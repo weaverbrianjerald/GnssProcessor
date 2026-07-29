@@ -148,6 +148,82 @@ def enu_error(est_x, est_y, est_z, tru_x, tru_y, tru_z, lat_deg, lon_deg):
 
 
 # --------------------------------------------------------------------------- #
+#  Full position covariance -> horizontal (E,N) 2x2, and track-relative frames
+# --------------------------------------------------------------------------- #
+#: chi-square, 2 dof: 95% -> 5.991, 99% -> 9.210.  A 2-D confidence region is NOT
+#: 1.96 sigma per axis; using the 1-D quantile is a common and gradeable error.
+CHI2_95 = 5.991
+CHI2_99 = 9.210
+
+
+def enu_cov2(df, lat0_deg, lon0_deg):
+    """Per-epoch horizontal (E,N) 2x2 covariance from a state trace, or ``None``.
+
+    Needs the off-diagonal position columns (``cov_xy_m2`` / ``cov_xz_m2`` /
+    ``cov_yz_m2``, emitted since 2026-07-24).  Returns ``None`` when they are
+    absent -- an ellipse ORIENTATION cannot be recovered from variances alone, and
+    rotating a diagonal-only ECEF covariance manufactures a bearing that is an
+    artifact of the rotation rather than the filter's correlation (median 41 deg
+    wrong on the hero run).  Callers must draw nothing rather than draw that.
+
+    Rotated about ONE fixed geodetic point so the result is consistent with a plot
+    drawn in that same frame; over a few hundred km the local ENU triad turns by
+    ~(L/R_earth), i.e. ~2.7 deg at 300 km.
+    """
+    need = ("x_std_m", "y_std_m", "z_std_m", "cov_xy_m2", "cov_xz_m2", "cov_yz_m2")
+    cols = {c: first_col(df, c) for c in need}
+    if any(cols[c] is None for c in need):
+        return None
+    sx, sy, sz = (cols[c].to_numpy(float) for c in ("x_std_m", "y_std_m", "z_std_m"))
+    cxy, cxz, cyz = (cols[c].to_numpy(float) for c in ("cov_xy_m2", "cov_xz_m2", "cov_yz_m2"))
+    C = np.zeros((sx.size, 3, 3), float)
+    C[:, 0, 0], C[:, 1, 1], C[:, 2, 2] = sx ** 2, sy ** 2, sz ** 2
+    C[:, 0, 1] = C[:, 1, 0] = cxy
+    C[:, 0, 2] = C[:, 2, 0] = cxz
+    C[:, 1, 2] = C[:, 2, 1] = cyz
+    la, lo = np.radians(lat0_deg), np.radians(lon0_deg)
+    sl, cl, so, co = np.sin(la), np.cos(la), np.sin(lo), np.cos(lo)
+    R = np.array([[-so, co, 0.0], [-sl * co, -sl * so, cl], [cl * co, cl * so, sl]])
+    return np.einsum("ij,njk,lk->nil", R, C, R)[:, :2, :2]
+
+
+def track_frame(e, n):
+    """Unit along-track / cross-track vectors per epoch from a plan-view path."""
+    de = np.gradient(np.asarray(e, float))
+    dn = np.gradient(np.asarray(n, float))
+    mag = np.hypot(de, dn)
+    ok = mag > 0
+    t = np.zeros((de.size, 2))
+    t[ok, 0], t[ok, 1] = de[ok] / mag[ok], dn[ok] / mag[ok]
+    t[~ok] = [1.0, 0.0]                       # stationary epoch: arbitrary but finite
+    return t, np.stack([t[:, 1], -t[:, 0]], axis=1)
+
+
+def proj_sigma(C2, v):
+    """1-sigma of a stack of 2x2 covariances projected onto unit vectors ``v``."""
+    return np.sqrt(np.clip(np.einsum("ni,nij,nj->n", v, C2, v), 0.0, None))
+
+
+def exaggeration(bound_m, span_m, *, target=0.015, skip=0):
+    """A 1/2/5-decade factor making the steady-state p90 bound ``target`` of span.
+
+    Cm-level bounds on a multi-hundred-km track are invisible at true scale, so
+    plan-view/geographic panels must exaggerate.  Scaled off the STEADY-STATE p90
+    rather than the whole-arc median: the filter's convergence transient runs
+    ~2.5 m against a ~0.6 cm steady state and would otherwise set the factor by
+    itself (one opening ellipse came out 450 km across).
+    """
+    b = np.asarray(bound_m, float)[skip:]
+    b = b[np.isfinite(b)]
+    ref = float(np.percentile(b, 90)) if b.size else 0.0
+    if not (ref > 0) or not (span_m > 0):
+        return 1.0
+    raw = (target * span_m) / ref
+    dec = 10.0 ** np.floor(np.log10(raw))
+    return float(next((s * dec for s in (1, 2, 5) if s * dec >= raw), 10 * dec))
+
+
+# --------------------------------------------------------------------------- #
 #  Answer-key scalars, mode, summary, verdict
 # --------------------------------------------------------------------------- #
 def scalars(ctx) -> dict:
@@ -269,6 +345,28 @@ def storm_window_utc(ctx):
         return None, None
     ts = list(gps_to_datetime([wk, wk], [w0, w1]))   # Series/Index-agnostic
     return ts[0], ts[1]
+
+
+#: Fraction of epochs above which a storm-window overlay is pure occlusion.
+STORM_WHOLE_ARC_FRAC = 0.95
+
+
+def storm_overlay_is_informative(mask, *, frac: float = STORM_WHOLE_ARC_FRAC) -> bool:
+    """``False`` when the storm window covers essentially the whole record.
+
+    The *spatial* viewers mark the storm by recolouring the affected track
+    segment, which only carries information if there is unaffected track to
+    contrast it against.  On a whole-arc storm (the DOY-132 hero: 100% of epochs)
+    the overlay is drawn thicker than the track it covers, so it hides the
+    trajectory it is meant to annotate and leaves a legend advertising a colour
+    the reader never sees.  Callers should skip the overlay and say "whole arc"
+    in prose instead.  Time-series viewers are unaffected — their paired
+    :func:`storm_vlines` land harmlessly at the plot edges.
+    """
+    m = np.asarray(mask, dtype=bool)
+    if m.size == 0 or not m.any():
+        return False
+    return float(m.mean()) < frac
 
 
 def storm_vlines(ctx, *, label: str = "storm"):

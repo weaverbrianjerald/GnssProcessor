@@ -110,6 +110,35 @@ void networkEmitStore(
         closed_loop_on ? Coordinates::ecefToLlh(cl_truth) : Coordinates::Llh{};
     constexpr std::size_t kClRecentWindow = 30;
 
+    // SPEC_day129_frame_guards Phase 2.2: an ENGAGED SH health gate withholds
+    // this epoch's EMISSION — no store push, no product write, no closed-loop
+    // consume/iono supply, no n_emitted advance (NetworkSolPrep already
+    // early-returned on the same flag, so `sol` is empty).  The withheld H
+    // heartbeat + per-epoch event keep the era visible on the wire and in the
+    // traces; NetworkStashStatus stamps the epoch-status disposition.  The
+    // carry stash and every QC tier still run — emission-only by design.
+    if (nc.sh_health_gate && ctx.carry.sh_gate_engaged) {
+        ++ctx.counters.n_sh_gate_withheld;
+        traces.emitEvent(se.time, "SH_GATE", "withhold", "", "",
+                         ctx.carry.sh_gate_last_a00, std::nullopt, "skip_emission",
+                         fmt::format("rms_all={:.2f} oob_run={}",
+                                     ctx.carry.sh_gate_last_rms,
+                                     ctx.carry.sh_gate_oob_run));
+        // RTA-10: product-level heartbeat for the WITHHELD epoch (H line, no E
+        // line) — a live tail can tell "SH gate withheld" from "producer died".
+        // Only once the deferred product writer has opened (the first emit).
+        if (emit_epoch_status && product_writer) {
+            NetworkProducerStatus hst;
+            hst.time.week = se.time.week;
+            hst.time.tow  = se.time.tow;
+            hst.state     = NetworkProducerStatus::State::WithheldShGate;
+            hst.withheld  = "*";
+            product_writer->writeEpochStatus(hst);
+            if (nc.product_flush_per_epoch) product_writer->flush();
+        }
+        return;
+    }
+
     // Card 4 (M1) phase D: emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md
     // §1).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
     // emitted per-(sat,σ) phase bias churns every epoch by a gauge element (a common

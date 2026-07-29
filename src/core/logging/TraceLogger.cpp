@@ -124,7 +124,15 @@ if (logging_config.enable_wls_trace) {
     // the StateManager has actually allocated (e.g. clock is omitted under
     // BSSD where it isn't a state).
     if (state_trace_.is_open()) {
-        state_trace_ << "week,tow_s,x_m,y_m,z_m,x_std_m,y_std_m,z_std_m,tropo_m,tropo_std_m";
+        // cov_xy/xz/yz complete the 3x3 ECEF position block.  The diagonal std
+        // columns alone cannot describe an error ellipse's ORIENTATION -- rotating
+        // a diagonal-only ECEF covariance into ENU produces an off-diagonal term
+        // that is an artifact of the rotation, not the estimator's real
+        // correlation -- so a consumer asked for the ENU 2x2 (semi-axes AND
+        // bearing) needs these.  Consumers must treat them as OPTIONAL: older
+        // traces and external submissions do not carry them.
+        state_trace_ << "week,tow_s,x_m,y_m,z_m,x_std_m,y_std_m,z_std_m,"
+                        "cov_xy_m2,cov_xz_m2,cov_yz_m2,tropo_m,tropo_std_m";
         if (is_ppp_rtk_) state_trace_ << ",iono_mean_m,iono_count";
     }
 
@@ -227,6 +235,12 @@ auto std_at = [&cov](size_t idx) -> double {
     }
     return std::numeric_limits<double>::quiet_NaN();
 };
+auto cov_at = [&cov](size_t i, size_t j) -> double {
+    if (i < static_cast<size_t>(cov.rows()) && j < static_cast<size_t>(cov.cols())) {
+        return cov(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j));
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+};
 
     const Eigen::VectorXd sv = state_manager.getStateVector();
     const size_t pos_idx = state_manager.getPositionIndex();
@@ -252,6 +266,21 @@ auto std_at = [&cov](size_t idx) -> double {
     state_trace_ << std_at(pos_idx) << ","
                  << std_at(pos_idx + 1) << ","
                  << std_at(pos_idx + 2) << ",";
+    // Off-diagonal position covariance (ECEF, m^2).  Scientific notation on
+    // purpose: a 1.5 cm sigma is ~2e-4 m^2, which the fixed 6-decimal format
+    // used for the columns around it would flatten to three significant
+    // figures.  Stream flags are saved/restored so the tropo/clock columns
+    // that follow keep the fixed formatting they have always had.
+    {
+        const std::ios_base::fmtflags saved_flags = state_trace_.flags();
+        const std::streamsize saved_prec = state_trace_.precision();
+        state_trace_ << std::scientific << std::setprecision(6)
+                     << cov_at(pos_idx, pos_idx + 1) << ","
+                     << cov_at(pos_idx, pos_idx + 2) << ","
+                     << cov_at(pos_idx + 1, pos_idx + 2) << ",";
+        state_trace_.flags(saved_flags);
+        state_trace_.precision(saved_prec);
+    }
     state_trace_ << sv(static_cast<Eigen::Index>(trop_idx)) << ","
                  << std_at(trop_idx);
     if (is_ppp_rtk_) {

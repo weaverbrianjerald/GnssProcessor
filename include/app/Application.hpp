@@ -472,6 +472,26 @@ private:
     int runNetwork();
 
     /**
+     * @brief Q5 consumer-only replay: drive the held-out PPP-RTK consumer from an
+     *        ALREADY-WRITTEN network product file (no producer solve).
+     *
+     * Dispatched from @c runNetwork() when
+     * @c network.closed_loop.replay_products_path is non-empty, BEFORE any
+     * producer setup.  Reconstructs exactly the in-process closed-loop wiring —
+     * @c deriveClosedLoopConsumerConfig, a @c RealTimeEngine fed epoch-by-epoch
+     * from the station's RINEX, an OWNED @c SsrCorrectionStore injected via
+     * @c setSsrStore — except that the store is filled by
+     * @c NetworkProductReader::replay from the recorded file instead of by the
+     * live emitter.  Writes the same @c closed_loop_trace.csv schema
+     * (@c pos_err_3d_m,east_m,north_m,up_m) so both sources grade identically.
+     *
+     * Implemented in @c ApplicationConsumerReplay.cpp.
+     *
+     * @return 0 on clean shutdown, non-zero on error.
+     */
+    int runConsumerReplay();
+
+    /**
      * @brief Network setup Phase 0 — validate every @c network.stations[] entry
      *        has an explicit @c rinex_path (decomposition INC-5; verbatim
      *        relocation from runNetwork, identical error text + exit status).

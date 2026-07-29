@@ -3164,6 +3164,50 @@ namespace GnssProcessor {
         double networkRaimWithholdSigma0() const { return network_raim_withhold_sigma0_; }
 
         /**
+         * @brief Extend the within-epoch screening to the CODE and IONO-CONSTRAINT
+         *        rows (@c network.raim_we_code_iono, WE-CI; used only when
+         *        @ref networkRaimWithinEpoch).
+         *
+         * The within-epoch adaptation's detection pool is historically the
+         * carried-ambiguity PHASE rows only — code rows and the per-LOS↔SH iono
+         * constraint rows were screened by NO tier (the DOY-129 19:26:00 SH
+         * detonation entered through exactly those rows).  When armed, each
+         * assess() additionally pools the code rows (CB-column-touching, non-phase)
+         * and the iono rows (SH-column-touching) into two per-pool robust σ̂0
+         * statistics with their OWN triggers (@ref networkRaimWeCodeTrigger /
+         * @ref networkRaimWeIonoTrigger).  A trip adds two response classes to the
+         * same capped drop→re-solve loop: the dominant STATION is excluded for the
+         * epoch (the BSHM/GOLD epicenter pattern), or the dominant satellite's
+         * code rows are DE-WEIGHTED network-wide (σ×10 — fallback, not drop).
+         * The phase pool, σ̂0_adapt, and the A4 ceiling are byte-identically
+         * unchanged; OFF (default) is byte-identical everywhere.
+         */
+        bool networkRaimWeCodeIono() const { return network_raim_we_code_iono_; }
+
+        /**
+         * @brief CODE-pool σ̂0 trigger for WE-CI (@c network.raim_we_code_trigger;
+         *        used only when @ref networkRaimWeCodeIono).
+         *
+         * Empirically derived (DOY-129, 305 stations): quiet code-pool σ̂0 runs
+         * ~2.5–4.7 with q99 ≈ 8, while the 19:26/19:34/20:47 events read 17.8,
+         * 28.0 and 288.2 — default 10.0 separates cleanly.  Per-pool statistic:
+         * the code rows' own 1.4826·median|v·√w| (B2-normalized when armed).
+         */
+        double networkRaimWeCodeTrigger() const { return network_raim_we_code_trigger_; }
+
+        /**
+         * @brief IONO-pool σ̂0 trigger for WE-CI (@c network.raim_we_iono_trigger;
+         *        used only when @ref networkRaimWeCodeIono).
+         *
+         * The iono-constraint rows (per-LOS iono ↔ SH field coupling) had no
+         * screening statistic before WE-CI, so this default (12.0) is a
+         * conservative first placement; the run-end WE-CI telemetry reports the
+         * maximum observed pool σ̂0 so the trigger can be calibrated from the
+         * first armed run (MW-thresholds discipline: empirical, never σ-model).
+         */
+        double networkRaimWeIonoTrigger() const { return network_raim_we_iono_trigger_; }
+
+        /**
          * @brief Per-CONSTELLATION σ̂0 carve-out of the A4 withhold
          *        (@c network.per_const_withhold, RTA-10; used only when
          *        @ref networkRaimWithholdSigma0 > 0).
@@ -4538,6 +4582,19 @@ namespace GnssProcessor {
         void loadAppModeAndRealtimeSection_(const nlohmann::json& json, LogManager& log_manager);
         bool loadBaselineSection_(const nlohmann::json& json, LogManager& log_manager);
         bool loadNetworkSection_(const nlohmann::json& json, LogManager& log_manager);
+        /**
+         * @brief Log the network POSTURE readout: which field-recommended knobs are armed for
+         *        THIS run's regime, which are not, and whether each COUPLED bundle is complete.
+         *
+         * Closes the project's missing PROMOTION step — new work ships default-OFF by
+         * convention and nothing ever moves it to default-ON, so validated options accumulate
+         * unarmed.  Regime-gated (a knob validated at 50 stations may be harmful at 305) and
+         * bundle-aware (a strict subset of a coupled set is its own failure mode).  Log-only.
+         *
+         * @param log  the "gnss_config" logger.
+         * @see docs/CONFIG_promotion_ledger.md, scripts/config_posture_check.py
+         */
+        void logNetworkPosture_(const std::shared_ptr<spdlog::logger>& log) const;
         void loadLoggingSection_(const nlohmann::json& json, LogManager& log_manager);
         void logConfigurationSummary_(LogManager& log_manager) const;
 
@@ -4693,6 +4750,9 @@ namespace GnssProcessor {
         bool   network_raim_within_epoch_{false}; ///< Arm within-epoch adaptation (detect→drop-culprit→re-solve) when σ̂0 exceeds the trigger; OFF = emit the first solve as today.
         double network_raim_sigma0_trigger_{3.0}; ///< σ̂0 above which an epoch is "so bad" that within-epoch adaptation fires.
         double network_raim_withhold_sigma0_{0.0}; ///< A4: within-epoch escape-hatch ceiling — if σ̂0 STILL exceeds this after the 5-pass adaptation, WITHHOLD the epoch (reuse the observability-gate disposition) instead of emitting with a warning; 0 = off (emit anyway, current behaviour). Used only when @ref networkRaimWithinEpoch. Typically ~2× @ref networkRaimSigma0Trigger.
+        bool   network_raim_we_code_iono_{false};  ///< WE-CI: extend the within-epoch screening to the CODE and IONO-CONSTRAINT row pools (own triggers, station-exclusion / sat-code-deweight responses); the phase pool, σ̂0_adapt and A4 are unchanged. OFF = byte-identical.
+        double network_raim_we_code_trigger_{10.0}; ///< WE-CI code-pool σ̂0 trigger (empirical: quiet 2.5–4.7 / q99 ≈ 8; events 17.8–288 on DOY-129@305). Inert unless network_raim_we_code_iono_.
+        double network_raim_we_iono_trigger_{12.0}; ///< WE-CI iono-pool σ̂0 trigger (first placement — the pool had no prior statistic; calibrate from the run-end max-observed telemetry). Inert unless network_raim_we_code_iono_.
         bool   network_per_const_withhold_{false};  ///< RTA-10: when the A4 σ̂0 withhold trips, carve the epoch per CONSTELLATION — publish each constellation whose own σ̂0_c (same standardized-residual pool, restricted to its rows) passes the SAME ceiling with ≥ min_rows rows; prune the rest (RT0-5-quarantine pattern). OFF = all-or-nothing withhold (byte-identical).
         int    network_per_const_withhold_min_rows_{20}; ///< RTA-10: minimum σ̂0-pool rows for a constellation to be JUDGEABLE by the carve-out; fewer ⇒ withheld (unjudgeable under a contaminated epoch). Inert unless network_per_const_withhold_.
         bool   network_emit_epoch_status_record_{false}; ///< RTA-10: write one positional H heartbeat record per epoch into the product file — including fully withheld epochs (gate + σ̂0), which otherwise emit nothing — so a tail consumer distinguishes "withheld" from "producer died". Positional (never feeds replay). OFF = no H records (byte-identical).

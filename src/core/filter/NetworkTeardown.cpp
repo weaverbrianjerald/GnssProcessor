@@ -362,6 +362,22 @@ int networkTeardown(
                   n_emitted, ctx.counters.n_gate_withheld_under,
                   ctx.counters.n_gate_withheld_over,
                   ctx.counters.nullspace_obs_min, ctx.counters.nullspace_obs_max);
+    if (config_.networkRaimWeCodeIono()) {
+        log->info("Network (WE-CI): within-epoch code/iono screening — {} code trip(s), "
+                  "{} iono trip(s), {} station exclusion(s), {} satellite code de-weight(s); "
+                  "max pool σ̂0 observed: code {:.2f} (trigger {:g}), iono {:.2f} (trigger {:g}).",
+                  ctx.counters.we_ci_code_trips, ctx.counters.we_ci_iono_trips,
+                  ctx.counters.we_ci_sta_excl, ctx.counters.we_ci_sat_dw,
+                  ctx.counters.we_ci_s0_code_max, config_.networkRaimWeCodeTrigger(),
+                  ctx.counters.we_ci_s0_iono_max, config_.networkRaimWeIonoTrigger());
+        if (ctx.counters.we_ci_code_trips == 0 && ctx.counters.we_ci_iono_trips == 0)
+            log->warn("Network (WE-CI): armed but never tripped — do NOT read this run as "
+                      "evidence the screening works.  If the max-observed σ̂0 above is 0.00 "
+                      "the pools never populated (phase_leveling off gates the whole "
+                      "within-epoch block via carry_warm, or no CB/SH columns registered); "
+                      "otherwise the window was quiet or the triggers sit above its misfit "
+                      "scale (invariant #4).");
+    }
     if (config_.networkCbKaulaPrior())
         log->info("Network (Card KP): admitted-OSB physical-bound prior folded on {} epoch(s), "
                   "{} column-epoch(s) total at sigma {:g} m.  [Invariant #4: an ARMED run "
@@ -738,6 +754,83 @@ int networkTeardown(
                       iono_deweight.staticCount(), iono_deweight.staticWeight(),
                       idw_list.empty() ? "" : "  Stations: ", idw_list);
     }
+    // SPEC_day129_frame_guards Phase 2.1 run-end telemetry.  Standing invariant #4:
+    // "0 trips / 0 reinits" means the guard is INERT no matter how clean the run
+    // looks — this line is the ON-path evidence, and the validation gate reads it.
+    if (config_.getNetworkConfig().cb_excursion_reinit) {
+        log->info("Network (Phase 2.1 CB-excursion guard): {} trip(s), {} code-bias "
+                  "carry reinit(s), {} discontinuity bump(s) landed; largest median "
+                  "|Δδtˢ| observed {:.2f} m at TOW {:.1f} (threshold {:.2f} m).  D1 "
+                  "evidence: {} (satellite,epoch) NON-pivot case(s) a per-satellite "
+                  "rule would have reinitialized — scope is {}.",
+                  ctx.carry.cb_exc_trips, ctx.carry.cb_exc_reinits,
+                  ctx.carry.cb_exc_bumps, ctx.carry.cb_exc_max_median,
+                  ctx.carry.cb_exc_max_median_tow,
+                  config_.getNetworkConfig().cb_excursion_median_m,
+                  ctx.carry.cb_exc_nonpivot_would,
+                  config_.getNetworkConfig().cb_excursion_reinit_all_sats
+                      ? "ALL satellites (D1b)" : "clock-PIVOT only (D1)");
+        if (ctx.carry.cb_exc_trips == 0)
+            log->warn("Network (Phase 2.1): the CB-excursion guard is ARMED but never "
+                      "tripped over this run — it is INERT here.  Either the window "
+                      "carries no common-mode excursion, or the threshold ({:.2f} m) is "
+                      "above anything that occurred (largest observed median {:.2f} m).  "
+                      "Do NOT read this run as evidence the guard works.",
+                      config_.getNetworkConfig().cb_excursion_median_m,
+                      ctx.carry.cb_exc_max_median);
+        if (!ctx.carry.cb_excursion_pending_bump.empty())
+            log->warn("Network (Phase 2.1): {} queued code-bias discontinuity bump(s) "
+                      "never landed (their satellites were absent from every subsequent "
+                      "emission) — the reinit stepped a value the product did not signal.",
+                      ctx.carry.cb_excursion_pending_bump.size());
+    }
+    // SPEC_day129_frame_guards Phase 2.2 run-end telemetry (invariant #4): the
+    // out-of-band count is per EPOCH — the throttled T1a WARN under-read the
+    // reference run 23.8× (9 warnings vs 214 out-of-band epochs), which is the
+    // defect this gate replaces.
+    if (config_.getNetworkConfig().sh_health_gate) {
+        log->info("Network (Phase 2.2 SH health gate): {} out-of-band EPOCH(s), {} "
+                  "engagement(s), {} emission(s) withheld (band [{:.1f}, {:.1f}] TECU, "
+                  "rms ceiling {}, min_epochs {}).{}",
+                  ctx.carry.sh_gate_oob_epochs_total, ctx.carry.sh_gate_engagements,
+                  ctx.counters.n_sh_gate_withheld,
+                  config_.getGlobalVtecShConfig().a00_warn_low_tecu,
+                  config_.getGlobalVtecShConfig().a00_warn_high_tecu,
+                  config_.getNetworkConfig().sh_gate_rms_max_tecu > 0.0
+                      ? fmt::format("{:.1f} TECU", config_.getNetworkConfig().sh_gate_rms_max_tecu)
+                      : std::string{"off"},
+                  config_.getNetworkConfig().sh_gate_min_epochs,
+                  ctx.carry.sh_gate_engaged
+                      ? "  STILL ENGAGED at run end — the era outlived the data."
+                      : "");
+        if (ctx.carry.sh_gate_oob_epochs_total == 0)
+            log->warn("Network (Phase 2.2): the SH health gate is ARMED but the field "
+                      "never left its band over this run — the gate is untested here.  "
+                      "Do NOT read this run as evidence the gate works.");
+    }
+    // SPEC_day129_frame_guards P1-3/P1-4 run-end telemetry.  Standing invariant #4:
+    // an instrumented run must state how many epochs the instrumentation actually
+    // produced — "0 traced" means the wiring is inert no matter how clean the log
+    // looks, and the trigger verdict would be built on an empty file.
+    if (config_.getNetworkConfig().trace_postfit_sigma0)
+        log->info("Network (P1-4 post-fit σ̂0): {} emitted epoch(s) pooled a post-fit "
+                  "residual statistic (last epoch: {} rows = {} code + {} phase; σ̂0 "
+                  "{:.4f} all / {:.4f} code / {:.4f} phase).  Read the CODE number: "
+                  "with free ambiguities every phase row is fitted exactly by its own "
+                  "ambiguity, so the phase pool is identically zero and DILUTES the "
+                  "pooled statistic — that zero is the finding (no phase-side "
+                  "redundancy, hence no phase fault detection without phase-leveling). "
+                  "MEASURE-ONLY — the A4 withhold ceiling still reads the within-epoch "
+                  "RAIM's sigma0_adapt, so this run's emit decisions are unchanged.",
+                  ctx.carry.pf_epochs_total, ctx.carry.ep_pf_rows,
+                  ctx.carry.ep_pf_code_rows, ctx.carry.ep_pf_phase_rows,
+                  ctx.carry.ep_sigma0_pf, ctx.carry.ep_sigma0_pf_code,
+                  ctx.carry.ep_sigma0_pf_phase);
+    if (config_.getNetworkConfig().trace_sh_spectrum)
+        log->info("Network (P1-3 shared-normal spectrum): {} epoch(s) written to "
+                  "network_sh_spectrum.csv (mode detail every {} traced epoch(s)).",
+                  ctx.carry.sh_spectrum_epochs,
+                  config_.getNetworkConfig().trace_sh_spectrum_stride);
     if (carry_innov_gate && carry_innov_map_miss > 0)
         log->warn("Network (Card 4/M1 D5): {} innovation flag(s) over the run did not resolve in the "
                   "flag→ambiguity reverse map (next-epoch re-tap skipped for them) — a reverse-map/"

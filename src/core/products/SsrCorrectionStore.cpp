@@ -524,6 +524,7 @@ NetworkProducerStatus::State NetworkProducerStatus::parseState(const std::string
     if (token == "partial")         return State::Partial;
     if (token == "withheld_sigma0") return State::WithheldSigma0;
     if (token == "withheld_gate")   return State::WithheldGate;
+    if (token == "withheld_sh")     return State::WithheldShGate;   // Phase 2.2 SH health gate
     return State::Unknown;
 }
 
@@ -533,6 +534,7 @@ const char* NetworkProducerStatus::stateName(State s) {
         case State::Partial:        return "partial";
         case State::WithheldSigma0: return "withheld_sigma0";
         case State::WithheldGate:   return "withheld_gate";
+        case State::WithheldShGate: return "withheld_sh";
         case State::Unknown:        break;
     }
     return "unknown";

@@ -58,6 +58,9 @@
  *     [,frame=<id>][,cepoch=<epoch>]        #   RTA-12 contract identity fields
  *     [,agek=<val>]                         #   M4 combined-σ age-scaling coefficient
  *     [,atx=<file>][,oref=<CoM|APC>]        #   (each absent when empty);
+ *     [,cbpin=<const>:<s1>-<s2>...]         #   §1.5 code-bias IF pin pair per
+ *                                           #   constellation (the pair the OSB
+ *                                           #   stream is internally consistent in)
  *                                           #   repeated S lines mid-file are RTA-5
  *                                           #   contract re-broadcasts (positional)
  *   H,<week>,<tow>,<status>,<sigma0>,       # RTA-10 epoch-status heartbeat
@@ -73,8 +76,11 @@
  * store.  Format-version note: a PRE-RTA-10 reader treats @c H as an unknown
  * tag — it still parses every epoch correctly but flags its sticky @c ok /
  * @c healthy() as false; arm @c network.emit_epoch_status_record only when the
- * consumers reading the file are current.  (The '#' header legend is NOT
- * extended — the v2 legend bytes are frozen so an OFF run stays byte-identical.)
+ * consumers reading the file are current.  (Handoff-§7 schema fix: the '#'
+ * header legend is GRAMMAR-COMPLETE — one line per record tag declaring every
+ * optional positional field and key=value token the writer can emit, shared
+ * verbatim by v1 and v2 headers.  Any wire-format extension MUST extend the
+ * legend; @c HeaderLegendDeclaresEveryEmittedField enforces it.)
  * Floating-point fields are written with the shortest round-trippable decimal
  * (fmt's default formatting), so a parse recovers the exact @c double.  A
  * satellite with no @c C line round-trips to @c has_clock=false; a satellite with
@@ -174,6 +180,24 @@ struct SbasisContract {
     /// (center of mass; the SP3+ATX convention) or "APC" (antenna phase center;
     /// SSR orbit streams).  @c oref= field.
     std::string       orbit_ref;
+    /// §1.5 (day-129 frame-guards report): the code-bias IF PIN PAIR per
+    /// constellation — the signal pair the emitted OSB stream is internally
+    /// consistent in, keyed by constellation letter with value "<s1>-<s2>"
+    /// (e.g. "G" → "C1C-C2L", the pair @c selectIfPinPair realized).  The
+    /// producer's code-bias datum pins IF(s1,s2) per satellite plus
+    /// sum-to-zero per (constellation, signal) channel; IF combinations
+    /// OUTSIDE the pinned pair ride data-determined directions and carry the
+    /// full frame wander.  A consumer should form its IF within ONE frame —
+    /// the measured ranking is pinned pair < convention pair < MIXED pair
+    /// (one signal in, one out), the last being worst because the consumer's
+    /// receiver code-bias state must absorb a between-channel differential
+    /// against the moving satellite OSBs.  Serialized as repeated trailing
+    /// @c cbpin=<const>:<s1>-<s2> S-line fields ONLY when non-empty
+    /// (byte-identical otherwise).  An interpretation hint, not a
+    /// replay-emitter parameter: @c makeReplayEmitter ignores it and
+    /// @c checkContract compares it only for constellations the consumer
+    /// declares (the @c clock_pivot_sat semantics).
+    std::map<std::string, std::string> cb_pin_pair;
     bool              present{false};         ///< True when parsed from (or written to) a v2 header.
 };
 

@@ -25,8 +25,10 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -173,15 +175,23 @@ void networkInstallCarry(
                                   static_cast<std::size_t>(a.est_station), x_s); }
                         catch (...) { xr_of[a.est_station] = Eigen::VectorXd(); }
                     }
-            Eigen::VectorXd v_wl;                   // kernel innovation v = z_free − Gᵀx_s − ẑ
+            // Kernel innovation v = z_free − Gᵀx_s − ẑ.  ddPriorInnovation is BLOCK-scoped, so
+            // under f6_all_blocks each block gets its own request and each row indexes into
+            // its own block's vector (rows of a block are contiguous in the capture).
+            std::map<std::size_t, Eigen::VectorXd> v_of;
             {
-                Eigen::MatrixXd cov_v_wl;           // (unused; v is cov-free)
-                try {
-                    const Eigen::MatrixXd cov0 =
-                        Eigen::MatrixXd::Zero(x_s.size(), x_s.size());
-                    est.ddPriorInnovation(mw_wl_f6.wl_block_index, x_s, cov0, v_wl, cov_v_wl);
-                } catch (...) { v_wl.resize(0); }
+                const Eigen::MatrixXd cov0 = Eigen::MatrixXd::Zero(x_s.size(), x_s.size());
+                std::set<std::size_t> want(mw_wl_f6.row_block.begin(),
+                                           mw_wl_f6.row_block.end());
+                if (want.empty()) want.insert(mw_wl_f6.wl_block_index);
+                for (const std::size_t bi : want) {
+                    Eigen::VectorXd v; Eigen::MatrixXd cov_v;   // (cov unused; v is cov-free)
+                    try { est.ddPriorInnovation(bi, x_s, cov0, v, cov_v); }
+                    catch (...) { v.resize(0); }
+                    v_of[bi] = std::move(v);
+                }
             }
+            std::map<std::size_t, std::size_t> row_in_block;   // block -> running row index
             std::error_code ec_f6;
             std::filesystem::create_directories(log_dir_, ec_f6);
             std::ofstream f6(log_dir_ / "network_mw_wl_f6.csv");
@@ -208,9 +218,15 @@ void networkInstallCarry(
                                    - (a.coeff / a.lambda2) * (a.x_lin2 + xr2);
                     }
                     const double zmw_frac = fr.z_mw - std::round(fr.z_mw);
-                    const double vrow = (static_cast<Eigen::Index>(r) < v_wl.size())
-                                            ? v_wl(static_cast<Eigen::Index>(r))
-                                            : std::numeric_limits<double>::quiet_NaN();
+                    const std::size_t bi = (r < mw_wl_f6.row_block.size())
+                                               ? mw_wl_f6.row_block[r]
+                                               : mw_wl_f6.wl_block_index;
+                    const std::size_t rb = row_in_block[bi]++;
+                    const auto vit = v_of.find(bi);
+                    const double vrow =
+                        (vit != v_of.end() && static_cast<Eigen::Index>(rb) < vit->second.size())
+                            ? vit->second(static_cast<Eigen::Index>(rb))
+                            : std::numeric_limits<double>::quiet_NaN();
                     f6 << r << ',' << fr.arcs.size() << ','
                        << fmt::format("{:.4f}", fr.z_mw) << ','
                        << fmt::format("{:.4f}", zmw_frac) << ','
@@ -263,10 +279,17 @@ void networkInstallCarry(
                 mw_wl_f6.written = true;
                 mw_wl_f6.pending = false;
                 log->info("Network (M5/WL-1 F6): wrote {} — first arming epoch tow {:.1f}, "
-                          "{} row(s); attribute z_mw_frac (MW integer-ness) + "
-                          "recon_minus_zmw (state-frame gap).",
+                          "{} row(s) over {} WL block(s); attribute z_mw_frac (MW "
+                          "integer-ness) + recon_minus_zmw (state-frame gap).  ⚠️ This is a "
+                          "capped SAMPLE (network.mw_wl.f6_max_rows={}, f6_all_blocks={}) — "
+                          "its size is NOT the WL population; read the run-end WL-1 counters "
+                          "for that.",
                           (log_dir_ / "network_mw_wl_f6.csv").string(), mw_wl_f6.tow,
-                          mw_wl_f6.rows.size());
+                          mw_wl_f6.rows.size(),
+                          std::set<std::size_t>(mw_wl_f6.row_block.begin(),
+                                                mw_wl_f6.row_block.end()).size(),
+                          config_.getNetworkConfig().mw_wl.f6_max_rows,
+                          config_.getNetworkConfig().mw_wl.f6_all_blocks);
             }
         }
     }
@@ -400,6 +423,18 @@ void networkInstallCarry(
     carry_dropped_total   = cc.chords_dropped;
     carry_innov_flags_total  = cc.innov_flags;
     carry_innov_retaps_total = cc.innov_retaps;
+    // P1-1 (SPEC_day129_frame_guards): difference the RUN-CUMULATIVE driver
+    // counters into THIS epoch's churn, for the per-epoch trace columns.  Taken
+    // here — the one site that owns the cumulative copy — so the deltas can never
+    // disagree with the run-end totals.  Pure trace; nothing reads them back.
+    ctx.carry.ep_chord_births  = cc.chords_born  - ctx.carry.carry_prev_born;
+    ctx.carry.ep_slip_refloats = cc.slip_kills   - ctx.carry.carry_prev_slipkills;
+    ctx.carry.ep_d5_flags      = cc.innov_flags  - ctx.carry.carry_prev_innov_flags;
+    ctx.carry.ep_d5_retaps     = cc.innov_retaps - ctx.carry.carry_prev_innov_retaps;
+    ctx.carry.carry_prev_born           = cc.chords_born;
+    ctx.carry.carry_prev_slipkills      = cc.slip_kills;
+    ctx.carry.carry_prev_innov_flags    = cc.innov_flags;
+    ctx.carry.carry_prev_innov_retaps   = cc.innov_retaps;
     // D5: fold the post-solve innovation flags into the NEXT epoch's slip funnel.
     // Each (group, chord) maps back to its (station, ambiguity) via the reverse map
     // built with this epoch's blocks; next epoch's buildCarryDdPriors excludes it from

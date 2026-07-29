@@ -65,6 +65,9 @@ void networkShHealth(
     auto& n_emitted = ctx.counters.n_emitted;
     auto& sh_a00_was_in_band = ctx.carry.sh_a00_was_in_band;
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
+    // P1-2: engage/release thresholds, echoed into the IONO_DW event rows so a
+    // reader sees the z-score against the gate it was judged by.
+    const IonoConstraintDeweightConfig& idw_cfg = config_.getIonoConstraintDeweightConfig();
 
 
     // --- T1a: SH-field health probe + a₀₀ physical-band divergence WARN ---
@@ -297,7 +300,31 @@ void networkShHealth(
             vtec_sh_health_trace << '\n';
             // Advance the deweight gate one clean epoch (EWMA + robust z +
             // hysteresis + slew).  Gate-off ⇒ never runs ⇒ byte-identical.
-            if (sh_want_gate) iono_deweight.advance(true);
+            if (sh_want_gate) {
+                iono_deweight.advance(true);
+                // --- SPEC_day129_frame_guards P1-2 -------------------------
+                // This is the ONE serial site the gate's threading contract
+                // allows a read from (advance/observe mutate; the assembly is
+                // parallel).  Harvest the weight field for the epoch-status row
+                // and emit each engage/release as a discrete IONO_DW event, so
+                // "did a deweight release wave land at the collapse epoch?" is
+                // answerable from the traces instead of from run-END totals
+                // (326 engage / 307 release over the whole day tells you
+                // nothing about WHEN).  Pure trace — no decision reads it.
+                const auto agg = iono_deweight.aggregate();
+                ctx.carry.ep_dw_engaged = agg.n_engaged;
+                ctx.carry.ep_dw_zero    = agg.n_zero;
+                ctx.carry.ep_dw_min_w   = agg.min_w;
+                ctx.carry.ep_dw_mean_w  = agg.mean_w;
+                for (const auto& tr : iono_deweight.lastTransitions())
+                    traces.emitEvent(se.time, "IONO_DW",
+                                     tr.engaged ? "engage" : "release",
+                                     /*sat=*/"", tr.station, tr.z,
+                                     tr.engaged ? idw_cfg.sigma_hi : idw_cfg.sigma_lo,
+                                     tr.engaged ? "deweight" : "restore",
+                                     fmt::format("w={:.4f} n_engaged={} n_zero={}",
+                                                 tr.w, agg.n_engaged, agg.n_zero));
+            }
         }
     }
 

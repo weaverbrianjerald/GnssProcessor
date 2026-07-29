@@ -417,6 +417,114 @@ void networkClockQc(NetworkRunContext& ctx,
     }
 
     networkRetroUraBookkeeping(ctx, clock_refloat_sats, retro_flag_sats, retro_feed);
+
+    // === SPEC_day129_frame_guards Phase 2.1 ===================================
+    // Network-wide COMMON-MODE clock-excursion detector -> code-bias carry reinit.
+    //
+    // Why the median and not the max: the solve can always slide along the cheap
+    // global mode {all satellite clocks −δ, all receiver clocks −δ} — phase and
+    // code residuals are invariant along it EXCEPT at the two hard pins.  The
+    // pinned satellite's clock cannot move, so the pressure every other satellite
+    // dumps into its soft clock (q = 0.3 m²/epoch, recovered in 2–4 epochs) lands
+    // instead on the pivot's NEAR-STATIC code biases (q = 3e-9 m²/epoch, gain
+    // K ≈ 2.2e-3/epoch, bleed τ ≈ 3.8 h).  The MEDIAN of |Δclock| measures exactly
+    // the one-sided/common part of an excursion — the part that projects onto the
+    // pins — while a max-based statistic fires on any single-satellite outlier,
+    // which the clock monitor above already owns.  Measured on DOY-129 the two
+    // statistics separate the harmless from the damaging event cleanly (see the
+    // calibration table on NetworkConfig::cb_excursion_median_m).
+    //
+    // Reset-not-repair: a tripped epoch REINITIALIZES the pivot's CB carry (the
+    // existing inflate_q path) so the next epoch re-estimates it from data with a
+    // weak anchor, instead of carrying a stale near-static value through the
+    // excursion.  No measurement is ever dropped.
+    //
+    // OFF (default) ⇒ this whole block is skipped: no baseline map is maintained,
+    // no set is written, no bump is queued — byte-identical.
+    if (nc.cb_excursion_reinit && nc.cb_excursion_median_m > 0.0) {
+        auto& prev = ctx.carry.cb_exc_prev_clk;
+        auto& mark = ctx.carry.cb_excursion_sats;
+        mark.clear();   // per-epoch handoff to this epoch's stash
+
+        std::map<std::string, double> now;
+        std::vector<double> deltas;
+        std::vector<std::string> jumpers;
+        for (const std::string& sat : registered_clock_sats) {
+            const Eigen::Index col = est.clockColumn(sat);
+            if (col < 0 || col >= x_s.size()) continue;
+            const double v = x_s(col);
+            if (!std::isfinite(v)) continue;
+            now[sat] = v;
+            const auto pit = prev.find(sat);
+            if (pit == prev.end()) continue;
+            const double d = std::abs(v - pit->second);
+            deltas.push_back(d);
+            if (d > nc.cb_excursion_median_m) jumpers.push_back(sat);
+        }
+
+        // A clock-pivot handover re-references every clock of the affected
+        // constellation by a common constant — a DATUM artifact, not an
+        // excursion.  Suppress the test (the clock monitor's jump test suppresses
+        // on the same condition and for the same reason) but still re-baseline,
+        // so the epoch after a handover compares like with like.
+        const bool testable = !datum_changed && deltas.size() >= 8;
+        if (testable) {
+            std::vector<double> s = deltas;
+            std::nth_element(s.begin(), s.begin() + static_cast<std::ptrdiff_t>(s.size() / 2),
+                             s.end());
+            const double med = s[s.size() / 2];
+            if (med > ctx.carry.cb_exc_max_median) {
+                ctx.carry.cb_exc_max_median     = med;
+                ctx.carry.cb_exc_max_median_tow = se.time.tow;
+            }
+            if (med > nc.cb_excursion_median_m) {
+                ++ctx.carry.cb_exc_trips;
+                const double mx = *std::max_element(deltas.begin(), deltas.end());
+                // D1: which satellites' CB carry is reinitialized.  Pivot-only by
+                // default (the pivot is the ONLY satellite whose clock↔code split
+                // is both data-exposed and stiff-carried); all-sats under D1b.
+                if (nc.cb_excursion_reinit_all_sats) {
+                    for (const auto& kv : now) mark.insert(kv.first);
+                } else {
+                    for (const auto& kv : ctx.carry.prev_pivot)
+                        if (!kv.second.empty() && now.count(kv.second))
+                            mark.insert(kv.second);
+                }
+                // D1 evidence counter: how often a PER-SATELLITE rule would have
+                // caught a non-pivot satellite too.  This is the number that lets
+                // pivot-only vs all-sats be re-decided from data rather than taste.
+                std::size_t n_nonpivot_jumpers = 0;
+                for (const std::string& s2 : jumpers)
+                    if (!mark.count(s2)) { ++n_nonpivot_jumpers; ++ctx.carry.cb_exc_nonpivot_would; }
+
+                ctx.carry.cb_exc_reinits += static_cast<long long>(mark.size());
+                // Card-2 rule: a value STEP must coincide with a signalled
+                // discontinuity.  The reinit lands in NEXT epoch's fold, so the
+                // bump is queued for the next emit (consumed in NetworkSolPrep).
+                for (const std::string& s2 : mark)
+                    ctx.carry.cb_excursion_pending_bump.insert(s2);
+
+                std::string marked;
+                for (const std::string& s2 : mark) marked += (marked.empty() ? "" : ";") + s2;
+                log->warn("Network[CB-excursion]: TOW {:.1f} network-wide common-mode clock "
+                          "excursion — median |Δδtˢ| {:.2f} m > {:.2f} m (max {:.2f} m, "
+                          "max/median {:.2f} — {}).  Reinitializing the code-bias carry of "
+                          "[{}] (σ={:.0f} m next epoch) and queueing a code-bias "
+                          "discontinuity bump at the next emit.  {} non-pivot satellite(s) "
+                          "also exceeded the bound this epoch.",
+                          se.time.tow, med, nc.cb_excursion_median_m, mx,
+                          med > 0.0 ? mx / med : 0.0,
+                          (med > 0.0 && mx / med < 2.0) ? "ONE-SIDED, reaches the pins"
+                                                        : "two-sided-ish",
+                          marked, clk_mon_reinit_sig, n_nonpivot_jumpers);
+                emitEvent("CB_EXC", "cb_excursion_reinit", marked, "", med,
+                          nc.cb_excursion_median_m, "reinit",
+                          fmt::format("max={:.2f};ratio={:.2f};n_jump={}", mx,
+                                      med > 0.0 ? mx / med : 0.0, jumpers.size()));
+            }
+        }
+        prev = std::move(now);
+    }
 }
 
 } // namespace GnssProcessor

@@ -470,6 +470,32 @@ struct EpochStatusRow {
     std::optional<int>    n_retro_applied;
     std::optional<int>    datum_changed;
     std::optional<int>    n_arc_refloat;   ///< T2d: isolated-arc RAIM refloats THIS epoch (the churn metric; distinct from n_refloat_sats which is the CLOCK-refloat set).
+    // --- SPEC_day129_frame_guards P1-1: per-epoch CARRY churn ----------------
+    // The Card-4 run-end log line reports RUN totals only (2.55 M chord births,
+    // 2.49 M slip refloats, 2.42 M D5 flags/re-taps over DOY-129), which cannot
+    // answer "did the churn SPIKE at the collapse epoch?".  These are the same
+    // quantities differenced per epoch (NetworkInstallCarry).  Appended columns,
+    // existing positions preserved (T2d precedent).
+    std::optional<long long> n_d5_flags;
+    std::optional<long long> n_d5_retaps;
+    std::optional<long long> n_chord_births;
+    std::optional<long long> n_slip_refloats;
+    // --- P1-2: per-epoch iono-DEWEIGHT state ---------------------------------
+    // n_adapt (already above) is a DIFFERENT counter (the within-epoch RAIM
+    // adaptation count, 0 all day on the reference run).  These are the SH-VTEC
+    // constraint deweight gate's weight field: engaged count, the count driven to
+    // w == 0 (whole SH block dropped, per-LOS iono floating), and the min/mean.
+    std::optional<int>    n_dw_engaged;
+    std::optional<int>    n_dw_zero;
+    std::optional<double> dw_min_w;
+    std::optional<double> dw_mean_w;
+    // --- P1-4: MEASURE-ONLY post-fit variance factor on the emit path --------
+    // Present only under network.trace_postfit_sigma0.  sigma0 (above) is the
+    // within-epoch RAIM's statistic and is 0.0000 whenever that RAIM is off.
+    std::optional<double> sigma0_pf;        ///< robust σ̂0 over ALL post-fit residual rows
+    std::optional<double> sigma0_pf_code;   ///< …code rows only
+    std::optional<double> sigma0_pf_phase;  ///< …phase rows only
+    std::optional<long long> n_pf_rows;     ///< rows in the pooled statistic (0 ⇒ inert)
 };
 
 /// Decomposition INC-7 (plan §Control flow): disposition of a relocated

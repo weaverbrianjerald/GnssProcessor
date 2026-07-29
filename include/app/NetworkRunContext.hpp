@@ -449,6 +449,86 @@ namespace GnssProcessor {
         long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;
         long long carry_innov_map_miss = 0;   // D5 flag→ambiguity reverse-map misses (should stay 0)
 
+        // --- SPEC_day129_frame_guards P1-1: per-epoch carry churn -------------
+        // The Card-4 counters above are RUN-CUMULATIVE (they mirror
+        // carry_driver.counters(), which never resets), so the run-end log line is
+        // the only place the churn is visible.  The trigger question — "did the
+        // re-tap count SPIKE at the collapse epoch?" — needs the per-epoch series.
+        // NetworkInstallCarry differences the cumulative totals against the
+        // previous epoch's snapshot; the emit site copies the deltas into the
+        // epoch-status row.  Pure trace: nothing reads them back.
+        long long carry_prev_born = 0, carry_prev_slipkills = 0,
+                  carry_prev_innov_flags = 0, carry_prev_innov_retaps = 0;
+        long long ep_chord_births = 0, ep_slip_refloats = 0,
+                  ep_d5_flags = 0, ep_d5_retaps = 0;
+
+        // --- SPEC_day129_frame_guards P1-2: per-epoch iono-deweight state -----
+        // Harvested at the SERIAL NetworkShHealth advance() site (the gate's
+        // threading contract forbids reading it from the parallel assembly) and
+        // copied into the emit epoch's status row.  n_dw_zero counts stations the
+        // gate has driven to w == floor == 0, i.e. whose ENTIRE SH block is
+        // dropped (ApplicationNetworkAssembly.cpp:330-331) and whose per-LOS iono
+        // is floating — the "deweight release wave" candidate trigger.
+        int    ep_dw_engaged = -1;   // -1 = not harvested this epoch (blank in the trace)
+        int    ep_dw_zero    = 0;
+        double ep_dw_min_w   = 1.0;
+        double ep_dw_mean_w  = 1.0;
+
+        // --- SPEC_day129_frame_guards P1-4: measure-only post-fit σ̂0 ---------
+        // Filled by networkPostfitSigma0 (filter/NetworkFrameDiag) under
+        // network.trace_postfit_sigma0; ep_pf_rows == 0 means "not computed this
+        // epoch" and the trace columns stay blank.  Nothing reads these back —
+        // the A4 withhold ceiling still uses the within-epoch RAIM's sigma0_adapt.
+        double    ep_sigma0_pf       = 0.0;
+        double    ep_sigma0_pf_code  = 0.0;
+        double    ep_sigma0_pf_phase = 0.0;
+        long long ep_pf_rows         = 0;
+        long long ep_pf_code_rows    = 0;   ///< …of which CODE rows
+        long long ep_pf_phase_rows   = 0;   ///< …of which PHASE rows (residual ≡ 0 under free ambiguities)
+        long long pf_epochs_total    = 0;   ///< run-end counter (invariant #4: 0 ⇒ inert)
+        bool      pf_empty_logged    = false;  ///< one-shot "armed but pooled nothing" warn latch
+
+        // --- P1-3 spectrum bookkeeping ---------------------------------------
+        long long sh_spectrum_epochs      = 0;      ///< traced epochs (also drives the mode-detail stride)
+        bool      sh_spectrum_fail_logged = false;  ///< one-shot eigensolve-failure warn latch
+
+        // --- SPEC_day129_frame_guards Phase 2.1: CB-carry event response ------
+        // NOT snapshotted (three-place-rule exemption): every member is either a
+        // one-epoch handoff (cb_excursion_sats is consumed by the SAME epoch's
+        // stash) or run telemetry.  cb_excursion_pending_bump crossing a resume
+        // boundary unbumped is the conservative failure: a resumed run re-detects
+        // the excursion if it is still present, and a missed bump costs a
+        // consumer nothing it was not already living without (the counter is
+        // silent by default today).  cb_exc_prev_clk rebuilds from the first
+        // post-resume epoch, which correctly suppresses a spurious trip on the
+        // resume seam itself (no baseline ⇒ no delta ⇒ no trip).
+        std::map<std::string, double> cb_exc_prev_clk;      ///< sat -> previous epoch's solved clock (m)
+        std::set<std::string> cb_excursion_sats;            ///< THIS epoch's stash: mark these sats' CB carry inflate_q
+        std::set<std::string> cb_excursion_pending_bump;    ///< disc-bump these sats' code biases at the NEXT emit
+        long long cb_exc_trips           = 0;   ///< epochs the detector tripped
+        long long cb_exc_reinits         = 0;   ///< (sat,epoch) CB carries marked for reinit
+        long long cb_exc_bumps           = 0;   ///< code-bias discontinuity bumps landed
+        long long cb_exc_nonpivot_would  = 0;   ///< D1 counter: (sat,epoch) NON-pivot sats a per-satellite rule would have tripped
+        double    cb_exc_max_median      = 0.0; ///< largest median |Δclock| observed (m) — the trip statistic's run maximum
+        double    cb_exc_max_median_tow  = -1.0;///< its epoch
+
+        // --- SPEC_day129_frame_guards Phase 2.2: SH-field health GATE ---------
+        // NOT snapshotted (three-place-rule exemption): the gate is EMISSION-ONLY
+        // (no carried state changes meaning across it), so a resume simply
+        // re-accrues the out-of-band run within sh_gate_min_epochs — one epoch of
+        // conservative extra emission at worst, never a wrong-frame fold.  For
+        // the same reason the toggle is NOT in the resume fingerprint (the
+        // raim / clock_runaway_check class, not the cb_excursion class).
+        // Verdict computed post-solve in NetworkSolveGlue (the only pre-emit
+        // seam holding x_s); enforced by early-returns in NetworkSolPrep +
+        // NetworkEmitStore; disposition stamped by NetworkStashStatus.
+        int       sh_gate_oob_run        = 0;     ///< CONSECUTIVE out-of-band epochs (0 = in band)
+        bool      sh_gate_engaged        = false; ///< this epoch's emission verdict (true = withhold)
+        long long sh_gate_oob_epochs_total = 0;   ///< run total of out-of-band EPOCHS (handoff §4.2: count epochs, not warns)
+        long long sh_gate_engagements    = 0;     ///< engage transitions over the run
+        double    sh_gate_last_a00       = 0.0;   ///< last computed total a00 (TECU; engage/release log detail)
+        double    sh_gate_last_rms       = 0.0;   ///< last computed total-field RMS (TECU)
+
         // --- T5/Iono-2 SH representativeness-error deviation carry (struct
         // ShDevCarry: filter/NetworkRunTypes.hpp; v2 units = vertical TECU) ---
         std::map<std::string, ShDevCarry> sh_dev_carry;   // key "STATION|SAT"
@@ -508,6 +588,10 @@ namespace GnssProcessor {
         double health_win_ms_anchor     = 0.0;
         size_t health_win_epochs_anchor = 0;
         size_t n_sigma0_withheld = 0;   // A4/R8: epochs skipped specifically by the σ̂0 withhold ceiling (subset of n_skipped)
+        // Phase 2.2: epochs whose EMISSION the SH health gate withheld.  NOT a
+        // subset of n_skipped — the solve/carry/QC all ran (emission-only gate),
+        // so these epochs are counted nowhere else.
+        size_t n_sh_gate_withheld = 0;
         // Prioritized-datum drop-and-heal observability: epochs where the gate threw and the
         // near-null phase-bias soft-anchor recovered it, and total columns anchored.  A run
         // that heals every epoch "succeeds" silently otherwise (the heal-success log is debug).
@@ -600,6 +684,16 @@ namespace GnssProcessor {
         std::size_t n_gate_withheld_over  = 0;   ///< withheld with observed < declared (tolerance below the gauge depth)
         int nullspace_obs_min = -1;              ///< min observed near-null count over the run (-1 = never evaluated)
         int nullspace_obs_max = -1;              ///< max observed near-null count over the run (-1 = never evaluated)
+
+        // WE-CI (network.raim_we_code_iono) run-end telemetry — standing
+        // invariant #4: an armed screening whose counters never move on an
+        // eventful window is a miswire, not a quiet run.
+        std::size_t we_ci_code_trips = 0;   ///< epochs whose FIRST assess code-pool σ̂0 exceeded the code trigger
+        std::size_t we_ci_iono_trips = 0;   ///< epochs whose FIRST assess iono-pool σ̂0 exceeded the iono trigger
+        std::size_t we_ci_sta_excl   = 0;   ///< epoch-scoped station exclusions chosen from the code/iono pools
+        std::size_t we_ci_sat_dw     = 0;   ///< network-wide satellite code-row de-weights chosen from the code pool
+        double we_ci_s0_code_max = 0.0;     ///< max code-pool σ̂0 observed (trigger-calibration telemetry)
+        double we_ci_s0_iono_max = 0.0;     ///< max iono-pool σ̂0 observed (trigger-calibration telemetry)
     };
 
     /// @internal The run context: one instance per runNetwork() invocation,

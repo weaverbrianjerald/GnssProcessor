@@ -214,6 +214,30 @@ namespace GnssProcessor {
         /// WARN text; the text parser stays as the fallback for ARCHIVED runs.
         std::ofstream estimability_trace;
         const std::filesystem::path estimability_trace_path;
+        /// SPEC_day129_frame_guards P1-3 (@c network.trace_sh_spectrum): the
+        /// PER-EPOCH spectrum of the reduced shared normals, with each small
+        /// direction's eigenvector mass partitioned across the clock / code-bias /
+        /// phase-bias / SH-VTEC column families.  Distinct from
+        /// @ref estimability_trace, which is a one-shot datum-debugging dump: this
+        /// is a time series built to test whether an a00 collapse coincides with a
+        /// smallest mode that SPANS clocks and the field (the joint near-null
+        /// slide of REPORT §3.2).  Nothing is logged — the estimability WARN text
+        /// stays golden.
+        std::ofstream sh_spectrum_trace;
+        const std::filesystem::path sh_spectrum_trace_path;
+        /// P1-3 detail file (every @c network.trace_sh_spectrum_stride traced
+        /// epochs): the heaviest per-COLUMN participations of the smallest mode,
+        /// so a spanning direction can be named, not just weighed.
+        std::ofstream sh_spectrum_mode_trace;
+        const std::filesystem::path sh_spectrum_mode_trace_path;
+        /// SPEC_day129_frame_guards §4.3 (@c network.trace_postfit_keyed): keyed
+        /// robust post-fit pools from the P1-4 residual pass — one row per
+        /// (kind ∈ {STA, SAT, SIG}, key) per emitted epoch, {code, phase} pools
+        /// each (n, σ̂0 = 1.4826·median, rms, max of |v|√w).  The RHS-localization
+        /// instrument: WHERE the onset misfit sits — which stations (geography),
+        /// which satellites, which signals (dispersive split).
+        std::ofstream pf_keyed_trace;
+        const std::filesystem::path pf_keyed_trace_path;
         /// L15: run-provenance manifest path (startup record written by
         /// writeRunManifestStartup, end-of-run record APPENDED by
         /// writeRunManifestComplete — one member so both target the same file).

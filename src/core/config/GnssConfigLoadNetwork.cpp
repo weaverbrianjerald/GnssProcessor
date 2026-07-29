@@ -315,6 +315,14 @@ namespace GnssProcessor {
                                                    "network_mw_wl_fix_weight_sigma_cyc", 0.01);
             mw.f6_dump = jval<bool>(json, "network.mw_wl.f6_dump",
                                     "network_mw_wl_f6_dump", false);
+            // Row budget + block span for the F6 dump.  The legacy dump sampled 8 rows of ONE
+            // block; that fixed size is a SAMPLE and says nothing about how many cycles the
+            // layer built (a lesson paid for by misreading it as a ~99.7% quarantine).  Both
+            // default to the legacy shape ⇒ an unset config dumps exactly as before.
+            mw.f6_max_rows = jval<int>(json, "network.mw_wl.f6_max_rows",
+                                       "network_mw_wl_f6_max_rows", 8);
+            mw.f6_all_blocks = jval<bool>(json, "network.mw_wl.f6_all_blocks",
+                                          "network_mw_wl_f6_all_blocks", false);
             mw.debug_r_scale = jval<double>(json, "network.mw_wl.debug_r_scale",
                                             "network_mw_wl_debug_r_scale", 1.0);
             mw.ewl_fold_rows = jval<bool>(json, "network.mw_wl.ewl_fold_rows",
@@ -581,6 +589,37 @@ namespace GnssProcessor {
             jval<int>(json, "network.neq_export_epoch", "neq_export_epoch", -1);
         network_config_.trace_epoch_status =
             jval<bool>(json, "network.trace_epoch_status", "trace_epoch_status", false);
+        // SPEC_day129_frame_guards P1-3/P1-4: trigger instrumentation.  Both are
+        // TRACE-ONLY and absent from the resume fingerprint (NetworkRunContext.cpp
+        // :172-307) — they may be armed on a warm resume against an untraced snapshot.
+        network_config_.trace_sh_spectrum =
+            jval<bool>(json, "network.trace_sh_spectrum", "trace_sh_spectrum", false);
+        network_config_.trace_sh_spectrum_stride =
+            jval<int>(json, "network.trace_sh_spectrum_stride", "trace_sh_spectrum_stride", 60);
+        network_config_.trace_postfit_sigma0 =
+            jval<bool>(json, "network.trace_postfit_sigma0", "trace_postfit_sigma0", false);
+        // §4.3 RHS localization rider: keyed (station / satellite / signal)
+        // post-fit pools on the same P1-4 residual pass.  Trace-only,
+        // fingerprint-SAFE; implies the pass runs even without the sigma0 trace.
+        network_config_.trace_postfit_keyed =
+            jval<bool>(json, "network.trace_postfit_keyed", "trace_postfit_keyed", false);
+        if (network_config_.trace_postfit_keyed)
+            log->info("Network (P2-RHS): network.trace_postfit_keyed ON — per-station / "
+                      "per-satellite / per-signal robust post-fit pools -> "
+                      "network_pf_keyed.csv (trace-only; the P1-4 residual pass runs "
+                      "whenever this or trace_postfit_sigma0 is armed).");
+        if (network_config_.trace_sh_spectrum)
+            log->info("Network (P1-3): network.trace_sh_spectrum ON — per-epoch reduced-shared-"
+                      "normal spectrum + per-family eigenvector mass partition into "
+                      "network_sh_spectrum.csv (mode detail every {} traced epoch(s)).  One "
+                      "SelfAdjointEigenSolver of N_ss per emitted epoch; measure-only.",
+                      network_config_.trace_sh_spectrum_stride);
+        if (network_config_.trace_postfit_sigma0)
+            log->info("Network (P1-4): network.trace_postfit_sigma0 ON — robust post-fit "
+                      "variance factor over EVERY station's residuals (code/phase pools "
+                      "separated) appended to network_epoch_status.csv.  MEASURE-ONLY: the A4 "
+                      "withhold ceiling still reads the within-epoch RAIM's sigma0_adapt, so "
+                      "this changes no decision.");
         // D0: per-epoch section-timer breakdown of the network solve (diagnostic; byte-identical OFF).
         network_config_.trace_section_timers =
             jval<bool>(json, "network.trace_section_timers", "trace_section_timers", false);
@@ -1520,6 +1559,34 @@ namespace GnssProcessor {
             network_raim_ = true;
             network_raim_attribution_ = true;
         }
+        // WE-CI: extend the within-epoch screening to the CODE + IONO-CONSTRAINT
+        // row pools.  Those rows historically had NO screening statistic in any
+        // tier (the P1-4 pass excludes SH-touching rows; the within-epoch pool is
+        // carried-ambiguity phase rows only) — the DOY-129 19:26:00 SH detonation
+        // entered through exactly them.  Follows the A4 precedent: arming the
+        // extension pulls in the tier it extends.
+        network_raim_we_code_iono_ =
+            jval<bool>(json, "network.raim_we_code_iono", "network_raim_we_code_iono", false);
+        network_raim_we_code_trigger_ =
+            jval<double>(json, "network.raim_we_code_trigger", "network_raim_we_code_trigger", 10.0);
+        network_raim_we_iono_trigger_ =
+            jval<double>(json, "network.raim_we_iono_trigger", "network_raim_we_iono_trigger", 12.0);
+        if (network_raim_we_code_iono_ && !network_raim_within_epoch_) {
+            log->warn("Network: network.raim_we_code_iono extends the within-epoch adaptation — "
+                      "enabling network.raim_within_epoch (the loop the code/iono pools feed).");
+            network_raim_within_epoch_ = true;
+            if (!network_raim_ || !network_raim_attribution_) {
+                network_raim_ = true;
+                network_raim_attribution_ = true;
+            }
+        }
+        if (network_raim_we_code_iono_)
+            log->info("Network producer (WE-CI): within-epoch CODE+IONO row screening ON — "
+                      "per-pool robust σ̂0 with triggers code {:g} / iono {:g}; responses: "
+                      "epoch-scoped station exclusion (epicenter class) or network-wide "
+                      "satellite code-row de-weight (σ×10, fallback-not-drop).  The phase "
+                      "pool, σ̂0_adapt and the A4 ceiling are unchanged.",
+                      network_raim_we_code_trigger_, network_raim_we_iono_trigger_);
 
         // Per-satellite carried-clock sanity monitor (the shared-parameter analogue of the
         // carried-ambiguity refloat): detects a lone satellite whose clock has locked into a
@@ -1539,6 +1606,86 @@ namespace GnssProcessor {
         // restores the hard skip-stash refloat.
         network_clock_monitor_reinit_sigma_m_ =
             jval<double>(json, "network.clock_monitor_reinit_sigma_m", "network_clock_monitor_reinit_sigma_m", 30.0);
+        // SPEC_day129_frame_guards Phase 2.1: CB-carry event response (invariant #1).
+        // Solve-determining when armed ⇒ conditional-appended to the resume
+        // fingerprint (NetworkRunContext.cpp), so an unarmed run's fingerprint is
+        // byte-identical and a resume cannot cross a flip of the toggle.
+        network_config_.cb_excursion_reinit =
+            jval<bool>(json, "network.cb_excursion_reinit", "cb_excursion_reinit", false);
+        network_config_.cb_excursion_median_m =
+            jval<double>(json, "network.cb_excursion_median_m", "cb_excursion_median_m", 50.0);
+        network_config_.cb_excursion_reinit_all_sats =
+            jval<bool>(json, "network.cb_excursion_reinit_all_sats",
+                       "cb_excursion_reinit_all_sats", false);
+        if (network_config_.cb_excursion_reinit) {
+            if (!(network_config_.cb_excursion_median_m > 0.0)) {
+                log->error("Network: network.cb_excursion_reinit is on but "
+                           "cb_excursion_median_m = {} is not > 0 — the detector would "
+                           "trip on every epoch.  Disabling the guard.",
+                           network_config_.cb_excursion_median_m);
+                network_config_.cb_excursion_reinit = false;
+            } else if (!estimate_network_sat_code_bias_) {
+                log->warn("Network: network.cb_excursion_reinit is on but "
+                          "estimate_sat_code_bias is off — there is no satellite "
+                          "code-bias carry to reinitialize, so the guard is INERT.");
+            } else {
+                log->info("Network (Phase 2.1): CB excursion reinit ARMED — a per-epoch "
+                          "network-wide common-mode trip (median |Δclock| over satellites "
+                          "> {:.1f} m) marks the {} code-bias carry for REINIT "
+                          "(inflate_q, σ={:.0f} m next epoch) and queues a code-bias "
+                          "discontinuity bump at the following emit.  Reset-not-repair; "
+                          "no measurement is dropped.  Datum-change epochs are exempt "
+                          "(a handover moves every clock — a datum artifact, not a fault).",
+                          network_config_.cb_excursion_median_m,
+                          network_config_.cb_excursion_reinit_all_sats
+                              ? "ALL satellites'" : "clock-PIVOT satellite's",
+                          network_clock_monitor_reinit_sigma_m_);
+            }
+        }
+
+        // SPEC_day129_frame_guards Phase 2.2: SH-field health GATE (gate-not-warn
+        // rework of the T1a a00 band probe; handoff §7).  EMISSION-ONLY — the solve
+        // and carry are untouched — so it is NOT in the resume fingerprint (same
+        // class as raim / clock_runaway_check).
+        network_config_.sh_health_gate =
+            jval<bool>(json, "network.sh_health_gate", "sh_health_gate", false);
+        network_config_.sh_gate_min_epochs =
+            jval<int>(json, "network.sh_gate_min_epochs", "sh_gate_min_epochs", 1);
+        network_config_.sh_gate_rms_max_tecu =
+            jval<double>(json, "network.sh_gate_rms_max_tecu", "sh_gate_rms_max_tecu", 0.0);
+        if (network_config_.sh_health_gate) {
+            const GlobalVtecShConfig& shc_gate = global_vtec_sh_;
+            const bool band_active = shc_gate.a00_warn_low_tecu < shc_gate.a00_warn_high_tecu;
+            const bool rms_active  = network_config_.sh_gate_rms_max_tecu > 0.0;
+            if (network_config_.sh_gate_min_epochs < 1) {
+                log->warn("Network: network.sh_gate_min_epochs = {} clamped to 1.",
+                          network_config_.sh_gate_min_epochs);
+                network_config_.sh_gate_min_epochs = 1;
+            }
+            if (!estimate_network_iono_sh_) {
+                log->warn("Network: network.sh_health_gate is on but estimate_iono_sh is "
+                          "off — there is no SH field to band-check, so the gate is INERT "
+                          "(disabled).");
+                network_config_.sh_health_gate = false;
+            } else if (!band_active && !rms_active) {
+                log->warn("Network: network.sh_health_gate is on but the a00 band is "
+                          "silenced (low {} >= high {}) and sh_gate_rms_max_tecu is 0 — "
+                          "no active condition, so the gate is INERT (disabled).",
+                          shc_gate.a00_warn_low_tecu, shc_gate.a00_warn_high_tecu);
+                network_config_.sh_health_gate = false;
+            } else {
+                log->info("Network (Phase 2.2): SH health GATE armed — an epoch with total "
+                          "a00 outside [{:.1f}, {:.1f}] TECU{} for >= {} consecutive "
+                          "epoch(s) is WITHHELD from emission (solve/carry/QC continue; "
+                          "counted per EPOCH, transitions logged un-throttled).",
+                          shc_gate.a00_warn_low_tecu, shc_gate.a00_warn_high_tecu,
+                          rms_active ? fmt::format(" (or rms_all > {:.1f} TECU)",
+                                                   network_config_.sh_gate_rms_max_tecu)
+                                     : std::string{},
+                          network_config_.sh_gate_min_epochs);
+            }
+        }
+
 
         // Two-state (offset+drift) oscillator model for the carried satellite clock, with
         // Allan/Hadamard-derived process noise, replacing the scalar random-walk carry: the tight
@@ -3243,6 +3390,11 @@ namespace GnssProcessor {
             clc.consume_network_iono     = cl.value("consume_network_iono", false);
             clc.consume_combined_sigma   = cl.value("consume_combined_sigma", false);  // M4 (contract v2)
             clc.consumer_undifferenced   = cl.value("consumer_undifferenced", false);
+            // Q5 replay: consume an already-written product file instead of the
+            // live producer.  Presence alone arms the replay driver (the enable
+            // flag still gates the station validation below), so a config that
+            // sets it is unambiguously a consumer-only run.
+            clc.replay_products_path     = cl.value("replay_products_path", std::string{});
             if (cl.contains("ar_active_systems") && cl["ar_active_systems"].is_array()) {
                 for (const auto& s : cl["ar_active_systems"])
                     if (s.is_string()) clc.ar_active_systems.push_back(s.get<std::string>());
@@ -3253,6 +3405,12 @@ namespace GnssProcessor {
                     log->error("Network closed_loop.enable=true but the consumer station is "
                                "incomplete (needs name + rinex_path + position_ecef); disabling.");
                     clc.enable = false;
+                } else if (!clc.replay_products_path.empty()) {
+                    log->info("Network closed-loop REPLAY (Q5) armed: consumer '{}' vs product "
+                              "file '{}' (AR mode {}, wl_only {}) — the joint producer does NOT "
+                              "run; runNetwork short-circuits to the consumer-only driver.",
+                              clc.station.name, clc.replay_products_path, clc.ar_mode,
+                              clc.ar_wl_only ? "on" : "off");
                 } else {
                     log->info("Network closed-loop harness ENABLED: held-out consumer '{}' "
                               "(AR mode {}, wl_only {})", clc.station.name, clc.ar_mode,
@@ -3318,7 +3476,162 @@ namespace GnssProcessor {
                       "(carry-fold + D5 readouts computed per-block in parallel, merged in "
                       "fixed block order — byte-identical to the serial fold)");
         }
+        logNetworkPosture_(log);
         return true;
+    }
+
+    // =================================================================
+    //  POSTURE readout — what the field record recommends vs what is armed
+    // =================================================================
+    /**
+     * @brief Log, once per run, every knob the field record recommends for THIS run's regime
+     *        and whether it is actually ON — plus the integrity of each COUPLED bundle.
+     *
+     * Motivation (user, 2026-07-29): the project ships new work default-OFF and
+     * byte-identity-gated, which is right for new work but leaves no PROMOTION step, so
+     * validated-good options accumulate in the OFF column and are re-discovered by accident
+     * one wasted run at a time.  The loader already logs everything it ARMS; this logs the
+     * inverse, so a run cannot start without the gap being visible.
+     *
+     * Two design rules, both paid for with data:
+     *  - **Regime, not blanket.** A knob validated at one scale can be harmful at another
+     *    (`mw_wl.bridge_sample_debias`: validated at 50 stations, net-harmful at 305 —
+     *    short-baseline wrong-integer rate 0.0 % → 12.5 %).  Every entry carries the regime
+     *    it was validated in and is only reported when that regime matches this run.
+     *  - **Bundles, not knobs.** Several options are only correct TOGETHER; arming a strict
+     *    subset is its own failure mode (the MW/WL lane stack without `cold_clock_seed`
+     *    quarantines its lane cycles — measured `x_lin` 269 km at 305 stations).  A partially
+     *    armed bundle WARNs.
+     *
+     * Log-only: reads already-parsed state and changes nothing.  Full evidence and the
+     * SCOPED/UNVALIDATED tiers live in `docs/CONFIG_promotion_ledger.md`; check any config
+     * offline with `scripts/config_posture_check.py`.
+     *
+     * @param log  the "gnss_config" logger.
+     */
+    void GnssConfig::logNetworkPosture_(const std::shared_ptr<spdlog::logger>& log) const {
+        const auto&       nc    = network_config_;
+        const std::size_t n_sta = nc.stations.size();
+        const std::size_t n_sys = active_systems_.size();
+        const bool tri   = frequency_mode_ == FrequencyMode::Triple
+                        || frequency_mode_ == FrequencyMode::All;
+        const bool warm  = !nc.state_snapshot_path.empty();
+        const bool lane  = nc.mw_wl.ewl_enable || nc.mw_wl.enable || nc.lane_carry.enable;
+
+        struct Item { bool applies; bool on; const char* knob; const char* why; };
+        const std::vector<Item> items = {
+            // --- Tier 1: recommended wherever they apply -------------------------------
+            { true, network_carry_invariant_, "network.carry_invariant",
+              "the ONLY cross-epoch channel this per-epoch estimator has; consumer float 7-10x" },
+            { network_carry_invariant_, network_carry_invariant_innov_gate_,
+              "network.carry_invariant_innov_gate",
+              "a zero-q carry with no jump response warps the solution (standing invariant #1)" },
+            { network_carry_invariant_innov_gate_, network_carry_invariant_innov_calibrate_,
+              "network.carry_invariant_innov_calibrate",
+              "the default innov_k=4.0 is only correct WITH calibrate; raw-Cov(v) wanted k=10" },
+            { true, network_phase_leveling_, "network.phase_leveling",
+              "without it phase post-fit residuals are identically zero — no QC statistic exists" },
+            { true, network_raim_, "network.raim",
+              "USER DIRECTIVE Jul-28: armed residual QC on every network run" },
+            { network_raim_, network_raim_within_epoch_, "network.raim_within_epoch",
+              "adapt-and-EMIT inside the epoch; also the only source of sigma0_adapt" },
+            { true, network_station_pd_pin_aware_, "network.station_pd_pin_aware",
+              "305-sta 3h: 884 spurious pin-driven station rejections -> 0, clock better on every metric" },
+            { n_sta >= 3 && tri, estimate_network_iono_sh_, "network.estimate_iono_sh",
+              "co-estimated SH-VTEC replaces the external GIM; needs >=3 frequencies in the DATA" },
+            { true, nc.trace_section_timers, "network.trace_section_timers",
+              "the only per-epoch cost attribution; every perf claim is unreproducible without it" },
+            { true, nc.trace_epoch_status, "network.trace_epoch_status",
+              "cost is O(epochs), not O(stations); the primary run-forensics record" },
+            { true, nc.write_run_manifest, "network.write_run_manifest",
+              "provenance; no estimation effect and no product bytes" },
+            { warm, nc.state_snapshot_require, "network.state_snapshot_require",
+              "without it a fingerprint mismatch SILENTLY cold-starts — every same-snapshot A/B needs it" },
+            // --- Regime-scoped ---------------------------------------------------------
+            { lane, network_cold_clock_seed_, "network.cold_clock_seed",
+              "lane/WL layers difference ~3e5-magnitude x_lin; measured 269 km at 305 sta cold" },
+            { network_emit_pb_filter_, network_emit_pb_filter_gate_v2_,
+              "network.emit_pb_filter_gate_v2",
+              "supersedes the retired per-cadence jump_k/meas_sigma_m hand tuning" },
+            { n_sta >= 50, iono_constraint_deweight_.adaptive,
+              "network.iono_constraint_deweight_adaptive",
+              "robust-z relative deweight of hostile minority iono rows (>=50 sta for a stable median)" },
+        };
+
+        struct Member { const char* knob; bool on; };
+        struct Bundle { bool engaged; const char* name; const char* rule;
+                        std::vector<Member> members; };
+        const std::vector<Bundle> bundles = {
+            { lane, "MW/WL lane stack",
+              "the lane rows are built in the CORRECTION frame, so an unseeded cold receiver "
+              "clock lands in the ambiguity seeds and lane_max_abs_xlin_m quarantines the "
+              "cycles (x_lin 269 km measured at 305 sta); the lane also rides the Card-4 "
+              "chord basis, and lane_carry additionally REQUIRES ewl_enable",
+              { { "network.cold_clock_seed", network_cold_clock_seed_ },
+                { "network.carry_invariant", network_carry_invariant_ },
+                { "network.phase_datum_eq34", network_phase_datum_eq34_ },
+                { "network.mw_wl.ewl_enable", nc.mw_wl.ewl_enable } } },
+            { network_phase_leveling_ || network_carry_invariant_,
+              "zero-q phase memory + slip response",
+              "STANDING INVARIANT #1: any stiff time-linked quantity MUST have a wired slip "
+              "response before an ON field run — a stale value carried past a jump warps the "
+              "whole solution (iono/clock absorb the tension)",
+              { { "network.cycle_slip.mw_detect", network_cycle_slip_mw_detect_ },
+                { "network.cycle_slip.if_phase_td", network_cycle_slip_if_phase_td_ } } },
+            { network_raim_, "armed QC set",
+              "a 96 km epoch entering the network is never acceptable; withhold is the "
+              "backstop, adapt-and-emit is the goal",
+              { { "network.raim_attribution", network_raim_attribution_ },
+                { "network.raim_within_epoch", network_raim_within_epoch_ },
+                { "network.clock_runaway_check", network_clock_runaway_check_ } } },
+            { estimate_network_iono_sh_, "SH-VTEC / W6 slice",
+              "the SH field is fed a per-epoch CODE-derived slant iono, so low-elevation code "
+              "contamination dominates a00 — the 25 deg iono cutoff is load-bearing and is a "
+              "SEPARATE gate from processing.elevation_mask_deg",
+              { { "estimation.ionosphere_weighting.enable", iono_weighting_.enabled },
+                { "estimation.ionosphere_weighting.elevation_cutoff_deg >= 25",
+                  iono_weighting_.elevation_cutoff_deg >= 24.9 },
+                { "network.estimate_sat_code_bias", estimate_network_sat_code_bias_ } } },
+        };
+
+        log->info("=== Network POSTURE (regime: {} station(s), {} constellation(s), {} "
+                  "frequency mode, {} start) — recommended-vs-armed; evidence in "
+                  "docs/CONFIG_promotion_ledger.md ===",
+                  n_sta, n_sys,
+                  frequency_mode_ == FrequencyMode::All ? "all"
+                      : frequency_mode_ == FrequencyMode::Triple ? "triple" : "dual",
+                  warm ? "WARM-RESUME" : "cold");
+        int n_on = 0, n_off = 0;
+        for (const auto& it : items) {
+            if (!it.applies) continue;
+            if (it.on) { ++n_on; continue; }
+            ++n_off;
+            log->warn("  POSTURE OFF  {} — {}", it.knob, it.why);
+        }
+        for (const auto& b : bundles) {
+            if (!b.engaged) continue;
+            std::string missing;
+            int armed = 0;
+            for (const auto& m : b.members) {
+                if (m.on) { ++armed; continue; }
+                if (!missing.empty()) missing += ", ";
+                missing += m.knob;
+            }
+            if (armed == static_cast<int>(b.members.size())) {
+                log->info("  POSTURE BUNDLE '{}': {}/{} armed — complete.",
+                          b.name, armed, b.members.size());
+            } else if (armed == 0) {
+                log->info("  POSTURE BUNDLE '{}': engaged but 0/{} companion(s) armed — {}.  "
+                          "Missing: {}", b.name, b.members.size(), b.rule, missing);
+            } else {
+                log->warn("  POSTURE BUNDLE '{}': PARTIAL {}/{} — a strict subset of a coupled "
+                          "set is its own failure mode.  {}.  MISSING: {}",
+                          b.name, armed, b.members.size(), b.rule, missing);
+            }
+        }
+        log->info("=== Network POSTURE: {} recommended knob(s) armed, {} NOT armed (see the "
+                  "POSTURE OFF lines above; `python scripts/config_posture_check.py <config> "
+                  "--tier all` lists the scoped tier too) ===", n_on, n_off);
     }
 
     void GnssConfig::applyNetworkConsumerCouplings(GnssConfig& c, bool consume_clock,

@@ -166,9 +166,16 @@ bool EphemerisProvider::gimSlantStec(const Eigen::Vector3d& rx, const Eigen::Vec
     // Querying ONCE here (never per band) is what keeps the injected first-order term a
     // single scalar, and therefore what keeps the iono-free combination cancelling exactly.
     const GimQuery q = gim_->slantIonoDelay(t, rx, sat_pos, Constants::GPS_L1_FREQ);
-    if (!q.valid || !std::isfinite(q.stec_tecu) || q.stec_tecu <= 0.0) return false;
+    if (!q.valid || !std::isfinite(q.stec_tecu)) return false;
 
-    stec_tecu = q.stec_tecu;   // ALREADY SLANT — see the header warning; do not map.
+    // Non-positive STEC is map CONTENT, not a failed query: storm-time GIMs legitimately
+    // carry near-zero/negative cells in depleted sectors (post-storm night side, plus the
+    // spherical-harmonic fit overshooting toward zero — DOY 132's pre-dawn minimum at the
+    // vessel is 10 TECU with negative cells nearby).  Clamp to 0 (a negative first-order
+    // group delay would be unphysical) instead of misclassifying the ray as invalid,
+    // which silently mixed Klobuchar into an otherwise-GIM background and tripped the
+    // uniform-background gate.
+    stec_tecu = std::max(0.0, q.stec_tecu);   // ALREADY SLANT — see the header warning; do not map.
     const double deg = 180.0 / Constants::PI;
     // std_m at L1 back to TECU: I = 40.3e16 * STEC / f^2.
     std_tecu = std::isfinite(q.std_m)

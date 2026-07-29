@@ -138,6 +138,40 @@ exemption (each was re-learned on a "different" mechanism).
    edits require same-build golden comparison (verification integers are
    build-config-sensitive at the ppm level — never compare Debug vs Release).
 
+## Standard armed set — every NETWORK run uses these (directive, Jul-28)
+
+"Unguarded" arms are over (the diagnostic cards that needed them are closed).
+Loader DEFAULTS stay off (flipping them invalidates stored-snapshot
+fingerprints — a migration card, not a quick edit); the rule is that every new
+network CONFIG derives from a base that arms this set explicitly
+(`scripts/p2_make_guard_configs.py` is the current template):
+
+- **QC, fingerprint-SAFE** (legal to arm even on a warm resume): `raim`,
+  `raim_attribution`, `raim_within_epoch`, `raim_withhold_sigma0: 6.0` (A4),
+  `clock_runaway_check`, `sh_health_gate`.  `raim_we_code_iono` (WE-CI — the
+  code+iono within-epoch pools) joins this list once its first ON validation
+  passes.  Known gap: the within-epoch tier is `carry_warm`-gated, so it is
+  inert without phase_leveling (decouple is a sanctioned open fix).
+- **Fingerprinted — fresh convergence only**: `phase_leveling`, `emit_ura`,
+  `code_bias_disc_jump_test` (+ explicit `cycle_slip.mw_detect` with
+  leveling).  `cb_excursion_reinit` is conditional-fingerprinted: seed and
+  legs must ALL carry it; never flip it mid-chain.
+- **Cold-start hygiene**: `cold_clock_seed` (the 256 km x_lin cold-start
+  leak fix — mandatory for MW-WL work), half-epoch back-off on every
+  `start_offset_hours` (bare hour values sit on the double-residue boundary),
+  and SEAMLESS (continuous) lineages for event studies — a 19:00-style
+  mid-lineage warm-resume seam measurably erases the events under guards.
+- **Observability**: `write_run_manifest`, `trace_epoch_status`,
+  `trace_events`, `trace_flag_rates`, `health_interval_s: 300`,
+  `emit_epoch_status_record`, `trace_postfit_sigma0`, `trace_postfit_keyed`.
+- **Parallel**: `parallel_carry: true` / `parallel_reduce: false` (mutex).
+
+Grading note: the response doctrine is adapt-and-EMIT within the detected
+epoch; a withhold is the backstop and is graded as an adaptation failure
+unless the epoch is provably unrecoverable.  (The SH gate currently has no
+release/degrade policy — a sick-field era withholds the wire for its full
+duration, 95+ min measured on DOY-129; open policy item.)
+
 ## File management (RINEX, products, downloads)
 
 Input-file location goes through one class — `PathResolver` — driven

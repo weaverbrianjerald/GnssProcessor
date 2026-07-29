@@ -45,6 +45,9 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
       estimability_trace_path(log_dir_ / "network_estimability.csv"),
+      sh_spectrum_trace_path(log_dir_ / "network_sh_spectrum.csv"),
+      sh_spectrum_mode_trace_path(log_dir_ / "network_sh_spectrum_mode.csv"),
+      pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
       manifest_path(log_dir_ / "network_run_manifest.json") {}
 
 void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& nc,
@@ -234,13 +237,58 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // that disposition site.  sigma0_trigger/withhold_ceiling are config echoes so
             // viewers draw honest threshold lines.  Note: fast-forward (start_offset_hours)
             // and max-duration epochs are uncounted by design and write NO row.
+            // P1-1/P1-2/P1-4 (SPEC_day129_frame_guards) append four carry-churn,
+            // four iono-deweight and four post-fit-σ̂0 columns AFTER n_arc_refloat —
+            // positions of every pre-existing column preserved (T2d precedent), so
+            // an old reader keeps working and a new one gets the trigger channels.
             epoch_status_trace << "week,tow,disposition,sigma0,n_adapt,n_present,"
                                   "n_clock_sats,clock_median_m,clock_std_m,worst_sat,"
                                   "worst_dev_m,n_refloat_sats,n_retro_applied,datum_changed,"
-                                  "sigma0_trigger,withhold_ceiling,n_arc_refloat\n";  // T2d: +n_arc_refloat (appended, positions preserved)
+                                  "sigma0_trigger,withhold_ceiling,n_arc_refloat,"   // T2d
+                                  "n_d5_flags,n_d5_retaps,n_chord_births,n_slip_refloats,"
+                                  "n_dw_engaged,n_dw_zero,dw_min_w,dw_mean_w,"
+                                  "sigma0_pf,sigma0_pf_code,sigma0_pf_phase,n_pf_rows\n";
         else
             log->warn("Network: failed to open epoch-status trace {}",
                       epoch_status_trace_path.string());
+    }
+    if (nc.trace_sh_spectrum) {
+        // P1-3.  ev1..ev5 are the FIVE SMALLEST eigenvalues (ascending); the mass_*
+        // columns partition the SMALLEST direction's |eigenvector| mass (Σ = 1) over
+        // the shared column families, and span_* count how many columns of each
+        // family carry >= 1% of that mass.  A joint clock↔iono slide shows up as
+        // mass_clk and mass_sh both substantial in the SAME row.
+        sh_spectrum_trace.open(sh_spectrum_trace_path);
+        if (sh_spectrum_trace)
+            sh_spectrum_trace << "week,tow,n_shared,n_clk,n_cb,n_pb,n_sh,"
+                                 "ev_min,ev_max,cond,ev1,ev2,ev3,ev4,ev5,"
+                                 "mass_clk,mass_cb,mass_pb,mass_sh,"
+                                 "span_clk,span_cb,span_pb,span_sh,cutoff\n";
+        else
+            log->warn("Network: failed to open SH-spectrum trace {}",
+                      sh_spectrum_trace_path.string());
+        if (nc.trace_sh_spectrum_stride > 0) {
+            sh_spectrum_mode_trace.open(sh_spectrum_mode_trace_path);
+            if (sh_spectrum_mode_trace)
+                sh_spectrum_mode_trace << "week,tow,mode_rank,ev,col_label,component\n";
+            else
+                log->warn("Network: failed to open SH-spectrum mode trace {}",
+                          sh_spectrum_mode_trace_path.string());
+        }
+    }
+    if (nc.trace_postfit_keyed) {
+        // §4.3 RHS localization: one row per (kind, key) per emitted epoch from
+        // the P1-4 residual pass.  kind ∈ {STA, SAT, SIG}; s0 = 1.4826·median of
+        // the measurement-standardized |v|√w pool (the sigma0_pf convention);
+        // phase pools are ≡0 under free ambiguities — their information is in
+        // n_phase vs the code pools, exactly as P1-4 documents.
+        pf_keyed_trace.open(pf_keyed_trace_path);
+        if (pf_keyed_trace)
+            pf_keyed_trace << "week,tow,kind,key,n_code,s0_code,rms_code,max_code,"
+                              "n_phase,s0_phase,rms_phase,max_phase\n";
+        else
+            log->warn("Network: failed to open keyed post-fit trace {}",
+                      pf_keyed_trace_path.string());
     }
     if (nc.health_interval_s > 0.0) {
         // RTB-6: periodic operator health heartbeat.  Cumulative epoch tallies +
@@ -400,6 +448,32 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
         o << fmt::format("{:.4f}", es_sigma0_trigger) << ','
           << fmt::format("{:.4f}", es_withhold_ceiling) << ',';
         if (r.n_arc_refloat)   o << *r.n_arc_refloat;   // T2d
+        // P1-1 carry churn / P1-2 deweight state / P1-4 post-fit σ̂0.  BLANK (not 0)
+        // when not in scope at this disposition — the file's existing convention.
+        o << ',';
+        if (r.n_d5_flags)      o << *r.n_d5_flags;
+        o << ',';
+        if (r.n_d5_retaps)     o << *r.n_d5_retaps;
+        o << ',';
+        if (r.n_chord_births)  o << *r.n_chord_births;
+        o << ',';
+        if (r.n_slip_refloats) o << *r.n_slip_refloats;
+        o << ',';
+        if (r.n_dw_engaged)    o << *r.n_dw_engaged;
+        o << ',';
+        if (r.n_dw_zero)       o << *r.n_dw_zero;
+        o << ',';
+        if (r.dw_min_w)        o << fmt::format("{:.4f}", *r.dw_min_w);
+        o << ',';
+        if (r.dw_mean_w)       o << fmt::format("{:.4f}", *r.dw_mean_w);
+        o << ',';
+        if (r.sigma0_pf)       o << fmt::format("{:.4f}", *r.sigma0_pf);
+        o << ',';
+        if (r.sigma0_pf_code)  o << fmt::format("{:.4f}", *r.sigma0_pf_code);
+        o << ',';
+        if (r.sigma0_pf_phase) o << fmt::format("{:.4f}", *r.sigma0_pf_phase);
+        o << ',';
+        if (r.n_pf_rows)       o << *r.n_pf_rows;
         o << '\n';
 }
 

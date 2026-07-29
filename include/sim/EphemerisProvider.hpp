@@ -82,6 +82,16 @@ public:
     /** @brief True if the product chain set up successfully. */
     bool ok() const { return ok_; }
 
+    /**
+     * @brief The provider's LogManager.
+     *
+     * spdlog registers loggers by process-global name, so a second LogManager in
+     * the same process fails to initialize; any additional parser this process
+     * stands up (e.g. spp-reference's RinexParser over the emitted hero RINEX)
+     * must reuse this one instead of creating its own.
+     */
+    LogManager& logManager() { return log_; }
+
     /** @brief Number of SP3 orbit nodes loaded into the shared cache. */
     std::size_t orbitNodeCount() const;
     /** @brief Number of CLK clock samples loaded into the shared cache. */

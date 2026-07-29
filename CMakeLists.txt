@@ -108,6 +108,7 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationRealtime.cpp
     src/core/app/ApplicationNetwork.cpp
     src/core/app/ApplicationNetworkSetup.cpp
+    src/core/app/ApplicationConsumerReplay.cpp
     src/core/app/ApplicationNetworkAssembly.cpp
     src/core/app/NetworkRunContext.cpp
     src/core/app/EpochUpdateSupport.cpp
@@ -164,6 +165,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkChainDatum.cpp
     src/core/filter/NetworkRaim.cpp
     src/core/filter/NetworkClockQc.cpp
+    src/core/filter/NetworkFrameDiag.cpp
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
     src/core/filter/NetworkIonoDiag.cpp

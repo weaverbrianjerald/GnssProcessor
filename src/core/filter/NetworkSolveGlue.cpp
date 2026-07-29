@@ -12,6 +12,7 @@
 #include "filter/NetworkSolveGlue.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "atmosphere/SphericalHarmonicIonosphere.hpp"   // Phase 2.2 SH gate: coeffs()
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkChainDatum.hpp"
@@ -34,6 +35,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -734,6 +736,63 @@ if (within_epoch_armed && carry_warm) {
     const bool   surgical  = config_.networkRaimSurgicalStation();
     const double sta_bias  = surgical ? config_.networkRaimStationDropBias() : 1.0;
     constexpr int    kMaxAdapt   = 5;
+    // --- WE-CI (network.raim_we_code_iono): code + iono-constraint row pools ----
+    // The historical pool below is the carried-ambiguity PHASE rows; the code and
+    // per-LOS↔SH iono-constraint rows were screened by NO tier (P1-4 skips
+    // SH-touching rows by design), which is exactly where the DOY-129 19:26:00
+    // SH detonation entered.  When armed, assess() additionally pools them into
+    // per-pool robust σ̂0 with their own triggers, and the adaptation loop gains
+    // two response classes: epoch-scoped station exclusion (the measured
+    // BSHM/GOLD epicenter pattern) and network-wide satellite code-row de-weight
+    // (σ×10 — fallback, not drop).  The phase pool, σ̂0_adapt and the A4 ceiling
+    // are untouched; every new branch is behind we_ci, so OFF is byte-identical.
+    const bool   we_ci     = config_.networkRaimWeCodeIono();
+    const double trig_code = config_.networkRaimWeCodeTrigger();
+    const double trig_iono = config_.networkRaimWeIonoTrigger();
+    constexpr double kWeCiCodeWeightScale = 1e-2;   // de-weighted code row: w×1e-2 = σ×10
+    // Shared-column classification, built once per epoch — the shared layout is
+    // frozen for the epoch, so the maps stay valid across within-epoch re-solves.
+    // Same label source and prefixes as the P1-4 pass (NetworkFrameDiag.cpp).
+    std::vector<char> ci_sh_col, ci_cb_col;
+    std::vector<std::string> ci_col_sat;
+    if (we_ci) {
+        const std::size_t nsh = static_cast<std::size_t>(est.numShared());
+        ci_sh_col.assign(nsh, 0);
+        ci_cb_col.assign(nsh, 0);
+        ci_col_sat.assign(nsh, {});
+        for (std::size_t u = 0; u < nsh; ++u) {
+            std::string lbl;
+            try { lbl = est.sharedColumnLabel(static_cast<Eigen::Index>(u)); }
+            catch (...) { continue; }
+            if (lbl.rfind("SH", 0) == 0) { ci_sh_col[u] = 1; continue; }
+            if (lbl.rfind("CB:", 0) == 0) ci_cb_col[u] = 1;
+            const std::size_t p1 = lbl.find(':');
+            if (p1 != std::string::npos) {
+                const std::size_t p2 = lbl.find(':', p1 + 1);
+                ci_col_sat[u] = lbl.substr(p1 + 1, (p2 == std::string::npos)
+                                                       ? std::string::npos : p2 - p1 - 1);
+            }
+        }
+    }
+    double s0_code_we = 0.0, s0_iono_we = 0.0;      // last assess()'s CI pool σ̂0
+    std::map<std::string, double> ci_sat_code_max;  // sat → max standardized code row (last assess)
+    std::map<int, double> ci_sta_max;               // station → max standardized code/iono row (last assess)
+    std::set<std::string> dw_code_sats;             // chosen sat code-de-weight responses
+    // Classify one data row against the shared maps: sh_row = iono-constraint row
+    // (touches an SH column, which short-circuits); cb_row = touches a CB column;
+    // row_sat = first sat-labelled shared column (the attribution key).
+    auto ci_classify = [&](const StationAssembly& R, Eigen::Index row,
+                           bool& sh_row, bool& cb_row, const std::string*& row_sat) {
+        sh_row = false; cb_row = false; row_sat = nullptr;
+        for (Eigen::Index c = 0; c < R.A_s.cols(); ++c) {
+            if (R.A_s(row, c) == 0.0) continue;
+            const std::size_t u = static_cast<std::size_t>(c);
+            if (u < ci_sh_col.size() && ci_sh_col[u]) { sh_row = true; return; }
+            if (u < ci_cb_col.size() && ci_cb_col[u]) cb_row = true;
+            if (!row_sat && u < ci_col_sat.size() && !ci_col_sat[u].empty())
+                row_sat = &ci_col_sat[u];
+        }
+    };
 
     std::vector<char> orig_added(stations.size(), 0);
     for (size_t i = 0; i < stations.size(); ++i)
@@ -767,6 +826,8 @@ if (within_epoch_armed && carry_warm) {
                       std::map<int, double>& sta_eff,
                       std::map<std::pair<int, std::string>, double>& arc_eff) {
         std::vector<double> r_pool;
+        std::vector<double> ci_code_pool, ci_iono_pool;   // WE-CI per-pool standardized rows
+        if (we_ci) { ci_sat_code_max.clear(); ci_sta_max.clear(); }
         if (perconst_on) we_sigma0_pool_c.clear();   // RTA-10: re-partition per assess
         std::map<std::pair<int, std::string>, double> cell_max;
         for (size_t i = 0; i < stations.size(); ++i) {
@@ -776,7 +837,10 @@ if (within_epoch_armed && carry_warm) {
             if (!orig_added[i] || est_index_of[i] < 0
                 || (!phase_datum_prioritized && stations[i].is_pivot)) continue;
             const StationAssembly& R = asm_res[i];
-            if (R.pl_amb.empty() || R.A_s.cols() != xs.size()) continue;
+            if (R.A_s.cols() != xs.size()) continue;
+            // WE-CI also screens stations with NO carried ambiguity (their code
+            // and iono rows are data too); OFF keeps the historical skip.
+            if (R.pl_amb.empty() && !we_ci) continue;
             Eigen::VectorXd x_r;
             try { x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), xs); }
             catch (...) { continue; }
@@ -814,6 +878,46 @@ if (within_epoch_armed && carry_warm) {
                 auto it = cell_max.find(key);
                 if (it == cell_max.end() || r_max > it->second) cell_max[key] = r_max;
             }
+            // --- WE-CI: pool this station's code + iono-constraint rows ---------
+            if (we_ci) {
+                std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
+                for (const auto& pa : R.pl_amb)
+                    if (pa.col >= 0 && pa.col < R.A_r.cols())
+                        is_amb_col[static_cast<std::size_t>(pa.col)] = 1;
+                const Eigen::Index data_rows =
+                    (R.cpl_row_start >= 0) ? R.cpl_row_start : R.A_r.rows();
+                double sta_max = 0.0;
+                for (Eigen::Index row = 0; row < data_rows && row < resid.size(); ++row) {
+                    bool sh_row = false, cb_row = false;
+                    const std::string* row_sat = nullptr;
+                    ci_classify(R, row, sh_row, cb_row, row_sat);
+                    if (!sh_row && !cb_row) continue;          // phase/clock-only row
+                    if (!sh_row) {
+                        bool phase_row = false;                // the phase pool's rows stay its own
+                        for (Eigen::Index c = 0; c < R.A_r.cols() && !phase_row; ++c)
+                            if (is_amb_col[static_cast<std::size_t>(c)]
+                                && std::abs(R.A_r(row, c)) > 0.5)
+                                phase_row = true;
+                        if (phase_row) continue;
+                    }
+                    const double w = (row < R.w.size()) ? R.w(row) : 1.0;
+                    double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
+                    if (raim_redun && row < row_r.size()) {    // B2, same as the phase pool
+                        constexpr double kRedFloor = 1e-6;
+                        const double ri = row_r(row);
+                        if (ri <= kRedFloor) continue;
+                        r /= std::sqrt(ri);
+                    }
+                    if (!std::isfinite(r)) continue;
+                    (sh_row ? ci_iono_pool : ci_code_pool).push_back(r);
+                    if (r > sta_max) sta_max = r;
+                    if (!sh_row && row_sat) {
+                        double& m = ci_sat_code_max[*row_sat];
+                        if (r > m) m = r;
+                    }
+                }
+                if (sta_max > 0.0) ci_sta_max[static_cast<int>(i)] = sta_max;
+            }
         }
         sigma0_out = 1.0;
         if (!r_pool.empty()) {
@@ -829,6 +933,17 @@ if (within_epoch_armed && carry_warm) {
         arc_eff.clear();
         for (std::size_t k = 0; k < tbl.size(); ++k)
             arc_eff[std::make_pair(std::get<0>(tbl[k]), std::get<1>(tbl[k]))] = mp.interaction[k];
+        if (we_ci) {   // WE-CI per-pool robust σ̂0 (same estimator as the phase pool)
+            auto pool_s0 = [](std::vector<double>& p) -> double {
+                if (p.empty()) return 0.0;
+                std::nth_element(p.begin(),
+                                 p.begin() + static_cast<std::ptrdiff_t>(p.size() / 2),
+                                 p.end());
+                return 1.4826 * p[p.size() / 2];
+            };
+            s0_code_we = pool_s0(ci_code_pool);
+            s0_iono_we = pool_s0(ci_iono_pool);
+        }
     };
 
     // Replay the epoch over a fresh arrowhead (beginEpoch reopens the frozen layout;
@@ -850,6 +965,35 @@ if (within_epoch_armed && carry_warm) {
                 continue;
             }
             const StationAssembly& R = asm_res[i];
+            // WE-CI: de-weight the culprit satellites' code rows (σ×10) in a
+            // per-station copy; `*wr` binds R.w itself on the OFF path and
+            // whenever no row matches, so the default numbers are untouched.
+            Eigen::VectorXd w_ci;
+            const Eigen::VectorXd* wr = &R.w;
+            if (we_ci && !dw_code_sats.empty()) {
+                std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
+                for (const auto& pa : R.pl_amb)
+                    if (pa.col >= 0 && pa.col < R.A_r.cols())
+                        is_amb_col[static_cast<std::size_t>(pa.col)] = 1;
+                const Eigen::Index dw_data_rows =
+                    (R.cpl_row_start >= 0) ? R.cpl_row_start : R.A_r.rows();
+                for (Eigen::Index row = 0; row < dw_data_rows && row < R.w.size(); ++row) {
+                    bool sh_row = false, cb_row = false;
+                    const std::string* row_sat = nullptr;
+                    ci_classify(R, row, sh_row, cb_row, row_sat);
+                    if (sh_row || !cb_row || !row_sat || !dw_code_sats.count(*row_sat))
+                        continue;
+                    bool phase_row = false;
+                    for (Eigen::Index c = 0; c < R.A_r.cols() && !phase_row; ++c)
+                        if (is_amb_col[static_cast<std::size_t>(c)]
+                            && std::abs(R.A_r(row, c)) > 0.5)
+                            phase_row = true;
+                    if (phase_row) continue;
+                    if (w_ci.size() == 0) w_ci = R.w;
+                    w_ci(row) *= kWeCiCodeWeightScale;
+                }
+                if (w_ci.size() > 0) wr = &w_ci;
+            }
             // A_r columns of THIS station's ambiguities to refloat (withhold their prior).
             // A SATELLITE culprit refloats its ambiguities at every station tracking it: a
             // satellite-level contamination pulls the shared clock at ALL its stations, and
@@ -886,7 +1030,7 @@ if (within_epoch_armed && carry_warm) {
                 Eigen::VectorXd rw(nd + nk), ry(nd + nk);
                 As.topRows(nd) = R.A_s.topRows(nd);
                 Ar.topRows(nd) = R.A_r.topRows(nd);
-                rw.head(nd)    = R.w.head(nd);
+                rw.head(nd)    = wr->head(nd);
                 ry.head(nd)    = R.y.head(nd);
                 if (nk > 0) {
                     As.bottomRows(nk) = Hs;
@@ -897,7 +1041,7 @@ if (within_epoch_armed && carry_warm) {
                 est_index_of[i] = static_cast<int>(est.addStation(As, Ar, rw, ry));
             } else if (carry_cpl_cond && !refloat_cols.empty() && R.cpl_row_start >= 0) {
                 Eigen::MatrixXd As = R.A_s, Ar = R.A_r;
-                Eigen::VectorXd rw = R.w, ry = R.y;
+                Eigen::VectorXd rw = *wr, ry = R.y;
                 for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
                     if (refloat_cols.count(R.cpl_row_local_cols[rr])) {
                         const Eigen::Index row =
@@ -907,7 +1051,7 @@ if (within_epoch_armed && carry_warm) {
                     }
                 est_index_of[i] = static_cast<int>(est.addStation(As, Ar, rw, ry));
             } else {
-                est_index_of[i] = static_cast<int>(est.addStation(R.A_s, R.A_r, R.w, R.y));
+                est_index_of[i] = static_cast<int>(est.addStation(R.A_s, R.A_r, *wr, R.y));
             }
             // B9: re-inject the pivot's ZWD carry too (its R.carry_cols is empty
             // unless network.carry_zwd), so the within-epoch re-solve matches the
@@ -975,8 +1119,19 @@ if (within_epoch_armed && carry_warm) {
     assess(x_s, sigma0, sat_eff, sta_eff, arc_eff);
     const double sigma0_first = sigma0;
     if (trace_flag_rates) { we_t2_opp = true; we_t2_flag = (sigma0_first > trig); }  // B8/T2 (R12: committed at emit, below)
+    if (we_ci) {   // invariant-#4 telemetry: first-assess trips + run maxima
+        auto& sc = ctx.counters;
+        if (s0_code_we > sc.we_ci_s0_code_max) sc.we_ci_s0_code_max = s0_code_we;
+        if (s0_iono_we > sc.we_ci_s0_iono_max) sc.we_ci_s0_iono_max = s0_iono_we;
+        if (s0_code_we > trig_code) ++sc.we_ci_code_trips;
+        if (s0_iono_we > trig_iono) ++sc.we_ci_iono_trips;
+    }
     std::string adapt_detail;
-    for (int iter = 0; iter < kMaxAdapt && sigma0 > trig; ++iter) {
+    for (int iter = 0;
+         iter < kMaxAdapt
+         && (sigma0 > trig
+             || (we_ci && (s0_code_we > trig_code || s0_iono_we > trig_iono)));
+         ++iter) {
         // Best NEW culprit per granularity (all gated on effect/σ̂0 > raim_k).  An
         // isolated ARC is the finest, least-destructive peel; a whole STATION is the
         // coarsest (it discards good arcs too) and is de-rated by sta_bias so it is
@@ -1030,7 +1185,42 @@ if (within_epoch_armed && carry_warm) {
             (best_sta_eff / sta_bias) > best_score) {
             best_score = best_sta_eff / sta_bias; kind = Kind::Sta;
         }
-        if (kind == Kind::None) break;  // nothing bad enough left to drop
+        bool ci_acted = false;
+        if (kind == Kind::None && we_ci
+            && (s0_code_we > trig_code || s0_iono_we > trig_iono)) {
+            // WE-CI culprits (the phase effects had nothing left to peel): worst
+            // station by its max code/iono row vs worst satellite by its
+            // network-wide max code row, both raim_k-gated against the offending
+            // pools' σ̂0.  Station exclusion is the epicenter response (BSHM/GOLD
+            // class); a satellite culprit gets its code rows DE-WEIGHTED
+            // (fallback, not drop).
+            const double s0_ci = std::max({s0_code_we, s0_iono_we, 1e-9});
+            int best_ci_sta = -1; double best_ci_sta_v = 0.0;
+            for (const auto& [sta, v] : ci_sta_max)
+                if (!drop_stations.count(sta) && v > best_ci_sta_v) {
+                    best_ci_sta_v = v; best_ci_sta = sta;
+                }
+            std::string best_ci_sat; double best_ci_sat_v = 0.0;
+            for (const auto& [sat, v] : ci_sat_code_max)
+                if (!dw_code_sats.count(sat) && v > best_ci_sat_v) {
+                    best_ci_sat_v = v; best_ci_sat = sat;
+                }
+            if (best_ci_sta >= 0 && best_ci_sta_v >= best_ci_sat_v
+                && best_ci_sta_v / s0_ci > raim_k) {
+                drop_stations.insert(best_ci_sta);
+                ++ctx.counters.we_ci_sta_excl;
+                ci_acted = true;
+                adapt_detail += fmt::format("{}ci-sta:{}", adapt_detail.empty() ? "" : ",",
+                                            stations[best_ci_sta].name);
+            } else if (!best_ci_sat.empty() && best_ci_sat_v / s0_ci > raim_k) {
+                dw_code_sats.insert(best_ci_sat);
+                ++ctx.counters.we_ci_sat_dw;
+                ci_acted = true;
+                adapt_detail += fmt::format("{}ci-dwsat:{}",
+                                            adapt_detail.empty() ? "" : ",", best_ci_sat);
+            }
+        }
+        if (kind == Kind::None && !ci_acted) break;  // nothing bad enough left to drop
 
         if (kind == Kind::Arc) {
             drop_arcs[best_arc_sta].insert(best_arc_sat);
@@ -1039,7 +1229,7 @@ if (within_epoch_armed && carry_warm) {
         } else if (kind == Kind::Sat) {
             drop_sats.insert(best_sat);
             adapt_detail += fmt::format("{}sat:{}", adapt_detail.empty() ? "" : ",", best_sat);
-        } else {
+        } else if (kind == Kind::Sta) {
             drop_stations.insert(best_sta);
             adapt_detail += fmt::format("{}sta:{}", adapt_detail.empty() ? "" : ",",
                                         stations[best_sta].name);
@@ -1083,6 +1273,9 @@ if (within_epoch_armed && carry_warm) {
             for (int sta : drop_stations)
                 emitEvent("T2_within_epoch", "we_exclude_station", "",
                           stations[sta].name, sigma0, trig, "exclude", span);
+            for (const auto& s : dw_code_sats)   // WE-CI response class
+                emitEvent("T2_within_epoch", "we_deweight_sat_code", s, "",
+                          sigma0, trig, "deweight", span);
         }
     }
 
@@ -1223,6 +1416,104 @@ if (raim_withhold > 0.0 && sigma0_adapt > raim_withhold && !perconst_active) {
     return result;
 }
 
+
+    // --- SPEC_day129_frame_guards Phase 2.2: SH-field health GATE verdict -----
+    // Post-solve, pre-emit (this is the only pre-emit seam holding x_s), on
+    // epochs that survived the rank gate and the A4 σ̂0 withhold above.  The
+    // verdict is EMISSION-ONLY: NetworkSolPrep + NetworkEmitStore early-return
+    // on ctx.carry.sh_gate_engaged, while the carry stash and every QC tier
+    // still run — an hours-long out-of-band era must not expire the carry the
+    // way the A4 skip-epoch semantics would.  Out-of-band EPOCHS are counted
+    // (not warns — the throttled T1a WARN under-read the reference run 23.8×)
+    // and every engage/release transition is logged + evented un-throttled.
+    if (nc.sh_health_gate && sh_model) {
+        const GlobalVtecShConfig& shc_g = config_.getGlobalVtecShConfig();
+        const auto& coeffs_g = sh_model->coeffs();
+        double a00_total = std::numeric_limits<double>::quiet_NaN();
+        double rms_all = 0.0;
+        int rms_n = 0;
+        bool coeff_ok = true;
+        for (std::size_t k = 0; k < coeffs_g.size() && coeff_ok; ++k) {
+            try {
+                const double val =
+                    x_s(est.vtecCoeffColumn(coeffs_g[k].n, coeffs_g[k].m, coeffs_g[k].trig));
+                rms_all += val * val;
+                ++rms_n;
+                if (coeffs_g[k].n == 0 && coeffs_g[k].m == 0 && coeffs_g[k].trig == 'C')
+                    a00_total = val;
+            } catch (...) { coeff_ok = false; }
+        }
+        // Dual-layer: the physical band bounds the TOTAL mean VTEC (layer sum),
+        // exactly as the T1a WARN does.
+        if (coeff_ok && sh_model2 && std::isfinite(a00_total)) {
+            try { a00_total += x_s(est.vtecCoeffColumn(0, 0, 'C', 1)); }
+            catch (...) { coeff_ok = false; }
+        }
+        if (coeff_ok && std::isfinite(a00_total)) {
+            rms_all = (rms_n > 0) ? std::sqrt(rms_all / rms_n) : 0.0;
+            ctx.carry.sh_gate_last_a00 = a00_total;
+            ctx.carry.sh_gate_last_rms = rms_all;
+            const bool band_active = shc_g.a00_warn_low_tecu < shc_g.a00_warn_high_tecu;
+            const bool band_oob = band_active
+                && (a00_total < shc_g.a00_warn_low_tecu
+                    || a00_total > shc_g.a00_warn_high_tecu);
+            const bool rms_oob = nc.sh_gate_rms_max_tecu > 0.0
+                && rms_all > nc.sh_gate_rms_max_tecu;
+            const bool oob = band_oob || rms_oob;
+            if (oob) {
+                ++ctx.carry.sh_gate_oob_epochs_total;
+                ++ctx.carry.sh_gate_oob_run;
+            } else {
+                ctx.carry.sh_gate_oob_run = 0;
+            }
+            const bool engage = ctx.carry.sh_gate_oob_run >= nc.sh_gate_min_epochs;
+            if (engage && !ctx.carry.sh_gate_engaged) {
+                ++ctx.carry.sh_gate_engagements;
+                log->warn("Network (SH gate): ENGAGED at TOW {:.1f} — a00 {:.1f} TECU "
+                          "(band [{:.1f}, {:.1f}]), rms_all {:.2f} TECU{} — out of band "
+                          "{} consecutive epoch(s); WITHHOLDING emission until the field "
+                          "returns (solve/carry/QC continue).",
+                          se.time.tow, a00_total, shc_g.a00_warn_low_tecu,
+                          shc_g.a00_warn_high_tecu, rms_all,
+                          rms_oob ? fmt::format(" > ceiling {:.1f}", nc.sh_gate_rms_max_tecu)
+                                  : std::string{},
+                          ctx.carry.sh_gate_oob_run);
+                emitEvent("SH_GATE", "engage", "", "", a00_total,
+                          band_oob ? (a00_total < shc_g.a00_warn_low_tecu
+                                          ? shc_g.a00_warn_low_tecu
+                                          : shc_g.a00_warn_high_tecu)
+                                   : nc.sh_gate_rms_max_tecu,
+                          "withhold_emission",
+                          fmt::format("rms_all={:.2f} oob_run={} rms_oob={}", rms_all,
+                                      ctx.carry.sh_gate_oob_run, rms_oob ? 1 : 0));
+            } else if (!engage && ctx.carry.sh_gate_engaged) {
+                log->info("Network (SH gate): RELEASED at TOW {:.1f} — a00 {:.1f} TECU "
+                          "back in band (rms_all {:.2f}); emission resumes.  Run totals: "
+                          "{} out-of-band epoch(s), {} engagement(s), {} emission(s) "
+                          "withheld.",
+                          se.time.tow, a00_total, rms_all,
+                          ctx.carry.sh_gate_oob_epochs_total, ctx.carry.sh_gate_engagements,
+                          ctx.counters.n_sh_gate_withheld);
+                emitEvent("SH_GATE", "release", "", "", a00_total, std::nullopt,
+                          "resume_emission",
+                          fmt::format("rms_all={:.2f} withheld_total={}", rms_all,
+                                      ctx.counters.n_sh_gate_withheld));
+            } else if (engage && (ctx.carry.sh_gate_oob_run % 20) == 0) {
+                // Un-throttled visibility during a LONG engaged era: a periodic
+                // count-bearing line every 20 epochs (10 min at 30 s) — the era's
+                // full extent is in the per-epoch counters/events regardless.
+                log->warn("Network (SH gate): still engaged at TOW {:.1f} — {} consecutive "
+                          "out-of-band epoch(s), a00 {:.1f} TECU, rms_all {:.2f}; {} "
+                          "emission(s) withheld so far.",
+                          se.time.tow, ctx.carry.sh_gate_oob_run, a00_total, rms_all,
+                          ctx.counters.n_sh_gate_withheld);
+            }
+            ctx.carry.sh_gate_engaged = engage;
+        }
+        // coeff_ok false ⇒ a column lookup failed (field not in this epoch's
+        // solve) — leave the gate state unchanged rather than fabricating a
+        // release; the next computable epoch re-evaluates.
+    }
 
     // --- Result epilogue: hand the 18 crossing locals to the caller. ---
     result.x_s = std::move(x_s);

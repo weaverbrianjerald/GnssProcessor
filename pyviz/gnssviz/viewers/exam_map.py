@@ -31,7 +31,7 @@ from ..basemap import extent_overlaps, load_basemap
 from ..coastline import load_coastline
 from ..figures import (Axes, Figure, Legend, Line, Polygon, RgbImage, Scatter,
                        TextBox)
-from ..io import first_col
+from ..io import first_col, load_trace
 from .base import Viewer, ViewerResult, ViewerSkip
 from . import exam_common as ec
 
@@ -85,6 +85,72 @@ def _storm_mask(ctx, df):
     return (t >= w0) & (t <= w1)
 
 
+#: Metres per degree (local flat-earth scaling; adequate over a sub-degree window).
+_M_PER_DEG_LAT = 110540.0
+_M_PER_DEG_LON = 111320.0
+_C_REGION = (1.00, 0.35, 0.35)      # error-region fill (reads over dark imagery)
+
+
+def _error_region(ctx, ax, lat, lon360, used_imagery):
+    """Append the filled 95% cross-track error region; return the exaggeration.
+
+    Returns ``None`` when it cannot be drawn (no ``state_trace.csv``, no epoch
+    overlap, or a trace without the off-diagonal covariance columns) — in which
+    case the panel is exactly what it was before, a context map with no bound.
+    """
+    if not ctx.has_data("state_trace.csv"):
+        return None
+    try:
+        truth = ec.truth_frame(ctx, "truth_position.csv")
+        state = load_trace(ctx.path("state_trace.csv"))
+        m = ec.merge_truth_trace(truth, state)
+    except Exception:
+        return None
+    if m is None or m.empty:
+        return None
+
+    mlat = first_col(m, "lat_deg")
+    mlon = first_col(m, "lon_deg")
+    if mlat is None or mlon is None:
+        return None
+    mlat = mlat.to_numpy(float)
+    mlon360 = mlon.to_numpy(float) % 360.0
+    lat0 = float(np.nanmean(mlat))
+    C2 = ec.enu_cov2(m, lat0, float(np.nanmean(mlon360)))
+    if C2 is None:
+        return None
+
+    # Local metres about the window centre, so the track frame is Euclidean.
+    coslat = float(np.cos(np.radians(lat0)))
+    e_m = (mlon360 - np.nanmean(mlon360)) * _M_PER_DEG_LON * coslat
+    n_m = (mlat - lat0) * _M_PER_DEG_LAT
+    _t, nvec = ec.track_frame(e_m, n_m)
+    k = float(np.sqrt(ec.CHI2_95))
+    sig_cross = ec.proj_sigma(C2, nvec)
+
+    span_m = max(float(np.nanmax(e_m) - np.nanmin(e_m)),
+                 float(np.nanmax(n_m) - np.nanmin(n_m)), 1.0)
+    skip = min(ec.converge_skip(ctx), max(0, len(sig_cross) - 2))
+    exag = ec.exaggeration(k * sig_cross, span_m, target=0.02, skip=skip)
+
+    off_m = np.minimum((k * exag) * sig_cross, 0.06 * span_m)   # clamp outliers
+    d_lon = off_m * nvec[:, 0] / (_M_PER_DEG_LON * coslat)
+    d_lat = off_m * nvec[:, 1] / _M_PER_DEG_LAT
+    hi_x, hi_y = mlon360 + d_lon, mlat + d_lat
+    lo_x, lo_y = mlon360 - d_lon, mlat - d_lat
+    good = (np.isfinite(hi_x) & np.isfinite(hi_y) & np.isfinite(lo_x) & np.isfinite(lo_y))
+    good[:skip] = False
+    if int(good.sum()) < 3:
+        return None
+
+    ax.traces.append(Polygon(
+        x=np.concatenate([hi_x[good], lo_x[good][::-1]]),
+        y=np.concatenate([hi_y[good], lo_y[good][::-1]]),
+        fill=_C_REGION, alpha=0.45 if used_imagery else 0.30, zorder=1,
+        label=f"95% error region (×{exag:,.0f})", show_in_legend=True))
+    return exag
+
+
 def build_exam_map(ctx) -> ViewerResult:
     truth = ec.require_truth(ctx, "truth_position.csv")
     lat_c = first_col(truth, "lat_deg")
@@ -126,7 +192,14 @@ def build_exam_map(ctx) -> ViewerResult:
     figures.append(Figure(name="World context", axes=[axw], width=12, height=6.2))
 
     # --- Figure 2: regional zoom (0–360° lon, dateline-safe) -------------------
-    pad = 3.0
+    # Pad PROPORTIONALLY to the track, not by a fixed 3° (~333 km): that framed a
+    # 1.3°×0.9° track inside a 7.3°×6.9° box, so the trajectory — the subject of
+    # the panel — occupied under a fifth of it.  12% of the larger span keeps the
+    # track dominant while leaving room for the markers and the legend.  Floored so
+    # a near-stationary instance still gets a sane window, and the vendored imagery
+    # is 0.0067°/px (~715 m), so much tighter than this would visibly upscale.
+    span_deg = max(float(lon360.max() - lon360.min()), float(lat.max() - lat.min()))
+    pad = max(0.12 * span_deg, 0.05)
     x0, x1 = float(lon360.min()) - pad, float(lon360.max()) + pad
     y0, y1 = float(lat.min()) - pad, float(lat.max()) + pad
     axr = Axes(title="SAR vessel track (regional — near Fiji, South Pacific)",
@@ -154,18 +227,37 @@ def build_exam_map(ctx) -> ViewerResult:
     track_color = _C_TRACK_IMG if used_imagery else _C_TRACK
     track_width = 2.0 if used_imagery else 1.6
     mask = _storm_mask(ctx, truth.iloc[np.flatnonzero(ok)])
+
+    # Filled 95% error region around the recovered trajectory, drawn UNDER the
+    # track.  Geographic scale forces the same exaggeration the plan view needs
+    # (a ~1 cm bound against a >1° extent is ~1 part in 1e7); the factor is stated
+    # in the legend and the axes title.  Skipped entirely when the trace predates
+    # the off-diagonal covariance columns — see ec.enu_cov2.
+    exag = _error_region(ctx, axr, lat, lon360, used_imagery)
+
     axr.traces.append(Line(x=lon360, y=lat, color=track_color, width=track_width,
                            label="truth track"))
-    if mask.any():
+    whole_arc_storm = mask.any() and not ec.storm_overlay_is_informative(mask)
+    if mask.any() and not whole_arc_storm:
         seg = np.where(mask, lon360, np.nan)
         axr.traces.append(Line(x=seg, y=np.where(mask, lat, np.nan),
                                color=ec.STORM_COLOR, width=3.0, label="storm window"))
+    elif whole_arc_storm:
+        # Whole-arc storm: recolouring every epoch would just paint over the track
+        # in a heavier line and advertise a legend colour with nothing to contrast
+        # against.  State it instead.
+        axr.traces.append(TextBox(x=0.02, y=0.98, va="top", boxed=True, fontsize=7.5,
+                                  color=ec.STORM_COLOR, zorder=7,
+                                  text="entire arc inside the storm window"))
     axr.traces.append(Scatter(x=[float(lon360[0])], y=[float(lat[0])], color=_C_START,
                               size=70, marker="o", edgecolor=(0, 0, 0), linewidth=0.5,
                               zorder=6, label="start"))
     axr.traces.append(Scatter(x=[float(lon360[-1])], y=[float(lat[-1])], color=_C_END,
                               size=70, marker="s", edgecolor=(0, 0, 0), linewidth=0.5,
                               zorder=6, label="end"))
+    if exag is not None:
+        axr.title = (f"SAR vessel track + 95% error region "
+                     f"(region EXAGGERATED {exag:,.0f}×; track is to scale)")
     if used_imagery:
         # Required imagery credit — a small corner chip over the ocean.
         axr.traces.append(TextBox(x=0.99, y=0.015, text=f"Imagery: {basemap.attribution}",

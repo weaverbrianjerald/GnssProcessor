@@ -108,7 +108,8 @@
 #include "filter/NetworkPhaseDatum.hpp"    // INC-8b: census + ensemble datum + anchor election + drop-and-heal
 #include "filter/NetworkChainDatum.hpp"    // INC-8b: Card-3 eq34 single-receiver-chain datum
 #include "filter/NetworkRaim.hpp"        // INC-9: post-fit network RAIM
-#include "filter/NetworkClockQc.hpp"    // INC-10: post-solve satellite-clock QC
+#include "filter/NetworkClockQc.hpp"
+#include "filter/NetworkFrameDiag.hpp"   // P1-3/P1-4 trigger instrumentation (SPEC_day129_frame_guards)    // INC-10: post-solve satellite-clock QC
 #include "filter/NetworkSolPrep.hpp"    // INC-11pre: emit-side solution prep + disc signalling
 #include "filter/NetworkEmitStore.hpp"    // INC-11: emit / store / product-write + closed-loop
 #include "filter/NetworkTeardown.hpp"
@@ -170,6 +171,13 @@ namespace GnssProcessor {
 int Application::runNetwork() {
     auto log = log_manager_.getLogger("main_log");
     const auto& nc = config_.getNetworkConfig();
+
+    // Q5 consumer-only replay: an already-written product file supplants the
+    // producer entirely.  Branch BEFORE input validation / setup so none of the
+    // producer machinery (roster, station build, emitter, snapshot fingerprint)
+    // is touched — a replay run cannot perturb a producer artifact.
+    if (!nc.closed_loop.replay_products_path.empty())
+        return runConsumerReplay();
 
     log->info("PPP-RTK Network producer (V1): {} stations, clock datum station '{}'{}",
               nc.stations.size(), nc.clock_datum_station,
@@ -863,13 +871,14 @@ int Application::runNetwork() {
         SB_LEVELING,     // block 5: phase-leveling carry harvest + D2/C1 stash + T1d SH-conv
         SB_RAIM,         // block 2: post-fit network RAIM pass-1/2 + median-polish attribution
         SB_CLOCKUPD,     // block 8: two-state clock update + fault QC + retro-flag feed
+        SB_FRAMEDIAG,    // P1-3/P1-4: shared-normal spectrum + post-fit sigma0 (both default-OFF)
         SB_STASH_STATUS, // block 5/8: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
         SB_COUNT
     };
     static constexpr const char* kSubNames[SB_COUNT] = {
         "slip-scans", "pre-asm", "gauge-build", "dd-build", "solve-glue", "install-post",
         "netar", "sol-prep", "emit-store", "iono-diag", "dd-frac", "shdev-vtec",
-        "t1a-health", "leveling", "raim", "clock-upd", "stash-status"
+        "t1a-health", "leveling", "raim", "clock-upd", "frame-diag", "stash-status"
     };
     std::vector<SubBlockTimer> sec_sub(SB_COUNT);        // run totals
     std::vector<SubBlockTimer> sec_sub_ep0(SB_COUNT);    // per-epoch loop-top snapshot of sec_sub
@@ -1578,6 +1587,18 @@ int Application::runNetwork() {
                        clk_model_warm, emit_rate_warm, pl_now_s, dt,
                        clock_refloat_sats, retro_flag_sats, retro_feed);
         subEnd(SB_CLOCKUPD);       // D0b: close block 8 (clock update + retro feed)
+        // SPEC_day129_frame_guards P1-3/P1-4: trigger instrumentation.  BEFORE the
+        // stash/status block, because the epoch-status row written there reads the
+        // post-fit sigma0 this fills in.  All default-OFF; an unarmed run makes
+        // neither call (byte-identical, no cost beyond the flag tests).  The §4.3
+        // keyed trace rides the same residual pass, so either toggle runs it.
+        subBegin(SB_FRAMEDIAG);
+        if (nc.trace_postfit_sigma0 || nc.trace_postfit_keyed)
+            networkPostfitSigma0(ctx, config_, log, traces, se, stations, est, x_s,
+                                 asm_res, est_index_of);
+        if (nc.trace_sh_spectrum)
+            networkShSpectrum(ctx, config_, log, traces, se, est);
+        subEnd(SB_FRAMEDIAG);
         subBegin(SB_STASH_STATUS); // D0b: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
         networkStashStatus(ctx, config_, log, traces, setup, se, est, x_s, plan, carry_vce_est,
                            clock_refloat_sats, n_arc_refloat_epoch, registered_clock_sats,

@@ -120,8 +120,13 @@ struct F6Capture {
     bool                 written{false};   // one-shot latch (whole run)
     double               week{0.0}, tow{0.0};
     int                  loop_epoch{-1};
-    std::size_t          wl_block_index{0};
+    std::size_t          wl_block_index{0};   ///< index of the FIRST WL block in `blocks`.
     std::vector<F6Row>   rows;
+    /// Parallel to `rows`: the `blocks` index each row's WL block occupies.  Under
+    /// f6_all_blocks the capture spans several blocks, and the kernel innovation must be
+    /// requested per block (ddPriorInnovation is block-scoped), so the write site groups by
+    /// this.  Single-block captures leave every entry == wl_block_index.
+    std::vector<std::size_t> row_block;
 };
 
 struct CarryEigenScope {

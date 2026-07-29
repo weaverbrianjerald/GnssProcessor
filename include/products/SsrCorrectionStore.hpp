@@ -46,7 +46,7 @@ namespace GnssProcessor {
 struct NetworkProducerStatus {
     /// Producer disposition of one epoch.  @c Unknown = an unrecognized status
     /// token from a NEWER producer (forward-compatible: surfaced, never fatal).
-    enum class State { Ok, Partial, WithheldSigma0, WithheldGate, Unknown };
+    enum class State { Ok, Partial, WithheldSigma0, WithheldGate, WithheldShGate, Unknown };
 
     GnssTime    time{0, 0.0};          ///< Content epoch the heartbeat describes.
     State       state{State::Unknown}; ///< Epoch disposition.
@@ -57,7 +57,9 @@ struct NetworkProducerStatus {
     std::string withheld{"-"};
 
     /// Map a wire status token ("ok", "partial", "withheld_sigma0",
-    /// "withheld_gate") to its @ref State; anything else → @c Unknown.
+    /// "withheld_gate", "withheld_sh") to its @ref State; anything else →
+    /// @c Unknown (a NEWER producer's token — forward-compatible, never fatal).
+    /// Operator-facing semantics per state: `docs/rt_service_operations.md` §2.1.
     static State parseState(const std::string& token);
     /// Inverse of @ref parseState (@c Unknown → "unknown").
     static const char* stateName(State s);

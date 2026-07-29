@@ -302,6 +302,16 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // requires carry_cpl_cond so an armed-joint config already carries carrycplcond.
         if (carry_cpl_joint)
             add(fmt::format("carrycpljoint={}", carry_cpl_joint));
+        // SPEC_day129_frame_guards Phase 2.1: the CB-excursion guard changes what a
+        // carried code bias MEANS across an excursion (a reinit-decorrelated state
+        // vs a stiff continuation) and its pending-bump queue is not snapshotted —
+        // a resume flipping it would fold a carry of the wrong kind and could
+        // silently drop a queued discontinuity.  On the SAME footing as
+        // cbtimelink / carrycpl* above.  Conditional-append (only when armed)
+        // keeps every existing (unarmed) fingerprint byte-identical.
+        if (nc.cb_excursion_reinit)
+            add(fmt::format("cbexc={},{}", nc.cb_excursion_median_m,
+                            nc.cb_excursion_reinit_all_sats));
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
 }
@@ -1737,7 +1747,17 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         const bool flagged = clock_refloat_sats.count(kv.first) > 0;
         if (flagged && full_refloat) continue;
         const Eigen::Index col = est.codeBiasColumn(kv.first, kv.second);
-        stash(SharedParamKind::CodeBias, kv.first, kv.second, col, flagged);
+        // SPEC_day129_frame_guards Phase 2.1: a network-wide common-mode clock
+        // excursion this epoch marks the affected satellite's CODE-BIAS carry for
+        // reinit — and ONLY the code-bias carry.  The clock and phase-bias carries
+        // are deliberately untouched: the clock is soft (q = 0.3 m²/ep, it recovers
+        // on its own in 2–4 epochs) and the phase biases measurably did not move
+        // (≤ 4 mm at the DOY-129 event).  The near-static code bias is the one
+        // state that ratchets, so it is the one state the guard resets.  The set is
+        // empty unless network.cb_excursion_reinit ⇒ byte-identical when OFF.
+        const bool cb_excursion = ctx.carry.cb_excursion_sats.count(kv.first) > 0;
+        stash(SharedParamKind::CodeBias, kv.first, kv.second, col,
+              flagged || cb_excursion);
         if (cb_time_linked) {
             const double v = x_s(col);
             if (std::isfinite(v)) {

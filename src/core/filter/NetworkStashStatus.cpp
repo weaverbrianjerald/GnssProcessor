@@ -173,6 +173,30 @@ void networkStashStatus(
         es.n_retro_applied = static_cast<int>(retro_emit_sats.size());   // bumps APPLIED this emit
         es.n_arc_refloat   = n_arc_refloat_epoch;   // T2d: isolated-arc RAIM refloats this epoch
         es.datum_changed   = datum_changed ? 1 : 0;
+        // P1-1 (SPEC_day129_frame_guards): this epoch's carry churn, differenced
+        // from the run-cumulative driver counters in NetworkInstallCarry.  The
+        // §3.2 trigger hypothesis is a D5 avalanche — testable only per epoch.
+        es.n_d5_flags      = ctx.carry.ep_d5_flags;
+        es.n_d5_retaps     = ctx.carry.ep_d5_retaps;
+        es.n_chord_births  = ctx.carry.ep_chord_births;
+        es.n_slip_refloats = ctx.carry.ep_slip_refloats;
+        // P1-2: the iono-deweight weight field, harvested at the serial
+        // NetworkShHealth advance() site.  -1 = the gate did not advance this
+        // epoch (inactive, or a held datum epoch) ⇒ leave the columns blank
+        // rather than write a misleading "0 engaged".
+        if (ctx.carry.ep_dw_engaged >= 0) {
+            es.n_dw_engaged = ctx.carry.ep_dw_engaged;
+            es.n_dw_zero    = ctx.carry.ep_dw_zero;
+            es.dw_min_w     = ctx.carry.ep_dw_min_w;
+            es.dw_mean_w    = ctx.carry.ep_dw_mean_w;
+        }
+        // P1-4: measure-only post-fit variance factor (blank unless armed).
+        if (ctx.carry.ep_pf_rows > 0) {
+            es.sigma0_pf       = ctx.carry.ep_sigma0_pf;
+            es.sigma0_pf_code  = ctx.carry.ep_sigma0_pf_code;
+            es.sigma0_pf_phase = ctx.carry.ep_sigma0_pf_phase;
+            es.n_pf_rows       = ctx.carry.ep_pf_rows;
+        }
         std::vector<double> cvals; cvals.reserve(registered_clock_sats.size());
         for (const std::string& sat : registered_clock_sats)
             cvals.push_back(x_s(est.clockColumn(sat)));
@@ -194,10 +218,17 @@ void networkStashStatus(
             es.worst_sat      = worst_sat_name;
             es.worst_dev_m    = worst;
         }
-        emitEpochStatus("emitted", es);
+        // Phase 2.2: an SH-gate-withheld epoch ran the full solve/carry/QC but
+        // emitted nothing — its disposition row says so (the row itself is the
+        // per-epoch out-of-band count the handoff §4.2 lesson demands).
+        emitEpochStatus(config_.getNetworkConfig().sh_health_gate
+                            && ctx.carry.sh_gate_engaged
+                        ? "sh_gate_withheld" : "emitted", es);
     }
 
-    if (n_emitted == 1 || n_emitted % 60 == 0) {
+    const bool sh_gate_withheld_ep =
+        config_.getNetworkConfig().sh_health_gate && ctx.carry.sh_gate_engaged;
+    if (!sh_gate_withheld_ep && (n_emitted == 1 || n_emitted % 60 == 0)) {
         log->info("Network: TOW {:.1f} emitted epoch {} — {} stations, {} sat clocks, "
                   "{} phase biases, {} code biases ({} single-station sat(s) dropped), "
                   "datum dim {}, clock-Δ rms {:.3f} m",

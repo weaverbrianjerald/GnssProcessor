@@ -1,16 +1,18 @@
-"""The eight exam_* viewers: build counts, auto-skip, graceful degradation."""
+"""The exam_* viewers: build counts, auto-skip, graceful degradation."""
 import pytest
 
 from gnssviz import TraceContext, run_viewers
 from gnssviz.backends import get_backend
+from gnssviz.figures import TextBox
 from gnssviz.viewers.base import ViewerSkip
 
 # viewer module -> (build fn name, expected figure count on the full fixture)
 _VIEWERS = {
     "exam_scorecard": 0,
+    "exam_spp_reference": 7,
     "exam_position_truth": 3,
     "exam_truth_lines": 3,
-    "exam_track": 1,
+    "exam_track": 3,
     "exam_map": 2,
     "exam_visibility": 1,
     "exam_iono_truth": 3,
@@ -125,9 +127,14 @@ def test_exam_map_uses_satellite_imagery(exam_fixture):
         pytest.skip("vendored basemap asset absent")
     truth, logs = exam_fixture()
     res = _build("exam_map", TraceContext(logs, truth_dir=truth))
+    from gnssviz.viewers.exam_map import _C_LAND
     regional = res.figures[1].axes[0].traces
     assert any(isinstance(t, RgbImage) for t in regional)
-    assert not any(isinstance(t, Polygon) for t in regional)
+    # No LAND-FILL polygon: the imagery replaces the coastline basemap.  (The
+    # error-region polygon added 2026-07-24 is a different thing and may be
+    # present, so this checks the fill colour rather than the type alone.)
+    assert not any(isinstance(t, Polygon) and tuple(t.fill) == tuple(_C_LAND)
+                   for t in regional)
     assert any(isinstance(t, TextBox) and "Esri" in t.text for t in regional)
 
 
@@ -150,11 +157,183 @@ def test_exam_map_falls_back_to_coastline_without_imagery(exam_fixture, monkeypa
     mpl.close(r)
 
 
+def test_track_error_bounds_need_the_off_diagonals(exam_fixture):
+    # The trajectory corridor + per-epoch ellipses come from the FULL covariance.
+    # Without cov_xy/xz/yz an orientation cannot be recovered, and rotating a
+    # diagonal-only ECEF covariance would manufacture a bearing that is an
+    # artifact of the rotation -- so the panels must be dropped, not faked.
+    truth, logs = exam_fixture(state_cov=True)
+    res = _build("exam_track", TraceContext(logs, truth_dir=truth))
+    names = [f.name for f in res.figures]
+    assert "Track error bounds" in names and "Track-relative error bounds" in names
+
+    truth2, logs2 = exam_fixture(state_cov=False)
+    res2 = _build("exam_track", TraceContext(logs2, truth_dir=truth2))
+    assert [f.name for f in res2.figures] == ["Plan-view track"]
+
+
+def test_exam_map_error_region_needs_the_off_diagonals(exam_fixture):
+    # The filled 95% region on the imagery panel comes from the full covariance;
+    # without cov_xy/xz/yz it must be omitted (an orientation cannot be recovered
+    # from variances alone), leaving the panel as the plain context map it was.
+    from gnssviz.figures import Polygon as _Poly
+    from gnssviz.viewers.exam_map import _C_REGION
+
+    def region_of(**kw):
+        truth, logs = exam_fixture(**kw)
+        res = _build("exam_map", TraceContext(logs, truth_dir=truth))
+        return [t for t in res.figures[1].axes[0].traces
+                if isinstance(t, _Poly) and tuple(t.fill) == tuple(_C_REGION)]
+
+    got = region_of(state_cov=True)
+    assert len(got) == 1, "error region missing with full covariance"
+    assert got[0].label and "95%" in got[0].label and "×" in got[0].label
+    assert not region_of(state_cov=False), "region drawn without the off-diagonals"
+
+
+def test_exam_map_zoom_is_proportional_to_the_track(exam_fixture):
+    # The regional panel used a fixed 3-degree pad (~333 km), which framed the
+    # track inside a box several times its own size.  The window must now scale
+    # with the track so the trajectory stays the subject of the panel.
+    truth, logs = exam_fixture()
+    res = _build("exam_map", TraceContext(logs, truth_dir=truth))
+    ax = res.figures[1].axes[0]
+    w = ax.xlim[1] - ax.xlim[0]
+    h = ax.ylim[1] - ax.ylim[0]
+    assert w < 1.0 and h < 1.0, (ax.xlim, ax.ylim)   # fixture track is tiny
+
+
+def test_whole_arc_storm_suppresses_the_spatial_overlay(exam_fixture):
+    # A storm covering the whole record is recoloured over EVERY epoch, in a line
+    # heavier than the track beneath it -- so the overlay hides the trajectory it
+    # annotates and advertises a legend colour with nothing to contrast against.
+    # The spatial viewers must drop it and say so in prose instead.
+    from gnssviz.figures import Line as _Line, TextBox as _TextBox
+    from gnssviz.viewers import exam_common as _ec
+
+    assert _ec.storm_overlay_is_informative([True, False, True])       # partial: draw
+    assert not _ec.storm_overlay_is_informative([True] * 20)           # whole arc: skip
+    assert not _ec.storm_overlay_is_informative([])                    # nothing to draw
+    assert not _ec.storm_overlay_is_informative([False, False])
+
+    def traces_of(name, **kw):
+        truth, logs = exam_fixture(**kw)
+        res = _build(name, TraceContext(logs, truth_dir=truth))
+        idx = 1 if name == "exam_map" else 0
+        return res.figures[idx].axes[0].traces
+
+    # The fixture's storm covers the middle third -> informative, overlay drawn.
+    for name, lbl in (("exam_track", "storm"), ("exam_map", "storm window")):
+        tr = traces_of(name)
+        assert any(isinstance(t, _Line) and t.label == lbl for t in tr), name
+        assert not any(isinstance(t, _TextBox) and "entire arc" in t.text for t in tr), name
+
+    # storm_whole_arc mirrors the hero (100% of epochs) -> overlay suppressed.
+    for name, lbl in (("exam_track", "storm"), ("exam_map", "storm window")):
+        tr = traces_of(name, storm_whole_arc=True)
+        assert not any(isinstance(t, _Line) and t.label == lbl for t in tr), name
+        assert any(isinstance(t, _TextBox) and "entire arc" in t.text for t in tr), name
+
+
 def test_static_track_branch(exam_fixture):
     truth, logs = exam_fixture(kinematic=False)
     res = _build("exam_track", TraceContext(logs, truth_dir=truth))
     assert len(res.figures) == 1
     assert "Static" in res.figures[0].axes[0].title
+
+
+# --------------------------------------------------------------------------- #
+#  Part-B SPP reference (truth-only viewer)
+# --------------------------------------------------------------------------- #
+def _textboxes(res):
+    return [t.text for f in res.figures for a in f.axes for t in a.traces
+            if isinstance(t, TextBox)]
+
+
+def test_spp_reference_stats_come_from_the_csv(exam_fixture):
+    # The grading bands are keyed to truth_spp.csv, so the read-out must be
+    # computed from it -- the ablation means especially.
+    truth, logs = exam_fixture()
+    res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
+    assert "Klobuchar" in res.summary and "+10.75" in res.summary
+    assert "-1.46" in res.summary and "-0.49" in res.summary and "+0.37" in res.summary
+    # Leg 1 is vertical-dominated, leg 2 is not (the Part-B teaching point).
+    assert "signed Up median" in res.summary
+    assert "1441" not in res.summary          # no numbers leaked from the real hero run
+
+
+def test_spp_reference_survives_missing_summary_json(exam_fixture):
+    # truth_spp.csv alone must still draw every panel; only the model ledger goes.
+    truth, logs = exam_fixture(spp_summary=False)
+    res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
+    assert len(res.figures) == 7
+    assert "truth_spp_summary.json absent" in res.summary
+    assert "Estimator" not in res.summary
+
+
+def test_spp_reference_sigma_panel_needs_the_sigma_columns(exam_fixture):
+    # The formal-sigma panel is the Part-B stochastic-model reference; it must
+    # appear when truth_spp.csv carries the sigma columns and be dropped (not
+    # faked) when an older file does not.
+    truth, logs = exam_fixture()
+    res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
+    assert any(f.name == "Formal sigma vs error" for f in res.figures)
+    assert "err/σ3D" in res.summary
+    # Leg 1's covariance is optimistic (ratio >> 1), leg 2's is honest (~1).
+    rows = [l for l in res.summary.split("\n") if l.strip().startswith(("leg 1", "leg 2"))]
+    assert rows, res.summary
+
+    import csv as _csv
+    import os
+    p = os.path.join(truth, "truth_spp.csv")
+    with open(p, newline="", encoding="utf-8") as fh:
+        rd = list(_csv.reader(fh))
+    keep = [i for i, c in enumerate(rd[0]) if "_sig" not in c]
+    with open(p, "w", newline="", encoding="utf-8") as fh:
+        _csv.writer(fh, lineterminator="\n").writerows([[r[i] for i in keep] for r in rd])
+    res2 = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
+    assert not any(f.name == "Formal sigma vs error" for f in res2.figures)
+    assert len(res2.figures) == 6
+    assert "err/σ3D" not in res2.summary
+
+
+def test_spp_reference_flags_a_stale_summary(exam_fixture, tmp_path):
+    # A summary written from a different (e.g. half-finished) CSV must be called
+    # out rather than silently quoted next to contradicting panels.
+    import json
+    import os
+    truth, logs = exam_fixture()
+    p = os.path.join(truth, "truth_spp_summary.json")
+    with open(p, encoding="utf-8") as fh:
+        js = json.load(fh)
+    js["n_epochs"] = 1441                      # CSV holds 6
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(js, fh)
+    res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
+    assert "STALE" in res.summary
+
+
+def test_spp_reference_excludes_partial_hour_from_the_ladder(exam_fixture):
+    # A stub bucket (arc ending mid-hour) is a 1-sample "hourly mean"; quoting it
+    # in the range turned leg 2's flat ladder into a spurious 2x spread.
+    import os
+    truth, logs = exam_fixture()
+    rows = ["week,tow_s,l1_n,l1_pdop,l1_cdt_m,l1_e_m,l1_n_m,l1_u_m,l1_3d_m,"
+            "l1_noklob_3d_m,l1_notgd_3d_m,l1_prec_3d_m,"
+            "if_n,if_pdop,if_cdt_m,if_e_m,if_n_m,if_u_m,if_3d_m,if_noosb_3d_m"]
+    # 120 epochs in hour 1, then ONE epoch that lands in hour 2 carrying a wild value.
+    for i in range(121):
+        tow = 3600.0 + i * 30.0
+        v = 3.0 if i < 120 else 50.0
+        rows.append(f"2313,{tow:.3f},9,1.4,29995.5,-1.5,0.8,{v:.4f},{v:.4f},"
+                    f"{v:.4f},{v:.4f},{v:.4f},10,1.3,29974.4,-0.7,-1.2,0.9,{v:.4f},{v:.4f}")
+    with open(os.path.join(truth, "truth_spp.csv"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(rows) + "\n")
+    res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
+    ladder = [t for t in _textboxes(res) if "→" in t]
+    assert ladder, "hourly ladder textbox missing"
+    assert "partial — excluded" in ladder[0]
+    assert "50.0" not in ladder[0]             # the stub hour never sets the range
 
 
 def test_slip_timeline_burst_label_no_signal_column():

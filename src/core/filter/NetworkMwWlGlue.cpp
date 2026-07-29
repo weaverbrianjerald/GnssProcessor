@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <optional>
 
 namespace GnssProcessor {
@@ -151,48 +152,61 @@ void networkMwWlInject(
     // the accepted solve wins (tow-matched at the write site).
     if (mw_wl_f6_dump && !mw_wl_f6.written && !wl_blocks.empty()) {
         const std::size_t Nc = blocks.size();      // WL blocks append AFTER the carry blocks
-        const auto& wb = wl_blocks.front();        // first carry component's WL block
         mw_wl_f6.rows.clear();
+        mw_wl_f6.row_block.clear();
         mw_wl_f6.week           = se.time.week;
         mw_wl_f6.tow            = se.time.tow;
         mw_wl_f6.loop_epoch     = static_cast<int>(n_loop_epochs);
         mw_wl_f6.wl_block_index = Nc;              // first WL block's index in `blocks`
-        const std::size_t nrow = std::min<std::size_t>(wb.rows.size(), std::size_t{8});
-        for (std::size_t r = 0; r < nrow; ++r) {
-            const auto& terms = wb.rows[r];
-            F6Row fr;
-            fr.zhat_block = (static_cast<Eigen::Index>(r) < wb.zhat.size())
-                                ? wb.zhat(static_cast<Eigen::Index>(r)) : 0.0;
-            for (std::size_t t = 0; t + 1 < terms.size(); t += 2) {
-                const auto& tL1 = terms[t];       // rows are [L1_0,L2_0, L1_1,L2_1, ...]
-                NetworkMwWlLayer::ArcData ad;
-                if (!resolver(tL1.station, tL1.local_col, ad)) continue;
-                F6Arc a;
-                a.est_station   = static_cast<int>(tL1.station);
-                a.col1          = static_cast<int>(ad.col1);
-                a.col2          = static_cast<int>(ad.col2);
-                a.coeff         = (ad.lambda1 > 0.0) ? tL1.coeff * ad.lambda1 : tL1.coeff;
-                a.mw_mean_m     = ad.mw_zd_mean_m;
-                a.mw_var_m2     = ad.mw_var_m2;
-                a.mw_count      = ad.mw_count;
-                a.bia_corrected = ad.bia_corrected;
-                a.x_lin1        = ad.x_lin1;
-                a.x_lin2        = ad.x_lin2;
-                a.lambda1       = ad.lambda1;
-                a.lambda2       = ad.lambda2;
-                a.lambda_wl     = ad.lambda_wl;
-                const auto r1 = revmap.find({ a.est_station, a.col1 });
-                if (r1 != revmap.end()) { a.sat = r1->second.sat; a.sig1 = r1->second.signal; }
-                const auto r2 = revmap.find({ a.est_station, a.col2 });
-                if (r2 != revmap.end()) a.sig2 = r2->second.signal;
-                if (a.lambda_wl > 0.0) fr.z_mw += a.coeff * a.mw_mean_m / a.lambda_wl;
-                if (a.lambda1 > 0.0 && a.lambda2 > 0.0)
-                    fr.z_lin += (a.coeff / a.lambda1) * a.x_lin1
-                              - (a.coeff / a.lambda2) * a.x_lin2;
-                fr.arcs.push_back(std::move(a));
+        // Row budget.  The historical dump sampled min(rows, 8) of wl_blocks.front() ONLY —
+        // a fixed-size SAMPLE, not a population (its size says nothing about how many cycles
+        // the layer built).  f6_max_rows <= 0 lifts the cap; f6_all_blocks walks every WL
+        // block.  Both default to the legacy shape, so an unset config dumps byte-identically.
+        const std::size_t cap = (nmw.f6_max_rows <= 0)
+            ? std::numeric_limits<std::size_t>::max()
+            : static_cast<std::size_t>(nmw.f6_max_rows);
+        const std::size_t n_blk = nmw.f6_all_blocks ? wl_blocks.size() : std::size_t{1};
+        for (std::size_t b = 0; b < n_blk && mw_wl_f6.rows.size() < cap; ++b) {
+            const auto& wb = wl_blocks[b];
+            const std::size_t nrow =
+                std::min<std::size_t>(wb.rows.size(), cap - mw_wl_f6.rows.size());
+            for (std::size_t r = 0; r < nrow; ++r) {
+                const auto& terms = wb.rows[r];
+                F6Row fr;
+                fr.zhat_block = (static_cast<Eigen::Index>(r) < wb.zhat.size())
+                                    ? wb.zhat(static_cast<Eigen::Index>(r)) : 0.0;
+                for (std::size_t t = 0; t + 1 < terms.size(); t += 2) {
+                    const auto& tL1 = terms[t];   // rows are [L1_0,L2_0, L1_1,L2_1, ...]
+                    NetworkMwWlLayer::ArcData ad;
+                    if (!resolver(tL1.station, tL1.local_col, ad)) continue;
+                    F6Arc a;
+                    a.est_station   = static_cast<int>(tL1.station);
+                    a.col1          = static_cast<int>(ad.col1);
+                    a.col2          = static_cast<int>(ad.col2);
+                    a.coeff         = (ad.lambda1 > 0.0) ? tL1.coeff * ad.lambda1 : tL1.coeff;
+                    a.mw_mean_m     = ad.mw_zd_mean_m;
+                    a.mw_var_m2     = ad.mw_var_m2;
+                    a.mw_count      = ad.mw_count;
+                    a.bia_corrected = ad.bia_corrected;
+                    a.x_lin1        = ad.x_lin1;
+                    a.x_lin2        = ad.x_lin2;
+                    a.lambda1       = ad.lambda1;
+                    a.lambda2       = ad.lambda2;
+                    a.lambda_wl     = ad.lambda_wl;
+                    const auto r1 = revmap.find({ a.est_station, a.col1 });
+                    if (r1 != revmap.end()) { a.sat = r1->second.sat; a.sig1 = r1->second.signal; }
+                    const auto r2 = revmap.find({ a.est_station, a.col2 });
+                    if (r2 != revmap.end()) a.sig2 = r2->second.signal;
+                    if (a.lambda_wl > 0.0) fr.z_mw += a.coeff * a.mw_mean_m / a.lambda_wl;
+                    if (a.lambda1 > 0.0 && a.lambda2 > 0.0)
+                        fr.z_lin += (a.coeff / a.lambda1) * a.x_lin1
+                                  - (a.coeff / a.lambda2) * a.x_lin2;
+                    fr.arcs.push_back(std::move(a));
+                }
+                fr.z_corr = fr.z_mw - fr.z_lin;
+                mw_wl_f6.rows.push_back(std::move(fr));
+                mw_wl_f6.row_block.push_back(Nc + b);
             }
-            fr.z_corr = fr.z_mw - fr.z_lin;
-            mw_wl_f6.rows.push_back(std::move(fr));
         }
         mw_wl_f6.pending = !mw_wl_f6.rows.empty();
     }

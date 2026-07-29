@@ -14,6 +14,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -28,6 +29,7 @@
 #include <vector>
 
 #include <Eigen/Dense>
+#include <nlohmann/json.hpp>
 
 #include "common/Constants.hpp"
 #include "config/GnssConfig.hpp"
@@ -35,9 +37,11 @@
 #include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"
 #include "model/ModelGeometry.hpp"
+#include "products/LiveEphemerisStore.hpp"
 #include "products/ProductCache.hpp"
 #include "products/ProductParser.hpp"
 #include "products/ProductTypes.hpp"
+#include "products/RinexNavParser.hpp"
 #include "rinex/RinexParser.hpp"
 #include "sim/EphemerisProvider.hpp"
 #include "sim/IonoDisturbance.hpp"
@@ -595,6 +599,672 @@ static FixtureDate makeFixtureDate(int year, int doy) {
     return fd;
 }
 
+// ===========================================================================
+//  spp-reference — author-side reference runs for exam Part B (SPEC/ANSWER_KEY).
+//
+//  Reads BACK the emitted hero RINEX through the production RinexParser (the
+//  student's view of the data, not the synthesizer's) and computes the two
+//  graded Part-B solutions at every epoch, epoch-wise weighted Gauss-Newton,
+//  exactly at the modelling level the brief demands of a student — emission
+//  time + Sagnac, SV clock incl. the periodic relativistic term, hydrostatic
+//  tropo — and nothing more (no tides/antenna/Shapiro/ZWD: those stay in the
+//  data as authentic unmodeled error, which is what the answer key must price):
+//
+//    leg 1  "the real-time view":  GPS L1 C1C, orbits/clocks from the REAL
+//           broadcast navigation file via the production RinexNavParser ->
+//           LiveEphemerisStore chain (fed epoch-synchronously, so each epoch
+//           sees only the ephemerides a live receiver would hold), +TGD,
+//           +broadcast Klobuchar.
+//    leg 2  "the analyst's check": GPS C1C/C2W ionosphere-free code with the
+//           precise COD MGX SP3/CLK, observables OSB-corrected from the .BIA.
+//
+//  A/B variants (leg 1 without Klobuchar, leg 1 without TGD, leg 2 without
+//  OSB) price the individual terms for the rubric.  Per-epoch errors against
+//  truth_position.csv go to <truth_dir>/truth_spp.csv, summary statistics to
+//  <truth_dir>/truth_spp_summary.json (key-side artifacts; the handout
+//  ship-list does not include truth_*.csv, so nothing leaks to students).
+// ===========================================================================
+
+struct RefObs {
+    std::string sat;
+    double P{ 0.0 };  ///< the (possibly bias-corrected / IF-combined) code observable [m]
+};
+
+struct RefSol {
+    bool ok{ false };
+    Eigen::Vector3d rx{ Eigen::Vector3d::Zero() };
+    double cdt{ 0.0 };   ///< receiver clock c*dt [m]
+    int n_used{ 0 };
+    double pdop{ 0.0 };
+    /// Formal 1-sigma of the epoch's position in the LOCAL ENU frame [m].
+    /// Part B asks for a documented stochastic model at three epochs, so the
+    /// reference has to publish what that model actually yields, not just DOP.
+    /// Scaled by the A-POSTERIORI variance factor (below) rather than an assumed
+    /// a-priori code sigma: the weights w = sin^2(el) are relative, and letting
+    /// the residuals set the scale means the number honestly inflates when the
+    /// storm inflates leg 1's misfit (which is the Part-B/D teaching point).
+    double sig_e{ 0.0 }, sig_n{ 0.0 }, sig_u{ 0.0 };
+    /// sqrt of the a-posteriori variance factor, sigma0 = sqrt(sum(w*v^2)/(n-4)) [m].
+    double sig0{ 0.0 };
+};
+
+// One epoch-wise elevation-weighted (w = sin^2 el) Gauss-Newton code solution
+// (x, y, z, c*dt).  @p brdc selects the orbit/clock source: non-null = the
+// LiveEphemerisStore broadcast chain (leg 1; gated healthy-only at insert and
+// |t - toe| <= 7200 s here, the LNAV fit interval), null = the provider's
+// precise SP3/CLK (leg 2).  Emission time iterates from the OBSERVED
+// pseudorange exactly like the synthesizer's forward model, so the convention
+// cancels.  The relativistic periodic term is computed from the emission-state
+// PV of whichever orbit source is active (equivalent to the broadcast
+// F*e*sqrtA*sinE form at the sub-mm level).
+RefSol solveReferenceEpoch(const sim::EphemerisProvider& eph, LiveEphemerisStore* brdc,
+                           const std::map<std::string, double>* tgd_s, bool apply_tgd,
+                           bool apply_klob, const GnssTime& t, const std::vector<RefObs>& obs,
+                           const Eigen::Vector3d& rx0, double cdt0, double mask_deg) {
+    const double c = Constants::SPEED_OF_LIGHT;
+    RefSol sol;
+    Eigen::Vector3d rx = rx0;
+    double cdt = cdt0;
+
+    // Shared per-observation model evaluation (GN accumulation + final DOP pass).
+    auto evalObs = [&](const RefObs& o, double& resid, Eigen::Vector3d& los, double& w,
+                       Eigen::Vector3d& sat_pos_out) -> bool {
+        const GnssTime em0 = addSeconds(t, -o.P / c);
+        double clk0 = 0.0;
+        if (brdc) {
+            const auto age = brdc->toeAgeSeconds(o.sat, t);
+            if (!age || std::abs(*age) > 7200.0) return false; // outside the fit interval
+            const auto ck = brdc->computeSatelliteClock(o.sat, em0);
+            if (!ck) return false;
+            clk0 = ck->bias;
+        } else {
+            clk0 = eph.clock(o.sat, em0);
+            if (std::abs(clk0) < 1e-12) return false; // no precise clock at this epoch
+        }
+        const GnssTime em = addSeconds(t, -(o.P / c + clk0));
+        Eigen::Vector3d s_em, v_em;
+        double clk = 0.0;
+        if (brdc) {
+            const auto st = brdc->computeSatellitePV(o.sat, em);
+            const auto ck = brdc->computeSatelliteClock(o.sat, em);
+            if (!st || !ck) return false;
+            s_em = st->position;
+            v_em = st->velocity;
+            clk = ck->bias;
+        } else {
+            if (!eph.positionVelocity(o.sat, em, s_em, v_em)) return false;
+            clk = eph.clock(o.sat, em);
+            if (std::abs(clk) < 1e-12) return false;
+        }
+        const Eigen::Vector3d sat_pos = sagnacRotate(s_em, rx);
+        const double range = (sat_pos - rx).norm();
+        const auto topo = Model::Geometry::computeTopocentric(rx, sat_pos);
+        if (topo.elevation_deg < mask_deg) return false;
+        double mf_d = 1.0, mf_w = 1.0;
+        eph.tropoMapping(topo.elevation_deg, rx, t, mf_d, mf_w);
+        double pred = range + cdt - c * clk + eph.relativityMetres(o.sat, s_em, v_em) +
+                      eph.tropoZhd(rx, t) * mf_d;
+        if (apply_tgd && tgd_s) {
+            const auto it = tgd_s->find(o.sat);
+            if (it != tgd_s->end()) pred += c * it->second; // dt_L1 = af - TGD => pred += c*TGD
+        }
+        if (apply_klob)
+            pred += eph.klobucharDelayMetres(rx, sat_pos, t, Constants::GPS_L1_FREQ);
+        resid = o.P - pred;
+        los = (sat_pos - rx) / range;
+        const double sin_el = std::sin(topo.elevation_deg * Constants::PI / 180.0);
+        w = sin_el * sin_el;
+        sat_pos_out = sat_pos;
+        return true;
+    };
+
+    for (int iter = 0; iter < 12; ++iter) {
+        Eigen::Matrix4d N = Eigen::Matrix4d::Zero();
+        Eigen::Vector4d b = Eigen::Vector4d::Zero();
+        int used = 0;
+        for (const auto& o : obs) {
+            double resid = 0.0, w = 0.0;
+            Eigen::Vector3d los, sp;
+            if (!evalObs(o, resid, los, w, sp)) continue;
+            Eigen::Vector4d g;
+            g << -los.x(), -los.y(), -los.z(), 1.0;
+            N += w * g * g.transpose();
+            b += w * g * resid;
+            ++used;
+        }
+        if (used < 4) return sol;
+        const Eigen::Vector4d dx = N.ldlt().solve(b);
+        if (!dx.allFinite()) return sol;
+        rx += dx.head<3>();
+        cdt += dx(3);
+        if (dx.head<3>().norm() < 1e-4) break;
+    }
+    if (!rx.allFinite() || (rx - rx0).norm() > 5.0e6) return sol; // diverged
+
+    // Final pass at the solution: the used-satellite set, its DOP, and the formal
+    // covariance.  Rebuild N here (rather than reusing the last iteration's) so it
+    // is evaluated AT the converged point, and accumulate the weighted residual
+    // sum of squares for the a-posteriori variance factor.
+    std::vector<Eigen::Vector3d> used_pos;
+    Eigen::Matrix4d N = Eigen::Matrix4d::Zero();
+    double wvv = 0.0;
+    for (const auto& o : obs) {
+        double resid = 0.0, w = 0.0;
+        Eigen::Vector3d los, sp;
+        if (!evalObs(o, resid, los, w, sp)) continue;
+        used_pos.push_back(sp);
+        Eigen::Vector4d g;
+        g << -los.x(), -los.y(), -los.z(), 1.0;
+        N += w * g * g.transpose();
+        wvv += w * resid * resid;
+    }
+    if (used_pos.size() < 4) return sol;
+    const Dop dop = computeDop(rx, used_pos, Coordinates::ecefToLlh(rx));
+    sol.ok = true;
+    sol.rx = rx;
+    sol.cdt = cdt;
+    sol.n_used = static_cast<int>(used_pos.size());
+    sol.pdop = dop.ok ? dop.pdop : 0.0;
+
+    // Cov(x) = sigma0^2 * N^-1 with sigma0^2 = sum(w*v^2)/(n-4); rotate the 3x3
+    // position block into ENU so sigma_e/n/u are directly comparable with what a
+    // student reports.  Redundancy n-4 <= 0 (a 4-satellite fix) leaves sigma at 0.
+    const int dof = static_cast<int>(used_pos.size()) - 4;
+    if (dof > 0) {
+        const double var0 = wvv / static_cast<double>(dof);
+        Eigen::Matrix4d Ninv = Eigen::Matrix4d::Zero();
+        const Eigen::FullPivLU<Eigen::Matrix4d> lu(N);
+        if (lu.isInvertible()) {
+            Ninv = lu.inverse();
+            const Eigen::Matrix3d cov_ecef = var0 * Ninv.topLeftCorner<3, 3>();
+            const auto llh = Coordinates::ecefToLlh(rx);
+            const double sla = std::sin(llh.lat_rad), cla = std::cos(llh.lat_rad);
+            const double slo = std::sin(llh.lon_rad), clo = std::cos(llh.lon_rad);
+            Eigen::Matrix3d R;
+            R << -slo, clo, 0.0,
+                 -sla * clo, -sla * slo, cla,
+                  cla * clo, cla * slo, sla;
+            const Eigen::Matrix3d cov_enu = R * cov_ecef * R.transpose();
+            sol.sig_e = std::sqrt(std::max(0.0, cov_enu(0, 0)));
+            sol.sig_n = std::sqrt(std::max(0.0, cov_enu(1, 1)));
+            sol.sig_u = std::sqrt(std::max(0.0, cov_enu(2, 2)));
+            sol.sig0 = std::sqrt(std::max(0.0, var0));
+        }
+    }
+    return sol;
+}
+
+int runSppReference(const std::filesystem::path& truth_dir, const sim::SimConfig& scfg) {
+    const std::string tag = "spp-ref";
+
+    const FixtureDate fd = makeFixtureDate(scfg.date.year, scfg.date.doy);
+    const std::filesystem::path root = GNSS_PROJECT_ROOT;
+    const std::filesystem::path base = root / "data" / fd.dir;
+    const std::filesystem::path setup_obs = base / "obs" / "gcgo00usa" /
+        ("GCGO00USA_R_" + fd.yyyydoy + "0000_01D_30S_MO.rnx");
+    const std::filesystem::path sp3 = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_05M_ORB.SP3");
+    const std::filesystem::path clk = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_30S_CLK.CLK");
+    const std::filesystem::path nav = base / "products" / ("BRDC00IGS_R_" + fd.yyyydoy + "0000_01D_MN.rnx");
+    const std::filesystem::path bia = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_01D_OSB.BIA");
+    for (const std::filesystem::path* p : { &setup_obs, &sp3, &clk, &nav }) {
+        if (!std::filesystem::exists(*p)) {
+            std::cerr << "[" << tag << "] FAIL: missing fixture " << p->string() << "\n";
+            return 1;
+        }
+    }
+    // Leg 2 corrects the observables with the same OSBs the synth injected; without
+    // the .BIA the two leg-2 variants would silently coincide, so warn loudly.
+    const bool want_osb = scfg.corrections.signal_bias && std::filesystem::exists(bia);
+    if (scfg.corrections.signal_bias && !want_osb)
+        std::cerr << "[" << tag << "] WARN: corrections.signal_bias is set but the .BIA is "
+                     "missing; leg 2 runs bias-blind\n";
+
+    // --- The emitted hero RINEX: exactly one *_MO.rnx in the truth dir. --------
+    std::filesystem::path obs_rnx;
+    int n_rnx = 0;
+    for (const auto& de : std::filesystem::directory_iterator(truth_dir)) {
+        if (!de.is_regular_file()) continue;
+        const std::string name = de.path().filename().string();
+        if (name.size() > 7 && name.compare(name.size() - 7, 7, "_MO.rnx") == 0) {
+            obs_rnx = de.path();
+            ++n_rnx;
+        }
+    }
+    if (n_rnx != 1) {
+        std::cerr << "[" << tag << "] FAIL: expected exactly one *_MO.rnx in "
+                  << truth_dir.string() << ", found " << n_rnx << "\n";
+        return 1;
+    }
+
+    // --- Truth trajectory, keyed on the integer-ms tow grid. -------------------
+    struct TruthRow {
+        Eigen::Vector3d xyz;
+        double lat_deg{ 0 }, lon_deg{ 0 }, h_m{ 0 };
+    };
+    std::map<long long, TruthRow> truth;
+    {
+        std::ifstream tf(truth_dir / "truth_position.csv");
+        if (!tf) {
+            std::cerr << "[" << tag << "] FAIL: cannot open " << (truth_dir / "truth_position.csv").string() << "\n";
+            return 1;
+        }
+        auto split = [](const std::string& s) {
+            std::vector<std::string> out;
+            std::size_t p = 0;
+            while (true) {
+                const std::size_t q = s.find(',', p);
+                out.push_back(s.substr(p, q == std::string::npos ? q : q - p));
+                if (q == std::string::npos) break;
+                p = q + 1;
+            }
+            return out;
+        };
+        std::string line;
+        if (!std::getline(tf, line)) {
+            std::cerr << "[" << tag << "] FAIL: empty truth_position.csv\n";
+            return 1;
+        }
+        const auto hdr = split(line);
+        auto col = [&](const char* name) {
+            for (std::size_t i = 0; i < hdr.size(); ++i)
+                if (hdr[i] == name) return static_cast<int>(i);
+            return -1;
+        };
+        const int c_tow = col("tow_s"), c_x = col("x_m"), c_y = col("y_m"), c_z = col("z_m");
+        const int c_lat = col("lat_deg"), c_lon = col("lon_deg"), c_h = col("h_m");
+        if (c_tow < 0 || c_x < 0 || c_y < 0 || c_z < 0 || c_lat < 0 || c_lon < 0 || c_h < 0) {
+            std::cerr << "[" << tag << "] FAIL: truth_position.csv missing a required column\n";
+            return 1;
+        }
+        while (std::getline(tf, line)) {
+            if (line.empty()) continue;
+            const auto v = split(line);
+            const int need = std::max({ c_tow, c_x, c_y, c_z, c_lat, c_lon, c_h });
+            if (static_cast<int>(v.size()) <= need) continue;
+            TruthRow r;
+            const double tow = std::atof(v[c_tow].c_str());
+            r.xyz = Eigen::Vector3d(std::atof(v[c_x].c_str()), std::atof(v[c_y].c_str()),
+                                    std::atof(v[c_z].c_str()));
+            r.lat_deg = std::atof(v[c_lat].c_str());
+            r.lon_deg = std::atof(v[c_lon].c_str());
+            r.h_m = std::atof(v[c_h].c_str());
+            truth[static_cast<long long>(std::llround(tow * 1000.0))] = r;
+        }
+    }
+    if (truth.empty()) {
+        std::cerr << "[" << tag << "] FAIL: no rows parsed from truth_position.csv\n";
+        return 1;
+    }
+
+    // --- Precise chain + Klobuchar + OSB via the standard provider. ------------
+    std::vector<std::filesystem::path> products = { sp3, clk };
+    if (want_osb) products.push_back(bia);
+    sim::EphemerisProvider eph(setup_obs, products, truth_dir / "logs_spp" / "provider", nav);
+    if (!eph.ok()) {
+        std::cerr << "[" << tag << "] FAIL: EphemerisProvider setup\n";
+        return 1;
+    }
+    if (!eph.hasKlobuchar()) {
+        std::cerr << "[" << tag << "] FAIL: no broadcast Klobuchar field (GPSA/GPSB) in "
+                  << nav.string() << " — leg 1 cannot run the bridge stack\n";
+        return 1;
+    }
+    if (want_osb && !eph.hasSignalBias()) {
+        std::cerr << "[" << tag << "] FAIL: .BIA present but no OSB entries loaded\n";
+        return 1;
+    }
+
+    // --- Broadcast ephemerides: healthy GPS records, sorted by toe. ------------
+    auto toeAbs = [](const BroadcastEphemeris& r) {
+        return r.kepler.toe.week * 604800.0 + r.kepler.toe.tow;
+    };
+    std::vector<BroadcastEphemeris> brdc;
+    int n_unhealthy = 0;
+    for (auto& r : RinexNavParser::parse(nav.string())) {
+        if (r.satellite.empty() || r.satellite[0] != 'G') continue;
+        if (r.health != 0) {
+            ++n_unhealthy;
+            continue;
+        }
+        brdc.push_back(r);
+    }
+    std::sort(brdc.begin(), brdc.end(),
+              [&](const BroadcastEphemeris& a, const BroadcastEphemeris& b) {
+                  return toeAbs(a) < toeAbs(b);
+              });
+    if (brdc.empty()) {
+        std::cerr << "[" << tag << "] FAIL: no healthy GPS broadcast ephemerides in " << nav.string() << "\n";
+        return 1;
+    }
+    std::cout << "[" << tag << "] " << brdc.size() << " healthy GPS broadcast ephemerides ("
+              << n_unhealthy << " unhealthy skipped); OSB " << (want_osb ? "ON" : "OFF") << "\n";
+
+    // --- The student's view: parse the emitted RINEX back.  Reuses the
+    // provider's LogManager: spdlog logger names are process-global, so a second
+    // LogManager here would fail to initialize.
+    GnssConfig obs_config;
+    obs_config.setObservationPath(obs_rnx);
+    ProductParser obs_pp(obs_config, eph.logManager());
+    RinexParser obs_parser(obs_config, eph.logManager(), obs_pp);
+    if (!obs_parser.parse()) {
+        std::cerr << "[" << tag << "] FAIL: RinexParser::parse() on " << obs_rnx.string() << "\n";
+        return 1;
+    }
+    const auto& all_obs = obs_parser.getObservations();
+    struct EpochObs {
+        GnssTime t;
+        std::vector<const RinexObservation*> recs;
+    };
+    std::vector<EpochObs> epochs;
+    for (const auto& o : all_obs) {
+        if (epochs.empty() || epochs.back().t.week != o.time.week ||
+            std::abs(epochs.back().t.tow - o.time.tow) > 1e-6)
+            epochs.push_back({ o.time, {} });
+        epochs.back().recs.push_back(&o);
+    }
+    std::cout << "[" << tag << "] " << obs_rnx.filename().string() << ": " << all_obs.size()
+              << " records over " << epochs.size() << " epochs\n";
+
+    // --- Epoch loop: 5 solutions per epoch. ------------------------------------
+    const double c = Constants::SPEED_OF_LIGHT;
+    const double f1 = Constants::GPS_L1_FREQ, f2 = Constants::GPS_L2_FREQ;
+    const double a1 = f1 * f1 / (f1 * f1 - f2 * f2);   // IF combination coefficients
+    const double a2 = f2 * f2 / (f1 * f1 - f2 * f2);
+    const double mask_deg = scfg.geometry.elevation_mask_deg;
+    const double d2r = Constants::PI / 180.0;
+
+    auto& store = LiveEphemerisStore::getInstance();
+    store.clear();
+    std::map<std::string, double> tgd_s;   // per-sat TGD of the latest inserted record
+    std::size_t next_eph = 0;
+
+    Eigen::Vector3d seed_l1 = obs_parser.getApproxPositionXyz();
+    Eigen::Vector3d seed_if = seed_l1;
+    double seed_l1_cdt = 0.0, seed_if_cdt = 0.0;
+
+    std::ofstream csv(truth_dir / "truth_spp.csv");
+    // The *_sig_[enu]_m / *_sig0_m columns publish each leg's FORMAL per-epoch
+    // uncertainty (a-posteriori-scaled, ENU) alongside its error, so Part B's
+    // "document your stochastic model" has a reference at whichever three epochs
+    // the student picked -- previously only DOP was emitted, which is geometry
+    // alone and says nothing about the measurement noise the student assumed.
+    csv << "week,tow_s,l1_n,l1_pdop,l1_cdt_m,l1_e_m,l1_n_m,l1_u_m,l1_3d_m,"
+           "l1_sig_e_m,l1_sig_n_m,l1_sig_u_m,l1_sig0_m,"
+           "l1_noklob_3d_m,l1_notgd_3d_m,l1_prec_3d_m,if_n,if_pdop,if_cdt_m,if_e_m,if_n_m,if_u_m,"
+           "if_3d_m,if_sig_e_m,if_sig_n_m,if_sig_u_m,if_sig0_m,if_noosb_3d_m\n";
+    csv << std::fixed;
+
+    struct Acc {
+        std::vector<double> d3, dh, du;
+        int fail{ 0 };
+        long long n_used_sum{ 0 };
+        std::array<double, 24> hr_sum{};
+        std::array<int, 24> hr_n{};
+    };
+    Acc a_l1, a_nk, a_nt, a_pr, a_if, a_no;
+    std::vector<double> delta_klob, delta_tgd, delta_osb, delta_brdc; // paired per-epoch 3D deltas
+    int n_truth_miss = 0;
+
+    for (const auto& ep : epochs) {
+        const double t_abs = ep.t.week * 604800.0 + ep.t.tow;
+        // Feed the store epoch-synchronously: a live receiver holds the currently
+        // broadcast data set, whose toe can sit up to ~2 h ahead of clock time.
+        while (next_eph < brdc.size() && toeAbs(brdc[next_eph]) <= t_abs + 7200.0) {
+            store.insert(brdc[next_eph]);
+            tgd_s[brdc[next_eph].satellite] = brdc[next_eph].kepler.tgd0;
+            ++next_eph;
+        }
+
+        std::vector<RefObs> l1, if_osb, if_raw;
+        for (const auto* r : ep.recs) {
+            if (r->satellite.empty() || r->satellite[0] != 'G') continue;
+            const auto c1 = r->measurements.find("C1C");
+            if (c1 == r->measurements.end() || !((*c1).second > 1.0e6)) continue;
+            l1.push_back({ r->satellite, (*c1).second });
+            const auto c2 = r->measurements.find("C2W");
+            if (c2 == r->measurements.end() || !((*c2).second > 1.0e6)) continue;
+            const double b1 = want_osb ? eph.signalBiasMetres(r->satellite, "C1C", ep.t) : 0.0;
+            const double b2 = want_osb ? eph.signalBiasMetres(r->satellite, "C2W", ep.t) : 0.0;
+            if_osb.push_back({ r->satellite, a1 * ((*c1).second - b1) - a2 * ((*c2).second - b2) });
+            if_raw.push_back({ r->satellite, a1 * (*c1).second - a2 * (*c2).second });
+        }
+
+        const RefSol s_l1 = solveReferenceEpoch(eph, &store, &tgd_s, true, true, ep.t, l1,
+                                                seed_l1, seed_l1_cdt, mask_deg);
+        const RefSol s_nk = solveReferenceEpoch(eph, &store, &tgd_s, true, false, ep.t, l1,
+                                                seed_l1, seed_l1_cdt, mask_deg);
+        const RefSol s_nt = solveReferenceEpoch(eph, &store, &tgd_s, false, true, ep.t, l1,
+                                                seed_l1, seed_l1_cdt, mask_deg);
+        // Precise-orbit/clock twin of the no-TGD broadcast leg (same raw C1C, same
+        // Klobuchar, bias content identical on both sides) — the paired delta
+        // against s_nt isolates the pure broadcast orbit/clock error.
+        const RefSol s_pr = solveReferenceEpoch(eph, nullptr, nullptr, false, true, ep.t, l1,
+                                                seed_l1, seed_l1_cdt, mask_deg);
+        const RefSol s_if = solveReferenceEpoch(eph, nullptr, nullptr, false, false, ep.t, if_osb,
+                                                seed_if, seed_if_cdt, mask_deg);
+        const RefSol s_no = solveReferenceEpoch(eph, nullptr, nullptr, false, false, ep.t, if_raw,
+                                                seed_if, seed_if_cdt, mask_deg);
+        if (s_l1.ok) { seed_l1 = s_l1.rx; seed_l1_cdt = s_l1.cdt; }
+        if (s_if.ok) { seed_if = s_if.rx; seed_if_cdt = s_if.cdt; }
+
+        const auto tr = truth.find(static_cast<long long>(std::llround(ep.t.tow * 1000.0)));
+        if (tr == truth.end()) ++n_truth_miss;
+        // Bucket on integer milliseconds: the parser's calendar->tow conversion can
+        // sit an ulp below an exact hour boundary, which would drop boundary epochs
+        // into the previous UT-hour bucket and shift every label by one.
+        const double rel_ms = static_cast<double>(std::llround((ep.t.tow - fd.day_start_tow) * 1000.0));
+        const int hr = std::max(0, std::min(23, static_cast<int>(rel_ms / 3600000.0)));
+
+        // ENU error of one solution against this epoch's truth; nan when unsolved.
+        auto errOf = [&](const RefSol& s, Eigen::Vector3d& enu, double& d3) -> bool {
+            if (!s.ok || tr == truth.end()) return false;
+            const Eigen::Vector3d dx = s.rx - tr->second.xyz;
+            const Coordinates::Llh llh{ tr->second.lat_deg * d2r, tr->second.lon_deg * d2r,
+                                        tr->second.h_m };
+            enu = Coordinates::ecefToEnu(dx, llh);
+            d3 = dx.norm();
+            return true;
+        };
+        auto accum = [&](const RefSol& s, Acc& a, Eigen::Vector3d& enu, double& d3) {
+            if (!errOf(s, enu, d3)) {
+                ++a.fail;
+                return false;
+            }
+            a.d3.push_back(d3);
+            a.dh.push_back(std::hypot(enu.x(), enu.y()));
+            a.du.push_back(std::abs(enu.z()));
+            a.n_used_sum += s.n_used;
+            a.hr_sum[hr] += d3;
+            a.hr_n[hr] += 1;
+            return true;
+        };
+        Eigen::Vector3d e_l1, e_nk, e_nt, e_pr, e_if, e_no;
+        double d_l1 = 0, d_nk = 0, d_nt = 0, d_pr = 0, d_if = 0, d_no = 0;
+        const bool ok_l1 = accum(s_l1, a_l1, e_l1, d_l1);
+        const bool ok_nk = accum(s_nk, a_nk, e_nk, d_nk);
+        const bool ok_nt = accum(s_nt, a_nt, e_nt, d_nt);
+        const bool ok_pr = accum(s_pr, a_pr, e_pr, d_pr);
+        const bool ok_if = accum(s_if, a_if, e_if, d_if);
+        const bool ok_no = accum(s_no, a_no, e_no, d_no);
+        if (ok_l1 && ok_nk) delta_klob.push_back(d_nk - d_l1);
+        if (ok_l1 && ok_nt) delta_tgd.push_back(d_nt - d_l1);
+        if (ok_if && ok_no) delta_osb.push_back(d_no - d_if);
+        if (ok_nt && ok_pr) delta_brdc.push_back(d_nt - d_pr);
+
+        auto num = [&](double v, int prec) {
+            if (std::isfinite(v))
+                csv << std::setprecision(prec) << v;
+            else
+                csv << "nan";
+        };
+        csv << ep.t.week << ",";
+        num(ep.t.tow, 3);
+        csv << "," << (s_l1.ok ? s_l1.n_used : 0) << ",";
+        num(s_l1.ok ? s_l1.pdop : std::nan(""), 2);
+        csv << ",";
+        num(s_l1.ok ? s_l1.cdt : std::nan(""), 3);
+        csv << ",";
+        num(ok_l1 ? e_l1.x() : std::nan(""), 4);
+        csv << ",";
+        num(ok_l1 ? e_l1.y() : std::nan(""), 4);
+        csv << ",";
+        num(ok_l1 ? e_l1.z() : std::nan(""), 4);
+        csv << ",";
+        num(ok_l1 ? d_l1 : std::nan(""), 4);
+        csv << ",";
+        num(s_l1.ok ? s_l1.sig_e : std::nan(""), 4);
+        csv << ",";
+        num(s_l1.ok ? s_l1.sig_n : std::nan(""), 4);
+        csv << ",";
+        num(s_l1.ok ? s_l1.sig_u : std::nan(""), 4);
+        csv << ",";
+        num(s_l1.ok ? s_l1.sig0 : std::nan(""), 4);
+        csv << ",";
+        num(ok_nk ? d_nk : std::nan(""), 4);
+        csv << ",";
+        num(ok_nt ? d_nt : std::nan(""), 4);
+        csv << ",";
+        num(ok_pr ? d_pr : std::nan(""), 4);
+        csv << "," << (s_if.ok ? s_if.n_used : 0) << ",";
+        num(s_if.ok ? s_if.pdop : std::nan(""), 2);
+        csv << ",";
+        num(s_if.ok ? s_if.cdt : std::nan(""), 3);
+        csv << ",";
+        num(ok_if ? e_if.x() : std::nan(""), 4);
+        csv << ",";
+        num(ok_if ? e_if.y() : std::nan(""), 4);
+        csv << ",";
+        num(ok_if ? e_if.z() : std::nan(""), 4);
+        csv << ",";
+        num(ok_if ? d_if : std::nan(""), 4);
+        csv << ",";
+        num(s_if.ok ? s_if.sig_e : std::nan(""), 4);
+        csv << ",";
+        num(s_if.ok ? s_if.sig_n : std::nan(""), 4);
+        csv << ",";
+        num(s_if.ok ? s_if.sig_u : std::nan(""), 4);
+        csv << ",";
+        num(s_if.ok ? s_if.sig0 : std::nan(""), 4);
+        csv << ",";
+        num(ok_no ? d_no : std::nan(""), 4);
+        csv << "\n";
+    }
+    csv.close();
+
+    // --- Summary statistics + JSON. --------------------------------------------
+    struct VarStats {
+        int n{ 0 };
+        double median{ 0 }, mean{ 0 }, p90{ 0 }, max{ 0 };
+    };
+    auto statsOf = [](const std::vector<double>& in) {
+        VarStats s;
+        if (in.empty()) return s;
+        std::vector<double> v = in;
+        std::sort(v.begin(), v.end());
+        s.n = static_cast<int>(v.size());
+        s.median = v[v.size() / 2];
+        double sum = 0;
+        for (double x : v) sum += x;
+        s.mean = sum / static_cast<double>(v.size());
+        s.p90 = v[static_cast<std::size_t>(std::floor(0.9 * static_cast<double>(v.size() - 1)))];
+        s.max = v.back();
+        return s;
+    };
+    auto meanOf = [](const std::vector<double>& v) {
+        if (v.empty()) return 0.0;
+        double s = 0;
+        for (double x : v) s += x;
+        return s / static_cast<double>(v.size());
+    };
+
+    nlohmann::json j;
+    j["generated_by"] = "gnss_simulator spp-reference";
+    j["date"] = { { "year", scfg.date.year }, { "doy", scfg.date.doy }, { "iso", fd.iso } };
+    j["obs_rinex"] = obs_rnx.filename().string();
+    j["n_epochs"] = epochs.size();
+    j["elevation_mask_deg"] = mask_deg;
+    j["estimator"] = "epoch-wise Gauss-Newton WLS (x,y,z,c*dt), w = sin^2(el)";
+    j["modeled"] = "emission time + Sagnac; SV clock (+ periodic relativistic); "
+                   "Saastamoinen ZHD * GMF dry; leg1 +TGD +broadcast Klobuchar; "
+                   "leg2 ionosphere-free C1C/C2W with OSB-corrected observables";
+    j["unmodeled_by_design"] = "wet troposphere (ZWD), Shapiro, solid-earth/pole tide, "
+                               "ocean loading, satellite+receiver antenna PCO/PCV, multipath";
+    auto pack = [&](const Acc& a, const char* note) {
+        const VarStats s3 = statsOf(a.d3), sh = statsOf(a.dh), su = statsOf(a.du);
+        nlohmann::json v;
+        v["note"] = note;
+        v["n_solved"] = s3.n;
+        v["n_failed"] = a.fail;
+        v["mean_sats_used"] = s3.n ? static_cast<double>(a.n_used_sum) / s3.n : 0.0;
+        v["err3d_m"] = { { "median", s3.median }, { "mean", s3.mean }, { "p90", s3.p90 }, { "max", s3.max } };
+        v["horizontal_median_m"] = sh.median;
+        v["up_abs_median_m"] = su.median;
+        nlohmann::json hours = nlohmann::json::array();
+        for (int h = 0; h < 24; ++h)
+            if (a.hr_n[h])
+                hours.push_back({ { "ut_hour", h },
+                                  { "n", a.hr_n[h] },
+                                  { "mean_3d_m", a.hr_sum[h] / a.hr_n[h] } });
+        v["hourly"] = hours;
+        return v;
+    };
+    j["variants"]["l1_broadcast"] = pack(a_l1, "leg 1: C1C + brdc eph/clk + TGD + Klobuchar (the bridge stack)");
+    j["variants"]["l1_no_klobuchar"] = pack(a_nk, "leg 1 A/B: Klobuchar correction omitted");
+    j["variants"]["l1_no_tgd"] = pack(a_nt, "leg 1 A/B: TGD not applied");
+    j["variants"]["l1_precise_orbits"] = pack(a_pr, "leg 1 A/B: precise SP3/CLK instead of broadcast "
+                                                    "(pair vs l1_no_tgd = pure broadcast orbit/clock error)");
+    j["variants"]["if_precise"] = pack(a_if, "leg 2: IF(C1C,C2W) code + precise SP3/CLK, OSB-corrected");
+    j["variants"]["if_no_osb"] = pack(a_no, "leg 2 A/B: raw observables, biases ignored");
+    j["paired_mean_delta_3d_m"] = { { "klobuchar_off_minus_on", meanOf(delta_klob) },
+                                    { "tgd_off_minus_on", meanOf(delta_tgd) },
+                                    { "osb_off_minus_on", meanOf(delta_osb) },
+                                    { "broadcast_minus_precise_orbits", meanOf(delta_brdc) } };
+    {
+        std::ofstream js(truth_dir / "truth_spp_summary.json");
+        js << j.dump(2) << "\n";
+    }
+
+    auto report = [&](const char* label, const Acc& a) {
+        const VarStats s3 = statsOf(a.d3), sh = statsOf(a.dh), su = statsOf(a.du);
+        std::cout << "[" << tag << "] " << label << ": " << s3.n << "/" << epochs.size()
+                  << " solved";
+        if (a.fail) std::cout << " (" << a.fail << " failed)";
+        if (s3.n)
+            std::cout << "; 3D m median " << std::fixed << std::setprecision(3) << s3.median
+                      << " mean " << s3.mean << " p90 " << s3.p90 << " max " << s3.max
+                      << "; H med " << sh.median << " |U| med " << su.median;
+        std::cout << "\n";
+    };
+    auto hourly = [&](const char* label, const Acc& a) {
+        std::cout << "[" << tag << "]   " << label << " hourly mean 3D (UT h):";
+        for (int h = 0; h < 24; ++h)
+            if (a.hr_n[h])
+                std::cout << " " << h << "=" << std::fixed << std::setprecision(2)
+                          << a.hr_sum[h] / a.hr_n[h];
+        std::cout << "\n";
+    };
+    if (n_truth_miss)
+        std::cout << "[" << tag << "] WARN: " << n_truth_miss << " epochs had no truth row\n";
+    report("leg1 brdc+TGD+Klob ", a_l1);
+    hourly("leg1", a_l1);
+    report("leg1 no-Klobuchar  ", a_nk);
+    report("leg1 no-TGD        ", a_nt);
+    report("leg1 precise-orbit ", a_pr);
+    report("leg2 IF+OSB precise", a_if);
+    hourly("leg2", a_if);
+    report("leg2 IF no-OSB     ", a_no);
+    std::cout << "[" << tag << "] paired mean d3D: Klobuchar saves "
+              << std::setprecision(3) << meanOf(delta_klob) << " m; TGD saves "
+              << meanOf(delta_tgd) << " m; OSB saves " << meanOf(delta_osb)
+              << " m; broadcast orbit/clock costs " << meanOf(delta_brdc) << " m\n";
+    std::cout << "[" << tag << "] wrote " << (truth_dir / "truth_spp.csv").string() << " and "
+              << (truth_dir / "truth_spp_summary.json").string() << "\n";
+    const bool complete = a_l1.d3.size() == epochs.size() && a_if.d3.size() == epochs.size();
+    if (!complete)
+        std::cerr << "[" << tag << "] WARN: not every epoch produced both canonical solutions\n";
+    return 0;
+}
+
 int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::SimConfig& scfg) {
     const std::string tag = kinematic ? "synth-kinematic" : "synth-static";
     std::error_code ec;
@@ -1020,6 +1690,11 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         scfg.iono.background_source == "gim"      ? Background::Gim :
         scfg.iono.background_source == "analytic" ? Background::Analytic : Background::Klobuchar;
 
+    // Basename of the IONEX actually loaded, echoed into scenario_summary.json so
+    // the handout packager does not have to guess it by glob (make_brief.py emits a
+    // C4 warning and falls back to a *.INX glob when storm.gim_file is absent).
+    std::string gim_file_name;
+
     if (background == Background::Gim) {
         std::filesystem::path gim_path = scfg.iono.gim_path;
         if (gim_path.empty())
@@ -1029,6 +1704,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                       << gim_path.string() << " could not be loaded.\n";
             return 1;
         }
+        gim_file_name = gim_path.filename().string();
         // The GIM background does NOT cancel against Klobuchar — that residual IS the
         // single-frequency payload — so the broadcast field must still be present to
         // subtract.  Without it the Part-B storyline silently degrades to nothing.
@@ -1045,13 +1721,19 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
             std::cerr << "[" << tag << "] FAIL: loaded IONEX carries no maps.\n";
             return 1;
         }
-        const double a0 = truth.front().time.tow, a1 = truth.back().time.tow;
-        if (truth.front().time.week != g0.week || truth.back().time.week != g1.week ||
-            a0 < g0.tow || a1 > g1.tow) {
-            std::cerr << "[" << tag << "] FAIL: arc [" << a0 << ", " << a1 << "] (week "
-                      << truth.front().time.week << ") is not strictly inside the IONEX map span ["
-                      << g0.tow << ", " << g1.tow << "] (week " << g0.week
-                      << ") — the GIM would be clamped and longitude-rotated.\n";
+        // Compare in CONTINUOUS GPS seconds, not (week == week && tow in range): a day
+        // that ENDS the GPS week (DOY 132 = week 2313 day 6) puts its final map at
+        // midnight of the NEXT day = week+1, tow 18 (IONEX epochs are UTC-labelled;
+        // +18 s leap on conversion), and a week-equality check would falsely reject an
+        // arc that is strictly inside the span.
+        const auto cont = [](const GnssTime& t) { return t.week * 604800.0 + t.tow; };
+        const double A0 = cont(truth.front().time), A1 = cont(truth.back().time);
+        if (A0 < cont(g0) || A1 > cont(g1)) {
+            std::cerr << "[" << tag << "] FAIL: arc [w" << truth.front().time.week << "/"
+                      << truth.front().time.tow << ", w" << truth.back().time.week << "/"
+                      << truth.back().time.tow << "] is not strictly inside the IONEX map span [w"
+                      << g0.week << "/" << g0.tow << ", w" << g1.week << "/" << g1.tow
+                      << "] — the GIM would be clamped and longitude-rotated.\n";
             return 1;
         }
         std::cout << "[" << tag << "] quiet background: CODE GIM " << gim_path.filename().string()
@@ -1793,7 +2475,20 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         js << "    \"window_tow_s\": [" << std::setprecision(3) << win_start << ", " << win_end << "],\n";
         js << "    \"peak_slant_dI_L1_m\": " << std::setprecision(4) << peak_dI_L1 << ",\n";
         js << "    \"peak_sat\": \"" << peak_dI_sat << "\", \"peak_tow_s\": " << std::setprecision(3) << peak_dI_tow << ",\n";
-        js << "    \"quiet_background\": \"" << (eph.hasKlobuchar() ? "broadcast Klobuchar" : "analytic") << "\"\n";
+        if (!gim_file_name.empty())
+            js << "    \"gim_file\": \"" << gim_file_name << "\",\n";
+        // Human-readable twin of the top-level "iono_background" above.  This MUST
+        // follow iono.background_source and not merely whether the nav file carries
+        // Klobuchar coefficients: a GIM-background run still has GPSA/GPSB in its
+        // nav file, so keying off hasKlobuchar() alone labelled every GIM instance
+        // "broadcast Klobuchar".  make_brief.py falls back to this string when the
+        // top-level key is absent, so a wrong value here can reach the STUDENT brief
+        // (it matches case-insensitively on "gim").
+        js << "    \"quiet_background\": \""
+           << (background == Background::Gim      ? "GIM (IONEX)"
+             : background == Background::Analytic ? "analytic"
+             : (eph.hasKlobuchar() ? "broadcast Klobuchar"
+                                   : "analytic (no broadcast Klobuchar)")) << "\"\n";
         js << "  },\n";
         js << "  \"noise\": {\"code_sigma_zen_m\": " << std::setprecision(4) << sigma_zen
            << ", \"phase_sigma_zen_m\": " << sigma_phase << ", \"seed\": " << scfg.noise.seed << "},\n";
@@ -1913,6 +2608,15 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                   << "] single-freq SPP (GPS L1 + Klobuchar): quiet 3D mean " << sf_quiet_sum / sf_quiet_n
                   << " m (max " << sf_quiet_max << "), STORM 3D mean " << sf_storm_sum / sf_storm_n
                   << " m (max " << sf_storm_max << ") -- storm biases single-freq, cancels in dual-freq\n";
+    } else if (sf_storm_n > 0) {
+        // Whole-arc storm window (a maximum-storm-content instance): there is no
+        // within-arc quiet control, so the storm-vs-quiet contrast gate below is
+        // unevaluable BY DESIGN — the gradable single-frequency signal is the absolute
+        // degradation throughout (a quiet day sits at ~1-2 m).
+        std::cout << std::setprecision(3) << "[" << tag
+                  << "] single-freq SPP (GPS L1 + Klobuchar): storm window spans the WHOLE arc — 3D mean "
+                  << sf_storm_sum / sf_storm_n << " m (max " << sf_storm_max
+                  << ") throughout; no within-arc quiet control\n";
     }
 
     int failures = 0;
@@ -2112,9 +2816,20 @@ int main(int argc, char** argv) {
             std::filesystem::temp_directory_path() / (kin ? "gnss_sim_kine" : "gnss_sim_synth");
         return runSynth(outdirArg(dflt), kin, scfg);
     }
+    if (cmd == "spp-reference") {
+        // Part-B reference runs against an ALREADY-SYNTHESIZED truth dir; the sim
+        // config supplies the fixture date (and the OSB opt-in) — pass the SAME
+        // --sim-config the dataset was synthesized with.
+        if (ac < 3) {
+            std::cerr << "usage: gnss_simulator spp-reference <truth_dir> [--sim-config <sim.json>]\n";
+            return 2;
+        }
+        return runSppReference(std::filesystem::path(a[2]), scfg);
+    }
     if (cmd == "all") {
-        // One-shot loop: synthesize -> run gnss_processor (out-of-process, per-run
-        // CWD because its log dir is hardcoded to ./logs) -> verify.  The config's
+        // One-shot loop: synthesize -> spp-reference (child process; Part-B reference
+        // solutions) -> run gnss_processor (out-of-process, per-run CWD because its
+        // log dir is hardcoded to ./logs) -> verify.  The config's
         // files.observation_path MUST point at <output_dir>'s synthesized RINEX.
         if (ac < 5) {
             std::cerr << "usage: gnss_simulator all <static|kinematic> <output_dir> <config>"
@@ -2133,16 +2848,36 @@ int main(int argc, char** argv) {
             : std::filesystem::path(a[0]).parent_path() / "gnss_processor.exe"; // sibling of this exe
         applyPositionalOverrides(/*isb=*/6, /*storm=*/7);
 
-        std::cout << "[all] (1/3) synthesize (" << mode << ") -> " << outdir.string() << "\n";
+        std::cout << "[all] (1/4) synthesize (" << mode << ") -> " << outdir.string() << "\n";
         if (runSynth(outdir, mode == "kinematic", scfg) != 0) {
             std::cerr << "[all] synthesis failed\n";
             return 1;
         }
 
+        // (2/4) Part-B SPP reference runs (truth_spp.csv + summary) — re-invoked as a
+        // CHILD process, not called in-process: LogManager/spdlog logger names and the
+        // product caches are process-global singletons, runSynth's provider has already
+        // claimed them in this process, and a second LogManager aborts (its console
+        // fallback re-registers the same logger name unguarded).  Fail-loud: an
+        // instance whose Part-B reference cannot be computed is not a valid exam
+        // artifact (missing nav/products or a broken RINEX).
+        std::cout << "[all] (2/4) spp-reference -> " << (outdir / "truth_spp.csv").string() << "\n";
+        {
+            std::string sp_cmd = "\"\"" + std::filesystem::path(a[0]).string() +
+                                 "\" spp-reference \"" + outdir.string() + "\"";
+            if (!sim_config_path.empty()) sp_cmd += " --sim-config \"" + sim_config_path + "\"";
+            sp_cmd += "\"";
+            const int sec = std::system(sp_cmd.c_str());
+            if (sec != 0) {
+                std::cerr << "[all] spp-reference exited " << sec << "\n";
+                return 1;
+            }
+        }
+
         const std::filesystem::path rundir = outdir / "run";
         std::error_code ec;
         std::filesystem::create_directories(rundir, ec);
-        std::cout << "[all] (2/3) gnss_processor " << config.string() << " (cwd " << rundir.string() << ")\n";
+        std::cout << "[all] (3/4) gnss_processor " << config.string() << " (cwd " << rundir.string() << ")\n";
         if (!std::filesystem::exists(proc)) {
             std::cerr << "[all] processor not found: " << proc.string() << " (pass it as arg 5)\n";
             return 1;
@@ -2158,7 +2893,7 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        std::cout << "[all] (3/3) verify\n";
+        std::cout << "[all] (4/4) verify\n";
         sim::VerifierConfig vcfg;
         vcfg.truth_dir = outdir;
         vcfg.run_logs_dir = rundir / "logs";
@@ -2172,8 +2907,9 @@ int main(int argc, char** argv) {
         return res.pass ? 0 : 1;
     }
     std::cerr << "usage: " << (argc > 0 ? argv[0] : "gnss_simulator")
-              << " <selftest|probe-orbit|synth-static|synth-kinematic|verify|all> ...\n"
+              << " <selftest|probe-orbit|synth-static|synth-kinematic|spp-reference|verify|all> ...\n"
               << "  synth-static|synth-kinematic [output_dir] [isb_m] [storm_scale] [--sim-config <sim.json>]\n"
+              << "  spp-reference <truth_dir> [--sim-config <sim.json>]\n"
               << "  verify <truth_dir> <run_logs_dir>\n"
               << "  all <static|kinematic> <output_dir> <config> [processor_exe] [isb_m] [storm_scale] [--sim-config <sim.json>]\n";
     return 2;

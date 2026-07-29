@@ -123,9 +123,21 @@ public:
         pending_[station] = stat;
     }
 
+    /// SPEC_day129_frame_guards P1-2: one engage/release transition of the LAST
+    /// @ref advance call.  The run-end summary reports only TOTALS (326 engage /
+    /// 307 release over the day), which cannot say whether a wave landed at the
+    /// collapse epoch — that needs the per-epoch list.
+    struct Transition {
+        std::string station;
+        double      z{0.0};      ///< robust z-score that tripped it
+        double      w{1.0};      ///< weight AFTER this epoch's rate-limited slew
+        bool        engaged{false};  ///< true = ENGAGE, false = RELEASE
+    };
+
     /// v2: advance the network-relative robust gate one epoch.  @p clean == false (a datum /
     /// pivot handover this epoch) ⇒ discard this epoch's observations and HOLD all weights.
     void advance(bool clean) {
+        last_transitions_.clear();   // P1-2: per-CALL, so a held epoch reports none
         if (!adaptive_) return;
         if (!clean) { pending_.clear(); return; }
         // (1) EWMA update per observed station.
@@ -157,13 +169,22 @@ public:
             double target = 1.0;
             if (g.n >= min_epochs_ && mad_sigma > 0.0) {
                 g.z = (g.ewma - med) / mad_sigma;
-                if (!g.engaged && g.z > sigma_hi_) { g.engaged = true; ++trigger_; }
-                else if (g.engaged && g.z < sigma_lo_) { g.engaged = false; ++release_; }
+                if (!g.engaged && g.z > sigma_hi_) {
+                    g.engaged = true; ++trigger_;
+                    last_transitions_.push_back({kv.first, g.z, g.w, true});   // P1-2
+                } else if (g.engaged && g.z < sigma_lo_) {
+                    g.engaged = false; ++release_;
+                    last_transitions_.push_back({kv.first, g.z, g.w, false});  // P1-2
+                }
                 if (g.engaged) target = rampTarget(g.z);
             }
             const double d = target - g.w;
             g.w += std::min(rate_, std::max(-rate_, d));
             g.w = std::min(1.0, std::max(floor_, g.w));
+            // P1-2: report the POST-slew weight (what the next epoch's assembly
+            // will actually multiply the SH rows by), not the pre-slew value.
+            if (!last_transitions_.empty() && last_transitions_.back().station == kv.first)
+                last_transitions_.back().w = g.w;
             if (g.engaged) { ++engaged; ever_.insert(kv.first); }
         }
         const std::size_t static_cnt = (static_w_ < 1.0) ? static_.size() : 0;
@@ -212,6 +233,42 @@ public:
         return it != gates_.end() ? it->second.n : 0;
     }
 
+    /// SPEC_day129_frame_guards P1-2: engage/release transitions of the LAST
+    /// @ref advance call (empty on a held / non-adaptive epoch).
+    const std::vector<Transition>& lastTransitions() const { return last_transitions_; }
+
+    /// P1-2: cheap per-epoch aggregate of the CURRENT weight field.
+    struct Aggregate {
+        int    n_engaged{0};  ///< adaptive gates currently engaged (excludes the static list)
+        int    n_zero{0};     ///< stations at w <= kZeroW — SH block fully dropped, iono floating
+        double min_w{1.0};    ///< smallest weight over all known stations (static included)
+        double mean_w{1.0};   ///< mean weight over all known stations (static included)
+    };
+    /// Weight-field summary.  O(stations); safe to call once per epoch from the
+    /// SERIAL harvest site (it only reads, but keep it on the same thread as
+    /// @ref advance for consistency with the class's threading contract).
+    Aggregate aggregate() const {
+        constexpr double kZeroW = 1e-9;
+        Aggregate a;
+        double sum = 0.0; std::size_t n = 0;
+        for (const auto& kv : gates_) {
+            const double w = isStatic(kv.first) ? static_w_ : kv.second.w;
+            sum += w; ++n;
+            a.min_w = std::min(a.min_w, w);
+            if (w <= kZeroW) ++a.n_zero;
+            if (kv.second.engaged && !isStatic(kv.first)) ++a.n_engaged;
+        }
+        // Static-listed stations with no adaptive gate entry still carry static_w_.
+        for (const auto& s : static_) {
+            if (gates_.count(s)) continue;
+            sum += static_w_; ++n;
+            a.min_w = std::min(a.min_w, static_w_);
+            if (static_w_ <= kZeroW) ++a.n_zero;
+        }
+        a.mean_w = n ? sum / static_cast<double>(n) : 1.0;
+        return a;
+    }
+
 private:
     struct Gate {
         double ewma{0.0};   ///< EWMA of the per-station misfit statistic.
@@ -246,6 +303,7 @@ private:
     long long   release_{0};
     std::size_t peak_{0};
     std::set<std::string> ever_;
+    std::vector<Transition> last_transitions_;   ///< P1-2: refilled per advance()
 };
 
 }  // namespace GnssProcessor

@@ -141,6 +141,26 @@ namespace GnssProcessor {
         bool          consume_network_iono{ false };     ///< Consume the network's co-estimated SH-VTEC ionosphere: the producer evaluates its VTEC field at the consumer's pierce points and supplies an UNDIFFERENCED per-satellite slant-iono value (metres on L1); the consumer applies it as a tight, quality-scaled BLUP / ionosphere-weighted prior on its slant-iono states instead of floating them at ionosphere_q.  This is the strong (ionosphere-corrected) user model Odijk-2012/TK-2015 identify as the fast-AR enabler.  Default OFF => byte-identical (producer pushes nothing, consumer applies nothing).
         bool          consume_combined_sigma{ false };   ///< M4 (contract v2): fold the network product's per-key COMBINED-correction σ (age-inflated) into a network-corrected observation's measurement variance INSTEAD OF the URA + phase-bias-σ RSS, so a fresh (reconverging) satellite whose individual clock/bias σ are cm-level but whose COMBINED correction is mm-level is NOT deweighted 10–100× off.  Per-key fallback to the v1 weighting when the sigc/sigcc tokens are absent (mixed-stream safe).  Default OFF => byte-identical.
         bool          consumer_undifferenced{ false };   ///< Consumer user model.  false = BSSD (legacy: between-satellite single-difference S-transform in the filter).  true = UNDIFFERENCED uncombined PPP-RTK USER (the end-state): no observation-space differencing — apply the network satellite phase biases directly to the raw float and fix per-band ambiguities INDIVIDUALLY via the resolver's internal-SD LAMBDA (no WL/NL cascade, no pivot-handover machinery).  Dissolves the network-bias↔.BIA-frame conflict by dropping the MW WL.
+
+        /**
+         * @brief Q5 replay: path to an ALREADY-WRITTEN network product file to
+         *        consume, instead of running the producer (@c network.closed_loop.replay_products_path).
+         *
+         * When non-empty, @c Application::runNetwork short-circuits to
+         * @c Application::runConsumerReplay BEFORE any producer setup: no joint
+         * solve, no station roster, no emit.  The held-out consumer station is
+         * driven epoch-by-epoch from its own RINEX while this file's records are
+         * replayed into an owned @c SsrCorrectionStore through the SAME
+         * @c NetworkProductReader::replay path the live harness uses, so the
+         * consumer sees a byte-faithful reconstruction of the recorded stream
+         * (including every discontinuity counter).
+         *
+         * This is the position-domain arm of a correction-domain investigation:
+         * minutes per arm instead of a producer day.  Empty (default) = off; the
+         * producer path is untouched (this key is NOT in the resume fingerprint —
+         * it never reaches the producer).
+         */
+        std::string   replay_products_path;
     };
 
     /**
@@ -197,6 +217,8 @@ namespace GnssProcessor {
         double lane_max_abs_xlin_m{ 1000.0 }; ///< Pre-flight quarantine: skip a lane cycle if ANY arc's ambiguity linearization |x_lin| exceeds this (m).  Guards the station-1 ~256 km receiver-clock-seed pathology (§7 pre-flight) — those cycles ill-condition the correction-frame rows and fail to converge even at authority.  0 = disabled.
         // --- Diagnostics (log-only; default OFF => byte-identical). ---
         bool   f6_dump{ false };              ///< One-shot F6 attribution dump: on the FIRST epoch that folds ≥1 WL row, write logs/network_mw_wl_f6.csv with per-arc (sat/sig/coeff/MW̄/x_lin) + per-row (z_MW/z_lin/z_corr/reconstructed_abs/innovation).  Pure diagnostic; does NOT change the solve.
+        int    f6_max_rows{ 8 };              ///< F6 dump row cap.  The historical dump sampled 8 rows of ONE block, which is a sample, NOT a population — do not infer skip/quarantine rates from its size.  Raise (with f6_all_blocks) to get a population-scale cycle census, e.g. the per-cycle station membership needed for a lane-chord BASELINE histogram.  ≤0 = uncapped.  Log-only.
+        bool   f6_all_blocks{ false };        ///< F6 dump walks EVERY WL block instead of only wl_blocks.front().  Default false reproduces the historical single-block sample byte-for-byte.  Log-only.
         double debug_r_scale{ 1.0 };          ///< DIAGNOSTIC ONLY: multiply every WL row's Pz by this (1.0 = honest default).  <<1 lets the WL rows dominate the stiff carry — the F6 probe for "is separate-Woodbury composition fatal or is authority enough?".  Changes the solve; NOT a production knob.
         bool   ewl_fold_rows{ false };        ///< F-A RESOLUTION (measured, Jul-16 15-ep A/B): folding the EWL integer rows into the solve is PURE COST — the WL cascade reads the DETECTOR statistic (never the posterior), and 147 σ0.01 rows perturb the shared clock/PB border enough to elevate D5 network-wide ~2× (679 vs control 342; 24% of flags on secondary-channel groups the EWL never touches).  Default FALSE = decide/FFR-fix/expose the integers, fold nothing (D5 348-358 ≈ control).  true = the study shape that re-creates the elevation; NOT a production knob.
         // ============================================================================
@@ -443,6 +465,180 @@ namespace GnssProcessor {
         bool trace_flag_rates{ false };   ///< B8: log a per-tier flag-rate summary at end of run — for each RAIM/QC tier (IF-phase slip, within-epoch trigger, post-fit RAIM cell/consensus, clock-model NIS, clock-monitor) accumulate {opportunities, flags} over the run and report realized rate vs the implied one-sided Gaussian α for the configured k.  Also writes @c network_flag_rates.csv + @c network_run_summary.csv (L3).  Measurement only — no threshold or decision change; OFF (default) = byte-identical.
         int  neq_export_epoch{ -1 };      ///< One-shot full-arrowhead NEQ export: at the Nth PROCESSED epoch (1-based; <=0 = off, the default) dump the assembled normal-equations system to @c logs/neq_export/ — border @f$N_{ss}@f$ (raw + reduced) and RHS, every station's @f$N_{sr}@f$ / @f$N_{rr}@f$ (rebuilt from its LDLᵀ) / @f$u_r@f$ as row-major little-endian double .bin files with a CSV station index, plus shared-column labels (@ref NetworkEstimator::sharedColumnLabel) and per-station local-column labels (StateManager::getStateLabels via the assembly h2local map).  Enables exact offline spectral / weak-direction attribution of the FULL system (the @ref trace_estimability dump covers only the reduced border's near-zero tail).  Post-solve read-only dump — the solution is byte-identical; ~100-200 MB once at 305 stations.
         bool trace_epoch_status{ false }; ///< L1: emit @c network_epoch_status.csv — ONE row per processed epoch (emitted OR skipped) recording the disposition (emitted / gate_withheld / sigma0_withheld / solve_failed / datum_failed / sync_skip), σ̂0, within-epoch adapt count, refloat/retro counts, datum-change flag, and the clock-Δ median+std+worst-sat (the median+std+worst convention, unlike @c network_trace.csv's rms/max).  Makes per-epoch disposition + σ̂0 level-shifts mechanically judgeable (V1/V3/V6).  O(epochs); off by default — byte-identical when OFF (no new file).
+        /**
+         * @brief SPEC_day129_frame_guards P1-3: per-epoch spectrum of the reduced
+         *        shared normals, split by parameter family (@c network.trace_sh_spectrum).
+         *
+         * Writes @c network_sh_spectrum.csv — one row per emitted epoch carrying
+         * λ_min / λ_max / condition number of @f$N_{ss}@f$ plus, for each of the
+         * smallest few directions, how its eigenvector mass PARTITIONS across the
+         * clock / code-bias / phase-bias / SH-VTEC column families.  That partition
+         * is the direct test of the "joint clock↔iono↔field near-null slide"
+         * hypothesis for the a00 collapses (REPORT §3.2): a slide needs a smallest
+         * mode that spans clocks AND the field, not one confined to either.
+         *
+         * Distinct from @ref trace_estimability, which is a ONE-SHOT text dump of
+         * the near-zero tail aimed at datum debugging; this is a per-epoch
+         * time series aimed at a trigger hunt, and it logs nothing (the
+         * estimability WARN text stays golden).  Cost is one
+         * @c SelfAdjointEigenSolver of @f$N_{ss}@f$ per emitted epoch
+         * (O(n_shared³), ~800³ GPS-only at 305 stations ≈ a few % of a 41 s epoch).
+         * TRACE-ONLY — never folded into the warm-resume fingerprint.
+         * Default OFF ⇒ no file, no eigensolve, byte-identical.
+         */
+        /**
+         * @brief SPEC_day129_frame_guards Phase 2.1: event response for the
+         *        satellite CODE-BIAS carry (@c network.cb_excursion_reinit).
+         *
+         * Standing invariant #1 for the CB carry.  @c sat_code_bias_q = 1e-10 m²/s
+         * makes the satellite code biases near-static (steady-state Kalman gain
+         * K ≈ 2.2e-3/epoch, bleed time constant τ ≈ 3.8 h), and the clock datum
+         * PINS one satellite's clock to zero.  A network-wide ONE-SIDED clock
+         * excursion therefore cannot be absorbed by the pivot's soft clock the way
+         * every other satellite absorbs it — it ratchets into the pivot's
+         * near-static CB states and bleeds out over hours.  On DOY-129 that cost
+         * +49 m on IF(C1W,C2W) of G01, still +42.7 m at end of day, with the
+         * emitted discontinuity counter silent throughout.  The C3c/D5 machinery
+         * guards the AMBIGUITY carry; nothing guarded the code-bias carry.
+         *
+         * When armed, a per-epoch NETWORK-WIDE common-mode detector — the median
+         * over satellites of |Δclock| against @ref cb_excursion_median_m — marks
+         * the clock-pivot satellite's CB carry for REINITIALIZATION (the existing
+         * @c CarryPrior::inflate_q path, folded next epoch at the loose
+         * @c network.clock_monitor_reinit_sigma variance) instead of the stiff
+         * near-static carry, and queues that satellite for a code-bias
+         * DISCONTINUITY bump at the next emit (Card-2 rule: a value step must
+         * coincide with a signalled discontinuity).  Reset-not-repair; no
+         * measurement is ever dropped.
+         *
+         * Default OFF ⇒ the detector never runs, nothing is marked, nothing is
+         * bumped: byte-identical.  Solve-determining when armed, so it is
+         * conditional-appended to the warm-resume fingerprint — every existing
+         * (unarmed) snapshot fingerprint is unchanged, and a resume may not cross
+         * a flip of this toggle.
+         */
+        bool cb_excursion_reinit{ false };
+        /**
+         * @brief Trip threshold on the per-epoch MEDIAN |Δclock| over satellites (m).
+         *
+         * Empirically derived from the DOY-129 reference run per the MW-thresholds
+         * directive (no stochastic-model σ).  Measured distribution of that
+         * statistic over the 2159 inter-epoch deltas of the day:
+         *
+         *   median 0.123 m · 1.4826·MAD 0.071 m · q0.99 13.0 m · q0.999 611 m
+         *
+         * and at the three known events:
+         *
+         *   07:32 (tow 286320)  median    5.03 m, max  529 m  (max/med 105 — TWO-sided,
+         *                                                       no persistent damage)
+         *   19:21 (tow 328920)  median   77.4  m, max  334 m  (max/med 4.3)
+         *   20:47 (tow 334020)  median 4581.9  m, max 5624 m  (max/med 1.23 — ONE-sided,
+         *                                                       the +49 m persistent fault)
+         *
+         * The default 50.0 m sits ~400× the quiet median (~700 robust-σ) and three
+         * orders of magnitude below the damaging event, so the choice is not
+         * delicate: it trips on 10 of 2159 epochs (0.46 %).  Note what the MEDIAN
+         * buys — it is blind to the two-sided 07:32 excursion (5.03 m, no trip)
+         * and saturated by the one-sided 20:47 one.  That is exactly the
+         * common/differential discriminator the mechanism analysis derives: only
+         * the one-sided projection reaches the pins.
+         */
+        double cb_excursion_median_m{ 50.0 };
+        /**
+         * @brief D1b: reinit EVERY satellite's CB carry on a trip, not just the
+         *        clock pivot's (@c network.cb_excursion_reinit_all_sats).
+         *
+         * Default false = pivot-only, which targets the measured mechanism
+         * minimally (the pivot is the only satellite whose clock↔code split is
+         * both data-exposed and stiff-carried).  Setting it true is the safer
+         * choice if a future pivot handover can move the vulnerable satellite
+         * mid-excursion, at the cost of a mass discontinuity bump that makes every
+         * consumer reset every satellite's CB state.  Either way the run-end
+         * telemetry reports how many NON-pivot satellites would have tripped a
+         * per-satellite rule, so the choice can be re-decided from data.
+         */
+        bool cb_excursion_reinit_all_sats{ false };
+        bool trace_sh_spectrum{ false };
+        /// P1-3: write the smallest mode's heaviest per-COLUMN participation
+        /// entries (@c network_sh_spectrum_mode.csv) every Nth traced epoch.
+        /// The per-family mass partition is written every epoch regardless; this
+        /// is the expensive-to-read detail.  <=0 disables the detail file.
+        /// Inert unless @ref trace_sh_spectrum.
+        int  trace_sh_spectrum_stride{ 60 };
+        /**
+         * @brief SPEC_day129_frame_guards P1-4: measure-only post-fit variance
+         *        factor on the EMIT path (@c network.trace_postfit_sigma0).
+         *
+         * The @c sigma0 column of @c network_epoch_status.csv is
+         * @c sigma0_adapt — the WITHIN-EPOCH RAIM's σ̂0, which is computed only
+         * inside @c if(within_epoch_armed && carry_warm).  With
+         * @c network.raim_within_epoch off (the DOY-129 reference run) that
+         * statistic never runs, so the column is 0.0000 on every row and the
+         * emit path ships with NO post-fit residual statistic at all — a 5636 m
+         * clock epoch cannot be told from a clean one.
+         *
+         * When this is on, a robust variance factor is computed over EVERY
+         * station's full post-fit residual vector (not just the carried-ambiguity
+         * phase rows the RAIM pools), split into CODE and PHASE pools, and traced
+         * as appended @c network_epoch_status.csv columns.  MEASURE-ONLY: nothing
+         * reads it, no gate consumes it, the A4 ceiling keeps using
+         * @c sigma0_adapt.  Costs one extra per-station reconstruct+residual pass
+         * per emitted epoch.  Default OFF ⇒ blank columns, byte-identical.
+         */
+        bool trace_postfit_sigma0{ false };
+        /**
+         * @brief SPEC_day129_frame_guards §4.3 (RHS localization): KEYED robust
+         *        post-fit residual aggregates (@c network.trace_postfit_keyed).
+         *
+         * The Phase-1 verdict located the collapse trigger on the RIGHT-hand
+         * side — the onset epoch's misfit is global (303/303 stations >3σ) and
+         * the normal matrix never moves — so the next question is WHERE the
+         * misfit sits: which stations (geography ⇒ iono front vs global),
+         * which satellites (per-sat structure ⇒ orbit/clock input), which
+         * signals (dispersive split ⇒ iono vs clock).  When this is on, the
+         * P1-4 residual pass additionally pools @f$|v_i|\sqrt{w_i}@f$ per
+         * STATION, per SATELLITE, and per SIGNAL ({code, phase} pools each)
+         * and writes one @c network_pf_keyed.csv row per key per emitted epoch
+         * (σ̂0 = 1.4826·median, rms, max, n).  Implies the P1-4 pass runs even
+         * with @ref trace_postfit_sigma0 off.  TRACE-ONLY — never folded into
+         * the warm-resume fingerprint.  Default OFF ⇒ no file, byte-identical.
+         */
+        bool trace_postfit_keyed{ false };
+        /**
+         * @brief SPEC_day129_frame_guards Phase 2.2: SH-field health GATE
+         *        (@c network.sh_health_gate) — gate emission, not just warn.
+         *
+         * The DOY-129 reference run shipped an 80-minute non-physical
+         * ionosphere (a₀₀ up to 2151 TECU) with @c gate_ok=1 on every epoch:
+         * the a₀₀ physical-band check was a warn-only probe, edge-triggered and
+         * throttled (9 warnings for 214 out-of-band EPOCHS — a 23.8× under-
+         * read).  With this on, an epoch whose total mean VTEC a₀₀ (layer sum)
+         * leaves the physical band [@c a00_warn_low_tecu, @c a00_warn_high_tecu]
+         * — or whose total-field coefficient RMS exceeds
+         * @ref sh_gate_rms_max_tecu — for @ref sh_gate_min_epochs CONSECUTIVE
+         * epochs is WITHHELD from emission: no store push, no product write, no
+         * closed-loop consume, no @c n_emitted advance.  EMISSION-ONLY: the
+         * solve, the carry stash and every QC tier still run, so state
+         * evolution is untouched (a multi-hour out-of-band era must not expire
+         * the carry the way the A4 skip-epoch semantics would) and the toggle
+         * is NOT in the warm-resume fingerprint (same class as @c raim /
+         * @c clock_runaway_check).  Engage/release transitions are logged
+         * un-throttled and counted per EPOCH (run-end + @c network_events.csv
+         * @c SH_GATE rows) per the handoff §4.2 lesson.  Default OFF ⇒
+         * byte-identical.
+         */
+        bool sh_health_gate{ false };
+        /// Phase 2.2: consecutive out-of-band epochs before the gate ENGAGES
+        /// (1 = withhold from the onset epoch — the 20:47 CB ratchet lands in
+        /// ONE epoch, so waiting ships the damaged product).  Release is
+        /// immediate on the first in-band epoch.  Inert unless @ref sh_health_gate.
+        int sh_gate_min_epochs{ 1 };
+        /// Phase 2.2: total-field coefficient RMS ceiling (TECU; the SAME
+        /// all-coefficient RMS the T1a health trace reports as @c rms_all), the
+        /// spec's "or total-field RMS" band clause — catches a blowup that a
+        /// still-in-band a₀₀ hides (e.g. a degree-1 tilt excursion).  0 = OFF
+        /// (a₀₀ band only).  Inert unless @ref sh_health_gate.
+        double sh_gate_rms_max_tecu{ 0.0 };
         bool trace_section_timers{ false };  ///< D0: per-epoch section-timer breakdown of the network solve (@c NetworkEstimator wall-clock accumulators around assembly / Schur reduce / constrained point-solve / the explicit shared-covariance full inverse / the per-station covariance consumers).  Arms @c NetworkNormalEquations::setPerfTiming so those primitives record their milliseconds; the driver logs a per-emitted-epoch @c "Network (D0)" line plus an end-of-run RUN-TOTALS line, so a profiling run can see which term dominates and thus which Tier-D scaling lever (D1 selected inverse / D2 rate-split / D3-D4 channel-and-ordering) is worth pulling.  Diagnostic only — no product bytes, no decision change; when OFF every instrumented primitive skips the clock read entirely (no measurable overhead, numerically byte-identical).
         bool write_run_manifest{ false }; ///< L15: write @c network_run_manifest.json (JSONL, two records) — a run-provenance snapshot (config path + FNV-1a-64 hash of the config bytes, build stamp, and the full network.* toggle/knob dump) at startup, plus an end-of-run record with the epoch counts + loop wall.  Makes an archived @c logs/ folder self-describing weeks later (which toggle set produced it) when everything is uncommitted.  Does NOT read git state.  Off by default.
         double health_interval_s{ 0.0 };  ///< RTB-6: operator health-record cadence in seconds of PROCESSED (content) time.  When > 0 the producer appends a machine-readable @c network_service_health.csv row every @c health_interval_s of data — cumulative epochs emitted/skipped/gate-withheld/σ̂0-withheld/runaway, the σ̂0 EWMA (−1 sentinel = "unavailable" when its feeding tiers @ref emit_ura + @ref raim + @ref phase_leveling are not ALL armed; the value would otherwise sit frozen at its 1.0 init), stations present, clock sats, mean ms/epoch over the just-ended health window, last-emit age, and the realized per-constellation clock pivots ("G:G05;E:E11"; empty before the first emit) — so a SERVICE run is observable WITHOUT waiting for the exit-time summary (all health surfaces else assume a finite run).  Distinct from the RTA-10 per-epoch product @c H status record (this is an aggregate OPERATOR heartbeat, not product content) and from the pyviz @c network_health VIEWER (which reads @c network_trace.csv, a different surface — hence this file's @c service name).  Column semantics: @c docs/rt_service_operations.md.  Negative values clamp to 0 with a warning.  Default 0 = off ⇒ no file, byte-identical.

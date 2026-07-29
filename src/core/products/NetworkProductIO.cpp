@@ -274,6 +274,14 @@ struct LineAssembler {
                             c.age_scale_k = std::stod(f[k].substr(5));      // M4: age-scaling coeff
                         } else if (f[k].rfind("discfrac=", 0) == 0) {
                             c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // H3: per-λ jump gate
+                        } else if (f[k].rfind("cbpin=", 0) == 0) {
+                            // §1.5: code-bias IF pin pair, "<const>:<s1>-<s2>".
+                            // Must dispatch BEFORE the ':' pivot fallback below —
+                            // the value itself contains a ':'.
+                            const std::string v = f[k].substr(6);
+                            const auto colon = v.find(':');
+                            if (colon != std::string::npos)
+                                c.cb_pin_pair[v.substr(0, colon)] = v.substr(colon + 1);
                         } else {
                             const auto colon = f[k].find(':');
                             if (colon != std::string::npos)
@@ -408,6 +416,18 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // checkContract compares it (a per-λ vs flat mismatch mis-counts discontinuities).
     if (contract.disc_threshold_frac_cycles > 0.0)
         out_ << ",discfrac=" << fmt::format("{}", contract.disc_threshold_frac_cycles);
+    // §1.5 (day-129 frame-guards report): the code-bias IF PIN PAIR per
+    // constellation — the signal pair the emitted OSB stream is internally
+    // consistent in ("cbpin=G:C1C-C2L").  selectIfPinPair pins the lexically-
+    // first pair, which is NOT the RTKLIB-convention (C1W,C2W) pair consumers
+    // typically form; a consumer MIXING frames (one signal inside the pinned
+    // pair, one outside — e.g. C1C with C2W) pays the §1.5 mixed-pair penalty.
+    // ONLY when non-empty, so a producer that does not declare it writes the S
+    // line byte-for-byte.  An interpretation hint, not a replay-emitter
+    // parameter — makeReplayEmitter ignores it; checkContract compares it only
+    // for constellations the consumer declares (clock_pivot_sat semantics).
+    for (const auto& [cst, pair] : contract.cb_pin_pair)
+        out_ << ",cbpin=" << cst << ':' << pair;
     out_ << '\n';
 }
 
@@ -422,8 +442,9 @@ void NetworkProductWriter::writeEpochStatus(const NetworkProducerStatus& status)
     // uses the SAME shortest-round-trip formatting as the E line, so the reader's
     // pending-H week/tow attach-match (LineAssembler) compares exactly equal doubles
     // for an emitted epoch's own heartbeat.  sigma0 fixed at 4 decimals per the RTA-10
-    // grammar (0 when unavailable).  Never legended in the '#' header (frozen bytes)
-    // and never fed to replay — purely positional, like the S contract line.
+    // grammar (0 when unavailable).  Legended in the '#' header like every record
+    // (handoff-§7 schema fix) and never fed to replay — purely positional, like the
+    // S contract line.
     out_ << "H," << status.time.week << ',' << fmt::format("{}", status.time.tow)
          << ',' << NetworkProducerStatus::stateName(status.state)
          << ',' << fmt::format("{:.4f}", status.sigma0)
@@ -439,23 +460,38 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
     } else {
         out_ << "# gnss_network_product v1\n";
     }
-    // Legend kept verbatim to the pre-B1/A2/B3b format so a v1 file is byte-identical
-    // to the pre-change writer.  The optional trailing fields (E-line datum_consts,
-    // C-line clock_c1_m_s) and the U/R records are position-parsed by the reader (f.size()
-    // guards) and appear only when their producer toggles emit them.
-    out_ << "# E,week,tow,iod_ssr,provider_id,solution_id,datum_changed\n"
-            "# C,sat,clock_c0_m\n"
-            "# B,sat,signal,code_bias_m\n"
-            "# P,sat,signal,bias_m,signal_integer,wide_lane_integer\n";
-    // R2b: the optional R/U records (and the S contract grammar, documented above the S line)
-    // are legended ONLY in the v2 header — the v1 legend above is frozen for byte-identity
-    // (a prior review reverted a v1 legend edit).  These are '#' comments, skipped by the
-    // reader, so they never affect parsing or replay.
-    if (contract)
-        out_ << "# R,retro_sat[,retro_sat...]   (B1 per-satellite discontinuity bump)\n"
-                "# U,sat,clock_ura_m             (B1 per-satellite URA quality, 1-sigma m)\n"
-                "# G,week,tow                    (RT0-4 wall-clock time-of-generation)\n"
-                "# S,ref_rx,...,pivots           (B6 S-basis contract; field grammar above)\n";
+    // Schema fix (DOY-129 handoff §7, Jul 2026).  The legend below is
+    // GRAMMAR-COMPLETE: it declares every record tag and every optional field the
+    // writer can emit — '[]' marks fields present only under their producer
+    // toggle; 'key=' tokens are self-describing.  The prior rule ("legend frozen
+    // to the base format for cross-build byte-identity"; a prior review reverted
+    // a v1 legend edit on those grounds) is deliberately superseded: on the
+    // DOY-129 reference run every P record carried a 7th field (sigma=) against a
+    // 6-name legend, and a schema-faithful consumer silently dropped the
+    // phase-bias σ — the legend froze a lie the moment an optional channel armed.
+    // From this revision the CORRECTED legend is the frozen one, and it is shared
+    // verbatim by v1 and v2 headers (the two differ only in banner + S line).
+    // Extending the wire format REQUIRES extending the legend — enforced by
+    // HeaderLegendDeclaresEveryEmittedField in test_network_product_io.cpp.
+    // Legend lines are '#' comments: the reader skips them, replay is
+    // unaffected, and DATA lines are byte-identical across this change — a
+    // cross-build SHA-256 of whole product files sees a one-time legend delta
+    // (compare with '^#' lines stripped to check the data stream).
+    out_ << "# fields in [] are optional (present only when the producing toggle is armed);\n"
+            "# 'key=value' tokens are self-describing; unknown keys are ignorable.\n"
+            "# E,week,tow,iod_ssr,provider_id,solution_id,datum_changed[,datum_consts]\n"
+            "# C,sat,clock_c0_m[,clock_c1_m_s[,clock_disc]][,iode=<n>[,oiod=<n>][,oepoch=<week>:<tow>]][,sigcc=<m>[,rho=<r>]]\n"
+            "# B,sat,signal,code_bias_m[,code_disc]\n"
+            "# P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc][,sigma=<m>][,sigc=<m>]\n"
+            "# G,week,tow                    (RT0-4 wall-clock time-of-generation)\n"
+            "# I,generation_id               (RTA-3 solution-generation id)\n"
+            "# R,retro_sat[,retro_sat...]    (B1 per-satellite discontinuity bump)\n"
+            "# U,sat,clock_ura_m             (B1 per-satellite URA quality, 1-sigma m)\n"
+            "# H,week,tow,status,sigma0,n_sats_published,withheld   (RTA-10 epoch-status heartbeat)\n"
+            "# S,ref_rx,bias_sign,windup_id,amb_datum,isb_datum,emit_cb,cb_datum,disc_thresh_m,"
+            "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
+            "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
+            "[,discfrac=<c>][,cbpin=<const>:<s1>-<s2>...]   (B6 S-basis contract)\n";
 }
 
 void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_changed,
@@ -715,6 +751,21 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
         else if (fit->second != sat)
             note(fmt::format("clock_pivot_sat[{}]: file '{}' vs expected '{}'",
                              cst, fit->second, sat));
+    }
+    // §1.5: the code-bias IF pin pair — checked per-constellation, only for the
+    // constellations the consumer DECLARES an expectation for (clock_pivot_sat
+    // semantics).  A mismatch means the consumer's chosen signal pair does not
+    // live in the product's internally-consistent frame: its receiver code-bias
+    // state must then absorb a between-channel differential against the moving
+    // satellite OSBs — the measured mixed-pair regime, worse than either
+    // consistent pair.
+    for (const auto& [cst, pair] : expected.cb_pin_pair) {
+        const auto fit = file.cb_pin_pair.find(cst);
+        if (fit == file.cb_pin_pair.end())
+            note(fmt::format("cb_pin_pair[{}]: file declares none vs expected '{}'", cst, pair));
+        else if (fit->second != pair)
+            note(fmt::format("cb_pin_pair[{}]: file '{}' vs expected '{}'",
+                             cst, fit->second, pair));
     }
     // The two replay-emitter construction parameters: a divergence here means a
     // consumer replaying with its own emitter config would reproduce DIFFERENT

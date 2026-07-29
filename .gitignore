@@ -68,6 +68,12 @@ batch_results_*/
 # not version-controlled; cite paths in memory/docs instead.
 # -------------------------------------------------------------------
 runs/
+# Same class, harness-written: the validation-campaign output root used by
+# scripts/chain_*.py, scripts/p2_*, scripts/s2z_* and the night-run harnesses
+# (per-leg logs/ trees, conv/work snapshots, product dumps).  1.8 GB and
+# growing; deliberately untracked since dee2824 — this pins that decision so
+# it stops surfacing in `git status`.
+val_out/
 
 # Top-level logs/ when running gnss_processor.exe directly from the
 # repo root (cwd-relative log_dir_ default in Application).

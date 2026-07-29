@@ -126,6 +126,20 @@ NetworkSolPrepResult networkSolPrep(
                          action, detail);
     };
 
+    // SPEC_day129_frame_guards Phase 2.2: an ENGAGED SH health gate withholds
+    // this epoch's EMISSION — every step below is emit machinery (solution
+    // serialization, disc-bump present/pending landing, pivot/anchor baseline
+    // advance, URA/ramp stamps), all of which the existing whole-epoch withhold
+    // paths skip by `continue`-ing before this seam.  Early-return replicates
+    // exactly that: pending disc bumps stay QUEUED and land with the next
+    // ACTUAL emit (the Card-2 value-step/signal coincidence rule), and the
+    // emit-only baselines (last_pivot / emitted_anchor / last_if_pin_sel /
+    // cb_reseed merge) stay at the last emitted product.  NetworkEmitStore
+    // early-returns on the same flag (it writes the withheld H heartbeat +
+    // counter there).  Solve/carry/QC upstream and downstream are untouched.
+    if (nc.sh_health_gate && ctx.carry.sh_gate_engaged)
+        return NetworkSolPrepResult{};
+
     // --- Emit -----------------------------------------------------------
     NetworkSolutionEpoch sol = est.toSolutionEpoch(x_s, se.time, iod++,
                                                    /*provider_id=*/0, /*solution_id=*/0,
@@ -638,6 +652,30 @@ NetworkSolPrepResult networkSolPrep(
                 for (const auto& s : mark)
                     emitEvent("RELEVEL", "eph_cutover_disc_landed", s, "", std::nullopt,
                               std::nullopt, "disc_bump", "prior_eph_version_evicted");
+        }
+    }
+    // SPEC_day129_frame_guards Phase 2.1: land the code-bias discontinuity bump for
+    // satellites whose CB carry the previous epoch's common-mode excursion detector
+    // reinitialized.  Card-2 rule: the reinit makes the emitted value STEP this
+    // epoch, so a signalled discontinuity must accompany it — without one, a
+    // counter-following consumer integrates straight across the step, which is
+    // exactly the DOY-129 failure (the +49 m fault bumped NOTHING).  Same
+    // present/pending split as the two blocks around it, so the bump lands with the
+    // satellite present and a replay reproduces the counters.  The set is empty
+    // unless network.cb_excursion_reinit ⇒ byte-identical when OFF.
+    if (!ctx.carry.cb_excursion_pending_bump.empty()) {
+        std::set<std::string> present, mark, still_pending;
+        for (const auto& s : sol.sats) present.insert(s.sat);
+        for (const auto& sat : ctx.carry.cb_excursion_pending_bump)
+            (present.count(sat) ? mark : still_pending).insert(sat);
+        ctx.carry.cb_excursion_pending_bump = std::move(still_pending);
+        if (!mark.empty()) {
+            emitter.markSatDiscontinuity(mark);
+            ctx.carry.cb_exc_bumps += static_cast<long long>(mark.size());
+            if (events_trace.is_open())
+                for (const auto& s : mark)
+                    emitEvent("CB_EXC", "cb_excursion_disc_landed", s, "", std::nullopt,
+                              std::nullopt, "disc_bump", "code_bias_carry_reinit");
         }
     }
     // T3c: land clock_signal_basis_hold RE-LATCH disc bumps this emit (same present/pending
