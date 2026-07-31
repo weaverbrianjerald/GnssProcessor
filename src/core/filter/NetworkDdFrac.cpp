@@ -64,6 +64,44 @@ void networkDdFrac(
     };
 
 
+    // --- S1: the (cons, signal, sat) -> anchor STATION map -----------------------
+    // docs/SPEC_lane_spectrometer.md §3.3 anchor partition.  Emitted HERE because this
+    // seam already reconstructs the gauge-pin predicate and already walks every
+    // station's ambiguity key map, so the map is read off the election that ran rather
+    // than re-derived (a second derivation is a second thing that can disagree with
+    // the datum).  Deliberately OUTSIDE the DD-fractional gate below: that block is
+    // stride-decimated and stream-gated, while the anchor map is small (bounded by
+    // gauge freedoms = satellites x signals, NOT by station pairs) and the partition
+    // wants it on every processed epoch — the sticky tree re-elects often (47 tree
+    // swaps / 31 epochs measured at 50 stations) and the grader takes the per-arc
+    // MODE, which needs the full sequence.
+    //
+    // Note the complement: the DD-fractional emit SKIPS pinned ambiguities (see the
+    // networkIsGaugePinned_ continue below), so no satellite can appear both as a
+    // graded DD member and as its own anchor on the same signal — the two files are
+    // exactly the two halves of the gauge.
+    if (traces.phase_anchor_trace.is_open()) {
+        for (std::size_t i = 0; i < stations.size(); ++i) {
+            if (est_index_of[i] < 0 || !stations[i].sm) continue;
+            for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
+                (void)sidx;
+                const auto parts = StateKeys::parseAmbiguityKey(key);
+                if (!parts) continue;
+                if (!networkIsGaugePinned_(stations, phase_datum_prioritized,
+                                           i, parts->satellite, parts->signal))
+                    continue;
+                const std::string cst = NetworkSbasis::constellationOf(parts->satellite);
+                traces.phase_anchor_trace
+                    << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
+                    << cst << ',' << parts->signal << ',' << parts->satellite << ','
+                    << stations[i].name << '\n';
+            }
+        }
+        // Flushed per epoch: this stream exists to grade runs that may be killed
+        // mid-flight, and an unflushed tail is exactly the evidence that goes missing.
+        traces.phase_anchor_trace.flush();
+    }
+
     // --- Cross-station DD fractional-residual (B5) ----------------------
     // For each present station, back-substitute its local block and read each
     // ABSOLUTE float ambiguity (x_lin + x_r(col), m) per (sat,signal).  Within a

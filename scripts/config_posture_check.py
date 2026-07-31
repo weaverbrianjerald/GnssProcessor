@@ -22,6 +22,14 @@ to list the real-time-only ``apriori_source = brdc_rts`` against a post-processe
 config).  The predicates are the same ones the loader's ``GnssConfig::logNetworkPosture_``
 evaluates at run time, so the offline check and the run-time POSTURE block agree.
 
+INHERITANCE.  The config is flattened through its ``"extends"`` chain before any regime
+variable is derived (scripts/gnss_config_chain.py, which mirrors the loader).  Reading the
+child file alone is not a near-miss, it inverts the answer: ``_golden0729_net305_3h.json`` is
+a four-key delta whose roster and arm set live three files up, and unflattened it reported
+"0 station(s), 0 constellation(s)" and eight ARMED knobs as gaps.  A checker that
+false-positives on every inheriting config teaches people to ignore it, which reinstates
+exactly the promotion gap the ledger exists to close.
+
     python scripts/config_posture_check.py runs/guards_cont/leg.json
     python scripts/config_posture_check.py <cfg> --tier all
     python scripts/config_posture_check.py <cfg> --tier all --show-suppressed
@@ -36,6 +44,10 @@ import re
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:                       # importable however the script is invoked
+    sys.path.insert(0, _HERE)
+from gnss_config_chain import load_config, ConfigChainError  # noqa: E402
+
 LEDGER = os.path.join(_HERE, "..", "docs", "CONFIG_promotion_ledger.json")
 LOADER = os.path.join(_HERE, "..", "src", "core", "config", "GnssConfigLoadNetwork.cpp")
 
@@ -63,6 +75,56 @@ def resolve(cfg, dotted):
 
 def is_off(v):
     return v is None or v is False or v == 0 or v == 0.0 or v == ""
+
+
+# ----------------------------------------------------------------------------------
+#  warm-resume detection
+# ----------------------------------------------------------------------------------
+def snapshot_state(cfg):
+    """-> (warm, why).  Is this config a RESUMED leg, or the SEED of a fresh lineage?
+
+    ``network.state_snapshot_path`` alone does not answer that.  The knob is WRITE-side in
+    the forward pass (ApplicationNetwork.cpp:914-918 sets the write target unconditionally);
+    a resume is only ATTEMPTED, and only succeeds, when a readable snapshot already exists
+    there.  Every lineage therefore begins with a leg that has the path set and no file -
+    a cold seed that a path-only test mislabels as a resume.
+
+    The mislabel is not cosmetic.  `warm` gates which ledger rows are in regime
+    (``state_snapshot_require`` applies only when warm; ``code_bias_disc_jump_test`` only
+    when NOT warm), and it drives the CHAIN annotation - which on a seed tells you that
+    arming a fingerprinted knob "SILENTLY cold-starts" the leg, when a fresh lineage is
+    precisely where the standard armed set says to arm it.
+
+    DIVERGENCE, deliberate: the loader's own posture readout tests the path only
+    (GnssConfigLoadNetwork.cpp:3838, ``warm = !nc.state_snapshot_path.empty()``), so it
+    labels a fresh seed "WARM-RESUME start".  runs/golden3h_net305 is that case on record -
+    it logged WARM-RESUME and then wrote six snapshots without ever resuming one.  This
+    check is the stricter of the two; where they differ, the loader is over-reporting.
+
+    Ambiguity resolves toward WARM on purpose.  A false COLD would suppress the
+    ``state_snapshot_require`` ON-tier row on a genuinely resumed leg, and that row is the
+    one guarding invariant #4's worst failure - a silent cold start that reads as a clean
+    resume.  A false WARM only over-reports.
+    """
+    found, p = resolve(cfg, "network.state_snapshot_path")
+    p = (p or "").strip() if isinstance(p, str) else ""
+    if not found or not p:
+        return False, "no network.state_snapshot_path (cold by construction)"
+    if os.path.isabs(p):
+        if os.path.exists(p):
+            return True, f"snapshot present at {p}"
+        return False, f"state_snapshot_path set but NO snapshot at {p} - this is a fresh " \
+                      f"lineage SEED, not a resumed leg"
+    # A relative path is resolved by the driver against log_dir_, which is "logs" relative
+    # to the process working directory (Application.hpp:844) - i.e. it depends on where the
+    # exe will be launched, which is not knowable from the config.  Probe both readings;
+    # if neither hits, we cannot prove it is a seed, so fall to the safe side.
+    for cand in (os.path.join("logs", p), p):
+        if os.path.exists(cand):
+            return True, f"snapshot present at {cand} (relative path, cwd-resolved)"
+    return True, (f"relative state_snapshot_path {p!r} and no snapshot under ./logs or . - "
+                  f"the driver resolves it against its own launch directory, so this cannot "
+                  f"be decided offline; assuming WARM (the over-reporting side)")
 
 
 # ----------------------------------------------------------------------------------
@@ -125,7 +187,9 @@ def make_env(cfg):
         "n_sta": len(net.get("stations", []) or []),
         "n_sys": len(systems),
         "tri":   freq in ("triple", "all"),
-        "warm":  bool(net.get("state_snapshot_path", "")),
+        # NOT a path-set test - see snapshot_state() for why a seed leg has the path set
+        # and is still cold.
+        "warm":  snapshot_state(cfg)[0],
         "lane":  bool(mw.get("ewl_enable") or mw.get("enable") or lc.get("enable")),
         # service_mode IS the real-time service producer, so it counts as the RT posture:
         # knobs scoped "post-processing only" must stay silent there and RT-only knobs must
@@ -201,6 +265,29 @@ def loader_knobs(path=LOADER):
     return out
 
 
+def loader_item_rows(path=LOADER):
+    """-> {knob: tier} for the ITEMS TABLE rows of logNetworkPosture_ (not bundle members).
+
+    ``loader_knobs`` scrapes every knob-shaped string literal in the function, so it cannot
+    tell a table ROW from a knob merely NAMED in a bundle's member list.  That distinction
+    is what makes the reverse coverage direction checkable: a row the loader counts and the
+    ledger has no entry for is a silent tally divergence between the run-time POSTURE block
+    and this script - which is exactly how network.trace_phase_anchor hid, showing up in the
+    forward check as an innocuous "bundle member only".
+
+    The row shape is `{ <applies>, <on>, Tier::X, <fp>, "knob", "why" }`, so anchoring on
+    `Tier::X, <bool>, "knob"` picks out rows and nothing else.
+    """
+    src = open(path, encoding="utf-8", errors="replace").read()
+    start = src.find("void GnssConfig::logNetworkPosture_")
+    if start < 0:
+        raise SystemExit(f"logNetworkPosture_ not found in {path}")
+    end = src.find("\n    void GnssConfig::", start + 10)
+    body = src[start:end if end > 0 else len(src)]
+    return {knob: tier for tier, knob in
+            re.findall(r'Tier::(ON|SCOPED)\s*,\s*(?:true|false)\s*,\s*"([^"]+)"', body)}
+
+
 def loader_default_true(config_src_dir=None):
     """Knob paths whose jval default in the loader is `true`.
 
@@ -240,9 +327,20 @@ def verify_loader(led, loader_path=LOADER):
     for k in missing:
         row = next(r for r in led["knobs"] if norm(r["knob"]) == k)
         print(f"  MISSING from loader  [{row['verdict'][10:]:6s}] {k}")
+    # REVERSE direction: a loader items-table ROW with no RECOMMEND_* ledger entry.  The
+    # loader counts it in its POSTURE tally and this script cannot, so the two readouts
+    # disagree by exactly that row on every config where it is in regime - a divergence
+    # with no other symptom.  Distinct from a bundle member, which is named but not counted.
+    rows = loader_item_rows(loader_path)
+    orphan_rows = sorted(k for k in rows if k not in want)
+    for k in orphan_rows:
+        print(f"  MISSING from ledger  [{rows[k]:6s}] {k} — a loader POSTURE ROW with no "
+              f"RECOMMEND_* entry; this script's tally will read one short of the run's")
     # Not a gap: the bundles name companion knobs (clock_runaway_check, mw_wl.ewl_enable, ...)
     # whose own ledger verdict is not RECOMMEND_*.  That is the point of a coupled bundle.
     for k in extra:
+        if k in orphan_rows:
+            continue                      # already reported above, as the stronger finding
         print(f"  named in loader as a bundle member only   {k}")
     exempt = sorted(norm(k["knob"]) for k in led["knobs"]
                     if k["verdict"] in RECOMMENDED and str(k.get("regime", "")).strip() == "False")
@@ -269,7 +367,7 @@ def verify_loader(led, loader_path=LOADER):
                                f"False for an ABSENT key but that knob's loader default is "
                                f"TRUE - use val(\"{ref}\", True)")
     print("\n".join(bad))
-    n = len(missing) + len(no_regime) + len(bad)
+    n = len(missing) + len(no_regime) + len(bad) + len(orphan_rows)
     print(f"\n{n} coverage gap(s).")
     return 1 if n else 0
 
@@ -302,15 +400,35 @@ def main():
     if not a.config:
         ap.error("a config path is required (or use --verify-loader)")
 
-    cfg = json.load(open(a.config, encoding="utf-8"))
+    # Flatten "extends" FIRST, exactly as the loader does before any section loader runs -
+    # every regime variable below is derived from the merged document, never the delta.
+    try:
+        cfg, chain = load_config(a.config)
+    except ConfigChainError as e:
+        print(f"config chain error: {e}", file=sys.stderr)
+        return 2
+    if not isinstance(cfg, dict):
+        # config/test_suite/ also holds bare station-roster ARRAYS
+        # (global_network_stations*.json).  Say so instead of dying in make_env with an
+        # AttributeError three frames down.
+        print(f"not a config: {a.config} parses as a top-level "
+              f"{type(cfg).__name__}, not an object.  (Roster files such as "
+              f"global_network_stations.json are data, not configs - point this at the "
+              f"config that REFERENCES the roster.)", file=sys.stderr)
+        return 2
     env = make_env(cfg)
+    warm, warm_why = snapshot_state(cfg)
     print(f"# posture check: {a.config}")
+    if chain:
+        print(f"#   extends: {' -> '.join(os.path.basename(c) for c in chain)}  "
+              f"({len(chain)} base(s), merged base-first, child wins)")
     print(f"#   regime: {env['n_sta']} station(s), {env['n_sys']} constellation(s), "
           f"{cfg.get('processing',{}).get('frequency_mode','?')} frequency mode, "
           f"{'WARM-RESUME' if env['warm'] else 'cold'} start, "
           f"{'lane/WL armed' if env['lane'] else 'no lane layer'}, "
           f"{'REAL-TIME' if env['rt'] else 'post-processed'}, "
           f"mode={cfg.get('processing',{}).get('mode','?')}")
+    print(f"#   chain state: {warm_why}")
     print(f"#   ledger: {len(led['knobs'])} knobs "
           f"({sum(1 for k in led['knobs'] if k['verdict']=='RECOMMEND_ON')} ON, "
           f"{sum(1 for k in led['knobs'] if k['verdict']=='RECOMMEND_SCOPED')} SCOPED)"
@@ -320,16 +438,27 @@ def main():
             "scoped": ("RECOMMEND_SCOPED",),
             "all": RECOMMENDED}[a.tier]
     n_gap = n_suppressed = n_chain = 0
+    tallies = []
     for tier in want:
         rows = [k for k in led["knobs"] if k["verdict"] == tier]
-        gaps, suppressed = [], []
+        gaps, suppressed, n_armed = [], [], 0
         for k in rows:
             in_regime, pred, filtered = (True, None, False) if a.no_regime else applies(k, env)
             is_armed, found, v = armed(k, cfg, env)
-            if is_armed:
+            # Classify BEFORE the armed short-circuit: an armed IN-REGIME row is what the
+            # loader's `on_armed` counts, and without counting it here there is no
+            # denominator to compare the two readouts on.  Only NOT-armed out-of-regime
+            # rows are worth listing under --show-suppressed, so that list is unchanged.
+            if not in_regime:
+                if not is_armed:
+                    suppressed.append((k, found, v, pred))
                 continue
-            (gaps if in_regime else suppressed).append((k, found, v, pred))
+            if is_armed:
+                n_armed += 1
+                continue
+            gaps.append((k, found, v, pred))
         n_suppressed += len(suppressed)
+        tallies.append((tier, n_armed, n_armed + len(gaps)))
         print(f"\n=== {tier}: {len(gaps)} of {len(rows)} not armed and IN REGIME"
               f"{f' ({len(suppressed)} suppressed as out-of-regime)' if suppressed else ''} ===")
         for k, found, v, pred in gaps:
@@ -353,6 +482,15 @@ def main():
         if a.show_suppressed:
             for k, found, v, pred in suppressed:
                 print(f"  [out of regime] {k['knob']}  (needs: {pred})")
+    # The one line that is directly comparable, term for term, against the run-time
+    # "=== Network POSTURE: ON tier X/Y armed, SCOPED tier A/B armed" in
+    # logs/gnss_config.log.  Same regime filter, same armed tests, so a mismatch means
+    # this checker and GnssConfig::logNetworkPosture_ have drifted - which is the only
+    # cheap way to notice that they have.
+    if tallies:
+        print("\n" + ", ".join(f"{t[10:]} tier {a_}/{n} armed" for t, a_, n in tallies)
+              + "   (armed/in-regime - compare against the run's "
+                "'Network POSTURE: ... armed' line)")
     print(f"\n{n_gap} in-regime gap(s); {n_suppressed} suppressed as out-of-regime"
           f"{' (--show-suppressed to list)' if n_suppressed and not a.show_suppressed else ''}."
           f"\nRead the scope before arming - see the ledger's SCOPED tier and "

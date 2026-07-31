@@ -1,0 +1,84 @@
+{
+  "_comment": [
+    "GOLDEN 2026-07-29 LONG RUN — full 305-station GPS+Galileo all-on, 30 s cadence,",
+    "3 h (360 epochs), COLD start at 00:00:00 GPS on DOY-129 (2024-05-08).",
+    "",
+    "PURPOSE.  The _golden0729_* family standardized the armed set after an audit found",
+    "many validated implementations were being left out of network configs by accident",
+    "(the arm set now lives in ONE place, _golden0729_allon_delta.json, and every roster",
+    "config composes it via 'extends').  Every arm of that set has so far only been",
+    "exercised at 10-30 epochs, which is inside the cold-start ignition transient — a",
+    "window in which nothing may be graded (project_net305_attribution_rerun: 'never",
+    "verdict inside ignition').  This config is the first run long enough to read",
+    "CONVERGENCE and STABILITY of the standardized posture at full network scale.",
+    "",
+    "PROVENANCE.  Extends _golden0729_net305_30ep.json verbatim — same 305-station",
+    "roster, same clock datum (MBAR00UGA), same carry/datum posture, same arm set — and",
+    "changes only (a) max_duration_s 900 -> 10800, (b) output/log destinations, (c) three",
+    "extra cheap traces, (d) periodic state snapshots.  NO estimation knob differs from",
+    "the 30-epoch golden arm, so the first 30 epochs of this run are directly comparable",
+    "to it.",
+    "",
+    "GRADING (datum-invariant / SD only — standing invariant #5).  Primary:",
+    "network_epoch_status.csv emitted-vs-withheld and postfit sigma0 trend; run-end",
+    "counters from the teardown readout (standing invariant #4 — '0 driven / 0 folded'",
+    "means the wiring is inert regardless of how clean the log looks).  Secondary:",
+    "network_dd_fractional.csv DD-chord convergence, network_sh_spectrum.csv ev1 /",
+    "a00 LEVEL (never slope — project_gg305_warm_resume_chain), network_solution.csv",
+    "clock + code-bias level stability, network_if_slip.csv / network_d5_flags.csv slip",
+    "churn, network_zwd.csv troposphere stability.",
+    "",
+    "WATCH ITEM — sh_health_gate has no release/degrade policy: a sick-field era",
+    "withholds the wire for its full duration (95+ min measured on DOY-129).  The a00",
+    "band is already demoted to the ruled wide backstop rail [-60, +200] with",
+    "sh_gate_min_epochs = 10 so the cold-start transient is not gated as a fault, but a",
+    "long withhold stretch in network_epoch_status.csv is the expected failure signature,",
+    "not a crash.",
+    "",
+    "ONE INHERITED DEFECT FIXED.  The roster base pins emit_pb_filter_jump_k = 8.0, which",
+    "is the RETIRED v1 hand tuning: the gate_v2 card (33x/178x measured improvement, gates",
+    "G1-G5 pass) replaced it with the k = 4.0 code default, and the promotion ledger names",
+    "jump_k=8 + meas_sigma_m=0.1 as the two v1 values 160 of 180 emit_pb_filter configs",
+    "still carry.  The runtime POSTURE check flags it as a SCOPED gap.  Overridden to 4.0",
+    "here.  Safe: emit_pb_filter and all its sub-knobs are OUTPUTS-ONLY and are NOT in the",
+    "warm-resume fingerprint, and the PB filter lives in the emission frame only — never in",
+    "the estimator — so this cannot perturb the estimation health read this run exists for.",
+    "",
+    "SNAPSHOTS.  state_snapshot_* is write-only in the forward pass (insurance against",
+    "losing a multi-hour run, plus a warm-resume seed for follow-on legs).  Diagonal carry",
+    "blob (committed dee2824) keeps each snapshot ~0.6 MB instead of ~258 MB.",
+    "",
+    "THREADS.  eigen_threads / parallel_max_threads held at 10 exactly as in the 30-epoch",
+    "arm: this box has 20 logical cores and a concurrent producer run was holding 8 of",
+    "them at launch.  parallel_carry ON / parallel_reduce OFF is inherited (they are",
+    "mutually exclusive — the loader silently forces pcarry off if both are set)."
+  ],
+
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net305_30ep.json"
+  ],
+
+  "processing": {
+    "max_duration_s": 10800.0,
+    "eigen_threads": 10
+  },
+
+  "network": {
+    "parallel_max_threads": 10,
+
+    "product_output_path": "C:/GnssProcessor/runs/golden3h_net305/products.txt",
+
+    "emit_pb_filter_jump_k": 4.0,
+
+    "trace_stations": true,
+    "trace_clock_full": true,
+    "trace_zwd": true,
+
+    "state_snapshot_path": "C:/GnssProcessor/runs/golden3h_net305/snap.txt",
+    "state_snapshot_interval_s": 1800.0,
+    "state_snapshot_carry": true,
+    "state_snapshot_carry_diagonal": true,
+    "state_snapshot_keep_history": true,
+    "state_snapshot_require": false
+  }
+}

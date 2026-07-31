@@ -23,10 +23,20 @@ construction, so warm resumes from ANY history snapshot carry it).
 import json
 import os
 
+import sys
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+# Resolve any "extends" chain the base may grow.  These bases are self-contained
+# today, so this is byte-identical now; it is here so the script does not silently
+# read a four-key DELTA as a whole config the day someone rebases it (the failure
+# scripts/config_posture_check.py shipped with).
+from gnss_config_chain import load_config_flat  # noqa: E402
+
 BASE = r"C:\GnssProcessor\config\test_suite\_day129_guards_conv.json"
 RUNDIR = r"C:\GnssProcessor\runs\guards_cont"
 
-cfg = json.load(open(BASE, encoding="utf-8"))
+cfg = load_config_flat(BASE)
 net = cfg["network"]
 
 cfg["processing"]["max_duration_s"] = 30600.0           # 13:00:00 .. 21:29:30 (1020 ep)

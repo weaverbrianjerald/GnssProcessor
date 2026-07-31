@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "S1 SMOKE — 10 epochs of the _spectro_50sta_3h posture (staged cadence: a 10-epoch",
+    "smoke before any >= 1 h arm; docs/SPEC_lane_spectrometer.md §3.5 / §11).",
+    "",
+    "This is NOT a verdict run.  It answers four mechanical questions before 3.5 h of",
+    "wall clock is spent, each of which has silently wasted a run before:",
+    "  1. does logs/network_phase_anchor.csv appear AND carry a varying anchor_sta?  Under",
+    "     the eq34 chain datum a satellite is pinned at EVERY station incident to it in the",
+    "     spanning tree (~3.9 stations per (sat,signal) measured at 50 sta / 17 sats), so",
+    "     the file is a pin SET, not a single anchor per satellite — the grader takes the",
+    "     modal station per arc and reports churn separately.  A constant column would mean",
+    "     the legacy single-pivot datum is in force and the partition degenerates.",
+    "  2. what does the uncapped DD-frac pool actually measure per epoch at 50 stations?",
+    "     Read the 'DD-frac tracer' log line's DD count: if it approaches 2000 the cap is",
+    "     about to bind and the arc continuity the ladder needs starts dying as p^4.",
+    "  3. is the SD EWL row layer alive at all (sd_ewl armed here with the DIAGNOSTIC",
+    "     min_arc_epochs 2 so arcs mature inside 10 epochs), and does the integer decision",
+    "     produce non-zero dd_fixed?  Read the two run-end 'Network (SD EWL integer fix)'",
+    "     lines: rows_fixed == 0 with a named dominant cause is the answer to look for.",
+    "  4. does the grader run end-to-end on a 10-epoch trace without a join collapse?",
+    "",
+    "sd_ewl + fix_enable are armed HERE ONLY.  The 3.5 h S1 seed deliberately leaves them",
+    "OFF: S1 grades the producer as it is, and folding rows would change the DDs it grades.",
+    "The integer path is exercised here purely so a miswire is found in 10 epochs.",
+    "",
+    "sigma_floor_m 1.0 / max_abs_z_m 10.0 are the increment-1 MEASURED honest ladder — the",
+    "unguarded 0.05 m floor over-weights by ~13x (SPEC_sd_ewl_prereduce §7.4)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_spectro_50sta_3h.json"
+  ],
+
+  "processing": {
+    "max_duration_s": 300.0
+  },
+
+  "network": {
+    "trace_dd_fractional_epoch_stride": 1,
+    "state_snapshot_path": "C:/GnssProcessor/runs/spectro_smoke10/snap.txt",
+    "state_snapshot_interval_s": 60.0,
+    "sd_ewl": {
+      "enable": true,
+      "trace": true,
+      "min_arc_epochs": 2,
+      "sigma_floor_m": 1.0,
+      "max_abs_z_m": 10.0,
+      "fix_enable": true,
+      "fix_min_ffr": 0.999,
+      "fix_max_frac_cyc": 0.15,
+      "fix_sigma_floor_m": 1.0
+    },
+    "product_output_path": "C:/GnssProcessor/runs/spectro_smoke10/products.txt"
+  }
+}

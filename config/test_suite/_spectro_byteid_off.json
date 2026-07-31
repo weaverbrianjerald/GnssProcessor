@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "GATE 1 (docs/SPEC_lane_spectrometer.md §9.1) — OFF byte-identity arm for every knob",
+    "the campaign adds: network.trace_phase_anchor, network.sd_ewl.fix_enable,",
+    "fix_min_ffr, fix_max_frac_cyc, fix_sigma_floor_m.  All five default false/inert, so",
+    "this config is the golden wl1off arm VERBATIM and its artifacts must reproduce",
+    "runs/golden_0729/net50_wl1off/ exactly.",
+    "",
+    "The ONLY key changed from the parent is product_output_path — pointed at this arm's",
+    "own directory so the comparison cannot overwrite the stored golden it is measured",
+    "against.  (Its `G` generation-timestamp record differs by construction, and several",
+    "service CSVs are APPEND-mode, which is why logs/ is cleared per arm.)",
+    "",
+    "What a difference here would mean: the campaign touches SHARED paths —",
+    "ApplicationNetwork.cpp (the 2a call site), ApplicationNetworkAssembly.cpp (the row",
+    "builder's group split and the pred_m split), NetworkDdFrac.cpp (the anchor emit),",
+    "NetworkRunTraces.cpp (two stream opens), NetworkTeardown.cpp (the readout).  Standing",
+    "invariant #6 requires this arm to be compared SAME-BUILD; a Debug-vs-Release or",
+    "cross-build comparison is meaningless at the ppm level."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/spectro_byteid/products.txt"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "S1 SEED — lane-ladder spectrometer campaign (docs/SPEC_lane_spectrometer.md §3.5).",
+    "50-station GPS+Galileo, 30 s, COLD start 00:00:00 GPS DOY-129, 3.5 h.",
+    "",
+    "WHY A FRESH RUN AT ALL.  Step 0 of §3.5 says grade a stored lineage if one survives.",
+    "Measured on every stored candidate carrying network_dd_fractional.csv for >= 3 h",
+    "(t6/t7 12 h arms, t7h 6 h, t4b 305-sta 2 h): the median adjacent-epoch DD step is",
+    "1.2-11.6 CYCLES per epoch — 2.4x to 23x the 0.5 cyc window-splitting threshold — so",
+    "0.0-0.2 % of arc windows reach the 10-epoch grading minimum and every one of them is",
+    "CHURN-GATED (§3.4's last row).  Confirmed not to be a ref_sat-flip artifact: the same",
+    "step measured on the re-referenced satellite-PAIR series (reference-independent by",
+    "construction) is 1.4-12.5 cyc, and the tail window carries exactly one ref_sat per",
+    "(cons,signal).  Those runs also predate the Cards 1d+1e honest instrument.",
+    "",
+    "POSTURE.  Inherits the full standard armed set from the _golden0729 lineage",
+    "(raim + attribution + within_epoch + withhold 6.0 + we_code_iono, clock_runaway_check,",
+    "sh_health_gate, phase_leveling with a wired MW slip detector, emit_ura,",
+    "code_bias_disc_jump_test, cb_excursion_reinit, cold_clock_seed, pcarry ON / preduce OFF,",
+    "eq34 + prioritized phase datum, eigen/parallel threads pinned at 8).  mw_wl.enable is",
+    "OFF via the wl1off parent so the graded solution carries no WL-1 float layer.",
+    "network.sd_ewl stays OFF here: S1 grades the producer AS IT IS, and arming the float",
+    "row layer would change the very DDs being graded (measured +0.51 % ev1).",
+    "",
+    "WHAT THIS RUN ADDS over the golden parent, all trace-only and fingerprint-safe:",
+    "  trace_dd_fractional_max_pairs 2000 + epoch_stride 2 — the cost controls are",
+    "    LOAD-BEARING (unbounded measured ~45 min/epoch at 305 sta).  At 50 stations the",
+    "    uncapped pool measures 122-524 DD/epoch, so 2000 never binds and the subsample",
+    "    (a per-epoch RANDOM reshuffle) never fires — which matters, because if it fired it",
+    "    would break the arc continuity the ladder needs as p^4 across a 4-row lane join.",
+    "  trace_phase_anchor — the (cons,signal,sat) -> anchor-station map for the §3.3",
+    "    anchor partition.  No other artifact carries it.",
+    "  state_snapshot_* — the S2 virtual-fold input AND crash insurance.",
+    "",
+    "GRADE THE FINAL 60 MIN ONLY:",
+    "  python scripts/lane_spectrometer.py runs/spectro_3h 3600",
+    "3.5 h ends at 03:30 UTC, deliberately short of the 04:00 UTC onset (Card 1e), so the",
+    "graded window is 02:30-03:30 and no storm-era epoch enters the verdict."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+
+  "processing": {
+    "max_duration_s": 12600.0,
+    "eigen_threads": 8
+  },
+
+  "network": {
+    "parallel_max_threads": 8,
+
+    "trace_dd_fractional": true,
+    "trace_dd_fractional_max_pairs": 2000,
+    "trace_dd_fractional_epoch_stride": 2,
+    "trace_phase_anchor": true,
+
+    "state_snapshot_path": "C:/GnssProcessor/runs/spectro_3h/snap.txt",
+    "state_snapshot_interval_s": 1800.0,
+    "state_snapshot_carry": true,
+    "state_snapshot_carry_diagonal": true,
+    "state_snapshot_keep_history": true,
+    "state_snapshot_require": false,
+
+    "product_output_path": "C:/GnssProcessor/runs/spectro_3h/products.txt"
+  }
+}

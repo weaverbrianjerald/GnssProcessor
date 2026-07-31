@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "SMOKE arm for _golden0729_net305_3h.json — 10 epochs (300 s) at 305 stations.",
+    "Mandated by the staged-cadence directive (feedback_test_cadence_smoke_first): a",
+    ">= 1 h run is only launched after a clean 10-epoch smoke on the SAME config.",
+    "",
+    "This arm exists to answer three questions BEFORE committing hours of wall clock:",
+    " (1) does the whole 'extends' chain flatten so that every armed knob actually binds",
+    "     (verified against network_run_manifest.json, not against absence of crashes),",
+    " (2) are the other sessions' in-flight knobs (sd_ewl, lane spectrometer) confirmed",
+    "     OFF in the manifest, so this build's uncommitted work is inert here,",
+    " (3) what is the real per-epoch cost at 305 stations x GPS+Galileo x 10 threads,",
+    "     so the 3 h wall clock can be projected honestly.",
+    "",
+    "Only duration and destinations differ from the 3 h arm; snapshots are off.",
+    "NOT a grading arm — 10 epochs is deep inside the cold-start ignition transient."
+  ],
+
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net305_3h.json"
+  ],
+
+  "processing": {
+    "max_duration_s": 300.0
+  },
+
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/golden3h_smoke/products.txt",
+    "state_snapshot_path": ""
+  }
+}

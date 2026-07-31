@@ -81,12 +81,10 @@ void networkInstallCarry(
     const auto& nc  = config_.getNetworkConfig();
     const auto& nmw = config_.getNetworkConfig().mw_wl;
     auto& trace = traces.trace;
-    auto& lane_trace_header_written = ctx.carry.lane_trace_header_written;
     auto& d5_ewl_stasat = ctx.carry.d5_ewl_stasat;
     auto& d5_hold_chords = ctx.carry.d5_hold_chords;
     auto& d5_inject_chords_prev = ctx.carry.d5_inject_chords_prev;
     auto& d5_inject_chords_now = ctx.carry.d5_inject_chords_now;
-    auto& d5_dump_header_written = ctx.carry.d5_dump_header_written;
     auto& carry_prev_tow = ctx.carry.carry_prev_tow;
     auto& carry_epochs = ctx.carry.carry_epochs;
     auto& carry_born_total = ctx.carry.carry_born_total;
@@ -134,6 +132,39 @@ void networkInstallCarry(
         a.sib_blocked         += b.sib_blocked;
         a.sib_abs_frac_sum    += b.sib_abs_frac_sum;
     };
+
+    // Card 4 (M1) D5 v3: hand the driver this epoch's CORROBORATION set before the install
+    // consumes it — the chords whose underlying arc the raw MW/GF observables measured as
+    // CONTINUOUS.  Built here because this is the one seam holding all three inputs at once:
+    // slip_qc (the raw verdicts, computed in PASS A before the solve), carry_arc_amb_key
+    // (the group→chord→ambiguity reverse map rebuilt with the blocks), and carry_driver.
+    //
+    // MEMBERSHIP IS "MEASURED AND FLAT", NEVER "NO EVIDENCE" — verdict.measured must be true
+    // AND the (station, satellite) must be absent from epoch.stepped.  An unmeasured arc is
+    // deliberately left OUT so it still re-taps: suppressing on absence of evidence would
+    // silently disable the fine-slip response on exactly the arcs we know least about
+    // (standing invariant #1).  Same tri-state the network_d5_flags.csv `raw_stepped` column
+    // encodes, so the trace and the gate cannot disagree.
+    if (carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()
+        && slip_qc.epoch.computed) {
+        std::set<std::pair<int, ArcKey>> flat;
+        for (const auto& [group, by_chord] : carry_arc_amb_key) {
+            for (const auto& [chord, amb] : by_chord) {
+                if (amb.empty() || chord.u < 0
+                    || static_cast<std::size_t>(chord.u) >= slip_qc.epoch.verdict.size())
+                    continue;
+                const auto parts = StateKeys::parseAmbiguityKey(amb);
+                if (!parts) continue;
+                const std::string& sat = parts->satellite;
+                if (slip_qc.epoch.stepped.count({ chord.u, sat })) continue;  // real step ⇒ re-tap
+                const auto& vmap = slip_qc.epoch.verdict[static_cast<std::size_t>(chord.u)];
+                const auto vit = vmap.find(sat);
+                if (vit != vmap.end() && vit->second.measured)
+                    flat.insert({ group, chord });   // measured AND flat ⇒ suppressible
+            }
+        }
+        carry_driver.setInnovFlatChords(std::move(flat));
+    }
 
     // parallel_carry: thread installPosterior's posterior-cov GEMMs.  Run it
     // SERIAL-over-blocks (n_threads=1, its byte-identical-to-serial path) so Eigen's
@@ -376,14 +407,11 @@ void networkInstallCarry(
         if (mw_lane_trace && !lane_trace_epoch.empty()) {
             std::map<ArcKey, double> w_of;   // decided cycles' integer targets
             for (const auto& pl : wl_inject_epoch) w_of[pl.chord] = pl.w;
-            std::error_code ec_lt;
-            std::filesystem::create_directories(log_dir_, ec_lt);
-            std::ofstream ltf(log_dir_ / "network_wl_lane_trace.csv", std::ios::app);
+            // Stream + header are owned by NetworkRunTraces (opened TRUNCATING once in
+            // openMwWlDumps).  This used to re-open the path per epoch in std::ios::app,
+            // which silently concatenated a re-run onto the previous run's rows.
+            auto& ltf = traces.wl_lane_trace;
             if (ltf) {
-                if (!lane_trace_header_written && ltf.tellp() == std::streampos(0))
-                    ltf << "week,tow,chord_u,chord_v,station,sat,lane_cyc,frac_cyc,"
-                           "w,decided,held,injected\n";
-                lane_trace_header_written = true;
                 for (const auto& e : lane_trace_epoch) {
                     double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
                     if (lane_on
@@ -517,14 +545,13 @@ void networkInstallCarry(
         const auto& flags  = carry_driver.lastInnovFlags();
         const auto& sigmas = carry_driver.lastInnovFlagSigmas();
         if (!flags.empty()) {
-            std::error_code ec_d5;
-            std::filesystem::create_directories(log_dir_, ec_d5);
-            std::ofstream d5f(log_dir_ / "network_d5_flags.csv", std::ios::app);
+            // Stream + header are owned by NetworkRunTraces (opened TRUNCATING once in
+            // openMwWlDumps, under the SAME arming expression this block tests).  The
+            // former per-epoch std::ios::app re-open glued consecutive runs into one
+            // file — an A/B whose arms had been re-run unequal numbers of times showed
+            // a pure-artifact row-count divergence (hit for real, FC-1 INC-1, 2026-07-30).
+            auto& d5f = traces.d5_flags_trace;
             if (d5f) {
-                if (!d5_dump_header_written && d5f.tellp() == std::streampos(0))
-                    d5f << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
-                           "ewl_stasat,hold_chord,injected_prev,raw_stepped\n";
-                d5_dump_header_written = true;
                 for (std::size_t fi = 0; fi < flags.size(); ++fi) {
                     const auto& [gk, chord] = flags[fi];
                     std::string amb, sat;

@@ -192,7 +192,18 @@ bool RealTimeEngine::initialize() {
         if (!std::isfinite(val) || std::abs(val) > 1e8) { valid_pos = false; break; }
     }
     if (valid_pos && approx_pos != std::array<double, 3>{0.0, 0.0, 0.0}) {
-        initial_position_ = Eigen::Vector3d(approx_pos[0], approx_pos[1], approx_pos[2]);
+        // ARP, not the marker: the state vector (and the ATX PCO/PCV applied to it)
+        // is antenna-referenced, while APPROX POSITION XYZ is the monument.  Matters
+        // for the file-fed closed-loop consumer, whose RINEX header carries a real
+        // eccentricity; a live SBF/RTCM stream has neither field, so markerToArp is
+        // an exact no-op there.
+        initial_position_ = rinex_parser_->getArpPositionXyz();
+        const Eigen::Vector3d hen = rinex_parser_->getAntennaDeltaHen();
+        if (hen.norm() > 1e-6)
+            log->info("Seed position reduced marker -> ARP via ANTENNA: DELTA H/E/N "
+                      "({:.4f}, {:.4f}, {:.4f}) m: ({:.3f}, {:.3f}, {:.3f}) m",
+                      hen(0), hen(1), hen(2),
+                      initial_position_.x(), initial_position_.y(), initial_position_.z());
     }
     // NOTE: the seed is applied to ppp_state_ AFTER initializeState() below, not
     // here.  initializeState() + syncPppStateToStateVector() run later in this

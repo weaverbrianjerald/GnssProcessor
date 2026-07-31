@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "FC-1 INC-0 byte-identity gate, arm B (ON, shadow).  Identical to _fc1_byteid_off.json",
+    "except that the fast-clock tier is ARMED in shadow mode.",
+    "",
+    "Shadow runs the tick body on FULL epochs (epoch_decimation_n stays 1, so there are no",
+    "decimated-out epochs), immediately before the full pipeline, and discards the result.",
+    "Both FC-1 hooks are therefore exercised on every epoch of this run: the shadow tick",
+    "and the emit-success anchor harvest.",
+    "",
+    "GATE: products.txt and every estimation CSV must be byte-identical to arm A.  The only",
+    "permitted differences are logs/network_fast_clock.csv (which arm A does not open at",
+    "all), the FC-1 lines in main_log.log, and the fast_clock_* keys in the run manifest.",
+    "A difference anywhere else means the tick is not isolated from the full pipeline,",
+    "which is the one property that makes this card safe to land incrementally."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_fc1_byteid_off.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/fc1_byteid_shadow/products.txt",
+    "fast_clock": {
+      "enable": true,
+      "shadow": true,
+      "trace": true,
+      "trace_sat_stride": 1
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "SD pre-reduce EWL — TAIL-GUARD arm.  One functional key over _sdewl_on30.json:",
+    "network.sd_ewl.max_abs_z_m = 10.0.",
+    "",
+    "Isolates ONE question: was the +6.8% ev1 lift of the unguarded arm the 2.3% of rows",
+    "carrying a pathological x_lin?  Measured |resid_m| on that arm: median 1.02, p90 3.50,",
+    "p95 5.04, p99 1349, max 1.85e6 m — at a 0.08 m row sigma, the tail is astronomically",
+    "over-weighted garbage and could manufacture the whole lift on its own.  A 10 m ceiling",
+    "keeps 96.5% of rows and drops the tail.",
+    "",
+    "If ev1 keeps ~+6% the lift is real structure; if it collapses toward the wl1off 0.1390",
+    "plateau, the lift WAS the tail."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_sdewl_on30.json"
+  ],
+  "network": {
+    "sd_ewl": { "max_abs_z_m": 10.0 },
+    "product_output_path": "C:/GnssProcessor/runs/sdewl_on30_guard/products.txt"
+  }
+}

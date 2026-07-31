@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "GOLDEN 2026-07-29 — 50-station GPS+Galileo all-on, 30 s cadence, 30 epochs,",
+    "COLD start at 00:00:00 GPS on DOY-129 (2024-05-08).",
+    "Roster + carry/datum posture from _dcmp_50sta_10ep_allon.json (50 well-distributed",
+    "IGS sites, clock datum MBAR00UGA); arm set from _golden0729_allon_delta.json.",
+    "eigen_threads / parallel_max_threads held at 8: two concurrent producer runs were",
+    "holding ~7-8 of this box's 20 logical cores when this was launched."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_dcmp_50sta_10ep_allon.json",
+    "C:/GnssProcessor/config/test_suite/_golden0729_allon_delta.json"
+  ],
+
+  "processing": {
+    "max_duration_s": 900.0,
+    "eigen_threads": 8
+  },
+
+  "network": {
+    "parallel_max_threads": 8,
+    "product_output_path": "C:/GnssProcessor/runs/golden_0729/net50/products.txt",
+    "trace_stations": true,
+    "trace_clock_full": true,
+    "trace_station_residuals": true,
+    "trace_zwd": true
+  }
+}

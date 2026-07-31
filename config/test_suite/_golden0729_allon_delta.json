@@ -1,0 +1,166 @@
+{
+  "_comment": [
+    "GOLDEN 2026-07-29 all-on DELTA — shared arm set, NO station roster.",
+    "Never load this file directly; it is an 'extends' base.  Compose as:",
+    "  \"extends\": [<roster config>, <this file>]   (child + later base wins)",
+    "",
+    "Arms, by group:",
+    " * user request      GPS+Galileo, frequency_mode/channel_mode = all, 10 deg mask,",
+    "                     all hardware-bias estimation, MW + IF-phase slip detectors,",
+    "                     cold-start clock seed, MW AR decision tiers.",
+    " * hardware bias     network.estimate_sat_code_bias = true is the COUPLED SLICE:",
+    "                     the loader forces estimate_sat_biases + promote_sat_code_bias +",
+    "                     estimate_ifb (rx DCB) + iono constraint + estimate_phase_clock=false",
+    "                     + enable_code_phase_bias=false (own per-signal OSB replaces .BIA).",
+    "                     enable_code_phase_bias is therefore set false EXPLICITLY here.",
+    " * non-negotiables   estimate_iono_sh + phase_datum_prioritized + zero-q leveling with a",
+    "                     wired slip detector + 10 deg mask (feedback_network_nonnegotiable_configs).",
+    " * standard armed    raim / raim_attribution / raim_within_epoch / raim_withhold_sigma0 6.0 /",
+    "   set (CLAUDE.md)   clock_runaway_check / sh_health_gate / phase_leveling / emit_ura /",
+    "                     code_bias_disc_jump_test / cb_excursion_reinit / cold_clock_seed /",
+    "                     pcarry ON + preduce OFF (mutex) / full observability.",
+    " * raim_we_code_iono ARMED — this run is its first ON exercise (code + iono-constraint",
+    "                     within-epoch pools, previously screened by no tier).",
+    "",
+    "DELIBERATE OMISSIONS (each has a measured reason; do not 'complete' the set):",
+    " - mw_wl.fix_enable / wl_inject_enable / ewl_fold_rows / uwl_cold_fix / lane_carry.*",
+    "   MW(1,2) is 1.6-1.9% wrong at every baseline and the WL bridge needs DD iono to",
+    "   0.198 m; on a global roster ~83% of gate-admitted WL integers are wrong.  Integer",
+    "   injection would corrupt the very health read this config exists to produce.",
+    " - mw_wl.uwl_family_pairs / mw_wl.lane_trace: INERT without lane_carry.  Gating is",
+    "   uwl_family_on = uwl_on && lane_on && ... (ApplicationNetwork.cpp:528) and",
+    "   mw_lane_trace = (wl_inject_on || lane_fix_on) && ... (:600).  Left off rather than",
+    "   armed-and-dead (standing invariant #4).",
+    " - warmup_ura_floor_m: deadlocks against sh_health_gate — NetworkSolPrep.cpp:140",
+    "   early-returns on sh_gate_engaged but the ramp-lift eval (:400) is downstream, so the",
+    "   floor can never lift.",
+    " - emit_clock_rate / clock_model: net-harmful (c0 is a random walk, ZOH is MMSE) and no",
+    "   RWFM in this fixture (Hadamard p~1).",
+    " - cycle_slip.turbo_edit: GF/TurboEdit is a 1 s real-time instrument; at 30 s the",
+    "   detector set is relaxed MW + LLI + IF-TD (feedback_slip_detectors_by_rate).",
+    " - ocean-tide loading / atmospheric loading / higher-order iono: no EOT20 grid in",
+    "   data/static/nc, no APL grid, and HOI would need an external GIM.",
+    " - estimate_glonass / GLONASS IFB: GPS+Galileo run, and estimate_glonass collapses",
+    "   Galileo clocks at scale.",
+    " - ambiguity_resolution.enable: the network producer is float-only by design.",
+    "",
+    "SH gate posture: the default a00 band [2, 150] TECU violates standing invariant #5",
+    "(a00 is the field's DC term, trades against the code-bias common mode, so its LEVEL is",
+    "a property of convergence history and two realizations of the same day differ by ~25",
+    "TECU).  Demoted here to the ruled wide backstop rail [-60, +200] with sh_gate_min_epochs",
+    "= 10 so the cold-start transient is not gated as a fault.  The ruled SHAPE gate (rms over",
+    "degrees >= 1 as a ratio to a converged-window median) is not built."
+  ],
+
+  "processing": {
+    "active_systems": ["GPS", "Galileo"],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ"
+    }
+  },
+
+  "estimation": {
+    "global_vtec_sh": {
+      "trace": true,
+      "a00_warn_low_tecu": -60.0,
+      "a00_warn_high_tecu": 200.0
+    }
+  },
+
+  "model_corrections": {
+    "enable_code_phase_bias": false
+  },
+
+  "network": {
+    "estimate_sat_code_bias": true,
+    "estimate_iono_sh": true,
+    "estimate_glonass": false,
+
+    "phase_datum_eq34": true,
+    "phase_datum_prioritized": true,
+    "code_datum_time_linked": true,
+    "cold_clock_seed": true,
+
+    "phase_leveling": true,
+    "phase_leveling_max_gap_s": 900.0,
+    "cycle_slip": {
+      "mw_detect": true,
+      "if_phase_td": true
+    },
+
+    "raim": true,
+    "raim_attribution": true,
+    "raim_within_epoch": true,
+    "raim_withhold_sigma0": 6.0,
+    "raim_we_code_iono": true,
+    "clock_runaway_check": true,
+    "code_bias_disc_jump_test": true,
+    "cb_excursion_reinit": true,
+    "sh_health_gate": true,
+    "sh_gate_min_epochs": 10,
+
+    "emit_ura": true,
+    "emit_clock_disc": true,
+    "emit_combined_sigma": true,
+    "emit_pb_filter": true,
+    "emit_pb_filter_gate_v2": true,
+    "emit_pb_filter_emit_sigma": true,
+    "emit_generation_id": true,
+    "emit_generation_time": true,
+    "emit_epoch_status_record": true,
+    "iono_supply_formal_sigma": true,
+
+    "mw_wl": {
+      "enable": true,
+      "ewl_enable": true,
+      "uwl_enable": true,
+      "uwl_mid_enable": true,
+      "uwl_dual_top": true,
+      "uwl_sib_gate": true,
+      "fix_enable": false,
+      "wl_inject_enable": false,
+      "ewl_fold_rows": false,
+      "uwl_cold_fix": false,
+      "uwl_family_pairs": false,
+      "bridge_sample_debias": false,
+      "d5_dump": true,
+      "f6_dump": true,
+      "f6_all_blocks": true
+    },
+    "lane_carry": {
+      "enable": false
+    },
+    "ambiguity_resolution": {
+      "enable": false
+    },
+
+    "parallel_stations": true,
+    "parallel_min_stations": 8,
+    "parallel_carry": true,
+    "parallel_reduce": false,
+    "parallel_seam": true,
+
+    "neq_export_epoch": -1,
+    "write_run_manifest": true,
+    "health_interval_s": 300.0,
+    "trace_epoch_status": true,
+    "trace_events": true,
+    "trace_flag_rates": true,
+    "trace_postfit_sigma0": true,
+    "trace_postfit_keyed": true,
+    "trace_section_timers": true,
+    "trace_sh_spectrum": true,
+    "trace_sh_spectrum_stride": 1,
+    "trace_slip_events": true,
+    "trace_estimability": true,
+    "trace_anchor_info": true,
+    "trace_ionosphere": true,
+    "trace_dd_fractional": true,
+    "trace_dd_fractional_max_pairs": 500,
+    "trace_dd_fractional_epoch_stride": 1
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "D5 v3 corroboration gate — OFF ARM (standing invariant #6: new work is default-OFF",
+    "with structural byte-identity).  Identical to _rawstep_smoke.json except for output",
+    "paths.  Run with the NEW exe carrying the corroboration code.",
+    "",
+    "GATE: every artifact must match runs/rawstep_smoke (built from the SAME config on the",
+    "exe WITHOUT the feature).  The epoch-1 solve checksum and the D5 flag / birth counts",
+    "are the load-bearing ones — if they move, the default-OFF path is not inert and the ON",
+    "arm's delta cannot be attributed to the gate."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_rawstep_smoke.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/corrob_off/products.txt"
+  }
+}

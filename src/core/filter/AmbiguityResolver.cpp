@@ -121,6 +121,129 @@ AmbiguityResolver::PartialFix AmbiguityResolver::selectFixableSubset_(
 }
 
 // ===========================================================================
+// DIAGNOSTIC (Jul-30 2026, AR integer-recovery investigation)
+//
+// Conditioning probe for the DD ambiguity sub-covariance, evaluated in the
+// CYCLE domain — the same matrix MLAMBDA searches.  The open question is
+// whether applying an integer fix as a Joseph-form pseudo-observation leaves
+// Qb well-conditioned for the NEXT epoch (the stated intent at the fix sites
+// below) or still collapses it the way the legacy back-substitution did.
+//
+// Field evidence that motivated this: tightening hold_variance 1e-3 -> 1e-7
+// REDUCED the fix count (668 -> 125 epochs) and diverged the kinematic
+// solution to 2-3 m.  Both are signatures of a covariance that is being
+// driven singular by the fix.
+//
+// Pure read-only: computes eigenvalues of a copy.  Compiled in unconditionally
+// but only evaluated when the ar_qb_trace logger is at debug or below, so the
+// default cost is one should_log() call per fix.
+// ===========================================================================
+namespace {
+
+struct QbCond {
+    double cond   = 0.0;   ///< lambda_max / lambda_min of Qb in cycles^2
+    double lo     = 0.0;   ///< smallest eigenvalue (cycles^2)
+    double hi     = 0.0;   ///< largest eigenvalue  (cycles^2)
+    double sig_lo = 0.0;   ///< sqrt(lo) — tightest DD direction, CYCLES
+    double sig_hi = 0.0;   ///< sqrt(hi) — loosest  DD direction, CYCLES
+};
+
+/// Eigen-decompose the (symmetric) cycle-domain DD ambiguity covariance.
+/// Returns all zeros on an empty or non-finite matrix.
+QbCond qbCondition(const Eigen::MatrixXd& Qb_cycles) {
+    QbCond c;
+    const Eigen::Index n = Qb_cycles.rows();
+    if (n <= 0 || !Qb_cycles.allFinite()) return c;
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(
+        0.5 * (Qb_cycles + Qb_cycles.transpose()), Eigen::EigenvaluesOnly);
+    if (es.info() != Eigen::Success) return c;
+    const Eigen::VectorXd ev = es.eigenvalues();
+    c.lo = ev.minCoeff();
+    c.hi = ev.maxCoeff();
+    c.cond   = (c.lo > 0.0) ? (c.hi / c.lo) : std::numeric_limits<double>::infinity();
+    c.sig_lo = (c.lo > 0.0) ? std::sqrt(c.lo) : 0.0;
+    c.sig_hi = (c.hi > 0.0) ? std::sqrt(c.hi) : 0.0;
+    return c;
+}
+
+/// Rebuild the cycle-domain DD ambiguity covariance from a full state
+/// covariance, using the SAME differencing and lambda scaling as resolve().
+/// This is how the POST-fix Qb is obtained: the fix updates the full P, so the
+/// DD block has to be re-extracted to be comparable to the pre-fix matrix.
+template <typename PairVec>
+Eigen::MatrixXd rebuildQbCycles(const Eigen::MatrixXd& P,
+                                const PairVec& pairs,
+                                const std::vector<double>& pair_lambda) {
+    const int nb = static_cast<int>(pairs.size());
+    Eigen::MatrixXd Q(nb, nb);
+    for (int i = 0; i < nb; ++i) {
+        for (int j = 0; j < nb; ++j) {
+            const int ii = pairs[i].state_idx_i,  ir = pairs[i].state_idx_ref;
+            const int ji = pairs[j].state_idx_i,  jr = pairs[j].state_idx_ref;
+            Q(i, j) = (P(ii, ji) - P(ii, jr) - P(ir, ji) + P(ir, jr))
+                      / (pair_lambda[i] * pair_lambda[j]);
+        }
+    }
+    return 0.5 * (Q + Q.transpose());
+}
+
+}  // namespace
+
+// ===========================================================================
+// DIAGNOSTIC: per-ambiguity arc age
+// ===========================================================================
+
+void AmbiguityResolver::refreshArcAges_(const StateManager& state_manager,
+                                        const std::vector<PppObservation>& observations) {
+    // satellite -> elevation (DEGREES; same field the AR elevation mask uses).
+    std::map<std::string, double> sat_elev;
+    for (const auto& obs : observations) sat_elev[obs.satellite] = obs.elevation;
+
+    const auto& amb = state_manager.getAmbiguities();
+    std::set<std::string> present;
+    for (const auto& [key, idx] : amb) {
+        (void)idx;
+        const auto parts = StateKeys::parseAmbiguityKey(key);
+        if (!parts) continue;
+        const std::string k = parts->satellite + "|" + parts->signal;
+        present.insert(k);
+        ArcState& a = arcs_[k];
+
+        // REFLOAT: resetAmbiguity() re-inflates the variance but KEEPS the key,
+        // so presence-counting alone would carry the pre-slip age across a
+        // discontinuity and call a brand-new arc mature.  The pending-reseed
+        // mark is the only in-place signal, so restart on it.
+        if (state_manager.isAmbiguityPendingReseed(key)) a = ArcState{};
+
+        ++a.epochs;
+        const auto it = sat_elev.find(parts->satellite);
+        if (it != sat_elev.end() && it->second > 0.0) {
+            // Same sin(el) form as the elevation stochastic model
+            // (StochasticModel.cpp:127), so `info` really is accumulated
+            // unit-weight code information under the weighting actually used.
+            const double s = std::sin(it->second * Constants::PI / 180.0);
+            a.info += s * s;
+        }
+    }
+    // Keys that left the state vector are gone for good: a re-acquired
+    // ambiguity is a NEW arc and must restart, not resume its pre-gap count.
+    for (auto it = arcs_.begin(); it != arcs_.end();)
+        it = present.count(it->first) ? std::next(it) : arcs_.erase(it);
+}
+
+int AmbiguityResolver::arcAgeOf_(const std::string& sat,
+                                 const std::string& signal) const {
+    const auto it = arcs_.find(sat + "|" + signal);
+    return (it == arcs_.end()) ? 0 : it->second.epochs;
+}
+
+double AmbiguityResolver::arcInfoOf_(const std::string& sat,
+                                     const std::string& signal) const {
+    const auto it = arcs_.find(sat + "|" + signal);
+    return (it == arcs_.end()) ? 0.0 : it->second.info;
+}
+
+// ===========================================================================
 // DD pair construction
 // ===========================================================================
 
@@ -274,6 +397,11 @@ AmbiguityResolution AmbiguityResolver::resolve(
 
     auto log = log_manager_.getLogger("ambiguity_resolver");
     AmbiguityResolution result;
+
+    // DIAGNOSTIC: bump arc ages BEFORE the ar_mode gate so the float-only arm
+    // (ar_mode 0) keeps an identical age series — otherwise an AR-on/AR-off A/B
+    // could not be compared on this field.
+    refreshArcAges_(state_manager, observations);
 
     if (config_.ar_mode == 0) {
         log->debug("AR disabled (ar_mode=0)");
@@ -505,6 +633,9 @@ AmbiguityResolution AmbiguityResolver::resolve(
         }
     }
 
+    // DIAGNOSTIC: pre-fix conditioning of the matrix MLAMBDA is about to search.
+    const QbCond qb_pre = qbCondition(Qb_cycles);
+
     // Run MLAMBDA on cycle-domain inputs.
     Eigen::VectorXd afix_cycles;
     Eigen::VectorXd s;
@@ -581,6 +712,14 @@ AmbiguityResolution AmbiguityResolver::resolve(
         PartialFix pf = selectFixableSubset_(y_cycles, Qb_cycles);
         if (!pf.success) {
             log->info("Partial AR: no fixable subset found ({} DD candidates); staying float", nb);
+            // DIAGNOSTIC: conditioning at REJECTION — pairs with the accept-path
+            // lines to show whether rejections correlate with a collapsed Qb.
+            log->info("QBCOND path=reject nb={} nfix=0 R={:.3e} "
+                      "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
+                      "post_cond=0 post_sig_lo=0 post_sig_hi=0 "
+                      "cond_ratio=0 siglo_ratio=0 ratio=0",
+                      nb, config_.hold_variance,
+                      qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi);
             return result;
         }
 
@@ -609,6 +748,20 @@ AmbiguityResolution AmbiguityResolver::resolve(
         log->info("Partial AR succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} ambiguities fixed, "
                   "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
                   config_.hold_variance, m, nb, pf.ratio, pf.p_s, pf.max_frac);
+        {   // DIAGNOSTIC: Qb conditioning across the fix (partial-AR path)
+            const QbCond qb_post =
+                qbCondition(rebuildQbCycles(result.fixed_covariance, pairs, pair_lambda));
+            log->info("QBCOND path=partial nb={} nfix={} R={:.3e} "
+                      "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
+                      "post_cond={:.4e} post_sig_lo={:.4e} post_sig_hi={:.4e} "
+                      "cond_ratio={:.4e} siglo_ratio={:.4e} ratio={:.2f}",
+                      nb, m, config_.hold_variance,
+                      qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi,
+                      qb_post.cond, qb_post.sig_lo, qb_post.sig_hi,
+                      (qb_pre.cond > 0.0 ? qb_post.cond / qb_pre.cond : 0.0),
+                      (qb_pre.sig_lo > 0.0 ? qb_post.sig_lo / qb_pre.sig_lo : 0.0),
+                      pf.ratio);
+        }
         return result;
     }
 
@@ -661,6 +814,21 @@ AmbiguityResolution AmbiguityResolver::resolve(
     log->info("AR succeeded (Kalman pseudo-obs, R={:.4f} m²): {} ambiguities fixed, "
               "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
               config_.hold_variance, nb, result.ratio, p_s, max_dd_frac);
+
+    {   // DIAGNOSTIC: Qb conditioning across the fix (full-set path)
+        const QbCond qb_post =
+            qbCondition(rebuildQbCycles(result.fixed_covariance, pairs, pair_lambda));
+        log->info("QBCOND path=full nb={} nfix={} R={:.3e} "
+                  "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
+                  "post_cond={:.4e} post_sig_lo={:.4e} post_sig_hi={:.4e} "
+                  "cond_ratio={:.4e} siglo_ratio={:.4e} ratio={:.2f}",
+                  nb, nb, config_.hold_variance,
+                  qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi,
+                  qb_post.cond, qb_post.sig_lo, qb_post.sig_hi,
+                  (qb_pre.cond > 0.0 ? qb_post.cond / qb_pre.cond : 0.0),
+                  (qb_pre.sig_lo > 0.0 ? qb_post.sig_lo / qb_pre.sig_lo : 0.0),
+                  result.ratio);
+    }
 
     return result;
 }
@@ -1047,6 +1215,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     std::vector<NlCandidate> nl_candidates;
     // Track which DD indices are consumed by NL pairs
     std::set<int> consumed_dd;
+    int n_skipped_immature = 0;   ///< candidates dropped by the min_arc_info gate
 
     for (const auto& [spkey, infos] : sat_pair_groups) {
         if (infos.size() != 2) continue;  // need exactly two frequencies
@@ -1071,7 +1240,32 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         auto it_ref = wl_ambiguities.find(wl_key_ref);
         if (it_i == wl_ambiguities.end() || it_ref == wl_ambiguities.end()) continue;
 
+        // Maturity gate: BOTH constituent arcs must have accumulated enough
+        // elevation-weighted code information.  ONE immature arc fails the whole
+        // set's ratio test, so this gates per CANDIDATE, not per set.
+        if (config_.min_arc_info > 0.0) {
+            const double info_i = arcInfoOf_(p_a.sat_i,   hi.signal);
+            const double info_r = arcInfoOf_(p_a.sat_ref, hi.signal);
+            if (std::min(info_i, info_r) < config_.min_arc_info) {
+                ++n_skipped_immature;
+                continue;
+            }
+        }
+
         const int dd_wl = it_i->second - it_ref->second;
+
+        // DIAGNOSTIC (Jul-30): dump the engine's MW-derived widelane integers so
+        // they can be scored against the estimator-free census
+        // (scripts/mw_census_allpairs.py).  The NL search is ANCHORED on dd_wl —
+        // a 1-cycle WL error shifts the N1 search target by f2/(f1+f2) = 0.438 cyc
+        // for GPS L1/L2, i.e. half a cycle, so a wrong WL deterministically yields
+        // a wrong NL.  tow lets the comparison window-match the census series.
+        if (!observations.empty()) {
+            log->info("WLDUMP tow={:.1f} sat_i={} sat_ref={} sig_hi={} sig_lo={} "
+                      "wl_i={} wl_ref={} dd_wl={}",
+                      observations.front().time.tow, p_a.sat_i, p_a.sat_ref,
+                      hi.signal, lo.signal, it_i->second, it_ref->second, dd_wl);
+        }
 
         const double f1 = hi.freq;
         const double f2 = lo.freq;
@@ -1086,6 +1280,13 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         consumed_dd.insert(lo.pair_idx);
     }
 
+    if (n_skipped_immature > 0) {
+        // Invariant #4: an active gate must say what it removed, or a shrinking
+        // candidate set reads as thin data rather than as the gate working.
+        log->info("AR maturity gate: {} NL candidate(s) below min_arc_info={:.1f}, "
+                  "{} remain", n_skipped_immature, config_.min_arc_info,
+                  nl_candidates.size());
+    }
     if (nl_candidates.empty()) {
         log->debug("WL-constrained AR: no dual-frequency pairs with known WL");
         return result;  // empty, caller falls through to standard LAMBDA
@@ -1155,6 +1356,48 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     Eigen::VectorXd y_reduced = T * y_dd;           // [n_NL cycles]
     Eigen::MatrixXd Q_reduced = T * Qdd * T.transpose();
     Q_reduced = 0.5 * (Q_reduced + Q_reduced.transpose());
+
+    // DIAGNOSTIC (Jul-30): pre-fix conditioning of the NL-space matrix MLAMBDA
+    // searches.  Paired with a post-fix rebuild at each fix site below, this
+    // answers whether the Joseph-form pseudo-observation keeps Qb usable for the
+    // next epoch or collapses it (the back-substitution failure mode).
+    const QbCond qb_pre = qbCondition(Q_reduced);
+
+    // DIAGNOSTIC (Jul-30): per-candidate NL sigma vs ARC AGE.  Tests whether the
+    // sigma_hi floor (~0.35 cyc, invariant to both run length and ionosphere_q)
+    // is simply the youngest arc in the set rather than a convergence limit.
+    // One line per candidate per epoch: the candidate's own marginal sigma
+    // sqrt(Q_reduced(k,k)) against the age of its two constituent arcs.
+    if (!observations.empty()) {
+        for (int k = 0; k < n_nl; ++k) {
+            const auto& nlc = nl_candidates[k];
+            const auto& p1  = pairs[nlc.dd_idx_1];
+            const int    age_i  = arcAgeOf_(p1.sat_i,   p1.signal);
+            const int    age_r  = arcAgeOf_(p1.sat_ref, p1.signal);
+            const double info_i = arcInfoOf_(p1.sat_i,   p1.signal);
+            const double info_r = arcInfoOf_(p1.sat_ref, p1.signal);
+            log->info("ARCAGE tow={:.1f} sat_i={} sat_ref={} sig={} "
+                      "age_i={} age_ref={} age_min={} "
+                      "info_i={:.2f} info_ref={:.2f} info_min={:.2f} "
+                      "sig_k={:.4f} n_nl={}",
+                      observations.front().time.tow, p1.sat_i, p1.sat_ref, p1.signal,
+                      age_i, age_r, std::min(age_i, age_r),
+                      info_i, info_r, std::min(info_i, info_r),
+                      std::sqrt(std::max(Q_reduced(k, k), 0.0)), n_nl);
+        }
+    }
+    // Rebuilds Q_reduced from an UPDATED full covariance, same T and pairs.
+    auto rebuildQnl = [&](const Eigen::MatrixXd& P_new) {
+        Eigen::MatrixXd Qdd_new(n_orig, n_orig);
+        for (int i = 0; i < n_orig; ++i)
+            for (int j = 0; j < n_orig; ++j) {
+                const int ii = pairs[i].state_idx_i,  ir = pairs[i].state_idx_ref;
+                const int ji = pairs[j].state_idx_i,  jr = pairs[j].state_idx_ref;
+                Qdd_new(i, j) = P_new(ii, ji) - P_new(ii, jr) - P_new(ir, ji) + P_new(ir, jr);
+            }
+        Eigen::MatrixXd Q = T * Qdd_new * T.transpose();
+        return Eigen::MatrixXd(0.5 * (Q + Q.transpose()));
+    };
 
     // Run MLAMBDA on the NL-only set
     // Shift y_reduced so MLAMBDA's integer search aligns with integer N_1.
@@ -1260,6 +1503,11 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         PartialFix pf = selectFixableSubset_(y_for_mlambda, Q_reduced);
         if (!pf.success) {
             log->info("Partial AR (WL/NL): no fixable subset found ({} NL candidates); staying float", n_nl);
+            log->info("QBCOND path=reject n_nl={} nfix=0 R={:.3e} "
+                      "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
+                      "post_cond=0 post_sig_lo=0 post_sig_hi=0 cond_ratio=0 siglo_ratio=0 ratio={:.2f}",
+                      n_nl, config_.hold_variance,
+                      qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi, result.ratio);
             return result;
         }
 
@@ -1296,6 +1544,19 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         log->info("Partial AR (WL/NL) succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} NL pairs fixed, "
                   "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
                   config_.hold_variance, m, n_nl, pf.ratio, pf.p_s, pf.max_frac);
+        {   // DIAGNOSTIC: Qb conditioning across the fix (partial WL/NL path)
+            const QbCond qb_post = qbCondition(rebuildQnl(result.fixed_covariance));
+            log->info("QBCOND path=partial n_nl={} nfix={} R={:.3e} "
+                      "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
+                      "post_cond={:.4e} post_sig_lo={:.4e} post_sig_hi={:.4e} "
+                      "cond_ratio={:.4e} siglo_ratio={:.4e} ratio={:.2f}",
+                      n_nl, m, config_.hold_variance,
+                      qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi,
+                      qb_post.cond, qb_post.sig_lo, qb_post.sig_hi,
+                      (qb_pre.cond   > 0.0 ? qb_post.cond   / qb_pre.cond   : 0.0),
+                      (qb_pre.sig_lo > 0.0 ? qb_post.sig_lo / qb_pre.sig_lo : 0.0),
+                      pf.ratio);
+        }
         return result;
     }
 
@@ -1379,6 +1640,20 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     log->info("WL-constrained AR succeeded (Kalman pseudo-obs, R={:.4f} m²): "
               "{} NL pairs fixed, ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
               config_.hold_variance, n_nl, result.ratio, p_s, max_pair_frac);
+
+    {   // DIAGNOSTIC: Qb conditioning across the fix (full WL/NL path)
+        const QbCond qb_post = qbCondition(rebuildQnl(result.fixed_covariance));
+        log->info("QBCOND path=full n_nl={} nfix={} R={:.3e} "
+                  "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
+                  "post_cond={:.4e} post_sig_lo={:.4e} post_sig_hi={:.4e} "
+                  "cond_ratio={:.4e} siglo_ratio={:.4e} ratio={:.2f}",
+                  n_nl, n_nl, config_.hold_variance,
+                  qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi,
+                  qb_post.cond, qb_post.sig_lo, qb_post.sig_hi,
+                  (qb_pre.cond   > 0.0 ? qb_post.cond   / qb_pre.cond   : 0.0),
+                  (qb_pre.sig_lo > 0.0 ? qb_post.sig_lo / qb_pre.sig_lo : 0.0),
+                  result.ratio);
+    }
 
     return result;
 }

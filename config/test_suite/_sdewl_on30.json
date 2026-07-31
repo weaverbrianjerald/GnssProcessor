@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "SD pre-reduce EWL — the SPEC gate-4 ON arm (docs/SPEC_sd_ewl_prereduce.md §7.4).",
+    "One functional key over _golden0729_net50_30ep_wl1off.json: network.sd_ewl.enable",
+    "(+ trace, which is log-only).  min_arc_epochs stays at the SHIPPING default 10 —",
+    "unlike _sdewl_smoke10.json, which drops it to 2 purely to diagnose arc availability",
+    "inside a 10-epoch window.",
+    "",
+    "eigen_threads / parallel_max_threads are left at the base's 8 so the ONLY treatment",
+    "versus runs/golden_0729/net50_wl1off/ is the SD EWL row fold.  (The first ON attempt",
+    "used 6; a thread-count delta would have made the spectrum comparison a two-treatment",
+    "test, and the parallelism rulebook's byte-identity guarantees are per-knob.)",
+    "",
+    "PRIMARY metric: network_sh_spectrum.csv ev1 must move off the wl1off 0.14135 plateau",
+    "by MUCH more than the 0.6% (-> 0.14220) that mw_wl.ewl_fold_rows bought on the DD",
+    "chord basis; below that the ordering risk is not worth it and the knob stays off.",
+    "SECONDARY: must not degrade clock_std_m / worst_dev_m / D5 churn.",
+    "TELEMETRY: the run-end 'Network (SD pre-reduce EWL)' line + logs/network_sd_ewl.csv."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+  "network": {
+    "sd_ewl": {
+      "enable": true,
+      "trace": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/sdewl_on30/products.txt"
+  }
+}

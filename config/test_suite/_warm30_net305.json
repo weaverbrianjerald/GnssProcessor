@@ -1,0 +1,67 @@
+{
+  "_comment": [
+    "WARM-RESUME arm off the GOLDEN 0729 3 h run — 305 sta, GPS+Galileo, 30 s.",
+    "First real exercise of the warm-resume path against a WELL-CONVERGED seed, which is",
+    "exactly what project_gg305_warm_resume_chain named as the missing prerequisite:",
+    "'a longer converge (tighter reference) + >= 60 post-resume epochs'.",
+    "",
+    "WHY IT CANNOT START AT THE GOLDEN'S END.  The golden's last snapshot is ep0303 at",
+    "TOW 268260.0 (02:31:00) — the 1800 s interval writer would next have fired at ep0363,",
+    "and the run stopped at ep0360, so NO end-of-run snapshot exists.  The carry-validity",
+    "horizon is max(pl_max_gap_s, clk_model_max_gap) = 900 s (NetworkRunContext.cpp:410),",
+    "but the golden's end (TOW 269970, 03:00:00) is 1710 s past that snapshot — nearly 2x",
+    "the horizon.  warmResumeAllowed() would reject it, and under state_snapshot_require",
+    "that is a hard error, not a silent cold start.  So the resume MUST re-enter within",
+    "900 s of 268260.",
+    "",
+    "WINDOW.  First live epoch TOW 268290 (02:31:30) — 30 s after the snapshot, age 30 s",
+    "<< 900 s.  Runs 117 epochs to TOW 271770 (03:30:00), which splits into:",
+    "  * 268290 -> 269970  (57 ep, 02:31:30-03:00:00)  OVERLAPS the golden ⇒ an in-pair",
+    "    warm-vs-cold comparison on identical data, the same exe and the same thread count.",
+    "    This is the comparison the gg305 card could not make against its soft reference.",
+    "  * 270000 -> 271770  (60 ep, 03:00:30-03:30:00)  NEW data past the golden's end —",
+    "    the 30 minutes actually requested.",
+    "",
+    "start_offset_hours = 2.5208333333 h = 9075 s.  That is a deliberate HALF-EPOCH",
+    "back-off from the 9090 s target (CLAUDE.md: bare boundary values sit on the",
+    "double-residue boundary).  The loop skips while (t - anchor) < offset, so 9060 is",
+    "skipped and 9090 is the first processed epoch, unambiguously.  Re-processing 9060",
+    "would double-count the epoch already folded into the snapshot; the restored",
+    "prev_week/prev_tow let the existing D2 q*dt machinery inflate across the true gap.",
+    "",
+    "FINGERPRINT.  Extends the golden config verbatim, so roster+order, datum toggles,",
+    "carry q's, clock model, pl knobs, ura and emit channels are byte-identical",
+    "(NetworkRunContext.cpp:179-240).  start_offset_hours is NOT in the fingerprint, and",
+    "neither is emit_pb_filter_jump_k — both are safe to differ on a resume.",
+    "",
+    "state_snapshot_require: TRUE — mandatory here, and it also closes the one ON-tier",
+    "POSTURE gap the golden carried.  Without it a fingerprint/age/parse failure SILENTLY",
+    "cold-starts and the arm would be graded as warm while running cold.  The snapshot",
+    "this run reads is a COPY: a resume OVERWRITES the file it read, so the immutable",
+    "converge artifact stays at runs/golden3h_net305/snap.txt.ep0303.",
+    "",
+    "GRADING.  Discard the first ~5 post-resume epochs (the transient is ~3 ep wide).",
+    "n_emitted is RESTORED on resume, so the zero-emit guard is unreachable and exit 0 does",
+    "NOT prove work was done — check the emitted count against the epoch count directly.",
+    "Judge hourly LEVEL bands, never slopes: on a restored diagonal P the filter is briefly",
+    "OVERCONFIDENT and ~ep20 sits a local minimum ~30% below the true floor."
+  ],
+
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net305_3h.json"
+  ],
+
+  "processing": {
+    "max_duration_s": 3510.0
+  },
+
+  "network": {
+    "start_offset_hours": 2.5208333333,
+
+    "state_snapshot_path": "C:/GnssProcessor/runs/warm30_net305/snap.txt",
+    "state_snapshot_require": true,
+    "state_snapshot_interval_s": 1800.0,
+
+    "product_output_path": "C:/GnssProcessor/runs/warm30_net305/products.txt"
+  }
+}

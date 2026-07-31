@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "CONTROL arm for the 2026-07-29 golden 50-station run.  Isolates ONE mechanism:",
+    "network.mw_wl.enable (the WL-1 MW-seeded wide-lane FLOAT pseudo-observation layer,",
+    "which folds rows into the normals).  Everything else — including the EWL/UWL decision",
+    "tiers — is unchanged from _golden0729_net50_30ep.json.",
+    "",
+    "Why this isolates cleanly (ApplicationNetwork.cpp):",
+    "  mw_wl_on          = carry_invariant && networkMwWlSeed()      (:459)  <- the ONLY thing changed",
+    "  ewl_carry_exclude = carry_invariant && nmw.ewl_enable         (:467)  <- unchanged",
+    "  uwl_excl_on       = ewl_carry_exclude && nmw.uwl_enable       (:474)  <- unchanged",
+    "so the carried-DD MEMBERSHIP (which GPS L5 / Galileo third-band ambiguities are excluded",
+    "from the carry) is identical across the two arms.  The treatment is purely 'do the MW WL",
+    "float rows enter the normal equations'.",
+    "",
+    "Hypothesis under test: in the treated arm, epoch 11 (tow 259500 — the first epoch WL-1",
+    "arms, min_arc_epochs = 10) shows a step change: D5 innovation flags 39 -> 877, post-fit",
+    "sigma0_code 3.62 -> 7.58, and the previously-descending robust clock spread (9.80 -> 9.13 m",
+    "over epochs 1-10) reverses and never recovers.  If this arm instead keeps sigma0_code near",
+    "3.5 and the clock spread keeps descending through epoch 31, the WL-1 float fold is the cause."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep.json"
+  ],
+
+  "network": {
+    "mw_wl": {
+      "enable": false
+    },
+    "product_output_path": "C:/GnssProcessor/runs/golden_0729/net50_wl1off/products.txt"
+  }
+}

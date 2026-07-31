@@ -229,10 +229,30 @@ namespace GnssProcessor {
         /** @brief Get marker number from header. */
         std::string getMarkerNumber() const { return header_.marker_number; }
 
-        /** @brief Get approximate receiver ECEF position (meters). */
+        /** @brief Get approximate receiver ECEF position (meters).
+         *
+         * This is the header `APPROX POSITION XYZ` verbatim — by RINEX convention
+         * the **marker/monument**, not the antenna.  Prefer @c getArpPositionXyz
+         * for anything that seeds or compares against a position STATE.
+         */
         Eigen::Vector3d getApproxPositionXyz() const {
             return Eigen::Vector3d(header_.approx_position[0], header_.approx_position[1], header_.approx_position[2]);
         }
+
+        /**
+         * @brief Get the antenna reference point ECEF position from the header (meters).
+         *
+         * `APPROX POSITION XYZ` reduced through `ANTENNA: DELTA H/E/N` via
+         * @c Coordinates::markerToArp.  This is the frame every position state in
+         * the engine lives in (ATX PCO/PCV are ARP-relative), so it — not the raw
+         * marker — is what a filter seed, a rover a-priori, or a truth comparison
+         * wants.  Returns the marker unchanged when the header carries no (or a
+         * zero) eccentricity, which keeps live streams and 0/0/0 stations exact.
+         *
+         * @return ARP ECEF position (meters); zero vector when the header carried
+         *         no `APPROX POSITION XYZ` (callers already guard on this).
+         */
+        Eigen::Vector3d getArpPositionXyz() const;
 
         /** @brief Get the time of the first parsed observation epoch. */
         GnssTime getTimeOfFirstObs() const { return time_of_first_obs_; }

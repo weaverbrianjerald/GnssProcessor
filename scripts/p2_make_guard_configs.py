@@ -44,13 +44,23 @@ import argparse
 import json
 import os
 
+import sys
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+# Resolve any "extends" chain the base may grow.  These bases are self-contained
+# today, so this is byte-identical now; it is here so the script does not silently
+# read a four-key DELTA as a whole config the day someone rebases it (the failure
+# scripts/config_posture_check.py shipped with).
+from gnss_config_chain import load_config_flat  # noqa: E402
+
 BASE = r"C:\GnssProcessor\config\test_suite\_night305_conv.json"
 OUT = r"C:\GnssProcessor\config\test_suite\_day129_guards_conv.json"
 RUNROOT = r"C:\GnssProcessor\runs\day129_guards"
 
 
 def build(seed_dir, max_duration_s):
-    cfg = json.load(open(BASE, encoding="utf-8"))
+    cfg = load_config_flat(BASE)
     cfg["processing"]["max_duration_s"] = float(max_duration_s)
     net = cfg["network"]
     # --- seed anchoring (offset skip runs BEFORE the max-duration anchor latch) --

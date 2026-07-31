@@ -105,7 +105,7 @@ void networkEmitStore(
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const ClosedLoopConfig& cl = nc.closed_loop;
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
-    const Eigen::Vector3d cl_truth(cl.station.position_ecef.data());
+    const Eigen::Vector3d cl_truth = setup.cl_truth_arp;   // ARP-referenced (setup owns the reduction)
     const Coordinates::Llh cl_truth_llh =
         closed_loop_on ? Coordinates::ecefToLlh(cl_truth) : Coordinates::Llh{};
     constexpr std::size_t kClRecentWindow = 30;

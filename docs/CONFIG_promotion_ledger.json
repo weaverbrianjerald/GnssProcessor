@@ -467,7 +467,8 @@
    "family": "EMISSION and PRODUCT knobs",
    "regime": "on(\"network.emit_pb_filter\") and on(\"network.carry_invariant\") and val(\"network.carry_invariant_emit_rebase\", True) and on(\"network.emit_pb_filter_gate_v2\")",
    "posture_why": "keep the k=4.0 default under gate_v2 - one k transfers 30 s to 300 s; jump_k=8 is the RETIRED v1 hand tuning",
-   "armed_when": "3.99 < val(\"network.emit_pb_filter_jump_k\", 4.0) < 4.01 and 0.0499 < val(\"network.emit_pb_filter_meas_sigma_m\", 0.05) < 0.0501",
+   "armed_when_why": "k ONLY. The regime already requires gate_v2, and under gate_v2 this entry's own interlock says the seed sigma is a ~1 mm numerical guard and meas_sigma_m stops being a lever - so testing it here contradicts the interlock and fires a FALSE gap on every gate_v2 config still carrying the retired v1 meas_sigma_m=0.1, which the scope line puts at 160 configs. The loader's matching posture row (GnssConfigLoadNetwork.cpp:4186) tests k alone; this now agrees with it.",
+   "armed_when": "3.99 < val(\"network.emit_pb_filter_jump_k\", 4.0) < 4.01",
    "fingerprinted": false
   },
   {

@@ -112,6 +112,7 @@
 #include "filter/NetworkFrameDiag.hpp"   // P1-3/P1-4 trigger instrumentation (SPEC_day129_frame_guards)    // INC-10: post-solve satellite-clock QC
 #include "filter/NetworkSolPrep.hpp"    // INC-11pre: emit-side solution prep + disc signalling
 #include "filter/NetworkEmitStore.hpp"    // INC-11: emit / store / product-write + closed-loop
+#include "filter/NetworkFastClock.hpp"    // FC-1: split-cadence clocks-only fast pass
 #include "filter/NetworkTeardown.hpp"
 #include "filter/NetworkProducerAr.hpp" // INC-9b: log-only producer-AR + NEQ export
 #include "filter/NetworkInstallCarry.hpp" // INC-9b: installPosterior + WL zone-4 fold/inject
@@ -119,6 +120,7 @@
 #include "filter/NetworkSolveGlue.hpp" // INC-9b: datum/solve/within-epoch RAIM
 #include "filter/NetworkIonoDiag.hpp"    // INC-11b
 #include "filter/NetworkDdFrac.hpp"    // INC-11b
+#include "filter/NetworkSdEwlAr.hpp"   // SD EWL Route-B integer decision (increment 2a)
 #include "filter/NetworkShDevVtec.hpp"    // INC-11b
 #include "filter/NetworkShHealth.hpp"    // INC-11b
 #include "filter/NetworkLeveling.hpp"    // INC-11b
@@ -227,8 +229,10 @@ int Application::runNetwork() {
     NetworkProductEmitter& emitter = *setup.emitter;
     auto& consumer = setup.consumer;
 
-    // Closed-loop metrics + trace.
-    const Eigen::Vector3d cl_truth(cl.station.position_ecef.data());
+    // Closed-loop metrics + trace.  ARP-referenced truth (setup owns the marker ->
+    // ARP reduction; see NetworkSetupResult::cl_truth_arp) so the consumer's ENU
+    // error is not offset by the station's antenna eccentricity.
+    const Eigen::Vector3d cl_truth = setup.cl_truth_arp;
     const Coordinates::Llh cl_truth_llh =
         closed_loop_on ? Coordinates::ecefToLlh(cl_truth) : Coordinates::Llh{};
     std::size_t cl_epochs = 0, cl_ar_ran = 0, cl_ar_fixed = 0;
@@ -302,6 +306,22 @@ int Application::runNetwork() {
     if (dd_frac_trace) dd_ppp_utils = std::make_unique<PppUtils>(log_manager_);
     if (slip_qc.params.anyConsumer(static_cast<bool>(slip_raw_trace)))
         slip_qc.utils = std::make_unique<PppUtils>(log_manager_);
+    // FC-1 (docs/SPEC_fast_clock_split_cadence.md): split-cadence clocks-only fast pass.
+    // Two hooks, both no-ops when OFF: a clocks-only TICK on every decimated-out epoch
+    // (the T2e hook), and the anchor HARVEST on every epoch that actually emitted.
+    // fc_shadow additionally runs the tick on FULL epochs for grading, discarding the
+    // result — the permanent instrument, never feedback.
+    const bool fc_on     = nc.fast_clock.enable;
+    const bool fc_shadow = nc.fast_clock.enable && nc.fast_clock.shadow;
+    // FC-1: the fast tier's own wavelength provider, built here for the same reason
+    // (log_manager_ is not reachable from the seam).  It converts RAW RINEX cycles to
+    // metres at BOTH the anchor harvest and the tick — and, critically, the wavelength
+    // it returns is CACHED per band in the anchor, so the tick re-uses the identical
+    // value.  A wavelength that differed by even 1e-9 m between the two ends would
+    // multiply an ~1e8-cycle phase count into a metre-scale error, so "same number,
+    // not merely same formula" is a correctness requirement, not tidiness.
+    std::unique_ptr<PppUtils> fc_ppp_utils;
+    if (fc_on) fc_ppp_utils = std::make_unique<PppUtils>(log_manager_);
 
 
 
@@ -429,6 +449,11 @@ int Application::runNetwork() {
     carry_cfg.innov_k    = config_.networkCarryInvariantInnovK();
     // D5 v2: LS-VCE calibration of the gate threshold (σ̂₀²); requires innov_gate (config-rejected).
     carry_cfg.innov_calibrate        = carry_innov_gate && config_.networkCarryInvariantInnovCalibrate();
+    // Card 4 (M1) D5 v3: corroboration gate on the re-tap.  The loader already forced the
+    // knob false if the D5 gate itself is off, but AND it here too so the driver Cfg is
+    // self-consistent regardless of load path.
+    carry_cfg.innov_corroborate      = carry_innov_gate && config_.networkCarryInvariantInnovCorroborate();
+    carry_cfg.innov_corroborate_backstop_k = config_.networkCarryInvariantInnovCorroborateBackstopK();
     carry_cfg.innov_calibrate_window = config_.networkCarryInvariantInnovCalibrateWindow();
     // M5 card WL-3 (docs/SPEC_lane_carry_card.md): the lane-coordinate carry.  The loader
     // enforces carry_invariant + mw_wl.ewl_enable.  lane_joint discriminates the LANE
@@ -599,6 +624,13 @@ int Application::runNetwork() {
     // written post-install against the FRESH posterior.
     const bool mw_lane_trace = (wl_inject_on || lane_fix_on) && nmw.lane_trace;
     const bool mw_tagsets    = mw_d5_dump || mw_lane_trace;   // hold/inject tag sets feed both
+    // Both dumps are ordinary NetworkRunTraces streams — opened ONCE, truncating, with
+    // their header, before the epoch loop.  The open sits here rather than in openAll
+    // only because the arming expressions above are not derived yet at that point.
+    // The D5 arm carries carry_innov_gate for the same reason its writer does: without
+    // the gate there are no flags, so an unarmed gate must yield NO file (not an empty
+    // one), keeping the artifact set an honest report of what actually ran.
+    traces.openMwWlDumps(mw_d5_dump && carry_innov_gate, mw_lane_trace, log);
     std::vector<LaneTraceEntry> lane_trace_epoch;   // per-build; consumed post-install.
     WlCounters wl_run, wl_epoch;
     // UWL-1: per-constellation WL-walk tallies when the card is armed (pooled lines hide
@@ -700,6 +732,8 @@ int Application::runNetwork() {
     auto& sh_dev_carry = ctx.carry.sh_dev_carry;
     const double sh_dev_tau = sh_model ? shc.rep_error_tau_s : 0.0;
     const bool   sh_dev_on  = sh_dev_tau > 0.0;
+    const bool   sh_dev_demean = sh_dev_on && shc.rep_error_demean;  // Iono-2 v3 anti-ratchet
+    const bool   sh_dev_d5_keep = sh_dev_on && shc.rep_error_d5_keep;  // v3k erase-policy split
 
     // ---- Station-adaptive SH-VTEC-constraint deweight (iono deweight card) ----------
     // Per-station factor w_s ∈ (0,1] scaling the INFORMATION of this station's SH↔slant
@@ -839,6 +873,7 @@ int Application::runNetwork() {
         log->info("Network (D0): per-epoch section timers ARMED "
                   "(assembly / reduce / solve / cov-inverse / cov-consumers).");
 
+
     // === Tier D0b: sub-instrument the "other" bucket (network.trace_section_timers) ==
     // "other" = loop wall − assembly − reduce − solve − cov-inverse − cov-consumers was
     // measured at ~81 % (42.9 s/ep) of the epoch on the 300 s GPS-only tier and scales
@@ -873,12 +908,17 @@ int Application::runNetwork() {
         SB_CLOCKUPD,     // block 8: two-state clock update + fault QC + retro-flag feed
         SB_FRAMEDIAG,    // P1-3/P1-4: shared-normal spectrum + post-fit sigma0 (both default-OFF)
         SB_STASH_STATUS, // block 5/8: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
+        SB_FASTCLOCK,    // FC-1: fast-clock anchor harvest + the shadow-mode grading tick
+                         //       (the DECIMATED-out tick is outside the loop, untimed here —
+                         //       it has its own ctx.counters.fc_wall_ms accumulator, since a
+                         //       tick is not a loop epoch and must not enter the D0 wall)
         SB_COUNT
     };
     static constexpr const char* kSubNames[SB_COUNT] = {
         "slip-scans", "pre-asm", "gauge-build", "dd-build", "solve-glue", "install-post",
         "netar", "sol-prep", "emit-store", "iono-diag", "dd-frac", "shdev-vtec",
-        "t1a-health", "leveling", "raim", "clock-upd", "frame-diag", "stash-status"
+        "t1a-health", "leveling", "raim", "clock-upd", "frame-diag", "stash-status",
+        "fast-clock"
     };
     std::vector<SubBlockTimer> sec_sub(SB_COUNT);        // run totals
     std::vector<SubBlockTimer> sec_sub_ep0(SB_COUNT);    // per-epoch loop-top snapshot of sec_sub
@@ -1057,7 +1097,17 @@ int Application::runNetwork() {
         // processed-epoch count).  The brdc_rts nav catch-up is idempotent across skips.
         {
             const size_t dn = static_cast<size_t>(std::max(1, nc.epoch_decimation_n));
-            if ((decim_counter++ % dn) != 0) continue;
+            if ((decim_counter++ % dn) != 0) {
+                // FC-1: a decimated-out epoch has fully synced observations and is simply
+                // not processed today.  With the tier armed it instead runs a clocks-only
+                // fast tick against the last EMITTED full solve.  OFF => the bare
+                // `continue` below is reached unchanged => byte-identical, structurally.
+                // A tick is NOT a loop epoch: n_loop_epochs is untouched, the D0/D0b
+                // brackets never open, and nothing outside ctx.carry.fast_clock is
+                // mutated (the isolation contract).
+                if (fc_on) networkFastClockTick(ctx, config_, log, traces, setup, se, false);
+                continue;
+            }
         }
         ++n_loop_epochs;  // [TIMING]
 
@@ -1084,6 +1134,17 @@ int Application::runNetwork() {
         traces.writeHealthRow(se.time, nc, ctx.counters, t_loop_begin,
                               ura_on, raim_on, pl_on, ura_sigma0_ewma,
                               last_pivot, grade_metric_s);
+
+        // FC-1 shadow mode: run the SAME tick body on this FULL epoch, immediately before
+        // the full pipeline, so the trace carries a fast-vs-full delta for every epoch of
+        // any run.  Bracketed (not hidden) so its cost is attributed in the D0b table
+        // rather than silently inflating `other`; the result is traced and discarded, so
+        // the full pipeline stays byte-identical (gated at every increment).
+        if (fc_shadow) {
+            subBegin(SB_FASTCLOCK);
+            networkFastClockTick(ctx, config_, log, traces, setup, se, true);
+            subEnd(SB_FASTCLOCK);
+        }
 
         // L1/L2: the row-writer bodies live in NetworkRunTraces (INC-4); these
         // thin forwarders keep every downstream call site textually unchanged.
@@ -1135,6 +1196,13 @@ int Application::runNetwork() {
             carry_slipped_ambs.insert(carry_innov_pending.begin(), carry_innov_pending.end());
             carry_innov_pending.clear();
         }
+        // Iono-2 v3k erase-policy split (SPEC_iono2_mechB_v3 addendum): the RAW-detector
+        // portion of the funnel, captured at insertion — PASS-A fills THIS set and the
+        // driver unions it into the funnel below, so every existing funnel consumer sees
+        // the identical union while the shdev pre-pass can distinguish raw-confirmed
+        // slips (erase) from D5-only re-taps (97 % have no raw observable step — they
+        // are iono-tension events the deviation should absorb, not die on).
+        std::set<std::pair<int, std::string>> carry_slipped_raw;
 
         // --- PASS A: per-station geometry + shared-state layout -------------
         std::vector<std::vector<PppObservation>> modeled(stations.size());
@@ -1157,7 +1225,11 @@ int Application::runNetwork() {
         ++slip_qc.epoch_idx;   // monotonic PROCESSED-epoch index (Card G gap arithmetic)
         networkPassASlipScan_(se, ctx, setup, traces, dt, pl_now_s, carry_warm,
                               modeled, present, shared_phase_keys,
-                              carry_slipped_ambs, slip_qc);
+                              carry_slipped_raw, slip_qc);
+        // Union preserves the funnel's exact previous contents (PASS-A consumers only
+        // ever INSERT — NetworkSlipQc.cpp:155/:373 — so redirecting its writes through
+        // carry_slipped_raw is behavior-identical for everything downstream).
+        carry_slipped_ambs.insert(carry_slipped_raw.begin(), carry_slipped_raw.end());
         subEnd(SB_SLIP);       // D0b: close block 1 (slip scans)
         subBegin(SB_PREASM);   // D0b: pre-assembly measurement build (post-slip → assembly wall)
 
@@ -1265,6 +1337,18 @@ int Application::runNetwork() {
         // over a fresh beginEpoch().  addSharedPrior is additive, so the three prior
         // sets concatenate into one replayable vector.  Populated only when the
         // adaptation is armed; otherwise the appends are cheap no-ops.
+        // --- SD EWL Route-B integer decision (increment 2a, filter/NetworkSdEwlAr) ----
+        // Placed HERE deliberately: after networkAssemblyPrefilter_ (satellites seen by
+        // <2 stations are erased there, so an integer decided for one that then vanishes
+        // is wasted), after the phase-datum election and the eq34 RPB allocation (both
+        // mutate StateManager layout), after networkAssemblyRegisterColumns_ (so the
+        // epoch is committed — that site can still SkipEpoch), and BEFORE networkPassB_,
+        // whose PARALLEL produce loop reads the published map read-only.  Inside the
+        // existing SB_PREASM bracket rather than a new SubBlock, because adding a timer
+        // slot would change the section-timing artifact for every run, armed or not.
+        // Default OFF => clears the map and returns => byte-identical.
+        networkSdEwlAr(ctx, config_, log, traces, setup, se, pl_now_s, modeled, present);
+
         const bool within_epoch_armed = config_.networkRaimWithinEpoch();
         auto& cap_H = ws.cap_H;
         auto& cap_z = ws.cap_z;
@@ -1290,7 +1374,8 @@ int Application::runNetwork() {
         // slant-iono block; -1 for stations not added this epoch.
         std::vector<int> est_index_of(stations.size(), -1);
         if (networkPassB_(se, ctx, setup, traces, est, iono_deweight,
-                          sh_dev_tau, sh_dev_on, carry_slipped_ambs,
+                          sh_dev_tau, sh_dev_on, sh_dev_demean, sh_dev_d5_keep,
+                          carry_slipped_ambs, carry_slipped_raw,
                           carry_warm, pl_now_s,
                           modeled, present, shared_phase_keys,
                           registered_clock_sats, registered_code_keys,
@@ -1542,6 +1627,14 @@ int Application::runNetwork() {
         auto& serialized_consts = sp_.serialized_consts;
         auto& retro_emit_sats = sp_.retro_emit_sats;
         subEnd(SB_SOLPREP);     // D0b: close sol-prep + discontinuity signalling
+        // FC-1: the fast anchor may advance ONLY on an epoch whose solution reached the
+        // wire.  Every whole-epoch withhold (observability gate, A4 sigma0 ceiling, SH
+        // health gate) `continue`s or returns before networkEmitStore's emit site, and
+        // n_emitted is incremented exactly there — so observing that counter across the
+        // call is the honest EMISSION-continuity test.  Keying on solve continuity
+        // instead is precisely the R11 defect the C1 card documented, where a delta
+        // measured inside a withheld era was publishable across a consumer-visible gap.
+        const std::size_t fc_n_emitted_before = ctx.counters.n_emitted;
         subBegin(SB_EMITSTORE); // D0b block 7: re-base + PB-emit filter + store push + solution CSV
         networkEmitStore(ctx, config_, log, traces, setup, se, est, x_s, pl_now_s,
                          datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,
@@ -1551,6 +1644,16 @@ int Application::runNetwork() {
                          we_t2_opp, we_t2_flag, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed,
                          cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d);
         subEnd(SB_EMITSTORE);   // D0b: close block 7 (emit/store, order-sensitive serial)
+        // FC-1: harvest the fast anchor from THIS epoch's emitted solution.  `sol` is read
+        // AFTER networkEmitStore, so the cached c0 values are the re-based / PB-filtered
+        // ones the consumer actually received — which is what makes the fast product a
+        // delta in the EMITTED frame, cancelling every per-era frame constant.
+        if (fc_on && ctx.counters.n_emitted != fc_n_emitted_before) {
+            subBegin(SB_FASTCLOCK);
+            networkFastClockHarvest(ctx, config_, log, setup, se, present, modeled, sol,
+                                    fc_ppp_utils);
+            subEnd(SB_FASTCLOCK);
+        }
         subBegin(SB_IONODIAG);  // D0b block 4a: iono / ZWD / anchor-info viz traces
         networkIonoDiag(ctx, config_, log, traces, setup, ws, se, est, x_s, plan, asm_res,
                         est_index_of, modeled, registered_clock_sats, clk_anchor_sigma);

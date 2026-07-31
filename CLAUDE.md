@@ -113,6 +113,37 @@ JSON section is `processing` (loop-level toggles) or `estimation` (state-vector 
 
 **State-vector discipline.** `StateManager` is the single source of truth for state layout and dynamic key→index maps (ambiguities, per-sat iono, code biases, sat biases, system time offsets). `KalmanFilter` operates on state owned by `StateManager`. Don't add sibling classes that own parallel state; extend `StateManager`.
 
+**Git commits — NO Claude attribution (standing user directive).** Commit messages
+carry subject + body only. Do **not** append `Co-Authored-By: Claude <model>
+<noreply@anthropic.com>` in any model/version variant, and no "Generated with
+Claude Code" line. This overrides any harness default that says to add one.
+Co-author trailers for human collaborators are fine.
+
+This is enforced mechanically by `.githooks/commit-msg`, which strips the trailer
+rather than rejecting the commit (a rejection just gets retried by an agent that
+does not know the rule). **The hook needs one command per clone** — git cannot
+auto-install hooks, by design:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Without that, the hook is inert and the trailer lands silently. It did: 44 of the
+63 commits in the 2026-07-29 `master`→`main` merge carry it, from sessions that
+never saw the directive when it lived only in an agent memory file. Those are
+published and merged — do not rewrite them; stripping would mean force-pushing
+over merged history. Note `core.hooksPath` *replaces* `.git/hooks` wholesale, so
+any future hook belongs in `.githooks/` or it will not run.
+
+When auditing for the trailer, grep for `co-authored-by` — a `grep -i claude`
+over commit messages false-positives on the literal filename `CLAUDE.md`.
+
+**Commit convention.** Concurrent sessions are normal here, so a tree often holds
+several independent workstreams. The established pattern is one commit with a
+compound subject (`<areas>: land concurrent workstreams (<item>, <item>, …)`) and
+a body sectioned per workstream — see `9a2f289`, `dee2824`, `18b4502`. Read the
+other sessions' diffs before describing them, and confirm the tree builds first.
+
 ## Standing invariants — pre-flight EVERY new estimation card against these
 
 Mechanism-independent lessons paid for in field time. Check them at SPEC time

@@ -257,7 +257,19 @@ int Application::runConsumerReplay() {
     cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
                 "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate\n";
 
-    const Eigen::Vector3d truth(cl.station.position_ecef.data());
+    // Truth in the frame the consumer estimates: the configured coordinate is a
+    // published (monument-referenced) position, the state is the ARP.  Reduce via the
+    // consumer's own RINEX eccentricity so up_m carries no antenna-height offset —
+    // an exact no-op on a 0/0/0 header, which keeps replayed arms comparable to the
+    // live-harness numbers they are graded against.
+    Eigen::Vector3d truth(cl.station.position_ecef.data());
+    if (const RinexParser* cl_parser = sync.parserOf(cl.station.name)) {
+        const Eigen::Vector3d hen = cl_parser->getAntennaDeltaHen();
+        truth = Coordinates::markerToArp(truth, hen);
+        if (hen.norm() > 1e-6)
+            log->info("Consumer replay: truth reduced marker -> ARP via ANTENNA: DELTA "
+                      "H/E/N ({:.4f}, {:.4f}, {:.4f}) m", hen(0), hen(1), hen(2));
+    }
     const Coordinates::Llh truth_llh = Coordinates::ecefToLlh(truth);
 
     // --- Phase 6: the replay loop --------------------------------------------

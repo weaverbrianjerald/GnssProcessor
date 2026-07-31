@@ -1,5 +1,6 @@
 #include "rinex/RinexParser.hpp"
 #include "products/ProductParser.hpp"
+#include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"
 #include <fstream>
 #include <sstream>
@@ -1048,6 +1049,13 @@ namespace GnssProcessor {
      * @return true if the header interval (if present) and all epoch intervals are
      *         within allowed ranges; false if any invalid interval is detected.
      */
+    Eigen::Vector3d RinexParser::getArpPositionXyz() const {
+        // Marker -> ARP through the header eccentricity.  The conversion itself
+        // lives in Coordinates (one owner of the H/E/N convention); this accessor
+        // only pairs the two header fields that belong together.
+        return Coordinates::markerToArp(getApproxPositionXyz(), getAntennaDeltaHen());
+    }
+
     bool RinexParser::validateMeasurementRate() const {
         if (observations_.empty()) return true;
 

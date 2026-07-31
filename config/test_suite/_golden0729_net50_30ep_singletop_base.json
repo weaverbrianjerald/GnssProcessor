@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "EWL-FOLD BENEFIT, corrected design.  The first attempt (runs/golden_0729/ewlfold) was",
+    "INERT: uwl_dual_top=true (from the all-on delta) makes the loader FORCE ewl_fold_rows",
+    "=false \u2014 'a cycle decided by both the preferred and the fallback rung must never fold two",
+    "integer rows (the F-A refold class)', GnssConfigLoadNetwork.cpp:2651.  It warned; I missed it.",
+    "",
+    "So both arms here drop to the PLAIN SINGLE-TOP lane tier:",
+    "  uwl_dual_top   false  (else the fold is forced off)",
+    "  uwl_mid_enable false  (the E6 mid hop is ALSO doubly-decided but has NO refold guard \u2014",
+    "                         only dual_top does; folding with it on would double-count unguarded)",
+    "  uwl_sib_gate   false  (documented INERT without dual_top \u2014 don't arm dead knobs)",
+    "Lanes remaining, each decided ONCE: GPS EWL (L2,L5) lam 5.861 m + Galileo UWL (E5b,E5a)",
+    "lam 9.768 m.  mw_wl.enable stays FALSE (WL-1 float layer is measured net-harmful).",
+    "",
+    "The two arms differ in exactly ONE functional key: mw_wl.ewl_fold_rows.",
+    "PRIMARY metric: network_sh_spectrum.csv ev1..ev5 + mass_pb/span_pb (does folding the",
+    "near-perfect EWL integers lift the ~0.139 soft-end plateau that 22 third-band phase-bias",
+    "states sit on?).  SECONDARY: the known churn cost from network_epoch_status.csv.",
+    "",
+    "THIS ARM: ewl_fold_rows = False."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+  "processing": {
+    "eigen_threads": 6
+  },
+  "network": {
+    "parallel_max_threads": 6,
+    "mw_wl": {
+      "uwl_dual_top": false,
+      "uwl_mid_enable": false,
+      "uwl_sib_gate": false,
+      "ewl_fold_rows": false
+    },
+    "product_output_path": "C:/GnssProcessor/runs/golden_0729/singletop_base/products.txt"
+  }
+}

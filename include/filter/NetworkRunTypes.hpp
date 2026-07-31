@@ -24,6 +24,7 @@
 
 #include <Eigen/Dense>
 
+#include <array>
 #include <map>
 #include <memory>
 #include <optional>
@@ -54,6 +55,62 @@ struct NetStation {
     // turbo_edit; under mw_detect the same detector drives a detect→refloat with
     // no resolver (null turbo_edit ⇒ the refloat branch in PASS A).
     std::unique_ptr<MwSlipDetector>   mw_slip;
+
+    /// SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md) — per-station
+    /// eligibility tallies for `Application::networkAppendSdEwlRows_`.  Held on the
+    /// STATION (not a shared accumulator) because the row build runs inside the
+    /// PARALLEL produce phase; the run-end readout sums over stations serially.
+    /// Standing invariant #4: a zero `rows_built` with everything else zero means the
+    /// wiring never ran, which is NOT the same as "the feature had no effect".
+    struct SdEwlCounters {
+        long long sat_seen{ 0 };                ///< (station,epoch,satellite) visits on a constellation that HAS an EWL tier — the denominator every skip below is measured against.
+        long long rows_built{ 0 };              ///< SD EWL rows appended to this station's block.
+        long long rows_capped{ 0 };             ///< eligible rows dropped by max_rows_per_station.
+        long long skip_no_detector{ 0 };        ///< st.mw_slip == nullptr (the clock-datum station, or phase_leveling/detector off) — counted ONCE per station-epoch.
+        long long skip_no_pivot{ 0 };           ///< fewer than two resolved arcs at this station for a constellation ⇒ no between-satellite difference to form.
+        long long skip_immature{ 0 };           ///< an MW arc EXISTS on a candidate signal pair but its lagged Welford count < min_arc_epochs.
+        long long skip_no_arc{ 0 };             ///< the detector holds NO MW arc on ANY candidate (band1,band2) signal pair — the "does the L2/L5 MW exist at all" tally.  Distinct from skip_immature by construction: this one means the pair was never formed.
+        long long skip_frame_recon{ 0 };        ///< the arc is stored SD (bia_corrected) but its group MW pivot arc was absent, so arcZdMean could not rebuild the ZD frame (valid=false at count>0).
+        long long skip_mixed_frame{ 0 };        ///< the two arcs disagree on bia_corrected (satellite-bias cancellation needs ONE frame).
+        long long skip_missing_amb_col{ 0 };    ///< no (band1,band2) phase-signal pair has BOTH ambiguities in this station's local block this epoch (band untracked, or the arc is not estimated).
+        long long skip_missing_shared_col{ 0 }; ///< a satellite PB/CB shared column is unregistered this epoch.
+        long long skip_missing_code{ 0 };       ///< the arc did not report the CODE channels its MW consumed, so the satellite code-bias column cannot be named without guessing.
+        long long skip_bad_lambda{ 0 };         ///< non-finite / non-positive wavelength or frequency.
+        long long skip_big_z{ 0 };              ///< |z_SD| exceeded max_abs_z_m.
+        double    sum_var_m2{ 0.0 };            ///< sum of the built rows' pre-whitening SD variances (m^2) — for the mean-R readout.
+        // --- increment 2b (network.sd_ewl.fix_enable); all zero on the float-only path.
+        long long rows_fixed{ 0 };              ///< rows that folded a FIXED integer (their four local ambiguity coefficients are absent, not merely small).
+        long long rows_float{ 0 };              ///< rows that took the increment-1 float path.  rows_fixed + rows_float == rows_built.
+        long long groups_fixed{ 0 };            ///< whitened ALL-FIXED groups emitted (a fixed and a float group never share one R — see Application.hpp).
+        long long fix_pair_mismatch{ 0 };       ///< an integer was published but the arc the row settled on is a DIFFERENT tracking-channel pair, so the integer belongs to another bias frame and the row went float.
+        long long fix_datum_only{ 0 };          ///< arcs demoted to the float group because their whole fixed group was DATUM values only (frame choices, no rounding decision) — a hard constraint with zero integer information is not worth a removed degree of freedom, and admitting it would make the feature undisarmable through its own gates.
+        long long fix_lone_arc{ 0 };            ///< exactly ONE arc of a constellation had an integer: nothing to difference it against, so it was demoted to the float group (note it keeps the fix sigma floor, which only ever DE-weights).
+
+        void operator+=(const SdEwlCounters& o) {
+            sat_seen += o.sat_seen;
+            rows_built += o.rows_built;
+            rows_capped += o.rows_capped;
+            skip_no_detector += o.skip_no_detector;
+            skip_no_pivot += o.skip_no_pivot;
+            skip_immature += o.skip_immature;
+            skip_no_arc += o.skip_no_arc;
+            skip_frame_recon += o.skip_frame_recon;
+            skip_mixed_frame += o.skip_mixed_frame;
+            skip_missing_amb_col += o.skip_missing_amb_col;
+            skip_missing_shared_col += o.skip_missing_shared_col;
+            skip_missing_code += o.skip_missing_code;
+            skip_bad_lambda += o.skip_bad_lambda;
+            skip_big_z += o.skip_big_z;
+            sum_var_m2 += o.sum_var_m2;
+            rows_fixed += o.rows_fixed;
+            rows_float += o.rows_float;
+            groups_fixed += o.groups_fixed;
+            fix_pair_mismatch += o.fix_pair_mismatch;
+            fix_datum_only += o.fix_datum_only;
+            fix_lone_arc += o.fix_lone_arc;
+        }
+    };
+    SdEwlCounters sd_ewl_ctr;   ///< accumulated across this run for this station.
     std::unique_ptr<TurboEditResolver> turbo_edit;
     // IF-phase triple-difference slip DETECTION (this increment): persistent
     // per-station between-satellite/between-epoch IF-phase OMC state.  Constructed
@@ -90,6 +147,38 @@ struct NetStation {
     // election.  EMPTY except at an eq34 component's datum receiver (and always
     // empty when network.phase_datum_eq34 is off).
     std::set<std::string> pinned_rpb_keys;
+};
+
+/// One SD extra-wide-lane INTEGER decision for a (station, constellation, satellite),
+/// as published by @ref networkSdEwlAr (increment 2a, Route B + the A2 DD-to-SD datum)
+/// and consumed by @c Application::networkAppendSdEwlRows_ (increment 2b).
+///
+/// @c n_cyc is in the r0-anchored frame: it equals the TRUE undifferenced EWL integer
+/// plus a per-station constant that cancels in the between-satellite difference and a
+/// per-satellite constant set by the component reference station.  So only the SD
+/// difference @c n_cyc(s) − @c n_cyc(pivot) is meaningful — never the value itself.
+///
+/// @c sig1 / @c sig2 record the NETWORK-COMMON channel pair the integer was decided on.
+/// The row builder must fold on that exact pair: the satellite bias combination
+/// @f$B_{EWL}^s@f$ is per-signal, so a row built on a different tracking channel would
+/// assert an integer derived from a different bias frame.
+struct SdEwlFix {
+    long long   n_cyc{ 0 };        ///< propagated SD-frame integer, CYCLES of lambda_EWL.
+    std::string sig1, sig2;        ///< the network-common phase pair it was decided on.
+    double      frac_cyc{ 0.0 };   ///< |fractional residue| of the DD that produced it (0 for the link/reference satellite — a DATUM choice, not a measurement).
+    double      ffr{ 1.0 };        ///< rounding success probability of that DD (1 for the link/reference satellite).
+    bool        usable{ false };   ///< passed the frac + FFR gates AND was not vetoed by a flip this epoch.
+    /// This value came from a ROUNDED double difference, not from a frame choice.
+    /// Datum values (the reference station's own satellites, each station's link
+    /// satellite, and a satellite framed on first sighting) carry no rounding decision
+    /// and are therefore UNGATED by construction — no FFR or |frac| setting can reject
+    /// them.  A whitened group built only from datum values would assert a hard
+    /// constraint with ZERO integer information behind it while still removing a real
+    /// local degree of freedom, and — measured — it also makes the feature impossible to
+    /// disarm through its own gates (the S2 `inert` arm differed from the float arm on 17
+    /// artifacts until this flag existed).  So the row builder requires at least one
+    /// MEASURED integer per fixed group.
+    bool        measured{ false };
 };
 
 /// One shared parameter carried across epochs (D2): its value and posterior
@@ -274,6 +363,14 @@ struct StationAssembly {
     /// the post-solve stash — (rpb_key, A_r column, linearization point).  Empty
     /// unless network.phase_datum_eq34 with phase_datum_eq34_rpb_q_m2s > 0.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_rpb;
+    /// SD pre-reduce EWL (docs/SPEC_sd_ewl_prereduce.md, @c network.sd_ewl.trace):
+    /// pre-formatted `network_sd_ewl.csv` rows for THIS station-epoch — one per
+    /// satellite visit, carrying the elected signal pair, the arc outcome, and the
+    /// row's z/σ.  Buffered here rather than written in place because the row build
+    /// runs in the PARALLEL produce phase; PASS B's SERIAL consume drains these in
+    /// station order, so the file is deterministic for any thread count.  Empty
+    /// unless the trace is armed (log-only — it changes no solve).
+    std::vector<std::string>  sd_ewl_trace;
 };
 
 /// Card 1b (network.carry_coupling_joint_whiten): JOINTLY whiten the KEPT coupling
@@ -395,6 +492,84 @@ inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, dou
     return S;
 }
 
+// ---- FC-1 split-cadence fast clock (docs/SPEC_fast_clock_split_cadence.md) --------
+// The cached anchor state a clocks-only fast tick measures against.  Rebuilt from
+// scratch at every EMITTED full solve, so an arc that reset between full epochs is
+// simply re-harvested; a slip WITHIN a fast window is caught by the per-LOS k·σ screen
+// (the fast tier's only detector — repair belongs to the full pipeline).
+// (Map instances live in NetworkCarryState::fast_clock.)
+
+/// FC-1: one cached band of one line-of-sight at the anchor epoch t0.
+///
+/// The "lump" M_j is everything the full solve modeled or estimated that is NOT the
+/// instantaneous geometric range and NOT the a-priori satellite clock: receiver clock,
+/// tropo (mf·ZWD), iono (μ_j·I), ambiguity, phase biases, wind-up, PCO/PCV projections,
+/// tides, Shapiro, and the RESIDUAL (beyond-a-priori) satellite clock — the quantity the
+/// producer emits.  Splitting the a-priori-clock-corrected phase
+/// Φ̃_j = Φ_j + c·δt_ap as Φ̃_j(t0) = ρ(t0) + M_j(t0) is what lets a fast tick recompute
+/// ONLY ρ (the one nonlinear term) and ride the rest linearly.  The a-priori clock
+/// (polynomial + relativistic, the full model's convention) is corrected OUT so the lump
+/// rate — and the ċ recovered from it — is the emitted-frame residual rate, not the full
+/// physical rate the consumer's own a-priori already advances (NetworkFastClock.cpp
+/// @c fc1_apriori).
+struct FastClockLosBand {
+    std::string signal;        ///< RINEX observation code of the cached phase observable (e.g. "L1C").
+    double freq_hz{0.0};       ///< Carrier frequency (Hz); the IF coefficients are formed from the pair.
+    double wavelength_m{0.0};  ///< Cycles->metres factor, CACHED so the tick re-uses the anchor's exact
+                               ///< value.  Recomputing it at the tick — even by the same formula — risks a
+                               ///< last-bit difference, and an ~1e8-cycle phase count turns 1e-9 m of
+                               ///< wavelength disagreement into ~0.1 m of fake clock.
+    double lump{0.0};          ///< M_j(t0) = Φ̃_j(t0) − ρ(t0)  (m), on a-priori-clock-corrected phase.
+    double lump_rate{0.0};     ///< Ṁ_j (m/s), finite-differenced against the PREVIOUS emitted full epoch.
+    bool   has_rate{false};    ///< false until two consecutive emitted full epochs have been harvested.
+};
+
+/// FC-1: one cached line-of-sight (station × satellite) at the anchor epoch t0.
+struct FastClockLos {
+    int    sta_idx{-1};        ///< Index into the run's station vector.
+    double rho0{0.0};          ///< Geometric range at t0 (m) — kept for the tick's consistency check.
+    double elevation_rad{0.0}; ///< Elevation at t0; sizes the elevation-weighted R at the tick.
+    std::array<FastClockLosBand, 2> band{};  ///< The arc's two cached bands (index 1 unused when n_band==1).
+    int    n_band{0};          ///< 1 or 2.  A single-band arc leaves μ_jΔI in the residual and is
+                               ///< admitted only under @c network.fast_clock.allow_single_band.
+};
+
+/// FC-1: the whole carried fast-clock anchor.  Deliberately NOT snapshotted (RTB-7a) —
+/// a warm-resumed run re-arms only after two fresh EMITTED full epochs, which costs one
+/// full-solve era and removes any question of a restored anchor referring to a frame the
+/// new leg never emitted.
+struct FastClockCarry {
+    bool   armed{false};              ///< True once two consecutive emitted full epochs have been harvested.
+    std::size_t consecutive_emitted{0};///< Emitted-full-epoch streak feeding @ref armed (reset by any withhold).
+    double t0_s{0.0};                 ///< Continuous-GPS seconds of the anchor (the LAST EMITTED full solve).
+    double t_prev_s{0.0};             ///< The emitted full epoch before the anchor (the Ṁ finite-difference base).
+    int    t0_week{0};                ///< GPS week of the anchor (for trace/product stamping).
+    double t0_tow{0.0};               ///< GPS TOW of the anchor.
+    std::string datum_station;        ///< The clock-datum pin the anchor was built under; a tick whose
+                                      ///< datum station is absent or screened is WITHHELD, never re-datumed.
+    std::map<std::string, std::vector<FastClockLos>> los;  ///< sat -> its cached LOS at t0.
+    std::map<std::string, double> c0_emitted;              ///< sat -> the EMITTED clock c0 (m) at t0; the fast
+                                                           ///< product is c0_emitted + ċ·Δt + δc, so it lives in
+                                                           ///< the emitted frame by construction.
+    /// sat -> RESIDUAL satellite clock RATE ċ (m/s), in the same datum frame as the fast
+    /// δc and the same a-priori-corrected (emitted) frame as the lump.
+    ///
+    /// Load-bearing, and easy to miss: the fast observable subtracts Ṁ·Δt, and Ṁ contains
+    /// the residual satellite clock's own drift.  What the tick estimates is therefore
+    /// the clock change BEYOND that linear trend, not the whole change.  Emitting
+    /// anchor + δc alone would drop the drift term and de-trend the product; emitting a
+    /// FULL-physical-rate drift (the raw-phase lump of the original build) double-counts
+    /// the broadcast af1 + relativistic rate the consumer's a-priori already advances.
+    /// This map carries the RESIDUAL drift back so the emitted value is
+    /// anchor + ċ·Δt + δc, advancing exactly what the a-priori does not.
+    ///
+    /// Recovered from the same per-LOS Ṁ by the same bipartite separation: Ṁ = τ̇_r − ċ,
+    /// so the satellite (column) effect IS −ċ once the datum station's row effect is
+    /// pinned to zero.  Same datum as δc, hence the same frame.
+    std::map<std::string, double> c1_rate;
+    std::size_t tick_seq{0};          ///< Ticks run since the anchor (drives the trace stride).
+};
+
 // Iono-2 / T5 v2 (2026-07-17): per-(station,sat) SH representativeness-error
 // Gauss–Markov deviation carry — the per-LOS iono TEMPORAL-ACCUMULATION channel
 // of the per-epoch network producer.  The SH surface cannot represent per-LOS
@@ -450,6 +625,91 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
     if (v_hat >= a) return {d_post, p_pred};  // no information beyond the row itself
     const double U = v_hat * a / (a - v_hat); // recovered data-only variance
     return {d_post, p_pred * (U + floor2) / (U + a)};
+}
+
+/// Iono-2 v3k (erase-policy split): the D5-only slip response — KEEP the
+/// accumulated deviation level, re-tap the confidence to the GM steady state.
+/// Applied when a (station,sat) LOS is in the C3c funnel WITHOUT a raw-detector
+/// confirmation this epoch (measured: 97 % of D5 re-taps have no raw observable
+/// step — they are iono-representation tension, the very signal the deviation
+/// carry exists to absorb; erasing on them capped the mean deviation lifetime
+/// at ≈ 0.7·τ).  Raw-confirmed slips still ERASE (invariant #1 unchanged) —
+/// see the PASS-B pre-pass.  Idempotent under the subsequent GM aging step
+/// (λ²·σ_ss² + (1−λ²)·σ_ss² = σ_ss²).
+inline void shDevD5Retap(ShDevCarry& dc) { dc.var = dc.var_ss; }
+
+/// Iono-2 v3 result of one de-mean pass over the deviation carry
+/// (docs/SPEC_iono2_mechB_v3.md; see @c shDevDemean).
+struct ShDevDemeanStats {
+    bool   applied{false};  ///< Global mean removed this epoch (n_used ≥ min_global_los).
+    int    n_used{0};       ///< Warm entries that participated.
+    double g_tecu{0.0};     ///< The removed global weighted mean (signed, vertical TECU).
+    int    n_sta{0};        ///< Stations whose per-station mean was also removed.
+};
+
+/// Iono-2 v3: contract-enforcing de-mean of the carried deviation priors — the
+/// anti-ratchet.  A component of the deviation field that is COMMON in vertical
+/// TECU across LOS has the row signature M(el)·tecu_to_m, IDENTICAL to the a00
+/// column's, so (common deviation ↔ a00) is an exactly quasi-null pair the data
+/// cannot allocate; the per-epoch harvest→age→re-assert alternation ratchets it
+/// (measured a00 25 → 104 TECU in 3 h with the carry alone, 207–255 with the
+/// dual layer — runs/iono2attr_*).  The per-(station) mean is the receiver-DCB
+/// lump one level down.  Removing both from the carried PRIOR leaves them to
+/// a00 / the receiver states, where each epoch's data re-derives them — the
+/// carry keeps only the per-LOS structure its contract names.
+///
+/// Serial-context only (the PASS-B pre-pass, after slip-erase + GM aging).
+/// Information weights w = 1/max(var, ε) over WARM entries (t_s > 0); the
+/// global weighted mean is removed when n ≥ @p min_global_los, then each
+/// station's weighted mean of the residual when that station has
+/// ≥ @p min_station_los warm LOS.  Variances are left UNCHANGED (conservative:
+/// the prior loses an estimated mean, keeps its spread).  Cold entries are
+/// untouched.  Key layout "STATION|SAT" (the sh_dev_carry contract).
+///
+/// @param carry            The deviation-carry map (mutated in place).
+/// @param min_global_los   Minimum warm LOS for the global de-mean (spec: 30).
+/// @param min_station_los  Minimum warm LOS per station for its mean (spec: 4).
+/// @return Per-epoch stats for the run-end counters.
+inline ShDevDemeanStats shDevDemean(std::map<std::string, ShDevCarry>& carry,
+                                    std::size_t min_global_los,
+                                    std::size_t min_station_los) {
+    ShDevDemeanStats st;
+    constexpr double kEps = 1e-12;
+    double sw = 0.0, swd = 0.0;
+    for (const auto& kv : carry) {
+        if (kv.second.t_s <= 0.0) continue;   // cold — not yet a prior
+        const double w = 1.0 / std::max(kv.second.var, kEps);
+        sw += w;
+        swd += w * kv.second.dev;
+        ++st.n_used;
+    }
+    if (st.n_used < static_cast<int>(min_global_los) || !(sw > 0.0)) return st;
+    st.g_tecu = swd / sw;
+    st.applied = true;
+    // Per-station accumulation of the residual (single pass: subtract g inline).
+    std::map<std::string, std::pair<double, double>> sta;  // station -> {Σw, Σw·dev}
+    std::map<std::string, std::size_t> sta_n;
+    for (auto& kv : carry) {
+        if (kv.second.t_s <= 0.0) continue;
+        kv.second.dev -= st.g_tecu;
+        const std::string s = kv.first.substr(0, kv.first.find('|'));
+        const double w = 1.0 / std::max(kv.second.var, kEps);
+        auto& acc = sta[s];
+        acc.first += w;
+        acc.second += w * kv.second.dev;
+        ++sta_n[s];
+    }
+    for (auto& kv : carry) {
+        if (kv.second.t_s <= 0.0) continue;
+        const std::string s = kv.first.substr(0, kv.first.find('|'));
+        const auto itn = sta_n.find(s);
+        if (itn == sta_n.end() || itn->second < min_station_los) continue;
+        const auto& acc = sta.at(s);
+        if (acc.first > 0.0) kv.second.dev -= acc.second / acc.first;
+    }
+    for (const auto& kv : sta_n)
+        if (kv.second >= min_station_los) ++st.n_sta;
+    return st;
 }
 
 // L1: one network_epoch_status.csv row per processed epoch.  Fields not yet in

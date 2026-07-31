@@ -233,6 +233,20 @@ struct NetworkProductRecord {
         bool any() const { return !clock.empty() || !code.empty() || !phase.empty(); }
     };
     SerializedDiscCounters serialized_disc;
+    /// FC-1: true when this record came from an @c F marker — a SPLIT-CADENCE FAST epoch
+    /// carrying satellite clock values only, measured by a clocks-only tick between full
+    /// solves.  A fast record never carries biases, URA, datum changes or discontinuity
+    /// information, and @c replay routes it to a clock-value-and-age-only store refresh
+    /// instead of the whole-epoch @c emitToStore path (which would advance discontinuity
+    /// counters and re-stamp the shared per-satellite header).
+    bool     is_fast{false};
+    /// FC-1: the last EMITTED full solve these fast values are referenced to.  A consumer
+    /// can compare it with its own most recent full epoch and ignore the record if they
+    /// disagree — the fast values are a delta on that anchor, so they are meaningless
+    /// against a different one.
+    GnssTime fast_anchor{};
+    /// FC-1: sat -> {clock_c0_m, sigma_m}.  sigma is 0 when the producer omitted @c sigk=.
+    std::map<std::string, std::pair<double, double>> fast_clocks;
     /// RTA-5: the S-contract state as of THIS epoch — set (present=true) when an
     /// S line immediately preceded this epoch's E line (the deferred v2 header S
     /// counts for the first epoch; a mid-file re-broadcast counts for the epoch it
@@ -295,6 +309,32 @@ public:
                const std::set<char>& datum_consts = {},
                const std::set<std::string>& retro_sats = {},
                const NetworkProductEmitter* disc_source = nullptr);
+
+    /// FC-1: append one SPLIT-CADENCE FAST epoch — satellite clock values only, measured
+    /// by a clocks-only tick between full solves (docs/SPEC_fast_clock_split_cadence.md).
+    ///
+    /// Written as an @c F marker plus one @c K line per satellite.  Both tags are NEW, and
+    /// that is deliberate rather than incidental: a pre-FC-1 reader skips unknown tags
+    /// silently (NetworkProductIO.cpp, the `ok = false` default branch), so re-using the
+    /// existing @c C tag would leave the payload attached to the PREVIOUS @c E epoch — a
+    /// silent frame misread.  With a private tag for BOTH the marker and the payload, an
+    /// old reader drops the entire record and degrades to exactly its pre-FC-1 behaviour
+    /// (ZOH between full epochs), which is correct, merely un-improved.
+    ///
+    /// @note SPEC section 8 asks instead for a banner version bump that makes old
+    ///       consumers "fail loudly".  That is not achievable: the banner is a @c #
+    ///       comment and NO C++ reader has ever inspected it, so a bump is invisible to
+    ///       every consumer already built.  Self-skipping records deliver the property the
+    ///       requirement was protecting — no silent misinterpretation — which a version
+    ///       nobody reads cannot.
+    ///
+    /// @param epoch     the fast tick's epoch.
+    /// @param anchor    the last EMITTED full solve the values are referenced to; a
+    ///                  consumer can check it against its own last full epoch and ignore
+    ///                  the record if they disagree.
+    /// @param sats      (sat, clock_c0_m, sigma_m) triples; sigma <= 0 omits the token.
+    void writeFastClock(const GnssTime& epoch, const GnssTime& anchor,
+                        const std::vector<std::tuple<std::string, double, double>>& sats);
 
     /// RTA-5: append a CURRENT machine-parseable "S" contract line mid-file (the
     /// periodic / datum-change contract re-broadcast).  Same grammar as the header

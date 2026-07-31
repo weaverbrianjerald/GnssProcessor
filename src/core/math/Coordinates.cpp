@@ -91,5 +91,28 @@ namespace GnssProcessor {
             return R * enu;
         }
 
+        Eigen::Vector3d markerToArp(const Eigen::Vector3d& marker_ecef,
+                                    const Eigen::Vector3d& delta_hen) {
+            // Exact no-op on a zero eccentricity: skip the LLH iteration so a
+            // header-less stream (or a 0/0/0 station) is bit-for-bit unchanged.
+            if (!(delta_hen.norm() > 1e-6) || !marker_ecef.allFinite()) return marker_ecef;
+            // RINEX (H, E, N) = (Up, East, North) -> ENU order (E, N, U).
+            const Eigen::Vector3d enu(delta_hen(1), delta_hen(2), delta_hen(0));
+            return marker_ecef + enuToEcef(enu, ecefToLlh(marker_ecef));
+        }
+
+        Eigen::Vector3d arpToMarker(const Eigen::Vector3d& arp_ecef,
+                                    const Eigen::Vector3d& delta_hen) {
+            if (!(delta_hen.norm() > 1e-6) || !arp_ecef.allFinite()) return arp_ecef;
+            const Eigen::Vector3d enu(delta_hen(1), delta_hen(2), delta_hen(0));
+            // The rotation belongs at the MARKER, which is what we are solving for,
+            // so take one fixed-point step: rotate at the ARP to get a first guess,
+            // then re-rotate at that guess.  The first guess is off by O(|ecc|²/R)
+            // (4 um on a 6.2 m tower — not negligible at the mm level this project
+            // grades at); one iteration drives closure below a picometre.
+            const Eigen::Vector3d guess = arp_ecef - enuToEcef(enu, ecefToLlh(arp_ecef));
+            return arp_ecef - enuToEcef(enu, ecefToLlh(guess));
+        }
+
     } // namespace Coordinates
 } // namespace GnssProcessor

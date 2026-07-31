@@ -1,0 +1,16 @@
+{
+  "_comment": [
+    "FC-1 byte-identity gate arm A (OFF), RE-RUN for the 2026-07-30 emit-frame fix",
+    "(a-priori satellite clock corrected out of the lump — NetworkFastClock.cpp",
+    "fc1_apriori).  Identical to _fc1_byteid_off.json except the output directory:",
+    "the original arms were produced by the pre-fix build, and standing invariant #6",
+    "requires byte comparisons SAME-BUILD, so both arms re-run fresh.  A fresh dir also",
+    "sidesteps the append-mode service CSVs (network_d5_flags.csv concatenation trap)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_fc1_byteid_off.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/fc1_byteid_off_v2/products.txt"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "SD pre-reduce EWL — OFF BYTE-IDENTITY arm (standing invariant #6).",
+    "Identical to _golden0729_net50_30ep_wl1off.json in EVERY functional key, including",
+    "eigen_threads / parallel_max_threads = 8: the only difference is where the product",
+    "file lands, so the artifacts must match runs/golden_0729/net50_wl1off/ byte for byte.",
+    "",
+    "Why this arm is required and not merely nice: this card touched a SHARED path.",
+    "MwSlipDetector::MwArcStats gained code1/code2, processMwSample gained two trailing",
+    "code parameters, and arcZdMean now serves exists/code1/code2.  All of it is",
+    "bookkeeping (the MW value arrives pre-computed), so it MUST be arithmetically inert",
+    "— and 'must be' is an argument, not a measurement.  Same-build comparison only:",
+    "verification integers are build-config sensitive at the ppm level."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/sdewl_byteid_off/products.txt"
+  }
+}

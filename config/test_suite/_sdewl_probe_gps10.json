@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "SD pre-reduce EWL — OPTIMISM PROBE.  GPS-only, all frequencies, SINGLE channel,",
+    "50 stations, 10 epochs.  Purpose is to explain WHY the float row's claimed sigma",
+    "(0.08 m, the Welford variance of the arc mean) was ~13x tighter than its measured",
+    "residual spread (1.02 m median).",
+    "",
+    "Why THIS configuration isolates it:",
+    " * channel_mode = single  -> exactly ONE candidate (band1,band2) phase pair per",
+    "   satellite, so the arc's MW and the estimator's ambiguity states are on the SAME",
+    "   channel by construction.  Removes channel mismatch as a candidate cause (41% of",
+    "   arcs had 2 candidates on the GPS+Gal all-channel arms).",
+    " * GPS-only -> one EWL tier, (L2,L5) at lambda 5.861 m.  Removes the Galileo (7,5)",
+    "   and (8,5) rungs, so the residual population is homogeneous in lambda.",
+    " * 10 epochs with min_arc_epochs = 2 -> rows arm at epoch 3, giving ~8 epochs of",
+    "   rows.  Enough to separate WITHIN-arc scatter from BETWEEN-arc offset, which is",
+    "   the decisive split (see below).",
+    "",
+    "MEASURE-ONLY BY CONSTRUCTION: sigma_floor_m = 1000 makes each row's information",
+    "1e-6 -> the rows are folded but carry no weight, so the solve is essentially the",
+    "OFF solve and x_lin is NOT perturbed by the very rows whose residual we are",
+    "measuring.  Without this the probe would measure its own back-reaction.",
+    "max_abs_z_m stays 0 (no cap) so the full residual population is visible.",
+    "",
+    "THE SPLIT TO READ, from logs/network_sd_ewl.csv:",
+    "  resid_m scatter WITHIN one (station,satellite) arc across epochs",
+    "     -> if ~1 m, the Welford variance of the mean genuinely understates the noise",
+    "        (MW repeatability != MW agreement with the estimator).",
+    "  resid_m mean OFFSET per (station,satellite), stable across epochs",
+    "     -> a SYSTEMATIC term the Welford variance cannot see at all: unmodelled bias,",
+    "        or the BIA frame skew (all arcs came back bia_corrected=false, so the arc",
+    "        carries the TOTAL satellite bias while the estimator may hold a residual).",
+    "  A per-SATELLITE (station-independent) offset implicates the satellite bias frame.",
+    "  A per-STATION offset implicates the receiver side / x_lin."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+  "processing": {
+    "active_systems": [ "GPS" ],
+    "frequency_mode": "all",
+    "channel_mode": "single",
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "sd_ewl": {
+      "enable": true,
+      "trace": true,
+      "min_arc_epochs": 2,
+      "sigma_floor_m": 1000.0,
+      "max_abs_z_m": 0.0
+    },
+    "product_output_path": "C:/GnssProcessor/runs/sdewl_probe_gps10/products.txt"
+  }
+}

@@ -801,18 +801,20 @@ namespace GnssProcessor {
         /**
          * @brief σ-power for elevation amplification on phase observations.
          *
-         * Defaults to 0.5, giving a 1/sin(elev) variance scaling
-         * (gentler than code's 1/sin²(elev)).  Justification: phase
-         * noise at low elevation is dominated by carrier-loop SNR
-         * (which falls slowly with elevation, not as csc²) and
+         * Defaults to 1.0, giving the symmetric 1/sin²(elev) variance
+         * scaling used for code — the project standard (every shipped
+         * production config sets 1.0 explicitly; the loader default
+         * matches it as of 2026-07-31).
+         *
+         * Setting @c phase_elevation_power = 0.5 in the JSON selects
+         * the gentler 1/sin(elev) scaling.  Rationale for that option:
+         * phase noise at low elevation is dominated by carrier-loop
+         * SNR (which falls slowly with elevation, not as csc²) and
          * antenna PCV miscalibration — neither follows the csc²(θ)
-         * mapping function that drives code multipath.  At a 10°
-         * mask, p=0.5 amplifies σ by 2.4× rather than 5.8×, keeping
+         * mapping that drives code multipath.  At a 10° mask, p=0.5
+         * amplifies σ by 2.4× rather than 5.8×, keeping
          * standardized-residual cycle-slip detection effective at
          * low elevation.
-         *
-         * Setting @c phase_elevation_power = 1.0 in the JSON
-         * recovers the legacy symmetric csc²(θ) phase weighting.
          *
          * Configurable via @c filter.phase_elevation_power.
          */
@@ -2633,6 +2635,10 @@ namespace GnssProcessor {
         bool networkCarryInvariantInnovCalibrate() const { return network_carry_invariant_innov_calibrate_; }
         /// Card 4 (M1, D5 v2): σ̂₀² forgetting half-life in epochs (@c network.carry_invariant_innov_calibrate_window).
         double networkCarryInvariantInnovCalibrateWindow() const { return network_carry_invariant_innov_calibrate_window_; }
+        /// Card 4 (M1, D5 v3): require raw-observable corroboration before a D5 re-tap (@c network.carry_invariant_innov_corroborate).
+        bool networkCarryInvariantInnovCorroborate() const { return network_carry_invariant_innov_corroborate_; }
+        /// Card 4 (M1, D5 v3): magnitude backstop for the corroboration gate (@c network.carry_invariant_innov_corroborate_backstop_k).
+        double networkCarryInvariantInnovCorroborateBackstopK() const { return network_carry_invariant_innov_corroborate_backstop_k_; }
 
         /// M5 card WL-1: the MW-seeded wide-lane pseudo-observation layer master
         /// (@c network.mw_wl.enable).  When on, the per-station MW detector is built
@@ -4486,6 +4492,8 @@ namespace GnssProcessor {
          * critical and acceptance latency matters.
          */
         double getArMinSuccessRate() const { return ar_min_success_rate_; }
+        /// @brief Per-candidate AR arc-maturity gate (@c estimation.ambiguity_resolution.min_arc_info), in zenith-epoch-equivalents; 0 = off.
+        double getArMinArcInfo() const { return ar_min_arc_info_; }
 
         /**
          * @brief Maximum per-NL-pair |float − fixed| residual (cycles)
@@ -4817,6 +4825,8 @@ namespace GnssProcessor {
         bool   network_carry_invariant_innov_refold_{false}; ///< Card 4 (M1, D5 v2, DEFERRED): when ≥N chords flag in one epoch, route the flagged set into the existing within-epoch re-solve so the epoch itself is cleaned (v1 keeps the one already-solved epoch's bounded contamination, q_z the backstop). Parsed for the config contract; NOT yet implemented (warned). INERT unless network_carry_invariant_innov_gate_.
         bool   network_carry_invariant_innov_calibrate_{false}; ///< Card 4 (M1, D5 v2): standardize the innovation gate by the LS-VCE-estimated EMPIRICAL innovation variance σ̂₀² (robust geo-mean of the standardized innovations, the M2 NetworkCarryVce instrument) instead of the raw formal Cov(v), which the M2 monitor measured 10-30× optimistic. Makes network_carry_invariant_innov_k a TRUE Nσ threshold that auto-adapts per regime (so one k serves both low- and high-elevation masks). OFF = raw formal Cov(v) (v1; k is an uncalibrated knob). INERT unless network_carry_invariant_innov_gate_.
         double network_carry_invariant_innov_calibrate_window_{60.0}; ///< Card 4 (M1, D5 v2): exponential-forgetting half-life (emitted epochs) of the σ̂₀² accumulator; larger = smoother/slower-adapting. INERT unless network_carry_invariant_innov_calibrate_.
+        bool   network_carry_invariant_innov_corroborate_{false}; ///< Card 4 (M1, D5 v3): suppress a D5 re-tap when the RAW observables positively measured the arc as continuous (no MW/GF step). Measured 2026-07-30: only 2.1% of D5 re-taps coincide with a raw step, vs 95% on the same run's known arc resumptions — the gate fires on persistent model error, not slips, and re-taps continuous arcs indefinitely (97.4% of inter-reset gaps are 1 epoch), pinning dd_sigma_cyc at ~3.9 cyc so DD fractions stay uniform at every baseline. FAIL-SAFE: only measured-and-flat suppresses; no-evidence still re-taps, so standing invariant #1's response is narrowed, never removed. INERT unless network_carry_invariant_innov_gate_ AND a slip-QC consumer computed the raw observables. OFF = byte-identical to D5 v2.
+        double network_carry_invariant_innov_corroborate_backstop_k_{0.0}; ///< Card 4 (M1, D5 v3): re-tap regardless of corroboration when the standardized innovation exceeds this MULTIPLE of the gate threshold (k·σ̂₀). 0 = inert (pure corroboration), the default and the recommended value: corroboration was measured to FALL with innovation size (2.1% below 25σ, 0.0% at 100-200σ, 1.2% above 200σ), so a magnitude backstop re-admits precisely the population with the least evidence of being a real slip. Provided for sweeps only. INERT unless network_carry_invariant_innov_corroborate_.
         bool   network_emit_pb_filter_{false};             ///< PB emission-continuity filter (M5 prerequisite): slip-gated per-key scalar KF on the POST-REBASE emitted phase biases + a self-tuning k·σ̂_step jump gate — an outputs-only, S-transparent smoother that clears the ~200/epoch threshold-in-noise discontinuity floor without touching the solve (user DDs + dd-frac grading byte-unchanged). Baked into the emitted product (replay-safe, like the re-base); the emitter jump test stays the SOLE, unchanged disc authority. INERT unless network_carry_invariant_ + network_carry_invariant_emit_rebase_ (it filters the re-based emission frame). OFF = the leaf is never constructed/called (byte-identical).
         double network_emit_pb_filter_q_{3E-07};           ///< PB filter: random-walk process noise of the emitted bias (m²/s); ≈(3 mm)² per 30 s epoch (the quasi-static drift class). INERT unless network_emit_pb_filter_.
         double network_emit_pb_filter_jump_k_{4.0};        ///< PB filter: reset gate |innovation| > k·σ̂_step (Nσ; mirrors carry_invariant_innov_k). k<~2 leaves the noise floor uncleared; k too large smears events — but genuine events are ≫k·σ̂_step. INERT unless network_emit_pb_filter_.
@@ -4904,7 +4914,7 @@ namespace GnssProcessor {
         ModelCorrections model_corrections_;                            ///< Enable/disable flags for model corrections.
         StochasticModelType stochastic_model_; ///< Measurement stochastic model selection.
         double code_elevation_power_;  ///< σ-power on the elevation amplification for **code** observations: σ = σ_zen / sin^p(elev).  p=1.0 reproduces the legacy 1/sin²(elev) variance scaling.  See @c getCodeElevationPower().
-        double phase_elevation_power_; ///< σ-power for **phase**: default 0.5 gives variance scaling 1/sin(elev), much gentler than the code's 1/sin²(elev).  See @c getPhaseElevationPower().
+        double phase_elevation_power_; ///< σ-power for **phase**: default 1.0 gives the symmetric 1/sin²(elev) variance scaling (matching code); 0.5 selects the gentler 1/sin(elev).  See @c getPhaseElevationPower().
         SnrModelParams snr_model_params_;                                ///< SNR-based model parameters.
         SatBlockNoiseParams sat_block_noise_params_;                      ///< Satellite-block stochastic model parameters.
         ImuConfig imu_config_;                                           ///< IMU integration configuration.
@@ -4930,6 +4940,7 @@ namespace GnssProcessor {
         double ar_wl_only_pseudo_var_; ///< Pseudo-obs variance (cycles²) for WL-only constraints.
         double ar_wl_max_frac_;        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
         double ar_min_success_rate_;  ///< Min bootstrap success rate (FFR-style) for AR fix acceptance.
+        double ar_min_arc_info_{ 0.0 };   ///< Per-candidate AR maturity gate: minimum accumulated sin^2(el) on BOTH arcs of a candidate. 0 = off (byte-identical). Makes AR SAFE, not useful — see AmbiguityResolverConfig::min_arc_info.
         double ar_nl_max_per_pair_frac_; ///< Max per-NL-pair |float − fixed| (cyc); rejects marginal fixes.
         bool   ar_enable_partial_ar_;    ///< Partial AR: on full-set fix failure, retry on the largest gate-passing subset.
         std::vector<std::string> ar_active_systems_; ///< Constellations eligible for AR (empty = all).

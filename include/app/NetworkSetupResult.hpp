@@ -31,6 +31,8 @@
 #include "products/NetworkProductIO.hpp"            // NetworkProductWriter, SbasisContract
 #include "realtime/RealTimeEngine.hpp"
 
+#include <Eigen/Dense>
+
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -108,6 +110,18 @@ namespace GnssProcessor {
         /// destroyed first.
         GnssConfig consumer_config;
         std::unique_ptr<RealTimeEngine> consumer;
+        /// Closed-loop truth, reduced into the frame the consumer actually
+        /// estimates.  `network.closed_loop.station.position_ecef` is a PUBLISHED
+        /// coordinate (IGS SSC / SIF / surveyed RINEX header) and therefore
+        /// monument-referenced, whereas the consumer's position state is the ARP.
+        /// Grading one against the other puts a constant vertical bias equal to the
+        /// station eccentricity into `up_m`.  Resolved ONCE here (the held-out
+        /// station's RINEX header is loaded by `sync`); every consumer-error site
+        /// reads this instead of re-deriving from config.  Equals the configured
+        /// value exactly when the header eccentricity is zero.
+        Eigen::Vector3d cl_truth_arp{ Eigen::Vector3d::Zero() };
+        /// The `ANTENNA: DELTA H/E/N` used for @ref cl_truth_arp (zero when none).
+        Eigen::Vector3d cl_truth_hen{ Eigen::Vector3d::Zero() };
     };
 
 } // namespace GnssProcessor

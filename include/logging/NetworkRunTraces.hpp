@@ -69,6 +69,13 @@ namespace GnssProcessor {
         "week,tow,n_emitted,n_skipped,n_gate_withheld,n_sigma0_withheld,"
         "n_runaway_epochs,sigma0_ewma,n_present,n_clock_sats,"
         "ms_per_epoch_window,last_emit_age_s,pivot,cold_start_grade_s\n";
+    /// network_fast_clock.csv header (re-written verbatim on every P1 rotation reopen).
+    /// Two row kinds share the stream, discriminated by @c kind: "T" = one per fast tick
+    /// (the summary), "S" = per-satellite detail, written only every
+    /// @c network.fast_clock.trace_sat_stride ticks.  A per-tick per-satellite row at a
+    /// 1 s RT cadence would be an unbounded firehose, hence the stride and the rotation.
+    inline constexpr const char* kFastClockHeader =
+        "week,tow,kind,dt_s,shadow,n_los,n_screened,n_sat_est,emitted,sat,dc_m,sigma_m\n";
     /// network_carry_vce.csv header (M2/LS-VCE hourly rows).
     inline constexpr const char* kCarryVceHeader =
         "week,tow,hour,family,const,n_rows,n_eff,robust_floor_m2,mean_floor_m2,"
@@ -175,6 +182,15 @@ namespace GnssProcessor {
         /// docs/rt_service_operations.md.
         std::ofstream health_trace;
         const std::filesystem::path health_trace_path;
+        /// FC-1: per-tick split-cadence fast-clock trace (network.fast_clock.trace) — one
+        /// summary row per fast tick plus strided per-satellite detail rows.  The tick tier
+        /// runs on epochs the full pipeline SKIPS, so this stream (with the run-end
+        /// counters) is the only evidence the tier ran at all; in shadow mode it is also
+        /// the grading instrument, carrying fast-vs-full deltas on FULL epochs.  Rotates
+        /// (P1) because a 1 s RT tick makes it unbounded.  Off by default (byte-identical
+        /// when OFF: no file opened, no rows written).
+        std::ofstream fast_clock_trace;
+        const std::filesystem::path fast_clock_trace_path;
         /// L2: structured per-event QC log (network.trace_events).  One LONG-format row per
         /// discrete QC action across every tier — the machine-readable replacement for
         /// spdlog regex-scraping.  Off by default (byte-identical when OFF).
@@ -238,6 +254,60 @@ namespace GnssProcessor {
         /// which satellites, which signals (dispersive split).
         std::ofstream pf_keyed_trace;
         const std::filesystem::path pf_keyed_trace_path;
+        /// S1 (@c network.trace_phase_anchor): one row per GAUGE-PINNED ambiguity per
+        /// PROCESSED epoch — @c week,tow,cons,signal,sat,anchor_sta.  The
+        /// (constellation, signal, satellite) -> anchoring STATION map that realizes the
+        /// phase datum, which the lane-ladder spectrometer's ANCHOR PARTITION needs and
+        /// which no other artifact carries (@c network_anchor_info.csv is the a-priori
+        /// CLOCK anchor — no signal, no station — and the DD-fractional trace skips
+        /// pinned ambiguities by construction).  Log-only: read off the election that
+        /// already ran, so the solve is identical with it armed.
+        std::ofstream phase_anchor_trace;
+        const std::filesystem::path phase_anchor_trace_path;
+        /// SPEC_sd_ewl_prereduce §6 (@c network.sd_ewl.trace): one row per
+        /// (station, epoch, satellite) visit that the SD pre-reduce EWL appender
+        /// considered — the elected (band1, band2) phase pair and its code channels,
+        /// the MW arc outcome (@c status), the arc's ZD mean / lagged count, and, for
+        /// a built row, the SD @f$z@f$ and its floored σ.  The instrument for the
+        /// question the run-end counters can only aggregate: WHICH signal pair the
+        /// detector actually holds an EWL arc on, per satellite.  Log-only — the
+        /// solve is identical with the trace armed.  Rows are buffered per station in
+        /// @c StationAssembly::sd_ewl_trace and drained by PASS B's serial consume, so
+        /// the file order is thread-count independent.
+        std::ofstream sd_ewl_trace;
+        const std::filesystem::path sd_ewl_trace_path;
+        /// Increment 2a (@c network.sd_ewl.trace AND @c network.sd_ewl.fix_enable): one
+        /// row per (station, satellite) the Route-B integer decision considered — the
+        /// elected NETWORK-COMMON channel pair, the component reference station r0, the
+        /// spanning-tree parent and link satellite, the DD it rounded with that DD's
+        /// fractional residue / sigma / FFR, the resulting frame integer, and a
+        /// @c status naming the outcome.  This is the only place the DD arithmetic
+        /// behind a fixed row is visible; the run-end tallies can only aggregate it.
+        /// Armed only WITH the integer path, so an increment-1 artifact set is
+        /// unchanged.  Serial seam — written in place, no per-station buffering needed.
+        std::ofstream sd_ewl_ar_trace;
+        const std::filesystem::path sd_ewl_ar_trace_path;
+        /// Card-4 F-A attribution dump (@c network.mw_wl.d5_dump AND the D5 innovation
+        /// gate): one row per D5 innovation flag per epoch with its adjacency tags —
+        /// EWL-fixed (station,sat) membership, hold-cycle chord, injected-last-epoch
+        /// chord — plus the D2 tri-state @c raw_stepped tag.  Log-only: the solve never
+        /// reads it.  Written from @ref networkInstallCarry through this handle.
+        ///
+        /// Opened by @ref openMwWlDumps, NOT openAll: its arming expression
+        /// (@c (ewl_on||wl_inject_on||lane_on) && nmw.d5_dump && carry_innov_gate) is
+        /// derived in the run TU well after openAll runs, and re-deriving it here would
+        /// bit-rot against the driver.  Same lifecycle either way — one truncating open
+        /// with the header, per run, before the epoch loop.
+        std::ofstream d5_flags_trace;
+        const std::filesystem::path d5_flags_trace_path;
+        /// Card WL-2/WL-3 F-B lane trace (@c network.mw_wl.lane_trace): per epoch, the
+        /// POST-install carried WL lane value of every primary cycle carried in both
+        /// bands, with the decided/held/injected tags — the constrained and
+        /// unconstrained populations in one file, so an injected cycle's circular R is
+        /// gradable (@c scripts/grade_lane_trace.py).  Log-only.  Opened by
+        /// @ref openMwWlDumps for the same reason as @ref d5_flags_trace.
+        std::ofstream wl_lane_trace;
+        const std::filesystem::path wl_lane_trace_path;
         /// L15: run-provenance manifest path (startup record written by
         /// writeRunManifestStartup, end-of-run record APPENDED by
         /// writeRunManifestComplete — one member so both target the same file).
@@ -274,6 +344,30 @@ namespace GnssProcessor {
                      const SphericalHarmonicIonosphere* sh_model,
                      bool cl_trace_armed,
                      const std::shared_ptr<spdlog::logger>& log);
+
+        /**
+         * @brief Open the two MW/WL diagnostic dumps (@ref d5_flags_trace,
+         *        @ref wl_lane_trace) with their headers — the openAll tail for the
+         *        streams whose arming expression is only known later in setup.
+         *
+         * Called ONCE from the run TU, before the epoch loop, after the WL zone-2
+         * arming booleans are derived.  Both open TRUNCATING like every other trace
+         * stream: re-running a config into an already-used log directory replaces the
+         * file instead of concatenating onto the previous run's rows.  (They used to
+         * be re-opened per epoch in @c std::ios::app from inside networkInstallCarry,
+         * which silently glued consecutive runs together — a false D5-divergence
+         * generator for any A/B whose two arms had been re-run unequal numbers of
+         * times.)  An unarmed dump opens nothing and writes nothing.
+         *
+         * @param d5_armed         @c mw_d5_dump && carry_innov_gate — the exact
+         *                         condition the per-epoch writer tests, so an armed
+         *                         run with zero flags yields a header-only file rather
+         *                         than an absent one, and an inert gate yields neither.
+         * @param lane_trace_armed @c mw_lane_trace.
+         * @param log              main_log logger for open-failure warnings.
+         */
+        void openMwWlDumps(bool d5_armed, bool lane_trace_armed,
+                           const std::shared_ptr<spdlog::logger>& log);
 
         /**
          * @brief Write the one-shot station-roster CSV (network_stations.csv).

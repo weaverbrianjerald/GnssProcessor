@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "SD pre-reduce EWL — OPTIMISM PROBE, channel_mode = all.  Paired with its sibling",
+    "_sdewl_probe_$( [ all = single ] && echo all || echo single )10.json; the ONLY functional key between them is",
+    "processing.channel_mode, so a residual difference is attributable to the arc<->state",
+    "CHANNEL correspondence and nothing else.  10 epochs, 50 stations, GPS+Galileo.",
+    "",
+    "GPS-only was the requested roster but is BLOCKED on this arm set independently of this",
+    "card: the NetworkSbasis null-space gate withholds every epoch with 'observed 1",
+    "(near-)zero eigenvalue but the declared S-basis dimension is 2 — the datum is",
+    "over-specified'.  declared_dimension is one clock pin per constellation, so declared=2",
+    "under 'Active systems: GPS' is itself the anomaly.  Separate card; GPS+Gal keeps the",
+    "validated datum so this probe measures the channel lever alone.",
+    "",
+    "MEASURE-ONLY: sigma_floor_m = 1000 makes each row's information ~1e-6, so the rows are",
+    "traced but do not perturb the x_lin whose residual is being measured.  max_abs_z_m = 0",
+    "leaves the full residual population visible.",
+    "min_arc_epochs = 2 so rows arm at epoch 3 inside a 10-epoch window."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+  "processing": {
+    "channel_mode": "all",
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "sd_ewl": {
+      "enable": true, "trace": true, "min_arc_epochs": 2,
+      "sigma_floor_m": 1000.0, "max_abs_z_m": 0.0
+    },
+    "product_output_path": "C:/GnssProcessor/runs/sdewl_probe_all10/products.txt"
+  }
+}

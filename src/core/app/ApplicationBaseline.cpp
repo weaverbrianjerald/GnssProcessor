@@ -347,13 +347,21 @@ int Application::runBaseline() {
                 rover_name, overlap, synced.size());
         }
 
-        // Rover a-priori position: config-supplied > RINEX header approx > zero fallback.
+        // Rover a-priori position: config-supplied > RINEX header ARP > zero fallback.
+        // The header path reduces marker -> ARP (getArpPositionXyz), because the
+        // rover position state is antenna-referenced; a config-supplied coordinate is
+        // taken at face value (the user owns its reference point).
         Eigen::Vector3d rov_apriori{ 0.0, 0.0, 0.0 };
         if (rover_cfg.has_position) {
             rov_apriori = Eigen::Vector3d(rover_cfg.position_ecef.data());
         }
         else {
-            rov_apriori = rov_parser->getApproxPositionXyz();
+            rov_apriori = rov_parser->getArpPositionXyz();
+            const Eigen::Vector3d hen = rov_parser->getAntennaDeltaHen();
+            if (hen.norm() > 1e-6)
+                log->info("Rover '{}' a-priori reduced marker -> ARP via "
+                    "ANTENNA: DELTA H/E/N ({:.4f}, {:.4f}, {:.4f}) m",
+                    rover_name, hen(0), hen(1), hen(2));
         }
         const double apriori_baseline_km = (rov_apriori - ref_pos).norm() / 1000.0;
         log->info("Rover '{}' a-priori ECEF=({:.3f}, {:.3f}, {:.3f}) m, baseline={:.3f} km",

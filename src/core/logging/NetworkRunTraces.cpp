@@ -40,6 +40,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       slip_raw_trace_path(log_dir_ / "network_slip_raw.csv"),
       epoch_status_trace_path(log_dir_ / "network_epoch_status.csv"),
       health_trace_path(log_dir_ / "network_service_health.csv"),
+      fast_clock_trace_path(log_dir_ / "network_fast_clock.csv"),
       events_trace_path(log_dir_ / "network_events.csv"),
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
@@ -48,6 +49,11 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       sh_spectrum_trace_path(log_dir_ / "network_sh_spectrum.csv"),
       sh_spectrum_mode_trace_path(log_dir_ / "network_sh_spectrum_mode.csv"),
       pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
+      phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
+      sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
+      sd_ewl_ar_trace_path(log_dir_ / "network_sd_ewl_ar.csv"),
+      d5_flags_trace_path(log_dir_ / "network_d5_flags.csv"),
+      wl_lane_trace_path(log_dir_ / "network_wl_lane_trace.csv"),
       manifest_path(log_dir_ / "network_run_manifest.json") {}
 
 void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& nc,
@@ -290,6 +296,77 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open keyed post-fit trace {}",
                       pf_keyed_trace_path.string());
     }
+    if (nc.trace_phase_anchor) {
+        // S1 anchor partition (docs/SPEC_lane_spectrometer.md §3.3).  One row per
+        // gauge-PINNED ambiguity: `anchor_sta` is the station whose ambiguity pin
+        // realizes the phase datum for that (constellation, signal, satellite)
+        // freedom.  Under the legacy single-pivot datum every freedom is pinned at the
+        // pivot, so the column is constant and the partition degenerates — which is
+        // itself the honest answer (it exonerates the election mechanism by
+        // construction, exactly as the SPEC says).  Under the prioritized / eq34
+        // realizations the column varies and the same/cross-anchor split becomes a
+        // real test.
+        phase_anchor_trace.open(phase_anchor_trace_path);
+        if (phase_anchor_trace)
+            phase_anchor_trace << "week,tow,cons,signal,sat,anchor_sta\n";
+        else
+            log->warn("Network: failed to open phase-anchor trace {}",
+                      phase_anchor_trace_path.string());
+    }
+    if (nc.sd_ewl.trace) {
+        // SPEC_sd_ewl_prereduce §6: one row per (station, epoch, satellite) the SD
+        // pre-reduce EWL appender considered.  `status` names the outcome in the
+        // appender's own vocabulary (BUILT / PIVOT / NO_ARC / IMMATURE /
+        // FRAME_RECON / NO_AMB_COL / NO_SHARED_COL / NO_CODE / BAD_LAMBDA / BIG_Z /
+        // MIXED_FRAME / CAPPED), so the file is a direct per-satellite expansion of
+        // the run-end skip tallies — the only way to see WHICH (band1,band2) signal
+        // pair carries an arc rather than just how many did not.  sig1/sig2 are the
+        // ELECTED phase pair (empty when none had both ambiguity columns);
+        // code1/code2 are the code channels the arc's MW actually consumed.
+        sd_ewl_trace.open(sd_ewl_trace_path);
+        if (sd_ewl_trace)
+            // mean_m = the arc's ZD MW mean (raw, hundreds of metres — it carries
+            // λ_EWL·N_EWL); pred_m = this arc's half of H·x_lin; resid_m = the
+            // CORRECTION-frame value actually folded, (mean_s−mean_p)−(pred_s−pred_p).
+            // resid_m is the row's residual and the quantity to judge: it should sit at
+            // the metre scale, and a per-satellite offset in it is a frame problem.
+            // Increment 2b appends three columns ONLY when the integer path is armed,
+            // so an increment-1 artifact set stays byte-identical (the same armed-only
+            // header rule the dual-layer SH coefficient trace uses above).
+            // n_fix_cyc = the folded SD integer (cycles of lambda_EWL, 0 for a float
+            // row); fixed = whether THIS row folded the integer; grp_fixed = whether
+            // the row's whitened group was the all-fixed group.
+            sd_ewl_trace << "week,tow,station,cons,sat,pivot_sat,status,"
+                            "sig1,sig2,code1,code2,n_cand_pairs,arc_count,bia,"
+                            "lambda_ewl_m,mean_m,pred_m,resid_m,sigma_m"
+                         << (nc.sd_ewl.fix_enable ? ",n_fix_cyc,fixed,grp_fixed\n"
+                                                  : "\n");
+        else
+            log->warn("Network: failed to open SD-EWL trace {}",
+                      sd_ewl_trace_path.string());
+    }
+    if (nc.sd_ewl.trace && nc.sd_ewl.fix_enable) {
+        // Increment 2a's own decision trace.  Kept SEPARATE from network_sd_ewl.csv
+        // because it is a different unit of observation: that file has one row per
+        // ROW-BUILD attempt (station x satellite x epoch, in the parallel produce
+        // phase), this one has one row per INTEGER DECISION (the serial pre-assembly
+        // seam), and the two do not correspond one-to-one — a satellite can get an
+        // integer and still fail to build a row, or vice versa.
+        sd_ewl_ar_trace.open(sd_ewl_ar_trace_path);
+        if (sd_ewl_ar_trace)
+            // status ∈ {R0 (the component reference, integers ≡ 0 by definition),
+            // FIXED, LINK (the per-station gauge integer — inherited, not measured),
+            // REJ_FRAC, REJ_FFR, FLIP (disagreed with the previous epoch on a
+            // continuous arc — counted and vetoed), NO_LINK, SKIP_CHANNEL (arc on a
+            // different tracking pair than the network-common election), SKIP_FRAME,
+            // NO_GRAPH}.  dd_cyc is the rounded DD's pre-rounding value in cycles.
+            sd_ewl_ar_trace << "week,tow,cons,sat,station,status,sig1,sig2,r0,parent,"
+                               "link_sat,arc_count,dd_cyc,frac_cyc,sigma_cyc,ffr,"
+                               "n_cyc,n_prev_cyc\n";
+        else
+            log->warn("Network: failed to open SD-EWL AR trace {}",
+                      sd_ewl_ar_trace_path.string());
+    }
     if (nc.health_interval_s > 0.0) {
         // RTB-6: periodic operator health heartbeat.  Cumulative epoch tallies +
         // σ̂0 EWMA + windowed ms/epoch + last-emit age + stations/clock-sats +
@@ -316,6 +393,18 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       "sentinel for this run.",
                       config_.networkEmitUra(), config_.networkRaim(),
                       config_.networkPhaseLeveling());
+    }
+    if (nc.fast_clock.enable && nc.fast_clock.trace) {
+        // FC-1: the per-tick fast-clock trace.  Gated on the tier master as well as its
+        // own knob — the tick tier runs on epochs the full pipeline skips, so a trace
+        // armed without the tier would produce an empty file that reads like a quiet run
+        // rather than an unarmed one (standing invariant #4).
+        fast_clock_trace.open(fast_clock_trace_path);
+        if (fast_clock_trace)
+            fast_clock_trace << kFastClockHeader;
+        else
+            log->warn("Network (FC-1): failed to open fast-clock trace {}",
+                      fast_clock_trace_path.string());
     }
     if (config_.networkCarryVce()) {
         carry_vce_trace.open(carry_vce_trace_path);
@@ -383,6 +472,40 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     // INC-4: capture the L1/L15 config echoes once (pure getter reads).
     es_sigma0_trigger_   = config_.networkRaimSigma0Trigger();
     es_withhold_ceiling_ = config_.networkRaimWithholdSigma0();
+}
+
+// The openAll tail for the two MW/WL dumps.  Split out (not folded into openAll)
+// because their arming expressions are derived in the run TU from the WL zone-2
+// booleans — carry_invariant, ewl_on, wl_inject_on, lane_fix_on, carry_innov_gate —
+// which are established well after openAll runs; re-deriving that chain here would
+// bit-rot against the driver.  The LIFECYCLE is what matters and it is now identical
+// to every other stream: one truncating open with the header, once per run, before
+// the epoch loop, closed in closeAll.
+void NetworkRunTraces::openMwWlDumps(bool d5_armed, bool lane_trace_armed,
+                                     const std::shared_ptr<spdlog::logger>& log) {
+    std::error_code ec;
+    std::filesystem::create_directories(log_dir_, ec);
+    if (d5_armed) {
+        d5_flags_trace.open(d5_flags_trace_path);
+        if (d5_flags_trace)
+            // raw_stepped is deliberately TRI-STATE (1 / 0 / blank) — see the writer
+            // banner in NetworkInstallCarry.cpp.  Blank means "no evidence", which is
+            // NOT the same claim as 0 ("a step could be formed and it was flat").
+            d5_flags_trace << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
+                              "ewl_stasat,hold_chord,injected_prev,raw_stepped\n";
+        else
+            log->warn("Network: failed to open D5 flag dump {}",
+                      d5_flags_trace_path.string());
+    }
+    if (lane_trace_armed) {
+        wl_lane_trace.open(wl_lane_trace_path);
+        if (wl_lane_trace)
+            wl_lane_trace << "week,tow,chord_u,chord_v,station,sat,lane_cyc,frac_cyc,"
+                             "w,decided,held,injected\n";
+        else
+            log->warn("Network: failed to open WL lane trace {}",
+                      wl_lane_trace_path.string());
+    }
 }
 
 void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
@@ -584,6 +707,11 @@ void NetworkRunTraces::rotateServiceCsvs(const NetworkConfig& nc,
             {&trace,        &trace_path,        kTraceHeader},
             {&soln,         &soln_path,         kSolnHeader},
             {&health_trace, &health_trace_path, kHealthHeader},
+            // FC-1: a fast tick writes a row per DECIMATED-OUT epoch, so at an RT 1 s
+            // cadence this stream grows faster than any other here — it belongs in the
+            // rotation set by construction, not as an afterthought.  maybeRotateCsv is a
+            // strict no-op while the stream is closed (unarmed tier).
+            {&fast_clock_trace, &fast_clock_trace_path, kFastClockHeader},
         };
         for (const auto& r : rotating)
             if (maybeRotateCsv(*r.os, *r.path, r.header,
@@ -830,6 +958,17 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
                << "\"trace_rotate_keep\":" << nc.trace_rotate_keep << ','
+               // FC-1: split-cadence fast clock.  The manifest is how a grader tells a
+               // SPLIT arm from a full-rate REF arm without re-reading the config.
+               << "\"fast_clock_enable\":" << (nc.fast_clock.enable ? "true" : "false") << ','
+               << "\"fast_clock_shadow\":" << (nc.fast_clock.shadow ? "true" : "false") << ','
+               << "\"fast_clock_emit\":" << (nc.fast_clock.emit ? "true" : "false") << ','
+               << "\"fast_clock_min_stations_per_sat\":" << nc.fast_clock.min_stations_per_sat << ','
+               << "\"fast_clock_min_sats_per_station\":" << nc.fast_clock.min_sats_per_station << ','
+               << fmt::format("\"fast_clock_screen_k_sigma\":{},", nc.fast_clock.screen_k_sigma)
+               << "\"fast_clock_allow_single_band\":" << (nc.fast_clock.allow_single_band ? "true" : "false") << ','
+               << fmt::format("\"fast_clock_emit_max_gap_s\":{},", nc.fast_clock.emit_max_gap_s)
+               << "\"fast_clock_trace\":" << (nc.fast_clock.trace ? "true" : "false") << ','
                // RTB-7: startup quality ramp + state snapshot / warm resume.
                << fmt::format("\"warmup_ura_floor_m\":{},", nc.warmup_ura_floor_m)
                << "\"warmup_epochs\":" << nc.warmup_epochs << ','
@@ -940,7 +1079,26 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"start_offset_hours\":{},", config_.networkStartOffsetHours())
                << fmt::format("\"process_noise_sat_clock\":{},", q_clock)
                << fmt::format("\"process_noise_sat_phase_bias\":{},", q_pb)
-               << fmt::format("\"process_noise_sat_code_bias\":{}", q_cb)
+               << fmt::format("\"process_noise_sat_code_bias\":{},", q_cb)
+               << "\"process_noise\":{";
+            // L15: the full scoped table (network.process_noise), one object per
+            // parameter class, with the RESOLVED rate and the precedence rung that
+            // supplied it.  The three flat fields above are kept verbatim so the
+            // existing manifest readers (scripts/analyze_net_sh.py, pyviz) keep
+            // parsing; this object is the auditable record.  Provenance is the
+            // point: a class reading "default" when the operator believed they had
+            // set it is exactly the inert-wiring failure that run-end telemetry
+            // exists to catch — and it is invisible from the rate alone, because a
+            // typo'd override and a documented default look identical in the value.
+            for (std::size_t i = 0; i < kNetworkQClassCount; ++i) {
+                const NetworkQDesc& d = kNetworkQClassTable[i];
+                const auto c = static_cast<NetworkQClass>(i);
+                mf << fmt::format(
+                    "{}\"{}\":{{\"q\":{},\"source\":\"{}\",\"units\":\"{}\"}}",
+                    i ? "," : "", d.name, nc.process_noise.get(c),
+                    NetworkProcessNoise::sourceLabel(nc.process_noise.source(c)), d.units);
+            }
+            mf << "}"
                << "}}\n";
             mf.close();
         } else {
@@ -1071,11 +1229,22 @@ void NetworkRunTraces::closeAll() {
     if (raim_attrib_trace.is_open()) raim_attrib_trace.close();
     if (epoch_status_trace.is_open()) epoch_status_trace.close();
     if (health_trace.is_open()) health_trace.close();
+    // FC-1: closed explicitly (not left to the destructor) because it ROTATES — rotation
+    // reads tellp() on a live handle, so the stream's lifetime is already coupled to the
+    // rotation set, and an unflushed tail here is the tick tier's only evidence.
+    if (fast_clock_trace.is_open()) fast_clock_trace.close();
     if (events_trace.is_open()) events_trace.close();
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
     if (carry_vce_trace.is_open()) carry_vce_trace.close();
     if (estimability_trace.is_open()) estimability_trace.close();   // Card DG5
+    // The two MW/WL dumps are NEW members, not entries the INC-4 relocation moved off
+    // the destructor, so the "do not widen" rule above does not cover them.  Closed
+    // here so their tail is flushed at teardown rather than at scope exit — these are
+    // the graded artifacts of a D5/lane arm, and a crash after teardown should not
+    // cost the last rows.
+    if (d5_flags_trace.is_open()) d5_flags_trace.close();
+    if (wl_lane_trace.is_open()) wl_lane_trace.close();
 }
 
 } // namespace GnssProcessor

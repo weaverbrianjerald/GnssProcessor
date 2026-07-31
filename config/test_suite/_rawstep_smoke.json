@@ -1,0 +1,69 @@
+{
+  "_comment": [
+    "RAW-STEP CORROBORATION smoke — 305 sta, GPS+Galileo, 30 s, 10 epochs, COLD.",
+    "",
+    "QUESTION.  The golden 3 h run emitted 1,330,066 D5 flag rows whose `raw_stepped`",
+    "column was EMPTY in every single one, so we could not tell whether D5 is resetting",
+    "arcs that actually stepped in the raw observables, or arcs the raw data says are",
+    "perfectly continuous.  With median std_innov ~= 90 against a k*sigma0_hat gate of",
+    "~11.6, and 1,636 arcs stuck in continuous reset for 200+ epochs, that fork decides",
+    "everything: a real satellite-level event vs. a model error being mistaken for slips.",
+    "",
+    "ROOT CAUSE — an ARMING gap, not a code gap.  The writer already exists and is",
+    "correct (NetworkInstallCarry.cpp:537-562, deliberately TRI-STATE 1/0/blank).  It",
+    "goes blank when `slip_qc.epoch.computed` is false, and that whole raw-observable",
+    "path is skipped unless a consumer asks:",
+    "    SlipQcParams::anyConsumer = trace_slip_raw || lli_corroborate || gap_instrument",
+    "The golden armed NONE of the three, so `armed()` was false and nothing was ever",
+    "computed.  Populating the column needs `cardsArmed()` too",
+    "(= lli_corroborate || gap_instrument), because `stepped` / `verdict[].measured` are",
+    "filled by networkQualifyRawObservables, which is gated on it",
+    "(ApplicationNetworkAssembly.cpp:1281).",
+    "",
+    "⚠ NOTE a doc/code mismatch found while confirming this: the SlipQcParams banner",
+    "(NetworkRawObservables.hpp:199-202) claims the qualification pass 'still runs ...",
+    "only when a consumer asked for it' with both cards off.  The CODE gates it on",
+    "cardsArmed().  The code is authoritative; the header comment is wrong.",
+    "",
+    "WHY gap_instrument AND NOT mw_lli_corroborate.  Card G is documented",
+    "instrumentation-only — 'Counters + trace rows only' (GnssConfigTypes.hpp:391) — and",
+    "the step verdicts it unlocks (`v.measured`, `ep.stepped`) are computed",
+    "UNCONDITIONALLY inside the qualification pass; only the arc-resumption counters are",
+    "gated on the knob itself.  Card L (mw_lli_corroborate) is a DECISION card: it",
+    "suppresses LLI assertions and demotes chattering stations, which would perturb the",
+    "very behaviour we are trying to observe.  The promotion ledger also records both of",
+    "Card L's own falsifiers as VOID / NOT MET.  So Card G buys the evidence at zero",
+    "decision cost; Card L would buy it by changing the experiment.",
+    "",
+    "trace_slip_raw is armed as the independent cross-check: network_slip_raw.csv carries",
+    "the per-(station,satellite) MW / GF / LLI the verdicts are derived from, so the",
+    "`raw_stepped` tag can be audited rather than trusted.",
+    "",
+    "EXPECTED READ.  If most D5 flags come back raw_stepped=0, D5 is resetting",
+    "continuous arcs and the 80-sigma innovations are model error, not slips — which",
+    "makes the reset loop a mis-attribution and points at a whole-satellite response",
+    "(the IF-TD card's 'whole-sat not per-arc' principle).  If they come back 1, these",
+    "are real events and the satellite concentration (G14/G15/G24, Block IIR/IIR-M) is",
+    "the lead instead.  The prior from the IF-phase side is 97% NO raw step.",
+    "",
+    "Everything else is the golden verbatim, so the flags themselves are comparable."
+  ],
+
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net305_3h.json"
+  ],
+
+  "processing": {
+    "max_duration_s": 300.0
+  },
+
+  "network": {
+    "cycle_slip": {
+      "gap_instrument": true
+    },
+    "trace_slip_raw": true,
+
+    "product_output_path": "C:/GnssProcessor/runs/rawstep_smoke/products.txt",
+    "state_snapshot_path": ""
+  }
+}

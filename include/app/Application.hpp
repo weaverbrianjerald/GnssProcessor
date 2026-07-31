@@ -40,6 +40,7 @@ namespace GnssProcessor {
 struct NetworkSetupResult;   // app/NetworkSetupResult.hpp (decomposition INC-5)
 struct NetworkRunContext;    // app/NetworkRunContext.hpp (decomposition INC-4; INC-7 signatures)
 struct NetworkRunTraces;     // logging/NetworkRunTraces.hpp (decomposition INC-3; INC-7 signatures)
+struct SdEwlFix;             // filter/NetworkRunTypes.hpp (SD EWL integer, increment 2a)
 struct NetStation;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
 struct StationAssembly;      // filter/NetworkRunTypes.hpp (decomposition INC-7)
 struct ShDevCarry;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
@@ -586,6 +587,107 @@ private:
                                   Eigen::VectorXd& w, Eigen::VectorXd& y) const;
 
     /**
+     * @brief Append the SD PRE-REDUCE EWL constraint rows to one station's own block.
+     *        See docs/SPEC_sd_ewl_prereduce.md.
+     *
+     * For each satellite @f$s@f$ paired against the station's elected SD pivot
+     * satellite @f$p@f$ on the constellation's extra-wide-lane band pair
+     * @f$(b_1,b_2)@f$ (GPS 2/5, Galileo 7/5), one pseudo-observation row
+     * @f[
+     *   z_{SD}=\overline{MW}(r,s)-\overline{MW}(r,p)
+     *         =\lambda_{EWL}\big[N_{EWL}(r,s)-N_{EWL}(r,p)\big]+\big[B^s_{EWL}-B^p_{EWL}\big]
+     * @f]
+     * The receiver EWL bias is common to both arcs at the same station and cancels
+     * identically, so the row carries only the SD ambiguity combination and the SD
+     * satellite bias lump — the latter reaching the shared satellite PHASE **and** CODE
+     * bias columns, which is the whole point (a DD-chord row is ~80 % eq34 tree pins and
+     * reaches them barely at all: measured +0.6 % on the soft-end eigenvalue).
+     *
+     * Local coefficients (@p A_r), on the metre-valued per-band ambiguity states:
+     * @f$+\lambda_{EWL}/\lambda_{b1}@f$, @f$-\lambda_{EWL}/\lambda_{b2}@f$ for @f$s@f$ and
+     * negated for @f$p@f$.  Shared coefficients (@p A_s), from
+     * @f$MW=\varphi_{WL}-P_{NL}@f$: @f$+f_1/(f_1-f_2)@f$ on @c PB|s|b1,
+     * @f$-f_2/(f_1-f_2)@f$ on @c PB|s|b2, @f$-f_1/(f_1+f_2)@f$ on @c CB|s|b1,
+     * @f$-f_2/(f_1+f_2)@f$ on @c CB|s|b2, negated for @f$p@f$.
+     *
+     * All rows at a station share the pivot arc's noise, so
+     * @f$R=\mathrm{diag}(\mathrm{var}_s)+\mathrm{var}_p\mathbf{1}\mathbf{1}^\top@f$ —
+     * structurally the GIM common-mode R — and is whitened by @f$L^{-1}@f$
+     * (@f$LL^\top=R@f$) into unit-information rows, exactly as
+     * @ref networkAppendGimIonoRows_ does.
+     *
+     * @par Why PRE-reduce
+     * These rows enter the station block that reaches @c addStationObservations, so they
+     * fold into @f$N_{rr}/N_{sr}/N_{ss}@f$ BEFORE @c reduce() and therefore compose
+     * EXACTLY with the post-reduce Card-4 DD fold — see NetworkNormalEquations.hpp:395,
+     * which is explicit that two POST-reduce Woodbury folds over coupled local columns
+     * drop the cross term.  @c addStationPrior is NOT usable: it is diagonal-only
+     * (@f$N_{rr}(c,c)\mathrel{+}=\Lambda@f$) and cannot express this cross-column row.
+     *
+     * @par Which signal pair
+     * The MW arc key carries the two PHASE signal names, and WHICH tracking channel
+     * the detector holds an arc on is its own choice (@c collectUncombinedPairs' KF-
+     * chosen / attribute-priority pick).  So this searches every candidate
+     * (band1, band2) phase pair that has BOTH ambiguities in the station's local block
+     * — ascending signal name, a strict total order for byte-identity — and takes the
+     * first with a usable arc, rather than electing one channel and mis-reporting the
+     * arc as absent when the detector picked the other.  The satellite CODE-bias
+     * columns come from @c MwArcZdMean::code1/code2, the channels the observable
+     * actually consumed, so the OSB attribution is not a guess.
+     *
+     * @par Thread safety
+     * Runs inside the PARALLEL produce phase.  It only READS @p est (via the const
+     * @c phaseBiasColumn / @c codeBiasColumn lookups — never @c register*, which would
+     * race and is illegal after @c beginEpoch(); both are @c map::at and THROW on an
+     * absent key, so both are wrapped) and writes this station's own blocks,
+     * @c st.sd_ewl_ctr, and @p trace_rows.  No shared mutation.
+     *
+     * @param st        This station (provides @c mw_slip, @c sm, @c name, the counters).
+     * @param est       Shared-column lookup only (const).
+     * @param sta_obs   This station's modeled observations this epoch.
+     * @param h2local   Global state index → local column within @p A_r.
+     * @param t         Epoch time (trace stamp only).
+     * @param[in,out] A_s,A_r,w,y  The station's design blocks, extended in place.
+     * @param[out] trace_rows  Pre-formatted @c network_sd_ewl.csv lines for this
+     *                  station-epoch, drained by PASS B's serial consume.  Untouched
+     *                  unless @c network.sd_ewl.trace.
+     *
+     * @par Increment 2b — folding the FIXED integer
+     * When @c network.sd_ewl.fix_enable published an integer for an arc (@p fix, decided
+     * SERIALLY pre-assembly by @ref networkSdEwlAr and read-only here), the row folds
+     * @f$\lambda_{EWL}\nabla N^{fixed}@f$ out of the RHS and drops its four local
+     * ambiguity coefficients entirely: the local degree of freedom is REMOVED, not
+     * constrained.  A tight prior on a gauge-adjacent local column would be a stiff
+     * prior, not a rank reduction, and the whole point of increment 2 is that the local
+     * nuisance stops absorbing the row's information so the shared satellite bias gets
+     * it.  @c pred_m loses its ambiguity terms in step with the design, because a row
+     * whose H changed and whose linearization point did not is folded in a MIXED FRAME.
+     *
+     * Fixed and float rows COEXIST per row, but in SEPARATE whitened groups.  They
+     * cannot share one: @f$R=\mathrm{diag}+\mathrm{var}_p\mathbf{1}\mathbf{1}^\top@f$ is
+     * whitened by a dense @f$L^{-1}@f$, which would re-populate a fixed row's zeroed
+     * local columns from its float siblings — and the pivot arc's ambiguity columns
+     * appear in EVERY row of a group, so a mixed group would simultaneously remove and
+     * estimate the pivot ambiguity.  Two groups, each with its own pivot and its own
+     * common-mode noise, keeps both halves exact and makes "a fixed row has zero local
+     * coefficients" true of the whitened block as well as of H.
+     *
+     * @param fix  This station's published integers for this epoch, keyed by
+     *             constellation then satellite; @c nullptr (or absent entries) => every
+     *             row takes the increment-1 float path.
+     */
+    void networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator& est,
+                                 const std::vector<PppObservation>& sta_obs,
+                                 const std::map<int, int>& h2local,
+                                 const GnssTime& t,
+                                 Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
+                                 Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                 std::vector<std::string>& trace_rows,
+                                 const std::map<std::pair<std::size_t, char>,
+                                                std::map<std::string, SdEwlFix>>* fix,
+                                 std::size_t station_index) const;
+
+    /**
      * @brief PASS-A head — legacy pivot-first modeling + the legacy shared
      *        phase-bias key seed (decomposition INC-7; verbatim relocation).
      *
@@ -694,8 +796,10 @@ private:
                               NetworkSetupResult& setup, NetworkRunTraces& traces,
                               NetworkEstimator& est,
                               const NetworkIonoDeweightGate& iono_deweight,
-                              double sh_dev_tau, bool sh_dev_on,
+                              double sh_dev_tau, bool sh_dev_on, bool sh_dev_demean,
+                              bool sh_dev_d5_keep,
                               const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                              const std::set<std::pair<int, std::string>>& carry_slipped_raw,
                               bool carry_warm, double pl_now_s,
                               std::vector<std::vector<PppObservation>>& modeled,
                               std::vector<bool>& present,

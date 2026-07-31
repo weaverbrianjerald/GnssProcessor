@@ -359,21 +359,9 @@ std::vector<std::string> activeFrequencyBands(
                 Eigen::Vector3d hen = rinex_parser_.getAntennaDeltaHen();
 
                 if (hen.norm() > 1e-6) {
-                    // Use centralized Coordinates for proper geodetic conversion
-                    Coordinates::Llh marker_llh = Coordinates::ecefToLlh(marker_pos);
-
-                    // Get ENU→ECEF rotation matrix (columns are E, N, U in ECEF)
-                    Eigen::Matrix3d R_enu_to_ecef = Coordinates::enuToEcefMatrix(
-                        marker_llh.lat_rad, marker_llh.lon_rad);
-
-                    // RINEX stores H/E/N (Height=Up, East, North), reorder to ENU
-                    // hen = (H, E, N) = (Up, East, North)
-                    // enu = (East, North, Up) = (hen[1], hen[2], hen[0])
-                    Eigen::Vector3d enu_offset(hen(1), hen(2), hen(0));
-
-                    // Convert to ECEF and add to marker position
-                    Eigen::Vector3d ecef_offset = R_enu_to_ecef * enu_offset;
-                    state.position = marker_pos + ecef_offset;
+                    // Coordinates owns the (H,E,N) -> ENU reorder and the rotation.
+                    const Coordinates::Llh marker_llh = Coordinates::ecefToLlh(marker_pos);
+                    state.position = Coordinates::markerToArp(marker_pos, hen);
 
                     log_manager_.getLogger("ppp_model")->info(
                         "Applied antenna H/E/N offset ({:.4f}, {:.4f}, {:.4f}) m to marker position, "

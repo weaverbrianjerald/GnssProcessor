@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "FC-1 INC-4 SPLIT arm, RE-RUN for the 2026-07-30 emit-frame fix (a-priori satellite",
+    "clock corrected out of the lump, so the emitted K advances the RESIDUAL clock rate",
+    "instead of double-counting broadcast af1 + relativistic rate).  Identical posture to",
+    "_fc1_split_n2_3h.json; fresh output directory for the same two reasons as the",
+    "shadow v2 arm.  REF arm: runs/fc1_shadow_3h_v2/products.txt (same build).",
+    "",
+    "Verification targets: (1) scripts drift analysis — per-sat (K − anchor − dc)/dt now",
+    "tracks the producer's own c0 slope instead of broadcast c·af1; (2) fc1_grade.py",
+    "split with arm-frame alignment — E19/E14/E18 no longer dominate the fast error and",
+    "the spurious 15.3 cm/tick drift term is gone.  The INC-4 verdict itself (fast",
+    "cannot beat ZOH 5x while the emitted clock is ~98% churn) is expected to STAND."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_fc1_split_n2_3h.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/fc1_split_n2_3h_v2/products.txt"
+  }
+}

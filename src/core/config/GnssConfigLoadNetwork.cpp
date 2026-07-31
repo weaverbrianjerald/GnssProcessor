@@ -8,9 +8,16 @@
  *   - the file-local @c parseCoordEpochYear helper (sole caller lives in
  *     @c loadNetworkSection_),
  *   - @c GnssConfig::loadNetworkSection_ — the network section loader,
- *     including its V1/W6 cross-section forcing writes (13 sites over 10
+ *     including its V1/W6 cross-section forcing writes (18 sites over 12
  *     non-network fields; they are private-member writes and travel with
- *     the member function),
+ *     the member function).  Five of those are the @c network.process_noise
+ *     write-through (@c process_noise_.sat_clock / .sat_phase_bias /
+ *     .sat_code_bias and @c global_vtec_sh_.q_per_degree / .layer2_q_per_degree),
+ *     which fire ONLY when the scoped table supplies a class the config did
+ *     not set through its legacy key.  They are safe to reach across sections
+ *     because this loader runs only in @c PPP_RTK_Network mode — the PPP and
+ *     real-time paths never execute it — and within a network run those
+ *     members name the same physical quantity the table is scoping,
  *   - the consumer-coupling helpers @c applyNetworkConsumerCouplings,
  *     @c deriveClosedLoopConsumerConfig and @c applyNetworkConsumerProfile.
  *
@@ -36,6 +43,7 @@ namespace GnssProcessor {
 
     using detail::jval;
     using detail::jsection;
+    using detail::jhas;
 
     namespace {
 
@@ -99,6 +107,112 @@ namespace GnssProcessor {
         network_service_mode_ =
             jval<bool>(json, "network.service_mode", "network_service_mode", false);
         const bool service_mode = network_service_mode_;
+
+        // --- Scoped per-parameter-class process noise (network.process_noise) ---
+        // One authoring surface for the eleven time-linked NETWORK-OWNED q's that
+        // were previously spelled across five config sections.  Resolved HERE,
+        // first thing in the section, because the resolution feeds two different
+        // mechanisms depending on where the legacy key is parsed:
+        //
+        //   * classes whose legacy key belongs to an EARLIER section
+        //     (filter.process_noise.*, estimation.global_vtec_sh.*) are already
+        //     in their canonical members, so the table writes through to them
+        //     below — but only where the legacy key was not set explicitly;
+        //   * classes parsed LATER in THIS section pass the resolved value as the
+        //     `jval` DEFAULT at their existing parse site, so `jval`'s own
+        //     "explicit key beats default" rule supplies the precedence and the
+        //     parse sites keep their shape.  This ordering also keeps the derived
+        //     network.ura_staleness_q2 correct: it defaults to clock_model_q2 and
+        //     is captured after it, so it inherits the resolved value for free.
+        //
+        // Every class defaults to its legacy key's OWN default (kNetworkQClassTable
+        // asserts that equality in a unit test), so a config with no
+        // network.process_noise block resolves to today's numbers exactly: the
+        // table is live by default and still byte-identical until a value is edited.
+        {
+            using QC  = NetworkQClass;
+            using Src = NetworkProcessNoise::Source;
+            auto& npn = network_config_.process_noise;
+            const auto& pn_sec = jsection(json, "network.process_noise", "network_process_noise");
+            for (std::size_t i = 0; i < kNetworkQClassCount; ++i) {
+                const NetworkQDesc& d = kNetworkQClassTable[i];
+                const bool legacy_set = jhas(json, d.legacy_path, d.legacy_flat);
+                const bool table_set  = pn_sec.is_object() && pn_sec.contains(d.name);
+                double v   = d.fallback;
+                Src    src = Src::Default;
+                if (table_set) {
+                    // jval/value() would THROW out of loadFromJson on a string or
+                    // object here, with no config-path context in the message.  A
+                    // q table invites `"sat_clock": "1e-2"`, so name the offender.
+                    if (!pn_sec[d.name].is_number()) {
+                        log->error("Network: network.process_noise.{} must be a NUMBER (got {}); "
+                                   "quote-free scientific notation is fine (1e-2), a quoted "
+                                   "string is not.", d.name, pn_sec[d.name].type_name());
+                        return false;
+                    }
+                    v = pn_sec.value(d.name, d.fallback);
+                    if (!(v >= 0.0)) {
+                        log->error("Network: network.process_noise.{} must be >= 0 (got {}); a "
+                                   "negative process-noise rate is meaningless.", d.name, v);
+                        return false;
+                    }
+                    src = Src::Table;
+                }
+                if (table_set && legacy_set) {
+                    log->warn("Network: process-noise class '{}' is set BOTH in "
+                              "network.process_noise (={}) and via the legacy key '{}' — the "
+                              "LEGACY key wins (explicit beats inherited).  Drop one; the "
+                              "table entry is being ignored for this run.",
+                              d.name, v, d.legacy_path);
+                }
+                npn.set(static_cast<QC>(i), v, src);
+            }
+            // A misspelled class would otherwise be silently inert — the exact
+            // "looks armed, does nothing" failure the run-end telemetry rule
+            // exists to prevent.  Reject it at load instead of at post-mortem.
+            if (pn_sec.is_object()) {
+                for (auto it = pn_sec.begin(); it != pn_sec.end(); ++it) {
+                    bool known = false;
+                    for (const NetworkQDesc& d : kNetworkQClassTable)
+                        if (it.key() == d.name) { known = true; break; }
+                    if (known) continue;
+                    std::string valid;
+                    for (const NetworkQDesc& d : kNetworkQClassTable) {
+                        if (!valid.empty()) valid += ", ";
+                        valid += d.name;
+                    }
+                    log->error("Network: unknown process-noise class "
+                               "'network.process_noise.{}'.  Valid classes: {}.",
+                               it.key(), valid);
+                    return false;
+                }
+            }
+            // Write-through for the classes whose legacy key lives in an earlier
+            // section and is therefore already resolved into its canonical member.
+            // Skipped when that key was set explicitly, so an existing config wins.
+            auto applyEarly = [&](QC c, double& member) {
+                const NetworkQDesc& d = kNetworkQClassTable[static_cast<std::size_t>(c)];
+                if (npn.source(c) == Src::Table && !jhas(json, d.legacy_path, d.legacy_flat))
+                    member = npn.get(c);
+            };
+            applyEarly(QC::SatClock,     process_noise_.sat_clock);
+            applyEarly(QC::SatPhaseBias, process_noise_.sat_phase_bias);
+            applyEarly(QC::SatCodeBias,  process_noise_.sat_code_bias);
+            applyEarly(QC::VtecSh,       global_vtec_sh_.q_per_degree);
+            applyEarly(QC::VtecShLayer2, global_vtec_sh_.layer2_q_per_degree);
+            // loadEstimationSection_ forces a non-positive layer-2 q back to the
+            // default; that guard ran before this write-through, so re-assert it
+            // rather than letting a table-supplied 0 through a path the rest of the
+            // dual-layer code assumes is positive.
+            if (!(global_vtec_sh_.layer2_q_per_degree > 0.0)) {
+                log->warn("Network: network.process_noise.vtec_sh_layer2 must be > 0 (got {}); "
+                          "restoring {}.", global_vtec_sh_.layer2_q_per_degree,
+                          kNetworkQClassTable[static_cast<std::size_t>(QC::VtecShLayer2)].fallback);
+                global_vtec_sh_.layer2_q_per_degree =
+                    kNetworkQClassTable[static_cast<std::size_t>(QC::VtecShLayer2)].fallback;
+                npn.set(QC::VtecShLayer2, global_vtec_sh_.layer2_q_per_degree, Src::Default);
+            }
+        }
 
         // --- Peer stations (>=2; each holds coordinates fixed) ---
         network_config_.stations.clear();
@@ -337,6 +451,124 @@ namespace GnssProcessor {
                                     "network_mw_wl_d5_dump", false);
             mw.lane_trace = jval<bool>(json, "network.mw_wl.lane_trace",
                                        "network_mw_wl_lane_trace", false);
+            // --- SD PRE-REDUCE EWL constraint (docs/SPEC_sd_ewl_prereduce.md) ---------
+            // The between-satellite SD extra-wide-lane MW statistic as a pseudo-obs row in
+            // each station's OWN pre-reduce block, so it reaches the shared satellite PHASE
+            // and CODE bias columns instead of a DD chord that is 80.7% eq34 tree pins.
+            // Default OFF => zero rows appended => byte-identical.
+            {
+                auto& se = network_config_.sd_ewl;
+                se.enable = jval<bool>(json, "network.sd_ewl.enable",
+                                       "network_sd_ewl_enable", false);
+                se.min_arc_epochs = jval<int>(json, "network.sd_ewl.min_arc_epochs",
+                                              "network_sd_ewl_min_arc_epochs", 10);
+                se.sigma_floor_m = jval<double>(json, "network.sd_ewl.sigma_floor_m",
+                                                "network_sd_ewl_sigma_floor_m", 0.05);
+                se.max_abs_z_m = jval<double>(json, "network.sd_ewl.max_abs_z_m",
+                                              "network_sd_ewl_max_abs_z_m", 0.0);
+                se.max_rows_per_station =
+                    jval<int>(json, "network.sd_ewl.max_rows_per_station",
+                              "network_sd_ewl_max_rows_per_station", 0);
+                se.trace = jval<bool>(json, "network.sd_ewl.trace",
+                                      "network_sd_ewl_trace", false);
+                // --- increment 2a+2b: FIX the integer (2c, the zero-q hold, is not built)
+                se.fix_enable = jval<bool>(json, "network.sd_ewl.fix_enable",
+                                           "network_sd_ewl_fix_enable", false);
+                se.fix_min_ffr = jval<double>(json, "network.sd_ewl.fix_min_ffr",
+                                              "network_sd_ewl_fix_min_ffr", 0.999);
+                se.fix_max_frac_cyc =
+                    jval<double>(json, "network.sd_ewl.fix_max_frac_cyc",
+                                 "network_sd_ewl_fix_max_frac_cyc", 0.15);
+                se.fix_sigma_floor_m =
+                    jval<double>(json, "network.sd_ewl.fix_sigma_floor_m",
+                                 "network_sd_ewl_fix_sigma_floor_m", 1.0);
+                if (se.fix_enable && !se.enable) {
+                    // The integer has nowhere to go without the row layer: 2b folds
+                    // inside networkAppendSdEwlRows_, which returns immediately when
+                    // sd_ewl.enable is false.  Armed-and-dead is exactly the shape
+                    // standing invariant #4 exists to catch, so refuse it loudly here
+                    // rather than let the run report zero fixed rows.
+                    log->warn("Network: network.sd_ewl.fix_enable is INERT without "
+                              "network.sd_ewl.enable — the integer decision has no row "
+                              "layer to fold into (networkAppendSdEwlRows_ returns "
+                              "immediately when enable is false).  Disarming fix_enable.");
+                    se.fix_enable = false;
+                }
+                if (se.fix_enable) {
+                    if (!(se.fix_min_ffr > 0.0) || se.fix_min_ffr >= 1.0) {
+                        log->warn("Network: network.sd_ewl.fix_min_ffr = {} is outside "
+                                  "(0,1) — clamped to 0.999.  It is a PROBABILITY (the "
+                                  "bootstrapped rounding success rate), not a sigma "
+                                  "multiplier.", se.fix_min_ffr);
+                        se.fix_min_ffr = 0.999;
+                    }
+                    if (!(se.fix_max_frac_cyc > 0.0) || se.fix_max_frac_cyc > 0.5) {
+                        log->warn("Network: network.sd_ewl.fix_max_frac_cyc = {} is "
+                                  "outside (0,0.5] — clamped to 0.15.  Above 0.5 the "
+                                  "gate cannot reject anything (every real number is "
+                                  "within half a cycle of some integer).",
+                                  se.fix_max_frac_cyc);
+                        se.fix_max_frac_cyc = 0.15;
+                    }
+                    if (!(se.fix_sigma_floor_m > 0.0)) {
+                        log->warn("Network: network.sd_ewl.fix_sigma_floor_m = {} is "
+                                  "non-positive — clamped to 1.0 m (amendment A1's "
+                                  "measured per-SAMPLE honest point).",
+                                  se.fix_sigma_floor_m);
+                        se.fix_sigma_floor_m = 1.0;
+                    }
+                    log->info("Network SD EWL INTEGER FIX ON (increment 2a+2b) — Route B "
+                              "between-station DD of the SD EWL decides the integer with "
+                              "NO a-priori satellite bias (so it cannot be poisoned by "
+                              "one), a network-COMMON tracking-channel pair is elected "
+                              "per (constellation, satellite) so B^s cancels exactly in "
+                              "the DD, and the A2 DD->SD datum propagates spanning-tree "
+                              "fixes from a sticky per-component reference station.  "
+                              "Gates: FFR >= {:.4f}, |frac| <= {:.3f} cyc, per-sample "
+                              "sigma floor {:.2f} m.  A fixed row REMOVES its four local "
+                              "ambiguity coefficients (rank reduction, not a stiff "
+                              "prior) and hands the whole row weight to the shared "
+                              "satellite PB/CB columns.  The zero-q HOLD (2c) is NOT "
+                              "built: the decision is re-derived every epoch and an "
+                              "integer that disagrees with the previous epoch on a "
+                              "continuous arc is COUNTED and VETOED (dd_flip), which is "
+                              "the standing-invariant-#1 event response.",
+                              se.fix_min_ffr, se.fix_max_frac_cyc, se.fix_sigma_floor_m);
+                }
+                if (se.enable) {
+                    if (se.min_arc_epochs < 2) {
+                        log->warn("Network: network.sd_ewl.min_arc_epochs = {} is below 2 "
+                                  "(arcZdMean needs >=2 LAGGED samples for a finite "
+                                  "variance) — clamped to 2.", se.min_arc_epochs);
+                        se.min_arc_epochs = 2;
+                    }
+                    if (!(se.sigma_floor_m > 0.0)) {
+                        log->warn("Network: network.sd_ewl.sigma_floor_m = {} is "
+                                  "non-positive — clamped to 1e-3 m.  The floor exists "
+                                  "because arcZdMean serves a VARIANCE OF THE MEAN "
+                                  "(~1/n), so a long quiet arc would otherwise dominate "
+                                  "the shared border.", se.sigma_floor_m);
+                        se.sigma_floor_m = 1e-3;
+                    }
+                    log->info("Network SD PRE-REDUCE EWL constraint ON — the "
+                              "between-satellite SD extra-wide-lane MW statistic enters "
+                              "each station's OWN pre-reduce block (min_arc_epochs={}, "
+                              "sigma_floor={:.3f} m, max_abs_z={}, max_rows/sta={}).  "
+                              "Reaches the shared satellite PHASE + CODE bias columns "
+                              "directly; composes EXACTLY with the post-reduce Card-4 DD "
+                              "fold.  FLOAT rows only — no integer fixing (increment 2, "
+                              "unbuilt).  Rows are skipped at the clock-datum station "
+                              "(no MW detector there) and wherever an arc is immature or "
+                              "mixed-BIA-frame; watch the run-end counters.",
+                              se.min_arc_epochs, se.sigma_floor_m,
+                              se.max_abs_z_m > 0.0 ? fmt::format("{:.1f} m", se.max_abs_z_m)
+                                                   : std::string("off"),
+                              se.max_rows_per_station > 0
+                                  ? std::to_string(se.max_rows_per_station)
+                                  : std::string("unlimited"));
+                }
+            }
+
             // --- M5 card WL-3: lane-coordinate carry (docs/SPEC_lane_carry_card.md).
             // Parsed + clamped here; the carry_invariant / ewl_enable mutex + the ON
             // summary live in the validation block below (after network.carry_invariant
@@ -574,10 +806,145 @@ namespace GnssProcessor {
                       "trace_dd_fractional_epoch_stride", 1);
         if (network_config_.trace_dd_fractional_epoch_stride < 1)
             network_config_.trace_dd_fractional_epoch_stride = 1;
+
+        // S1 (docs/SPEC_lane_spectrometer.md §3.3): the per-(cons,signal,sat) -> anchor
+        // STATION map, for the spectrometer's anchor partition.  Trace-only, no stride —
+        // the row count scales with gauge freedoms (sats x signals), not station pairs.
+        network_config_.trace_phase_anchor =
+            jval<bool>(json, "network.trace_phase_anchor", "trace_phase_anchor", false);
         network_config_.epoch_decimation_n =
             jval<int>(json, "network.epoch_decimation_n", "epoch_decimation_n", 1);
         if (network_config_.epoch_decimation_n < 1)
             network_config_.epoch_decimation_n = 1;
+
+        // --- FC-1: split-cadence clocks-only fast pass (docs/SPEC_fast_clock_split_cadence.md) ---
+        // Parsed HERE, after epoch_decimation_n, because the inert-arming refusal below
+        // reads it: without decimation there are no decimated-out epochs for a tick to
+        // ride, so an armed non-shadow tier would run exactly zero ticks and report a
+        // perfectly clean log (standing invariant #4's subtlest failure mode).
+        // Default OFF => the T2e hook keeps its bare `continue` => byte-identical.
+        {
+            auto& fc = network_config_.fast_clock;
+            fc.enable = jval<bool>(json, "network.fast_clock.enable",
+                                   "network_fast_clock_enable", false);
+            fc.shadow = jval<bool>(json, "network.fast_clock.shadow",
+                                   "network_fast_clock_shadow", false);
+            fc.emit = jval<bool>(json, "network.fast_clock.emit",
+                                 "network_fast_clock_emit", false);
+            fc.min_stations_per_sat =
+                jval<int>(json, "network.fast_clock.min_stations_per_sat",
+                          "network_fast_clock_min_stations_per_sat", 3);
+            fc.min_sats_per_station =
+                jval<int>(json, "network.fast_clock.min_sats_per_station",
+                          "network_fast_clock_min_sats_per_station", 2);
+            fc.screen_k_sigma = jval<double>(json, "network.fast_clock.screen_k_sigma",
+                                             "network_fast_clock_screen_k_sigma", 5.0);
+            fc.allow_single_band =
+                jval<bool>(json, "network.fast_clock.allow_single_band",
+                           "network_fast_clock_allow_single_band", false);
+            fc.emit_max_gap_s = jval<double>(json, "network.fast_clock.emit_max_gap_s",
+                                             "network_fast_clock_emit_max_gap_s", 60.0);
+            fc.trace = jval<bool>(json, "network.fast_clock.trace",
+                                  "network_fast_clock_trace", false);
+            fc.trace_sat_stride = jval<int>(json, "network.fast_clock.trace_sat_stride",
+                                            "network_fast_clock_trace_sat_stride", 0);
+
+            // Inert-arming disarms (invariant #4): refuse to run an armed-and-dead tier.
+            if (fc.shadow && !fc.enable) {
+                log->warn("Network (FC-1): network.fast_clock.shadow is INERT without "
+                          "network.fast_clock.enable — the shadow pass runs the SAME tick "
+                          "body, which is not built when the tier is off.  Disarming shadow.");
+                fc.shadow = false;
+            }
+            if (fc.emit && !fc.enable) {
+                log->warn("Network (FC-1): network.fast_clock.emit is INERT without "
+                          "network.fast_clock.enable — there are no fast clocks to emit.  "
+                          "Disarming emit.");
+                fc.emit = false;
+            }
+            if (fc.enable && !fc.shadow && network_config_.epoch_decimation_n <= 1) {
+                log->warn("Network (FC-1): network.fast_clock.enable is armed but "
+                          "network.epoch_decimation_n = {} leaves NO decimated-out epochs "
+                          "for a fast tick to ride, so this run would drive exactly zero "
+                          "ticks while logging cleanly (standing invariant #4).  Set "
+                          "epoch_decimation_n > 1 for a split cadence, or "
+                          "network.fast_clock.shadow = true to grade the tick against the "
+                          "full solve on every epoch.  Disarming fast_clock for this run.",
+                          network_config_.epoch_decimation_n);
+                fc.enable = false;
+                fc.emit   = false;
+            }
+            if (fc.emit && network_config_.product_output_path.empty()) {
+                log->warn("Network (FC-1): network.fast_clock.emit is set but "
+                          "network.product_output_path is empty — no product file is "
+                          "written, so the fast rows have nowhere to land.  Disarming emit "
+                          "(the tick still runs and traces).");
+                fc.emit = false;
+            }
+
+            // Clamps, gated on the master.
+            if (fc.enable) {
+                if (fc.min_stations_per_sat < 2) {
+                    log->warn("Network (FC-1): network.fast_clock.min_stations_per_sat = {} "
+                              "is below 2 — a single station cannot separate its own clock "
+                              "from the satellite's (the bipartite fit is rank-deficient). "
+                              "Clamped to 2.", fc.min_stations_per_sat);
+                    fc.min_stations_per_sat = 2;
+                }
+                if (fc.min_sats_per_station < 1) {
+                    log->warn("Network (FC-1): network.fast_clock.min_sats_per_station = {} "
+                              "is below 1 — clamped to 1.", fc.min_sats_per_station);
+                    fc.min_sats_per_station = 1;
+                }
+                if (!(fc.screen_k_sigma > 0.0)) {
+                    log->warn("Network (FC-1): network.fast_clock.screen_k_sigma = {} is "
+                              "non-positive, which would screen every LOS and leave the "
+                              "tick with nothing to fit — clamped to the 5.0 default.",
+                              fc.screen_k_sigma);
+                    fc.screen_k_sigma = 5.0;
+                }
+                if (fc.emit_max_gap_s < 0.0) {
+                    log->warn("Network (FC-1): network.fast_clock.emit_max_gap_s = {} < 0 "
+                              "clamped to 0 (0 = emit only when the anchor is this epoch's "
+                              "own emitted solve).", fc.emit_max_gap_s);
+                    fc.emit_max_gap_s = 0.0;
+                }
+                if (fc.trace_sat_stride < 0) fc.trace_sat_stride = 0;
+
+                // gnss_rate_s = 0 means "use the native RINEX rate", which is unknown
+                // until data is read — the same caveat the emit_clock_rate inert-arming
+                // guard carries.  Report the cadence as a ratio in that case rather than
+                // printing a fabricated "0 s".
+                const std::string fc_cadence =
+                    gnss_rate_s_ > 0.0
+                        ? fmt::format("full solve every {:.0f} s (gnss_rate_s {:.0f} x "
+                                      "epoch_decimation_n {}), clocks-only ticks every {:.0f} s",
+                                      gnss_rate_s_ * network_config_.epoch_decimation_n,
+                                      gnss_rate_s_, network_config_.epoch_decimation_n,
+                                      gnss_rate_s_)
+                        : fmt::format("full solve every {} native epochs "
+                                      "(epoch_decimation_n; gnss_rate_s = 0 => native RINEX "
+                                      "rate, unknown until data is read), clocks-only ticks "
+                                      "on each of the other {}",
+                                      network_config_.epoch_decimation_n,
+                                      network_config_.epoch_decimation_n - 1);
+                log->info("Network (FC-1): split-cadence fast clock ENABLED — {}.  Floors: "
+                          "{} station(s)/sat, {} sat(s)/station; screen k={:.1f} sigma; {}; "
+                          "R11 emission bound {:.0f} s.  shadow={}, emit={}, trace={}.",
+                          fc_cadence, fc.min_stations_per_sat, fc.min_sats_per_station,
+                          fc.screen_k_sigma,
+                          fc.allow_single_band ? "single-band arcs ADMITTED (iono change "
+                                                 "survives in the residual)"
+                                               : "dual-band arcs only (IF kills the iono change)",
+                          fc.emit_max_gap_s, fc.shadow, fc.emit, fc.trace);
+                if (fc.emit)
+                    log->info("Network (FC-1): fast rows will be EMITTED to the product "
+                              "wire — they refresh the satellite CLOCK value and its age "
+                              "only; bias / phase-bias / iono entries and their ages belong "
+                              "to the slow era and are untouched, and no discontinuity "
+                              "counter advances on a fast row.");
+            }
+        }
         // T3f: RSS the SH formal σ + floor + stale-OSB skip on the closed-loop iono supply.
         network_config_.iono_supply_formal_sigma =
             jval<bool>(json, "network.iono_supply_formal_sigma",
@@ -1054,7 +1421,8 @@ namespace GnssProcessor {
         network_phase_leveling_ =
             jval<bool>(json, "network.phase_leveling", "phase_leveling", false);
         network_phase_leveling_q_amb_ =
-            jval<double>(json, "network.phase_leveling_q_amb", "phase_leveling_q_amb", 0.0);
+            jval<double>(json, "network.phase_leveling_q_amb", "phase_leveling_q_amb",
+                         network_config_.process_noise.get(NetworkQClass::LevelingAmbiguity));
         network_phase_leveling_warmup_epochs_ =
             jval<int>(json, "network.phase_leveling_warmup_epochs", "phase_leveling_warmup_epochs", 6);
         network_phase_leveling_max_gap_s_ =
@@ -1170,7 +1538,8 @@ namespace GnssProcessor {
         network_carry_zwd_ =
             jval<bool>(json, "network.carry_zwd", "carry_zwd", false);
         network_zwd_carry_q_ =
-            jval<double>(json, "network.zwd_carry_q", "zwd_carry_q", 1e-9);
+            jval<double>(json, "network.zwd_carry_q", "zwd_carry_q",
+                         network_config_.process_noise.get(NetworkQClass::StationZwd));
         // M2 (LS-VCE carry-q): the carry-row variance-component MONITOR.  A
         // calibration/honesty instrument — accumulates carry innovations and logs
         // σ̂ against the hand floors; NO feedback into the solve (v1).  Default OFF
@@ -1694,9 +2063,11 @@ namespace GnssProcessor {
         network_clock_model_ =
             jval<bool>(json, "network.clock_model", "network_clock_model", false);
         network_clock_model_q1_ =
-            jval<double>(json, "network.clock_model_q1", "network_clock_model_q1", 0.0);
+            jval<double>(json, "network.clock_model_q1", "network_clock_model_q1",
+                         network_config_.process_noise.get(NetworkQClass::SatClockWfm));
         network_clock_model_q2_ =
-            jval<double>(json, "network.clock_model_q2", "network_clock_model_q2", 1.5e-7);
+            jval<double>(json, "network.clock_model_q2", "network_clock_model_q2",
+                         network_config_.process_noise.get(NetworkQClass::SatClockRwfm));
         network_clock_model_k_sigma_ =
             jval<double>(json, "network.clock_model_k_sigma", "network_clock_model_k_sigma", 6.0);
         network_clock_model_meas_std_m_ =
@@ -2048,7 +2419,8 @@ namespace GnssProcessor {
                          "network_phase_datum_eq34_rpb_prior_sigma_m", 1.0);
         network_phase_datum_eq34_rpb_q_m2s_ =
             jval<double>(json, "network.phase_datum_eq34_rpb_q_m2s",
-                         "network_phase_datum_eq34_rpb_q_m2s", 3e-6);
+                         "network_phase_datum_eq34_rpb_q_m2s",
+                         network_config_.process_noise.get(NetworkQClass::ChainDatumRpb));
         network_phase_datum_eq34_carry_shift_ =
             jval<bool>(json, "network.phase_datum_eq34_carry_shift",
                        "network_phase_datum_eq34_carry_shift", false);
@@ -2064,7 +2436,8 @@ namespace GnssProcessor {
                        "network_carry_invariant", false);
         network_carry_invariant_qz_ =
             jval<double>(json, "network.carry_invariant_qz",
-                         "network_carry_invariant_qz", 0.0);
+                         "network_carry_invariant_qz",
+                         network_config_.process_noise.get(NetworkQClass::DdCarry));
         network_carry_invariant_emit_rebase_ =
             jval<bool>(json, "network.carry_invariant_emit_rebase",
                        "network_carry_invariant_emit_rebase", true);
@@ -2086,6 +2459,53 @@ namespace GnssProcessor {
         network_carry_invariant_innov_calibrate_window_ =
             jval<double>(json, "network.carry_invariant_innov_calibrate_window",
                          "network_carry_invariant_innov_calibrate_window", 60.0);
+        // Card 4 (M1) D5 v3: raw-observable corroboration gate on the D5 re-tap.
+        network_carry_invariant_innov_corroborate_ =
+            jval<bool>(json, "network.carry_invariant_innov_corroborate",
+                       "network_carry_invariant_innov_corroborate", false);
+        network_carry_invariant_innov_corroborate_backstop_k_ =
+            jval<double>(json, "network.carry_invariant_innov_corroborate_backstop_k",
+                         "network_carry_invariant_innov_corroborate_backstop_k", 0.0);
+        if (network_carry_invariant_innov_corroborate_) {
+            // Two ways this arms into silence — both are standing-invariant-#4 traps
+            // ("clean log, dead wiring"), so neither is allowed to pass quietly.
+            if (!network_carry_invariant_innov_gate_) {
+                log->warn("Network (Card 4 D5 v3): network.carry_invariant_innov_corroborate is "
+                          "set but .carry_invariant_innov_gate is OFF — there are no D5 re-taps "
+                          "to corroborate, so the gate is INERT this run.");
+                network_carry_invariant_innov_corroborate_ = false;
+            } else {
+                // The suppression evidence is the slip-QC raw-observable pass.  Without a
+                // consumer it is never COMPUTED (SlipQcParams::anyConsumer), the flat set
+                // arrives empty, nothing is ever suppressed, and the run looks identical to
+                // v2 while claiming to be v3.  Auto-arm the instrumentation-only card that
+                // supplies it rather than failing — Card G is counters + trace rows only
+                // (verified byte-identical: 359 flags/ep, 275 births/ep and an identical
+                // epoch-1 solve checksum vs the same config without it).
+                if (!network_config_.slip_qc.gap_instrument
+                    && !network_config_.slip_qc.lli_corroborate
+                    && !network_config_.trace_slip_raw) {
+                    network_config_.slip_qc.gap_instrument = true;
+                    log->info("Network (Card 4 D5 v3): auto-arming "
+                              "network.cycle_slip.gap_instrument — the corroboration gate needs "
+                              "the raw MW/GF step verdicts, which are only computed when a "
+                              "slip-QC consumer asks for them.  Card G is instrumentation-only "
+                              "(counters + trace rows), so the solve is unchanged.");
+                }
+                log->info("Network (Card 4 D5 v3): D5 re-tap corroboration ON — a flagged chord "
+                          "is re-tapped UNLESS the raw observables positively measured its arc "
+                          "as continuous.  No-evidence still re-taps (invariant #1).  Magnitude "
+                          "backstop {} (0 = pure corroboration).  Watch the run-end "
+                          "innov_suppressed counter: 0 means the flat set never arrived.",
+                          network_carry_invariant_innov_corroborate_backstop_k_);
+            }
+        }
+        if (network_carry_invariant_innov_corroborate_backstop_k_ < 0.0) {
+            log->warn("Network (Card 4 D5 v3): network.carry_invariant_innov_corroborate_backstop_k "
+                      "= {} is negative; clamping to 0 (pure corroboration).",
+                      network_carry_invariant_innov_corroborate_backstop_k_);
+            network_carry_invariant_innov_corroborate_backstop_k_ = 0.0;
+        }
         // RTB-7(c): the branch-faithful carry blob requires the invariant carry to be
         // armed and a snapshot path to write to (parsed above); enforce + log here now
         // that network_carry_invariant_ is known.
@@ -2661,6 +3081,27 @@ namespace GnssProcessor {
                 log->info("Network: network.mw_wl.uwl_gal_top_band is IGNORED under "
                           "uwl_dual_top — the dual tier always prefers '8' (E5 AltBOC, "
                           "λ 19.537 m) per cycle and falls back to '7' (E5b, λ 9.768 m).");
+            // ---- SD pre-reduce EWL: the statistic source must actually exist. ----
+            // NetStation::mw_slip is constructed only for NON-pivot stations and only
+            // when network.phase_leveling && (cycle_slip.mw_detect || turbo_edit).
+            // Without it arcZdMean() is unreachable at EVERY station and the feature is
+            // silently inert — exactly the armed-but-dead shape standing invariant #4
+            // exists to catch, so say so loudly at load.
+            if (network_config_.sd_ewl.enable) {
+                const bool det = network_cycle_slip_mw_detect_
+                                 || network_cycle_slip_turbo_edit_;
+                if (!network_phase_leveling_ || !det) {
+                    log->warn("Network: network.sd_ewl.enable is INERT — the MW arc "
+                              "accumulator it reads (NetStation::mw_slip -> arcZdMean) is "
+                              "constructed ONLY when network.phase_leveling && "
+                              "(network.cycle_slip.mw_detect || turbo_edit); currently "
+                              "phase_leveling={}, mw_detect={}, turbo_edit={}.  Zero SD "
+                              "EWL rows will be built at any station.",
+                              network_phase_leveling_,
+                              network_cycle_slip_mw_detect_,
+                              network_cycle_slip_turbo_edit_);
+                }
+            }
             if (mw.uwl_sib_gate && !(mw.uwl_dual_top && mw.uwl_enable))
                 log->warn("Network: network.mw_wl.uwl_sib_gate is INERT without uwl_dual_top — "
                           "the sibling closure gate compares the untaken {7,8} rung against "
@@ -3476,6 +3917,61 @@ namespace GnssProcessor {
                       "(carry-fold + D5 readouts computed per-block in parallel, merged in "
                       "fixed block order — byte-identical to the serial fold)");
         }
+        // --- Finalize the scoped process-noise table (network.process_noise) ---
+        // Re-read the canonical members AFTER every clamp, arming rule and
+        // validity-restore in this section — network.clock_model_q1/q2 in
+        // particular are reset wholesale when the clock-model parameters fail
+        // validation — so the struct, and therefore the run manifest, reports the
+        // rate the estimator will ACTUALLY use rather than the one requested.
+        // Provenance settles here too: `jval` already let an explicit legacy key
+        // beat the table-supplied default, so a class whose legacy key is present
+        // reads Legacy whatever the table said.
+        {
+            using QC  = NetworkQClass;
+            using Src = NetworkProcessNoise::Source;
+            auto& npn = network_config_.process_noise;
+            const std::pair<QC, double> finals[] = {
+                { QC::SatClock,          process_noise_.sat_clock },
+                { QC::SatPhaseBias,      process_noise_.sat_phase_bias },
+                { QC::SatCodeBias,       process_noise_.sat_code_bias },
+                { QC::VtecSh,            global_vtec_sh_.q_per_degree },
+                { QC::VtecShLayer2,      global_vtec_sh_.layer2_q_per_degree },
+                { QC::StationZwd,        network_zwd_carry_q_ },
+                { QC::LevelingAmbiguity, network_phase_leveling_q_amb_ },
+                { QC::ChainDatumRpb,     network_phase_datum_eq34_rpb_q_m2s_ },
+                { QC::DdCarry,           network_carry_invariant_qz_ },
+                { QC::SatClockWfm,       network_clock_model_q1_ },
+                { QC::SatClockRwfm,      network_clock_model_q2_ },
+            };
+            std::string shown;
+            for (const auto& entry : finals) {
+                const QC     c           = entry.first;
+                const double final_value = entry.second;
+                const NetworkQDesc& d    = kNetworkQClassTable[static_cast<std::size_t>(c)];
+                Src src = npn.source(c);
+                if (jhas(json, d.legacy_path, d.legacy_flat)) {
+                    src = Src::Legacy;              // explicit key beat the table default
+                } else if (final_value != npn.get(c)) {
+                    src = Src::Derived;             // a clamp or arming rule moved it
+                }
+                npn.set(c, final_value, src);
+                if (src != Src::Default) {
+                    if (!shown.empty()) shown += ", ";
+                    shown += fmt::format("{}={:g} {} [{}]", d.name, final_value, d.units,
+                                         NetworkProcessNoise::sourceLabel(src));
+                }
+            }
+            // Only the non-default classes are listed: on a stock config this line
+            // reports the handful of q's the posture actually moved, and its
+            // ABSENCE is the signal that every rate is at its documented default.
+            if (shown.empty())
+                log->info("Network process noise: all {} classes at documented defaults.",
+                          kNetworkQClassCount);
+            else
+                log->info("Network process noise ({} classes; non-default shown): {}",
+                          kNetworkQClassCount, shown);
+        }
+
         logNetworkPosture_(log);
         return true;
     }
@@ -3823,6 +4319,11 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.trace_dd_fractional_max_pairs",
               "unbounded dd-frac cost 20-40 min/epoch at 305 sta (10-ep run died at ep 4); set "
               "500, or 2000 decimated" },
+            { nc.trace_dd_fractional && network_phase_datum_prioritized_,
+              nc.trace_phase_anchor,
+              Tier::SCOPED, false, "network.trace_phase_anchor",
+              "the lane spectrometer's ANCHOR partition is untestable without the "
+              "(cons,signal,sat)->anchor-station map; no other artifact carries it" },
             { true,
               nc.trace_events,
               Tier::SCOPED, false, "network.trace_events",

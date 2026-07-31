@@ -46,10 +46,52 @@ from collections import Counter, defaultdict
 
 DAY_ANCHOR_TOW = 259200.0          # 2024-05-08 00:00:00 GPS
 EPOCH_S = 30.0
-C1 = 2.545728                       # f1^2/(f1^2-f2^2)
+C1 = 2.545728                       # f1^2/(f1^2-f2^2)  -- GPS L1/L2, kept for reference
 C2 = 1.545728                       # f2^2/(f1^2-f2^2)
 DEFAULT_L1 = ("C1W", "C1C", "C1X", "C1P")
 DEFAULT_L2 = ("C2W", "C2C", "C2X", "C2P", "C2L", "C2S")
+
+# Carrier frequencies in Hz, keyed by system letter then RINEX band digit.
+# Source of these numbers: include/common/Constants.hpp (GPS_L1_FREQ etc.) --
+# do not retype them from a datasheet, keep them equal to the producer's.
+FREQ_HZ = {
+    "G": {"1": 1575.42e6, "2": 1227.60e6, "5": 1176.45e6},
+    "E": {"1": 1575.42e6, "5": 1176.45e6, "6": 1278.75e6, "7": 1207.14e6,
+          "8": 1191.795e6},
+    "C": {"1": 1575.42e6, "2": 1561.098e6, "5": 1176.45e6, "6": 1268.52e6,
+          "7": 1207.14e6},
+}
+
+# Per-system ionosphere-free pin pair, as (band1_codes, band2_codes) in RINEX
+# attribute-preference order (most preferred first).  These mirror the pair the
+# producer's W6 code-bias IF pin actually selects for each constellation:
+#   GPS      L1/L2  -- the legacy IGS convention the .BIA products are cast in
+#   Galileo  E1/E5a -- Galileo has NO L2 band at all, so the GPS list can never
+#                      match it; before this table every Galileo satellite was
+#                      silently dropped from the grade.
+#   BeiDou   B1/B2a
+IF_PAIR = {
+    "G": (("C1W", "C1C", "C1X", "C1P"), ("C2W", "C2C", "C2X", "C2P", "C2L", "C2S")),
+    "E": (("C1C", "C1X", "C1B"), ("C5Q", "C5X", "C5I")),
+    "C": (("C1P", "C1X", "C2I"), ("C5P", "C5X", "C5D")),
+}
+
+SYS_NAME = {"G": "GPS", "E": "Galileo", "C": "BeiDou"}
+
+
+def if_coeffs(sysid, code1, code2):
+    """(c1, c2) for the IF combination formed from two RINEX observation codes.
+
+    c1 = f1^2/(f1^2-f2^2), c2 = f2^2/(f1^2-f2^2), derived from the band digit of
+    each code so that every constellation gets ITS OWN coefficients.  Applying the
+    GPS L1/L2 pair (2.545728, 1.545728) to a Galileo E1/E5a pair -- which is what
+    naively widening the band-2 code list would do -- yields a garbage combination
+    that is not ionosphere-free at all.  Galileo E1/E5a is (2.260604, 1.260604).
+    """
+    f1 = FREQ_HZ[sysid][code1[1]]
+    f2 = FREQ_HZ[sysid][code2[1]]
+    den = f1 * f1 - f2 * f2
+    return (f1 * f1) / den, (f2 * f2) / den
 
 
 def hms(tow):
@@ -57,11 +99,17 @@ def hms(tow):
     return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
 
 
-def load_solution(path):
-    """tow -> {sat: total_IF_m}, plus per-epoch disc bumps.
+def load_solution(path, sysid="G"):
+    """tow -> {sat: total_IF_m} for ONE constellation, plus per-epoch disc bumps.
 
     Returns (epochs, disc_events) where epochs is an ordered list of
     (tow, {sat: total_if}) and disc_events is a list of (tow, sat, signal, counter).
+
+    One constellation at a time, deliberately.  Each constellation carries its own
+    clock datum and its own per-(constellation,signal) code-bias sum-to-zero, so
+    total_IF values from different systems live in DIFFERENT gauges.  Pooling them
+    into one per-epoch median would fold the inter-system time offset into the
+    spread and report a datum artifact as producer error (standing invariant #5).
     """
     clk = defaultdict(dict)
     cb = defaultdict(lambda: defaultdict(dict))
@@ -75,6 +123,8 @@ def load_solution(path):
                 kind = r["kind"]
                 val = float(r["value_m"])
             except (ValueError, KeyError, TypeError):
+                continue
+            if not sat.startswith(sysid):
                 continue
             if kind == "CLK":
                 clk[tow][sat] = val
@@ -92,16 +142,18 @@ def load_solution(path):
                         disc_events.append((tow, sat, sig, dcv))
                     disc_last[key] = dcv
 
+    band1_codes, band2_codes = IF_PAIR[sysid]
     epochs = []
     for tow in sorted(clk):
         sats = {}
         for sat, c in clk[tow].items():
             sig = cb[tow].get(sat, {})
-            b1 = next((sig[s] for s in DEFAULT_L1 if s in sig), None)
-            b2 = next((sig[s] for s in DEFAULT_L2 if s in sig), None)
-            if b1 is None or b2 is None:
+            k1 = next((s for s in band1_codes if s in sig), None)
+            k2 = next((s for s in band2_codes if s in sig), None)
+            if k1 is None or k2 is None:
                 continue
-            sats[sat] = c + C1 * b1 - C2 * b2
+            c1, c2 = if_coeffs(sysid, k1, k2)
+            sats[sat] = c + c1 * sig[k1] - c2 * sig[k2]
         if len(sats) >= 3:
             epochs.append((tow, sats))
     return epochs, disc_events
@@ -144,12 +196,63 @@ def main():
     ap.add_argument("--event-threshold", type=float, default=40.0,
                     help="worst-satellite deviation (m) that marks an excursion epoch")
     ap.add_argument("--csv", default=None)
+    ap.add_argument("--sys", default="G",
+                    help="constellation(s) to grade: G, E, C, a comma list, or 'all'. "
+                         "Each is graded SEPARATELY -- their total_IF values are in "
+                         "different gauges and must never share a median. Default G "
+                         "(GPS), which is what this script has always graded.")
     args = ap.parse_args()
 
     segs = sorted(glob.glob(os.path.join(args.runroot, "seg*")))
     if not segs:
-        raise SystemExit("no segments found")
+        # A single continuous run is the degenerate one-segment chain: no seg*/
+        # subdirectories, logs/ sits directly under the runroot.  Grade it as one
+        # segment rather than refusing -- the metric and the masking are identical,
+        # there is simply only one segment start to mask (the cold-start ignition).
+        if os.path.exists(os.path.join(args.runroot, "logs", "network_solution.csv")):
+            segs = [args.runroot]
+        else:
+            raise SystemExit(
+                f"no segments found: {args.runroot} has neither seg*/ subdirectories "
+                f"nor logs/network_solution.csv")
 
+    if args.sys.lower() == "all":
+        systems = [s for s in ("G", "E", "C")
+                   if any(present_systems(os.path.join(sg, "logs", "network_solution.csv"))
+                          & {s} for sg in segs)]
+    else:
+        systems = [s.strip().upper() for s in args.sys.split(",") if s.strip()]
+    unknown = [s for s in systems if s not in IF_PAIR]
+    if unknown:
+        raise SystemExit(f"--sys: no IF pin pair defined for {unknown}; known: {sorted(IF_PAIR)}")
+    if not systems:
+        raise SystemExit("--sys: no gradable constellation found in the solution trace")
+
+    rc = 0
+    for i, sysid in enumerate(systems):
+        if i:
+            print("\n")
+        print("#" * 96)
+        print(f"# CONSTELLATION {sysid} ({SYS_NAME.get(sysid, sysid)})"
+              f"   pin pair {IF_PAIR[sysid][0][0]}/{IF_PAIR[sysid][1][0]}")
+        print("#" * 96)
+        rc |= report_for_system(segs, sysid, args)
+    return rc
+
+
+def present_systems(path):
+    """System letters that appear as CLK rows in a solution trace."""
+    out = set()
+    if not os.path.exists(path):
+        return out
+    with open(path, newline="") as fh:
+        for r in csv.DictReader(fh):
+            if r.get("kind") == "CLK" and r.get("sat"):
+                out.add(r["sat"][0])
+    return out
+
+
+def report_for_system(segs, sysid, args):
     rows = []          # (tow, stats, seg_index_within_segment)
     disc_all = []
     status_all = {}
@@ -158,11 +261,15 @@ def main():
         if not os.path.exists(sol):
             print(f"{os.path.basename(seg)}: no network_solution.csv")
             continue
-        eps, disc = load_solution(sol)
+        eps, disc = load_solution(sol, sysid)
         disc_all.extend(disc)
         status_all.update(load_epoch_status(os.path.join(seg, "logs", "network_epoch_status.csv")))
         for i, (tow, sats) in enumerate(eps):
             rows.append((tow, epoch_stats(sats), i))
+        if not eps:
+            print(f"{os.path.basename(seg):<8} no {sysid} epochs with a complete "
+                  f"{IF_PAIR[sysid][0][0]}/{IF_PAIR[sysid][1][0]} pin pair")
+            continue
         print(f"{os.path.basename(seg):<8} {len(eps)} epochs  "
               f"{hms(eps[0][0])} -> {hms(eps[-1][0])}")
 
@@ -174,8 +281,12 @@ def main():
     print()
     print("=" * 96)
     print("PRODUCT QUALITY -- total IF code correction, between-satellite")
-    print("  total_IF = CLK + 2.545728*CB(L1) - 1.545728*CB(L2);  deviations from per-epoch median")
-    print("  (gauge-invariant; includes the pinned pivot, which a consumer cannot exclude)")
+    _k1, _k2 = IF_PAIR[sysid][0][0], IF_PAIR[sysid][1][0]
+    _c1, _c2 = if_coeffs(sysid, _k1, _k2)
+    print(f"  total_IF = CLK + {_c1:.6f}*CB({_k1}) - {_c2:.6f}*CB({_k2});"
+          f"  deviations from per-epoch median")
+    print(f"  (gauge-invariant WITHIN {SYS_NAME.get(sysid, sysid)}; includes the pinned "
+          f"pivot, which a consumer cannot exclude)")
     print("=" * 96)
 
     def col(vals, f=".3f"):
@@ -302,13 +413,43 @@ def main():
     else:
         by_sat = Counter(s for _, s, _, _ in disc_all)
         print(f"  {len(disc_all)} bumps; top sats: {dict(by_sat.most_common(5))}")
+        # Per-hour rate, normalised per (sat,signal) channel.  The run-total alone
+        # cannot distinguish cold-start code-bias initialisation -- where every
+        # channel legitimately bumps for the first few minutes -- from steady-state
+        # disc CHURN, which disc_threshold_frac_cycles explicitly does NOT fix
+        # ("it equalizes SEMANTICS only"); the PB emit filter owns churn.  A rate
+        # that decays toward zero is convergence; a flat rate is churn.
+        chans = len({(s, g) for _, s, g, _ in disc_all}) or 1
+        per_hr = defaultdict(int)
+        eps_hr = defaultdict(set)
+        for tow, _, _, _ in disc_all:
+            per_hr[int((tow - DAY_ANCHOR_TOW) // 3600)] += 1
+        for tow, _, _ in rows:
+            eps_hr[int((tow - DAY_ANCHOR_TOW) // 3600)].add(tow)
+        print(f"  {chans} distinct (sat,signal) channels bumped")
+        print(f"  {'hr':>4}{'bumps':>9}{'epochs':>8}{'bumps/ep':>10}{'per_chan/ep':>13}")
+        # Iterate the hours that have EPOCHS, not the hours that have bumps.  An hour
+        # with zero bumps is the best possible outcome; omitting its row makes it look
+        # like missing data instead, which is the "0 driven / 0 folded" ambiguity in
+        # reverse -- a reader cannot tell a clean hour from an absent trace.
+        for h in sorted(eps_hr):
+            ne = len(eps_hr[h]) or 1
+            nb = per_hr.get(h, 0)
+            print(f"  {h:>4}{nb:>9}{ne:>8}{nb / ne:>10.1f}{nb / ne / chans:>13.3f}")
+        print("  (per_chan/ep ~1.0 = every channel bumping every epoch; decay = converging,")
+        print("   flat = steady-state churn -- read against the PB emit filter, not the")
+        print("   disc threshold, which cannot fix churn by construction)")
 
     if args.csv and hourly:
-        with open(args.csv, "w", newline="") as fh:
+        # One file per constellation -- the tables are in different gauges and must
+        # not be concatenated into a single sheet.
+        stem, ext = os.path.splitext(args.csv)
+        out = args.csv if args.sys.upper() == sysid else f"{stem}_{sysid}{ext or '.csv'}"
+        with open(out, "w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=list(hourly[0].keys()))
             w.writeheader()
             w.writerows(hourly)
-        print(f"\nhourly table -> {args.csv}")
+        print(f"\nhourly table -> {out}")
     return 0
 
 

@@ -287,6 +287,15 @@ namespace GnssProcessor {
         // feeds a prior or a refloat ⇒ the solution is byte-identical; only clock_c1_m_s changes.  Empty /
         // inert unless emit_clock_rate_on (which is off whenever clk_model_on supplies C1 from clock_osc).
         std::map<std::string, ClockOsc> clock_rate_est;
+        // FC-1 (network.fast_clock): the split-cadence fast-clock anchor — per-LOS cached
+        // lumps + rates + the emitted c0 at the last EMITTED full solve, rebuilt from
+        // scratch at every emit.  Empty / inert unless fast_clock.enable.  Deliberately
+        // NOT snapshotted (RTB-7a exemption record): a warm resume re-arms after two fresh
+        // emitted full epochs, so a restored anchor can never refer to a frame the resumed
+        // leg did not itself emit.  The fast tick mutates NOTHING outside this member —
+        // that is the isolation contract that keeps full epochs byte-identical whether or
+        // not ticks ran.
+        FastClockCarry fast_clock;
         // Card 6 (RTF-2, network.apriori_source = brdc_rts): the broadcast-ephemeris IODE
         // that each satellite's CARRIED clock state (clock_osc.x0 / the D2 clock carry /
         // the clock-monitor jump baseline) is currently referenced to.  Advanced at the
@@ -411,11 +420,13 @@ namespace GnssProcessor {
         // plain-data Tier-1 entities; instances with function-local types —
         // WlInjectPlan/LaneTraceEntry/WlCounters/F6Capture vectors and the lane/
         // layer engines — stay in the run TU until INC-9b) ---
-        bool lane_trace_header_written = false;
+        // (The lane-trace / D5-dump "header written" latches lived here until the two
+        // dumps were given the normal trace lifecycle — a NetworkRunTraces-owned
+        // stream opened truncating WITH its header in openMwWlDumps.  Nothing writes a
+        // header mid-run any more, so the latches are gone.)
         std::set<std::pair<int, std::string>> d5_ewl_stasat;
         std::set<ArcKey> d5_hold_chords;
         std::set<ArcKey> d5_inject_chords_prev, d5_inject_chords_now;
-        bool d5_dump_header_written = false;
         // WL-3 regroup census (run totals; the equivalence leg reads these).
         long long lane_pair_arcs = 0;           ///< arcs routed into pair groups.
         long long lane_resid_arcs = 0;          ///< primary-band arcs left in residual per-band groups (partner missing/unshared).
@@ -537,6 +548,13 @@ namespace GnssProcessor {
         // resets, and no-information harvest skips (V̂ ≥ P_pred + f²).
         long long shdev_warm_total = 0, shdev_cold_total = 0,
                   shdev_slip_resets_total = 0, shdev_nodata_total = 0;
+        // Iono-2 v3 de-mean (SPEC_iono2_mechB_v3): epochs the global de-mean
+        // applied, station-mean removals, and Σ|g| for the run-end mean |g|.
+        long long shdev_demean_epochs_total = 0, shdev_demean_sta_total = 0;
+        double    shdev_demean_abs_g_sum = 0.0;
+        // Iono-2 v3k: D5-only re-taps that KEPT the level (variance re-tap) instead
+        // of erasing.  shdev_slip_resets_total then counts actual erases only.
+        long long shdev_d5_keeps_total = 0;
 
         // --- T1a/T1d SH-field WARN edge state + convergence latch ---
         // T1a: persistent state for the a₀₀ physical-band divergence WARN — start "in band"
@@ -547,6 +565,33 @@ namespace GnssProcessor {
         // and/or the one-shot carry refloat.  Empty/false until the first emitted SH epoch.
         bool sh_converged_latch = false;
         Eigen::VectorXd sh_coeff_prev;
+
+        // --- SD EWL Route-B integer decision (increment 2a — filter/NetworkSdEwlAr) ---
+        // NOT snapshotted, all three, DELIBERATELY (the RTB-7 three-place rule's
+        // exemption record):
+        //  * sd_ewl_fix is re-derived from scratch every epoch — it is this epoch's
+        //    publication to the PASS-B produce loop, not cross-epoch state;
+        //  * sd_ewl_r0 is a DATUM choice that is re-electable from any epoch's data.
+        //    Keeping it sticky only avoids a needless re-frame; a fresh election after
+        //    a warm resume costs exactly one counted sd_ref_reelected.  Adding it to
+        //    the fingerprint/restore/write chain would change the snapshot format for
+        //    EVERY run — including ones with this feature off — and invalidate every
+        //    stored snapshot, for no estimation benefit;
+        //  * sd_ewl_prev exists only to VETO a flipped integer.  Empty after a resume
+        //    means the first resumed epoch charges no flip and folds normally, which
+        //    is precisely what makes the S2 single-epoch virtual fold non-inert.
+        //    Snapshotting it would make a paired A/B build-format-sensitive.
+        // Storing a decision here and REUSING it instead of re-deriving would be a
+        // zero-q hold in disguise (increment 2c) and would pull 2c's slip-response
+        // rules forward — see the invariant #1 discussion in NetworkSdEwlAr.hpp.
+        std::map<std::pair<std::size_t, char>, std::map<std::string, SdEwlFix>> sd_ewl_fix;
+        std::map<char, std::string> sd_ewl_r0;   ///< constellation -> sticky component reference station name (A2's r0).
+        /// (station index, constellation, satellite) -> (integer, the detector's lagged
+        /// arc sample count).  The count is what separates a genuine FLIP from a
+        /// legitimately-changed integer on a restarted arc: a slip / gap / re-acquisition
+        /// resets the MW accumulator, so the count goes DOWN.
+        std::map<std::tuple<std::size_t, char, std::string>,
+                 std::pair<long long, std::size_t>> sd_ewl_prev;
 
         // --- RTB-7(a) state-snapshot channel (path resolved at the run-TU site;
         // fingerprint/restore/write live in NetworkRunContext.cpp) ---
@@ -565,6 +610,27 @@ namespace GnssProcessor {
     /// @internal Service counters, health-window anchors, and B8 flag-rate
     /// tallies (decomposition INC-4) — verbatim relocation.
     struct NetworkServiceCounters {
+        // --- SD EWL Route-B integer decision (increment 2a) run tallies.  Standing
+        // invariant #4: on an armed run `sdewl_dd_fixed == 0` means the decision never
+        // fired, which is NOT the same as "the integers had no effect", so every
+        // rejection path below is counted against a denominator.  The 2b ROW tallies
+        // live per-station in NetStation::SdEwlCounters (the row build is parallel).
+        long long sdewl_epochs = 0;             ///< epochs the decision seam ran (the denominator for everything else).
+        long long sdewl_components = 0;         ///< (constellation, connected component) instances processed.
+        long long sdewl_dd_pairs_seen = 0;      ///< (station, satellite) arcs admitted to the integer graph.
+        long long sdewl_dd_fix_attempts = 0;    ///< DD roundings attempted along spanning-tree / closure edges.
+        long long sdewl_dd_fixed = 0;           ///< integers published usable this epoch — MEASURED plus DATUM values (see sdewl_dd_datum; both are legitimately foldable, but only the measured ones went through a rounding gate).
+        long long sdewl_dd_datum = 0;           ///< of those, values assigned as a DATUM rather than measured: the reference station's own satellites, each station's link satellite, and a satellite framed on first sighting.  A datum value carries no rounding decision, so it can never be WRONG — it defines the frame.
+        long long sdewl_dd_reject_frac = 0;     ///< rejected: |fractional residue| over sd_ewl.fix_max_frac_cyc.
+        long long sdewl_dd_reject_ffr = 0;      ///< rejected: rounding success probability under sd_ewl.fix_min_ffr.
+        long long sdewl_dd_flip = 0;            ///< integer disagreed with the previous epoch on a CONTINUOUS arc — counted AND vetoed (invariant #1 response).
+        long long sdewl_dd_restart = 0;         ///< arc restarted (lagged count fell): memory replaced, NO flip charged.
+        long long sdewl_sd_ref_reelected = 0;   ///< the sticky component reference station r0 changed (re-datums the whole component's SD frame).
+        long long sdewl_dd_skip_channel = 0;    ///< (station, satellite) excluded: its MW arc is on a different tracking-channel pair than the network-common election, so B^s would NOT cancel in the DD.
+        long long sdewl_dd_skip_frame = 0;      ///< (station, satellite) excluded: BIA frame disagrees with the constellation majority.
+        long long sdewl_dd_no_link = 0;         ///< (station, satellite) left unfixed: no admissible link satellite reached it from the tree/closure.
+        long long sdewl_dd_no_graph = 0;        ///< stations isolated: fewer than two co-visible satellites with any neighbour, so no DD can be formed.
+
         double prev_tow = -1.0;
         int    prev_week = -1;
         int    iod = 0;
@@ -694,6 +760,27 @@ namespace GnssProcessor {
         std::size_t we_ci_sat_dw     = 0;   ///< network-wide satellite code-row de-weights chosen from the code pool
         double we_ci_s0_code_max = 0.0;     ///< max code-pool σ̂0 observed (trigger-calibration telemetry)
         double we_ci_s0_iono_max = 0.0;     ///< max iono-pool σ̂0 observed (trigger-calibration telemetry)
+
+        // FC-1 (network.fast_clock) split-cadence fast-clock telemetry — standing
+        // invariant #4 in its sharpest form for this card: the fast tier runs on
+        // epochs the full pipeline SKIPS, so a miswired hook produces a completely
+        // clean log and zero evidence of itself.  "0 ticks_driven" on an armed run
+        // means the T2e hook never fired; "0 ticks_emitted" with emit on means the
+        // product wire never saw the tier.  Both are miswires, not quiet runs.
+        std::size_t fc_ticks_driven   = 0;  ///< fast ticks the decimation hook actually ran (incl. shadow ticks)
+        std::size_t fc_ticks_estimated = 0; ///< ticks that produced at least one satellite clock delta
+        std::size_t fc_ticks_emitted  = 0;  ///< ticks whose deltas reached the product wire (INC-3)
+        std::size_t fc_los_used       = 0;  ///< LOS admitted into a tick's fit, summed over ticks
+        std::size_t fc_los_screened   = 0;  ///< LOS excluded by the k·σ post-fit screen
+        std::size_t fc_screen_slips   = 0;  ///< screened LOS whose residual is slip-scale (|res| >= half a wide-lane)
+        std::size_t fc_sat_below_floor = 0; ///< (tick, satellite) pairs that missed min_stations_per_sat
+        std::size_t fc_datum_withheld_ticks = 0; ///< ticks withheld entirely because the datum station was absent/screened
+        std::size_t fc_gap_withheld_ticks   = 0; ///< ticks whose emission was suppressed by the R11 emit_max_gap_s bound
+        std::size_t fc_anchor_los  = 0;     ///< LOS cached by the MOST RECENT anchor harvest (a level, not a run total)
+        std::size_t fc_anchor_sats = 0;     ///< satellites in the most recent anchor (likewise a level)
+        std::size_t fc_anchor_rho_fail = 0; ///< run-total LOS dropped at harvest for want of a usable range / orbit sample
+        double fc_wall_ms = 0.0;            ///< run-total wall inside the tick body (perf budget: §7.3 ≤ 50 ms/tick @305)
+        double fc_wall_ms_max = 0.0;        ///< slowest single tick (the budget is a MAX bound, not a mean)
     };
 
     /// @internal The run context: one instance per runNetwork() invocation,

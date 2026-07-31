@@ -1497,6 +1497,14 @@ namespace GnssProcessor {
         global_vtec_sh_.rep_error_tau_s = jval<double>(json,
             "estimation.global_vtec_sh.rep_error_tau_s", "global_vtec_sh_rep_error_tau_s", 0.0);
         if (global_vtec_sh_.rep_error_tau_s < 0.0) global_vtec_sh_.rep_error_tau_s = 0.0;
+        // Iono-2 v3: carried-prior common-mode de-mean (the anti-ratchet;
+        // docs/SPEC_iono2_mechB_v3.md).  Inert without the GM deviation itself.
+        global_vtec_sh_.rep_error_demean = jval<bool>(json,
+            "estimation.global_vtec_sh.rep_error_demean", "global_vtec_sh_rep_error_demean", false);
+        // Iono-2 v3k: erase-policy split (raw-confirmed slip ⇒ erase; D5-only
+        // re-tap ⇒ keep level, re-tap variance).  Inert without the GM deviation.
+        global_vtec_sh_.rep_error_d5_keep = jval<bool>(json,
+            "estimation.global_vtec_sh.rep_error_d5_keep", "global_vtec_sh_rep_error_d5_keep", false);
         if (global_vtec_sh_.rep_error_tau_s > 0.0) {
             if (log) {
                 log->info("Network (Iono-2/T5v2): SH representativeness-error GM deviation ON — the "
@@ -1507,12 +1515,31 @@ namespace GnssProcessor {
                           "channel targeting the NL-AR representation blocker (T4/Jul-17 A/B).",
                           global_vtec_sh_.rep_error_tau_s,
                           global_vtec_sh_.representation_sigma_tecu);
+                if (global_vtec_sh_.rep_error_demean)
+                    log->info("Network (Iono-2/v3): carried-prior common-mode de-mean ON — the "
+                              "information-weighted global and per-station means are removed from "
+                              "the deviation priors each epoch (the a00-twin / receiver-lump "
+                              "quasi-null directions; anti-ratchet, SPEC_iono2_mechB_v3).");
+                if (global_vtec_sh_.rep_error_d5_keep) {
+                    log->info("Network (Iono-2/v3k): D5-keep erase-policy split ON — only "
+                              "RAW-detector-confirmed slips erase the deviation; D5-only re-taps "
+                              "keep the level and re-tap the variance to steady state (97 %% of "
+                              "D5 re-taps have no raw step — iono tension the deviation absorbs).");
+                    if (!global_vtec_sh_.rep_error_demean)
+                        log->warn("Network (Iono-2/v3k): rep_error_d5_keep WITHOUT rep_error_demean "
+                                  "— kept levels have no common-mode drain; the measured a00 "
+                                  "ratchet can re-open through them.  Arm rep_error_demean.");
+                }
                 if (global_vtec_sh_.row_decimation_epochs >= 2)
                     log->warn("Network (T5): rep_error_tau_s supersedes row_decimation_epochs "
                               "({}) — the T1b σ-inflation is ignored while the GM deviation is on.",
                               global_vtec_sh_.row_decimation_epochs);
             }
             global_vtec_sh_.row_decimation_epochs = 0;
+        } else if ((global_vtec_sh_.rep_error_demean || global_vtec_sh_.rep_error_d5_keep) && log) {
+            log->warn("Network (Iono-2/v3): rep_error_demean/rep_error_d5_keep set but "
+                      "rep_error_tau_s is 0 — both act on the GM deviation carry, so they are "
+                      "INERT without it.");
         }
 
         // Ambiguity resolution
@@ -1538,6 +1565,8 @@ namespace GnssProcessor {
                                                  "ar_wl_max_frac", 0.40);
         ar_min_success_rate_     = jval<double>(json, "estimation.ambiguity_resolution.min_success_rate",
                                                  "ar_min_success_rate", 0.999);
+        ar_min_arc_info_         = jval<double>(json, "estimation.ambiguity_resolution.min_arc_info",
+                                                 "ar_min_arc_info", 0.0);
         ar_nl_max_per_pair_frac_ = jval<double>(json, "estimation.ambiguity_resolution.nl_max_per_pair_frac",
                                                  "ar_nl_max_per_pair_frac", 0.15);
         ar_enable_partial_ar_    = jval<bool>(json, "estimation.ambiguity_resolution.enable_partial_ar",
@@ -1944,7 +1973,7 @@ namespace GnssProcessor {
         code_elevation_power_  = jval<double>(json,
             "filter.code_elevation_power",  "code_elevation_power",  1.0);
         phase_elevation_power_ = jval<double>(json,
-            "filter.phase_elevation_power", "phase_elevation_power", 0.5);
+            "filter.phase_elevation_power", "phase_elevation_power", 1.0);
         log->info("Elevation power: code={:.2f}, phase={:.2f}  "
             "(var_actual = var_zen / sin^(2·power)(elev))",
             code_elevation_power_, phase_elevation_power_);

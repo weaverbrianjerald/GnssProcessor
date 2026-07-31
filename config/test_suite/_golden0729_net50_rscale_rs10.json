@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "debug_r_scale sweep arm: network.mw_wl.debug_r_scale = 10.0.",
+    "Deltas vs _golden0729_net50_30ep.json: debug_r_scale, the F6 row cap",
+    "(f6_max_rows 8 -> 200000 \u2014 f6_all_blocks alone does NOT lift it), threads,",
+    "and the output path.  Everything else, including every QC arm and the",
+    "EWL/UWL decision tiers, is inherited unchanged.",
+    "",
+    "debug_r_scale multiplies every WL-1 row's Pz (NetworkMwWlLayer.hpp:88):",
+    "  <1  -> WL rows DOMINATE the stiff Card-4 carry",
+    "   1  -> honest (reproduces runs/golden_0729/net50 numerically)",
+    "  >1  -> WL rows approach weightless",
+    "",
+    "threads 4 (not 8): this arm runs concurrently with three siblings and",
+    "the 305 baseline.  The seam fold is bit-identical for any thread count and",
+    "parallel_reduce is off, so the ESTIMATION numbers are thread-invariant \u2014 but",
+    "the ms/epoch figures from these arms are NOT comparable to the golden run."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep.json"
+  ],
+  "processing": {
+    "eigen_threads": 4
+  },
+  "network": {
+    "parallel_max_threads": 4,
+    "mw_wl": {
+      "debug_r_scale": 10.0,
+      "f6_dump": true,
+      "f6_all_blocks": true,
+      "f6_max_rows": 200000
+    },
+    "product_output_path": "C:/GnssProcessor/runs/golden_0729/rscale_rs10/products.txt"
+  }
+}

@@ -65,6 +65,21 @@ void SsrCorrectionStore::pushClock(const SsrClockCorrection& rec, const SsrHeade
     auto& r = by_sat_[rec.sat]; r.clock = rec; r.header = header;
 }
 
+bool SsrCorrectionStore::pushFastClock(const SsrClockCorrection& rec) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = by_sat_.find(rec.sat);
+    if (it == by_sat_.end() || !it->second.clock) return false;   // refresh only, never establish
+    SsrClockCorrection& c = *it->second.clock;
+    // Exactly three fields move: the value, and the two times that define its age and
+    // its extrapolation base.  Everything else — c1, c2, iod_ssr, iode, orbit linkage,
+    // combined_code_sigma_m, code_phase_corr, disc_counter — and the shared SatRecord
+    // header belong to the slow era and are left untouched by contract.
+    c.c0            = rec.c0;
+    c.received_time = rec.received_time;
+    c.epoch_time    = rec.epoch_time;
+    return true;
+}
+
 void SsrCorrectionStore::pushCombined(const SsrCombinedCorrection& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& r = by_sat_[rec.sat]; r.combined = rec; r.header = header;

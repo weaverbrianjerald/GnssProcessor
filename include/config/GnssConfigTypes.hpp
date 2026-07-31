@@ -254,6 +254,73 @@ namespace GnssProcessor {
     /// equivalence shape, lane prior/q + per-epoch MW lane rows, bridge rows +
     /// fold-on-change FFR fixing.  Supersedes mw_wl.wl_inject_enable at runtime (warned);
     /// the inject primitive remains as the pair-block fallback.
+    /// SD PRE-REDUCE EWL constraint (docs/SPEC_sd_ewl_prereduce.md).  The
+    /// between-satellite single-differenced extra-wide-lane MW statistic folded as a
+    /// pseudo-observation row in each station's OWN pre-reduce block, so it reaches the
+    /// shared satellite PHASE and CODE bias columns directly instead of a DD chord that
+    /// is 80.7 % eq34 tree pins (measured Jul-29: @c mw_wl.ewl_fold_rows moved the
+    /// soft-end eigenvalue of reduced_N_ss only 0.6 %, and mass_pb/span_pb not at all).
+    /// Pre-reduce ⇒ composes EXACTLY with the post-reduce Card-4 DD fold
+    /// (NetworkNormalEquations.hpp:395), unlike two post-reduce Woodbury folds over
+    /// coupled local columns, which drop the cross term.
+    ///
+    /// MUST be between-satellite: the eq34 gauge is per (constellation, SIGNAL), so an
+    /// UNDIFFERENCED cross-signal bias difference is NOT estimable (the per-component
+    /// constants c_b1 − c_b2 are free).  The between-satellite SD cancels them, leaving
+    /// exactly the EWL integer lattice {lam_b1*m − lam_b2*n}.  See SPEC section 2.
+    ///
+    /// Increment 1 = FLOAT rows only.  Integer fixing is increment 2 and is NOT built:
+    /// the network producer is float-only by design and a wrongly-fixed integer poisons
+    /// the emitted product for every consumer.
+    struct SdEwlConfig {
+        bool   enable{ false };               ///< Master.  OFF => zero rows appended, byte-identical.
+        int    min_arc_epochs{ 10 };          ///< Minimum LAGGED Welford count on BOTH arcs of a row (mirrors mw_wl.min_arc_epochs).
+        double sigma_floor_m{ 0.05 };         ///< Per-arc sigma floor (m) applied to var_of_mean before the R assembly — arcZdMean's variance-of-mean shrinks as 1/n, so a long quiet arc would otherwise dominate the shared border.
+        double max_abs_z_m{ 0.0 };            ///< Reject a row whose |z_SD| exceeds this (m).  0 = disabled.  Guards the station-1 cold-clock x_lin pathology class that ill-conditions correction-frame rows.
+        int    max_rows_per_station{ 0 };     ///< 0 = unlimited; else keep the lowest-variance rows first (drops counted).
+        bool   trace{ false };                ///< Log-only per-row CSV (logs/network_sd_ewl.csv).  Does NOT change the solve.
+
+        // --- Increment 2a+2b: FIX the EWL integer (docs/SPEC_sd_ewl_integer_hold.md,
+        // as amended by docs/SPEC_lane_spectrometer.md §6).  Increment 2c (the zero-q
+        // HOLD) is deliberately NOT built: the decision is re-derived every epoch, so
+        // there is no stiff cross-epoch carry to retrofit a slip response onto.
+        /// Master for the integer path.  ON: @ref networkSdEwlAr decides this epoch's
+        /// SD EWL integers by Route B (between-station DD — no a-priori satellite bias
+        /// needed, hence unpoisonable) and the row builder folds the FIXED value,
+        /// removing the local ambiguity degree of freedom instead of estimating it.
+        /// That is the whole value of increment 2: a FLOAT MW row adds zero new rank
+        /// (measured: +0.51 % of ev1 at an honest sigma), because the integrality is
+        /// the only content the normal equations do not already hold.
+        /// OFF => not one integer is decided and every row takes the increment-1 float
+        /// path => byte-identical.  Requires @ref enable.
+        bool   fix_enable{ false };
+        /// Minimum rounding success probability (FFR, not ADOP — the standing AR
+        /// criterion) for a DD integer to be usable: @f$\mathrm{erf}(0.5/(\sigma\sqrt2))@f$
+        /// with sigma the DD's own formed sigma in cycles.  0.999 is decisive on the
+        /// EWL lanes at lambda 5.861 / 9.768 m and still rejects a 2-sample arc.
+        double fix_min_ffr{ 0.999 };
+        /// Reject a DD whose |fractional residue| exceeds this (cycles).  0.15 mirrors
+        /// the MW detector's own confident-integer-jump gate, and the MEASURED EWL DD
+        /// fractional spread is 0.019-0.029 cyc (circR 0.96-0.98), so this is loose by
+        /// design — it screens gross mis-pairings, not noise.
+        double fix_max_frac_cyc{ 0.15 };
+        /// Per-SAMPLE MW noise scale (m) — amendment A1.  Used twice, for two DIFFERENT
+        /// quantities, which is why there is one knob and not two:
+        ///  * DECISION: the per-arc variance-of-the-mean is floored at
+        ///    @f$\sigma^2/n@f$, because @c arcZdMean serves a variance that shrinks as
+        ///    1/n and measured 13-60x optimistic against the rows' own residual spread
+        ///    (median 1.02 m) — an optimistic sigma inflates FFR and buys wrong fixes.
+        ///  * FIXED ROW: the row sigma is floored at this value FLAT (per-sample, NOT
+        ///    per-mean).  @c arcZdMean is arc-CUMULATIVE, so consecutive-epoch rows
+        ///    share n-1 of n samples (rho ~ 1 - 1/2n); refolding a variance-of-mean as
+        ///    white every epoch over-claims information as sqrt(k), and the over-claim
+        ///    GROWS exactly as the fixed-row residuals drop to code-noise scale.
+        ///    Folding the current mean at per-sample weight accretes ~1 sample of
+        ///    information per epoch instead — asymptotically honest, zero detector
+        ///    change.  1.0 m is the increment-1 ladder's measured honest point.
+        double fix_sigma_floor_m{ 1.0 };
+    };
+
     struct LaneCarryConfig {
         bool   enable{ false };               ///< Master.  Requires carry_invariant + mw_wl.ewl_enable (statistics source).  OFF ⇒ byte-identical.
         double q_wl_scale{ 0.01 };            ///< q along the WL lane = this × carry_invariant_qz.  DEFAULT 0.01 ≈ (0.04 cyc)²/epoch at the lineage qz=1e-4/30 s — keeps the √N lane accumulation + FFR fixes alive (measured circR 0.471-vs-0.251, Jul-16).  The SPEC §3.1 10³× numerology assumed qz≈0 and would swamp every lane measurement (~12 WL cyc of lane q per epoch).  1.0 = isotropic (part of the §6.1 equivalence shape).
@@ -356,6 +423,260 @@ namespace GnssProcessor {
         BrdcRts   ///< Broadcast ephemeris (@c LiveEphemerisStore) + external IGS-SSR (4076) orbit corrections; the emitted C0 is a delta against broadcast(IODE) + the applied RTS orbit (the self-sufficient real-time service mode).
     };
 
+    /**
+     * @brief The network producer's time-linked parameter classes — the key
+     *        space of the @c network.process_noise table.
+     *
+     * One entry per NETWORK-OWNED state whose covariance is inflated by a
+     * per-second driving-noise rate between epochs.  "Network-owned" is the
+     * scope boundary and it is deliberate: the per-STATION states (receiver
+     * clock, station ZWD/gradients, per-sat slant iono, station ambiguities,
+     * receiver code biases) are propagated by @c StateManager, which is shared
+     * verbatim with the PPP and real-time paths, so they keep reading
+     * @c filter.process_noise.*.  Routing those through a network-scoped table
+     * would be a shared-path edit reaching two other estimators; see the class
+     * list in @ref NetworkProcessNoise for the pointer users get instead.
+     *
+     * The enumerator ORDER is the index order of @ref kNetworkQClassTable and
+     * of the @ref NetworkProcessNoise arrays — append only, never reorder.
+     */
+    enum class NetworkQClass : std::size_t {
+        SatClock = 0,       ///< Satellite clock Δδtˢ random walk (the shared arrowhead column).
+        SatPhaseBias,       ///< Satellite phase bias (OSB) random walk.
+        SatCodeBias,        ///< Satellite code bias (OSB) random walk; W6.
+        VtecSh,             ///< Global SH-VTEC layer-1 coefficient q, per degree (the n>0 terms take q/n²).
+        VtecShLayer2,       ///< Global SH-VTEC layer-2 coefficient q, per degree (dual-layer / Iono-2).
+        StationZwd,         ///< Station ZWD carry across the epoch seam.
+        LevelingAmbiguity,  ///< Phase-leveling carried station ambiguity (the zero-q lock-in state).
+        ChainDatumRpb,      ///< Eq-34 chain-datum per-receiver phase-bias split.
+        DdCarry,            ///< Card-4 invariant DD carry, z-store.
+        SatClockWfm,        ///< Two-state satellite clock model, white-FM term (q1) on the bias.
+        SatClockRwfm        ///< Two-state satellite clock model, random-walk-FM term (q2) on the rate.
+    };
+
+    /// Number of entries in @ref NetworkQClass / @ref kNetworkQClassTable.
+    inline constexpr std::size_t kNetworkQClassCount = 11;
+
+    /**
+     * @brief Static descriptor for one @ref NetworkQClass — the single place
+     *        that names a class, its legacy key, its fallback and its units.
+     *
+     * The loader, the ON-summary log line and the run-manifest writer all
+     * iterate @ref kNetworkQClassTable rather than repeating an 11-way switch,
+     * so adding a class is one row here plus one enumerator.
+     */
+    struct NetworkQDesc {
+        const char* name;        ///< Key under @c network.process_noise (and the manifest field name).
+        const char* legacy_path; ///< Dotted legacy key this class subsumes ("" if none).
+        const char* legacy_flat; ///< Flat legacy alias accepted by @c jval ("" if none).
+        double      fallback;    ///< Hard-coded default — MUST equal the legacy key's own default.
+        const char* units;       ///< Physical units of the rate.
+        const char* gate;        ///< Config toggle(s) that must be armed for this q to do anything.
+    };
+
+    /**
+     * @brief The network process-noise class table.
+     *
+     * Every @c fallback below is the EXACT default of the legacy key beside it,
+     * verified against the loader.  That equality is what makes the table
+     * default-ON without changing any result: with no @c network.process_noise
+     * block present every class resolves to the value the run would have used
+     * anyway, so a stock config is byte-identical and every warm-resume
+     * fingerprint (which hashes the resolved q's) is unchanged.
+     */
+    inline constexpr std::array<NetworkQDesc, kNetworkQClassCount> kNetworkQClassTable{ {
+        { "sat_clock",          "filter.process_noise.sat_clock_q",       "sat_clock_q",       1e-2,   "m^2/s",   "always (network producer)" },
+        { "sat_phase_bias",     "filter.process_noise.sat_phase_bias_q",  "sat_phase_bias_q",  1e-12,  "m^2/s",   "always (network producer)" },
+        { "sat_code_bias",      "filter.process_noise.sat_code_bias_q",   "sat_code_bias_q",   1e-10,  "m^2/s",   "network.estimate_sat_code_bias" },
+        { "vtec_sh",            "estimation.global_vtec_sh.q_per_degree", "global_vtec_sh_q_per_degree", 1.0e-2, "TECU^2/s", "network.estimate_iono_sh" },
+        { "vtec_sh_layer2",     "estimation.global_vtec_sh.layer2_q_per_degree", "global_vtec_sh_layer2_q_per_degree", 1.0e-2, "TECU^2/s", "network.estimate_iono_sh + layer2" },
+        { "station_zwd",        "network.zwd_carry_q",                    "zwd_carry_q",       1e-9,   "m^2/s",   "network.zwd_carry" },
+        { "leveling_ambiguity", "network.phase_leveling_q_amb",           "phase_leveling_q_amb", 0.0, "m^2/s",   "network.phase_leveling" },
+        { "chain_datum_rpb",    "network.phase_datum_eq34_rpb_q_m2s",     "network_phase_datum_eq34_rpb_q_m2s", 3e-6, "m^2/s", "network.phase_datum_eq34 (INERT under carry_invariant)" },
+        { "dd_carry",           "network.carry_invariant_qz",             "network_carry_invariant_qz", 0.0, "m^2/s", "network.carry_invariant" },
+        { "sat_clock_wfm",      "network.clock_model_q1",                 "network_clock_model_q1", 0.0, "m^2/s",  "network.clock_model" },
+        { "sat_clock_rwfm",     "network.clock_model_q2",                 "network_clock_model_q2", 1.5e-7, "m^2/s^3", "network.clock_model" },
+    } };
+
+    /**
+     * @brief Resolved per-class process-noise rates for the network producer
+     *        (@c network.process_noise).
+     *
+     * A scoped authoring surface over q's that were previously spelled eleven
+     * different ways across five config sections.  The table is **always live**
+     * — there is no master enable — because it changes nothing on its own: each
+     * class defaults to its legacy key's own default (see
+     * @ref kNetworkQClassTable), so an unmodified config resolves to today's
+     * numbers exactly.
+     *
+     * **Precedence** (highest first), per class:
+     *  1. the legacy key, when the config sets it EXPLICITLY — existing configs,
+     *     including every archived campaign config and the golden-0729 posture
+     *     set, therefore behave identically and a delta config can still
+     *     override one class without restating the table;
+     *  2. @c network.process_noise.<name>;
+     *  3. @ref NetworkQDesc::fallback.
+     *
+     * Setting both is legal and logged at WARN so the shadowed value is never
+     * silent.  @ref source records which rung won, and the run manifest emits
+     * it per class — a q that reads as @c Default when the operator believed
+     * they had set it is exactly the "wiring is inert" failure that run-end
+     * telemetry exists to catch.
+     *
+     * Resolution happens ONCE, in the network section loader, writing through
+     * to the canonical config members the estimator already reads
+     * (@c process_noise_.sat_clock, @c network_zwd_carry_q_, …).  No apply site,
+     * no @c NetworkKnobs field and no fingerprint input changes; this struct is
+     * an authoring and provenance surface, not a second source of truth.
+     *
+     * **Deliberately NOT in the table.**  Three network mechanisms are genuine
+     * covariance-growth rates but are not process noise on a network state, and
+     * folding them in would blur a distinction that was expensive to establish:
+     *  - @c network.emit_pb_filter_q — the emitted phase-bias smoother.  It lives
+     *    in the EMISSION frame, never the estimator; the PB-gate card exists
+     *    precisely because a low-q PB in the estimator and a low-q PB on the wire
+     *    are different things, and one table listing them side by side invites
+     *    exactly the confusion that card ruled out.
+     *  - @c estimation.global_vtec_sh.rep_error_tau_s — a Gauss-Markov TIME
+     *    CONSTANT (seconds), not a rate; its covariance growth is set jointly with
+     *    @c representation_sigma_tecu, so a q-keyed table cannot express it.
+     *  - @c network.lane_carry.q_wl_scale — a dimensionless ANISOTROPY multiplier
+     *    that shapes @ref NetworkQClass::DdCarry into the (NL, WL) lane basis
+     *    (q_wl = q_wl_scale x qz).  It selects a direction, not a magnitude.
+     *
+     * The per-STATION classes are absent for the scope reason given on
+     * @ref NetworkQClass: they are propagated by @c StateManager, shared with the
+     * PPP and real-time estimators, and stay on @c filter.process_noise.*.
+     *
+     * @warning A process-noise rate is the ONLY thing that keeps a time-linked
+     *          state from carrying a stale value across an event.  Lowering a
+     *          class toward zero makes the corresponding carry stiff, and a
+     *          stiff carry across an unmodelled jump warps the whole solution
+     *          rather than degrading gracefully (standing invariant 1).  Any
+     *          class driven to 0 here needs a wired, tested slip/jump response
+     *          on the state it governs before an ON field run.
+     */
+    struct NetworkProcessNoise {
+        /// Which precedence rung supplied a class's resolved value.
+        enum class Source {
+            Default,  ///< No key set anywhere; @ref NetworkQDesc::fallback.
+            Legacy,   ///< The pre-existing scattered key, set explicitly.
+            Table,    ///< @c network.process_noise.<name>.
+            Derived   ///< Overwritten after resolution by another loader rule (a validity-restore, a clamp, or the service-mode bundle) — the value is real but neither key chose it.
+        };
+
+        std::array<double, kNetworkQClassCount> q{};    ///< Resolved rate, indexed by @ref NetworkQClass.
+        std::array<Source, kNetworkQClassCount> src{};  ///< Winning precedence rung, indexed by @ref NetworkQClass.
+
+        /// Fill every class with its descriptor fallback (@c Source::Default).
+        NetworkProcessNoise() {
+            for (std::size_t i = 0; i < kNetworkQClassCount; ++i) {
+                q[i]   = kNetworkQClassTable[i].fallback;
+                src[i] = Source::Default;
+            }
+        }
+
+        /// Resolved rate for @p c.
+        double get(NetworkQClass c) const { return q[static_cast<std::size_t>(c)]; }
+        /// Winning precedence rung for @p c.
+        Source source(NetworkQClass c) const { return src[static_cast<std::size_t>(c)]; }
+
+        /// Record @p value for class @p c as having come from @p s.
+        void set(NetworkQClass c, double value, Source s) {
+            q[static_cast<std::size_t>(c)]   = value;
+            src[static_cast<std::size_t>(c)] = s;
+        }
+
+        /// Stable lowercase label for @p s (manifest field + log line).
+        static const char* sourceLabel(Source s) {
+            switch (s) {
+                case Source::Legacy:  return "legacy";
+                case Source::Table:   return "table";
+                case Source::Derived: return "derived";
+                case Source::Default: break;
+            }
+            return "default";
+        }
+    };
+
+    /**
+     * @brief FC-1 split-cadence clocks-only fast pass (docs/SPEC_fast_clock_split_cadence.md).
+     *
+     * The full pipeline (solve + carry + QC + emit) keeps running at its own cadence;
+     * epochs decimated out by @c network.epoch_decimation_n — today a bare @c continue at
+     * the T2e hook — instead run a CLOCKS-ONLY tick that measures each satellite's clock
+     * change since the last EMITTED full solve and (optionally) emits it.  Everything else
+     * is frozen and rides ZOH, which is what a consumer already does inside one full-solve
+     * era; the fast tick just refreshes the one state whose ZOH error dominates.
+     *
+     * Motivation is measured, not conjectured: the 305-station all-on baseline spends
+     * 27.7 s/epoch of which the border SOLVE is 41 ms, so a 1 s product cadence is
+     * unreachable by optimizing the per-epoch pipeline — but the estimation itself is
+     * cheap once the expensive structure (ambiguities, iono, biases, datum, QC) is known.
+     * The C1 card supplies the theoretical mandate: the emitted c0 is a random walk
+     * (0.157 m per 30 s) so ZOH is already MMSE GIVEN a 30 s solve, and the only way to
+     * serve better fast clocks is to MEASURE them at the served rate.  C1's own rate
+     * product was measured NET-HARMFUL and stays dead (@c network.emit_clock_rate).
+     *
+     * The observable is a per-band delta-from-fit against the anchor epoch t0, IF-combined
+     * (which kills the iono change) and phase-only; frozen ambiguities / biases / windup
+     * cancel exactly in the delta on a live arc.  Station clocks are re-estimated fresh
+     * per tick and Schur-eliminated, leaving a dense n_sat x n_sat solve.
+     *
+     * Default OFF => the T2e hook keeps its bare @c continue and nothing is allocated,
+     * traced or emitted => byte-identical.  The isolation contract is that FULL epochs are
+     * byte-identical whether or not fast ticks ran: a tick mutates nothing outside
+     * @ref FastClockCarry.
+     */
+    struct FastClockConfig {
+        /// Master.  OFF => the decimation hook keeps its bare @c continue => byte-identical.
+        bool   enable{ false };
+        /// Run the tick computation on FULL epochs too, immediately before the full
+        /// pipeline, logging fast-vs-full deltas and discarding the result.  Zero
+        /// downstream effect (gate: byte-identity of everything but the trace CSV).
+        /// This is the permanent grading instrument — it gives per-epoch truth on ANY
+        /// run for free, the same "instrument, never feedback" shape as the M2 LS-VCE
+        /// carry-variance monitor.  Requires @ref enable.
+        bool   shadow{ false };
+        /// Emit the fast clocks as product records (INC-3).  OFF => the tick runs and
+        /// traces but writes nothing to the product wire, which is the INC-2 posture.
+        /// Requires @ref enable.
+        bool   emit{ false };
+        /// A satellite needs this many unscreened dual-band LOS with LIVE t0 arcs to be
+        /// fast-estimated on a tick.  Below the floor the satellite is simply not
+        /// refreshed — the consumer keeps the last emitted value and its age grows.
+        /// Never extrapolated (no fabricated corrections).
+        int    min_stations_per_sat{ 3 };
+        /// A station needs this many usable satellites to contribute its clock nuisance.
+        int    min_sats_per_station{ 2 };
+        /// Per-LOS post-fit screen in sigmas: |res| > k*sigma_pred excludes the LOS from
+        /// THIS tick only (re-tested next tick).  This screen is the fast tier's ONLY slip
+        /// response — a slipped arc's delta jumps by lambda*dN, hugely outside k*sigma.
+        /// Repair stays with the full pipeline (reset-not-repair; no GF/TurboEdit here,
+        /// per the 30/60 s data-rate directive).  A whole-row (satellite) coherent move is
+        /// NOT screened: that is the signal being measured.
+        double screen_k_sigma{ 5.0 };
+        /// Admit single-band arcs (no IF combination, so the iono change survives in the
+        /// residual).  Useless at a 300 s dev cadence; potentially worth it at a 1 s RT
+        /// tick with iono-rate-inflated R.  OFF by default.
+        bool   allow_single_band{ false };
+        /// R11 emission-continuity bound (s).  If the time since the last EMITTED full
+        /// solve exceeds this, fast EMISSION stops (ticks may still run for telemetry).
+        /// Keyed on EMITTED, never on solve continuity — that distinction is the whole
+        /// R11 lesson: a withheld era advances the solve clock while the consumer sees
+        /// nothing, so a solve-keyed gate would publish a delta measured inside an era
+        /// the consumer never received.  Degrade-by-silence, never by fabrication.
+        double emit_max_gap_s{ 60.0 };
+        /// Log-only per-tick CSV (logs/network_fast_clock.csv).  Does NOT change the
+        /// solve or the emission.
+        bool   trace{ false };
+        /// Per-satellite detail rows in the trace: 0 = per-tick summary rows only,
+        /// N > 0 = also write per-satellite dc/sigma rows every Nth tick.  A per-tick
+        /// per-satellite row at 305 stations x 1 s would be an unbounded firehose, so
+        /// the detail is strided and off by default.
+        int    trace_sat_stride{ 0 };
+    };
+
     struct NetworkConfig {
         std::vector<StationConfig> stations;  ///< Peer stations (>=2); each needs a known ECEF (held fixed).
         std::string clock_datum_station;      ///< Pivot receiver whose clock defines network time ("" => first station).
@@ -365,7 +686,10 @@ namespace GnssProcessor {
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default OFF => float product).
         MwWlConfig       mw_wl;               ///< M5 card WL-1: MW-seeded wide-lane pseudo-obs layer (default OFF => byte-identical).
         LaneCarryConfig  lane_carry;          ///< M5 card WL-3: lane-coordinate carry (default OFF => byte-identical; config CONTRACT only — mechanism is a follow-up increment, docs/SPEC_lane_carry_card.md).
+        SdEwlConfig      sd_ewl;              ///< SD PRE-REDUCE EWL constraint (default OFF => byte-identical; docs/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening Cards R/L/G (network.cycle_slip.*; all default OFF => byte-identical; docs/SPEC_slip_qc_hardening.md).
+        FastClockConfig  fast_clock;          ///< FC-1 split-cadence clocks-only fast pass (network.fast_clock.*; default OFF => the T2e decimation hook is untouched => byte-identical; docs/SPEC_fast_clock_split_cadence.md).
+        NetworkProcessNoise process_noise;    ///< Scoped per-parameter-class process-noise table (network.process_noise). Always live; every class defaults to its legacy key's default => byte-identical unless a value is edited.
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
         /// RTA-6: flush the product file once per emitted epoch (after the epoch
         /// block, incl. any RTA-5 S re-broadcast preceding it) so a LIVE tail
@@ -460,6 +784,21 @@ namespace GnssProcessor {
         bool trace_dd_fractional{ false };///< B5: emit @c network_dd_fractional.csv — per-epoch cross-station between-satellite double-differenced float ambiguity (from reconstructStation), keyed (constellation,signal), with its fractional-cycle residual: a sign-convention self-check + empirical <0.1-cycle-support evidence for user AR.  O(stations x sats x epochs); off by default.  Pure additional CSV, no state mutation.
         int    trace_dd_fractional_max_pairs{ 0 };  ///< T2b: cap on the DD pairs emitted (and covariance-propagated) per epoch across the whole @c network_dd_fractional.csv write — a deterministic seeded subsample keyed on the epoch (week,tow).  0 = unlimited (current full-pair behaviour, reproduces the benchmark).  Bounds the O(pairs) emit AND the T2a @c jointConditionalCovariance request count (the dominant 305-station tracer cost).  Inert unless @ref trace_dd_fractional; diagnostic file only, no state change.
         int    trace_dd_fractional_epoch_stride{ 1 };  ///< T2e: write @c network_dd_fractional.csv only every Nth PROCESSED epoch (1 = every epoch = current).  Fraction statistics don't need every epoch; combines with @ref trace_dd_fractional_max_pairs to make a traced convergence run affordable.  TRACE-ONLY (never folded into the warm-resume fingerprint).  Inert unless @ref trace_dd_fractional.
+        /// S1: emit @c network_phase_anchor.csv — per PROCESSED epoch, one row per
+        /// GAUGE-PINNED ambiguity as (week,tow,cons,signal,sat,anchor_sta), i.e. WHICH
+        /// STATION realizes the phase datum for each (constellation, signal, satellite)
+        /// freedom.  This is the ANCHOR PARTITION input of the lane-ladder spectrometer
+        /// (docs/SPEC_lane_spectrometer.md §3.3): the open datum blocker predicts that
+        /// DD satellite pairs pinned at DIFFERENT stations are non-integer while
+        /// same-anchor pairs stay clean, and that split cannot be tested without the
+        /// map.  It is not recoverable from any other artifact —
+        /// @c network_anchor_info.csv is the a-priori CLOCK anchor (no signal, no
+        /// station) and @c network_dd_fractional.csv deliberately SKIPS pinned
+        /// ambiguities.  Row count is bounded by the number of gauge freedoms
+        /// (satellites x signals), not by station PAIRS, so it is affordable even at
+        /// 305 stations.  TRACE-ONLY: read straight off the election that already ran,
+        /// never folded into the warm-resume fingerprint, and OFF => byte-identical.
+        bool   trace_phase_anchor{ false };
         int    epoch_decimation_n{ 1 };  ///< T2e: process only every Nth SYNCED epoch in the network loop (1 = off = every epoch).  N=2 → 60 s effective rate, ~halving convergence wall time; the convergence horizon is physical-time-driven so a coarser rate loses little.  ESTIMATION-RELEVANT (changes the carried-state cadence / process-noise dt) — folded into the warm-resume fingerprint when != 1 so a decimation mismatch invalidates a resume.  The physical-time start-offset and max-duration guards still evaluate on every raw epoch (overshoot-safe).
         bool   iono_supply_formal_sigma{ false };  ///< T3f: when supplying the co-estimated SH-VTEC slant iono to the closed-loop consumer (@c closed_loop.consume_network_iono), RSS the SH-coefficient FORMAL σ (√(aᵀ Q_sh a), mapped to slant metres) onto the per-LOS representativeness floor, enforce a floor after the scale, AND skip the supply for satellites without FRESH OSB (satellite-code-bias) coverage this epoch (an under-observed field value is not trustworthy).  In-process supply only (no product bytes); OFF ⇒ the representativeness-floor-only σ (byte-identical consumer solution).
         bool trace_flag_rates{ false };   ///< B8: log a per-tier flag-rate summary at end of run — for each RAIM/QC tier (IF-phase slip, within-epoch trigger, post-fit RAIM cell/consensus, clock-model NIS, clock-monitor) accumulate {opportunities, flags} over the run and report realized rate vs the implied one-sided Gaussian α for the configured k.  Also writes @c network_flag_rates.csv + @c network_run_summary.csv (L3).  Measurement only — no threshold or decision change; OFF (default) = byte-identical.
@@ -1732,6 +2071,8 @@ namespace GnssProcessor {
         double layer2_mean_vtec_prior_sigma_tecu = 5.0; ///< Layer-2 a₀₀ prior σ (TECU) — TIGHT on purpose (split constraint).
         int    row_decimation_epochs = 0;      ///< T1b temporal treatment of the (quasi-static) SH pseudo-obs constraint (0/1 = off = current behavior).  The sun-fixed field is quasi-static, so re-applying the SH↔slant rows as an INDEPENDENT white obs every epoch is a σ-incest channel (collapses the formal σ without new information).  Mechanism: the rows are still applied EVERY epoch (so the satellite-code-bias observability they provide is preserved and no epoch is withheld — pure row-skipping instead makes the observability gate withhold every skipped epoch) but their noise is inflated by N (σ ×√N), so each epoch's white row carries only 1/N of the information, matching the information rate of "one full look per N epochs".
         double rep_error_tau_s = 0.0;          ///< T5/Iono-2 (v2 EXACT harvest, 2026-07-17): correlated per-(station,sat) SH representativeness-error deviation.  0 = OFF = byte-identical.  When > 0, the SH↔slant pin row `ι − SH·c = 0 + ε(white)` becomes `ι − SH·c = d̂ₖ|ₖ₋₁ + ε(floor² + Pₖ|ₖ₋₁)` where d is a per-LOS Gauss–Markov deviation (τ = this value, steady-state σ = representation_sigma_tecu, carried in VERTICAL TECU so the level and variance are elevation-stationary).  v2 replaces the falsified-circular v1 scalar filter with the EXACT joint-posterior harvest: d̂ = d_pred + [P/(P+f²)]·(û − d_pred) with û/V̂ the solved posterior mean/variance of the pin functional (one NetworkEstimator::stationRegression per LOS + the datum-frame shared covariance), and P⁺ = P·(U+f²)/(U+P+f²) with the data-only information U recovered from V̂ — see docs/HANDOFF_iono2_card.md.  This is the per-LOS iono TEMPORAL ACCUMULATION channel the per-epoch producer lacks (the NL-AR representation lever; the single-layer surface leaves ~70 % of LOS residuals > 3σ at ANY degree, T4/Jul-17 A/B).  Slip-integrated from day one: the C3c PASS-A funnel (carry_slipped_ambs, per-signal → per-sat projection) ERASES the entry (reset-not-repair, cold re-tap at σ_ss).  Supersedes row_decimation_epochs when set.
+        bool rep_error_d5_keep = false;        ///< Iono-2 v3k (2026-07-31): erase-policy split for the deviation carry's slip response.  Default false = v2/v3 behavior (EVERY C3c-funnel entry erases the (station,sat) deviation).  When true, only RAW-detector-confirmed slips (MW/LLI/IF-TD firing THIS epoch — the carry_slipped_raw provenance set captured at PASS-A insertion) erase; D5-ONLY re-taps (the prior-epoch innovation drain — measured 97 % coincide with NO raw observable step, i.e. iono-representation tension, docs/slip_qc_hardening_report + SPEC_iono2_mechB_v3) KEEP the accumulated level and re-tap the variance to steady state (shDevD5Retap: var → var_ss, mean held).  Motivation: with every D5 re-tap erasing, mean deviation lifetime measured ≈ 0.7·τ — the accumulation channel never matures.  Safety: the weak re-tapped prior lets a genuinely missed fine slip be re-estimated away within a few harvests, and the v3 de-mean drains any common mode of kept levels (arm WITH rep_error_demean).  Inert without rep_error_tau_s.
+        bool rep_error_demean = false;         ///< Iono-2 v3 (2026-07-31): once per epoch, remove the information-weighted GLOBAL mean and per-STATION means from the carried deviation priors (serial PASS-B pre-pass, after slip-erase + GM aging).  A common vertical-TECU deviation has the row signature M(el)·tecu_to_m — IDENTICAL to the a00 column — so the pair is exactly quasi-null and the harvest→age→re-assert alternation ratchets it (measured: a00 25 → 104 TECU in 3 h with mech B alone, 207–255 with the dual layer amplifying ~2.2×; runs/iono2attr_*, docs/SPEC_iono2_mechB_v3.md).  The de-mean enforces the deviation state's contract (per-LOS structure NOT representable by SH + receiver lumps): the common component stays with a00/the receiver DCB where the data puts it each epoch, and the carry never re-asserts it as independent prior information.  Variances unchanged (conservative).  Inert unless rep_error_tau_s > 0.  Default false (standing invariant #6).
     };
 
     struct AdaptiveIonoQConfig {

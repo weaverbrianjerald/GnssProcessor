@@ -661,11 +661,11 @@ def section_reverse(ev_rows, raw_rows, grid, steps, tol, lam, gates, top, summar
 # (g) D5 re-tap attribution  [network_d5_flags.csv]
 # ---------------------------------------------------------------------------
 # Column order of the producer's dump, oldest first.  Used ONLY to recover a
-# segment whose header line is not in the file (see read_d5_segments): the dump
-# is opened in APPEND mode and its header is written once per FILE, so a log dir
-# reused across runs holds several runs' rows under a single header -- and, since
-# the Card D5-A `raw_stepped` column was appended, under a header that may be one
-# column short of the rows below it.
+# segment whose header line is not in the file (see read_d5_segments): runs up to
+# 2026-07-30 opened the dump in APPEND mode and wrote its header only when the
+# file was empty, so a log dir reused across runs holds several runs' rows under a
+# single header -- and, since the Card D5-A `raw_stepped` column was appended,
+# under a header that may be one column short of the rows below it.
 D5_COLS_V1 = ('week', 'tow', 'group', 'chord_u', 'chord_v', 'station', 'amb_key',
               'std_innov', 'ewl_stasat', 'hold_chord', 'injected_prev')
 D5_COLS_V2 = D5_COLS_V1 + ('raw_stepped',)
@@ -674,12 +674,17 @@ D5_COLS_V2 = D5_COLS_V1 + ('raw_stepped',)
 def read_d5_segments(path, label='network_d5_flags.csv'):
     """Parse the D5 flag dump into per-RUN segments (list of list-of-dict).
 
-    ``network_d5_flags.csv`` is written with ``std::ios::app`` and its header is
-    emitted only when the file is empty, so a log directory that is not wiped
-    between runs accumulates several runs in one file -- and the run-end counters
-    a caller cross-checks against describe only the LAST of them.  Grading the
-    whole file against those counters would manufacture a disagreement out of
-    perfectly good data, so the rows are split into segments:
+    Segmentation is a reader for ARCHIVED runs.  Until 2026-07-30 the producer
+    re-opened ``network_d5_flags.csv`` per epoch in ``std::ios::app`` and never
+    truncated it, so a log directory that was not wiped between runs accumulated
+    several runs in one file -- while the run-end counters a caller cross-checks
+    against describe only the LAST of them.  Grading the whole file against those
+    counters would manufacture a disagreement out of perfectly good data, so the
+    rows are split into segments.  The producer now owns the stream in
+    NetworkRunTraces and opens it truncating once per run (a re-run REPLACES the
+    file), so a current run yields exactly one segment and this all reduces to a
+    no-op -- but old log dirs are still graded, and a multi-run file must not be
+    silently read as one long run.  Splits are made where:
 
       * a header line ('week,...') starts a new segment and (re)defines the
         columns -- this is also how the pre/post ``raw_stepped`` schema change is

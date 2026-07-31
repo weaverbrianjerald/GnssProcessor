@@ -35,6 +35,7 @@
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // Card 4 (M1) C3b: DD cycle-basis invariant carry
 #include "filter/NetworkMwWlLayer.hpp"             // M5 card WL-1: MW-seeded wide-lane pseudo-obs layer
+#include "filter/NetworkSdEwlAr.hpp"               // SD EWL: the shared EWL band table (sdEwlBands) + increment-2a decision
 #include "filter/NetworkCoupling.hpp"       // INC-7b: Card-1/1b/1d conditional coupling-row builder
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
@@ -231,6 +232,587 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
 // the station's diagonal-weight block.  GLONASS is handled by its own loose
 // anchors above (no satellite code bias).  Built into the station's own block —
 // no shared write, safe in the parallel produce phase (GIM query is const).
+// SD PRE-REDUCE EWL constraint (docs/SPEC_sd_ewl_prereduce.md).  Between-satellite
+// single-differenced extra-wide-lane MW statistic as a pseudo-observation row in this
+// station's OWN pre-reduce block.  See the header for the algebra and the thread-safety
+// contract.  Default OFF => returns immediately => byte-identical.
+void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator& est,
+                                          const std::vector<PppObservation>& sta_obs,
+                                          const std::map<int, int>& h2local,
+                                          const GnssTime& t,
+                                          Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
+                                          Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                          std::vector<std::string>& trace_rows,
+                                          const std::map<std::pair<std::size_t, char>,
+                                                         std::map<std::string, SdEwlFix>>* fix,
+                                          std::size_t station_index) const {
+    const auto& cfg = config_.getNetworkConfig().sd_ewl;
+    if (!cfg.enable) return;
+    auto& ctr = st.sd_ewl_ctr;
+    // Increment 2b: the three trailing trace columns exist ONLY when the integer path
+    // is armed, so an increment-1 artifact set stays byte-identical (the header in
+    // NetworkRunTraces::openAll follows the same rule).
+    const bool fix_on = cfg.fix_enable && fix != nullptr;
+    // Per-satellite trace sink (§6).  Formatted here, drained by PASS B's SERIAL
+    // consume — the produce phase must not touch a shared stream.
+    const auto tr2 = [&](const char* status, const std::string& sat,
+                         const std::string& pivot, const std::string& s1,
+                         const std::string& s2, const std::string& c1,
+                         const std::string& c2, std::size_t n_cand,
+                         std::size_t n_arc, bool bia, double lam, double mean_m,
+                         double pred_m, double resid_m, double sigma_m,
+                         long long n_fix, bool row_fixed, bool grp_fixed) {
+        if (!cfg.trace) return;
+        std::string row = fmt::format(
+            "{},{:.3f},{},{},{},{},{},{},{},{},{},{},{},{},{:.4f},{:.4f},{:.4f},"
+            "{:.4f},{:.4f}",
+            t.week, t.tow, st.name, sat.empty() ? '?' : sat.front(), sat, pivot,
+            status, s1, s2, c1, c2, n_cand, n_arc, bia ? 1 : 0, lam, mean_m, pred_m,
+            resid_m, sigma_m);
+        if (cfg.fix_enable)
+            row += fmt::format(",{},{},{}", n_fix, row_fixed ? 1 : 0, grp_fixed ? 1 : 0);
+        row += '\n';
+        trace_rows.push_back(std::move(row));
+    };
+    const auto tr = [&](const char* status, const std::string& sat,
+                        const std::string& pivot, const std::string& s1,
+                        const std::string& s2, const std::string& c1,
+                        const std::string& c2, std::size_t n_cand,
+                        std::size_t n_arc, bool bia, double lam, double mean_m,
+                        double pred_m, double resid_m, double sigma_m) {
+        tr2(status, sat, pivot, s1, s2, c1, c2, n_cand, n_arc, bia, lam, mean_m,
+            pred_m, resid_m, sigma_m, 0, false, false);
+    };
+    // The MW arc accumulator is built only for NON-pivot stations, and only under
+    // phase_leveling && (mw_detect || turbo_edit).  Count the station-epoch and bail —
+    // an uncounted skip is how a feature ends up armed and dead (invariant #4).
+    if (!st.mw_slip || !st.sm) {
+        ++ctr.skip_no_detector;
+        tr("NO_DETECTOR", {}, {}, {}, {}, {}, {}, 0, 0, false, 0.0, 0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    // --- The extra-wide-lane band pair per constellation (the UWL-1 tier table). ------
+    // Shared with the increment-2a integer decision via @ref sdEwlBands (one definition,
+    // so the row and the integer folded into it can never disagree about which lane
+    // they are on).  GPS (L2,L5) lambda_EWL 5.861 m; Galileo (E5b,E5a) 9.768 m; BeiDou
+    // deferred and GLONASS excluded, both by simply producing no rows.
+    auto bandsFor = [](char cons, char& b1, char& b2, double& f1, double& f2) -> bool {
+        return sdEwlBands(cons, b1, b2, f1, f2);
+    };
+
+    // One resolved arc: the ZD-consistent EWL statistic plus the four state columns the
+    // row needs (two local ambiguities, and the shared PB/CB pair per band).
+    struct Arc {
+        std::string sat;
+        double      mean_m{ 0.0 };
+        double      var_m2{ 0.0 };
+        std::size_t count{ 0 };
+        bool        bia{ false };
+        double      lam_ewl{ 0.0 }, lam_b1{ 0.0 }, lam_b2{ 0.0 };
+        double      f1{ 0.0 }, f2{ 0.0 };
+        int         amb_col_b1{ -1 }, amb_col_b2{ -1 };
+        Eigen::Index pb_b1{ -1 }, pb_b2{ -1 }, cb_b1{ -1 }, cb_b2{ -1 };
+        /// This arc's LINEARIZED prediction of the MW observable, i.e. its half of
+        /// @f$H\,x_{lin}@f$ — see the correction-frame note at the row build.  Split in
+        /// two because increment 2b's fixed row DROPS its local ambiguity coefficients,
+        /// and the linearization point must lose exactly the same terms in the same
+        /// place or the row is folded in a mixed frame.
+        double      pred_amb_m{ 0.0 };   ///< the two local ambiguity terms of H·x_lin
+        double      pred_bias_m{ 0.0 };  ///< the four shared PB/CB terms of H·x_lin
+        double      pred_m{ 0.0 };       ///< pred_amb_m + pred_bias_m (the float row's frame)
+        // Trace-only provenance (§6): the elected phase pair, the code channels the
+        // MW actually consumed, and how many candidate pairs were searched.
+        std::string sig1, sig2, code1, code2;
+        std::size_t n_cand{ 0 };
+        // Increment 2b: the published integer for this arc, if any.  `n_cyc` is in the
+        // r0-anchored frame, so only the between-satellite DIFFERENCE against the
+        // group's pivot is meaningful.
+        bool        has_fix{ false };
+        long long   n_fix_cyc{ 0 };
+        /// The integer came from a ROUNDED double difference rather than from a frame
+        /// choice.  A fixed group must contain at least one of these (see the group
+        /// split below) or it asserts a hard constraint with no measurement behind it.
+        bool        fix_measured{ false };
+    };
+
+    // --- Correction frame -------------------------------------------------------------
+    // The station's whole block is in the CORRECTION frame: networkSplitStation_ fills
+    // y from `em.innovations` = z − h(x_lin), with x_lin = st.sm->getStateVector().  A
+    // pseudo-observation must obey the SAME convention or it asserts an absolute value
+    // against a design that solves for a correction — here catastrophically so, because
+    // the raw MW mean carries λ_EWL·N_EWL with N_EWL in the thousands of cycles
+    // (measured |z_SD| mean 203 m, max 4162 m, against a 0.13 m row σ).
+    //
+    // Which columns need the x_lin term: the LOCAL ambiguity states are seeded from
+    // code-minus-phase and reseeded on slips, so theirs is large and load-bearing —
+    // exactly the term NetworkMwWlLayer subtracts as `z_lin` (its z_corr = z_mw − z_lin).
+    // The SHARED satellite phase/code-bias states are allocated at 0 and never written
+    // back from the solve (MeasurementModel: "Allocated at value 0 ... a SHARED state the
+    // network solves"), so their term is identically zero today — it is included anyway
+    // rather than asserted, so a future seeding change cannot silently skew the frame.
+    const Eigen::VectorXd x_lin = st.sm->getStateVector();
+    const auto xAt = [&x_lin](int idx) -> double {
+        return (idx >= 0 && idx < static_cast<int>(x_lin.size())) ? x_lin(idx) : 0.0;
+    };
+    // Shared PB/CB STATE indices at this station (distinct from the estimator's border
+    // COLUMN indices): a column may be registered by another station, in which case this
+    // station holds no state and its x_lin contribution is 0 — which is precisely what
+    // its real rows do (em.H has no such column, so the innovations omit it).
+    std::map<std::pair<std::string, std::string>, int> pb_state, cb_state;
+    for (const auto& kv : st.sm->getSatPhaseBiasStates()) {
+        const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
+        if (p) pb_state[{ p->satellite, p->signal }] = static_cast<int>(kv.second);
+    }
+    for (const auto& kv : st.sm->getSatBiasStates()) {
+        const auto p = StateKeys::parseSatBiasKey(kv.first);
+        if (p) cb_state[{ p->satellite, p->signal }] = static_cast<int>(kv.second);
+    }
+    const auto stateOf = [](const std::map<std::pair<std::string, std::string>, int>& m,
+                            const std::string& sat, const std::string& sig) -> int {
+        const auto it = m.find({ sat, sig });
+        return it == m.end() ? -1 : it->second;
+    };
+
+    // --- This station's per-(satellite, band) ambiguity candidates ---------------------
+    // Built ONCE from StateManager's own key map (the authority) rather than by
+    // reconstructing a key string per candidate: the ambiguity key format is the state
+    // layer's business, and a reconstructed key that does not round-trip fails SILENTLY
+    // (every arc looks absent).  A candidate additionally needs a LOCAL COLUMN this
+    // epoch — h2local presence is exactly "this arc has a phase row in A_r now".
+    // Sorted ascending by signal name so the pair search below is a strict total order
+    // (byte-identity: an insertion-order-dependent pick changes the row set run to run).
+    // Entries are (signal, A_r local column, global state index) — the state index is
+    // needed for the correction-frame x_lin term, the local column for the design.
+    using Cand = std::tuple<std::string, int, int>;
+    std::map<std::pair<std::string, char>, std::vector<Cand>> cand;
+    for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
+        const auto parts = StateKeys::parseAmbiguityKey(key);
+        if (!parts) continue;
+        const std::string& sig = parts->signal;
+        if (sig.size() < 2 || sig[0] != 'L') continue;
+        const auto hit = h2local.find(static_cast<int>(sidx));
+        if (hit == h2local.end()) continue;         // no phase row on this arc this epoch
+        cand[{ parts->satellite, sig[1] }].emplace_back(sig, hit->second,
+                                                        static_cast<int>(sidx));
+    }
+    for (auto& kv : cand)
+        std::sort(kv.second.begin(), kv.second.end());   // ascending signal name first
+
+    // --- Resolve every eligible arc, grouped by constellation (sorted => determinism). -
+    // The MW arc key carries the two PHASE signal names, and which channel the detector
+    // holds an arc on is ITS choice (collectUncombinedPairs' KF-chosen / attribute-
+    // priority pick), not ours.  So SEARCH the candidate pairs in ascending order and
+    // take the first that actually HAS a usable arc, instead of electing one channel and
+    // declaring the arc missing when the detector picked the other.  A one-channel band
+    // (the common case) has exactly one candidate, so this reduces to the direct lookup.
+    std::map<char, std::vector<Arc>> by_const;
+    for (const auto& o : sta_obs) {
+        if (o.satellite.empty()) continue;
+        const char cons = o.satellite.front();
+        char b1 = 0, b2 = 0;
+        double fb1 = 0.0, fb2 = 0.0;
+        if (!bandsFor(cons, b1, b2, fb1, fb2)) continue;
+        ++ctr.sat_seen;
+
+        const auto c1it = cand.find({ o.satellite, b1 });
+        const auto c2it = cand.find({ o.satellite, b2 });
+        if (c1it == cand.end() || c2it == cand.end()) {
+            ++ctr.skip_missing_amb_col;
+            tr("NO_AMB_COL", o.satellite, {}, {}, {}, {}, {}, 0, 0, false,
+               0.0, 0.0, 0.0, 0.0, 0.0);
+            continue;
+        }
+        // First candidate pair with a MATURE arc wins; remember the best near-miss so
+        // the skip is attributed to a CAUSE (never formed / young / unreconstructable)
+        // rather than lumped into one uninformative tally.
+        MwSlipDetector::MwArcZdMean zd;                 // the winner
+        std::string sig1, sig2;
+        int col1 = -1, col2 = -1, sidx1 = -1, sidx2 = -1;
+        std::size_t n_cand = 0, best_n = 0;
+        bool any_exists = false, any_recon_fail = false;
+        std::string near_s1, near_s2;
+        // Increment 2b: the published integer, if any, for this (station, satellite).
+        // Looked up but NOT allowed to influence the channel search below.  An earlier
+        // version tried the decision's pair FIRST, on the reasoning that the row must
+        // fold on the pair the integer was decided on — true, but it made the integer
+        // path able to change which pair the FLOAT path elects, and therefore to change
+        // the solve even when no integer is ultimately folded.  Measured: the `inert`
+        // A/B arm (fix armed, FFR gate set unreachable) differed from the float arm on 17
+        // artifacts.  The dependency runs the other way now — the row elects its pair
+        // exactly as increment 1 does, and the fix is used only if it was decided on THAT
+        // pair (else `fix_pair_mismatch`, measured 0, because 2a searches the same
+        // candidates in the same ascending order).
+        const SdEwlFix* my_fix = nullptr;
+        if (fix_on) {
+            const auto git = fix->find({ station_index, cons });
+            if (git != fix->end()) {
+                const auto sit = git->second.find(o.satellite);
+                if (sit != git->second.end() && sit->second.usable)
+                    my_fix = &sit->second;
+            }
+        }
+        for (const auto& [s1, k1, i1] : c1it->second) {
+            for (const auto& [s2, k2, i2] : c2it->second) {
+                ++n_cand;
+                if (!sig1.empty()) continue;            // already decided; just count
+                const auto q = st.mw_slip->arcZdMean(o.satellite, s1, s2);
+                if (!q.exists) continue;                // this pair was never formed
+                any_exists = true;
+                // arcZdMean reports !valid for TWO different reasons — under two
+                // lagged samples, and an SD arc whose group MW pivot arc is missing.
+                // Only the latter is a frame-reconstruction failure; conflating them
+                // reports a warm-up epoch as a datum defect.
+                if (!q.valid && q.count >= 2) any_recon_fail = true;
+                if (q.count > best_n) { best_n = q.count; near_s1 = s1; near_s2 = s2; }
+                if (q.valid && q.count >= static_cast<std::size_t>(cfg.min_arc_epochs)) {
+                    zd = q; sig1 = s1; sig2 = s2;
+                    col1 = k1; col2 = k2; sidx1 = i1; sidx2 = i2;
+                }
+            }
+        }
+        if (sig1.empty()) {
+            // Ordered most- to least-specific: a pair that exists but cannot be framed
+            // is a DIFFERENT defect from one that is merely young, and both are
+            // different from a pair the detector never built at all.
+            const char* why = !any_exists      ? "NO_ARC"
+                            : any_recon_fail   ? "FRAME_RECON"
+                                               : "IMMATURE";
+            if (!any_exists)          ++ctr.skip_no_arc;
+            else if (any_recon_fail)  ++ctr.skip_frame_recon;
+            else                      ++ctr.skip_immature;
+            tr(why, o.satellite, {}, near_s1, near_s2, {}, {}, n_cand, best_n,
+               false, 0.0, 0.0, 0.0, 0.0, 0.0);
+            continue;
+        }
+        const double f1 = fb1, f2 = fb2;
+        // λ cross-check: the detector's own λ_WL comes from the ACTUAL signal
+        // frequencies, so a disagreement with the tier's nominal c/(f1−f2) means the
+        // elected pair is not the tier this row's coefficients assume (a mis-tiered
+        // row would fold a wrong-wavelength constraint silently).
+        const double lam_nom = Constants::SPEED_OF_LIGHT / (f1 - f2);
+        if (!(f1 > 0.0) || !(f2 > 0.0) || std::abs(f1 - f2) < 1.0
+            || !(zd.lambda_wl > 0.0) || !std::isfinite(zd.lambda_wl)
+            || std::abs(zd.lambda_wl - lam_nom) > 1e-6 * std::abs(lam_nom)) {
+            ++ctr.skip_bad_lambda;
+            tr("BAD_LAMBDA", o.satellite, {}, sig1, sig2, zd.code1, zd.code2, n_cand,
+               zd.count, zd.bia_corrected, zd.lambda_wl, zd.mean_m, 0.0, 0.0, 0.0);
+            continue;
+        }
+        // The satellite CODE-BIAS columns must be the ones the MW observable actually
+        // carries.  The arc serves its own code channels (matchChannel's same-attribute
+        // pick, with an in-band fallback), so no guessing: without them the OSB
+        // attribution would be an assumption, and a wrong OSB column is undetectable
+        // downstream.
+        if (zd.code1.empty() || zd.code2.empty()) {
+            ++ctr.skip_missing_code;
+            tr("NO_CODE", o.satellite, {}, sig1, sig2, zd.code1, zd.code2, n_cand,
+               zd.count, zd.bia_corrected, zd.lambda_wl, zd.mean_m, 0.0, 0.0, 0.0);
+            continue;
+        }
+        Arc a;
+        a.sat = o.satellite;
+        a.mean_m = zd.mean_m;
+        // Increment 2b: attach the published integer ONLY if the arc the search settled
+        // on is the pair the integer was decided on.  A mismatch is not an error — the
+        // decision runs before assembly and does not know which pairs will have local
+        // columns this epoch — but folding across it would silently substitute one bias
+        // frame's integer into another's row, so it is counted and the arc goes float.
+        if (my_fix) {
+            if (sig1 == my_fix->sig1 && sig2 == my_fix->sig2) {
+                a.has_fix = true;
+                a.n_fix_cyc = my_fix->n_cyc;
+                a.fix_measured = my_fix->measured;
+            } else {
+                ++ctr.fix_pair_mismatch;
+            }
+        }
+        // arcZdMean serves a VARIANCE OF THE MEAN (~1/n); floor it so a long quiet arc
+        // cannot dominate the shared border with an unphysically tight row.  A FIXED row
+        // takes the per-SAMPLE floor instead (amendment A1): the accumulator is
+        // arc-cumulative, so consecutive-epoch rows share n−1 of n samples and refolding
+        // a variance-of-mean as white every epoch over-claims information as sqrt(k) —
+        // and the over-claim grows exactly as the fixed-row residuals fall to code-noise
+        // scale.  Folding the current mean at per-sample weight accretes ~1 sample of
+        // information per epoch instead, which is asymptotically honest.
+        a.var_m2 = a.has_fix
+                       ? std::max(zd.var_of_mean_m2,
+                                  cfg.fix_sigma_floor_m * cfg.fix_sigma_floor_m)
+                       : std::max(zd.var_of_mean_m2,
+                                  cfg.sigma_floor_m * cfg.sigma_floor_m);
+        a.count = zd.count;
+        a.bia = zd.bia_corrected;
+        a.lam_ewl = zd.lambda_wl;
+        a.lam_b1 = Constants::SPEED_OF_LIGHT / f1;
+        a.lam_b2 = Constants::SPEED_OF_LIGHT / f2;
+        a.f1 = f1;
+        a.f2 = f2;
+        a.amb_col_b1 = col1;
+        a.amb_col_b2 = col2;
+        // NON-THROWING shared lookups: phaseBiasColumn / codeBiasColumn are `index_.at()`
+        // and THROW when the key is unregistered.  Bare calls here would escape into the
+        // parallel produce loop's catch and silently drop the WHOLE station's block
+        // (losing its good phase rows) for a merely absent bias column.
+        const auto pbCol = [&est, &o](const std::string& sig) -> Eigen::Index {
+            try { return est.phaseBiasColumn(o.satellite, sig); }
+            catch (...) { return -1; }
+        };
+        const auto cbCol = [&est, &o](const std::string& code) -> Eigen::Index {
+            try { return est.codeBiasColumn(o.satellite, code); }
+            catch (...) { return -1; }
+        };
+        a.pb_b1 = pbCol(sig1);
+        a.pb_b2 = pbCol(sig2);
+        a.cb_b1 = cbCol(zd.code1);
+        a.cb_b2 = cbCol(zd.code2);
+        if (a.pb_b1 < 0 || a.pb_b2 < 0 || a.cb_b1 < 0 || a.cb_b2 < 0) {
+            ++ctr.skip_missing_shared_col;
+            tr("NO_SHARED_COL", o.satellite, {}, sig1, sig2, zd.code1, zd.code2,
+               n_cand, zd.count, a.bia, a.lam_ewl, a.mean_m, 0.0, 0.0, 0.0);
+            continue;
+        }
+        // This arc's half of H·x_lin, with EXACTLY the coefficients the row folds below
+        // (kept in one place so design and frame cannot drift apart).  Split into its
+        // ambiguity and bias halves so the FIXED row, whose design drops the ambiguity
+        // columns, can drop the matching linearization terms in the same breath.
+        a.pred_amb_m = (a.lam_ewl / a.lam_b1) * xAt(sidx1)
+                     - (a.lam_ewl / a.lam_b2) * xAt(sidx2);
+        a.pred_bias_m = (f1 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig1))
+                      - (f2 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig2))
+                      - (f1 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code1))
+                      - (f2 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code2));
+        a.pred_m = a.pred_amb_m + a.pred_bias_m;
+        a.sig1 = sig1;
+        a.sig2 = sig2;
+        a.code1 = zd.code1;
+        a.code2 = zd.code2;
+        a.n_cand = n_cand;
+        by_const[cons].push_back(std::move(a));
+    }
+
+    // --- Build the rows. --------------------------------------------------------------
+    // Increment 1: ONE whitened group per constellation.  Increment 2b: TWO — the arcs
+    // whose integer is FIXED and the rest — because a group cannot be mixed.  R is
+    // whitened by a dense L^-1, which would re-populate a fixed row's deliberately
+    // zeroed local ambiguity columns out of its float siblings; and the pivot arc's
+    // ambiguity columns appear in EVERY row of a group, so one mixed group would
+    // simultaneously REMOVE and ESTIMATE the pivot ambiguity.  Splitting keeps both
+    // halves exact and makes "a fixed row carries no local coefficients" true of the
+    // whitened block, not just of H.  With the integer path off there is exactly one
+    // group holding every arc, so the float behaviour is unchanged.
+    const auto emitGroup = [&](const std::vector<const Arc*>& g, bool fixed_group) {
+        if (g.size() < 2) {
+            ++ctr.skip_no_pivot;
+            for (const Arc* a : g)
+                tr2("NO_PIVOT", a->sat, {}, a->sig1, a->sig2, a->code1, a->code2,
+                    a->n_cand, a->count, a->bia, a->lam_ewl, a->mean_m, a->pred_m,
+                    0.0, 0.0, a->n_fix_cyc, false, fixed_group);
+            return;
+        }
+        const Arc& p = *g.front();
+        tr2("PIVOT", p.sat, p.sat, p.sig1, p.sig2, p.code1, p.code2, p.n_cand, p.count,
+            p.bia, p.lam_ewl, p.mean_m, p.pred_m, 0.0, std::sqrt(p.var_m2),
+            p.n_fix_cyc, false, fixed_group);
+
+        struct Row { const Arc* s; double z; double var; };
+        std::vector<Row> rows;
+        for (std::size_t k = 1; k < g.size(); ++k) {
+            const Arc& s = *g[k];
+            // Satellite-bias cancellation needs ONE frame across the difference — the
+            // same rule NetworkMwWlLayer applies per cycle (skip_mixed_frame).
+            if (s.bia != p.bia) {
+                ++ctr.skip_mixed_frame;
+                tr2("MIXED_FRAME", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2,
+                    s.n_cand, s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m, 0.0, 0.0,
+                    s.n_fix_cyc, false, fixed_group);
+                continue;
+            }
+            // CORRECTION FRAME: y = z_SD − H·x_lin, with H·x_lin = pred(s) − pred(p)
+            // (the row's H is exactly the s-terms minus the p-terms).  The raw SD
+            // difference is hundreds of metres; this residual is the only thing the
+            // station's block can legally be handed.
+            //
+            // FIXED row (increment 2b): the integer leaves the RHS and the ambiguity
+            // columns leave H, so H·x_lin must lose exactly its ambiguity half — a row
+            // whose design changed and whose linearization point did not is folded in a
+            // MIXED frame.  Both edits are here, in one expression, for that reason.
+            const double z =
+                fixed_group
+                    ? (s.mean_m - p.mean_m)
+                          - p.lam_ewl * static_cast<double>(s.n_fix_cyc - p.n_fix_cyc)
+                          - (s.pred_bias_m - p.pred_bias_m)
+                    : (s.mean_m - p.mean_m) - (s.pred_m - p.pred_m);
+            // The limit gates the CORRECTION-frame residual, which is the quantity the
+            // cold-clock x_lin pathology inflates (a 256 km x_lin makes pred absurd
+            // while the raw statistic looks ordinary).
+            if (cfg.max_abs_z_m > 0.0 && std::abs(z) > cfg.max_abs_z_m) {
+                ++ctr.skip_big_z;
+                tr2("BIG_Z", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2, s.n_cand,
+                    s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m, z, 0.0,
+                    s.n_fix_cyc, false, fixed_group);
+                continue;
+            }
+            if (!std::isfinite(z)) {   // never poison u_r with a non-finite RHS
+                ++ctr.skip_bad_lambda;
+                tr2("BAD_LAMBDA", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2,
+                    s.n_cand, s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m, z, 0.0,
+                    s.n_fix_cyc, false, fixed_group);
+                continue;
+            }
+            rows.push_back(Row{ &s, z, s.var_m2 });
+        }
+        if (rows.empty()) return;
+        if (cfg.max_rows_per_station > 0
+            && rows.size() > static_cast<std::size_t>(cfg.max_rows_per_station)) {
+            std::stable_sort(rows.begin(), rows.end(),
+                             [](const Row& a, const Row& b) { return a.var < b.var; });
+            const std::size_t keep = static_cast<std::size_t>(cfg.max_rows_per_station);
+            ctr.rows_capped += static_cast<long long>(rows.size() - keep);
+            for (std::size_t k = keep; k < rows.size(); ++k) {
+                const Arc& s = *rows[k].s;
+                tr2("CAPPED", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2, s.n_cand,
+                    s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m, rows[k].z,
+                    std::sqrt(rows[k].var), s.n_fix_cyc, false, fixed_group);
+            }
+            rows.resize(keep);
+        }
+
+        const int mc = static_cast<int>(rows.size());
+        const Eigen::Index m0 = A_s.rows();
+        const Eigen::Index ncol_s = A_s.cols();
+        const Eigen::Index ncol_r = A_r.cols();
+        A_s.conservativeResize(m0 + mc, Eigen::NoChange);
+        A_s.bottomRows(mc).setZero();
+        A_r.conservativeResize(m0 + mc, Eigen::NoChange);
+        A_r.bottomRows(mc).setZero();
+        w.conservativeResize(m0 + mc);
+        y.conservativeResize(m0 + mc);
+
+        // Every row shares the pivot arc's noise => R = diag(var_s) + var_p * 11^T,
+        // structurally the GIM common-mode R.
+        Eigen::MatrixXd R = Eigen::MatrixXd::Constant(mc, mc, p.var_m2);
+        Eigen::MatrixXd Hr = Eigen::MatrixXd::Zero(mc, ncol_r);
+        Eigen::MatrixXd Hs = Eigen::MatrixXd::Zero(mc, ncol_s);
+        Eigen::VectorXd zc(mc);
+        for (int k = 0; k < mc; ++k) {
+            const Arc& s = *rows[static_cast<std::size_t>(k)].s;
+            R(k, k) += rows[static_cast<std::size_t>(k)].var;
+            zc(k) = rows[static_cast<std::size_t>(k)].z;
+            ctr.sum_var_m2 += R(k, k);
+            // Local: lambda_EWL * (amb_b1/lambda_b1 - amb_b2/lambda_b2), s minus p.
+            // A FIXED row has NONE of these: the local degree of freedom is REMOVED
+            // (rank reduction), not constrained with a tight weight — a tight prior on
+            // a gauge-adjacent local column is a stiff prior, and the whole point of
+            // increment 2 is to stop the local nuisance absorbing the row's information
+            // so the shared satellite bias receives it.
+            if (!fixed_group) {
+                Hr(k, s.amb_col_b1) += s.lam_ewl / s.lam_b1;
+                Hr(k, s.amb_col_b2) -= s.lam_ewl / s.lam_b2;
+                Hr(k, p.amb_col_b1) -= p.lam_ewl / p.lam_b1;
+                Hr(k, p.amb_col_b2) += p.lam_ewl / p.lam_b2;
+            }
+            // Shared: MW = phi_WL - P_NL, and the satellite code bias enters the
+            // pseudorange with +, hence the negative CB coefficients.
+            const double wl_s1 = s.f1 / (s.f1 - s.f2), wl_s2 = -s.f2 / (s.f1 - s.f2);
+            const double nl_s1 = -s.f1 / (s.f1 + s.f2), nl_s2 = -s.f2 / (s.f1 + s.f2);
+            const double wl_p1 = p.f1 / (p.f1 - p.f2), wl_p2 = -p.f2 / (p.f1 - p.f2);
+            const double nl_p1 = -p.f1 / (p.f1 + p.f2), nl_p2 = -p.f2 / (p.f1 + p.f2);
+            Hs(k, s.pb_b1) += wl_s1;  Hs(k, s.pb_b2) += wl_s2;
+            Hs(k, s.cb_b1) += nl_s1;  Hs(k, s.cb_b2) += nl_s2;
+            Hs(k, p.pb_b1) -= wl_p1;  Hs(k, p.pb_b2) -= wl_p2;
+            Hs(k, p.cb_b1) -= nl_p1;  Hs(k, p.cb_b2) -= nl_p2;
+        }
+        // Whiten by L^-1 (LL^T = R) into unit-information rows, so the block contributes
+        // exactly H^T R^-1 H / H^T R^-1 z and stays in the diagonal-weight path.
+        const Eigen::LLT<Eigen::MatrixXd> llt(R);
+        if (llt.info() != Eigen::Success) {
+            // UNWIND the append.  conservativeResize leaves the new w/y entries
+            // UNINITIALIZED; leaving them behind — even against all-zero design rows —
+            // risks 0·NaN = NaN poisoning N_rr/u_r, so the rows must go, not just be
+            // zeroed.  (Cannot happen for a positive-variance R; belt-and-suspenders.)
+            A_s.conservativeResize(m0, Eigen::NoChange);
+            A_r.conservativeResize(m0, Eigen::NoChange);
+            w.conservativeResize(m0);
+            y.conservativeResize(m0);
+            ctr.skip_bad_lambda += mc;
+            return;
+        }
+        A_r.middleRows(m0, mc) = llt.matrixL().solve(Hr);
+        A_s.middleRows(m0, mc) = llt.matrixL().solve(Hs);
+        y.segment(m0, mc) = llt.matrixL().solve(zc);
+        w.segment(m0, mc).setOnes();
+        ctr.rows_built += mc;
+        if (fixed_group) { ctr.rows_fixed += mc; ++ctr.groups_fixed; }
+        else             { ctr.rows_float += mc; }
+        for (int k = 0; k < mc; ++k) {
+            const Arc& s = *rows[static_cast<std::size_t>(k)].s;
+            tr2("BUILT", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2, s.n_cand,
+                s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m,
+                rows[static_cast<std::size_t>(k)].z, std::sqrt(R(k, k)),
+                s.n_fix_cyc - p.n_fix_cyc, fixed_group, fixed_group);
+        }
+    };
+
+    for (auto& [cons, arcs] : by_const) {
+        // Pivot election: most mature arc, tie-break ASCENDING satellite name.  Must be
+        // deterministic or the row set (and hence byte-identity) drifts run to run.
+        // Sorted ONCE over the whole constellation, so each partition inherits the same
+        // ordering and elects its own most-mature member as its pivot.
+        std::sort(arcs.begin(), arcs.end(), [](const Arc& a, const Arc& b) {
+            if (a.count != b.count) return a.count > b.count;
+            return a.sat < b.sat;
+        });
+        if (!fix_on) {
+            std::vector<const Arc*> all;
+            all.reserve(arcs.size());
+            for (const Arc& a : arcs) all.push_back(&a);
+            emitGroup(all, false);
+            continue;
+        }
+        std::vector<const Arc*> fixed_g, float_g;
+        for (const Arc& a : arcs) (a.has_fix ? fixed_g : float_g).push_back(&a);
+        // A fixed group needs at least one MEASURED integer.  Datum-valued integers (the
+        // component reference station's own satellites, each station's link satellite, a
+        // satellite framed on first sighting) carry no rounding decision, so no gate can
+        // reject them — a group built only from those would assert a hard constraint with
+        // ZERO integer information while still removing a real local degree of freedom,
+        // and it would make the whole feature impossible to disarm through its own gates.
+        // Measured: without this test the S2 `inert` arm (fix armed, FFR gate set
+        // unreachable) still differed from the float arm on 17 artifacts.  A MIXED group
+        // is correct and wanted — the datum value is the reference the measurement is
+        // relative to.
+        if (!fixed_g.empty()
+            && std::none_of(fixed_g.begin(), fixed_g.end(),
+                            [](const Arc* a) { return a->fix_measured; })) {
+            ctr.fix_datum_only += static_cast<long long>(fixed_g.size());
+            float_g.insert(float_g.end(), fixed_g.begin(), fixed_g.end());
+            std::stable_sort(float_g.begin(), float_g.end(),
+                             [](const Arc* a, const Arc* b) {
+                                 if (a->count != b->count) return a->count > b->count;
+                                 return a->sat < b->sat;
+                             });
+            fixed_g.clear();
+        }
+        // A single fixed arc cannot form a group of its own (there is nothing to
+        // difference against), and demoting it to the float group would be honest but
+        // would silently change which arc is the float pivot between the ON and OFF legs
+        // of an A/B.  Counting it as an unusable fix keeps the partition a pure function
+        // of the published integers.
+        if (fixed_g.size() == 1) {
+            ++ctr.fix_lone_arc;
+            float_g.insert(float_g.begin(), fixed_g.front());
+            std::sort(float_g.begin(), float_g.end(),
+                      [](const Arc* a, const Arc* b) {
+                          if (a->count != b->count) return a->count > b->count;
+                          return a->sat < b->sat;
+                      });
+            fixed_g.clear();
+        }
+        emitGroup(fixed_g, true);
+        emitGroup(float_g, false);
+    }
+}
+
 void Application::networkAppendGimIonoRows_(NetStation& st,
                                             const std::vector<PppObservation>& sta_obs,
                                             const std::map<int, int>& h2local,
@@ -1102,8 +1684,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                        NetworkRunTraces& traces,
                                        NetworkEstimator& est,
                                        const NetworkIonoDeweightGate& iono_deweight,
-                                       double sh_dev_tau, bool sh_dev_on,
+                                       double sh_dev_tau, bool sh_dev_on, bool sh_dev_demean,
+                                       bool sh_dev_d5_keep,
                                        const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                                       const std::set<std::pair<int, std::string>>& carry_slipped_raw,
                                        bool carry_warm, double pl_now_s,
                                        std::vector<std::vector<PppObservation>>& modeled,
                                        std::vector<bool>& present,
@@ -1198,6 +1782,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // deviation never constrains a post-slip row.
     if (sh_dev_on) {
         std::set<std::string> slipped_los;   // "STATION|SAT" projection of the funnel
+        std::set<std::string> raw_los;       // v3k: the RAW-detector-confirmed subset
         for (const auto& sk : carry_slipped_ambs) {
             if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
             const auto parts = StateKeys::parseAmbiguityKey(sk.second);
@@ -1205,14 +1790,39 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             slipped_los.insert(stations[static_cast<std::size_t>(sk.first)].name
                                + "|" + parts->satellite);
         }
+        if (sh_dev_d5_keep) {
+            for (const auto& sk : carry_slipped_raw) {
+                if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
+                const auto parts = StateKeys::parseAmbiguityKey(sk.second);
+                if (!parts) continue;
+                raw_los.insert(stations[static_cast<std::size_t>(sk.first)].name
+                               + "|" + parts->satellite);
+            }
+        }
         const double now_s = se.time.week * 604800.0 + se.time.tow;
         for (auto it = sh_dev_carry.begin(); it != sh_dev_carry.end();) {
             ShDevCarry& dc = it->second;
             const double dt = now_s - dc.t_s;
             if (!slipped_los.empty() && slipped_los.count(it->first)) {
-                ++ctx.carry.shdev_slip_resets_total;
-                it = sh_dev_carry.erase(it);
-                continue;
+                // v3k erase-policy split (SPEC_iono2_mechB_v3 addendum): a
+                // RAW-confirmed slip (MW/LLI/IF-TD this epoch) aliases n·λ into
+                // the GF iono — the pre-slip deviation is poison, ERASE
+                // (invariant #1, unchanged).  A D5-ONLY re-tap (97 % have no
+                // raw observable step) is iono tension the deviation exists to
+                // ABSORB: keep the accumulated level, re-tap the confidence to
+                // steady state (weak prior — a genuinely missed fine slip gets
+                // re-estimated away within a few harvests instead of being
+                // carried stiffly).  The v3 de-mean drains any common mode of
+                // the kept levels, so the keep cannot re-open the ratchet.
+                if (!sh_dev_d5_keep || raw_los.count(it->first)) {
+                    ++ctx.carry.shdev_slip_resets_total;
+                    it = sh_dev_carry.erase(it);
+                    continue;
+                }
+                shDevD5Retap(dc);
+                ++ctx.carry.shdev_d5_keeps_total;
+                // falls through to staleness + GM aging (retap is idempotent
+                // under the aging step: λ²σ_ss² + (1−λ²)σ_ss² = σ_ss²).
             }
             if (dc.t_s <= 0.0 || dt > 5.0 * sh_dev_tau) {
                 it = sh_dev_carry.erase(it);
@@ -1224,6 +1834,24 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 dc.var  = lam * lam * dc.var + dc.var_ss * (1.0 - lam * lam);
             }
             ++it;
+        }
+        // Iono-2 v3 anti-ratchet (docs/SPEC_iono2_mechB_v3.md): remove the
+        // information-weighted global + per-station means from the carried
+        // priors.  A common vertical-TECU deviation shares the a00 column's
+        // exact row signature (M(el)·tecu_to_m), so the pair is quasi-null and
+        // the harvest→age→re-assert alternation ratchets it (measured a00
+        // 25 → 104 TECU/3 h carry-alone, 207–255 with the dual layer).  The
+        // common component belongs to a00 / the receiver DCB, which each
+        // epoch's data re-derives; the carry must not re-assert it as an
+        // independent prior.  Same serial context as the aging above.
+        // Thresholds 30/4 per the spec (constants, not knobs).
+        if (sh_dev_demean) {
+            const ShDevDemeanStats ds = shDevDemean(sh_dev_carry, 30, 4);
+            if (ds.applied) {
+                ++ctx.carry.shdev_demean_epochs_total;
+                ctx.carry.shdev_demean_sta_total += ds.n_sta;
+                ctx.carry.shdev_demean_abs_g_sum += std::abs(ds.g_tecu);
+            }
         }
     }
 
@@ -1496,6 +2124,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 networkAppendGimIonoRows_(st, modeled[i], h2local, se.time,
                                           R.A_s, R.A_r, R.w, R.y);
 
+            // --- SD PRE-REDUCE EWL constraint (docs/SPEC_sd_ewl_prereduce.md) --------
+            // Appended AFTER the iono rows and BEFORE the block reaches
+            // addStationObservations, so it folds into N_rr/N_sr/N_ss pre-reduce and
+            // composes EXACTLY with the post-reduce Card-4 DD fold.  Default OFF =>
+            // returns immediately => byte-identical.
+            if (config_.getNetworkConfig().sd_ewl.enable)
+                networkAppendSdEwlRows_(st, est, modeled[i], h2local, se.time,
+                                        R.A_s, R.A_r, R.w, R.y, R.sd_ewl_trace,
+                                        &ctx.carry.sd_ewl_fix, i);
+
             // --- Phase-leveling carry: record present ambiguities + build the
             //     diagonal carried prior (Increment 1) ----------------------
             // For every present NON-pivot ambiguity: record it for the
@@ -1657,6 +2295,18 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             se.time.tow, log,
                             n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
                             n_cpl_row_dump);
+
+    // SD pre-reduce EWL trace drain (SERIAL, post-produce — SPEC_sd_ewl_prereduce §6).
+    // The rows were formatted per station inside the parallel produce; writing them
+    // here in station index order makes the file thread-count independent.  Flushed
+    // per epoch: this stream exists to diagnose runs that get killed mid-flight, and
+    // an unflushed tail is exactly the evidence that would be missing.
+    if (config_.getNetworkConfig().sd_ewl.trace && traces.sd_ewl_trace) {
+        for (size_t i = 0; i < asm_res.size(); ++i)
+            for (const std::string& row : asm_res[i].sd_ewl_trace)
+                traces.sd_ewl_trace << row;
+        traces.sd_ewl_trace.flush();
+    }
 
     // Serial consume: scatter each station's block into the shared arrowhead
     // in deterministic station order, preserving the exact pivot-aborts-epoch

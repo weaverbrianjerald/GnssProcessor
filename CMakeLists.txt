@@ -170,6 +170,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkEmitStore.cpp
     src/core/filter/NetworkIonoDiag.cpp
     src/core/filter/NetworkDdFrac.cpp
+    src/core/filter/NetworkSdEwlAr.cpp
     src/core/filter/NetworkShDevVtec.cpp
     src/core/filter/NetworkShHealth.cpp
     src/core/filter/NetworkLeveling.cpp
@@ -180,6 +181,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkMwWlGlue.cpp
     src/core/filter/NetworkSolveGlue.cpp
     src/core/filter/NetworkRelevel.cpp
+    src/core/filter/NetworkFastClock.cpp
     src/core/filter/NetworkTeardown.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkBiasAdmission.cpp
@@ -305,13 +307,18 @@ add_executable(gnss_tests
     tests/test_network_phase_datum.cpp
     tests/test_network_bias_admission.cpp
     tests/test_network_rank_gate.cpp
+    tests/test_network_fast_clock.cpp
+    tests/test_network_run_traces.cpp
     tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
+    tests/test_network_process_noise_config.cpp
     tests/test_config_extends.cpp
+    tests/test_sd_ewl_prereduce.cpp
+    tests/test_sd_ewl_integer.cpp
     tests/test_ssr_store_injection.cpp
     tests/test_realtime_seams.cpp
     tests/test_transforms.cpp
@@ -334,6 +341,7 @@ add_executable(gnss_tests
     tests/test_neq_accumulator.cpp
     tests/test_station_info.cpp
     tests/test_antenna_radome_fallback.cpp
+    tests/test_antenna_eccentricity.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

@@ -58,6 +58,27 @@ struct AmbiguityResolverConfig {
     double hold_variance{ 0.001 };     ///< Pseudo-observation variance for fix-and-hold (m^2).
     int    ar_mode{ 0 };               ///< 0: float-only, 1: continuous, 2: instantaneous, 3: fix-and-hold.
     int    min_epochs{ 10 };           ///< Convergence guard: skip AR for the first N invocations.
+    /**
+     * @brief Per-candidate maturity gate: minimum accumulated @f$\Sigma\sin^2(el)@f$
+     *        on BOTH constituent arcs before a candidate may enter the search.
+     *
+     * @c min_epochs is a GLOBAL filter-epoch counter and does not gate individual
+     * candidates, so a satellite that rose one minute ago is searched alongside
+     * one tracked for four hours.  Measured on a 24 h ALGO run: the worst NL
+     * direction is the youngest arc in 85.5% of epochs, and the full-set ratio
+     * test consequently fails 98% of the time — one immature candidate spoils
+     * the set.
+     *
+     * Units are epoch-equivalents at zenith (an epoch at 30 deg contributes
+     * 0.25).  0 (default) disables the gate and is byte-identical to the
+     * pre-gate behaviour.
+     *
+     * @warning This gate makes AR SAFE, not USEFUL.  It admits candidates only
+     * once they are already well determined, which is precisely when the float
+     * needs no help — see the caveat in @ref AmbiguityResolver.  It is a
+     * wrong-fix guard, not a convergence accelerator.
+     */
+    double min_arc_info{ 0.0 };
     double max_position_sigma_m{ 0.05 };  ///< Convergence guard: skip AR when 3D position σ exceeds this (m).
     double ratio_upper_bound{ 1e4 };   ///< Reject fixes whose ratio exceeds this (degenerate covariance).
     bool   wl_only{ false };           ///< If true, AR only applies MW-resolved WL integers as Kalman pseudo-observations; no LAMBDA NL search.
@@ -352,6 +373,54 @@ private:
     LogManager& log_manager_;
     PppUtils ppp_utils_;   ///< For frequency/wavelength lookups in NL computation.
     int      epoch_count_{ 0 };  ///< Counts resolve()/resolveDd() invocations for the min-epochs convergence gate.
+
+    /**
+     * @brief Per-arc maturity for an ambiguity key (@c "SAT|SIGNAL").
+     *
+     * Nothing else in the tree tracks this — @c StateManager registers
+     * ambiguities by (satellite, signal) with no birth epoch, and the MW
+     * detector's arc state is per-(satellite, channel-pair) and private to the
+     * slip layer.
+     *
+     * @c epochs is the raw age.  @c info is the load-bearing one: an
+     * ambiguity's precision is set by ACCUMULATED CODE INFORMATION, and under
+     * the elevation stochastic model each epoch contributes weight
+     * @f$\sin^2(\mathrm{el})@f$.  Two arcs of equal age are NOT equally mature —
+     * one climbing from the mask and one sitting at zenith differ by ~5x per
+     * epoch.  Measured: the hold-free log-log slope of sigma vs raw AGE is
+     * -0.816 rather than the -0.5 of white-noise averaging, and an
+     * elevation-weighted limb (@f$\Sigma \propto N^{1.4-1.5}@f$) predicts
+     * about -0.7 of that gap.  So @c info is the right maturity axis and
+     * @c epochs is only a proxy.
+     */
+    struct ArcState {
+        int    epochs{ 0 };   ///< Consecutive epochs since arc birth / last refloat.
+        double info{ 0.0 };   ///< Sum of sin^2(elevation) over those epochs.
+    };
+
+    /// Per-ambiguity-key arc maturity, maintained by @ref refreshArcAges_.
+    std::map<std::string, ArcState> arcs_;
+
+    /**
+     * @brief Bump/expire @ref arcs_ against the state vector.  Call ONCE per
+     *        epoch, before any candidate is built.
+     *
+     * Two ways an arc ends, and BOTH must reset the counter:
+     *   - the key leaves the state vector (set-out / prune) — detected by absence;
+     *   - the key is REFLOATED IN PLACE by @c StateManager::resetAmbiguity, which
+     *     zeroes the covariance row/col and re-inflates the variance but KEEPS
+     *     the key (StateManager.cpp:1150-1160).  Presence-counting alone misses
+     *     this and logs a freshly refloated arc as fully mature — the defect this
+     *     signature exists to close.  @c isAmbiguityPendingReseed is the marker.
+     */
+    void refreshArcAges_(const StateManager& state_manager,
+                         const std::vector<PppObservation>& observations);
+
+    /// Arc age (epochs) of @c "SAT|SIGNAL"; 0 if unknown.
+    int arcAgeOf_(const std::string& sat, const std::string& signal) const;
+
+    /// Accumulated sin^2(el) information of @c "SAT|SIGNAL"; 0 if unknown.
+    double arcInfoOf_(const std::string& sat, const std::string& signal) const;
     /// Last DD WL integer applied per (sat_i, sat_ref, sig_hi, sig_lo) key,
     /// used by resolveWlOnly to detect when MW has re-locked at a different
     /// integer and the L1/L2 SD ambiguity covariance must be inflated so

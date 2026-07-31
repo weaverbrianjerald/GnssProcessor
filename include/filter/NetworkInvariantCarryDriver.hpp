@@ -104,6 +104,41 @@ public:
         double innov_k{4.0};            ///< D5 per-chord standardized flag threshold |v_i|/√Cov(v)_ii; a flagged chord is re-tapped fresh. INERT unless @c innov_gate.
         bool   innov_calibrate{false};  ///< D5 v2: standardize by the LS-VCE-estimated EMPIRICAL innovation variance σ̂₀² (robust geo-mean of the standardized innovations), not the raw formal Cov(v) — makes @c innov_k a true Nσ gate (the formal Cov(v) is 10-30× optimistic). OFF = raw formal (v1). INERT unless @c innov_gate.
         double innov_calibrate_window{60.0};  ///< D5 v2: exponential-forgetting half-life (epochs) of the σ̂₀² accumulator. INERT unless @c innov_calibrate.
+        /**
+         * @brief D5 v3: require RAW-OBSERVABLE corroboration before a flagged chord is re-tapped.
+         *
+         * Measured 2026-07-30 (`runs/rawstep_smoke`): only **2.1 %** of D5 resets coincide with
+         * a raw MW/GF step, against **95 %** on the same run's Card-G arc resumptions (known
+         * real discontinuities) — so the gate is firing on a persistent model-vs-data
+         * disagreement, not on slips, and re-tapping continuous arcs indefinitely (97.4 % of
+         * inter-reset gaps are 1 epoch).  With this armed, a flagged chord is re-tapped ONLY
+         * unless the raw observables positively say its arc was continuous.
+         *
+         * FAIL-SAFE BY CONSTRUCTION — suppression requires POSITIVE evidence of continuity.
+         * The raw-step tag is tri-state and only the measured-and-flat state suppresses:
+         *   - stepped            ⇒ re-tap (a real discontinuity)
+         *   - measured and flat  ⇒ SUPPRESS (the arc did not step; the innovation is model error)
+         *   - no evidence at all ⇒ re-tap (arc start / gap / single-band / unresolved key)
+         * Absence of evidence is never evidence of absence, so standing invariant #1's slip
+         * response is narrowed, never removed: the coarse layer (MW/LLI/IF-TD) is untouched and
+         * D5 still fires on every corroborated chord.
+         *
+         * Fed per epoch via @ref setInnovFlatChords; INERT unless @c innov_gate, and inert
+         * (empty flat set ⇒ nothing suppressed) unless a slip-QC consumer computed the raw
+         * observables that epoch.  OFF = byte-identical to D5 v2.
+         */
+        bool   innov_corroborate{false};
+        /**
+         * @brief Optional magnitude backstop for @c innov_corroborate, in multiples of the gate
+         *        threshold — re-tap regardless of corroboration when |v_i|/√Cov(v)_ii exceeds
+         *        this × (@c innov_k · σ̂₀).  0 (default) = inert, pure corroboration.
+         *
+         * Deliberately defaulted OFF: corroboration does NOT improve with innovation size — it
+         * measured 2.1 % below 25σ but 0.0 % at 100-200σ and 1.2 % above 200σ — so a magnitude
+         * backstop re-admits exactly the population with the LEAST evidence of being real.
+         * Provided only so the knob can be swept, never as a recommended default.
+         */
+        double innov_corroborate_backstop_k{0.0};
         // --- M5 card WL-3: lane-coordinate carry (docs/SPEC_lane_carry_card.md §3.1). ---
         // All three are INERT unless the caller feeds PAIR groups (@ref GroupInput::pair).
         double q_wl_scale{1.0};         ///< WL-3 §3.1: q along the WL lane = this × @c qz (lane basis, per pair chord).  1 = isotropic (== today's per-band q; the §6.1 equivalence shape).  INERT unless @c lane_joint.
@@ -160,6 +195,7 @@ public:
         long long slip_kills{0};          ///< Card 4 C3c: chords that would have been carried but were refloated FRESH because a cycle slip / RAIM culprit invalidated an arc of their fundamental cycle (≈ the slip rate the carry saw).
         long long innov_flags{0};         ///< Card 4 D5: carried chords whose post-solve standardized innovation exceeded @c innov_k (a fine slip the coarse layer missed).
         long long innov_retaps{0};        ///< Card 4 D5: flagged chords actually re-tapped fresh at install (== @c innov_flags in v1; a distinct counter for the v2 refold route).
+        long long innov_suppressed{0};    ///< D5 v3: chords that TRIPPED the gate but were NOT re-tapped because the raw observables positively said the arc was continuous (@c innov_corroborate).  Standing invariant #4: the ONLY way to see the corroboration gate is doing anything — 0 with the knob armed means the flat set never reached it (no slip-QC consumer computed the raw observables).
         long long merges{0};              ///< components formed from ≥2 previous components.
         long long splits{0};              ///< previous components spread across ≥2 new components.
         long long tree_swaps{0};          ///< components whose carry was re-expressed in a genuinely different fundamental-cycle basis (a projection W that is not a signed permutation — the analogue of the phase-B unimodular pivot).
@@ -452,6 +488,23 @@ public:
      */
     bool injectCarriedChord(int group, const ArcKey& chord, double new_z, double new_var);
 
+    /**
+     * @brief D5 v3: this epoch's chords whose underlying arc the RAW observables measured as
+     *        CONTINUOUS (no MW/GF step) — the suppression set for @c Cfg::innov_corroborate.
+     *
+     * ONE-EPOCH state, consumed and cleared by @ref installPosterior exactly like the WL-2
+     * inject exemption, so a stale set can never suppress a later epoch's re-tap.  Membership
+     * must mean "measured and flat", NEVER "no evidence" — the caller owns that distinction
+     * (@c SlipQcEpoch::verdict[].measured && !@c SlipQcEpoch::stepped), because passing an
+     * unmeasured arc here would silently disable the slip response on it (standing invariant #1).
+     *
+     * Leaving this unset is safe and inert: an empty set suppresses nothing, so the gate
+     * degrades to D5 v2 rather than to "no gate".
+     */
+    void setInnovFlatChords(std::set<std::pair<int, ArcKey>> flat) {
+        innov_flat_ = std::move(flat);
+    }
+
     /// The carried DD mean+variance of @p chord in @p group (false if not carried) — the read
     /// half of the WL inject (compute the current lane value before deciding to inject).  Same
     /// as @ref carriedDdForTest but named for production use.  On a WL-3 PAIR block this
@@ -645,6 +698,7 @@ private:
     std::vector<std::pair<int, ArcKey>> last_innov_flags_;  ///< D5: (group, chord) flagged at the last install.
     std::vector<double> last_innov_sigmas_;  ///< D5 diagnostic: |v|/√Cov(v) per flag, aligned with last_innov_flags_.
     std::set<std::pair<int, ArcKey>> gate_exempt_;  ///< WL-2 §3.3: (group, chord) injected this epoch — D5-exempt at the NEXT @ref installPosterior (consumed + cleared there).  WL-3: a pair chord's exemption spans BOTH band rows.
+    std::set<std::pair<int, ArcKey>> innov_flat_;   ///< D5 v3: (group, chord) whose arc the raw observables measured as CONTINUOUS this epoch — see @ref setInnovFlatChords.  Consumed + cleared in @ref installPosterior.
     std::map<std::pair<int, ArcKey>, long long> lane_fix_w_;      ///< WL-3 §3.3: the last COMMITTED FFR integer per (pair group, chord) — the fold-on-change memory.  Committed at @ref installPosterior; erased when the chord re-taps (slip / D5 flag / rebirth).
     std::map<std::pair<int, ArcKey>, long long> lane_fix_staged_; ///< WL-3: this build's @ref applyLaneFix decisions, staged so a within-epoch RAIM re-solve re-derives identical folds; merged into @ref lane_fix_w_ at install, cleared at each @ref buildDdPriors.
     std::map<std::pair<int, ArcKey>, long long> lane_fix_epoch_;  ///< LF-1 INC-2: the @c install_epoch_index_ at which each @c lane_fix_w_ key was LAST re-decided.  Committed/pruned/erased in lockstep with @c lane_fix_w_; drives the @ref laneIncrementSkippable grace window.  Empty unless @c Config::skip_pinned_increments.

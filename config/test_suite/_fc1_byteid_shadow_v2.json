@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "FC-1 byte-identity gate arm B (ON, shadow), RE-RUN for the 2026-07-30 emit-frame",
+    "fix — pair of _fc1_byteid_off_v2.json.  Both FC-1 hooks fire on every epoch (shadow",
+    "tick + emit-success harvest), now computing the a-priori-corrected lump; the gate is",
+    "unchanged: products.txt and every estimation CSV byte-identical to arm A."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_fc1_byteid_shadow.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/fc1_byteid_shadow_v2/products.txt"
+  }
+}

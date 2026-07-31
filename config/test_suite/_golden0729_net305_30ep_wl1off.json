@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "GOLDEN 2026-07-29 — full 305-station GPS+Galileo, 30 s, 30 epochs, COLD at 00:00:00 GPS,",
+    "DOY-129 (2024-05-08), in the WL-1-OFF posture.",
+    "",
+    "This is the golden BASELINE, not the as-requested all-on arm.  Reason, measured on the",
+    "50-station pair in runs/golden_0729/{net50, net50_wl1off} this session:",
+    "  epochs 1-10  bit-identical across arms (WL-1 arms at min_arc_epochs = 10, so it cannot",
+    "               act earlier — this is the A/B's own validity check)",
+    "  epochs 11-31 means, WL-1 ON vs OFF:",
+    "               D5 innovation flags/ep   158.4 vs  45.6   (3.48x)",
+    "               post-fit sigma0_code       6.03 vs  3.96   (1.52x)",
+    "               robust clock spread     10.250 vs 8.764 m  (1.17x)",
+    "               worst-sat deviation     22.062 vs 18.202 m (1.21x)",
+    "               slip refloats/ep         205.0 vs  97.7   (2.10x)",
+    "  With WL-1 OFF the clock spread keeps CONVERGING (9.80 -> 8.34 m over the run); with it ON",
+    "  convergence is arrested at epoch 11 and ends worse than epoch 10 (9.13 -> 9.97 m).",
+    "",
+    "No integers are involved: fix_enable / wl_inject_enable / lane_carry were OFF in BOTH arms.",
+    "The harm comes from the MW-seeded wide-lane FLOAT rows themselves (4710 folded, mean",
+    "R = 0.0319 cyc^2, sigma ~ 0.179 cyc).  The MW observable is CODE-derived, so folding it on",
+    "the Card-4 global chord basis injects code-scale error into a phase-precision carry, and the",
+    "D5 innovation gate then tears the carry down — 0 of 3649 re-taps had a raw phase step.",
+    "This EXTENDS the standing do-not-arm finding, which covered only the integer tiers.",
+    "",
+    "The EWL/UWL DECISION tiers stay ON: they fold nothing (ewl_fold_rows default false) and are",
+    "the telemetry the MW AR question needs.  Keeping ewl_enable also holds ewl_carry_exclude",
+    "fixed, so carry membership matches the 50-station pair.",
+    "",
+    "eigen_threads / parallel_max_threads 12: the two mwwl_cond posture-probe runs are still",
+    "live on this box but were only drawing ~18% total CPU when this launched."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net305_30ep.json"
+  ],
+
+  "processing": {
+    "eigen_threads": 12
+  },
+
+  "network": {
+    "parallel_max_threads": 12,
+    "mw_wl": {
+      "enable": false
+    },
+    "product_output_path": "C:/GnssProcessor/runs/golden_0729/net305_wl1off/products.txt"
+  }
+}

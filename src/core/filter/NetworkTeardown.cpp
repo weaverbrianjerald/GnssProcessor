@@ -399,6 +399,133 @@ int networkTeardown(
                   ctx.counters.n_cb_late_quarantined,
                   ctx.admission.active ? "ran" : "did-not-run", ctx.admission.active,
                   ctx.counters.n_cbadm_phase_orphan_key_epochs);
+    // --- SD pre-reduce EWL constraint run-end telemetry (SPEC_sd_ewl_prereduce.md) ---
+    // Standing invariant #4: rows_built == 0 on an armed run means the wiring never fired,
+    // which is NOT "the feature had no effect" — so the skip tallies are reported too, and
+    // an all-zero build is called out explicitly rather than left to look quiet.
+    if (config_.getNetworkConfig().sd_ewl.enable) {
+        NetStation::SdEwlCounters t;
+        for (const auto& st : stations) t += st.sd_ewl_ctr;
+        const double mean_var = t.rows_built > 0
+                                    ? t.sum_var_m2 / static_cast<double>(t.rows_built)
+                                    : 0.0;
+        log->info("Network (SD pre-reduce EWL): {} row(s) built over the run from {} "
+                  "(station,epoch,satellite) visit(s) on an EWL-tier constellation "
+                  "(mean SD variance {:.5f} m^2, i.e. sigma ~ {:.4f} m); {} capped.  "
+                  "Skips — {} no-detector station-epoch(s), {} no-pivot (<2 arcs at the "
+                  "station), {} NO MW ARC on any candidate signal pair, {} immature arc "
+                  "(< {} lagged samples), {} unreconstructable SD frame (group MW pivot "
+                  "arc absent), {} mixed BIA frame, {} no ambiguity-column pair, {} "
+                  "missing shared PB/CB column, {} arc without code channels, {} bad "
+                  "lambda, {} |z| over limit.  FLOAT rows only (increment 1); these fold "
+                  "PRE-reduce so they compose exactly with the Card-4 post-reduce DD fold.",
+                  t.rows_built, t.sat_seen, mean_var, std::sqrt(std::max(mean_var, 0.0)),
+                  t.rows_capped, t.skip_no_detector, t.skip_no_pivot, t.skip_no_arc,
+                  t.skip_immature, config_.getNetworkConfig().sd_ewl.min_arc_epochs,
+                  t.skip_frame_recon, t.skip_mixed_frame, t.skip_missing_amb_col,
+                  t.skip_missing_shared_col, t.skip_missing_code, t.skip_bad_lambda,
+                  t.skip_big_z);
+        if (t.rows_built == 0) {
+            // Name the DOMINANT cause: "zero rows" plus a table of ten tallies is a
+            // puzzle, and the three failure classes have entirely different fixes
+            // (wiring / signal availability / maturity).
+            const char* lead =
+                t.sat_seen == 0                                  ? "the appender never saw a single EWL-tier satellite — the hook is not running, or no GPS/Galileo station-epoch reached PASS B"
+              : t.skip_missing_amb_col >= t.sat_seen / 2         ? "the dominant cause is NO AMBIGUITY-COLUMN PAIR: the second EWL band (GPS L5 / Galileo E5a) is not being ESTIMATED at these stations — check processing.frequency_mode / signal_priorities, not the detector"
+              : t.skip_no_arc >= t.sat_seen / 4                  ? "the dominant cause is NO MW ARC on the (band1,band2) pair: the detector never formed that pair — check mw_frequency_mode (Mirror reads obs.observed, so an unprocessed band yields no pair) and mw_channel_mode"
+              : t.skip_immature >= t.sat_seen / 4                ? "the dominant cause is IMMATURE arcs: the run is shorter than sd_ewl.min_arc_epochs, or arcs keep refloating"
+              : t.skip_frame_recon >= t.sat_seen / 4             ? "the dominant cause is an UNRECONSTRUCTABLE SD frame: the arcs are BIA-differenced but their group MW pivot arc is missing"
+                                                                : "no single cause dominates — read the tallies above";
+            log->warn("Network (SD pre-reduce EWL): ARMED but built ZERO rows — the "
+                      "feature is INERT on this run.  {}.  (An all-zero no-detector "
+                      "count with sat_seen > 0 means the hook DID run; a large "
+                      "no-detector count means phase_leveling / cycle_slip.mw_detect "
+                      "are off or every station is the clock datum.)", lead);
+        }
+        // --- increment 2a+2b: the INTEGER path (docs/SPEC_sd_ewl_integer_hold.md) -----
+        if (config_.getNetworkConfig().sd_ewl.fix_enable) {
+            const auto& K = ctx.counters;
+            log->info("Network (SD EWL integer fix, 2a decision): {} epoch(s), {} "
+                      "component(s), {} arc(s) admitted to the integer graph; {} DD "
+                      "rounding attempt(s) -> {} usable integer(s), of which {} are DATUM "
+                      "values (reference/link/first-sighting frame choices that carry no "
+                      "rounding decision and so cannot be wrong).  Rejected — {} on "
+                      "|frac| > {:.3f} cyc, {} on FFR < {:.4f}.  Events — {} FLIP "
+                      "(disagreed with the previous epoch on a continuous arc: counted "
+                      "AND vetoed, the standing-invariant-#1 response), {} arc restart "
+                      "(no flip charged), {} reference-station re-election (re-datums a "
+                      "whole component's SD frame).  Excluded — {} on a non-consensus "
+                      "tracking-channel pair (B^s would NOT cancel in the DD), {} on a "
+                      "mixed BIA frame, {} with no admissible link satellite, {} with no "
+                      "DD graph.",
+                      K.sdewl_epochs, K.sdewl_components, K.sdewl_dd_pairs_seen,
+                      K.sdewl_dd_fix_attempts, K.sdewl_dd_fixed, K.sdewl_dd_datum,
+                      K.sdewl_dd_reject_frac,
+                      config_.getNetworkConfig().sd_ewl.fix_max_frac_cyc,
+                      K.sdewl_dd_reject_ffr,
+                      config_.getNetworkConfig().sd_ewl.fix_min_ffr,
+                      K.sdewl_dd_flip, K.sdewl_dd_restart, K.sdewl_sd_ref_reelected,
+                      K.sdewl_dd_skip_channel, K.sdewl_dd_skip_frame,
+                      K.sdewl_dd_no_link, K.sdewl_dd_no_graph);
+            log->info("Network (SD EWL integer fix, 2b fold): {} FIXED row(s) in {} "
+                      "all-fixed whitened group(s) + {} float row(s) (of {} built).  {} "
+                      "arc(s) had an integer on a DIFFERENT channel pair than the row "
+                      "settled on and went float; {} lone fixed arc(s) had nothing to "
+                      "difference against; {} arc(s) were demoted because their group "
+                      "held DATUM values only (a frame choice carries no integer "
+                      "information, so it does not earn a removed local DOF).  A fixed row carries ZERO local ambiguity "
+                      "coefficients — the local DOF is removed, not constrained — and is "
+                      "weighted at the per-SAMPLE sigma floor {:.2f} m (amendment A1: "
+                      "arcZdMean is arc-CUMULATIVE, so refolding a variance-of-mean as "
+                      "white every epoch over-claims information as sqrt(k)).",
+                      t.rows_fixed, t.groups_fixed, t.rows_float, t.rows_built,
+                      t.fix_pair_mismatch, t.fix_lone_arc, t.fix_datum_only,
+                      config_.getNetworkConfig().sd_ewl.fix_sigma_floor_m);
+            if (t.rows_fixed == 0) {
+                // Invariant #4 again, one level down: the row layer can be healthy and
+                // the INTEGER layer still inert, and the two have completely different
+                // fixes.  Name the dominant cause rather than leaving nine tallies.
+                const char* lead2 =
+                    K.sdewl_epochs == 0
+                        ? "the 2a decision seam never ran — the call site is not reached "
+                          "(every epoch skipped before pre-assembly?)"
+                  : K.sdewl_dd_pairs_seen == 0
+                        ? "no arc reached the integer graph: the MW accumulator has no "
+                          "MATURE EWL arc at any station (raise the run length or lower "
+                          "sd_ewl.min_arc_epochs), or no station has both EWL bands "
+                          "ESTIMATED"
+                  : K.sdewl_dd_no_graph >= K.sdewl_dd_pairs_seen / 2
+                        ? "the DD GRAPH is empty: stations do not share two co-visible "
+                          "satellites on a consensus channel pair, so no double "
+                          "difference can be formed at all"
+                  : K.sdewl_dd_skip_channel >= K.sdewl_dd_pairs_seen / 2
+                        ? "channel DIVERSITY: most arcs sit on a non-consensus tracking "
+                          "pair, so they are excluded to keep the satellite-bias "
+                          "cancellation exact — check processing.channel_mode and "
+                          "signal_priorities"
+                  : K.sdewl_dd_reject_ffr >= K.sdewl_dd_fix_attempts / 2
+                        ? "the FFR gate: the DDs are too noisy to round confidently "
+                          "(arcs are short, or sd_ewl.fix_min_ffr is set too tight for "
+                          "this maturity)"
+                  : K.sdewl_dd_reject_frac >= K.sdewl_dd_fix_attempts / 2
+                        ? "the |frac| gate: the DDs are NOT sitting on integers, which "
+                          "is itself the finding — Route B's cancellation is failing, so "
+                          "suspect channel identity or the BIA frame before the gate"
+                  : K.sdewl_dd_flip >= K.sdewl_dd_fixed
+                        ? "FLIP vetoes: integers are decided but disagree epoch to "
+                          "epoch, so none is ever folded.  That is the invariant-#1 "
+                          "response doing its job; the integers are not stable enough "
+                          "to fold"
+                  : t.fix_pair_mismatch > 0
+                        ? "CHANNEL MISMATCH between the decision and the row: integers "
+                          "exist but the row builder settles on a different pair"
+                        : "no single cause dominates — read the 2a tallies above";
+                log->warn("Network (SD EWL integer fix): ARMED but folded ZERO fixed "
+                          "rows.  {}.", lead2);
+            }
+        }
+    }
+
     // --- Slip-QC hardening run-end telemetry (docs/SPEC_slip_qc_hardening.md) ---
     // Standing invariant #4: a card whose counters are all zero on an armed run
     // is a MISWIRE, not a quiet run.  Card E's line is unconditional under
@@ -534,6 +661,60 @@ int networkTeardown(
                   carry_slipkills_total, carry_dropped_total,
                   carry_swaps_total, carry_merges_total, carry_splits_total,
                   config_.networkCarryInvariantQz());
+    // FC-1 (network.fast_clock): the split-cadence fast tier runs on epochs the full
+    // pipeline SKIPS, so it leaves no trace in any of the per-epoch readouts above.  These
+    // counters ARE its ON-path telemetry (standing invariant #4) — a clean log proves
+    // nothing about whether a single tick ever fired.
+    if (config_.getNetworkConfig().fast_clock.enable) {
+        const auto& fcc = config_.getNetworkConfig().fast_clock;
+        const auto& c = ctx.counters;
+        const double ms_per_tick =
+            c.fc_ticks_driven ? c.fc_wall_ms / static_cast<double>(c.fc_ticks_driven) : 0.0;
+        log->info("Network (FC-1 split-cadence fast clock): {} tick(s) driven, {} estimated, "
+                  "{} emitted; {} LOS used / {} screened ({} slip-scale); {} sat-below-floor, "
+                  "{} datum-withheld tick(s), {} gap-withheld tick(s).",
+                  c.fc_ticks_driven, c.fc_ticks_estimated, c.fc_ticks_emitted,
+                  c.fc_los_used, c.fc_los_screened, c.fc_screen_slips,
+                  c.fc_sat_below_floor, c.fc_datum_withheld_ticks, c.fc_gap_withheld_ticks);
+        log->info("Network (FC-1)   tick wall: {:.1f} ms total, {:.3f} ms/tick mean, "
+                  "{:.3f} ms max (§7.3 budget: <= 50 ms/tick at 305 stations — a MAX bound, "
+                  "since an over-budget tick at an RT cadence is a MISSED epoch, not a "
+                  "slower average).",
+                  c.fc_wall_ms, ms_per_tick, c.fc_wall_ms_max);
+        if (c.fc_ticks_driven == 0)
+            log->warn("Network (FC-1): armed but ZERO ticks were driven — the T2e decimation "
+                      "hook never fired.  With epoch_decimation_n > 1 that means no epoch was "
+                      "decimated out (too few synced epochs); with shadow on it means no full "
+                      "epoch was reached.  This is inert WIRING, not a quiet run: do NOT read "
+                      "this run as evidence about the fast tier (invariant #4).");
+        else if (c.fc_ticks_estimated == 0)
+            log->warn("Network (FC-1): {} tick(s) ran but NONE produced a satellite clock "
+                      "delta — the anchor never armed (it needs two consecutive EMITTED full "
+                      "epochs) or every satellite missed the {}-station floor.  The tier is "
+                      "wired but measured nothing.",
+                      c.fc_ticks_driven, fcc.min_stations_per_sat);
+        else if (fcc.emit && c.fc_ticks_emitted == 0)
+            log->warn("Network (FC-1): emit is armed and {} tick(s) estimated, but NOTHING "
+                      "reached the product wire — every tick was withheld by the datum guard "
+                      "({}) or the R11 emission-gap bound of {:.0f} s ({}).  The consumer saw "
+                      "no fast clocks at all.",
+                      c.fc_ticks_estimated, c.fc_datum_withheld_ticks, fcc.emit_max_gap_s,
+                      c.fc_gap_withheld_ticks);
+        if (c.fc_los_used + c.fc_los_screened > 0) {
+            const double screen_frac =
+                static_cast<double>(c.fc_los_screened)
+                / static_cast<double>(c.fc_los_used + c.fc_los_screened);
+            if (screen_frac > 0.01)
+                log->warn("Network (FC-1): screen rate {:.2f}% of LOS exceeds the 1% quiet-data "
+                          "expectation (§6 INC-4) — either the window is genuinely eventful or "
+                          "screen_k_sigma ({:.1f}) is mis-scaled against the prediction spread.",
+                          100.0 * screen_frac, fcc.screen_k_sigma);
+        }
+        if (c.fc_wall_ms_max > 50.0)
+            log->warn("Network (FC-1): slowest tick {:.1f} ms exceeds the §7.3 50 ms budget — "
+                      "profile before threading; the WLS must stay serial-deterministic.",
+                      c.fc_wall_ms_max);
+    }
     // RTB-7(d) RE-4 / invariant #4: the resume event's wiring is only visible through
     // counters — "0 restored / no shock" must be stated, never inferred from absence.
     if (carry_invariant && !config_.getNetworkConfig().state_snapshot_path.empty()) {
@@ -571,7 +752,7 @@ int networkTeardown(
                           ? "DIAGONAL-ONLY (v3 — Sum K_c numbers)"
                           : "dense (v2 — Sum K_c^2 numbers)");
     }
-    if (sh_dev_on)
+    if (sh_dev_on) {
         log->info("Network (Iono-2/T5v2 per-LOS deviation carry): {} warm harvest(s), "
                   "{} cold seed(s), {} slip reset(s) (C3c funnel), {} no-information "
                   "harvest skip(s), {} deviation(s) carried at run end (τ={} s, "
@@ -580,6 +761,25 @@ int networkTeardown(
                   ctx.carry.shdev_slip_resets_total, ctx.carry.shdev_nodata_total,
                   sh_dev_carry.size(), shc.rep_error_tau_s,
                   shc.representation_sigma_tecu);
+        // v3k clause only when armed — the v2/v3 OFF lines stay byte-identical.
+        if (shc.rep_error_d5_keep)
+            log->info("Network (Iono-2/v3k D5-keep): {} D5-only re-tap(s) KEPT the level "
+                      "(variance re-tapped to σ_ss), {} raw-confirmed erase(s) — the erase "
+                      "policy split (SPEC_iono2_mechB_v3 addendum).",
+                      ctx.carry.shdev_d5_keeps_total, ctx.carry.shdev_slip_resets_total);
+        // v3 clause only when armed — the v2 OFF line stays byte-identical.
+        if (shc.rep_error_demean)
+            log->info("Network (Iono-2/v3 de-mean): global common-mode removed on {} epoch(s) "
+                      "(mean |g| = {:.3f} TECU), per-station means removed {} station-epoch(s) "
+                      "(anti-ratchet; the a00-twin / receiver-lump quasi-null directions stay "
+                      "with the field and receiver states — SPEC_iono2_mechB_v3).",
+                      ctx.carry.shdev_demean_epochs_total,
+                      ctx.carry.shdev_demean_epochs_total > 0
+                          ? ctx.carry.shdev_demean_abs_g_sum
+                                / static_cast<double>(ctx.carry.shdev_demean_epochs_total)
+                          : 0.0,
+                      ctx.carry.shdev_demean_sta_total);
+    }
     if (mw_wl_on) {
         const double mean_R = mw_wl_run.rows_built > 0
             ? mw_wl_run.sum_R / static_cast<double>(mw_wl_run.rows_built) : 0.0;
@@ -725,6 +925,24 @@ int networkTeardown(
                   "chord re-taps data-only + marks its arc slipped for the next epoch).",
                   carry_innov_flags_total, carry_innov_retaps_total,
                   config_.networkCarryInvariantInnovK());
+    if (carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()) {
+        const long long sup = carry_driver.counters().innov_suppressed;
+        const long long tripped = carry_innov_flags_total + sup;
+        log->info("Network (Card 4/M1 D5 v3 corroboration gate): {} of {} gate trips SUPPRESSED "
+                  "({:.1f}%) because the raw observables measured the arc as CONTINUOUS; {} "
+                  "re-tapped (raw step, or no raw evidence — absence of evidence never "
+                  "suppresses).  Backstop k = {}.",
+                  sup, tripped,
+                  tripped > 0 ? 100.0 * static_cast<double>(sup) / static_cast<double>(tripped) : 0.0,
+                  carry_innov_flags_total,
+                  config_.networkCarryInvariantInnovCorroborateBackstopK());
+        if (sup == 0)
+            log->warn("Network (Card 4/M1 D5 v3): the corroboration gate is ARMED but suppressed "
+                      "NOTHING — the flat set never reached the driver.  Standing invariant #4: "
+                      "check that a slip-QC consumer computed the raw observables this run "
+                      "(network.cycle_slip.gap_instrument / .mw_lli_corroborate / "
+                      "network.trace_slip_raw); without one the gate is INERT, not permissive.");
+    }
     if (carry_innov_gate && config_.networkCarryInvariantInnovCalibrate())
         log->info("Network (Card 4/M1 D5 v2 LS-VCE calibration): final empirical inflation σ̂₀ = "
                   "{:.2f}× (the gate threshold is k·σ̂₀ = {:.1f} formal-σ; σ̂₀>1 quantifies how "

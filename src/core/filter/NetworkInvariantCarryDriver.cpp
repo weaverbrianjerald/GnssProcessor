@@ -119,6 +119,7 @@ void NetworkInvariantCarryDriver::reset() {
     last_innov_flags_.clear();
     last_innov_sigmas_.clear();
     gate_exempt_.clear();
+    innov_flat_.clear();       // D5 v3: the corroboration set dies with the carry too
     lane_fix_w_.clear();       // WL-3: the fold-on-change memory dies with the carry
     lane_fix_staged_.clear();
     lane_fix_epoch_.clear();   // LF-1 INC-2: the skip grace clock dies with the carry
@@ -1183,6 +1184,31 @@ void NetworkInvariantCarryDriver::installPosterior(
     // the default) is left completely UNTOUCHED — keep the two per-chord bodies in lockstep.
     // WL-3: a D5-flagged pair chord loses its fold-on-change memory (it re-taps and must
     // re-earn its FFR fix, §3.4) — shared by all install shapes below.
+    // D5 v3 corroboration gate (Cfg::innov_corroborate).  Called ONLY after a chord has
+    // already tripped the k·σ̂₀ test, and returns true when the re-tap must be SUPPRESSED.
+    //
+    // Suppress only on POSITIVE evidence of continuity — membership of innov_flat_ means the
+    // caller measured the raw MW/GF level and found it flat.  An arc with no evidence is not
+    // in the set and is therefore re-tapped as before, so this narrows the slip response
+    // rather than removing it (standing invariant #1).  The optional magnitude backstop
+    // re-admits very large innovations; it defaults to 0 (inert) because corroboration was
+    // measured to FALL with innovation size, not rise.
+    //
+    // NOTE the ordering contract: the σ̂₀ accumulator (inflation_->addRow) is fed BEFORE this
+    // is consulted at both call sites, so suppression never censors the calibration input —
+    // the D5 v2 design note ("feeding above-threshold rows into σ̂₀ is NECESSARY, not merely
+    // safe") holds unchanged whether or not the re-tap happens.
+    const double corr_backstop2 =
+        (cfg_.innov_corroborate && cfg_.innov_corroborate_backstop_k > 0.0)
+            ? cfg_.innov_corroborate_backstop_k * cfg_.innov_corroborate_backstop_k * k2f
+            : 0.0;
+    auto d5Suppressed = [&](int group, const ArcKey& chord, double v2, double var) {
+        if (!cfg_.innov_corroborate) return false;
+        if (!innov_flat_.count({ group, chord })) return false;   // no positive evidence ⇒ re-tap
+        if (corr_backstop2 > 0.0 && v2 > corr_backstop2 * var) return false;  // backstop wins
+        ++counters_.innov_suppressed;
+        return true;
+    };
     auto laneFixErase = [this](int group, const ArcKey& chord) {
         if (!lane_fix_w_.empty())      lane_fix_w_.erase({group, chord});
         if (!lane_fix_staged_.empty()) lane_fix_staged_.erase({group, chord});
@@ -1207,6 +1233,9 @@ void NetworkInvariantCarryDriver::installPosterior(
                                    v(i) / std::sqrt(var), /*gap_s=*/0.0,
                                    /*post_var=*/0.0, /*fold_var=*/1.0);
             if (v(i) * v(i) <= k2f * var) continue;
+            if (d5Suppressed(bm.group, bm.chords[static_cast<std::size_t>(i)],
+                             v(i) * v(i), var))
+                continue;
             cb.z(off + i) = bm.zhat(i) + v(i);
             cb.Pz.row(off + i).setZero();
             cb.Pz.col(off + i).setZero();
@@ -1239,6 +1268,12 @@ void NetworkInvariantCarryDriver::installPosterior(
                                    v(i) / std::sqrt(var), /*gap_s=*/0.0,
                                    /*post_var=*/0.0, /*fold_var=*/1.0);
             if (v(i) * v(i) <= k2f * var) continue;
+            // WL-3: a pair chord's corroboration keys by the GRAPH chord, so BOTH band rows
+            // are suppressed together — exactly like gate_exempt_ above.  Splitting them
+            // would re-tap one band of a continuous pair and leave the other carried.
+            if (d5Suppressed(bm.group, bm.chords[static_cast<std::size_t>(c)],
+                             v(i) * v(i), var))
+                continue;
             cb.z(i) = bm.zhat(i) + v(i);
             cb.Pz.row(i).setZero();
             cb.Pz.col(i).setZero();
@@ -1353,6 +1388,7 @@ void NetworkInvariantCarryDriver::installPosterior(
         }
         carried_.swap(next);
         gate_exempt_.clear();   // WL-2 §3.3: the one-epoch inject exemption is consumed here
+        innov_flat_.clear();    // D5 v3: the one-epoch corroboration set is consumed here too
         laneFixCommit();        // WL-3 §3.3: fold-on-change memory commits on the accepted epoch
         ++install_epoch_index_; // LF-1 INC-2: advance the skip grace clock (accepted install only)
         counters_.z_dim = static_cast<long long>(totalZDim());
@@ -1458,6 +1494,7 @@ void NetworkInvariantCarryDriver::installPosterior(
     }
     carried_.swap(next);
     gate_exempt_.clear();   // WL-2 §3.3: the one-epoch inject exemption is consumed here
+    innov_flat_.clear();    // D5 v3: the one-epoch corroboration set is consumed here too
     laneFixCommit();        // WL-3 §3.3: fold-on-change memory commits on the accepted epoch
     ++install_epoch_index_; // LF-1 INC-2: advance the skip grace clock (accepted install only)
     counters_.z_dim = static_cast<long long>(totalZDim());
