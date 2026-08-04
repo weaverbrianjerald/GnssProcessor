@@ -49,7 +49,11 @@ if _HERE not in sys.path:                       # importable however the script 
 from gnss_config_chain import load_config, ConfigChainError  # noqa: E402
 
 LEDGER = os.path.join(_HERE, "..", "docs", "CONFIG_promotion_ledger.json")
-LOADER = os.path.join(_HERE, "..", "src", "core", "config", "GnssConfigLoadNetwork.cpp")
+# logNetworkPosture_ was split out of GnssConfigLoadNetwork.cpp into its own TU
+# (GnssConfigNetworkPosture.cpp) when the network posture check landed.  Both files still
+# NAME the function, but only this one DEFINES it - and every scraper below anchors on the
+# definition, so pointing at the old file made --verify-loader die with "not found".
+LOADER = os.path.join(_HERE, "..", "src", "core", "config", "GnssConfigNetworkPosture.cpp")
 
 RECOMMENDED = ("RECOMMEND_ON", "RECOMMEND_SCOPED")
 
@@ -249,14 +253,33 @@ def armed(knob, cfg, env):
 # ----------------------------------------------------------------------------------
 #  loader <-> ledger coverage cross-check
 # ----------------------------------------------------------------------------------
-def loader_knobs(path=LOADER):
-    """Knob paths named inside GnssConfig::logNetworkPosture_ (items table + bundles)."""
+def _posture_body(path):
+    """Source text of the whole posture TU, from its first function to EOF.
+
+    THE TRAP THIS EXISTS FOR: the items table used to live INSIDE logNetworkPosture_, so both
+    scrapers anchored on that function and read to the next `void GnssConfig::`.  The table was
+    later split into appendNetworkPostureItemsOn_ / appendNetworkPostureItemsScoped_, which sit
+    ABOVE logNetworkPosture_ in the file - so the old anchor started reading AFTER every row and
+    found zero of them, reporting all 65 recommended knobs as "MISSING from loader" (i.e. a
+    total-coverage-loss readout that looks exactly like a catastrophic ledger regression).
+
+    Anchoring on the FIRST posture function instead of a named one keeps this working across
+    further decomposition.  It deliberately starts at the first function rather than at byte 0:
+    the file-header Doxygen quotes knob paths in prose, and counting those as loader coverage
+    would silently mask real gaps in the forward check.
+    """
     src = open(path, encoding="utf-8", errors="replace").read()
-    start = src.find("void GnssConfig::logNetworkPosture_")
-    if start < 0:
-        raise SystemExit(f"logNetworkPosture_ not found in {path}")
-    end = src.find("\n    void GnssConfig::", start + 10)
-    body = src[start:end if end > 0 else len(src)]
+    starts = [m.start() for m in
+              re.finditer(r"void GnssConfig::(?:appendNetworkPostureItems\w*_|logNetworkPosture_)",
+                          src)]
+    if not starts:
+        raise SystemExit(f"no GnssConfig posture function found in {path}")
+    return src[min(starts):]
+
+
+def loader_knobs(path=LOADER):
+    """Knob paths named in the posture TU (items table + bundles)."""
+    body = _posture_body(path)
     out = set()
     for lit in re.findall(r'"((?:[^"\\]|\\.)*)"', body):
         head = lit.split(" ")[0].rstrip(".,;:")
@@ -278,12 +301,7 @@ def loader_item_rows(path=LOADER):
     The row shape is `{ <applies>, <on>, Tier::X, <fp>, "knob", "why" }`, so anchoring on
     `Tier::X, <bool>, "knob"` picks out rows and nothing else.
     """
-    src = open(path, encoding="utf-8", errors="replace").read()
-    start = src.find("void GnssConfig::logNetworkPosture_")
-    if start < 0:
-        raise SystemExit(f"logNetworkPosture_ not found in {path}")
-    end = src.find("\n    void GnssConfig::", start + 10)
-    body = src[start:end if end > 0 else len(src)]
+    body = _posture_body(path)
     return {knob: tier for tier, knob in
             re.findall(r'Tier::(ON|SCOPED)\s*,\s*(?:true|false)\s*,\s*"([^"]+)"', body)}
 

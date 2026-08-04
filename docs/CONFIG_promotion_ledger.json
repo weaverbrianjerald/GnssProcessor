@@ -306,6 +306,15 @@
    "family": "Card-4 invariant DD carry, its carry couplings"
   },
   {
+   "knob": "network.carry_invariant_pd_safe",
+   "default_at": "include/config/GnssConfig.hpp (network_carry_invariant_pd_safe_{false}, in the carry_invariant family block); parsed src/core/config/GnssConfigLoadNetwork.cpp in loadNetworkDatumSignalling_; prerequisite checked in validateNetworkDatumCoherence_; kernel half NetworkNormalEquations::setDdFoldPdSafe, driver half NetworkInvariantCarryDriver::Config::pd_safe",
+   "verdict": "UNVALIDATED",
+   "scope": "",
+   "evidence": "Card built + unit-gated 2026-08-03, NO field arm run yet. THE DEFECT IS MEASURED, the fix is not: scripts/parse_carry_psd.py on runs/churn_base2 shows the giant joint lane block born near-singular (normalized min eig 3.43e-07 at ep0001 vs 1.37e-02 for the per-band block), indefinite by ep0122 (304 non-positive variances), and at 3 h carrying 100 negative variances + 943 entries above the 1e6 fresh prior -- 776 of 782 carried rows (99.2%) in failing blocks, 65.3% of rows standing diffuse. That is the silent M:=0 freeze (NetworkNormalEquations.cpp serial :884 / parallel :734) behind which three weeks of campaigns were graded. Unit gates (tests/test_pd_safe_fold.cpp, suite PdSafeFoldTest, 6 cases): the legacy recursion reproduces the disease on a 40-row mixed-scale lane-pair toy at cycle 0 and ends 1.1e+02 RELATIVE from an independent augmented-solve oracle; the pd_safe path holds normalized min-eig 1.5e-04 at 1.6e-09. OWED for promotion (SPEC section 7): pdfix_off md5-identity vs runs/churn_base2, pdfix_on 3 h graded on parse_carry_psd (THE gate) + grade_dd_spillway + chain_stability total_IF with eyes open (78% of the carry starts WORKING, so products may move well beyond the +-1% churn band in either direction; a clock-QC degradation is the fail), D5 flag-rate response, and fold_minv_ms delta < 25%. Configs: config/test_suite/_ft63_pdfix_{off,on,qz0,qz0_iofloat}.json (+ _smoke).",
+   "interlock": "INERT without network.carry_invariant -- WARN + auto-DISARM in the cross-knob validation pass (GnssConfigLoadNetwork.cpp validateNetworkDatumCoherence_), NOT a load failure. FINGERPRINTED (NetworkRunContext.cpp networkSnapshotFingerprint, add(\"carry:pdsafe\") appended only when armed): a pd_safe run's z-store came out of a different recursion and is PD by construction, so it cannot be A/B'd against a shared snapshot and must never be flipped mid-chain. A PRE-CARD blob restored INTO an armed run is separately handled -- the INC-2c restore guard rebirths any non-PD block it finds and WARNs. Two deliberate readings beyond the SPEC's literal text, both recorded: (1) a repair clamp above 1e-6*lambda_max is REFUSED rather than applied, because SPEC 4(c) requires a large clamp to 'scream, not be laundered' while SPEC 5(a) names a corrupt restored blob as a reachable rebirth trigger -- both are only true together if an outsized clamp falls through to the rebirth; (2) INC-0's counters and its three network_epoch_status.csv columns are ALWAYS-ON and unconditional (the redundancy/prefit precedent, not the adm one), so an OFF run's epoch-status schema changes while its SOLVE artifacts stay byte-identical -- that is the invariant-#6 gate for this card.",
+   "family": "Card-4 invariant DD carry, its carry couplings"
+  },
+  {
    "knob": "network.carry_invariant_qz",
    "default_at": "include/config/GnssConfig.hpp:4781 (network_carry_invariant_qz_{0.0}); parsed GnssConfigLoadNetwork.cpp:2065",
    "verdict": "RECOMMEND_ON",
@@ -317,15 +326,6 @@
    "posture_why": "set 1e-4 m2/s: beats zero-q, DD step 2.433 -> 1.498 cyc/ep and calib 0.82 -> 0.49 at 50 sta 3h",
    "armed_when": "5e-5 <= val(\"network.carry_invariant_qz\", 0.0) <= 2e-4",
    "fingerprinted": false
-  },
-  {
-   "knob": "network.carry_invariant_pd_safe",
-   "default_at": "include/config/GnssConfig.hpp (network_carry_invariant_pd_safe_{false}, in the carry_invariant family block); parsed src/core/config/GnssConfigLoadNetwork.cpp in loadNetworkDatumSignalling_; prerequisite checked in validateNetworkDatumCoherence_; kernel half NetworkNormalEquations::setDdFoldPdSafe, driver half NetworkInvariantCarryDriver::Config::pd_safe",
-   "verdict": "UNVALIDATED",
-   "scope": "",
-   "evidence": "Card built + unit-gated 2026-08-03, NO field arm run yet. THE DEFECT IS MEASURED, the fix is not: scripts/parse_carry_psd.py on runs/churn_base2 shows the giant joint lane block born near-singular (normalized min eig 3.43e-07 at ep0001 vs 1.37e-02 for the per-band block), indefinite by ep0122 (304 non-positive variances), and at 3 h carrying 100 negative variances + 943 entries above the 1e6 fresh prior -- 776 of 782 carried rows (99.2%) in failing blocks, 65.3% of rows standing diffuse. That is the silent M:=0 freeze (NetworkNormalEquations.cpp serial :884 / parallel :734) behind which three weeks of campaigns were graded. Unit gates (tests/test_pd_safe_fold.cpp, suite PdSafeFoldTest, 6 cases): the legacy recursion reproduces the disease on a 40-row mixed-scale lane-pair toy at cycle 0 and ends 1.1e+02 RELATIVE from an independent augmented-solve oracle; the pd_safe path holds normalized min-eig 1.5e-04 at 1.6e-09. OWED for promotion (SPEC section 7): pdfix_off md5-identity vs runs/churn_base2, pdfix_on 3 h graded on parse_carry_psd (THE gate) + grade_dd_spillway + chain_stability total_IF with eyes open (78% of the carry starts WORKING, so products may move well beyond the +-1% churn band in either direction; a clock-QC degradation is the fail), D5 flag-rate response, and fold_minv_ms delta < 25%. Configs: config/test_suite/_ft63_pdfix_{off,on,qz0,qz0_iofloat}.json (+ _smoke).",
-   "interlock": "INERT without network.carry_invariant -- WARN + auto-DISARM in the cross-knob validation pass (GnssConfigLoadNetwork.cpp validateNetworkDatumCoherence_), NOT a load failure. FINGERPRINTED (NetworkRunContext.cpp networkSnapshotFingerprint, add(\"carry:pdsafe\") appended only when armed): a pd_safe run's z-store came out of a different recursion and is PD by construction, so it cannot be A/B'd against a shared snapshot and must never be flipped mid-chain. A PRE-CARD blob restored INTO an armed run is separately handled -- the INC-2c restore guard rebirths any non-PD block it finds and WARNs. Two deliberate readings beyond the SPEC's literal text, both recorded: (1) a repair clamp above 1e-6*lambda_max is REFUSED rather than applied, because SPEC 4(c) requires a large clamp to 'scream, not be laundered' while SPEC 5(a) names a corrupt restored blob as a reachable rebirth trigger -- both are only true together if an outsized clamp falls through to the rebirth; (2) INC-0's counters and its three network_epoch_status.csv columns are ALWAYS-ON and unconditional (the redundancy/prefit precedent, not the adm one), so an OFF run's epoch-status schema changes while its SOLVE artifacts stay byte-identical -- that is the invariant-#6 gate for this card.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
   },
   {
    "knob": "network.carry_vce",
@@ -371,6 +371,32 @@
    "evidence": "project_day129_pivot_cb_ratchet.md: 'D1 pivot-only FALSIFIED — 130 non-pivot (sat,epoch) cases; the seam ratcheted EVERY sat's CB.' Doxygen GnssConfigTypes.hpp:547-559 states the untested cost: 'at the cost of a mass discontinuity bump that makes every consumer reset every satellite's CB state ... the run-end telemetry reports how many NON-pivot satellites would have tripped a per-satellite rule, so the choice can be re-decided from data.' Settling run: re-run runs/day129_guards with _all_sats=true, grading cross-seam datum-invariant total_IF LEVELS (G01/G07/G30) against the pivot-only leg's +117.4 / -94.8 / +41.9 m, plus the consumer reset count from count_disc_bumps.py.",
    "interlock": "Inert unless network.cb_excursion_reinit. Inherits the same resume-fingerprint conditional append.",
    "family": "QC, RAIM and SLIP knobs"
+  },
+  {
+   "knob": "network.cb_kaula_prior",
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "verdict": "RECOMMEND_SCOPED",
+   "scope": "GPS+Gal network producer WITH estimate_sat_code_bias (inert without it). Validated 63 sta / DOY-129 / 30 s at both 150 ep and 12 h. NOT GPS-only (no deficiency there to fix) and NOT with BeiDou. sigma MUST travel with it at 3 m - see network.cb_kaula_sigma_m.",
+   "regime": "gps_gal_only and on(\"network.estimate_sat_code_bias\")",
+   "evidence": "project_network_ssystem_dia_assessment. Lifts the CODE-dominated near-null direction the Card-PA phase heal structurally cannot reach (PA anchors PB columns only). Full 12 h leg runs/ft63_gg12h_sbckp: 1440/1440 emitted, 0 withheld, 0 PA heals, vs baseline 1433 emitted / 7 gate-withheld / PA on 41% of epochs. Same-build 150-ep A/B over the TOW 263250-263370 cluster (runs/sbcfix_{off,on}, 2026-08-03): OFF 145/150 with 5 gate withholds + 600 phase_heal events; ON 150/150, 0 withheld, 0 heals. COST: post-fit code sigma0 4.63 -> 5.12 (+10.5%) on an identical 9587-row measurement set - the prior pulls OSB columns toward 0; consumer-replay total_IF grade still owed.",
+   "posture_why": "lifts the CODE-dominated near-null direction PA cannot reach; FT63 GPS+Gal 145/150 -> 150/150 emitted",
+   "default_at": "src/core/config/GnssConfigLoadNetwork.cpp:4323-4324 (false)",
+   "fingerprinted": false,
+   "interlock": "INERT unless network.estimate_sat_code_bias. Travels with network.cb_kaula_sigma_m=3.0 (the 10 m default WARNS at 1.6 decades of K2 margin) and with network.sbasis_complete as the GPS+Gal datum recipe, Card PA left armed as backstop. NOT in the warm-resume fingerprint (NetworkRunContext.cpp), so arming it mid-chain changes the solve WITHOUT a cold start or hard abort - arm in a fresh lineage."
+  },
+  {
+   "knob": "network.cb_kaula_sigma_m",
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "verdict": "RECOMMEND_SCOPED",
+   "scope": "Set 3.0 wherever network.cb_kaula_prior is armed; same envelope as that knob. Do NOT copy 3.0 to another constellation set or station count without re-reading that config's own rank-gate cutoff from network_estimability.csv.",
+   "regime": "on(\"network.cb_kaula_prior\")",
+   "armed_when": "val(\"network.cb_kaula_sigma_m\", 10.0) <= 3.01",
+   "armed_when_why": "Recommended value is 3.0 m, not the 10.0 default; SMALLER sigma = more prior information = larger K2 margin, so the armed test is an upper bound on sigma.",
+   "evidence": "project_network_ssystem_dia_assessment. K2 anti-fragility rule: prior info 1/sigma^2 must sit >= 2 decades ABOVE the armed rank-gate cutoff (the CB-ADM card rejected a prior sitting AT the cutoff, where it either trips the gate or survives by coincidence). On this config sigma=10 m gives only 1.6 decades and the producer WARNS; sigma=3 m gives 2.7 decades (prior info 1.111e-01 vs cutoff 2.472e-04, logged at first fold in runs/sbcfix_on) and is what the passing 12 h leg used.",
+   "posture_why": "sigma=3 m gives 2.7 decades of K2 margin; the 10 m default gives 1.6 and survives only by coincidence",
+   "default_at": "src/core/config/GnssConfigLoadNetwork.cpp:4326-4327 (10.0)",
+   "fingerprinted": false,
+   "interlock": "INERT unless network.cb_kaula_prior. The margin is a ratio against a cutoff that moves with the constellation mix, exactly like network.rank_gate_tol - re-place it per config, never copy."
   },
   {
    "knob": "network.clock_datum_broadcast_anchored",
@@ -1210,6 +1236,18 @@
    "regime": "True",
    "posture_why": "the next discharge names its own injector in the run it happens; SCOPED on MEMORY - retains 25.4 MB/epoch at 63 sta and self-disables above rhs_attrib_prev_max_stations",
    "fingerprinted": false
+  },
+  {
+   "knob": "network.sbasis_complete",
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "verdict": "RECOMMEND_SCOPED",
+   "scope": "GPS+Gal network producer; measured 63 sta / DOY-129 / 30 s. Regime is by NAME, not count: n_sys>=2 would admit GPS+BeiDou, which is NOT validated here (BeiDou needs the full 4-piece code-bias datum chain). GPS-only exhibits no deficiency, so arming it there is INERT rather than harmful. Extras are intermittent (0-3/epoch, 41% of epochs), so the completion must be per-epoch - a static declared = 2 x #constellations would over-specify the other 59%.",
+   "regime": "gps_gal_only",
+   "evidence": "project_network_ssystem_dia_assessment. Derives the epoch's REALIZED S-basis dimension from the same reduced normals + cutoff the gate uses and folds one minimum-constraint gauge row per extra direction (its own unit eigenvector, RHS = the carried level), constraining exactly the deficient combination (S-transform invariant) and HOLDING it with no engage step. Declared structural dimension and the gate itself are untouched. 31-ep smoke: OFF = PA fired 23/31 epochs / 69 columns (all E03 E5-family); ON = 0 phase_heal, 0 withheld, 31/31 emitted, 5 sbc_engage + 1 release, 0 refusals. Carrying the load ALONE with KP off (runs/sbc_leg75_on): 145/150, 108 epochs completed / 115 directions. Engage attribution shows the code half PA never sees: PB proportional to +mu, CB to -mu, X-family only.",
+   "posture_why": "GPS+Gal adds per-sat channel-family PB<->iono trades the declared dimension does not count; the armed net when KP's lift falls short",
+   "default_at": "src/core/config/GnssConfigLoadNetwork.cpp:4409-4410 (false)",
+   "fingerprinted": false,
+   "interlock": "Pairs with network.cb_kaula_prior (+ cb_kaula_sigma_m 3.0); Card PA stays armed as backstop. Where KP's lift suffices SBC correctly fires 0 times (confirmed on the 12 h leg and runs/sbcfix_on) - a 0-fire readout is the designed idle state of a safety net, NOT dead wiring. REFUSES (folds nothing, gate decides, epoch withholds) on: extras > sbasis_complete_max (6); declared/extra eigenvalue split < 1 decade or extra < 1e-14*lambda_max (machine-zero orphans stay Card-PA territory); row weight < 2 decades above cutoff (K2). Every refusal counted + evented. SELF-EXTINGUISHING through the carry, so engage counts UNDER-count deficient epochs. NOT in the warm-resume fingerprint - arm in a fresh lineage. Cross-arm deltas on RAW per-sat quantities are datum-variant by construction; grade invariants only (#5)."
   },
   {
    "knob": "network.scoped_handover_response",

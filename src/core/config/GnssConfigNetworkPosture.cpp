@@ -455,6 +455,16 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.apriori_source",
               "self-sufficient RT service needs apriori_source=brdc_rts; float 2.84 m vs sp3 2.76 "
               "m (3 sta/121 ep)" },
+            { estimate_network_sat_code_bias_ && gps_gal_only,
+              network_cb_kaula_prior_,
+              Tier::SCOPED, false, "network.cb_kaula_prior",
+              "lifts the CODE-dominated near-null direction the PA heal cannot reach (it anchors "
+              "PB only); FT63 GPS+Gal 145/150 -> 150/150 emitted" },
+            { network_cb_kaula_prior_,
+              network_cb_kaula_sigma_m_ <= 3.01,
+              Tier::SCOPED, false, "network.cb_kaula_sigma_m",
+              "sigma=3 m gives 2.7 decades of K2 margin; the 10 m default gives 1.6 and survives "
+              "only by coincidence" },
             { network_apriori_source_ == NetworkAprioriSource::BrdcRts &&
                   !network_clock_datum_sum_to_zero_,
               network_clock_datum_broadcast_anchored_,
@@ -491,6 +501,11 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.phase_datum_prioritized",
               "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m "
               "step, JPLM masked)" },
+            { gps_gal_only,
+              network_sbasis_complete_,
+              Tier::SCOPED, false, "network.sbasis_complete",
+              "GPS+Gal adds per-sat channel-family PB<->iono trades the declared dimension does "
+              "not count; the armed net when the KP lift falls short" },
         };
         out.insert(out.end(), rows.begin(), rows.end());
     }
