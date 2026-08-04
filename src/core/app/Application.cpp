@@ -1628,14 +1628,17 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         ar_config.min_success_rate      = config_.getArMinSuccessRate();
         ar_config.min_arc_info          = config_.getArMinArcInfo();
         ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
+        ar_config.nl_iono_free_row      = config_.getArNlIonoFreeRow();
         ar_config.enable_partial_ar     = config_.getArEnablePartialAr();
         ar_config.ar_active_systems     = config_.getArActiveSystems();
         ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
         ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
         log_manager_.getLogger("main_log")->info(
-            "Ambiguity resolution enabled: mode={}, wl_only={}, partial_ar={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
+            "Ambiguity resolution enabled: mode={}, wl_only={}, partial_ar={}, nl_row={}, "
+            "ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
             "min_epochs={}, max_pos_σ={:.3f} m",
             ar_config.ar_mode, ar_config.wl_only ? "on" : "off", ar_config.enable_partial_ar ? "on" : "off",
+            ar_config.nl_iono_free_row ? "iono-free" : "narrowlane",
             ar_config.ratio_threshold, ar_config.ratio_upper_bound,
             ar_config.elevation_mask_ar, ar_config.min_epochs, ar_config.max_position_sigma_m);
     }

@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "IONO-FLOAT CARD, ARM 1 of 2 — qz0 (3 h, 63 sta, DOY-129, cold).  Derived from",
+    "_ft63_churn_base.json with TWO deltas and no others: carry_invariant_qz 1e-4 -> 0",
+    "(the DD ambiguities are asserted CONSTANT — the estimator finally models what the",
+    "physics says), and carry_invariant_innov_carried_only ON (D5 v5b — the born-chord",
+    "fix; at zero q a D5 mis-fire is a permanent stiff prior, so the correctness fix is",
+    "mandatory here, not optional).  SH ties stay at representation_sigma_tecu 5 — this",
+    "arm isolates the CONSTANCY axis alone.",
+    "",
+    "Invariant #1 checklist (zero-q REQUIRES a slip response — feedback_network_",
+    "nonnegotiable_configs): pre-fit mw_detect + if_phase_td + ref_gate + lli_corroborate",
+    "armed via the inherited lineage; fine layer = D5 innov_gate v2 (calibrate) + v5b;",
+    "reset path = the C3c funnel refloat (GATE 10b proved it completes real-slip resets).",
+    "",
+    "PREDICTION (committed 2026-08-02, project_dd_spillway_rootcause): with ties still",
+    "tight the SH-representation drift now fights an ever-stiffer prior — D5 becomes a",
+    "relaxation oscillator (flags rise as var_v shrinks, chord lifetime ~10-30 ep), and",
+    "mature-DD steps improve less than the iofloat twin.  If instead this arm alone goes",
+    "quiet, the spillway attribution to the TIE ROWS is wrong.",
+    "",
+    "GRADE with scripts/grade_dd_spillway.py (steps-by-age + structure function — NOT",
+    "dd_sigma_cyc, which is carry-blind: jointConditionalCovariance has no dd-prior",
+    "term), epoch-status counters BY NAME, and total_IF hr2 no-harm."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "network": {
+    "carry_invariant_qz": 0.0,
+    "carry_invariant_innov_carried_only": true,
+    "product_output_path": "C:/GnssProcessor/runs/qz0/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/qz0/state_snapshot.bin"
+  }
+}

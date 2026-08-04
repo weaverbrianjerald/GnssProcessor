@@ -76,6 +76,13 @@ void networkBuildCarryDdPriors(
     std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
     std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+    /// Card 4 (M1) D5 v4: the RAW-detector subset of this epoch's funnel.  The
+    /// complement `carry_slipped_ambs \ carry_slipped_raw` is EXACTLY the D5 drain
+    /// (every non-D5 inserter writes both sets — NetworkSlipQc via the PASS-A binding,
+    /// networkSignalIntegrity, networkMeasurementAdmission, the deweight-release
+    /// drain), which is the same idiom the Iono-2 v3k erase-policy split already
+    /// relies on.  Read ONLY under network.carry_invariant_innov_retap_only.
+    const std::set<std::pair<int, std::string>>& carry_slipped_raw,
     const std::set<std::string>* carry_we_drop_sats,
     const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
     int n_threads,

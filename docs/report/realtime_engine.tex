@@ -7,7 +7,8 @@
 %  RtcmStreamReader}.cpp, src/core/rtcm/{RtcmParser,RtcmMsmDecoder,
 %  RtcmSsrDecoder,RtcmNavDecoder}.cpp, src/core/sbf/{SbfStreamReader,
 %  SbfParser,Meas3Decoder,SbfSignalMap,SubframeAssembler}.cpp,
-%  src/core/app/ApplicationRealtime.cpp, src/core/math/TimeUtils.cpp,
+%  src/core/app/ApplicationRealtime.cpp, src/core/math/{TimeUtils,
+%  Coordinates}.cpp, src/core/rinex/RinexParser.cpp,
 %  src/core/products/{SsrCorrectionStore,LiveEphemerisStore}.cpp.
 % ============================================================
 \documentclass[main.tex]{subfiles}
@@ -132,9 +133,16 @@ sync and CRC-16/XMODEM check, \texttt{SbfParser} dispatches blocks by
 ID, \texttt{Meas3Decoder} unpacks the \texttt{MeasEpoch} /
 \texttt{Meas3Ranges} observations (GLONASS FDMA slots resolved through
 \texttt{SbfSignalMap}), and \texttt{SubframeAssembler} rebuilds
-broadcast ephemeris from raw-nav subframes.  The SBF observation-decode
-mathematics is documented separately; only the framing and feed seam
-(\Cref{sec:rt-flow,sec:rt-apriori}) are covered here.
+broadcast ephemeris from raw-nav subframes.  Only the framing and feed seam
+(\Cref{sec:rt-flow,sec:rt-apriori}) are covered here.  The
+\texttt{Meas3Ranges} differential range reconstruction --- the direct
+analogue of \eqref{eq:rt-msm-code} and \eqref{eq:rt-msm-phase} below, and the
+one part of the SBF path that is report-worthy algebra rather than ICD
+bookkeeping --- is \emph{not} yet derived in this reference; it is a known
+gap, not material documented elsewhere.  The remaining SBF detail
+(\texttt{SubframeAssembler} ICD scaling, the \texttt{SbfSignalMap} tables,
+the framing constants) belongs in the Doxygen headers and is deliberately
+out of scope here.
 
 The top-level \texttt{RtcmParser} (\texttt{src/core/rtcm/RtcmParser.cpp})
 reads the 12-bit message type DF002 from the \emph{first 12 bits of the
@@ -388,8 +396,9 @@ is appropriate. Two policies matter in real time.
 
 \subsection{A-priori seeding from RTCM 1005/1006}\label{sec:rt-apriori}
 
-A live SBF/RTCM observation stream carries no RINEX \texttt{APPROX
-POSITION} record.  Without a finite a-priori the first
+A \emph{live} SBF/RTCM observation stream carries no RINEX \texttt{APPROX
+POSITION} record (a file-fed source does; see the third bullet below).
+Without a finite a-priori the first
 \texttt{computeModels} rejects every satellite on a position-sanity
 check (almost all sit below the elevation mask when the seed is the
 default Earth-centred fallback at the geographic pole), so WLS never
@@ -402,7 +411,21 @@ ownership of the position:
 \item from an RTCM \emph{1005/1006} station ARP
       (\texttt{feedRtcmFrame}), the RTCM analogue of the PVT seed,
       which makes \texttt{receiver.reference\_position} optional for any
-      station streaming 1005/1006.
+      station streaming 1005/1006; and
+\item from the RINEX header of a \emph{file-fed} source, reduced from the
+      marker to the antenna reference point through
+      \texttt{ANTENNA: DELTA H/E/N}
+      (\texttt{RinexParser::getArpPositionXyz}, over
+      \texttt{Coordinates::markerToArp}).  The ARP, not the monument, is the
+      frame the position state and the ATX PCO/PCV applied to it live in, so
+      seeding on \texttt{APPROX POSITION XYZ} verbatim would start the filter
+      one eccentricity out of frame.  The reduction is an exact no-op on a
+      zero or absent eccentricity, so a live SBF/RTCM stream is unaffected;
+      it is observable only for the file-fed closed-loop consumer, whose
+      header carries a real eccentricity.  There is no double
+      application --- \texttt{PppModel::initializeState} reduces from the
+      \emph{raw} marker, and only while the state position is still
+      zero or non-finite.
 \end{itemize}
 A configured \texttt{reference\_position} always wins.  The seed is
 applied only while \texttt{first\_epoch\_} holds; the startup-defer gate

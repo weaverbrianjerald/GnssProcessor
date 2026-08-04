@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "IONO-FLOAT CARD, ARM 2 of 2 — qz0_iofloat (3 h, 63 sta, DOY-129, cold).  The",
+    "uncombined-PPP-RTK iono-float arm (Odijk/Teunissen CC-R in estimative content):",
+    "_ft63_qz0.json deltas PLUS the tie release.  representation_sigma_tecu 5 -> 50",
+    "(8.1 m — informationally negligible against the ~0.5-1 m code channel, ~1-2% weight)",
+    "releases the SH field's grip on the per-LOS iono states while the FIELD stays ON and",
+    "co-estimated (kaula-anchored, rank-safe, diagnostics alive) — honoring the letter and",
+    "the Jul-3 substance of 'SH-VTEC always on' (low-el iono is absorbed by the FREE",
+    "per-LOS states here, more absorption than tight ties, not less).  Mech-B",
+    "(rep_error_*) OFF as a set — a deviation carry about a field with no grip is",
+    "meaningless.  layer2 OFF (its cross-space was an amplifier; fewer moving parts).",
+    "sh_health_gate OFF + deweight adaptive OFF: both key on tie residuals/a00 bands that",
+    "are meaningless once the ties are loose — a00 WARN lines in the log are EXPECTED and",
+    "benign in this arm.  raim/clock_runaway/adm_screen stay armed (fingerprint-safe QC).",
+    "",
+    "KNOWN COST (accepted, user decision 2026-08-02): GF/DCB separation over long windows",
+    "— code biases and iono trade a GF lump; emitted products stay internally consistent",
+    "as a SET (TK-2015 one-model) but external OSB interop is paused in this mode.  Watch",
+    "rx-CB excursion counters + clock spread for the GF-wander class.",
+    "",
+    "PREDICTION (committed 2026-08-02, project_dd_spillway_rootcause): mature-DD steps",
+    "collapse toward the sub-0.5 cyc/ep class, structure function flattens (constancy",
+    "finally visible), D5 flags collapse toward the raw-slip population, frac circR shows",
+    "the first real upward trend — but NOT integer-grade at 3 h (code-noise-limited",
+    "sqrt-K: ~0.4-0.8 cyc).  total_IF hr2 within ~10% of churn_v5b = the no-harm gate;",
+    "a large move here means the tie rows were load-bearing for the clock split after",
+    "all, and the arm FAILS regardless of how constant the ambiguities became."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_qz0.json"
+  ],
+  "estimation": {
+    "global_vtec_sh": {
+      "representation_sigma_tecu": 50.0,
+      "rep_error_tau_s": 0.0,
+      "rep_error_demean": false,
+      "rep_error_d5_keep": false,
+      "layer2_max_degree": 0
+    }
+  },
+  "network": {
+    "sh_health_gate": false,
+    "iono_constraint_deweight_adaptive": false,
+    "product_output_path": "C:/GnssProcessor/runs/qz0_iofloat/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/qz0_iofloat/state_snapshot.bin"
+  }
+}

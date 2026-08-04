@@ -98,6 +98,19 @@ def build(seed_dir, max_duration_s):
     # RTA-10 H heartbeat: on the wire, a WITHHELD epoch (A4 / SH gate) must be
     # distinguishable from "producer died" — the smoke showed 0 H lines without it.
     net["emit_epoch_status_record"] = True
+    # --- observability, prefit tier (SPEC_prefit_census_observability.md §9;
+    #     promoted 2026-08-01 after the FT63 leg-19 gates).  All three are
+    #     trace-class and fingerprint-SAFE, so they are legal on a warm resume.
+    #     The census is the only ALWAYS-ON pre-solve screen the producer has —
+    #     postfit sigma0 launders a parked cell through the free ambiguities, and
+    #     raim_within_epoch is carry_warm-gated and inert without leveling.  The
+    #     topology ledger is what makes standing invariant #7's two edges visible
+    #     at all.  The recorder makes the next discharge attribute itself.
+    #     NOTE the FUSE (network.prefit_fuse_sigma) is deliberately NOT here: it
+    #     is solve-affecting and stays a default-OFF guard (user directive).
+    net["trace_prefit_census"] = True
+    net["trace_topology"] = True
+    net["rhs_attrib_on_trip"] = True
     return cfg
 
 

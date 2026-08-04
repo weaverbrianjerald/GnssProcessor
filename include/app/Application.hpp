@@ -583,6 +583,8 @@ private:
                                   const NetworkIonoDeweightGate& iono_deweight,
                                   const GlobalVtecShConfig& shc, bool sh_dev_on,
                                   const std::map<std::string, ShDevCarry>& sh_dev_carry,
+                                  const std::set<std::string>& dw_row_held,
+                                  const std::set<std::string>* dw_tie_admitted,
                                   Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                                   Eigen::VectorXd& w, Eigen::VectorXd& y) const;
 

@@ -148,8 +148,14 @@ void networkProducerAr(NetworkRunContext& ctx,
             }
         }
         if (!dds.empty() && reqs.size() >= 2) {
+            const bool ar_carry_aware = ctx.knobs.carry_aware_covariance;
             Eigen::MatrixXd cov_undiff;
-            try { cov_undiff = est.jointConditionalCovariance(reqs, plan.shared_datum); }
+            // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  Q_cyc — and
+            // therefore FFR, ADOP and the partial-AR ordering below — was built from a
+            // covariance the SOLVE never used.  OFF (default) keeps that expression
+            // verbatim; ON makes the probe's uncertainty the estimator's own.
+            try { cov_undiff = est.jointConditionalCovariance(reqs, plan.shared_datum,
+                                                              ar_carry_aware); }
             catch (...) { cov_undiff = Eigen::MatrixXd(); }
             if (cov_undiff.rows() == static_cast<Eigen::Index>(reqs.size())
                 && cov_undiff.rows() > 0) {
@@ -225,15 +231,19 @@ void networkProducerAr(NetworkRunContext& ctx,
                 };
                 const double med_sig  = med(dsig);
                 const double med_frac = med(dfrac);
+                // The covariance MODE is part of the reading, not a footnote: med_DD_sigma
+                // and every ratio/p_succ derived from it mean different things under the
+                // two forms (docs/SPEC_carry_aware_covariance.md §4).
                 log->info("Network AR (Phase 2, log-only): TOW {:.1f} — {} DD / {} undiff-amb / "
                           "{} (const,signal); fixed {}{} of {} searched{} (ratio {:.2f}, "
                           "p_succ {:.4f}, med_DD_sigma {:.4f} cyc, med_DD_frac {:.3f}, "
-                          "near_int {}/{})",
+                          "near_int {}/{}), cov {}",
                           se.time.tow, nd, static_cast<int>(reqs.size()), n_const_signal,
                           fix.ok ? static_cast<int>(fix.kept.size()) : 0,
                           fix.partial ? " partial" : "", nd_fix,
                           nd_fix < nd ? " (ILS-capped)" : "", fix.ratio, fix.p_succ,
-                          med_sig, med_frac, n_near, nd);
+                          med_sig, med_frac, n_near, nd,
+                          ar_carry_aware ? "CARRY-AWARE" : "carry-blind");
             }
         }
     }

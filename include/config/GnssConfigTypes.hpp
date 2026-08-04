@@ -60,6 +60,34 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief RTF-3: per-station live-transport descriptor for the multi-station
+     *        streaming front-end (@c network.streaming).
+     *
+     * Describes where one roster station's live observation bytes come from.
+     * An empty @c input_type (the default) means the station has no stream —
+     * under batch processing that is every station; under streaming mode such
+     * a station contributes no live epochs (it is warned about at front-end
+     * build and is simply absent from every dispatched epoch, the design norm
+     * downstream).  Field set mirrors @c NtripConfig / the realtime aux-stream
+     * descriptors so the front-end can map 1:1 onto the existing transports.
+     */
+    struct StationTransportConfig {
+        std::string input_type;           ///< "" (no stream) | "ntrip" | "tcp" | "file" (RTCM3 dump replay).
+        std::string host;                 ///< Caster / TCP server hostname.
+        int         port{ 2101 };         ///< Caster / TCP port.
+        std::string mountpoint;           ///< NTRIP mountpoint (ntrip only).
+        std::string username;             ///< NTRIP username ("" = anonymous).
+        std::string password;             ///< NTRIP password.
+        bool        use_tls{ false };     ///< HTTPS caster (e.g. port-443 casters).
+        bool        tls_insecure{ false };///< Skip TLS peer/host verification (testing only).
+        std::string input_path;           ///< RTCM3 dump path for "file" replay lanes.
+        int         reconnect_delay_s{ 5 };///< Reconnect back-off base seconds (per-attempt jitter added).
+
+        /// True when the station declares any live transport.
+        bool configured() const { return !input_type.empty(); }
+    };
+
+    /**
      * @brief Configuration for one station in a baseline / network processing run.
      *
      * Each station supplies its own RINEX observation file.  Reference
@@ -80,6 +108,9 @@ namespace GnssProcessor {
         /// JSON coordinates always win, so this is false whenever the user supplied
         /// them.  Logged per station at roster build.
         bool position_from_sif{ false };
+        /// RTF-3: live transport for the streaming front-end (default: none).
+        /// Ignored entirely under batch processing (network.streaming off).
+        StationTransportConfig transport;
     };
 
     /**
@@ -391,6 +422,116 @@ namespace GnssProcessor {
         bool   gap_instrument{ false };      ///< Master arm (network.cycle_slip.gap_instrument).  Counters + trace rows only.
     };
 
+    /**
+     * @brief Flicker / gap SIGNAL-INTEGRITY knobs
+     *        (docs/SPEC_flicker_gap_integrity.md, 2026-08-01).
+     *
+     * ## The epistemics
+     *
+     * Across any loss of lock the slip magnitude is **unbounded and unknowable** —
+     * the phase counter is arbitrary at re-acquisition, and a proportional L1/L2
+     * counter reset is invisible to BOTH the geometry-free and the
+     * Melbourne-Wübbena combinations.  Recovery is therefore safe only if every
+     * path treats re-entry as code-anchored-fresh, and if the first post-recovery
+     * epochs — where no time-difference detector can operate at all — never carry
+     * full phase weight.  The blind window is STRUCTURAL, not a tuning miss: MW
+     * needs Welford history, IF-TD needs three consecutive epochs, LLI is
+     * receiver-discretionary, and GF is doctrine-barred at 30 s
+     * (`feedback_slip_detectors_by_rate`).
+     *
+     * Measured case — G21 @ MBAR00UGA (JAVAD TRE_3 DELTA), DOY-129 19:21-19:31,
+     * raw RINEX: a mid-arc −1.42 m GF step (≈ −6 L2W cycles) with **no receiver
+     * flag**; L2W then missing for one epoch; re-entry at 19:25:30 with LLI=1 on
+     * BOTH bands; and a further unflagged −0.99 m step (≈ +4 L2W cycles) at
+     * 19:26:00.  Both unflagged slips fell in windows where MW and IF-TD were
+     * structurally blind (arc 0-1 epochs old).  Class scale: 2482 (station,
+     * satellite) re-entries in ONE 24 h at 63 stations (~1.7 per epoch) — constant
+     * weather, not a corner case.
+     *
+     * ## What the block does (four increments, one master arm)
+     *
+     *  - **INC-0 `census`** — the master.  Classifies every present
+     *    (station, satellite) line of sight each epoch and counts the behaviour:
+     *    re-entries by outage length, band losses and regains, DEGRADED
+     *    continuations (a dual-born arc still contributing with fewer bands), and
+     *    standing single-frequency arcs.  Diagnostics only.
+     *  - **INC-1** — the band-state classifier itself (STABLE / NEW / REENTRY /
+     *    FLICKER-REGAIN / DEGRADED), which feeds INC-2 and INC-3.
+     *  - **INC-2 `unvetted_sigma_scale` / `withhold_instead`** — while a LOS is not
+     *    STABLE its PHASE rows fold at an inflated σ (prefer-fallback, never
+     *    exclusion — `feedback_prefer_fallback_over_drop`).  **Code rows are
+     *    untouched**: they are slip-immune and they are what re-anchors the float.
+     *  - **INC-3 `refloat_on_regain` / `revet_ep`** — a band that returns without a
+     *    producer-registered gap refloats the LOS's ambiguities on ALL bands
+     *    through the existing slip funnel (reset-not-repair,
+     *    `feedback_reset_over_repair_biasless`), and STABLE is only re-earned after
+     *    @ref revet_ep consecutive full-band epochs.
+     *
+     * With @ref census false the whole block is inert: no map is allocated, no row
+     * weight changes, no observable is touched, and the producer is byte-identical.
+     * Deliberately NOT part of the warm-resume fingerprint — a forward-only weight
+     * and refloat POLICY that changes no serialized state's meaning (the
+     * `adaptive_iono_q` / eq34-hygiene precedent), which is what keeps a
+     * shared-snapshot A/B legal.
+     */
+    struct SignalIntegrityConfig {
+        /// Master arm (@c network.signal_integrity.census).  ON: the classifier
+        /// runs and every counter below is live.  INC-2 and INC-3 REQUIRE it (the
+        /// loader warns and disarms them otherwise) — you cannot act on a band
+        /// state you are not tracking.
+        bool   census{ false };
+        /// INC-2: σ multiplier on the PHASE rows of a LOS that is not STABLE
+        /// (weight /= scale²).  <= 1 disables the demotion, which is how the
+        /// spec's §6C CENSUS-ONLY leg is expressed (`census: true`,
+        /// `unvetted_sigma_scale: 1.0`, `refloat_on_regain: false`).  <= 0 is the
+        /// second spelling of @ref withhold_instead.
+        double unvetted_sigma_scale{ 10.0 };
+        /// INC-3(b): consecutive FULL-BAND epochs a LOS must accumulate after ANY
+        /// transition before its phase returns to full weight.  DEFAULT 3 so that
+        /// MW (2 time-difference samples) and IF-TD (3 epochs) are BOTH live for at
+        /// least one epoch before the vet ends — the vet ends exactly when
+        /// monitoring begins.
+        int    revet_ep{ 3 };
+        /// INC-1: a reference band absent for at most this many consecutive epochs
+        /// while the LOS itself stayed present is a FLICKER; its return is a
+        /// FLICKER-REGAIN (refloat).  Beyond it the band is treated as genuinely
+        /// gone and the LOS re-vets on the REDUCED reference set, so a permanently
+        /// single-frequency arc is not demoted forever (spec §7 defers that policy
+        /// to after the census).
+        int    flicker_max_ep{ 5 };
+        /// INC-3(a): refloat the LOS's ambiguities on ALL bands through the slip
+        /// funnel on a FLICKER-REGAIN.  Default true when the block is armed: the
+        /// G21 case proves a flicker window slips BOTH bands and nothing can bound
+        /// the sizes, so reset-over-repair is the only safe response.
+        bool   refloat_on_regain{ true };
+        /// INC-2 alternative disposition: instead of deweighting, REMOVE the
+        /// unvetted LOS's phase observables for the epoch (code rows survive).
+        /// Available, NOT default — withholding a phase row can also remove the
+        /// only support of an elected datum pin, leaving the rank gate as the
+        /// backstop.  Arm only with the W5 gate graded.
+        bool   withhold_instead{ false };
+        /**
+         * @brief Vet EVERY arc for @ref revet_ep epochs after a WARM RESUME
+         *        (spec ADDENDUM, 2026-08-01).  Default true when the block is armed.
+         *
+         * A warm resume is the true sibling of the flicker case and the one situation
+         * this card must answer network-wide.  The snapshot restores TIGHT carries but
+         * NO detector state — nothing in @c NetworkStateSnapshot serializes MW Welford
+         * counts or IF-TD arc history, so both re-converge from scratch — which leaves
+         * the first `revet_ep` epochs of every resumed run with fully-warm state and
+         * ZERO time-difference coverage.  That is the flicker hazard at network scale.
+         *
+         * Trade-off to record when grading: this perturbs the first K epochs of a
+         * replay leg relative to the continuous run (a branch-faithfulness cost).
+         * Acceptable for event-replay legs seeded >= K epochs before the event (the
+         * era legs start 38 epochs ahead); a byte-grade resume A/B must arm or disarm
+         * it SYMMETRICALLY on both legs.  The long-term alternative — serializing
+         * detector arc state into the RTB-7 snapshot — is a format change and is
+         * deferred.
+         */
+        bool   resume_warmup_vet{ true };
+    };
+
     struct NetworkArConfig {
         bool   enable{ false };               ///< Master switch; OFF => float product unchanged.
         double min_success_rate{ 0.9999 };    ///< FFR bootstrap acceptance gate (stricter than the user's 0.999).
@@ -677,6 +818,59 @@ namespace GnssProcessor {
         int    trace_sat_stride{ 0 };
     };
 
+    /**
+     * @brief RTF-3: the multi-station streaming front-end (@c network.streaming).
+     *
+     * When @c enable is set, @c runNetwork replaces its batch epoch source (the
+     * pre-built @c MultiRinexSync synced vector) with live per-station streams:
+     * one transport + framer + RTCM decoder lane per roster station carrying a
+     * @c StationTransportConfig, a wait-budget aligner that dispatches each
+     * epoch at T+@c wait_budget_s with whoever arrived, and a bounded solve
+     * queue with EPOCH-granular drop-oldest backpressure.  Everything else —
+     * station build, per-epoch body, teardown — is the identical code path.
+     *
+     * v1 constraint (documented in the front-end header): station CONSTRUCTION
+     * still reads each roster station's @c rinex_path for header metadata
+     * (receiver antenna type, GLONASS FCN slots, first-epoch seed), so the
+     * files must exist even though their observations are not the epoch
+     * source.  The header-free StationMetadata factory is a follow-up
+     * increment of the RTF-3 card.
+     *
+     * Default OFF => none of this is constructed; the batch path is untouched.
+     */
+    struct NetworkStreamingConfig {
+        bool   enable{ false };            ///< Master switch (default OFF => batch, byte-identical).
+        /// Wait budget from an epoch's FIRST arrival to dispatch (s).  The card's
+        /// design range is 0.3-1 s; an epoch whose full expected station set
+        /// arrives earlier dispatches immediately.
+        double wait_budget_s{ 0.7 };
+        /// Minimum stations present to dispatch an epoch (below => the epoch is
+        /// dropped and counted, never solved).  2 is the estimability floor for
+        /// any between-station content.
+        int    min_stations{ 2 };
+        /// Require the clock-datum station in a dispatched epoch.  The legacy
+        /// pivot-first PASS A skips a pivot-less epoch anyway; gating here spends
+        /// no queue slot on a known skip.  Prioritized/eq34 datums may relax this.
+        bool   require_datum_station{ true };
+        /// Bounded solve-queue depth in WHOLE epochs.  Overflow drops the OLDEST
+        /// queued epoch (epoch-granular backpressure — never bytes, so the framer
+        /// and decode state stay coherent; the byte-granular alternative is the
+        /// documented desync trap).
+        int    queue_depth_epochs{ 8 };
+        /// Nominal observation cadence (s) used to bucket arrivals into epochs.
+        /// v1 requires a uniform cadence across streams (IGS MSM standard: 1 s).
+        double epoch_interval_s{ 1.0 };
+        /// Aligner memory bound: pending (not yet dispatched) epoch buckets are
+        /// capped at this many; the oldest stale bucket is dropped + counted.
+        int    max_pending_epochs{ 16 };
+        /// RTB-3 reuse: derive LLI 0x1 from MSM lock-time regressions, tracked
+        /// per (station, sat, signal) through one shared LockTimeTracker.
+        bool   msm_lli_from_locktime{ false };
+        /// Front-end heartbeat cadence (s of wall clock) for the ingest summary
+        /// log line (lanes up, epochs dispatched/dropped, queue depth).
+        double log_interval_s{ 30.0 };
+    };
+
     struct NetworkConfig {
         std::vector<StationConfig> stations;  ///< Peer stations (>=2); each needs a known ECEF (held fixed).
         std::string clock_datum_station;      ///< Pivot receiver whose clock defines network time ("" => first station).
@@ -688,7 +882,9 @@ namespace GnssProcessor {
         LaneCarryConfig  lane_carry;          ///< M5 card WL-3: lane-coordinate carry (default OFF => byte-identical; config CONTRACT only — mechanism is a follow-up increment, docs/SPEC_lane_carry_card.md).
         SdEwlConfig      sd_ewl;              ///< SD PRE-REDUCE EWL constraint (default OFF => byte-identical; docs/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening Cards R/L/G (network.cycle_slip.*; all default OFF => byte-identical; docs/SPEC_slip_qc_hardening.md).
+        SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier + degraded-phase demotion + re-vet (network.signal_integrity.*; default OFF => byte-identical; docs/SPEC_flicker_gap_integrity.md).
         FastClockConfig  fast_clock;          ///< FC-1 split-cadence clocks-only fast pass (network.fast_clock.*; default OFF => the T2e decimation hook is untouched => byte-identical; docs/SPEC_fast_clock_split_cadence.md).
+        NetworkStreamingConfig streaming;     ///< RTF-3 multi-station streaming front-end (network.streaming.*; default OFF => batch epoch source, byte-identical).
         NetworkProcessNoise process_noise;    ///< Scoped per-parameter-class process-noise table (network.process_noise). Always live; every class defaults to its legacy key's default => byte-identical unless a value is edited.
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
         /// RTA-6: flush the product file once per emitted epoch (after the epoch
@@ -723,6 +919,48 @@ namespace GnssProcessor {
         // serial-vs-parallel byte-diff for regression.  Uses the same thread budget
         // (@ref parallel_max_threads) and only when @ref parallel_stations is active.
         bool parallel_reduce{ false };    ///< Parallelize the Schur reduce loop (opt-in; trades serial≡parallel byte-identity for speed).
+        bool adaptive_iono_q{ false };    ///< Network storm response: per-station GF-TD2 variability monitors (IonoVariabilityMonitor) scale the T5v2 GM deviation innovation per (station,satellite); tuning from estimation.adaptive_iono_process_noise (whose .enable stays user-path-only). Requires the deviation channel (estimate_iono_sh + rep_error_tau_s > 0) — validated at load. Deliberately NOT in the warm-resume fingerprint (forward-only Q modifier).
+
+        // --- eq34 REATTACH HYGIENE (docs/SPEC_eq34_reattach_hygiene.md) ---------
+        // The phase datum may only be RE-HOSTED onto an arc whose ambiguity has
+        // actually converged.  A one-epoch-old arc's float is code-seeded (± metres),
+        // so realizing the gauge on it re-levels the whole component by an arbitrary
+        // amount that discharges along the soft phase-bias directions (DOY-129
+        // 19:25:30 `PHASE_DATUM/eq34_reattach G29 GAMB00PYF->INEG00MEX`: a00 SUM
+        // 38.7 → 5739 TECU one epoch later, with a 181 m between-satellite total_IF
+        // scar that never healed).  All three knobs are default-OFF and, OFF, add no
+        // state and no rows — the election is structurally unchanged.  Deliberately
+        // NOT in the warm-resume fingerprint: they are a forward-only election / row
+        // POLICY and do not change the meaning of any serialized state (the
+        // adaptive_iono_q precedent), which is what keeps a shared-snapshot A/B legal.
+        int  eq34_anchor_min_arc_ep{ 0 };        ///< INC-1: minimum consecutive-present arc age (epochs) for a (station, ambiguity) arc to be an ELIGIBLE anchor host on a REATTACH.  0 = legacy (any host, byte-identical).  First-sighting keys (no incumbent) are never gated — this bounds re-hosting, not cold start.
+        double eq34_prior_realization_max_gap_s{ 1800.0 };  ///< INC-1 WARM CONDITIONING (spec addendum): a cold host is dangerous only in proportion to the warm memory that contradicts it, so the block applies ONLY while the key's last EMITTED datum realization is younger than this (s).  A network restart / cold start has no fresh realization ⇒ no blocking ⇒ legacy convergence behaviour, and an outage longer than this leaves nothing to shock (the carried state has expired through its own staleness machinery).  <= 0 disables the conditioning (always block on cold hosts).
+        bool phase_datum_time_linked{ false };   ///< INC-2: on a handover with no eligible host (or, with eq34_anchor_min_arc_ep = 0, on EVERY handover), hold the key's shared phase bias at its last solved level with a soft pseudo-obs row instead of dropping/cold-pinning it.  The `code_datum_time_linked` analogue for the phase datum.
+        double phase_datum_bridge_sigma_m{ 0.05 };  ///< INC-2: σ of the bridge row (m).  Loose relative to the phase data (which carries no information along the gauge direction the row realizes) but ≫ the rank-gate cutoff — a load-time K2-style margin check reports the actual decades.
+        int  phase_datum_bridge_max_ep{ 20 };    ///< INC-2: maximum consecutive epochs one bridge may be folded before it is dropped as STALE (standing invariant #1 — a stiff time-linked quantity gets a bounded, event-responsive lifetime).
+        double eq34_fresh_pin_sigma_scale{ 1.0 };   ///< INC-3: σ multiplier applied to a datum row that had to be pinned on a host younger than eq34_anchor_min_arc_ep + eq34_fresh_pin_ramp_ep, decaying linearly over the ramp.  1.0 = off (the exact 1e10 hard pin, byte-identical).
+        int  eq34_fresh_pin_ramp_ep{ 0 };        ///< INC-3: length (epochs) of the fresh-pin deweight ramp above.  0 = off.
+
+        // --- IONO-DEWEIGHT RELEASE HYGIENE (docs/SPEC_deweight_release_hygiene.md) ---
+        // A station held at w_s = 0 by the adaptive SH-constraint deweight gate has NO
+        // tie rows folded, so its per-LOS slant-iono states spend the era unconstrained
+        // by the field — and because the network producer's per-station StateManager is
+        // a FROZEN linearization point, a bad state does not decay, it PARKS.  When the
+        // gate RELEASES, the tie rows silently re-couple those parked states to the SH
+        // block (DOY-129 TOW 329160, BSHM00ISR/G07: a steady +1.88e5 m code prefit whose
+        // C00 contribution went 0.002 -> +6493 with the row itself IDENTICAL across the
+        // break — only the coupling changed; a00 SUM 38.7 -> 5739 TECU, 76-min SH-gate
+        // era, 181 m total_IF scar that never healed).  All three knobs are default-OFF
+        // and, OFF, allocate no state, write no state and remove no row.  Deliberately
+        // NOT in the warm-resume fingerprint: this is a forward-only RELEASE-TIME state
+        // and row policy that changes the meaning of no serialized quantity (the
+        // adaptive_iono_q / eq34-hygiene precedent), which is what keeps the card's
+        // shared-snapshot event A/B legal.
+        bool   iono_dw_release_reseed{ false };   ///< INC-1: when a station's gate weight RISES above iono_dw_release_floor_eps (its zero-weight era ends), reseed every per-LOS slant-iono state of that station from the CURRENT SH field evaluation, refloat its float ambiguities through the standard slip funnel (deferred one epoch), and erase its per-LOS deviation-stash entries.  false = legacy (release re-couples whatever was parked).
+        double iono_dw_release_floor_eps{ 1e-9 }; ///< INC-1: the "decoupled" weight threshold.  A station at or below this has its SH block dropped entirely (the assembly's w_s <= 0 early return), so a rise ABOVE it is the release edge.  Detected around the gate's rate-limited slew, never by comparing to exactly 0.0.
+        double iono_dw_park_bound_tecu{ 0.0 };    ///< INC-2: while a station is decoupled (weight <= eps) — and, for warm-resume coverage, while the gate holds no samples for it at all — any slant-iono state whose magnitude exceeds this bound, in SLANT TECU, is reset to the field evaluation immediately.  0 = off.  A physical O(300 TECU) bound sits three orders below the 1.15e6-TECU-equivalent park measured on DOY-129.
+        double iono_dw_release_validate_k{ 0.0 }; ///< INC-3: fold a re-engaged SH<->slant tie row only if its standardized deviation |dev| / representation_sigma_tecu passes this k; a failing LOS stays decoupled and is re-tested every epoch.  0 = off.  Reads the SOLVED deviation networkShDevVtec harvests, never the linearization point (which is provably frame-arbitrary — see NetworkIonoDwRelease.hpp).  Requires the T5 deviation channel (global_vtec_sh.rep_error_tau_s > 0) — validated at load.
+        double iono_dw_admit_validate_k{ 0.0 };   ///< INC-3b: the SAME screen at a LOS's FIRST tie row.  A LOS crossing the elevation cutoff into a station's tie stack couples a previously unvalidated slant column to the SH field — the valve MEASURED at DOY-129 TOW 329160 (BSHM00ISR sat at w = 1.0 throughout; its only IONO_DW event is an ENGAGE at the break, and the release wave that epoch first acts one epoch later).  A LOS is held for one epoch, during which its deviation is still harvested, then admitted iff that deviation passes k.  0 = off.  Requires the T5 deviation channel — validated at load.
         // Deterministic-parallel fan-out of the post-solve SERIAL SEAM (the ~72% of a
         // 305-station epoch that reduce/assembly parallelism does NOT cover: the Card-4
         // DD carry-fold @ref NetworkNormalEquations::foldReducedDdPriors and the D5
@@ -802,6 +1040,164 @@ namespace GnssProcessor {
         int    epoch_decimation_n{ 1 };  ///< T2e: process only every Nth SYNCED epoch in the network loop (1 = off = every epoch).  N=2 → 60 s effective rate, ~halving convergence wall time; the convergence horizon is physical-time-driven so a coarser rate loses little.  ESTIMATION-RELEVANT (changes the carried-state cadence / process-noise dt) — folded into the warm-resume fingerprint when != 1 so a decimation mismatch invalidates a resume.  The physical-time start-offset and max-duration guards still evaluate on every raw epoch (overshoot-safe).
         bool   iono_supply_formal_sigma{ false };  ///< T3f: when supplying the co-estimated SH-VTEC slant iono to the closed-loop consumer (@c closed_loop.consume_network_iono), RSS the SH-coefficient FORMAL σ (√(aᵀ Q_sh a), mapped to slant metres) onto the per-LOS representativeness floor, enforce a floor after the scale, AND skip the supply for satellites without FRESH OSB (satellite-code-bias) coverage this epoch (an under-observed field value is not trustworthy).  In-process supply only (no product bytes); OFF ⇒ the representativeness-floor-only σ (byte-identical consumer solution).
         bool trace_flag_rates{ false };   ///< B8: log a per-tier flag-rate summary at end of run — for each RAIM/QC tier (IF-phase slip, within-epoch trigger, post-fit RAIM cell/consensus, clock-model NIS, clock-monitor) accumulate {opportunities, flags} over the run and report realized rate vs the implied one-sided Gaussian α for the configured k.  Also writes @c network_flag_rates.csv + @c network_run_summary.csv (L3).  Measurement only — no threshold or decision change; OFF (default) = byte-identical.
+        double rhs_attrib_tow{ -1.0 };    ///< Reduced-RHS class attribution (filter/NetworkRhsAttrib; diagnostics-only, NOT fingerprinted): first target TOW at/after which the per-class attribution dump fires (< 0 = off, the default).  Dumps `logs/rhs_attrib/attrib_<tow>.csv` + per-class full vectors, with an explicit closure check against the kernel's reduced RHS.
+        int    rhs_attrib_n_ep{ 2 };      ///< Number of consecutive processed epochs to attribute starting at @ref rhs_attrib_tow (default 2 — a pre-break/break pair).
+
+        // --- Prefit census / structural fuse / topology ledger / flight recorder ---
+        // docs/SPEC_prefit_census_observability.md.  ALL default-OFF, OFF structurally
+        // byte-identical, and NONE fingerprinted (forward-only observability — the
+        // adaptive_iono_q / eq34-hygiene precedent), so a shared-snapshot replay leg
+        // with any of them armed stays A/B-legal against an unarmed control.  The FUSE
+        // is the one solve-affecting member of the family and carries its own arm.
+        bool   trace_prefit_census{ false };  ///< INC-1: per-DATA-class common-mode-removed prefit statistics into @c network_epoch_status.csv plus PREFIT-tier `prefit_exceedance` events.  MEASURE-ONLY.  The metric is per station, per row type, robust-centred (s = |y − median_t(y)|·√w) — a between-satellite single difference in all but name, so a whole-station receiver-clock step (ms-scale, |y| ≈ 3e5 m on every row) cancels while a single parked cell does not.  This is the tripwire the era-2 injector (+1.88e5 m prefit code innovation on BSHM00ISR/G07, folded at w ≈ 2 for minutes) walked straight past: postfit σ̂0 launders it through the free ambiguities, and `raim_within_epoch` is carry_warm-gated.
+        /**
+         * @brief INC-1 EVENT domain — which DATA classes may raise a
+         *        `prefit_exceedance` event (default @c "code,sh,other"; @c "all"
+         *        includes phase).  The per-class COLUMNS always report all four.
+         *
+         * Measured on the FT63 leg-19 replay (63 stations, 121 epochs, threshold
+         * 1e3), the four classes are not remotely comparable as tripwires:
+         *
+         *  - @c obs_code — **6 events, all of them (BSHM00ISR, G07/G16)**, i.e.
+         *    the era-2 injector and nothing else, with s growing 1.90e5 → 2.69e5
+         *    as the park intensified.  Zero false positives.
+         *  - @c iono_sh_row — 51 events over 44 stations, tightly clustered at
+         *    s ≈ 1.2–2.4e3 (just over threshold), with ONE 40x outlier:
+         *    (BSHM00ISR, G03) at s = 9.47e4 at TOW 329190, the epoch after the
+         *    discharge.  Usable: the real event stands out from the floor.
+         *  - @c obs_other — 0 events.
+         *  - @c obs_phase — **608 events over 55 stations**.  A phase row's
+         *    prefit innovation is ARC-SPECIFIC: it contains that arc's ambiguity
+         *    linearization point, so a station's phase rows are not a common-mode
+         *    population at all (CAS100ATA's median walks 177037 → 150500 → 84184
+         *    → 17974 m within one leg while individual rows sit 133 km away from
+         *    it).  The "median" is not a centre there, and the statistic is
+         *    meaningless — 91% of all events, none of them findings.
+         *
+         * A tripwire that cries wolf 608 times an hour is not a tripwire, and the
+         * six real ones would be buried in it.  Phase is therefore out of the
+         * EVENT domain by default and its suppression is COUNTED
+         * (`events_class_skipped`), never silent.  Tokens: @c code, @c phase,
+         * @c other, @c sh, @c all, @c none.
+         */
+        std::string prefit_event_classes{ "code,sh,other" };
+        double prefit_event_sigma{ 1000.0 }; ///< INC-1 event threshold on the standardized deviation.  Deliberately three decades above the storm sea (~40σ) — this instrument is for the wiring/seed/model-fault regime, not for robustness tuning.
+        int    prefit_event_holdoff_ep{ 20 };///< INC-1/INC-2 per-(event, station, satellite, class) event rate limit, in PROCESSED epochs.  A parked cell must log its identity persistently (so its duration is readable) without writing 120 rows/hour.
+        double prefit_fuse_sigma{ 0.0 };     ///< INC-2 STRUCTURAL FUSE (0 = off).  SOLVE-AFFECTING: a DATA row whose common-mode-removed s exceeds this has its weight capped to w·(S/s)² — a continuous, order-preserving cap, NOT a drop (the prefer-fallback directive), so the row still carries sign information.  Skips rows with w ≥ 1e6 (pin/constraint regime) and rows whose station type-median was unavailable (n < 4).  Recommended when armed: 1e3 — the era-2 cell sat at 2.6e5 and the storm sea tops out near 40σ, three decades of margin on each side.  Defence in depth: it also bounds the discharge magnitude of ANY future parked-garbage release, whatever the valve.
+        /**
+         * @brief INC-2 fuse DOMAIN — the comma-separated DATA classes the cap may act on
+         *        (default @c "code,sh"; @c "all" = every DATA class = the spec's §4 form).
+         *
+         * DEVIATION from SPEC_prefit_census_observability §4 ("For DATA-class rows only"),
+         * taken on measured evidence from the FT63 leg-19 smoke and recorded here rather
+         * than in a comment nobody reads.  A PHASE row's prefit innovation contains the
+         * arc's FREE ambiguity linearization point, and the state initializer seeds a
+         * fresh arc so that its innovation is ~0 while its already-converged peers carry
+         * the station's residual phase level.  In steady state that level is ~1 m
+         * (measured: BOGT00COL phase median 1.12 m against a code median 20.8 m) and
+         * nothing is near the fuse; but on a WARM-RESUME or cold-start epoch every arc is
+         * re-seeded at once and the pool's centre is whatever the seeding produced
+         * (measured: MRO100AUS phase median −4248 m two epochs after resume, giving
+         * s ≈ 3.8e5 on a perfectly healthy row).  Capping those weights would slow the
+         * re-convergence of every new arc, for no fault — a row whose own free state
+         * absorbs it exactly is not a fault, it is a birth.
+         *
+         * @c obs_code and @c iono_sh_row have no such free per-row absorber (the receiver
+         * clock and code bias are shared ACROSS satellites, so a single-satellite
+         * excursion survives the centring), which is why they are the default domain —
+         * and the era-2 injector this card exists for is an @c obs_code cell, so the
+         * designed target is fully covered.  Widen to @c "all" deliberately, on its own
+         * arm, if a phase-side fault is ever the thing being fused.
+         *
+         * Tokens: @c code, @c phase, @c other, @c sh, @c all, @c none.  Inert unless
+         * @ref prefit_fuse_sigma > 0.
+         */
+        std::string prefit_fuse_classes{ "code,sh" };
+        bool   prefit_fuse_require_uncheckable{ false }; ///< INC-2 composition with the redundancy census (docs/SPEC_redundancy_census.md): fuse ONLY rows that census marks r < ε, i.e. act only where the misfit is invisible to every residual test.  The network-side redundancy census is NOT BUILT in this tree, so the loader WARNs and forces this back off — the field exists so a config written against the companion card fails loudly instead of silently fusing everything.
+        double seed_birth_check_sigma{ 0.0 };///< INC-3 seed-birth tripwire (0 = off).  MEASURE-ONLY: applies the INC-1 statistic at this tighter threshold to the rows of a (station, satellite) whose per-LOS states were BORN this epoch.  A correctly self-seeded birth has s ≈ 0 by construction, so ANY fire localizes a seed-path defect to an exact epoch and site (recommended 100).  Implies the census walk runs even with @ref trace_prefit_census off.
+        bool   trace_topology{ false };      ///< INC-4 topology ledger: TOPOLOGY-tier events for estimation-topology changes — per-station SH-tie row-set presence deltas (the deweight valve: era-2's entire story was one "BSHM +1 tie row, w 0→0.25" that nothing logged), per-(station, satellite) row-KIND changes while the satellite stays present, and shared-column registry deltas.  MEASURE-ONLY; implies the census walk.
+        bool   rhs_attrib_on_trip{ false };  ///< INC-5 FLIGHT RECORDER: arm the estimator's shared-info capture recorder EVERY epoch and fire @ref networkRhsAttribution automatically at the first trip of a QC era (SH-gate engage, A4 σ̂0 withhold, clock-runaway, a₀₀-band exit), instead of at a hand-picked @ref rhs_attrib_tow.  With this armed the NEXT discharge of any class names its own injector in the run where it first happens — no investigation campaign.
+        bool   rhs_attrib_on_trip_prev{ true }; ///< INC-5: also dump the RETAINED PREVIOUS epoch on a trip.  The pre-trip frame is the informative one (era-2's 329130 "before" frame is what exposed the weight flip; 329160 alone shows only the aftermath).  Costs one epoch of retained assemblies + kernel blocks — order 100 MB at 63 stations — so it self-disables above @ref rhs_attrib_prev_max_stations.
+        int    rhs_attrib_prev_max_stations{ 128 }; ///< INC-5: network size above which previous-epoch retention is disabled (with a one-shot WARN).  A trip still dumps the CURRENT epoch.
+        // --- Redundancy / testability census (docs/SPEC_redundancy_census.md;
+        //     filter/NetworkRedundancyCensus) --------------------------------
+        // MEASURE-ONLY and NOT fingerprinted, exactly like the rhs_attrib block
+        // above: a shared-snapshot replay leg with only these armed stays
+        // A/B-legal against an unarmed control.  Magnitude alone cannot separate
+        // a fault from an extreme (a 1 ms receiver clock step is 3e5 m on every
+        // row of a station at once); the discriminator is TESTABILITY, and the
+        // alarm is the CROSS-FLAG "uncheckable AND large", never either half.
+        int    redundancy_census_stride{ 0 };   ///< Row-redundancy + unobservable-local sweep every Nth PROCESSED epoch (0 = OFF, the default).  Recommended 10 when armed = one sweep per 5 min at 30 s cadence: a park persists for many epochs, so minutes of detection latency is acceptable for an alarm and the 100-300 ms/epoch sweep cost is amortized.  A flight-recorder trip epoch (an armed @ref rhs_attrib_tow window) always forces a full sweep regardless of the stride phase.
+        double redundancy_eps{ 0.05 };          ///< Local redundancy floor: a DATA row with @f$r_i < \varepsilon@f$ is UNCHECKABLE — its misfit is invisible to every residual-based test (post-fit RAIM, sigma0, robust weighting) because Baarda's minimal detectable bias scales as @f$1/\sqrt{r_i}@f$.  Counted always; evented only in combination with @ref redundancy_hot_sigma.
+        double redundancy_hot_sigma{ 1000.0 };  ///< Cross-flag magnitude half: the centred standardized prefit deviation above which an UNCHECKABLE row becomes a @c uncheckable_hot_cell event.  The era-2 parked cell sat at 2.6e5 and the storm sea tops out near 40, so three decades of margin on each side.  An uncheckable row BELOW this (a healthy single-frequency riser) is counted and never evented — the prefer-fallback directive.
+        double redundancy_pivot_eps{ 1e-8 };    ///< INC-2 unobservable-local floor, RELATIVE to the station's median @f$N_{rr}@f$ LDLT pivot (the absolute scale is set by the measurement weights and varies by decades between an ambiguity column and a ZWD column).  A column below it carries essentially NO information this epoch.
+        double redundancy_escalate_sigma{ 0.0 };///< Free-tier escalation trigger (0 = OFF).  When > 0 the O(rows) centred prefit census runs on EVERY station every epoch, and any station whose largest centred deviation exceeds this gets a TARGETED single-station redundancy sweep at the next epoch (~2-5 ms).  The free tier asks "is something big?"; redundancy answers "is it checkable?".  Works with @ref redundancy_census_stride = 0.
+        int    redundancy_event_holdoff_ep{ 20 };///< Per-(station, satellite, class) event rate limit in sweep passes: a parked cell logs its identity persistently, not 120x/hour.
+        // --- Product-referenced measurement admission
+        //     (docs/SPEC_measurement_admission.md; filter/NetworkMeasurementAdmission)
+        // The corrupt-channel screen — LAYER 0 of the era-2 defense in depth
+        // (this screen -> iono_dw_admit_validate_k -> prefit_fuse_sigma -> the SH
+        // health gate).  BSHM00ISR emits G07 C1C+L1C at +198.2 km and G16 at
+        // +99.9 km against SP3+CLK on DOY-129; because the offset rides BOTH the
+        // code and the phase of the channel it is invisible to every differential
+        // check (TD, phase-minus-code, GF, MW all pass by construction), and on a
+        // single-band line of sight it is absorbed exactly by the free slant state
+        // where no residual test can reach it.  Only an ABSOLUTE, product-referenced
+        // test can see this class.
+        //
+        // Like the two blocks above, and unlike an estimation knob: default-OFF,
+        // OFF structurally byte-identical, and NOT fingerprinted — a forward-only
+        // ADMISSION policy (RAIM-class), so a stored snapshot's state means the
+        // same thing armed or not and an OFF/ON pair on ONE shared snapshot stays
+        // A/B-legal.  @ref adm_screen is solve-affecting when armed; @ref adm_trace
+        // alone is measure-only.
+        bool   adm_screen{ false };      ///< INC-1/INC-2: reject a (station, satellite, band) CODE channel whose common-mode-removed |z| exceeds @ref adm_bound_m — at arc BIRTH (never seeded), at a warm resume's first restored epoch (a restored corrupt arc is not a birth), and mid-arc (withhold + refloat).  SOLVE-AFFECTING.  The statistic is `observed - modeled` on CODE only, centred on the station median: `modeled` is the STATE-FREE deterministic model (range - c*dt^s - c*rel + ZHD*mf + antenna + bias + tides), so unlike a prefit innovation it does not vanish at a cell's birth — which is exactly why the prefit census could see this class only after the fact.  Phase is deliberately NOT screened: a constant phase offset is indistinguishable from an ambiguity and is therefore gauge, not corruption.  Implies @ref adm_trace's columns.
+        double adm_bound_m{ 1000.0 };    ///< |z| rejection bound (m).  Deliberately >= 10x above the worst legitimate |z| (low-elevation storm slant + tropo residual + multipath + ephemeris error, ~<= 100 m; measured across eleven healthy BSHM satellites on the storm day: -12.5…+19.1 m) and >= 100x below the observed corrupt class (1e5 m).  Two decades of margin on each side; a bound sweep is a validation gate, not a tuning exercise.
+        int    adm_min_sats{ 4 };        ///< Median-validity floor: the station's centre is trusted only when at least this many DISTINCT satellites carry a finite term.  Below it the station-epoch is SKIPPED and counted — a median of two or three values IS the outlier it is meant to remove, and a screen that rejects off an untrusted centre is worse than no screen.
+        int    adm_heal_ep{ 5 };         ///< Consecutive in-bound epochs a REJECTED channel must show before it is readmitted.  A rejected band re-tests every epoch; a heal readmits through the normal funnel with a FRESH seed and never restores the old states.
+        double adm_max_frac{ 0.5 };      ///< Station guard: if MORE than this fraction of a station's screened channels fail in one epoch, the MEDIAN itself is untrusted (bad a-priori coordinates, a product outage, a receiver-wide fault) and no per-channel verdict derived from it means anything.  The response mirrors the IF-TD reference gate's incoherent-station precedent — act at the STATION's scope (hold its screened bands for the epoch, refloat the arcs behind the holes) and REFUSE every per-channel claim, leaving the admission records untouched so the next epoch re-tests from evidence.
+        bool   adm_trace{ false };       ///< INC-3 absolute-residual census: two per-epoch |z| columns into @c network_epoch_status.csv (the median over stations of each station's worst, and the network maximum) plus ADMISSION-tier events naming every over-bound channel, rate-limited per cell.  MEASURE-ONLY and armable WITHOUT @ref adm_screen — this is the scan modality whose absence let "raw RINEX verified clean" be honestly wrong for a month of sessions.
+        // --- INC-4: the ARC RE-ENTRY vet (docs/SPEC_measurement_admission.md §10)
+        //
+        // The admission record is keyed per (station, satellite, band) and is kept
+        // for a full day, so a channel that LEAVES the model set and comes back
+        // hours later is still carrying `admitted = true` from before the gap.  The
+        // seam therefore dispatched it down the ESTABLISHED-arc path (INC-2 onset)
+        // instead of the birth path (INC-1) — a verdict inherited from a channel
+        // that is not necessarily the one that just returned.
+        //
+        // Measured on runs/ft63_24h_conv (63 stations, 24 h, 2880/2880 emitted):
+        // 16 of the 17 mid-arc `adm_onset` events are preceded by a `T0_gap
+        // arc_resume` on the same cell within 5 minutes.  There were no genuine
+        // mid-arc onsets on the day at all — only unscreened re-entries, in two
+        // sub-classes:
+        //
+        //  * TWELVE fire at the SAME epoch as the resume, after gaps of 3-2025
+        //    epochs.  Pure mislabelling: the response was already correct, but the
+        //    label was not, and G16@BSHM at TOW 327210 (gap 568 epochs) is the very
+        //    channel §1 of the card is written around — which the gate-2 leg replay,
+        //    whose record map starts EMPTY, correctly calls `adm_reject_birth`.  The
+        //    classification was an artifact of how long the run had been going.
+        //  * FOUR are re-admitted and cross the bound 2-8 epochs LATER, and those
+        //    epochs are expensive: a00 runs 39.7 -> 59.4 TECU (G16@BSHM, resume
+        //    307740, onset 307800) and 30.8 -> 43.0 (G13@BSHM, resume 273240, onset
+        //    273390) INSIDE the exposure window, recovering only once the withhold
+        //    lands.  The 8 birth rejections of the same day move a00 by a median of
+        //    -0.11 TECU (max +0.32).  Refusing at admission is free; amputating an
+        //    established arc is not — standing invariant #7, both edges.
+        //
+        // So the fix is to stop inheriting the verdict: a return after a gap is
+        // re-screened as a BIRTH.  That alone fixes the twelve at zero cost (a clean
+        // re-entry passes the bound and is admitted with no withhold, no funnel
+        // insertion and no solve change).  The four need the second half — a VET
+        // WINDOW in which the prefit census, which named every one of them 1-4
+        // epochs before the bound did, is admitted as evidence.
+        bool   adm_revet{ false };       ///< INC-4: re-screen an arc RE-ENTRY as a birth rather than inheriting the pre-gap `admitted` verdict, and vet it for @ref adm_revet_ep epochs afterwards.  Requires @ref adm_screen (the vet is a verdict, and the census-only arm makes no verdicts).  SOLVE-AFFECTING when it changes an admission, but inert on a healthy re-entry by construction: a returning channel inside the bound is admitted on its return epoch exactly as before, with no withhold and no refloat.
+        int    adm_revet_gap_ep{ 1 };    ///< Screened epochs a channel must be ABSENT before its return counts as a re-entry (1 = any missing epoch).  Absence is measured in epochs this seam actually SCREENED the channel, so a station below @ref adm_min_sats or erased by the two-station observability gate reads as absent — which is the conservative direction (it re-screens).  Measured on the FT63 day: 746 of 4657 `arc_resume` rows have gap 1 and the exposed sub-class spans gaps of 1-9, so a threshold above 1 would miss G13.
+        int    adm_revet_ep{ 8 };        ///< Screened epochs the vet window stays open after a re-entry (coverage runs from the return epoch through return + this - 1).  Sized from the field rather than picked: the census cannot flag the return epoch itself (a re-entering arc's ambiguity is fresh, so the census defers it as a birth) and its flags are read one epoch late, so the first readable flag is at return + 2; the FT63 day's four exposed cells were flagged at return + 1, +3, +4 and +1, i.e. readable at return + 2, +4, +5 and +2.  8 covers every measured case with three epochs to spare, and a window that is too LONG costs nothing on a healthy channel (the census simply never flags it) — the asymmetry is deliberate.  Re-armed to full by any refusal inside the window, and opened afresh by a heal, which is a re-entry in all but name.
+        double adm_revet_bound_scale{ 0.2 }; ///< Fraction of @ref adm_bound_m a channel answers to while it is RE-ENTERING or vetting (1.0 = no tightening).  0.2 = 200 m at the default bound.  Measured, not picked (card §10.10): on two legs, 272 epochs, 63 stations and 49 `arc_resume` cells with the census bound walked down to 50 m, **not one healthy station's re-entry cell cleared 50 m** — the entire >50 m re-entry population is BSHM00ISR, of which G16 arrives at 670.3 m, G22 at 347.6 m and G13 at 81.5 m ON THEIR RETURN EPOCH.  The healthy tail (COCO00AUS G24, NIUM00NIU G03, DARW00AUS G23, STHL00GBR G08 — tropical low-elevation repeat offenders) tops out at 61.9 m and is entirely STEADY-STATE.  200 m therefore sits 3.2x above the worst legitimate |z| anywhere in the sample and refuses G16 and G22 at the door, which is what closes the a00 excursion (+19.2 TECU) that the census trigger structurally cannot reach.  Deliberately does NOT reach G13 at 81.5 m — 1.3x the healthy maximum is not separable by any absolute bound, and that cell is the census trigger's (@ref adm_revet_census); the two mechanisms cover DISJOINT failure shapes (fast-ramp/large-on-arrival vs slow-ramp/small-on-arrival) and neither subsumes the other.  NOT applied to the INC-3 census, whose domain is @ref adm_bound_m by definition.
+        bool   adm_revet_census{ true }; ///< Inside a vet window, a PREFIT-census `obs_code` exceedance on the line of sight (@c network.trace_prefit_census, previous epoch) is ALSO grounds for refusal — the trigger the card's §1 always named the census as ("the redundancy census as the detection net") wired to the response.  The census statistic is standardized (@f$|y-m|\sqrt{w}@f$) and therefore sees a ramping corruption while it is still under this card's absolute metre bound: it flagged G16@BSHM at 307770 (s = 1439.6, raw y = 975.5 m) one epoch before the bound fired.  Ignored — and COUNTED — when the census is not armed or its flags are stale; the vet then runs on the bound alone rather than going silently inert.
+        bool   adm_revet_hold{ false };  ///< Strict posture: withhold a re-entering channel until it re-earns admission through the normal heal path (@ref adm_heal_ep) instead of admitting it provisionally for the vet window.  Default OFF on the prefer-fallback directive and on the flicker card's INC-3 deviation 9 — acting on every re-entry would add ~1.6 funnel insertions per epoch (4657 re-entries over 2880 epochs on the FT63 day) to a channel the Iono-2 v3k erase policy is tuned on.  Arm it only to bound a run where the census trigger is unavailable.
         int  neq_export_epoch{ -1 };      ///< One-shot full-arrowhead NEQ export: at the Nth PROCESSED epoch (1-based; <=0 = off, the default) dump the assembled normal-equations system to @c logs/neq_export/ — border @f$N_{ss}@f$ (raw + reduced) and RHS, every station's @f$N_{sr}@f$ / @f$N_{rr}@f$ (rebuilt from its LDLᵀ) / @f$u_r@f$ as row-major little-endian double .bin files with a CSV station index, plus shared-column labels (@ref NetworkEstimator::sharedColumnLabel) and per-station local-column labels (StateManager::getStateLabels via the assembly h2local map).  Enables exact offline spectral / weak-direction attribution of the FULL system (the @ref trace_estimability dump covers only the reduced border's near-zero tail).  Post-solve read-only dump — the solution is byte-identical; ~100-200 MB once at 305 stations.
         bool trace_epoch_status{ false }; ///< L1: emit @c network_epoch_status.csv — ONE row per processed epoch (emitted OR skipped) recording the disposition (emitted / gate_withheld / sigma0_withheld / solve_failed / datum_failed / sync_skip), σ̂0, within-epoch adapt count, refloat/retro counts, datum-change flag, and the clock-Δ median+std+worst-sat (the median+std+worst convention, unlike @c network_trace.csv's rms/max).  Makes per-epoch disposition + σ̂0 level-shifts mechanically judgeable (V1/V3/V6).  O(epochs); off by default — byte-identical when OFF (no new file).
         /**

@@ -317,6 +317,14 @@ namespace GnssProcessor {
         /// the L15 manifest) — captured once in openAll().
         double es_sigma0_trigger_   = 0.0;
         double es_withhold_ceiling_ = 0.0;
+        /// L1: are the two product-referenced admission census columns part of this
+        /// run's epoch-status schema (docs/SPEC_measurement_admission.md INC-3)?
+        /// Captured in openAll() because @ref emitEpochStatus receives neither the
+        /// config nor the run context, and the card's OFF contract is structural
+        /// byte-identity — appending the columns unconditionally, as the redundancy
+        /// and prefit censuses did, would change the artifact of every unarmed run
+        /// and break exactly the same-build A/B this card's §7 gates depend on.
+        bool es_adm_columns_ = false;
 
         /**
          * @brief Open every armed trace stream and write its header row (verbatim

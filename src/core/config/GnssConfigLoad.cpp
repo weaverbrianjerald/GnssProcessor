@@ -660,6 +660,16 @@ namespace GnssProcessor {
                 rinex_types_.find('D') != std::string::npos ? "doppler " : "",
                 rinex_types_.find('S') != std::string::npos ? "snr "     : "");
         }
+        // RINEX 3 zero-sentinel guard (docs/SPEC_rinex_zero_sentinel.md): a written
+        // 0.0 is the standard's missing-observation sentinel, not a measurement.
+        // Default false = legacy ingest (byte-identity); arm in new configs.
+        rinex_skip_zero_values_ = jval<bool>(json, "processing.rinex_skip_zero_values",
+                                             "rinex_skip_zero_values", false);
+        if (rinex_skip_zero_values_) {
+            log->info("RINEX 3 zero-sentinel guard ARMED: written 0.0 observation "
+                      "values are treated as missing (RINEX 3 convention).");
+        }
+
         leap_seconds_tai_   = jval<double>(json, "processing.leap_seconds_tai", "leap_seconds_tai", 37.0);
 
         // Relinearize geometry lives under processing (it affects the model loop).
@@ -1571,6 +1581,17 @@ namespace GnssProcessor {
                                                  "ar_nl_max_per_pair_frac", 0.15);
         ar_enable_partial_ar_    = jval<bool>(json, "estimation.ambiguity_resolution.enable_partial_ar",
                                                "ar_enable_partial_ar", false);
+        ar_nl_iono_free_row_     = jval<bool>(json, "estimation.ambiguity_resolution.nl_iono_free_row",
+                                               "ar_nl_iono_free_row", false);
+        if (ar_nl_iono_free_row_) {
+            // Invariant #4: an armed functional switch must announce itself, and
+            // this one is only safe with a hardened widelane (8.06× WL
+            // sensitivity vs the narrowlane row).
+            log->warn("AR: WL-constrained N_1 search is on the exact IONO-FREE row "
+                      "(c_IF·alpha = 0).  This is 8.06x more sensitive to a widelane "
+                      "error than the narrowlane row — a 1-cycle WL error moves the "
+                      "N_1 target 3.53 cyc.  Verify the widelane before trusting fixes.");
+        }
 
         // estimation.ambiguity_resolution.active_systems = ["GPS","Galileo",...]
         // Empty / missing → all active systems are eligible for AR.

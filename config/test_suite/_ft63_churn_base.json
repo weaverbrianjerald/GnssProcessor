@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "CHURN CARD — BASELINE ARM (3 h, 63 sta, DOY-129, cold).  Derived from",
+    "_ft63_24h_conv.json, the config the 2026-08-02 churn decomposition was measured on,",
+    "with THREE deltas and no others: 3 h instead of 24 h, its own snapshot path (so no arm",
+    "can warm-resume off another's state and read as a clean cold start), and its own output",
+    "paths.  D5 v2 exactly as it ran there — innov_gate + calibrate, corroborate OFF,",
+    "retap_only OFF.",
+    "",
+    "WHAT IT IS FOR.  The reference the v3 and v4 arms are read against.  The measured",
+    "pathology on the 24 h leg: 525 009 slip refloats of which 513 482 (97.8 %) are the D5",
+    "gate's own flag -> re-tap -> funnel limit cycle, mean chord lifetime 4.3 epochs,",
+    "dd_sigma_cyc pinned ~3.9 cyc and med|frac_cyc| uniform at every baseline.",
+    "",
+    "GRADE (all datum-invariant, standing invariant #5):",
+    "  1. n_chord_births / n_slip_refloats per epoch (network_epoch_status.csv) — the churn;",
+    "  2. dd_sigma_cyc: does it leave the ~3.9 cyc pin (scripts/grade_ddfrac_perhour.py);",
+    "  3. med|frac_cyc|: does it leave 0.25 (uniform = zero integer information);",
+    "  4. total_IF spread / worst_med — the NO-HARM check.  A churn win that moves this is",
+    "     not a win.",
+    "Read epoch-status columns BY NAME: the indices around n_arc_refloat(17) / n_d5_flags(18)",
+    "/ n_d5_retaps(19) / n_chord_births(20) / n_slip_refloats(21) are off by one."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_24h_conv.json"
+  ],
+  "processing": {
+    "max_duration_s": 10800.0
+  },
+  "network": {
+    "max_duration_s": 10800.0,
+    "product_output_path": "C:/GnssProcessor/runs/churn_base/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_base/state_snapshot.bin"
+  }
+}

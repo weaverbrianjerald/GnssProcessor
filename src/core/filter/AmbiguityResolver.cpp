@@ -1163,6 +1163,51 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
 // WL-constrained NL resolution (two-step approach)
 // ===========================================================================
 
+AmbiguityResolver::NlRowCoefficients AmbiguityResolver::nlRowCoefficients(
+    double f1, double f2, double lam1, double lam2, bool iono_free) {
+
+    // Both rows are exact identities for the SAME integer N_1 once the widelane
+    // WL = N_1 − N_2 is known; they differ only in what they are sensitive to.
+    // Writing the slant-iono direction as α = (1, (f1/f2)²):
+    //
+    //   NARROWLANE (legacy, default)   a_NL = (f1, f2)/(f1+f2)
+    //     y = (f1·N_1 + f2·N_2)/(f1+f2) = N_1 − [f2/(f1+f2)]·WL
+    //     a_NL·α ≠ 0 — the row sits 6.66° off α, so it carries 0.959 cycles of
+    //     error per TECU of slant-iono error.  That is what makes the default
+    //     nl_max_per_pair_frac = 0.15 cyc an implicit 0.156-TECU demand.
+    //
+    //   IONO-FREE (nl_iono_free_row)   c_IF = (f1², −f2²)/(f1²−f2²)
+    //     B_IF = c_IF·(λ1 N_1, λ2 N_2) = λ_NL·(N_1 + [f2/(f1−f2)]·WL)
+    //     since c_IF1·λ1 + c_IF2·λ2 = c(f1−f2)/(f1²−f2²) = c/(f1+f2) = λ_NL
+    //     EXACTLY, and c_IF·α = 0 EXACTLY — no slant-iono sensitivity at all.
+    //
+    // The price is a single factor (f1+f2)/(f1−f2) = 8.06 for GPS L1/L2: the
+    // iono-free row's norm is 8.06× larger (≈65× in variance) AND its widelane
+    // sensitivity is 8.06× larger (3.53 cyc of N_1 per cycle of WL error, vs
+    // 0.438).  It trades an ionospheric BIAS for widelane/noise AMPLIFICATION.
+    NlRowCoefficients c{};
+    if (iono_free) {
+        // Rows in [1/m] so T·(DD metres) lands in NL cycles:
+        //   t = c_IF / λ_NL  with λ_NL = c/(f1+f2)  ⇒  t_1 = f1²/((f1−f2)·c)
+        const double f_dif   = f1 - f2;
+        const double c_light = Constants::SPEED_OF_LIGHT;
+        c.t_1   =  f1 * f1 / (f_dif * c_light);
+        c.t_2   = -(f2 * f2) / (f_dif * c_light);
+        c.shift = -f2 / f_dif;
+        c.bt_2  = -f1 / f_dif;
+    } else {
+        // Legacy narrowlane row.  Expressions kept verbatim from the original
+        // in-line form so the OFF path stays BIT-identical, not merely
+        // algebraically equal (standing invariant #6).
+        const double f_sum = f1 + f2;
+        c.t_1   =  f1 / (lam1 * f_sum);
+        c.t_2   =  f2 / (lam2 * f_sum);
+        c.shift =  f2 / (f1 + f2);
+        c.bt_2  = -f1 / f_sum;
+    }
+    return c;
+}
+
 AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     const std::vector<DdPair>& pairs,
     const Eigen::VectorXd& x,
@@ -1211,6 +1256,14 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         double lam1, lam2;    // wavelengths (m)
         int dd_wl;            // DD WL integer (known)
         double lambda_nl;     // NL wavelength (m)
+        // --- Search-functional coefficients (see the T-matrix block below) ---
+        // Filled per candidate so every downstream expression keeps ONE shape
+        // whichever row (narrowlane / iono-free) is in force.
+        double t_coef_1;      // T row entry on dd_idx_1 [1/m]: DD metres → search cycles
+        double t_coef_2;      // T row entry on dd_idx_2 [1/m]
+        double shift_coef;    // y_for_mlambda = y_reduced + shift_coef·WL  (≡ N_1)
+                              // and, identically, N_1 = n_reduced_fixed + shift_coef·WL
+        double bt_coef_2;     // N_2 = n_reduced_fixed + bt_coef_2·WL  (= shift_coef − 1)
     };
     std::vector<NlCandidate> nl_candidates;
     // Track which DD indices are consumed by NL pairs
@@ -1256,10 +1309,11 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
 
         // DIAGNOSTIC (Jul-30): dump the engine's MW-derived widelane integers so
         // they can be scored against the estimator-free census
-        // (scripts/mw_census_allpairs.py).  The NL search is ANCHORED on dd_wl —
-        // a 1-cycle WL error shifts the N1 search target by f2/(f1+f2) = 0.438 cyc
-        // for GPS L1/L2, i.e. half a cycle, so a wrong WL deterministically yields
-        // a wrong NL.  tow lets the comparison window-match the census series.
+        // (scripts/mw_census_allpairs.py).  The N1 search is ANCHORED on dd_wl —
+        // a 1-cycle WL error shifts the N1 search target by |shift_coef|: that is
+        // f2/(f1+f2) = 0.438 cyc on the narrowlane row and f2/(f1−f2) = 3.53 cyc
+        // on the iono-free row (GPS L1/L2).  Either way a wrong WL deterministically
+        // yields a wrong N1.  tow lets the comparison window-match the census series.
         if (!observations.empty()) {
             log->info("WLDUMP tow={:.1f} sat_i={} sat_ref={} sig_hi={} sig_lo={} "
                       "wl_i={} wl_ref={} dd_wl={}",
@@ -1269,12 +1323,44 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
 
         const double f1 = hi.freq;
         const double f2 = lo.freq;
+        const double f_sum = f1 + f2;
+        const double f_dif = f1 - f2;
         const double lambda_nl = Constants::SPEED_OF_LIGHT / (f1 + f2);
+
+        // A near-degenerate frequency pair makes the iono-free row explode: the
+        // amplification is (f1+f2)/(f1−f2), which is 6.9–8.1 for every real
+        // widelane pair (GPS L1/L2 8.06, L1/L5 6.90, E1/E5b 7.56) but 77.7 for
+        // an intra-E5a/E5b pair.  At that scale a single wrong widelane cycle
+        // displaces N_1 by ~38 cycles.  Drop the candidate rather than fix it
+        // wrong.  Runs BEFORE nlRowCoefficients — it is the guard on that
+        // function's f1−f2 divisor.  Invariant #4: say what was removed.
+        if (config_.nl_iono_free_row) {
+            constexpr double kIfRowMaxWlAmplification = 20.0;
+            const double amplification = (f_dif > 0.0)
+                ? f_sum / f_dif
+                : std::numeric_limits<double>::infinity();
+            if (!(amplification < kIfRowMaxWlAmplification)) {
+                log->warn("AR iono-free row: dropping {}-{} {}/{} — WL amplification "
+                          "{:.1f}x exceeds {:.1f}x (frequency pair too close; a 1-cycle "
+                          "WL error would move N_1 by {:.1f} cyc)",
+                          p_a.sat_i, p_a.sat_ref, hi.signal, lo.signal,
+                          amplification, kIfRowMaxWlAmplification,
+                          std::abs(f2 / f_dif));
+                continue;
+            }
+        }
+
+        // Search functional: which row of the (L1,L2) plane observes N_1.
+        // Both rows target the SAME integer; see nlRowCoefficients().
+        const NlRowCoefficients row =
+            nlRowCoefficients(f1, f2, hi.wavelength, lo.wavelength,
+                              config_.nl_iono_free_row);
 
         nl_candidates.push_back({
             hi.pair_idx, lo.pair_idx,
             f1, f2, hi.wavelength, lo.wavelength,
-            dd_wl, lambda_nl
+            dd_wl, lambda_nl,
+            row.t_1, row.t_2, row.shift, row.bt_2
         });
         consumed_dd.insert(hi.pair_idx);
         consumed_dd.insert(lo.pair_idx);
@@ -1314,25 +1400,14 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     // DD vector to the NL vector.
     const int n_orig = static_cast<int>(pairs.size());
     Eigen::MatrixXd T = Eigen::MatrixXd::Zero(n_nl, n_orig);
-    // Also build the WL correction vector (for back-transformation)
-    Eigen::VectorXd wl_correction = Eigen::VectorXd::Zero(n_orig);
 
     for (int k = 0; k < n_nl; ++k) {
         const auto& nlc = nl_candidates[k];
-        const double f_sum = nlc.f1 + nlc.f2;
-
-        // n_NL = (f1/lam1 * DD_1 + f2/lam2 * DD_2) / (f1+f2)
-        // In the NL row, we want the result in NL cycles, so:
-        //   row[dd_idx_1] = f1 / (lam1 * f_sum)
-        //   row[dd_idx_2] = f2 / (lam2 * f_sum)
-        T(k, nlc.dd_idx_1) = nlc.f1 / (nlc.lam1 * f_sum);
-        T(k, nlc.dd_idx_2) = nlc.f2 / (nlc.lam2 * f_sum);
-
-        // WL correction for back-transformation:
-        // DD_1 [m] = (n_NL + f2/(f1+f2) * dd_wl) * lam1
-        // DD_2 [m] = (n_NL - f1/(f1+f2) * dd_wl) * lam2
-        wl_correction(nlc.dd_idx_1) = nlc.f2 / f_sum * nlc.dd_wl * nlc.lam1;
-        wl_correction(nlc.dd_idx_2) = -nlc.f1 / f_sum * nlc.dd_wl * nlc.lam2;
+        // Row entries are in [1/m]: y_dd carries DD ambiguities in METRES
+        // (λ_i·N_i), so T·y_dd lands in NL cycles.  Which row this is —
+        // narrowlane or exact iono-free — was decided per candidate above.
+        T(k, nlc.dd_idx_1) = nlc.t_coef_1;
+        T(k, nlc.dd_idx_2) = nlc.t_coef_2;
     }
 
     // Extract original DD float vector (meters)
@@ -1402,26 +1477,26 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     // Run MLAMBDA on the NL-only set
     // Shift y_reduced so MLAMBDA's integer search aligns with integer N_1.
     //
-    // The IF-NL combination satisfies
-    //   y_reduced(k) = (f1·N_1 + f2·N_2) / (f1+f2)
-    //                = N_1 − [f2/(f1+f2)] · WL          (substituting N_2 = N_1−WL)
+    // Neither reduced combination is integer-valued on its own — each is N_1
+    // displaced by a known multiple of the fixed widelane:
     //
-    // which is NOT integer-valued in general — for GPS L1/L2 with WL=1 it
-    // sits at N_1 − 0.4379, neither integer is meaningfully closer, and
-    // the ratio test sees s2/s1 ≈ 1.6 regardless of float quality.  By
-    // adding the known-WL offset back in we get a search variable that
-    // IS integer in expectation:
+    //   narrowlane   y_reduced(k) = N_1 − [f2/(f1+f2)]·WL   (−0.438·WL, L1/L2)
+    //   iono-free    y_reduced(k) = N_1 + [f2/(f1−f2)]·WL   (+3.530·WL, L1/L2)
     //
-    //   y_for_mlambda(k) = y_reduced(k) + [f2/(f1+f2)] · WL_int  =  N_1 + noise
+    // Left unshifted, the narrowlane form with WL=1 sits at N_1 − 0.4379 where
+    // neither integer is meaningfully closer and the ratio test sees s2/s1 ≈ 1.6
+    // regardless of float quality.  Adding the known-WL offset back gives a
+    // search variable that IS integer in expectation, in both forms:
     //
-    // We then back-shift afix_n1 to the IF-NL form so the existing
-    // back-transform expression (which expects IF-NL) continues to work.
-    // Q_reduced is unchanged: a constant per-row shift doesn't affect the
-    // covariance, only the mean.
+    //   y_for_mlambda(k) = y_reduced(k) + shift_coef·WL_int  =  N_1 + noise
+    //
+    // We then back-shift afix_n1 to the reduced form so the back-transform
+    // expressions below keep one shape.  Q_reduced is unchanged: a constant
+    // per-row shift moves the mean, not the covariance.
     Eigen::VectorXd nl_shift(n_nl);
     for (int k = 0; k < n_nl; ++k) {
         const auto& nlc = nl_candidates[k];
-        nl_shift(k) = nlc.f2 / (nlc.f1 + nlc.f2) * static_cast<double>(nlc.dd_wl);
+        nl_shift(k) = nlc.shift_coef * static_cast<double>(nlc.dd_wl);
     }
     const Eigen::VectorXd y_for_mlambda = y_reduced + nl_shift;
 
@@ -1517,10 +1592,9 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         Eigen::VectorXd v = Eigen::VectorXd::Zero(2 * m);
         for (int a = 0; a < m; ++a) {
             const auto&  nlc        = nl_candidates[pf.kept[a]];
-            const double f_sum      = nlc.f1 + nlc.f2;
-            const double n_nl_fixed = pf.afix_cycles(a) - nl_shift(pf.kept[a]);  // N_1 → IF-NL
-            const double dd1 = (n_nl_fixed + nlc.f2 / f_sum * nlc.dd_wl) * nlc.lam1;
-            const double dd2 = (n_nl_fixed - nlc.f1 / f_sum * nlc.dd_wl) * nlc.lam2;
+            const double n_nl_fixed = pf.afix_cycles(a) - nl_shift(pf.kept[a]);  // N_1 → reduced
+            const double dd1 = (n_nl_fixed + nlc.shift_coef * nlc.dd_wl) * nlc.lam1;
+            const double dd2 = (n_nl_fixed + nlc.bt_coef_2 * nlc.dd_wl) * nlc.lam2;
             const auto& p1 = pairs[nlc.dd_idx_1];
             const auto& p2 = pairs[nlc.dd_idx_2];
             if (p1.state_idx_i   >= 0 && p1.state_idx_i   < nx) H(2 * a,     p1.state_idx_i)   = +1.0;
@@ -1560,20 +1634,20 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         return result;
     }
 
-    // Back-transform: recover fixed DD ambiguities in meters.
-    // For NL-paired DDs:
-    //   DD_1 [m] = (n_NL_fixed + f2/(f1+f2) * dd_wl) * lam1
-    //   DD_2 [m] = (n_NL_fixed - f1/(f1+f2) * dd_wl) * lam2
+    // Back-transform: recover fixed DD ambiguities in meters.  By construction
+    // n_reduced_fixed + shift_coef·WL = N_1 and + bt_coef_2·WL = N_2 = N_1 − WL,
+    // for either search row:
+    //   DD_1 [m] = N_1 · lam1
+    //   DD_2 [m] = N_2 · lam2
     Eigen::VectorXd afix_orig(n_orig);
     afix_orig.setZero();
 
     for (int k = 0; k < n_nl; ++k) {
         const auto& nlc = nl_candidates[k];
-        const double f_sum = nlc.f1 + nlc.f2;
         const double n_nl_fixed = afix_reduced(k);
 
-        afix_orig(nlc.dd_idx_1) = (n_nl_fixed + nlc.f2 / f_sum * nlc.dd_wl) * nlc.lam1;
-        afix_orig(nlc.dd_idx_2) = (n_nl_fixed - nlc.f1 / f_sum * nlc.dd_wl) * nlc.lam2;
+        afix_orig(nlc.dd_idx_1) = (n_nl_fixed + nlc.shift_coef * nlc.dd_wl) * nlc.lam1;
+        afix_orig(nlc.dd_idx_2) = (n_nl_fixed + nlc.bt_coef_2 * nlc.dd_wl) * nlc.lam2;
 
         const double n1_float = y_for_mlambda(k);   // searched as N_1 + noise
         const int    n1_int   = static_cast<int>(std::lround(afix_n1(k)));

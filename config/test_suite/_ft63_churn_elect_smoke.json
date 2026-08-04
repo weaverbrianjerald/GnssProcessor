@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "CHURN CARD \u2014 slip-aware eq34 election, 10-EPOCH WIRING SMOKE.  One functional key over",
+    "_ft63_churn_base.json: network.phase_datum_eq34_slip_aware_election.",
+    "",
+    "WHAT THIS CAN AND CANNOT SHOW.  It proves the seam runs on real data without losing tree",
+    "rank or crashing, and that the de-seed / re-admit counters populate.  It CANNOT grade the",
+    "policy: 10 cold epochs contain few slips, and the number that matters is the ratio",
+    "eq34_slip_readmitted / eq34_slip_deseeded over a leg with real slip traffic \u2014 near 1 means",
+    "the observation graph, not the election, is the binding constraint and the knob buys",
+    "little.  That field arm is still owed."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "phase_datum_eq34_slip_aware_election": true,
+    "product_output_path": "C:/GnssProcessor/runs/churn_elect_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_elect_smoke/state_snapshot.bin"
+  }
+}

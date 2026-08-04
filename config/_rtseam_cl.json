@@ -1,0 +1,47 @@
+// RT seam gate — ARM D: closed-loop network consumer (the SSR-bearing arm).
+//
+// This is the ONLY arm that puts real numbers through RealTimeEngineSsrBreaks.cpp.
+// The SBF arms (A/B/C) carry no SSR at all, so all five datum-break seams run
+// their empty-store no-op paths there: wiring exercised, arithmetic DEAD.  That
+// is precisely the invariant-#4 trap that let the network decomposition's 10-arm
+// matrix certify zero coupling rows, so it is called out rather than glossed.
+//
+// The producer (3 stations, 05:00-06:00 UTC on 2024-129) emits into an OWNED
+// SsrCorrectionStore each epoch; the held-out station CIT100USA is driven
+// through RealTimeEngine::processEpoch against that store (NetworkEmitStore.cpp
+// :547).  Gate artifacts are the CONSUMER-side per-epoch files —
+// closed_loop_trace.csv and ssr_consumer_trace.csv.  The producer's own CSVs are
+// untouched by this refactor and serve only as a "did the run actually run"
+// tripwire.
+//
+// Seams this arm ARMS that no other arm reaches:
+//   reactToGenerationChange   logProducerStatus       resetOnPhaseBiasDisc
+//   reinflateOnCodeBiasDisc   reinflateOnClockDisc    traceSsrConsumer
+//   applyNetworkIonoPrior     applyZwdConstraint      logSsrCoverage
+//   resolveAmbiguities (real fixes; the SBF arms run AR mode 0)
+{
+  "extends": "ppp_rtk_network_brdc_rts.json",
+
+  "estimation": {
+    // Arms the ~80-line branch of reinflateOnCodeBiasDisc.  The base config has
+    // this FALSE, which reaches only the 20-line else-branch warn.  KNOWN GAP:
+    // no arm in this matrix executes that else-branch (see the gate report).
+    "estimate_ifb": true,
+    // Arms the ISB re-inflation inside reinflateOnClockDisc; at the default 0
+    // that seam is note-only and the reref_isb / present_isb machinery is dead.
+    "clock_disc_isb_reinflate_std": 0.5,
+    // Arms applyZwdConstraint (the pseudo-observation, not just the guard).
+    "zwd_constraint": { "enabled": true, "sigma_m": 0.05, "apriori_m": 0.1 }
+  },
+
+  "network": {
+    // Arms traceSsrConsumer (the 80-line L10 trace seam) AND gives the
+    // comparator a dense per-sat-per-epoch consumer artifact.
+    "trace_ssr_consumer": true,
+
+    "closed_loop": {
+      // Arms applyNetworkIonoPrior (the BLUP pseudo-observation block).
+      "consume_network_iono": true
+    }
+  }
+}

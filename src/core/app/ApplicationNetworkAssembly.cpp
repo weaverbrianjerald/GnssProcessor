@@ -37,6 +37,7 @@
 #include "filter/NetworkMwWlLayer.hpp"             // M5 card WL-1: MW-seeded wide-lane pseudo-obs layer
 #include "filter/NetworkSdEwlAr.hpp"               // SD EWL: the shared EWL band table (sdEwlBands) + increment-2a decision
 #include "filter/NetworkCoupling.hpp"       // INC-7b: Card-1/1b/1d conditional coupling-row builder
+#include "filter/NetworkPrefitCensus.hpp"   // INC-2 structural fuse (SPEC_prefit_census_observability)
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
 #include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
@@ -216,6 +217,50 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         A_r.col(static_cast<Eigen::Index>(j)) = em.H.col(local_cols[j]);
 
     w = em.R_v.cwiseInverse();   // per-obs information = 1/σ²
+    // --- flicker/gap signal integrity INC-2 (docs/SPEC_flicker_gap_integrity.md) ---
+    // Demote the PHASE rows of every line of sight that is currently UNVETTED — one
+    // that re-entered, flickered a band, is degraded, or is brand new, i.e. one
+    // inside the structural window where NO time-difference detector can operate (MW
+    // needs Welford history, IF-TD needs three consecutive epochs, LLI is
+    // receiver-discretionary, GF is doctrine-barred at 30 s).  Across a loss of lock
+    // the slip magnitude is unbounded and unknowable — a proportional counter reset
+    // is invisible to BOTH MW and GF — so the only safe posture is to stop trusting
+    // the phase until something can watch it again.
+    //
+    // CODE rows are deliberately untouched (`sig[0] != 'L'`): they are slip-immune,
+    // and they are what re-anchors the float to a bounded error.  This is
+    // prefer-fallback, not exclusion — the row still contributes, at σ × scale.
+    //
+    // This is the ONLY place that needs it, and the cheapest: `em.satellite_ids` /
+    // `em.signal_types` are row-aligned with H/R_v by an asserted invariant, so
+    // phase-vs-code and the satellite are O(1) lookups with no matrix scan — the
+    // three existing post-assembly sites (WE-CI, frame-diag) each have to re-derive
+    // "is this a phase row" from shared-column label archaeology.  Everything folded
+    // later — the datum pins, the GLONASS anchors, the SH/GIM iono rows, the SD-EWL
+    // rows, the Card-1 coupling rows — APPENDS, so rows [0, em.H.rows()) are
+    // structurally the data rows and nothing else can be caught here.
+    //
+    // Thread-safety: `st.phase_sigma_scale` is republished SERIALLY by
+    // @ref networkSignalIntegrity before the parallel produce and only find-read here
+    // (the pinned_amb_sigma_scale / iono-deweight contract).  OFF byte-identity: the
+    // map is never populated when the card is disarmed, so `w` keeps the exact
+    // cwiseInverse result with zero additional floating-point operations.
+    if (!st.phase_sigma_scale.empty()) {
+        const Eigen::Index mr = std::min<Eigen::Index>(
+            m, static_cast<Eigen::Index>(em.signal_types.size()));
+        long long n_dem = 0;
+        for (Eigen::Index r = 0; r < mr; ++r) {
+            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            if (sig.empty() || sig[0] != 'L') continue;          // CODE UNTOUCHED
+            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
+            const auto sc = st.phase_sigma_scale.find(
+                em.satellite_ids[static_cast<std::size_t>(r)]);
+            if (sc == st.phase_sigma_scale.end() || !(sc->second > 1.0)) continue;
+            w(r) /= sc->second * sc->second;                      // σ × scale
+            ++n_dem;
+        }
+        st.si_rows_demoted += n_dem;
+    }
     y = em.innovations;
 }
 
@@ -900,6 +945,8 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
                                            const NetworkIonoDeweightGate& iono_deweight,
                                            const GlobalVtecShConfig& shc, bool sh_dev_on,
                                            const std::map<std::string, ShDevCarry>& sh_dev_carry,
+                                           const std::set<std::string>& dw_row_held,
+                                           const std::set<std::string>* dw_tie_admitted,
                                            Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                                            Eigen::VectorXd& w, Eigen::VectorXd& y) const {
     if (!sh_model) return;
@@ -942,6 +989,24 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
         if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
         const auto hit = h2local.find(iono_idx);
         if (hit == h2local.end()) continue;   // iono not in this station's local block this epoch
+        // Iono-deweight release hygiene (docs/SPEC_deweight_release_hygiene.md).  Two
+        // dispositions keep a tie row OUT of this station's stack:
+        //   INC-3  — the LOS failed the release screen: its solved deviation is still
+        //            too far from the field for the row to be folding information
+        //            rather than garbage, so it stays decoupled until the serial seam
+        //            re-tests it next epoch.
+        //   INC-3b — the LOS has not been ADMITTED yet.  This is a POSITIVE list, not a
+        //            hold list, and it has to be: at a LOS's first sighting the seam has
+        //            never run for that key, so there is nothing that could have put it
+        //            in a hold list — and its first tie row is precisely the coupling
+        //            event this card exists to screen (the measured DOY-129 valve).
+        // Both are EMPTY / null unless armed, so the OFF path costs one empty() test and
+        // one null test and never looks a key up (byte-identical).
+        if (!dw_row_held.empty() || dw_tie_admitted) {
+            const std::string dw_key = st.name + "|" + o.satellite;
+            if (!dw_row_held.empty() && dw_row_held.count(dw_key)) continue;
+            if (dw_tie_admitted && !dw_tie_admitted->count(dw_key)) continue;
+        }
         const IppGeometry g0 =
             computeIppGeometry(st.ecef, o.sat_pos, Re, layers[0].shell_height_m);
         if (!g0.valid) continue;
@@ -1194,6 +1259,19 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
             else
                 st.mm->ensureNetworkSharedStates(modeled[i], shared_phase_keys, cbadm_admit);
             a_ok[i] = 1;
+
+            // Adaptive iono q (network.adaptive_iono_q): roll this station's GF-TD2
+            // variability monitor forward.  Station-local state, no shared write
+            // (same parallel contract as the T0 slip scan below); the per-satellite
+            // multipliers are consumed SERIALLY by the T5v2 GM deviation aging later
+            // this epoch.  Best-effort like the slip scan: a monitor failure costs
+            // this station's boosts this epoch, never the station.
+            if (st.iono_var) {
+                try {
+                    st.iono_var->update(modeled[i]);
+                    ++st.iono_var_epochs_fed;
+                } catch (...) { /* best-effort: no boosts from this station this epoch */ }
+            }
 
             // T0 slip detection: roll this station's MW + GF arcs forward and
             // collect per-(sat,signal) integer repairs.  Station-local detector
@@ -1723,6 +1801,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const bool   carry_cpl_shmarg = ctx.knobs.carry_cpl_shmarg; // Card 1d-SH: fully marginalize VtecSh coupling terms (GM border ≠ RW κ model — severs the amb↔SH carry feedback) — requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // B9: carry per-station ZWD across epochs
     const double zwd_q         = ctx.knobs.zwd_q;                // B9: ZWD carry random-walk process noise (m²/s)
+    const bool   rx_cb_on      = ctx.knobs.rx_cb_on;             // rx-CB carry (SPEC_rx_cb_carry)
+    const double rx_cb_q       = ctx.knobs.rx_cb_q;              // rx-CB carry RW process noise (m²/s)
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
@@ -1740,6 +1820,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     auto& zwd_carry = ctx.carry.zwd_carry;
     auto& rpb_carry = ctx.carry.rpb_carry;
     auto& sh_dev_carry = ctx.carry.sh_dev_carry;
+    auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // rx-CB carry: produce phase READS only
     auto& n_cpl_joint_fallback = ctx.counters.n_cpl_joint_fallback;
     auto& n_cpl_terms_present = ctx.counters.n_cpl_terms_present;
     auto& n_cpl_terms_departed = ctx.counters.n_cpl_terms_departed;
@@ -1799,6 +1880,21 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                + "|" + parts->satellite);
             }
         }
+        // Adaptive iono q (network.adaptive_iono_q): per-LOS GM boost factors from
+        // the PASS-A station monitors (already rolled forward this epoch — PASS A
+        // precedes this serial block).  The multiplier inflates ONLY the innovation
+        // term σ_ss²(1−λ²) below — the GM shape (τ) and the carried level are
+        // untouched, so a quiet LOS (m=1) ages byte-identically and the disarmed
+        // path never builds the map.
+        std::map<std::string, double> aiq_mult;
+        const bool aiq_on = nc.adaptive_iono_q;
+        if (aiq_on) {
+            for (const auto& sta : stations) {
+                if (!sta.iono_var) continue;
+                for (const auto& [aiq_sat, aiq_m] : sta.iono_var->multipliers())
+                    if (aiq_m > 1.0) aiq_mult.emplace(sta.name + "|" + aiq_sat, aiq_m);
+            }
+        }
         const double now_s = se.time.week * 604800.0 + se.time.tow;
         for (auto it = sh_dev_carry.begin(); it != sh_dev_carry.end();) {
             ShDevCarry& dc = it->second;
@@ -1831,7 +1927,19 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             if (dt > 0.0) {
                 const double lam = std::exp(-dt / sh_dev_tau);
                 dc.dev *= lam;
-                dc.var  = lam * lam * dc.var + dc.var_ss * (1.0 - lam * lam);
+                // Adaptive iono q: storm-scaled innovation for this LOS (1.0 when
+                // disarmed / quiet / unmonitored — the legacy expression exactly).
+                double aiq_scale = 1.0;
+                if (aiq_on && !aiq_mult.empty()) {
+                    const auto mit = aiq_mult.find(it->first);
+                    if (mit != aiq_mult.end()) {
+                        aiq_scale = mit->second;
+                        ++ctx.counters.aiq_boosts_total;
+                        if (aiq_scale > ctx.counters.aiq_max_mult)
+                            ctx.counters.aiq_max_mult = aiq_scale;
+                    }
+                }
+                dc.var  = lam * lam * dc.var + aiq_scale * dc.var_ss * (1.0 - lam * lam);
             }
             ++it;
         }
@@ -1957,7 +2065,20 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // uses the general form.
                     pin_y.push_back(target == 0.0 ? -piv_x(amb_idx)
                                                   : target - piv_x(amb_idx));
-                    pin_w.push_back(1e10);   // hard pin (exact gauge)
+                    // eq34 reattach hygiene INC-3: a pin the election could not avoid
+                    // placing on a FRESH host is folded with an inflated sigma (weight
+                    // /= scale²), decaying to the hard pin as the arc matures — the
+                    // gauge is still fixed, but the data can pull the code-seeded
+                    // ambiguity instead of the whole component re-levelling onto it.
+                    // The map is EMPTY unless the ramp is armed, so the lookup misses
+                    // and the weight is the exact legacy 1e10 (byte-identical).
+                    double w = 1e10;         // hard pin (exact gauge)
+                    if (!st.pinned_amb_sigma_scale.empty()) {
+                        const auto sc = st.pinned_amb_sigma_scale.find(amb_key);
+                        if (sc != st.pinned_amb_sigma_scale.end() && sc->second > 1.0)
+                            w /= (sc->second * sc->second);
+                    }
+                    pin_w.push_back(w);
                 };
                 // eq34: r1's RPB pin — δ_{r1,σ}=0 on the RPB column in this
                 // station's OWN block (the receiver half of the chain gauge).
@@ -2119,7 +2240,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 networkAppendShIonoRows_(st, est, modeled[i], h2local, se.time,
                                          sh_model, setup.sh_model2, iono_deweight,
                                          shc, sh_dev_on,
-                                         sh_dev_carry, R.A_s, R.A_r, R.w, R.y);
+                                         sh_dev_carry, ctx.carry.dw_row_held,
+                                         // INC-3b: inert until the seam's one-shot
+                                         // start/resume seed has run, or the very first
+                                         // epoch would withhold EVERY tie row.
+                                         (ctx.knobs.dw_admit_validate_k > 0.0
+                                          && ctx.carry.dw_tie_seeded)
+                                             ? &ctx.carry.dw_tie_seen : nullptr,
+                                         R.A_s, R.A_r, R.w, R.y);
             else if (config_.estimateNetworkSatCodeBias())
                 networkAppendGimIonoRows_(st, modeled[i], h2local, se.time,
                                           R.A_s, R.A_r, R.w, R.y);
@@ -2144,7 +2272,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // define the phase-bias gauge exactly, so a carried diagonal there is
             // redundant.  Pure per-station compute + read-only local_carry lookup
             // — no shared write, safe in the parallel produce phase.
-            if (carry_warm && (phase_datum_prioritized || !st.is_pivot || zwd_on)) {
+            // rx-CB carry (SPEC_rx_cb_carry): the legacy predicate is hoisted so the
+            // receiver code-bias carry can enter this block WITHOUT the carry_warm
+            // (phase-leveling) gate — the legacy interior below keeps its exact
+            // original condition, so rx_cb_on=false is byte-identical.
+            const bool legacy_local_inject =
+                carry_warm && (phase_datum_prioritized || !st.is_pivot || zwd_on);
+            if (legacy_local_inject || rx_cb_on) {
                 const Eigen::VectorXd x_lin = st.sm->getStateVector();
                 std::vector<std::tuple<Eigen::Index, double, double>> inj;  // (col, Λ, η) — legacy diagonal path
                 // Card 1 (network.carry_conditional_coupling): each carried local column
@@ -2156,6 +2290,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 CouplingRowBuilder cb{est, shc, q_clock, q_cb, q_pb,
                                       carry_cpl_joint, carry_cpl_tu, carry_cpl_shmarg,
                                       tu_reinit_hist, R};
+                if (legacy_local_inject) {
                 // Ambiguity carry.  Legacy: the whole pivot station is skipped (all
                 // its ambiguities are gauge pins).  Prioritized: every station
                 // carries the arcs it does NOT anchor, so the skip is PER-(sat,
@@ -2259,12 +2394,55 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         }
                     }
                 }
+                }   // legacy_local_inject
+                // --- rx-CB carry (docs/SPEC_rx_cb_carry.md): receiver code-bias
+                //     columns as carried RW priors.  OUTSIDE the legacy gate above —
+                //     live on the carry_invariant / no-leveling lineage.  The carry
+                //     map is READ-ONLY here (parallel produce phase); decisions are
+                //     counted in R and the serial harvest applies every consequence
+                //     (stale-entry overwrite = the implicit drop).  Diagonal fold
+                //     even under carry_cpl_cond — the RPB rationale: a coupling row
+                //     would hand a strictly-local hardware state a shared-border
+                //     footprint.
+                if (rx_cb_on) {
+                    for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
+                        if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;  // anchored family
+                        const int cb_idx = static_cast<int>(cb_sidx);
+                        if (cb_idx < 0 || cb_idx >= x_lin.size()) continue;
+                        if (!std::isfinite(x_lin(cb_idx))) continue;
+                        const auto cbhit = h2local.find(cb_idx);
+                        if (cbhit == h2local.end()) continue;
+                        const Eigen::Index cbcol = static_cast<Eigen::Index>(cbhit->second);
+                        R.pl_cb.emplace_back(cb_key, cbcol, x_lin(cb_idx));
+                        const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
+                        if (cbit == rx_cb_carry.end()) continue;   // cold — the harvest seeds it
+                        double cb_var_eff = 0.0;
+                        const double cb_innov = cbit->second.value_abs - x_lin(cb_idx);
+                        const RxCbInjectAction act = rxCbInjectGate(
+                            pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/900.0,
+                            cbit->second.var, rx_cb_q, cb_innov,
+                            /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff);
+                        if (act == RxCbInjectAction::SkipInnov) {
+                            ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
+                            continue;
+                        }
+                        if (act != RxCbInjectAction::Fold) continue;
+                        const double cb_lambda = 1.0 / cb_var_eff;
+                        const double cb_eta = cb_lambda * cb_innov;
+                        if (!std::isfinite(cb_eta)) continue;
+                        inj.emplace_back(cbcol, cb_lambda, cb_eta);
+                        ++R.pl_cb_injected;
+                    }
+                }
                 if (carry_cpl_cond) {
                     // Card 1/1b: batch-append this station's conditional coupling rows into
-                    // R.A_s/R.A_r (joint-whitened when carry_cpl_joint, else scalar per-row);
-                    // R.carry_cols stays EMPTY so the serial addStationPrior is skipped.
+                    // R.A_s/R.A_r (joint-whitened when carry_cpl_joint, else scalar per-row).
                     cb.appendCouplingRows();
-                } else {
+                }
+                {
+                    // Diagonal fold — under carry_cpl_cond the legacy paths routed through
+                    // buildCplRow, so inj here holds ONLY rx-CB rows (empty when off —
+                    // resize(0) leaves R.carry_* exactly as before: byte-identical).
                     // ASCENDING column order → deterministic rank-1 update sequence.
                     std::sort(inj.begin(), inj.end(),
                               [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
@@ -2306,6 +2484,29 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             for (const std::string& row : asm_res[i].sd_ewl_trace)
                 traces.sd_ewl_trace << row;
         traces.sd_ewl_trace.flush();
+    }
+
+    // --- INC-2 STRUCTURAL FUSE (docs/SPEC_prefit_census_observability.md §4) ---
+    // The single last-touch site for every data row's weight: every appender
+    // (splitStation, the GLONASS anchors, the SH/GIM iono ties, the SD-EWL rows)
+    // has finished, and nothing between here and est.addStation writes R.w.
+    // SERIAL on purpose — the row build is parallel, so a fuse inside it would
+    // make the event order thread-count dependent.  s_fuse <= 0 (the default)
+    // skips the whole block: no shared-column map, no classification, no
+    // allocation — structurally byte-identical OFF.
+    const double pc_fuse_sigma = ctx.knobs.pc_fuse_sigma;
+    if (pc_fuse_sigma > 0.0) {
+        const SharedColumnMap fuse_cm = buildSharedColumnMap(est, est.numShared());
+        if (fuse_cm.n > 0) {
+            ++ctx.counters.pc.fuse_epochs;
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!present[i]) continue;
+                StationAssembly& R = asm_res[i];
+                if (!R.ok || R.threw || R.state_mismatch || R.empty_innov) continue;
+                networkPrefitFuseStation(ctx, traces, se.time, fuse_cm,
+                                         stations[i].name, R, pc_fuse_sigma);
+            }
+        }
     }
 
     // Serial consume: scatter each station's block into the shared arrowhead
@@ -2381,7 +2582,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         // pivot R.carry_cols holds at most the ZWD column, and is empty (no call,
         // byte-identical) unless network.carry_zwd is on.  A reject here drops only
         // this station's carry, not the station — its data is already in the system.
-        if (carry_warm && !R.carry_cols.empty()) {
+        // rx-CB carry (SPEC_rx_cb_carry): rx_cb_on joins the gate — when carry_warm
+        // is false the produce phase built ONLY rx-CB rows (the legacy inject paths
+        // sit inside legacy_local_inject = carry_warm && …), so the extended gate
+        // folds exactly them and rx_cb_on=false remains byte-identical.
+        if ((carry_warm || rx_cb_on) && !R.carry_cols.empty()) {
             try {
                 est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                     R.carry_cols, R.carry_dNrr, R.carry_dur);

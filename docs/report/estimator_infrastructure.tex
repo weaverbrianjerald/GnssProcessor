@@ -78,13 +78,14 @@ term and the current state's contribution,
 where $\code_\sat^{\mathrm{mod}}$ is the modelled pseudorange,
 $\geomrange_\sat-\geomrange_\sat^{0}$ the change in geometric range relative
 to the range at the iteration's linearisation point, and $\mapw(\sat)$ the
-wet mapping function (\texttt{WlsEstimator.cpp}:100,~189).  The geometric
-range is \emph{re-evaluated every iteration} about the running position
-estimate (\texttt{WlsEstimator.cpp}:184--186), so this is a genuine
+wet mapping function (\texttt{WlsEstimator::predictObs}, evaluated once per
+row from the design-row loop of \texttt{WlsEstimator::estimate}).  The
+geometric range is \emph{re-evaluated every iteration} about the running
+position estimate inside that loop, so this is a genuine
 Gauss--Newton relinearisation rather than a single-shot least-squares fit.
 
 The design row for satellite $\sat$ is the negated line-of-sight stacked with
-the clock and wet-mapping partials (\texttt{WlsEstimator.cpp}:191--195):
+the clock and wet-mapping partials, assembled in the same loop:
 \begin{equation}
 \wlsdesign_\sat = \begin{bmatrix} -\los_\sat^\Tr & 1 & \mapw(\sat) \end{bmatrix}
 = \begin{bmatrix} -e_x & -e_y & -e_z & 1 & \mapw(\sat) \end{bmatrix},
@@ -94,23 +95,25 @@ with $\los_\sat$ the receiver-to-satellite unit vector (the same line-of-sight
 that drives \dcref{eq:los}{the observation geometry}).  Stacking all rows into
 $\wlsdesign$, the prefit residuals into $\coderes$, and the inverse measurement
 variances onto the diagonal weight $\wlsweight$ (clamped from below by
-\texttt{kMinVariance}~$=10^{-6}$ at \texttt{WlsEstimator.cpp}:197), the
+\texttt{kMinVariance}~$=10^{-6}$ in that same loop), the
 normal-equations step is the boxed Gauss--Newton update
 \begin{empheq}[box=\fbox]{equation}
 \Delta\wlsstate = \bigl(\wlsdesign^\Tr \wlsweight\, \wlsdesign\bigr)^{-1}
                   \wlsdesign^\Tr \wlsweight\, \coderes,
 \label{eq:estinfra-wls-step}
 \end{empheq}
-applied at \texttt{WlsEstimator.cpp}:219.  Iteration terminates on a position
+applied once per Gauss--Newton iteration of \texttt{WlsEstimator::estimate}.
+Iteration terminates on a position
 increment $\lVert\Delta\rxpos\rVert < \texttt{kTol}=0.1\,\mathrm{m}$
-(\texttt{WlsEstimator.cpp}:230) or at \texttt{kMaxIter}.  The normal matrix is
+or at \texttt{kMaxIter}.  The normal matrix is
 guarded against rank deficiency: if
 \begin{equation}
 \det\!\bigl(\wlsdesign^\Tr \wlsweight\, \wlsdesign\bigr) \le 10^{-6}
 \label{eq:estinfra-wls-detguard}
 \end{equation}
 the solve aborts and the epoch is left un-seeded
-(\texttt{WlsEstimator.cpp}:212), which protects against the degenerate
+(the determinant guard immediately preceding the step), which protects
+against the degenerate
 single-constellation, near-coplanar geometry that would otherwise produce a
 wild position step.
 
@@ -121,7 +124,8 @@ covariance, the inverse normal matrix
 \covM_{\wlsstate} = \bigl(\wlsdesign^\Tr \wlsweight\, \wlsdesign\bigr)^{-1}
 \label{eq:estinfra-wls-cov}
 \end{equation}
-(\texttt{WlsEstimator.cpp}:237).  Of this pair the filter consumes only the
+(the result assembly at the tail of \texttt{WlsEstimator::estimate}).  Of
+this pair the filter consumes only the
 \emph{clock}: \texttt{Application::handleWlsSeeding} writes
 $\sLight\,\mathrm{d}t_\rx$ into the receiver-clock state, and only when one of
 three triggers fires---the first epoch, a data gap, or a clock \emph{jump} of at
@@ -167,9 +171,10 @@ The shared prefit residual is
 \label{eq:estinfra-rawres}
 \end{equation}
 the observation minus every term the model can already account for, evaluated
-at the current state (\texttt{StateInitializer.cpp}:255, with the tropospheric
-gradient projection $g_{\mathrm{trop}} = m_g(g_N\cos\mathrm{az} + g_E\sin\mathrm{az})$
-at lines~202--211).  The five \emph{differential} seeds (a)--(e) below are
+at the current state (\texttt{StateInitializer::computeRawResidual}, which
+also forms the tropospheric gradient projection
+$g_{\mathrm{trop}} = m_g(g_N\cos\mathrm{az} + g_E\sin\mathrm{az})$).  The
+five \emph{differential} seeds (a)--(e) below are
 differences of \eqref{eq:estinfra-rawres}; a sixth, network-only pre-seed~(f)
 anchors the receiver clock itself.
 
@@ -187,7 +192,7 @@ residual minus the GPS-median residual:
 (\texttt{StateInitializer::initializeInterSystemBiases}).  Medians, not means, are used throughout
 so a single gross code outlier cannot capsize the seed.  A hard guard requires
 at least one GPS code observation at the seeding epoch
-(\texttt{StateInitializer.cpp}:361--366): if GPS is absent the routine returns
+(the GPS-median guard in that same routine): if GPS is absent it returns
 \texttt{false} and \emph{retries the next epoch} rather than latching the ISB
 states as initialised against an arbitrary datum.  This avoids the failure
 mode where a constellation that happens to acquire first becomes the implicit
@@ -205,7 +210,7 @@ observation of the code-minus-phase residual:
 (\texttt{StateInitializer::initializePhaseClockOffset}).  The seed's covariance
 is then set from the code noise, tightened relative to the (looser) default
 initial standard deviation but \emph{independent} of the $n$ differences that
-formed the median (\texttt{StateInitializer.cpp}:518--533):
+formed the median (the covariance-seeding tail of that routine):
 \begin{equation}
 \sigma_{\pclk} = \max\!\Bigl(\tfrac{\sigma_{\code}}{\sqrt{n}},\ \sigma_{\code}\Bigr),
 \qquad
@@ -239,7 +244,8 @@ coefficients gives
 (\texttt{StateInitializer::initializeCodeBiases}), median-aggregated over satellites and
 subject to the same $\lvert\widehat{b}\rvert > 200\,\mathrm{m}$ reject as the
 ionosphere seed below.  The Jacobian coefficient $\biascoef_\sigl$ depends on
-the bias parameterisation (\texttt{StateInitializer.cpp}:166--172): for a pure
+the bias parameterisation (\texttt{StateInitializer::resolveReceiverBias}):
+for a pure
 IFB state it is the unit coefficient $\biascoef = 1$, whereas for a
 geometry-free / ionosphere-free DCB state against reference bands of
 frequencies $f_1,f_2$ it is
@@ -264,7 +270,8 @@ per-band treatment above.  This branch runs before the clock-reference lookup
 because GLONASS usually ships no clock-reference pair in the \texttt{.BIA}
 product and would otherwise early-return before reaching any IFB logic; with the
 flag off a non-reference GLONASS band carries no IFB state at all
-(\texttt{StateInitializer.cpp}:92--132,~146--158).
+(the per-slot and non-reference-band branches of
+\texttt{resolveReceiverBias}).
 
 \paragraph{(d) Per-satellite slant ionosphere.}  Each tracked satellite's
 slant ionospheric delay (\dcref{sec:state}{the per-satellite iono state}) is
@@ -281,9 +288,9 @@ the seed is
 (\texttt{StateInitializer::computeIonosphereSeed}), where $\code_k^{\mathrm{mod}}$ is the
 modelled pseudorange on band $k$.  Two structural guards apply: the denominator
 must satisfy $\lvert\alpha_1-\alpha_2\rvert \ge 10^{-6}$
-(\texttt{StateInitializer.cpp}:312--313), and the seed is rejected unless it is
+(the denominator guard in that routine), and the seed is rejected unless it is
 finite and $\lvert\ionoest^\sat\rvert < 200\,\mathrm{m}$
-(\texttt{StateInitializer.cpp}:317).  The $200\,\mathrm{m}$ reject is a physical
+(its magnitude reject).  The $200\,\mathrm{m}$ reject is a physical
 sanity bound---a slant ionospheric delay larger than this is never real and
 signals a band mis-pairing or a gross code outlier, which must not be latched
 into a per-satellite state.  The seed additionally applies two BIA-coverage
@@ -365,11 +372,12 @@ first, then a continuous score within the tier.  Coverage dominates because the
 pivot must track every signal any non-pivot tracks---a non-pivot signal the
 pivot does not carry is orphaned and dropped---so \emph{any} full-coverage
 candidate outranks \emph{any} partial-coverage candidate regardless of score
-(\texttt{PivotManager.cpp}:76--98).  Concretely, candidate $a$ beats $b$ iff its
+(the lexicographic comparator in \texttt{PivotManager::buildEpochMaps}).
+Concretely, candidate $a$ beats $b$ iff its
 phase-signal count is higher, or the counts tie and its score is higher.
 
 Within a coverage tier the tie-break score combines float-convergence and
-geometry (\texttt{scorePivotCandidate}, \texttt{PivotManager.cpp}:121--156):
+geometry (\texttt{PivotManager::scorePivotCandidate}):
 \begin{empheq}[box=\fbox]{equation}
 \mathrm{score}(\sat) =
   -\min\!\bigl(1,\ \sqrt{\,v_{\max}(\sat)\,}\bigr)
@@ -387,29 +395,32 @@ the diagonal of the \dcref{sec:diff}{S-transform}, implemented in
 so a pivot whose own state is still settling injects that uncertainty into the
 entire constellation; the penalty saturates at $-1$ (one metre of equivalent
 $1\sigma$ ambiguity uncertainty), with a flat $-1$ sentinel for a candidate that
-has \emph{no} state yet (\texttt{PivotManager.cpp}:139--143).  On the first BSSD
+has \emph{no} state yet (the negative-\texttt{max\_amb\_variance} sentinel
+branch of that score).  On the first BSSD
 epoch every candidate in a tier shares the sentinel, so the score collapses to
 elevation alone and no special first-election branch is needed.  The
 $\mathrm{el}/90$ term prefers high-elevation pivots, and the explicit
 $-\tfrac12$ sub-$20^\circ$ penalty hard-discourages a low-elevation pivot whose
 tropospheric and multipath residuals exceed the formal stochastic model
-regardless of how converged its float state looks
-(\texttt{PivotManager.cpp}:153--154).  Both score terms only ever \emph{rank}
+regardless of how converged its float state looks.  Both score terms only
+ever \emph{rank}
 candidates that have already cleared a hard elevation gate: a satellite below
 \texttt{pivot\_min\_el} (\texttt{getBssdPivotMinElevation}) is barred from
 election outright---in the freshest-peer scan, the online pick, and the
-sticky-retention test (\texttt{PivotManager.cpp}:187,~209,~242)---so the
+sticky-retention test, all three in
+\texttt{PivotManager::selectPivotCandidates}---so the
 $-\tfrac12$ penalty only breaks ties among survivors rather than being the
 mechanism that keeps low satellites out.  The gate falls through deliberately
 when \emph{no} satellite clears the mask (a genuine code-only-float
 constellation): the pick reverts to the precomputed best/highest-elevation
-satellite so the candidate set is never emptied
-(\texttt{PivotManager.cpp}:250--265).  Sticky retention---the code's own
+satellite so the candidate set is never emptied (the fallback from
+\texttt{pickExclusionAwareBest} to the precomputed \texttt{best\_sat} /
+\texttt{highest\_sat}).  Sticky retention---the code's own
 \emph{elevation hysteresis}---suppresses epoch-to-epoch flip-flop, but on that
 same \emph{absolute} gate, not a challenger comparison: the incumbent is kept
 whenever it still clears \texttt{pivot\_min\_el}, is not excluded, and stays
-within the toe spread of \Cref{sec:estinfra-pivot-toe}
-(\texttt{PivotManager.cpp}:231--248), with no score evaluated on that branch, so
+within the toe spread of \Cref{sec:estinfra-pivot-toe} (the sticky branch of
+\texttt{selectPivotCandidates}), with no score evaluated on that branch, so
 a strictly better challenger cannot displace a qualifying incumbent; the score
 re-ranking runs only once the incumbent has \emph{failed} the gate.
 
@@ -428,7 +439,10 @@ freshest qualified peer by more than
 \texttt{kPivotToeSpreadMaxS} = 1200\ \mathrm{s} = 20\ \mathrm{min}
 \label{eq:estinfra-pivot-toe}
 \end{equation}
-(\texttt{PivotManager.cpp}:181,~212).  Gating on the \emph{spread} rather than an
+(the \texttt{freshestToeAgeAbs} scan in
+\texttt{PivotManager::selectPivotCandidates}, applied both at the online
+pick and at the sticky-retention test).  Gating on the \emph{spread} rather
+than an
 absolute age means that when every candidate is comparably fresh the ranking is
 untouched---only an outlier-stale candidate is displaced.  The barred satellite
 remains usable as a non-pivot; the freshest peer always passes (its difference
@@ -449,7 +463,7 @@ reference and the SD frame is no longer self-consistent.
 \covM(\piv{g},\piv{g}) > 10^{-12}
 \label{eq:estinfra-pivot-disturbed}
 \end{empheq}
-(\texttt{PivotManager.cpp}:285--286).  The two thresholds are numerical-zero
+(\texttt{PivotManager::isPivotDisturbed}).  The two thresholds are numerical-zero
 tolerances, not tuned gates: $10^{-6}\,\mathrm{m}$ on the value and
 $10^{-12}\,\mathrm{m}^2$ on the variance are tight enough to catch any genuine
 leakage of state onto the pivot while tolerating floating-point round-off in the
@@ -476,7 +490,7 @@ re-derived here.  The baseline DD path differs structurally: rather than a
 subtract-and-freeze on a single pivot it negates the new-pivot row/column and
 subtracts from the others (a different S-transform), then re-keys the affected
 ambiguity states via \texttt{StateManager::renameAmbiguity}
-(\texttt{DdPivotManager.cpp}:228--242).  Both paths share only the post-transform
+(\texttt{DdPivotManager::handleHandover}).  Both paths share only the post-transform
 positive-definiteness guard (\texttt{enforcePsd}); the single-receiver user path
 runs the transform unguarded, since at user scale the groups are small and
 handovers rare enough that floating-point error in $\stransform\,\covM\,\stransform^\Tr$ does

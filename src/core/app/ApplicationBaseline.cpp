@@ -413,6 +413,7 @@ int Application::runBaseline() {
             ar_config.wl_max_frac          = config_.getArWlMaxFrac();
             ar_config.min_success_rate     = config_.getArMinSuccessRate();
             ar_config.nl_max_per_pair_frac = config_.getArNlMaxPerPairFrac();
+            ar_config.nl_iono_free_row     = config_.getArNlIonoFreeRow();
             ar_config.enable_partial_ar    = config_.getArEnablePartialAr();
             ar_config.ar_active_systems    = config_.getArActiveSystems();
             ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();

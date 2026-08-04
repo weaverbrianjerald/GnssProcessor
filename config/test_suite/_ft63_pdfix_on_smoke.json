@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "PD-SAFE FOLD CARD - 10-EPOCH SMOKE of the ON arm.  Sole deltas over the leg config are",
+    "the 300 s duration and its own output/snapshot paths.",
+    "",
+    "WHAT TO CHECK (invariant #4 - counters, not absence of crashes):",
+    "  - the loader's 'Card 4 PD-safe fold: ON' line appears (the knob bound);",
+    "  - run-end ddfold_epochs > 0 (the fold ran at all);",
+    "  - ddfold_repairs is dust-rate and ddfold_repair_loud is 0;",
+    "  - the OFF smoke's degenerate rows, if any, are GONE here - that is the fix firing.",
+    "It CANNOT show convergence; that is what the 3 h legs are for."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_on.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_on_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_on_smoke/state_snapshot.bin"
+  }
+}

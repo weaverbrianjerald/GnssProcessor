@@ -48,7 +48,9 @@ realises each step, so the diagrams double as a map into \texttt{src/}.
         {Before the loop the driver branches on mode:\\
          \texttt{RealTime}~$\to$~\texttt{RealTimeEngine};\\
          baseline~$\to$~DD pipeline;\\
-         \texttt{PPP\_RTK\_Network}~$\to$~producer.};
+         \texttt{PPP\_RTK\_Network}~$\to$~producer\\
+         (or the consumer-replay driver when\\
+         \texttt{closed\_loop.}\\\texttt{replay\_products\_path} is set).};
 
   \foreach \a/\b in {collect/geom, geom/wls, wls/predict, predict/slip,
                      slip/update, update/relin, relin/gim, gim/ar, ar/log}
@@ -253,21 +255,32 @@ push advances the horizon; otherwise it is passed straight to
 \caption{PPP-RTK network producer joint estimator (\texttt{NetworkEstimator}).
 Each epoch the shared satellite-side columns---one per
 (satellite, parameter-kind, signal) for the estimable clock, code bias, and
-phase bias---are registered once, then \texttt{beginEpoch} opens an arrowhead
-normal-equation system of that width.  \texttt{addStation} contributes one
+phase bias---are re-registered at the top of every epoch (\texttt{reset}, then
+\texttt{registerClock} / \texttt{registerCodeBias} / \texttt{registerPhaseBias},
+plus \texttt{registerVtecCoeff} for the network-wide SH-VTEC coefficients when
+\texttt{network.estimate\_iono\_sh} is on), after which \texttt{beginEpoch}
+opens an arrowhead normal-equation system of that width.
+\texttt{addStation} contributes one
 pre-formed block of local-vs-shared design rows per station (the network
 applies no receiver-side differencing); the local nuisances are Schur-reduced
 out, leaving a reduced shared system that is rank-deficient by the gauge
 freedoms.  \texttt{solve} pins those with an explicit minimum-constraint
 S-basis datum on a copy of the reduced system, and \texttt{toSolutionEpoch}
 maps the shared estimate to an emittable record that
-\texttt{NetworkProductEmitter} serializes in IGS-SSR convention.  The full
-\texttt{Application::runNetwork()} driver runs this core in a live per-epoch
-loop over the synced \texttt{MultiRinexSync} stations, with a two-pass station
-assembly (\texttt{networkPassAHead\_}/\texttt{networkPassB\_}) feeding
-\texttt{addStation}; when \texttt{network.closed\_loop} is armed it additionally
-drives an undifferenced PPP-RTK consumer against the freshly emitted products.
-See \dcref{sec:net}{the network mode}.}
+\texttt{NetworkProductEmitter} serializes in IGS-SSR convention.  The
+\texttt{Application::runNetwork} driver runs this core in a live per-epoch loop
+over the synced \texttt{MultiRinexSync} stations, but is itself only
+orchestration: the two-pass station assembly
+(\texttt{networkPassAHead\_}/\texttt{networkPassB\_},
+\texttt{app/ApplicationNetworkAssembly}) feeds \texttt{addStation}, the datum and
+solve run in \texttt{networkSolveGlue}, and the emit step in
+\texttt{networkEmitStore} --- which, when \texttt{network.closed\_loop.enable} is
+armed, additionally drives a held-out PPP-RTK consumer against the freshly
+emitted products, a between-satellite single-difference (BSSD) consumer by
+default or an undifferenced one under
+\texttt{closed\_loop.consumer\_undifferenced}.
+See \dcref{sec:net}{the network mode} and
+\dcref{sec:net-arch}{its producer-architecture section}.}
 \label{fig:net-flow}
 \end{figure}
 

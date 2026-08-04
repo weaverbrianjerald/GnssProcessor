@@ -177,6 +177,10 @@ void NetworkEstimator::beginEpoch() {
     // that sets none cannot re-fold a stale block — keeps the OFF path byte-identical
     // and makes carry_invariant robust to an epoch with no carry available.
     dd_priors_.clear();
+    // RHS-attribution recorder: a re-opened epoch (including the within-epoch
+    // RAIM re-solve) must retain only the FINAL build's captures — clear the
+    // list, keep the armed flag (see attribArm()).
+    if (attrib_armed_) attrib_shared_.clear();
     epoch_open_ = true;
     solved_ = false;
 }
@@ -337,7 +341,7 @@ void NetworkEstimator::zeroPhaseGaugeColumns(Eigen::MatrixXd& cov) const {
 }
 
 Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
-    std::size_t station, const Datum& datum) const {
+    std::size_t station, const Datum& datum, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
     // (variance 0), not as carrying the Dirichlet pin's artificial 1/pin_scale.
@@ -350,7 +354,7 @@ Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
     }
     // Fix A: the ensemble phase-bias gauges are exact datum columns too.
     zeroPhaseGaugeColumns(cov_free);
-    return neq_.reconstructStationCovariance(station, cov_free);
+    return neq_.reconstructStationCovariance(station, cov_free, carry_aware);
 }
 
 Eigen::MatrixXd NetworkEstimator::datumFrameSharedCov(const Datum& datum) const {
@@ -384,7 +388,7 @@ void NetworkEstimator::ddPriorInnovation(
 
 Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
     const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
-    const Datum& datum) const {
+    const Datum& datum, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
     // (variance 0), mirroring conditionalLocalCovariance so the between-station
@@ -397,12 +401,12 @@ Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
         }
     }
     zeroPhaseGaugeColumns(cov_free);
-    return neq_.jointConditionalCovariance(requests, cov_free);
+    return neq_.jointConditionalCovariance(requests, cov_free, carry_aware);
 }
 
 Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
     std::size_t station, const std::vector<Eigen::Index>& local_cols,
-    const Datum& datum) const {
+    const Datum& datum, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Same datum-as-known frame as conditionalLocalCovariance: the pinned shared
     // columns are EXACT (variance 0), not carrying the Dirichlet pin's 1/pin_scale.
@@ -418,14 +422,17 @@ Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
     // conditional variance → the phase-leveling carry goes inert → the ensemble
     // reference churns → runaway (see zeroPhaseGaugeColumns).
     zeroPhaseGaugeColumns(cov_free);
-    return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_free);
+    return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_free,
+                                                carry_aware);
 }
 
 NetworkNormalEquations::StationRegression NetworkEstimator::stationRegression(
-    std::size_t station, Eigen::Index local_col) const {
+    std::size_t station, Eigen::Index local_col, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer)
     // Pure normals — no datum frame (M_r and (N_rr⁻¹)_{rr} are datum-independent).
-    return neq_.stationRegression(station, local_col);
+    // The carry-aware form is datum-independent too: Ã⁻¹ = N_rr⁻¹ − Σ_b Y_b M_b Y_bᵀ is
+    // built from the accumulated normals and the fold's own factors, not from Σ_ss.
+    return neq_.stationRegression(station, local_col, carry_aware);
 }
 
 Eigen::VectorXd NetworkEstimator::rowRedundancy(
@@ -474,6 +481,7 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
         delta_info(c, c) += p.info;          // diagonal info prior (D2 carry-forward)
         delta_rhs(c)     += p.info * p.value;
     }
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
 }
 
@@ -605,6 +613,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
                        col[static_cast<std::size_t>(b)]) += Lambda(a, b);
         if (lambda_diag) (*lambda_diag)(in_idx[static_cast<std::size_t>(a)]) = Lambda(a, a);
     }
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
     return static_cast<std::size_t>(k);
 }
@@ -619,6 +628,7 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
     if (H.rows() == 0 || !(weight > 0.0)) return;
     const Eigen::MatrixXd delta_info = weight * (H.transpose() * H);
     const Eigen::VectorXd delta_rhs  = weight * (H.transpose() * z);
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
 }
 

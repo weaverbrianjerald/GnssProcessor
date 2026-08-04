@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "RUN QUEUE P1 (docs/RUNQUEUE_pdfix_reask.md) - D5 policy matrix on the WORKING fold.",
+    "",
+    "Control is runs/pdfix_on (D5 v2 as-is): 18559 flags, 23675 births, 20330 refloats,",
+    "sigma0-hat 4.05, mature steps 1.015/0.883/0.509 cyc/ep, SF k=1 0.83 cyc,",
+    "total_IF hr2 8.812 / 22.14 / clk_std 5.00.",
+    "ONE variable vs that control; everything else is _ft63_pdfix_on.json verbatim.",
+    "",
+    "ARM v5b - carried-only gate: do not test a chord BORN this epoch (no H0 exists for a",
+    "diffuse prior).  On the CORRUPT substrate this was measured to skip 95.3% of all flags,",
+    "because the frozen block re-borned its chords every epoch.  That population is now GONE",
+    "(births already fell 38% on pdfix_on), so this arm answers a different question than it",
+    "did in the churn card: with the born-chord loop already dead, does the guard still have",
+    "anything to skip, and does the D5 re-tap ramp FLATTEN?",
+    "",
+    "READ: innov_born_skipped (if ~0 the guard is now inert - a RESULT, not a miswire),",
+    "flags/ep vs carried population (chord informational lifetime), mature steps, SF knee."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_on.json"
+  ],
+  "network": {
+    "carry_invariant_innov_carried_only": true,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_v5b/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_v5b/state_snapshot.bin"
+  }
+}

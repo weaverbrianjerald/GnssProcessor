@@ -321,7 +321,8 @@ public:
      *         the station has no locals.  Requires a prior @ref solve.
      */
     Eigen::MatrixXd conditionalLocalCovariance(std::size_t station,
-                                               const Datum& datum) const;
+                                               const Datum& datum,
+                                               bool carry_aware = false) const;
 
     /**
      * @brief Joint conditional covariance of local parameters drawn from one or
@@ -337,12 +338,18 @@ public:
      *
      * @param requests @c (station, local_col) pairs.
      * @param datum    The same datum passed to @ref solve.
+     * @param carry_aware Include the folded DD priors' rank-K term
+     *                 (@ref NetworkNormalEquations::hasCarryCovCorrection).  @c false
+     *                 (default) is the pre-card expression, verbatim.  Armed, the
+     *                 sentence above about cross-station entries no longer holds — the
+     *                 rank-K downdate couples every column inside a DD block, and a
+     *                 chord spans two stations by construction.
      * @return The @c k×k joint conditional covariance; empty if @p requests is
      *         empty.  Requires a prior @ref solve.
      */
     Eigen::MatrixXd jointConditionalCovariance(
         const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
-        const Datum& datum) const;
+        const Datum& datum, bool carry_aware = false) const;
 
     /**
      * @brief Diagonal conditional variances for a SUBSET of a station's local
@@ -364,7 +371,7 @@ public:
      */
     Eigen::VectorXd conditionalLocalVarianceDiag(
         std::size_t station, const std::vector<Eigen::Index>& local_cols,
-        const Datum& datum) const;
+        const Datum& datum, bool carry_aware = false) const;
 
     /**
      * @brief Regression of one local column on the shared border and its pure
@@ -386,7 +393,8 @@ public:
      * @return @ref NetworkNormalEquations::StationRegression.
      */
     NetworkNormalEquations::StationRegression stationRegression(
-        std::size_t station, Eigen::Index local_col) const;
+        std::size_t station, Eigen::Index local_col,
+        bool carry_aware = false) const;
 
     /**
      * @brief Baarda per-row redundancy numbers for one station's measurement rows
@@ -773,6 +781,73 @@ public:
     /// @return Number of DD-prior blocks folded this epoch.
     std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
 
+    // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) — forwarders ---
+
+    /// Arm the PD-safe DD-prior fold arithmetic (@c network.carry_invariant_pd_safe;
+    /// @ref NetworkNormalEquations::setDdFoldPdSafe).  Set once before the epoch loop —
+    /// it survives @ref reset, like @ref setPerfTiming.  OFF ⇒ byte-identical.
+    void setDdFoldPdSafe(bool on) { neq_.setDdFoldPdSafe(on); }
+    /// @return Whether the PD-safe fold arithmetic is armed.
+    bool ddFoldPdSafe() const { return neq_.ddFoldPdSafe(); }
+    /// @return INC-0 diagnostics of the LAST DD-prior fold's PD screen (per-fold, so a
+    ///         within-epoch RAIM re-solve overwrites them — the install seam therefore
+    ///         always reads the ACCEPTED solve).  @ref NetworkNormalEquations::DdFoldStats.
+    const NetworkNormalEquations::DdFoldStats& ddFoldStats() const { return neq_.ddFoldStats(); }
+    /// @return Whether DD-prior block @p b folded INERTLY (PD screen tripped ⇒ M = 0).
+    bool ddPriorBlockDegenerate(std::size_t b) const { return neq_.ddPriorBlockDegenerate(b); }
+    /// @return DD-prior block @p b's relative pivot d_min/d_max at the fold.
+    double ddPriorBlockMinPivotRel(std::size_t b) const { return neq_.ddPriorBlockMinPivotRel(b); }
+
+    // --- Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md) ---
+
+    /// @return Whether this epoch's fold left a DD-prior block for a @c carry_aware
+    ///         readback to correct (@ref NetworkNormalEquations::hasCarryCovCorrection).
+    bool hasCarryCovCorrection() const { return neq_.hasCarryCovCorrection(); }
+    /// @return Run-cumulative carry-aware readback telemetry
+    ///         (@ref NetworkNormalEquations::CarryCovStats) — the run-end readout, and the
+    ///         first measurement anywhere of the fold's cross-block approximation error.
+    const NetworkNormalEquations::CarryCovStats& carryCovStats() const {
+        return neq_.carryCovStats();
+    }
+
+    // --- Reduced-RHS class attribution (diagnostics; filter/NetworkRhsAttrib) ---
+
+    /// One captured shared-info RHS increment: the tag active at the call site
+    /// (a string LITERAL — the recorder stores the pointer, not a copy) plus the
+    /// delta the call folded into the shared RHS.
+    struct AttribCapture {
+        const char*     tag;        ///< class tag (string literal only)
+        Eigen::VectorXd delta_rhs;  ///< the folded shared-RHS increment (n_shared)
+    };
+
+    /**
+     * @brief Arm / disarm the shared-info capture recorder for THIS epoch.
+     *
+     * Armed, every @ref addSharedPrior / @ref addSharedPriorDense /
+     * @ref addSharedConstraintRows call appends its RHS increment under the tag
+     * last set by @ref attribTag.  @ref beginEpoch clears the captures but keeps
+     * the armed flag, so a within-epoch re-solve leaves exactly the FINAL
+     * build's captures (matching the kernel state the attribution reads).
+     * Disarmed (the default), the recorder costs one branch per call.
+     */
+    void attribArm(bool on) {
+        attrib_armed_ = on;
+        if (on) attrib_shared_.clear();
+    }
+    /// @return Whether the capture recorder is armed this epoch.
+    bool attribArmed() const { return attrib_armed_; }
+    /// Set the class tag for subsequent shared-info folds (string literal only —
+    /// the pointer is stored verbatim).  Cheap enough to call unconditionally.
+    void attribTag(const char* tag) { attrib_tag_ = tag; }
+    /// @return This epoch's captured shared-info RHS increments (armed builds only).
+    const std::vector<AttribCapture>& attribCaptures() const { return attrib_shared_; }
+    /// @return The INPUT DD-prior blocks set by @ref setDdPriors this epoch — the
+    ///         (station, local column, coefficient) structure the attribution
+    ///         recompute needs (the kernel's folded factors do not retain it).
+    const std::vector<NetworkNormalEquations::DdPriorBlock>& ddPriorInputs() const {
+        return dd_priors_;
+    }
+
     /**
      * @brief Map a shared estimate to an emittable @c NetworkSolutionEpoch.
      * @param x_s        The shared estimate from @ref solve.
@@ -859,6 +934,9 @@ private:
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
     std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< Card 4 (M1): per-component invariant-carry DD priors (empty = OFF, byte-identical)
+    bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)
+    const char* attrib_tag_{"shared_untagged"};  ///< class tag for the next shared-info fold (string literal)
+    std::vector<AttribCapture> attrib_shared_;   ///< captured shared-info RHS increments (armed epochs only)
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
     int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = OFF; >1 relaxes ~1e-X on the reduction, byte-id on the middle inverse; set by the driver)

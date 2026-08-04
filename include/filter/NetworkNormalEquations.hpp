@@ -75,6 +75,7 @@
 
 #include <Eigen/Dense>
 
+#include <cmath>      // std::isfinite (the carry-aware readback's refuse-never-clamp screen)
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -532,6 +533,140 @@ public:
     ///         @ref foldReducedDdPriors; degenerate/chordless blocks are inert slots).
     std::size_t numDdPriorBlocks() const { return dd_priors_.size(); }
 
+    // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) ----------------
+
+    /**
+     * @brief INC-0 diagnostics of the LAST @ref foldReducedDdPriors PD screen.
+     *
+     * Standing invariant #4: before this card the @f$M:=0@f$ inert-fold branch had NO
+     * counter, NO log and NO event, so a block that went indefinite between epoch 2 and
+     * epoch 122 froze its whole carried sub-state FOREVER while every downstream reading
+     * (`dd_sigma_cyc`, the D5 gate, the AR probe) stayed carry-blind.  Measured
+     * 2026-08-02 on `runs/churn_base`: 568 of 686 carried rows — 78 % of the state — were
+     * diffusing through exactly that silence.  These counters are solve-NEUTRAL (pure
+     * reads of the factor already computed) and are therefore always-on.
+     *
+     * Per-FOLD, not cumulative: a within-epoch RAIM re-solve re-folds and overwrites
+     * them, so the values the install seam reads always describe the ACCEPTED solve.
+     */
+    struct DdFoldStats {
+        long long degen_blocks{0};   ///< blocks whose @f$P^z+B@f$ failed the PD screen ⇒ folded inertly (M=0).
+        long long degen_rows{0};     ///< Σ K over those blocks — the carried dimension that took no data this fold.
+        long long repairs{0};        ///< INC-1c eigen-clamp repairs applied (0 unless @ref setDdFoldPdSafe).
+        long long repaired_rows{0};  ///< Σ K over repaired blocks.
+        long long blocks{0};         ///< blocks that reached the factorization (K > 0) — the denominator.
+        long long rows{0};           ///< Σ K over those blocks.
+        /// Worst relative pivot @f$d_{\min}/d_{\max}@f$ over the fold (1.0 when nothing
+        /// was factored).  On the PD-safe path this is the EQUILIBRATED pivot, so it is a
+        /// true conditioning read rather than a scale artifact; ≤ 0 means indefinite.
+        double min_pivot_rel{1.0};
+        /// Worst clamped eigenvalue magnitude relative to @f$\lambda_{\max}@f$ over the
+        /// fold — whether or not the repair was ACCEPTED.  Dust is hygiene and is
+        /// repaired; anything above 1e-6·λmax is REFUSED (repairing it would rewrite a
+        /// genuinely broken block into one that looks healthy, which is the exact failure
+        /// this card exists to end) and falls through to the INC-2a rebirth.
+        double repair_worst{0.0};
+    };
+    /// @return The last fold's PD-screen diagnostics (@ref DdFoldStats).
+    const DdFoldStats& ddFoldStats() const { return dd_fold_stats_; }
+    /// @return Whether DD-prior block @p b folded INERTLY (its @f$P^z+B@f$ failed the PD
+    ///         screen ⇒ @f$M=0@f$ ⇒ posterior == prior).  False for a chordless K=0 slot.
+    ///         The install-side rebirth (INC-2a) keys on this.
+    /// @throws std::out_of_range on a bad index.
+    bool ddPriorBlockDegenerate(std::size_t b) const;
+    /// @return DD-prior block @p b's relative pivot @f$d_{\min}/d_{\max}@f$ at the fold
+    ///         (0 for a chordless slot or a factorization that never completed).
+    /// @throws std::out_of_range on a bad index.
+    double ddPriorBlockMinPivotRel(std::size_t b) const;
+
+    /**
+     * @brief Arm the PD-safe DD-prior fold arithmetic (@c network.carry_invariant_pd_safe).
+     *
+     * OFF (default) is the pre-card path, BYTE-IDENTICAL (standing invariant #6): the
+     * plain @f$P^z+B@f$ LDLᵀ, the absolute @c minCoeff()<=0 screen, and the subtractive
+     * posterior @f$P^z-P^zMP^z@f$.  ON replaces all three with algebraically identical
+     * but differently-rounding forms (SPEC §4):
+     *  - (a) PRODUCT-form posterior @f$\mathrm{sym}(P^zMB)+(P^zMG^\top)\Sigma(P^zMG^\top)^\top@f$,
+     *        which follows the scale of the ANSWER instead of subtracting two 1e6-scale
+     *        operands to reach 1e-4 (@f$B@f$ is cached per block for this, +K² doubles);
+     *  - (b) an EQUILIBRATED factorization @f$\tilde A=S(P^z+B)S@f$ with a scale-RELATIVE
+     *        pivot test (@f$d_{\min}\ge@f$ 1e-12 @f$d_{\max}@f$) and an exact unscale
+     *        @f$M=S\tilde A^{-1}S@f$;
+     *  - (c) a counted eigenvalue-clamp repair when (b) still trips.
+     *
+     * Set once before the epoch loop (survives @ref reset, like @ref setPerfTiming).
+     */
+    void setDdFoldPdSafe(bool on) { dd_fold_pd_safe_ = on; }
+    /// @return Whether the PD-safe fold arithmetic is armed (@ref setDdFoldPdSafe).
+    bool ddFoldPdSafe() const { return dd_fold_pd_safe_; }
+
+    /**
+     * @brief Telemetry for the carry-aware covariance readback
+     *        (docs/SPEC_carry_aware_covariance.md §5b/§5c).
+     *
+     * RUN-cumulative (deliberately NOT cleared by @ref reset, like the section timers):
+     * the readback is a per-consumer opt-in, so a per-epoch view would be a histogram of
+     * whichever tracer happened to run.  @ref resetCarryCovStats exists for tests.
+     *
+     * @c nonpos_rows is the one that matters and it is NOT about this readback: the fold
+     * composes one Woodbury update PER BLOCK against the pristine @f$N_{rr}^{-1}@f$, which
+     * is exact only when no station is touched by two blocks — and a block is one connected
+     * component of ONE (const,signal) group, so two groups routinely share a station.  The
+     * summed rank-K downdate can therefore over-subtract.  Nothing in the producer has ever
+     * screened that; these counters are its first measurement (SPEC §3).
+     */
+    struct CarryCovStats {
+        long long calls{0};          ///< carry-aware readback calls that reached the correction.
+        long long rows{0};           ///< requested (station,column) entries the correction covered.
+        long long corrected_rows{0}; ///< …of those, entries whose corrected variance was ACCEPTED.
+        long long nonpos_rows{0};    ///< …entries whose corrected variance came out ≤ 0 / non-finite ⇒ REFUSED (never clamped).
+        long long refused_calls{0};  ///< matrix-valued calls refused WHOLESALE (one bad diagonal ⇒ the whole matrix falls back, so the returned covariance stays a single consistent model).
+        /// SMALLEST accepted corrected/blind variance ratio — the largest information gain
+        /// the carry was hiding.  Starts at 1.0, so 1.0 means the correction never moved
+        /// anything (a dead-wiring read, invariant #4).
+        double ratio_min{1.0};
+        /// LARGEST accepted ratio.  > 1 is legal but notable: the local term is provably
+        /// tighter, while the regression term @f$\tilde A^{-1}N_{rs}\Sigma_{ss}(\cdot)^\top@f$
+        /// is NOT sign-definite, so a variance CAN grow.  A run where this is far above 1
+        /// is a result, not a bug — read it, do not "fix" it.
+        double ratio_max{0.0};
+        double ratio_sum{0.0};       ///< Σ of the ratio over accepted entries…
+        long long ratio_n{0};        ///< …and its count, so the run-end line can print the MEAN.
+    };
+    /**
+     * @brief The carry-aware covariance correction — what the @c carry_aware flag on
+     *        @ref reconstructStationCovariance, @ref reconstructStationCovarianceDiag,
+     *        @ref stationRegression and @ref jointConditionalCovariance turns on.
+     *
+     * @ref foldReducedDdPriors is a per-block rank-K Woodbury update on the PRISTINE
+     * per-station factors, i.e. it is exactly the Schur complement of
+     * @f[
+     *   \tilde A^{-1} \;=\; N_{rr}^{-1} \;-\; \sum_b Y_b M_b Y_b^\top ,
+     *   \qquad Y_b = N_{rr}^{-1}C_b^\top,\; M_b=(P^z_b+B_b)^{-1},
+     * @f]
+     * because @f$N_{sr}\tilde A^{-1}N_{rs}=N_{sr}N_{rr}^{-1}N_{rs}-\sum_b G_bM_bG_b^\top@f$
+     * is precisely what the fold adds to the reduced shared normals.  @ref
+     * reconstructStation ALREADY reads that model back on the mean (the @f$\kappa@f$
+     * correction).  The four covariance readbacks did not: they used @f$N_{rr}^{-1}@f$ and
+     * @f$N_{rr}^{-1}N_{rs}@f$ while @c NetworkEstimator's shared covariance — inverted from
+     * the FOLDED reduced normals — was carry-AWARE, so the result was a hybrid that is the
+     * covariance of no estimator at all: carry-aware in the shared block, carry-blind in
+     * the local block and in the regression coupling the two.
+     *
+     * Armed, they use @f$\tilde A^{-1}@f$ and @f$\tilde A^{-1}N_{rs}@f$ instead — the SAME
+     * model the solve used, which is the point.  Disarmed (the default) every expression is
+     * the pre-card one, verbatim.
+     *
+     * @return Whether this epoch's fold left any DD-prior block for the correction to use
+     *         (so a @c carry_aware call could differ from a blind one at all).  False on a
+     *         chordless epoch, before @ref foldReducedDdPriors, or with the carry off.
+     */
+    bool hasCarryCovCorrection() const { return !dd_priors_.empty(); }
+    /// @return Run-cumulative carry-aware readback telemetry (@ref CarryCovStats).
+    const CarryCovStats& carryCovStats() const { return carry_cov_stats_; }
+    /// Clear @ref CarryCovStats (tests / a deliberate per-leg re-zero; @ref reset does NOT).
+    void resetCarryCovStats() const { carry_cov_stats_ = CarryCovStats{}; }
+
     /**
      * @brief Schur-eliminate every station's nuisance block onto the shared
      *        border, producing @f$\tilde N_{ss},\ \tilde u_s@f$.
@@ -634,12 +769,15 @@ public:
      * @param station      Index from @ref addStation.
      * @param cov_free_xs  Shared-parameter covariance (@c n_shared × @c n_shared),
      *                     datum-pinned rows/cols zeroed for the conditional form.
+     * @param carry_aware  Include the folded DD priors' rank-K term (@ref hasCarryCovCorrection).
+     *                     @c false (default) is the pre-card expression, verbatim.
      * @return The station's @c n_local × @c n_local covariance (symmetric; empty
      *         if the station has no locals).
      * @throws std::out_of_range / std::invalid_argument on a bad index or size.
      */
     Eigen::MatrixXd reconstructStationCovariance(
-        std::size_t station, const Eigen::MatrixXd& cov_free_xs) const;
+        std::size_t station, const Eigen::MatrixXd& cov_free_xs,
+        bool carry_aware = false) const;
 
     /**
      * @brief Diagonal of @ref reconstructStationCovariance for a SUBSET of local
@@ -659,13 +797,17 @@ public:
      * @param station     Index from @ref addStation.
      * @param local_cols  Local columns whose conditional variance is wanted.
      * @param cov_free_xs Shared-parameter covariance (datum-pinned rows/cols zeroed).
+     * @param carry_aware Include the folded DD priors' rank-K term (@ref hasCarryCovCorrection).
+     *                    @c false (default) is the pre-card expression, verbatim.
+     *                    Per-COLUMN fallback here (each variance stands alone), unlike
+     *                    the matrix-valued forms' wholesale refusal.
      * @return A vector of conditional variances, one per requested column (empty if
      *         the station has no locals or @p local_cols is empty).
      * @throws std::out_of_range / std::invalid_argument on a bad index or column.
      */
     Eigen::VectorXd reconstructStationCovarianceDiag(
         std::size_t station, const std::vector<Eigen::Index>& local_cols,
-        const Eigen::MatrixXd& cov_free_xs) const;
+        const Eigen::MatrixXd& cov_free_xs, bool carry_aware = false) const;
 
     /// The regression of one local column on the shared border plus that column's
     /// PURE conditional variance — the two ingredients of a rigorous between-epoch
@@ -699,11 +841,19 @@ public:
      *
      * @param station   Index from @ref addStation (must have local state).
      * @param local_col Local column within this station's @c A_r block.
+     * @param carry_aware Include the folded DD priors' rank-K term (@ref hasCarryCovCorrection) in
+     *                    BOTH outputs — @c cond_var becomes @f$(\tilde A^{-1})_{rr}@f$ and
+     *                    @c row becomes @f$N_{sr}\tilde A^{-1}e_r@f$.  @c false (default)
+     *                    is the pre-card expression, verbatim.  A non-positive corrected
+     *                    @c cond_var is REFUSED (both outputs fall back together, so the
+     *                    pseudo-observation row and its variance always describe the same
+     *                    model).
      * @return @ref StationRegression (empty @c row when @c n_shared is 0).
      * @throws std::out_of_range / std::invalid_argument on a bad index or column.
      */
     StationRegression stationRegression(std::size_t station,
-                                        Eigen::Index local_col) const;
+                                        Eigen::Index local_col,
+                                        bool carry_aware = false) const;
 
     /**
      * @brief Joint conditional covariance of an arbitrary set of local parameters
@@ -733,6 +883,15 @@ public:
      *                    in that station's local block.
      * @param cov_free_xs Shared-parameter covariance (@c n_shared × n_shared) with
      *                    the datum-pinned rows/cols zeroed (the conditional frame).
+     * @param carry_aware Include the folded DD priors' rank-K term (@ref hasCarryCovCorrection).
+     *                    @c false (default) is the pre-card expression, verbatim.
+     *                    NOTE the sentence above — "the local term is added only for
+     *                    same-station pairs" — is a statement about @f$N_{rr}^{-1}@f$,
+     *                    which is block-diagonal.  @f$\tilde A^{-1}@f$ is NOT: the rank-K
+     *                    downdate couples every column inside a block, and a DD chord
+     *                    spans two stations by construction, so the carry-aware form
+     *                    carries a CROSS-STATION local term.  That term is the entire
+     *                    reason a between-station DD σ means anything.
      * @return The @c k×k joint conditional covariance (symmetric); empty if
      *         @p requests is empty.
      * @throws std::out_of_range / std::invalid_argument on a bad station, column,
@@ -740,7 +899,7 @@ public:
      */
     Eigen::MatrixXd jointConditionalCovariance(
         const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
-        const Eigen::MatrixXd& cov_free_xs) const;
+        const Eigen::MatrixXd& cov_free_xs, bool carry_aware = false) const;
 
     /**
      * @brief Baarda per-row redundancy numbers for a batch of one station's
@@ -812,6 +971,25 @@ public:
      * @throws std::out_of_range if @p station ≥ @ref numStations.
      */
     Eigen::MatrixXd stationLocalNormals(std::size_t station) const;
+
+    /**
+     * @brief Station @p station's cached LDLᵀ PIVOTS @f$D@f$, permuted back into
+     *        ORIGINAL local-column order (docs/SPEC_redundancy_census.md INC-2).
+     *
+     * @c Eigen::LDLT pivots symmetrically — it factorizes @f$P N_{rr} P^\top =
+     * L D L^\top@f$ — so @c vectorD() is indexed in the PERMUTED frame and is
+     * useless for naming a state without the permutation.  This accessor applies
+     * the inverse permutation, so entry @c k is the pivot of local column @c k
+     * as the caller built it, and a caller never has to know pivoting happened.
+     *
+     * Read-only on the cached factor: no factorization, no allocation beyond the
+     * returned vector.  A pivot far below the station's median pivot marks a
+     * local state carrying essentially NO information this epoch — the state-side
+     * complement of a zero-redundancy row.
+     *
+     * @throws std::out_of_range if @p station ≥ @ref numStations.
+     */
+    Eigen::VectorXd stationLocalPivots(std::size_t station) const;
 
     /// @return How many times @ref reduce has actually RECOMPUTED the per-station
     ///         Schur loop since the last @ref reset (idempotent no-op returns do
@@ -949,11 +1127,57 @@ private:
         Eigen::VectorXd z_free;  ///< Σ_r C_{L,r} N_rr⁻¹ u_r     (K)
         Eigen::VectorXd zhat;    ///< prior means                (K)
         Eigen::MatrixXd Pz;      ///< prior covariance           (K × K, for the posterior shrink)
+        /// PD-safe INC-1a ONLY (empty unless @ref setDdFoldPdSafe): B = Σ_r C_{L,r} N_rr⁻¹
+        /// C_{L,r}ᵀ, the DATA information of this block's DDs, kept so the posterior can be
+        /// read back in PRODUCT form (Pᶻ − PᶻMPᶻ ≡ PᶻMB).  Deliberately NOT recomputed as
+        /// @c Minv − @c Pz at readback: that re-introduces exactly the 1e6-minus-1e6
+        /// cancellation the product form exists to remove (SPEC §4(a)).
+        Eigen::MatrixXd B;
+        // --- INC-0 per-block PD-screen diagnostics (always filled; solve-neutral) ---
+        bool   degenerate{false};    ///< the PD screen tripped ⇒ this block folded INERTLY (M = 0).
+        double min_pivot_rel{0.0};   ///< d_min/d_max of the block's factor (0 for a K=0 slot or a failed factor).
+        bool   repaired{false};      ///< INC-1c: an eigenvalue clamp rescued this block's factor.
+        double repair_worst{0.0};    ///< INC-1c: |worst clamped eigenvalue| / λ_max (0 when nothing was clamped).
     };
     std::vector<FoldedDdPrior> dd_priors_;   ///< folded DD-prior blocks (cleared by reduce()/reset())
+    DdFoldStats dd_fold_stats_;              ///< INC-0: the LAST fold's PD-screen aggregate (per-fold, not cumulative)
+    bool dd_fold_pd_safe_{false};            ///< PD-safe fold arithmetic armed (@ref setDdFoldPdSafe); survives reset()
     /// One (block, row, col, coeff) term of a station's DD-prior reconstruction correction.
     struct DdStationTerm { std::size_t block; Eigen::Index row; Eigen::Index col; double coeff; };
     std::vector<std::vector<DdStationTerm>> station_ddprior_;  ///< station → its DD-prior terms
+    /**
+     * @brief The batched rank-K carry correction for a request set
+     *        (@ref hasCarryCovCorrection; docs/SPEC_carry_aware_covariance.md §5a).
+     *
+     * Given each request's station and its @f$n_i=N_{rr}^{-1}e_{c_i}@f$ (the solve the
+     * blind path already performs), fills
+     * @f$\texttt{local\_corr}(a,b)=\sum_b Y^{(a)\top}_bM_bY^{(b)}_b@f$ (@c k×k) and
+     * @f$\texttt{m\_corr}(:,i)=\sum_b G_bM_bY^{(i)}_b@f$ (@c n_shared×k), both to be
+     * SUBTRACTED.  One sparse pass over @ref station_ddprior_ builds every block's
+     * @f$Y@f$ columns, then one GEMM per block — so the cost is
+     * @f$O(\sum_b K_b^2 k)@f$ in BLAS-3, not @f$k@f$ separate K-vector products.
+     *
+     * A chordless (K=0), never-factored, or DEGENERATE block (M=0, the parent card's
+     * INC-0 inert fold) contributes exactly zero with no special case — the inert-fold
+     * semantics carry through the readback for free.
+     */
+    void carryCovCorrection(const std::vector<std::size_t>& sta,
+                            const std::vector<Eigen::VectorXd>& n,
+                            Eigen::MatrixXd& local_corr,
+                            Eigen::MatrixXd& m_corr) const;
+    /// Fold one ACCEPTED (corrected, blind) variance pair into @ref CarryCovStats.  A
+    /// non-positive or non-finite blind reference is skipped rather than made up — the
+    /// ratio is telemetry, and telemetry that invents a denominator is the defect this
+    /// card's parent exists to end.
+    void tallyCarryRatio(double corrected, double blind) const {
+        if (!(blind > 0.0) || !std::isfinite(blind) || !std::isfinite(corrected)) return;
+        const double r = corrected / blind;
+        carry_cov_stats_.ratio_sum += r;
+        ++carry_cov_stats_.ratio_n;
+        if (r < carry_cov_stats_.ratio_min) carry_cov_stats_.ratio_min = r;
+        if (r > carry_cov_stats_.ratio_max) carry_cov_stats_.ratio_max = r;
+    }
+    mutable CarryCovStats carry_cov_stats_;  ///< run-cumulative readback telemetry (survives reset(), like @ref timers_)
     bool ddprior_folded_{false};             ///< guards double-folding the DD priors within one reduce
     std::size_t reduce_recompute_count_{0}; ///< #full reduce() recomputes since reset() (reduce-once invariant)
     bool station_pd_median_scale_{false};   ///< pin-aware addStation PD test (median-|pivot| reference scale); survives reset()

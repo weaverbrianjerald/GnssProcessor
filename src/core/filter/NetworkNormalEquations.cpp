@@ -12,6 +12,7 @@
 #include "filter/NetworkNormalEquations.hpp"
 
 #include <Eigen/Core>          // Eigen::setNbThreads / nbThreads (parallel_carry: local GMGᵀ un-pin)
+#include <Eigen/Eigenvalues>   // SelfAdjointEigenSolver (PD-safe fold INC-1c repair backstop)
 
 #include <algorithm>
 #include <chrono>
@@ -82,6 +83,202 @@ void requireFactorPd(const Eigen::LDLT<Eigen::MatrixXd>& ldlt,
     if (!ok) {
         fail(context);
     }
+}
+
+// --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4) --------------
+// The DD-prior fold's middle inverse M = (Pᶻ+B)⁻¹ is where the corrupted-carry defect
+// lives: the [band-1; band-2] joint lane block is born near-singular (same-chord band
+// rows are near-duplicates through shared geometry — min eig 4.6e-6 vs 1.8e-2 for the
+// per-band blocks), and mixed operand scales (1e-4 mature .. 1e6 fresh) over K=686 GEMM
+// chains push its hidden tight eigenvalues through zero.  The LEGACY screen's response
+// is a SILENT permanent freeze (M:=0 forever, posterior == prior); the PD-safe screen
+// makes the arithmetic scale-following so the violations shrink to round-off dust,
+// repairs the dust it still finds, and COUNTS both.
+//
+// Relative pivot floor — the @ref requireFactorPd constant, reused deliberately so the
+// DD fold's rank test and the shared-system rank test cannot drift apart.
+constexpr double kDdPivotRelTol = 1e-12;
+/// "This is not dust" bar for the INC-1c repair, relative to λmax.  SPEC §4(c) requires a
+/// clamp above this to SCREAM rather than be laundered; §5(a) says a block that "still
+/// cannot factor after (c)" is rebirthed and names a corrupt restored blob as a reachable
+/// trigger.  Both statements are only true together if a clamp this large is REFUSED —
+/// otherwise the eigen-clamp always succeeds, a −2.9e7 eigenvalue is silently rewritten to
+/// +1e-12·λmax, and §5(a)'s trigger is unreachable by construction.  So: dust is repaired
+/// and counted; anything above this bar is handed to the bounded, loud rebirth instead of
+/// being made to look healthy.
+constexpr double kDdRepairLoudRel = 1e-6;
+/// Diagonal floor for the equilibration, RELATIVE to the largest |diagonal|.  A
+/// non-positive diagonal (precisely the corrupt-carry case this card exists for) would
+/// make an absolute floor produce a ~1e150 scale factor and overflow the scaled matrix;
+/// a relative floor keeps S finite so the PD screen — not an inf — makes the decision.
+constexpr double kDdEquilDiagFloorRel = 1e-16;
+
+/// Explicit symmetrized inverse from a COMPUTED LDLᵀ factor.  Verbatim the expressions
+/// that were inline in the serial fold before this card (standing invariant #6: the OFF
+/// path must round identically, so this is a relocation, not a rewrite).
+///
+/// @p station_threads > 1 (@c network.parallel_carry) splits the Identity columns across
+/// threads: LᵀDL x_j = e_j has no cross-column arithmetic, so the split is BYTE-IDENTICAL
+/// to the single solve for a given factor.  The factor itself stays serial.
+Eigen::MatrixXd inverseFromLdlt(const Eigen::LDLT<Eigen::MatrixXd>& ldlt, Eigen::Index K,
+                                int station_threads) {
+    Eigen::MatrixXd M;
+#ifdef _OPENMP
+    if (station_threads > 1 && K > 1) {
+        M.resize(K, K);
+        const int nt = static_cast<int>(
+            std::min<Eigen::Index>(static_cast<Eigen::Index>(station_threads), K));
+        #pragma omp parallel num_threads(nt)
+        {
+            const int tid = omp_get_thread_num();
+            const int rnt = omp_get_num_threads();
+            const Eigen::Index lo = (K * tid) / rnt;
+            const Eigen::Index hi = (K * (tid + 1)) / rnt;
+            if (hi > lo) {
+                Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(K, hi - lo);
+                for (Eigen::Index j = lo; j < hi; ++j) rhs(j, j - lo) = 1.0;
+                M.middleCols(lo, hi - lo) = ldlt.solve(rhs);
+            }
+        }
+    } else
+#endif
+        M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
+    M = (0.5 * (M + M.transpose())).eval();
+    return M;
+}
+
+/// One block's middle-inverse screen result (both arithmetic paths produce this shape).
+struct DdMiddleInverse {
+    Eigen::MatrixXd M;            ///< (Pᶻ+B)⁻¹, or K×K ZERO when the screen tripped (inert fold).
+    Eigen::MatrixXd Minv;         ///< the matrix M actually inverts — Pᶻ+B, post-repair if (c) fired.
+    bool   degenerate{false};     ///< the screen tripped and nothing rescued it ⇒ M = 0.
+    double min_pivot_rel{0.0};    ///< d_min/d_max of the ORIGINAL (pre-repair) factor.
+    bool   repaired{false};       ///< INC-1c: an eigenvalue clamp was applied.
+    double repair_worst{0.0};     ///< INC-1c: |worst clamped eigenvalue| / λ_max.
+};
+
+/// LEGACY middle inverse — the pre-card arithmetic, unchanged.  The ONLY addition is the
+/// @c min_pivot_rel READ of the factor already computed (INC-0); the decision below is
+/// byte-for-byte the historical `info() != Success || vectorD().minCoeff() <= 0.0`.
+DdMiddleInverse ddMiddleInverseLegacy(const Eigen::MatrixXd& PzB, Eigen::Index K,
+                                      int station_threads) {
+    DdMiddleInverse r;
+    r.Minv = PzB;
+    Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);   // O(K³/3) factor — serial (byte-id floor)
+    if (ldlt.info() == Eigen::Success) {      // INC-0: pure read, no effect on the decision
+        const Eigen::VectorXd d = ldlt.vectorD();
+        const double dmax = d.cwiseAbs().maxCoeff();
+        r.min_pivot_rel = (dmax > 0.0) ? (d.minCoeff() / dmax) : 0.0;
+    }
+    if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
+        r.M = Eigen::MatrixXd::Zero(K, K);
+        r.degenerate = true;
+    } else {
+        r.M = inverseFromLdlt(ldlt, K, station_threads);
+    }
+    return r;
+}
+
+/// PD-SAFE middle inverse (@c network.carry_invariant_pd_safe) — SPEC §4(b)+(c).
+///
+/// (b) Equilibrate: S = diag(1/√max(A_ii, ε)) makes every pivot of Ã = S A S O(1), so
+///     the rank test `d_min ≥ 1e-12·d_max` is a statement about CONDITIONING rather than
+///     about the 1e10 spread between a mature (1e-4) and a fresh (1e6) row.  The unscale
+///     M = S Ã⁻¹ S is exact (A⁻¹ = S (S A S)⁻¹ S for diagonal S) — no approximation is
+///     introduced, only a different rounding path.
+/// (c) Repair: on a trip, clamp Ã's eigenvalues below 1e-12·λmax up to that floor and
+///     refactor.  Bounded and counted by construction; a clamp above 1e-6·λmax is a NEW
+///     bug and the caller WARNs on it rather than laundering it.
+DdMiddleInverse ddMiddleInversePdSafe(const Eigen::MatrixXd& PzB, Eigen::Index K,
+                                      int station_threads) {
+    DdMiddleInverse r;
+    r.Minv = PzB;
+    const Eigen::VectorXd dg = PzB.diagonal();
+    const double dmax_abs = dg.cwiseAbs().maxCoeff();
+    const double eps = (dmax_abs > 0.0) ? (kDdEquilDiagFloorRel * dmax_abs) : 1.0;
+    Eigen::VectorXd s(K);
+    for (Eigen::Index i = 0; i < K; ++i) s(i) = 1.0 / std::sqrt(std::max(dg(i), eps));
+    Eigen::MatrixXd At = s.asDiagonal() * PzB * s.asDiagonal();
+    At = (0.5 * (At + At.transpose())).eval();
+
+    Eigen::LDLT<Eigen::MatrixXd> ldlt(At);
+    bool ok = (ldlt.info() == Eigen::Success);
+    if (ok) {
+        const Eigen::VectorXd d = ldlt.vectorD();
+        const double dmax = d.cwiseAbs().maxCoeff();
+        const double dmin = d.minCoeff();
+        r.min_pivot_rel = (dmax > 0.0) ? (dmin / dmax) : 0.0;
+        ok = (dmax > 0.0) && (dmin > 0.0) && (dmin >= kDdPivotRelTol * dmax);
+    }
+    if (ok) {   // the common case: scale-following arithmetic, no repair
+        const Eigen::MatrixXd Ainv = inverseFromLdlt(ldlt, K, station_threads);
+        r.M = s.asDiagonal() * Ainv * s.asDiagonal();
+        r.M = (0.5 * (r.M + r.M.transpose())).eval();
+        return r;
+    }
+
+    // ---- (c) repair backstop: eigenvalue clamp on the EQUILIBRATED matrix -------
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(At);
+    if (es.info() != Eigen::Success) {
+        r.M = Eigen::MatrixXd::Zero(K, K);
+        r.degenerate = true;                 // INC-2a: the install rebirths this block
+        return r;
+    }
+    Eigen::VectorXd lam = es.eigenvalues();
+    const double lmax = lam.cwiseAbs().maxCoeff();
+    if (!(lmax > 0.0)) {                     // an all-zero block carries no information
+        r.M = Eigen::MatrixXd::Zero(K, K);
+        r.degenerate = true;
+        return r;
+    }
+    const double lfloor = kDdPivotRelTol * lmax;
+    double worst = 0.0;
+    long long nclamp = 0;
+    for (Eigen::Index i = 0; i < K; ++i) {
+        if (lam(i) < lfloor) {
+            worst = std::max(worst, std::abs(lam(i)));
+            lam(i) = lfloor;
+            ++nclamp;
+        }
+    }
+    r.repair_worst = worst / lmax;
+    if (r.repair_worst > kDdRepairLoudRel) {
+        // NOT dust.  Repairing this would rewrite a genuinely broken block into one that
+        // LOOKS healthy — the single worst thing this card could do, because the whole
+        // defect it fixes was an unhealthy block that nothing could see.  Refuse, and let
+        // the bounded + counted + logged INC-2a rebirth handle it instead.
+        r.M = Eigen::MatrixXd::Zero(K, K);
+        r.degenerate = true;
+        return r;
+    }
+    r.repaired     = (nclamp > 0);
+    Eigen::MatrixXd Arep = es.eigenvectors() * lam.asDiagonal()
+                         * es.eigenvectors().transpose();
+    Arep = (0.5 * (Arep + Arep.transpose())).eval();
+    Eigen::LDLT<Eigen::MatrixXd> ldlt2(Arep);
+    bool ok2 = (ldlt2.info() == Eigen::Success);
+    if (ok2) {
+        const Eigen::VectorXd d2 = ldlt2.vectorD();
+        const double d2max = d2.cwiseAbs().maxCoeff();
+        ok2 = (d2max > 0.0) && (d2.minCoeff() > 0.0)
+              && (d2.minCoeff() >= kDdPivotRelTol * d2max);
+    }
+    if (!ok2) {   // INC-2a: fail LOUDLY and boundedly — inert fold + install-side rebirth
+        r.M = Eigen::MatrixXd::Zero(K, K);
+        r.degenerate = true;
+        r.repaired = false;                  // the clamp did not rescue it; do not count it
+        return r;
+    }
+    const Eigen::MatrixXd Ainv = inverseFromLdlt(ldlt2, K, station_threads);
+    r.M = s.asDiagonal() * Ainv * s.asDiagonal();
+    r.M = (0.5 * (r.M + r.M.transpose())).eval();
+    // Keep the D5 cache consistent with the matrix M actually inverts: Cov(v) reads
+    // fd.Minv, and handing it the PRE-repair (indefinite) Pᶻ+B would make the innovation
+    // covariance disagree with the fold that produced the innovation.
+    const Eigen::VectorXd sinv = s.cwiseInverse();
+    r.Minv = sinv.asDiagonal() * Arep * sinv.asDiagonal();
+    r.Minv = (0.5 * (r.Minv + r.Minv.transpose())).eval();
+    return r;
 }
 
 // --- Tier D0 section timers (network.trace_section_timers) -------------------
@@ -161,6 +358,7 @@ void NetworkNormalEquations::reset(Eigen::Index n_shared) {
     dd_priors_.clear();
     station_ddprior_.clear();
     ddprior_folded_ = false;
+    dd_fold_stats_ = DdFoldStats{};   // INC-0 (dd_fold_pd_safe_ is configuration — it survives)
 }
 
 void NetworkNormalEquations::addSharedInfo(const Eigen::MatrixXd& delta_info,
@@ -630,6 +828,30 @@ void NetworkNormalEquations::foldReducedDdPriors(
     dd_priors_.clear();
     station_ddprior_.assign(n_active_, {});
     ddprior_folded_ = true;
+    dd_fold_stats_ = DdFoldStats{};   // INC-0: per-FOLD, so a RAIM re-solve overwrites it
+    // INC-0: roll the per-block PD-screen reads up into the fold's diagnostics.  Invoked
+    // from BOTH fold paths (the deterministic-parallel one returns early) so the two can
+    // never disagree about what the epoch's screen saw.
+    auto tallyDdFoldStats = [this]() {
+        DdFoldStats st;
+        for (const FoldedDdPrior& f : dd_priors_) {
+            const Eigen::Index K = f.Pz.rows();
+            if (K == 0) continue;   // chordless slot — never reached a factorization
+            ++st.blocks;
+            st.rows += static_cast<long long>(K);
+            if (f.degenerate) {
+                ++st.degen_blocks;
+                st.degen_rows += static_cast<long long>(K);
+            }
+            if (f.repaired) {
+                ++st.repairs;
+                st.repaired_rows += static_cast<long long>(K);
+            }
+            st.min_pivot_rel = std::min(st.min_pivot_rel, f.min_pivot_rel);
+            st.repair_worst  = std::max(st.repair_worst, f.repair_worst);
+        }
+        dd_fold_stats_ = st;
+    };
     if (blocks.empty() || n_shared_ == 0) {
         return;
     }
@@ -728,17 +950,22 @@ void NetworkNormalEquations::foldReducedDdPriors(
             }
             Eigen::MatrixXd PzB = blk.Pz + B;
             PzB = (0.5 * (PzB + PzB.transpose())).eval();
-            fd_slot[bidx].Minv = PzB;
-            Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);
-            Eigen::MatrixXd M;
-            if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
-                M = Eigen::MatrixXd::Zero(K, K);
-            } else {
-                M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
-                M = (0.5 * (M + M.transpose())).eval();
-            }
+            // PD-safe INC-1a: the DATA information B is what the PRODUCT-form posterior
+            // readback multiplies through (Pᶻ − PᶻMPᶻ ≡ PᶻMB); cached only when armed so
+            // the OFF path keeps its exact allocation footprint.
+            if (dd_fold_pd_safe_) fd_slot[bidx].B = B;
+            // station_threads is deliberately 1 here: the WITHIN-block column split is a
+            // serial-fold-only option (the blocks already run one per thread).
+            DdMiddleInverse mi = dd_fold_pd_safe_
+                                     ? ddMiddleInversePdSafe(PzB, K, 1)
+                                     : ddMiddleInverseLegacy(PzB, K, 1);
+            fd_slot[bidx].Minv         = std::move(mi.Minv);
+            fd_slot[bidx].degenerate   = mi.degenerate;
+            fd_slot[bidx].min_pivot_rel = mi.min_pivot_rel;
+            fd_slot[bidx].repaired     = mi.repaired;
+            fd_slot[bidx].repair_worst = mi.repair_worst;
             fd_slot[bidx].G      = std::move(G);
-            fd_slot[bidx].M      = std::move(M);
+            fd_slot[bidx].M      = std::move(mi.M);
             fd_slot[bidx].z_free = std::move(z_free);
             terms_slot[bidx].reserve(by_station.size());
             for (auto& [si, terms] : by_station) {
@@ -765,6 +992,7 @@ void NetworkNormalEquations::foldReducedDdPriors(
             dd_priors_.push_back(std::move(fd));
         }
         reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
+        tallyDdFoldStats();   // INC-0
         return;
     }
 
@@ -874,43 +1102,29 @@ void NetworkNormalEquations::foldReducedDdPriors(
         // Middle inverse M = (Pᶻ + B)⁻¹ (PD: SPD prior + PSD B).  A degenerate block
         // (non-PD, e.g. a malformed prior) folds INERTLY (M=0) — a no-op that keeps its
         // index slot rather than corrupting the reduced system or shifting the keys.
+        // PD-safe card: that inert branch is the SILENT PERMANENT FREEZE this card exists
+        // to end — it is now counted (INC-0), avoided where the violation is numerical
+        // (INC-1), and re-coupled by the install's block rebirth when it is not (INC-2a).
+        // The column-parallel inverse (parallel_carry) moved into @ref inverseFromLdlt.
         Eigen::MatrixXd M;
         {   // P0b: time the K×K middle inverse (LDLT factor + explicit inverse)
             ScopedAccum _fm(perf_timing_, &timers_.fold_minv_ms);
             Eigen::MatrixXd PzB = blk.Pz + B;
             PzB = (0.5 * (PzB + PzB.transpose())).eval();
-            fd.Minv = PzB;   // D5: cache M⁻¹ = Pᶻ+B for the innovation covariance readout
-            Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);   // O(K³/3) factor — serial (byte-id floor)
-            if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
-                M = Eigen::MatrixXd::Zero(K, K);
-            } else {
-#ifdef _OPENMP
-                if (station_threads > 1 && K > 1) {
-                    // parallel_carry: the explicit inverse M = (Pᶻ+B)⁻¹ = ldlt.solve(I) is a
-                    // per-column back-substitution (LᵀDL x_j = e_j; no cross-column arithmetic),
-                    // so splitting the Identity columns across threads is BYTE-IDENTICAL to the
-                    // single solve given this PzB (ldlt.solve is const ⇒ safe to share).  Only
-                    // the factor above is unparallelized.
-                    M.resize(K, K);
-                    const int nt = static_cast<int>(
-                        std::min<Eigen::Index>(static_cast<Eigen::Index>(station_threads), K));
-                    #pragma omp parallel num_threads(nt)
-                    {
-                        const int tid = omp_get_thread_num();
-                        const int rnt = omp_get_num_threads();
-                        const Eigen::Index lo = (K * tid) / rnt;
-                        const Eigen::Index hi = (K * (tid + 1)) / rnt;
-                        if (hi > lo) {
-                            Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(K, hi - lo);
-                            for (Eigen::Index j = lo; j < hi; ++j) rhs(j, j - lo) = 1.0;
-                            M.middleCols(lo, hi - lo) = ldlt.solve(rhs);
-                        }
-                    }
-                } else
-#endif
-                    M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
-                M = (0.5 * (M + M.transpose())).eval();
-            }
+            // PD-safe INC-1a: cache the DATA information B for the PRODUCT-form posterior
+            // (Pᶻ − PᶻMPᶻ ≡ PᶻMB).  Armed-only, so the OFF path's footprint is unchanged.
+            if (dd_fold_pd_safe_) fd.B = B;
+            DdMiddleInverse mi = dd_fold_pd_safe_
+                                     ? ddMiddleInversePdSafe(PzB, K, station_threads)
+                                     : ddMiddleInverseLegacy(PzB, K, station_threads);
+            // D5: cache M⁻¹ = Pᶻ+B for the innovation covariance readout (post-repair
+            // when INC-1c fired, so Cov(v) and the fold agree).
+            fd.Minv          = std::move(mi.Minv);
+            fd.degenerate    = mi.degenerate;
+            fd.min_pivot_rel = mi.min_pivot_rel;
+            fd.repaired      = mi.repaired;
+            fd.repair_worst  = mi.repair_worst;
+            M = std::move(mi.M);
         }
 
         // Joint rank-K Woodbury fold onto the reduced shared system (a no-op when M=0).
@@ -938,6 +1152,23 @@ void NetworkNormalEquations::foldReducedDdPriors(
         dd_priors_.push_back(std::move(fd));
     }
     reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
+    tallyDdFoldStats();   // INC-0
+}
+
+bool NetworkNormalEquations::ddPriorBlockDegenerate(std::size_t b) const {
+    if (b >= dd_priors_.size()) {
+        throw std::out_of_range("NetworkNormalEquations::ddPriorBlockDegenerate: "
+                                "block index out of range");
+    }
+    return dd_priors_[b].degenerate;
+}
+
+double NetworkNormalEquations::ddPriorBlockMinPivotRel(std::size_t b) const {
+    if (b >= dd_priors_.size()) {
+        throw std::out_of_range("NetworkNormalEquations::ddPriorBlockMinPivotRel: "
+                                "block index out of range");
+    }
+    return dd_priors_[b].min_pivot_rel;
 }
 
 Eigen::VectorXd NetworkNormalEquations::ddPriorPosteriorMean(
@@ -972,7 +1203,24 @@ Eigen::MatrixXd NetworkNormalEquations::ddPriorPosteriorCovariance(
     // Pᶻ_post = (Pᶻ − Pᶻ M Pᶻ) + (Pᶻ M Gᵀ) Σ_ss (G M Pᶻ).  An inert degenerate block
     // has M=0 ⇒ Pᶻ_post = Pᶻ (the untouched prior — no information was folded).
     const Eigen::MatrixXd PzM = fd.Pz * fd.M;                 // Pᶻ M            (K×K)
-    Eigen::MatrixXd cov = fd.Pz - PzM * fd.Pz;                // conditional-given-x_s
+    Eigen::MatrixXd cov;
+    if (dd_fold_pd_safe_ && !fd.degenerate && fd.B.rows() == K && fd.B.cols() == K) {
+        // --- PD-safe INC-1a: the PRODUCT form of the same quantity ---------------
+        // Pᶻ − PᶻMPᶻ = PᶻM[(Pᶻ+B) − Pᶻ] = PᶻMB, EXACTLY.  The left form subtracts two
+        // 1e6-scale operands to land on a 1e-4-scale mature row — catastrophic
+        // cancellation that, over K=686 GEMM chains and the W·Pᶻ·Wᵀ integer
+        // re-expression, pushes the near-singular joint lane block's hidden tight
+        // eigenvalues through zero (measured between ep 2 and ep 122, 2026-08-02).
+        // The right form's operands follow the scale of the ANSWER: 1e-4·(1/B)·B.
+        //
+        // NOT applied to a degenerate block: with M forced to 0 the identity's premise
+        // (M = (Pᶻ+B)⁻¹) is false, and the inert-fold semantics — posterior == the
+        // untouched prior — are what the subtractive form still delivers.
+        cov = fd.Pz * (fd.M * fd.B);                          // Pᶻ M B          (K×K)
+        cov = (0.5 * (cov + cov.transpose())).eval();         // sym(·): the exact symmetry
+    } else {
+        cov = fd.Pz - PzM * fd.Pz;                            // conditional-given-x_s
+    }
     // Coupling through the shared-parameter uncertainty: the DD depends on x_s via
     // −Pᶻ M Gᵀ, so add (Pᶻ M Gᵀ) Σ_ss (Pᶻ M Gᵀ)ᵀ.  Empty on a zero shared block.
     if (n_shared_ > 0) {
@@ -1129,8 +1377,55 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
     return x_r;
 }
 
+// ---------------------------------------------------------------------------------
+// Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §5a).
+//
+// The fold is the Schur complement of  Ã⁻¹ = N_rr⁻¹ − Σ_b Y_b M_b Y_bᵀ  (Y_b = N_rr⁻¹C_bᵀ),
+// so the honest readback subtracts the SAME rank-K term the reduced shared normals were
+// already built from.  This is the single implementation of that term — every armed
+// readback routes through it, so the four can never drift apart.
+// ---------------------------------------------------------------------------------
+void NetworkNormalEquations::carryCovCorrection(
+    const std::vector<std::size_t>& sta, const std::vector<Eigen::VectorXd>& n,
+    Eigen::MatrixXd& local_corr, Eigen::MatrixXd& m_corr) const {
+    const Eigen::Index k = static_cast<Eigen::Index>(n.size());
+    local_corr.setZero(k, k);
+    m_corr.setZero(n_shared_, k);
+    if (k == 0 || dd_priors_.empty()) {
+        return;
+    }
+    // ONE sparse pass over the requests fills every touched block's Y columns:
+    //   Ycols_b(:, i) = C_{b, sta[i]} n_i   (zero column where block b misses station i).
+    // station_ddprior_ is exactly the (block, row, local_col, coeff) list the MEAN path
+    // walks in reconstructStation, so the two readbacks cannot disagree about which
+    // block owns which column.
+    std::vector<Eigen::MatrixXd> Ycols(dd_priors_.size());
+    for (Eigen::Index i = 0; i < k; ++i) {
+        const std::size_t s = sta[static_cast<std::size_t>(i)];
+        if (s >= station_ddprior_.size()) continue;
+        for (const DdStationTerm& t : station_ddprior_[s]) {
+            const FoldedDdPrior& fd = dd_priors_[t.block];
+            const Eigen::Index K = fd.Pz.rows();
+            if (K == 0 || fd.M.rows() != K) continue;   // chordless / never factored
+            Eigen::MatrixXd& Y = Ycols[t.block];
+            if (Y.size() == 0) Y.setZero(K, k);
+            Y(t.row, i) += t.coeff * n[static_cast<std::size_t>(i)](t.col);
+        }
+    }
+    // One GEMM per touched block.  A DEGENERATE block carries M = 0 (the parent card's
+    // inert fold), so it contributes exactly zero here without a branch.
+    for (std::size_t b = 0; b < dd_priors_.size(); ++b) {
+        const Eigen::MatrixXd& Y = Ycols[b];
+        if (Y.size() == 0) continue;
+        const FoldedDdPrior& fd = dd_priors_[b];
+        const Eigen::MatrixXd W = fd.M * Y;                 // K × k
+        local_corr.noalias() += Y.transpose() * W;          // k × k
+        if (n_shared_ > 0) m_corr.noalias() += fd.G * W;    // n_shared × k
+    }
+}
+
 Eigen::MatrixXd NetworkNormalEquations::reconstructStationCovariance(
-    std::size_t station, const Eigen::MatrixXd& cov_free_xs) const {
+    std::size_t station, const Eigen::MatrixXd& cov_free_xs, bool carry_aware) const {
     if (station >= n_active_) {
         throw std::out_of_range("NetworkNormalEquations::reconstructStationCovariance: "
                                 "station index out of range");
@@ -1148,12 +1443,42 @@ Eigen::MatrixXd NetworkNormalEquations::reconstructStationCovariance(
     const Eigen::MatrixXd Nrr_inv = st.Nrr_ldlt.solve(
         Eigen::MatrixXd::Identity(st.n_local, st.n_local));
     Eigen::MatrixXd cov = Nrr_inv + M * cov_free_xs * M.transpose();
-    return 0.5 * (cov + cov.transpose());  // symmetrize numerical drift
+    cov = (0.5 * (cov + cov.transpose())).eval();  // symmetrize numerical drift
+    if (!carry_aware || dd_priors_.empty()) {
+        return cov;
+    }
+    // Armed: the same quantity over Ã⁻¹.  Column i of N_rr⁻¹ IS n_i = N_rr⁻¹e_i, so the
+    // whole-station form is the batched correction with one request per local column.
+    std::vector<std::size_t>     sta(static_cast<std::size_t>(st.n_local), station);
+    std::vector<Eigen::VectorXd> n(static_cast<std::size_t>(st.n_local));
+    for (Eigen::Index c = 0; c < st.n_local; ++c) n[static_cast<std::size_t>(c)] = Nrr_inv.col(c);
+    Eigen::MatrixXd local_corr, m_corr;
+    carryCovCorrection(sta, n, local_corr, m_corr);
+    ++carry_cov_stats_.calls;
+    carry_cov_stats_.rows += static_cast<long long>(st.n_local);
+    const Eigen::MatrixXd Mreg = (n_shared_ > 0) ? Eigen::MatrixXd(M - m_corr.transpose())
+                                                 : Eigen::MatrixXd(M);
+    Eigen::MatrixXd out = Nrr_inv - local_corr;
+    if (n_shared_ > 0) out.noalias() += Mreg * cov_free_xs * Mreg.transpose();
+    out = (0.5 * (out + out.transpose())).eval();
+    // §5b: refuse, never clamp — and refuse WHOLESALE, so the returned matrix stays one
+    // consistent model rather than a mixture of two.
+    long long bad = 0;
+    for (Eigen::Index c = 0; c < st.n_local; ++c)
+        if (!(out(c, c) > 0.0) || !std::isfinite(out(c, c))) ++bad;
+    if (bad > 0) {
+        carry_cov_stats_.nonpos_rows += bad;
+        ++carry_cov_stats_.refused_calls;
+        return cov;
+    }
+    for (Eigen::Index c = 0; c < st.n_local; ++c) tallyCarryRatio(out(c, c), cov(c, c));
+    carry_cov_stats_.corrected_rows += static_cast<long long>(st.n_local);
+    return out;
 }
 
 Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
     std::size_t station, const std::vector<Eigen::Index>& local_cols,
-    const Eigen::MatrixXd& cov_free_xs) const {
+    const Eigen::MatrixXd& cov_free_xs, bool carry_aware) const {
     if (station >= n_active_) {
         throw std::out_of_range("NetworkNormalEquations::reconstructStationCovarianceDiag: "
                                 "station index out of range");
@@ -1170,6 +1495,13 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
     //   (N_rr⁻¹)_{cc} = e_cᵀ N_rr⁻¹ e_c = n_c(c),   n_c = N_rr⁻¹ e_c
     //   (M Cov_free Mᵀ)_{cc} = m_cᵀ Cov_free m_c,   m_c = N_sr n_c  (row c of M, transposed)
     // One local solve per requested column — no full N_rr⁻¹ (the serial-path cost).
+    const bool armed = carry_aware && !dd_priors_.empty();
+    std::vector<Eigen::VectorXd> nvec;
+    std::vector<std::size_t>     sta;
+    if (armed) {
+        nvec.resize(static_cast<std::size_t>(k));
+        sta.assign(static_cast<std::size_t>(k), station);
+    }
     Eigen::VectorXd out(k);
     Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
     for (Eigen::Index i = 0; i < k; ++i) {
@@ -1186,13 +1518,40 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
             var += m_c.dot(cov_free_xs * m_c);                // m_cᵀ Cov_free m_c
         }
         out(i) = var;
+        if (armed) nvec[static_cast<std::size_t>(i)] = n_c;
+    }
+    if (!armed) {
+        return out;
+    }
+    // Armed: the same per-column quantity over Ã⁻¹ — one batched correction for all k
+    // columns.  PER-COLUMN fallback here (unlike the matrix-valued forms): each variance
+    // is a standalone number, so refusing one does not make the others inconsistent.
+    Eigen::MatrixXd local_corr, m_corr;
+    carryCovCorrection(sta, nvec, local_corr, m_corr);
+    ++carry_cov_stats_.calls;
+    carry_cov_stats_.rows += static_cast<long long>(k);
+    for (Eigen::Index i = 0; i < k; ++i) {
+        const Eigen::VectorXd& n_c = nvec[static_cast<std::size_t>(i)];
+        double var = n_c(local_cols[i]) - local_corr(i, i);
+        if (n_shared_ > 0) {
+            const Eigen::VectorXd m_c = st.N_sr * n_c - m_corr.col(i);
+            var += m_c.dot(cov_free_xs * m_c);
+        }
+        if (var > 0.0 && std::isfinite(var)) {
+            tallyCarryRatio(var, out(i));
+            out(i) = var;
+            ++carry_cov_stats_.corrected_rows;
+        } else {
+            ++carry_cov_stats_.nonpos_rows;   // §5b: refuse, never clamp — keep the blind value
+        }
     }
     return out;
 }
 
 NetworkNormalEquations::StationRegression
 NetworkNormalEquations::stationRegression(std::size_t station,
-                                          Eigen::Index local_col) const {
+                                          Eigen::Index local_col,
+                                          bool carry_aware) const {
     if (station >= n_active_) {
         throw std::out_of_range("NetworkNormalEquations::stationRegression: "
                                 "station index out of range");
@@ -1212,12 +1571,31 @@ NetworkNormalEquations::stationRegression(std::size_t station,
     out.cond_var = n_c(local_col);                        // (N_rr⁻¹)_{rr}
     out.row = (n_shared_ > 0) ? Eigen::VectorXd(st.N_sr * n_c)   // N_sr N_rr⁻¹ e_r (n_shared)
                               : Eigen::VectorXd();
+    if (!carry_aware || dd_priors_.empty()) {
+        return out;
+    }
+    // Armed: both outputs move to Ã⁻¹ TOGETHER — a pseudo-observation row whose
+    // coefficients came from one model and whose variance came from another would be
+    // worse than either, so the refusal is joint.
+    Eigen::MatrixXd local_corr, m_corr;
+    carryCovCorrection({station}, {n_c}, local_corr, m_corr);
+    ++carry_cov_stats_.calls;
+    ++carry_cov_stats_.rows;
+    const double cond_var = out.cond_var - local_corr(0, 0);
+    if (!(cond_var > 0.0) || !std::isfinite(cond_var)) {
+        ++carry_cov_stats_.nonpos_rows;
+        return out;                                       // §5b: refuse, never clamp
+    }
+    tallyCarryRatio(cond_var, out.cond_var);
+    ++carry_cov_stats_.corrected_rows;
+    out.cond_var = cond_var;
+    if (n_shared_ > 0) out.row -= m_corr.col(0);
     return out;
 }
 
 Eigen::MatrixXd NetworkNormalEquations::jointConditionalCovariance(
     const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
-    const Eigen::MatrixXd& cov_free_xs) const {
+    const Eigen::MatrixXd& cov_free_xs, bool carry_aware) const {
     const Eigen::Index k = static_cast<Eigen::Index>(requests.size());
     if (k == 0) {
         return Eigen::MatrixXd();
@@ -1265,7 +1643,48 @@ Eigen::MatrixXd NetworkNormalEquations::jointConditionalCovariance(
             cov(b, a) = v;
         }
     }
-    return cov;
+    if (!carry_aware || dd_priors_.empty()) {
+        return cov;
+    }
+    // Armed: the same joint quantity over Ã⁻¹.  Note the local term now survives ACROSS
+    // stations — N_rr⁻¹ is block-diagonal, Ã⁻¹ is not, and a DD chord spans two stations
+    // by construction, so this cross-station term is the one that makes a between-station
+    // DD σ mean anything at all.
+    Eigen::MatrixXd local_corr, m_corr;
+    carryCovCorrection(sta, n, local_corr, m_corr);
+    ++carry_cov_stats_.calls;
+    carry_cov_stats_.rows += static_cast<long long>(k);
+    std::vector<Eigen::VectorXd> m_dd(k), cm_dd(k);
+    for (Eigen::Index i = 0; i < k; ++i) {
+        m_dd[i] = (n_shared_ > 0) ? Eigen::VectorXd(m[i] - m_corr.col(i)) : Eigen::VectorXd();
+    }
+    for (Eigen::Index b = 0; b < k; ++b) {
+        cm_dd[b] = (n_shared_ > 0) ? Eigen::VectorXd(cov_free_xs * m_dd[b]) : Eigen::VectorXd();
+    }
+    Eigen::MatrixXd out(k, k);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        for (Eigen::Index b = a; b < k; ++b) {
+            double v = (n_shared_ > 0) ? m_dd[a].dot(cm_dd[b]) : 0.0;
+            if (sta[a] == sta[b]) v += n[a](col[b]);
+            v -= local_corr(a, b);
+            out(a, b) = v;
+            out(b, a) = v;
+        }
+    }
+    // §5b: refuse WHOLESALE.  A k×k matrix with some entries from Ã⁻¹ and some from
+    // N_rr⁻¹ is not the covariance of anything, and the DD variance gᵀQg its consumers
+    // form would silently mix the two models.
+    long long bad = 0;
+    for (Eigen::Index a = 0; a < k; ++a)
+        if (!(out(a, a) > 0.0) || !std::isfinite(out(a, a))) ++bad;
+    if (bad > 0) {
+        carry_cov_stats_.nonpos_rows += bad;
+        ++carry_cov_stats_.refused_calls;
+        return cov;
+    }
+    for (Eigen::Index a = 0; a < k; ++a) tallyCarryRatio(out(a, a), cov(a, a));
+    carry_cov_stats_.corrected_rows += static_cast<long long>(k);
+    return out;
 }
 
 Eigen::VectorXd NetworkNormalEquations::rowRedundancy(
@@ -1353,6 +1772,32 @@ Eigen::MatrixXd NetworkNormalEquations::stationLocalNormals(std::size_t station)
     const Station& st = stations_[station];
     if (st.n_local == 0) return Eigen::MatrixXd(0, 0);
     return st.Nrr_ldlt.reconstructedMatrix();
+}
+
+Eigen::VectorXd NetworkNormalEquations::stationLocalPivots(std::size_t station) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationLocalPivots: "
+                                "station index out of range");
+    }
+    const Station& st = stations_[station];
+    if (st.n_local == 0) return Eigen::VectorXd();
+    const Eigen::VectorXd d = st.Nrr_ldlt.vectorD();
+    // Undo Eigen's symmetric pivoting.  Applying the transposition sequence to
+    // the identity labelling gives perm[k] = the ORIGINAL column sitting at
+    // permuted slot k (the same k-th/indices[k] swap order LDLT::solve uses), so
+    // the pivot D(k) belongs to original column perm[k].
+    const auto& tr = st.Nrr_ldlt.transpositionsP();
+    std::vector<Eigen::Index> perm(static_cast<std::size_t>(st.n_local));
+    for (Eigen::Index k = 0; k < st.n_local; ++k) perm[static_cast<std::size_t>(k)] = k;
+    for (Eigen::Index k = 0; k < st.n_local; ++k) {
+        const Eigen::Index j = static_cast<Eigen::Index>(tr.coeff(k));
+        if (j >= 0 && j < st.n_local)
+            std::swap(perm[static_cast<std::size_t>(k)], perm[static_cast<std::size_t>(j)]);
+    }
+    Eigen::VectorXd out(st.n_local);
+    for (Eigen::Index k = 0; k < st.n_local && k < d.size(); ++k)
+        out(perm[static_cast<std::size_t>(k)]) = d(k);
+    return out;
 }
 
 } // namespace GnssProcessor

@@ -14,6 +14,8 @@
 
 #include "filter/NetworkSolPrep.hpp"
 
+#include "filter/NetworkRhsAttrib.hpp"   // INC-5 flight-recorder trip latch
+
 #include "app/NetworkRunContext.hpp"            // ctx.* aliases
 #include "config/GnssConfig.hpp"                // config_ getters + getNetworkConfig
 #include "logging/NetworkRunTraces.hpp"         // events_trace + emitEvent
@@ -116,6 +118,7 @@ NetworkSolPrepResult networkSolPrep(
     auto& n_perconst_diffuse_published = ctx.counters.n_perconst_diffuse_published;
     const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
+    const bool anchor_hygiene_on       = ctx.knobs.anchor_hygiene_on;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
 
     auto emitEvent = [&](const char* tier, const char* event,
@@ -305,6 +308,12 @@ NetworkSolPrepResult networkSolPrep(
                 }
             }
         }
+        // INC-5 flight-recorder trigger (docs/SPEC_prefit_census_observability.md
+        // §7): the RUNAWAY era.  Consulted on every epoch the check evaluates —
+        // an empty `runaway` clears the era and re-arms the latch, which is what
+        // makes the counter's denominator honest.  SB_SOLPREP runs before
+        // SB_FRAMEDIAG, so the pending trip is consumed later this same epoch.
+        networkRhsTripEdge(ctx, "clk_runaway", !runaway.empty());
         if (!runaway.empty()) {
             std::vector<NetworkSatSolution> kept;
             kept.reserve(sol.sats.size());
@@ -791,6 +800,19 @@ NetworkSolPrepResult networkSolPrep(
                 // round.  Disc still rides the emitter's replay-safe bias-jump
                 // test (NEVER markSatDiscontinuity — not reconstructable on
                 // NetworkProductIO replay).  Trace event only.
+                //
+                // ⚠ THE INTEGER CLAIM ABOVE HOLDS ONLY IF THE NEW HOST'S AMBIGUITY
+                // HAS CONVERGED.  On a one-epoch-old arc the float is code-seeded
+                // (± metres), so the "integer" step is an arbitrary re-level of the
+                // whole component — the DOY-129 19:25:30 mechanism (this exact event,
+                // G29 GAMB00PYF->INEG00MEX, followed one epoch later by a00 SUM
+                // 38.7 → 5739 TECU and a 181 m total_IF scar that never healed).
+                // That is now guarded in the ELECTION, not here:
+                // docs/SPEC_eq34_reattach_hygiene.md /
+                // filter/NetworkAnchorHygiene.hpp (network.eq34_anchor_min_arc_ep).
+                // With the guard armed this event only fires for a host that has
+                // cleared the arc-age threshold; a refused one is traced as
+                // PHASE_DATUM/reattach_blocked_cold instead.
                 emitEvent(phase_datum_eq34 ? "PHASE_DATUM" : "PHASE_ANCHOR",
                           phase_datum_eq34 ? "eq34_reattach" : "anchor_handover",
                           amb.substr(0, amb.find('_')), sta,
@@ -799,6 +821,14 @@ NetworkSolPrepResult networkSolPrep(
                 ++n_handover;
             }
             emitted_anchor[amb] = sta;
+            // eq34 reattach hygiene, WARM CONDITIONING: stamp WHEN this key's datum was
+            // last realized AND emitted.  The eligibility block is only warranted while
+            // that memory is fresh — see filter/NetworkAnchorHygiene.hpp.  Advanced on
+            // the same emit-only discipline as the baseline above (a withheld epoch
+            // must not refresh it, or a long withhold would look warm forever).
+            if (anchor_hygiene_on)
+                ctx.carry.emitted_anchor_s[amb] =
+                    TimeUtils::continuousGpsSeconds(se.time);
         }
         if (n_handover > 0)
             log->debug("Network: {} per-(sat,signal) phase-bias anchor handover(s) at "

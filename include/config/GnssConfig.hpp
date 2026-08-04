@@ -665,6 +665,22 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Whether the RINEX 3 observation parser skips written 0.0 values.
+         *
+         * Per RINEX 3.0x §6 "Missing observations are written as 0.0 or blanks":
+         * a written zero is a receiver's data-not-available sentinel (Trimble
+         * ALLOY emits them for weak-signal tracking), not a measurement.  The
+         * RINEX 2.x branch has always skipped them; the 3.x branch historically
+         * ingested them as real 0-cycle phases / 0-m ranges — a ~2·10⁷ m
+         * pseudo-observation when the cell sits above the elevation mask
+         * (DOY-129 GOPE/GOP6 zero cells were all sub-mask, hence latent).
+         * Default false preserves the legacy 3.x byte-identity; new configs arm
+         * it via @c processing.rinex_skip_zero_values (see
+         * docs/SPEC_rinex_zero_sentinel.md; promotion-ledger candidate).
+         */
+        bool rinexSkipZeroValues() const { return rinex_skip_zero_values_; }
+
+        /**
          * @brief Get the list of satellites excluded from processing.
          * @return Vector of satellite identifiers (e.g. "E14", "E18").
          */
@@ -1864,6 +1880,42 @@ namespace GnssProcessor {
         double networkZwdCarryQ() const { return network_zwd_carry_q_; }
 
         /**
+         * @brief Carry per-station RECEIVER code biases across epochs in the network
+         *        producer as diagonal random-walk priors (@c network.carry_rx_code_bias,
+         *        docs/SPEC_rx_cb_carry.md).
+         *
+         * Receiver code biases are hardware-stable (cm over hours); the per-epoch
+         * network solve re-estimates them white at the 10 m initial σ, so the level
+         * allocation (rx CB ↔ iono level ↔ SH field) is re-derived from code noise
+         * every epoch.  When on, each station's present code-bias columns are carried
+         * as diagonal information priors on its own local block (same
+         * @ref NetworkEstimator::addStationPrior path as the ambiguity/ZWD carries)
+         * with @c var_eff = var + q·Δt, and harvested post-solve OUTSIDE the
+         * phase-leveling gate — the carry is live on the carry_invariant lineage.
+         *
+         * Guards: forced OFF (with a warning) unless @ref networkCodeDatumTimeLinked
+         * (a time-linked code datum is what makes the carried lump frame-continuous);
+         * a loader warning recommends arming @c estimation.global_vtec_sh.rep_error_demean
+         * with it (the rx-CB ↔ iono-level ↔ deviation-mean three-way quasi-null).
+         * Event response (invariant #1): an inject-time innovation gate withholds the
+         * fold at receiver-reset scale and the harvest overwrites the stale entry.
+         * Default false = byte-identical.
+         */
+        bool networkCarryRxCodeBias() const { return network_carry_rx_code_bias_; }
+
+        /**
+         * @brief rx-CB carry random-walk process noise (m²/s)
+         *        (@c network.rx_cb_carry_q, docs/SPEC_rx_cb_carry.md).
+         *
+         * @c var_eff = var + q·Δt_since_last_seen.  Hardware code biases drift at
+         * the mm-over-hours class, so the default 1e-9 (≈ 3 mm 1σ over 3 h) models
+         * temperature-scale drift while remaining far stiffer than the per-epoch
+         * white re-estimate.  Must be @c >= 0.  Used only when
+         * @ref networkCarryRxCodeBias is on.
+         */
+        double networkRxCbCarryQ() const { return network_rx_cb_carry_q_; }
+
+        /**
          * @brief Run the M2 LS-VCE carry-row variance-component MONITOR
          *        (@c network.carry_vce).
          *
@@ -2639,6 +2691,16 @@ namespace GnssProcessor {
         bool networkCarryInvariantInnovCorroborate() const { return network_carry_invariant_innov_corroborate_; }
         /// Card 4 (M1, D5 v3): magnitude backstop for the corroboration gate (@c network.carry_invariant_innov_corroborate_backstop_k).
         double networkCarryInvariantInnovCorroborateBackstopK() const { return network_carry_invariant_innov_corroborate_backstop_k_; }
+        /// Card 4 (M1, D5 v4): a D5 flag re-taps its chord IN-EPOCH only — it no longer also refloats the arc next epoch (@c network.carry_invariant_innov_retap_only).
+        bool networkCarryInvariantInnovRetapOnly() const { return network_carry_invariant_innov_retap_only_; }
+        /// Card 4 (M1, D5 v5): gate only chords genuinely CARRIED into the epoch — a born chord has no H0 to test (@c network.carry_invariant_innov_carried_only).
+        bool networkCarryInvariantInnovCarriedOnly() const { return network_carry_invariant_innov_carried_only_; }
+        /// Card 4 (M1): PD-safe DD fold — scale-following posterior/factorization + counted repair + bounded degenerate-block rebirth (@c network.carry_invariant_pd_safe).
+        bool networkCarryInvariantPdSafe() const { return network_carry_invariant_pd_safe_; }
+        /// Carry-aware covariance readback — dd_sigma_cyc and the AR probe read Cov(x_r) from the model the solve actually used (@c network.carry_aware_covariance).
+        bool networkCarryAwareCovariance() const { return network_carry_aware_covariance_; }
+        /// Card 3/4: keep this epoch's SLIPPED arcs out of the eq34 spanning tree so a slip costs one chord, not every cycle through a tree edge (@c network.phase_datum_eq34_slip_aware_election).
+        bool networkPhaseDatumEq34SlipAwareElection() const { return network_phase_datum_eq34_slip_aware_election_; }
 
         /// M5 card WL-1: the MW-seeded wide-lane pseudo-observation layer master
         /// (@c network.mw_wl.enable).  When on, the per-station MW detector is built
@@ -2822,6 +2884,56 @@ namespace GnssProcessor {
          * sits deliberately at the loose end of the physical bound.
          */
         double networkCbKaulaSigmaM() const { return network_cb_kaula_sigma_m_; }
+
+        /**
+         * @brief SBC — arm the per-epoch S-basis dimension completion
+         *        (@c network.sbasis_complete).  Default OFF ⇒ byte-identical.
+         *
+         * The declared S-basis dimension counts only the STRUCTURAL gauges (one
+         * clock gauge per constellation in PIN mode).  A multi-constellation
+         * epoch can REALIZE more near-null directions than that — measured on
+         * FT63 GPS+Galileo (12 h, DOY-129): 41% of epochs carried 1–3
+         * per-satellite phase-bias↔slant-iono trade directions confined to one
+         * receiver channel family (the Galileo C/Q-vs-X tracking split), with
+         * eigenvector components ∝ μ_σ over that family's phase biases and only
+         * the SH-VTEC prior resisting (λ ≈ 1e-6 ≪ cutoff) when the family's
+         * code support thins.  The rank gate then withheld the epoch (7/1433)
+         * or Card PA soft-anchored columns (589/1433 — a COLUMN prior that also
+         * touches the estimable part and misses spread directions).
+         *
+         * Armed, the producer instead derives the epoch's REALIZED dimension
+         * from the reduced normals and folds ONE minimum-constraint gauge row
+         * per residual direction — the direction's own unit eigenvector, RHS =
+         * its carried level (continuity: the unobservable combination HOLDS
+         * instead of stepping, and nothing estimable moves — S-transform
+         * invariance).  Both edges are events (@c sbc_engage / @c sbc_release,
+         * tier GATE — standing invariant #7) with per-direction attribution,
+         * and every refusal path is counted (see
+         * @ref networkSbasisCompleteMax).  Card PA stays armed as the backstop
+         * for what the completion refuses (orphaned EXACT gauges land in the
+         * degenerate refusal on purpose).
+         *
+         * @see NetworkSbasis::completeSbasisDimension for the derivation and
+         *      the refusal contract; @c NetworkSbasis::kSbasisCompleteWeight
+         *      for the row weight and its K2 margin rule.
+         */
+        bool networkSbasisComplete() const { return network_sbasis_complete_; }
+
+        /**
+         * @brief SBC — per-epoch cap on completed (constrained) directions
+         *        (@c network.sbasis_complete_max).  Default 6.
+         *
+         * Beyond the cap the completion REFUSES (nothing folded, epoch falls
+         * through to the gate → withhold) rather than mass-pinning: a
+         * deficiency burst that size is a pathological epoch or a
+         * @c network.rank_gate_tol counting weak-but-REAL directions as null,
+         * and silently constraining dozens of them would fabricate a solution.
+         * Refusals are counted and reported at run end (standing invariant #3:
+         * a bound that trips is never silent).  Measured need on the FT63
+         * GPS+Gal arm: 1–3 extras per firing epoch, so 6 leaves headroom
+         * without admitting a storm; ≤ 0 removes the cap (diagnostic only).
+         */
+        int networkSbasisCompleteMax() const { return network_sbasis_complete_max_; }
 
         /**
          * @brief Whether the network kernel's per-station local-block positive-
@@ -4513,6 +4625,33 @@ namespace GnssProcessor {
         double getArNlMaxPerPairFrac() const { return ar_nl_max_per_pair_frac_; }
 
         /**
+         * @brief Use the exact ionosphere-free row for the WL-constrained N_1
+         *        search (@c estimation.ambiguity_resolution.nl_iono_free_row).
+         *
+         * The legacy search functional is the narrowlane row
+         * @f$(f_1,f_2)/(f_1{+}f_2)@f$, which sits only 6.66° off the
+         * ionospheric direction @f$\alpha=(1,(f_1/f_2)^2)@f$ and therefore
+         * carries 0.959 cycles of error per TECU of slant-iono error.  Against
+         * the default 0.15-cycle @ref getArNlMaxPerPairFrac cap that demands
+         * the ionosphere to 0.156 TECU — roughly 20× better than any available
+         * ionospheric representation delivers.
+         *
+         * With this flag the same integer is observed through
+         * @f$(f_1^2,-f_2^2)/(f_1^2-f_2^2)@f$, whose inner product with
+         * @f$\alpha@f$ is identically zero: the N_1 target becomes exactly
+         * iono-free.
+         *
+         * @warning The two effects that make it cheap are the same one that
+         * makes it dangerous.  The iono-free row's norm and its widelane
+         * sensitivity both scale by @f$(f_1{+}f_2)/(f_1{-}f_2)@f$ = 8.06 for
+         * GPS L1/L2, so a 1-cycle widelane error moves the N_1 target 3.53
+         * cycles rather than 0.438.  Arm this only alongside a hardened
+         * widelane; on its own it converts an ionospheric bias into
+         * deterministic wrong integers.  Default false (byte-identical).
+         */
+        bool getArNlIonoFreeRow() const { return ar_nl_iono_free_row_; }
+
+        /**
          * @brief Get the list of constellations eligible for AR.
          *
          * Empty list = all active systems are eligible (current default).
@@ -4605,19 +4744,150 @@ namespace GnssProcessor {
         void loadAppModeAndRealtimeSection_(const nlohmann::json& json, LogManager& log_manager);
         bool loadBaselineSection_(const nlohmann::json& json, LogManager& log_manager);
         bool loadNetworkSection_(const nlohmann::json& json, LogManager& log_manager);
-        /**
-         * @brief Log the network POSTURE readout: which field-recommended knobs are armed for
-         *        THIS run's regime, which are not, and whether each COUPLED bundle is complete.
-         *
-         * Closes the project's missing PROMOTION step — new work ships default-OFF by
-         * convention and nothing ever moves it to default-ON, so validated options accumulate
-         * unarmed.  Regime-gated (a knob validated at 50 stations may be harmful at 305) and
-         * bundle-aware (a strict subset of a coupled set is its own failure mode).  Log-only.
-         *
-         * @param log  the "gnss_config" logger.
-         * @see docs/CONFIG_promotion_ledger.md, scripts/config_posture_check.py
-         */
+
+        // -------------------------------------------------------------
+        //  network subsection helpers   (GnssConfigLoadNetwork.cpp)
+        //
+        //  The `network` section carries more knobs than the other eleven
+        //  top-level sections combined and every card adds to it, so it
+        //  gets a second level of the same split: loadNetworkSection_ is a
+        //  thin orchestrator over one helper per JSON subsection.  That is
+        //  what keeps two concurrent sessions' knob additions out of one
+        //  merge hunk, and it is where a new knob goes — find the helper
+        //  that owns your subsection rather than appending to the driver.
+        //
+        //  CALL ORDER IS LOAD-BEARING and is fixed in loadNetworkSection_.
+        //  Every cross-knob forcing in the section is expressed as "a later
+        //  helper reads what an earlier one resolved": the
+        //  parallel_carry/parallel_reduce mutex, the FC-1 and RTF-3
+        //  inert-arming refusals, the D5 corroboration gate auto-arming the
+        //  slip-QC instrumentation that feeds it, the RAIM tier
+        //  auto-couplings, the RTB-8 service arming and its P3
+        //  re-validation, and the network.process_noise table (resolved
+        //  first, settled last).  Add a new subsection as a new helper at
+        //  the point where its prerequisites are final; never reorder the
+        //  existing calls.
+        //
+        //  Helpers that can reject the config return bool (the driver
+        //  propagates false straight out of loadFromJson); the rest return
+        //  void.  A helper that takes no `json` is a pure cross-knob
+        //  validator over already-parsed state.  Each is documented at its
+        //  definition.
+        // -------------------------------------------------------------
+        bool loadNetworkProcessNoise_(const nlohmann::json& json,
+                                      const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkRosterAndDatum_(const nlohmann::json& json,
+                                        const nlohmann::json& nw,
+                                        const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkProducerAr_(const nlohmann::json& json,
+                                    const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkLaneLayers_(const nlohmann::json& json,
+                                    const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkOutputAndParallel_(const nlohmann::json& json,
+                                           const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkFastClock_(const nlohmann::json& json,
+                                   const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkStreaming_(const nlohmann::json& json,
+                                   const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkObservabilityAndSnapshot_(const nlohmann::json& json,
+                                                  const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkSharedStateForcings_(const nlohmann::json& json,
+                                             const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkAprioriAndGlonass_(const nlohmann::json& json,
+                                           const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkCarries_(const nlohmann::json& json,
+                                 const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkSlipDetectors_(const nlohmann::json& json,
+                                       const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkQcTiers_(const nlohmann::json& json,
+                                 const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkClockModelAndChannels_(const nlohmann::json& json,
+                                               const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkDatumSignalling_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkReattachHygiene_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkDeweightReleaseHygiene_(const nlohmann::json& json,
+                                                const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkSignalIntegrity_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkEmissionFilters_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        bool validateNetworkDatumCoherence_(const std::shared_ptr<spdlog::logger>& log);
+        bool validateNetworkLaneLayers_(const nlohmann::json& json,
+                                        const std::shared_ptr<spdlog::logger>& log);
+        bool validateNetworkPhaseDatum_(const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkContractHardening_(const nlohmann::json& json,
+                                           const std::shared_ptr<spdlog::logger>& log);
+        void applyNetworkServiceProfile_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        bool validateNetworkCarryPosture_(const nlohmann::json& json,
+                                          const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkClosedLoop_(const nlohmann::json& nw,
+                                    const std::shared_ptr<spdlog::logger>& log);
+        void logNetworkSummary_(const std::shared_ptr<spdlog::logger>& log) const;
+        void finalizeNetworkProcessNoise_(const nlohmann::json& json,
+                                          const std::shared_ptr<spdlog::logger>& log);
+
+        // -------------------------------------------------------------
+        //  network POSTURE readout   (GnssConfigNetworkPosture.cpp)
+        //
+        //  Closes the project's missing PROMOTION step — new work ships
+        //  default-OFF by convention and nothing ever moves it to
+        //  default-ON, so validated options accumulate unarmed and get
+        //  re-discovered by accident one wasted run at a time.  The loader
+        //  logs everything it ARMS; this logs the inverse.  Regime-gated (a
+        //  knob validated at 50 stations may be harmful at 305) and
+        //  bundle-aware (a strict subset of a coupled set is its own
+        //  failure mode).  Log-only.
+        //
+        //  Its own TU because it churns for a DIFFERENT reason than the
+        //  loader: landing a knob edits the loader, VALIDATING one adds a
+        //  row here.
+        //
+        //  @see docs/CONFIG_promotion_ledger.md, scripts/config_posture_check.py
+        // -------------------------------------------------------------
+        /// Which of the two recommendation tiers a row belongs to: an ON-tier
+        /// gap WARNs (no known counter-scope in this regime), a SCOPED-tier
+        /// gap only INFOs (there are 40+, and warning on all would drown ON).
+        enum class PostureTier { ON, SCOPED };
+        /// One recommendation row.
+        ///
+        /// `fp` = the knob is part of the WARM-RESUME FINGERPRINT (the add() set at
+        /// NetworkRunContext.cpp:180-315).  This is the CHAIN axis, and it is the reason a
+        /// recommendation cannot be read as an instruction: on a resumed leg, arming a
+        /// fingerprinted knob does not take effect mid-chain.  With state_snapshot_require ON
+        /// the leg hard-aborts; with it OFF the leg SILENTLY cold-starts, which is the worse
+        /// failure and the one this readout exists to prevent.  Such a knob has to be armed in
+        /// a FRESH lineage (a new seed), never bolted onto an existing chain.
+        struct PostureItem { bool applies; bool on; PostureTier tier; bool fp;
+                             const char* knob; const char* why; };
+        /// One companion knob of a coupled bundle.
+        struct PostureMember { const char* knob; bool on; };
+        /// A set of knobs that is only correct armed TOGETHER.
+        struct PostureBundle { bool engaged; const char* name; const char* rule;
+                               std::vector<PostureMember> members; };
+        /// The regime predicates every row filters on, computed once per run.
+        struct PostureRegime {
+            std::size_t n_sta;        ///< Roster size.
+            std::size_t n_sys;        ///< Active-constellation count.
+            bool        tri;          ///< Triple/All frequency mode.
+            bool        warm;         ///< A state-snapshot path is set (warm-resume lineage).
+            bool        lane;         ///< Any MW/WL lane layer is armed.
+            bool        rt;           ///< Real-time or service posture.
+            bool        par;          ///< Per-station parallelism actually engages at this size.
+            double      spacing_s;    ///< Config-determinable epoch spacing (0 = native RINEX rate).
+            bool        gps_only;     ///< active_systems == {GPS}.
+            bool        gps_gal_only; ///< active_systems ⊆ {GPS, Galileo}.
+        };
+        PostureRegime networkPostureRegime_() const;
+        void appendNetworkPostureItemsOn_(const PostureRegime& r,
+                                          std::vector<PostureItem>& out) const;
+        void appendNetworkPostureItemsScoped_(const PostureRegime& r,
+                                              std::vector<PostureItem>& out) const;
+        std::vector<PostureBundle> networkPostureBundles_(const PostureRegime& r) const;
         void logNetworkPosture_(const std::shared_ptr<spdlog::logger>& log) const;
+
         void loadLoggingSection_(const nlohmann::json& json, LogManager& log_manager);
         void logConfigurationSummary_(LogManager& log_manager) const;
 
@@ -4653,6 +4923,7 @@ namespace GnssProcessor {
         bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.
         double obs_ssr_sync_max_hold_s_{ 30.0 };          ///< RT-only: max seconds to hold obs for SSR before degraded fallback (obs↔SSR sync liveness bound).
         std::string rinex_types_;                        ///< Enabled RINEX observation type letters (subset of "CLDS"); default code+phase.
+        bool rinex_skip_zero_values_{false};             ///< RINEX 3 parser: skip written 0.0 values (the standard's missing-observation sentinel).  Default false = legacy ingest (see rinexSkipZeroValues()).
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
         bool enable_rx_antenna_orientation_{ false };  ///< Apply receiver antenna azimuth orientation to the RX PCV look-up (off → byte-identical).
         bool enable_rx_antenna_substitution_{ false }; ///< Allow rule-driven receiver antenna model substitution (deprecated-code table + radome→NONE) when no exact ATX match.
@@ -4747,6 +5018,8 @@ namespace GnssProcessor {
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Only used when network.carry_zwd.
+        bool   network_carry_rx_code_bias_{false};        ///< rx-CB carry (SPEC_rx_cb_carry): carry per-station receiver code biases across epochs as diagonal RW priors, harvested OUTSIDE the phase-leveling gate. Forced off without code_datum_time_linked. OFF = byte-identical.
+        double network_rx_cb_carry_q_{1e-9};              ///< rx-CB carry RW process noise (m²/s); var_eff = var + q·Δt. Only used when network.carry_rx_code_bias.
         bool   network_carry_vce_{false};                 ///< M2 (LS-VCE): run the carry-row variance-component MONITOR — estimate σ̂ (Floor m² + Rate m²/s) per carry family per constellation from the post-fit carry innovations and log it against the hand floors. Calibration/honesty instrument ONLY; no feedback into the solve. OFF = byte-identical (no accumulator, no logging).
         bool   network_carry_vce_apply_{false};           ///< M2 v2: feed σ̂ back into the carry stochastic model (replace the hand floors). REQUIRES carry_vce. NOT IMPLEMENTED in this build (monitor v1 only) — setting it true is a hard load error.
         std::string network_carry_vce_components_{"pl"};  ///< M2: carry families the monitor accumulates (comma list of pl / pb / cb). Default "pl" (the phase-leveling ambiguity carry — the primary floor). Only used when carry_vce.
@@ -4827,6 +5100,11 @@ namespace GnssProcessor {
         double network_carry_invariant_innov_calibrate_window_{60.0}; ///< Card 4 (M1, D5 v2): exponential-forgetting half-life (emitted epochs) of the σ̂₀² accumulator; larger = smoother/slower-adapting. INERT unless network_carry_invariant_innov_calibrate_.
         bool   network_carry_invariant_innov_corroborate_{false}; ///< Card 4 (M1, D5 v3): suppress a D5 re-tap when the RAW observables positively measured the arc as continuous (no MW/GF step). Measured 2026-07-30: only 2.1% of D5 re-taps coincide with a raw step, vs 95% on the same run's known arc resumptions — the gate fires on persistent model error, not slips, and re-taps continuous arcs indefinitely (97.4% of inter-reset gaps are 1 epoch), pinning dd_sigma_cyc at ~3.9 cyc so DD fractions stay uniform at every baseline. FAIL-SAFE: only measured-and-flat suppresses; no-evidence still re-taps, so standing invariant #1's response is narrowed, never removed. INERT unless network_carry_invariant_innov_gate_ AND a slip-QC consumer computed the raw observables. OFF = byte-identical to D5 v2.
         double network_carry_invariant_innov_corroborate_backstop_k_{0.0}; ///< Card 4 (M1, D5 v3): re-tap regardless of corroboration when the standardized innovation exceeds this MULTIPLE of the gate threshold (k·σ̂₀). 0 = inert (pure corroboration), the default and the recommended value: corroboration was measured to FALL with innovation size (2.1% below 25σ, 0.0% at 100-200σ, 1.2% above 200σ), so a magnitude backstop re-admits precisely the population with the least evidence of being a real slip. Provided for sweeps only. INERT unless network_carry_invariant_innov_corroborate_.
+        bool   network_carry_invariant_innov_retap_only_{false}; ///< Card 4 (M1, D5 v4): on a D5-flagged chord whose arc the RAW observables MEASURED as continuous, the in-epoch re-tap (installPosterior: mean ẑ+v, variance σ̂₀²·Cov(v)_ii, cross zeroed) is the WHOLE response — the funnel entry no longer also excludes the arc from next epoch's A_old membership, so the DD keeps its history instead of being refloated from a diffuse prior. Under a stable tree a CHORD arc has cycle support exactly 1 (its own fundamental cycle), so on that population the exclusion protects no other DD and is pure churn: 2026-08-02 measured 513 482 of 525 009 "slip refloats" on `runs/ft63_24h_conv` as the gate's own flag→re-tap→funnel limit cycle (mean chord lifetime 4.3 epochs, dd_sigma_cyc pinned ~3.9 cyc). NOT a general removal of the refloat — tests/test_network_invariant_carry_driver.cpp GATE 10b measures the refloat COMPLETING a real slip's reset (the in-epoch move is partial: v is the post-fit innovation, already shrunk by the fold's −GᵀΣG border term) to 0.48 cyc, so the same fail-safe tri-state as the v3 corroboration gate applies: stepped ⇒ refloat · measured-and-flat ⇒ keep the carry · no evidence ⇒ refloat. An arc a raw detector flags in the CURRENT epoch refloats regardless. Standing invariant #1 is narrowed to the diagnosed population, never removed. The funnel INSERT is untouched, so every side consumer (Iono-2 v3k erase classifier, WL-3 MW-row slip-skip, anchor hygiene, PB emit filter, Card G) is unaffected. Composes with `_innov_corroborate`, which suppresses the flat population one level earlier — with v3 armed this knob is largely inert by construction, and the pair is the "re-centre the DD" vs "leave it alone" A/B on model tension. INERT unless network_carry_invariant_innov_gate_ AND a slip-QC consumer computed the raw observables. OFF = byte-identical to D5 v3.
+        bool   network_carry_invariant_innov_carried_only_{false}; ///< Card 4 (M1, D5 v5): evaluate the innovation gate ONLY on chords genuinely carried into this epoch. The test is |v_i| > k·σ̂₀·√Cov(v)_ii with Cov(v) the H0 covariance about the CARRIED prior; a chord born this epoch has no carried prior (its prior is the diffuse fresh_prior_var), so there is no hypothesis to test, the reset it triggers is a no-op — a diffuse chord's posterior ALREADY is the data-only tap-off — and the flag's only lasting effect is the funnel entry that re-borns it next epoch, which flags again. MEASURED 2026-08-02 on runs/churn_base (63 sta, 3 h, DOY-129): 32 062 of 33 628 flags (95.3 %) sit on born chords at exactly the diffuse √var = 1000.000 m with median |v| 19.2 km, and 27 chords are born-flagged on more than half of all flagged epochs (URUM00CHN/G22 at duty 0.99). A chord re-born every epoch has by construction never accumulated anything — that is why dd_sigma_cyc cannot fall off its pin and med|frac_cyc| stays uniform at 0.25. This is the ENGINE of the D5 churn, upstream of both the v3 corroboration gate and the v4 re-tap-only knob, which suppress the same population for incidental reasons. The D5 v2 design already excluded born chords from the σ̂₀ accumulator for exactly this reason ("a born chord's diffuse Cov(v) would tank σ̂₀²") and simply never applied the same exclusion to the gate DECISION; this reuses the identical chord_carried mask so the two cannot drift. INERT unless network_carry_invariant_innov_gate_. OFF = byte-identical.
+        bool   network_carry_invariant_pd_safe_{false};    ///< Card 4 (M1): PD-SAFE DD fold (docs/SPEC_pd_safe_dd_fold.md). The carried Pz's positive-definiteness is an ALGEBRAIC INVARIANT of the exact recursion (independent chords => full-row-rank W => W.PSD.W' + fresh diagonal is PD; the exact posterior of a PD prior is PD) and breaks only NUMERICALLY. Armed, the fold (a) reads the posterior back in PRODUCT form sym(Pz.M.B) instead of subtracting two 1e6-scale operands to reach a 1e-4-scale mature row, (b) factorizes the EQUILIBRATED S(Pz+B)S against a scale-RELATIVE pivot floor (1e-12.dmax) instead of the absolute minCoeff()<=0 screen, (c) repairs a still-tripping block by clamping its eigenvalues and COUNTS it, and (d) REBIRTHS a block that still cannot factor (means kept, Pz re-seeded diffuse) at install and at warm-resume restore rather than freezing it forever. Measured 2026-08-02: 78% of the carried state was diffusing behind the silent M:=0 branch this replaces. INERT unless network_carry_invariant_; FINGERPRINTED (fresh convergence only). OFF = byte-identical.
+        bool   network_carry_aware_covariance_{false};     ///< CARRY-AWARE COVARIANCE READBACK (docs/SPEC_carry_aware_covariance.md). foldReducedDdPriors is a per-block rank-K Woodbury update on the pristine per-station factors, i.e. exactly the Schur complement of A~^-1 = N_rr^-1 - SUM_b Y_b M_b Y_b' (Y_b = N_rr^-1 C_b'), and reconstructStation ALREADY reads that model back on the MEAN (the kappa correction). The four covariance readbacks did not: they used N_rr^-1 while NetworkEstimator's shared covariance -- inverted from the FOLDED reduced normals -- was carry-AWARE, so every sigma the producer published was a HYBRID that is the covariance of no estimator at all. Armed, jointConditionalCovariance (dd_sigma_cyc, the AR probe's Q_cyc) uses A~^-1 and A~^-1.N_rs instead, including the CROSS-STATION local term N_rr^-1 cannot express and a between-station DD needs. HONEST WITH RESPECT TO THE FOLD THAT RAN, not to the true posterior: the fold composes ONE Woodbury update per block against the pristine N_rr^-1, which is exact only if no station is touched by two blocks -- and a block is one connected component of ONE (const,signal) group, so a station tracking two signals sits in both. The correction therefore inherits the same block-Jacobi truncation the SOLVE made (deliberately: a covariance from a different model than the mean would be the defect restated), and its non-positive-variance guard -- refuse, never clamp, always count -- is the first measurement anywhere of that truncation's size. rowRedundancy deliberately gets NO carry_aware flag: it is on the armed RAIM path and the correction would make the detector fire LESS. Both consumers are READ-ONLY (NetworkProducerAr is log-only, Phase 2 read-only), so ON must be BYTE-IDENTICAL to OFF on the SOLVE -- that is the gate. Why it matters: med|frac| ~ 0.25 is the EXPECTED reading whenever sigma_DD >~ 0.3 cyc, so the campaign's strongest negative ("no DD integer information at this cadence/geometry", 6 h + GPS+Gal) cannot be tested without a valid sigma, and the only sigma emitted was carry-blind (pinned ~3.9 cyc; scripts/grade_pdfix_arms.py excludes it ON PURPOSE). NOT fingerprinted (no stored state changes meaning). INERT unless network_carry_invariant_. OFF = byte-identical.
+        bool   network_phase_datum_eq34_slip_aware_election_{false}; ///< Card 3/4: make the eq34 spanning-tree election SLIP-AWARE, so a slipped arc is kept OUT of the tree wherever the graph allows it. Two effects, both fail-safe: a slipped INCUMBENT is not sticky-seeded (it must re-win as a new edge), and a slipped arc ranks below every clean arc in the I4 longevity order (inert unless network_phase_datum_eq34_longevity_election_). WHY: a slipped TREE edge poisons every fundamental cycle through it, so all dependent chords refloat at once; a slipped CHORD costs exactly one DD (its cycle support is 1). Demoting the arc to a chord converts the mass kill into a rank-1 kill without discarding any information — the DD through the slipped arc still refloats, only its neighbours stop dying with it. If the arc is the component's ONLY connection the completion re-admits it and the mass kill happens anyway, which is correct: the topology, not the policy, forced it. Under network_carry_invariant_ the resulting basis change is a non-event by construction (the driver re-expresses exactly). OFF = byte-identical.
         bool   network_emit_pb_filter_{false};             ///< PB emission-continuity filter (M5 prerequisite): slip-gated per-key scalar KF on the POST-REBASE emitted phase biases + a self-tuning k·σ̂_step jump gate — an outputs-only, S-transparent smoother that clears the ~200/epoch threshold-in-noise discontinuity floor without touching the solve (user DDs + dd-frac grading byte-unchanged). Baked into the emitted product (replay-safe, like the re-base); the emitter jump test stays the SOLE, unchanged disc authority. INERT unless network_carry_invariant_ + network_carry_invariant_emit_rebase_ (it filters the re-based emission frame). OFF = the leaf is never constructed/called (byte-identical).
         double network_emit_pb_filter_q_{3E-07};           ///< PB filter: random-walk process noise of the emitted bias (m²/s); ≈(3 mm)² per 30 s epoch (the quasi-static drift class). INERT unless network_emit_pb_filter_.
         double network_emit_pb_filter_jump_k_{4.0};        ///< PB filter: reset gate |innovation| > k·σ̂_step (Nσ; mirrors carry_invariant_innov_k). k<~2 leaves the noise floor uncleared; k too large smears events — but genuine events are ≫k·σ̂_step. INERT unless network_emit_pb_filter_.
@@ -4841,6 +5119,8 @@ namespace GnssProcessor {
         bool   network_cb_kaula_prior_{false};             ///< Card KP (network.cb_kaula_prior): fold a LOOSE physical-bound prior (value 0, info 1/sigma^2) onto every ADMITTED satellite code-bias column, lifting a CODE-dominated near-null direction the phase drop-and-heal structurally cannot reach (it anchors PB columns only). Real prior information — satellite OSBs are bounded at tens of ns — not a fudge. Folded through the diagonal SharedPrior channel, NOT into the tight kCodeBiasGaugeWeight datum rows, so declared_dimension is unchanged by construction. OFF = byte-identical; INERT unless estimate_sat_code_bias.
         double network_cb_kaula_sigma_m_{10.0};            ///< Card KP: sigma (m) of the admitted-OSB prior; 10 m ~ 33 ns, the loose end of the physical bound. K2 anti-fragility rule: 1/sigma^2 must sit >= 2 decades ABOVE the armed rank-gate cutoff (the CB-ADM card rejected a loose prior that sat AT the cutoff); the producer computes and logs that margin once and warns below 2 decades. INERT unless network_cb_kaula_prior_.
         double network_rank_gate_tol_{1e-9};               ///< Card DG (network.rank_gate_tol): RELATIVE eigenvalue tolerance of the shared-border null-space rank gate, resolved once into NetworkEstimator::setRankGateTol and read by ALL THREE consumers (gate / estimability dump / prioritized drop-and-heal). Default 1e-9 == NetworkEstimator::kNullSpaceTol ⇒ byte-identical. A calibration parameter, not a constant: "null" is a placement decision in a spectral gap that moves with the constellation mix (1e-6→1e-9 happened once already for GPS+Gal; BeiDou's weak-but-real layer sits ~3 decades deeper relatively). PER-CONFIG and dump-justified — the gate is exact-equality/both-direction, so a value below a config's own gauge depth withholds a HEALTHY config ("over-specified"). See the getter for the binding placement rule.
+        bool   network_sbasis_complete_{false};            ///< SBC (network.sbasis_complete): derive the epoch's REALIZED S-basis dimension pre-gate and fold one minimum-constraint eigenvector gauge row (RHS = the combination's carried level) per near-null direction BEYOND the declared structural dimension — the constellation-scaling phase-bias-datum fix for the FT63 GPS+Gal observed-4-vs-declared-2 withholds/PA-storms (per-satellite channel-family PB↔iono trades the anchor pins cannot close). Engage/release events (invariant #7), every refusal counted. OFF = byte-identical; the gate/PA path is untouched.
+        int    network_sbasis_complete_max_{6};            ///< SBC: per-epoch cap on completed directions; beyond it the completion REFUSES (counted) and the epoch withholds — a burst that size is a pathological epoch or a mis-placed rank_gate_tol, not a datum to auto-fabricate. Measured need 1-3; <=0 = uncapped (diagnostic only). INERT unless network_sbasis_complete_.
         bool   network_station_pd_pin_aware_{false};       ///< Pin-aware station PD guard: the addStation local-block rank test references the MEDIAN |LDLᵀ pivot| instead of the max, so the prioritized datum's in-block 1e10 anchor pins no longer inflate the rejection bar ~10 orders and eject healthy marginal stations every epoch (TWTF/VOIM class). OFF = legacy max-pivot test (byte-identical).
         bool   network_emit_generation_id_{false};         ///< RTA-3: stamp a solution-GENERATION id (uint32 = first-emitted epoch's week·604800+⌊tow⌋) on every epoch (optional I record + store field + S-line gid=); a consumer treats a CHANGE as a global datum break; OFF = no I record, store generation unset (byte-identical).
         bool   network_serialize_disc_counters_{false};    ///< RTA-4: append the POST-EMIT discontinuity-counter VALUES as optional trailing fields (C field 5 clock / B field 5 code / P field 7 phase) so a tail reader reconstructs counters without replaying from epoch 1; OFF = old field counts (byte-identical).
@@ -4942,6 +5222,7 @@ namespace GnssProcessor {
         double ar_min_success_rate_;  ///< Min bootstrap success rate (FFR-style) for AR fix acceptance.
         double ar_min_arc_info_{ 0.0 };   ///< Per-candidate AR maturity gate: minimum accumulated sin^2(el) on BOTH arcs of a candidate. 0 = off (byte-identical). Makes AR SAFE, not useful — see AmbiguityResolverConfig::min_arc_info.
         double ar_nl_max_per_pair_frac_; ///< Max per-NL-pair |float − fixed| (cyc); rejects marginal fixes.
+        bool   ar_nl_iono_free_row_{ false }; ///< WL-constrained N_1 search runs on the exact iono-free row instead of the narrowlane row. Default off (byte-identical) — see AmbiguityResolverConfig::nl_iono_free_row for the 8.06× WL-sensitivity trade.
         bool   ar_enable_partial_ar_;    ///< Partial AR: on full-set fix failure, retry on the largest gate-passing subset.
         std::vector<std::string> ar_active_systems_; ///< Constellations eligible for AR (empty = all).
 

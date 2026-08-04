@@ -2,7 +2,8 @@
  * @file NetworkSbasis.hpp
  * @brief Explicit minimum-constraint S-basis for the PPP-RTK network producer
  *        (W4-S2b / W5): the datum *declaration* + the shared-block clock datum
- *        builder + a null-space rank gate.
+ *        builder + a null-space rank gate + the SBC per-epoch S-basis
+ *        completion (@ref NetworkSbasis::completeSbasisDimension).
  *
  * Where @ref NetworkEstimator owns the per-epoch shared satellite-parameter
  * column layout and @ref NetworkNormalEquations is the pure Schur kernel, this
@@ -224,6 +225,27 @@ public:
     /// @ref kClockGaugeWeight (sibling constants — equal by design, documented
     /// separately because they gauge different parameter families).
     static constexpr double kCodeBiasGaugeWeight = 1.0e3;
+
+    /// Tight gauge-row information weight (= 1/σ²) for the SBC per-epoch S-basis
+    /// completion rows (@ref completeSbasisDimension).  Third sibling of
+    /// @ref kClockGaugeWeight / @ref kCodeBiasGaugeWeight — equal by design; a
+    /// completion row pins a MEASURED (near-)null direction, so like the other
+    /// two it fixes a gauge without biasing the estimable structure.  The
+    /// completion refuses to emit rows when this weight would not clear the armed
+    /// rank-gate cutoff by ≥ 2 decades (@ref GaugeCompletion::weight_marginal) —
+    /// the K2 anti-fragility rule, so a folded row can never itself sit at the
+    /// cutoff it exists to lift the direction above.
+    static constexpr double kSbasisCompleteWeight = 1.0e3;
+
+    /// Attribution/identity span threshold of the S-basis completion: a column
+    /// participates in a constrained direction when its eigenvector component
+    /// magnitude is ≥ this.  Looser than the drop-and-heal's 0.3 ON PURPOSE — the
+    /// heal SELECTS columns to prior (a false positive costs information on a
+    /// real parameter), while this only NAMES participants for events and the
+    /// engage/release identity (a false positive costs a log token).  The
+    /// measured FT63 GPS+Gal directions put μ-weighted E5-family components at
+    /// 0.33–0.36 and the E6 member at ~0.30, which 0.3 would flicker on.
+    static constexpr double kSbasisAttrSpan = 0.25;
 
     /// Result of @ref buildCodeBiasDatumRows: stacked W6 gauge rows for the driver
     /// to fold via NetworkEstimator::addSharedConstraintRows at
@@ -512,6 +534,127 @@ public:
     static std::vector<NetworkEstimator::SharedPrior> buildCodeBiasKaulaPriors(
         const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
         double sigma_m);
+
+    /// Result of @ref completeSbasisDimension — the SBC per-epoch S-basis
+    /// completion (@c network.sbasis_complete): the realized near-null
+    /// directions BEYOND the declared structural dimension, as eigenvector
+    /// gauge rows for the driver to fold (at @ref kSbasisCompleteWeight)
+    /// BEFORE the rank gate, plus per-direction attribution for the
+    /// engage/release event contract (standing invariant #7).
+    struct GaugeCompletion {
+        /// One residual (weak/undeclared) direction selected for constraint.
+        struct Dir {
+            double ev{ 0.0 };         ///< its eigenvalue in the inspected reduced normals (absolute, may be ~0)
+            double target{ 0.0 };     ///< folded RHS = vᵀ·x_prev (the combination's carried level; 0 cold / on datum change)
+            double top_span{ 0.0 };   ///< |component| of the heaviest participating column
+            std::string top_label;    ///< that column's label (from the caller's labeler)
+            std::set<std::string> sats;  ///< satellites of columns at |component| ≥ @ref kSbasisAttrSpan — the engage/release identity
+            std::string detail;       ///< "label:span,…" over the top participants (trace attribution)
+        };
+        int observed{ 0 };        ///< near-null count measured pre-completion — the epoch's REALIZED S-basis dimension
+        int n_extra{ 0 };         ///< directions beyond declared_dim actually constrained (= H.rows())
+        int n_skipped{ 0 };       ///< extras SKIPPED as unseparated from the declared-gauge cluster (< 1 decade or at machine zero — exact orphaned gauges, Card-PA's class).  Skips are per-DIRECTION, not epoch-fatal: the separated extras above them are still constrained, the gate then throws by exactly n_skipped, and the drop-and-heal composes on what remains (measured: the FT63 gg withhold-cluster epochs carry 1 orphan + 1-2 trades — refusing the whole epoch left PA alone with both, which is precisely its PA5 insufficiency).
+        bool capped{ false };     ///< extras exceeded max_extra: NOTHING emitted (caller falls through to the gate → withhold)
+        bool degenerate{ false }; ///< n_skipped > 0 (informational — folding proceeds on the separated extras)
+        bool weight_marginal{ false }; ///< @ref kSbasisCompleteWeight < 2 decades above the cutoff: NOTHING emitted (K2)
+        Eigen::MatrixXd H;        ///< n_extra × n gauge rows (the extra directions' unit eigenvectors)
+        Eigen::VectorXd z;        ///< length-n_extra continuity targets (see Dir::target)
+        std::vector<Dir> dirs;    ///< per-row attribution, same order as @ref H
+        std::vector<Dir> skipped; ///< attribution of the n_skipped unconstrained directions (target unused, 0) — a skipped orphan must NAME itself in the sbc_skip event, or the withhold it causes is undiagnosable from the trace (the FT63 cluster orphans carried no PB span ≥ 0.3, i.e. exactly the class the heal cannot see either)
+    };
+
+    /**
+     * @brief SBC — derive the epoch's REALIZED S-basis dimension and return
+     *        minimum-constraint gauge rows for every residual near-null
+     *        direction beyond the declared structural dimension.
+     *
+     * The declared dimension counts only the STRUCTURAL gauges (per-
+     * constellation clock in PIN mode; 0 in the constraint-realized clock
+     * datums).  The realized per-epoch system can carry MORE: measured on
+     * FT63 GPS+Galileo (63 sta, DOY-129, 2026-08), 41% of epochs held 1–3
+     * additional near-null directions — per-satellite phase-bias↔slant-iono
+     * trade directions confined to ONE receiver channel family (the Galileo
+     * C/Q-vs-X tracking split partitions the station set, so e.g. the X-family
+     * observations of one satellite form their own weakly-coupled component),
+     * with eigenvector components ∝ μ_σ = f₁²/f_σ² over that family's
+     * phase-bias columns and only the SH-VTEC prior (λ ≈ 1e-6 ≪ cutoff)
+     * resisting once the family's code support thins.  The per-(sat,signal)
+     * anchor pins close the phase-bias↔ambiguity gauge but NOT this trade, and
+     * the declared dimension therefore under-counts — the gate withheld the
+     * epoch or Card PA soft-anchored columns (a COLUMN prior that also touches
+     * the estimable part, and misses spread directions).
+     *
+     * This method is the datum-derivation fix: eigen-decompose the reduced
+     * shared normals with the SAME cutoff arithmetic as the gate, take the
+     * near-null directions in ascending order, skip the @p declared_dim
+     * smallest (the structural gauges the declared datum already pins — they
+     * sit at machine-zero, decades below the weak extras), and return one
+     * gauge row per REMAINING direction: @f$v^\top x = v^\top x_{\text{prev}}@f$
+     * — the minimum-constraint completion of the S-basis.  Each row pins
+     * exactly the deficient combination (eigenvectors are orthogonal to every
+     * estimable direction at the cutoff's resolution), so the estimable
+     * solution is untouched (S-transform invariance) and the pinned
+     * combination HOLDS its carried level instead of stepping — the emitted
+     * frame stays continuous at the engage edge, and at the release edge the
+     * data re-determines the combination from the held level.
+     *
+     * Epoch-level refusals — the method returns attribution but NO rows, and
+     * the caller falls through to the unchanged gate (→ withhold), because
+     * folding would be worse than withholding:
+     *  - @ref GaugeCompletion::capped — more than @p max_extra separated
+     *    extras.  A mass deficiency is a pathological epoch (or a mis-set
+     *    tolerance counting real directions as null); silently pinning dozens
+     *    of directions would fabricate a solution.  Counted, never silent
+     *    (standing invariant #3).
+     *  - @ref GaugeCompletion::weight_marginal — @ref kSbasisCompleteWeight
+     *    < 2 decades above the armed cutoff (K2 anti-fragility: the CB-ADM
+     *    card rejected exactly the prior-at-the-cutoff configuration).
+     *
+     * Per-DIRECTION skip (@ref GaugeCompletion::n_skipped) — an extra
+     * UNSEPARATED from the declared-gauge cluster (not ≥ 1 decade above the
+     * cluster top, or below the 1e-14·λmax machine-zero floor) is skipped,
+     * NOT epoch-fatal: eigenvectors mix within a degenerate cluster, so a row
+     * there could re-target a combination the declared pins own — and an
+     * extra AT machine zero is an orphaned EXACT gauge, which is Card PA's
+     * class.  The separated extras above the skipped cluster (≥ 1 decade
+     * above its top) do not mix with it and ARE constrained; the gate then
+     * throws by exactly n_skipped and the drop-and-heal composes on that
+     * remainder.  Measured (FT63 gg leg, Aug-2): the withhold-cluster epochs
+     * carry 1 orphan + 1–2 trades — the all-or-nothing refusal left PA alone
+     * with both, reproducing its PA5 insufficiency; the split guard is what
+     * lets the two mechanisms each take their own class.
+     *
+     * Pure function of its inputs (no estimator/driver state) — the driver
+     * owns the fold (@c addSharedConstraintRows at @ref kSbasisCompleteWeight),
+     * the RAIM-replay capture, the engage/release events and the counters.
+     *
+     * @param reduced_N_ss The PRE-datum reduced shared normals — the SAME
+     *                     matrix state @ref assertNullSpaceRank inspects (all
+     *                     pre-gate priors/rows already folded).
+     * @param declared_dim The declared STRUCTURAL dimension
+     *                     (@c Plan::declared_dimension).
+     * @param tol          The armed relative rank-gate tolerance
+     *                     (@c NetworkEstimator::rankGateTol — the ONE value all
+     *                     gate consumers share, Card DG2).
+     * @param x_prev       Carried shared state mapped to this epoch's columns
+     *                     (0 where no carry exists / on a datum re-reference);
+     *                     an empty or wrong-length vector ⇒ all targets 0.
+     * @param labelOf      Column labeler for attribution (pass
+     *                     @c NetworkEstimator::sharedColumnLabel — ALWAYS
+     *                     populated, unlike the diag-only col_desc).  May be
+     *                     empty (labels become "col<N>").
+     * @param max_extra    Cap on constrained directions per epoch
+     *                     (@c network.sbasis_complete_max); ≤ 0 ⇒ uncapped.
+     * @return The completion (see @ref GaugeCompletion).  @c n_extra == 0 with
+     *         no refusal flag set means the epoch needs no completion —
+     *         including the observed < declared case, which is the GATE's
+     *         "over-specified" verdict to make, not this method's.
+     */
+    GaugeCompletion completeSbasisDimension(
+        const Eigen::MatrixXd& reduced_N_ss, int declared_dim, double tol,
+        const Eigen::VectorXd& x_prev,
+        const std::function<std::string(Eigen::Index)>& labelOf,
+        int max_extra) const;
 
     /**
      * @brief Null-space rank gate: eigen-decompose the PRE-constraint reduced

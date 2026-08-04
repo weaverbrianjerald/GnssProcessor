@@ -306,6 +306,7 @@ namespace GnssProcessor {
 
         RinexHeader header_;             /**< Parsed header metadata. */
         std::vector<RinexObservation> observations_; /**< Parsed observation epochs. */
+        long long zero_sentinels_skipped_{0}; /**< RINEX 3 written-0.0 values skipped this parse (guard armed via processing.rinex_skip_zero_values; logged at parse end — invariant #4 observability). */
 
         /**
          * @brief Per-system shared obs-code layouts, built lazily during parse.

@@ -73,7 +73,7 @@ src/core/             Implementation files mirror the include/ subdir layout
                       products/, slip/, etc.).  src/core/config/ also holds
                       gnss_config.json — the primary user-edited config file.
 
-tests/                GoogleTest unit suite (904 cases / 138 suites across 55
+tests/                GoogleTest unit suite (1128 cases / 174 suites across 72
                       files) linked into `gnss_tests.exe`.  tests/sim/ is a
                       SEPARATE target, `gnss_simulator_selftest` (35 cases).
                       Note: docs/test_suite.md documents the real-data
@@ -171,6 +171,22 @@ exemption (each was re-learned on a "different" mechanism).
 6. **New work is default-OFF with structural byte-identity**; shared-path
    edits require same-build golden comparison (verification integers are
    build-config-sensitive at the ppm level — never compare Debug vs Release).
+7. **Any mechanism that changes which information flows into which states —
+   gates, deweights, admissions, coverage/rank drops, datum handovers, holds,
+   withhold eras — is an EVENT at BOTH edges, with counters and identities.
+   The DECOUPLING edge must bound what the decoupled states can accumulate;
+   the RE-COUPLING edge must re-validate or re-seed what it reconnects.
+   "The weight ramps smoothly" is not an exemption — era-2's valve ramped at
+   the configured rate limit and discharged anyway.**
+   Field-demonstrated: the FT63 leg-19 topology ledger
+   (`network.trace_topology`) recovered 13 re-coupling edges that were
+   previously silent, including the three stations (SAVO/OAFA/POVE) whose
+   SH-tie weight went 0.25 → 0.5 at TOW 329190 one epoch after the era-2
+   discharge. Every one of them had been invisible because a station with zero
+   tie rows dropped out of the baseline map and its return read as a *first
+   sighting* rather than a re-coupling — the exact failure this invariant
+   names. The open valve inventory (which valves still have a bare edge) lives
+   in `docs/SPEC_prefit_census_observability.md` §13.
 
 ## Standard armed set — every NETWORK run uses these (directive, Jul-28)
 
@@ -198,6 +214,17 @@ network CONFIG derives from a base that arms this set explicitly
 - **Observability**: `write_run_manifest`, `trace_epoch_status`,
   `trace_events`, `trace_flag_rates`, `health_interval_s: 300`,
   `emit_epoch_status_record`, `trace_postfit_sigma0`, `trace_postfit_keyed`.
+- **Observability, prefit tier** (promoted Aug-1 on the FT63 leg-19 gates —
+  all three trace-class and fingerprint-SAFE, so legal on a warm resume):
+  `trace_prefit_census` (the ONLY always-on PRE-solve screen: postfit σ̂₀
+  launders a parked cell through the free ambiguities, and `raim_within_epoch`
+  is carry_warm-gated and inert without leveling; 7.6 ms/epoch at 63 sta,
+  solve byte-identical), `trace_topology` (invariant #7's two edges), and
+  `rhs_attrib_on_trip` (the next discharge attributes itself — reproduced the
+  era-2 attribution with no armed TOW).  The FUSE
+  (`network.prefit_fuse_sigma`) is deliberately NOT in this set: it is
+  solve-affecting and stays a validated default-OFF guard until total_IF
+  grading and a second event.
 - **Parallel**: `parallel_carry: true` / `parallel_reduce: false` (mutex).
 
 Grading note: the response doctrine is adapt-and-EMIT within the detected
@@ -333,8 +360,8 @@ JSON to retain the compressed copy (for byte-exact archival).
 
 ## Known state
 
-- **Test suite.** `gnss_tests.exe` runs 904 GoogleTest cases across 138 suites in 55 files (~76 s, full Debug run; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (35 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
-  - Suite hygiene: every suite name is owned by exactly one file (138 suites, zero cross-file overlap) — keep it that way, and prefer a new file over widening an existing one. At 29.5k test LOC against 136.9k production LOC the suite is *thin* (0.22 ratio, ~1 case per 151 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
+- **Test suite.** `gnss_tests.exe` runs 1128 GoogleTest cases across 174 suites in 72 files (~69 s, full Debug run; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (35 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
+  - Suite hygiene: every suite name is owned by exactly one file (174 suites, zero cross-file overlap — re-verified 2026-08-03) — keep it that way, and prefer a new file over widening an existing one. At 39.7k test LOC against 150.5k production LOC the suite is *thin* (0.26 ratio, ~1 case per 138 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
 - **Pre-existing C4828 warnings** (illegal characters at codepage 65001) are from older mixed-encoding files and unrelated to new work. Ignore unless the user asks to clean them up.
 - **`vswhere.exe not recognized`** messages from cmd subshells are benign noise when using the vcvars64 pattern above — the build proceeds.
 - **Real-time mode** uses a separate path (`Application::runRealTime` → `RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `Application::run` and should guard against `AppMode::RealTime`.
@@ -361,3 +388,45 @@ JSON to retain the compressed copy (for byte-exact archival).
 - **Setup** (validation / sinks / consumer) → `app/ApplicationNetworkSetup`; **assembly** (PASS A/B) → `app/ApplicationNetworkAssembly`.
 
 Seam contract: a free function over `(NetworkRunContext& ctx, const GnssConfig& config_, log, NetworkRunTraces&, …)` opening with an alias preamble that reconstructs the driver's `ctx.*` / `setup.*` aliases so the body reads the original names; it owns NO state (every carry object is a reference into `ctx`). The driver keeps only the `subBegin/subEnd` brackets and the call. New `.cpp` seams need a manual `CMakeLists.txt` entry (no globbing).
+
+### Real-time engine — where new code goes (anti-regrowth decision-tree)
+
+`src/core/realtime/RealTimeEngine.cpp` got the same treatment (2,366 → 625 lines;
+`processEpoch` 1,438 → 135, `initialize` 343 → 19, `feedRtcmFrame` 256 → 78),
+cut **before** the RTF-4..9 service queue lands more accretion. The driver is now
+thin ordered orchestration. **Keep it thin** — new code goes in the seam matching
+its concern:
+
+- **New per-epoch admission / deferral rule** → `RealTimeEngineAdmit.cpp`. These
+  are the ONLY seams that may end an epoch: `bool`, false ⇒ `processEpoch`
+  returns false. Everything downstream is unconditionally straight-line.
+- **New consumer-side observability** → `RealTimeEngineSsrDiag.cpp`.
+- **New measurement-set conditioning** (drop/seed/re-gauge, pre-predict) →
+  `RealTimeEnginePrepare.cpp`. Note `seedClockFromWls` and `regaugeBssd` are
+  mutually exclusive (`hasClock()` vs not) — a matrix that arms only one leaves
+  the other uncertified.
+- **New slip detection / repair** → `RealTimeEngineSlipQc.cpp`.
+- **New "the producer moved its datum" reaction** → `RealTimeEngineSsrBreaks.cpp`.
+  Order is load-bearing: `reactToGenerationChange` applies the union globally and
+  must precede the per-signal handlers.
+- **New update / constraint / AR / trace step** → `RealTimeEngineEstimate.cpp`.
+  Pseudo-observation constraints belong after the update and before AR.
+- **New construction step** → `RealTimeEngineInit.cpp` (the order there is a real
+  dependency chain — `seedInitialState` must follow `initProcessingComponents`).
+- **New RTCM ingest step** → `RealTimeEngineIngest.cpp`. The obs-buffering loop
+  and ephemeris push stay in the driver on purpose: they call the file-local
+  anon-namespace helpers `isSystemActive` / `refreshGlonassSlots`.
+
+Seam contract: a **private member function** (not a free function — every
+persistent value is already a `RealTimeEngine` member, so no `NetworkRunContext`
+equivalent is needed) opening with an alias preamble reconstructing the driver's
+local names. Cross-seam per-epoch values travel in `RtEpochContext`, which owns
+nothing that outlives the epoch — **a value that must survive to the next epoch
+is a member, and putting it in the context silently cold-starts it every epoch.**
+
+Gate: `scripts/rt_seamcut.py` (generator, one canonical seam table),
+`scripts/rt_seam_verify.py` (proves each relocated body character-exact against
+the frozen pre-cut source — 30/30 verbatim), `scripts/rt_seam_gate.ps1` +
+`scripts/rt_seam_compare.py` (4-arm same-build byte-identity A/B, all PASS).
+Re-run the verifier after touching a seam body; see `docs/rt_seam_decomposition.md`
+for the coverage the A/B does and does NOT certify.

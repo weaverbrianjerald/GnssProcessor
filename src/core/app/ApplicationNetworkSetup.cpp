@@ -671,6 +671,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             (config_.networkPhaseDatumPrioritized() || !is_pivot)
             && config_.networkPhaseLeveling()
             && (config_.networkCycleSlipTurboEdit() || config_.networkCycleSlipMwDetect());
+        // Adaptive iono q (network.adaptive_iono_q): per-station GF-TD2 variability
+        // monitor.  Station-local (fed in the PARALLEL PASS A produce, same contract
+        // as st.mw_slip below); consumed SERIALLY by the T5v2 GM deviation aging —
+        // on the network path the per-(station,satellite) deviation channel is the
+        // only time-linked slant-iono element, so the storm response scales ITS
+        // innovation term, not a slant q.  OFF ⇒ null pointer, byte-identical.
+        if (config_.getNetworkConfig().adaptive_iono_q)
+            st.iono_var = std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
+
         // M5 card WL-2 (SPEC_ewl_wl_cascade_card.md §4): the EWL/WL lanes also need the
         // per-station MW detector running (its per-arc Welford means feed the EWL/MW(1,2)
         // statistics).  OFF (all lanes disabled) ⇒ unchanged.

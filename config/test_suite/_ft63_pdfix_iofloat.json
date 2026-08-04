@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "RUN QUEUE P3 (docs/RUNQUEUE_pdfix_reask.md) - iono-representation ladder, SUBTRACTIVE.",
+    "BASE IS THE P1 WINNER (_ft63_pdfix_v3.json = pdfix_on + carry_invariant_innov_corroborate), per the queue's 'winner becomes the base posture for P2-P6'.  P1 measured: informational lifetime 12.0 -> 55.3 ep, mature steps 1.015/0.883/0.509 -> 0.953/0.789/0.485, SF k=1 0.83 -> 0.77, total_IF and clock QC NEUTRAL-to-better, coarse IF-TD slip layer BYTE-IDENTICAL (129 flags / 201253 opp on every arm incl. pdfix_off), tension landing only in post-fit sigma0_phase 0.120 -> 0.171.",
+    "",
+    "The base lineage IS dual-layer SH + mech-B v3k, so each arm REMOVES one layer.",
+    "Control runs/pdfix_on: SF k=1 0.83 / k=16 11.00 / k=32 20.87 cyc, mature steps",
+    "1.015/0.883/0.509, cross-band ratio 1.270 (COMMON-CYCLE = the residual is still iono",
+    "representation), worst pair 3.41 cyc/ep, total_IF hr2 8.812/22.14/5.00.",
+    "Metric per the queue: SF k=16/32 (the spillway walk), equatorial-pair step ranking,",
+    "the SH a00 band, total_IF.",
+    "",
+    "ARM iofloat - PURE SLANT-FLOAT cell: representation sigma 50 TECU (the SH surface stops",
+    "constraining the slants), layer 2 off, mech-B off.  q_z stays 1e-4 ON PURPOSE - that is",
+    "what separates this from P2's qz0_iofloat and makes this a REPRESENTATION axis, not a",
+    "time-constant axis.",
+    "",
+    "This is the uncombined-PPP-RTK limit: if the DD steps collapse here, the residual walk IS",
+    "the SH representation error and no amount of carry stiffness will fix it (which is what",
+    "project_why_non_integer_rootcause predicts - NL is 99.3% iono)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "estimation": {
+    "global_vtec_sh": {
+      "representation_sigma_tecu": 50.0,
+      "rep_error_tau_s": 0.0,
+      "rep_error_demean": false,
+      "rep_error_d5_keep": false,
+      "layer2_max_degree": 0
+    }
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_iofloat/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_iofloat/state_snapshot.bin"
+  }
+}

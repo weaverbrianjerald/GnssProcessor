@@ -21,6 +21,7 @@
 #include "slip/MwSlipDetector.hpp"
 #include "slip/TurboEditResolver.hpp"
 #include "slip/IfPhaseSlipDetector.hpp"
+#include "slip/IonoVariabilityMonitor.hpp"
 
 #include <Eigen/Dense>
 
@@ -55,6 +56,18 @@ struct NetStation {
     // turbo_edit; under mw_detect the same detector drives a detect→refloat with
     // no resolver (null turbo_edit ⇒ the refloat branch in PASS A).
     std::unique_ptr<MwSlipDetector>   mw_slip;
+
+    /// Adaptive iono q (network.adaptive_iono_q): per-station GF-TD2 variability
+    /// monitor.  Fed in the PARALLEL PASS A produce (station-local state, no
+    /// shared write — same contract as mw_slip above); its per-satellite
+    /// multipliers are consumed SERIALLY by the T5v2 GM deviation aging, the
+    /// only per-(station,satellite) time-linked slant-iono element on the
+    /// network path (slant states themselves are white per epoch).  Null when
+    /// disarmed (no calls, byte-identical OFF).
+    std::unique_ptr<IonoVariabilityMonitor> iono_var;
+    /// Invariant-#4 feed counter for iono_var (run-end readout sums over
+    /// stations serially, like SdEwlCounters below).
+    long long iono_var_epochs_fed{ 0 };
 
     /// SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md) — per-station
     /// eligibility tallies for `Application::networkAppendSdEwlRows_`.  Held on the
@@ -147,6 +160,38 @@ struct NetStation {
     // election.  EMPTY except at an eq34 component's datum receiver (and always
     // empty when network.phase_datum_eq34 is off).
     std::set<std::string> pinned_rpb_keys;
+    // eq34 reattach hygiene INC-3 (docs/SPEC_eq34_reattach_hygiene.md): per-pin σ
+    // MULTIPLIER for the (few) entries of @ref pinned_amb_targets that had to be
+    // pinned on a host younger than the eligibility threshold.  The fold divides the
+    // 1e10 hard-pin weight by scale² — the pin still fixes the gauge, but the datum
+    // row is soft enough for the data to pull the cold host's ambiguity during the
+    // ramp instead of re-levelling the whole component onto its code-seeded value.
+    // ABSENT key ⇒ scale 1 ⇒ the exact legacy 1e10 weight, so an OFF run never reads
+    // this map and the fold is byte-identical.  Cleared + rebuilt with the pins.
+    std::map<std::string, double> pinned_amb_sigma_scale;
+
+    // --- flicker/gap signal integrity INC-2 (docs/SPEC_flicker_gap_integrity.md) ---
+    // Per-SATELLITE σ MULTIPLIER for this station's PHASE rows while that line of
+    // sight is UNVETTED (not STABLE — re-entered, flickered, degraded, or brand new,
+    // i.e. inside the structural window where no time-difference detector can operate:
+    // MW needs Welford history, IF-TD needs three consecutive epochs, GF is
+    // doctrine-barred at 30 s).  The split at the fold divides the row's information
+    // by scale², CODE rows untouched — they are slip-immune and they are what
+    // re-anchors the float.  Keyed by SATELLITE, not by ambiguity key, because the
+    // demotion is a property of the LINE OF SIGHT: across a loss of lock the slip
+    // magnitude is unbounded on EVERY band at once (the G21 case carries LLI=1 on
+    // both), so demoting one band and trusting the other would be the same
+    // absence-of-evidence claim the card exists to refuse.
+    // ABSENT key ⇒ scale 1 ⇒ the exact legacy 1/σ² weight, so an OFF run never reads
+    // this map and the assembly is byte-identical.  Cleared + rebuilt each epoch by
+    // @ref networkSignalIntegrity, before the parallel PASS-B produce reads it
+    // (station-local ⇒ thread-safe).
+    std::map<std::string, double> phase_sigma_scale;
+    /// Phase rows this station folded at a demoted weight over the run (INC-2's ROW
+    /// telemetry).  Accumulated inside the PARALLEL produce phase, so it must live
+    /// per-station; summed into the run-end report at teardown (the
+    /// @c iono_var_epochs_fed / @c sd_ewl_ctr precedent).
+    long long si_rows_demoted{ 0 };
 };
 
 /// One SD extra-wide-lane INTEGER decision for a (station, constellation, satellite),
@@ -363,6 +408,12 @@ struct StationAssembly {
     /// the post-solve stash — (rpb_key, A_r column, linearization point).  Empty
     /// unless network.phase_datum_eq34 with phase_datum_eq34_rpb_q_m2s > 0.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_rpb;
+    /// rx-CB carry (docs/SPEC_rx_cb_carry.md): present receiver code-bias columns
+    /// (state key, A_r col, x_lin) recorded for the post-solve harvest.  Filled only
+    /// under network.carry_rx_code_bias; same tuple shape as pl_rpb.
+    std::vector<std::tuple<std::string, Eigen::Index, double>> pl_cb;
+    int pl_cb_injected{0};     ///< rx-CB priors folded this epoch (produce-phase local; summed serially).
+    int pl_cb_innov_skips{0};  ///< rx-CB priors withheld by the innovation gate (receiver-reset response).
     /// SD pre-reduce EWL (docs/SPEC_sd_ewl_prereduce.md, @c network.sd_ewl.trace):
     /// pre-formatted `network_sd_ewl.csv` rows for THIS station-epoch — one per
     /// satellite visit, carrying the elected signal pair, the arc outcome, and the
@@ -627,6 +678,30 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
     return {d_post, p_pred * (U + floor2) / (U + a)};
 }
 
+/// rx-CB carry (docs/SPEC_rx_cb_carry.md): the inject-time decision for one
+/// carried receiver code-bias prior.  Read-only w.r.t. the carry map — the
+/// produce phase is PARALLEL, so a breach is answered by WITHHOLDING the fold
+/// (the serial post-solve harvest then overwrites the stale entry with the
+/// fresh posterior: an implicit, race-free drop).  The innovation gate is the
+/// invariant-#1 event response for receiver resets / firmware bias jumps:
+/// |value_abs − x_lin| beyond k·√(var_eff + guard²) means the carried level
+/// and the station filter's own estimate disagree at hardware-jump scale.
+enum class RxCbInjectAction { Fold, SkipGap, SkipInnov };
+inline RxCbInjectAction rxCbInjectGate(double gap_s, double max_gap_s,
+                                       double var, double q_m2s, double innov_m,
+                                       double k_sigma, double guard_var_m2,
+                                       double& var_eff_out) {
+    if (gap_s > max_gap_s) return RxCbInjectAction::SkipGap;
+    const double var_eff = var + q_m2s * (gap_s > 0.0 ? gap_s : 0.0);
+    // No <cmath> in this header: NaN via self-compare, runaway via a bound.
+    if (!(var_eff > 0.0) || var_eff != var_eff || !(var_eff < 1e30))
+        return RxCbInjectAction::SkipGap;
+    var_eff_out = var_eff;
+    if (innov_m * innov_m > k_sigma * k_sigma * (var_eff + guard_var_m2))
+        return RxCbInjectAction::SkipInnov;
+    return RxCbInjectAction::Fold;
+}
+
 /// Iono-2 v3k (erase-policy split): the D5-only slip response — KEEP the
 /// accumulated deviation level, re-tap the confidence to the GM steady state.
 /// Applied when a (station,sat) LOS is in the C3c funnel WITHOUT a raw-detector
@@ -756,6 +831,52 @@ struct EpochStatusRow {
     std::optional<double> sigma0_pf_code;   ///< …code rows only
     std::optional<double> sigma0_pf_phase;  ///< …phase rows only
     std::optional<long long> n_pf_rows;     ///< rows in the pooled statistic (0 ⇒ inert)
+    // --- redundancy census (docs/SPEC_redundancy_census.md INC-1/INC-2) -------
+    // Present only on an epoch the census actually SWEPT (strided, escalated or
+    // trip-forced).  A non-sweep epoch leaves all three BLANK rather than
+    // repeating the last sweep's numbers — the timeline viewers must be able to
+    // see where the sweeps were, and a carried-forward value would read as a
+    // per-epoch measurement that was never taken.
+    std::optional<long long> n_redun_rows;         ///< DATA rows swept — the DENOMINATOR (1461 of 3300 and 1461 of 40000 are different networks)
+    std::optional<long long> n_uncheckable_rows;   ///< of those, rows with r_i < redundancy_eps
+    std::optional<double>    uncheckable_max_s;    ///< largest CENTRED standardized prefit deviation among those rows (0 ⇒ swept, none carried a finite metric)
+    std::optional<long long> n_unobservable_local; ///< local columns below the relative N_rr pivot floor (INC-2)
+    // --- PREFIT census (docs/SPEC_prefit_census_observability.md INC-1) -------
+    // Per DATA class {obs_code, obs_phase, obs_other, iono_sh_row} — the
+    // enumerator order of NetRowClass, which is also the trace column order.
+    // The statistic is the COMMON-MODE-REMOVED standardized prefit deviation
+    // s = |y − median_type(y)|·√w (m ≡ 0 for iono_sh_row, which carries no
+    // receiver clock), so a whole-station receiver-clock step cancels to ~0 and
+    // a single parked cell does not.  Present only under
+    // network.trace_prefit_census AND on an epoch that classified rows; blank
+    // otherwise (the "unavailable is not 0" convention).
+    struct PrefitCensusStats {
+        double    max_s[4]{};      ///< largest s in the class this epoch
+        double    p99_s[4]{};      ///< 99th percentile of s in the class
+        long long n_gt_10[4]{};    ///< rows with s > 10   (the storm-sea shoulder)
+        long long n_gt_1000[4]{};  ///< rows with s > 1000 (the fault regime)
+    };
+    std::optional<PrefitCensusStats> prefit_census;
+    // --- measurement-admission census (docs/SPEC_measurement_admission.md INC-3)
+    // The ABSOLUTE, product-referenced |z| population — the modality the prefit
+    // census structurally lacks, because its statistic subtracts the filter state
+    // and therefore reads ~0 on a cell that was born wrong.  The two columns exist
+    // in the schema only when network.adm_trace / network.adm_screen is armed, and
+    // are blank on an epoch the screen did not run (the "unavailable is not 0"
+    // convention: a genuine 0.0 worst-|z| and a skipped epoch say different things).
+    std::optional<double> adm_sta_worst_z;  ///< MEDIAN over screened stations of each station's worst |z| (m) — the healthy sea
+    std::optional<double> adm_net_worst_z;  ///< network MAXIMUM |z| (m) — the extreme; its identity goes to the ADMISSION events
+    // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md INC-0) -------
+    // The per-epoch face of the fold's PD screen.  Always-on and solve-neutral —
+    // these are reads of a factorization the fold already computed — because the
+    // branch they observe (`M := 0` on a non-PD Pᶻ+B) previously had NO counter,
+    // NO log and NO event, and 78 % of the carried state was measured diffusing
+    // behind it (2026-08-02).  Blank on an epoch the invariant carry did not fold
+    // on, per the "unavailable is not 0" convention: zero degenerate blocks and
+    // "the carry never ran" say very different things.
+    std::optional<long long> ddfold_degen_blocks;  ///< blocks that folded INERTLY this epoch (PD screen tripped ⇒ M=0)
+    std::optional<long long> ddfold_degen_rows;    ///< Σ K over those blocks — carried dimension that took NO data
+    std::optional<double>    ddfold_min_pivot_rel; ///< worst relative pivot d_min/d_max this epoch (≤ 0 ⇒ indefinite)
 };
 
 /// Decomposition INC-7 (plan §Control flow): disposition of a relocated
@@ -780,6 +901,11 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 /// list — a new prior fold elsewhere MUST mirror into this channel):
 ///   - cap_H / cap_z / cap_constraint_weight / cap_has_constraint: the W6
 ///     satellite code-bias datum constraint rows (SB_SOLVEGLUE, W6 block).
+///   - cap_sbc_H / cap_sbc_z: the SBC S-basis completion gauge rows
+///     (SB_SOLVEGLUE, network.sbasis_complete block; re-applied at
+///     NetworkSbasis::kSbasisCompleteWeight — the weight is the compile
+///     constant, so no weight field travels).  rows() == 0 ⇒ nothing to
+///     re-apply.
 ///   - cap_priors: SH-VTEC pre-gate prior (networkInjectShVtecPrior_), Fix-A
 ///     held phase-bias datum prior (networkInjectPhaseHoldPrior_), the
 ///     drop-and-heal soft anchors (NetworkPhaseDatum healNearNullPhaseBias, gate-failure path),
@@ -795,6 +921,8 @@ struct EpochWorkspace {
     Eigen::VectorXd cap_z;
     double cap_constraint_weight = 0.0;
     bool   cap_has_constraint = false;
+    Eigen::MatrixXd cap_sbc_H;   ///< SBC completion rows (see writer-site list)
+    Eigen::VectorXd cap_sbc_z;   ///< SBC completion targets
     std::vector<NetworkEstimator::SharedPrior> cap_priors;
     std::vector<NetworkEstimator::SharedPrior> cap_dense_keys;
     Eigen::MatrixXd cap_dense_cov;

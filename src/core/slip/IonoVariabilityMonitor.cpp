@@ -141,6 +141,7 @@ namespace GnssProcessor {
             if (!obs.satellite.empty()) { current_epoch_ = obs.time; break; }
 
         std::map<std::string, double> new_overrides;
+        std::map<std::string, double> new_multipliers;
 
         for (const auto& obs : observations) {
             if (obs.satellite.empty()) continue;
@@ -217,6 +218,7 @@ namespace GnssProcessor {
 
             const double q_eff = q_baseline * multiplier;
             new_overrides[obs.satellite] = q_eff;
+            new_multipliers[obs.satellite] = multiplier;
 
             if (trace_file_.is_open()) {
                 trace_file_ << std::fixed << std::setprecision(3)
@@ -235,6 +237,7 @@ namespace GnssProcessor {
         }
 
         overrides_.swap(new_overrides);
+        multipliers_.swap(new_multipliers);
 
         // Diagnostic: report the worst-case multiplier this epoch.
         if (!overrides_.empty() && q_baseline > 0.0) {

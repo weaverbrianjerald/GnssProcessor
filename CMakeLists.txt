@@ -55,6 +55,7 @@ add_library(gnss_core STATIC
     src/core/config/GnssConfig.cpp
     src/core/config/GnssConfigLoad.cpp
     src/core/config/GnssConfigLoadNetwork.cpp
+    src/core/config/GnssConfigNetworkPosture.cpp
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
     src/core/logging/CsvRotator.cpp
@@ -152,7 +153,17 @@ add_library(gnss_core STATIC
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
     src/core/realtime/RtcmStreamReader.cpp
+    src/core/realtime/NetworkStreamAligner.cpp
+    src/core/realtime/NetworkStreamFrontEnd.cpp
     src/core/realtime/RealTimeEngine.cpp
+    src/core/realtime/RealTimeEngineAdmit.cpp
+    src/core/realtime/RealTimeEngineSsrDiag.cpp
+    src/core/realtime/RealTimeEnginePrepare.cpp
+    src/core/realtime/RealTimeEngineSlipQc.cpp
+    src/core/realtime/RealTimeEngineSsrBreaks.cpp
+    src/core/realtime/RealTimeEngineEstimate.cpp
+    src/core/realtime/RealTimeEngineInit.cpp
+    src/core/realtime/RealTimeEngineIngest.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
@@ -163,9 +174,17 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkSbasis.cpp
     src/core/filter/NetworkPhaseDatum.cpp
     src/core/filter/NetworkChainDatum.cpp
+    src/core/filter/NetworkAnchorHygiene.cpp
+    src/core/filter/NetworkSignalIntegrity.cpp
+    src/core/filter/NetworkMeasurementAdmission.cpp
+    src/core/filter/NetworkIonoDwRelease.cpp
     src/core/filter/NetworkRaim.cpp
     src/core/filter/NetworkClockQc.cpp
     src/core/filter/NetworkFrameDiag.cpp
+    src/core/filter/NetworkRowClassify.cpp
+    src/core/filter/NetworkRhsAttrib.cpp
+    src/core/filter/NetworkPrefitCensus.cpp
+    src/core/filter/NetworkRedundancyCensus.cpp
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
     src/core/filter/NetworkIonoDiag.cpp
@@ -292,7 +311,10 @@ add_executable(gnss_tests
     tests/test_network_product_io.cpp
     tests/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
+    tests/test_rinex_zero_sentinel.cpp
     tests/test_network_normal_equations.cpp
+    tests/test_pd_safe_fold.cpp
+    tests/test_carry_aware_covariance.cpp
     tests/test_network_estimator.cpp
     tests/test_network_carry_vce.cpp
     tests/test_network_iono_deweight_gate.cpp
@@ -303,10 +325,18 @@ add_executable(gnss_tests
     tests/test_network_coupling.cpp
     tests/test_network_invariant_carry_driver.cpp
     tests/test_shdev_carry.cpp
+    tests/test_rx_cb_carry.cpp
     tests/test_network_mw_wl_layer.cpp
     tests/test_network_phase_datum.cpp
+    tests/test_eq34_reattach_hygiene.cpp
+    tests/test_signal_integrity.cpp
+    tests/test_measurement_admission.cpp
+    tests/test_iono_dw_release_hygiene.cpp
+    tests/test_redundancy_census.cpp
+    tests/test_prefit_census.cpp
     tests/test_network_bias_admission.cpp
     tests/test_network_rank_gate.cpp
+    tests/test_network_sbasis_complete.cpp
     tests/test_network_fast_clock.cpp
     tests/test_network_run_traces.cpp
     tests/test_mw_bridge.cpp
@@ -324,9 +354,11 @@ add_executable(gnss_tests
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
+    tests/test_network_streaming.cpp
     tests/test_sbf.cpp
     tests/test_estimation_core.cpp
     tests/test_ils_core.cpp
+    tests/test_nl_search_row.cpp
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
     tests/test_stochastic_model.cpp

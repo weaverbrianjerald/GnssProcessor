@@ -48,6 +48,15 @@ _UNKNOWN_TIER_COLOR = (0.5, 0.5, 0.5)
 # ``we_refloat_sat`` / ``consensus_refloat`` / ``clk_monitor_refloat``); order
 # matters (first hit wins), so specific bumps/handovers precede the generic verbs.
 _SHAPE_RULES = (
+    # Product-referenced measurement admission (docs/SPEC_measurement_admission.md).
+    # These carry no generic verb in their names, so without explicit rules the
+    # whole family renders as the default circle and a REJECTION is indis-
+    # tinguishable from a READMIT.  ``adm_heal`` precedes ``adm_`` because first
+    # hit wins.  (The ADMISSION tier itself still draws in the unknown-tier grey:
+    # extending ``_TIERS`` would re-walk the colour list and shift every existing
+    # tier's colour, which is a bigger change than this card is entitled to make.)
+    ("adm_heal", "^"),
+    ("adm_", "v"),
     ("retro_bump", "s"),
     ("handover", "D"),
     ("pivot", "D"),

@@ -1686,6 +1686,89 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovCalibrateParsesAndRequiresGate) {
     }
 }
 
+// Card 4 (M1) D5 v4: network.carry_invariant_innov_retap_only parses OFF by default
+// (byte-identical), ON atop the innovation gate, and — unlike calibrate, which is a hard
+// load REJECT — is FORCED OFF with a warning when the gate is absent.  That asymmetry is
+// deliberate and worth pinning: calibrate changes the gate's THRESHOLD (a silently
+// different gate is a wrong answer), while retap_only only decides what happens to flags
+// that, without the gate, do not exist at all.  Same fail-safe shape as the v3
+// corroboration knob it sits beside.
+TEST(CodeBiasNetworkConfig, CarryInvariantInnovRetapOnlyParsesAndNeedsGate) {
+    LogManager log;
+    // Default OFF.
+    {
+        const fs::path p = writeTempConfig("d5v4_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCarryInvariantInnovRetapOnly());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // ON atop carry_invariant + eq34 + gate.
+    {
+        const fs::path p = writeTempConfig("d5v4_on",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"carry_invariant_innov_gate\": true,\n"
+                "    \"carry_invariant_innov_retap_only\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkCarryInvariantInnovRetapOnly());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Without the gate the load SUCCEEDS but the knob is forced OFF (inert, not permissive).
+    {
+        const fs::path p = writeTempConfig("d5v4_no_gate",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"carry_invariant_innov_retap_only\": true,\n"));   // no gate
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCarryInvariantInnovRetapOnly())
+            << "retap_only without the innovation gate must be forced OFF, not left armed.";
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// Card 3/4: network.phase_datum_eq34_slip_aware_election keeps a slipped arc out of the
+// eq34 spanning tree (a slipped TREE edge refloats every fundamental cycle through it; a
+// slipped CHORD costs one DD).  Default OFF, ON atop phase_datum_eq34, and forced OFF
+// without it — there is no spanning tree to keep anything out of.
+TEST(CodeBiasNetworkConfig, PhaseDatumEq34SlipAwareElectionParsesAndNeedsEq34) {
+    LogManager log;
+    {
+        const fs::path p = writeTempConfig("slipelect_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkPhaseDatumEq34SlipAwareElection());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("slipelect_on",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"phase_datum_eq34_slip_aware_election\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkPhaseDatumEq34SlipAwareElection());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("slipelect_no_eq34",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34_slip_aware_election\": true,\n"));   // no eq34
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkPhaseDatumEq34SlipAwareElection())
+            << "slip-aware election without phase_datum_eq34 must be forced OFF.";
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
 // M5 card WL-1: network.mw_wl.enable rides the Card-4 chord basis, so it REQUIRES
 // network.carry_invariant (SPEC §11 Q1 mutex).  Default OFF (byte-identical), and the
 // knobs parse when armed alongside carry_invariant.
@@ -1736,6 +1819,112 @@ TEST(CodeBiasNetworkConfig, MwWlSeedContract) {
         GnssConfig cfg;
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         EXPECT_EQ(cfg.getNetworkConfig().mw_wl.min_arc_epochs, 2);
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4): default OFF (the fold's
+// arithmetic is byte-identical), and it is INERT without network.carry_invariant — there
+// is no DD-prior fold to make PD-safe.  The advisory is deliberately a WARN + DISARM, not
+// a load failure: a config that carries the knob for a later leg is not a config error.
+// The check lives in the CROSS-KNOB validation pass, so this gate is also the regression
+// test for the loader-ordering trap (a check placed in the parse block reads
+// network_carry_invariant_ before it is parsed and disarms EVERY run).
+TEST(CodeBiasNetworkConfig, CarryInvariantPdSafeContract) {
+    LogManager log;
+    // Default: absent → OFF.
+    {
+        const fs::path p = writeTempConfig("pdsafe_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCarryInvariantPdSafe());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed WITHOUT carry_invariant → loads, but DISARMED (inert, not an error).
+    {
+        const fs::path p = writeTempConfig("pdsafe_no_carry",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"carry_invariant_pd_safe\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCarryInvariantPdSafe())
+            << "without carry_invariant there is no DD-prior fold — the knob must disarm.";
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed WITH carry_invariant (+eq34) → stays armed.  This is the loader-ordering
+    // regression: the knob is parsed in loadNetworkDatumSignalling_ and its prerequisite
+    // test runs later, in the cross-knob pass, where every flag is settled.
+    {
+        const fs::path p = writeTempConfig("pdsafe_armed",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"carry_invariant_pd_safe\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkCarryInvariant());
+        EXPECT_TRUE(cfg.networkCarryInvariantPdSafe());
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §6): default OFF
+// (every readback expression is the pre-card one, verbatim), INERT without
+// network.carry_invariant — with no folded DD priors the rank-K correction is identically
+// zero — and the prerequisite check lives in the CROSS-KNOB pass for the same
+// loader-ordering reason as the PD-safe knob above.  Unlike that knob this one is NOT
+// fingerprinted: its consumers (dd_sigma_cyc, the log-only AR probe) feed nothing back, so
+// no stored state changes meaning when it flips.
+TEST(CodeBiasNetworkConfig, CarryAwareCovarianceContract) {
+    LogManager log;
+    // Default: absent → OFF.
+    {
+        const fs::path p = writeTempConfig("cacov_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCarryAwareCovariance());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed WITHOUT carry_invariant → loads, but DISARMED (inert, not an error).
+    {
+        const fs::path p = writeTempConfig("cacov_no_carry",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"carry_aware_covariance\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCarryAwareCovariance())
+            << "without carry_invariant there are no folded DD priors — the correction is "
+               "identically zero, so the knob must disarm rather than pretend to arm.";
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed WITH carry_invariant (+eq34) → stays armed.
+    {
+        const fs::path p = writeTempConfig("cacov_armed",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"carry_aware_covariance\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkCarryInvariant());
+        EXPECT_TRUE(cfg.networkCarryAwareCovariance());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Composes with the PD-safe knob rather than depending on it: the correction reads
+    // back whatever fold ran, PD-safe or legacy.
+    {
+        const fs::path p = writeTempConfig("cacov_with_pdsafe",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"carry_invariant_pd_safe\": true,\n"
+                "    \"carry_aware_covariance\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkCarryInvariantPdSafe());
+        EXPECT_TRUE(cfg.networkCarryAwareCovariance());
         std::error_code ec; fs::remove(p, ec);
     }
 }

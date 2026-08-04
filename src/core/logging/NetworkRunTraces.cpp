@@ -206,8 +206,14 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // dd_cyc − round(dd_cyc)) so the CSV is directly a fractional-cycle histogram —
             // the go/no-go instrument for float-bias user AR.  GLONASS (FDMA) and the pivot
             // station (pinned ambiguities) are excluded from the pool below.
+            // sigma_carry_aware APPENDED (readers read by name): 1 = dd_sigma_cyc came from
+            // the carry-aware readback (docs/SPEC_carry_aware_covariance.md), 0 = the
+            // carry-blind N_rr⁻¹ form every pre-card run emitted.  Without it a reader
+            // cannot tell a 0.14-cyc σ that means something from a 3.9-cyc σ that means
+            // "this covariance never saw the carry".
             dd_frac_trace << "week,tow,cons,signal,sat_i,ref_sat,sta_a,sta_b,"
-                             "dd_m,lambda_m,dd_cyc,frac_cyc,dd_sigma_cyc\n";  // T2a: +dd_sigma_cyc
+                             "dd_m,lambda_m,dd_cyc,frac_cyc,dd_sigma_cyc,"
+                             "sigma_carry_aware\n";  // T2a: +dd_sigma_cyc
             // (B5 wavelength provider dd_ppp_utils is constructed by the CALLER,
             //  gated on this stream being open — it needs the LogManager.)
         } else {
@@ -232,6 +238,11 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       slip_raw_trace_path.string());
         }
     }
+    // Measurement-admission census schema flag (docs/SPEC_measurement_admission.md
+    // INC-3) — decided ONCE, here, so the header below and every row written by
+    // emitEpochStatus agree by construction (the two writers are 300 lines apart).
+    // Screening implies the columns, per spec §5.
+    es_adm_columns_ = nc.adm_trace || nc.adm_screen;
     if (nc.trace_epoch_status) {
         epoch_status_trace.open(epoch_status_trace_path);
         if (epoch_status_trace)
@@ -253,7 +264,44 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                   "sigma0_trigger,withhold_ceiling,n_arc_refloat,"   // T2d
                                   "n_d5_flags,n_d5_retaps,n_chord_births,n_slip_refloats,"
                                   "n_dw_engaged,n_dw_zero,dw_min_w,dw_mean_w,"
-                                  "sigma0_pf,sigma0_pf_code,sigma0_pf_phase,n_pf_rows\n";
+                                  "sigma0_pf,sigma0_pf_code,sigma0_pf_phase,n_pf_rows,"
+                                  // docs/SPEC_redundancy_census.md INC-1/INC-2:
+                                  // blank on epochs the census did not sweep.
+                                  "n_redun_rows,n_uncheckable_rows,uncheckable_max_s,"
+                                  "n_unobservable_local,"
+                                  // docs/SPEC_prefit_census_observability.md INC-1:
+                                  // per DATA class, the COMMON-MODE-REMOVED
+                                  // standardized prefit deviation s.  Blank on
+                                  // epochs the census did not walk.
+                                  "pc_code_max_s,pc_code_p99_s,pc_code_n10,pc_code_n1k,"
+                                  "pc_phase_max_s,pc_phase_p99_s,pc_phase_n10,pc_phase_n1k,"
+                                  "pc_other_max_s,pc_other_p99_s,pc_other_n10,pc_other_n1k,"
+                                  "pc_sh_max_s,pc_sh_p99_s,pc_sh_n10,pc_sh_n1k,"
+                                  // docs/SPEC_pd_safe_dd_fold.md INC-0: the DD-prior
+                                  // fold's PD screen.  UNCONDITIONAL (the redundancy /
+                                  // prefit precedent, not the adm one) because INC-0 is
+                                  // an always-on instrument, not an armed card: the
+                                  // branch it observes — `M := 0` on a non-PD Pᶻ+B —
+                                  // had no counter, no log and no event, and 78 % of
+                                  // the carried state was measured diffusing behind it.
+                                  // Blank on epochs the invariant carry did not fold on.
+                                  "ddfold_degen_blocks,ddfold_degen_rows,"
+                                  "ddfold_min_pivot_rel"
+                               // docs/SPEC_measurement_admission.md INC-3: the
+                               // ABSOLUTE product-referenced |z| census.  Appended
+                               // ONLY when the card is armed — unlike the two
+                               // censuses above, whose unconditional columns changed
+                               // every unarmed run's artifact (the deweight card's
+                               // gate-1 record had to say so: "29 -> 48 -> 49 columns
+                               // over the session").  This card's OFF contract is
+                               // STRUCTURAL byte-identity, and its own §7 gates are
+                               // same-build A/B comparisons of this very file.
+                               // adm_sta_worst_z = the MEDIAN over screened stations
+                               // of each station's worst |z| (the healthy sea);
+                               // adm_net_worst_z = the network MAXIMUM (the extreme,
+                               // whose identity goes to the ADMISSION events).
+                               << (es_adm_columns_
+                                       ? ",adm_sta_worst_z,adm_net_worst_z\n" : "\n");
         else
             log->warn("Network: failed to open epoch-status trace {}",
                       epoch_status_trace_path.string());
@@ -491,8 +539,19 @@ void NetworkRunTraces::openMwWlDumps(bool d5_armed, bool lane_trace_armed,
             // raw_stepped is deliberately TRI-STATE (1 / 0 / blank) — see the writer
             // banner in NetworkInstallCarry.cpp.  Blank means "no evidence", which is
             // NOT the same claim as 0 ("a step could be formed and it was flat").
+            // The five algebra columns after raw_stepped are the churn card's instrument
+            // (2026-08-02): std_innov alone cannot say whether a standing 230σ means the
+            // innovation is large or the formal Cov(v) is small.  z_post differenced across
+            // epochs for ONE chord is the estimate's measured wander; var_v is the formal
+            // claim about exactly that quantity, so the ratio is readable per chord without
+            // re-running anything.  dw_w is the station's SH-constraint deweight weight
+            // (ctx.carry.topo_prev_w, this epoch — blank unless network.trace_topology is
+            // armed), carried here because the chronic-flagger roster was measured to
+            // overlap the deweight gate's chronic >3σ SH-misfit roster and the correlation
+            // should be gradeable from one file.
             d5_flags_trace << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
-                              "ewl_stasat,hold_chord,injected_prev,raw_stepped\n";
+                              "ewl_stasat,hold_chord,injected_prev,raw_stepped,"
+                              "zhat,v,var_v,sigma0,z_post,dw_w\n";
         else
             log->warn("Network: failed to open D5 flag dump {}",
                       d5_flags_trace_path.string());
@@ -597,6 +656,49 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
         if (r.sigma0_pf_phase) o << fmt::format("{:.4f}", *r.sigma0_pf_phase);
         o << ',';
         if (r.n_pf_rows)       o << *r.n_pf_rows;
+        o << ',';
+        if (r.n_redun_rows)         o << *r.n_redun_rows;
+        o << ',';
+        if (r.n_uncheckable_rows)   o << *r.n_uncheckable_rows;
+        o << ',';
+        if (r.uncheckable_max_s)    o << fmt::format("{:.6e}", *r.uncheckable_max_s);
+        o << ',';
+        if (r.n_unobservable_local) o << *r.n_unobservable_local;
+        // INC-1 prefit census: four columns per DATA class, in NetRowClass order.
+        // Absent ⇒ 16 blank fields (the census did not walk this epoch), so the
+        // row width is constant and an old reader that stops at the previous
+        // column keeps working.
+        for (int t = 0; t < 4; ++t) {
+            o << ',';
+            if (r.prefit_census) o << fmt::format("{:.6e}", r.prefit_census->max_s[t]);
+            o << ',';
+            if (r.prefit_census) o << fmt::format("{:.6e}", r.prefit_census->p99_s[t]);
+            o << ',';
+            if (r.prefit_census) o << r.prefit_census->n_gt_10[t];
+            o << ',';
+            if (r.prefit_census) o << r.prefit_census->n_gt_1000[t];
+        }
+        // PD-safe fold INC-0: three UNCONDITIONAL columns (see the header write in
+        // openAll).  Blank on an epoch the invariant carry did not fold on — "zero
+        // degenerate blocks" and "the carry never ran" are different statements, and
+        // conflating them is exactly how the frozen 78 % stayed invisible.
+        o << ',';
+        if (r.ddfold_degen_blocks) o << *r.ddfold_degen_blocks;
+        o << ',';
+        if (r.ddfold_degen_rows) o << *r.ddfold_degen_rows;
+        o << ',';
+        if (r.ddfold_min_pivot_rel) o << fmt::format("{:.6e}", *r.ddfold_min_pivot_rel);
+        // INC-3 measurement-admission census: two columns, present in the schema
+        // only when the card is armed (see the header write in openAll).  Blank on
+        // an epoch the screen did not run — the file's "unavailable is not 0"
+        // convention, which matters here because a genuine 0.0 worst-|z| and a
+        // skipped epoch are very different statements.
+        if (es_adm_columns_) {
+            o << ',';
+            if (r.adm_sta_worst_z) o << fmt::format("{:.6e}", *r.adm_sta_worst_z);
+            o << ',';
+            if (r.adm_net_worst_z) o << fmt::format("{:.6e}", *r.adm_net_worst_z);
+        }
         o << '\n';
 }
 
@@ -954,6 +1056,37 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"trace_zwd\":" << (nc.trace_zwd ? "true" : "false") << ','
                << "\"trace_clock_full\":" << (nc.trace_clock_full ? "true" : "false") << ','
                << "\"trace_station_residuals\":" << (nc.trace_station_residuals ? "true" : "false") << ','
+               // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
+               // needs to tell a screened leg from its control without re-reading the
+               // config — and, because `adm_screen` is solve-affecting, to know that
+               // it is NOT comparing like with like.  Emitted ONLY when armed, so an
+               // unarmed run's manifest bytes are unchanged (the same
+               // structural-byte-identity rule the epoch-status columns follow; the
+               // decomposition golden hashes this file).
+               << ((nc.adm_screen || nc.adm_trace)
+                       ? fmt::format("\"adm_screen\":{},\"adm_trace\":{},"
+                                     "\"adm_bound_m\":{},\"adm_min_sats\":{},"
+                                     "\"adm_heal_ep\":{},\"adm_max_frac\":{},",
+                                     nc.adm_screen ? "true" : "false",
+                                     nc.adm_trace ? "true" : "false",
+                                     nc.adm_bound_m, nc.adm_min_sats,
+                                     nc.adm_heal_ep, nc.adm_max_frac)
+                       : std::string())
+               // INC-4 re-entry vet, gated on its OWN arming rather than on the
+               // block's: an unarmed-vet run's manifest keeps the exact six fields it
+               // had before this increment, so the card's own §9.7 conditional-column
+               // contract still holds one level down.
+               << (nc.adm_revet
+                       ? fmt::format("\"adm_revet\":true,\"adm_revet_gap_ep\":{},"
+                                     "\"adm_revet_ep\":{},"
+                                     "\"adm_revet_bound_scale\":{},"
+                                     "\"adm_revet_census\":{},"
+                                     "\"adm_revet_hold\":{},",
+                                     nc.adm_revet_gap_ep, nc.adm_revet_ep,
+                                     nc.adm_revet_bound_scale,
+                                     nc.adm_revet_census ? "true" : "false",
+                                     nc.adm_revet_hold ? "true" : "false")
+                       : std::string())
                // RTB-6/P1: service-observability knobs (health heartbeat + trace rotation).
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
@@ -1041,6 +1174,10 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"emit_clock_disc\":" << (emit_clock_disc ? "true" : "false") << ','
                << "\"sticky_pivot\":" << (sticky_pivot ? "true" : "false") << ','
                << "\"carry_invariant\":" << (config_.networkCarryInvariant() ? "true" : "false") << ','
+               << "\"carry_invariant_pd_safe\":"
+               << (config_.networkCarryInvariantPdSafe() ? "true" : "false") << ','
+               << "\"carry_aware_covariance\":"
+               << (config_.networkCarryAwareCovariance() ? "true" : "false") << ','
                << fmt::format("\"carry_invariant_qz\":{},", config_.networkCarryInvariantQz())
                << "\"carry_invariant_emit_rebase\":"
                << (config_.networkCarryInvariantEmitRebase() ? "true" : "false") << ','

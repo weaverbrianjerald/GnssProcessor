@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "CHURN CARD \u2014 D5 v5b: the CORRECTED carried-only guard.",
+    "",
+    "Same single functional key as _ft63_churn_v5.json",
+    "(network.carry_invariant_innov_carried_only); what changed is the CODE behind it.  The",
+    "first implementation keyed the skip on the driver's chord_carried mask alone.  That mask",
+    "is TOPOLOGICAL \u2014 cycle in A_old, no slip \u2014 and says nothing about whether the carried",
+    "prior holds information: a chord carried from a predecessor that was itself diffuse",
+    "inherits a diffuse PROJECTED prior and passes it.  Measured on runs/churn_v5: after",
+    "skipping 13 643 rows, 7 082 of the 8 807 surviving flags (80.4%) were STILL at",
+    "sqrt(Cov(v)) = 1000 m, i.e. still untestable.  The guard now also skips a chord whose",
+    "Cov(v)_ii is at or above half of fresh_prior_var, which is the informational test the",
+    "topological one only approximates.",
+    "",
+    "GRADE against runs/churn_v5 (the defective arm, deliberately kept on disk) and",
+    "runs/churn_base2 (same-build baseline).  The expectation from v3 and v4 is that the",
+    "graded quantities do NOT move \u2014 this arm exists to close the question at the source",
+    "rather than leave it resting on a guard that only caught two thirds of its target."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_v5.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/churn_v5b/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_v5b/state_snapshot.bin"
+  }
+}

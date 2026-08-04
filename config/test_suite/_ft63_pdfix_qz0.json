@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "RUN QUEUE P2 (docs/RUNQUEUE_pdfix_reask.md) - the q_z axis: carry_invariant_qz = 0.",
+    "",
+    "BASE IS THE P1 WINNER (_ft63_pdfix_v3.json = pdfix_on + carry_invariant_innov_corroborate), per the queue's 'winner becomes the base posture for P2-P6'.  P1 measured: informational lifetime 12.0 -> 55.3 ep, mature steps 1.015/0.883/0.509 -> 0.953/0.789/0.485, SF k=1 0.83 -> 0.77, total_IF and clock QC NEUTRAL-to-better, coarse IF-TD slip layer BYTE-IDENTICAL (129 flags / 201253 opp on every arm incl. pdfix_off), tension landing only in post-fit sigma0_phase 0.120 -> 0.171.",
+    "",
+    "DELIBERATELY NOT built on the pre-existing _ft63_qz0.json: that config already carries",
+    "carry_invariant_innov_carried_only (it IS a v5b arm), so extending it would have put TWO",
+    "variables in this arm - the q_z change AND a D5 policy that P1 did not select.",
+    "",
+    "THE QUESTION: 'are the ambiguities time-CONSTANT?'  The POSTURE ledger's answer",
+    "('q_z 1e-4 beats zero-q') was measured on a substrate where 85.24% of carried row-epochs",
+    "were INERT - a q_z sweep there measured how fast a FROZEN prior diffuses, not how well a",
+    "stiff one carries.  PREDICTION (SPEC 7.2): mature steps -> sub-0.3 cyc/ep and the",
+    "structure function FLATTENS.  Watch for the opposite failure too: with q_z=0 and D5",
+    "corroboration suppressing 99.5% of trips, a stale carry has NO release valve except the",
+    "coarse slip layer - standing invariant #1's exact shape.  Grade post-fit sigma0_phase and",
+    "total_IF for where that lands."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "network": {
+    "carry_invariant_qz": 0.0,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_qz0/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_qz0/state_snapshot.bin"
+  }
+}

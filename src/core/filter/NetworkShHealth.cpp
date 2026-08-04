@@ -14,6 +14,7 @@
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
+#include "filter/NetworkRhsAttrib.hpp"   // INC-5 flight-recorder trip latch
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
@@ -87,6 +88,14 @@ void networkShHealth(
         if (std::isfinite(a00)) {
             const bool in_band =
                 (a00 >= shc.a00_warn_low_tecu && a00 <= shc.a00_warn_high_tecu);
+            // INC-5 flight-recorder trigger
+            // (docs/SPEC_prefit_census_observability.md §7): the a00-BAND era.
+            // Distinct from the SH GATE era above it in the pipeline — the WARN
+            // fires on the FIRST out-of-band epoch while the gate waits
+            // sh_gate_min_epochs, so this is the earliest of the four triggers
+            // and the one most likely to catch a discharge in progress.
+            // SB_T1A precedes SB_FRAMEDIAG, so the trip lands this same epoch.
+            networkRhsTripEdge(ctx, "a00_band", !in_band);
             if (!in_band && (sh_a00_was_in_band || n_emitted % 60 == 0)) {
                 log->warn("Network (SH-iono): a₀₀ = {:.1f} TECU OUTSIDE physical band "
                           "[{:.1f}, {:.1f}] — global VTEC field diverging (TOW {:.1f}); the "

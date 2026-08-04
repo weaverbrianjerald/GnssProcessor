@@ -50,6 +50,7 @@
  */
 
 #include "filter/NetworkRunTypes.hpp"   // NetStation / PhaseDatumCandidates
+#include "filter/NetworkAnchorHygiene.hpp"   // AnchorHygiene (eq34 reattach hygiene)
 
 #include <memory>
 #include <set>
@@ -91,6 +92,15 @@ struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cp
  * @param stations      [in/out] pinned_amb_targets / pinned_rpb_keys.
  * @param present       This epoch's presence mask.
  * @param cnd           Candidate census (sat_el / usable_keys / cover / union_keys).
+ * @param hyg           eq34 REATTACH HYGIENE verdicts for this epoch
+ *                      (filter/NetworkAnchorHygiene.hpp).  Default-constructed
+ *                      (inactive) reproduces the pre-card election exactly: every
+ *                      arc is an eligible host, nothing is bridged and no pin is
+ *                      σ-scaled.  When active it (a) restricts which arcs may become
+ *                      NEW tree edges, (b) contributes extra spanning-FOREST ROOTS —
+ *                      a bridged satellite is grounded by its shared pseudo-obs row
+ *                      instead of a parent edge — and (c) supplies the INC-3 σ
+ *                      multiplier for pins the eligible pass could not avoid.
  * @param shared_phase_keys [out] the post-gate union's phase-bias keys.
  */
 void networkElectChainDatum(NetworkRunContext& ctx,
@@ -100,6 +110,16 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             std::vector<NetStation>& stations,
                             const std::vector<bool>& present,
                             const PhaseDatumCandidates& cnd,
+                            const AnchorHygiene& hyg,
+                            /// This epoch's complete C3c slip funnel — (station index, ambiguity
+                            /// key).  Read ONLY under network.phase_datum_eq34_slip_aware_election,
+                            /// to keep a slipped arc out of the spanning tree where the graph
+                            /// allows it (a slipped TREE edge refloats every fundamental cycle
+                            /// through it; a slipped CHORD costs one DD).  The caller must not
+                            /// insert into the funnel after this point — see the ordering
+                            /// contract above; the election already sits after every PASS-A
+                            /// drain, signal integrity and measurement admission.
+                            const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys);
 
 } // namespace GnssProcessor

@@ -104,10 +104,21 @@ docs/report/
   realtime_engine.tex       Streaming architecture: NTRIP transport, RTCM/MSM
                             decode, observation/SSR synchronisation, per-epoch
                             real-time update path.
-  network.tex               Multi-station PPP-RTK network estimator: joint model,
-                            satellite phase-bias state, S-basis datum, Schur
-                            reduction — the producer of the SSR-style corrections
-                            the single-receiver modes consume.
+  network.tex               Multi-station PPP-RTK network estimator: producer
+                            architecture (the decomposed epoch loop and its seam
+                            sequence), joint model, satellite phase-bias state,
+                            S-basis datum, Schur reduction — the producer of the
+                            SSR-style corrections the single-receiver modes consume.
+  network_example.tex       Fully numerical 2-receiver x 4-satellite S-system
+                            estimability worked example, mirroring
+                            tests/test_network_estimator.cpp.
+  network_carry.tex         Between-epoch carry: the three folds an arrowhead
+                            system admits and where each must be applied, the
+                            DD cycle basis (spanning-tree chords) as the only
+                            gauge-free carriable quantity, the Woodbury DD-prior
+                            fold with its posterior/innovation closed forms, and
+                            a fully numerical 2-receiver x 2-satellite example
+                            (one chord) carried end to end.
   pipeline_diagrams.tex     Curated TikZ process diagrams.
   generated_tables.tex      Appendix subfile; \input's the generated/ tables.
 

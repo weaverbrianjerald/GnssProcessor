@@ -1,0 +1,25 @@
+// RT seam gate — ARM C: SBF file replay with TurboEdit + soft-LLI bridge armed.
+//
+// detectAndRepairSlips is the single largest seam (~265 L) and roughly two
+// thirds of it is unreachable unless turbo_edit_resolver_ and soft_lli_ are
+// non-null: the gap-hold pre-pass, the WL-settle deferral, resolveHolds, the
+// per-signal integer repairs, the reset_sats loop, the code-domain veto, the
+// moot/clean adjudications, and the te_pending / code_clean_signals branches of
+// the default reset loop.  Arm A reaches only the MW mandate path.
+//
+// This is the arm that makes RealTimeEngineSlipQc.cpp's certification non-vacuous.
+{
+  "extends": "_rtseam_sbf.json",
+
+  "estimation": {
+    "cycle_slip": {
+      "turbo_edit": true,
+      "turbo_edit_bridge_lli": true
+    }
+  },
+
+  "logging": {
+    "enable_turbo_edit_resolver": true,
+    "enable_mw_slip_detector": true
+  }
+}

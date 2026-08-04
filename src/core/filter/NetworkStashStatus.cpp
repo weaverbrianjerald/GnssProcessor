@@ -197,6 +197,53 @@ void networkStashStatus(
             es.sigma0_pf_phase = ctx.carry.ep_sigma0_pf_phase;
             es.n_pf_rows       = ctx.carry.ep_pf_rows;
         }
+        // Redundancy census (docs/SPEC_redundancy_census.md): the seam stamps the
+        // TOW it computed for, so a strided run leaves these BLANK on the epochs
+        // between sweeps instead of repeating the last sweep's numbers.  The
+        // census seam runs in SB_FRAMEDIAG, i.e. before this block, every epoch.
+        if (std::abs(ctx.carry.redun_ep_tow - se.time.tow) < 1e-6) {
+            es.n_redun_rows         = ctx.carry.ep_redun_rows;
+            es.n_uncheckable_rows   = ctx.carry.ep_uncheckable_rows;
+            es.uncheckable_max_s    = ctx.carry.ep_uncheckable_max_s;
+            es.n_unobservable_local = ctx.carry.ep_unobservable_local;
+        }
+        // PREFIT census (docs/SPEC_prefit_census_observability.md INC-1): the walk
+        // runs in SB_FRAMEDIAG, i.e. before this block, and sets ep_pc_rows > 0
+        // only on an epoch it actually classified rows for.  Blank otherwise.
+        if (ctx.carry.ep_pc_rows > 0) {
+            EpochStatusRow::PrefitCensusStats pc;
+            for (int t = 0; t < kNetDataClasses; ++t) {
+                pc.max_s[t]     = ctx.carry.ep_pc_max_s[t];
+                pc.p99_s[t]     = ctx.carry.ep_pc_p99_s[t];
+                pc.n_gt_10[t]   = ctx.carry.ep_pc_n_gt_10[t];
+                pc.n_gt_1000[t] = ctx.carry.ep_pc_n_gt_1000[t];
+            }
+            es.prefit_census = pc;
+        }
+        // Measurement-admission census (docs/SPEC_measurement_admission.md INC-3):
+        // the seam runs pre-assembly, i.e. long before this block, and stamps the
+        // TOW it screened.  An epoch it skipped (every station under adm_min_sats,
+        // or the card disarmed) leaves the columns BLANK rather than repeating the
+        // last screened epoch's numbers.
+        if (std::abs(ctx.carry.adm_ep_tow - se.time.tow) < 1e-6) {
+            es.adm_sta_worst_z = ctx.carry.ep_adm_sta_worst_z;
+            es.adm_net_worst_z = ctx.carry.ep_adm_net_worst_z;
+        }
+        // PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md INC-0): read STRAIGHT off the
+        // kernel, which by this point holds the ACCEPTED solve's fold (a within-epoch RAIM
+        // re-solve re-folds and overwrites, and NetworkEstimator::beginEpoch resets it once
+        // per epoch).  `blocks == 0` means NO fold ran this epoch — carry off, no chords —
+        // and the columns correctly stay BLANK.  Going through a ctx.carry stamp instead
+        // would report a default-constructed min_pivot_rel of 1.0 on a chordless epoch,
+        // i.e. a perfectly conditioned factorization that was never computed, and 1.0 is
+        // ALSO what a genuine single-chord block reports (caught by the card's own review,
+        // 2026-08-03).  "Zero degenerate blocks" and "the carry never ran" are different
+        // statements, and conflating them is how the frozen 78 % stayed invisible.
+        if (const auto& dfs = est.ddFoldStats(); dfs.blocks > 0) {
+            es.ddfold_degen_blocks  = dfs.degen_blocks;
+            es.ddfold_degen_rows    = dfs.degen_rows;
+            es.ddfold_min_pivot_rel = dfs.min_pivot_rel;
+        }
         std::vector<double> cvals; cvals.reserve(registered_clock_sats.size());
         for (const std::string& sat : registered_clock_sats)
             cvals.push_back(x_s(est.clockColumn(sat)));

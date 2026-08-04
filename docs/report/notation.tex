@@ -10,7 +10,7 @@ for sets:
       PPP-RTK) have $|\rxset| = 1$; baseline modes have a fixed
       reference and one or more rovers; the network producer
       (\texttt{PPP\_RTK\_Network}) carries a peer set of
-      $|\rxset| \ge 2$ stations (150--305 in practice) with no
+      $|\rxset| \ge 2$ stations (50--305 in practice) with no
       reference/rover asymmetry.
 \item $g \in \sysset = \{\text{GPS}, \text{GAL}, \text{BDS},
       \text{GLO}, \text{QZS}, \dots\}$ --- constellation.
@@ -111,7 +111,8 @@ $B_{\rx,\sigl}, B^\sat_\sigl$ & m   & receiver / satellite code biases (OSB) \\
 $B^{(g,b)}_{\rx,k}$           & m   & per-FCN-slot GLONASS receiver IFB, band $b$; here $k \in [-7,+6]$ is the signed FDMA channel number (a context-local reuse, not the epoch index) \\
 $\varepsilon^\code, \varepsilon^\phaseo$ & m & residual (multipath + thermal) \\
 $\bm{v}_\rx$                  & m/s & receiver velocity (optional / IMU state) \\
-$\lamwl,\ \lamnl$             & m   & wide- / narrow-lane wavelength $\sLight/(f_1 \mp f_2)$ \\
+$\lamwl,\ \lamnl,\ \lamewl$   & m   & wide- / narrow- / extra-wide-lane wavelength $\sLight/(f_a \mp f_b)$ for the lane's band pair \\
+$\lamif$                      & m   & effective ionosphere-free wavelength $|c_1\lambda_1 - c_2\lambda_2|$ with the IF coefficients $c_1 - c_2 = 1$; not an integer wavelength (\dcref{sec:slip}{the cycle-slip document}) \\
 $\Cbe$                        & --- & body-to-ECEF attitude (direction-cosine) matrix \\
 \bottomrule
 \end{tabular}

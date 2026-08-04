@@ -24,8 +24,10 @@ this chapter supply its a-priori seed, an optional pseudo-observation that
 ties the relative slants to a Global Ionosphere Map, and the small
 second- and third-order corrections that the linear $1/f^2$ scaling cannot
 represent.  The network producer additionally co-estimates its own
-single-layer spherical-harmonic VTEC field, which lets it dispense with an
-external GIM entirely; that model is derived with the network estimation in
+spherical-harmonic VTEC field on a single thin shell (optionally two,
+\Cref{sec:atmos-shvtec}), which lets it dispense with an external GIM
+entirely; that model is derived in \Cref{sec:atmos-shvtec}, and the shared
+column layout it occupies in the network normal equations in
 \dcref{sec:net}{the network mode chapter}.  This document is the derivation of those interiors: the
 mapping functions, the pressure reductions, the thin-shell geometry, the
 geomagnetic field, and the sign conventions that decide whether each term
@@ -127,7 +129,8 @@ another, is the triple $(a,b,c)$.  Two families are implemented.
 The default mapping interpolates the Niell tables \cite{niell1996global}
 of $(a,b,c)$ given at five reference latitudes $15^\circ, 30^\circ,
 45^\circ, 60^\circ, 75^\circ$, each as a mean plus an annually varying
-amplitude (\texttt{Troposphere.cpp} lines~233--254).  The seasonal value
+amplitude (the coefficient tables inside
+\texttt{Troposphere::getTroposphereMapping}).  The seasonal value
 is
 \begin{equation}
 v(\phi,t) = \bar v(\phi)
@@ -137,7 +140,8 @@ v(\phi,t) = \bar v(\phi)
 \begin{cases} 28 & \phi \ge 0 \\ 28 + 182.625 & \phi < 0 \end{cases}
 \label{eq:atmos-niell-season}
 \end{equation}
-(\texttt{Troposphere.cpp} lines~216, 278--280).  The \emph{minus} sign and
+(\texttt{Troposphere::getTroposphereMapping}, over the day of year returned
+by \texttt{Troposphere::getDayOfYear}).  The \emph{minus} sign and
 the southern-hemisphere half-year phase shift are both load-bearing: the
 amplitude term is subtracted, and the Southern Hemisphere is put in
 anti-phase by adding half a year to the phase reference rather than by
@@ -147,7 +151,7 @@ carry mean values only (no annual term in this model).
 
 A height correction lifts the hydrostatic mapping from sea level to the
 station, identical in the Niell and VMF3 paths
-(\texttt{Troposphere.cpp} lines~194--198, 294--298):
+(\texttt{Troposphere::getTroposphereMapping}):
 \begin{equation}
 \mfh(\elev,h) = \mfh(\elev,0)
   + \left[\frac{1}{\sinel} - m(\elev;\,a_{\mathrm{ht}},b_{\mathrm{ht}},c_{\mathrm{ht}})\right] h_{\mathrm{km}},
@@ -169,13 +173,12 @@ coefficients are synthesised on the fly by a degree- and order-12
 spherical-harmonic expansion of their seasonal columns
 (\texttt{src/core/atmosphere/Vmf3.cpp}).  A Cartesian-form associated
 Legendre recursion builds the real and imaginary solid harmonics
-$V_{nm},W_{nm}$ at the station co-latitude and longitude
-(\texttt{Vmf3.cpp} lines~46--72), the $91 = \sum_{n=0}^{12}(n+1)$ harmonic
-terms are accumulated against stored coefficient sets
-(\texttt{Vmf3.cpp} lines~80--92), and each of $b_{\mathrm h},c_{\mathrm
+$V_{nm},W_{nm}$ at the station co-latitude and longitude, the
+$91 = \sum_{n=0}^{12}(n+1)$ harmonic terms are accumulated against the
+stored \texttt{Vmf3Coeffs} tables, and each of $b_{\mathrm h},c_{\mathrm
 h},b_{\mathrm w},c_{\mathrm w}$ is then evaluated as a five-coefficient
-mean-plus-annual-plus-semiannual harmonic
-(\texttt{Vmf3.cpp} lines~29--32, 97--106):
+mean-plus-annual-plus-semiannual harmonic --- all three steps inside
+\texttt{Vmf3::computeMapping}:
 \begin{equation}
 v(\mathrm{doy}) = A_0 + A_1\cos\omega + B_1\sin\omega
                        + A_2\cos 2\omega + B_2\sin 2\omega,
@@ -192,9 +195,9 @@ the Niell path so a single bad sample never aborts the run.
 The GPT3 $5^\circ$ grid \cite{landskron2018vmf3} supplies, per cell, the
 five harmonic coefficients of pressure, temperature, temperature lapse
 rate, geoid undulation, and the VMF3 hydrostatic and wet $a$-coefficients
-(\texttt{src/core/atmosphere/Gpt3.cpp} lines~88--96).  Each quantity is the
+(\texttt{Gpt3::load}, in \texttt{atmosphere/Gpt3}).  Each quantity is the
 same annual-plus-semiannual harmonic as \eqref{eq:atmos-seasonal-harmonic}
-evaluated per cell (\texttt{Gpt3.cpp} lines~40--47):
+evaluated per cell (\texttt{Gpt3::harmonic}):
 \begin{equation}
 V(\mathrm{doy}) = a_0 + A_1\cos\omega + B_1\sin\omega
                        + A_2\cos 2\omega + B_2\sin 2\omega .
@@ -203,7 +206,7 @@ V(\mathrm{doy}) = a_0 + A_1\cos\omega + B_1\sin\omega
 The grid value sits at the cell's orthometric reference height $H_s$; it is
 carried to the station orthometric height $h_{\mathrm{ortho}} = h - N$
 (undulation $N$) by a barometric pressure reduction and a linear
-temperature lapse (\texttt{Gpt3.cpp} lines~34--37, 151--157):
+temperature lapse (\texttt{Gpt3::query}):
 \begin{equation}
 P_{\mathrm{stn}} = P_{\mathrm{grid}}
    \bigl(1 - K_{\mathrm P}\,\Delta h\bigr)^{n_{\mathrm P}},
@@ -221,7 +224,7 @@ grid lapse in $\mathrm{K\,km^{-1}}$ applied to $\Delta h$ in kilometres.
 The exponent $5.225$ is the same $g/(RL)$ ratio as
 \eqref{eq:atmos-barometric}, rounded for the grid.  Four corners are read
 and combined by bilinear interpolation in latitude and (wrapped) longitude
-(\texttt{Gpt3.cpp} lines~146--182); the resulting $P_{\mathrm{stn}}$ drives
+(also \texttt{Gpt3::query}); the resulting $P_{\mathrm{stn}}$ drives
 the Saastamoinen $\zhd$ of \eqref{eq:atmos-zhd}, and the interpolated
 $a_{\mathrm h},a_{\mathrm w}$ drive the VMF3 mapping.
 
@@ -231,7 +234,7 @@ The azimuthal gradient in \eqref{eq:atmos-tropo-total} uses the
 Chen--Herring mapping \cite{chen1997effects}, coded identically in the
 Jacobian and the prefit residual
 (\texttt{MeasurementModel::buildJacobianRow},
-\texttt{src/core/measurement/StateInitializer.cpp} lines~207--211):
+\texttt{StateInitializer::computeRawResidual}):
 \begin{empheq}[box=\fbox]{equation}
 \mfg(\elev) = \frac{1}{\sinel\tan\elev + 0.0032},
 \qquad
@@ -247,7 +250,8 @@ receiver position is not yet usable (norm below $10^3$~m, or non-finite)
 the geodetic latitude/height needed by the Niell/VMF3 coefficients is
 unavailable, so the hydrostatic and wet mappings degrade to the
 geometry-only Black--Eisner form $1/(\sinel + a/(\tan\elev + b))$
-(\texttt{Troposphere.cpp} lines~161--162) purely so the engine never
+(the fallback branch of \texttt{Troposphere::getTroposphereMapping})
+purely so the engine never
 divides by an undefined elevation during cold start.
 
 % ============================================================
@@ -319,8 +323,10 @@ The VTEC at the IPP is interpolated bilinearly in space and, in time,
 \emph{sun-fixed}: each bracketing map is sampled at the IPP longitude
 rotated by the Earth's rotation between the map epoch and the query epoch,
 $\Delta\lambda = (t - t_{\mathrm{map}})\cdot 360^\circ/86400~\mathrm{s}$,
-before the two are linearly blended (\texttt{GlobalIonosphereMap.cpp}
-lines~16, 89--97).  The slant delay in metres at frequency $f$ then uses
+before the two are linearly blended
+(\texttt{GlobalIonosphereMap::interpolateVtec}, over
+\texttt{GlobalIonosphereMap::sampleMap}).  The slant delay in metres at
+frequency $f$ then uses
 the dispersion constant
 \begin{empheq}[box=\fbox]{equation}
 I^{\mathrm{GIM}} = \stec \cdot \frac{40.3 \times 10^{16}}{f^2}
@@ -330,16 +336,15 @@ I^{\mathrm{GIM}} = \stec \cdot \frac{40.3 \times 10^{16}}{f^2}
 \end{empheq}
 the factor $10^{16}$ converting $\vtec$ from TECU to $\mathrm{el\,m^{-2}}$
 and $40.3 = 40.3~\mathrm{m\,Hz^2\,(el\,m^{-2})^{-1}}$ the first-order
-refractivity constant (\texttt{GlobalIonosphereMap.cpp} lines~13--15; the metre
-conversion is in \texttt{GlobalIonosphereMap::slantIonoDelay}).
+refractivity constant (both the constant and the metre conversion live in
+\texttt{GlobalIonosphereMap::slantIonoDelay}).
 
 \subsubsection{The GIM iono-weighting pseudo-observation}
 
 The GIM is too coarse to constrain the \emph{absolute} slant of any one
 satellite, but it constrains the \emph{relative} slants across a
 constellation well.  This is imposed as a Kalman pseudo-observation
-(\texttt{src/core/app/Application.cpp} lines~683--777,
-\texttt{applyGimIonoUpdate}), one row per satellite that owns a slant
+(\texttt{Application::applyGimIonoUpdate}), one row per satellite that owns a slant
 state above the elevation cutoff.  The innovation is the GIM slant minus
 the current state,
 \begin{equation}
@@ -348,7 +353,7 @@ z_\sat = I^{\mathrm{GIM}}_\sat - I^\sat_\rx,
 \label{eq:atmos-gim-innov}
 \end{equation}
 with the GIM evaluated at GPS~L1 to match the state reference
-(\texttt{Application.cpp} lines~728--733).  The structure is in the
+(\texttt{Application::applyGimIonoUpdate}).  The structure is in the
 measurement-noise matrix.  Per constellation $g$, with $\bm 1$ the
 all-ones vector over that constellation's rows,
 \begin{empheq}[box=\fbox]{equation}
@@ -357,7 +362,7 @@ all-ones vector over that constellation's rows,
               + \sigma_c^2\,\bm 1\bm 1^{\Tr}\Bigr),
 \label{eq:atmos-gim-R}
 \end{empheq}
-(\texttt{Application.cpp} lines~749--760).  The rank-one
+(also \texttt{Application::applyGimIonoUpdate}).  The rank-one
 $\sigma_c^2\,\bm 1\bm 1^{\Tr}$ block assigns an essentially unbounded
 variance to the per-constellation \emph{common mode} of the innovations:
 that common mode is the un-modellable receiver iono datum (an arbitrary
@@ -374,7 +379,8 @@ repeated here.
 In the BSSD parameterisation each constellation's pivot satellite holds
 its slant-iono state frozen at value $0$ with variance $0$ as the
 rank-fixing datum.  Such a row is skipped entirely
-(\texttt{Application.cpp} lines~707--725).  A zero-variance state receives
+(the frozen-pivot guard in \texttt{Application::applyGimIonoUpdate}).  A
+zero-variance state receives
 zero Kalman gain and so could never benefit from the GIM; but it shares the
 common-mode $\bm 1\bm 1^{\Tr}$ block of \eqref{eq:atmos-gim-R} with its
 constellation peers.  Were it included, its spurious innovation
@@ -386,12 +392,229 @@ but a correctness requirement: the common-mode block is meant to absorb
 the datum offset of the \emph{remaining} rows, so the datum satellite must
 not itself appear as a measurement.
 
+\subsubsection{The co-estimated spherical-harmonic VTEC field}\label{sec:atmos-shvtec}
+
+Rather than import an external map, the network producer can estimate the
+vertical TEC field itself --- a truncated real spherical-harmonic expansion
+on the same kind of thin shell, solved jointly with the satellite code
+biases.  The coefficients are \emph{shared} columns of the network normal
+equations, registered through \texttt{NetworkEstimator::registerVtecCoeff}
+and reduced onto the shared border like any other network-wide family
+(\dcref{sec:net}{the network mode chapter}); what follows is the model
+itself, its pseudo-observation, and its datum.
+
+The switch is \texttt{network.estimate\_iono\_sh}.  It defaults false, but it
+is part of the standing armed network posture and is set by most shipped
+network configurations, so it is the ionosphere model the producer actually
+runs on rather than an experiment.  Arming it forces
+\texttt{network.estimate\_sat\_code\_bias} on --- the field is what makes the
+satellite code-bias slice observable --- and suppresses external GIM loading,
+so the two ionosphere sources can never be applied to the same run
+(\texttt{config/GnssConfigLoadNetwork.cpp}; the SH-versus-GIM branch guards
+the \texttt{networkAppendGimIonoRows\_} call site in
+\texttt{app/ApplicationNetworkAssembly}).
+
+\paragraph{Basis and normalisation.}
+With $\beta$ the geographic latitude of the pierce point and $s$ its
+sun-fixed longitude, the field is
+\begin{empheq}[box=\fbox]{equation}
+\vtec(\beta,s) = \sum_{n=0}^{N}\sum_{m=0}^{n}
+   \bar P_{nm}(\sin\beta)\,
+   \bigl[a_{nm}\cos(m s) + b_{nm}\sin(m s)\bigr]
+\quad [\mathrm{TECU}],
+\label{eq:atmos-sh-synth}
+\end{empheq}
+truncated triangularly at degree $N$
+(\texttt{estimation.global\_vtec\_sh.max\_degree}), which gives $(N+1)^2$
+real coefficients: one cosine term per $(n, m\ge 0)$ and one sine term per
+$(n, m\ge 1)$, enumerated once in a fixed order that the shared-column
+layout mirrors (\texttt{SphericalHarmonicIonosphere::coeffs}).  The
+normalisation is
+\begin{equation}
+\bar P_{nm} = N_{nm}\,P_{nm},
+\qquad
+N_{nm} = \sqrt{(2-\delta_{0m})\,(2n+1)\,\frac{(n-m)!}{(n+m)!}},
+\label{eq:atmos-sh-norm}
+\end{equation}
+chosen so the real surface harmonics $\{\bar P_{nm}\cos(m s),\ \bar
+P_{nm}\sin(m s)\}$ are orthonormal under $(1/4\pi)\int(\cdot)\,\mathrm
+d\Omega$ \cite{subirana2013gnss}.  Because \eqref{eq:atmos-sh-synth} is
+linear in the coefficients, the basis values \emph{are} the partial
+derivatives --- $\partial\vtec/\partial a_{nm}$ and
+$\partial\vtec/\partial b_{nm}$ are exactly what
+\texttt{SphericalHarmonicIonosphere::basis} returns, so no numerical
+differentiation enters the Jacobian.  One consequence is used repeatedly
+below: $\bar P_{00}\equiv 1$, so $a_{00}$ \emph{is} the global mean VTEC.
+
+\paragraph{Frame and geometry.}
+The expansion is carried in a sun-fixed frame, $s = \lambda_{\mathrm{IPP}} -
+\lambda_\odot$, with $\lambda_\odot = \alpha_\odot - \mathrm{GMST}$ the
+sub-solar geographic longitude (\texttt{meanSunLongitude}), so the field is
+quasi-static over a session instead of sweeping westward at the Earth's
+rotation rate; \texttt{estimation.global\_vtec\_sh.sun\_fixed} selects
+geographic longitude instead.  The pierce point and the thin-shell mapping
+$M(\elev)$ that carries $\vtec$ to $\stec$ come from \emph{the same}
+\texttt{computeIppGeometry} helper that
+\texttt{GlobalIonosphereMap::slantIonoDelay} calls, evaluated at
+\texttt{estimation.global\_vtec\_sh.layer\_height\_km} over base radius
+\texttt{earth\_radius\_km}.  Equations \eqref{eq:atmos-gim-obliquity},
+\eqref{eq:atmos-ipp-lat} and \eqref{eq:atmos-ipp-lon} are therefore the
+co-estimated model's geometry verbatim: the external map and the
+co-estimated field share one geometry implementation precisely so they
+cannot drift apart.
+
+\paragraph{The pin row.}
+The field observes nothing directly; it is tied to the estimated slant states
+by one pseudo-observation per line of sight
+(\texttt{Application::networkAppendShIonoRows\_}).  For every GPS or Galileo
+LOS above \texttt{ionosphere\_weighting.elevation\_cutoff\_deg} whose slant
+state lives in that station's local block, the row asserts that the slant
+state equals the field's prediction:
+\begin{empheq}[box=\fbox]{equation}
+\begin{aligned}
+g^\sat_\rx &\equiv I^\sat_\rx
+   \;-\; \kappa\,M(\elev)\sum_k \bar Y_k(\mathrm{IPP})\,c_k \;=\; 0,
+\qquad
+\kappa = \frac{40.3\times 10^{16}}{f_{\mathrm{L1}}^2},\\[2pt]
+\frac{\partial g^\sat_\rx}{\partial I^\sat_\rx} &= +1,
+\qquad
+\frac{\partial g^\sat_\rx}{\partial c_k}
+   = -\,\kappa\,M(\elev)\,\bar Y_k(\mathrm{IPP}).
+\end{aligned}
+\label{eq:atmos-sh-pin}
+\end{empheq}
+Here $c_k$ runs over the field coefficients, $\bar Y_k$ over the
+corresponding basis functions of \eqref{eq:atmos-sh-synth}, and $\kappa$ is
+the TECU-to-L1-metre conversion already introduced in
+\eqref{eq:atmos-gim-delay}.  The $+1$ lands in the station's private block
+and the $-\kappa M \bar Y_k$ terms in the \emph{shared} border; that second
+write is the whole difference between an ionosphere prior and a joint
+estimate.  The right-hand side is $-I^\sat_\rx$ at the current state, the
+shared coefficients entering the absolute solve at zero offset.
+
+The measurement noise on these rows is \emph{the same} common-mode-free
+per-constellation block as the GIM pseudo-observation,
+\eqref{eq:atmos-gim-R}, built from the same
+\texttt{ionosphere\_weighting.common\_mode\_sigma\_m} over a per-LOS
+representativeness sigma
+\begin{equation}
+\sigma_\sat = \max\bigl(\texttt{floor\_m},\;
+   \sigma_{\mathrm{rep}}\,M(\elev)\,\kappa\bigr),
+\qquad
+\sigma_{\mathrm{rep}} = \texttt{global\_vtec\_sh.representation\_sigma\_tecu},
+\label{eq:atmos-sh-sigma}
+\end{equation}
+after which the block is whitened by the Cholesky factor of $\Rmat$ into
+unit-information rows before it joins the normal equations.  Reusing
+\eqref{eq:atmos-gim-R} is a modelling decision, not an implementation
+convenience.  The rank-one $\sigma_c^2\,\bm 1\bm 1^{\Tr}$ block leaves the
+per-(receiver, constellation) iono datum free, so the receiver DCB rides in
+the common mode and the field constrains only the \emph{between-satellite}
+slant structure --- which is the only thing a global VTEC surface can be
+asked to know.  Its corollary is that $a_{00}$ is observable only weakly,
+through the spread of $M(\elev)$ across the network, and that is what the
+datum below has to handle.  GLONASS is excluded from the field entirely
+(\texttt{networkAppendShIonoRows\_} skips it): its FDMA per-slot
+inter-frequency bias does not cancel in the common-mode block and would leak
+into the global coefficients.
+
+\paragraph{The Kaula--Tikhonov prior as the estimability datum.}
+Because the coefficients are shared columns, a coefficient whose pierce-point
+support has rotated over an ocean or polar gap is near-null in the reduced
+normal equations and would trip the all-or-nothing rank gate
+(\texttt{NetworkSbasis::assertNullSpaceRank}).  A degree-dependent prior is
+therefore folded on \emph{every} coefficient before the gate runs
+(\texttt{networkInjectShVtecPrior}):
+\begin{empheq}[box=\fbox]{equation}
+\begin{aligned}
+\sigma_n &= \frac{\texttt{kaula\_scale\_tecu}}{n}\quad(n\ge 1),
+\qquad
+\sigma_0 = \texttt{mean\_vtec\_prior\_sigma\_tecu},\\[2pt]
+\bar c_k &=
+\begin{cases}
+\texttt{mean\_vtec\_prior\_tecu}, & c_k = a_{00},\\
+0, & \text{otherwise,}
+\end{cases}
+\end{aligned}
+\label{eq:atmos-sh-kaula}
+\end{empheq}
+combined in information space with an optional random-walk anchor toward the
+previous epoch's estimate, inflated by a per-degree spectral density $q_n =
+\texttt{q\_per\_degree}/n^2$ for $n \ge 1$.  The two roles the prior plays
+must be kept apart.  The Kaula term is \emph{estimability}: it bounds every
+coefficient positive-definitely, so the declared null-space dimension stays
+equal to the number of constellations regardless of coverage, and it pulls
+unobserved coefficients back toward climatology each epoch instead of letting
+them random-walk away.  The $a_{00}$ term is a deliberately \emph{loose}
+climatology anchor, and its looseness is the point: $a_{00}$ trades against
+the absolute satellite-DCB level, whose only rigorous datum is the
+per-(constellation, signal) sum-to-zero constraint of
+\dcref{sec:net}{the network mode chapter}.  Clamping $a_{00}$ to an external
+mean VTEC would re-import the very GIM dependency the co-estimation exists to
+remove, and would bias every emitted satellite code bias by the difference.
+
+\paragraph{Open extensions --- default OFF, not yet field-validated.}
+Two extensions of this model are built but off by default and still under
+validation; neither is the shipped behaviour.
+
+\emph{(i) A second thin shell}
+(\texttt{estimation.global\_vtec\_sh.layer2\_max\_degree}, default $0$ =
+single layer) registers a second coefficient set at its own height, and the
+pin row \eqref{eq:atmos-sh-pin} then sums the shells, each evaluated at
+\emph{its own} pierce geometry, $\sum_l \kappa\,M_l(\elev)\,\bar
+Y_k(\mathrm{IPP}_l)\,c_{k,l}$ (\texttt{ShLayer}, assembled by
+\texttt{shLayers}, which every consumer of the field loops so a shell can
+never be evaluated at another shell's geometry).  The second shell's $a_{00}$
+anchor is deliberately \emph{tight} --- the mirror image of the argument
+above.  The inter-layer split of the mean VTEC is quasi-null from ground-only
+geometry, since only the difference of the two shells' mapping profiles
+observes it, so the split must be held by prior information while the
+\emph{total} mean stays data-determined through the first shell's loose
+anchor.
+
+\emph{(ii) A per-(station, satellite) representativeness deviation}
+(\texttt{estimation.global\_vtec\_sh.rep\_error\_tau\_s}, default $0$ = off)
+replaces the pin-to-zero of \eqref{eq:atmos-sh-pin} with a pin to a tracked
+first-order Gauss--Markov deviation $d$, carried in vertical TECU so its
+level and steady state are elevation-stationary.  Writing $d^-, P^-$ for the
+aged prior, $\hat u, \hat V$ for the solved posterior mean and variance of
+the pin functional, and $f^2$ for the pin-row floor variance, the exact
+scalar posterior is
+\begin{equation}
+\hat d = d^- + \frac{P^-}{a}\bigl(\hat u - d^-\bigr),
+\qquad
+P^{+} = P^-\,\frac{U + f^2}{U + a},
+\qquad
+a = P^- + f^2,
+\quad
+U = \frac{\hat V a}{a - \hat V},
+\label{eq:atmos-sh-dev}
+\end{equation}
+with $U$ the data-only information recovered from $\hat V$
+(\texttt{shDevExactUpdate}).  Two anti-ratchet treatments sit on top of it,
+also default OFF.  \texttt{rep\_error\_demean} (\texttt{shDevDemean}) removes
+the information-weighted global and per-station means of the carried priors
+once per epoch, because a deviation component that is common in vertical TECU
+has row signature $\kappa\,M(\elev)$ --- \emph{identical} to the $a_{00}$
+column's --- so the pair is exactly quasi-null and the
+harvest--age--re-assert cycle ratchets it; the de-mean enforces the state's
+own contract, that it carries per-LOS structure only.
+\texttt{rep\_error\_d5\_keep} (\texttt{shDevD5Retap}) splits the slip
+response by provenance: a raw-detector-confirmed slip still \emph{erases} the
+deviation, keeping faith with the rule that a stiff time-linked carry must
+have a wired slip response (\dcref{sec:slip}{the cycle-slip chapter}), while
+an innovation-gate-only re-tap keeps the level and merely re-taps the
+variance to the Gauss--Markov steady state.  The warm-LOS counts that arm the
+de-mean are constants in the seam, not configuration; the loader warns that
+both treatments are inert unless \texttt{rep\_error\_tau\_s} is positive, and
+that arming the erase-policy split without the de-mean re-opens the ratchet.
+
 \subsubsection{Klobuchar broadcast seed}
 
 For a single-frequency a-priori only --- the cold-start seed of the slant
 state, never a dual-frequency correction --- the broadcast Klobuchar
 half-cosine model is available \cite{klobuchar1987ionospheric}
-(\texttt{src/core/atmosphere/Ionosphere.cpp} lines~151--195).  With
+(\texttt{Ionosphere::computeKlobucharDelay}).  With
 elevation and azimuth in semicircles, the earth-centred angle, geomagnetic
 IPP latitude, local time and obliquity are
 \begin{align}
@@ -414,7 +637,7 @@ geomagnetic latitude $\phi_m$ give the amplitude and period,
 and the zenith delay is the truncated half-cosine, mapped to slant by $F$
 and scaled to the requested frequency by the $f_{\mathrm{L1}}^2/f^2$
 dispersion ratio of \eqref{eq:atmos-iono-scaling}
-(\texttt{Ionosphere.cpp} lines~183--194):
+(the tail of \texttt{Ionosphere::computeKlobucharDelay}):
 \begin{equation}
 I^{\mathrm{Klob}} = c\,F\Bigl(5\!\times\!10^{-9}
    + \mathrm{AMP}\,\bigl[1 - \tfrac{X^2}{2} + \tfrac{X^4}{24}\bigr]\Bigr)
@@ -433,7 +656,7 @@ seconds to metres.
 The $1/f^2$ scaling captures the first-order term; the residual second-
 and third-order delays scale as $1/f^3$ and $1/f^4$ and are applied as
 deterministic corrections to the modelled range
-(\texttt{src/core/atmosphere/HigherOrderIonosphere.cpp} lines~45--103).
+(\texttt{HigherOrderIonosphere::slantHigherOrderComponents}).
 The second order is the magnetic-field--weighted delay
 \begin{empheq}[box=\fbox]{equation}
 I_2^{\,\code} = 7527\,c\;\stec\,\frac{\Bvec\cdot\khat}{f^3},
@@ -445,12 +668,12 @@ where $\stec$ is in $\mathrm{el\,m^{-2}}$, $\Bvec$ is the geomagnetic flux
 density in tesla at the IPP, $\khat$ the receiver$\to$satellite unit
 vector, and $c$ the speed of light (the constant $7527\,c =
 e\,A/(2\pi m_e) \approx 2.2564\times10^{12}$ folds the electron charge,
-the $40.3$-family refractivity constant $A$, and the electron mass;
-\texttt{HigherOrderIonosphere.cpp} lines~10--24, 88).  The phase carries
-exactly $-\tfrac12$ of the code value (\texttt{HigherOrderIonosphere.cpp}
-line~98).  The third order depends on the path integral of $N_e^2$, which a
-shape factor $\eta$ relates to the F2-peak density and STEC
-(\texttt{HigherOrderIonosphere.cpp} lines~29--42, 87--89):
+the $40.3$-family refractivity constant $A$, and the electron mass; the
+constants and the $-\tfrac12$ phase factor are both in
+\texttt{HigherOrderIonosphere::slantHigherOrderComponents}).  The third
+order depends on the path integral of $N_e^2$, which a shape factor $\eta$
+relates to the F2-peak density and STEC (also
+\texttt{HigherOrderIonosphere::slantHigherOrderComponents}):
 \begin{empheq}[box=\fbox]{equation}
 I_3^{\,\code} = 2437\,\eta\,N_{\max}\,\frac{\stec}{f^4},
 \qquad
@@ -472,7 +695,7 @@ satellite-specific.
 \subsubsection{The geomagnetic dipole field}
 
 The field at the IPP is a centred, tilted magnetic dipole evaluated in ECEF
-(\texttt{src/core/atmosphere/MagneticField.cpp} lines~33--49):
+(\texttt{MagneticField::fieldAtEcef}):
 \begin{empheq}[box=\fbox]{equation}
 \Bvec(\bm r) = B_0\left(\frac{R_E}{r}\right)^{\!3}
                \bigl(\mhat - 3(\mhat\cdot\rhat)\,\rhat\bigr),
@@ -482,7 +705,7 @@ with $r = \lVert\bm r\rVert$, $\rhat = \bm r/r$, $B_0 = 30\times10^{-6}$~T
 the equatorial surface field, $R_E = 6371.2$~km the IGRF reference radius,
 and $\mhat$ the unit axis pointing to the geographic location of the
 geomagnetic north pole, IGRF-13 epoch 2020.0 at
-$(80.65^\circ, -72.68^\circ)$ (\texttt{MagneticField.cpp} lines~14--31).
+$(80.65^\circ, -72.68^\circ)$ (\texttt{MagneticField::dipoleAxisEcef}).
 With $\mhat$ directed at the Arctic geomagnetic pole (which is the dipole's
 \emph{south} pole), the sign convention in \eqref{eq:atmos-dipole} makes
 $\Bvec$ point horizontally toward magnetic north at the magnetic equator,
@@ -491,7 +714,7 @@ $\Bvec\cdot\khat$ and hence of $I_2$ in \eqref{eq:atmos-i2}.  The IPP ECEF
 position itself is reconstructed as a spherical-to-Cartesian map of the
 geocentric IPP latitude/longitude at the IONEX base-plus-shell radius,
 since IONEX is a thin-shell model
-(\texttt{HigherOrderIonosphere.cpp} lines~61--69).
+(\texttt{HigherOrderIonosphere::slantHigherOrderComponents}).
 
 \medskip
 Together with the deterministic $\zhd$ removal, the estimated

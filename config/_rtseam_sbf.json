@@ -1,0 +1,44 @@
+// RT seam-decomposition byte-identity gate — ARM A: SBF file replay, PPP.
+//
+// Baseline arm for the RealTimeEngine::processEpoch seam cuts.  Deterministic:
+// a captured SBF file drives feedSbfFrame -> processEpoch with no socket and no
+// wall-clock-gated control flow (see the DETERMINISM PINS below).
+//
+// Seams this arm ARMS (invariant #4 — a seam nobody executes certifies nothing):
+//   admitBacklogAndSync (warn path)  gateMaxDuration      stepTimeAndDetectGap
+//   seedClockFromWls (hasClock)      detectAndRepairSlips (MW path)
+//   runMeasurementUpdate             resolveAmbiguities   writeEpochTraces
+// Seams it leaves INERT (covered by arms B/C/D): regaugeBssd, the TurboEdit /
+// soft-LLI two thirds of the slip seam, every SSR-break seam, the network iono
+// prior, the ZWD constraint, traceSsrConsumer.
+{
+  "extends": "sbf_replay.json",
+
+  "processing": {
+    // DETERMINISM PIN 1: skip-to-latest reads TimeUtils::nowContinuousGpsSeconds().
+    // On a historical replay every epoch is hours "late", so arming this drops
+    // the whole file and the arm compares two empty runs.
+    "enable_obs_skip_to_latest": false,
+    // DETERMINISM PIN 2: the obs<->SSR hold measures held_for against wall clock.
+    // Arming it makes the hold/release boundary run-to-run variable.
+    "enable_obs_ssr_sync": false,
+    // Arms gateMaxDuration (the latch + the early return).  600 s of data time.
+    "max_duration_s": 600.0,
+    // Arms the backlog-warn branch of admitBacklogAndSync every epoch (the
+    // replay is years behind wall clock).  Log-only; the emitted lag_s and
+    // rx_to_proc_s are masked by the comparator.
+    "rt_backlog_warn_s": 30.0
+  },
+
+  "logging": {
+    "enable_main_log": true,
+    "enable_state_trace": true,
+    "enable_ambiguity_trace": true,
+    "enable_ionosphere_trace": true,
+    "enable_sat_bias_trace": true,
+    "enable_code_bias_trace": true,
+    "enable_sat_status_trace": true,
+    "enable_dop_trace": true,
+    "enable_residual_trace": true
+  }
+}

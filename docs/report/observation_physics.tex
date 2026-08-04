@@ -192,7 +192,9 @@ geometric umbra, not a photometric penumbra model.
 
 The range measurement is realised between the satellite and receiver
 \emph{antenna phase centres}, but the estimated states refer to the
-satellite centre of mass and the receiver antenna reference point (ARP).
+satellite centre of mass and the receiver antenna reference point (ARP):
+the ANTEX receiver PCO/PCV below are ARP-referenced, so the position
+state must be too.
 The antenna correction $A^\sat_{\rx,\sigl}$ reconciles the two, summing
 four geometric terms plus the wind-up:
 \begin{empheq}[box=\fbox]{equation}
@@ -213,6 +215,23 @@ $\los = (\rxpos_\rx-\satpos)/\lVert\rxpos_\rx-\satpos\rVert$
 $\los^\sat_{\hat{\rx}}$ of \dcref{sec:obs-geometry}{the geometry section}
 in \dcref{eq:los}{its line-of-sight definition}).  The sign conventions are derived once and reused for
 each term below.
+
+\paragraph{Which coordinate is the ARP.}
+The ARP frame asserted above holds for every position the engine derives
+from a RINEX \emph{header}: the marker coordinate is reduced to the ARP
+through the header eccentricity before it seeds the state
+(\texttt{Coordinates::markerToArp}, packaged as
+\texttt{RinexParser::getArpPositionXyz}; \dcref{sec:frame-arp}{the
+marker/ARP section of the Coordinate Frames document}).  A coordinate
+supplied directly in the configuration is \emph{not} reduced --- it is
+used at face value, on the policy that the user owns its reference
+point.  That exception is load-bearing in the network producer, whose
+station coordinates come from the configuration
+(\texttt{StationConfig::position\_ecef}) and are held fixed, their
+position columns dropped from the normal equations: a
+monument-referenced coordinate there is not absorbed by a position state
+but survives into the residuals, and so into the estimated clocks,
+biases, and ionosphere.
 
 \paragraph{Satellite PCO (subtracted).}
 The satellite phase-centre offset $\pco^\sat_{\mathrm{body}}$ is published

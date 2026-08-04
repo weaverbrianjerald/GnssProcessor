@@ -9,9 +9,8 @@
 %  phase bias is estimable only across stations.
 %
 %  Standalone-compilable subfile (shares gnssreport.sty via the
-%  subfiles package, exactly like network.tex).  Wire into the
-%  combined volume with \subfile{network_example} after
-%  \subfile{network} in main.tex when desired.
+%  subfiles package, exactly like network.tex).  Wired into the
+%  combined volume after \subfile{network} in main.tex.
 % ============================================================
 \documentclass[main.tex]{subfiles}
 \begin{document}
@@ -258,8 +257,9 @@ This four-satellite, two-receiver instance is, up to the geometry and
 the second frequency it suppresses, exactly the synthetic network the
 estimator core is validated on: the
 \texttt{RecoversSyntheticTruthUpToSTransform} test
-(\texttt{tests/test\_network\_estimator.cpp}) builds these very rows,
-pins the reference-satellite clock datum $g^1 \equiv 0$
+(\texttt{tests/test\_network\_estimator.cpp}) builds rows of exactly
+this shape --- at four receivers and five satellites, from a random
+truth --- pins the reference-satellite clock datum $g^1 \equiv 0$
 (S-transform-equivalent to the $a_A \equiv 0$ used above) through
 \texttt{NetworkEstimator::solve}, and asserts
 recovery of the satellite-side parameters \emph{up to the declared

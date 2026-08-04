@@ -250,9 +250,15 @@ void networkDdFrac(
         };
         for (auto& d : dds)
             for (int p = 0; p < 4; ++p) d.rq[p] = reqOf(d.amb[p]);
+        // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  OFF (default) is
+        // the pre-card expression, verbatim.  ON, this σ is the σ of the estimator that
+        // actually ran — which is what makes `med|frac|` conditioned on it a TEST rather
+        // than a restatement (a uniform fractional part is the EXPECTED reading whenever
+        // σ_DD ≳ 0.3 cyc, so the campaign's six-hour null needs a σ it can trust).
+        const bool dd_carry_aware = ctx.knobs.carry_aware_covariance;
         Eigen::MatrixXd cov;
         if (!reqs.empty()) {
-            try { cov = est.jointConditionalCovariance(reqs, plan.shared_datum); }
+            try { cov = est.jointConditionalCovariance(reqs, plan.shared_datum, dd_carry_aware); }
             catch (...) { cov = Eigen::MatrixXd(); }
         }
         const bool cov_ok =
@@ -276,7 +282,12 @@ void networkDdFrac(
                 << fmt::format("{:.6f}", d.lambda) << ','
                 << fmt::format("{:.4f}", d.dd_cyc) << ','
                 << fmt::format("{:.4f}", d.frac_cyc) << ','
-                << fmt::format("{:.4f}", dd_sigma_cyc) << '\n';
+                << fmt::format("{:.4f}", dd_sigma_cyc) << ','
+                // INC-0: the column says WHICH covariance produced the σ next to it.  The
+                // parent card's §11 is the lesson — a number published without its state
+                // is an instrument that lies, and this exact σ was read as meaningful for
+                // a whole campaign while it could not see 78 % of the carried state.
+                << (dd_carry_aware ? 1 : 0) << '\n';
         }
         const auto t_dd_emit = std::chrono::steady_clock::now();
         auto ms = [](const auto& a, const auto& b) {

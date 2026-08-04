@@ -12,7 +12,7 @@ optional prior-anchored iterated (IEKF) relinearisation pass, robust
 post-fit residual gating, and a backward Rauch--Tung--Striebel (RTS)
 smoother for post-processing modes.  The state vector $\stateV$ is the
 uncombined PPP / PPP-RTK parameterisation of
-\dcref{sec:diff}{the differencing-transformations section of the
+\dcref{sec:state}{the state-vector-layout section of the
 Foundations document}: receiver position (and optionally velocity),
 receiver clock and per-system time offsets, zenith wet troposphere and
 gradients, per-satellite slant ionosphere, receiver/satellite code and
@@ -104,9 +104,18 @@ where $\spd{i}$ is the continuous variance rate
 ($\mathrm{m}^2/\mathrm{s}$) read from \texttt{filter.process\_noise.*}.
 Representative entries are zenith wet troposphere
 (\texttt{troposphere\_q}), the receiver code bias
-(\texttt{code\_bias\_q}), satellite phase bias (\texttt{sat\_bias\_q}),
+(\texttt{code\_bias\_q}), the satellite \emph{code} bias
+(\texttt{sat\_bias\_q}, applied to
+\texttt{StateManager::sat\_bias\_indices\_}), the satellite \emph{phase}
+bias (\texttt{sat\_phase\_bias\_q}, a separate density on the separate
+\texttt{sat\_phase\_bias\_indices\_} map),
 phase clock (\texttt{phase\_clock\_q}), and the float ambiguity
-(\texttt{ambiguity\_q}).  The ambiguity density defaults to a numerical
+(\texttt{ambiguity\_q}).  Both satellite-bias blocks --- and the
+satellite-clock block beside them --- suppress $\Qmat$ entirely for a
+frozen-pivot satellite, for the same reason as the freeze discussion above:
+the frozen state is held at (value, variance) $=(0,0)$ as the datum, and any
+process noise would walk it off that datum.  The ambiguity density defaults
+to a numerical
 safety floor ($10^{-12}$) rather than a physical value, and per-key
 overrides are supported for arc-specific reseeding.  The per-satellite
 slant ionosphere uses a random walk whose zenith density is mapped to
@@ -156,6 +165,24 @@ position density \texttt{position\_q} is unused.  Baseline
 per-ambiguity random-walk term, and an optional differential-ZWD entry
 $\Qmat_{ii} = \sigma^2\dt$ governed by
 \texttt{baseline.differential\_tropo\_process\_noise\_m\_per\_sqrt\_s}.
+
+\paragraph{Scope: the recursive estimator only.}
+These densities govern the \emph{recursive} estimator.  The network
+producer runs no \texttt{KalmanFilter} at all --- \texttt{getTransitionMatrix}
+and \texttt{getProcessNoiseMatrix} are reached only from
+\texttt{KalmanFilter::predict} / \texttt{predictImu} / \texttt{predictAided}
+and from the smoother's \texttt{Application::capturePriorSnapshot}.  The
+producer instead solves per-epoch normal equations for corrections to each
+station's linearisation point, and imposes its cross-epoch stiffness with
+explicit information-form carry priors of effective variance
+$\mathrm{var}_{\mathrm{eff}} = \mathrm{var} + q\,\dt$ rather than through
+$\Qmat(\dt)$ (\dcref{sec:net}{the network-mode document}).  The
+satellite-side densities \texttt{sat\_clock\_q},
+\texttt{sat\_phase\_bias\_q} and \texttt{sat\_code\_bias\_q} are read there
+as exactly those carry rates, and are additionally authorable through the
+always-live network-scoped \texttt{network.process\_noise} class table,
+whose per-class fallbacks equal the legacy \texttt{filter.process\_noise.*}
+defaults so an unmodified config resolves identically either way.
 
 \paragraph{Aided time update.}
 When inertial aiding is active, \texttt{KalmanFilter::predictImu}

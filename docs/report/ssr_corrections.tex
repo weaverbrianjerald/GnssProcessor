@@ -132,6 +132,33 @@ identically on code and phase.  The high-rate clock is additive
 (\texttt{corrections/GnssCorrections.cpp}); the $C_2$ field is a
 $27$-bit two's-complement quantity at $2\times10^{-8}$\,m/s$^2$.
 
+\paragraph{Split-cadence fast clocks.}
+A third, structurally different way for the stored clock to move is a
+\emph{fast tick} (\texttt{SsrCorrectionStore::pushFastClock}), which the
+network producer can run between full solves on decimated-out epochs.  A
+fast tick re-bases exactly three fields of an \emph{existing} clock record
+--- $C_0$ and the two epoch stamps --- so \eqref{eq:ssr-clock-poly} is
+thereafter evaluated at the fast $\delta t$ while retaining the slow era's
+$C_1$ and $C_2$:
+\begin{equation}
+\Delta C^\sat(t) = C_0^{\mathrm{fast}}
+   + C_1\,(t - t_{\mathrm{fast}}) + C_2\,(t - t_{\mathrm{fast}})^2 .
+\label{eq:ssr-clock-fast}
+\end{equation}
+Two omissions are what make this safe for a consumer, and both are contract,
+not accident.  The discontinuity counter is \emph{not} advanced: a fast row
+is a continuation of the same clock, not a new arc, so it must not trip the
+ambiguity reset of the discontinuity paragraph below at the fast cadence.
+And the shared per-satellite SSR header is \emph{not} restamped, so the
+code-bias, phase-bias, URA and slant-iono channels do not inherit the fast
+clock's age off one refresh.  The method is also refresh-only --- it returns
+false rather than creating a record, so a consumer can never be handed a
+satellite that exists on the fast channel alone with no bias set to go with
+it.  It is wired both in-process (\texttt{filter/NetworkFastClock}) and on
+replay of an on-disk product (\texttt{products/NetworkProductIO}), and is
+default OFF (\texttt{network.fast\_clock.enable}, which the loader also
+disarms when the run's posture leaves no epoch for a tick to ride).
+
 \subsection{IOD gate at correction-set boundaries}\label{sec:ssr-iod}
 
 Orbit and clock corrections are deltas against a \emph{specific}
@@ -374,11 +401,11 @@ The atmosphere loop is, however, closed \emph{off} the RTCM wire, through
 the same \texttt{SsrCorrectionStore} the clock and bias overlays use.  The
 store carries a dedicated undifferenced slant-iono channel
 (\texttt{SsrSlantIono}, via \texttt{SsrCorrectionStore::pushSlantIono} /
-\texttt{getSlantIono}): the network producer
-(\texttt{app/ApplicationNetwork.cpp}) evaluates its co-estimated SH-VTEC
-field at the consumer's pierce points and pushes a per-LOS slant delay and
-$1\sigma$, and the consumer
-(\texttt{realtime/RealTimeEngine.cpp}, in \texttt{processEpoch}) folds
+\texttt{getSlantIono}): the network producer's emit seam
+(\texttt{filter/NetworkEmitStore}) evaluates its co-estimated SH-VTEC field
+(\dcref{sec:atmos-shvtec}{the co-estimated VTEC field}) at the consumer's
+pierce points and pushes a per-LOS slant delay and $1\sigma$, and the
+consumer (\texttt{RealTimeEngine::processEpoch}) folds
 each fresh, same-epoch record into an ionosphere-weighted (BLUP)
 pseudo-observation on the matching slant-iono state
 (\texttt{KalmanFilter::applyPseudoObservation}) --- exactly the
@@ -388,6 +415,26 @@ rows are built and the update is byte-identical) and admits a value only
 when the producer refreshed it this epoch
 (\texttt{max\_age}~$=\tfrac12$ the epoch spacing), so a satellite the
 producer did not re-supply floats rather than inheriting a stale delay.
+
+Three properties of the channel are worth stating because they are
+inherited from the field, not chosen here.  The supply is GPS and Galileo
+only --- GLONASS is excluded from the SH field itself, so a consumer's
+GLONASS slant states simply float.  When a second shell is armed the pushed
+value is the \emph{sum} over shells, each evaluated at its own pierce
+geometry, so the consumer is layer-agnostic by construction.  And the
+per-LOS $\sigma$ is the field's own representativeness floor
+(\dcref{eq:atmos-sh-sigma}{the SH representativeness sigma}), optionally
+root-sum-squared with the SH coefficients' \emph{formal} $\sigma$ propagated
+through the same weighted basis and additionally gated on fresh OSB coverage
+for that satellite, under \texttt{network.iono\_supply\_formal\_sigma}
+(default OFF, byte-identical).  On the consumer side the rows are not
+independent: they are folded as a per-constellation common-mode-free block
+with exactly the noise structure of \dcref{eq:atmos-gim-R}{the GIM
+iono-weighting covariance}, and frozen BSSD pivots (and any zero-variance
+slant state) are excluded from it for exactly the reason given there --- the
+common-mode block exists to absorb the datum offset of the \emph{remaining}
+rows, so the datum satellite must not appear as a measurement.
+
 What remains open is a \emph{standardised} on-wire STEC product: the
 in-process channel is a closed-loop store hand-off, not an
 IGS-SSR/RTCM message either side can yet decode from a third-party stream.
@@ -432,6 +479,19 @@ one user-facing SSR-related estimator config is the warm-up gate
 solvable floor of satellites is broadcast-plus-SSR centimetre-grade, so
 the filter seeds code and phase together rather than cold-starting a
 contaminated partition on metre-grade broadcast clocks.
+
+Alongside the correction records the store also carries a per-epoch
+producer \emph{heartbeat} (\texttt{NetworkProducerStatus}), which is what
+lets a consumer distinguish ``the producer withheld this epoch'' from ``the
+producer died'' --- a withheld epoch still writes its status line even
+though it publishes no corrections.  The wire token set is deliberately
+forward-compatible: an unrecognised token from a newer producer maps to
+\texttt{State::Unknown} and is surfaced, never fatal
+(\texttt{SsrCorrectionStore::parseState} / \texttt{stateName}).  One of the
+tokens now reports a withhold driven by the health of the producer's own
+SH-VTEC field; the \emph{policy} behind that withhold --- what engages it,
+what it suppresses, and what it does not --- belongs to
+\dcref{sec:net}{the Network mode document} and is not restated here.
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

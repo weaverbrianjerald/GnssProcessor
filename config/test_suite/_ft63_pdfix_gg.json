@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "RUN QUEUE P4 (docs/RUNQUEUE_pdfix_reask.md) - GPS+GALILEO on the working fold, 3 h.",
+    "",
+    "Base is _ft63_gg12h.json (a STANDALONE GPS+Gal config), trimmed to 3 h + pd_safe.  It is",
+    "NOT the churn lineage, so the runs/pdfix_on comparison is CROSS-CONFIG: read it for",
+    "DIRECTION and for the GPS+Gal-specific quantities, never as a same-build A/B number.",
+    "(It does carry the same Card-4 posture: carry_invariant, q_z 1e-4, innov_gate +",
+    "calibrate window 15 - checked 2026-08-03.)",
+    "",
+    "WHAT IT TESTS: the Aug-2 S-basis completion (project_network_ssystem_dia_assessment)",
+    "under a carry that finally works, with double the DD pool and double the iono sampling.",
+    "",
+    "WATCH - this arm has a real structural risk the GPS-only arms do not: the joint pair",
+    "block K will EXCEED 686.  The whole defect was born of that block's near-singularity, so",
+    "track the pivot trajectory (ddfold_min_pivot_rel per epoch), ddfold_degen_* (must stay 0),",
+    "ddfold_repairs (a non-zero here would be the FIRST field exercise of INC-1c), and the",
+    "fold cost.  Also: datum/SBC health and PER-CONSTELLATION total_IF (their gauges differ -",
+    "chain_stability --sys G,E grades them separately and must never share a median).",
+    "",
+    "P1-WINNER POSTURE ADDED 2026-08-03 eve: carry_invariant_innov_corroborate = true.  The",
+    "queue's own rule is 'winner becomes the base posture for P2-P6', and P2 / P3 / P3b / P6",
+    "all run it; without it this arm would differ from every other arm in TWO things at once",
+    "(constellation AND D5 policy) and no GPS+Gal difference would be attributable.  The base",
+    "_ft63_gg12h.json carries innov_gate + calibrate (window 15) but not corroborate, so this",
+    "is the only delta needed to line the D5 posture up with the rest of the matrix.",
+    "",
+    "READ THE sigma0 STATE LINE (SPEC_pd_safe_dd_fold.md section 11).  A run-end 'sigma0 =",
+    "1.00x' WITHOUT a state histogram is a pre-fix exe; with one, check the histogram says",
+    "'active', not 'floored'.  A floored GPS+Gal run would mean the doubled DD pool is not",
+    "taking data - exactly the failure the giant-K risk above predicts."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_gg12h.json"
+  ],
+  "processing": {
+    "max_duration_s": 10800.0
+  },
+  "network": {
+    "max_duration_s": 10800.0,
+    "carry_invariant_pd_safe": true,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_gg/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_gg/state_snapshot.bin",
+    "carry_invariant_innov_corroborate": true
+  }
+}

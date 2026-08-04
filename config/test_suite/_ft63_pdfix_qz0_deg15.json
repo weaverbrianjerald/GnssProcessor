@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "ADDITIVE IONO LADDER, arm A1 (2026-08-03) - SH truncation degree 8 -> 15.",
+    "",
+    "WHY THE qz0 SUBSTRATE.  Queue P3's SUBTRACTIVE iono ladder (layer2 off / mech-B off /",
+    "sigma_rep 5 -> 50) was a COMPLETE NULL on the qz=1e-4 posture: every arm moved mature",
+    "steps < 1 % and total_IF within noise.  P2 explains why: at qz=1e-4 the carried-DD walk",
+    "IS q_z (mature steps 0.953/0.789/0.485 cyc/ep, structure function still growing to k=32),",
+    "so it swamps any iono-representation term.  On pdfix_qz0 the walk collapses to",
+    "0.168/0.096/0.030 cyc/ep and the SF FLATTENS (k=32: 21.15 -> 1.51).  What remains at that",
+    "floor is the representation residual - which is the only substrate on which an ADDITIVE",
+    "iono change is visible at all.",
+    "",
+    "qz0 IS A DIAGNOSTIC SUBSTRATE, NOT A POSTURE.  P2 graded it a FAIL on the card's own",
+    "stated rule: total_IF worst_med +16.4 %, worst_max +24.3 %, clk_std 4.86 -> 5.29 (+8.8 %)",
+    "= a clock-QC degradation.  The mechanism is that q_z decides whether the iono",
+    "mismodelling lands in the carried DDs (walk) or in the sat clocks / code biases",
+    "(total_IF).  So a WIN HERE IS NOT A POSTURE DECISION: any arm that wins on qz0 must be",
+    "re-run on the qz=1e-4 posture (control runs/pdfix_v3) before it can be promoted.",
+    "",
+    "THE ONE VARIABLE: estimation.global_vtec_sh.max_degree 8 -> 15.  Layer 2 stays at",
+    "degree 4, mech-B v3k stays on, representation_sigma_tecu stays 5.0.",
+    "",
+    "OUTSIDE THE LEDGER'S ENVELOPE, DELIBERATELY.  The POSTURE ledger's deg-15 evidence line",
+    "(GnssConfigNetworkPosture.cpp) is conditioned on n_sta >= 150 AND an iono cutoff >= 25 deg",
+    "(sat code-OSB drift 0.66 vs 2.31 m, epoch step 1.57 vs 4.43 cm).  This lineage meets the",
+    "cutoff (ionosphere_weighting.elevation_cutoff_deg = 25.0) but NOT the station count: 63",
+    "stations, GPS-only.  Degree 15 is 256 layer-1 coefficients against roughly 500-600 LOS per",
+    "epoch - about 2 LOS per coefficient, thin, and regularized only by the Kaula prior",
+    "(kaula_scale_tecu 10.0, q_per_degree 0.01).  That thinness is the POINT of the arm: the",
+    "question is whether a finer surface earns its parameters at THIS density or aliases.",
+    "",
+    "GRADE (all datum-invariant, standing invariant #5; control = runs/pdfix_qz0):",
+    "  1. scripts/grade_dd_spillway.py - mature steps by age and the STRUCTURE FUNCTION.  The",
+    "     qz0 floor is 0.168/0.096/0.030 cyc/ep with SF k=32 = 1.51.  A real iono win pushes",
+    "     the floor DOWN; anything else is noise at this scale.",
+    "  2. CROSS-BAND RATIO - the discriminator.  Every arm of P2/P3 including qz0 sits at",
+    "     1.263-1.265 against the common-cycle signature 1.2833, i.e. the residual's DIRECTION",
+    "     never changed, only its magnitude.  If degree 15 is genuinely absorbing iono, this",
+    "     ratio must MOVE AWAY from 1.2833.  If it does not, the extra coefficients are not",
+    "     eating iono no matter what the step numbers do.",
+    "  3. ALIASING WATCH (the documented failure mode): the SH a00 band, the sh_health gate",
+    "     engagements/withholds, and the iono-deweight engage count.  A finer surface with too",
+    "     few LOS pushes power into low-degree coefficients and the a00 band is where that",
+    "     shows first.",
+    "  4. scripts/chain_stability.py total_IF hr2 + clk_std - the no-harm check, read against",
+    "     the qz0 control (NOT against pdfix_v3: qz0 already carries the +16.4 % / clk_std 5.29",
+    "     degradation, so the question here is whether degree 15 makes it better or worse).",
+    "  5. scripts/parse_carry_psd.py - the PD gate still has to pass; degree 15 changes the",
+    "     conditioning of the shared block the DD fold rides on.",
+    "  6. Perf: (N+1)^2 coefficients means 81 -> 256, so the shared system grows.  Note the",
+    "     cost; it is not a gate at 63 sta."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_qz0.json"
+  ],
+  "estimation": {
+    "global_vtec_sh": {
+      "max_degree": 15
+    }
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_qz0_deg15/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_qz0_deg15/state_snapshot.bin"
+  }
+}

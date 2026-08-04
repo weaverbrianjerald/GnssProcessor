@@ -59,8 +59,10 @@ $B^{(k(\sat))}_{\rx,\sigl} - B^{(k(\piv{g}))}_{\rx,\sigl}$ survives the
 single difference.  Accordingly \texttt{BssdTransform} zeroes the
 receiver-DCB columns after differencing \emph{except} the per-slot
 GLONASS IFB states (guarded by \texttt{StateKeys::isGlonassPerSlotIfbKey}),
-and \texttt{PivotManager} bars GLONASS from pivot election, for the same
-reason.  GLONASS BSSD is default-OFF
+and \texttt{PivotManager::buildEpochMaps} drops GLONASS from the BSSD
+candidate maps altogether --- not merely from pivot election --- so with
+the flag off the constellation contributes no single-differenced row at
+all.  GLONASS BSSD is default-OFF
 (\texttt{estimation.between\_satellite\_sd.enable\_glonass}); when
 enabled, \Cref{eq:bssd-code} acquires the surviving inter-slot IFB
 difference as an additional estimated column.

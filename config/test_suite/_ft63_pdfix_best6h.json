@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "RUN QUEUE P6 (docs/RUNQUEUE_pdfix_reask.md) - THE PAYOFF LEG, 6 h.",
+    "",
+    "WHAT 'BEST' RESOLVED TO, AND WHY IT IS JUST v3 EXTENDED.  The queue defines P6 as 'P1",
+    "winner + best of P2/P3'.  Both of those axes came back empty, so the honest composition",
+    "is the P1 winner alone at double the duration:",
+    "  - P1 winner = _ft63_pdfix_v3.json (carry_invariant_innov_corroborate).  Chord",
+    "    informational lifetime 12.0 -> 55.3 ep, flags 18559 -> 307 of which 209 (68 %) carry",
+    "    raw_stepped=1, mature steps 0.953/0.789/0.485, total_IF and clock QC neutral-to-better.",
+    "  - P2 contributes NOTHING: qz0 flattens the DD walk (0.168/0.096/0.030, SF k=32 1.51) but",
+    "    FAILS the card's stated clock-QC rule (clk_std 4.86 -> 5.29, total_IF worst_med",
+    "    +16.4 %).  q_z=1e-4 stands, on a NEW mechanism (q_z decides whether the iono",
+    "    mismodelling lands in the carried DDs or in the sat clocks / code biases).",
+    "  - P3 contributes NOTHING: the subtractive iono ladder is a complete null that reproduces",
+    "    (layer2 off / mech-B off / sigma_rep 5 -> 50 all within noise).",
+    "So the ONLY delta over _ft63_pdfix_v3.json is 10800 -> 21600 s.  That is deliberate: P6 is",
+    "a DURATION question, not a posture question, and adding an unvalidated knob would confound",
+    "the two things it exists to answer.",
+    "",
+    "THE TWO QUESTIONS (queue P6 verbatim):",
+    "  (a) DOES total_IF CONVERGE PAST THE CONTROL?  The 3 h pdfix_on leg moved total_IF hr2",
+    "      +12.4 % vs the pre-fix control, but with the opposite SHAPE: it starts 28 % WIDER at",
+    "      hr0 (13.543 vs 10.600) and converges HARDER (ratio 0.653 vs 0.755), i.e. ignition now",
+    "      re-earns information instead of freezing whatever it grabbed first.  Whether that",
+    "      crossover happens is not a 3 h question.  Grade the hr0->hr5 trajectory, not one bin.",
+    "  (b) THE FIRST HONEST med|frac| / circR TREND ON MATURED CHORDS.  Every previous read of",
+    "      'is there integer information at this cadence and geometry' was taken on the corrupt",
+    "      substrate, where 85.24 % of carried row-epochs folded inertly and chord lifetime was",
+    "      12 epochs.  At 55.3 ep lifetime and a working fold, a 6 h leg is the first run where",
+    "      a chord can plausibly mature far enough for the question to have an answer.",
+    "      med|frac| has sat at 0.24-0.25 (uniform = zero integer information) in EVERY arm to",
+    "      date, including pdfix_on.  Grade whether it MOVES, and read it per age bin, not",
+    "      pooled - a pooled median over a population still dominated by young chords cannot",
+    "      show a mature-chord effect even if one exists.",
+    "",
+    "GRADE: scripts/grade_dd_spillway.py (steps by age + SF + cross-band),",
+    "scripts/grade_ddfrac_perhour.py (med|frac| and circR BY HOUR and BY AGE BIN),",
+    "scripts/chain_stability.py (total_IF per hour + clk), scripts/parse_carry_psd.py (the PD",
+    "gate must hold for 720 epochs, not 360 - INC-1c repairs and INC-2a rebirths are still",
+    "field-UNEXERCISED, so a first firing here is a finding either way).",
+    "",
+    "COST: ~22 min at the 3 h leg's 2481 ms/epoch (720 epochs)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "processing": {
+    "max_duration_s": 21600.0
+  },
+  "network": {
+    "max_duration_s": 21600.0,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_best6h/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_best6h/state_snapshot.bin"
+  }
+}
