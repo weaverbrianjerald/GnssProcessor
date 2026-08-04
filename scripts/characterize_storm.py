@@ -60,10 +60,15 @@ Sections
 (f) ARM-vs-ARM diff when two inputs are given.
 
 A NOTE ON TWO NUMBERS THAT LOOK COMPARABLE AND ARE NOT: the dump's
-``N ev<cutoff`` and the withhold line's ``observed M`` are different quantities —
-the withhold message reports the POST-heal re-gate.  Measured on the 305 control
-arm at TOW 259200: dump 22, withhold 14, identical cutoff.  This tool never
-cross-validates or sums them.
+``N ev<cutoff`` and the withhold line's ``observed M``.  On ARCHIVED logs these
+are different quantities — the withhold message reported the POST-heal re-gate,
+i.e. what survived after the drop-and-heal folded its soft anchors.  Measured on
+the 305 control arm at TOW 259200: dump 22, withhold 14, identical cutoff.
+Current producers report the FIRST gate evaluation (pre-heal) on that line, and
+this tool reads it, so the confound is gone going forward — but the two are
+still produced by different code paths at different points in the epoch and have
+never been shown equal on real data, so this tool STILL does not cross-validate
+or sum them.  Treat a mismatch as a question, not a bug.
 
 Usage
 -----
@@ -126,13 +131,39 @@ _RE_HDR = re.compile(
     r'(\d+)\s+ev<cutoff')
 _RE_DIR = re.compile(
     r'Network\[estimability\]:\s+ev=([-\d.eE+]+)\s+dir spanned by \[([^\]]*)\]')
-_RE_WITHHOLD_TOW = re.compile(r'TOW\s+([-\d.eE+]+)\s+drop-and-heal failed')
+# The withhold WARN.  Current producers emit one line per withheld epoch on
+# EVERY route (heal failed, re-gate failed, or heal anchored nothing and never
+# re-gated).  Pre-fix producers emitted a warn ONLY when the inner heal/re-gate
+# threw, so a heal that anchored 0 columns left the epoch invisible in the log
+# -- the legacy pattern is kept so archived run logs still parse, with the
+# caveat that their withhold census is a LOWER BOUND (the run-end
+# "withheld N epoch(s)" counter is the authority for those).
+_RE_WITHHOLD_TOW = re.compile(
+    r'observability gate at TOW\s+([-\d.eE+]+)\s+withheld product')
+_RE_WITHHOLD_TOW_LEGACY = re.compile(r'TOW\s+([-\d.eE+]+)\s+drop-and-heal failed')
+# First match on the line is the FIRST gate evaluation: current lines lead with
+# "First gate: <exception>" and only then append the heal-failure text, and
+# legacy lines carry the re-gate exception alone.  So this reads the pre-heal
+# count on a current log and the post-heal count on an archived one.
 _RE_WITHHOLD_OBS = re.compile(r'observed\s+(\d+)\s+\(near-\)zero')
 
 
 # ---------------------------------------------------------------------------
 # parsing
 # ---------------------------------------------------------------------------
+def match_withhold(line):
+    """``(tow, observed)`` for a gate-withhold WARN line, else ``None``.
+
+    Accepts the current and the legacy line format; ``observed`` is ``None``
+    when the line carries no parseable count.
+    """
+    m = _RE_WITHHOLD_TOW.search(line) or _RE_WITHHOLD_TOW_LEGACY.search(line)
+    if not m:
+        return None
+    obs = _RE_WITHHOLD_OBS.search(line)
+    return (float(m.group(1)), int(obs.group(1)) if obs else None)
+
+
 def parse_label(label):
     """Split one column descriptor into (family, sat, signal).
 
@@ -236,10 +267,9 @@ def read_log(path, label):
             if m and cur is not None:
                 cur.dirs.append((float(m.group(1)), parse_components(m.group(2))))
                 continue
-            m = _RE_WITHHOLD_TOW.search(line)
-            if m:
-                obs = _RE_WITHHOLD_OBS.search(line)
-                arm.withheld[float(m.group(1))] = int(obs.group(1)) if obs else None
+            w = match_withhold(line)
+            if w:
+                arm.withheld[w[0]] = w[1]
     return arm
 
 
@@ -336,10 +366,9 @@ def scavenge_withholds(arm, log_path):
     arm.withhold_source = log_path
     with open(log_path, encoding='utf-8', errors='replace') as fh:
         for line in fh:
-            m = _RE_WITHHOLD_TOW.search(line)
-            if m:
-                obs = _RE_WITHHOLD_OBS.search(line)
-                arm.withheld[float(m.group(1))] = int(obs.group(1)) if obs else None
+            w = match_withhold(line)
+            if w:
+                arm.withheld[w[0]] = w[1]
 
 
 # ---------------------------------------------------------------------------
@@ -563,13 +592,15 @@ def report_arm(r, args):
     if not r['withhold_source']:
         print('    (no log alongside the CSV — the per-epoch withhold lines live only '
               'in the log; the RUN record above is the run-wide answer)')
-    print('    epochs with a "drop-and-heal failed; withholding" line: %d   [source: %s]'
+    print('    epochs with a gate-withhold WARN line: %d   [source: %s]'
           % (r['withheld_epochs'], r['withhold_source'] or 'unavailable'))
     if r['withhold_observed_counts']:
         print('    observed counts on those lines: %s' % r['withhold_observed_counts'])
-        print('    NOTE these are POST-heal re-gate counts and are NOT comparable '
-              'to the dump\'s below-cutoff census above — different quantity, '
-              'same epoch.  Never sum or cross-validate the two.')
+        print('    NOTE current logs report the FIRST (pre-heal) gate here; archived '
+              'logs predating that fix report the POST-heal re-gate instead, and '
+              'omit any epoch whose heal anchored 0 columns.  Either way this is '
+              'NOT the dump\'s below-cutoff census above — never sum or '
+              'cross-validate the two.  The run-end counter is the withhold authority.')
 
 
 def _seq(vals, fmt='%s'):
