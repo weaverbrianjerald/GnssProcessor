@@ -146,3 +146,5 @@ data_nobia/
 *.rnx
 *.crx
 *.crx.gz
+
+vc140.pdb
