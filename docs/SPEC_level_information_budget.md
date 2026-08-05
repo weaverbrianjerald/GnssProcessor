@@ -1789,3 +1789,398 @@ levels and the EXT-305 chain already sits at that depth.  Arm 36's first attempt
 load ("chain deeper than 8 levels — refusing to continue"); the fix is to extend the same
 base as the sibling arm and restate the overrides, which also makes the one-knob claim
 structural rather than inherited.
+
+---
+
+## 24. Item-1 STAGE 2 passes every gate — and sharpens the trade to its final form (2026-08-05)
+
+§23 left the staged escalation "earned but unspent".  Stage 2 was spent:
+`_ext63_gps_dual_3h_lv4_m15i25.json` (arm 37), 3 h fresh seamless lineage, vs the
+existing arm-32 control (`runs/ext63_dual_3h_m15i25`), same 00:09 binary (run as
+`gnss_processor_f17.exe`, renamed-copy convention), ONE knob apart, and — the pair's
+decisive control — **byte-matched observation sets in every window** (77 988 phase obs
+in the settled 20–60 min slice, 119 734 in h2–3, 21 949 harvests; identical in both
+arms).  Predictions were written into the config before the run; scored in §24.4.
+
+### 24.1 The stage-2 gate, measured
+
+| §17 stage-2 gate | threshold | arm 37 | control |
+|---|---|---|---|
+| folds | — | **99.6 %** (21 866/21 949, 0 gate-withholds) | 44.2 % (12 191 withheld by the legacy screen) |
+| erases | ≤ 2 % | **0.10 %** (22, max z 107.7 — the same first-hour event arm 34 saw) | — |
+| settled sd | ≤ 5 TECU | 1.81 | 4.94 |
+| 3-epoch alternation | none | none (flip 0.44 vs 0.37) | — |
+| sh_health | 0/0/0 | **0/0/0** | 0/0/0 |
+| h2–3 time-matched level | inside ±4..9 | **−0.67 ± 2.09** | +0.44 ± 1.30 |
+| breathing | ≤ control's | run sd **2.40** | 4.42 |
+| over-retention signature | absent | absent (see §24.3 — BOTH sides louder, not the lane trade) | — |
+
+**PASS on every clause.  Stage 3 (12 h) is earned.**
+
+### 24.2 The level channel: the best tracker any 61-station posture has shown
+
+Time-matched hourly (`gim_global_mean_series.py`), a₀₀ − GIM(t):
+
+| hour | control (arm 32) | **arm 37 (LV-4)** |
+|---|---|---|
+| 0 | −7.23 ± 2.83 | **−2.57 ± 2.92** |
+| 1 | −5.52 ± 4.06 | **−0.58 ± 1.37** |
+| 2 | +0.44 ± 1.30 | **−0.67 ± 2.09** |
+| run mean / sd | −4.10 / 4.42 | **−1.27 / 2.40** |
+
+No ramp (the §14 stack pathology is absent), half the breathing, and hourly means
+within ±0.7 TECU of the GIM from hour 1 on.  §19.1's "the same memory at 97.5 %
+admission drags the level out of the physical band" was an obs-mask-10 artifact top to
+bottom: at the current denominator, full admission is the best level behavior measured
+at this scale.  (Diagnostic under invariant #5, as always.)
+
+### 24.3 The data side: +32 % persists settled, and every loud instrument agrees
+
+| instrument (h2–3, identical obs) | control | arm 37 | ratio |
+|---|---|---|---|
+| **median rms_phase** (pf_keyed STA) | **0.00870 m** | **0.01150 m** | **+32.2 %** |
+| median rms_phase, settled 20–60 min | 0.00800 m | 0.01080 m | +35.0 % (reproduces arm 34 exactly) |
+| prires `rxcb` σ̂₀ (settled → h2–3) | 0.63 → 0.95 | 3.10 → **6.33** | 4.9× → 6.6× |
+| block-Baarda G σ̂₀ (0 % floored, both) | 2.21 | 3.59 | 1.62× |
+| congruence σ̂₀ | 63.7 | 26.3 | **0.41× (quieter — the lone dissenter, again)** |
+
+Two new facts beyond §23.4: **block-Baarda's first usable read on an LV-4 pair** (3 h
+unfloors it — 0 % floored in both arms at h2–3) lands on the data-side-louder camp; and
+the prior-side tension is **growing with era** in the LV-4 arm (3.10 settled → 6.33 at
+h2–3, a doubling in two hours) where the control grows 0.63 → 0.95.  Whether that
+compounds toward the §14 stack's 12.62 or plateaus is stage 3's fourth prediction — it
+is the number that matters for the item-3 design (a tracking authority that does NOT
+tax the prior side).
+
+The over-retention (lane-A/B) signature — quieter priors bought with louder data — is
+absent: this posture is louder on BOTH sides while tracking the level best.  The trade
+is now in its final, un-confounded form: **the full-admission rolling carry buys the
+level channel at the price of fitting both its priors and its observations worse.**
+
+### 24.4 Predictions, scored
+
+| # | prediction (in the config, pre-run) | outcome |
+|---|---|---|
+| 1 | h2–3 rms 0.0110–0.0125 (+26..44 %) | **CONFIRMED** — 0.01150, +32.2 % |
+| 2 | level inside band, above control +2..6, sd ≤ 4.42 | **mostly** — band and sd PASS; above control at h0/h1 (+4.7/+4.9), crosses at h2 (−0.67 vs +0.44) |
+| 3 | folds ≥ 98 %, erases ≤ 0.5 %, no alternation | **CONFIRMED** — 99.6 %, 0.10 %, none |
+| 4 | prires 3–6×; congruence quieter; block-Baarda records a side | **CONFIRMED** — 4.9–6.6×; 0.41×; louder (1.62×) |
+
+### 24.5 Standing after stage 2
+
+Item 1 remains **not a promotion candidate** on the invariant-legal axis (§23's verdict,
+now with a settled 3 h confirmation), and simultaneously the **strongest evidence yet
+for §13.4/§15's tracking thesis**: what tracks the level is admitted per-epoch code GF
+information flowing through a rolling memory.  LV-4-alone demonstrates the authority
+exists; its cost says the carry is the wrong VEHICLE for it.  That is precisely item
+3's design brief ("S-consistent harvest" — per-epoch data-derived frame, no fold-side
+tax), which stage 3's σ̂₀-growth read (P4) will parameterize.  Provenance: run
+`runs/ext63_dual_3h_lv4_m15i25` (54 traces harvested), wall 248 s.
+
+---
+
+## 25. The excursion attribution: the product wire is MARK-FREE, the churn is posture-invariant, and the consumer has no reaction path anyway (2026-08-05)
+
+§17 item 0 closed with "NEXT ANALYSIS on these replays: excursion-hour attribution vs
+`products.txt` R/disc events, both arms."  Executed on the 12 h pair
+(`runs/ext63_dual_12h_{ref,lv125}` producers, `runs/replay_ext63_12h_{ref,lv125}`
+consumers).  The first finding is about the instrument, and it reframes the task:
+
+### 25.1 There ARE no R/disc events — the wire carries values and nothing else
+
+Both 12 h products contain exactly four record kinds: 45 311 C, 1 440 E, 1 440 H,
+144 164 P.  Verified absent or inert, in BOTH arms:
+
+- **zero `R` records** (the per-satellite discontinuity bump), zero `phase_disc` /
+  `clock_disc` / `code_disc` optional fields, and `datum_changed = 0` on all 1 440 E
+  records — through consumer excursions reaching 546 m and 979 m;
+- **no `S` contract record at all** on this lineage's wire;
+- the `H` heartbeat reads `status=ok` with **σ₀ = 0.000 on every epoch** — its σ₀
+  feed is the within-epoch RAIM, which is carry_warm-gated and therefore inert
+  without phase_leveling.  The standard-armed-set's known gap, now visible as a
+  dead instrument ON THE WIRE;
+- every `P` record advertises `sigma=` ≤ 0.56 m (mostly the 0.1 floor) — including
+  the epochs where its value steps by hundreds of meters (§25.2).
+
+CLAUDE.md amendment 5's warning ("without `emit_clock_disc` the clock jumps are
+silent to the consumer") generalizes to **every channel of this lineage's product**.
+The emitter HAS the machinery (per-sat disc counters, `disc_threshold_m`,
+`emit_clock_disc`, set-change tracking — `NetworkProductEmitter.cpp:75-136`); none of
+it reaches the wire here.  So the attribution below runs against the producer's own
+traces — which is exactly the problem: **the producer's event knowledge exists only on
+the producer's side.**
+
+### 25.2 The step census (the disc record, computed after the fact)
+
+Mid-arc steps in emitted values between CONSECUTIVELY-PRESENT epochs (gap re-inits
+excluded — those are legitimate re-datums the consumer re-initializes through).
+Instrument promoted to `scripts/product_step_census.py` — run it on ANY
+product-affecting change; a posture that moves the mid-arc census has changed the
+consumer's world no matter what the solve-side grades say:
+
+| | ref | lv125 |
+|---|---|---|
+| phase-bias key-steps > 0.1 m | **387 on 244 epochs (16.9 % of epochs)** | 385 on 245 (17.0 %) |
+| median / p90 / max \|step\| | 2.66 / 42.4 / **287.6 m** | 3.19 / 45.1 / 255.0 m |
+| clock common-mode steps > 0.1 m | **0** | **0** |
+| per-sat clock outliers > 0.5 m | **0** | **0** |
+
+Three structural facts.  (1) **The emitted PB stream steps constantly and enormously,
+unmarked** — somewhere in the constellation, a multi-meter unmarked step lands about
+every sixth epoch, all under σ=0.1-class advertised uncertainty.  The paired L1/L2
+signature of the giants (G17 −215/−288 m at h4.99, G19, G09, G06…) is integer
+re-basing on reference-path slips — the emit re-base preserves those steps BY DESIGN
+(40 ref-path slip steps preserved per 3 h; "91 % of emitted PB discontinuities are
+ref-path re-referencing", CLAUDE.md).  The design assumption is that a datum step is
+harmless if marked or differenced away; on this wire it is neither.  The census ties
+out against the producer's own run-end counters: the PB emission-continuity filter
+reports **394 ref-path-slip resets in BOTH arms** (of 462/458 total resets), and the
+wire census independently recovers 387/385 of them — **the producer counts every step
+it ships, and marks none of them.**  (2) **The churn is posture-invariant**: same
+satellites, same TOWs, same magnitudes, and the same 394 ref-path-slip count in both
+arms — the LV stack neither causes nor cures it (consistent with §17's "the campaign's
+true blocker is product internal consistency / churn", now measured as identical
+across the postures the campaign compared).  (3) **The emitted clock is smooth on this lineage**
+at emission granularity — the "13 product-wide clock jumps" of amendment 5 belong to a
+different (phase-leveled) lineage; under EXT-CB the phase-bias channel carries the
+churn instead (free per-(sat,band) PBs make phase rows clock-blind, §-rootcause memo).
+
+### 25.3 Excursion onsets align with RE-REFERENCING EVENTS, not with value steps
+
+Consumer excursion windows (err3d > 20 m) and producer-side onset context
+(−120 s..+60 s), with enrichment vs each event's 12 h base rate:
+
+| arm | window | peak | onset enrichment (× base) | PB steps at onset |
+|---|---|---|---|---|
+| ref | h1.51–1.68 (22 ep) | 308 m | **col_removed 12.7×**, refsat_reset 2.5× | 0 |
+| ref | h3.30–4.70 (169 ep) | **546 m** | **refsat_reset 5.0×** | 2 |
+| lv125 | h2.41–2.67 (32 ep) | **979 m** | eq34_reattach 2.1× | 4 |
+| lv125 | h4.27–4.58 (38 ep) | 660 m | refsat_reset 5.0×, block_outlier 1.7× | 3 |
+| lv125 | h6.48–6.60 (15 ep) | 293 m | col_removed 5.1× | 0 |
+| lv125 | h9.51 (3 ep) | 42 m | **sbc_engage 7.6×**, refsat_reset 5.0×, col_removed 5.1× | 1 |
+| lv125 | h10.47–11.99 (184 ep) | 22.8 m steady | col_removed 7.6× | 1 |
+
+PB-step density INSIDE excursions is at base rate (0.27/ep) and clock steps are zero —
+the naive "a big product step caused it" story fails.  What marks the onsets is the
+**event class that changes which datum realizes the product**: reference-satellite
+resets, topology column removals, SBC gate engagements, eq34 re-attachments.  All of
+them are invariant #7's edges; none of them has any wire representation.  Consumer AR
+is essentially never fixed inside excursions (≈1 epoch per window; 0.3 % fix rate
+overall) — these are FLOAT-side failures, so wrong-fix poison is ruled out too.
+
+Honest caveat: onset windows hold 2–6 events each, so the 5–13× enrichments are
+suggestive, not mechanism-proof.  The load-bearing facts are the structural ones:
+mark-free wire, endemic unmarked steps, float-side failures, and §25.4.
+
+### 25.4 The h9.5–11.5 storm: common stressor, differential response — the internal-inconsistency reading, quantified
+
+Both producers show the SAME event storm at h9.5–11.5 (they process the same
+observations): refsat_reset at 0.142/ep (5–7× base) and sbc_engage at 0.154/ep
+(4.4×) in BOTH arms, epoch-for-epoch.  The consumer response differs 3×:
+
+| era h9.5–11.5 | ref | lv125 |
+|---|---|---|
+| consumer median 3D | 6.72 m | **20.72 m** (p95 ≈ median — a stable bias, 184 contiguous ep > 20 m) |
+
+Same stress, same product-churn statistics, one consumer rides it out at 7 m and the
+other locks a steady 21 m frame error — during exactly §14's pin-ramp era.  This is
+§17 item 0's "the late-era stack product is INTERNALLY inconsistent" with the stressor
+identified: the storm's re-referencing is the moment the pinned rx-CB frame and the
+drifting iono/clock content get pulled apart into estimable space.
+
+### 25.5 What this changes (and does not)
+
+1. **The wire needs its event channel armed** — but that alone is INERT downstream:
+   the product READER parses every mark (`NetworkProductIO.cpp:120,278,603-620`) yet
+   the only consumer that REACTS is the RT engine (`RealTimeEngineSsrBreaks` — the
+   sole non-producer file in the discontinuity-reaction census); the closed-loop /
+   replay consumer only logs the contract flags (`ApplicationConsumerReplay.cpp:171`)
+   and has **no reaction path to any per-satellite disc**.  It needs the RT seam's
+   equivalent.
+   The card is therefore two-sided by construction: emit the marks (producer, cheap,
+   machinery exists) + react to them (consumer seam, the real work).  Until both
+   exist, "adapt-and-EMIT" is invisible at the consumer — invariant #7's consumer
+   edge, formalized.
+2. **Churn is confirmed as the campaign blocker and it is posture-independent** — no
+   LV/level decision changes it.  The level cards and the churn card are separable
+   work streams; §17's arc already said this, the census makes it quantitative.
+3. The mark-free H heartbeat (σ₀ ≡ 0) upgrades the standing-set note "within-epoch
+   tier is carry_warm-gated ⇒ inert without leveling" from a producer-side caveat to
+   a **consumer-facing defect**: the one health signal on the wire is structurally
+   dead on any non-leveled lineage.
+
+### 25.6 Item 0's diagnostic rider, discharged: the fleet-bias mean does NOT drift diurnally
+
+§17 item 0 also asked whether the receiver fleet's GF-bias mean itself moves through
+the day (receiver thermal) — which would make §14's a₀₀ wander partly physical.
+Estimator-free sweep (the `extcb_gim_verdict.py` instrument, hour-bucketed: raw RINEX +
+COD SP3/OSB vs the day's hourly GIM maps, same 30-station subsample, el > 20°,
+`scripts/fleet_bias_diurnal.py`):
+
+| hour | fleet bias mean | median | std |
+|---|---|---|---|
+| 00 | −14.76 | −22.92 | 21.50 |
+| 02 | −14.31 | −22.28 | 22.03 |
+| 04 | −15.26 | −21.99 | 21.56 |
+| 06 | −16.00 | −23.28 | 20.51 |
+| 08 | −15.35 | −23.79 | 22.18 |
+| 10 | −16.15 | −23.91 | 22.81 |
+
+(Hour 0 reproduces the root-cause memo's −14.76/−22.92/21.50 to the digit — instrument
+closure.)  **The mean moves −1.4 slant TECU in ten hours** (median −1.8) — quasi-static
+against the level channel's ±6 TECU breathing and §14's −4..−15 wander.  Per-station
+drift is ±2–5 TECU sd, and the tail is geography-coded, not hardware-coded: the largest
+drifters (HKSL −16, SGOC −10, GAMB +7, COCO −6) are all equatorial-anomaly-band
+stations, i.e. GIM misfit moving through local time — the SPREAD/dipole channel, not
+the mean.  Two conclusions: the −5 ns convention offset is stable hardware (the
+zero-mean-datum analysis stands as a STATIC frame choice), and **the a₀₀ breathing is
+estimator realization noise, not receiver physics** — which is consistent with §24.2,
+where doubling the admitted information halved it.
+
+---
+
+## 26. The 305 @ 15/25 cell: a data-side TIE, and the footprint INVERTS the level verdict — the mask study closes on a unified posture (2026-08-05)
+
+`_ext305_gps_dual_1h_m15i25.json` (arm 38) — the cell §22.2 nominated and §23.5
+predicted would lose to 10/25.  303 stations, 1 h, same 00:09-family binary
+(`gnss_processor_f17.exe`), one knob vs the m15i15 sibling (cutoff 15 → 25 + paths;
+verified at file level; phase obs 375 563 vs 376 070, −0.13 %, not material).  Wall
+2 124 s.  Predictions were in the config; scored in §26.3.
+
+### 26.1 The completed 305 factorial
+
+20–60 min settled window, matched across all cells; level from
+`gim_global_mean_series.py` (time-matched); footprint from
+`field_vs_gim_footprint.py --radius 5 --every 1` with the RUN'S OWN 303-station
+config (⚠ instrument note, §26.4):
+
+| 305 cell | rms_phase | ep10–40 rms | a₀₀−GIM global | **footprint(5°)** | breathing sd | a₀₀ post-σ | sh |
+|---|---|---|---|---|---|---|---|
+| 10/25 | **0.00600** | 0.00570 | **−1.99** | −6.34 (rms 6.81) | 3.64 | 0.433 | 0/0/0 |
+| 15/15 | 0.00990 | 0.00830 | −14.74 | −3.22 (rms 3.95) | 3.99 | 0.281 | 0/0/0 |
+| **15/25 (arm 38)** | 0.00620 | **0.00560** | −5.81 | **−3.51 (rms 3.90)** | **1.86** | 0.433 | 0/0/0 |
+
+**Data side: a statistical tie.**  Restoring the validated cutoff recovers ~95 % of
+15/15's +65 % penalty (0.00990 → 0.00620 vs 10/25's 0.00600); each of 10/25 and 15/25
+wins one window by ≤ 3 %.  §22's "at 303 stations 15/15 is worse on BOTH axes" was a
+CUTOFF statement, not an obs-mask statement.
+
+**Level: the global mean and the footprint DISAGREE, and the footprint is the honest
+instrument.**  On the global mean, §23.5's monotone prior held (−1.99 → −5.81 for
+obs 10 → 15).  Over the network's own pierce points it reverses: arm 38 −3.51 vs
+10/25's −6.34, footprint rms halved (3.90 vs 6.81).  §18's structure ("the residual is
+~3× larger over the footprint than globally, in every arm") is therefore an
+**obs-mask-10 artifact at scale**: at obs 15 the inversion flips, in BOTH obs-15 cells
+(15/15's footprint is −3.22 — its catastrophic −14.75 global mean is almost entirely
+the extrapolated hemisphere).  Decomposition, physically coherent with §21.1:
+
+- the **obs mask owns the footprint** — the low-elevation code that damages the field
+  lives exactly where the network has data (obs 10 → footprint −6.3; obs 15 → −3.2..−3.5);
+- the **cutoff owns the residuals and the extrapolated hemisphere** — cutoff 15 lets
+  the 15–25° band fight the phase data (+60 % rms) and warps the Kaula-extrapolated
+  side (global −14.7);
+- **10/25's celebrated −1.99 global mean is won by CANCELLATION** between a bad
+  footprint and the opposite-signed unsupported hemisphere — the best-looking global
+  number in the factorial belongs to the arm with the worst field where consumers are.
+  (15/15's a₀₀ posterior σ 0.281 — tightest formal confidence, worst level — is the
+  same lesson from the other side: contaminated rows talk confidently.)
+
+Stability is not close: arm 38 halves the breathing against both siblings (run sd
+1.86, settled 1.64) — consistent with §24.2's mechanism reading (breathing is
+realization noise; cleaner admitted information quiets it).
+
+### 26.2 The mask study CLOSES: one posture serves both scales
+
+**obs 15 / iono 25** is best-or-tied at BOTH scales: at 61 stations it dominates
+outright (arm 32 — best rms of any arm, +5 TECU of level); at 303 it ties the rms,
+wins the footprint level ~2×, wins breathing 2×, keeps the validated cutoff, and the
+posture check stays silent.  The only axis 10/25 still wins is the global-mean
+diagnostic — which §26.1 shows is won by cancellation.  §22's "do not generalize a
+mask verdict across network size" survives as method; its practical sting is gone:
+the scale-dependence belonged to the CUTOFF arm of the 2×2, and with the cutoff held
+at 25 the obs-mask choice no longer flips sign with scale.
+
+**Recommended config action** (not taken here — the masks were set by directive): the
+lineage root `_ft63_24h_conv.json` currently pins 15/15; the one-line edit
+`estimation.ionosphere_weighting.elevation_cutoff_deg: 15 → 25` lands the unified
+posture everywhere, is now validated at both scales, and un-warns every network run.
+New denominators for all future comparisons: **arm 32 (61 sta) and arm 38 (305 sta)**.
+
+### 26.3 Predictions, scored
+
+| # | prediction (in the config, pre-run) | outcome |
+|---|---|---|
+| 1 | rms 0.0062–0.0072, better than 15/15, worse than 10/25 | **CONFIRMED** at the good edge — 0.00620 (+3.3 % vs 10/25); recovery larger than predicted, and arm 38 WINS the ep10–40 window |
+| 2 | level −2..−7, does not beat 10/25's −1.99 | **CONFIRMED on the global mean** (−5.81) — and exposed as the wrong instrument: the footprint verdict reverses (−3.51 vs −6.34) |
+| 3 | sh_health 0/0/0; obs ≈ m15i15 within ~1 % | **CONFIRMED** — 0/0/0; −0.13 % |
+| 4 | 10/25 remains the best 305 posture on the grade | **MISSED in substance** — it is a tie on the grade, and 15/25 wins every consumer-relevant axis; "15/25 is the best obs-15 posture" holds trivially |
+
+§23.5's monotonicity prior was right about the number it named and wrong about what
+the number meant.  The method lesson mirrors §23's: a verdict read off a FRAME
+quantity (the global a₀₀) at one operating point does not survive a better
+instrument.  Level claims from here on quote BOTH the time-matched global series and
+the footprint restriction, per §17's grading protocol — now with measured proof of
+why.
+
+### 26.4 Instrument note (invariant #4, near-miss)
+
+`field_vs_gim_footprint.py` run bare on a 305 run silently uses its default
+61-station `--config` for the footprint AND reads only epoch 1 (`--every` default) —
+it printed a plausible-looking, wrong table before the right flags were found.  Any
+future footprint quote must carry `--config <the run's own network> --radius 5
+--every 1`.  (The §20.2/§18 numbers were produced by the script's author with correct
+flags; this note is for the next session that isn't.)
+
+---
+
+## 27. Roadmap refresh — state on hand-back (2026-08-05, end of session)
+
+What changed today, in one paragraph.  The mask study CLOSED on a unified 15/25
+posture validated at both scales (§26; recommended root-config edit pending user
+sign-off).  Item 1's staged escalation passed stage 2 with the best level tracking
+measured at 61 stations and a persistent +32 % data-side cost (§24) — stage 3 is
+earned and STAGED but unspent (12 h pair cancelled for time: configs
+`_ext63_gps_dual_12h_lv4_m15i25.json` + `_ext63_gps_dual_12h_m15i25.json` sit on disk
+with predictions written, posture-checked, run dirs created — ~26 min each when a
+session has the budget; the control doubles as the missing 12 h denominator at the
+new masks).  §17 item 0 fully discharged: the excursion attribution (§25) found a
+mark-free wire carrying endemic posture-invariant PB steps, onsets enriched in
+re-referencing events, and NO consumer reaction path; the diurnal rider (§25.6)
+measured the fleet bias quasi-static, closing the receiver-thermal hypothesis.  Two
+instruments promoted: `scripts/product_step_census.py`, `scripts/fleet_bias_diurnal.py`.
+
+Ranked next actions (supersedes §17's list):
+
+1. **BUILD item 3 — the S-consistent harvest** (§17 item 3, brief unchanged, now
+   triply motivated): §24 proved the tracking authority exists in the admitted
+   per-epoch code GF information and that the carry is the wrong vehicle (+32 %
+   fold-side tax); §25.6 proved the physical rx biases are static, so the frame
+   component is the ONLY moving part — exactly what a per-epoch post-solve transform
+   carries and a stiff fold-side prior cannot; §19–§24 measured every fold-side
+   manipulation of the frame (pin, de-mean, full admission) paying on an invariant
+   axis.  Oracle: `C:\LASER\test\GPS3710_test_PMINOLESS`.  Grade against arm 32 / arm
+   38 denominators; target unchanged (|a₀₀ − GIM(t)| ≲ 4 at h0 AND h11, zero
+   fold-side cost).
+2. **The two-sided disc channel** (new, from §25 — posture-independent, blocks the
+   consumer grade for EVERY posture): producer side, arm the existing machinery
+   (`emit_clock_disc`, PB disc fields, `datum_changed`; emitter already counts every
+   event it ships — 394/394 unmarked); consumer side, give the closed-loop/replay
+   consumer the RT engine's reaction seam (`RealTimeEngineSsrBreaks` equivalent —
+   currently the parse exists, the reaction does not).  Then re-run the §25 replay
+   pair and measure how much excursion mass disc-aware resets recover.  Rider: feed
+   the H heartbeat's σ₀ from the always-on prefit census instead of the
+   carry_warm-gated within-epoch RAIM (§25.1's dead instrument).
+3. **Stage 3 of item 1** — staged, predictions on record (the tracking verdict + the
+   σ̂₀-compounding read that parameterizes item 3's requirements).  Run when ~55 min
+   of budget exists.  Not a promotion candidate regardless of outcome (§23/§24).
+4. **Item 0b — external receiver DCBs (CAS MGEX)** — unchanged; still blocked by the
+   ProductParser 4-char-station card.
+5. Parked, unchanged: the deg-1 clustered-spread dipole card; the self-contained
+   posture decision (§17 item 4).
+
+Grading-protocol addenda (binding for anything touching this doc's subject):
+time-matched GIM series AND footprint restriction with correct flags (§26.4), ≥ 2 h
+for any level claim at 61 stations (§14) — the 305 network's transient is milder but
+1 h remains a rank-only window; `product_step_census.py` on any product-affecting
+change (§25.2); postfit rms / prires / block-Baarda (≥ 3 h) / congruence as the
+four-instrument audit, expecting the congruence dissent (§23.4, §24.3, unexplained).

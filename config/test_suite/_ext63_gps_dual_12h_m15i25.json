@@ -1,0 +1,57 @@
+{
+ "_comment": [
+  "ARM 40 — the 12 h CANONICAL CONTROL at the current masks (obs 15 / iono 25).  §21.2",
+  "declared arm 32's posture the new denominator; arm 32 is 3 h.  Every existing 12 h",
+  "number (§14, §15, §19.2, the replay pair) sits on the VOIDED 10/25 masks.  This arm",
+  "refreshes the 12 h denominator so stage 3 (arm 39) and every future settled claim",
+  "grades against a control on the SAME operating point — and it is needed by the",
+  "campaign regardless of what stage 3 shows.",
+  "",
+  "Identical to _ext63_gps_dual_12h_ref.json's INTENT (canonical EXT-CB posture, no LV",
+  "knobs) but at 15/25 and with the §13.5 audit feeds restated.  ONE knob apart from",
+  "arm 39 (rx_cb_carry_step_gate).  Fresh SEAMLESS lineage, own paths.",
+  "",
+  "PREDICTIONS, STATED BEFORE THE RUN:",
+  " 1. LEVEL (diagnostic): h0 reproduces arm 32's −7.2; heals into the ±4 band by h2;",
+  "    12 h mean a00−GIM(t) in the −2..−5 band with sd 4-6 (the 10/25 canonical read",
+  "    mean −8.4 sd 5.5; §21 measured the obs-15 mask worth ~5-6 TECU of level).",
+  "    Breathing ±5-6 TECU persists (it is the rolling memory's price, §14 corollary).",
+  " 2. DATA: h2-3 reproduces arm 32's 0.00870; h6-12 settled median rms_phase",
+  "    0.0088-0.0098 (the 10/25 canonical read 0.01110 settled; obs 15 bought ~10-20 %",
+  "    everywhere it was measured).",
+  " 3. MECHANICS: folds ~44 % (the legacy screen's rate), sh_health 0/0/0, prires rxcb",
+  "    σ̂₀ settled ~0.6-1.2 growing slowly (arm 32: 0.63 settled, 0.95 h2-3).",
+  " 4. The h9.5-11.5 event-storm era (refsat_reset 5-7×, sbc_engage 4.4× — posture-",
+  "    independent per the 12 h replay attribution) appears in THIS arm's event stream",
+  "    at the same hours with ~the same rates as the 10/25 pair showed."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 43200.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": {
+   "elevation_cutoff_deg": 25.0
+  }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_12h_m15i25/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_12h_m15i25/state_snapshot.bin"
+ }
+}

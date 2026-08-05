@@ -1,0 +1,89 @@
+{
+ "_comment": [
+  "ARM 37 — SPEC_level_information_budget §17 item 1, STAGE 2 (3 h), earned by §23's",
+  "stage-1 PASS at the current mask denominator.  LV-4 alone (network.rx_cb_carry_step_gate);",
+  "de-mean OFF so the loader forces LV-5 off (GnssConfigLoadNetwork.cpp:6630); LV-1 OFF.",
+  "Fresh SEAMLESS lineage from day start, own paths, never resumed onto another arm's",
+  "snapshot (staged-escalation directive, 2026-08-05).",
+  "",
+  "CONTROL: arm 32, runs/ext63_dual_3h_m15i25 (obs 15 / iono 25, 3 h), SAME 00:09 build,",
+  "ONE knob apart.  Both arms run obs mask 15, so the identical-observations control holds",
+  "within the pair (arm 32: 132967-class phase obs at h2-3 scale; §23.1 measured 78931 in",
+  "the matched 1 h window).  Any large obs-count deviation means a second variable is loose.",
+  "",
+  "WHY STAGE 2 EXISTS.  §23.1 passed all five §17 stage-1 gates at 15/25 (folds 98.9 %,",
+  "erases 0.25 %, sd 1.42, no alternation, sh_health 0/0/0), which un-falsifies §19's",
+  "stage-1 kill and earns the 3 h stage per the escalation directive.  Both open questions",
+  "are ones a 1 h window cannot answer (§14: the level channel's convergence budget is",
+  "~2 h): (a) does LV-4's +35 % data-side cost persist into the settled h2-3 window, and",
+  "(b) does the level hold the band once past ignition, or walk the way §15 measured the",
+  "12 h stack walking.",
+  "",
+  "PREDICTIONS, STATED BEFORE THE RUN:",
+  "",
+  " 1. DATA SIDE (the invariant-legal GRADE, §19.6): the cost PERSISTS settled.  Predict",
+  "    h2-3 median rms_phase 0.0110-0.0125 m vs arm 32's 0.00870, i.e. +26..44 %.  §19.2",
+  "    measured +44 % at h2-3 and +40 % over 12 h at obs 10; arm 34 measured +35 % settled",
+  "    at 1 h at obs 15.  Basis: the mechanism (full admission delivers carry information",
+  "    the observations do not support) is not a transient — the 12 h stack never shed it.",
+  "",
+  " 2. LEVEL (DIAGNOSTIC only, invariant #5): h2-3 time-matched a00-GIM(t) stays inside",
+  "    the §17 stage-2 band (within ±4..9 TECU of zero) and ABOVE the control (less",
+  "    negative) by +2..6 TECU, extending §23.1's sign inversion (LV-4 at 15/25 lifted the",
+  "    level +4.7 at h0).  Breathing sd ≤ the control's 4.42.  The interesting failure",
+  "    mode to watch: a RAMP — §14 saw the pinned stack ramp +15..+21 after hour 2; LV-4's",
+  "    full admission feeds the rolling memory 2.2x as fast as the control's 44 %, so if",
+  "    admitted-mass drives any slow walk it should show FIRST here.",
+  "",
+  " 3. MECHANICS: folds ≥ 98 %, erases ≤ 0.5 %, sh_health 0/0/0, no 3-epoch alternation",
+  "    (all passed at 1 h and none is window-sensitive in the harmful direction).",
+  "",
+  " 4. AUDIT FEEDS (§13.5 / §23.4, armed below): prires rxcb sigma0 3-6x the control's",
+  "    (arm 34 read 3.11 vs 0.63); congruence sigma0 LOWER than the control's (the §23.4",
+  "    split, still unexplained — record, don't verdict); block-Baarda partially unfloored",
+  "    at 3 h (36 % floored at 12 h, 100 % at 1 h) — FIRST usable read on an LV-4 pair:",
+  "    record which side of the over-retention trade it lands on.",
+  "",
+  "STAGE-2 GATE (§17 item 1): pass = P2's band + P3 + no over-retention signature",
+  "(data-side sigma0 inflating while prior side quiets).  NOTE even a full pass does NOT",
+  "promote — §23's verdict stands (LV-4 costs the data side in every cell measured); a",
+  "pass buys the 12 h stage-3 run for the record, nothing else.  A P1 miss (cost gone",
+  "settled) would be the surprise that re-opens promotion.",
+  "",
+  "KNOWN instrument holes (§19.4, re-verified §23.4): network_prior_residual.csv emits",
+  "ONLY the rxcb family under this posture; network_pf_keyed.csv has n_code == 0 in every",
+  "row (code-side reads vacuous).  Usable data-side instruments: rms_phase / s0_phase",
+  "from pf_keyed, congruence sigma0, and (3 h, partially) block-Baarda."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": {
+   "elevation_cutoff_deg": 25.0
+  }
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+
+  "rx_cb_carry_step_gate": true,
+
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_3h_lv4_m15i25/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_3h_lv4_m15i25/state_snapshot.bin"
+ }
+}
