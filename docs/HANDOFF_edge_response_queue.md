@@ -14,6 +14,15 @@ its item 2 = the two-sided disc channel = this list's edge 1).  This list ranks 
 EDGES by measured damage.  Working either order is defensible; the two documents agree
 on content.
 
+> ⚠ **AMENDED 2026-08-05 — the two documents NO LONGER agree on edge 1.**  Edge 1 has
+> been rewritten against measurement and its premise retracted: the replay consumer's
+> disc reaction path is LIVE (83 resets / 12 h on the arm §25 graded), so §25.5 /
+> §27 item 2's "the closed-loop/replay consumer has no reaction path" is false, and
+> "build the consumer reaction seam" is NOT the work.  **This document is the current
+> statement; SPEC §25.5 and §27 item 2 are stale on that point** and should be
+> corrected there when that doc is next touched.  §25's *other* findings stand, with
+> one caveat: its replay arms are at the now-void 10/25 posture (edge 1 §1.5).
+
 ---
 
 ## Session constraints (violating any of these voids the work)
@@ -34,8 +43,20 @@ on content.
 - **Release-only for every data run** (`build/x64-Release`); run a RENAMED copy of the
   exe (concurrent sessions rebuild; LNK1104).  ⚠ Same-build pairing (invariant #6):
   the §21–§27 comparison family is the **Aug-5 00:09 binary** (`gnss_processor_lv4stage1.exe`,
-  copy `gnss_processor_f17.exe`); `gnss_processor.exe` was rebuilt 11:51 Aug-5 — never
-  compare a pair across that boundary; build fresh pairs from ONE binary.
+  copies `gnss_processor_f17.exe` / `gnss_processor_lvsession.exe` / `gnss_processor_edge1.exe`,
+  all md5 `383ad4a7f339e06751b91a08de1f2956`); `gnss_processor.exe` was rebuilt 11:51
+  Aug-5 and differs — never compare a pair across that boundary; build fresh pairs
+  from ONE binary, and **hash it** rather than trusting the filename.
+- ⚠ **Pair on the resolved CONFIG CHAIN too, not just the build** (new, paid for
+  2026-08-05 — see edge 1 §1.5).  A concurrent session editing a shared BASE config
+  silently re-postures every descendant arm: `_ft63_24h_conv.json` moved
+  `elevation_mask_deg` 10→15 and `elevation_cutoff_deg` 25→15 at 09:01 Aug-5, so arms
+  run before and after that edit are not comparable even on a byte-identical binary
+  (measured: same product, same exe, last-30 3D RMS 6.70 vs 2.78 m, diverging from
+  epoch 1).  The resolved-config summary in `gnss_config.log` does NOT print enough to
+  catch this — it showed the iono cutoff but not the obs mask.  Before pairing against
+  a stored arm, `ls -la` the whole chain and compare mtimes against the arm's run time,
+  or restate the posture explicitly in the new config (the twin config does this).
 - **Runs cannot overlap on this machine** (shared `C:\GnssProcessor\logs\` spdlog →
   second instance fast-fails 0xC0000409).  Harvest traces (mtime ≥ run start) into
   `runs/<name>/logs/` BEFORE the next run.
@@ -62,43 +83,169 @@ on content.
 
 ---
 
-## Edge 1 — the wire/consumer edge (fully bare; blocks the consumer grade for EVERY posture)
+## Edge 1 — the wire/consumer edge — ★ REWRITTEN 2026-08-05 after measurement
 
-**What.**  Producer datum re-realizations ship as unmarked value steps; the consumer
-has no reaction path.  Measured (SPEC §25, runs `ext63_dual_12h_{ref,lv125}` +
-`replay_ext63_12h_{ref,lv125}`): the wire carries only C/E/H/P records — zero R
-records, zero `phase_disc`/`clock_disc` fields, `datum_changed ≡ 0`, H-heartbeat
-σ₀ ≡ 0.000.  Mid-arc PB steps > 0.1 m on ~17 % of epochs (median ~3 m, max ~290 m);
-the producer's own counter says **394 ref-path-slip steps in both arms, and the wire
-census recovers 387/385 — counted, shipped, zero marked**, under `sigma=` ≤ 0.56 m
-advertised.  Consumer excursions (to 979 m) are float-side and onset-enriched 5–13×
-in re-referencing/topology events, not in value steps.
+> **The premise of the original card was FALSE and is retracted.**  SPEC §25.5 /
+> §27 item 2 (and this card's first draft) asserted that "the closed-loop/replay
+> consumer has no reaction path to any per-satellite disc."  **It has one, it is
+> wired, and it was firing 83 times over 12 h in the very arm §25 graded.**  Do not
+> spend a session building a consumer reaction seam — it exists.  What is bare is
+> (a) the CONTRACT that makes it faithful and (b) the EVENT CLASS that actually
+> drives the excursions.  Everything below is measured, not inferred.
 
-**The card is two-sided by construction** (SPEC §25.5 / §27 item 2):
-1. *Producer:* arm the existing mark machinery — `NetworkProductEmitter.cpp:75-136`
-   has per-sat disc counters, `disc_threshold_m`, `emit_clock_disc`,
-   set-change tracking; the emit re-base already counts each preserved ref-path step.
-   Emitting marks changes product bytes → default-OFF knob + consumer-compat check.
-2. *Consumer:* the reader already parses every mark (`NetworkProductIO.cpp:120,278,
-   603-620`) but only the RT engine reacts (`RealTimeEngineSsrBreaks.cpp` — order is
-   load-bearing there: `reactToGenerationChange` global union BEFORE per-signal
-   handlers).  The closed-loop/replay consumer (`ApplicationConsumerReplay.cpp` logs
-   the contract at :171 and nothing else) needs the equivalent reaction seam:
-   per-sat disc ⇒ reset that sat's carried SD ambiguity (reset-over-repair,
-   biasless — NOT a repair attempt).
-3. *Rider:* the H heartbeat's σ₀ is fed by the carry_warm-gated within-epoch RAIM —
-   structurally dead on non-leveled lineages.  Candidate fix: feed it from the
-   always-on prefit census σ̂₀ (`trace_prefit_census` tier).
+### 1.0 How the false premise survived: a default-OFF logger
 
-**Grade — fits the run budget.**  Marks need fresh producer runs (the existing 12 h
-products are mark-free); use **3 h producer pairs** (~4–6 min each — both §25 arms
-already show excursions inside h0–3: ref h1.5 peak 308 m, lv125 h2.4 peak 979 m) +
-replays (~11 s).  Success = excursion mass (epochs > 20 m, peak) drops materially in
-both arms with the reaction built; `product_step_census.py` shows the same steps now
-MARKED (census counts unchanged — the steps are legitimate re-datums; only their
-visibility changes).  Ground truth for tests: the emitter's per-run ref-path-slip
-count vs the census tie-out (394/394 at 12 h; expect ~100 at 3 h).  The h9.5–11.5
-storm-era grade rides the parked 12 h tier.
+`Application::runConsumerReplay` drives a `RealTimeEngine`, and
+`RealTimeEngine::processEpoch` calls **all five** `RealTimeEngineSsrBreaks` handlers
+unconditionally (`src/core/realtime/RealTimeEngine.cpp:479-483`).  The reactions
+log to the `rt_engine` logger, and `logging.enable_rt_engine` **defaults to false**
+(`GnssConfigLoad.cpp:3075`) — so `runs/replay_ext63_12h_ref/logs/rt_engine.log` is
+**0 bytes** and the whole reaction layer read as absent.  Invariant #4 ("run-end
+counters are the ON-path telemetry") has a corollary this cost a card:
+**an empty log is not evidence of an inert path — check whether its logger is armed.**
+
+### 1.1 The proof (byte-identical twin, logger ON)
+
+`config/test_suite/_ext63_replay_12h_ref_twin.json` restates the reference arm's
+posture (see §1.5) and adds only `logging.enable_rt_engine: true`:
+
+| | reference `replay_ext63_12h_ref` | twin |
+|---|---|---|
+| AR ran / fixed | 1424 / 5 | 1424 / 5 |
+| first fix | tow 264630.0 | tow 264630.0 |
+| last-30 3D RMS | 6.7027 m | 6.7027 m |
+| `closed_loop_trace.csv` md5 | `3af4ff1a0d4dfee1faf0a5327eb68938` | **same** |
+| `consumer_replay_hourly.csv` md5 | `7fba959eff71086e31d311792981bb51` | **same** |
+| phase-bias disc resets | *(invisible)* | **83** |
+
+Byte-identical traces ⇒ the logger toggle is solve-neutral ⇒ those 83 resets were
+in the reference run too.  A logger-OFF control (`_ext63_replay_12h_ref_ctl.json`)
+reproduces the same solve, confirming the toggle changes nothing but the log.
+
+### 1.2 What is actually bare, per channel (measured on the graded arm)
+
+| channel | wire | consumer reaction | verdict |
+|---|---|---|---|
+| **phase-bias disc** | P records; disc field NOT serialized ⇒ replay RECOMPUTES | `resetOnPhaseBiasDisc` → `resetAmbiguity` | **LIVE — 83 resets / 12 h, but at the WRONG threshold (§1.3)** |
+| **code-bias disc** | **zero B records on the wire** — no satellite code biases emitted at all | `reinflateOnCodeBiasDisc`, additionally gated on `estimate_ifb` (**off**) | dead at source, twice over |
+| **clock disc** | C records present, `emit_clock_disc` OFF ⇒ counter ≡ 0 | `reinflateOnClockDisc` | dead at source |
+| **generation id** | no `I` records | `reactToGenerationChange` | inert (single producer run) |
+| **`datum_changed`** | E field ≡ 0 | forced bump | inert |
+| **H heartbeat** | **1440 H records ARE on the wire** | `logProducerStatus` | **structurally invisible: `NetworkProductReader::replay` never feeds H** — only `NetworkProductTail::lastStatus` surfaces it, and the batch replay path does not use the tail |
+
+So §25.1's "the wire is mark-free" is right about the *marks* but understates one
+case (1440 H records are written and then ignored by the batch reader) and
+overstates another (the phase channel needs no serialized mark — replay recomputes
+it deterministically, which is why the reaction works at all).
+
+### 1.3 ★ The real producer-side defect: a v1 wire mis-thresholds the one live channel
+
+The product is `# gnss_network_product v1` with **no S contract line**, because
+`network.serialize_sbasis_contract` defaults to **false**.  So
+`NetworkProductReader::makeReplayEmitter` falls back to the DEFAULT emitter —
+flat `kDefaultDiscThresholdM = 0.05 m` — while the producer ran
+`network.disc_threshold_frac_cycles = 0.25` (per-λ: **0.0476 m** L1, **0.0611 m** L2).
+Producer and consumer are counting **different events**.  Quantified over the 12 h
+wire (scan validated: it reproduces §25.2's census number 387 exactly):
+
+| | count |
+|---|---|
+| mid-arc steps > 0.1 m (the §25.2 number) | **387** |
+| would fire at PRODUCER threshold (0.25·λ) | 437 |
+| would fire at CONSUMER fallback (flat 0.05 m) | 477 |
+| → producer flags, consumer **MISSES** | **5** (all band 1; 0.25λ = 0.0476 < 0.05) |
+| → consumer flags, producer **did NOT** | **45** (all band 2; 0.25λ = 0.0611 > 0.05) |
+
+The error is **band-asymmetric and mostly spurious**: 45 false resets against 5
+missed.  The observed resets are `L2W 52 / L1W 31` — i.e. the band carrying the
+spurious population is the majority channel.  **Fix is one default-OFF knob, not
+new code:** arm `network.serialize_sbasis_contract` on the producer; the contract
+already carries `discfrac=` (`ApplicationNetworkSetup.cpp:1062`) and
+`makeReplayEmitter` already consumes it.  ⚠ One latent bug to fix with it:
+`pending_contract.disc_threshold_m` is hardcoded to
+`NetworkProductEmitter::kDefaultDiscThresholdM` (`ApplicationNetworkSetup.cpp:1051`)
+rather than the configured value — harmless while `discfrac` > 0 dominates, wrong the moment a run
+sets a non-default flat threshold.
+
+### 1.4 ★★ The load-bearing NEGATIVE result: the live reaction does not touch the excursions
+
+Correlating the 83 resets against the consumer's own excursion windows
+(err3d > 20 m), base reset rate 0.0576/epoch over 1440 epochs:
+
+| window (h) | ep | peak | resets in onset (−120…+60 s) | enrichment |
+|---|---|---|---|---|
+| 1.51–1.68 | 22 | 307.6 m | **0** | **0.00×** |
+| 3.30–4.70 | 169 | 545.6 m | **0** | **0.00×** |
+
+Inside the windows: **10 resets of 83, against 11.0 expected at base rate —
+enrichment 0.91×, i.e. exactly nothing.**  Zero at both onsets.
+
+This extends §25.3 one decisive step.  §25.3 showed the *steps* are at base rate
+inside excursions; this shows **the consumer's reactions to those steps are too**,
+and are entirely absent at the onsets.  Therefore:
+
+> **Arming marks and reactions on the phase-bias disc channel will NOT recover the
+> excursion mass.**  The original card's success criterion ("excursion mass drops
+> materially in both arms with the reaction built") is not achievable through this
+> channel and is retracted.
+
+The excursion driver remains §25.3's event class — `refsat_reset`, `col_removed`,
+`sbc_engage`, `eq34_reattach` — which has **no wire representation of any kind**.
+That, not the reaction seam, is Edge 1's bare edge: the producer knows it moved its
+datum and the wire has no record type that says so.  The nearest existing carrier is
+the per-sat forced bump (`markSatDiscontinuity` → `R` record) and the
+per-constellation `datum_changed` / `datum_consts` E-fields — both present in the
+format, both never written on this lineage.
+
+### 1.5 ⚠ The §25 replay arms are at the now-VOID 10/25 posture
+
+Discovered while building the twin, and it affects every number §25 quotes.  The
+chain root `config/test_suite/_ft63_24h_conv.json` was edited at **09:01 Aug-5**
+(landed in `2862318`), moving `processing.elevation_mask_deg` **10 → 15** and
+`estimation.ionosphere_weighting.elevation_cutoff_deg` **25 → 15**.  The §25 replays
+ran at **07:52**, i.e. under the OLD **10/25** posture — which this document's own
+Denominators rule declares "void as a control".  Same product stream, same binary,
+current 15/25 posture ⇒ last-30 3D RMS **2.78 m vs 6.70 m** and a completely
+different excursion profile.  Consequences:
+
+- reproducing any §25 replay number requires restating `elevation_mask_deg: 10.0`
+  **and** `elevation_cutoff_deg: 25.0` (the twin config does exactly this);
+- the iono cutoff is a red herring **for the consumer** — measured: 15 vs 25 gives
+  bit-identical consumer output.  The obs mask is what moves it;
+- **same-build pairing (invariant #6) was not sufficient here.**  The binaries were
+  byte-identical (`md5 383ad4a7…`) and the arms still diverged from epoch 1.  New
+  rule for this document: *pair on the resolved CONFIG CHAIN as well as the build* —
+  a shared base config edited by a concurrent session silently re-postures every
+  descendant arm, and the resolved-config summary does not print enough to catch it
+  (it showed the iono cutoff but not the obs mask).
+
+### 1.6 Revised card
+
+Three separable pieces, in dependency order:
+
+1. **Make the live channel faithful** (cheap, default-OFF, no new code): arm
+   `network.serialize_sbasis_contract`; fix the hardcoded `disc_threshold_m` at
+   `ApplicationNetworkSetup.cpp:1051`.  Grade: replay recomputes 437 events instead
+   of 477, the 45 spurious band-2 resets vanish, the 5 band-1 misses appear.
+   Product bytes change (new S line) ⇒ consumer-compat check + `product_step_census.py`.
+2. **Give the excursion event class a wire record** (the real work): the format
+   already has `R` records and `datum_changed`/`datum_consts`; the producer already
+   detects `refsat_reset` / `col_removed` / `sbc_engage` / `eq34_reattach` for
+   `trace_events`.  Route those to `markSatDiscontinuity` / `markDatumChange` behind
+   a default-OFF knob, then re-measure §1.4's onset enrichment — **that** table is
+   the success criterion, not excursion mass in the abstract.
+3. **The H rider, re-scoped**: two defects, not one.  (a) σ₀ ≡ 0 because the feed is
+   the carry_warm-gated within-epoch RAIM (candidate: the always-on prefit census
+   σ̂₀); (b) **the batch replay path ignores H entirely** — 1440 records written and
+   dropped.  (b) is the cheaper and more surprising half.
+
+**Grade — fits the run budget.**  Piece 1 and the §1.4 re-measure are replay-only
+(~16 s per arm) against the existing 12 h products.  Piece 2 needs fresh producer
+runs: **3 h pairs** (~4–6 min each; the ref arm's h1.5 and h3.3 excursions both sit
+inside h0–3).  Reproduction recipe for everything above:
+`_ext63_replay_12h_ref_twin.json` (10/25 posture + `enable_rt_engine`), binary
+`gnss_processor_lv4stage1.exe` (= `f17`, md5 `383ad4a7…`), harvested to
+`runs/replay_ext63_12h_ref_twin/`.
 
 ## Edge 2 — the clock datum (worst re-realizer on the leveled lineage; candidates never validated)
 

@@ -1990,13 +1990,13 @@ drifting iono/clock content get pulled apart into estimable space.
 
 ### 25.5 What this changes (and does not)
 
-1. **The wire needs its event channel armed** — but that alone is INERT downstream:
-   the product READER parses every mark (`NetworkProductIO.cpp:120,278,603-620`) yet
-   the only consumer that REACTS is the RT engine (`RealTimeEngineSsrBreaks` — the
-   sole non-producer file in the discontinuity-reaction census); the closed-loop /
-   replay consumer only logs the contract flags (`ApplicationConsumerReplay.cpp:171`)
-   and has **no reaction path to any per-satellite disc**.  It needs the RT seam's
-   equivalent.
+1. ~~**The wire needs its event channel armed** — but that alone is INERT downstream:
+   the closed-loop / replay consumer has **no reaction path to any per-satellite
+   disc**.  It needs the RT seam's equivalent.~~  **RETRACTED — FALSE.  See §25.7:**
+   the replay consumer IS a `RealTimeEngine` and all five `RealTimeEngineSsrBreaks`
+   handlers run unconditionally (`RealTimeEngine.cpp:479-483`); the phase-disc
+   reaction fired **83 times** in the very arm this section graded, silently, because
+   `logging.enable_rt_engine` defaults false (`GnssConfigLoad.cpp:3075`).
    The card is therefore two-sided by construction: emit the marks (producer, cheap,
    machinery exists) + react to them (consumer seam, the real work).  Until both
    exist, "adapt-and-EMIT" is invisible at the consumer — invariant #7's consumer
@@ -2036,6 +2036,54 @@ the mean.  Two conclusions: the −5 ns convention offset is stable hardware (th
 zero-mean-datum analysis stands as a STATIC frame choice), and **the a₀₀ breathing is
 estimator realization noise, not receiver physics** — which is consistent with §24.2,
 where doubling the admitted information halved it.
+
+### 25.7 CORRECTION (2026-08-05, same day): §25.5's central claim was FALSE — the reaction path exists, fires, and doesn't touch the excursions
+
+Caught by the user; measured by the follow-up probe arms
+(`_ext63_replay_12h_ref_{twin,ctl,rtlog}.json`, runs
+`replay_ext63_12h_ref_{twin,ctl,rtlog}`).  **The current statement of edge 1 is
+`HANDOFF_edge_response_queue.md`**; this subsection records what changes in §25's
+own claims.
+
+1. **"No reaction path" — RETRACTED.**  `Application::runConsumerReplay` drives a
+   `RealTimeEngine` (`ApplicationConsumerReplay.cpp:222`) and `processEpoch` calls
+   all five `RealTimeEngineSsrBreaks` handlers unconditionally
+   (`RealTimeEngine.cpp:479-483`).  In the very arm §25 graded, the phase-bias-disc
+   reaction fired **83 ambiguity resets over 12 h** — invisibly, because the
+   `rt_engine` logger defaults OFF (`GnssConfigLoad.cpp:3075`) and its log was
+   0 bytes.  Twin run with the logger armed: solve byte-identical
+   (`closed_loop_trace.csv` / `consumer_replay_hourly.csv` md5-equal), 83 resets
+   visible.  Method lesson, now a standing corollary of invariant #4: **an empty
+   log is not an inert path — check the logger's enable flag; and absence of a
+   BEHAVIOR must be verified at the call-graph level, not by grepping one file.**
+2. **"Mark-free wire" (§25.1) — stands for the marks, but two refinements.**  The
+   phase channel needs no serialized mark: `NetworkProductReader::replay`
+   re-derives disc counters by replaying values through an emitter
+   (`emitToStore`), which is why the reaction lives.  And the wire is not merely
+   unread-able but UNREAD in one case: all 1440 H heartbeat records are dropped by
+   the batch replay reader (only `NetworkProductTail::lastStatus` surfaces H, and
+   replay does not use the tail).
+3. **A real producer-side defect found by the probe (§1.3 of the handoff):** the v1
+   wire carries no S contract (`serialize_sbasis_contract` defaults false), so the
+   replay emitter falls back to a flat 0.05 m disc threshold while the producer ran
+   0.25·λ — **producer and consumer count different events** (45 spurious band-2
+   resets, 5 missed band-1, of 437 producer-true events).  Plus a latent hardcode at
+   `ApplicationNetworkSetup.cpp:1051`.
+4. **The load-bearing negative result (§1.4): the 83 live reactions have ZERO
+   enrichment at excursion onsets** (0 resets at both onsets; 0.91× inside windows).
+   §25.3's conclusion survives and sharpens: the excursion driver is the
+   re-referencing event class, which has no wire representation — and no amount of
+   PB-disc marking/reacting reaches it.  §25.5's original success criterion
+   ("excursion mass drops") is retracted for that channel; the revised criterion is
+   onset ENRICHMENT of a new event-class record (handoff §1.6).
+5. **⚠ Scope caveat on all §25 replay numbers: the replay arms ran at the void
+   10/25 posture** (07:52, before the 09:01 root-mask edit).  Reproduction requires
+   restating `elevation_mask_deg: 10` + `elevation_cutoff_deg: 25` (the twin config
+   does).  Measured while proving the twin: the consumer is bit-identical under the
+   iono cutoff (15 vs 25) and moves with the OBS mask (last-30 RMS 2.78 m at 15 vs
+   6.70 m at 10) — and **invariant #6 (same-build) is INSUFFICIENT for pairing:
+   pair on the resolved CONFIG CHAIN as well**, because a concurrently-edited shared
+   base re-postures every descendant silently.
 
 ---
 
@@ -2161,15 +2209,21 @@ Ranked next actions (supersedes §17's list):
    axis.  Oracle: `C:\LASER\test\GPS3710_test_PMINOLESS`.  Grade against arm 32 / arm
    38 denominators; target unchanged (|a₀₀ − GIM(t)| ≲ 4 at h0 AND h11, zero
    fold-side cost).
-2. **The two-sided disc channel** (new, from §25 — posture-independent, blocks the
-   consumer grade for EVERY posture): producer side, arm the existing machinery
-   (`emit_clock_disc`, PB disc fields, `datum_changed`; emitter already counts every
-   event it ships — 394/394 unmarked); consumer side, give the closed-loop/replay
-   consumer the RT engine's reaction seam (`RealTimeEngineSsrBreaks` equivalent —
-   currently the parse exists, the reaction does not).  Then re-run the §25 replay
-   pair and measure how much excursion mass disc-aware resets recover.  Rider: feed
-   the H heartbeat's σ₀ from the always-on prefit census instead of the
-   carry_warm-gated within-epoch RAIM (§25.1's dead instrument).
+2. **The disc-channel card — REVISED, see §25.7 and `HANDOFF_edge_response_queue.md`
+   edge 1 (the current statement).**  The original two-sided formulation is retracted:
+   the consumer reaction seam EXISTS and FIRES (83 resets/12 h, measured), and the
+   §1.4 negative result shows the PB-disc channel's reactions have ZERO enrichment at
+   excursion onsets — so "build the consumer seam" is not the work and "recover the
+   excursion mass through this channel" is not achievable.  The revised card:
+   (a) make the live channel FAITHFUL — arm `network.serialize_sbasis_contract` so
+   the replay emitter stops mis-thresholding (flat 0.05 m fallback vs the producer's
+   0.25·λ ⇒ 45 spurious band-2 resets, 5 missed band-1), and fix the hardcoded
+   `disc_threshold_m` at `ApplicationNetworkSetup.cpp:1051`; (b) give the ACTUAL
+   excursion event class (refsat_reset / col_removed / sbc_engage / eq34_reattach —
+   no wire representation of any kind) a record, via the existing `R` /
+   `datum_changed` carriers behind a default-OFF knob, graded on onset ENRICHMENT,
+   not excursion mass; (c) the H rider is TWO defects — σ₀ ≡ 0 (feed from the prefit
+   census) and the batch replay reader dropping all 1440 H records unread.
 3. **Stage 3 of item 1** — staged, predictions on record (the tracking verdict + the
    σ̂₀-compounding read that parameterizes item 3's requirements).  Run when ~55 min
    of budget exists.  Not a promotion candidate regardless of outcome (§23/§24).
