@@ -1,0 +1,35 @@
+{
+ "_comment": [
+  "PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md) -- 0.08 h SMOKE.",
+  "Extends _ft63_prires_corrob.json (census + corroboration, all five families),",
+  "so one 10-epoch run exercises EVERY new code path: the five feeds, both",
+  "dispersion branches, the three labels, the ladder, the trace, the PRIORRES",
+  "events, the epoch-status columns, the contingency join and the run-end readout.",
+  "Per the staged-cadence directive this runs FIRST; a >= 1 h arm only after it is",
+  "clean.",
+  "",
+  "WHAT A SMOKE CAN AND CANNOT ESTABLISH (spec section 9's convergence hygiene):",
+  "  CAN  -- gate 1 (OFF byte-identity against _ft63_prires_smoke_off-style",
+  "          control), gate 2 (LIVE WIRING: non-zero n_rows per armed family, and",
+  "          the run-end line distinguishing 'ran, saw nothing' from 'never ran'),",
+  "          gate 7 (cost: ms/epoch against the <= 1 ms budget at 63 stations --",
+  "          above 5 ms/epoch is an implementation defect, not a bad estimate, and",
+  "          the report must say so rather than add a stride).",
+  "  CANNOT -- gates 3-6.  Ten epochs is entirely inside ignition: sigma0 is below",
+  "          its 200-row warm-up for most families (every t reported RAW FORMAL and",
+  "          flagged), a free ambiguity absorbs its own arc's misfit exactly, and",
+  "          the redundancy census measured 43 % of data rows reading uncheckable",
+  "          cold.  Do NOT quote a ladder occupancy from this run."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ft63_prires_corrob.json"
+ ],
+ "processing": {
+  "max_duration_s": 300.0
+ },
+ "network": {
+  "max_duration_s": 300.0,
+  "product_output_path": "C:/GnssProcessor/runs/ft63_prires_smoke/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ft63_prires_smoke/state_snapshot.bin"
+ }
+}

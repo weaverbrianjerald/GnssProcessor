@@ -47,6 +47,7 @@ void networkLeveling(
     const std::vector<StationAssembly>& asm_res,
     const std::vector<int>& est_index_of,
     NetworkCarryVce& carry_vce_est,
+    NetworkPriorResidual& prires_est,
     bool carry_warm,
     double pl_now_s,
     const std::vector<std::string>& registered_clock_sats,
@@ -68,9 +69,34 @@ void networkLeveling(
 
     networkHarvestLocalCarries(ctx, config_, est, x_s, stations, est_index_of,
                                asm_res, plan, sh_model.get(), sh_model2.get(),
-                               carry_vce_est,
+                               carry_vce_est, prires_est,
                                carry_warm, pl_now_s, registered_clock_sats,
                                shared_phase_keys, registered_code_keys);
+
+    // --- Card LV-2 (docs/SPEC_level_information_budget.md): trace μ ------------
+    // One `lv2_mu` row per receiver-code-bias family per epoch on the EXISTING
+    // events stream (the spec's "do not create a new stream for one scalar").  μ is
+    // the direct observable of the flywheel this card removes: it should sit near
+    // zero in a healthy run and swing during a frame move, and `action` says
+    // whether this epoch's value was FRESH or FROZEN by the thin-mean floor —
+    // invariant #7's decoupling edge, visible rather than inferred.  The harvest
+    // above has just reduced it; emitted here because the trace sinks and the
+    // epoch time live on this side of the seam.
+    // Under LV-5 the row carries BOTH numbers: the μ actually folded against this
+    // epoch, and the folded set's own raw common mode measured afterwards — their
+    // difference is the residual force the correction left behind, which is the only
+    // honest way to tell a working de-mean from one that merely ran.
+    for (const auto& [fam, rec] : ctx.carry.rx_cb_demean_last)
+        traces.emitEvent(se.time, "lv2", "rx_cb_demean_mu", "", "",
+                         rec.mu, static_cast<double>(ctx.knobs.rx_cb_demean_min_sta),
+                         rec.fresh ? "fresh" : "frozen",
+                         ctx.knobs.rx_cb_demean_within
+                             ? fmt::format("family={};n_sta={};sum_lambda={:.6g};"
+                                           "mode=within;folded_mu={:.6g};resid={:.6g}",
+                                           fam, rec.n_sta, rec.sum_lam,
+                                           rec.folded_mu, rec.folded_mu - rec.mu)
+                             : fmt::format("family={};n_sta={};sum_lambda={:.6g};mode=lag1",
+                                           fam, rec.n_sta, rec.sum_lam));
 
     // --- T1d: SH-field convergence detector (latch + one-shot refloat) ----
     // Judge the co-estimated SH field "stationary" once the epoch-over-epoch coefficient

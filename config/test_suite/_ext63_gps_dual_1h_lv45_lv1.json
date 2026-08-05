@@ -1,0 +1,50 @@
+{
+ "_comment": [
+  "EXT-63, arm 28a \u2014 ATTRIBUTION PAIR for LV-1's surviving actuator.  1 h,",
+  "LV-4 + LV-5 armed, LV-2 de-mean DELIBERATELY OFF, LV-1 ON.",
+  "",
+  "WHY.  Arm 27 falsified the inertness prediction: with the frame gate retired by LV-4,",
+  "LV-1 still moved the level by ~10 TECU (first 58 ep: LV-1 ON mean 38.80, OFF 28.70,",
+  "difference flat at -9..-12 from epoch 10 on).  So a second actuator exists, and the",
+  "algebra points at LV-2 itself:",
+  "",
+  "  the de-meaned fold asserts  dx_i = innov_i - mu  with  mu = sum(lam*innov)/sum(lam)",
+  "  and  innov_i = value_abs_i - x_lin_i,  so  mu = mean(value_abs) - mean(x_lin)",
+  "  and the target is   x_abs_i = value_abs_i - mean(value_abs) + mean(x_lin).",
+  "",
+  "The common-mode component of that target is mean(x_lin) -- the mean of the FROZEN",
+  "first-epoch code-bias seeds.  The carry still puts sum(lam) ~ 100 information units on",
+  "the common mode (the de-mean changes the RHS, never the information), so it PINS the",
+  "receiver-DCB common mode to the seed frame.  LV-1 changes exactly that frame: the",
+  "reframed iono seed feeds initializeCodeBiases, which derives x_lin(cb) by subtracting",
+  "the seeded iono.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN: with LV-2 OFF, arms 28a and 28b agree (no",
+  "systematic level difference) -- because the un-demeaned fold asserts x_abs = value_abs",
+  "outright, which is frame-free, so LV-1 loses its last channel.  If they still differ,",
+  "the actuator is somewhere else again and neither the gate nor the de-mean explains it.",
+  "",
+  "NOTE what this pair does NOT claim: with LV-2 off and LV-4 admitting the full carry,",
+  "the common mode is owned by the carry's own memory.  Expect a poor level in BOTH arms.",
+  "The comparison is arm-to-arm, not against GIM."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "rx_cb_carry_step_gate": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv45_lv1/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv45_lv1/state_snapshot.bin",
+  "iono_seed_field_frame": true
+ }
+}

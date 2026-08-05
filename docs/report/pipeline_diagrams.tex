@@ -42,7 +42,7 @@ realises each step, so the diagrams double as a map into \texttt{src/}.
   \node[proc, below=of relin]   (gim)        {GIM iono weighting~\textsuperscript{(P)}\\{\footnotesize \texttt{applyGimIonoUpdate}}};
   \node[proc, below=of gim]     (ar)         {Ambiguity resolution\\{\footnotesize MLAMBDA $\cdot$ \texttt{AmbiguityResolver::resolve}}};
   \node[io,   below=of ar]      (log)        {Log epoch + write CSV traces};
-  \node[proc, below=8mm of log] (smoother)   {RTS smoother — backward pass~\textsuperscript{(P)}\\{\footnotesize \texttt{Smoother::run}}};
+  \node[proc, below=8mm of log] (smoother)   {RTS smoother: backward pass~\textsuperscript{(P)}\\{\footnotesize \texttt{Smoother::run}}};
 
   \node[note, left=10mm of collect, text width=3.4cm] (modes)
         {Before the loop the driver branches on mode:\\
@@ -81,11 +81,11 @@ once after the forward pass completes.}
         {branch chosen by\\\texttt{differencingModeFor(config)}};
 
   \node[proc, text width=3.4cm, below=18mm of kernel, xshift=-5.4cm] (none)
-        {\textbf{None} — PPP\\{\footnotesize no differencing\\(raw uncombined)}};
+        {\textbf{None}: PPP\\{\footnotesize no differencing\\(raw uncombined)}};
   \node[proc, text width=3.6cm, below=18mm of kernel] (bssd)
-        {\textbf{BetweenSatellite} — PPP-RTK\\{\footnotesize \texttt{BssdTransform::apply}\\SD vs.\ pivot (\texttt{PivotManager})}};
+        {\textbf{BetweenSatellite}: PPP-RTK\\{\footnotesize \texttt{BssdTransform::apply}\\SD vs.\ pivot (\texttt{PivotManager})}};
   \node[proc, text width=3.8cm, below=18mm of kernel, xshift=5.6cm] (dd)
-        {\textbf{DoubleDifference} — baseline\\{\footnotesize \texttt{BrsdTransform::apply}\\$\to$ \texttt{differenceBrsd}\\(\texttt{DdPivotManager})}};
+        {\textbf{DoubleDifference}: baseline\\{\footnotesize \texttt{BrsdTransform::apply}\\$\to$ \texttt{differenceBrsd}\\(\texttt{DdPivotManager})}};
 
   \node[proc, below=20mm of bssd] (kf)
         {\texttt{EpochMeasurement} $\to$ \texttt{KalmanFilter::update}};
@@ -253,9 +253,9 @@ push advances the horizon; otherwise it is passed straight to
         node[pos=0.25, right, note] {next epoch};
 \end{tikzpicture}}
 \caption{PPP-RTK network producer joint estimator (\texttt{NetworkEstimator}).
-Each epoch the shared satellite-side columns---one per
+Each epoch the shared satellite-side columns, one per
 (satellite, parameter-kind, signal) for the estimable clock, code bias, and
-phase bias---are re-registered at the top of every epoch (\texttt{reset}, then
+phase bias, are re-registered at the top of every epoch (\texttt{reset}, then
 \texttt{registerClock} / \texttt{registerCodeBias} / \texttt{registerPhaseBias},
 plus \texttt{registerVtecCoeff} for the network-wide SH-VTEC coefficients when
 \texttt{network.estimate\_iono\_sh} is on), after which \texttt{beginEpoch}
@@ -274,7 +274,7 @@ orchestration: the two-pass station assembly
 (\texttt{networkPassAHead\_}/\texttt{networkPassB\_},
 \texttt{app/ApplicationNetworkAssembly}) feeds \texttt{addStation}, the datum and
 solve run in \texttt{networkSolveGlue}, and the emit step in
-\texttt{networkEmitStore} --- which, when \texttt{network.closed\_loop.enable} is
+\texttt{networkEmitStore}, which, when \texttt{network.closed\_loop.enable} is
 armed, additionally drives a held-out PPP-RTK consumer against the freshly
 emitted products, a between-satellite single-difference (BSSD) consumer by
 default or an undifferenced one under

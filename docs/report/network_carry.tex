@@ -88,7 +88,7 @@ parts, developed in order below:
 \item The quantity that may be carried is therefore constrained to be
       gauge-free, and the natural gauge-free basis of the ambiguity
       block is the \emph{cycle space} of the receiver--satellite
-      observation graph --- the double differences indexed by the
+      observation graph, the double differences indexed by the
       spanning tree's \emph{chords} (\Cref{sec:net-carry-cycles}).
 \item Carrying that basis costs one bounded Woodbury correction per
       connected component, with closed forms for the posterior and for
@@ -96,8 +96,8 @@ parts, developed in order below:
 \end{enumerate}
 
 \Cref{sec:net-carry-example} then carries a two-receiver,
-two-satellite network --- the smallest network whose observation graph
-has a cycle at all --- through every step with exact arithmetic.
+two-satellite network, the smallest network whose observation graph
+has a cycle at all, through every step with exact arithmetic.
 
 \begin{remark}[Theoretical footing]
 Time-linking a \emph{selected} set of linear functions $\bm{z} =
@@ -153,7 +153,7 @@ of $\Nsr$ and $\Nrr$ only; $\Nss$ enters
 The practical consequence is that a border prior may be folded
 \emph{before or after} the reduction with identical results, so the
 between-epoch carry of the satellite clock and biases costs no second
-Schur pass even when it is applied late --- between the null-space rank
+Schur pass even when it is applied late, between the null-space rank
 gate and the solve, say.  This is what \texttt{addSharedInfo}
 (\texttt{filter/NetworkNormalEquations}) exploits: when a reduction is
 already cached it folds the delta in place and leaves the cache current.
@@ -188,8 +188,8 @@ Two properties make it cheap: it is orthogonal to every other station
 (the arrowhead has no station--station block to disturb), and it
 conditions only $\xlocal{\rx}$.
 
-The two doors have opposite ordering constraints --- door~1 may be late,
-door~2 must be early --- and that asymmetry is not a convention but a
+The two doors have opposite ordering constraints (door~1 may be late,
+door~2 must be early), and that asymmetry is not a convention but a
 direct reading of \dcref{eq:net-schur-N}{the reduced-normals equation}.
 
 \paragraph{Door 3: local columns across several stations.}
@@ -201,7 +201,7 @@ nor as a per-station one, and folding it into the unreduced system
 marginalisation exact and cheap are exactly what it would fill in.
 
 This is not an exotic case.  It is the case that matters, because the
-only ambiguity combinations worth carrying are between-station ones ---
+only ambiguity combinations worth carrying are between-station ones:
 a single station's ambiguity is not estimable on its own
 (\dcref{sec:net-example-phase}{the phase part of the two-receiver
 example}).  The resolution is to fold such a prior \emph{after} the
@@ -213,7 +213,7 @@ subsection records the two hazards it creates.
 \begin{remark}[Post-reduce folds do not compose]
 Two door-3 folds applied to the same reduced system are each derived
 against the \emph{pristine} $\Nrr$.  Composing them over coupled local
-columns is therefore inexact --- it silently drops the cross term
+columns is therefore inexact, since it silently drops the cross term
 $\Czmat\Nrr^{-1}\bm{C}_{L,\text{other}}^{\Tr}$ of the joint middle
 inverse, because neither fold sees the other's augmentation of $\Nrr$.
 The implementation makes this structural rather than advisory: the
@@ -221,7 +221,7 @@ sum-to-zero ensemble phase gauge (\texttt{foldReducedSumZeroGauges}) and
 the carried DD priors (\texttt{foldReducedDdPriors}) are mutually
 exclusive, and \texttt{NetworkEstimator::solve} throws if both are set.
 Under the invariant carry the phase datum is realised instead by
-door~2 --- pre-reduce tree pins --- which compose with a post-reduce
+door~2, the pre-reduce tree pins, which compose with a post-reduce
 door~3 fold \emph{exactly}, since the fold then reads an
 already-pinned factor.
 \end{remark}
@@ -268,8 +268,8 @@ K_c \;=\; |\arcset_c| \;-\; (n_c + m_c - 1)
 \label{eq:carry-chordcount}
 \end{equation}
 arcs are the \emph{chords}.  Adding a chord to the tree closes exactly
-one cycle --- its \emph{fundamental cycle}, the chord plus the unique
-tree path joining its endpoints --- and those $K_c$ cycles are a basis
+one cycle, its \emph{fundamental cycle}, the chord plus the unique
+tree path joining its endpoints, and those $K_c$ cycles are a basis
 of the component's cycle space.  \Cref{eq:carry-chordcount} is the
 first Betti number of the component; it is the exact number of
 independent double differences the component supports, and it is a
@@ -294,7 +294,7 @@ higher-order alternating difference on six or more columns.
 \begin{samepage}
 \begin{quote}
 \textbf{Proposition (gauge-freeness).} $z_c$ is invariant under both
-ambiguity gauges of the network model --- the receiver shift
+ambiguity gauges of the network model: the receiver shift
 $N^{\sat}_{\rx}\mapsto N^{\sat}_{\rx} - d_{\rx}$ for all $\sat$, and the
 satellite shift $N^{\sat}_{\rx}\mapsto N^{\sat}_{\rx} - c^{\sat}$ for
 all $\rx$.
@@ -302,7 +302,7 @@ all $\rx$.
 \emph{Proof.} A cycle visits each of its vertices exactly once, and each
 visited vertex is incident to exactly \emph{two} arcs of the cycle,
 which by the alternating signing carry opposite signs.  A shift attached
-to that vertex --- $d_\rx$ at a receiver, $c^{\sat}$ at a satellite ---
+to that vertex ($d_\rx$ at a receiver, $c^{\sat}$ at a satellite)
 therefore contributes $(+1)\delta + (-1)\delta = 0$ to
 \Cref{eq:carry-cycle-sum}.  Summing over vertices gives invariance.
 \hfill$\square$
@@ -328,9 +328,9 @@ the cycle basis is the right carried object:
       same arc set give cycle bases related by an integer matrix
       $\bm{T}$ with $\det\bm{T} = \pm1$, so $\bm{z}' = \bm{T}\bm{z}$,
       $\Pzmat{}' = \bm{T}\Pzmat\bm{T}^\Tr$ is an \emph{exact} change of
-      basis with no information loss.  Basis churn --- the failure mode
+      basis with no information loss.  Basis churn, the failure mode
       that defeats every attempt to carry the raw ambiguities, whose
-      individual values are datum-dependent --- becomes a non-event by
+      individual values are datum-dependent, becomes a non-event by
       construction rather than by hygiene.
 \end{itemize}
 
@@ -345,7 +345,7 @@ operation on the carried $(\hat{\bm{z}}, \Pzmat)$
 Graph event & Operation on the store \\
 \midrule
 Chord dies (arc lost) &
-  Drop that row and column of $\Pzmat$ --- pure marginalisation \\
+  Drop that row and column of $\Pzmat$, pure marginalisation \\
 Chord born (arc closes a new cycle) &
   Append an entry initialised by tap-off
   $\hat z_{\text{new}} = \bm{f}^\Tr\hat{\bm{x}}$ with its conditional
@@ -486,7 +486,7 @@ same object and cannot be composed.
 
 \paragraph{Positive-definiteness, and why it must be counted.}
 $\Pzmat + \Bfold$ is positive-definite in exact arithmetic.  It can
-fail to be so numerically --- a stiff carry ($\Pzmat$ near zero) added
+fail to be so numerically: a stiff carry ($\Pzmat$ near zero) added
 to an ill-conditioned $\Bfold$ subtracts operands of similar magnitude
 to reach a much smaller answer.  When it fails, the only safe action is
 to fold \emph{inertly}, $\Mfold := \bm{0}$, which leaves the reduced
@@ -494,8 +494,8 @@ system untouched and makes the posterior equal the prior.
 
 That branch is silent by construction, and silence here is dangerous in
 a specific way: the component's carried sub-state stops taking data
-while every downstream reading of it --- its formal $\sigma$, the
-innovation test, any ambiguity-resolution probe --- continues to report
+while every downstream reading of it (its formal $\sigma$, the
+innovation test, any ambiguity-resolution probe) continues to report
 on a quantity that is no longer being updated.  A carry can therefore
 diffuse for hundreds of epochs behind clean-looking logs.  The
 implementation consequently treats the PD screen as \emph{always-on
@@ -516,9 +516,9 @@ We now carry a complete network through every step above with exact
 arithmetic.  The network is the smallest one whose observation graph has
 a cycle at all: two receivers, two satellites, one signal.  As in
 \dcref{sec:net-example}{the two-receiver estimability example},
-everything inessential is stripped --- coordinates known so the
+everything inessential is stripped: coordinates known so the
 geometric range is removed, one frequency, no atmosphere, noise-free
-data, unit weights --- so that every number below is exact.  Ambiguities
+data, unit weights, so that every number below is exact.  Ambiguities
 are in cycles.
 
 \paragraph{Model and truth.}
@@ -580,8 +580,8 @@ z \;=\; N^1_B - N^1_A + N^2_A - N^2_B .
   \draw[tree]  (rB) -- (s2);
   \draw[chord] (rB) -- (s1);
   \node[lbl, anchor=west] at (4.1,2.0) {satellites (top), receivers (bottom)};
-  \node[lbl, anchor=west] at (4.1,1.3) {solid: 3 tree edges --- fix the gauge};
-  \node[lbl, anchor=west] at (4.1,0.6) {dashed: 1 chord --- carries the DD};
+  \node[lbl, anchor=west] at (4.1,1.3) {solid: 3 tree edges, which fix the gauge};
+  \node[lbl, anchor=west] at (4.1,0.6) {dashed: 1 chord, which carries the DD};
 \end{tikzpicture}
 \caption{The smallest observation graph with a cycle: two receivers,
 two satellites, four arcs.  Three arcs form a spanning tree; the fourth
@@ -608,14 +608,14 @@ $\delta\beta_A,\delta\beta_B,\delta b^1,\delta b^2$ freely; the
 $\delta N^{\sat}_{\rx}$ follow).  Pinning the three \emph{tree}
 ambiguities $N^1_A = N^2_A = N^2_B = 0$ removes three of those four
 dimensions, leaving the single direction
-$(\beta_A,\beta_B,b^1,b^2)\mapsto(\beta_A+t,\ \beta_B+t,\ b^1-t,\ b^2-t)$
---- the one remaining receiver-versus-satellite gauge, which is the
+$(\beta_A,\beta_B,b^1,b^2)\mapsto(\beta_A+t,\ \beta_B+t,\ b^1-t,\ b^2-t)$,
+the one remaining receiver-versus-satellite gauge, which is the
 network's clock gauge in miniature.  It is removed by one \emph{shared}
 pin, $b^1 \equiv 0$.
 
 This is the whole datum architecture in four arcs: the tree edges are
 pinned through door~2 (locally, pre-reduce), the last gauge through the
-shared minimum-constraint datum, and the chord is left free --- it is
+shared minimum-constraint datum, and the chord is left free: it is
 the only ambiguity that carries information rather than convention.  For
 tidy arithmetic the pins are taken here as \emph{exact}; the
 implementation realises them as tight finite priors folded by
@@ -671,7 +671,7 @@ entirely.  Summing,
 \label{eq:carry-ex-reduced}
 \end{equation}
 The reduced system has rank $1$ and one zero eigenvalue, whose
-eigenvector is $[1,1]^\Tr$ --- exactly the one gauge predicted above.
+eigenvector is $[1,1]^\Tr$, exactly the one gauge predicted above.
 A null-space rank gate declaring dimension $1$ for this configuration
 would pass; declaring $0$ or $2$ would throw
 (\dcref{sec:net-sbasis}{the minimum-constraint datum section}).
@@ -728,7 +728,7 @@ prior $\Pzmat = 0$, \Cref{eq:carry-fold-N,eq:carry-fold-u} reproduce
 $\hat b^2 = -4.25$, $\hat\beta_A = 3.40$, $\hat\beta_B = 5.90$,
 $\hat N^1_B = -1$ and zero residuals.  The innovation is
 $v = 3.25 - 4.25 - (-1) = 0$.  Carrying information the data already
-implies changes nothing --- as it should.
+implies changes nothing, as it should.
 
 \emph{A stale carry warps everything.}  Now suppose the chord slipped by
 one cycle and the carry did not notice, so $\hat z = 0$ is folded
@@ -749,7 +749,7 @@ in a stiff carried quantity did not stay in the ambiguity that slipped:
 it moved the \emph{emitted satellite phase bias} by half a cycle and
 smeared the remainder evenly over every observation in the network.
 This is the general mechanism by which a stale zero-$q$ carry damages a
-solution --- the network has no way to reject information asserted with
+solution: the network has no way to reject information asserted with
 infinite confidence, so it redistributes the contradiction into whatever
 states can absorb it.  It is also why any zero-$q$ time link requires a
 wired slip response before it may be armed.
@@ -764,7 +764,7 @@ v = 3.25 - 3.75 - 0 = -0.5,
 \qquad
 \frac{|v|}{\sqrt{\mathrm{Cov}(v)}} = 0.5 .
 \]
-The test sees the slip, but at only $0.5\sigma$ --- far below any
+The test sees the slip, but at only $0.5\sigma$, far below any
 sensible flag threshold.  The reason is visible in the residual table:
 with four observations and no redundancy to speak of, half the error was
 absorbed by the parameters, so only half of it reached the innovation.
@@ -786,7 +786,7 @@ z_1 = N^2_B - N^2_A + N^1_A - N^1_B,
 z_2 = N^3_B - N^3_A + N^1_A - N^1_B .
 \]
 Now let the tree edge $(A,1)$ die.  It is covered by both chords, so a
-covering chord --- say $(B,2)$ --- is promoted into the tree, and the
+covering chord, say $(B,2)$, is promoted into the tree, and the
 dead arc is killed as a chord.  Against the new tree
 $\{(A,2),(A,3),(B,1),(B,2)\}$ the cycle basis is
 \[
@@ -805,7 +805,7 @@ carried covariance is transformed, not approximated.  Killing the dead
 arc's row of $\bm{z}'$ is then a marginalisation, and the surviving
 $z_2'$ continues with no loss.  Had the carried quantity been the raw
 ambiguities instead of the cycle basis, this same graph event would have
-demanded an S-transformation of a datum-dependent state --- the failure
+demanded an S-transformation of a datum-dependent state, the failure
 mode the cycle basis exists to eliminate.
 
 % ------------------------------------------------------------------
@@ -820,13 +820,13 @@ Object & Symbol & Home \\
 Arrowhead accumulation, Schur reduction, back-substitution &
   \texttt{addStation}, \texttt{reduce}, \texttt{reconstructStation} &
   \texttt{filter/Network\-Normal\-Equations} \\
-Door 1 --- shared border prior &
+Door 1: shared border prior &
   \texttt{addSharedInfo}, \texttt{addSharedPriorDense} &
   \texttt{filter/Network\-Normal\-Equations}, \texttt{filter/Network\-Estimator} \\
-Door 2 --- pre-reduce local prior &
+Door 2: pre-reduce local prior &
   \texttt{addStationPrior} &
   \texttt{filter/Network\-Normal\-Equations} \\
-Door 3 --- post-reduce Woodbury folds &
+Door 3: post-reduce Woodbury folds &
   \texttt{foldReducedSumZeroGauges}, \texttt{foldReducedDdPriors} &
   \texttt{filter/Network\-Normal\-Equations} \\
 Cycle algebra, lifecycle operations &

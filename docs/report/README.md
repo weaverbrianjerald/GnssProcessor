@@ -6,9 +6,9 @@ reference under `include/`.
 The reference is organised as a set of **component documents**, each of which
 compiles **two ways**:
 
-- as its own **standalone PDF** (e.g. `slip_detection.pdf`) — a focused,
+- as its own **standalone PDF** (e.g. `slip_detection.pdf`): a focused,
   shareable document covering one core component; and
-- as a **part of the combined volume** (`main.pdf`) — the complete reference,
+- as a **part of the combined volume** (`main.pdf`): the complete reference,
   with a single table of contents, bibliography, and cross-references resolved
   to section numbers.
 
@@ -51,7 +51,7 @@ clean intermediates **and** PDFs with `latexmk -C`.
 docs/report/
   gnssreport.sty            SHARED PREAMBLE: packages, TikZ styles, ALL notation
                             macros, and the \dcref cross-document macro. Single
-                            source of truth — do not redefine notation elsewhere.
+                            source of truth; do not redefine notation elsewhere.
   main.tex                  Combined volume. \subfile's every component, grouped
                             with \part, plus the introduction and bibliography.
   latexmkrc                 Build config: a bare `latexmk` builds all targets.
@@ -60,7 +60,7 @@ docs/report/
   COMPONENT DOCUMENTS (each a standalone-capable subfile):
   foundations.tex           Shared substrate. Wrapper that supplies the \section
                             headings and \input's the four content fragments
-                            below — the notation, state vector, observation
+                            below: the notation, state vector, observation
                             equations, and differencing that everything cites.
     notation.tex              Symbol table + sign conventions.
     state_vector.tex          Variable-dimension Kalman state vector layout.
@@ -73,7 +73,7 @@ docs/report/
   product_evaluation.tex    Baseline orbit/clock product evaluation: derotated-
                             Neville / sidereal-trig SP3 interpolation, rate-anchored
                             clock LSQ, broadcast Kepler / GLONASS PZ-90, ephemeris
-                            selection — the baseline the SSR chapter overlays.
+                            selection; the baseline the SSR chapter overlays.
   atmosphere.tex            Tropospheric (Saastamoinen ZHD, Niell/GMF/VMF3/GPT3
                             mapping, Chen-Herring gradients) and ionospheric
                             (uncombined slant scaling, GIM/IONEX STEC + iono-
@@ -107,7 +107,7 @@ docs/report/
   network.tex               Multi-station PPP-RTK network estimator: producer
                             architecture (the decomposed epoch loop and its seam
                             sequence), joint model, satellite phase-bias state,
-                            S-basis datum, Schur reduction — the producer of the
+                            S-basis datum, Schur reduction; the producer of the
                             SSR-style corrections the single-receiver modes consume.
   network_example.tex       Fully numerical 2-receiver x 4-satellite S-system
                             estimability worked example, mirroring
@@ -146,7 +146,7 @@ Each component file is a subfile:
 ```
 
 Everything outside the `\section ... \printbibliography` body is boilerplate
-that makes the dual (standalone + combined) build work — leave it alone. Notation
+that makes the dual (standalone + combined) build work, so leave it alone. Notation
 comes from `gnssreport.sty`; reuse those macros rather than redefining them.
 
 ### Cross-document references
@@ -154,8 +154,8 @@ comes from `gnssreport.sty`; reuse those macros rather than redefining them.
 Within one document, use `\Cref{...}` as usual. To reference a label defined in
 a **different** component document, use `\dcref{label}{human-readable name}`
 (defined in `gnssreport.sty`). In the combined volume it renders the section
-number; in a standalone PDF — where a combined-volume number would be
-meaningless — it renders the readable name. Example:
+number; in a standalone PDF, where a combined-volume number would be
+meaningless, it renders the readable name. Example:
 
 ```latex
 the SSR correction model (\dcref{sec:ssr}{the Real-time SSR corrections document})
@@ -166,8 +166,8 @@ the SSR correction model (\dcref{sec:ssr}{the Real-time SSR corrections document
 Everything under `generated/` is produced from the C++ source tree by
 `scripts/gen_report_tables.py`, so the tables track the code instead of
 drifting from it. The generator parses the *single source of truth* for
-each table — the cycle-slip registry, the `jval<bool>` config loader, the
-`make*Key` builders in `StateKeySchema.hpp`, and the mode enums — and emits
+each table (the cycle-slip registry, the `jval<bool>` config loader, the
+`make*Key` builders in `StateKeySchema.hpp`, and the mode enums) and emits
 LaTeX fragments. A renamed flag or a new detector shows up on the next run.
 
 ```sh
@@ -182,13 +182,13 @@ sync when the pipeline changes.
 
 > **Note on the API docs.** The Doxygen build (`cmake --build … --target docs`)
 > renders class/include/collaboration *structure* graphs when Graphviz `dot`
-> is installed — enabled automatically via `CMakeLists.txt`. Install Graphviz
+> is installed, enabled automatically via `CMakeLists.txt`. Install Graphviz
 > and re-run CMake to turn them on; add `-DGNSS_DOXYGEN_CALL_GRAPHS=ON` for the
 > verbose per-function call graphs.
 
 ## Scope
 
-This document covers the estimation mathematics and design rationale —
+This document covers the estimation mathematics and design rationale,
 the material that ages slowly because it is settled theory or algebra,
 not churning code:
 
@@ -212,8 +212,8 @@ not churning code:
 
 Empirical thresholds and tuning (MAD/Welford/EWMA gates, per-arc
 calibration) are deliberately left to the code and cited, not
-reproduced. Implementation notes that mirror evolving code — call
-signatures, configuration field reference, per-class responsibilities —
+reproduced. Implementation notes that mirror evolving code (call
+signatures, configuration field reference, per-class responsibilities)
 belong in the headers under `include/` and are rendered via Doxygen.
 Cross-references between the two are explicit:
 

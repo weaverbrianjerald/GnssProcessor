@@ -226,6 +226,137 @@ network CONFIG derives from a base that arms this set explicitly
   solve-affecting and stays a validated default-OFF guard until total_IF
   grading and a second event.
 - **Parallel**: `parallel_carry: true` / `parallel_reduce: false` (mutex).
+- **Lane layer**: OFF **on large networks only** (~300 sta); at ~60 sta it is a
+  small net LOSS. Scale-dependent — see below.
+
+### Amendments from the AGU-26 campaign (2026-08-04) — measured, not inferred
+
+**1. The MW/WL lane layer is OFF on LARGE networks — the win is scale-dependent
+and it is NOT a blanket default.**
+`applyLaneMeasurement` is **84.7 % of total runtime at 305 stations** — 232 ms
+per row of dense O(dim²) downdate on a **2K×2K joint block** (max K_c 3866, so
+7732² = 478 MB touched per row, twice, because the per-row re-symmetrize
+allocates a second copy). Settled 305-sta GPS epoch:
+
+| arm | s/epoch | note |
+|---|---|---|
+| `lane_carry.enable: true` (the old default) | **310–325** | 3 h of data = 33 h wall |
+| + `fold_blocked` + `parallel_components` | **115** | 2.8×; fold_blocked is NOT bit-identical |
+| `lane_carry.enable: false` | **26.7** | **12×**; 3 h of data = 2.7 h wall |
+
+Turning it off also shrinks the largest carried component **3866 → 2359** (the
+pair-block both merges the two bands into one component and doubles its
+dimension). It buys nothing measurable on DOY-129: AR fix rate is **0 %** and
+med|frac_cyc| is **uniform 0.25** with the layer ON, i.e. the lane layer costs
+85 % of the run to support integer fixing that is not happening. Consistent with
+the standing "MW/WL as conditioning — do NOT arm; net-harmful" verdict.
+
+**~~It does NOT transfer to ~60 stations~~ — SUPERSEDED 2026-08-04. Lane OFF
+wins at 63 stations too, once the window is settled.** The earlier reading
+(30-epoch arms `runs/agu63_nolane_30ep`: dd-build 895 → 241 ms but `install-post`
+108 → 291 and `solve-glue` 233 → 308, TOTAL 2084 → 2207 ms = a small net LOSS)
+was measured **entirely inside ignition** — the same objection this section
+already raises against 30-epoch arms below. Re-measured on matched 1 h arms
+(`_golden63_gps_1h_laneoff` / `_laneon`, 121 epochs, median over the 101 settled
+epochs, single knob differing):
+
+| section (median, settled) | lane OFF | lane ON | ON/OFF |
+|---|---|---|---|
+| **total epoch** | **2266.8 ms** | **2940.1 ms** | **1.30×** |
+| dd-build | 173.3 | 1150.0 | 6.64× |
+| install-post | 706.9 | 526.8 | 0.75× |
+| solve-glue | 363.6 | 386.1 | 1.06× |
+| assembly / reduce / cov-consumers | 250.6 / 134.2 / 163.6 | 252.7 / 93.3 / 163.8 | flat |
+
+It attributes exactly: +977 ms dd-build, −180 ms install-post, net +673 ms =
+the observed median gap. Both component DIRECTIONS matched the old 30-epoch
+reading and the install-post penalty is nearly identical (+183 then, +180 now);
+what flipped the total is the much larger settled dd-build saving (−977 vs −654).
+**Lane OFF is now the speed call at BOTH scales** — the old "decide it on speed
+only above ~100 stations; below that decide it on science" no longer applies,
+though science still points the same way.
+
+**⚠️ It changes carry RETENTION — now measured (2026-08-04), and the answer cuts
+both ways.** Same 1 h arms. Whole-block marginalizations: lane ON = **0**, lane
+OFF = **2549** over 121 epochs (reproducing the ON=0 / OFF=many pattern; the
+earlier figures were ON = 0 over 1440 ep, OFF = 735 over 31 ep). Lane ON ends
+with **726 carried DDs from 2113 births** vs OFF's **498 from 4312** — 46 % more
+retained carry from half the births, and max K_c 460 → 708 (the pair-block
+dimension doubling). Without pair-joining, a per-band component whose chords all
+refloat is discarded wholesale, where the joint block survived if either band did.
+
+**But the two σ̂₀ families split, and that is the finding.** Prior side gets
+QUIETER with lane ON (prires `cb` σ̂₀ 2.3372 → 2.0233, `rxcb` 1.5249 → 1.1417,
+global prior-only σ̂₀ 2.1051 → 1.8463, rows > 4σ̂₀ 717 → 223) while the post-fit
+DATA side gets ~2.3× LOUDER on two independent instruments (block-Baarda G σ̂₀
+6.372 → 15.51; station-congruence σ̂₀ 17.69 → 40.53). The prires drop is not a
+moved-threshold artifact — lane ON's σ̂₀ is *lower*, so its 4σ̂₀ bar is tighter,
+and it still flags 3.2× fewer rows. **Interpretation (consistent with the data,
+not independently proven): that split is what OVER-RETENTION looks like — the
+lane keeps state the data does not support, the carry stays self-consistent
+because it is stiff, and the observation residuals pay for it.** Consistent with
+the standing "MW/WL as conditioning — do NOT arm; net-harmful" verdict, now with
+a visible mechanism. **Still ungraded: total_IF** — 1 h cannot settle the LEVEL
+channel, so grade that on a ≥2 h run before quoting it.
+
+*A/B sanity gate worth reusing:* the block-Baarda block-size histogram and the
+datum-graph census came out **bit-identical** across the two arms (7259 blocks,
+`b1:17 b2:25 b3:15 b4:3672 b5:2 b6:3528`; 67518 edges, 438 tier-2). Both key off
+observation / S-basis structure rather than carry structure, so a lane A/B that
+moves them has a second variable loose.
+
+**2. Do NOT arm `emit_pb_filter_gate_v2` on this lineage.** Tested Aug-4
+(`runs/agu63_pbv2`, 12 h): solve byte-identical (CLK and CB max |Δ| = 0.0, so
+invariant #6 passes), but the effect is null-to-negative — ref-path-slip resets
+unchanged at 538, innovation resets **0 → 31**, PB discontinuity rate 1/128 min
+→ 1/124 min, consumer unchanged at 0 % fix. Its advertised win ("innovation
+resets 5707 → 32") has an **empty target population** here because the inherited
+`emit_pb_filter_jump_k: 8.0` already suppressed them. **91 % of emitted
+phase-bias discontinuities are ref-path SLIP re-referencing**, which no emission
+filter touches.
+
+**3. `emit_pb_filter_jump_k: 8.0` in the FT63 lineage is the RETIRED v1 hand
+tuning** — the code default is 4.0.
+
+**4. `trace_ionosphere` is a DIAGNOSTIC, and `network_ionosphere.csv` is
+frame-broken.** It emits `x_r` alone while the per-LOS iono state is seeded at
+allocation, so it is a CORRECTION, not absolute slant ionosphere (medians 9.9
+TECU against the field's own 30–33 TECU a00, 37 % negative). For anything that
+needs the estimated ionosphere, synthesize `network_vtec_sh.csv` —
+`scripts/sh_vtec.py` (ported basis + `--selftest`).
+
+**5. Candidates that still need their first validation run** (do not arm blind):
+`network.clock_datum_sum_to_zero` (or `_broadcast_anchored`) — both are
+`declared_dimension = 0` with "no pivot, no handover seam", and the clock is the
+worst re-realizer measured (**13 product-wide jumps** post-convergence over 12 h
+vs 2 for code bias and 0 for phase bias); and `network.emit_clock_disc: true` —
+without it the per-satellite clock disc counter is never populated, so all 13 of
+those jumps are **silent to the consumer**.
+
+**6. NEVER grade the ionosphere LEVEL against a single GIM number, and never on a
+1 h window** (2026-08-05, `docs/SPEC_level_information_budget.md` §14).  Two
+independent traps, both paid for:
+
+- The GIM's own **global mean VTEC moves through the day** — measured on DOY-129:
+  32.0 TECU at 00 UT, 36.9 at 08, 33.9 at 24.  Every level verdict on the EXT-CB
+  ladder before this was quoted against "GIM 32.24", the 00:00 map alone, so a run
+  tracking the ionosphere reads as drifting and vice versa.  Use
+  `python scripts/gim_global_mean_series.py <run_dir> …`, which reports
+  `a₀₀(t) − GIM_mean(t)` hourly (a sun-fixed a₀₀ **is** the global mean: Ȳ₀₀ ≡ 1).
+- **DEFECT 2 is about half an ignition transient.**  Graded time-matched, the
+  canonical EXT-CB posture starts −15.8 TECU (what every 20-epoch and 1 h arm
+  measured) and from hour 2 wanders in a −4…−15 band, mean ≈ −9.  The level
+  channel's convergence budget is ~2 h; any level claim from a shorter window is
+  measuring ignition.  The LV-1/2/4/5 stack inverts the trade — best ignition on
+  the ladder (+4) and then a ramp to +15…+21 — so **it is NOT armed for settled
+  work**; its cards remain valid fixes to the defects they name.
+- Corollary, measured over four 12 h postures (§15): **the rx-CB carry's rolling
+  common-mode memory is what TRACKS the level**, and the ±6 TECU breathing is its
+  price.  Freezing that memory (de-mean) drifts +20; loosening it (`rx_cb_carry_q`
+  1e-9 → 1e-6) drifts +25 — the frozen pin was RESISTING the drift; removing the
+  carry entirely collapses at −9 TECU/epoch.  Do not "fix" the level by tuning the
+  carry's memory model in either direction; it needs a per-epoch data-derived
+  authority instead.
 
 Grading note: the response doctrine is adapt-and-EMIT within the detected
 epoch; a withhold is the backstop and is graded as an adaptation failure

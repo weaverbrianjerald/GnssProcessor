@@ -22,7 +22,7 @@ renamed flag, a new cycle-slip detector, or a changed state-key delimiter
 appears here on the next run of the generator.  \emph{Known gap:} the
 feature-flag table de-duplicates on the C\texttt{++} member name rather
 than on the JSON path, so a section master switch named \texttt{enable}
-in more than one config sub-struct appears only once --- several
+in more than one config sub-struct appears only once, so several
 \texttt{network.*} masters, including those governing the default-off
 subsystems this appendix exists to disclose, are consequently absent.
 Treat the flag table as indicative and \texttt{GnssConfigLoad.cpp} /
@@ -31,7 +31,7 @@ Treat the flag table as indicative and \texttt{GnssConfigLoad.cpp} /
 \texttt{generated/} are \texttt{.gitignore}d and rebuilt on demand
 (\texttt{build.ps1 -Regen} / \texttt{build.sh -{}-regen}); to see whether
 anything moved, re-run the generator and check \texttt{git status}
-(\texttt{-{}-check} is not read-only --- it rewrites the fragments before
+(\texttt{-{}-check} is not read-only, since it rewrites the fragments before
 comparing them).
 
 \input{generated/processing_modes}

@@ -157,6 +157,15 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the 
  *                     is computed.
  * @param asm_res      PASS A/B station assemblies (the row stacks).
  * @param est_index_of Station → kernel slot map (−1 = not folded this epoch).
+ * @param x_s          The epoch's accepted POST-FIT shared solution.  The census
+ *                     itself does not read it — @f$r_i@f$ is a property of the
+ *                     geometry alone — but the BlockFormal rider that hangs off
+ *                     this sweep (docs/SPEC_block_baarda.md) needs the post-fit
+ *                     residual @f$y - A_s x_s - A_r x_r@f$, and the whole point of
+ *                     riding this seam is that the block sweep inherits its
+ *                     stride/escalation schedule instead of adding a second one.
+ *                     Pass @c sg_.x_s (the FINAL accepted solution, after any
+ *                     within-epoch re-solve); an empty vector disarms the rider.
  */
 void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                              const std::shared_ptr<spdlog::logger>& log,
@@ -165,7 +174,8 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                              const NetworkEstimator& est,
                              const NetworkEstimator::Datum& plan_datum,
                              const std::vector<StationAssembly>& asm_res,
-                             const std::vector<int>& est_index_of);
+                             const std::vector<int>& est_index_of,
+                             const Eigen::VectorXd& x_s);
 
 // ---------------------------------------------------------------------------
 //  Testable pieces (unit-test seam; no run state, no I/O)

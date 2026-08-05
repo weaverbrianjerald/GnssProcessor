@@ -1,0 +1,40 @@
+{
+ "_comment": [
+  "AGU26 arm 2 — the EMISSION-FILTER fix for the churn blocker measured on runs/agu63.",
+  "",
+  "WHY.  On the baseline arm the held-out consumer never resolves a single ambiguity",
+  "(0 % fix over 12 h, wandering 3-7 m) while the SAME consumer on the SAME products",
+  "reaches ~0.1 m and ~100 % fixed the moment the product stream stops updating.  The",
+  "blocker is emitted-product CHURN, not product accuracy.  Measured post-convergence:",
+  "the phase-bias channel signals a discontinuity every ~104 min per (sat,signal), and",
+  "the arc-age table says an ambiguity needs ~240 epochs (~2 h) to reach resolvable",
+  "sigma.  The product resets the user's ambiguity just before it can mature.",
+  "",
+  "THE CHANGE (two knobs, one prescribed pair — NOT a clean single-variable A/B):",
+  "  1. network.emit_pb_filter_gate_v2 — posture-recommended ON and OFF in every config",
+  "     on this lineage.  Its own validation record: disc floor 2.6/ep vs v1 85.5/ep",
+  "     (33x), innovation resets 5707 -> 32 (178x), solve BYTE-IDENTICAL.  It is an",
+  "     OUTPUTS-only gate on the re-based emission frame (requires",
+  "     carry_invariant_emit_rebase, which this lineage already runs) and is NOT in the",
+  "     warm-resume fingerprint, so it changes what the consumer eats and nothing else.",
+  "  2. network.emit_pb_filter_jump_k 8.0 -> 4.0 (the code default).  The inherited 8.0",
+  "     is the RETIRED v1 hand tuning; under gate_v2 the gate is model-scaled",
+  "     (|innov| > k*sqrt(Ppred+R)) so one k transfers across rates and the loader's own",
+  "     guidance is to retire per-rate overrides once G5 passed.  Arming gate_v2 while",
+  "     leaving the retired v1 k in place would confound the arm with a stale tuning.",
+  "",
+  "GRADE: the SOLVE must be byte-identical to runs/agu63 (invariant #6 — check products",
+  "data lines with ^# stripped, and the network_solution CLK/CB values).  Everything that",
+  "moves should move in the EMITTED phase-bias discontinuity rate and, through it, in the",
+  "held-out consumer's fix rate and position."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu63.json"
+ ],
+ "network": {
+  "emit_pb_filter_gate_v2": true,
+  "emit_pb_filter_jump_k": 4.0,
+  "product_output_path": "C:/GnssProcessor/runs/agu63_pbv2/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu63_pbv2/state_snapshot.bin"
+ }
+}

@@ -1,0 +1,48 @@
+{
+ "_comment": [
+  "SELF-CONTAINED (W6) SPOT-CHECK, arm 26 \u2014 _agu63_nolane_30ep + the full LV stack",
+  "(LV-1 seed frame, LV-2 de-mean, LV-4 invariant screen, LV-5 within-epoch mu).",
+  "SPEC_level_information_budget S3 item 3, generalized from LV-1 to all four cards.",
+  "",
+  "WHY THIS ARM EXISTS.  Everything the LV cards were graded on is the EXT-CB ladder,",
+  "where the satellite gauge is GIVEN AWAY and the level is held by an external a00",
+  "anchor.  The production posture is the opposite: W6 estimates the satellite code",
+  "biases and gauges them sum-to-zero, which realizes the IONEX convention -- which is",
+  "WHY this control's level lands GIM-compatible (23-28 TECU) with no external data.",
+  "The rx-CB carry and the SH field are LIVE here too, so all four cards apply.  The",
+  "question is not 'do they help' -- there is no level defect here to fix -- but 'do",
+  "they leave a healthy posture alone'.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - a00 stays in the control's band (23-28 TECU family, in-band throughout).  A large",
+  "   move means the cards are doing something to a posture that did not need them, and",
+  "   that is a BLOCKER for ever making them defaults -- report it, do not tune it.",
+  " - The LV-4 same-run A/B should show the SAME frame artifact here: the retired screen",
+  "   would have withheld a large fraction of folds.  If it would have withheld only a",
+  "   few percent, then the frozen-x_lin pathology is specific to the EXT-CB posture",
+  "   (where the DCB seed is left near zero because the bias rides in the iono) and the",
+  "   general claim needs narrowing.",
+  " - LV-5's residual stays ~1e-2 m.",
+  " - 30 epochs = 15 min = INSIDE IGNITION.  This cannot grade total_IF, a00 convergence",
+  "   or DD steps.  It can show: nothing breaks, the counters fire, and the level does",
+  "   not leave its band.  Grade against the SAME first 30 epochs of runs/agu63_nolane_30ep."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu63.json"
+ ],
+ "processing": {
+  "max_duration_s": 900.0
+ },
+ "network": {
+  "max_duration_s": 900.0,
+  "lane_carry": {
+   "enable": false
+  },
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "rx_cb_carry_demean_within": true,
+  "rx_cb_carry_step_gate": true,
+  "product_output_path": "C:/GnssProcessor/runs/agu63_nolane_30ep_lv125/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu63_nolane_30ep_lv125/state_snapshot.bin"
+ }
+}

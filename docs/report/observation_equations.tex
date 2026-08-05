@@ -118,14 +118,14 @@ long initial position offsets.
 
 The satellite position $\satpos$ is itself a function of the
 transmission time.  Rather than iterate the emission time against the
-geometric range --- which depends on $\rxpos_\rx$ ---
+geometric range, which depends on $\rxpos_\rx$,
 \texttt{Geometry::computeEmissionState} solves it in a single step from
 the \emph{pseudorange}: the time of flight is $\tau = \code / \sLight$,
 subtracted (with the satellite clock) from the receiver epoch.  Because
 the receiver clock bias $\mathrm{d}t_\rx$ enters the receiver epoch as
 $+\mathrm{d}t_\rx$ and the pseudorange as $+\sLight\,\mathrm{d}t_\rx$, it
 cancels exactly, leaving a residual $(I+T+\varepsilon)/\sLight \approx
-30$--$60$~ns of satellite displacement --- sub-millimetre, below any PPP
+30$--$60$~ns of satellite displacement, sub-millimetre and below any PPP
 threshold.  This deliberately avoids a range-based fixed point: iterating
 against $\geomrange^\sat_\rx$ would re-introduce an uncancelled
 $\mathrm{d}t_\rx$ and drive a positive-feedback loop through the filter's
@@ -134,7 +134,7 @@ receiver-clock state.  The only second pass (the
 \texttt{Geometry::computeSatelliteGeometry}) re-runs
 \texttt{computeEmissionState} on a cleaned pseudorange, having first
 subtracted the slant hydrostatic delay and the IF-combined ATX projection
-from the seed --- a pseudorange-cleanliness refinement, not a
+from the seed, a pseudorange-cleanliness refinement rather than a
 range-versus-position iteration.
 
 \subsection{Stochastic model}
@@ -152,9 +152,9 @@ combining a per-type baseline ($\sigma_{0,\text{code}}$,
 $\sigma_{0,\text{phase}}$ from \texttt{filter.measurement\_noise}), an
 elevation-dependent down-weighting factor
 $w(\theta^\sat_\rx)^{-1} = (\sin\theta^\sat_\rx)^{-2p_{\text{type}}}$ whose
-exponent is \emph{continuous} and \emph{type-dependent} --- code and Doppler
+exponent is \emph{continuous} and \emph{type-dependent}: code and Doppler
 rows take \texttt{filter.code\_elevation\_power}, carrier-phase rows
-\texttt{filter.phase\_elevation\_power} --- with the weighting strategy
+\texttt{filter.phase\_elevation\_power}, with the weighting strategy
 itself selected by \texttt{filter.stochastic\_model} (derived, together with
 the low-elevation guard that leaves $\sigma^2_0$ unamplified, in
 \dcref{eq:qc-elevation}{the stochastic-model section of the quality-control

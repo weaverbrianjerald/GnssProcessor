@@ -185,6 +185,11 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkRhsAttrib.cpp
     src/core/filter/NetworkPrefitCensus.cpp
     src/core/filter/NetworkRedundancyCensus.cpp
+    src/core/filter/NetworkMdb.cpp
+    src/core/filter/NetworkDatumGraph.cpp
+    src/core/filter/NetworkBlockBaarda.cpp
+    src/core/filter/NetworkCongruence.cpp
+    src/core/filter/NetworkPriorResidual.cpp
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
     src/core/filter/NetworkIonoDiag.cpp
@@ -317,6 +322,7 @@ add_executable(gnss_tests
     tests/test_carry_aware_covariance.cpp
     tests/test_network_estimator.cpp
     tests/test_network_carry_vce.cpp
+    tests/test_carry_vce_apply.cpp
     tests/test_network_iono_deweight_gate.cpp
     tests/test_network_zstore.cpp
     tests/test_network_robust_stats.cpp
@@ -333,10 +339,15 @@ add_executable(gnss_tests
     tests/test_measurement_admission.cpp
     tests/test_iono_dw_release_hygiene.cpp
     tests/test_redundancy_census.cpp
+    tests/test_network_mdb.cpp
+    tests/test_block_baarda.cpp
+    tests/test_station_congruence.cpp
+    tests/test_prior_residual_census.cpp
     tests/test_prefit_census.cpp
     tests/test_network_bias_admission.cpp
     tests/test_network_rank_gate.cpp
     tests/test_network_sbasis_complete.cpp
+    tests/test_datum_graph_census.cpp
     tests/test_network_fast_clock.cpp
     tests/test_network_run_traces.cpp
     tests/test_mw_bridge.cpp
@@ -345,6 +356,7 @@ add_executable(gnss_tests
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
+    tests/test_level_information_budget.cpp
     tests/test_network_process_noise_config.cpp
     tests/test_config_extends.cpp
     tests/test_sd_ewl_prereduce.cpp

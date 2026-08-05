@@ -16,13 +16,13 @@
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesPackage{gnssreport}[2026/06/24 GnssProcessor math reference shared preamble]
 
-% --- Math
+% Math
 \RequirePackage{amsmath, amssymb, amsthm, mathtools, bm}
 \RequirePackage{empheq}                 % boxed equations via \begin{empheq}[box=\fbox]{...}
 \RequirePackage{siunitx}                % \SI{10}{km} etc. for typeset units
 \RequirePackage{textcomp}               % \textdegree and friends
 
-% --- Layout
+% Layout
 \RequirePackage[margin=1in]{geometry}
 \RequirePackage{microtype}
 \RequirePackage{enumitem}
@@ -30,7 +30,7 @@
 \RequirePackage{array}
 \RequirePackage{longtable}
 
-% --- Diagrams (curated TikZ process diagrams; see diagrams component)
+% Diagrams (curated TikZ process diagrams; see diagrams component)
 \RequirePackage{tikz}
 \usetikzlibrary{positioning, arrows.meta, shapes.geometric, fit, backgrounds, calc}
 \tikzset{
@@ -48,7 +48,7 @@
 \newcommand{\fitwidth}[1]{%
   \resizebox{\ifdim\width>\linewidth \linewidth\else \width\fi}{!}{#1}}
 
-% --- Cross-refs and links
+% Cross-refs and links
 \RequirePackage{xcolor}
 \RequirePackage{hyperref}
 \hypersetup{
@@ -75,11 +75,11 @@
 }
 \RequirePackage[capitalize, noabbrev]{cleveref}
 
-% --- Lightweight remark environment (used in the inertial-aiding section)
+% Lightweight remark environment (used in the inertial-aiding section)
 \theoremstyle{remark}
 \newtheorem{remark}{Remark}
 
-% --- Cross-DOCUMENT reference.
+% Cross-DOCUMENT reference.
 %   \dcref{label}{human-readable name}
 %   In the combined volume the label resolves natively, so this renders a
 %   numbered \Cref (e.g. "Section 3").  In a standalone component PDF the
@@ -92,7 +92,7 @@
 %   the combined and the standalone build).
 \newcommand{\dcref}[2]{\ifSubfilesClassLoaded{#2}{\Cref{#1}}}
 
-% --- Breakable monospace for long source paths / identifiers ----------
+% Breakable monospace for long source paths / identifiers
 %   Long \texttt strings (e.g. src/core/filter/NetworkEstimator.cpp or
 %   StateManager::sat\_phase\_bias\_indices\_) do not hyphenate, so they
 %   overran the right margin.  We permit line breaks after path
@@ -140,7 +140,7 @@
 % with no separator): let the paragraph breaker stretch as a last resort.
 \setlength{\emergencystretch}{4em}
 
-% --- Bibliography (package load only; \addbibresource lives in the document
+% Bibliography (package load only; \addbibresource lives in the document
 %     so it can be wrapped in \subfix for the subfiles build).
 \RequirePackage[backend=biber, style=numeric-comp, sorting=nyt]{biblatex}
 
@@ -177,7 +177,7 @@
 \newcommand{\geomrange}{\rho}                        % geometric range
 \newcommand{\sLight}{c}                              % speed of light
 
-% --- Estimation: Kalman filter, RTS smoother, ambiguity resolution.
+% Estimation: Kalman filter, RTS smoother, ambiguity resolution.
 \newcommand{\Fmat}{\bm{F}}                           % state-transition matrix
 \newcommand{\Qmat}{\bm{Q}}                            % discrete process-noise covariance
 \newcommand{\Rmat}{\bm{R}}                            % measurement-noise covariance
@@ -196,7 +196,7 @@
 \newcommand{\Dmat}{\bm{D}}                            % LDL^T diagonal (conditional variances)
 \newcommand{\Lmat}{\bm{L}}                            % LDL^T unit-lower-triangular factor
 
-% --- Cycle-slip combinations ---
+% Cycle-slip combinations
 \newcommand{\slipd}[1]{\delta #1}                    % temporal integer slip step (distinct from \bsd's \Delta)
 \newcommand{\mwc}{\mathrm{MW}}                        % Melbourne-Wubbena combination
 \newcommand{\gfc}{\mathrm{GF}}                        % geometry-free combination
@@ -207,7 +207,7 @@
 \newcommand{\lamewl}{\lambda_{\mathrm{EWL}}}          % extra-wide-lane wavelength
 \newcommand{\lamif}{\lambda_{\mathrm{IF}}}            % ionosphere-free effective wavelength
 
-% --- Inertial aiding (IMU) ---
+% Inertial aiding (IMU)
 \newcommand{\Cbe}{\bm{C}_b^e}                         % body-to-ECEF direction-cosine matrix
 \newcommand{\imuvel}{\bm{v}}                          % ECEF velocity (INS nominal state)
 \newcommand{\imupsi}{\delta\bm{\psi}}                 % attitude-error state (small angle)
@@ -224,7 +224,7 @@
 \newcommand{\insQ}{\bm{Q}_{\mathrm{ins}}}             % INS discrete process noise
 \newcommand{\insPhi}{\bm{\Phi}_{\mathrm{ins}}}        % discrete INS transition
 
-% --- Real-time SSR corrections ---
+% Real-time SSR corrections
 \newcommand{\satvel}{\dot{\bm{r}}^{\sat}}             % broadcast satellite velocity
 \newcommand{\racR}{\hat{\bm{e}}_r}                    % SSR orbit radial basis vector
 \newcommand{\racA}{\hat{\bm{e}}_a}                    % SSR orbit along-track basis vector

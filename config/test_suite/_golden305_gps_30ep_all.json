@@ -1,0 +1,49 @@
+{
+ "_comment": [
+  "GOLDEN-305, 30 epoch, ALL-FREQUENCY CONTROL — the matched baseline for",
+  "_golden305_gps_30ep_dual.json.  Identical in every respect (303 in-network GPS-only,",
+  "channel_mode single, lane_carry OFF, full golden instrumentation, WTZZ00DEU closed-loop",
+  "consumer, 30 epochs = 900 s) EXCEPT processing.frequency_mode, which stays at the golden",
+  "posture's 'all'.  Single knob, matched duration, own lineage.",
+  "",
+  "WHY THIS EXISTS: the only ALL-frequency 305 measurement on hand (_golden305_gps_30m,",
+  "median settled 34871 ms) ran CONCURRENTLY with a sibling 305 job holding roughly half the",
+  "20-thread box, while the dual probe (median settled 25391 ms) had the machine to itself.",
+  "The naive 1.37x is therefore NOT the dual speedup.  The giveaway is assembly-wall: 2127 ms",
+  "contended vs 1122 ms clean, and assembly is only weakly band-dependent — most of that gap",
+  "is contention.  This arm re-measures ALL on a clean box so the dual-vs-all comparison is",
+  "made on equal footing.",
+  "",
+  "RUN IT ALONE.  A second 305 job on this machine invalidates the entire point of the arm;",
+  "that is the confound it exists to remove.  Check for other gnss_processor* processes",
+  "before launching and grade on D0/D0b section medians over settled epochs, never on wall.",
+  "",
+  "STRUCTURAL EXPECTATION (band-driven, contention-independent — these should hold whatever",
+  "the timing says): shared cols 566 (all) vs 499 (dual); n_cb 130-ish (all) vs 102 (dual).",
+  "The dual reduction is modest because the shared block also carries satellite clocks and",
+  "the 256 deg-15 SH-VTEC coefficients, neither of which depends on band count.",
+  "",
+  "⚠️ DO NOT try to reach a 'conformant two-frequency producer' by setting",
+  "network.estimate_sat_code_bias: false — it is SILENTLY FORCED BACK ON.",
+  "GnssConfigLoadNetwork.cpp:2034 does `if (estimate_network_iono_sh_) {",
+  "estimate_network_sat_code_bias_ = true; }` AFTER parsing the user value, with no warning.",
+  "The co-estimated SH-VTEC field IS the constraint that makes the satellite DCB observable",
+  "against the per-(rx,sat) slant iono (loader comment, same file ~2017-2022: 'a single",
+  "coupled slice ... must ALL be present or the shared null-space rank gate withholds every",
+  "epoch').  Disabling satellite OSB therefore requires disabling network.estimate_iono_sh,",
+  "which the standing directive forbids (SH-VTEC-always-on is a DATUM, not a nicety).",
+  "That coupling is the same GF-combination / ionosphere absorption Odijk 2016 describes —",
+  "it shows up here as an inseparability, not as a rank wall.",
+  "",
+  "FRESH LINEAGE ONLY.  Own paths; never resume onto another arm's snapshot."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden305_gps.json"
+ ],
+ "processing": { "max_duration_s": 900.0 },
+ "network": {
+  "max_duration_s": 900.0,
+  "product_output_path": "C:/GnssProcessor/runs/golden305_gps_30ep_all/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/golden305_gps_30ep_all/state_snapshot.bin"
+ }
+}

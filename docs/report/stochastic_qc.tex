@@ -21,7 +21,7 @@
 %    filter/NetworkCarryVce     -- LS-VCE carry monitor (default-off)
 % ============================================================
 
-% --- doc-local macros (descriptive names, no single/double-letter caps) ---
+% doc-local macros (descriptive names, no single/double-letter caps)
 \newcommand{\zenvar}{\sigma^2_{\mathrm{zen}}}            % zenith-referenced variance
 \newcommand{\elev}{\theta}                               % satellite elevation angle
 \newcommand{\sinel}{\sin\elev}                            % sin elevation
@@ -52,7 +52,7 @@ Two scopes are deliberately \emph{out} of this document and only
 cross-referenced.  First, the standardised-residual outlier path
 ($|\sres|>6$), the Huber re-weighting, and the EWMA $\Rmat$-inflation that
 react to a detected blunder live in
-\dcref{sec:kf-gating}{the Kalman-filter gating section} --- this document
+\dcref{sec:kf-gating}{the Kalman-filter gating section}; this document
 explains how the QC statistics feed an \emph{alternative} gate but does not
 re-derive the dispatch.  Second, the per-state process-noise covariance
 $\Qmat$ (clock random walk, ZWD, ambiguity, IMU bias) is purely a
@@ -73,7 +73,7 @@ geometry-aware strategies share a common low-elevation guard: when
 $\sinel \le 10^{-6}$ the elevation amplification is suppressed and the
 un-amplified variance is returned, so a satellite at the horizon does not
 inflate to a numerically infinite weight (\texttt{computeElevation}).  The
-\texttt{Constant} strategy has no elevation term at all --- it returns its
+\texttt{Constant} strategy has no elevation term at all: it returns its
 a-priori variance directly from the dispatch (\texttt{computeConstant}) and
 never reaches the guard.
 
@@ -102,8 +102,8 @@ The shipped defaults of \texttt{filter.code\_elevation\_power} and
 law (\texttt{computeElevation}).  The exponent in code is $-2p_{\mathrm{type}}$
 because the strategy works in variance, not $\sigma$:
 $\bigl(\sinel\bigr)^{-2p}$ is exactly $\bigl(\sinel^{-p}\bigr)^2$.  Rows whose
-observable code does not begin with \texttt{L} --- everything but carrier phase,
-including Doppler and the empty-\texttt{obs\_type} fallback paths --- take the
+observable code does not begin with \texttt{L} (everything but carrier phase,
+including Doppler and the empty-\texttt{obs\_type} fallback paths) take the
 code power.
 
 Both exponents are configurable per observable class, and the asymmetric
@@ -116,8 +116,8 @@ miscalibration, neither of which follows the $\csc^2\elev$ mapping that governs
 code multipath and pseudorange path-length error; and that the milder
 amplification keeps low-elevation phase inside the useful range of the
 standardised-residual cycle-slip test instead of deweighting it into
-irrelevance.  The argument against it is comparability --- the code branch, and
-every archived benchmark, run at unity --- and that is the position the loader
+irrelevance.  The argument against it is comparability: the code branch, and
+every archived benchmark, run at unity.  That is the position the loader
 now ships (\texttt{GnssConfig::getPhaseElevationPower}, whose documentation
 carries the amplification ratios at a $10^{\circ}$ mask).
 
@@ -139,7 +139,7 @@ $\sigma$-additive alternative
 $\sigma = a + b\,10^{-\cnzero/10}$ is explicitly rejected in
 \texttt{computeSnr} because squaring it produces an
 unphysical $2ab\,10^{-\cnzero/10}$ cross-term that has no noise-process
-interpretation --- it would couple the two contributions as if they were
+interpretation: it would couple the two contributions as if they were
 correlated when they are not.
 
 When no \texttt{S\dots} observable is present the model does not switch
@@ -159,9 +159,9 @@ signals such as L5/E5a get $\sim\!\sqrt{10}$ less correlator-noise $\sigma$,
 hence a factor $\sim\!1/10$ in variance), while phase stays band-flat because
 PLL noise is governed by carrier-loop bandwidth, not chip rate.  Finally the
 Wieser hybrid step pipes the SNR variance through \Cref{eq:qc-elevation} so
-that elevation-correlated multipath --- which pure SNR weighting
+that elevation-correlated multipath, which pure SNR weighting
 under-weights, since the carrier loop tracks cleanly even while the range is
-corrupted --- is still captured.
+corrupted, is still captured.
 
 \paragraph{(d) SatelliteBlock.}  The most detailed strategy keys the zenith
 $\sigma$ on the transmitting satellite's ANTEX block type, then applies
@@ -187,8 +187,8 @@ Galileo E1C pilot).  The attribute lookup order is
 \texttt{[system][attr]}~$\to$~\texttt{[default][attr]}~$\to$~$1.0$.  Code and
 phase carry separate band/attribute tables
 (\texttt{SatBlockNoiseParams::ObservableScale}) since chip-rate calibration
-governs code while carrier-tracking calibration --- a much smaller band
-gradient --- governs phase.  As with the other geometry-aware strategies the
+governs code while carrier-tracking calibration, a much smaller band
+gradient, governs phase.  As with the other geometry-aware strategies the
 block variance is finally amplified by \Cref{eq:qc-elevation}; phase only
 reaches this path when \texttt{apply\_to\_phase} is set, otherwise it takes the
 flat \texttt{default\_phase\_std\_m} route in the top-level dispatch.
@@ -260,7 +260,7 @@ Here $\hat{\stateV} = \bm{N}^{-1}\bm{u}$ is the least-squares solution, the
 Schur-reduced local parameters $n_{\mathrm{local}}$ are subtracted from the
 redundancy alongside the retained parameters $n_{\mathrm{params}}$, and each
 retained parameter's formal $\sigma$ is the $\varfac$-scaled square root of the
-inverse normal matrix diagonal --- the batch analogue of
+inverse normal matrix diagonal, the batch analogue of
 \Cref{eq:qc-varfac}'s recursive $\dof$.
 
 Neither of these is the network producer's \emph{operational} variance factor.
@@ -298,7 +298,7 @@ carry-row stochastic model by residual-form least-squares variance-component
 estimation at fixed weight, purely to check the hand-set carry floors against a
 measured $\hat\sigma$.  It is default-off (\texttt{network.carry\_vce}), never
 feeds back into the solve, and the feedback path \texttt{network.carry\_vce\_apply}
-is a hard configuration-load error --- the class has no apply method at all.
+is a hard configuration-load error: the class has no apply method at all.
 
 \subsection{Redundancy numbers, the Baarda $w$-test, and the MDB}
 \label{sec:stoch-baarda}
@@ -336,12 +336,12 @@ estimate and leaves no residual signature).  The sum $\dof = \sum_i \redno_i =
 The network producer reimplements \Cref{eq:qc-redundancy} in the batch/arrowhead
 algebra of the Schur-conditioned shared covariance,
 $\redno_i = 1 - w_i\,\bm{a}_i^{\Tr}\operatorname{Cov}(\stateV)\,\bm{a}_i$
-with $\bm{a}_i = [\,\bm{a}_{s,i}\mid\bm{a}_{r,i}\,]$ and the same $[0,1]$ clamp
---- algebraically the batch twin of $\redno_i = \srmat_{ii}/R_{ii}$
+with $\bm{a}_i = [\,\bm{a}_{s,i}\mid\bm{a}_{r,i}\,]$ and the same $[0,1]$ clamp,
+algebraically the batch twin of $\redno_i = \srmat_{ii}/R_{ii}$
 (\texttt{NetworkNormalEquations::rowRedundancy}, gated by
 \texttt{network.raim\_redundancy\_normalize}, default off).  Rows falling below
 the \texttt{kRedFloor} redundancy floor are dropped from the
-$\hat\sigma_{0,\mathrm{net}}$ pool of \Cref{eq:qc-sigma0-net} as uncheckable ---
+$\hat\sigma_{0,\mathrm{net}}$ pool of \Cref{eq:qc-sigma0-net} as uncheckable,
 the network analogue of the KF snooping gate's \texttt{kUncheckableRedundancy}
 cutoff below, at a much smaller constant because it guards only the
 $\sqrt{\redno_i}$ standardisation, not a reset decision.
@@ -349,14 +349,14 @@ $\sqrt{\redno_i}$ standardisation, not a reset decision.
 A structurally \emph{exact} instance of $\redno_i = 0$ governs the network
 producer's entire phase-side QC design, and it is worth stating as a theorem
 rather than as a numerical caveat.  Whenever each (station, satellite, signal)
-arc carries its own free ambiguity --- the configuration in force whenever
-\texttt{network.phase\_leveling} is off --- every phase row is fitted
+arc carries its own free ambiguity, the configuration in force whenever
+\texttt{network.phase\_leveling} is off, every phase row is fitted
 \emph{exactly} by its own parameter.  The post-fit phase residual then vanishes
 identically, $\redno_i$ is exactly zero, and no phase fault is detectable from
 the residuals at any magnitude: an undifferenced network with per-arc float
 ambiguities carries \emph{no} phase-side redundancy whatsoever.  Only when the
 ambiguities are stiffened by a carried prior do the phase rows acquire
-redundancy, and therefore fault-detection power --- which is why the producer's
+redundancy, and therefore fault-detection power, which is why the producer's
 phase RAIM (\Cref{sec:stoch-net-raim}) is gated on phase-leveling in the first
 place, rather than merely working less well without it.  The measure-only
 instrument that reports the collapse is \texttt{networkPostfitSigma0}
@@ -375,7 +375,7 @@ form is
 \wtest_i \;=\; \frac{\hat v_i}{\sqrt{\srmat_{ii}}}
 \label{eq:qc-wtest-diag}
 \end{equation}
-(the diagonal branch of \texttt{computeResidualQc\_}), which --- crucially ---
+(the diagonal branch of \texttt{computeResidualQc\_}), which, crucially,
 divides by $\sqrt{\srmat_{ii}}$, the
 \emph{true} residual standard deviation, not by $\sqrt{R_{ii}}$.  This is the
 Studentised residual proper; under the null hypothesis $\wtest_i \sim
@@ -409,8 +409,8 @@ critical value plus $\Phi^{-1}(0.80)=0.8416$ (the $20\%$ false-negative
 quantile, i.e.\ $\beta=0.20$ power); for the default critical $k=3.29$ this
 gives $\noncentral \approx 4.13$.  The $1/\sqrt{\redno_i}$ factor is the
 geometric leverage: a poorly-checked observation ($\redno_i \to 0$) has an
-arbitrarily large MDB --- the code returns $+\infty$ when $\redno_i$ falls below
-\texttt{kRedFloor} --- so a blunder there is by construction undetectable from
+arbitrarily large MDB (the code returns $+\infty$ when $\redno_i$ falls below
+\texttt{kRedFloor}), so a blunder there is by construction undetectable from
 the residual alone.  The MDB is a Kalman-filter QC quantity only: the network
 producer implements no minimal detectable bias, relying instead on the robust
 $\hat\sigma_{0,\mathrm{net}}$ RAIM loop of \Cref{eq:qc-sigma0-net}.
@@ -459,7 +459,7 @@ $\Rmat_{\mathrm{SD/DD}} = \bm{D}\,\Rmat_{\mathrm{ZD}}\,\bm{D}^{\Tr}$, carrying
 the structured SD/DD cross-covariance between observations that share a pivot
 or reference.  Under the off-diagonal kernel
 (\texttt{estimation.enable\_full\_r\_kernel}, default off, which additionally
-requires that a dense $\Rmat$ was actually supplied for the epoch --- the
+requires that a dense $\Rmat$ was actually supplied for the epoch, via the
 \texttt{dense\_r\_supplied} test in \texttt{KalmanFilter::update}) the full
 residual covariance \Cref{eq:qc-srcov} is built densely and symmetrised, and the
 QC quantities follow without approximation:
@@ -478,7 +478,7 @@ against the identity, exploiting the symmetric positive-definiteness of both.
 The kernel is consistent by construction: the diagonal of the full $\redmat$ and
 of the full Teunissen $\wtest$ equal the per-row quantities of
 \Cref{sec:stoch-baarda} whenever the off-diagonals vanish, so the
-\emph{outlier-handling path is unchanged behind the flag} --- it only gains
+\emph{outlier-handling path is unchanged behind the flag}; it only gains
 correctness on differenced epochs where the residual correlations are real.
 Note the narrow scope of the flag: the gain and Joseph-form update already
 honour a dense $\Rmat$ whenever one is supplied, independently of it; the flag
@@ -503,8 +503,8 @@ splits the contamination into a grand effect $\mu$, a per-station row effect
 $\alpha_{\rx}$, a per-satellite column effect $\beta_{\sat}$, and an
 isolated-arc interaction $\gamma_{\rx\sat}$ (\texttt{medianPolish2Way},
 \texttt{filter/NetworkRobustStats}).  Sweeping medians rather than means is what
-makes the split usable: a minority of very large cells --- the actual outliers
---- does not distort the additive effects, so a bad satellite lighting up a whole
+makes the split usable: a minority of very large cells, the actual outliers,
+does not distort the additive effects, so a bad satellite lighting up a whole
 column is separable from a bad station lighting up a whole row, and genuinely
 isolated arc slips are left in the interaction term.
 
@@ -514,8 +514,8 @@ configured gate (\texttt{network.raim\_k\_sigma}) to be eligible at all.  The th
 then ranked surgical-first: on equal score an
 arc beats a satellite beats a station, and the station branch is additionally
 de-rated by a bias factor (\texttt{network.raim\_station\_drop\_bias}, active
-under \texttt{network.raim\_surgical\_station}) so the coarsest response --- which
-discards good arcs along with bad --- is taken only when it dominates by that
+under \texttt{network.raim\_surgical\_station}) so the coarsest response, which
+discards good arcs along with bad, is taken only when it dominates by that
 margin.  A consensus rule short-circuits arc-by-arc peeling: when at least
 \texttt{network.raim\_min\_stations} of one satellite's arcs are over the gate in
 a single iteration, the arc candidate is redirected to the whole satellite,
@@ -524,7 +524,7 @@ rather than a stack of independent local ones.
 
 The response itself distinguishes a bad \emph{measurement} from a stale
 \emph{parameter}, and that distinction is the load-bearing design decision.  A
-whole-station culprit is excluded --- its data are bad, and deweighting or
+whole-station culprit is excluded: its data are bad, and deweighting or
 exclusion is the right tool for bad data.  A satellite or arc culprit, by
 contrast, is overwhelmingly a cycle slip, and a slipped ambiguity does not need
 less weight, it needs a new \emph{value}.  The epoch is therefore replayed over a
@@ -539,7 +539,7 @@ last good solution (\texttt{networkSolveGlue}).
 
 Arming honesty: \texttt{network.raim} and \texttt{network.raim\_within\_epoch}
 both default to false, and \emph{both} tiers are additionally gated on the
-phase-leveling carry being warm --- the within-epoch loop inside
+phase-leveling carry being warm: the within-epoch loop inside
 \texttt{networkSolveGlue}, the post-fit pass at the \texttt{networkPostFitRaim}
 call site.  With \texttt{network.phase\_leveling} off there are no carried
 ambiguities to refloat and, by the redundancy-collapse argument of
@@ -571,7 +571,7 @@ supports.  Neither pool carries the floor of \Cref{eq:qc-sigma0-net}, and
 neither displaces the phase pool as the driver of the whole-epoch ceiling.  The
 adaptation gains two response classes matched to what these rows can actually
 diagnose: an epoch-scoped station exclusion, and a network-wide
-\emph{deweighting} of one satellite's code rows --- a fallback, not a drop, in
+\emph{deweighting} of one satellite's code rows, a fallback rather than a drop, in
 keeping with the project's standing preference for degrading a measurement over
 discarding it.
 
@@ -585,7 +585,7 @@ ambiguity's satellite constellation and each part judged on its own,
         1.4826\,\operatorname{median}\{\tilde v_i : i \in \mathcal{P}_c\}\bigr),
 \label{eq:qc-sigma0-perconst}
 \end{equation}
-over exactly the rows $\mathcal{P}_c$ that the global statistic pools --- same
+over exactly the rows $\mathcal{P}_c$ that the global statistic pools: same
 statistic, same ceiling, restricted support.  A constellation is published if and
 only if $\hat\sigma_{0,c}$ clears that ceiling \emph{and} $|\mathcal{P}_c|$ meets
 a minimum row count, since too few rows cannot certify cleanliness inside a
@@ -599,7 +599,7 @@ constellation's residuals; and each row's redundancy is its share of the joint
 system's redundancy, not of a hypothetical per-constellation solve.
 $\hat\sigma_{0,c}$ therefore under-separates cross-constellation coupling, and
 the outcome ``every constellation individually clean while the global statistic
-tripped'' is the honest edge of that approximation --- it is published with a
+tripped'' is the honest edge of that approximation; it is published with a
 warning and counted, not silently absorbed.  The rank and observability gate is
 deliberately left with whole-epoch semantics: a rank deficiency invalidates the
 declared datum itself, so the product would be a meaningless least-norm split and
@@ -613,8 +613,8 @@ per-line-of-sight slant structure: the large majority of LOS residuals against
 the fitted field exceed $3\sigma$ at any degree and at every network scale.  That
 exceedance is a chronic, roughly common-mode background, so an \emph{absolute}
 $3\sigma$ gate would engage every station and diagnose nothing.  The genuinely
-hostile sites --- equatorial-anomaly and scintillation-belt stations whose true
-slant ionosphere lies beyond the field's representability --- stand out only as a
+hostile sites, equatorial-anomaly and scintillation-belt stations whose true
+slant ionosphere lies beyond the field's representability, stand out only as a
 \emph{relative} excess.  That is the reason the gate below is network-relative
 and robust rather than absolute (\texttt{NetworkIonoDeweightGate}).
 
@@ -638,10 +638,10 @@ absolute threshold lacks.  A minimum mature population is required before the
 robust centre is formed at all, and statically-listed stations are excluded from
 it so that a known-bad site cannot mask the detection of others.
 
-Detection is hysteretic --- a station engages at
+Detection is hysteretic: a station engages at
 $z_{\rx} > \sigma_{\mathrm{hi}}$ and releases at
 $z_{\rx} < \sigma_{\mathrm{lo}}$, with $\sigma_{\mathrm{lo}}$ forced below
-$\sigma_{\mathrm{hi}}$ --- and while engaged the target weight follows a smooth
+$\sigma_{\mathrm{hi}}$.  While engaged the target weight follows a smooth
 IGG-style ramp, unity at the release threshold and equal to a configured floor
 $w_{\min}$ at and above the engage threshold, quadratic between:
 \begin{empheq}[box=\fbox]{equation}
@@ -662,16 +662,16 @@ pseudo-observation rows, equivalently $\sigma^2 \mapsto \sigma^2/w_{\rx}$.
 Because those rows are one joint pseudo-observation coupling the station's
 per-LOS slant ionosphere to the shared field in both directions, a single
 $w_{\rx}$ relaxes both directions uniformly; $w_{\rx} \to 0$ decouples that
-station's ionosphere entirely
---- it then floats on its own geometry-free combination, still observable, so no
-rank hole opens --- while the station continues to serve the shared clocks,
+station's ionosphere entirely,
+so it then floats on its own geometry-free combination, still observable, and no
+rank hole opens, while the station continues to serve the shared clocks,
 biases, datum graph and position.  It is the surgical alternative to dropping a
 hostile station, and it is a weighting change only: no state is removed and no
 datum is altered.
 
 Two honesty notes.  Datum-change epochs, pivot handover included, are excluded
-outright --- the gate is neither fed nor advanced on them, because their
-residual spikes are datum artefacts rather than station misfit --- so every
+outright: the gate is neither fed nor advanced on them, because their
+residual spikes are datum artefacts rather than station misfit, so every
 weight is simply held across them.  And the adaptive path is default-off
 (\texttt{network.iono\_constraint\_deweight\_adaptive}); with it off and the
 static station list empty, every $w_{\rx}$ is unity and the producer is byte-identical
@@ -685,7 +685,7 @@ per-station assembly.
 Everything above tests \emph{residuals} against $\Rmat$.  The producer also
 carries two gates that test the \emph{solved state} and act on the emitted
 product rather than on the estimation.  A reader who meets them as ``QC'' should
-know both that they are a different kind of test and where they live --- in
+know both that they are a different kind of test and where they live, which is in
 neither case the seam whose name most suggests it.
 
 \paragraph{Spherical-harmonic field health.}  Under
@@ -699,8 +699,8 @@ engages, which debounces the single-epoch excursion.  The verdict is
 tier continue to run while emission is withheld, so an era lasting hours cannot
 expire the carry the way a skip-epoch response would.  A failed coefficient
 lookup leaves the gate state unchanged rather than fabricating a release.  The
-gate has no release-or-degrade policy --- a sick era withholds for its full
-duration --- and that is an open policy item, not a design conclusion.  The
+gate has no release-or-degrade policy, since a sick era withholds for its full
+duration, and that is an open policy item, not a design conclusion.  The
 verdict is formed in \texttt{networkSolveGlue}, the only pre-emission seam
 holding the solved shared vector; \texttt{networkShHealth}
 (\texttt{filter/NetworkShHealth}) owns the health \emph{probe}, the deweight fold
@@ -716,12 +716,12 @@ ceiling.  Like the carve-out of \Cref{sec:stoch-net-pools}, this degrades scope
 rather than the whole product.  The code documents an inversion hazard instead of
 defending against it: the magnitude test is referenced to the global median over
 \emph{all} clock satellites, so if the runaway constellation supplies half or more
-of them the comparison inverts --- the healthy minority trips the ceiling and is
+of them the comparison inverts: the healthy minority trips the ceiling and is
 quarantined while the runaway passes.  The single-constellation degenerate case
 is warned at configuration load.  The quarantine lives in
 \texttt{networkSolPrep} (\texttt{filter/NetworkSolPrep});
 \texttt{networkClockQc} (\texttt{filter/NetworkClockQc}) is a different tier
-entirely --- the two-state oscillator model with its normalised-innovation fault
+entirely: the two-state oscillator model with its normalised-innovation fault
 test, the decoupled emit-clock-rate estimator, and the per-satellite
 carried-clock sanity monitor.
 

@@ -1,0 +1,31 @@
+{
+ "_comment": [
+  "305-sta GPS deg-15 probe, ONE variable: network.lane_carry.enable false.",
+  "",
+  "WHY.  The LF-1 instrument on _agu305_gps_d15_smoke names the bottleneck exactly:",
+  "  applyLaneMeasurement 2619071 ms = 84.7 % of the whole run, over 11256 rows,",
+  "  i.e. 232 ms PER ROW of O(K_c^2) dense downdate at max K_c = 3866.",
+  "That is 238 s of dd-build's 265 s/epoch.  basis-project -- the dense W*Pz*W^T I",
+  "first suspected -- is 10.8 s total (0.3 %), and every trace sub-block is <0.2 %.",
+  "",
+  "Turning the lane carry off should therefore take a settled 305 epoch from ~310 s",
+  "to roughly 50 s.  This is NOT outputs-only: the lane carry feeds the WL bridge, so",
+  "the solve changes and the arm needs its own grading.  It is, however, aligned with",
+  "the standing MW/WL verdict (mwwl_conditioning_day129: 'do NOT arm; net-harmful')",
+  "and the WL-3 card's three falsified mechanisms -- so the question this arm asks is",
+  "'does the network give up anything measurable by switching it off?', and the prior",
+  "says no.",
+  "",
+  "Read the rate from epoch 4 onward: epochs 1-2 run before the DD carry populates."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu305_gps_d15_smoke.json"
+ ],
+ "network": {
+  "lane_carry": {
+   "enable": false
+  },
+  "product_output_path": "C:/GnssProcessor/runs/agu305_gps_d15_nolane_smoke/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu305_gps_d15_nolane_smoke/state_snapshot.bin"
+ }
+}

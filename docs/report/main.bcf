@@ -2434,6 +2434,8 @@
     <bcf:citekey order="51" intorder="1">odijk2003fast</bcf:citekey>
     <bcf:citekey order="52" intorder="1">teunissen1985generalised</bcf:citekey>
     <bcf:citekey order="53" intorder="1">teunissen1985generalised</bcf:citekey>
+    <bcf:citekey order="54" intorder="1">deJonge1998processing</bcf:citekey>
+    <bcf:citekey order="55" intorder="1">deJonge1998processing</bcf:citekey>
   </bcf:section>
   <!-- SORTING TEMPLATES -->
   <bcf:sortingtemplate name="nyt">

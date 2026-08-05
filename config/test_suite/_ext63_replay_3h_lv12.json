@@ -1,0 +1,29 @@
+{
+ "_comment": [
+  "Datum-invariant grade (a) for arm 30 (SPEC_level_information_budget §19.6 / §20):",
+  "consumer-only REPLAY of the recorded ext63_dual_3h_lv12 product stream against the",
+  "WTZZ00DEU holdout.  No producer run, no artifact perturbation (runNetwork",
+  "short-circuits to Application::runConsumerReplay before setup).",
+  "",
+  "WHY THIS IS THE GRADE AND THE a00 NUMBER IS NOT.  Per invariant #5 and §17 item 0,",
+  "a00 is a FRAME quantity: content moved along the null directions (level + rx-DCB",
+  "common + per-LOS commons) is invisible to estimable quantities.  The consumer",
+  "position and the postfit residuals are the invariant-legal grades.  Arm 30 exists",
+  "because the §19.3 audit attributes the ladder's residual cost entirely to LV-4,",
+  "which arm 30 drops.",
+  "",
+  "CONTRAST SET: runs/replay_ext63_12h_{ref,lv125} hours 0-3 (Fable's item-0 arms, same",
+  "build).  Compare hour-by-hour over the 3 h this arm covers -- NOT against their 12 h",
+  "means, which include the h10-11 pin-ramp era arm 30 cannot reach."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 10800.0 },
+ "network": {
+  "max_duration_s": 10800.0,
+  "closed_loop": { "replay_products_path": "C:/GnssProcessor/runs/ext63_dual_3h_lv12/products.txt" },
+  "product_output_path": "C:/GnssProcessor/runs/replay_ext63_3h_lv12/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_ext63_3h_lv12/state_snapshot.bin"
+ }
+}

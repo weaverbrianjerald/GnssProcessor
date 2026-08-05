@@ -557,7 +557,12 @@ namespace GnssProcessor {
               { { "estimation.ionosphere_weighting.enable", iono_weighting_.enabled },
                 { "estimation.ionosphere_weighting.elevation_cutoff_deg >= 25",
                   iono_weighting_.elevation_cutoff_deg >= 24.9 },
-                { "network.estimate_sat_code_bias", estimate_network_sat_code_bias_ } } },
+                // The bundle member is "the satellite code bias has a DECLARED
+                // source", not "W6 specifically" — EXT-CB satisfies it from the
+                // external .BIA.  Naming only W6 here would fire a spurious
+                // partially-armed WARN on every EXT-CB run.
+                { "network.estimate_sat_code_bias | network.external_sat_code_bias",
+                  estimate_network_sat_code_bias_ || network_external_sat_code_bias_ } } },
         };
     }
 

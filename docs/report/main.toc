@@ -4,340 +4,365 @@
 \contentsline {paragraph}{Indices and sets.}{7}{section*.2}%
 \contentsline {paragraph}{Vectors and matrices.}{7}{section*.3}%
 \contentsline {paragraph}{Observables.}{7}{section*.4}%
-\contentsline {paragraph}{Frequencies and wavelengths.}{7}{section*.5}%
+\contentsline {paragraph}{Frequencies and wavelengths.}{8}{section*.5}%
 \contentsline {paragraph}{Differencing operators.}{8}{section*.6}%
 \contentsline {paragraph}{Sign conventions.}{8}{section*.7}%
 \contentsline {paragraph}{Symbol table.}{8}{section*.8}%
 \contentsline {section}{\numberline {3}State vector layout}{9}{section.3}%
-\contentsline {subsection}{\numberline {3.1}Schematic layout}{9}{subsection.3.1}%
-\contentsline {subsection}{\numberline {3.2}Component-by-component description}{9}{subsection.3.2}%
-\contentsline {paragraph}{Position $\bm {r}_r\in \mathbb {R}^3$.}{9}{section*.9}%
+\contentsline {subsection}{\numberline {3.1}Schematic layout}{10}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Component-by-component description}{10}{subsection.3.2}%
+\contentsline {paragraph}{Position $\bm {r}_r\in \mathbb {R}^3$.}{10}{section*.9}%
 \contentsline {paragraph}{Velocity $\bm {v}_r\in \mathbb {R}^3$.}{10}{section*.10}%
 \contentsline {paragraph}{Receiver clock $c\,\mathrm {d}t_r$.}{10}{section*.11}%
-\contentsline {paragraph}{Inter-system time offsets $c\,\delta t^{(g)}_r$.}{10}{section*.12}%
-\contentsline {paragraph}{Tropospheric ZWD and gradients.}{10}{section*.13}%
-\contentsline {paragraph}{Per-satellite slant ionosphere $I^i_{r,1}$.}{10}{section*.14}%
-\contentsline {paragraph}{Carrier-phase ambiguities $N^i_{r,s}$.}{10}{section*.15}%
+\contentsline {paragraph}{Inter-system time offsets $c\,\delta t^{(g)}_r$.}{11}{section*.12}%
+\contentsline {paragraph}{Tropospheric ZWD and gradients.}{11}{section*.13}%
+\contentsline {paragraph}{Per-satellite slant ionosphere $I^i_{r,1}$.}{11}{section*.14}%
+\contentsline {paragraph}{Carrier-phase ambiguities $N^i_{r,s}$.}{11}{section*.15}%
 \contentsline {paragraph}{Receiver code biases $B_{r,s}$.}{11}{section*.16}%
-\contentsline {paragraph}{Per-slot GLONASS inter-frequency bias $B^{(g,b)}_{r,k}$.}{11}{section*.17}%
-\contentsline {paragraph}{Satellite code biases $B^i_s$.}{11}{section*.18}%
-\contentsline {paragraph}{Satellite phase biases $\bar b^i_s$ (network mode).}{11}{section*.19}%
-\contentsline {paragraph}{Receiver phase biases $\delta _{r,s}$ (network mode).}{12}{section*.20}%
-\contentsline {paragraph}{Satellite clocks $c\,\Delta \delta t^i$ (network mode).}{12}{section*.21}%
+\contentsline {paragraph}{Per-slot GLONASS inter-frequency bias $B^{(g,b)}_{r,k}$.}{12}{section*.17}%
+\contentsline {paragraph}{Satellite code biases $B^i_s$.}{12}{section*.18}%
+\contentsline {paragraph}{Satellite phase biases $\bar b^i_s$ (network mode).}{12}{section*.19}%
+\contentsline {paragraph}{Receiver phase biases $\delta _{r,s}$ (network mode).}{13}{section*.20}%
+\contentsline {paragraph}{Satellite clocks $c\,\Delta \delta t^i$ (network mode).}{13}{section*.21}%
 \contentsline {paragraph}{Inertial augmentation.}{13}{section*.22}%
 \contentsline {paragraph}{Baseline differential troposphere.}{13}{section*.23}%
-\contentsline {subsection}{\numberline {3.3}Dynamic indexing}{13}{subsection.3.3}%
+\contentsline {subsection}{\numberline {3.3}Dynamic indexing}{14}{subsection.3.3}%
 \contentsline {paragraph}{Ambiguity basis.}{14}{section*.24}%
-\contentsline {section}{\numberline {4}Observation equations}{14}{section.4}%
-\contentsline {subsection}{\numberline {4.1}Code (pseudorange) observation}{14}{subsection.4.1}%
-\contentsline {subsection}{\numberline {4.2}Carrier-phase observation}{14}{subsection.4.2}%
+\contentsline {section}{\numberline {4}Observation equations}{15}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Code (pseudorange) observation}{15}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Carrier-phase observation}{15}{subsection.4.2}%
 \contentsline {subsection}{\numberline {4.3}Geometric range and linearisation}{15}{subsection.4.3}%
-\contentsline {subsection}{\numberline {4.4}Stochastic model}{15}{subsection.4.4}%
+\contentsline {subsection}{\numberline {4.4}Stochastic model}{16}{subsection.4.4}%
 \contentsline {section}{\numberline {5}Differencing transformations}{16}{section.5}%
 \contentsline {subsection}{\numberline {5.1}Between-satellite single difference (BSSD)}{16}{subsection.5.1}%
-\contentsline {paragraph}{Pivot selection.}{16}{section*.28}%
+\contentsline {paragraph}{Pivot selection.}{17}{section*.28}%
 \contentsline {paragraph}{Pivot transitions.}{17}{section*.29}%
-\contentsline {subsection}{\numberline {5.2}Between-receiver single difference (BRSD)}{17}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.2}Between-receiver single difference (BRSD)}{18}{subsection.5.2}%
 \contentsline {subsection}{\numberline {5.3}Double difference (DD)}{18}{subsection.5.3}%
-\contentsline {paragraph}{Short vs.\ long baselines.}{18}{section*.30}%
-\contentsline {subsection}{\numberline {5.4}S-transform structure}{18}{subsection.5.4}%
+\contentsline {paragraph}{Short vs.\ long baselines.}{19}{section*.30}%
+\contentsline {subsection}{\numberline {5.4}S-transform structure}{19}{subsection.5.4}%
 \contentsline {paragraph}{Implementation notes.}{19}{section*.31}%
-\contentsline {part}{II\hspace {1em}Reference systems and measurement models}{19}{part.2}%
-\contentsline {section}{\numberline {6}Coordinate Frames and Time Systems}{19}{section.6}%
-\contentsline {subsection}{\numberline {6.1}The WGS84 ellipsoid: ECEF, geodetic, and local frames}{19}{subsection.6.1}%
-\contentsline {paragraph}{Inverse map (Bowring fixed point).}{20}{section*.33}%
-\contentsline {paragraph}{Pole branch.}{20}{section*.34}%
-\contentsline {paragraph}{Local East--North--Up frame.}{20}{section*.35}%
-\contentsline {paragraph}{Elevation and azimuth.}{21}{section*.37}%
-\contentsline {subsection}{\numberline {6.2}Station reference points: marker, ARP, and phase centre}{21}{subsection.6.2}%
+\contentsline {part}{II\hspace {1em}Reference systems and measurement models}{20}{part.2}%
+\contentsline {section}{\numberline {6}Coordinate Frames and Time Systems}{20}{section.6}%
+\contentsline {subsection}{\numberline {6.1}The WGS84 ellipsoid: ECEF, geodetic, and local frames}{20}{subsection.6.1}%
+\contentsline {paragraph}{Inverse map (Bowring fixed point).}{21}{section*.33}%
+\contentsline {paragraph}{Pole branch.}{21}{section*.34}%
+\contentsline {paragraph}{Local East--North--Up frame.}{21}{section*.35}%
+\contentsline {paragraph}{Elevation and azimuth.}{22}{section*.37}%
+\contentsline {subsection}{\numberline {6.2}Station reference points: marker, ARP, and phase centre}{22}{subsection.6.2}%
 \contentsline {paragraph}{The inverse is not a sign flip.}{22}{section*.39}%
-\contentsline {paragraph}{Where the reduction is applied --- and where it is not.}{22}{section*.40}%
-\contentsline {subsection}{\numberline {6.3}GNSS time scales and the GPS reference epoch}{22}{subsection.6.3}%
+\contentsline {paragraph}{Where the reduction is applied, and where it is not.}{22}{section*.40}%
+\contentsline {subsection}{\numberline {6.3}GNSS time scales and the GPS reference epoch}{23}{subsection.6.3}%
 \contentsline {paragraph}{Gregorian$\leftrightarrow $Julian Date.}{23}{section*.42}%
-\contentsline {subsection}{\numberline {6.4}Leap seconds and per-system dispatch}{23}{subsection.6.4}%
-\contentsline {paragraph}{The wall-clock leap constant and its runtime override.}{23}{section*.43}%
-\contentsline {paragraph}{Per-constellation Gregorian dispatch.}{23}{section*.44}%
-\contentsline {subsection}{\numberline {6.5}GLONASS time-of-day to full GPS week}{24}{subsection.6.5}%
+\contentsline {subsection}{\numberline {6.4}Leap seconds and per-system dispatch}{24}{subsection.6.4}%
+\contentsline {paragraph}{The wall-clock leap constant and its runtime override.}{24}{section*.43}%
+\contentsline {paragraph}{Per-constellation Gregorian dispatch.}{24}{section*.44}%
+\contentsline {subsection}{\numberline {6.5}GLONASS time-of-day to full GPS week}{25}{subsection.6.5}%
 \contentsline {subsection}{\numberline {6.6}BeiDou time: the 14\,s offset and independent week base}{25}{subsection.6.6}%
-\contentsline {subsection}{\numberline {6.7}Legacy ECI$\to $ECEF: the equinox-based chain}{25}{subsection.6.7}%
-\contentsline {paragraph}{Precession (IAU 1976).}{25}{section*.48}%
+\contentsline {subsection}{\numberline {6.7}Legacy ECI$\to $ECEF: the equinox-based chain}{26}{subsection.6.7}%
+\contentsline {paragraph}{Precession (IAU 1976).}{26}{section*.48}%
 \contentsline {paragraph}{Nutation (IAU 1980, 106 terms).}{26}{section*.49}%
-\contentsline {paragraph}{Apparent sidereal time and the 0h-UT1 subtlety.}{26}{section*.50}%
-\contentsline {paragraph}{Polar motion.}{26}{section*.51}%
-\contentsline {subsection}{\numberline {6.8}CIO-based ITRS$\leftrightarrow $GCRS (IAU 2000A/2006)}{26}{subsection.6.8}%
-\contentsline {subsection}{\numberline {6.9}Earth-orientation parameters: parse and interpolation}{27}{subsection.6.9}%
-\contentsline {subsection}{\numberline {6.10}The Sun and Moon series these transforms position}{27}{subsection.6.10}%
-\contentsline {section}{\numberline {7}Orbit and Clock Product Evaluation}{28}{section.7}%
-\contentsline {subsection}{\numberline {7.1}Precise orbit: derotated Neville interpolation}{28}{subsection.7.1}%
-\contentsline {paragraph}{Bracket-centred window.}{29}{section*.53}%
-\contentsline {paragraph}{Neville value and derivative.}{29}{section*.54}%
+\contentsline {paragraph}{Apparent sidereal time and the 0h-UT1 subtlety.}{27}{section*.50}%
+\contentsline {paragraph}{Polar motion.}{27}{section*.51}%
+\contentsline {subsection}{\numberline {6.8}CIO-based ITRS$\leftrightarrow $GCRS (IAU 2000A/2006)}{27}{subsection.6.8}%
+\contentsline {subsection}{\numberline {6.9}Earth-orientation parameters: parse and interpolation}{28}{subsection.6.9}%
+\contentsline {subsection}{\numberline {6.10}The Sun and Moon series these transforms position}{28}{subsection.6.10}%
+\contentsline {section}{\numberline {7}Orbit and Clock Product Evaluation}{29}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Precise orbit: derotated Neville interpolation}{29}{subsection.7.1}%
+\contentsline {paragraph}{Bracket-centred window.}{30}{section*.53}%
+\contentsline {paragraph}{Neville value and derivative.}{30}{section*.54}%
 \contentsline {paragraph}{Inertial-to-ECEF velocity.}{30}{section*.55}%
-\contentsline {subsection}{\numberline {7.2}Precise orbit: sidereal-trigonometric LSQ fit}{30}{subsection.7.2}%
-\contentsline {subsection}{\numberline {7.3}Precise clock interpolation}{31}{subsection.7.3}%
-\contentsline {paragraph}{(a) Linear (MMSE for Brownian motion).}{31}{section*.58}%
-\contentsline {paragraph}{(b) Rate-anchored weighted LSQ.}{31}{section*.59}%
-\contentsline {paragraph}{(c) Barycentric Lagrange.}{32}{section*.61}%
-\contentsline {subsection}{\numberline {7.4}Broadcast Keplerian evaluation}{32}{subsection.7.4}%
-\contentsline {subsection}{\numberline {7.5}Broadcast GLONASS: PZ-90 RK4 integration}{33}{subsection.7.5}%
-\contentsline {subsection}{\numberline {7.6}Broadcast satellite clock}{33}{subsection.7.6}%
-\contentsline {paragraph}{The precise-clock-baseline convention.}{34}{section*.65}%
-\contentsline {subsection}{\numberline {7.7}Ephemeris selection and IOD bookkeeping}{34}{subsection.7.7}%
-\contentsline {paragraph}{Freshest-toe within a source.}{34}{section*.66}%
-\contentsline {paragraph}{IGS-source authority over receiver nav.}{34}{section*.67}%
-\contentsline {paragraph}{IODE-change demote and SSR re-referencing.}{34}{section*.68}%
-\contentsline {paragraph}{The GNSS-IOD matching convention.}{35}{section*.69}%
-\contentsline {section}{\numberline {8}Atmospheric Delay Modelling: Troposphere and Ionosphere}{35}{section.8}%
-\contentsline {subsection}{\numberline {8.1}The slant tropospheric delay}{35}{subsection.8.1}%
-\contentsline {subsubsection}{\numberline {8.1.1}Saastamoinen zenith hydrostatic delay}{36}{subsubsection.8.1.1}%
-\contentsline {subsubsection}{\numberline {8.1.2}The Marini mapping form}{36}{subsubsection.8.1.2}%
-\contentsline {paragraph}{Niell / GMF coefficients.}{37}{section*.73}%
-\contentsline {paragraph}{VMF3 coefficients.}{37}{section*.74}%
-\contentsline {subsubsection}{\numberline {8.1.3}GPT3 empirical pressure, temperature and VMF3 $a$-coefficients}{37}{subsubsection.8.1.3}%
-\contentsline {subsubsection}{\numberline {8.1.4}The gradient mapping and a degenerate fallback}{38}{subsubsection.8.1.4}%
-\contentsline {subsection}{\numberline {8.2}The slant ionospheric delay}{38}{subsection.8.2}%
-\contentsline {subsubsection}{\numberline {8.2.1}The $1/f^2$ scaling and its sign}{38}{subsubsection.8.2.1}%
-\contentsline {subsubsection}{\numberline {8.2.2}IONEX / GIM thin-shell slant delay}{39}{subsubsection.8.2.2}%
-\contentsline {subsubsection}{\numberline {8.2.3}The GIM iono-weighting pseudo-observation}{39}{subsubsection.8.2.3}%
-\contentsline {paragraph}{Why frozen pivots are excluded.}{40}{section*.79}%
-\contentsline {subsubsection}{\numberline {8.2.4}The co-estimated spherical-harmonic VTEC field}{40}{subsubsection.8.2.4}%
-\contentsline {paragraph}{Basis and normalisation.}{40}{section*.80}%
-\contentsline {paragraph}{Frame and geometry.}{41}{section*.82}%
-\contentsline {paragraph}{The pin row.}{41}{section*.83}%
-\contentsline {paragraph}{The Kaula--Tikhonov prior as the estimability datum.}{42}{section*.85}%
-\contentsline {paragraph}{Open extensions --- default OFF, not yet field-validated.}{42}{section*.87}%
-\contentsline {subsubsection}{\numberline {8.2.5}Klobuchar broadcast seed}{43}{subsubsection.8.2.5}%
-\contentsline {subsection}{\numberline {8.3}Higher-order ionospheric corrections}{43}{subsection.8.3}%
-\contentsline {subsubsection}{\numberline {8.3.1}The geomagnetic dipole field}{44}{subsubsection.8.3.1}%
-\contentsline {section}{\numberline {9}Site Displacement and Geophysical Corrections}{44}{section.9}%
-\contentsline {subsection}{\numberline {9.1}Sign convention and projection into the range}{45}{subsection.9.1}%
-\contentsline {subsection}{\numberline {9.2}Solid Earth tide (IERS 2010, Steps 1 + 2)}{45}{subsection.9.2}%
-\contentsline {subsubsection}{\numberline {9.2.1}Step 1 --- in-phase degree 2 and 3}{46}{subsubsection.9.2.1}%
-\contentsline {subsubsection}{\numberline {9.2.2}Step 1 --- out-of-phase anelasticity and the $L^1$ term}{46}{subsubsection.9.2.2}%
-\contentsline {subsubsection}{\numberline {9.2.3}Step 2 --- frequency dependence (Doodson tables)}{47}{subsubsection.9.2.3}%
-\contentsline {paragraph}{Diurnal band (Table 7.3a).}{47}{section*.93}%
-\contentsline {paragraph}{Long-period band (Table 7.3b).}{47}{section*.94}%
-\contentsline {subsection}{\numberline {9.3}Ocean tidal loading (OTL)}{47}{subsection.9.3}%
-\contentsline {subsubsection}{\numberline {9.3.1}Astronomical argument and the Doodson--Warburg phase bias}{48}{subsubsection.9.3.1}%
-\contentsline {subsubsection}{\numberline {9.3.2}Coefficient sources: SIF, BLQ, and the EOT20 grid}{48}{subsubsection.9.3.2}%
-\contentsline {subsection}{\numberline {9.4}Pole tide (rotational deformation, IERS 7.1.4)}{49}{subsection.9.4}%
-\contentsline {subsection}{\numberline {9.5}Ocean pole tide (Desai 2002, IERS 7.1.5)}{49}{subsection.9.5}%
-\contentsline {subsection}{\numberline {9.6}Atmospheric pressure loading (S1/S2 thermal tide)}{50}{subsection.9.6}%
-\contentsline {paragraph}{Honesty note.}{50}{section*.99}%
-\contentsline {subsection}{\numberline {9.7}Integration into the measurement model}{50}{subsection.9.7}%
-\contentsline {section}{\numberline {10}Observation Model Physics: Antenna, Attitude, Relativity, and Range Corrections}{51}{section.10}%
-\contentsline {subsection}{\numberline {10.1}Satellite attitude: the body frame}{51}{subsection.10.1}%
-\contentsline {paragraph}{Nominal yaw-steering.}{52}{section*.100}%
-\contentsline {paragraph}{Sun elevation and the mode switch.}{52}{section*.101}%
-\contentsline {paragraph}{Eclipse gating.}{52}{section*.103}%
-\contentsline {subsection}{\numberline {10.2}Antenna phase-centre corrections}{53}{subsection.10.2}%
-\contentsline {paragraph}{Which coordinate is the ARP.}{53}{section*.105}%
-\contentsline {paragraph}{Satellite PCO (subtracted).}{53}{section*.106}%
-\contentsline {paragraph}{Satellite PCV (added).}{53}{section*.107}%
-\contentsline {paragraph}{Receiver PCO (added).}{54}{section*.108}%
-\contentsline {paragraph}{Receiver PCV (added).}{54}{section*.109}%
-\contentsline {paragraph}{ATX frequency fallback.}{54}{section*.110}%
-\contentsline {subsection}{\numberline {10.3}Carrier-phase wind-up}{54}{subsection.10.3}%
-\contentsline {paragraph}{Fractional vs.\ accumulated modes.}{55}{section*.112}%
-\contentsline {paragraph}{Known frame duplication.}{55}{section*.113}%
-\contentsline {subsection}{\numberline {10.4}Periodic relativistic clock correction}{55}{subsection.10.4}%
-\contentsline {subsection}{\numberline {10.5}Shapiro (gravitational-delay) correction}{56}{subsection.10.5}%
-\contentsline {subsection}{\numberline {10.6}Sagnac (Earth-rotation) correction}{56}{subsection.10.6}%
-\contentsline {subsection}{\numberline {10.7}Group delays and inter-frequency biases}{56}{subsection.10.7}%
-\contentsline {paragraph}{Broadcast group delay.}{57}{section*.117}%
-\contentsline {paragraph}{Precise OSB / DCB biases.}{57}{section*.118}%
-\contentsline {paragraph}{Estimated vs.\ deterministic biases.}{57}{section*.119}%
-\contentsline {paragraph}{Relation to the SSR overlay.}{57}{section*.120}%
-\contentsline {subsection}{\numberline {10.8}Provenance and assembly}{57}{subsection.10.8}%
-\contentsline {part}{III\hspace {1em}Estimation engine}{58}{part.3}%
-\contentsline {section}{\numberline {11}Estimation engine: the Kalman filter and RTS smoother}{58}{section.11}%
-\contentsline {subsection}{\numberline {11.1}Time update}{58}{subsection.11.1}%
-\contentsline {paragraph}{State transition.}{58}{section*.121}%
-\contentsline {paragraph}{Process-noise model.}{59}{section*.123}%
-\contentsline {paragraph}{Scope: the recursive estimator only.}{60}{section*.124}%
-\contentsline {paragraph}{Aided time update.}{60}{section*.125}%
-\contentsline {subsection}{\numberline {11.2}Measurement update}{60}{subsection.11.2}%
-\contentsline {paragraph}{Joseph-form covariance update.}{61}{section*.126}%
-\contentsline {paragraph}{Post-fit residuals.}{61}{section*.128}%
-\contentsline {subsection}{\numberline {11.3}Iterated relinearisation (IEKF)}{61}{subsection.11.3}%
-\contentsline {paragraph}{Anchor.}{61}{section*.129}%
-\contentsline {paragraph}{Gauss--Newton step.}{62}{section*.130}%
-\contentsline {paragraph}{Firing condition.}{62}{section*.132}%
-\contentsline {subsection}{\numberline {11.4}Innovation and residual gating}{62}{subsection.11.4}%
-\contentsline {paragraph}{Per-row rejection.}{62}{section*.133}%
-\contentsline {paragraph}{Baarda data-snooping gate (optional override).}{63}{section*.134}%
-\contentsline {paragraph}{Complete-reset backstop.}{63}{section*.135}%
-\contentsline {paragraph}{Robust pivot-slip detectors (BSSD).}{63}{section*.136}%
-\contentsline {paragraph}{Down-weighting (not gating).}{63}{section*.137}%
-\contentsline {subsection}{\numberline {11.5}Backward RTS smoother}{63}{subsection.11.5}%
-\contentsline {paragraph}{Forward-pass capture.}{63}{section*.138}%
-\contentsline {paragraph}{Recursion.}{64}{section*.139}%
-\contentsline {paragraph}{Variable-dimension reconciliation.}{64}{section*.141}%
-\contentsline {paragraph}{Segment boundaries at resets and frame changes.}{64}{section*.142}%
-\contentsline {paragraph}{BSSD pivot-handover reconciliation.}{64}{section*.143}%
-\contentsline {paragraph}{Static-position degeneracy.}{65}{section*.144}%
-\contentsline {section}{\numberline {12}Stochastic Model and Quality Control}{65}{section.12}%
-\contentsline {subsection}{\numberline {12.1}The stochastic-model dispatch}{65}{subsection.12.1}%
-\contentsline {paragraph}{(a) Constant.}{66}{section*.145}%
-\contentsline {paragraph}{(b) Elevation.}{66}{section*.146}%
-\contentsline {paragraph}{(c) SNR (SIGMA-$\varepsilon $).}{66}{section*.148}%
-\contentsline {paragraph}{(d) SatelliteBlock.}{67}{section*.150}%
-\contentsline {subsection}{\numberline {12.2}A-posteriori variance factor}{67}{subsection.12.2}%
-\contentsline {subsection}{\numberline {12.3}Redundancy numbers, the Baarda $w$-test, and the MDB}{68}{subsection.12.3}%
-\contentsline {paragraph}{Redundancy number.}{69}{section*.153}%
-\contentsline {paragraph}{$w$-test.}{69}{section*.155}%
-\contentsline {paragraph}{Minimal detectable bias.}{70}{section*.157}%
-\contentsline {subsection}{\numberline {12.4}Data-snooping gate override}{70}{subsection.12.4}%
-\contentsline {subsection}{\numberline {12.5}Correlation-aware full-$\bm {R}$ kernel}{70}{subsection.12.5}%
-\contentsline {subsection}{\numberline {12.6}Producer-side RAIM: within-epoch adaptation}{71}{subsection.12.6}%
-\contentsline {subsection}{\numberline {12.7}Pooled variance factors and the per-constellation carve-out}{72}{subsection.12.7}%
-\contentsline {paragraph}{Code and iono-constraint pools.}{72}{section*.159}%
-\contentsline {paragraph}{Per-constellation carve-out.}{72}{section*.160}%
-\contentsline {subsection}{\numberline {12.8}Station-relative deweighting of the ionosphere constraint}{73}{subsection.12.8}%
-\contentsline {subsection}{\numberline {12.9}State-domain emission gates}{74}{subsection.12.9}%
-\contentsline {paragraph}{Spherical-harmonic field health.}{74}{section*.162}%
-\contentsline {paragraph}{Clock-runaway quarantine.}{74}{section*.163}%
-\contentsline {section}{\numberline {13}Estimator Infrastructure: WLS Seeding, State Initialisation, and Pivot Management}{74}{section.13}%
-\contentsline {subsection}{\numberline {13.1}The WLS epoch estimator: receiver-clock seed and post-gap re-seed}{75}{subsection.13.1}%
-\contentsline {subsection}{\numberline {13.2}First-epoch state seeding by residual differencing}{76}{subsection.13.2}%
-\contentsline {paragraph}{(a) Inter-system bias.}{76}{section*.165}%
-\contentsline {paragraph}{(b) Phase clock.}{76}{section*.167}%
-\contentsline {paragraph}{(c) Uncombined receiver code bias / IFB.}{77}{section*.168}%
-\contentsline {paragraph}{(d) Per-satellite slant ionosphere.}{77}{section*.170}%
-\contentsline {paragraph}{(e) Carrier ambiguity.}{78}{section*.172}%
-\contentsline {paragraph}{(f) Cold receiver-clock pre-seed (network path).}{78}{section*.173}%
-\contentsline {subsection}{\numberline {13.3}BSSD pivot management}{78}{subsection.13.3}%
-\contentsline {subsubsection}{\numberline {13.3.1}Lexicographic candidate ranking}{79}{subsubsection.13.3.1}%
-\contentsline {subsubsection}{\numberline {13.3.2}Ephemeris-freshness guardrail}{79}{subsubsection.13.3.2}%
-\contentsline {subsubsection}{\numberline {13.3.3}Pivot disturbance detection and handover}{80}{subsubsection.13.3.3}%
-\contentsline {part}{IV\hspace {1em}Cycle-slip detection and repair}{80}{part.4}%
-\contentsline {section}{\numberline {14}Cycle-slip detection and repair}{81}{section.14}%
-\contentsline {subsection}{\numberline {14.1}Detector registry and composition}{81}{subsection.14.1}%
-\contentsline {subsection}{\numberline {14.2}Test-statistic combinations}{82}{subsection.14.2}%
-\contentsline {subsubsection}{\numberline {14.2.1}Melbourne--W\"ubbena (wide-lane)}{82}{subsubsection.14.2.1}%
-\contentsline {subsubsection}{\numberline {14.2.2}Extra-wide-lane (EWL)}{83}{subsubsection.14.2.2}%
-\contentsline {subsubsection}{\numberline {14.2.3}GRAPHIC (single-frequency half-sum)}{83}{subsubsection.14.2.3}%
-\contentsline {subsubsection}{\numberline {14.2.4}Geometry-free phase (staged)}{84}{subsubsection.14.2.4}%
-\contentsline {subsubsection}{\numberline {14.2.5}Ionosphere-free phase (staged on the user path; armed on the network path)}{84}{subsubsection.14.2.5}%
-\contentsline {subsection}{\numberline {14.3}Network slip QC: raw evidence and refloat over repair}{86}{subsection.14.3}%
-\contentsline {paragraph}{Shared evidence.}{86}{section*.177}%
-\contentsline {paragraph}{Response doctrine.}{86}{section*.178}%
-\contentsline {paragraph}{Status.}{87}{section*.179}%
-\contentsline {subsection}{\numberline {14.4}TurboEdit dual-frequency resolution}{87}{subsection.14.4}%
-\contentsline {subsubsection}{\numberline {14.4.1}The 2$\times $2 system}{87}{subsubsection.14.4.1}%
-\contentsline {subsubsection}{\numberline {14.4.2}Integer rounding and validation}{88}{subsubsection.14.4.2}%
-\contentsline {subsubsection}{\numberline {14.4.3}MW-only / code-event null line}{89}{subsubsection.14.4.3}%
-\contentsline {subsubsection}{\numberline {14.4.4}Gap-spanning GF bridge}{89}{subsubsection.14.4.4}%
-\contentsline {subsubsection}{\numberline {14.4.5}Atomic reconciliation}{90}{subsubsection.14.4.5}%
-\contentsline {part}{V\hspace {1em}Integer ambiguity resolution}{90}{part.5}%
-\contentsline {section}{\numberline {15}Integer ambiguity resolution}{91}{section.15}%
-\contentsline {subsection}{\numberline {15.1}The integer least-squares problem}{91}{subsection.15.1}%
-\contentsline {paragraph}{Float extraction and rescaling to cycles.}{92}{section*.183}%
-\contentsline {subsection}{\numberline {15.2}Decorrelation: $LDL^{\mathrm {T}}$ factorisation and the integer $\bm {Z}$-transform}{92}{subsection.15.2}%
-\contentsline {paragraph}{Factorisation.}{92}{section*.184}%
-\contentsline {paragraph}{The $\bm {Z}$-transform.}{92}{section*.185}%
-\contentsline {paragraph}{The shrinking-ellipsoid search.}{93}{section*.186}%
-\contentsline {subsection}{\numberline {15.3}Wide-lane / narrow-lane decomposition (PPP path)}{93}{subsection.15.3}%
-\contentsline {paragraph}{WL from Melbourne--W\"ubbena (integer by contract).}{93}{section*.187}%
-\contentsline {paragraph}{NL search variable.}{94}{section*.188}%
-\contentsline {paragraph}{Integer-recentring shift.}{94}{section*.189}%
-\contentsline {paragraph}{Back-transform to per-signal DDs.}{94}{section*.190}%
-\contentsline {paragraph}{State-basis variants.}{94}{section*.191}%
-\contentsline {subsection}{\numberline {15.4}Partial / subset ambiguity resolution}{94}{subsection.15.4}%
-\contentsline {paragraph}{Upstream candidate gating (always on).}{95}{section*.192}%
-\contentsline {paragraph}{Dynamic backward-elimination subset (\texttt {enable\_partial\_ar}, default off).}{95}{section*.193}%
-\contentsline {subsection}{\numberline {15.5}Validation: ratio test and fixed-failure-rate gate}{96}{subsection.15.5}%
-\contentsline {paragraph}{Ratio test (discrimination).}{96}{equation.233}%
-\contentsline {paragraph}{Fixed-failure-rate gate (bootstrap success rate).}{96}{section*.196}%
-\contentsline {paragraph}{Per-pair residual backstop.}{96}{section*.198}%
-\contentsline {paragraph}{Convergence guards.}{96}{section*.199}%
-\contentsline {subsection}{\numberline {15.6}Feedback: constrained pseudo-observation update}{96}{subsection.15.6}%
-\contentsline {subsection}{\numberline {15.7}Network-producer AR (both mechanisms default off)}{97}{subsection.15.7}%
-\contentsline {paragraph}{Producer AR: a log-only fixability probe.}{97}{section*.201}%
-\contentsline {paragraph}{SD extra-wide-lane integers: Route B and the A2 datum.}{98}{section*.202}%
-\contentsline {paragraph}{Status.}{99}{section*.204}%
-\contentsline {subsection}{\numberline {15.8}Configuration summary}{99}{subsection.15.8}%
-\contentsline {part}{VI\hspace {1em}Inertial aiding}{99}{part.6}%
-\contentsline {section}{\numberline {16}Inertial aiding}{99}{section.16}%
-\contentsline {subsection}{\numberline {16.1}Strapdown mechanization}{100}{subsection.16.1}%
-\contentsline {subsection}{\numberline {16.2}INS error-state dynamics}{101}{subsection.16.2}%
-\contentsline {subsection}{\numberline {16.3}Covariance splice and attitude feedback}{102}{subsection.16.3}%
-\contentsline {subsection}{\numberline {16.4}Coupling modes and the GNSS update}{102}{subsection.16.4}%
-\contentsline {paragraph}{Loosely coupled (default).}{102}{section*.208}%
-\contentsline {paragraph}{Tightly coupled.}{102}{section*.209}%
-\contentsline {part}{VII\hspace {1em}Real-time SSR corrections}{103}{part.7}%
-\contentsline {section}{\numberline {17}Real-time SSR corrections}{103}{section.17}%
-\contentsline {subsection}{\numberline {17.1}Orbit correction --- refines $\rho ^i_r$}{103}{subsection.17.1}%
-\contentsline {subsection}{\numberline {17.2}Clock correction --- refines $-c\,\mathrm {d}t^i$}{104}{subsection.17.2}%
-\contentsline {paragraph}{Split-cadence fast clocks.}{104}{section*.213}%
-\contentsline {subsection}{\numberline {17.3}IOD gate at correction-set boundaries}{105}{subsection.17.3}%
-\contentsline {subsection}{\numberline {17.4}Satellite biases --- refine $-B^i_s$ and $-b^i_s$}{105}{subsection.17.4}%
-\contentsline {subsection}{\numberline {17.5}Satellite-bias STATE gate vs.\ SSR code biases}{106}{subsection.17.5}%
-\contentsline {paragraph}{Network-producer exemption.}{106}{section*.216}%
-\contentsline {paragraph}{Integer recoverability via consistent phase biases.}{107}{section*.217}%
-\contentsline {paragraph}{Discontinuity handling.}{107}{section*.218}%
-\contentsline {subsection}{\numberline {17.6}GLONASS}{107}{subsection.17.6}%
-\contentsline {subsection}{\numberline {17.7}Ionosphere --- $\mu _sI^i_{r,1}$ off-wire, via the slant channel}{107}{subsection.17.7}%
-\contentsline {subsection}{\numberline {17.8}Provenance and code pointers}{108}{subsection.17.8}%
-\contentsline {part}{VIII\hspace {1em}Real-time engine}{109}{part.8}%
-\contentsline {section}{\numberline {18}Real-time engine}{109}{section.18}%
-\contentsline {subsection}{\numberline {18.1}Streaming control flow}{109}{subsection.18.1}%
-\contentsline {subsection}{\numberline {18.2}NTRIP transport}{110}{subsection.18.2}%
-\contentsline {paragraph}{Caster connection.}{110}{section*.219}%
-\contentsline {paragraph}{Transport security.}{110}{section*.220}%
-\contentsline {paragraph}{Reconnection.}{110}{section*.221}%
-\contentsline {subsection}{\numberline {18.3}RTCM\,3 framing and CRC}{110}{subsection.18.3}%
-\contentsline {paragraph}{Septentrio SBF.}{111}{section*.222}%
-\contentsline {subsection}{\numberline {18.4}MSM observation decode}{111}{subsection.18.4}%
-\contentsline {paragraph}{Range reconstruction.}{111}{section*.223}%
+\contentsline {subsection}{\numberline {7.2}Precise orbit: sidereal-trigonometric LSQ fit}{31}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Precise clock interpolation}{32}{subsection.7.3}%
+\contentsline {paragraph}{(a) Linear (MMSE for Brownian motion).}{32}{section*.58}%
+\contentsline {paragraph}{(b) Rate-anchored weighted LSQ.}{32}{section*.59}%
+\contentsline {paragraph}{(c) Barycentric Lagrange.}{33}{section*.61}%
+\contentsline {subsection}{\numberline {7.4}Broadcast Keplerian evaluation}{33}{subsection.7.4}%
+\contentsline {subsection}{\numberline {7.5}Broadcast GLONASS: PZ-90 RK4 integration}{34}{subsection.7.5}%
+\contentsline {subsection}{\numberline {7.6}Broadcast satellite clock}{34}{subsection.7.6}%
+\contentsline {paragraph}{The precise-clock-baseline convention.}{35}{section*.65}%
+\contentsline {subsection}{\numberline {7.7}Ephemeris selection and IOD bookkeeping}{35}{subsection.7.7}%
+\contentsline {paragraph}{Freshest-toe within a source.}{35}{section*.66}%
+\contentsline {paragraph}{IGS-source authority over receiver nav.}{35}{section*.67}%
+\contentsline {paragraph}{IODE-change demote and SSR re-referencing.}{35}{section*.68}%
+\contentsline {paragraph}{The GNSS-IOD matching convention.}{36}{section*.69}%
+\contentsline {section}{\numberline {8}Atmospheric Delay Modelling: Troposphere and Ionosphere}{36}{section.8}%
+\contentsline {subsection}{\numberline {8.1}The slant tropospheric delay}{36}{subsection.8.1}%
+\contentsline {subsubsection}{\numberline {8.1.1}Saastamoinen zenith hydrostatic delay}{37}{subsubsection.8.1.1}%
+\contentsline {subsubsection}{\numberline {8.1.2}The Marini mapping form}{37}{subsubsection.8.1.2}%
+\contentsline {paragraph}{Niell / GMF coefficients.}{38}{section*.73}%
+\contentsline {paragraph}{VMF3 coefficients.}{38}{section*.74}%
+\contentsline {subsubsection}{\numberline {8.1.3}GPT3 empirical pressure, temperature and VMF3 $a$-coefficients}{38}{subsubsection.8.1.3}%
+\contentsline {subsubsection}{\numberline {8.1.4}The gradient mapping and a degenerate fallback}{39}{subsubsection.8.1.4}%
+\contentsline {subsection}{\numberline {8.2}The slant ionospheric delay}{39}{subsection.8.2}%
+\contentsline {subsubsection}{\numberline {8.2.1}The $1/f^2$ scaling and its sign}{39}{subsubsection.8.2.1}%
+\contentsline {subsubsection}{\numberline {8.2.2}IONEX / GIM thin-shell slant delay}{40}{subsubsection.8.2.2}%
+\contentsline {subsubsection}{\numberline {8.2.3}The GIM iono-weighting pseudo-observation}{40}{subsubsection.8.2.3}%
+\contentsline {paragraph}{Why frozen pivots are excluded.}{41}{section*.79}%
+\contentsline {subsubsection}{\numberline {8.2.4}The co-estimated spherical-harmonic VTEC field}{41}{subsubsection.8.2.4}%
+\contentsline {paragraph}{Basis and normalisation.}{41}{section*.80}%
+\contentsline {paragraph}{Frame and geometry.}{42}{section*.82}%
+\contentsline {paragraph}{The pin row.}{42}{section*.83}%
+\contentsline {paragraph}{The Kaula--Tikhonov prior as the estimability datum.}{43}{section*.85}%
+\contentsline {paragraph}{Open extensions: default OFF, not yet field-validated.}{43}{section*.87}%
+\contentsline {subsubsection}{\numberline {8.2.5}Klobuchar broadcast seed}{44}{subsubsection.8.2.5}%
+\contentsline {subsection}{\numberline {8.3}Higher-order ionospheric corrections}{44}{subsection.8.3}%
+\contentsline {subsubsection}{\numberline {8.3.1}The geomagnetic dipole field}{45}{subsubsection.8.3.1}%
+\contentsline {section}{\numberline {9}Site Displacement and Geophysical Corrections}{45}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Sign convention and projection into the range}{46}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Solid Earth tide (IERS 2010, Steps 1 + 2)}{46}{subsection.9.2}%
+\contentsline {subsubsection}{\numberline {9.2.1}Step 1: in-phase degree 2 and 3}{47}{subsubsection.9.2.1}%
+\contentsline {subsubsection}{\numberline {9.2.2}Step 1: out-of-phase anelasticity and the $L^1$ term}{47}{subsubsection.9.2.2}%
+\contentsline {subsubsection}{\numberline {9.2.3}Step 2: frequency dependence (Doodson tables)}{47}{subsubsection.9.2.3}%
+\contentsline {paragraph}{Diurnal band (Table 7.3a).}{48}{section*.93}%
+\contentsline {paragraph}{Long-period band (Table 7.3b).}{48}{section*.94}%
+\contentsline {subsection}{\numberline {9.3}Ocean tidal loading (OTL)}{48}{subsection.9.3}%
+\contentsline {subsubsection}{\numberline {9.3.1}Astronomical argument and the Doodson--Warburg phase bias}{49}{subsubsection.9.3.1}%
+\contentsline {subsubsection}{\numberline {9.3.2}Coefficient sources: SIF, BLQ, and the EOT20 grid}{49}{subsubsection.9.3.2}%
+\contentsline {subsection}{\numberline {9.4}Pole tide (rotational deformation, IERS 7.1.4)}{50}{subsection.9.4}%
+\contentsline {subsection}{\numberline {9.5}Ocean pole tide (Desai 2002, IERS 7.1.5)}{50}{subsection.9.5}%
+\contentsline {subsection}{\numberline {9.6}Atmospheric pressure loading (S1/S2 thermal tide)}{51}{subsection.9.6}%
+\contentsline {paragraph}{Honesty note.}{51}{section*.99}%
+\contentsline {subsection}{\numberline {9.7}Integration into the measurement model}{51}{subsection.9.7}%
+\contentsline {section}{\numberline {10}Observation Model Physics: Antenna, Attitude, Relativity, and Range Corrections}{52}{section.10}%
+\contentsline {subsection}{\numberline {10.1}Satellite attitude: the body frame}{52}{subsection.10.1}%
+\contentsline {paragraph}{Nominal yaw-steering.}{53}{section*.100}%
+\contentsline {paragraph}{Sun elevation and the mode switch.}{53}{section*.101}%
+\contentsline {paragraph}{Eclipse gating.}{53}{section*.103}%
+\contentsline {subsection}{\numberline {10.2}Antenna phase-centre corrections}{54}{subsection.10.2}%
+\contentsline {paragraph}{Which coordinate is the ARP.}{54}{section*.105}%
+\contentsline {paragraph}{Satellite PCO (subtracted).}{54}{section*.106}%
+\contentsline {paragraph}{Satellite PCV (added).}{54}{section*.107}%
+\contentsline {paragraph}{Receiver PCO (added).}{55}{section*.108}%
+\contentsline {paragraph}{Receiver PCV (added).}{55}{section*.109}%
+\contentsline {paragraph}{ATX frequency fallback.}{55}{section*.110}%
+\contentsline {subsection}{\numberline {10.3}Carrier-phase wind-up}{55}{subsection.10.3}%
+\contentsline {paragraph}{Fractional vs.\ accumulated modes.}{56}{section*.112}%
+\contentsline {paragraph}{Known frame duplication.}{56}{section*.113}%
+\contentsline {subsection}{\numberline {10.4}Periodic relativistic clock correction}{56}{subsection.10.4}%
+\contentsline {subsection}{\numberline {10.5}Shapiro (gravitational-delay) correction}{57}{subsection.10.5}%
+\contentsline {subsection}{\numberline {10.6}Sagnac (Earth-rotation) correction}{57}{subsection.10.6}%
+\contentsline {subsection}{\numberline {10.7}Group delays and inter-frequency biases}{57}{subsection.10.7}%
+\contentsline {paragraph}{Broadcast group delay.}{58}{section*.117}%
+\contentsline {paragraph}{Precise OSB / DCB biases.}{58}{section*.118}%
+\contentsline {paragraph}{Estimated vs.\ deterministic biases.}{58}{section*.119}%
+\contentsline {paragraph}{Relation to the SSR overlay.}{58}{section*.120}%
+\contentsline {subsection}{\numberline {10.8}Provenance and assembly}{58}{subsection.10.8}%
+\contentsline {part}{III\hspace {1em}Estimation engine}{59}{part.3}%
+\contentsline {section}{\numberline {11}Estimation engine: the Kalman filter and RTS smoother}{59}{section.11}%
+\contentsline {subsection}{\numberline {11.1}Time update}{59}{subsection.11.1}%
+\contentsline {paragraph}{State transition.}{59}{section*.121}%
+\contentsline {paragraph}{Process-noise model.}{60}{section*.123}%
+\contentsline {paragraph}{Scope: the recursive estimator only.}{61}{section*.124}%
+\contentsline {paragraph}{Aided time update.}{61}{section*.125}%
+\contentsline {subsection}{\numberline {11.2}Measurement update}{61}{subsection.11.2}%
+\contentsline {paragraph}{Joseph-form covariance update.}{62}{section*.126}%
+\contentsline {paragraph}{Post-fit residuals.}{62}{section*.128}%
+\contentsline {subsection}{\numberline {11.3}Iterated relinearisation (IEKF)}{62}{subsection.11.3}%
+\contentsline {paragraph}{Anchor.}{62}{section*.129}%
+\contentsline {paragraph}{Gauss--Newton step.}{63}{section*.130}%
+\contentsline {paragraph}{Firing condition.}{63}{section*.132}%
+\contentsline {subsection}{\numberline {11.4}Innovation and residual gating}{63}{subsection.11.4}%
+\contentsline {paragraph}{Per-row rejection.}{63}{section*.133}%
+\contentsline {paragraph}{Baarda data-snooping gate (optional override).}{64}{section*.134}%
+\contentsline {paragraph}{Complete-reset backstop.}{64}{section*.135}%
+\contentsline {paragraph}{Robust pivot-slip detectors (BSSD).}{64}{section*.136}%
+\contentsline {paragraph}{Down-weighting (not gating).}{64}{section*.137}%
+\contentsline {subsection}{\numberline {11.5}Backward RTS smoother}{64}{subsection.11.5}%
+\contentsline {paragraph}{Forward-pass capture.}{64}{section*.138}%
+\contentsline {paragraph}{Recursion.}{65}{section*.139}%
+\contentsline {paragraph}{Variable-dimension reconciliation.}{65}{section*.141}%
+\contentsline {paragraph}{Segment boundaries at resets and frame changes.}{65}{section*.142}%
+\contentsline {paragraph}{BSSD pivot-handover reconciliation.}{65}{section*.143}%
+\contentsline {paragraph}{Static-position degeneracy.}{66}{section*.144}%
+\contentsline {section}{\numberline {12}Stochastic Model and Quality Control}{66}{section.12}%
+\contentsline {subsection}{\numberline {12.1}The stochastic-model dispatch}{66}{subsection.12.1}%
+\contentsline {paragraph}{(a) Constant.}{67}{section*.145}%
+\contentsline {paragraph}{(b) Elevation.}{67}{section*.146}%
+\contentsline {paragraph}{(c) SNR (SIGMA-$\varepsilon $).}{67}{section*.148}%
+\contentsline {paragraph}{(d) SatelliteBlock.}{68}{section*.150}%
+\contentsline {subsection}{\numberline {12.2}A-posteriori variance factor}{68}{subsection.12.2}%
+\contentsline {subsection}{\numberline {12.3}Redundancy numbers, the Baarda $w$-test, and the MDB}{69}{subsection.12.3}%
+\contentsline {paragraph}{Redundancy number.}{70}{section*.153}%
+\contentsline {paragraph}{$w$-test.}{70}{section*.155}%
+\contentsline {paragraph}{Minimal detectable bias.}{71}{section*.157}%
+\contentsline {subsection}{\numberline {12.4}Data-snooping gate override}{71}{subsection.12.4}%
+\contentsline {subsection}{\numberline {12.5}Correlation-aware full-$\bm {R}$ kernel}{71}{subsection.12.5}%
+\contentsline {subsection}{\numberline {12.6}Producer-side RAIM: within-epoch adaptation}{72}{subsection.12.6}%
+\contentsline {subsection}{\numberline {12.7}Pooled variance factors and the per-constellation carve-out}{73}{subsection.12.7}%
+\contentsline {paragraph}{Code and iono-constraint pools.}{73}{section*.159}%
+\contentsline {paragraph}{Per-constellation carve-out.}{73}{section*.160}%
+\contentsline {subsection}{\numberline {12.8}Station-relative deweighting of the ionosphere constraint}{74}{subsection.12.8}%
+\contentsline {subsection}{\numberline {12.9}State-domain emission gates}{75}{subsection.12.9}%
+\contentsline {paragraph}{Spherical-harmonic field health.}{75}{section*.162}%
+\contentsline {paragraph}{Clock-runaway quarantine.}{75}{section*.163}%
+\contentsline {section}{\numberline {13}Estimator Infrastructure: WLS Seeding, State Initialisation, and Pivot Management}{75}{section.13}%
+\contentsline {subsection}{\numberline {13.1}The WLS epoch estimator: receiver-clock seed and post-gap re-seed}{76}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}First-epoch state seeding by residual differencing}{77}{subsection.13.2}%
+\contentsline {paragraph}{(a) Inter-system bias.}{77}{section*.165}%
+\contentsline {paragraph}{(b) Phase clock.}{77}{section*.167}%
+\contentsline {paragraph}{(c) Uncombined receiver code bias / IFB.}{78}{section*.168}%
+\contentsline {paragraph}{(d) Per-satellite slant ionosphere.}{78}{section*.170}%
+\contentsline {paragraph}{(e) Carrier ambiguity.}{79}{section*.172}%
+\contentsline {paragraph}{(f) Cold receiver-clock pre-seed (network path).}{79}{section*.173}%
+\contentsline {subsection}{\numberline {13.3}BSSD pivot management}{79}{subsection.13.3}%
+\contentsline {subsubsection}{\numberline {13.3.1}Lexicographic candidate ranking}{80}{subsubsection.13.3.1}%
+\contentsline {subsubsection}{\numberline {13.3.2}Ephemeris-freshness guardrail}{80}{subsubsection.13.3.2}%
+\contentsline {subsubsection}{\numberline {13.3.3}Pivot disturbance detection and handover}{81}{subsubsection.13.3.3}%
+\contentsline {part}{IV\hspace {1em}Cycle-slip detection and repair}{81}{part.4}%
+\contentsline {section}{\numberline {14}Cycle-slip detection and repair}{82}{section.14}%
+\contentsline {subsection}{\numberline {14.1}Detector registry and composition}{82}{subsection.14.1}%
+\contentsline {subsection}{\numberline {14.2}Test-statistic combinations}{83}{subsection.14.2}%
+\contentsline {subsubsection}{\numberline {14.2.1}Melbourne--W\"ubbena (wide-lane)}{83}{subsubsection.14.2.1}%
+\contentsline {subsubsection}{\numberline {14.2.2}Extra-wide-lane (EWL)}{84}{subsubsection.14.2.2}%
+\contentsline {subsubsection}{\numberline {14.2.3}GRAPHIC (single-frequency half-sum)}{84}{subsubsection.14.2.3}%
+\contentsline {subsubsection}{\numberline {14.2.4}Geometry-free phase (staged)}{85}{subsubsection.14.2.4}%
+\contentsline {subsubsection}{\numberline {14.2.5}Ionosphere-free phase (staged on the user path; armed on the network path)}{85}{subsubsection.14.2.5}%
+\contentsline {subsection}{\numberline {14.3}Network slip QC: raw evidence and refloat over repair}{87}{subsection.14.3}%
+\contentsline {paragraph}{Shared evidence.}{87}{section*.177}%
+\contentsline {paragraph}{Response doctrine.}{87}{section*.178}%
+\contentsline {paragraph}{Status.}{88}{section*.179}%
+\contentsline {subsection}{\numberline {14.4}TurboEdit dual-frequency resolution}{88}{subsection.14.4}%
+\contentsline {subsubsection}{\numberline {14.4.1}The 2$\times $2 system}{88}{subsubsection.14.4.1}%
+\contentsline {subsubsection}{\numberline {14.4.2}Integer rounding and validation}{89}{subsubsection.14.4.2}%
+\contentsline {subsubsection}{\numberline {14.4.3}MW-only / code-event null line}{90}{subsubsection.14.4.3}%
+\contentsline {subsubsection}{\numberline {14.4.4}Gap-spanning GF bridge}{90}{subsubsection.14.4.4}%
+\contentsline {subsubsection}{\numberline {14.4.5}Atomic reconciliation}{91}{subsubsection.14.4.5}%
+\contentsline {part}{V\hspace {1em}Integer ambiguity resolution}{91}{part.5}%
+\contentsline {section}{\numberline {15}Integer ambiguity resolution}{92}{section.15}%
+\contentsline {subsection}{\numberline {15.1}The integer least-squares problem}{92}{subsection.15.1}%
+\contentsline {paragraph}{Float extraction and rescaling to cycles.}{93}{section*.183}%
+\contentsline {subsection}{\numberline {15.2}Decorrelation: $LDL^{\mathrm {T}}$ factorisation and the integer $\bm {Z}$-transform}{93}{subsection.15.2}%
+\contentsline {paragraph}{Factorisation.}{93}{section*.184}%
+\contentsline {paragraph}{The $\bm {Z}$-transform.}{93}{section*.185}%
+\contentsline {paragraph}{The shrinking-ellipsoid search.}{94}{section*.186}%
+\contentsline {subsection}{\numberline {15.3}Wide-lane / narrow-lane decomposition (PPP path)}{94}{subsection.15.3}%
+\contentsline {paragraph}{WL from Melbourne--W\"ubbena (integer by contract).}{94}{section*.187}%
+\contentsline {paragraph}{NL search variable.}{95}{section*.188}%
+\contentsline {paragraph}{Integer-recentring shift.}{95}{section*.189}%
+\contentsline {paragraph}{Back-transform to per-signal DDs.}{95}{section*.190}%
+\contentsline {paragraph}{State-basis variants.}{95}{section*.191}%
+\contentsline {subsection}{\numberline {15.4}Partial / subset ambiguity resolution}{95}{subsection.15.4}%
+\contentsline {paragraph}{Upstream candidate gating (always on).}{96}{section*.192}%
+\contentsline {paragraph}{Dynamic backward-elimination subset (\texttt {enable\_partial\_ar}, default off).}{96}{section*.193}%
+\contentsline {subsection}{\numberline {15.5}Validation: ratio test and fixed-failure-rate gate}{97}{subsection.15.5}%
+\contentsline {paragraph}{Ratio test (discrimination).}{97}{equation.233}%
+\contentsline {paragraph}{Fixed-failure-rate gate (bootstrap success rate).}{97}{section*.196}%
+\contentsline {paragraph}{Per-pair residual backstop.}{97}{section*.198}%
+\contentsline {paragraph}{Convergence guards.}{97}{section*.199}%
+\contentsline {subsection}{\numberline {15.6}Feedback: constrained pseudo-observation update}{97}{subsection.15.6}%
+\contentsline {subsection}{\numberline {15.7}Network-producer AR (both mechanisms default off)}{98}{subsection.15.7}%
+\contentsline {paragraph}{Producer AR: a log-only fixability probe.}{98}{section*.201}%
+\contentsline {paragraph}{SD extra-wide-lane integers: Route B and the A2 datum.}{99}{section*.202}%
+\contentsline {paragraph}{Status.}{100}{section*.204}%
+\contentsline {subsection}{\numberline {15.8}Configuration summary}{100}{subsection.15.8}%
+\contentsline {part}{VI\hspace {1em}Inertial aiding}{100}{part.6}%
+\contentsline {section}{\numberline {16}Inertial aiding}{100}{section.16}%
+\contentsline {subsection}{\numberline {16.1}Strapdown mechanization}{101}{subsection.16.1}%
+\contentsline {subsection}{\numberline {16.2}INS error-state dynamics}{102}{subsection.16.2}%
+\contentsline {subsection}{\numberline {16.3}Covariance splice and attitude feedback}{103}{subsection.16.3}%
+\contentsline {subsection}{\numberline {16.4}Coupling modes and the GNSS update}{103}{subsection.16.4}%
+\contentsline {paragraph}{Loosely coupled (default).}{103}{section*.208}%
+\contentsline {paragraph}{Tightly coupled.}{103}{section*.209}%
+\contentsline {part}{VII\hspace {1em}Real-time SSR corrections}{104}{part.7}%
+\contentsline {section}{\numberline {17}Real-time SSR corrections}{104}{section.17}%
+\contentsline {subsection}{\numberline {17.1}Orbit correction: refines $\rho ^i_r$}{104}{subsection.17.1}%
+\contentsline {subsection}{\numberline {17.2}Clock correction: refines $-c\,\mathrm {d}t^i$}{105}{subsection.17.2}%
+\contentsline {paragraph}{Split-cadence fast clocks.}{105}{section*.213}%
+\contentsline {subsection}{\numberline {17.3}IOD gate at correction-set boundaries}{106}{subsection.17.3}%
+\contentsline {subsection}{\numberline {17.4}Satellite biases: refine $-B^i_s$ and $-b^i_s$}{106}{subsection.17.4}%
+\contentsline {subsection}{\numberline {17.5}Satellite-bias STATE gate vs.\ SSR code biases}{107}{subsection.17.5}%
+\contentsline {paragraph}{Network-producer exemption.}{107}{section*.216}%
+\contentsline {paragraph}{Integer recoverability via consistent phase biases.}{108}{section*.217}%
+\contentsline {paragraph}{Discontinuity handling.}{108}{section*.218}%
+\contentsline {subsection}{\numberline {17.6}GLONASS}{108}{subsection.17.6}%
+\contentsline {subsection}{\numberline {17.7}Ionosphere: $\mu _sI^i_{r,1}$ off-wire, via the slant channel}{108}{subsection.17.7}%
+\contentsline {subsection}{\numberline {17.8}Provenance and code pointers}{109}{subsection.17.8}%
+\contentsline {part}{VIII\hspace {1em}Real-time engine}{110}{part.8}%
+\contentsline {section}{\numberline {18}Real-time engine}{110}{section.18}%
+\contentsline {subsection}{\numberline {18.1}Streaming control flow}{110}{subsection.18.1}%
+\contentsline {subsection}{\numberline {18.2}NTRIP transport}{111}{subsection.18.2}%
+\contentsline {paragraph}{Caster connection.}{111}{section*.219}%
+\contentsline {paragraph}{Transport security.}{111}{section*.220}%
+\contentsline {paragraph}{Reconnection.}{111}{section*.221}%
+\contentsline {subsection}{\numberline {18.3}RTCM\,3 framing and CRC}{111}{subsection.18.3}%
+\contentsline {paragraph}{Septentrio SBF.}{112}{section*.222}%
+\contentsline {subsection}{\numberline {18.4}MSM observation decode}{112}{subsection.18.4}%
+\contentsline {paragraph}{Range reconstruction.}{112}{section*.223}%
 \contentsline {paragraph}{DF419 extended-satellite-info gating.}{112}{section*.224}%
-\contentsline {subsection}{\numberline {18.5}Broadcast nav, SSR and station coordinates}{112}{subsection.18.5}%
-\contentsline {paragraph}{Broadcast ephemeris.}{112}{section*.225}%
-\contentsline {paragraph}{SSR corrections.}{112}{section*.226}%
-\contentsline {paragraph}{Station coordinates (1005/1006).}{112}{section*.227}%
-\contentsline {subsection}{\numberline {18.6}Time-system handling}{113}{subsection.18.6}%
-\contentsline {subsection}{\numberline {18.7}Observation/SSR synchronisation}{113}{subsection.18.7}%
-\contentsline {subsection}{\numberline {18.8}Ephemeris management}{114}{subsection.18.8}%
-\contentsline {subsection}{\numberline {18.9}A-priori seeding from RTCM 1005/1006}{114}{subsection.18.9}%
-\contentsline {subsection}{\numberline {18.10}The per-epoch real-time update}{115}{subsection.18.10}%
-\contentsline {paragraph}{Post-processing stages skipped in real time.}{116}{section*.228}%
-\contentsline {part}{IX\hspace {1em}Network mode}{116}{part.9}%
-\contentsline {section}{\numberline {19}Network mode}{116}{section.19}%
-\contentsline {paragraph}{Scope and status.}{116}{section*.229}%
-\contentsline {subsection}{\numberline {19.1}Producer architecture: the decomposed epoch loop}{117}{subsection.19.1}%
-\contentsline {paragraph}{Why the shape changed.}{117}{section*.230}%
-\contentsline {paragraph}{Four stages.}{117}{section*.231}%
-\contentsline {paragraph}{The seam contract.}{118}{section*.232}%
-\contentsline {paragraph}{Why there is a context object.}{118}{section*.233}%
-\contentsline {paragraph}{The ordered epoch seams.}{118}{section*.234}%
-\contentsline {paragraph}{Reading key.}{119}{section*.235}%
-\contentsline {subsection}{\numberline {19.2}Joint multi-station observation model}{120}{subsection.19.2}%
-\contentsline {paragraph}{No receiver-side differencing.}{120}{section*.236}%
-\contentsline {subsection}{\numberline {19.3}The explicit satellite phase-bias state}{120}{subsection.19.3}%
-\contentsline {subsection}{\numberline {19.4}Rank deficiency and the minimum-constraint S-basis}{121}{subsection.19.4}%
-\contentsline {paragraph}{Exact gauge, soft elimination.}{121}{section*.237}%
-\contentsline {paragraph}{Selectable datum realisations.}{122}{section*.238}%
-\contentsline {subsection}{\numberline {19.5}Per-station Schur reduction (arrowhead normals)}{122}{subsection.19.5}%
-\contentsline {paragraph}{Lossless marginalisation.}{123}{section*.239}%
-\contentsline {subsection}{\numberline {19.6}Constellation scope}{123}{subsection.19.6}%
-\contentsline {subsection}{\numberline {19.7}The closed loop: producer $\to $ held-out user}{124}{subsection.19.7}%
-\contentsline {section}{\numberline {20}Worked example: estimability in a two-receiver network}{125}{section.20}%
-\contentsline {subsection}{\numberline {20.1}Code only: clocks and one gauge freedom}{125}{subsection.20.1}%
-\contentsline {paragraph}{The deficiency, seen two ways.}{125}{section*.241}%
-\contentsline {paragraph}{Two datum choices, same fit.}{126}{section*.242}%
-\contentsline {paragraph}{What is invariant.}{126}{section*.243}%
-\contentsline {subsection}{\numberline {20.2}Adding carrier phase: the satellite phase bias needs the network}{126}{subsection.20.2}%
-\contentsline {paragraph}{Counting: one receiver vs.\ two.}{127}{section*.244}%
-\contentsline {paragraph}{Datum and solution.}{127}{section*.245}%
-\contentsline {paragraph}{Reading the result.}{127}{section*.246}%
-\contentsline {part}{X\hspace {1em}Reference}{128}{part.10}%
-\contentsline {section}{\numberline {21}Pipeline and architecture diagrams}{128}{section.21}%
-\contentsline {section}{\numberline {A}Generated reference tables}{128}{section.A}%
-\contentsline {subsection}{\numberline {A.1}Processing modes}{128}{subsection.A.1}%
-\contentsline {subsection}{\numberline {A.2}Execution mode and data source}{129}{subsection.A.2}%
-\contentsline {subsection}{\numberline {A.3}Differencing regime}{129}{subsection.A.3}%
-\contentsline {subsection}{\numberline {A.4}Config-to-differencing mapping}{129}{subsection.A.4}%
-\contentsline {subsection}{\numberline {A.5}Feature toggles}{135}{subsection.A.5}%
-\contentsline {subsection}{\numberline {A.6}Model-correction switches}{141}{subsection.A.6}%
-\contentsline {subsection}{\numberline {A.7}Logging and trace channels}{144}{subsection.A.7}%
-\contentsline {subsection}{\numberline {A.8}Cycle-slip detector registry}{146}{subsection.A.8}%
-\contentsline {subsection}{\numberline {A.9}State-vector key schema}{146}{subsection.A.9}%
+\contentsline {subsection}{\numberline {18.5}Broadcast nav, SSR and station coordinates}{113}{subsection.18.5}%
+\contentsline {paragraph}{Broadcast ephemeris.}{113}{section*.225}%
+\contentsline {paragraph}{SSR corrections.}{113}{section*.226}%
+\contentsline {paragraph}{Station coordinates (1005/1006).}{113}{section*.227}%
+\contentsline {subsection}{\numberline {18.6}Time-system handling}{114}{subsection.18.6}%
+\contentsline {subsection}{\numberline {18.7}Observation/SSR synchronisation}{114}{subsection.18.7}%
+\contentsline {subsection}{\numberline {18.8}Ephemeris management}{115}{subsection.18.8}%
+\contentsline {subsection}{\numberline {18.9}A-priori seeding from RTCM 1005/1006}{115}{subsection.18.9}%
+\contentsline {subsection}{\numberline {18.10}The per-epoch real-time update}{116}{subsection.18.10}%
+\contentsline {paragraph}{Post-processing stages skipped in real time.}{117}{section*.228}%
+\contentsline {part}{IX\hspace {1em}Network mode}{117}{part.9}%
+\contentsline {section}{\numberline {19}Network mode}{117}{section.19}%
+\contentsline {paragraph}{Scope and status.}{117}{section*.229}%
+\contentsline {subsection}{\numberline {19.1}Producer architecture: the decomposed epoch loop}{118}{subsection.19.1}%
+\contentsline {paragraph}{Why the shape changed.}{118}{section*.230}%
+\contentsline {paragraph}{Four stages.}{118}{section*.231}%
+\contentsline {paragraph}{The seam contract.}{119}{section*.232}%
+\contentsline {paragraph}{Why there is a context object.}{119}{section*.233}%
+\contentsline {paragraph}{The ordered epoch seams.}{119}{section*.234}%
+\contentsline {paragraph}{Reading key.}{121}{section*.235}%
+\contentsline {subsection}{\numberline {19.2}Joint multi-station observation model}{121}{subsection.19.2}%
+\contentsline {paragraph}{No receiver-side differencing.}{121}{section*.236}%
+\contentsline {subsection}{\numberline {19.3}The explicit satellite phase-bias state}{122}{subsection.19.3}%
+\contentsline {subsection}{\numberline {19.4}Rank deficiency and the minimum-constraint S-basis}{122}{subsection.19.4}%
+\contentsline {paragraph}{Exact gauge, soft elimination.}{122}{section*.237}%
+\contentsline {paragraph}{Selectable datum realisations.}{123}{section*.238}%
+\contentsline {subsection}{\numberline {19.5}Per-station Schur reduction (arrowhead normals)}{124}{subsection.19.5}%
+\contentsline {paragraph}{Lossless marginalisation.}{124}{section*.239}%
+\contentsline {subsection}{\numberline {19.6}Constellation scope}{125}{subsection.19.6}%
+\contentsline {subsection}{\numberline {19.7}The closed loop: producer $\to $ held-out user}{125}{subsection.19.7}%
+\contentsline {section}{\numberline {20}Worked example: estimability in a two-receiver network}{126}{section.20}%
+\contentsline {subsection}{\numberline {20.1}Code only: clocks and one gauge freedom}{126}{subsection.20.1}%
+\contentsline {paragraph}{The deficiency, seen two ways.}{126}{section*.241}%
+\contentsline {paragraph}{Two datum choices, same fit.}{127}{section*.242}%
+\contentsline {paragraph}{What is invariant.}{127}{section*.243}%
+\contentsline {subsection}{\numberline {20.2}Adding carrier phase: the satellite phase bias needs the network}{127}{subsection.20.2}%
+\contentsline {paragraph}{Counting: one receiver vs.\ two.}{128}{section*.244}%
+\contentsline {paragraph}{Datum and solution.}{128}{section*.245}%
+\contentsline {paragraph}{Reading the result.}{128}{section*.246}%
+\contentsline {section}{\numberline {21}Between-epoch carry: arrowhead admissibility and the DD cycle basis}{129}{section.21}%
+\contentsline {subsection}{\numberline {21.1}Three doors into an arrowhead system}{129}{subsection.21.1}%
+\contentsline {paragraph}{Door 1: the shared border.}{130}{section*.247}%
+\contentsline {paragraph}{Door 2: one station's own columns, before the reduction.}{130}{section*.248}%
+\contentsline {paragraph}{Door 3: local columns across several stations.}{130}{section*.249}%
+\contentsline {subsection}{\numberline {21.2}The observation graph and its cycle space}{131}{subsection.21.2}%
+\contentsline {paragraph}{The graph.}{131}{section*.250}%
+\contentsline {paragraph}{Trees and chords.}{131}{section*.251}%
+\contentsline {paragraph}{The carried functions.}{131}{section*.252}%
+\contentsline {paragraph}{Graph events are exact operations.}{132}{section*.253}%
+\contentsline {subsection}{\numberline {21.3}Folding the carried double differences}{133}{subsection.21.3}%
+\contentsline {paragraph}{Posterior.}{133}{section*.255}%
+\contentsline {paragraph}{Innovation.}{133}{section*.256}%
+\contentsline {paragraph}{The hard-constraint limit.}{133}{section*.257}%
+\contentsline {paragraph}{Positive-definiteness, and why it must be counted.}{134}{section*.258}%
+\contentsline {subsection}{\numberline {21.4}Worked example: the smallest network with a cycle}{134}{subsection.21.4}%
+\contentsline {paragraph}{Model and truth.}{134}{section*.259}%
+\contentsline {paragraph}{The graph, its tree, and its one chord.}{134}{section*.260}%
+\contentsline {paragraph}{The tree pins are the datum; the chord is left free.}{135}{section*.261}%
+\contentsline {paragraph}{Arrowhead blocks.}{135}{section*.262}%
+\contentsline {paragraph}{Schur reduction.}{135}{section*.263}%
+\contentsline {paragraph}{Datum, solve, back-substitute.}{136}{section*.264}%
+\contentsline {paragraph}{Folding a carried DD.}{136}{section*.265}%
+\contentsline {paragraph}{A tree-edge death: the unimodular pivot.}{137}{section*.266}%
+\contentsline {subsection}{\numberline {21.5}Where each object lives}{138}{subsection.21.5}%
+\contentsline {part}{X\hspace {1em}Reference}{138}{part.10}%
+\contentsline {section}{\numberline {22}Pipeline and architecture diagrams}{138}{section.22}%
+\contentsline {section}{\numberline {A}Generated reference tables}{138}{section.A}%
+\contentsline {subsection}{\numberline {A.1}Processing modes}{144}{subsection.A.1}%
+\contentsline {subsection}{\numberline {A.2}Execution mode and data source}{144}{subsection.A.2}%
+\contentsline {subsection}{\numberline {A.3}Differencing regime}{144}{subsection.A.3}%
+\contentsline {subsection}{\numberline {A.4}Config-to-differencing mapping}{145}{subsection.A.4}%
+\contentsline {subsection}{\numberline {A.5}Feature toggles}{145}{subsection.A.5}%
+\contentsline {subsection}{\numberline {A.6}Model-correction switches}{153}{subsection.A.6}%
+\contentsline {subsection}{\numberline {A.7}Logging and trace channels}{156}{subsection.A.7}%
+\contentsline {subsection}{\numberline {A.8}Cycle-slip detector registry}{157}{subsection.A.8}%
+\contentsline {subsection}{\numberline {A.9}State-vector key schema}{158}{subsection.A.9}%

@@ -29,6 +29,11 @@
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
 #include "filter/NetworkIonoDwRelease.hpp"   // NetworkIonoDwReleaseTallies (iono-deweight release hygiene)
 #include "filter/NetworkPrefitCensus.hpp"    // NetworkPrefitCensusTallies (prefit census / fuse / topology / recorder)
+#include "filter/NetworkCarryVceApply.hpp"   // NetworkCarryVceApply (M2 v2 carry variance-factor state)
+#include "filter/NetworkMdb.hpp"             // NetworkMdbEpoch + NetworkMdbTallies (Baarda MDB reliability)
+#include "filter/NetworkBlockBaarda.hpp"     // NetworkBlockBaarda + BlockBaardaHit + tallies (BlockFormal LOS block census)
+#include "filter/NetworkCongruence.hpp"      // NetworkCongruence + CongruenceHit + tallies (station congruence screen)
+#include "filter/NetworkDatumGraph.hpp"      // NetDatumGraphSpectral + NetworkDatumGraphTallies (datum graph census)
 #include "filter/NetworkMeasurementAdmission.hpp" // MeasurementAdmissionArc + tallies (product-referenced admission)
 #include "filter/NetworkRhsAttrib.hpp"       // NetworkAttribFrame (INC-5 flight-recorder retention slot)
 #include "filter/NetworkZStore.hpp"     // ArcKey (D5 inject/hold tag sets)
@@ -59,6 +64,7 @@ namespace GnssProcessor {
     class NetworkProductEmitter;
     class NetworkInvariantCarryDriver;
     class NetworkCarryVce;
+    class NetworkPriorResidual;   ///< filter/NetworkPriorResidual.hpp — a run-TU local, like NetworkCarryVce.
     class SphericalHarmonicIonosphere;
     struct GnssTime;
 
@@ -87,10 +93,20 @@ namespace GnssProcessor {
         bool carry_cpl_tu{};
         bool carry_cpl_shmarg{};
         bool zwd_on{};
-        bool rx_cb_on{};    ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
+        bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
+        bool rx_cb_datum{};   ///< RXCB-DATUM: zero-mean-over-receivers DCB datum (network.rx_code_bias_datum).
+        double rx_cb_datum_sigma{};  ///< RXCB-DATUM loose physical-bound sigma in m (network.rx_code_bias_datum_sigma_m).
         double rx_cb_q{};   ///< rx-CB carry RW process noise (m²/s).
+        bool rx_cb_demean{};  ///< Card LV-2 (SPEC_level_information_budget): inject η = λ·(innov − μ_c) and gate on |innov − μ_c|; loader guarantees rx_cb_on.
+        int rx_cb_demean_min_sta{};  ///< Card LV-2: contributing-station floor below which μ_c FREEZES (thin-mean guard).
+        bool rx_cb_demean_within{};  ///< Card LV-5 (SPEC_level_information_budget §12): reduce μ between PASS A and PASS B and fold against THIS epoch's value (no lag).  Loader guarantees rx_cb_demean.
+        bool rx_cb_step_gate{};      ///< Card LV-4 (SPEC_level_information_budget §11): disable the frame-DEPENDENT inject screen; erase on a frame-INVARIANT step at the harvest.  Loader guarantees rx_cb_on.
+        double rx_cb_step_k{};       ///< Card LV-4: k·σ of the invariant step screen.
+        bool lv1_seed_frame{};       ///< Card LV-1 (SPEC_level_information_budget): reframe per-LOS iono seeds into the field's frame at allocation; loader guarantees estimate_iono_sh.
+        int lv1_min_sats{};          ///< Card LV-1: minimum raw seeds for the per-station median offset.
         double zwd_q{};
         bool carry_vce{};
+        bool vce_apply_on{};   ///< M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor apply. SOLVE-AFFECTING; loader guarantees carry_vce.
         bool ura_on{};
         double ura_alpha{};
         bool ura_retro{};
@@ -217,6 +233,62 @@ namespace GnssProcessor {
         // MEASURE-ONLY, so there is no estimation precondition to resolve against
         // — only the two arming knobs.
         bool   redun_census_on{};     ///< Master: the stride OR the escalation trigger is armed.
+        // --- Baarda reliability numbers / MDB (docs/SPEC_network_mdb_reliability.md) ---
+        // `mdb_on` is the single "does this run compute an MDB at all" predicate
+        // that BOTH feed sites and the flush read, so an OFF run pays one bool
+        // test per site and nothing else.  The two source flags are resolved here
+        // (not re-derived at the sites) because the run-end invariant-#4 lines
+        // need to say WHICH feed was armed when a source contributed zero rows —
+        // "the RAIM pool never ran warm" and "no sweep completed" demand
+        // different fixes.
+        bool   mdb_on{};              ///< Master: network.mdb, AND at least one live r_i source.
+        bool   mdb_from_raim{};       ///< The RAIM-pool feed site is armed (raim AND raim_redundancy_normalize).
+        bool   mdb_from_census{};     ///< The redundancy-census feed site is armed (mirrors @ref redun_census_on).
+        double mdb_event_m{};         ///< REPORTING threshold, metres (0 = no events).  Nothing acts on it.
+        long long mdb_event_holdoff{};///< Per-cell MDB event rate limit, in flush passes.
+        // --- prior-residual census (docs/SPEC_prior_residual_census.md) -------
+        // `prires_on` is the single "does this run touch the census at all"
+        // predicate every feed site reads, so an OFF run pays one bool test per
+        // site and nothing else.  The five per-family arms are RESOLVED here (the
+        // families CSV is parsed once at run start, never per row) so a feed site
+        // in the serial carry harvest tests a bool rather than searching a vector.
+        bool   prires_on{};           ///< Master: the census is armed AND at least one known family was requested.
+        bool   prires_pl{};           ///< Phase-leveling ambiguity carry family armed.
+        bool   prires_pb{};           ///< Satellite phase-bias carry family armed.
+        bool   prires_cb{};           ///< Satellite code-bias carry family armed.
+        bool   prires_zwd{};          ///< INC-2 ZWD (B9) carry family armed.
+        bool   prires_rxcb{};         ///< INC-2 receiver code-bias carry family armed.
+        bool   prires_corrob{};       ///< INC-3 raw-observable corroboration join armed.
+        double prires_report_sigma{}; ///< Per-row TRACE threshold in σ̂₀ units (nothing acts on it).
+        int    prires_event_holdoff{};///< Per-cell PRIORRES event rate limit, in census epochs.
+        // --- constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md)
+        bool   prires_s0g{};          ///< The global variance-component rider is armed (implies @ref prires_on).
+        bool   prires_s0g_redun{};    ///< A per-row Baarda r_i actually exists for the data side (`raim` AND `raim_redundancy_normalize`).  FALSE ⇒ the r ≡ 1 fallback, flagged per epoch.
+        // --- BlockFormal LOS block census (docs/SPEC_block_baarda.md) ---------
+        // `bb_on` is the single "does this run sweep blocks at all" predicate,
+        // read at ONE site (inside the redundancy census's swept branch) and by
+        // the emission seam.  It is the AND of the master arm and a LIVE HOST:
+        // this card deliberately has no scheduler and rides the redundancy
+        // census's swept stations, so with that census off there is nothing to
+        // ride and the sweep must never be entered.  The loader hard-errors on
+        // that combination; this AND is the belt-and-braces re-resolution, in the
+        // one place a knob may be computed (ctx.knobs is const thereafter).
+        bool   bb_on{};               ///< Master: network.block_baarda AND a live redundancy-census sweep.
+        bool   bb_corrob{};           ///< INC-2 raw-observable corroboration join armed (implies @ref bb_on).
+        double bb_report_sigma{};     ///< TRACE/event threshold on t_B.  A VARIANCE RATIO (E = 1 under H0), NOT σ units — see NetworkBlockBaarda.hpp.
+        long long bb_event_holdoff{}; ///< Per-(station, satellite) BLOCKBAARDA event rate limit, in census epochs.
+        // --- Station congruence screen (docs/SPEC_station_congruence.md) -------
+        // `cg_on` is the single "does this run screen coordinates at all"
+        // predicate.  It is read at THREE sites — the assembly's INC-0 geometry
+        // retention, the redundancy census's swept branch, and the emission seam —
+        // and, exactly like `bb_on`, it is the AND of the master arm and a LIVE
+        // HOST: the screen has no scheduler and rides the redundancy census's
+        // swept stations, so with that census off there is nothing to ride.  The
+        // loader hard-errors on that combination; this AND is the belt-and-braces
+        // re-resolution, in the one place a knob may be computed.
+        bool   cg_on{};               ///< Master: network.congruence_screen AND a live redundancy-census sweep.
+        double cg_report_sigma{};     ///< TRACE/event threshold on t_i.  A VARIANCE RATIO (E = 1 under H0 for every observable dimension), NOT σ units — see NetworkCongruence.hpp.
+        long long cg_event_holdoff{}; ///< Per-station CONGRUENCE event rate limit, in census epochs.
         // --- prefit census / fuse / birth check / topology / flight recorder ---
         // (docs/SPEC_prefit_census_observability.md).  `pc_walk_on` is the single
         // "does this run walk the row stacks at all" predicate the driver reads, so
@@ -235,6 +307,15 @@ namespace GnssProcessor {
         double pc_birth_sigma{};      ///< INC-3 seed-birth tripwire threshold (0 = off).
         bool   pc_topo_on{};          ///< INC-4 TOPOLOGY events.
         bool   rec_on{};              ///< INC-5 flight recorder armed (trip latch + retention).
+        // --- datum graph census (docs/SPEC_datum_graph_census.md) ------------
+        // `dg_on` is the single "does this run predict the S-basis dimension at
+        // all" predicate, read at THREE sites: the driver's census call, the
+        // top-of-epoch clear of the spectral hand-off, and the solve glue's
+        // write of it.  All three must agree or the census would reconcile
+        // against a stale epoch — which is precisely why it is one resolved
+        // knob and not three independent config reads.
+        bool      dg_on{};            ///< Master: network.datum_graph_census.
+        long long dg_event_holdoff{}; ///< Per-identity DATUMGRAPH event rate limit, in processed epochs.
         // --- product-referenced measurement admission
         //     (docs/SPEC_measurement_admission.md).  Nothing to resolve against the
         //     estimation configuration: the screen reads `observed` / `modeled` and
@@ -674,6 +755,58 @@ namespace GnssProcessor {
         // rx-CB carry run counters (armed-only run-end line).
         long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
                   rx_cb_harvested_total = 0;
+        /// Card LV-2 (docs/SPEC_level_information_budget.md): the information-
+        /// weighted MEAN carry innovation, μ = Σλ·innov / Σλ, keyed by receiver
+        /// code-bias STATE KEY ("GPS_DCB", "GPS_IFB5", …) — the constellation is in
+        /// the key, and the DCB/IFB families are kept apart because their
+        /// innovations are different physical quantities.  Computed at the SERIAL
+        /// post-solve harvest from the sums the parallel produce phase accumulated,
+        /// and consumed LAG-1 by the next epoch's inject — the same race-free split
+        /// the carry itself uses (produce reads, serial writes).  Empty until the
+        /// first harvest ⇒ epoch 1 injects un-demeaned (μ = 0), one epoch of legacy
+        /// behaviour.
+        std::map<std::string, double> rx_cb_demean_mu;
+        /// LV-2: THIS epoch's reduction per family, retained only so the caller can
+        /// trace it (one `lv2_mu` row per family in network_events.csv — the spec's
+        /// "do not create a new stream for one scalar").  Rebuilt every armed epoch.
+        struct RxCbDemeanEpoch {
+            double mu{0.0};       ///< the applied μ — this epoch's under LV-5, next epoch's under lag-1 LV-2.
+            double sum_lam{0.0};  ///< Σλ over the rows of this family.
+            int    n_sta{0};      ///< contributing stations.
+            bool   fresh{false};  ///< false ⇒ FROZEN (below the thin-mean floor).
+            double folded_mu{0.0};  ///< LV-5 diagnostic: the FOLDED set's raw common mode, measured after the fact.
+        };
+        std::map<std::string, RxCbDemeanEpoch> rx_cb_demean_last;
+        // LV-2 run counters (armed-only run-end line).  `mu_frozen` is the
+        // invariant-#7 thin-mean event: a mass re-seed / RAIM re-reduce epoch whose
+        // folded set is too thin to define the common mode holds μ instead of
+        // trusting it.
+        long long lv2_mu_epochs = 0, lv2_mu_frozen = 0, lv2_folds_demeaned = 0;
+        // LV-4 run counters (armed-only run-end line).  `frame_gate_would_skip` is
+        // the same-run A/B: what the RETIRED frame-dependent screen would have
+        // withheld on exactly these rows, so the comparison needs no second run.
+        long long lv4_step_resets = 0, lv4_step_checks = 0,
+                  lv4_frame_gate_would_skip = 0, lv4_scale_standdown = 0;
+        double    lv4_max_step_z = 0.0;    ///< largest peer-relative z seen (jump-scale readout).
+        double    lv4_max_scale_m = 0.0;   ///< largest robust step σ̂ (m) — how big "normal" got.
+        // LV-5 (within-epoch μ) counters.  `resid` is the folded set's raw common
+        // mode MINUS the μ that was applied to it — the direct measure of what the
+        // correction left behind, and the only honest way to tell a working de-mean
+        // from one that merely ran.
+        long long lv5_within_epochs = 0, lv5_resid_n = 0;
+        double    lv5_resid_sum = 0.0, lv5_max_abs_resid_m = 0.0;
+        double    lv2_last_mu_m = 0.0;   ///< most recent μ (any constellation) for the run-end line.
+        double    lv2_max_abs_mu_m = 0.0;
+        /// Card LV-1: LAG-1 snapshot of the solved SH-VTEC coefficient vector, per
+        /// active shell in @c shLayers order (TECU, in @c SphericalHarmonicIonosphere
+        /// ::coeffs() order).  Written SERIALLY post-solve, read by the next epoch's
+        /// PARALLEL produce phase to sample the field at each LOS's pierce point —
+        /// so the seed frame is one epoch old by construction (the field is
+        /// quasi-static; this is the same lag the LV-2 de-mean takes).  Invalid
+        /// before the first solve: the reframe then falls back to the a₀₀
+        /// climatology PRIOR MEAN, which is the designed level authority.
+        std::vector<std::vector<double>> sh_field_lag1;
+        long long lv1_field_snapshots = 0;   ///< epochs the lag-1 field was refreshed.
         // B1 URA quality channel carried state (inert unless network.emit_ura).
         double                       ura_sigma0_ewma = 1.0;   ///< network-wide σ̂0 EWMA scaling the emitted URA (one-epoch lag).
         std::map<std::string, int>   ura_refloat_horizon;     ///< sat -> epochs remaining of post-refloat URA inflation.
@@ -1040,6 +1173,123 @@ namespace GnssProcessor {
         bool      redun_cov_warned    = false; ///< one-shot: armed with no solved covariance to read.
         bool      redun_closure_warned = false;///< one-shot: trace(H) exceeded the free-parameter bound.
 
+        // --- Baarda MDB (docs/SPEC_network_mdb_reliability.md) ----------------
+        // [snapshot: EXEMPT] — observer state of a MEASURE-ONLY, forward-only
+        // instrument, same class as the two censuses above.  Snapshotting an
+        // event-holdoff clock would make a diagnostic fingerprint-relevant, which
+        // is exactly what keeps this card A/B-legal on a shared snapshot.
+        //
+        // @c mdb is STAMPED, not driver-cleared: the RAIM pool feeds it in SB_RAIM
+        // and the census sweep in SB_FRAMEDIAG, so a feed whose TOW differs from
+        // the stamp resets it first.  That is what makes an epoch which fed rows
+        // and never reached the flush (a withhold, a failed solve) leak nothing
+        // into the next epoch's aggregates.  Empty / unread unless
+        // ctx.knobs.mdb_on, so an OFF run allocates nothing.
+        NetworkMdbEpoch mdb;                   ///< this epoch's per-(constellation x class) accumulation.
+        long long mdb_seq = 0;                 ///< flush passes — the per-cell event-holdoff clock.
+        std::map<std::string, long long> mdb_event_last;  ///< "station\x1fsat\x1fclass" -> mdb_seq of its last emitted MDB event.
+        bool      mdb_join_warned = false;     ///< one-shot: the uncheckable join disagreed with the census.
+
+        // --- M2 v2 carry variance FACTOR (docs/SPEC_carry_vce_apply.md) -------
+        // [snapshot: EXEMPT, and this one is BLOCKING rather than free] — α² is
+        // genuine cross-epoch state that CHANGES THE SOLVE, so leaving it out of
+        // the snapshot is not the harmless observer exemption the two censuses
+        // below get.  Spec §8 declares it: α² restarting at 1 mid-chain would
+        // move the solve across the seam, so v1 is FRESH-CONVERGENCE-ONLY and
+        // networkTryWarmResume HARD-ERRORS when a resume meets an armed apply
+        // (the fingerprint alone cannot catch it — both legs of an apply-on chain
+        // fingerprint identically).  The v2 that would relax it is a pair:
+        // NetworkCarryVce::seedRobustFloor for the monitor plus an α² field in
+        // the snapshot; until both exist this stays exempt-by-refusal.
+        //
+        // Inert (unity factor, no allocation beyond the fixed table) unless
+        // ctx.knobs.vce_apply_on, so an OFF run is byte-identical.
+        NetworkCarryVceApply vce_apply;         ///< per-(family x constellation) α², its clamps, freezes and tallies.
+        std::vector<NetworkCarryVceApply::Edge> vce_apply_edges;  ///< the last step's clamp/freeze edges, drained by the emitting seam.
+        int  vce_apply_trace_hour = -1;         ///< content-hour bucket of the last apply-trace flush (durability).
+
+        // --- PRIOR-RESIDUAL census (docs/SPEC_prior_residual_census.md) --------
+        // [snapshot: EXEMPT] — observer state of a MEASURE-ONLY, forward-only
+        // instrument.  Restoring an event-holdoff clock would make a diagnostic
+        // fingerprint-relevant, which is exactly what keeps this card A/B-legal on
+        // a shared snapshot; §7 of the spec pre-declares the σ̂₀ accumulator as
+        // deliberately un-snapshotted too (a resumed run restarts it empty and
+        // reports RAW FORMAL for the first window, and the output says so per row;
+        // NetworkCarryVce::seedRobustFloor is the v2 path if that ever matters).
+        // Empty / unread unless ctx.knobs.prires_on, so an OFF run allocates nothing.
+        std::map<std::string, long long> prires_event_last;  ///< "family|station|sat|signal" -> census-epoch index of its last emitted PRIORRES event.
+        /// Per-epoch L1 scalars.  prires_ep_tow is the STAMP the epoch-status
+        /// writer compares against, so an epoch the census did not run leaves the
+        /// columns BLANK rather than repeating stale numbers ("unavailable is not
+        /// 0" — and a genuine 0-row epoch and an un-run one say different things).
+        double    prires_ep_tow      = -1.0;
+        long long ep_prires_rows     = 0;   ///< the DENOMINATOR: carried priors censused this epoch.
+        long long ep_prires_resp     = 0;   ///< of those, RESPONDED-labelled (the positive control's population).
+        long long ep_prires_frame    = 0;   ///< of those, FRAME-labelled (invariant-#7 edges).
+        long long ep_prires_reported = 0;   ///< of those, |t| above the TRACE threshold (nothing acted on them).
+        double    ep_prires_max_t    = 0.0; ///< the worst |t| this epoch, over every family and label.
+        bool      prires_trunc_warned = false; ///< one-shot: the per-epoch identity buffer overflowed (ladders unaffected; the event stream became a sample).
+        int       prires_last_flush_hour = -1; ///< content-hour bucket of the last ladder flush (durability: only health_trace flushes on its own).
+        /// Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) —
+        /// the three epoch-status scalars, stamped by the same emission seam and
+        /// gated by the same @ref prires_ep_tow stamp, so an epoch the rider did
+        /// not drain leaves them BLANK rather than repeating stale numbers.
+        bool      ep_s0g_formed = false;///< σ̂₀²_global was defined this epoch (Σr > 0); false ⇒ the column is blank, never 0.
+        double    ep_s0g_sigma0 = 0.0;  ///< σ̂₀_global (the SQRT — directly comparable to the median σ̂₀ it is measured against).
+        bool      ep_s0g_tension_def = false; ///< the tension ratio had a data side to divide by.
+        double    ep_s0g_tension = 0.0; ///< Σw·ê² / Σw·v² — THE HEADLINE column.
+        int       ep_s0g_flags   = 0;   ///< @c NetworkPriorResidual::GlobalFlag bitmask: in-band degradation, never silent.
+
+        // --- BLOCKFORMAL LOS block census (docs/SPEC_block_baarda.md) ---------
+        // [snapshot: EXEMPT] — observer state of a MEASURE-ONLY, forward-only
+        // instrument, the same class as the three censuses above.  Restoring the
+        // σ̂₀ accumulator or the event-holdoff clock would make a diagnostic
+        // fingerprint-relevant and cost this card its A/B legality on a shared
+        // snapshot; a resumed leg simply restarts the calibration empty and
+        // reports RAW FORMAL for its first window, and every trace row and log
+        // line SAYS SO rather than hiding it.
+        //
+        // The accumulator lives HERE rather than as a run-TU local (the
+        // prior-residual census's shape) because its feed site is inside the
+        // redundancy-census seam, which takes ctx but not a run-TU reference.
+        // Default-constructed with NO families ⇒ enabled() is false ⇒ every entry
+        // point is a single bool test, so an unarmed run allocates nothing beyond
+        // the empty vectors.
+        NetworkBlockBaarda bb{{}, 0.0};        ///< the run accumulator; re-seated from config once at run start.
+        std::vector<BlockBaardaHit> bb_hits;   ///< this epoch's reportable blocks, drained by the emission seam.
+        std::map<std::string, long long> bb_event_last;  ///< "station\x1fsat" -> census-epoch index of its last emitted BLOCKBAARDA event.
+        // NOTE: this card deliberately adds NO network_epoch_status.csv columns,
+        // unlike the three censuses above.  Its own network_block_baarda.csv
+        // already carries n_blocks / n_reported / max_t PER (family x label) per
+        // epoch — strictly more than three pooled scalars could say — so an
+        // epoch-status column would be a second copy of a number nobody would
+        // read from there.  Carrying per-epoch state nothing consumes is the
+        // "live counter over dead wiring" failure the blocks above exist to
+        // prevent, so those scalars are not carried at all.
+
+        // --- STATION CONGRUENCE screen (docs/SPEC_station_congruence.md) -------
+        // [snapshot: EXEMPT] — same class and same reasoning as the block census
+        // above: observer state of a MEASURE-ONLY, forward-only instrument.  A
+        // resumed leg restarts the σ̂₀ calibration empty and reports RAW FORMAL for
+        // its first window, and every trace row and log line SAYS SO.
+        //
+        // ⚠ There IS a cost to that exemption here, and it is worth naming: the
+        // per-station δ̂ / MDB samples are not restored either, so a resumed leg's
+        // run-median covers only that LEG, not the lineage.  SPEC §7.2 grades a
+        // run-median against a perturbed arm — run BOTH arms as one continuous
+        // lineage, or the two medians are over different windows.
+        //
+        // Lives HERE rather than as a run-TU local for the block census's reason:
+        // its feed site is inside the redundancy-census seam, which takes ctx but
+        // not a run-TU reference.  Default-constructed UNARMED ⇒ enabled() is
+        // false ⇒ every entry point is a single bool test.
+        NetworkCongruence cg{false};           ///< the run accumulator; re-seated from config once at run start.
+        std::vector<CongruenceHit> cg_hits;    ///< this epoch's per-station records, drained by the emission seam.
+        std::map<std::string, long long> cg_event_last;  ///< station name -> census-epoch index of its last emitted CONGRUENCE event.
+
+        bool      s0g_approx_warned = false;  ///< one-shot: the data side took the r ≡ 1 fallback.
+        bool      s0g_nodata_warned = false;  ///< one-shot: an epoch formed the number with NO data rows at all.
+
         // --- PREFIT census / fuse / birth check / topology / flight recorder ----
         // (docs/SPEC_prefit_census_observability.md).  [snapshot: EXEMPT] — every
         // member is observer state of a forward-only instrument (the fuse aside,
@@ -1110,6 +1360,29 @@ namespace GnssProcessor {
         std::string rhs_trip_pending;          ///< this epoch's trip reason ("" = none); names the dump.
         std::unique_ptr<NetworkAttribFrame> rhs_prev_frame;  ///< the RETAINED previous epoch (null unless retention is on and sized in).
         bool rhs_prev_oversize_logged = false; ///< one-shot: retention disabled for network size.
+
+        // --- datum graph census (docs/SPEC_datum_graph_census.md) -------------
+        // NOT restored from a state snapshot, deliberately and for the same
+        // reason the prefit census's observer state is not: this is forward-only
+        // observer state of a MEASURE-ONLY instrument, and persisting it would
+        // make a diagnostic fingerprint-relevant — which is exactly what keeps
+        // the card A/B-legal on a shared snapshot and legal on a warm resume.
+        // Empty / unread unless ctx.knobs.dg_on, so an OFF run allocates nothing.
+        //
+        // `dg_spec` is a ONE-EPOCH hand-off written by the solve glue and read by
+        // the SB_FRAMEDIAG census.  It is cleared at the TOP of every epoch, so
+        // an epoch that skips, withholds or throws before the gate can never hand
+        // the previous epoch's spectrum to the next census pass — the census
+        // would then reconcile this epoch's topology against last epoch's
+        // eigenvalues and never say so.
+        NetDatumGraphSpectral dg_spec;
+        std::map<std::string, long long> dg_event_last;  ///< "kind|identity" -> processed-epoch index of its last DATUMGRAPH event (per-identity rate limit).
+        /// `predicted only` identities already reported in the CURRENT era.
+        /// Cleared on a datum re-reference — the same boundary SBC re-seeds its
+        /// continuity targets on — so the KP-load-bearing roster is reported once
+        /// per identity per era rather than once per run (which would make its
+        /// stability across the day, spec §6.4, unreadable).
+        std::set<std::string> dg_pred_only_era;
     };
 
     /// @internal Service counters, health-window anchors, and B8 flag-rate
@@ -1235,6 +1508,10 @@ namespace GnssProcessor {
         // Card 1b (network.carry_coupling_joint_whiten): #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.
+        // RXCB-DATUM: zero-mean receiver code-bias prior rows folded over the run
+        // (one per station-epoch per constellation).  0 with the toggle armed is
+        // the standing invariant #4 reading: no receiver DCB column ever existed.
+        size_t n_rxcb_gauges = 0;
         size_t n_cpl_joint_fallback = 0;
         // Card 1/1d observability: run-total coupling-carry volume — harvest-side stash
         // counts (non-empty regression vs EMPTY = plain-diagonal degrade vs outright
@@ -1388,6 +1665,66 @@ namespace GnssProcessor {
         std::string redun_max_cold_id;          ///< its (station/sat/class @tow) identity.
         double    redun_wall_ms = 0.0;          ///< run-total wall inside the census seam (the cost claim).
 
+        /// Baarda reliability / MDB tallies (docs/SPEC_network_mdb_reliability.md).
+        /// Every field documented on the struct; reported by @c networkMdbReport,
+        /// which lives next to the aggregation that produced the numbers so the
+        /// counters and the sentences interpreting them cannot drift apart.
+        NetworkMdbTallies mdb;
+
+        /// BlockFormal LOS block census tallies (docs/SPEC_block_baarda.md).
+        /// Named `bb`, NOT `block`: `ctx.counters.bb` is the run-total POD and
+        /// `ctx.carry.bb` is the accumulator that produced it — two different
+        /// objects with one short name each, deliberately spelled the same so a
+        /// reader never has to remember which card owns which prefix.  It is NOT
+        /// the redundancy census's `redun_*` block: that one counts ROWS, this
+        /// one counts BLOCKS, and their denominators are not interchangeable.
+        NetworkBlockBaardaTallies bb;
+
+        /// Station congruence screen tallies (docs/SPEC_station_congruence.md).
+        /// Named `cg` on the same convention as `bb`: `ctx.counters.cg` is the
+        /// run-total POD and `ctx.carry.cg` is the accumulator that produced it.
+        /// It counts STATION-EPOCHS, where `bb` counts BLOCKS and the redundancy
+        /// census's `redun_*` block counts ROWS — three denominators that are not
+        /// interchangeable and must never be divided into one another.
+        NetworkCongruenceTallies cg;
+
+        // --- PRIOR-RESIDUAL census (docs/SPEC_prior_residual_census.md) --------
+        // Standing invariant #4: THE LADDER IS THE TELEMETRY.  The per-family
+        // ladders live in the accumulator (NetworkPriorResidual) and are read
+        // straight out of it at run end; these are the seam-level counters that
+        // make the ladders INTERPRETABLE — how many epochs the seam ran, how many
+        // rows reached it, how many identities were emitted and how many were
+        // dropped to the per-epoch buffer cap.  A family with n_rows = 0 must read
+        // as "ran, saw nothing", distinct from "never ran", and that distinction
+        // is prires_epochs > 0 with prires_rows = 0.
+        long long prires_epochs = 0;            ///< census epochs advanced (beginEpoch) — the "did the wiring execute at all" denominator.
+        long long prires_emit_passes = 0;       ///< emission-seam invocations (should track prires_epochs; a gap means an epoch fed rows nobody drained).
+        long long prires_rows = 0;              ///< carried priors censused over the run, ALL families and labels.
+        long long prires_reported = 0;          ///< of those, rows above the TRACE threshold (nothing acted on them).
+        long long prires_events = 0;            ///< PRIORRES events actually emitted (post per-cell holdoff).
+        long long prires_hits_dropped = 0;      ///< above-threshold rows whose INDIVIDUAL identity was dropped to the per-epoch buffer cap.  Never affects a ladder — but a nonzero value means the event stream is a SAMPLE, and a truncated stream must not read as a quiet run.
+        double    prires_max_t = 0.0;           ///< the worst |t| over the whole run, any family, any label.
+        std::string prires_max_id;              ///< its (family/label/station/sat/signal @tow) identity.
+        double    prires_wall_ms = 0.0;         ///< run-total wall inside the emission seam (the §5 cost claim; the per-row addRow cost rides the carry harvests and is not separable).
+
+        // --- CONSTRAINT-AWARE GLOBAL σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) -
+        // Standing invariant #4 for the rider.  The four SUMS live in the
+        // accumulator (they are the statistic); these are the seam-level
+        // counters that say whether the wiring executed and in which DEGRADED
+        // mode — "0 rows on the data side" and "the rider never ran" are
+        // different findings, and a run whose every epoch carried the APPROX
+        // flag must not read like one that never needed it.
+        long long s0g_epochs = 0;               ///< drained epochs the rider evaluated — the "did it execute at all" denominator.
+        long long s0g_formed = 0;               ///< of those, epochs with a defined σ̂₀²_global (Σr > 0).
+        long long s0g_data_rows = 0;            ///< data rows folded into Σw·v² over the run (RAIM pool, de-duplicated).
+        long long s0g_prior_rows = 0;           ///< folded census rows in Σw·ê² over the run.
+        long long s0g_ep_approx = 0;            ///< epochs whose data side used the r ≡ 1 fallback (Σr_data is a row count).
+        long long s0g_ep_no_data = 0;           ///< epochs with ZERO data rows (the number is prior-only).
+        long long s0g_ep_no_prior = 0;          ///< epochs with ZERO folded prior rows (the number is data-only — exactly what the card corrects).
+        long long s0g_ep_degenerate = 0;        ///< epochs where Σr ≤ 0 and no number was formed.
+        double    s0g_max_tension = 0.0;        ///< the worst per-epoch Σw·ê²/Σw·v² of the run.
+        double    s0g_max_tension_tow = -1.0;   ///< its GPS TOW (the cliff's timestamp, for §6 gate 3).
+
         /// Prefit census / structural fuse / seed-birth tripwire / topology
         /// ledger / flight-recorder tallies
         /// (docs/SPEC_prefit_census_observability.md).  Every field documented on
@@ -1397,6 +1734,14 @@ namespace GnssProcessor {
         /// tripwire that was never connected — only `epochs` / `rows` /
         /// `rec_consults` separate them.
         NetworkPrefitCensusTallies pc;
+
+        /// Datum graph census run tallies (docs/SPEC_datum_graph_census.md).
+        /// Standing invariant #4 with an extra twist this card owns: the EXPECTED
+        /// reading of tier 1 on a healthy global roster is k = 1 everywhere with
+        /// zero predictions, which is byte-for-byte what a seam that never ran
+        /// produces — only `epochs` vs `epochs_quiet` tells the two apart, and the
+        /// teardown line prints both.
+        NetworkDatumGraphTallies dg;
 
         // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) run tallies.
         // INC-0 is ALWAYS-ON and solve-neutral: the counters are pure reads of a
@@ -1518,6 +1863,36 @@ namespace GnssProcessor {
                                     const std::set<char>& changed_consts,
                                     double pl_now_s, double dt, bool within_epoch_armed);
 
+    /**
+     * @brief Card LV-5 — reduce the rx-CB de-mean μ WITHIN the epoch
+     *        (docs/SPEC_level_information_budget.md §12).
+     *
+     * Runs SERIALLY between PASS A and PASS B.  Both terms of every carry
+     * innovation are already known at that point — the carried absolute posterior
+     * (last epoch's stash) and @c x_lin(cb) (the frozen linearization point) — so
+     * the LV-2 mean can be formed over the stations present THIS epoch and applied
+     * to THIS epoch's folds, instead of arriving one epoch late.
+     *
+     * The lag matters: its loop gain scales with how much carry information folds,
+     * so it was harmless while the (defective) frame screen withheld two thirds of
+     * the priors and limit-cycles the level once card LV-4 admits them all.
+     *
+     * Same race contract as the rest of the carry cycle: one serial writer, and the
+     * parallel produce phase only reads @c ctx.carry.rx_cb_demean_mu.  Candidate
+     * set = every present station with a carried entry inside the gap horizon; the
+     * folded set can be marginally smaller (a column that drops out of the local
+     * block), which the harvest's diagnostic mean measures directly.
+     *
+     * No-op unless @c network.rx_cb_carry_demean_within.
+     *
+     * @param present  PASS-A presence flags (a station with no data this epoch must
+     *                 not vote on the frame it will not be folded into).
+     */
+    void networkRxCbDemeanPrepass(NetworkRunContext& ctx,
+                                  const std::vector<NetStation>& stations,
+                                  const std::vector<bool>& present,
+                                  double pl_now_s);
+
     void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config_,
                                     NetworkEstimator& est, const Eigen::VectorXd& x_s,
                                     std::vector<NetStation>& stations,
@@ -1526,7 +1901,8 @@ namespace GnssProcessor {
                                     const NetworkSbasis::Plan& plan,
                                     const SphericalHarmonicIonosphere* sh_model,
                                     const SphericalHarmonicIonosphere* sh_model2,
-                                    NetworkCarryVce& carry_vce_est, bool carry_warm,
+                                    NetworkCarryVce& carry_vce_est,
+                                    NetworkPriorResidual& prires_est, bool carry_warm,
                                     double pl_now_s,
                                     const std::vector<std::string>& registered_clock_sats,
                                     const std::set<std::string>& shared_phase_keys,

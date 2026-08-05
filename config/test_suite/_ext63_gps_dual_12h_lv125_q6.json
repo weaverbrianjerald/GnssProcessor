@@ -1,0 +1,63 @@
+{
+ "_comment": [
+  "EXT-63, arm 29 \u2014 12 h, full LV stack + rx_cb_carry_q raised 1e-9 -> 1e-6 m^2/s.",
+  "THE MECHANISM TEST for SPEC S14.3, and possibly the cheapest form of its fix.",
+  "",
+  "WHAT S14 FOUND.  Over 12 h the LV stack's level ramps from +4 to +15..+21 TECU",
+  "against the time-matched GIM global mean, while the canonical posture wanders in a",
+  "-4..-13 band.  S13 says why: the de-meaned carry does not free the receiver-DCB",
+  "common mode, it PINS it to mean(x_lin) -- the frozen first-epoch code-bias seed",
+  "frame -- with sum(lambda) ~ 100 information units.  Frozen is exactly right at",
+  "ignition (LV-1 makes it the physically correct value) and exactly wrong later.",
+  "",
+  "THE KNOB.  The carry's random walk is q = 1e-9 m^2/s: over the whole 12 h that",
+  "inflates the carried variance by q*dt = 4.3e-5 m^2 against a posterior var ~1e-2 --",
+  "i.e. the carry never forgets anything.  Raising q to 1e-6 gives a forgetting",
+  "timescale tau ~ var/q ~ 2.8 h: long enough that within-epoch difference rigidity is",
+  "unchanged (over 30 s the inflation is 3e-5 m^2, still negligible), short enough that",
+  "the pinned common mode can follow the day.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - If the frozen pin is the mechanism, the ramp FLATTENS: hours 3-11 should stay",
+  "   inside roughly +-8 TECU of the GIM instead of climbing to +20, while hour 0 keeps",
+  "   the stack's good ignition (+4).  That combination -- good ignition AND a settled",
+  "   level -- is what neither posture achieves today, and it would make the tracking",
+  "   pin a one-knob fix rather than a new card.",
+  " - If the ramp is UNCHANGED, the pin is not the driver and S14.3's mechanism is",
+  "   wrong; the next suspects are the SH deviation carry (rep_error_tau_s = 900 s is",
+  "   armed on this lineage) and the leveling-era ratchet the handoff still lists as",
+  "   inferred.  Say so rather than sweeping q further.",
+  " - Watch the carry counters: with a 2.8 h forgetting timescale the LV-4 erase count",
+  "   should FALL (a looser prior is harder to contradict) and mu should stay ~0.  A",
+  "   rise in erases means q is now large enough that the carry is chasing noise.",
+  "",
+  "This is a MECHANISM test on a settled window -- do not read its ignition hour as a",
+  "verdict, and do not promote the knob off one run."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 43200.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "rx_cb_carry_demean_within": true,
+  "rx_cb_carry_step_gate": true,
+  "rx_cb_carry_q": 1e-06,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_12h_lv125_q6/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_12h_lv125_q6/state_snapshot.bin"
+ }
+}

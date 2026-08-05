@@ -1,0 +1,49 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 4 — arm 2 plus the RECEIVER CODE-BIAS DATUM.",
+  "",
+  "network.rx_code_bias_datum folds one sum-to-zero gauge per constellation over the",
+  "per-station receiver DCB columns — the IGS zero-mean-over-receivers convention, and the",
+  "receiver-side counterpart of the W6 per-(constellation,signal) SATELLITE code-bias gauge",
+  "that network.external_sat_code_bias gives away along with the satellite biases.",
+  "",
+  "Realized through the SAME family-agnostic SumZeroGauge machinery the ensemble phase-bias",
+  "datum already uses (NetworkNormalEquations::foldReducedSumZeroGauges): the receiver DCB",
+  "is a LOCAL, Schur-eliminated state, so it cannot be a shared-border row; the hard",
+  "w->infinity limit is folded by Woodbury through the cached per-station LDL^T factors as a",
+  "rank-1 update on the reduced shared normals.  It APPENDS to the ensemble gauges (which",
+  "are empty on this lineage — phase_datum_eq34 is the phase datum here) and rides the same",
+  "re-apply lambda, because a within-epoch RAIM re-reduce CLEARS stored gauges.",
+  "",
+  "sbasis_complete stays ARMED as the backstop.  It is NOT expected to carry the load any",
+  "more: the persistent 1.33e-4 direction should be gone (that is what this datum gauges),",
+  "but the machine-zero ORPHANS remain real — arm 2 saw one at TOW 259410 (G22/L1C, ev",
+  "-2.9e-10, span 1.00: a single satellite-signal whose phase bias had no support that",
+  "epoch).  Those are Card PA's class and SBC handles them; they are unrelated to the",
+  "receiver datum.",
+  "",
+  "WHAT TO READ, in order:",
+  " 1. 'Network (RXCB-DATUM): N receiver code-bias sum-to-zero gauge(s) folded'.  N should be",
+  "    ~1 per solved epoch (GPS-only, one constellation).  A run-end WARN saying ZERO means",
+  "    the gauge never found >= 2 stations with a DCB column and this arm is inert.",
+  " 2. gate_withheld count -> 0, and sbc_engage should drop to the orphans only.",
+  " 3. a00 in network_vtec_sh_health.csv.  Arms 2/3 walked to -80 / -48 TECU with sigma",
+  "    collapsing.  If the diagnosis is right this now HOLDS, and holds near the DOY-129",
+  "    field truth of 30-33 TECU rather than near the 15 TECU prior mean.  a00 sitting on 15",
+  "    would say the gauge fixed the RANK but the level is still prior-driven.",
+  " 4. SH health gate: 19/20 emissions withheld in arm 2.  Target is 0.",
+  "",
+  "20 epochs is inside ignition: wiring + datum reachability only, no science claim."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_rxcb/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_rxcb/state_snapshot.bin"
+ }
+}

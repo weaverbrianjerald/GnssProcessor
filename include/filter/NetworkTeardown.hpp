@@ -28,6 +28,7 @@
 #include "filter/NetworkEstimator.hpp"    // NetworkEstimator
 #include "filter/NetworkInvariantCarryDriver.hpp"
 #include "filter/NetworkCarryVce.hpp"     // NetworkCarryVce
+#include "filter/NetworkPriorResidual.hpp" // NetworkPriorResidual (prior-residual census run-end readout)
 #include "filter/NetworkMwWlLayer.hpp"    // NetworkMwWlLayer::Counters
 #include "filter/NetworkWlRunTypes.hpp"   // EwlLane / WlCounters / SubBlockTimer
 #include "products/NetworkEmitRebase.hpp"   // NetworkEmitRebase
@@ -68,6 +69,7 @@ int networkTeardown(
     const NetworkEstimator& est,
     const NetworkInvariantCarryDriver& carry_driver,
     const NetworkCarryVce& carry_vce_est,
+    const NetworkPriorResidual& prires_est,
     const SlipQcChannel& slip_qc,
     const NetworkMwWlLayer::Counters& mw_wl_run,
     const std::vector<EwlLane>& ewl_lanes,

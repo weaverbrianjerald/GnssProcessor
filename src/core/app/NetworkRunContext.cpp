@@ -16,6 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "filter/NetworkCarryVce.hpp"
+#include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkInvariantCarryDriver.hpp"   // RTB-7(c) branch-faithful carry (de)serialize
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey (handover scope predicate)
@@ -60,8 +61,18 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.zwd_on = config_.networkCarryZwd();
     k.zwd_q = config_.networkZwdCarryQ();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
+    k.rx_cb_datum = config_.networkRxCodeBiasDatum();
+    k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
     k.rx_cb_q = config_.networkRxCbCarryQ();
+    k.rx_cb_demean = config_.networkRxCbCarryDemean();   // loader guarantees rx_cb_on
+    k.rx_cb_demean_min_sta = config_.networkRxCbCarryDemeanMinStations();
+    k.rx_cb_demean_within = config_.networkRxCbCarryDemeanWithin();  // loader guarantees rx_cb_demean
+    k.rx_cb_step_gate = config_.networkRxCbCarryStepGate();   // loader guarantees rx_cb_on
+    k.rx_cb_step_k = config_.networkRxCbCarryStepKSigma();
+    k.lv1_seed_frame = config_.networkIonoSeedFieldFrame();  // loader guarantees estimate_iono_sh
+    k.lv1_min_sats = config_.networkIonoSeedFieldFrameMinSats();
     k.carry_vce = config_.networkCarryVce();
+    k.vce_apply_on = config_.networkCarryVceApply();   // M2 v2; loader guarantees carry_vce
     k.ura_on = config_.networkEmitUra();
     k.ura_alpha = config_.networkUraEwmaAlpha();
     k.ura_retro = config_.networkUraRetroBump();
@@ -204,6 +215,91 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // predicate.  The loader has already clamped the thresholds.
     k.redun_census_on = nc.redundancy_census_stride > 0
                      || nc.redundancy_escalate_sigma > 0.0;
+    // Baarda reliability numbers / MDB (docs/SPEC_network_mdb_reliability.md).
+    // Nothing to resolve against the estimation configuration either — MDB reads
+    // (sigma_i, r_i) pairs the host loops already hold and writes counters — but the
+    // two SOURCE flags are resolved here rather than re-derived at the feed sites,
+    // for two reasons.  (1) The RAIM source needs the tier it rides to be live:
+    // raim_redundancy_normalize alone computes no r_i, because networkPostFitRaim is
+    // not called at all without network.raim.  (2) The run-end invariant-#4 lines
+    // must be able to say WHICH feed was armed when a source contributed zero rows —
+    // "the RAIM pool never ran warm" and "no sweep completed" demand different fixes.
+    // The AND with a live source is belt-and-braces against the loader's hard error,
+    // so a hand-built NetworkConfig (tests) cannot arm a flush over dead wiring.
+    k.mdb_from_raim   = config_.networkRaim() && config_.networkRaimRedundancyNormalize();
+    k.mdb_from_census = k.redun_census_on;
+    k.mdb_on          = nc.mdb && (k.mdb_from_raim || k.mdb_from_census);
+    k.mdb_event_m     = std::max(0.0, nc.mdb_event_m);
+    k.mdb_event_holdoff = static_cast<long long>(std::max(0, nc.mdb_event_holdoff_ep));
+    // Prior-residual census (docs/SPEC_prior_residual_census.md).  Nothing to
+    // resolve against the estimation configuration — the census reads
+    // (prior mean, prior var, posterior var) triples the carry harvests already
+    // hold and writes counters, so the master arm IS the predicate.  The family
+    // CSV is parsed ONCE, here, into per-family bools: the feed sites sit in the
+    // serial carry harvest and must test a bool, not search a vector, per row.
+    // `prires_on` is the AND of the arm and a non-empty KNOWN family set, so a
+    // census armed with only unknown family names (the loader already WARNed)
+    // never enters a single feed site.
+    {
+        k.prires_on = false;
+        if (nc.prior_residual_census) {
+            for (const std::string& f :
+                 NetworkCarryVce::parseComponents(nc.prior_residual_families)) {
+                if      (f == "pl")   k.prires_pl   = true;
+                else if (f == "pb")   k.prires_pb   = true;
+                else if (f == "cb")   k.prires_cb   = true;
+                else if (f == "zwd")  k.prires_zwd  = true;
+                else if (f == "rxcb") k.prires_rxcb = true;
+            }
+            k.prires_on = k.prires_pl || k.prires_pb || k.prires_cb
+                       || k.prires_zwd || k.prires_rxcb;
+        }
+        // The corroboration join is re-AND-ed with the master here rather than
+        // trusted from the loader's hard error: belt-and-braces, so a hand-built
+        // NetworkConfig (tests) cannot arm a join behind a census that never runs.
+        k.prires_corrob       = k.prires_on && nc.prior_residual_corroborate;
+        k.prires_report_sigma = (nc.prior_residual_report_sigma > 0.0)
+                                ? nc.prior_residual_report_sigma : 4.0;
+        k.prires_event_holdoff = std::max(0, nc.prior_residual_event_holdoff_ep);
+        // Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md).
+        // Same belt-and-braces AND with the master.  `prires_s0g_redun` mirrors
+        // `mdb_from_raim` EXACTLY and for the same reason: raim_redundancy_
+        // normalize alone computes no r_i, because networkPostFitRaim is not
+        // called at all without network.raim.  Resolved here rather than
+        // re-derived at the feed site so the r ≡ 1 fallback is decided ONCE and
+        // the run-end line can say which mode the whole run was in.
+        k.prires_s0g       = k.prires_on && nc.prior_residual_global_sigma0;
+        k.prires_s0g_redun = config_.networkRaim()
+                          && config_.networkRaimRedundancyNormalize();
+    }
+    // BlockFormal LOS block census (docs/SPEC_block_baarda.md).  The master is
+    // AND-ed with a LIVE HOST here rather than trusted from the loader's hard
+    // error — belt-and-braces, so a hand-built NetworkConfig (tests) cannot arm a
+    // sweep behind a redundancy census that never runs.  The host predicate is the
+    // census's own two-term expression, repeated verbatim as every other consumer
+    // repeats it; there is no `network.redundancy_census` bool to read.
+    {
+        k.bb_on     = nc.block_baarda && k.redun_census_on;
+        k.bb_corrob = k.bb_on && nc.block_baarda_corroborate;
+        k.bb_report_sigma = (nc.block_baarda_report_sigma > 0.0)
+                            ? nc.block_baarda_report_sigma : 4.0;
+        k.bb_event_holdoff =
+            static_cast<long long>(std::max(0, nc.block_baarda_event_holdoff_ep));
+    }
+    // Station congruence screen (docs/SPEC_station_congruence.md).  Same host
+    // predicate, same belt-and-braces AND, and for the same reason the block
+    // census has one: a hand-built NetworkConfig (tests) must not be able to arm
+    // a sweep behind a redundancy census that never runs.  `cg_on` is ALSO what
+    // gates the assembly's INC-0 geometry retention, so resolving it here — once,
+    // before ctx.knobs goes const — is what keeps the producer and the assembly
+    // from disagreeing about whether row_pos_enu exists.
+    {
+        k.cg_on = nc.congruence_screen && k.redun_census_on;
+        k.cg_report_sigma = (nc.congruence_report_sigma > 0.0)
+                            ? nc.congruence_report_sigma : 4.0;
+        k.cg_event_holdoff =
+            static_cast<long long>(std::max(0, nc.congruence_event_holdoff_ep));
+    }
     // Prefit census / structural fuse / seed-birth tripwire / topology ledger /
     // flight recorder (docs/SPEC_prefit_census_observability.md).  Nothing to
     // resolve against the estimation configuration either — these read the
@@ -221,6 +317,16 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pc_topo_on       = nc.trace_topology;
     k.pc_walk_on       = k.pc_census_on || k.pc_birth_sigma > 0.0 || k.pc_topo_on;
     k.rec_on           = nc.rhs_attrib_on_trip;
+    // Datum graph census (docs/SPEC_datum_graph_census.md).  Nothing to resolve
+    // against the estimation configuration: the census reads the epoch's
+    // registration sets and the admitted support, and writes nothing back, so
+    // the master arm IS the predicate.  Deliberately NOT AND-ed with
+    // `sbasis_complete`: without SBC the spectral side still supplies the
+    // observed-vs-declared COUNT, the reconciliation degrades to count-level and
+    // the trace says so (`obs_src=count`) — silently disarming the census there
+    // would hide the tier-1 fragmentation reading, which needs no spectrum at all.
+    k.dg_on            = nc.datum_graph_census;
+    k.dg_event_holdoff = static_cast<long long>(std::max(0, nc.datum_graph_event_holdoff_ep));
     // Product-referenced measurement admission
     // (docs/SPEC_measurement_admission.md).  Nothing to resolve against the
     // estimation configuration either — the screen reads `observed` / `modeled`
@@ -376,12 +482,69 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", emit_gen_id));
         add(fmt::format("{}", config_.estimateNetworkSatCodeBias()));
         add(fmt::format("{}", config_.estimateNetworkIonoSh()));
+        // EXT-CB: the satellite code bias moves from a shared COLUMN to a modelled
+        // CORRECTION on the observable, and the forced rx DCB adds a local state —
+        // so a carried shared border means something different with it armed than
+        // without, and a warm resume must not cross the flip.  The (sat_code_bias,
+        // iono_sh) pair above already reads (false, true) only in this posture, but
+        // that is an inference from a coupling; append the knob itself so the
+        // fingerprint states it.  Conditional-append (the rxcb/shl2/iono2 pattern)
+        // so every pre-card snapshot fingerprint is unchanged.
+        if (config_.networkExternalSatCodeBias()) add("extcb:1");
+        // RXCB-DATUM changes which receiver-DCB combination is realized, so the
+        // carried rx-CB levels mean something different with it armed.  Same
+        // conditional-append rule: pre-card fingerprints are unchanged.
+        if (config_.networkRxCodeBiasDatum())
+            add(fmt::format("rxcbdatum:{}", config_.networkRxCodeBiasDatumSigmaM()));
         add(fmt::format("{}", q_clock)); add(fmt::format("{}", q_pb)); add(fmt::format("{}", q_cb));
         add(fmt::format("{}", nc.warmup_ura_floor_m)); add(fmt::format("{}", nc.warmup_epochs));
         // rx-CB carry (SPEC_rx_cb_carry): conditional append ONLY when armed, so every
         // pre-existing snapshot fingerprint is unchanged (the shl2/iono2 pattern).
         if (rx_cb_on) {
             add("rxcb:1"); add(fmt::format("{}", rx_cb_q));
+            // Card LV-2 (docs/SPEC_level_information_budget.md): the de-mean changes
+            // what a carried rx-CB level MEANS — the carry stops transporting the
+            // common mode, so a chain that folded demeaned priors and one that did
+            // not have realized different receiver-DCB frames.  Same conditional-
+            // append rule (nested inside rxcb:1, which is itself conditional), so
+            // every pre-card snapshot fingerprint is unchanged.
+            if (ctx.knobs.rx_cb_demean) {
+                add(fmt::format("rxcbdemean:{}", ctx.knobs.rx_cb_demean_min_sta));
+                // Card LV-5: a chain that folded against THIS epoch's μ and one that
+                // folded against last epoch's realized different receiver-DCB frames.
+                if (ctx.knobs.rx_cb_demean_within) add("rxcbdemeanwin:1");
+            }
+            // Card LV-4: which priors fold, and which carried entries survive an
+            // event, both change — so a resume must not cross the flip.  Same
+            // nested conditional-append rule.
+            if (ctx.knobs.rx_cb_step_gate)
+                add(fmt::format("rxcbstep:{}", ctx.knobs.rx_cb_step_k));
+        }
+        // Card LV-1: the seed reframe changes the per-station LINEARIZATION POINT of
+        // the per-LOS iono AND (through initializeCodeBiases, which subtracts the
+        // seeded iono) of the receiver DCB.  The absolute solve is invariant to that
+        // frame, but the SNAPSHOT stores absolute carried levels whose prefit
+        // innovations are read against x_lin — the rx-CB inject gate is exactly such
+        // a consumer — so a resume must not cross the flip.  Conditional append.
+        if (ctx.knobs.lv1_seed_frame)
+            add(fmt::format("lv1seed:{}", ctx.knobs.lv1_min_sats));
+        // M2 v2 (docs/SPEC_carry_vce_apply.md): the variance FACTOR multiplies every
+        // carry fold variance, so a carried (value, var) pair means a different prior
+        // with it armed than without — the textbook fingerprint case, and the reason
+        // this knob is NOT in the carry_vce monitor's fingerprint-free class.  Note
+        // the fingerprint is necessary but NOT sufficient here: both legs of an
+        // apply-ON chain fingerprint identically while α² itself is unsnapshotted, so
+        // networkTryWarmResume refuses the resume outright (spec §8, the one BLOCKING
+        // deferral).  Appended ONLY when armed, so every pre-card snapshot's
+        // fingerprint is untouched.
+        if (config_.networkCarryVceApply()) {
+            add("vceapply:1");
+            add(config_.networkCarryVceApplyFamilies());
+            add(fmt::format("{}", config_.networkCarryVceApplySlew()));
+            add(fmt::format("{}", config_.networkCarryVceApplyMax()));
+            add(fmt::format("{}", config_.networkCarryVceApplyMinRows()));
+            add(fmt::format("{}", config_.networkCarryVceComponents()));
+            add(fmt::format("{}", config_.networkCarryVceWindowEpochs()));
         }
         // Card 6: apriori_source + anchor σ are datum-relevant.  The carried clock
         // frame is Δδtˢ-vs-broadcast in brdc_rts but Δδtˢ-vs-precise in sp3 (differ by
@@ -617,6 +780,25 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     if (nc.state_snapshot_require && !snap_path.empty()
         && !std::filesystem::exists(snap_path))
         hb1("snapshot file '" + snap_path.string() + "' does not exist");
+    // M2 v2 (docs/SPEC_carry_vce_apply.md §8) — the ONE field-BLOCKING deferral,
+    // enforced rather than documented.  The variance factor α² is cross-epoch,
+    // solve-affecting, and NOT in the snapshot; a resumed leg would restart every
+    // group at α² = 1 and re-climb at the slew rate, so the carry priors either
+    // side of the seam encode different variances for the same carried values.
+    // The fingerprint cannot catch this (an apply-ON seed and an apply-ON leg
+    // fingerprint identically), so the refusal has to live here.  v1 is
+    // fresh-convergence-only; the relaxation is a snapshot field plus
+    // NetworkCarryVce::seedRobustFloor, and neither exists yet.
+    if (ctx.knobs.vce_apply_on && !snap_path.empty()
+        && std::filesystem::exists(snap_path))
+        throw std::runtime_error(
+            "network.carry_vce_apply (M2 v2) is armed and a state snapshot exists at '"
+            + snap_path.string() + "' — a WARM RESUME is refused.  The carry variance factor "
+            "alpha2 is cross-epoch, solve-affecting and deliberately NOT snapshotted "
+            "(docs/SPEC_carry_vce_apply.md section 8), so resuming would fold the restored "
+            "carries at alpha2 = 1 and re-converge across the seam.  v1 is "
+            "fresh-convergence-only: run this arm from a cold start (move or delete the "
+            "snapshot, or clear network.state_snapshot_path).");
     if (!snap_path.empty() && std::filesystem::exists(snap_path)) {
         NetworkStateSnapshot snap;
         std::string err;
@@ -1334,6 +1516,30 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     const double clk_mon_reinit_var = ctx.knobs.clk_mon_reinit_var;
     const double pb_var_floor = ctx.knobs.pb_var_floor;
     const double cb_var_floor = ctx.knobs.cb_var_floor;
+    // M2 v2 (docs/SPEC_carry_vce_apply.md §2) — the LASER 5-95 variance factor,
+    // applied to the shared carry AFTER the hand model has formed var_eff exactly
+    // as it does today (q·Δt inflation then the B4 floor).  Both D2 branches route
+    // through this one lambda so the diagonal and the C1 dense fold cannot drift
+    // apart: the dense branch's DIAGONAL is var_eff, and the marginal prior on any
+    // one state must be identical either way — the same property that makes the
+    // M2 carry innovation representation-independent in the first place.
+    //
+    // An inflate_q key is EXCLUDED: it folds with the clock-monitor REINIT variance,
+    // a deliberate soft refloat that is not the hand carry model, and the monitor
+    // skips those rows too (NetworkStashStatus's feed), so there is no measured
+    // factor for them and scaling one would be inventing a number.
+    //
+    // OFF (or an unarmed family) returns var unchanged ⇒ byte-identical.
+    const bool  vce_apply_on = ctx.knobs.vce_apply_on;
+    const auto& vce_apply    = ctx.carry.vce_apply;
+    const auto vce_scale_shared = [&](SharedParamKind kind, const std::string& sat,
+                                      bool inflate_q, double var) {
+        if (!vce_apply_on || inflate_q) return var;
+        const int slot = (kind == SharedParamKind::PhaseBias) ? NetworkCarryVceApply::kPb
+                       : (kind == SharedParamKind::CodeBias)  ? NetworkCarryVceApply::kCb
+                                                              : -1;
+        return var * vce_apply.factor(slot, sat);
+    };
     auto& cap_priors = ws.cap_priors;
     auto& cap_dense_keys = ws.cap_dense_keys;
     auto& cap_dense_cov = ws.cap_dense_cov;
@@ -1397,6 +1603,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                                                              : 0.0;
                 if (floor > 0.0) var_eff = std::max(var_eff, floor);
             }
+            var_eff = vce_scale_shared(cp.kind, cp.sat, cp.inflate_q, var_eff);  // M2 v2 factor
             if (!(var_eff > 0.0)) continue;
             NetworkEstimator::SharedPrior p;
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
@@ -1451,6 +1658,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                                                              : 0.0;
                 if (floor > 0.0) var_eff = std::max(var_eff, floor);
             }
+            var_eff = vce_scale_shared(cp.kind, cp.sat, cp.inflate_q, var_eff);  // M2 v2 factor
             if (!(var_eff > 0.0)) continue;
             NetworkEstimator::SharedPrior p;
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
@@ -1605,6 +1813,77 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     }
 }
 
+void networkRxCbDemeanPrepass(NetworkRunContext& ctx,
+                              const std::vector<NetStation>& stations,
+                              const std::vector<bool>& present,
+                              double pl_now_s) {
+    if (!ctx.knobs.rx_cb_on || !ctx.knobs.rx_cb_demean
+        || !ctx.knobs.rx_cb_demean_within) return;
+    const auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // READ-only here
+    // Clear the per-epoch trace record FIRST: an epoch that computes no μ (cold
+    // start, or a full carry wipe) must not leave the previous epoch's row standing
+    // for the trace emitter to publish under this epoch's timestamp.
+    ctx.carry.rx_cb_demean_last.clear();
+    if (rx_cb_carry.empty()) return;                   // cold start: nothing to average
+    constexpr double kRxCbMaxGapS = 900.0;             // the inject's own horizon
+
+    std::map<std::string, double> sum_lam, sum_lam_innov;
+    std::map<std::string, int> n_sta;
+    for (std::size_t i = 0; i < stations.size(); ++i) {
+        if (i >= present.size() || !present[i]) continue;   // no data ⇒ no vote
+        const NetStation& st = stations[i];
+        if (!st.sm) continue;
+        const Eigen::VectorXd x_lin = st.sm->getStateVector();
+        for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
+            if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;   // anchored family
+            const Eigen::Index cb_idx = static_cast<Eigen::Index>(cb_sidx);
+            if (cb_idx < 0 || cb_idx >= x_lin.size()) continue;
+            if (!std::isfinite(x_lin(cb_idx))) continue;
+            const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
+            if (cbit == rx_cb_carry.end()) continue;           // cold — nothing to fold
+            const double gap = pl_now_s - cbit->second.last_seen_s;
+            if (gap > kRxCbMaxGapS) continue;                  // the fold would be skipped
+            const double var_eff = cbit->second.var
+                                 + ctx.knobs.rx_cb_q * std::max(0.0, gap);
+            if (!(var_eff > 0.0) || !std::isfinite(var_eff)) continue;
+            const double innov = cbit->second.value_abs - x_lin(cb_idx);
+            if (!std::isfinite(innov)) continue;
+            const double lam = 1.0 / var_eff;
+            sum_lam[cb_key]       += lam;
+            sum_lam_innov[cb_key] += lam * innov;
+            ++n_sta[cb_key];
+        }
+    }
+
+    // Same reduction, same thin-mean floor, same freeze semantics as the LV-2
+    // harvest path — only the EPOCH the result is applied to differs.  Writing
+    // ctx.carry.rx_cb_demean_mu here (serially, before PASS B) is what removes the
+    // lag; the parallel produce phase reads it exactly as before.
+    bool any = false;
+    for (const auto& [fam, s] : sum_lam) {
+        const auto held = ctx.carry.rx_cb_demean_mu.find(fam);
+        const double prev_mu =
+            (held != ctx.carry.rx_cb_demean_mu.end()) ? held->second : 0.0;
+        const RxCbDemeanReduce red = rxCbDemeanMu(
+            sum_lam_innov[fam], s, n_sta[fam], ctx.knobs.rx_cb_demean_min_sta, prev_mu);
+        auto& rec = ctx.carry.rx_cb_demean_last[fam];
+        rec.sum_lam = s;
+        rec.n_sta   = n_sta[fam];
+        rec.fresh   = red.fresh;
+        rec.mu      = red.mu;
+        if (!red.fresh) { ++ctx.carry.lv2_mu_frozen; continue; }
+        ctx.carry.rx_cb_demean_mu[fam] = red.mu;
+        ctx.carry.lv2_last_mu_m = red.mu;
+        ctx.carry.lv2_max_abs_mu_m = std::max(ctx.carry.lv2_max_abs_mu_m,
+                                              std::abs(red.mu));
+        any = true;
+    }
+    if (any) {
+        ++ctx.carry.lv2_mu_epochs;
+        ++ctx.carry.lv5_within_epochs;
+    }
+}
+
 void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config_,
                                 NetworkEstimator& est, const Eigen::VectorXd& x_s,
                                 std::vector<NetStation>& stations,
@@ -1613,7 +1892,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                 const NetworkSbasis::Plan& plan,
                                 const SphericalHarmonicIonosphere* sh_model,
                                 const SphericalHarmonicIonosphere* sh_model2,
-                                NetworkCarryVce& carry_vce_est, bool carry_warm,
+                                NetworkCarryVce& carry_vce_est,
+                                NetworkPriorResidual& prires_est, bool carry_warm,
                                 double pl_now_s,
                                 const std::vector<std::string>& registered_clock_sats,
                                 const std::set<std::string>& shared_phase_keys,
@@ -1635,6 +1915,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const bool   zwd_on = ctx.knobs.zwd_on;
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
     const bool   phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
+    // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md) — the pl / zwd /
+    // rxcb feed arms.  Resolved once at run start into per-family bools, so an
+    // OFF run pays one bool test per harvest loop and nothing else.
+    const bool   prires_pl   = ctx.knobs.prires_pl;
+    const bool   prires_zwd  = ctx.knobs.prires_zwd;
+    const bool   prires_rxcb = ctx.knobs.prires_rxcb;
+    const double zwd_q       = ctx.knobs.zwd_q;
 
     // --- Phase-leveling carry: harvest posterior + stash (Increment 1) ----
     // For each present non-pivot station, recover its ambiguities' ABSOLUTE
@@ -1780,21 +2067,83 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 // carried a prior this epoch — mirror the inject predicate: a
                 // live prior within max-gap, not a slip/refloat (pending reseed),
                 // and not a Card-3 re-referenced arc (a frame step, not noise).
-                if (carry_vce) {
+                // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md §6):
+                // the SAME (prior − solved, gap, post_var, fold_var) tuple the
+                // VCE monitor folds, but WITHOUT its two exclusions — those become
+                // the RESPONDED / FRAME labels, which is exactly the population a
+                // detector exists to find and a variance component is right to
+                // drop.  Hoisted above the monitor so both read one qualification.
+                //
+                // `folded` is REPRODUCED from the inject predicate rather than
+                // mirrored by hand: every clause of the PASS-B injector
+                // (ApplicationNetworkAssembly.cpp, the `local_carry.find` block)
+                // is a pure function of values still in scope here — the carry
+                // entry, the gap, the pending-reseed mark (cleared only AFTER
+                // this point), pa.x_lin and var_eff.  Getting this bit wrong is
+                // not a cosmetic error: the folded branch on an unfolded row
+                // inflates |t| by ~x3000 through the ε clamp and would make the
+                // §9.3 positive control pass vacuously.  Two clauses are NOT
+                // reproducible here and are assumed to have held, because the
+                // ambiguity reached R.pl_amb at all: the gauge-pin exclusion
+                // (pinned keys never enter R.pl_amb) and the h2local column
+                // lookup.  Note eq34_reref is a FRAME LABEL for pl and NOT a
+                // folded=false condition — unlike the shared PB carry, the pl
+                // injector has no eq34 skip, so a re-referenced arc really did
+                // fold.  Truth wins over symmetry here.
+                const bool prires_want = prires_pl && prires_est.enabled();
+                if (carry_vce || prires_want) {
                     const auto oc = local_carry.find(
                         std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
-                    if (oc != local_carry.end()
-                        && !stations[i].sm->isAmbiguityPendingReseed(pa.amb_key)
-                        && !eq34_reref.count({pa.sat, pa.signal})) {
+                    const bool reseed_pending =
+                        stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
+                    const bool reref = eq34_reref.count({pa.sat, pa.signal}) > 0;
+                    if (oc != local_carry.end()) {
                         const double gapv = pl_now_s - oc->second.last_seen_s;
                         if (gapv >= 0.0 && gapv <= pl_max_gap_s) {
-                            double fold_var =
-                                oc->second.var + pl_q_amb * std::max(0.0, gapv);
-                            if (pl_var_floor > 0.0)
-                                fold_var = std::max(fold_var, pl_var_floor);
-                            carry_vce_est.addRow(
-                                "pl", pa.sat, oc->second.value_abs - value_abs,
-                                gapv, var, fold_var);
+                            const double fold_var_hand =
+                                [&] {
+                                    double v = oc->second.var + pl_q_amb * std::max(0.0, gapv);
+                                    if (pl_var_floor > 0.0) v = std::max(v, pl_var_floor);
+                                    return v;
+                                }();
+                            // M2 v2 (docs/SPEC_carry_vce_apply.md): the PASS-B injector
+                            // multiplies the SAME hand value by the SAME α² (the factor
+                            // table is refreshed once per epoch, at the end, so inject and
+                            // harvest read one value), so `fold_var` here is the variance
+                            // the fold ACTUALLY used.  Both consumers want that: the census
+                            // standardizes by the used weight (§3), and the monitor's
+                            // sigma_hat_post readout is only "1 at convergence" if its
+                            // denominator is the used weight too.  The HAND value goes in
+                            // alongside it because it is the factor iteration's own
+                            // denominator and must stay α²-independent.  Unity when OFF.
+                            const double fold_var =
+                                fold_var_hand * ctx.carry.vce_apply.factor(
+                                                    NetworkCarryVceApply::kPl, pa.sat);
+                            const double innov = oc->second.value_abs - value_abs;
+                            if (carry_vce && !reseed_pending && !reref)
+                                carry_vce_est.addRow("pl", pa.sat, innov,
+                                                     gapv, var, fold_var, fold_var_hand);
+                            if (prires_want) {
+                                NetworkPriorResidual::Input in;
+                                in.family   = "pl";
+                                in.sat      = pa.sat;
+                                in.signal   = pa.signal;
+                                in.station  = static_cast<int>(i);
+                                in.e        = innov;
+                                in.fold_var = fold_var;
+                                in.post_var = var;
+                                in.gap_s    = gapv;
+                                // The inject predicate, reproduced (see above).
+                                in.folded   = !reseed_pending
+                                           && std::isfinite(pa.x_lin)
+                                           && fold_var > 0.0;
+                                in.label = reseed_pending ? PriorResidualLabel::Responded
+                                         : reref          ? PriorResidualLabel::Frame
+                                                          : PriorResidualLabel::Clean;
+                                in.mech  = reseed_pending ? "reseed"
+                                         : reref          ? "eq34_reref" : "";
+                                prires_est.addRow(in);
+                            }
                         }
                     }
                 }
@@ -1841,6 +2190,37 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     var = (vard.size() > 0) ? vard(0) : -1.0;
                 }
                 if (!(var > 0.0) || !std::isfinite(var)) continue;
+                // PRIOR-RESIDUAL CENSUS INC-2 (new hook): the ZWD carry has NO
+                // screen of any kind today — no slip detector, no jump test, no
+                // D5 analogue — which is precisely the standing-invariant-#1 gap
+                // this card was built to inventory.  Unlike pl, `folded` is
+                // GROUND TRUTH here and needs no reproduction: PASS B already
+                // records R.pl_zwd_injected at the injector itself.  Read the
+                // prior BEFORE the stash below overwrites it.
+                if (prires_zwd && prires_est.enabled()) {
+                    const auto zit = zwd_carry.find(static_cast<int>(i));
+                    if (zit != zwd_carry.end()) {
+                        const double zgap = pl_now_s - zit->second.last_seen_s;
+                        if (zgap >= 0.0 && zgap <= pl_max_gap_s) {
+                            NetworkPriorResidual::Input in;
+                            in.family   = "zwd";
+                            in.station  = static_cast<int>(i);
+                            in.e        = zit->second.value_abs - value_abs;
+                            in.fold_var = zit->second.var + zwd_q * std::max(0.0, zgap);
+                            in.post_var = var;
+                            in.gap_s    = zgap;
+                            in.folded   = R.pl_zwd_injected;
+                            // A ZWD carry within its horizon that did NOT inject
+                            // is not a mechanism RESPONSE — nothing fired on it;
+                            // the injector simply had no live column or a
+                            // non-positive var_eff.  CLEAN with the `+` branch is
+                            // the honest classification, and the mech tag says so.
+                            in.label = PriorResidualLabel::Clean;
+                            in.mech  = R.pl_zwd_injected ? "" : "not_injected";
+                            prires_est.addRow(in);
+                        }
+                    }
+                }
                 zwd_carry[static_cast<int>(i)] =
                     LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
             }
@@ -1902,11 +2282,22 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     if (ctx.knobs.rx_cb_on) {
         auto& rx_cb_carry = ctx.carry.rx_cb_carry;
         constexpr double kRxCbMaxGapS = 900.0;   // spec §3: housekeeping horizon
+        // Card LV-4: this epoch's invariant steps, collected during the station walk
+        // and judged AFTER it — the screen needs the whole population to build a
+        // robust, peer-relative scale (rxCbStepScale).  Empty unless armed.
+        struct Lv4Pending { int station; std::string key; double step; double formal_sigma; };
+        std::vector<Lv4Pending> lv4_pending;
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
             const StationAssembly& R = asm_res[i];
             ctx.carry.rx_cb_injected_total += R.pl_cb_injected;
+            ctx.counters.n_rxcb_gauges  += static_cast<size_t>(R.pl_cb_datum_rows);
             ctx.carry.rx_cb_innov_skips_total += R.pl_cb_innov_skips;
+            ctx.carry.lv2_folds_demeaned += R.pl_cb_demeaned;   // Card LV-2
+            // Card LV-4 same-run A/B — summed with the other produce-phase tallies,
+            // BEFORE any early continue, so a station whose back-substitution throws
+            // still reports what the retired screen would have done to its folds.
+            ctx.carry.lv4_frame_gate_would_skip += R.pl_cb_frame_gate_would_skip;
             if (R.pl_cb.empty()) continue;
             const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
             Eigen::VectorXd xr, vard;
@@ -1926,15 +2317,258 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                        ? vard(a) : -1.0;
                 if (!std::isfinite(value_abs) || !(var > 0.0)
                     || !std::isfinite(var)) continue;
+                // PRIOR-RESIDUAL CENSUS INC-2 (new hook).  `folded` is RE-DERIVED
+                // by calling rxCbInjectGate with the identical arguments PASS B
+                // used — the gate is a pure function and every input is still in
+                // hand and un-mutated at this point (the stash below is what
+                // overwrites the entry), so this reproduces the injector's own
+                // decision exactly rather than mirroring it.  The SkipInnov branch
+                // is a genuine invariant-#1 event RESPONSE (receiver reset /
+                // firmware bias jump: withhold the fold, let the harvest re-seed),
+                // so it is the RESPONDED positive control for this family.
+                if (prires_rxcb && prires_est.enabled()) {
+                    const auto pit = rx_cb_carry.find({static_cast<int>(i), cb_key});
+                    if (pit != rx_cb_carry.end()) {
+                        const double cgap = pl_now_s - pit->second.last_seen_s;
+                        const double cinnov = pit->second.value_abs - cx_lin;
+                        double cvar_eff = 0.0;
+                        const RxCbInjectAction cact = rxCbInjectGate(
+                            cgap, kRxCbMaxGapS, pit->second.var, ctx.knobs.rx_cb_q,
+                            cinnov, /*k_sigma=*/10.0, /*guard_var=*/0.25, cvar_eff,
+                            // LV-4: mirror the injector's actual configuration, or
+                            // the census would label rows "responded" for a test the
+                            // run no longer applies.
+                            /*innov_test=*/!ctx.knobs.rx_cb_step_gate);
+                        // SkipGap leaves cvar_eff at 0 (the gate returns before
+                        // setting it) — there is no fold variance to standardize
+                        // against, so fall back to the nominal recompute and mark
+                        // the row RAW FORMAL rather than invent a scale.
+                        const bool have_var = cvar_eff > 0.0;
+                        NetworkPriorResidual::Input in;
+                        in.family   = "rxcb";
+                        in.signal   = cb_key;
+                        in.station  = static_cast<int>(i);
+                        in.e        = pit->second.value_abs - value_abs;
+                        in.fold_var = have_var
+                            ? cvar_eff
+                            : pit->second.var
+                                + ctx.knobs.rx_cb_q * std::max(0.0, cgap);
+                        in.post_var = var;
+                        in.gap_s    = std::max(0.0, cgap);
+                        in.folded   = (cact == RxCbInjectAction::Fold);
+                        in.var_nominal = !have_var;
+                        in.label = (cact == RxCbInjectAction::SkipInnov)
+                                       ? PriorResidualLabel::Responded
+                                       : PriorResidualLabel::Clean;
+                        in.mech  = (cact == RxCbInjectAction::SkipInnov) ? "innov_withhold"
+                                 : (cact == RxCbInjectAction::SkipGap)   ? "gap" : "";
+                        prires_est.addRow(in);
+                    }
+                }
+                // --- Card LV-4: the FRAME-INVARIANT event screen (§11) -------------
+                // docs/SPEC_level_information_budget.md.  This is the only place in
+                // the cycle where TWO absolute realizations of the same receiver bias
+                // exist side by side — the freshly back-substituted posterior
+                // (cx_lin + xr) and the carried one — so their difference is the one
+                // discrepancy no reframing, reseeding or datum change can move.  The
+                // retired inject test compared the carried value against a FROZEN
+                // x_lin instead, which is why it withheld half the folds of stations
+                // that never did anything and stayed blind to the jumps it was built
+                // for (at inject time the carried value is still the pre-jump one).
+                //
+                // The DECISION cannot be taken here: it needs this epoch's whole
+                // population (see rxCbStepScale — a formal-σ test mass-triggers, and
+                // a step common to every station is a frame move, not 61 receiver
+                // resets).  So the step is recorded and the screen runs after this
+                // station loop, over all stations at once.
+                if (ctx.knobs.rx_cb_step_gate) {
+                    const auto sit = rx_cb_carry.find({static_cast<int>(i), cb_key});
+                    if (sit != rx_cb_carry.end()) {
+                        lv4_pending.push_back(
+                            {static_cast<int>(i), cb_key,
+                             value_abs - sit->second.value_abs,
+                             std::sqrt(std::max(0.0,
+                                 var + sit->second.var + ctx.knobs.rx_cb_q
+                                     * std::max(0.0, pl_now_s - sit->second.last_seen_s)))});
+                    }
+                }
                 rx_cb_carry[{static_cast<int>(i), cb_key}] =
                     LocalCarry{value_abs, var, pl_now_s};
                 ++ctx.carry.rx_cb_harvested_total;
+            }
+        }
+        // --- Card LV-4, decision pass (serial, all stations) -------------------
+        // Robust and PEER-RELATIVE, per code-bias family: σ̂ = 1.4826·MAD of this
+        // epoch's steps (floored at the median formal σ), and the MEDIAN step is
+        // removed first because a step common to the network is a frame move, not an
+        // event.  What is left is the per-station outlier.  Response is ERASE, not
+        // overwrite (reset-not-repair): a genuine jump means this epoch's solve
+        // folded a stale pre-jump prior, so the posterior it produced is suspect
+        // too — the entry goes cold for exactly one epoch and the next harvest
+        // re-seeds it from data, the same lifecycle a first sighting takes.
+        if (ctx.knobs.rx_cb_step_gate && !lv4_pending.empty()) {
+            std::map<std::string, std::vector<double>> by_fam, formal_by_fam;
+            for (const auto& p : lv4_pending) {
+                by_fam[p.key].push_back(p.step);
+                formal_by_fam[p.key].push_back(p.formal_sigma);
+            }
+            std::map<std::string, RxCbStepScale> scale;
+            for (auto& [fam, steps] : by_fam) {
+                auto& f = formal_by_fam[fam];
+                std::nth_element(f.begin(), f.begin() + f.size() / 2, f.end());
+                // min_n mirrors the LV-2 thin-mean floor: below it there is no
+                // defensible "normal", so the screen stands down (counted).
+                scale[fam] = rxCbStepScale(steps, f[f.size() / 2],
+                                           ctx.knobs.rx_cb_demean_min_sta);
+            }
+            for (const auto& p : lv4_pending) {
+                const auto sc = scale.find(p.key);
+                if (sc == scale.end()) continue;
+                ++ctx.carry.lv4_step_checks;
+                if (!sc->second.valid) { ++ctx.carry.lv4_scale_standdown; continue; }
+                const RxCbStepVerdict sv =
+                    rxCbStepVerdict(p.step, sc->second, ctx.knobs.rx_cb_step_k);
+                ctx.carry.lv4_max_step_z = std::max(ctx.carry.lv4_max_step_z, sv.z);
+                ctx.carry.lv4_max_scale_m =
+                    std::max(ctx.carry.lv4_max_scale_m, sc->second.sigma);
+                if (!sv.jumped) continue;
+                rx_cb_carry.erase({p.station, p.key});
+                ++ctx.carry.lv4_step_resets;
             }
         }
         for (auto it = rx_cb_carry.begin(); it != rx_cb_carry.end();) {
             if (pl_now_s - it->second.last_seen_s > kRxCbMaxGapS)
                 it = rx_cb_carry.erase(it);
             else ++it;
+        }
+        // --- Card LV-2: the common-mode mean, computed HERE (serial) -----------
+        // docs/SPEC_level_information_budget.md.  The parallel produce phase
+        // accumulated, per station and per constellation, Σλ·innov and Σλ over the
+        // rows it actually FOLDED (the gate's skips contribute nothing — a withheld
+        // row exerts no force, so it must not vote on the force being removed).
+        // Reducing them here and applying the result LAG-1 keeps the whole cycle
+        // race-free by construction, exactly like the carry itself — but the lag is
+        // a feedback delay, so under card LV-5 (§12) μ is instead reduced BEFORE
+        // PASS B (networkRxCbDemeanPrepass) and this pass degrades to a diagnostic;
+        // see the branch below.
+        //
+        // μ_c = Σλ·innov / Σλ  ⇒  Σλ·(innov − μ_c) = 0 in DELTA coordinates: the
+        // carry keeps every between-station DIFFERENCE at full stiffness and stops
+        // re-asserting LAST epoch's common-mode realization (the flywheel).
+        //
+        // ⚠ It does NOT free that direction (measured 2026-08-05, SPEC §13).  The
+        // de-mean moves the RHS, never the fold's information, so Σλ ≈ 100 units
+        // still land on the common mode — and in ABSOLUTE terms each row now targets
+        // value_abs−μ, whose weighted mean is mean(x_lin).  So the de-meaned carry
+        // PINS the receiver-DCB common mode to the frozen first-epoch code-bias seed
+        // frame: a rolling memory swapped for a frozen one.  It is therefore closer
+        // to the rejected "demeaned target" variant than this card believed — the
+        // difference being that the pinned value is epoch 1's data-derived mean
+        // rather than the physical zero, which is exactly why card LV-1 (which sets
+        // that seed through initializeCodeBiases) moves the level ~10 TECU with no
+        // row-set change at all.
+        if (ctx.knobs.rx_cb_demean) {
+            std::map<std::string, double> sum_lam_innov, sum_lam;
+            std::map<std::string, int> n_sta;
+            for (std::size_t i = 0; i < stations.size(); ++i) {
+                if (est_index_of[i] < 0) continue;
+                const StationAssembly& R = asm_res[i];
+                for (const auto& [fam, s] : R.pl_cb_sum_lam) {
+                    if (!(s > 0.0)) continue;
+                    const auto nit = R.pl_cb_sum_lam_innov.find(fam);
+                    if (nit == R.pl_cb_sum_lam_innov.end()) continue;
+                    sum_lam[fam] += s;
+                    sum_lam_innov[fam] += nit->second;
+                    ++n_sta[fam];
+                }
+            }
+            // Invariant #7 (both edges): a DECOUPLING epoch — mass re-seed, RAIM
+            // re-reduce, a thin station set — must not be allowed to define the
+            // frame.  Below the floor μ FREEZES at its previous value (a held frame
+            // is conservative: it re-asserts nothing new) and the event is COUNTED,
+            // so a run that froze its way through an era says so.
+            // Card LV-5 (§12): with the within-epoch reduction armed, THIS pass is a
+            // DIAGNOSTIC only.  μ was already formed between PASS A and PASS B and
+            // folded against; what the folded set's raw mean measures now is the
+            // RESIDUAL common-mode force that survived the correction — the direct
+            // check that the de-mean did its job (it is not identically zero because
+            // the folded set is not exactly the candidate set the prepass averaged).
+            // Overwriting μ here would silently reinstate the lag.
+            const bool lv5_within = ctx.knobs.rx_cb_demean_within;
+            bool any = false;
+            if (!lv5_within) ctx.carry.rx_cb_demean_last.clear();
+            for (const auto& [fam, s] : sum_lam) {
+                const auto held = ctx.carry.rx_cb_demean_mu.find(fam);
+                const double prev_mu =
+                    (held != ctx.carry.rx_cb_demean_mu.end()) ? held->second : 0.0;
+                const RxCbDemeanReduce red = rxCbDemeanMu(
+                    sum_lam_innov[fam], s, n_sta[fam],
+                    ctx.knobs.rx_cb_demean_min_sta, prev_mu);
+                if (lv5_within) {
+                    if (!red.fresh) continue;
+                    // Residual = the folded set's raw common mode minus the μ that was
+                    // actually applied to it.
+                    const double applied = prev_mu;
+                    const double resid = red.mu - applied;
+                    ctx.carry.lv5_resid_sum += std::abs(resid);
+                    ctx.carry.lv5_max_abs_resid_m =
+                        std::max(ctx.carry.lv5_max_abs_resid_m, std::abs(resid));
+                    ++ctx.carry.lv5_resid_n;
+                    auto it_rec = ctx.carry.rx_cb_demean_last.find(fam);
+                    if (it_rec != ctx.carry.rx_cb_demean_last.end())
+                        it_rec->second.folded_mu = red.mu;
+                    continue;
+                }
+                auto& rec = ctx.carry.rx_cb_demean_last[fam];
+                rec.sum_lam = s;
+                rec.n_sta   = n_sta[fam];
+                rec.fresh   = red.fresh;
+                rec.mu      = red.mu;
+                if (!red.fresh) { ++ctx.carry.lv2_mu_frozen; continue; }
+                ctx.carry.rx_cb_demean_mu[fam] = red.mu;
+                ctx.carry.lv2_last_mu_m = red.mu;
+                ctx.carry.lv2_max_abs_mu_m =
+                    std::max(ctx.carry.lv2_max_abs_mu_m, std::abs(red.mu));
+                any = true;
+            }
+            if (any) ++ctx.carry.lv2_mu_epochs;
+        }
+    }
+
+    // --- Card LV-1: LAG-1 snapshot of the solved SH-VTEC field ----------------
+    // docs/SPEC_level_information_budget.md.  Copied SERIALLY here (post-solve,
+    // x_s final) and read next epoch by the PARALLEL produce phase, which samples
+    // it at each new LOS's pierce point so a per-LOS iono state is born in the
+    // FIELD's frame instead of the receiver-bias-in frame the raw geometry-free
+    // code seed carries.  Coefficients only: the pierce geometry and the sun-fixed
+    // rotation belong to the epoch that EVALUATES them, not to the epoch that
+    // solved them.  Cheap ((N+1)² doubles/shell, 81 at degree 8) and untouched
+    // when the card is disarmed.
+    if (ctx.knobs.lv1_seed_frame && sh_model) {
+        const std::vector<ShLayer> lv1_lay =
+            shLayers(config_.getGlobalVtecShConfig(), sh_model, sh_model2);
+        std::vector<std::vector<double>> snap(lv1_lay.size());
+        bool ok = !lv1_lay.empty();
+        for (std::size_t l = 0; l < lv1_lay.size() && ok; ++l) {
+            const auto& cf = lv1_lay[l].model->coeffs();
+            snap[l].resize(cf.size(), 0.0);
+            for (std::size_t k = 0; k < cf.size() && ok; ++k) {
+                try {
+                    const Eigen::Index col = est.vtecCoeffColumn(
+                        cf[k].n, cf[k].m, cf[k].trig, lv1_lay[l].layer);
+                    if (col < 0 || col >= x_s.size()) { ok = false; break; }
+                    const double v = x_s(col);
+                    if (!std::isfinite(v)) { ok = false; break; }
+                    snap[l][k] = v;
+                } catch (...) { ok = false; }
+            }
+        }
+        // A partial / failed read leaves the PREVIOUS snapshot standing (or none at
+        // all on epoch 1, which falls back to the a₀₀ climatology prior mean —
+        // the designed level authority).  Never install a half-built field.
+        if (ok) {
+            ctx.carry.sh_field_lag1 = std::move(snap);
+            ++ctx.carry.lv1_field_snapshots;
         }
     }
 }

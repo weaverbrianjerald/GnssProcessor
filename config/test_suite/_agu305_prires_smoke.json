@@ -1,0 +1,58 @@
+{
+ "_comment": [
+  "PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md) -- 305-station",
+  "SCALING smoke, 0.25 h of data (900 s = 30 epochs at 30 s).",
+  "",
+  "Extends _agu305_gps_smoke.json, so the posture is the AGU26 305-station arm",
+  "verbatim: roster 305 -> 303 (WTZZ00DEU + OBE400DEU held out), GPS-only, SH",
+  "degree 8 dual-shell, PD-safe fold + D5 v3 + adm_screen + the Jul-28 armed set,",
+  "and network.lane_carry.enable FALSE (the measured 12x arm: applyLaneMeasurement",
+  "is 84.7 % of a 305-station run's wall and buys nothing on DOY-129).  The ONLY",
+  "deltas are the duration and the census knobs.",
+  "",
+  "WHY 305 AND NOT 63.  The card's section 5 cost claim is stated at 63 stations",
+  "(<= 1 ms/epoch, measured 0.14).  The census is O(carried priors), and the",
+  "carried-prior population is the thing that scales with the roster -- so this arm",
+  "is the cost claim's actual falsifier.  Section 5 also pre-commits the response:",
+  "above 5 ms/epoch something is wrong with the IMPLEMENTATION, not with the",
+  "estimate, and the report says so rather than adding a stride.  There is no",
+  "stride knob in v1 and this run is not permitted to invent one.",
+  "",
+  "Corroboration is ON (the arm extends the FT63 corrob posture in spirit) so one",
+  "run exercises every path: the five feeds, both dispersion branches, all three",
+  "labels, the ladder, the trace, the PRIORRES events, the epoch-status columns,",
+  "the contingency join and the run-end readout.",
+  "",
+  "WHAT 30 EPOCHS CAN AND CANNOT ESTABLISH.  This is a COLD window and section 9's",
+  "convergence hygiene applies unchanged: it establishes LIVE WIRING (gate 2 --",
+  "non-zero n_rows per armed family, with the run-end line separating 'ran, saw",
+  "nothing' from 'never ran') and COST (gate 7) at 305 stations, and nothing else.",
+  "Do NOT quote a ladder occupancy from it: sigma0 needs 200 rows per family to",
+  "leave warm-up (every t below that is the RAW FORMAL s and flagged as such), and",
+  "the whole window sits inside ignition, where a free ambiguity absorbs its own",
+  "arc's misfit exactly.  Gates 3-6 need a converged warm leg.",
+  "",
+  "NO OFF CONTROL IS PAIRED WITH THIS ARM by instruction, so gate 1 (OFF",
+  "byte-identity) is NOT graded here -- it was graded on the 63-station pair",
+  "(_ft63_prires_smoke vs _ft63_prires_smoke_off) and the card's OFF contract is",
+  "structural, not roster-dependent."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu305_gps_smoke.json"
+ ],
+ "processing": {
+  "max_duration_s": 900.0
+ },
+ "network": {
+  "max_duration_s": 900.0,
+  "prior_residual_census": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+  "prior_residual_window_epochs": 60,
+  "prior_residual_min_rows": 200,
+  "prior_residual_report_sigma": 4.0,
+  "prior_residual_event_holdoff_ep": 20,
+  "prior_residual_corroborate": true,
+  "product_output_path": "C:/GnssProcessor/runs/agu305_prires_smoke/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu305_prires_smoke/state_snapshot.bin"
+ }
+}

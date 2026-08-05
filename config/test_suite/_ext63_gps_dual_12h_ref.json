@@ -1,0 +1,40 @@
+{
+ "_comment": [
+  "EXT-63, arm 24 \u2014 12 h REFERENCE: the canonical single-layer EXT-CB posture with NO",
+  "LV cards (deg-8 single layer + a00 GIM anchor 32.24+-2 + rx_code_bias_datum).  The",
+  "matched control for arm 25.  Same lineage, same window, one difference: the four LV",
+  "knobs are off.",
+  "",
+  "WHY 12 h.  1 h settles the LEVEL but not the slow channels: the standing rule is",
+  "that total_IF and any drift claim need >= 2 h, and the breathing measured on this",
+  "lineage runs on a 20-30 min cycle, so an hour holds only two periods.  12 h also",
+  "exposes what an hour cannot: whether the level PARKS or slowly walks, and whether",
+  "the deg-1 dipole (which grew with the level fix at 1 h) keeps growing.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN: reproduces the 1 h shape and then keeps",
+  "breathing -- a00 well below GIM 32.24 (1 h settled mean 17.45), oscillating on the",
+  "constellation-sweep timescale, gate 0/0/0, in-band throughout.  This arm exists to",
+  "be the honest denominator, not to be interesting."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 43200.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_12h_ref/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_12h_ref/state_snapshot.bin"
+ }
+}

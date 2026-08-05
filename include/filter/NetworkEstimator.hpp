@@ -695,6 +695,7 @@ public:
         phase_sumzero_gauges_ = std::move(gauges);
     }
 
+
     /**
      * @brief Card-4 (M1) invariant carry: set the rank-K double-difference priors the
      *        z-store folds onto the reduced system this epoch

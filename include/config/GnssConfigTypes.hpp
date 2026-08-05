@@ -1133,6 +1133,108 @@ namespace GnssProcessor {
         double redundancy_pivot_eps{ 1e-8 };    ///< INC-2 unobservable-local floor, RELATIVE to the station's median @f$N_{rr}@f$ LDLT pivot (the absolute scale is set by the measurement weights and varies by decades between an ambiguity column and a ZWD column).  A column below it carries essentially NO information this epoch.
         double redundancy_escalate_sigma{ 0.0 };///< Free-tier escalation trigger (0 = OFF).  When > 0 the O(rows) centred prefit census runs on EVERY station every epoch, and any station whose largest centred deviation exceeds this gets a TARGETED single-station redundancy sweep at the next epoch (~2-5 ms).  The free tier asks "is something big?"; redundancy answers "is it checkable?".  Works with @ref redundancy_census_stride = 0.
         int    redundancy_event_holdoff_ep{ 20 };///< Per-(station, satellite, class) event rate limit in sweep passes: a parked cell logs its identity persistently, not 120x/hour.
+        // --- Baarda reliability numbers / MDB (docs/SPEC_network_mdb_reliability.md;
+        //     filter/NetworkMdb) ----------------------------------------------
+        // MEASURE-ONLY, default-OFF and NOT fingerprinted, same class as the two
+        // blocks above.  A PORT of KalmanFilter::computeResidualQc_'s quartet, not
+        // a new mechanism: wherever @f$r_i@f$ already exists, one division gives
+        // @f$\mathrm{MDB}_i = \sigma_i\delta_0/\sqrt{r_i}@f$ — how large a fault
+        // could hide in that row RIGHT NOW, in metres.  It makes the census's
+        // UNCHECKABLE binary quantitative and the RAIM thresholds interpretable;
+        // nothing in v1 wires a decision to it.
+        bool   mdb{ false };                    ///< Master.  Requires an @f$r_i@f$ source — @ref redundancy_census_stride / @ref redundancy_escalate_sigma, or network.raim_redundancy_normalize on a live network.raim.  The loader HARD-ERRORS when neither is armed: without a redundancy source there is nothing to divide by, and the card would report a clean zero-row run indistinguishable from a genuine negative result.
+        double mdb_event_m{ 1.0 };              ///< REPORTING threshold in metres (0 = no events): a finite MDB above it emits an @c MDB / @c mdb_exceedance event.  Not a gate — no deweight, no admission, no withhold reads it.  Per (station x row class) the WORST finite row is the one named; the full above-threshold population is in the trace's @c n_over column.
+        int    mdb_event_holdoff_ep{ 20 };      ///< Per-(station, satellite, class) MDB event rate limit, in flush passes — the PREFIT/redundancy holdoff convention.  MDB moves slowly (it is geometry), so an un-throttled stream would repeat the same cell every epoch for hours.
+        // --- Datum graph census (docs/SPEC_datum_graph_census.md;
+        //     filter/NetworkDatumGraph) ----------------------------------------
+        // MEASURE-ONLY, default-OFF and fingerprint-SAFE, same class as the
+        // blocks around it.  The S-basis dimension is DETECTED spectrally today
+        // (the null-space gate counts near-zero eigenvalues; SBC derives the
+        // epoch's extras from the same normals) and never EXPLAINED.  LASER
+        // 5-62/5-63 gives the structural form — rank deficiency = d.k over k
+        // disjoint components, "knowing the type of observations involved could
+        // indicate the rank of A" — and the Aug-2 GPS+Gal extras turned out to be
+        // exactly a support-structure split (per-satellite channel-family PB<->iono
+        // trades on the Galileo C/Q-vs-X station partition).  This census predicts
+        // from topology and reconciles against the spectrum; it feeds NOTHING.
+        bool   datum_graph_census{ false };     ///< Master arm.  OFF => the seam is never entered, no file is opened, no counter moves.  ON: per epoch, union-find over the admitted (station, satellite) support graph per constellation (tier 1) plus the (satellite x channel-family) code-support partition (tier 2), joined to the epoch's spectral observation into the predicted/observed contingency.  Never feeds the gate, SBC or @c Plan::declared_dimension — acting on a prediction is the successor card.
+        int    datum_graph_event_holdoff_ep{ 20 };///< Per-identity DATUMGRAPH event rate limit, in processed epochs — the PREFIT/MDB/block-Baarda convention.  Datum topology moves slowly, so an un-throttled stream would repeat the same (sat, family) every epoch for hours; the CSV rows are never rate-limited, only the individual identities.
+        // --- Prior-residual census (docs/SPEC_prior_residual_census.md;
+        //     filter/NetworkPriorResidual) -------------------------------------
+        // MEASURE-ONLY, default-OFF and NOT fingerprinted, exactly like the two
+        // blocks above.  Standing invariant #1's response layer is PER-MECHANISM
+        // (MW / LLI / IF-TD on the observables, D5 on the DD chords, jump tests
+        // on the code bias, eq34_reref on the pin displacement) and nothing tells
+        // us which of the REMAINING stiff priors is carrying a stale value.  This
+        // mirrors D5's own statistic — LASER 5-74's residual of prior information
+        // and its dispersion, which is algebraically the partial redundancy
+        // NetworkCarryVce::addRow already forms — onto the carry families that
+        // have no screen at all, and makes them comparable on ONE axis.
+        //
+        // It adds NO gate, NO deweight, NO exclusion, NO refloat: the SOLVE IS
+        // BYTE-IDENTICAL with this armed, which is the acceptance criterion, not
+        // a limitation.  The response question is a SEPARATE card whose design
+        // input is this card's per-family exceedance ladders.
+        bool   prior_residual_census{ false };   ///< Master arm.  OFF ⇒ the accumulator is inert, the seam is never entered and no column, row or event exists.
+        std::string prior_residual_families{ "pl,pb,cb" }; ///< CSV of carry families to census (@c NetworkCarryVce::parseComponents, reused verbatim).  Known: @c pl (phase-leveling ambiguity carry — the origin of standing invariant #1 and the largest population by two orders of magnitude), @c pb / @c cb (satellite phase- / code-bias carry; @c cb is where the DOY-129 pivot-CB ratchet lived, q_cb = 1e-10 => 49 m step, tau = 3.79 h), @c zwd (B9 ZWD carry) and @c rxcb (receiver code-bias carry).  A name with no hook in this build WARNs at load.
+        int    prior_residual_window_epochs{ 60 };///< sigma0 exponential-forgetting half-life in epochs; mirrors @c carry_vce_window_epochs.  <= 0 ⇒ whole-run accumulation.
+        int    prior_residual_min_rows{ 200 };   ///< sigma0 WARM-UP in effective rows (D5 v2's value).  Below it the family reports the RAW FORMAL t == s and SAYS SO in the output column, rather than silently standardizing by a seed.
+        double prior_residual_report_sigma{ 4.0 };///< Per-row trace/event threshold in sigma0 units.  A REPORTING threshold, NOT a gate — nothing in the solve reads it back.  The ladder, not this knob, is the deliverable.
+        int    prior_residual_event_holdoff_ep{ 20 };///< Per-(family, station, satellite, signal) PRIORRES event rate limit in census epochs — rate-limited like the PREFIT events, so a persistently stale prior logs its identity persistently rather than 120x/hour.  The LADDER is never rate-limited; only the individual identities are.
+        bool   prior_residual_corroborate{ false };///< INC-3: join every row to the raw-observable verdict the slip-QC pass already computes and emit the per-family contingency table.  Auto-arms @c network.cycle_slip.gap_instrument (instrumentation-only, verified byte-identical) with a WARN — deliberately NOT @c mw_lli_corroborate, which is a DECISION card and would perturb what is being measured.  Requires @ref prior_residual_census (hard error otherwise).
+        // --- BlockFormal: (station, satellite) LOS block outlier census
+        //     (docs/SPEC_block_baarda.md) — a RIDER on the redundancy census's
+        //     swept stations ---------------------------------------------------
+        // The MIDDLE tier.  A per-row w-test sits below the unit a physical fault
+        // actually occupies and station-level median polish sits above it, so ONE
+        // fault on ONE line of sight — smeared by the adjustment across that LOS's
+        // 2-8 code and phase rows — can be sub-threshold on every row while the
+        // block is jointly loud.  LASER 5-98: "not necessarily a one-to-one
+        // correspondence between large residuals and outliers".  MEASURE-ONLY: the
+        // solve is BYTE-IDENTICAL with this armed, and no response reads any of it.
+        bool   block_baarda{ false };            ///< Master arm.  OFF ⇒ the accumulator is inert, the sweep is never entered and no column, row or event exists.  REQUIRES a live @ref redundancy_census_stride / @ref redundancy_escalate_sigma — that sweep is the host whose stride, targeted escalation and trip schedule this card rides instead of adding a scheduler.  The loader HARD-ERRORS when neither is armed: with no host there would be nothing to sweep, and a clean zero-block run would be indistinguishable from a genuine negative result.
+        std::string block_baarda_families{ "G,E,R,C" }; ///< CSV of CONSTELLATION letters to census.  The prior-residual census's families are CARRY families and mean nothing for a line of sight; the constellation is the only partition that can label a WHOLE block, because a block spans code AND phase rows by construction.  A letter with no satellites in this run reports zero blocks and SAYS SO at run end.
+        int    block_baarda_window_epochs{ 60 }; ///< sigma0 exponential-forgetting half-life in epochs; mirrors @ref prior_residual_window_epochs.  <= 0 ⇒ whole-run accumulation.
+        int    block_baarda_min_blocks{ 200 };   ///< sigma0 WARM-UP in effective blocks (D5 v2's value, in this card's unit).  Below it the family reports the RAW FORMAL t_B == T_B and SAYS SO in the output column, rather than silently standardizing by a seed.
+        double block_baarda_report_sigma{ 4.0 }; ///< Trace/event threshold on @f$t_B@f$.  REPORTING ONLY — nothing in the solve reads it back.  NOTE the unit: @f$t_B@f$ carries the @f$1/b@f$, so it is a VARIANCE RATIO with @f$E=1@f$ under @f$H_0@f$ for every block size; 4.0 means "four times the variance the model allows", NOT four sigma.  The ladder, not this knob, is the deliverable (SPEC 2.1: empirical critical values, never tabular).
+        int    block_baarda_event_holdoff_ep{ 20 };///< Per-(station, satellite) BLOCKBAARDA event rate limit in census epochs, so a persistently loud LOS logs its identity persistently rather than 120x/hour.  The LADDER is never rate-limited; only the individual identities are.
+        bool   block_baarda_corroborate{ false };///< INC-2: join every reported block to the raw-observable verdict the slip-QC pass already computes, and emit the per-family contingency table whose b-cell (loud AND raw-flat) is the number SPEC 8.3 grades.  Auto-arms @c network.cycle_slip.gap_instrument with a WARN, exactly as @ref prior_residual_corroborate does.  Requires @ref block_baarda (hard error otherwise).
+        // --- Station congruence screen: coordinate-fault detection in POSITION
+        //     space (docs/SPEC_station_congruence.md) — a second RIDER on the
+        //     redundancy census's swept stations -------------------------------
+        // The tier ABOVE the block census, and the one fault class no armed tier
+        // can see.  Station coordinates are HELD; a wrong held coordinate (survey
+        // blunder, ARP/eccentricity mistake, monument motion) projects coherently
+        // into EVERY row of that station, and median polish removes exactly that
+        // common effect, per-row w-tests see only the post-absorption crumbs, and
+        // the (station, satellite) block test pools ONE line of sight.  JPLM's
+        // 6.10 cm ARP error is the measured precedent — found by hand, not by QC.
+        // Caspary (2000) congruence composed with the LASER guide's Baarda
+        // material (5-97..5-101); multi-dimensional outlier form per Snow &
+        // Schaffrin (2003).  MEASURE-ONLY: the solve is BYTE-IDENTICAL with this
+        // armed, nothing moves or reweights a coordinate, and the per-station
+        // per-direction coordinate MDB is the card's service deliverable — on a
+        // carry_invariant lineage the honest Up answer may be "large", and the
+        // SPEC forbids tuning that away.
+        bool   congruence_screen{ false };       ///< Master arm.  OFF ⇒ the accumulator is inert, StationAssembly::row_pos_enu is never populated, the sweep is never entered and no column, row or event exists.  REQUIRES a live @ref redundancy_census_stride / @ref redundancy_escalate_sigma — that sweep is the host whose stride, targeted escalation and trip schedule this card rides instead of adding a scheduler.  The loader HARD-ERRORS when neither is armed: a clean zero-sweep run would be indistinguishable from a genuine negative.
+        double congruence_report_sigma{ 4.0 };   ///< Trace/event threshold on @f$t_i@f$.  REPORTING ONLY — nothing in the solve reads it back.  NOTE the unit: @f$T_i@f$ carries the @f$1/q@f$, so it is a VARIANCE RATIO with @f$E=1@f$ under @f$H_0@f$ for every observable dimension; 4.0 means "four times the coordinate tension the model allows", NOT four sigma.  The per-station ladder and the MDB table, not this knob, are the deliverable.
+        int    congruence_event_holdoff_ep{ 20 };///< Per-station CONGRUENCE event rate limit in census epochs, so a persistently offset station logs its identity persistently rather than 120x/hour.  The per-station TRACE row is never rate-limited; only the individual events are.
+        // --- Constraint-aware global variance component
+        //     (docs/SPEC_sigma0_constraint_aware.md) — a RIDER on the census
+        //     accumulator above ------------------------------------------------
+        // The network's within-epoch sigma0 is a ROBUST MEDIAN of standardized
+        // DATA-row residuals.  That is the right statistic for RAIM attribution
+        // and it stays untouched, but it is structurally BLIND to tension
+        // absorbed by the carried priors — the largest constraint population in
+        // the solve by orders of magnitude, and the "postfit sigma0 launders a
+        // parked cell through the free ambiguities" blind spot.  LASER 5-74's
+        // global form puts the prior residuals in the numerator and the
+        // constraints in the redundancy; slide 5-85 is why only the NON-MINIMAL
+        // stochastic rows need the correction (a datum pin's contribution
+        // vanishes at both ends).  Two sums per side, one division, nothing
+        // consumed: the A4 raim_withhold_sigma0 guard, every gate and every
+        // deweight stay on the median sigma0 in v1.
+        bool   prior_residual_global_sigma0{ false };///< Master arm for the rider.  Requires @ref prior_residual_census (hard error otherwise).  WARNs without @c network.raim_redundancy_normalize, whose per-row Baarda r_i is the only honest data-side redundancy — the r == 1 fallback is taken and FLAGGED in-band per epoch rather than silently.  MEASURE-ONLY: no gate, no deweight, no withhold reads it; the solve is byte-identical.
         // --- Product-referenced measurement admission
         //     (docs/SPEC_measurement_admission.md; filter/NetworkMeasurementAdmission)
         // The corrupt-channel screen — LAYER 0 of the era-2 defense in depth
@@ -3194,7 +3296,7 @@ namespace GnssProcessor {
     struct ModelCorrections {
         // --- Atmosphere ---
         bool enable_troposphere{ true };               ///< Saastamoinen ZHD + GMF dry mapping (slant hydrostatic delay).
-        bool enable_klobuchar_ionosphere{ false };     ///< Klobuchar ionospheric delay model (single-frequency fallback only).  IF combinations and DD short-baselines cancel ionosphere geometrically; PPP-RTK uncombined estimates per-satellite slant iono states.  In all three of those configs the Klobuchar model is a no-op — but constructing the @c Ionosphere instance still pays for an extra @c Model::Geometry load and the Klobuchar coefficient parse.  Default off.  Enable only for single-frequency PPP runs that need a-priori iono.
+        bool enable_klobuchar_ionosphere{ false };     ///< Klobuchar ionospheric delay model (single-frequency fallback only).  IF combinations and DD short-baselines cancel ionosphere geometrically; PPP-RTK uncombined estimates per-satellite slant iono states.  In all three of those configs the Klobuchar model is a no-op, but constructing the @c Ionosphere instance still pays for an extra @c Model::Geometry load and the Klobuchar coefficient parse.  Default off.  Enable only for single-frequency PPP runs that need a-priori iono.
         bool enable_higher_order_ionosphere{ false };  ///< Apply second-order (B·cos(θ)·STEC/f³) and third-order (η·STEC²/f⁴) ionospheric delays as a per-signal observation-level correction, evaluated at the GIM-derived IPP using a centered tilted dipole geomagnetic field.  Requires a loaded IONEX GIM as the absolute-STEC source; the engine auto-loads the GIM when this flag is on even if @c estimation.ionosphere_weighting.enabled is false.  No-op when no GIM resolves (warning logged at startup).  Magnitudes: I₂ ~1–2 cm at L1 during high TEC, I₃ ~mm; the IF combination only partially cancels these, so the largest visible benefit is in standard PPP (IF).  For PPP-RTK uncombined and short-baseline DD the higher-order term mostly cancels in the SD / DD differencing, so this flag is closer to a consistency knob than a bias remover.  Default off.
 
         // --- Relativistic / propagation ---
@@ -3215,8 +3317,8 @@ namespace GnssProcessor {
         bool enable_receiver_pcv{ true };              ///< Receiver antenna phase centre variation.
         std::string receiver_antenna_type_override{ "" };  ///< Receiver antenna type when no RINEX header supplies one (live SBF/RTCM). Format "MODEL RADOME", e.g. "LEIAR25         NONE". Empty = use RINEX header (which always wins). Real-time path only.
         bool enable_receiver_cross_system_atx_fallback{ false };  ///< RECEIVER-ONLY: when the receiver ATX entry lacks a non-GPS frequency, substitute the nearest GPS band (E1->G01, E5a->G05, B1C->G01, B2a->G05, ...). Valid: receiver phase pattern is frequency-dependent on shared hardware. NEVER applied to the satellite antenna (E01 and G01 are different spacecraft). Opt-in.
-        bool enable_atx_frequency_fallback{ true };    ///< When the ATX entry doesn't have PCO/PCV for the requested frequency (common for L5 / E5* / B2a on older satellites or receiver antennas), look up the nearest available frequency on the same antenna and use its values instead of silently skipping the correction.  Cross-frequency PCO drift on a single physical antenna is typically <1 cm — better than the few-cm vertical residual that comes from skipping a frequency entirely.  Set false to revert to the legacy "skip if missing" behavior for A/B comparison.
-        bool require_atx_coverage{ false };            ///< When true, drop observations whose (sat, signal) lacks complete ATX coverage on **both** the satellite and receiver entries — i.e., satellite PCO+PCV and receiver PCO+PCV must all resolve to non-empty entries for the row's exact frequency, *without* @c enable_atx_frequency_fallback being used to substitute a neighbouring frequency.  Default false (legacy behaviour: observations are kept and any missing PCO/PCV is silently zeroed).  Set true when you've explicitly chosen `signal_mode: "all"` and want the ATX file to be the authoritative whitelist, dropping rows that would otherwise process without proper antenna calibration.
+        bool enable_atx_frequency_fallback{ true };    ///< When the ATX entry doesn't have PCO/PCV for the requested frequency (common for L5 / E5* / B2a on older satellites or receiver antennas), look up the nearest available frequency on the same antenna and use its values instead of silently skipping the correction.  Cross-frequency PCO drift on a single physical antenna is typically <1 cm, better than the few-cm vertical residual that comes from skipping a frequency entirely.  Set false to revert to the legacy "skip if missing" behavior for A/B comparison.
+        bool require_atx_coverage{ false };            ///< When true, drop observations whose (sat, signal) lacks complete ATX coverage on **both** the satellite and receiver entries, i.e., satellite PCO+PCV and receiver PCO+PCV must all resolve to non-empty entries for the row's exact frequency, *without* @c enable_atx_frequency_fallback being used to substitute a neighbouring frequency.  Default false (legacy behaviour: observations are kept and any missing PCO/PCV is silently zeroed).  Set true when you've explicitly chosen `signal_mode: "all"` and want the ATX file to be the authoritative whitelist, dropping rows that would otherwise process without proper antenna calibration.
         bool require_atx_coverage_for_ar{ false };     ///< When true, AR (WL constraints, LAMBDA NL search) skips (sat, signal) pairs lacking strict ATX coverage even though the underlying observations are still used in the float Kalman update.  Softer counterpart to @c require_atx_coverage: lets you keep "all"-signal float estimation alive while restricting integer fixing to the ATX-curated subset.  Default false (no AR-side gating).
         bool restrict_ar_for_substituted_atx{ false }; ///< When true, AR additionally skips (sat, signal) pairs whose ATX correction was computed via the frequency-fallback substitution chain (rather than an exact entry).  Targets specifically the cases where the antenna model is approximate; signals lacking ATX entirely (no substitution applied) are still allowed.  Use alongside or instead of @c require_atx_coverage_for_ar depending on which kind of imperfection you want to gate on.  Default false.
         bool loosen_amb_q_for_substituted_atx{ false }; ///< When true, ambiguity states whose underlying (sat, signal) had their ATX correction frequency-fallback-substituted use a looser process noise (@c ambiguity_q_substituted_atx) instead of the standard @c process_noise.ambiguity.  Compensates for the small but non-zero modeling error introduced by the substituted PCV/PCO.  Default false.

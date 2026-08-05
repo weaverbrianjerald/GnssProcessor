@@ -1740,6 +1740,66 @@ Eigen::VectorXd NetworkNormalEquations::rowRedundancy(
     return r;
 }
 
+Eigen::MatrixXd NetworkNormalEquations::blockResidualCofactor(
+    std::size_t station, const Eigen::MatrixXd& A_s_rows,
+    const Eigen::MatrixXd& A_r_rows, const Eigen::VectorXd& w_rows,
+    const Eigen::MatrixXd& cov_free_xs) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::blockResidualCofactor: "
+                                "station index out of range");
+    }
+    const Eigen::Index b = A_s_rows.rows();
+    if (A_r_rows.rows() != b || w_rows.size() != b) {
+        fail("blockResidualCofactor: row count mismatch across A_s/A_r/w");
+    }
+    if (A_s_rows.cols() != n_shared_) {
+        fail("blockResidualCofactor: A_s column count != n_shared");
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("blockResidualCofactor: cov_free_xs size mismatch");
+    }
+    const Station& st = stations_[station];
+    if (A_r_rows.cols() != st.n_local) {
+        fail("blockResidualCofactor: A_r column count != station n_local");
+    }
+    if (b == 0) {
+        return Eigen::MatrixXd();
+    }
+    // L_ij = a_iᵀ Cov(θ) a_j — rowRedundancy's leverage, evaluated OFF the diagonal
+    // too.  Same marginalization, same frame; the loop there is the i = j case of
+    // the two Gram products here.  Costs one N_rr solve for the b right-hand sides
+    // plus the (already cached) M = N_rr⁻¹ N_srᵀ.
+    Eigen::MatrixXd L;
+    const bool has_local = st.n_local > 0;
+    if (has_local) {
+        const Eigen::MatrixXd nrr_ar = st.Nrr_ldlt.solve(A_r_rows.transpose());  // n_local × b
+        L.noalias() = A_r_rows * nrr_ar;                     // A_r N_rr⁻¹ A_rᵀ
+        if (n_shared_ > 0) {
+            const Eigen::MatrixXd M = st.Nrr_ldlt.solve(st.N_sr.transpose());  // n_local × n_shared
+            const Eigen::MatrixXd G = A_s_rows - A_r_rows * M;                 // b × n_shared
+            L.noalias() += G * cov_free_xs * G.transpose();
+        }
+    } else if (n_shared_ > 0) {
+        L.noalias() = A_s_rows * cov_free_xs * A_s_rows.transpose();
+    } else {
+        L = Eigen::MatrixXd::Zero(b, b);
+    }
+    // Q = P⁻¹ − L.  The two Gram products are symmetric in exact arithmetic only,
+    // and the consumer factorizes this matrix to form ẽᵀQ⁻¹ẽ — a half-ulp asymmetry
+    // there is a silently wrong quadratic form, not a diagnostic, so symmetrize.
+    // NOT clamped: a fully-leveraged block must come back singular (header note 1).
+    Eigen::MatrixXd Q(b, b);
+    for (Eigen::Index i = 0; i < b; ++i) {
+        for (Eigen::Index j = i; j < b; ++j) {
+            const double lev = 0.5 * (L(i, j) + L(j, i));
+            const double v = (i == j) ? (1.0 / w_rows(i) - lev) : -lev;
+            Q(i, j) = v;
+            Q(j, i) = v;
+        }
+    }
+    return Q;
+}
+
 Eigen::Index NetworkNormalEquations::numLocal(std::size_t station) const {
     if (station >= n_active_) {
         throw std::out_of_range("NetworkNormalEquations::numLocal: "

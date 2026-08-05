@@ -1,0 +1,49 @@
+{
+ "_comment": [
+  "EXT-63, arm 11 — the 1 h SETTLED-WINDOW VALIDATION of the DEFECT-2 level fix",
+  "(= arm 10's posture: rxcb datum + a00 GIM anchor 32.24±2 + layer-2 level pin 3±0.5).",
+  "",
+  "Smoke ledger feeding this arm (all 20-ep, 2026-08-04): arm 9 confirmed the root cause",
+  "by response but the tension escaped into the unanchored L2 level (dived to -33); arm 10",
+  "closed that (L2 flat 2.0-2.6, sh_health gate 0/0/0 for the first time on this ladder)",
+  "and showed the remaining walk pump discharging into L1 alone: a00 ignited 23.9, sagged",
+  "to ~7 by ep 16, then INFLECTED UPWARD (7.06 -> 8.70 over the last 5 ep) while the deg-1",
+  "dipole peaked at ep 6 (39.5 TECU) and decayed (-> 30.3).  Both curves turning around",
+  "together is the signature of a TRANSIENT ignition-era pump — the clustered receiver",
+  "GF biases being harvested into the rx-CB carry states (709/1219 innovation-gate",
+  "withholds still at ep 20) — but a smoke cannot separate transient from equilibrium.",
+  "",
+  "PREDICTION (stated before the run):",
+  " - TRANSIENT reading (expected): a00 recovers through the run — sustained positive",
+  "   slope after the ignition dip, reaching >= 20-25 TECU by the second half-hour, while",
+  "   deg-1 rms decays below ~20 toward the control's 8-12 and the rx-CB carry fold",
+  "   fraction rises (innovation-gate withholds per epoch falling).",
+  " - EQUILIBRIUM reading (falsifies the transient story): a00 flatlines ~7-10 or",
+  "   re-descends; then the pump is a standing leveling/carry-era mechanism and must be",
+  "   NAMED before any anchor tightening (invariant #7 — do not overpower an unnamed",
+  "   valve; tightening sigma to 1.0 is the fallback ONLY with the mechanism identified).",
+  " - Gate: sh_health stays 0-withhold; a00_in_band 121/121.",
+  " - Consumer: WTZZ00DEU closed-loop stays nominal; clock-Δ rms at the tight anchor",
+  "   unchanged (the raw chain is verified clean to ±0.3 m — scripts/extcb_raw_if_check).",
+  "",
+  "FRESH LINEAGE: own paths, never resume onto another arm's snapshot (fingerprinted",
+  "posture: frequency_mode/bias-source/clock-gauge all inherited from the EXT-CB parent)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "estimation": {
+  "global_vtec_sh": {
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0,
+   "layer2_mean_vtec_prior_tecu": 3.0,
+   "layer2_mean_vtec_prior_sigma_tecu": 0.5
+  }
+ },
+ "network": {
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_1h_a00gim2/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_1h_a00gim2/state_snapshot.bin"
+ }
+}

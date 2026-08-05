@@ -98,6 +98,7 @@
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
 #include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
+#include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // Card 4 (M1) C3b: DD cycle-basis invariant carry
 #include "filter/NetworkMwWlLayer.hpp"             // M5 card WL-1: MW-seeded wide-lane pseudo-obs layer
@@ -114,8 +115,10 @@
 #include "filter/NetworkClockQc.hpp"
 #include "filter/NetworkFrameDiag.hpp"   // P1-3/P1-4 trigger instrumentation (SPEC_day129_frame_guards)    // INC-10: post-solve satellite-clock QC
 #include "filter/NetworkRhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
+#include "filter/NetworkMdb.hpp"               // Baarda reliability numbers / MDB (SPEC_network_mdb_reliability)
 #include "filter/NetworkRedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
 #include "filter/NetworkPrefitCensus.hpp"      // prefit census / fuse / birth check / topology (SPEC_prefit_census_observability)
+#include "filter/NetworkDatumGraph.hpp"        // structural S-basis dimension census (SPEC_datum_graph_census)
 #include "filter/NetworkSolPrep.hpp"    // INC-11pre: emit-side solution prep + disc signalling
 #include "filter/NetworkEmitStore.hpp"    // INC-11: emit / store / product-write + closed-loop
 #include "filter/NetworkFastClock.hpp"    // FC-1: split-cadence clocks-only fast pass
@@ -375,6 +378,162 @@ int Application::runNetwork() {
         /*seed_floor=*/pl_var_floor, /*seed_rate=*/pl_q_amb);
     int last_vce_hour = -1;   // content-hour bucket for the per-hour VCE log line
     double first_vce_s = -1.0;  // content time of the first monitored epoch (hour anchor)
+    // M2 v2 APPLY (docs/SPEC_carry_vce_apply.md): arm the LASER 5-95 variance-factor
+    // iteration over the monitor above.  Unlike the monitor's estimator this is NOT a
+    // run-TU local — α² is cross-epoch state read at three fold sites in three
+    // translation units (the PASS-B ambiguity injector, the D2 shared injector, and
+    // the two harvest mirrors), so it lives in ctx.carry per the decomposition rule
+    // and every seam reaches it through ctx.  Inert (unity factor, no state written)
+    // unless armed, so an OFF run is byte-identical.
+    if (ctx.knobs.vce_apply_on)
+        ctx.carry.vce_apply.configure(
+            NetworkCarryVce::parseComponents(config_.networkCarryVceApplyFamilies()),
+            config_.networkCarryVceApplySlew(), config_.networkCarryVceApplyMax(),
+            config_.networkCarryVceApplyMinRows());
+    // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md).  A run-TU local
+    // for the same reason carry_vce_est is one (see the "engine objects stay
+    // run-TU locals" note in app/NetworkRunContext.hpp) and threaded into exactly
+    // the same four seams: SB_T1A advances it, SB_LEVELING feeds pl/zwd/rxcb,
+    // SB_STASH_STATUS feeds pb/cb and drains it, and the teardown reads it.  It
+    // shares the M2 monitor's per-row arithmetic and adds NO solve effect: with
+    // the census armed the solution is byte-identical.
+    NetworkPriorResidual prires_est(
+        ctx.knobs.prires_on
+            ? NetworkCarryVce::parseComponents(nc.prior_residual_families)
+            : std::vector<std::string>{},
+        static_cast<double>(nc.prior_residual_window_epochs),
+        static_cast<double>(nc.prior_residual_min_rows),
+        ctx.knobs.prires_report_sigma,
+        ctx.knobs.prires_corrob,
+        // docs/SPEC_sigma0_constraint_aware.md — the constraint-aware global
+        // variance component rides this same accumulator (its prior side IS the
+        // census's folded rows) and is fed its data side from SB_RAIM, one seam
+        // earlier than the SB_STASH_STATUS drain.
+        ctx.knobs.prires_s0g);
+    // INC-3 corroboration resolver.  Injected here rather than plumbed through
+    // five seam signatures, and capturing slip_qc by reference because the
+    // evidence it reads is refreshed per epoch inside that channel.
+    //
+    // It gathers DOMAIN COUNTS only; the verdict RULE is
+    // @ref priorResidualConsensus, a pure function in the leaf header with its
+    // own unit cases.  That split is what makes the roster-independence claim
+    // checkable without a network — and the split exists because v1 put an OR
+    // here and the OR SATURATED: at 303 stations `cb` rows reading raw_stepped
+    // went 29 % -> 70 % and the b-cell collapsed 57 % -> 21 % on identical data,
+    // purely because P(any of N steps) -> 1.  See the rule's banner.
+    //
+    // The DOMAIN of a carried prior is the set of (station, satellite) pairs
+    // whose raw MW/GF observables can witness a discontinuity in it:
+    //   * `pl`          -> ONE pair (station, sat): the arc's own verdict;
+    //   * `zwd`, `rxcb` -> RECEIVER-level: that station's satellites;
+    //   * `pb`, `cb`    -> SATELLITE-level: the stations that measured that sat.
+    //
+    // Both multi-member domains are aggregated ONCE PER EPOCH into the two maps
+    // below rather than re-scanned per row.  Without that, a shared-family row
+    // would walk all 303 station maps: 131 cb rows x 303 stations = 40k map
+    // lookups per epoch, which would have made the census's own cost
+    // roster-quadratic and blown the section 5 budget the card just cleared at
+    // 0.17 ms/epoch.  Building them is one pass over the verdict table
+    // (~303 x 12 entries) and the per-row lookup is then O(log n).
+    //
+    // The cache is keyed on slip_qc.epoch_idx, the monotonic PROCESSED-epoch
+    // index, so it self-invalidates exactly when the evidence is refreshed.  All
+    // five feed sites are serial post-solve, so the mutable capture is race-free
+    // by construction (the parallel produce phase never reaches this).
+    if (ctx.knobs.prires_corrob) {
+        struct CorrobCache {
+            long long epoch = -1;
+            std::map<std::string, PriorResidualEvidence> by_sat;   // satellite-level domains
+            std::vector<PriorResidualEvidence>           by_sta;   // receiver-level domains
+        };
+        auto cache = std::make_shared<CorrobCache>();
+        prires_est.setCorroborator(
+            [&slip_qc, cache](std::string_view /*family*/, int station,
+                              std::string_view sat) -> PriorResidualEvidence {
+                const RawSlipEpoch& ep = slip_qc.epoch;
+                if (!ep.computed) return PriorResidualEvidence{};
+                if (cache->epoch != slip_qc.epoch_idx) {
+                    cache->epoch = slip_qc.epoch_idx;
+                    cache->by_sat.clear();
+                    cache->by_sta.assign(ep.verdict.size(), PriorResidualEvidence{});
+                    for (std::size_t i = 0; i < ep.verdict.size(); ++i)
+                        for (const auto& kv : ep.verdict[i]) {
+                            if (!kv.second.measured) continue;   // no predecessor ⇒ not in ANY domain
+                            const int step = kv.second.stepped ? 1 : 0;
+                            PriorResidualEvidence& a = cache->by_sta[i];
+                            ++a.n_measured; a.n_stepped += step;
+                            PriorResidualEvidence& b = cache->by_sat[kv.first];
+                            ++b.n_measured; b.n_stepped += step;
+                        }
+                }
+                if (station >= 0 && static_cast<std::size_t>(station) < ep.verdict.size()) {
+                    if (sat.empty()) return cache->by_sta[static_cast<std::size_t>(station)];
+                    // pl: a ONE-member domain.  priorResidualConsensus degenerates
+                    // to the member's own verdict there, so this family is
+                    // bit-for-bit unaffected by the consensus rule.
+                    const auto& vmap = ep.verdict[static_cast<std::size_t>(station)];
+                    const auto it = vmap.find(std::string(sat));
+                    if (it == vmap.end() || !it->second.measured)
+                        return PriorResidualEvidence{};
+                    return PriorResidualEvidence{1, it->second.stepped ? 1 : 0};
+                }
+                if (!sat.empty()) {
+                    const auto it = cache->by_sat.find(std::string(sat));
+                    if (it != cache->by_sat.end()) return it->second;
+                }
+                return PriorResidualEvidence{};
+            });
+    }
+    // BLOCKFORMAL (docs/SPEC_block_baarda.md).  The accumulator lives in
+    // ctx.carry (its feed site is inside the redundancy-census seam, which takes
+    // ctx but no run-TU reference), so it is SEATED here from config rather than
+    // constructed by the context: an unarmed run keeps the default-constructed
+    // empty-family instance whose enabled() is false and allocates nothing.
+    if (ctx.knobs.bb_on) {
+        ctx.carry.bb = NetworkBlockBaarda(
+            NetworkCarryVce::parseComponents(nc.block_baarda_families),
+            static_cast<double>(nc.block_baarda_window_epochs),
+            static_cast<double>(std::max(0, nc.block_baarda_min_blocks)),
+            ctx.knobs.bb_report_sigma, ctx.knobs.bb_corrob);
+        // INC-2 corroboration resolver.  A block IS a (station, satellite), which
+        // is exactly the key RawSlipEpoch::verdict is stored under, so unlike the
+        // prior-residual census's resolver this one needs no OR-fold over
+        // stations or satellites — it is a direct lookup, and that directness is
+        // the reason the b-cell means something at block granularity.
+        //
+        // `station` here is the APP roster index (the census loop's `i`), NOT the
+        // kernel slot: ep.verdict is indexed by the former and a slot lookup would
+        // silently read another station's satellites.
+        if (ctx.knobs.bb_corrob) {
+            ctx.carry.bb.setCorroborator(
+                [&slip_qc](int station, std::string_view sat) -> PriorResidualCorrob {
+                    const RawSlipEpoch& ep = slip_qc.epoch;
+                    if (station < 0
+                        || static_cast<std::size_t>(station) >= ep.verdict.size()
+                        || sat.empty())
+                        return PriorResidualCorrob::NoEvidence;
+                    const auto& vmap = ep.verdict[static_cast<std::size_t>(station)];
+                    const auto it = vmap.find(std::string(sat));
+                    // No entry, or an entry with no adjacent-epoch predecessor to
+                    // difference against, is NO EVIDENCE — never "flat".  Absence
+                    // of evidence is not evidence of absence, and a code-only or
+                    // single-frequency LOS lands here BY CONSTRUCTION.
+                    if (it == vmap.end() || !it->second.measured)
+                        return PriorResidualCorrob::NoEvidence;
+                    return it->second.stepped ? PriorResidualCorrob::Stepped
+                                              : PriorResidualCorrob::Flat;
+                });
+        }
+    }
+    // STATION CONGRUENCE (docs/SPEC_station_congruence.md).  Seated here for the
+    // block census's reason (its feed site is inside the redundancy-census seam),
+    // and with no resolver to install: the INC-3 separability join reads the block
+    // census's own hit count at the sweep site, not an injected callback.  An
+    // unarmed run keeps the default-constructed UNARMED instance.
+    if (ctx.knobs.cg_on)
+        ctx.carry.cg = NetworkCongruence(/*armed=*/true, kCongruenceWindowEpochs,
+                                         kCongruenceWarmupSamples,
+                                         ctx.knobs.cg_report_sigma);
     const bool   ura_on        = ctx.knobs.ura_on;                  // B1: emit per-sat URA quality channel
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
     const bool   clock_signal_basis_hold = ctx.knobs.clock_signal_basis_hold; // W6: HOLD each sat's IF-pin reference pair fixed across epochs (time-consistent δtˢ↔dˢ split) instead of re-selecting from each epoch's coverage — inert without estimate_sat_code_bias
@@ -1131,6 +1290,15 @@ int Application::runNetwork() {
         // SB_FRAMEDIAG consumer cannot leak into the next epoch's dump.
         ctx.carry.rhs_trip_pending.clear();
 
+        // Datum graph census (docs/SPEC_datum_graph_census.md): the spectral
+        // hand-off is a ONE-EPOCH value too, and for a sharper reason — an epoch
+        // that skips, withholds or throws before the rank gate would otherwise
+        // leave the PREVIOUS epoch's eigenvalue count in place and the next
+        // census pass would reconcile this epoch's topology against it without
+        // any column saying so.  Cleared here, at the top, so the only thing the
+        // census can ever read is an observation from its own epoch.
+        if (ctx.knobs.dg_on) ctx.carry.dg_spec.clear();
+
         // Card 8 (replay parity): feed the staged broadcast nav records whose
         // availability (toc, GPS scale) this epoch has reached.  The store's
         // current/previous retention then evolves exactly as under live
@@ -1533,6 +1701,19 @@ int Application::runNetwork() {
         // Default OFF => clears the map and returns => byte-identical.
         networkSdEwlAr(ctx, config_, log, traces, setup, se, pl_now_s, modeled, present);
 
+        // --- Card LV-5 (docs/SPEC_level_information_budget.md §12) ----------------
+        // Reduce the rx-CB de-mean μ HERE — after PASS A has settled which stations
+        // are present, before PASS B's parallel produce folds anything.  Both terms
+        // of every carry innovation (the stashed absolute posterior, the frozen
+        // x_lin) are already known at this point, so the LV-2 mean can be applied to
+        // the SAME epoch it describes instead of arriving one epoch late.  That lag
+        // is a feedback delay whose loop gain scales with how much carry information
+        // folds: harmless while the defective frame screen withheld two thirds of
+        // the priors, and a ~3-epoch limit cycle in the level once LV-4 admits them
+        // all.  Serial, one writer, and PASS B only reads the map — the same race
+        // contract as the rest of the carry cycle.  No-op unless armed.
+        networkRxCbDemeanPrepass(ctx, stations, present, pl_now_s);
+
         const bool within_epoch_armed = config_.networkRaimWithinEpoch();
         auto& cap_H = ws.cap_H;
         auto& cap_z = ws.cap_z;
@@ -1853,8 +2034,8 @@ int Application::runNetwork() {
         subEnd(SB_SHDEV_VTEC);  // D0b: close block 4b (T5 sh-dev + VTEC trace)
         subBegin(SB_T1A);       // D0b block 3: T1a SH health probe + fused adaptive-deweight gate
         networkShHealth(ctx, config_, log, traces, setup, se, est, x_s, asm_res, est_index_of,
-                        modeled, iono_deweight, carry_vce_est, datum_changed, pl_now_s,
-                        first_vce_s, last_vce_hour);
+                        modeled, iono_deweight, carry_vce_est, prires_est, datum_changed,
+                        pl_now_s, first_vce_s, last_vce_hour);
         // IONO-DEWEIGHT RELEASE HYGIENE (docs/SPEC_deweight_release_hygiene.md).
         // MUST sit HERE: networkShHealth above is the ONLY caller of the gate's
         // advance(), and the release edge created by that slew raises the weight the
@@ -1868,7 +2049,7 @@ int Application::runNetwork() {
         subEnd(SB_T1A);        // D0b: close block 3 (T1a health + deweight)
         subBegin(SB_LEVELING); // D0b block 5: phase-leveling carry harvest + T1d SH-convergence
         networkLeveling(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
-                        est_index_of, carry_vce_est, carry_warm, pl_now_s,
+                        est_index_of, carry_vce_est, prires_est, carry_warm, pl_now_s,
                         registered_clock_sats, registered_code_keys, shared_phase_keys);
         subEnd(SB_LEVELING);   // D0b: close block 5 (leveling + T1d SH-convergence)
         subBegin(SB_RAIM);     // D0b block 2: post-fit network RAIM + median-polish attribution
@@ -1876,7 +2057,7 @@ int Application::runNetwork() {
             networkPostFitRaim(ctx, config_, log, traces, se,
                                stations, asm_res, est_index_of, present, x_s, est,
                                plan.shared_datum, clock_refloat_sats, retro_flag_sats,
-                               retro_feed, n_arc_refloat_epoch);
+                               retro_feed, n_arc_refloat_epoch, prires_est);
         }
         subEnd(SB_RAIM);       // D0b: close block 2 (RAIM)
         subBegin(SB_CLOCKUPD); // D0b block 8: two-state clock update + fault QC + retro-flag feed
@@ -1891,6 +2072,17 @@ int Application::runNetwork() {
         // neither call (byte-identical, no cost beyond the flag tests).  The §4.3
         // keyed trace rides the same residual pass, so either toggle runs it.
         subBegin(SB_FRAMEDIAG);
+        // BLOCKFORMAL predict half (docs/SPEC_block_baarda.md §3): freeze each
+        // family's through-PREVIOUS-epoch σ̂₀ and clear the per-epoch ladders
+        // BEFORE the census's rider feeds this epoch's blocks.  Predict-then-
+        // update is the D5 v2 contract — a block standardized by a calibration it
+        // contributed to can standardize itself away.
+        if (ctx.knobs.bb_on) ctx.carry.bb.beginEpoch(pl_now_s, se.time.tow);
+        // Station-congruence predict half (docs/SPEC_station_congruence.md §2),
+        // same contract and same reason: freeze the through-PREVIOUS-epoch σ̂₀
+        // before the census's rider feeds this epoch's stations, so a station
+        // cannot standardize its own coordinate fault away.
+        if (ctx.knobs.cg_on) ctx.carry.cg.beginEpoch(pl_now_s, se.time.tow);
         if (nc.trace_postfit_sigma0 || nc.trace_postfit_keyed)
             networkPostfitSigma0(ctx, config_, log, traces, se, stations, est, x_s,
                                  asm_res, est_index_of);
@@ -1914,7 +2106,50 @@ int Application::runNetwork() {
         // knob keeps an unarmed run out of the translation unit entirely.
         if (ctx.knobs.redun_census_on)
             networkRedundancyCensus(ctx, config_, log, traces, se, stations, est,
-                                    plan.shared_datum, asm_res, est_index_of);
+                                    plan.shared_datum, asm_res, est_index_of, x_s);
+        // docs/SPEC_block_baarda.md INC-1..3 — drain this epoch's LOS-block
+        // ladders, write network_block_baarda.csv and emit the block identities.
+        // The FEED is inside the census above (that is the whole point: the block
+        // sweep inherits its stride and escalation instead of adding a scheduler),
+        // so this must run AFTER it; the accumulator carries nothing forward, so
+        // an epoch that swept blocks and never reached here would simply not
+        // report them.
+        if (ctx.knobs.bb_on)
+            networkBlockBaardaEmit(ctx, config_, log, traces, se, stations);
+        // docs/SPEC_station_congruence.md INC-1..3 — drain this epoch's per-station
+        // coordinate-offset records, write network_congruence.csv and emit the loud
+        // stations' identities.  The FEED is inside the census above (same host,
+        // same stride, no scheduler of its own), so this must run AFTER it.  It
+        // does NOT read ctx.carry.bb_hits — the separability join was resolved at
+        // the sweep site — so its position relative to the block census's own emit
+        // is free.
+        if (ctx.knobs.cg_on)
+            networkCongruenceEmit(ctx, config_, log, traces, se, stations);
+        // docs/SPEC_network_mdb_reliability.md INC-1 — aggregate this epoch's
+        // Baarda MDB rows, write network_mdb.csv, emit the reporting events and
+        // reconcile the uncheckable join.  BOTH orderings here are load-bearing:
+        // AFTER networkPostfitSigma0, whose per-family σ̂₀ the SCALED variant needs
+        // (read earlier it would silently apply the PREVIOUS epoch's inflation),
+        // and AFTER the redundancy census, whose per-epoch row counts the join
+        // compares against.  The feed sites are in SB_RAIM and in the census; this
+        // is only the drain, and the accumulator is stamped so an epoch that fed
+        // rows and never reached here leaks nothing forward.
+        if (ctx.knobs.mdb_on)
+            networkMdbFlush(ctx, config_, log, traces, se);
+        // docs/SPEC_datum_graph_census.md — the STRUCTURAL S-basis dimension:
+        // predicted from this epoch's admitted support topology and reconciled
+        // against the spectral count the solve glue handed forward.  Placed in
+        // the measure-only group because it is one: it reads the registration
+        // sets and `modeled`, and writes nothing but rows, events and counters.
+        // Order within the group is free — it shares no accumulator with the
+        // censuses above — so it sits last among them, ahead of the attribution
+        // seams that consume the trip predicate.  The master knob keeps an
+        // unarmed run out of the translation unit entirely.
+        if (ctx.knobs.dg_on)
+            networkDatumGraphCensus(ctx, config_, log, traces, se, stations, modeled,
+                                    est_index_of, plan, shared_phase_keys,
+                                    registered_code_keys, registered_clock_sats,
+                                    datum_changed);
         if (est.attribArmed())
             networkRhsAttribution(ctx, config_, log, traces, se, stations, est,
                                   plan.shared_datum, asm_res, est_index_of);
@@ -1928,7 +2163,7 @@ int Application::runNetwork() {
         subEnd(SB_FRAMEDIAG);
         subBegin(SB_STASH_STATUS); // D0b: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
         networkStashStatus(ctx, config_, log, traces, setup, se, est, x_s, plan, carry_vce_est,
-                           clock_refloat_sats, n_arc_refloat_epoch, registered_clock_sats,
+                           prires_est, clock_refloat_sats, n_arc_refloat_epoch, registered_clock_sats,
                            registered_code_keys, retro_emit_sats, shared_phase_keys,
                            sigma0_adapt, total_pins, vce_wants_cb, vce_wants_pb, dt,
                            datum_changed, changed_consts, n_clock, n_present, n_pb, n_cb,
@@ -2016,7 +2251,7 @@ int Application::runNetwork() {
 
     if (parallel_on) Eigen::setNbThreads(eigen_threads_saved);  // restore Eigen's own threading
 
-    return networkTeardown(ctx, config_, log, traces, setup, est, carry_driver, carry_vce_est, slip_qc, mw_wl_run, ewl_lanes, wl_run, wl_cons_run, emit_rebase_engine, pb_filter_engine, iono_deweight, sec_sub, kSubNames, synced, carry_innov_gate, mw_wl_on, ewl_on, wl_inject_on, uwl_on, lane_on, sh_dev_on, idw_on, emit_rebase_on, emit_pb_filter_on, sec_asm_wall_ms, sec_profiled_epochs, t_loop_begin, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed, cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d, cl_truth, cl_truth_llh, log_dir_);
+    return networkTeardown(ctx, config_, log, traces, setup, est, carry_driver, carry_vce_est, prires_est, slip_qc, mw_wl_run, ewl_lanes, wl_run, wl_cons_run, emit_rebase_engine, pb_filter_engine, iono_deweight, sec_sub, kSubNames, synced, carry_innov_gate, mw_wl_on, ewl_on, wl_inject_on, uwl_on, lane_on, sh_dev_on, idw_on, emit_rebase_on, emit_pb_filter_on, sec_asm_wall_ms, sec_profiled_epochs, t_loop_begin, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed, cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d, cl_truth, cl_truth_llh, log_dir_);
 }
 
 } // namespace GnssProcessor

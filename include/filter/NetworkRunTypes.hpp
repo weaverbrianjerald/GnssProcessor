@@ -25,7 +25,9 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>      // rxCbStepScale's median / MAD (nth_element, remove_if)
 #include <array>
+#include <cmath>          // the invariant step z (std::abs / std::isfinite)
 #include <map>
 #include <memory>
 #include <optional>
@@ -412,8 +414,58 @@ struct StationAssembly {
     /// (state key, A_r col, x_lin) recorded for the post-solve harvest.  Filled only
     /// under network.carry_rx_code_bias; same tuple shape as pl_rpb.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_cb;
-    int pl_cb_injected{0};     ///< rx-CB priors folded this epoch (produce-phase local; summed serially).
+    int pl_cb_datum_rows{0};   ///< RXCB-DATUM: zero-mean DCB prior rows folded this station-epoch (summed serially).
+        int pl_cb_injected{0};     ///< rx-CB priors folded this epoch (produce-phase local; summed serially).
     int pl_cb_innov_skips{0};  ///< rx-CB priors withheld by the innovation gate (receiver-reset response).
+    /// Card LV-2 (docs/SPEC_level_information_budget.md): this station-epoch's
+    /// contribution to the information-weighted mean carry innovation, keyed by the
+    /// receiver code-bias STATE KEY ("GPS_DCB", "GPS_IFB5", …).  Accumulated over
+    /// the rows this station actually FOLDED (a gate-withheld row exerts no force,
+    /// so it must not vote on the force being removed) and reduced SERIALLY at the
+    /// harvest into μ = Σλ·innov / Σλ.
+    ///
+    /// The key is the state key rather than the bare constellation on purpose: it
+    /// already CARRIES the constellation (every key is "<system>_<family>"), and it
+    /// additionally separates the DCB from each per-band IFB — physically distinct
+    /// quantities whose innovations must never be averaged together.  In the GPS
+    /// dual-frequency posture the two keyings coincide (one family, "GPS_DCB").
+    /// Empty unless network.rx_cb_carry_demean.
+    std::map<std::string, double> pl_cb_sum_lam_innov;
+    std::map<std::string, double> pl_cb_sum_lam;
+    int pl_cb_demeaned{0};     ///< LV-2: folds that actually applied a non-zero μ (0 through the lag-1 warm-up and any frozen-from-cold era — invariant #4).
+    int pl_cb_frame_gate_would_skip{0};  ///< LV-4 same-run A/B: folds the RETIRED frame-dependent screen would have withheld.  Counted only when the invariant step gate is armed.
+    /// Station congruence screen (docs/SPEC_station_congruence.md INC-0): the
+    /// per-row POSITION PARTIAL @f$\partial y_i/\partial\delta p@f$, expressed in
+    /// the station's local ENU frame — @c m_data × 3, row-aligned with the FIRST
+    /// @c m_data rows of @c A_s / @c A_r / @c w / @c y.
+    ///
+    /// The network holds every station coordinate fixed, so @c networkSplitStation_
+    /// DROPS the three position columns of @c H (they would break @c A_r's
+    /// linear-in-observation invariant — see the A6 guard there) and no other
+    /// structure in the run retains the geometry of a row.  A wrong held coordinate
+    /// is consequently invisible to every armed tier: median polish removes the
+    /// station common effect, per-row w-tests see only the post-absorption crumbs,
+    /// and the (station, satellite) block test pools ONE line of sight while a
+    /// coordinate error is spread coherently across ALL of them.  This block is the
+    /// one piece of state the congruence screen needs to ask the question at all.
+    ///
+    /// It is the JACOBIAN, not a raw line-of-sight vector, and deliberately so: it
+    /// is lifted verbatim out of @c em.H (whose position partial is @f$-\hat u@f$
+    /// per @c MeasurementModel::buildJacobianRow) and rotated by the ENU→ECEF
+    /// matrix at the station's held coordinate.  Taking the partial the measurement
+    /// model actually built — rather than re-deriving a sign per row type — is what
+    /// makes the screen's convention correct by construction for every current and
+    /// future row class: @c em.innovations and @c em.H are one linearization, so
+    /// @f$y \approx H\,\delta x@f$ holds row by row whatever the observable is.  A
+    /// row whose observable carries no geometry (an SH↔slant tie, a pin, a coupling
+    /// row) has an exactly-zero partial here, or lies past @c rows() entirely —
+    /// every append site in the assembly APPENDS past the data rows, so only rows
+    /// @f$[0,\text{rows}())@f$ can ever carry a non-zero triple.
+    ///
+    /// EMPTY unless @c network.congruence_screen is armed: an unarmed run allocates
+    /// nothing and executes not one extra floating-point operation, which is what
+    /// the card's OFF byte-identity A/B checks.
+    Eigen::MatrixXd           row_pos_enu;
     /// SD pre-reduce EWL (docs/SPEC_sd_ewl_prereduce.md, @c network.sd_ewl.trace):
     /// pre-formatted `network_sd_ewl.csv` rows for THIS station-epoch — one per
     /// satellite visit, carrying the elected signal pair, the arc outcome, and the
@@ -686,20 +738,185 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
 /// invariant-#1 event response for receiver resets / firmware bias jumps:
 /// |value_abs − x_lin| beyond k·√(var_eff + guard²) means the carried level
 /// and the station filter's own estimate disagree at hardware-jump scale.
+///
+/// ⚠ THE INNOVATION TEST IS FRAME-DEPENDENT — see @ref rxCbStepGate.  @p innov_m is
+/// @c value_abs − x_lin(cb), and x_lin is a FROZEN linearization point (seeded once
+/// by @c StateInitializer::initializeCodeBiases, never written back from the solve),
+/// so this statistic measures how far the carried value sits from an arbitrary
+/// frame, not whether anything happened.  @p innov_test = false disables it, leaving
+/// the gap + variance sanity checks that are frame-free; the harvest-side
+/// @ref rxCbStepGate then owns the event response.
 enum class RxCbInjectAction { Fold, SkipGap, SkipInnov };
 inline RxCbInjectAction rxCbInjectGate(double gap_s, double max_gap_s,
                                        double var, double q_m2s, double innov_m,
                                        double k_sigma, double guard_var_m2,
-                                       double& var_eff_out) {
+                                       double& var_eff_out, bool innov_test = true) {
     if (gap_s > max_gap_s) return RxCbInjectAction::SkipGap;
     const double var_eff = var + q_m2s * (gap_s > 0.0 ? gap_s : 0.0);
     // No <cmath> in this header: NaN via self-compare, runaway via a bound.
     if (!(var_eff > 0.0) || var_eff != var_eff || !(var_eff < 1e30))
         return RxCbInjectAction::SkipGap;
     var_eff_out = var_eff;
-    if (innov_m * innov_m > k_sigma * k_sigma * (var_eff + guard_var_m2))
+    if (innov_test
+        && innov_m * innov_m > k_sigma * k_sigma * (var_eff + guard_var_m2))
         return RxCbInjectAction::SkipInnov;
     return RxCbInjectAction::Fold;
+}
+
+/// Card LV-4 (docs/SPEC_level_information_budget.md §11): the FRAME-INVARIANT
+/// receiver-code-bias carry screen — the epoch-over-epoch STEP of the station's own
+/// ABSOLUTE estimate.
+///
+/// WHY THE OLD SCREEN COULD NOT WORK.  @ref rxCbInjectGate tests
+/// |value_abs − x_lin(cb)|.  Both the carried value and x_lin are absolute, but
+/// x_lin is FROZEN at its first-epoch seed, so that difference is just the standing
+/// correction x_r — a property of where the seed happened to land, not of anything
+/// the receiver did.  Two consequences, both measured on DOY-129:
+///   * a station whose true bias sits far from its seed trips it EVERY epoch for the
+///     whole run (~50–67 % of all folds withheld, with no receiver event anywhere);
+///   * a real receiver jump between epochs t−1 and t is INVISIBLE to it — at t's
+///     inject the carried value is still the pre-jump one and x_lin has not moved,
+///     so the statistic contains no information about the jump at all.
+///
+/// THE INVARIANT STATISTIC.  Both the freshly harvested posterior and the carried
+/// value are ABSOLUTE (x_lin + x_r), so their difference is invariant under any
+/// shift of the linearization point:
+///
+///     e   = value_abs_new − value_abs_prev
+///     var = var_new + var_prev + q·Δt          (both posteriors + the RW drift)
+///     z   = |e| / √(var + guard)
+///
+/// z > k means the receiver's OWN estimate stepped at hardware-jump scale between
+/// two solves — exactly the invariant-#1 event the carry needs a response to, and a
+/// quantity no reseeding, reframing or datum change can move.
+///
+/// THE SCALE MUST BE ROBUST AND PEER-RELATIVE, not formal — measured 2026-08-05.
+/// A first cut standardized e by its FORMAL variance (var_new + var_prev + q·Δt +
+/// 0.5 m guard ⇒ σ ≈ 0.52 m).  On the DOY-129 EXT-CB arm that erased **432 of 777**
+/// carried entries in 20 epochs (max z 48, 10 of 61 stations still carrying at run
+/// end) and the level went unstable.  The cause is not the receivers: at ignition
+/// the confounded (level ↔ rx-DCB) direction genuinely RE-REALIZES by metres per
+/// epoch, so the formal variance understates the true step scatter by two to three
+/// orders and any formal-σ test is a guaranteed mass-trigger.  Two corrections,
+/// both of which the network already uses elsewhere:
+///   * take the scale from THIS epoch's own steps (a Baarda-style robust σ̂ =
+///     1.4826·MAD, floored at the formal σ so a freakishly quiet epoch cannot make
+///     the screen hypersensitive) — the same idiom as the RAIM σ̂₀;
+///   * remove the MEDIAN step first.  A step COMMON to the whole network is a frame
+///     move, not 61 simultaneous receiver resets — the same distinction LV-2 draws
+///     for the fold.  What survives is the per-station outlier: exactly the event
+///     the carry needs a response to.
+struct RxCbStepScale {
+    double median{0.0};   ///< median step this epoch (the common frame move — NOT an event).
+    double sigma{0.0};    ///< robust scale, 1.4826·MAD, floored at the formal σ.
+    int    n{0};          ///< contributing entries.
+    bool   valid{false};  ///< false ⇒ too few entries to define a scale; screen stands down.
+};
+
+/// Build the robust per-epoch step scale.  @p steps is REORDERED in place.
+/// @param formal_sigma_floor √(var_new + var_prev + q·Δt) class floor (m).
+/// @param min_n Minimum entries for a defensible scale; below it the screen stands
+///        down entirely (invariant #7: a thin epoch must not define what "normal"
+///        is, and a false erase costs a real prior).
+inline RxCbStepScale rxCbStepScale(std::vector<double>& steps,
+                                   double formal_sigma_floor, int min_n) {
+    RxCbStepScale out;
+    steps.erase(std::remove_if(steps.begin(), steps.end(),
+                               [](double v) { return !std::isfinite(v); }),
+                steps.end());
+    out.n = static_cast<int>(steps.size());
+    if (out.n < min_n || out.n < 1) return out;
+    const std::size_t mid = steps.size() / 2;
+    std::nth_element(steps.begin(), steps.begin() + mid, steps.end());
+    double med = steps[mid];
+    if (steps.size() % 2 == 0) {
+        std::nth_element(steps.begin(), steps.begin() + (mid - 1), steps.end());
+        med = 0.5 * (steps[mid - 1] + med);
+    }
+    std::vector<double> dev(steps.size());
+    for (std::size_t i = 0; i < steps.size(); ++i) dev[i] = std::abs(steps[i] - med);
+    std::nth_element(dev.begin(), dev.begin() + mid, dev.end());
+    double mad = dev[mid];
+    if (dev.size() % 2 == 0) {
+        std::nth_element(dev.begin(), dev.begin() + (mid - 1), dev.end());
+        mad = 0.5 * (dev[mid - 1] + mad);
+    }
+    out.median = med;
+    out.sigma  = std::max(1.4826 * mad,
+                          std::max(formal_sigma_floor, 0.0));
+    out.valid  = std::isfinite(out.median) && std::isfinite(out.sigma) && out.sigma > 0.0;
+    return out;
+}
+
+/// @return z (0 on degenerate input) and whether it exceeded k·σ̂.  Degenerate or
+///        non-finite input, or an invalid scale, reports NO jump: a false erase
+///        costs a real prior, and the harvest's own finite checks already reject
+///        unusable values.
+struct RxCbStepVerdict { double z{0.0}; bool jumped{false}; };
+inline RxCbStepVerdict rxCbStepVerdict(double step_m, const RxCbStepScale& scale,
+                                       double k_sigma) {
+    RxCbStepVerdict out;
+    if (!scale.valid || !std::isfinite(step_m)) return out;
+    const double z = std::abs(step_m - scale.median) / scale.sigma;
+    if (!std::isfinite(z)) return out;
+    out.z = z;
+    out.jumped = (z > k_sigma);
+    return out;
+}
+
+/// Card LV-2 (docs/SPEC_level_information_budget.md): the outcome of reducing one
+/// receiver-code-bias family's accumulated (Σλ·innov, Σλ, n_stations) into the
+/// information-weighted mean innovation the NEXT epoch's folds subtract.
+struct RxCbDemeanReduce {
+    double mu{0.0};       ///< the μ to apply (fresh, or @p prev_mu held).
+    bool   fresh{false};  ///< false ⇒ FROZEN: the epoch was too thin to define a frame.
+};
+
+/// Card LV-2: μ = Σλ·innov / Σλ over the rows that actually FOLDED this epoch.
+///
+/// Subtracting it makes Σλ(innov − μ) ≡ 0 in the fold's DELTA coordinates, so the
+/// carry transports every between-station DIFFERENCE at full stiffness and stops
+/// re-asserting LAST EPOCH's common-mode realization — the flywheel this card was
+/// written to remove.
+///
+/// ⚠ WHAT IT DOES **NOT** DO (measured 2026-08-05, and the card's own docs said
+/// otherwise until then): it does not leave the common mode FREE.  The fold's
+/// information is unchanged by the de-mean — only its RHS moves — so the carry
+/// still puts Σλ (~100 units) on the common-mode direction.  In ABSOLUTE terms
+/// each row now targets `value_abs_i − μ`, whose information-weighted mean is
+///
+///     mean_λ(value_abs) − μ  =  mean_λ(x_lin)
+///
+/// i.e. the de-meaned carry PINS the receiver-DCB common mode to the mean of the
+/// frozen first-epoch linearization points.  It swaps a rolling memory for a
+/// frozen one; the designed authority (the rx-DCB datum at 0.01, the a₀₀ anchor at
+/// 0.25) is still outvoted ~400:1.  Consequence, measured: changing what
+/// `initializeCodeBiases` seeds — which is exactly what card LV-1 does — moves the
+/// ionosphere level by ~10 TECU through this channel and nothing else (arm 23 vs
+/// arm 27: settled 35.24 vs 26.45, identical row sets).  Freeing the direction
+/// needs the common mode removed from the carry's INFORMATION, which the
+/// per-station diagonal channel cannot express — see SPEC §13.
+///
+/// Invariant #7, decoupling edge: an epoch whose folded set is thin (mass re-seed,
+/// RAIM re-reduce, a station-poor era) must NOT be allowed to define the frame, so
+/// below @p min_sta contributing stations the previous μ is HELD and the caller
+/// counts the freeze.  A non-finite or non-positive Σλ freezes the same way — a
+/// mean with no weight behind it is not a measurement.
+///
+/// Pure function (no <cmath> in this header: NaN via self-compare), so the
+/// arithmetic is unit-testable away from the run loop.
+inline RxCbDemeanReduce rxCbDemeanMu(double sum_lam_innov, double sum_lam,
+                                     int n_sta, int min_sta, double prev_mu) {
+    RxCbDemeanReduce out;
+    out.mu = prev_mu;
+    if (n_sta < min_sta) return out;
+    if (!(sum_lam > 0.0) || sum_lam != sum_lam) return out;
+    if (sum_lam_innov != sum_lam_innov) return out;
+    const double mu = sum_lam_innov / sum_lam;
+    if (mu != mu || !(mu < 1e30) || !(mu > -1e30)) return out;
+    out.mu = mu;
+    out.fresh = true;
+    return out;
 }
 
 /// Iono-2 v3k (erase-policy split): the D5-only slip response — KEEP the
@@ -877,6 +1094,26 @@ struct EpochStatusRow {
     std::optional<long long> ddfold_degen_blocks;  ///< blocks that folded INERTLY this epoch (PD screen tripped ⇒ M=0)
     std::optional<long long> ddfold_degen_rows;    ///< Σ K over those blocks — carried dimension that took NO data
     std::optional<double>    ddfold_min_pivot_rel; ///< worst relative pivot d_min/d_max this epoch (≤ 0 ⇒ indefinite)
+    // --- prior-residual census (docs/SPEC_prior_residual_census.md) -----------
+    // The per-epoch face of the carried-prior census.  In the schema only when
+    // network.prior_residual_census is armed (the adm precedent — this card's OFF
+    // contract is STRUCTURAL byte-identity), and blank on an epoch the census did
+    // not run.  The per-(family × label) detail is in network_prior_residual.csv;
+    // these five are the timeline channel, and prires_rows is the DENOMINATOR
+    // without which the reported count means nothing.
+    std::optional<long long> prires_rows;        ///< carried priors censused this epoch, all families and labels
+    std::optional<long long> prires_rows_resp;   ///< of those, RESPONDED (an independent mechanism had already fired) — the positive control's population
+    std::optional<long long> prires_rows_frame;  ///< of those, FRAME (datum handover / reref / inflate-q / hold) — the invariant-#7 edges
+    std::optional<long long> prires_n_reported;  ///< of those, |t| above network.prior_residual_report_sigma (a TRACE threshold; nothing acted)
+    std::optional<double>    prires_max_t;       ///< the worst |t| this epoch
+    // --- constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) ----
+    // A SEPARATE schema flag from the five above, deliberately: the census's own
+    // §9.1 A/B arms compare network_epoch_status.csv across builds, so a
+    // census-only run must keep exactly the schema it had before this rider
+    // existed.  Present only when network.prior_residual_global_sigma0 is armed.
+    std::optional<double>    s0g_sigma0;         ///< σ̂₀_global = sqrt((Σw·v² + Σw·ê²)/(Σr_data + Σr_prior)); blank when Σr ≤ 0 (never 0)
+    std::optional<double>    s0g_tension;        ///< Σw·ê² / Σw·v² — the fraction of the epoch's weighted misfit living in the CARRY.  THE HEADLINE.
+    std::optional<int>       s0g_flags;          ///< in-band degradation bitmask (@c NetworkPriorResidual::GlobalFlag): 1 APPROX(r≡1), 2 NO_DATA, 4 NO_PRIOR, 8 DEGENERATE, 16 RNEG_DROP
 };
 
 /// Decomposition INC-7 (plan §Control flow): disposition of a relocated

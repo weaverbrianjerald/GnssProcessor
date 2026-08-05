@@ -6,21 +6,21 @@
 We use lower-case Latin letters for indices and calligraphic upper-case
 for sets:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
-\item $\rx \in \rxset$ --- receiver.  Single-receiver modes (PPP,
+\item $\rx \in \rxset$ is the receiver.  Single-receiver modes (PPP,
       PPP-RTK) have $|\rxset| = 1$; baseline modes have a fixed
       reference and one or more rovers; the network producer
       (\texttt{PPP\_RTK\_Network}) carries a peer set of
       $|\rxset| \ge 2$ stations (50--305 in practice) with no
       reference/rover asymmetry.
 \item $g \in \sysset = \{\text{GPS}, \text{GAL}, \text{BDS},
-      \text{GLO}, \text{QZS}, \dots\}$ --- constellation.
-\item $\sat \in \satset{g}$ --- satellite of constellation $g$.
+      \text{GLO}, \text{QZS}, \dots\}$ is the constellation.
+\item $\sat \in \satset{g}$ is a satellite of constellation $g$.
       $\piv{g}$ denotes the pivot satellite of constellation $g$
       under the BSSD parameterisation (\Cref{sec:diff}).
-\item $\sigl \in \sigset$ --- signal/observation type, identified by
+\item $\sigl \in \sigset$ is the signal/observation type, identified by
       its RINEX-3 three-character code (e.g.\ \texttt{C1C}, \texttt{L2W},
       \texttt{L5X}).
-\item $k \in \mathbb{N}$ --- discrete epoch index.
+\item $k \in \mathbb{N}$ is the discrete epoch index.
 \end{itemize}
 
 \paragraph{Vectors and matrices.}
@@ -33,8 +33,8 @@ $\hat{\stateV}_{k|k}$ vs.\ $\tilde{\stateV}_{k|k-1}$.
 For each receiver/satellite/signal triple, the engine consumes two
 real-valued observables (in metres) per epoch:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
-\item $\code^\sat_{\rx,\sigl}$ --- pseudorange (code), in metres.
-\item $\phaseo^\sat_{\rx,\sigl}$ --- carrier phase, scaled to metres
+\item $\code^\sat_{\rx,\sigl}$ is the pseudorange (code), in metres.
+\item $\phaseo^\sat_{\rx,\sigl}$ is the carrier phase, scaled to metres
       via $\lambda_\sigl$.  Beyond the range, clock, and atmosphere
       terms it shares with the code, its ambiguous (non-range) part is
       $\lambda_\sigl N^\sat_{\rx,\sigl}$ plus the fractional phase
@@ -59,7 +59,7 @@ is
 \label{eq:iono-scaling}
 \end{equation}
 Here $f_1$ is the GPS~L1 frequency ($1575.42$~MHz), used as the common
-reference for \emph{every} constellation --- not the band-1 frequency of
+reference for \emph{every} constellation, not the band-1 frequency of
 the satellite's own system.  The estimated state $I^\sat_{\rx,1}$ is
 therefore GPS-L1-equivalent even for BDS/GLO/GAL satellites
 (\texttt{MeasurementModel::buildJacobianRow}: \texttt{f\_ref =
@@ -97,7 +97,7 @@ Symbol & Units & Meaning \\
 \midrule
 $\rxpos_\rx, \satpos$         & m   & ECEF position of receiver/satellite \\
 $\geomrange^\sat_\rx$         & m   & geometric range $\|\satpos - \rxpos_\rx\|$ \\
-$\los^\sat_\rx$               & --- & unit LOS from $\rx$ to $\sat$ in ECEF \\
+$\los^\sat_\rx$               & none & unit LOS from $\rx$ to $\sat$ in ECEF \\
 $\sLight\,\mathrm{d}t_\rx$    & m   & receiver clock offset (scaled by $c$) \\
 $\sLight\,\mathrm{d}t^\sat$   & m   & satellite clock offset (CLK product in user modes; estimated state \texttt{"<sat>|SC"} in \texttt{PPP\_RTK\_Network}) \\
 $\sLight\,\delta t^{(g)}_\rx$ & m   & receiver inter-system time offset for constellation $g\neq g_{\mathrm{ref}}$ \\
@@ -113,7 +113,7 @@ $\varepsilon^\code, \varepsilon^\phaseo$ & m & residual (multipath + thermal) \\
 $\bm{v}_\rx$                  & m/s & receiver velocity (optional / IMU state) \\
 $\lamwl,\ \lamnl,\ \lamewl$   & m   & wide- / narrow- / extra-wide-lane wavelength $\sLight/(f_a \mp f_b)$ for the lane's band pair \\
 $\lamif$                      & m   & effective ionosphere-free wavelength $|c_1\lambda_1 - c_2\lambda_2|$ with the IF coefficients $c_1 - c_2 = 1$; not an integer wavelength (\dcref{sec:slip}{the cycle-slip document}) \\
-$\Cbe$                        & --- & body-to-ECEF attitude (direction-cosine) matrix \\
+$\Cbe$                        & none & body-to-ECEF attitude (direction-cosine) matrix \\
 \bottomrule
 \end{tabular}
 \end{center}

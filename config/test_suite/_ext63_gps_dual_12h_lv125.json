@@ -1,0 +1,58 @@
+{
+ "_comment": [
+  "EXT-63, arm 25 \u2014 12 h FULL STACK: canonical + LV-1 (seed frame) + LV-2 (carry",
+  "de-mean) + LV-4 (frame-invariant carry screen) + LV-5 (within-epoch mu).  Graded",
+  "against arm 24 on the same window.",
+  "",
+  "LADDER SO FAR (1 h settled window, 20-60 min, GIM reference 32.24 TECU):",
+  "  arm 13 canonical        settled mean 17.45  sd  3.71  range 12.2",
+  "  arm 19 +LV-1+LV-2       settled mean 37.43  sd  4.98  range 14.3",
+  "  arm 21 +LV-4            settled mean 36.93  sd 15.53  range 54.1  (lag-1 limit cycle)",
+  "  arm 23 +LV-5            settled mean 35.24  sd  4.69  range 13.9  end 32.68",
+  "The level defect closes (17.45 -> 35.24 against 32.24) with the oscillation removed",
+  "and the carry fully admitted (97.5 % folded vs 43.5 % on the canonical posture).",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - a00 holds near GIM over 12 h rather than settling and then walking: predict the",
+  "   hour-mean stays inside ~28-38 TECU for every hour after the first, with no",
+  "   monotone trend.  A slow walk means the designed authority (the per-epoch a00",
+  "   anchor) is being outvoted by the newly admitted carry information over long",
+  "   horizons -- which an hour cannot see and which would be the next card.",
+  " - Residual common mode (LV-5's own readout) stays ~1e-2 m over 12 h.  If mean",
+  "   |resid| grows with the window, the prepass candidate set and PASS B's folded set",
+  "   are diverging and the fix is a two-pass PASS B, not a threshold.",
+  " - LV-4 erases stay ~1 % of checks; a climb means the peer-relative scale is",
+  "   tracking a real per-station instability -- a finding about the network.",
+  " - deg-1 dipole: it GREW with the level fix at 1 h (end 20.11 -> 31.30).  Predict it",
+  "   stabilizes rather than growing without bound; if it keeps climbing over 12 h, the",
+  "   clustered-spread mechanism is being fed by the admitted carry and needs its own",
+  "   card before this posture is promoted anywhere.",
+  " - Grade the level on network_vtec_sh_health.csv a00_tecu ONLY (network_ionosphere.csv",
+  "   is frame-broken by construction, and LV-1 deliberately moves the seed it omits)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 43200.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "rx_cb_carry_demean_within": true,
+  "rx_cb_carry_step_gate": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_12h_lv125/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_12h_lv125/state_snapshot.bin"
+ }
+}

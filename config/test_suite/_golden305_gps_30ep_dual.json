@@ -1,0 +1,60 @@
+{
+ "_comment": [
+  "GOLDEN-305, 30 epoch, DUAL-FREQUENCY probe — the golden305 posture (303 in-network GPS-",
+  "only, channel_mode single, lane_carry OFF, full golden instrumentation, WTZZ00DEU closed-",
+  "loop consumer) with the ONLY change being processing.frequency_mode: all -> dual.",
+  "30 epochs at 30 s = 900 s.",
+  "",
+  "⚠️ EXPECTED OUTCOME: ZERO SOLUTION EPOCHS, exit 1.  This is a CONFIRMATION probe, not a",
+  "speed measurement.  The identical single-knob change at 63 stations",
+  "(_golden63_gps_1h_dual.json, 2026-08-04) withheld all 121 epochs and exited 1.  The",
+  "mechanism is Odijk et al. 2016 (J Geod 90:15-44) estimability: in the undifferenced/",
+  "uncombined model the satellite code biases on the FIRST TWO frequencies are not",
+  "estimable — the IF combination of (d^s_1, d^s_2) is absorbed into the satellite CLOCK and",
+  "the GF combination into the IONOSPHERE.  Two frequencies, two code-bias parameters, both",
+  "consumed.  Estimable satellite OSB appears only from the THIRD frequency onward.  This",
+  "codebase realises exactly that S-basis as the W6 IF-pin a1+a2=1, so under dual the pin",
+  "eats both bands and network.estimate_sat_code_bias (TRUE in this lineage) asks for",
+  "parameters that do not exist.  The OSB columns are null BY CONSTRUCTION, not by data.",
+  "",
+  "WHAT THIS PROBE IS FOR: the deficiency above is per-SATELLITE and structural, so it must",
+  "be station-count INDEPENDENT.  303 stations is ~5x the 63-station arm and cannot add a",
+  "band.  If this run also produces zero solution epochs, that is the confirmation.  If it",
+  "somehow solves, the 63-station failure was NOT the estimability wall and the whole",
+  "diagnosis needs reopening — which is precisely why the probe is worth its few minutes.",
+  "",
+  "RECOGNITION SIGNATURE (from the 63-sta arm — check these, not the absence of a crash):",
+  "  - 'Network (D0) TOW' lines: 0  (section timers print per SOLVED epoch)",
+  "  - Card 4 PD-safe fold INC-0: 'the DD-prior fold ran on ZERO epochs'",
+  "  - Card PA: drop-and-heal fires, soft-anchors near-null PHASE-BIAS columns, 0 RECOVERED",
+  "  - fatal: 'the shared datum is under-specified - a near-null W6 code-bias direction'",
+  "  - every downstream instrument reports its own emptiness (0 emission passes) rather than",
+  "    looking clean — the invariant-#4 shape: all tiers print ARMED, ingest is perfect,",
+  "    every epoch walks, and nothing is produced.",
+  "",
+  "ALSO EXPECTED, not a defect: the GPS EWL (L2,L5) and UWL-1 tiers lose their third band",
+  "and go INERT while still printing ARMED — the loader only advises",
+  "(GnssConfigLoadNetwork.cpp:5532 is a log->info, not a guard).",
+  "",
+  "IF A SPEED NUMBER IS WANTED, this is not the config: dual needs",
+  "network.estimate_sat_code_bias: false to be the CONFORMANT two-frequency model (there is",
+  "no OSB to estimate below 3 bands, so switching it off is conformance, not a compromise).",
+  "That is a structurally WEAKER producer — it also forfeits the third-frequency estimable",
+  "PHASE bias and the lane tiers — so grade it as 'a two-frequency producer', never as 'the",
+  "golden posture on two bands'.",
+  "",
+  "FRESH LINEAGE ONLY: frequency_mode changes the state vector.  Own paths; never resume."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden305_gps.json"
+ ],
+ "processing": {
+  "max_duration_s": 900.0,
+  "frequency_mode": "dual"
+ },
+ "network": {
+  "max_duration_s": 900.0,
+  "product_output_path": "C:/GnssProcessor/runs/golden305_gps_30ep_dual/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/golden305_gps_30ep_dual/state_snapshot.bin"
+ }
+}

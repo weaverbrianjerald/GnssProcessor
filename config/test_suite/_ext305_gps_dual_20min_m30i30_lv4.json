@@ -1,0 +1,75 @@
+{
+ "_comment": [
+  "ARM 36 — the MASK EXTREME at scale, LV-4 half.  Identical to arm 35",
+  "(_ext305_gps_dual_20min_m30i30.json) except for ONE knob:",
+  "",
+  "    network.rx_cb_carry_step_gate : true      (LV-4)",
+  "",
+  "De-mean stays OFF, so the loader forces LV-5 off (GnssConfigLoadNetwork.cpp:6630) and",
+  "LV-1 is off — this is the SPEC §17 item-1 posture, 'LV-4 alone, LV-5 machinery idle',",
+  "carried to the mask extreme at 303 stations.  Read arm 35's comment block for the",
+  "design, the a00-sigma circularity check, and what is and is not gradeable.",
+  "",
+  "THE ONE NUMBER THIS PAIR EXISTS TO PRODUCE: median postfit phase rms (STA rows,",
+  "network_pf_keyed.csv) of arm 36 over arm 35, at identical observations.  The LV-4",
+  "data-side cost measured so far, always as a one-knob pair at fixed masks:",
+  "",
+  "    obs 10 / iono 25, 61 sta   0.01020 -> 0.01670   +64 %   (SPEC §19.3)",
+  "    obs 15 / iono 25, 61 sta   0.00800 -> 0.01080   +35 %   (arm 34, this session)",
+  "    obs 30 / iono 30, 303 sta  <arm 35> -> <arm 36>   ?",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN.  The cost is not a constant of the mechanism — it",
+  "nearly halved from obs 10 to obs 15.  The mechanism §19.3 proposes is that LV-4's full",
+  "admission delivers carry information the observations do not support; the information",
+  "that is least supported is the low-elevation code that sets the receiver DCBs.  If that",
+  "reading is right the cost should keep shrinking as the mask removes exactly that code,",
+  "so predict +10..25 % here, i.e. materially below arm 34's +35 %.  If instead it returns",
+  "to ~+64 %, or grows, the cost is NOT about low-elevation code and §19.3's mechanism is",
+  "wrong even though its measurement stands.",
+  "",
+  "SECOND PREDICTION, on the level (DIAGNOSTIC, invariant #5).  LV-4's level offset has",
+  "tracked the obs mask monotonically so far (-28.4 TECU vs GIM at obs 10, -2.6 at obs 15,",
+  "i.e. +25.8 TECU for +5 deg of mask).  If that continued naively to obs 30 the field",
+  "would be absurdly high, so it must saturate or reverse somewhere.  Predict arm 36 lands",
+  "ABOVE arm 35 but by a small margin (a few TECU), because at obs 30 there is little",
+  "low-elevation code left for the admitted carry to lock in — the same starvation that",
+  "arm 35's comment predicts will hurt a00's observability hurts LV-4's actuator too.",
+  "",
+  "READ THE a00 SIGMA FIRST.  If std_tecu approaches the 2.0 prior in EITHER arm, both",
+  "level numbers are prior-driven and neither prediction above can be scored.  The rms",
+  "grade survives that; the level read does not.",
+  "",
+  "Fresh lineage, own paths; never resume onto another arm's snapshot.",
+  "",
+  "NOTE ON THE EXTENDS LINE.  This arm extends _ext305_gps_dual_1h.json directly rather",
+  "than arm 35, and restates arm 35's overrides verbatim.  Chaining off arm 35 would sit",
+  "one level deeper than the loader's 8-level guard allows and the run dies at load",
+  "(measured: 'chain deeper than 8 levels ... refusing to continue').  Keeping both arms",
+  "at the SAME depth off the same base also makes the one-knob claim structural: the two",
+  "files differ by exactly rx_cb_carry_step_gate and the two output paths."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext305_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 1200.0,
+  "elevation_mask_deg": 30.0
+ },
+ "estimation": {
+  "ionosphere_weighting": {
+   "elevation_cutoff_deg": 30.0
+  }
+ },
+ "network": {
+  "max_duration_s": 1200.0,
+
+  "rx_cb_carry_step_gate": true,
+
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+
+  "product_output_path": "C:/GnssProcessor/runs/ext305_dual_20min_m30i30_lv4/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext305_dual_20min_m30i30_lv4/state_snapshot.bin"
+ }
+}

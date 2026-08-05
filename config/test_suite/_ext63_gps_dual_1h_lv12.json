@@ -1,0 +1,51 @@
+{
+ "_comment": [
+  "EXT-63, arm 19 — the 1 h SETTLED-WINDOW validation of arm 18 (canonical single-layer",
+  "EXT-CB posture + LV-1 + LV-2).  The counterpart of arm 13, one window, two knobs.",
+  "RUN ONLY IF THE ARM-18 SMOKE MATCHES ITS PREDICTION (staged cadence).",
+  "",
+  "WHAT ONLY 1 h CAN SHOW.  Arm 13 (the canonical posture at 1 h) is the reference:",
+  "ignition 24.7, trough 7.1, recovery to 22.4 by 30 min, a SECOND breath down to 10.1 at",
+  "~45 min, ending 20.95 rising; gate 0/0/0; in-band 121/121; deg-1 peak 31; rx-CB carry",
+  "fold fraction stuck at 43 %.  The BREATHING (+/-6 TECU on a ~20-30 min cycle) is the",
+  "open mechanism LV-2 exists to damp, and it is invisible at 20 epochs.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - Fold fraction rises materially above 43 % (the direct LV-1+LV-2 effect on the",
+  "   prefit inject gate); skip rate near zero.",
+  " - Breathing amplitude damps vs arm 13: the second trough should be SHALLOWER than",
+  "   10.1 TECU and the level should not re-dip below ~15 after the first recovery, IF",
+  "   the carry's re-injection of an older frame realization is what drives the cycle.",
+  "   If the breathing is unchanged with mu demonstrably non-zero and folds up, the",
+  "   flywheel is NOT the breathing's driver and the next suspect is the leveling-era",
+  "   ratchet on the confounded direction (handoff S ROOT CAUSE, still inferred).",
+  " - a00 ends in-band and >= arm 13's 20.95; gate 0/0/0; in-band 121/121.",
+  " - Grade the LEVEL only on network_vtec_sh_health.csv a00_tecu + a cross-check with",
+  "   scripts/extcb_gim_verdict.py.  Do NOT grade it on network_ionosphere.csv: that",
+  "   trace emits x_r alone while the per-LOS iono is SEEDED at allocation, so it is a",
+  "   correction, not an absolute slant -- and LV-1 deliberately changes that seed, which",
+  "   moves the broken trace without moving the physics.",
+  " - Watch the two sigma0 families in opposite directions (the lane A/B lesson): if the",
+  "   prior side (prires cb/rxcb) gets quieter while the post-fit DATA side (block-Baarda",
+  "   G, station congruence) gets louder, that is OVER-RETENTION, not improvement."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv12/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv12/state_snapshot.bin"
+ }
+}

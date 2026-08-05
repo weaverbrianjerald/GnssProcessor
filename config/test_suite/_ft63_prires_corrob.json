@@ -1,0 +1,46 @@
+{
+ "_comment": [
+  "PRIOR-RESIDUAL CENSUS INC-3 (docs/SPEC_prior_residual_census.md) -- the",
+  "CORROBORATION arm.  Extends _ft63_prires_on.json; the ONLY delta is",
+  "network.prior_residual_corroborate (plus the run paths).",
+  "",
+  "WHY THIS IS A v1 DELIVERABLE AND NOT A CYCLE-FOUR ONE: D5 spent THREE field",
+  "iterations before anyone joined its flags to raw-observable evidence, and that",
+  "join is what revealed its population to be a persistent MODEL ERROR rather than",
+  "slips -- 2.1 % of D5 resets showed a raw MW/GF step against 95 % on the same",
+  "run's known-discontinuity control, and v3 suppressed 97.3 % of trips by",
+  "requiring positive evidence.  This card ships the contingency table in cycle ONE",
+  "for every family it touches, so that mistake cannot be repeated per family.",
+  "",
+  "THE B-CELL is the number that matters: rows flagged above report_sigma for which",
+  "the raw observable was MEASURED and did NOT move.  On the DD family it was 97 %.",
+  "A large b-cell on cb or rxcb says the same thing it said for D5 -- the flags are",
+  "model tension, not events -- and that verdict is the design input to the",
+  "SUCCESSOR response card, which this one deliberately does not write.",
+  "",
+  "network.cycle_slip.gap_instrument is already ON in this lineage; the loader",
+  "would AUTO-ARM it with a WARN otherwise, because without it the slip-QC",
+  "qualification pass never runs and every contingency cell lands in the",
+  "'no_evidence' column.  mw_lli_corroborate is deliberately NOT touched: it is a",
+  "DECISION card and would perturb the very population being measured.",
+  "",
+  "JOIN SEMANTICS, so the table is read correctly:",
+  "  * pl   -- the (station, satellite) verdict directly;",
+  "  * zwd, rxcb -- RECEIVER-level quantities with no satellite, so the verdict is",
+  "    OR-ed over that station's satellites ('did anything at this station step?');",
+  "  * pb, cb -- SHARED, no station, so OR-ed over the stations that measured that",
+  "    satellite this epoch.",
+  "In every case Stepped dominates Flat dominates NoEvidence: absence of evidence",
+  "is never evidence of a slip and never evidence of its absence either.",
+  "",
+  "Grade on a CONVERGED WARM window -- see the ON arm's convergence-hygiene note."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ft63_prires_on.json"
+ ],
+ "network": {
+  "prior_residual_corroborate": true,
+  "product_output_path": "C:/GnssProcessor/runs/ft63_prires_corrob/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ft63_prires_corrob/state_snapshot.bin"
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "_comment": [
+  "EXT-63, arm 13 — the 1 h SETTLED-WINDOW validation of the CANONICAL EXT-CB posture",
+  "(user direction 2026-08-04: single-layer): deg-8 SINGLE layer + a00 GIM anchor",
+  "(32.24±2, per-epoch) + rx_code_bias_datum.  The 1 h counterpart of arm 12.",
+  "",
+  "Smoke ledger: arm 12 reproduced arm 10's dynamics with a cleaner dipole (peak 34.6 vs",
+  "39.5, end 26.1 vs 30.3) — even a pinned L2 shell contributed slosh room.  Arm 11's 1 h",
+  "(dual-layer pinned) falsified the equilibrium-flatline reading: a00 recovered 8.3 ->",
+  "20.2 by 30 min, then BREATHED (second dip to 9.2 at ~45 min, 21.3 rising at the end),",
+  "with deg-1 anti-correlated (level<->dipole sloshing during the rx-DCB harvest).",
+  "",
+  "PREDICTION (stated before the run):",
+  " - Trajectory family matches arm 11 (ignition ~24, dip, recovery to ~20 by 30 min,",
+  "   breathing ±6 TECU at ~20-30 min period) with the single-layer field breathing",
+  "   SHALLOWER than arm 11's if the L2 slosh-room reading is right.",
+  " - sh_health 0/0/0; a00_in_band 121/121; deg-1 Kaula ratio ends < 2.",
+  " - rx-CB carry fold fraction > arm 11's 43 % by run end.",
+  "",
+  "The BREATHING itself is the open mechanism (suspected: the rx-CB carry re-injecting",
+  "common-mode content harvested in an older frame realization — see the arm-14 carry-off",
+  "discriminator).  This arm VALIDATES the posture; it does not close that card."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_1h_a00gim_sl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_1h_a00gim_sl/state_snapshot.bin"
+ }
+}

@@ -33,6 +33,7 @@ namespace GnssProcessor {
 
 class GnssConfig;
 class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
+class NetworkPriorResidual; // filter/NetworkPriorResidual.hpp — included in the .cpp only
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
@@ -54,6 +55,7 @@ void networkStashStatus(
     const Eigen::VectorXd& x_s,
     const NetworkSbasis::Plan& plan,
     NetworkCarryVce& carry_vce_est,
+    NetworkPriorResidual& prires_est,
     const std::set<std::string>& clock_refloat_sats,
     int n_arc_refloat_epoch,
     const std::vector<std::string>& registered_clock_sats,

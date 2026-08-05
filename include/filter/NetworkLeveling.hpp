@@ -33,6 +33,7 @@ namespace GnssProcessor {
 
 class GnssConfig;
 class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
+class NetworkPriorResidual; // filter/NetworkPriorResidual.hpp — included in the .cpp only
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
@@ -56,6 +57,7 @@ void networkLeveling(
     const std::vector<StationAssembly>& asm_res,
     const std::vector<int>& est_index_of,
     NetworkCarryVce& carry_vce_est,
+    NetworkPriorResidual& prires_est,
     bool carry_warm,
     double pl_now_s,
     const std::vector<std::string>& registered_clock_sats,

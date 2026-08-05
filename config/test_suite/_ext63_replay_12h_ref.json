@@ -1,0 +1,20 @@
+{
+ "_comment": [
+  "Datum-invariant grade (a) for SPEC_level_information_budget §17 item 0: consumer-only",
+  "REPLAY of the recorded ext63_dual_12h_ref product stream against the WTZZ00DEU",
+  "holdout.  No producer run, no artifact perturbation (runNetwork short-circuits to",
+  "Application::runConsumerReplay before setup).  Pair arm: _ext63_replay_12h_lv125.",
+  "The CONTRAST between the two replays is the verdict: frame-content shuffling between",
+  "rx-DCB/iono/level is invisible here; real estimable-content change is not."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 43200.0 },
+ "network": {
+  "max_duration_s": 43200.0,
+  "closed_loop": { "replay_products_path": "C:/GnssProcessor/runs/ext63_dual_12h_ref/products.txt" },
+  "product_output_path": "C:/GnssProcessor/runs/replay_ext63_12h_ref/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_ext63_12h_ref/state_snapshot.bin"
+ }
+}

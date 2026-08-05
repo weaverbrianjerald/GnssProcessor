@@ -928,6 +928,78 @@ public:
                                   const Eigen::VectorXd& w_rows,
                                   const Eigen::MatrixXd& cov_free_xs) const;
 
+    /**
+     * @brief The @c b×b RESIDUAL COFACTOR of a block of one station's rows — the
+     *        off-diagonal-preserving sibling of @ref rowRedundancy
+     *        (BlockFormal / Baarda block data snooping; @c docs/SPEC_block_baarda.md
+     *        INC-0).
+     *
+     * For a row subset @f$B@f$ of one station (the sweep's block is one
+     * @c (station,satellite) LOS across bands, so @f$b=|B|\le 8@f$) this returns
+     * @f[
+     *   Q_{\tilde e,B} = \big(P^{-1} - A\,N^{-}A^\top\big)_{BB},
+     *   \qquad
+     *   (Q_{\tilde e,B})_{ij} = \frac{\delta_{ij}}{w_i}
+     *                           - a_i^\top\,\mathrm{Cov}(\theta)\,a_j ,
+     * @f]
+     * the cofactor matrix of the least-squares residuals @f$\tilde e_B@f$ — what the
+     * block statistic @f$T_B\,b = \tilde e_B^\top Q_{\tilde e,B}^{-1}\tilde e_B@f$
+     * needs and what no per-row number can supply.  ONE physical fault on one LOS
+     * (multipath, a wet radome lobe, an unflagged slip) lands on every band's code
+     * and phase row at once and is SMEARED by the adjustment across all of them;
+     * the off-diagonals kept here are exactly that smearing structure, which is why
+     * each row can sit below its own w-test while the block is jointly loud.
+     * @f$b=1@f$ reduces to the scalar w-test's denominator, so this is the strict
+     * generalization of the row tier, not a parallel one.
+     *
+     * Same inputs, same station-local marginalization identity and same datum frame
+     * as @ref rowRedundancy — this is the BILINEAR POLARIZATION of that method's
+     * quadratic form:
+     * @f[
+     *   a_i^\top \mathrm{Cov}\, a_j =
+     *     (a^s_i - M^\top a^r_i)^\top C_\text{free} (a^s_j - M^\top a^r_j)
+     *     + a^{r\top}_i N_{rr}^{-1} a^r_j , \qquad M = N_{rr}^{-1}N_{sr}^\top ,
+     * @f]
+     * so the diagonal reproduces @ref rowRedundancy exactly:
+     * @f$w_i\,(Q_{\tilde e,B})_{ii} = r_i@f$ (before that method's clamp — see the
+     * first note).  @p A_s_rows / @p A_r_rows carry ONLY the block's rows; the
+     * covariance comes from the cached factors, which already hold every row of
+     * every station, so a block's cofactor is the same whether it is passed alone or
+     * as part of the station's full stack.
+     *
+     * @note **The diagonal is deliberately NOT clamped**, unlike
+     *       @ref rowRedundancy's @f$r_i\in[0,1]@f$.  A fully-leveraged block comes
+     *       back SINGULAR, and that singularity IS the caller's UNCHECKABLE test
+     *       (SPEC §3, the block analogue of @f$r<\varepsilon@f$).  Clamping would
+     *       launder it into an invertible-looking matrix and the block would be
+     *       silently inverted through instead of counted — the census's
+     *       "count it, keep its identity, never invert through it" discipline
+     *       depends on this method telling the truth.  Callers MUST check
+     *       conditioning (and finiteness — a non-positive @f$w_i@f$ puts a
+     *       non-finite entry on the diagonal, on purpose) before inverting.
+     * @note **No @c carry_aware flag**, for the reason @ref rowRedundancy has none
+     *       (@c docs/SPEC_carry_aware_covariance.md §9): both feed DETECTION
+     *       thresholds, and the carry correction moves them — that is a QC change
+     *       needing a QC gate, not a side effect of a census kernel.
+     *
+     * @param station     Station index (from @ref addStation).
+     * @param A_s_rows    Shared-border design rows of the block (@c b × n_shared).
+     * @param A_r_rows    Local design rows of the block (@c b × n_local).
+     * @param w_rows      Per-row information weights (@c 1/σ²; length @c b).
+     * @param cov_free_xs Datum-frame shared covariance (@c n_shared × n_shared),
+     *                    pinned/gauge columns zeroed — the same matrix
+     *                    @ref rowRedundancy takes.
+     * @return The symmetric @c b×b residual cofactor; empty if @p A_s_rows has no
+     *         rows.  Symmetrized explicitly (see the implementation note).
+     * @throws std::out_of_range / std::invalid_argument on a bad station, a row-count
+     *         mismatch, or a bad @p A_s_rows / @p A_r_rows / @p cov_free_xs shape.
+     */
+    Eigen::MatrixXd blockResidualCofactor(std::size_t station,
+                                          const Eigen::MatrixXd& A_s_rows,
+                                          const Eigen::MatrixXd& A_r_rows,
+                                          const Eigen::VectorXd& w_rows,
+                                          const Eigen::MatrixXd& cov_free_xs) const;
+
     /// @return The reduced shared normal matrix @f$\tilde N_{ss}@f$ (after @ref reduce).
     const Eigen::MatrixXd& reducedSharedNormals() const { return reduced_N_ss_; }
     /// @return The reduced shared RHS @f$\tilde u_s@f$ (after @ref reduce).

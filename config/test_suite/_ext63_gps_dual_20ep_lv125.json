@@ -1,0 +1,58 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 22 — arm 20 (canonical + LV-1 + LV-2 + LV-4) + CARD LV-5, the",
+  "WITHIN-EPOCH mu (docs/SPEC_level_information_budget.md S12).  Single knob vs arm 20:",
+  "network.rx_cb_carry_demean_within.",
+  "",
+  "WHAT LV-5 REMOVES.  LV-2 reduced mu at the SERIAL POST-SOLVE harvest and applied it",
+  "to the NEXT epoch's folds.  That is a feedback delay, and its loop gain scales with",
+  "how much carry information folds: harmless while the defective frame screen withheld",
+  "two thirds of the priors (arm 19: 51.9 % folded, settled sd 4.98 TECU), a ~3-epoch",
+  "LIMIT CYCLE once LV-4 admits them all (arm 21: 97.5 % folded, settled sd 15.53,",
+  "range 54.1, max |mu| 1.96 -> 10.15 m).",
+  "",
+  "The lag was never necessary.  Both terms of the carry innovation -- the stashed",
+  "ABSOLUTE posterior and the FROZEN x_lin(cb) -- are known before PASS B, so mu is now",
+  "reduced SERIALLY between PASS A and PASS B over the stations present THIS epoch, and",
+  "PASS B folds against it.  Same race contract (one serial writer, parallel readers).",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - The limit cycle DAMPS.  a00 over 20 ep should look like arm 18/20's envelope",
+  "   without the epoch-to-epoch alternation; the real test is the 1 h settled sd",
+  "   (arm 23), so treat this smoke as wiring + counters.",
+  " - Fold fraction unchanged from arm 20 (~94 %): LV-5 changes WHEN mu is computed,",
+  "   not which rows fold.  A materially different fold count means the prepass",
+  "   candidate set disagrees with PASS B's folded set by more than the expected",
+  "   column-dropout margin -- investigate before reading the level.",
+  " - The run-end LV-5 line reports the RESIDUAL: the folded set's own raw common mode",
+  "   MINUS the mu applied to it.  Predict mean |resid| well below max |mu| (order 10 %",
+  "   or less).  A residual the size of mu means the correction is decorative -- the",
+  "   candidate set and the folded set would then be effectively different populations,",
+  "   and the honest fix is a two-pass PASS B, not a bigger mu.",
+  " - max |mu| should FALL back toward arm 18's ~2 m: with no lag, mu no longer chases",
+  "   its own tail."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "rx_cb_carry_demean_within": true,
+  "rx_cb_carry_step_gate": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv125/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv125/state_snapshot.bin"
+ }
+}

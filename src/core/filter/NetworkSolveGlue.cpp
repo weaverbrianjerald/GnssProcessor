@@ -16,6 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkChainDatum.hpp"
+#include "filter/NetworkDatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "filter/NetworkPhaseDatum.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/NetworkRelevel.hpp"
@@ -557,6 +558,46 @@ if (ctx.knobs.sbasis_complete_on) {
         sbc_x_prev,
         [&est](Eigen::Index c) { return est.sharedColumnLabel(c); },
         ctx.knobs.sbasis_complete_max);
+    // --- datum graph census hand-off (docs/SPEC_datum_graph_census.md) ----
+    // The SPECTRAL half of the census's contingency, captured HERE and only
+    // here: this is the one place in the run where the realized near-null
+    // count is measured PRE-completion and its directions still carry
+    // attribution.  The gate below runs on the COMPLETED system and would
+    // report `observed == declared`, i.e. the completion's own success, which
+    // is not the quantity the census is reconciling against.
+    //
+    // MEASURE-ONLY and armed-only: nothing downstream of this block reads
+    // ctx.carry.dg_spec, so an unarmed run pays one predictable branch.  The
+    // identities come from parsing `d.detail` — the SAME string the
+    // sbc_engage / sbc_skip events carry — so the census and the event stream
+    // agree about a direction's identity by construction rather than by two
+    // parallel derivations that can drift.  Both populations are recorded:
+    // the CONSTRAINED extras and the SKIPPED orphans are equally "observed",
+    // and dropping the orphans would silently delete the `observed only` cell
+    // that measures this predictor's honest boundary.
+    if (ctx.knobs.dg_on) {
+        auto& dgs = ctx.carry.dg_spec;
+        dgs.valid    = true;
+        dgs.from_sbc = true;
+        dgs.observed = sbc.observed;
+        dgs.declared = plan.declared_dimension;
+        // Overwrite, never append: if a within-epoch adaptation ever re-enters
+        // this body the census must see THIS evaluation's directions, not the
+        // union of every attempt.
+        dgs.dirs.clear();
+        const auto push = [&dgs](const NetworkSbasis::GaugeCompletion::Dir& d,
+                                 bool skipped) {
+            NetDatumGraphDir g;
+            g.ev        = d.ev;
+            g.skipped   = skipped;
+            g.top_label = d.top_label;
+            g.detail    = d.detail;
+            g.ids       = netDatumGraphDetailIds(d.detail);
+            dgs.dirs.push_back(std::move(g));
+        };
+        for (const auto& d : sbc.dirs)    push(d, false);
+        for (const auto& d : sbc.skipped) push(d, true);
+    }
     // Per-direction skips (unseparated from the declared-gauge cluster —
     // orphaned exact gauges, Card PA's class) are NOT epoch-fatal: the
     // separated extras still fold below, the gate then throws by exactly
@@ -747,6 +788,22 @@ if (gate_first_observed >= 0) {
     auto& hi = ctx.counters.nullspace_obs_max;
     if (lo < 0 || gate_first_observed < lo) lo = gate_first_observed;
     if (hi < 0 || gate_first_observed > hi) hi = gate_first_observed;
+}
+// Datum graph census: the FALLBACK spectral hand-off, for runs without SBC.
+// The gate's own first evaluation is then the only realized near-null count
+// there is — a COUNT with no direction identities, which the census labels
+// `obs_src=count` rather than pretending it can attribute.  Deliberately does
+// NOT overwrite an SBC capture: with the completion armed the gate inspects
+// the COMPLETED system and reads back the declared dimension, so taking its
+// count would report the completion succeeding instead of the deficiency the
+// census is reconciling against.
+if (ctx.knobs.dg_on) {
+    auto& dgs = ctx.carry.dg_spec;
+    if (!dgs.from_sbc && gate_first_observed >= 0) {
+        dgs.valid    = true;
+        dgs.observed = gate_first_observed;
+        dgs.declared = plan.declared_dimension;
+    }
 }
 if (!gate_ok) {
     ++n_skipped;

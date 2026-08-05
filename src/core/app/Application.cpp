@@ -1645,7 +1645,9 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
 
     const bool is_ppp_rtk = (config_.getProcessingMode() == ProcessingMode::PPP_RTK);
     trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir_, is_ppp_rtk, config_.getLoggingConfig());
-    if (!trace_logger_->isInitialized()) {
+    // Only a FAILED set of requested opens is worth a warning; an unarmed set of
+    // enable_*_trace toggles leaves the logger uninitialized by design.
+    if (!trace_logger_->isInitialized() && trace_logger_->requestedStreamCount() > 0) {
         log_manager_.getLogger("main_log")->warn(
             "TraceLogger could not open CSV trace files in '{}'; continuing without CSV traces", log_dir_.string());
     }

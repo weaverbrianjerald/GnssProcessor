@@ -448,7 +448,9 @@ int Application::runBaseline() {
         }
         trace_logger_ = std::make_unique<TraceLogger>(
             log_manager_, rover_trace_dir, /*is_ppp_rtk=*/false, config_.getLoggingConfig());
-        if (!trace_logger_->isInitialized()) {
+        // See Application.cpp: uninitialized with zero requested streams is the
+        // by-design "no traces armed" case, not a failure.
+        if (!trace_logger_->isInitialized() && trace_logger_->requestedStreamCount() > 0) {
             log->warn("Rover '{}' TraceLogger did not initialise; continuing without CSV traces",
                 rover_name);
         }

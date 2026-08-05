@@ -35,7 +35,7 @@ products are referenced, displaced by a sum of \emph{a~priori}
 geophysical corrections.  Each correction is a deterministic, modelled
 3D displacement $\disp(t)$ of the antenna reference point (the position
 state, which the engine reduces from the RINEX monument through the
-header eccentricity --- \dcref{sec:frame-arp}{the marker/ARP section of
+header eccentricity; see \dcref{sec:frame-arp}{the marker/ARP section of
 the Coordinate Frames document}).  None is
 estimated; all are computed from the (cm-grade) a~priori position, the
 ephemerides of the Sun and Moon, and Earth-orientation parameters, then
@@ -134,7 +134,7 @@ tide is \emph{retained}, so the corrected coordinate is conventional
 tide-free, matching IGS/ITRF (see the routine's header comment on the
 retained zero-frequency tide).
 
-\subsubsection{Step 1 --- in-phase degree 2 and 3}
+\subsubsection{Step 1: in-phase degree 2 and 3}
 
 For each tide-raising body $b\in\{\odot,\leftmoon\}$ at geocentric
 position $\bm{r}^b$ ($r_b=\lVert\bm{r}^b\rVert$) and the station at
@@ -180,7 +180,7 @@ vector and the tangential weight along each body's unit vector:
 matching the per-component accumulation in
 \texttt{computeSolidEarthTideDisplacement}.
 
-\subsubsection{Step 1 --- out-of-phase anelasticity and the $L^1$ term}
+\subsubsection{Step 1: out-of-phase anelasticity and the $L^1$ term}
 
 Mantle anelasticity makes the diurnal and semidiurnal degree-2 Love
 numbers complex; the small imaginary parts produce out-of-phase
@@ -198,7 +198,7 @@ displacements rotated into ECEF and are added to
 their detailed trigonometric forms follow the IERS reference verbatim
 and are not reproduced here.
 
-\subsubsection{Step 2 --- frequency dependence (Doodson tables)}
+\subsubsection{Step 2: frequency dependence (Doodson tables)}
 
 Step~2 corrects the constituents whose actual Love numbers differ from
 the nominal degree-2 value, summing harmonic terms keyed by the Doodson
@@ -312,7 +312,7 @@ applied as $\chi_k \mathrel{+}= 2\pi\,(\text{bias}_k)$
 \texttt{OceanTideModel.hpp}).
 \textbf{Omitting this bias phases every diurnal constituent
 (K1/O1/P1/Q1) by a full $90^\circ$}, mismodelling the entire diurnal OTL
-contribution --- this is the intended oracle resolution of the
+contribution.  This is the intended oracle resolution of the
 OTL-diurnal-phase question.  The bias \emph{must} be present and carry
 the species signs of \Cref{eq:sitedisp-dw-bias}.
 
@@ -331,13 +331,13 @@ Up/West/South; since $\text{East}=-\text{West}$ and
 $\text{South}=-\text{North}$, the horizontals keep their amplitude and
 shift phase by $+180^\circ$ (\texttt{d.phase\_west = c.east\_phase +
 180}, \texttt{d.phase\_south = c.north\_phase + 180}), Up passing through
-unchanged --- the same class of phase-convention resolution as the
+unchanged, the same class of phase-convention resolution as the
 Doodson--Warburg bias above.  When no SIF entry exists the coefficients
 come from a station BLQ block or, failing that, are synthesised by
 bilinear interpolation of the global EOT20 complex load grid at the
 RINEX header \emph{marker} position
 (\texttt{RinexParser::getApproxPositionXyz}), not at the ARP-referenced
-state --- immaterial at this grid resolution, but the two points are
+state, immaterial at this grid resolution, but the two points are
 distinct in the code (radial only, unlike the three-component SIF);
 with no source at all the displacement is zero.  The EOT20 netCDF packs the real
 and imaginary load coefficients as \texttt{int16} with a
@@ -413,7 +413,7 @@ $\sin\geolat$ ($=\cos\theta$), not $\cos\geolat$}: this is the intended
 oracle resolution of the pole-tide east-term question.  An east factor
 of $\cos\geolat$ is internally inconsistent with the geodetic-$\geolat$
 radial/north terms ($\sim\!1.48\times$ scale error at mid-latitude, and
-the wrong latitude dependence --- vanishing at the equator instead of
+the wrong latitude dependence, vanishing at the equator instead of
 the pole).  The local $(R,N,E)$ vector is rotated into ECEF at the end
 of \texttt{computePoleTideCorrection}.
 
@@ -467,8 +467,8 @@ oracle \texttt{scripts/ocean\_pole\_tide\_reference.py} to $\sim\!10^{-12}$
 \subsection{Atmospheric pressure loading (S1/S2 thermal tide)}
 \label{sec:sitedisp-apl}
 
-Atmospheric pressure loading (APL) --- the crustal response to
-surface-pressure redistribution --- is $\sim\!2$--$20$~mm, predominantly
+Atmospheric pressure loading (APL), the crustal response to
+surface-pressure redistribution, is $\sim\!2$--$20$~mm, predominantly
 vertical.  It splits into a sun-synchronous, thermally driven $S_1/S_2$
 tidal part (diurnal and semidiurnal, fully predictable from local solar
 time) and a non-tidal (synoptic) part driven by weather systems.  The
@@ -509,9 +509,9 @@ byte-identical.
 \paragraph{Honesty note.}  In the spirit of \dcref{sec:ssr}{the SSR
 document}'s flag of the iono-not-SSR gap: only the sun-synchronous
 $S_1/S_2$ tidal APL is modelled.  The non-tidal (synoptic) pressure
-loading --- the larger, weather-driven part, requiring a surface-pressure
+loading, the larger, weather-driven part, requiring a surface-pressure
 field convolved with a Green's function or a gridded non-tidal loading
-product --- is \emph{not} modelled and is the leading candidate for the
+product, is \emph{not} modelled and is the leading candidate for the
 next site-displacement term.
 
 % ============================================================

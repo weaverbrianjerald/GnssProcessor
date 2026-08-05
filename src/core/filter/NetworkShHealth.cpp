@@ -12,6 +12,7 @@
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
+#include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/NetworkRhsAttrib.hpp"   // INC-5 flight-recorder trip latch
@@ -49,6 +50,7 @@ void networkShHealth(
     const std::vector<std::vector<PppObservation>>& modeled,
     NetworkIonoDeweightGate& iono_deweight,
     NetworkCarryVce& carry_vce_est,
+    NetworkPriorResidual& prires_est,
     bool datum_changed,
     double pl_now_s,
     double& first_vce_s,
@@ -387,6 +389,22 @@ void networkShHealth(
         }
         carry_vce_est.beginEpoch(pl_now_s, !datum_changed);
     }
+
+    // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md §6): advance the
+    // census alongside the VCE monitor above — this is the ONE point in the epoch
+    // that precedes every feed (SB_LEVELING's pl/zwd/rxcb harvest and
+    // SB_STASH_STATUS's pb/cb snapshot both run later), which is what makes the
+    // PREDICT-THEN-UPDATE contract enforceable: beginEpoch FREEZES the
+    // through-previous-epoch σ̂₀ that this epoch's rows are standardized against,
+    // so no row can calibrate against itself.
+    //
+    // The census passes `clean = true` UNCONDITIONALLY — deliberately NOT
+    // `!datum_changed`.  A datum-changed epoch is exactly the FRAME population
+    // this card exists to MEASURE (standing invariant #7's re-coupling edge on
+    // the carry layer); dropping it, as the variance-component monitor correctly
+    // does, would discard the rows the census was built for.
+    if (prires_est.enabled())
+        prires_est.beginEpoch(pl_now_s, se.time.tow);
 }
 
 } // namespace GnssProcessor

@@ -6,7 +6,7 @@
 %  The geodetic-frame and time-scale substrate the engine assumes
 % ============================================================
 
-% --- Doc-local symbols (descriptive names to avoid package collisions) ---
+% Doc-local symbols (descriptive names to avoid package collisions)
 \newcommand{\semia}{a}                               % WGS84 semi-major axis
 \newcommand{\wgsflat}{f}                              % WGS84 flattening
 \newcommand{\eccsq}{e^{2}}                            % first eccentricity squared
@@ -37,23 +37,23 @@
 \newcommand{\cipY}{Y}                                 % CIP coordinate Y
 \newcommand{\cioloc}{s}                               % CIO locator
 
-Every model in this reference --- the tropospheric and ionospheric
+Every model in this reference (the tropospheric and ionospheric
 mappings of \dcref{sec:atmos}{the Atmosphere document}, the
 solid-Earth, ocean, and pole tides of \dcref{sec:sitedisp}{the Site
 Displacement document}, the antenna, attitude, and phase-wind-up terms
 of \dcref{sec:obsphys}{the Observation Physics document}, and the orbit
-evaluation of \dcref{sec:products}{the Product Evaluation document} ---
+evaluation of \dcref{sec:products}{the Product Evaluation document})
 presumes a fixed geodetic-frame and time-scale substrate.  This document
 specifies that substrate: the WGS84 ellipsoid and the three coordinate
 representations (Cartesian ECEF, geodetic, and local ENU) the engine
 moves between; the family of GNSS time scales together with the leap-
 second machinery that ties them to UTC; and the Earth-orientation chain
-that rotates the celestial frame --- in which the Sun, Moon, and the
-satellite ephemerides are most naturally expressed --- into the
+that rotates the celestial frame, in which the Sun, Moon, and the
+satellite ephemerides are most naturally expressed, into the
 terrestrial frame in which the receiver sits.  None of the conversions
 here is an estimator state.  The one frame quantity that \emph{is}
-estimated --- the inter-system time offset (ISB) that absorbs the
-unmodelled bias between constellation time scales --- belongs to
+estimated, the inter-system time offset (ISB) that absorbs the
+unmodelled bias between constellation time scales, belongs to
 \dcref{sec:state}{the State Vector document}; this document covers only
 the \emph{deterministic} scale conversions that the ISB state is defined
 relative to.  Code references are to \texttt{src/core/math/Coordinates.cpp},
@@ -103,8 +103,8 @@ distinguishes the geodetic normal (perpendicular to the ellipsoid
 surface) from the geocentric radius vector.
 
 \paragraph{Inverse map (Bowring fixed point).}
-The inverse problem --- recovering $(\geolat,\geolon,\geoht)$ from
-$(x,y,z)$ --- has no closed form for the latitude because $\primevn$ in
+The inverse problem, recovering $(\geolat,\geolon,\geoht)$ from
+$(x,y,z)$, has no closed form for the latitude because $\primevn$ in
 \eqref{eq:frame-llh2ecef} itself depends on $\geolat$.  The longitude is
 immediate, $\geolon = \operatorname{atan2}(y,x)$.  For the latitude the
 engine runs a Bowring fixed-point iteration on the equatorial projection
@@ -133,7 +133,7 @@ picometre of) the $z$ axis and both the longitude and the
 $p/\cos\geolat$ height formula degenerate.  The code takes an explicit
 branch (\texttt{Coordinates::ecefToLlh}, the $p<10^{-12}$ guard): the
 longitude retains the $\operatorname{atan2}(y,x)$ value computed before
-the guard --- formally undefined on the axis, and immaterial there ---
+the guard, formally undefined on the axis and immaterial there,
 while the branch fixes $\geolat = \pm\pi/2$ by the sign of $z$ and reads
 the height directly off the polar semi-minor axis,
 \begin{equation}
@@ -148,8 +148,8 @@ attitude code occasionally evaluates geometry for satellite positions
 that transit near the polar axis.
 
 \paragraph{Local East--North--Up frame.}
-Many of the downstream models --- the tropospheric mapping function, the
-elevation mask, the antenna phase-centre projection --- are most natural
+Many of the downstream models (the tropospheric mapping function, the
+elevation mask, the antenna phase-centre projection) are most natural
 in the topocentric ENU frame anchored at the receiver's geodetic
 $(\geolat,\geolon)$.  The columns of the ENU$\to$ECEF rotation are the
 three local unit vectors expressed in ECEF
@@ -165,9 +165,9 @@ three local unit vectors expressed in ECEF
 \end{bmatrix}.
 \label{eq:frame-enu}
 \end{empheq}
-The Up column is the outward geodetic normal --- identical to the
-direction along which $\geoht$ is measured in \eqref{eq:frame-llh2ecef}
---- East is its horizontal cross-product with the pole, and North
+The Up column is the outward geodetic normal, identical to the
+direction along which $\geoht$ is measured in \eqref{eq:frame-llh2ecef};
+East is its horizontal cross-product with the pole, and North
 completes the right-handed triad.  Because the columns are orthonormal,
 $\enuR$ is a proper rotation and its inverse is its transpose: an ECEF
 displacement is resolved into local components by
@@ -208,8 +208,8 @@ solution, an NGS Station Information File, and the RINEX
 mount and is the origin against which the ANTEX phase-centre offsets of
 \dcref{sec:obsphys}{the Observation Physics document} are tabulated.
 The \emph{antenna phase centre} is where the measurement is physically
-realised.  The estimator's position state is the ARP --- for the simple
-reason that the receiver PCO/PCV it applies are ARP-referenced --- so
+realised.  The estimator's position state is the ARP, for the simple
+reason that the receiver PCO/PCV it applies are ARP-referenced, so
 the ARP$\to$phase-centre leg is closed by the antenna model and only the
 marker$\to$ARP leg belongs to this document.  Confusing the two ends of
 that leg puts a constant bias, equal to the eccentricity, straight into
@@ -237,8 +237,8 @@ permuted $(\delta E, \delta N, \delta H)^{\Tr}$ that the rotation acts
 on.
 
 \paragraph{The inverse is not a sign flip.}
-Reducing an ARP-referenced estimate back to the monument --- to compare
-it against, or publish it in, a surveyed coordinate --- cannot simply
+Reducing an ARP-referenced estimate back to the monument, to compare
+it against or publish it in a surveyed coordinate, cannot simply
 negate \eqref{eq:frame-marker2arp}, because the local frame belongs at
 the marker and the marker is precisely the unknown.  Evaluating $\enuR$
 at the ARP instead leaves a closure error of order
@@ -255,21 +255,21 @@ takes one fixed-point step (\texttt{Coordinates::arpToMarker}):
 which closes the round trip with \eqref{eq:frame-marker2arp} to well
 below the millimetre level this reference grades at.
 
-\paragraph{Where the reduction is applied --- and where it is not.}
+\paragraph{Where the reduction is applied, and where it is not.}
 Every position derived from a RINEX \emph{header} is reduced: the
 post-processing filter seed (\texttt{Application::initializePosition}
 and the \texttt{PppModel} state initialiser), the real-time seed
 (\texttt{RealTimeEngine::initialize}), the baseline rover a~priori, and
 the closed-loop consumer truth all take the marker through
-\eqref{eq:frame-marker2arp} --- some calling
+\eqref{eq:frame-marker2arp}, some calling
 \texttt{Coordinates::markerToArp} directly, others through the accessor
 \texttt{RinexParser::getArpPositionXyz} that pairs the two header
 fields.  A coordinate supplied
 \emph{directly in the configuration} is not reduced: it is taken at face
 value, on the stated policy that the user owns its reference point.  So
 the baseline \emph{reference} coordinate is used as given while the
-rover a~priori read from its header is reduced --- an asymmetry inside
-one mode --- and, more consequentially, the network producer's station
+rover a~priori read from its header is reduced, an asymmetry inside
+one mode, and, more consequentially, the network producer's station
 coordinates (\texttt{StationConfig::position\_ecef}, optionally
 SIF-resolved under \texttt{network.use\_sif\_coordinates}) are used as
 given while being held \emph{fixed}, their three position columns
@@ -288,8 +288,8 @@ ordering, sign, no-op, and round-trip properties are pinned by the
 % ============================================================
 
 Time inside the engine is carried as a \texttt{GnssTime}
-$\{\text{week},\text{tow}\}$ pair --- an integer GPS week and a
-floating-point time-of-week in seconds --- and is expanded to a single
+$\{\text{week},\text{tow}\}$ pair, an integer GPS week and a
+floating-point time-of-week in seconds, and is expanded to a single
 continuous count $T = \text{week}\times 604800 + \text{tow}$ wherever a
 monotone scalar is needed (e.g.\ ERP interpolation,
 \Cref{sec:frame-erp}).  A week boundary is $604\,800\;\mathrm{s}$ and a
@@ -302,8 +302,8 @@ Date is fixed in the code:
 \qquad(\texttt{src/core/math/TimeUtils.cpp}, \texttt{GPS\_EPOCH\_JD}).
 \label{eq:frame-gpsepoch}
 \end{equation}
-GPS time is a continuous atomic scale --- it never inserts a leap second
---- so it sits a fixed integer offset below International Atomic Time and
+GPS time is a continuous atomic scale, since it never inserts a leap second,
+so it sits a fixed integer offset below International Atomic Time and
 a fixed fractional offset below Terrestrial Time
 (\texttt{src/core/math/TimeUtils.cpp}, header constants
 \texttt{TAI\_GPS\_OFFSET}, \texttt{TT\_GPS\_OFFSET}):
@@ -355,7 +355,7 @@ classic source of whole-second timing errors.
 
 UTC is tied to GPS by the historical table of leap-second insertions.
 The engine stores the table as $\big(\mathrm{JD}_k,\,\leapgu(k)\big)$
-pairs --- the GPS$-$UTC offset that takes effect at each insertion
+pairs, the GPS$-$UTC offset that takes effect at each insertion
 boundary, the first row being the GPS epoch itself with offset zero
 (\texttt{src/core/math/TimeUtils.cpp}, \texttt{LEAP\_TABLE}).  A query resolves the
 offset by a reverse scan that returns the offset of the latest boundary
@@ -376,8 +376,8 @@ boundary-aware lookup recovers the correct offset.
 
 \paragraph{The wall-clock leap constant and its runtime override.}
 The boundary-aware table of \eqref{eq:frame-leaplookup} is the authority
-for every \emph{epoch-referenced} conversion --- a dated calendar
-timestamp, GLONASS day arithmetic, UTC formatting --- because each of
+for every \emph{epoch-referenced} conversion (a dated calendar
+timestamp, GLONASS day arithmetic, UTC formatting) because each of
 those carries the epoch at which the correct offset is known.  The one
 conversion that does not is the promotion of the \emph{system wall clock}
 to GPS time (\texttt{TimeUtils::nowContinuousGpsSeconds},
@@ -397,7 +397,7 @@ alone, since they are correct at every historical epoch outside the
 insertion instants themselves\footnote{The comparison in
 \texttt{TimeUtils::leapSecondsGpsUtc} is made on the GPS scale against
 boundary Julian Dates tabulated at the \emph{UTC} insertion instant, so
-the offset advances $\leapgu$ seconds early --- a known, deferred
+the offset advances $\leapgu$ seconds early, a known, deferred
 discrepancy confined to a $\leapgu$-second window at each boundary
 (18\,s at the most recent insertion, 2017-01-01).} and an override
 there would corrupt rather than update them.
@@ -407,22 +407,22 @@ The four supported time systems differ only in how a RINEX/broadcast
 calendar timestamp is referred to the GPS scale, dispatched by a system
 tag (\texttt{TimeUtils::GnssTimeFromDate}):
 \begin{itemize}
-  \item \textbf{GPS / Galileo} --- already on the GPS scale; the
+  \item \textbf{GPS / Galileo}: already on the GPS scale; the
     timestamp is converted with no leap correction (GST is steered to
     GPS time and shares the same week/second framing to within the few
     nanoseconds the ISB state of \dcref{sec:state}{the State Vector
     document} absorbs).
-  \item \textbf{BeiDou} --- the timestamp is on BDT, which runs
+  \item \textbf{BeiDou}: the timestamp is on BDT, which runs
     $14\;\mathrm{s}$ behind GPS (\Cref{sec:frame-bdt}); the code converts
     on the GPS-scale assumption and then \emph{adds} $14\;\mathrm{s}$,
     carrying any week roll-over
     (\texttt{TimeUtils::GnssTimeFromDate}, BeiDou branch).
-  \item \textbf{GLONASS} --- the RINEX timestamp is UTC; the full leap
+  \item \textbf{GLONASS}: the RINEX timestamp is UTC; the full leap
     correction of \eqref{eq:frame-leaplookup} is applied to bring it onto
     GPS time (\texttt{TimeUtils::GnssTimeFromDate}, GLONASS branch).
 \end{itemize}
 GPS and Galileo therefore carry no leap correction, BeiDou a fixed
-$14\;\mathrm{s}$, and GLONASS the full epoch-dependent leap count --- a
+$14\;\mathrm{s}$, and GLONASS the full epoch-dependent leap count, a
 dispatch that exactly mirrors the constellations' defining time
 references.  There is a fourth branch: an unrecognised time-system tag
 falls through to the GPS-scale conversion with only a trace-level note,
@@ -437,8 +437,8 @@ rather than failing loudly.
 \label{sec:frame-glonass}
 % ============================================================
 
-GLONASS broadcast and SSR records frequently carry only a time-of-day
---- seconds since the start of the GLONASS day --- with no week and no
+GLONASS broadcast and SSR records frequently carry only a time-of-day,
+seconds since the start of the GLONASS day, with no week and no
 absolute date.  GLONASS time runs on UTC(SU) advanced by three hours
 (Moscow), so its day boundary is three hours ahead of the UTC midnight.
 Reconstructing a full GPS week from a bare time-of-day therefore needs an
@@ -473,7 +473,7 @@ t_{\mathrm{GPS}} = \underbrace{(t_0 + \tau)}_{\text{Moscow}} - M + \leapgu .
 The final line undoes the Moscow offset to recover UTC and then
 \emph{re-adds the same leap count} $\leapgu$ to climb back onto the GPS
 scale.  The leap term enters once with each sign and so cancels exactly
-between the two legs --- it is present only because the intermediate
+between the two legs; it is present only because the intermediate
 arithmetic must pass through UTC to frame the Moscow day correctly.  If
 no usable anchor is supplied (a non-positive value) the routine returns
 the sentinel $\{0,0\}$ rather than fabricate a week, so the caller can
@@ -579,9 +579,9 @@ $\nutN = \rotR{1}(-\obleps_0-\deps)\,\rotR{3}(-\dpsi)\,\rotR{1}(\obleps_0)$
 (the nutation block of \texttt{Planetary::eci2ecef}).
 
 \paragraph{Apparent sidereal time and the 0h-UT1 subtlety.}
-Greenwich Apparent Sidereal Time adds the equation of the equinoxes ---
+Greenwich Apparent Sidereal Time adds the equation of the equinoxes,
 the nutation in longitude projected on the equator, plus the two leading
-complementary terms in the lunar node $\Omega$ --- to the mean sidereal
+complementary terms in the lunar node $\Omega$, to the mean sidereal
 time (the GAST block of \texttt{Planetary::eci2ecef}):
 \begin{equation}
 \gast = \gmst + \dpsi\cos\obleps_0
@@ -599,7 +599,7 @@ referenced to \emph{noon}, that midnight is recovered as
 \end{equation}
 not $\lfloor\mathrm{JD}\rfloor$ (same routine).  Using
 the bare floor lands on the \emph{previous} noon for any post-midnight
-epoch --- a half-day error that propagates to roughly $0.5^{\circ}$ in
+epoch, a half-day error that propagates to roughly $0.5^{\circ}$ in
 GMST and, through \eqref{eq:frame-legacy-chain}, on the order of
 $10^{6}\;\mathrm{km}$ in the rotated Sun position; the comment in
 \texttt{Planetary::utc2gmst} records exactly this failure mode.
@@ -665,7 +665,7 @@ $(x_p, y_p, \mathrm{UT1}-\mathrm{UTC}, \mathrm{d}X, \mathrm{d}Y)$.  These
 arrive in a standard IGS \texttt{.ERP} file, parsed by
 \texttt{ProductParser::parseErp} (\texttt{src/core/products/ProductParser.cpp}).
 The parser reads the MJD time tag and the pole/UT1 columns and applies
-the IGS scale factors --- the pole coordinates are tabulated in
+the IGS scale factors: the pole coordinates are tabulated in
 $10^{-6}$ arcseconds and UT1$-$UTC in $10^{-7}$ seconds
 (\texttt{ProductParser::parseErp}):
 \begin{equation}
@@ -741,9 +741,9 @@ the inputs consumed by the solid-Earth and ocean tides of
 \dcref{sec:sitedisp}{the Site Displacement document} and by the
 satellite-attitude and phase-wind-up models of
 \dcref{sec:obsphys}{the Observation Physics document}.  The two
-luni-solar models are only $\sim$100\,km accurate in position --- ample
+luni-solar models are only $\sim$100\,km accurate in position.  That is ample
 for the tidal and attitude geometry, which depend on the Sun/Moon
-\emph{direction} to well under the milliarcsecond level that matters ---
+\emph{direction} to well under the milliarcsecond level that matters,
 and a non-finite guard substitutes a nominal 1\,AU / mean-lunar-distance
 fallback rather than propagate a NaN into the correction stack (the
 output-validation tail of \texttt{Planetary::computeSunMoonPosition}).

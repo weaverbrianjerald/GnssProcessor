@@ -54,13 +54,13 @@ The receiver-bias cancellation of $B_{\rx,\sigl}$ in
 a single per-signal receiver term.  GLONASS is the exception: its FDMA
 inter-frequency biases are per-FCN-slot states, so two satellites on
 different slots carry different receiver delays and the term does
-\emph{not} cancel between them --- a residual
+\emph{not} cancel between them: a residual
 $B^{(k(\sat))}_{\rx,\sigl} - B^{(k(\piv{g}))}_{\rx,\sigl}$ survives the
 single difference.  Accordingly \texttt{BssdTransform} zeroes the
 receiver-DCB columns after differencing \emph{except} the per-slot
 GLONASS IFB states (guarded by \texttt{StateKeys::isGlonassPerSlotIfbKey}),
 and \texttt{PivotManager::buildEpochMaps} drops GLONASS from the BSSD
-candidate maps altogether --- not merely from pivot election --- so with
+candidate maps altogether, not merely from pivot election, so with
 the flag off the constellation contributes no single-differenced row at
 all.  GLONASS BSSD is default-OFF
 (\texttt{estimation.between\_satellite\_sd.enable\_glonass}); when
@@ -90,8 +90,8 @@ and does not use elevation.
 
 \paragraph{Pivot transitions.}
 A handover fires on two kinds of trigger.  The visibility-driven one
-is simple --- when the incumbent pivot leaves the visible set,
-$\piv{g}$ is re-elected from the remaining satellites --- but the
+is simple: when the incumbent pivot leaves the visible set,
+$\piv{g}$ is re-elected from the remaining satellites.  But the
 dominant one in practice is \emph{event-driven}: the post-fit residual
 analyser calls \texttt{PivotManager::requestForcedHandover} when the
 pivot's \emph{observation} slipped while its filter \emph{state} is
@@ -120,24 +120,24 @@ $\bsd{N^{\piv{g}^{\mathrm{new}},\piv{g}^{\mathrm{old}}}_{\rx,\sigl}}$
 becomes the new reference (zero), preserving the integer information
 accumulated since the last fix; the covariance transforms as
 $\covM^{\mathrm{new}} = \bm{S}\,\covM^{\mathrm{old}}\,\bm{S}^{\Tr}$.
-When it cannot --- the new pivot has no existing ambiguity in the
+When it cannot, because the new pivot has no existing ambiguity in the
 $(\text{cons},\text{code})$ group (\texttt{DdPivotManager}, logged as
 ``reset-and-reseed''), or a disturbed pivot has no healthy replacement
 in a single-satellite constellation (\texttt{PivotManager::handleDisturbedPivot}
 re-zeroes $\stateV$ and the corresponding rows/columns of $\covM$ in
-place) --- the transform is skipped and the stale rows are discarded and
+place), the transform is skipped and the stale rows are discarded and
 re-seeded.  In the uncombined PPP-RTK parameterisation the same
 $\bm{S}\,\covM\,\bm{S}^{\Tr}$ re-reference is applied not only to the
-ambiguity block but to \emph{three} state groups ---
-\texttt{reReferenceAmbiguities}, \texttt{reReferenceIonosphere}, and
-\texttt{reReferenceSatBiases} --- which is why \texttt{BssdTransform}
+ambiguity block but to \emph{three} state groups
+(\texttt{reReferenceAmbiguities}, \texttt{reReferenceIonosphere}, and
+\texttt{reReferenceSatBiases}), which is why \texttt{BssdTransform}
 zeroes the pivot's ionosphere and sat-bias $\bm{H}$-columns after
 differencing, and why $\bsd{I^{\sat,\piv{g}}_{\rx,1}}$ in
 \Cref{eq:bssd-code,eq:bssd-phase} is itself a pivot-referenced SD
 quantity, not an absolute slant delay.  The S-basis constraint is
 realised operationally by freezing the pivot's ambiguity, ionosphere,
 and sat-bias covariances to exactly zero (and suppressing their process
-noise) --- the very condition \texttt{isPivotDisturbed} tests against.
+noise), the very condition \texttt{isPivotDisturbed} tests against.
 
 \texttt{PivotManager::getCleanHandovers} classifies each transition as
 lossless-invertible (\emph{clean}) or discontinuous
@@ -166,7 +166,7 @@ $\brd{\cdot}$ are dual to those produced by $\bsd{\cdot}$: BRSD
 cancels \emph{satellite}-side common terms ($\sLight\,\mathrm{d}t^\sat$,
 $B^\sat_\sigl$, $b^\sat_\sigl$) but preserves receiver clock and
 biases of \emph{both} stations.  No state-space estimation of
-satellite biases is required when $\brd{}$ is applied --- they
+satellite biases is required when $\brd{}$ is applied, since they
 disappear before reaching the filter.
 
 \subsection{Double difference (DD)}\label{sec:dd}
@@ -187,7 +187,7 @@ cancellations:
 \end{equation}
 What survives in \Cref{eq:dd-phase} is precisely the geometry term
 (linear in the rover position perturbation), the differential
-atmospheric delays, and the integer DD ambiguity --- the structural
+atmospheric delays, and the integer DD ambiguity: the structural
 form that makes carrier-phase RTK possible.
 
 \paragraph{Short vs.\ long baselines.}
@@ -240,14 +240,14 @@ populated satellite\,$\times$\,receiver observation grid does this
 composition coincide with the Kronecker product
 $\mathbf{D}_{\mathrm{sat}} \otimes \mathbf{D}_{\mathrm{rx}}$ of the
 between-satellite and between-receiver differencing matrices acting on
-the vectorised observations --- a useful mental model, but not what the
+the vectorised observations, a useful mental model but not what the
 non-rectangular real-data case computes.  The
 transformed covariance is $\covM_{\mathrm{diff}} = \bm{S}\,\covM_{\mathrm{undiff}}\,\bm{S}^{\Tr}$,
 a generally dense matrix even when $\covM_{\mathrm{undiff}}$ is
 diagonal (because each differenced row borrows from the same pivot
 column).  This dense correlation structure is the algebraic reason
 DD-based filters cannot be naively implemented as independent
-per-pair scalar updates --- the correctly correlated joint update is
+per-pair scalar updates; the correctly correlated joint update is
 what unlocks integer ambiguity recovery via the LAMBDA decorrelation.
 The general theory and a thorough catalogue of admissible
 S-transforms is given in \textcite{teunissen1985generalised} and in
@@ -260,8 +260,8 @@ materialised as an explicit minimum-constraint $\bm{S}$-basis matrix; it
 is realised \emph{implicitly} through the pivot-differencing operator
 (\texttt{measurement/BssdTransform}), a faithful, S-basis-invariant
 realisation of the uncombined parameterisation of
-\textcite{odijk2003fast}.  The three regimes --- undifferenced, BSSD,
-and DD --- are dispatched polymorphically by a \texttt{DifferencingMode}
+\textcite{odijk2003fast}.  The three regimes (undifferenced, BSSD,
+and DD) are dispatched polymorphically by a \texttt{DifferencingMode}
 strategy in \texttt{measurement/MeasurementBuilder}, not by inline
 config branches.  Second, integer recovery on a DD row requires that all
 four contributing observations share the same RINEX signal code.  The

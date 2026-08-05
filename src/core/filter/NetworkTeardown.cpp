@@ -24,6 +24,9 @@
 #include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
 #include "filter/NetworkWlRunTypes.hpp" // INC-9b: hoisted runNetwork()-local WL/RAII types
 #include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
+#include "filter/NetworkBlockBaarda.hpp"       // BlockFormal LOS-block census (networkBlockBaardaReport)
+#include "filter/NetworkCongruence.hpp"        // station congruence screen (networkCongruenceReport)
+#include "filter/NetworkMdb.hpp"               // Baarda MDB (networkMdbReport — the run-end body lives there)
 #include "filter/NetworkRedundancyCensus.hpp"  // redundancy census (kCensusMinPoolRows for the run-end line)
 #include "filter/NetworkPrefitCensus.hpp"      // prefit census (kNetPrefitMinTypeRows / kNetPrefitPinWeight for the run-end line)
 #include "app/NetworkSetupResult.hpp"   // INC-5: setup-phase handoff (setup) + navAvailabilityGpsSeconds
@@ -66,6 +69,7 @@ int networkTeardown(
     const NetworkEstimator& est,
     const NetworkInvariantCarryDriver& carry_driver,
     const NetworkCarryVce& carry_vce_est,
+    const NetworkPriorResidual& prires_est,
     const SlipQcChannel& slip_qc,
     const NetworkMwWlLayer::Counters& mw_wl_run,
     const std::vector<EwlLane>& ewl_lanes,
@@ -394,6 +398,64 @@ int networkTeardown(
                       ctx.counters.nullspace_obs_min,
                       ctx.counters.nullspace_obs_max);
     }
+    // DATUM GRAPH CENSUS (docs/SPEC_datum_graph_census.md) run-end telemetry.
+    // Standing invariant #4 in the form this card owns: the EXPECTED healthy
+    // reading is "k = 1 everywhere, zero predictions", which is byte-for-byte
+    // what a seam that was never called produces.  So `epochs` and
+    // `epochs_quiet` are BOTH printed, and a run that walked zero support edges
+    // is called out as a miswire rather than reported as a clean network.
+    if (ctx.knobs.dg_on) {
+        const auto& dg = ctx.counters.dg;
+        log->info("Network (datum graph): census ran {} epoch(s) — {} quiet (k = 1 on "
+                  "every constellation AND zero tier-2 predictions), {} fragmented "
+                  "(max k = {}), {} admitted support edge(s) walked.  PREDICTED: {} "
+                  "tier-1 (k-1)*d deficiencies, {} tier-2 zero-code-key directions over "
+                  "{} (sat, family) cell(s) ({} cell(s) had no code-bias layer, both "
+                  "predicates held off); companion zero-support predicate {}.  OBSERVED: "
+                  "{} extra direction(s) by count, {} with identities.  CONTINGENCY — "
+                  "predicted AND observed {}, predicted ONLY {}, observed ONLY {} "
+                  "(directions matching a prediction: {}); companion cells {} / {}.  "
+                  "Events: {} emitted, {} held.  Cost {:.2f} ms total, {:.3f} ms worst "
+                  "epoch (spec budget 0.5, hard limit 2.0).  MEASURE-ONLY: no weight, "
+                  "state, gate, SBC or declared dimension was touched.",
+                  dg.epochs, dg.epochs_quiet, dg.epochs_frag, dg.max_k, dg.edges,
+                  dg.pred_tier1, dg.pred_tier2, dg.cells_tier2, dg.cells_no_cb_layer,
+                  dg.pred_support, dg.obs_extras_count, dg.obs_dirs,
+                  dg.cell_pred_obs, dg.cell_pred_only, dg.cell_obs_only,
+                  dg.cell_obs_matched, dg.support_pred_obs, dg.support_pred_only,
+                  dg.events, dg.events_held, dg.ms, dg.ms_max);
+        if (dg.epochs == 0)
+            log->warn("Network (datum graph): ARMED but never ran a single census pass — "
+                      "the seam is not being reached (miswire), which is a different "
+                      "finding from a quiet network.");
+        else if (dg.edges == 0)
+            log->warn("Network (datum graph): ran {} epoch(s) and walked ZERO admitted "
+                      "support edges.  Tier 1 saw no graph at all, so its k = 1 reading "
+                      "is vacuous — the support source (modeled observations of FOLDED "
+                      "stations) is empty, not the network.",
+                      dg.epochs);
+        if (dg.epochs_count_only > 0)
+            log->info("Network (datum graph): {} epoch(s) reconciled at COUNT level only "
+                      "(extras observed, no identities) — arm network.sbasis_complete for "
+                      "the per-direction attribution the contingency needs; without it "
+                      "every prediction falls into `predicted only` for want of a "
+                      "right-hand side.",
+                      dg.epochs_count_only);
+        if (static_cast<std::size_t>(std::max<long long>(dg.epochs, 0))
+            < ctx.counters.n_gate_evaluated)
+            log->info("Network (datum graph): {} of {} gate-evaluated epoch(s) never "
+                      "reached the census — a WITHHELD epoch skips before SB_FRAMEDIAG, "
+                      "so the epochs whose datum actually failed are precisely the ones "
+                      "with no census row.  Read this line next to the Card-DG withhold "
+                      "counts, not on its own.",
+                      ctx.counters.n_gate_evaluated - static_cast<std::size_t>(dg.epochs),
+                      ctx.counters.n_gate_evaluated);
+        if (dg.ms_max > 2.0)
+            log->warn("Network (datum graph): worst census pass {:.3f} ms exceeds the "
+                      "card's 2.0 ms hard limit (§7) — the implementation is walking "
+                      "something it should not.",
+                      dg.ms_max);
+    }
     if (config_.networkRaimWeCodeIono()) {
         log->info("Network (WE-CI): within-epoch code/iono screening — {} code trip(s), "
                   "{} iono trip(s), {} station exclusion(s), {} satellite code de-weight(s); "
@@ -712,6 +774,14 @@ int networkTeardown(
                       s.arcs_forgotten);
     }
 
+    // --- prior-residual census run-end telemetry ------------------------------
+    // (docs/SPEC_prior_residual_census.md §6).  Standing invariant #4, ladder
+    // edition: THE LADDER IS THE TELEMETRY, and a family with n_rows = 0 must
+    // read as "ran, saw nothing" rather than "never ran".  Body in
+    // filter/NetworkPriorResidual.cpp, next to the emission that produced it.
+    if (ctx.knobs.prires_on)
+        networkPriorResidualReport(ctx, config_, log, setup.stations, prires_est);
+
     // --- redundancy / testability census run-end telemetry --------------------
     // (docs/SPEC_redundancy_census.md).  Standing invariant #4, statistical
     // edition.  The claim this card makes is "the cross-flag has essentially zero
@@ -841,6 +911,36 @@ int networkTeardown(
                           q.redun_escalations);
         }
     }
+
+    // --- Baarda reliability numbers / MDB run-end telemetry -------------------
+    // (docs/SPEC_network_mdb_reliability.md §4).  Standing invariant #4 in its
+    // reliability form: the aggregates must distinguish "ran, all rows checkable"
+    // from "never ran", and the two are reported by the SAME line only if the
+    // denominators come first.  Body in filter/NetworkMdb.cpp, next to the
+    // aggregation that produced the numbers.
+    if (ctx.knobs.mdb_on)
+        networkMdbReport(ctx, config_, log);
+
+    // --- BLOCKFORMAL LOS-block census run-end telemetry ----------------------
+    // (docs/SPEC_block_baarda.md §10.4).  Standing invariant #4 in this card's
+    // form: "the block tier found no smearing" and "there was never a block to
+    // smear across" produce identical ladders, so the BLOCK-SIZE HISTOGRAM is
+    // reported before any occupancy and INC-3's fraction is reported last, with
+    // its denominator.  Body in filter/NetworkBlockBaarda.cpp, next to the sweep
+    // that produced the numbers.
+    if (ctx.knobs.bb_on)
+        networkBlockBaardaReport(ctx, log, setup.stations);
+
+    // --- STATION CONGRUENCE run-end telemetry --------------------------------
+    // (docs/SPEC_station_congruence.md §7.3).  Standing invariant #4 in this
+    // card's form: "every held coordinate on this network is right" and "the
+    // screen never swept a station" produce identical silence, so the
+    // denominators come first — and then THE MDB TABLE, which is the card's
+    // service deliverable rather than a diagnostic: the smallest coordinate fault
+    // this network can see, per station, per direction.  Body in
+    // filter/NetworkCongruence.cpp, next to the sweep that produced the numbers.
+    if (ctx.knobs.cg_on)
+        networkCongruenceReport(ctx, log, setup.stations);
 
     // --- PREFIT census / fuse / seed-birth / topology / flight-recorder --------
     // (docs/SPEC_prefit_census_observability.md §10).  Standing invariant #4 in
@@ -1757,6 +1857,178 @@ int networkTeardown(
                   ctx.carry.rx_cb_injected_total, ctx.carry.rx_cb_innov_skips_total,
                   ctx.carry.rx_cb_harvested_total, ctx.carry.rx_cb_carry.size(),
                   config_.networkRxCbCarryQ());
+    // Card LV-2 (docs/SPEC_level_information_budget.md): armed-only run-end line.
+    // Standing invariant #4 — "0 demeaned" must be visible, never silent, because a
+    // de-mean that never fired is indistinguishable from a healthy one in every
+    // other trace.  The skip rate is printed against its own denominator: the whole
+    // point of judging |innov − μ| is that a coherent frame move stops
+    // mass-triggering the receiver-reset response.
+    if (config_.networkRxCbCarryDemean()) {
+        const long long lv2_seen = ctx.carry.rx_cb_injected_total
+                                 + ctx.carry.rx_cb_innov_skips_total;
+        const double skip_pct = lv2_seen > 0
+            ? 100.0 * static_cast<double>(ctx.carry.rx_cb_innov_skips_total)
+                    / static_cast<double>(lv2_seen)
+            : 0.0;
+        if (ctx.carry.lv2_mu_epochs == 0)
+            log->warn("Network (LV-2 rx-CB de-mean): ARMED but NO epoch ever produced a μ "
+                      "— every epoch fell below the {}-station floor (or no carry row ever "
+                      "folded), so the carry ran with its FULL common-mode force all run "
+                      "(standing invariant #4).  {} μ-freeze event(s).",
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      ctx.carry.lv2_mu_frozen);
+        else
+            log->info("Network (LV-2 rx-CB de-mean): μ computed on {} epoch(s), FROZEN {} time(s) "
+                      "by the {}-station thin-mean floor (invariant #7 decoupling edge); last μ "
+                      "{:+.4f} m, max |μ| {:.4f} m, applied {}.  {}  Σλ(innov−μ) = 0 by "
+                      "construction (in DELTA coordinates): the carry transported "
+                      "between-station differences at full stiffness and stopped re-asserting "
+                      "last epoch's common-mode realization.  It did NOT free that direction — "
+                      "in absolute terms the de-meaned targets pin the receiver-DCB common "
+                      "mode to mean(x_lin), the frozen first-epoch seed frame (SPEC §13).",
+                      ctx.carry.lv2_mu_epochs, ctx.carry.lv2_mu_frozen,
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      ctx.carry.lv2_last_mu_m, ctx.carry.lv2_max_abs_mu_m,
+                      config_.networkRxCbCarryDemeanWithin()
+                          ? "WITHIN the epoch (LV-5: no lag)"
+                          : "LAG-1 (next epoch's folds)",
+                      // The skip figure is only a statement about anything when the
+                      // innovation test is still live: under LV-4 it is switched off by
+                      // construction, so printing "0.0 %" as if it were an outcome would
+                      // read as a result the run did not produce.
+                      config_.networkRxCbCarryStepGate()
+                          ? std::string("The prefit innovation test is RETIRED on this run "
+                                        "(LV-4) — see the invariant-gate line for the erase "
+                                        "count and the same-run A/B.")
+                          : fmt::format("Inject gate skipped {}/{} rows ({:.1f} %) on the "
+                                        "DEMEANED innovation.",
+                                        ctx.carry.rx_cb_innov_skips_total, lv2_seen, skip_pct));
+    }
+    // Card LV-5 (docs/SPEC_level_information_budget.md §12): armed-only run-end line.
+    // The load-bearing number is the RESIDUAL — the folded set's own common mode
+    // minus the μ that was applied to it.  Near zero means the within-epoch
+    // correction actually nulled the force on the frame direction; a residual of the
+    // same size as μ means it did not, and the de-mean is decorative.
+    if (config_.networkRxCbCarryDemeanWithin()) {
+        const double mean_resid = ctx.carry.lv5_resid_n > 0
+            ? ctx.carry.lv5_resid_sum / static_cast<double>(ctx.carry.lv5_resid_n)
+            : 0.0;
+        if (ctx.carry.lv5_within_epochs == 0)
+            log->warn("Network (LV-5 within-epoch μ): ARMED but NO epoch reduced a μ "
+                      "before PASS B — every epoch fell below the thin-mean floor or the "
+                      "carry map was empty, so the folds ran UN-demeaned (standing "
+                      "invariant #4).");
+        else
+            log->info("Network (LV-5 within-epoch μ): μ reduced between PASS A and PASS B "
+                      "on {} epoch(s) and folded against the SAME epoch — no lag.  Residual "
+                      "common mode measured on the folded set afterwards: mean |resid| "
+                      "{:.4f} m, max {:.4f} m over {} family-epoch(s), against max |μ| "
+                      "{:.4f} m.  The residual is what the correction LEFT: near zero means "
+                      "the de-mean tracked the folded set's own common mode this run (NOT "
+                      "that the direction is free — in absolute terms the carry still pins it "
+                      "to mean(x_lin), SPEC §13); residual ≈ μ would mean the de-mean was "
+                      "decorative.  Removing the lag "
+                      "is what makes full carry admission (LV-4) stable — the lag-1 loop "
+                      "gain scales with the folded fraction and limit-cycled the level.",
+                      ctx.carry.lv5_within_epochs, mean_resid,
+                      ctx.carry.lv5_max_abs_resid_m, ctx.carry.lv5_resid_n,
+                      ctx.carry.lv2_max_abs_mu_m);
+    }
+    // Card LV-4 (docs/SPEC_level_information_budget.md §11): armed-only run-end line.
+    // The headline is the SAME-RUN A/B — how many folds the retired frame-dependent
+    // screen would have withheld on exactly these rows, against how many genuine
+    // invariant steps the new screen found.  A large first number with a near-zero
+    // second one IS the finding: the old screen was measuring the seed, not the
+    // receiver.
+    if (config_.networkRxCbCarryStepGate()) {
+        const long long lv4_folds = ctx.carry.rx_cb_injected_total;
+        const double would_pct = lv4_folds > 0
+            ? 100.0 * static_cast<double>(ctx.carry.lv4_frame_gate_would_skip)
+                    / static_cast<double>(lv4_folds)
+            : 0.0;
+        if (ctx.carry.lv4_step_checks == 0)
+            log->warn("Network (LV-4 invariant carry gate): ARMED but ZERO step checks ran "
+                      "— no carried receiver code bias was ever re-harvested, so the event "
+                      "screen never looked at anything (standing invariant #4).");
+        else
+            log->info("Network (LV-4 invariant carry gate): {} step check(s) at the harvest, "
+                      "{} ERASE(s) beyond {}·σ̂ peer-relative (max z {:.2f}, max robust σ̂ "
+                      "{:.3f} m), {} epoch-family stand-down(s) below the {}-entry floor; "
+                      "{} prior(s) folded.  The RETIRED frame-dependent screen "
+                      "(|value_abs − x_lin(cb)|) would have withheld {} of those folds "
+                      "({:.1f} %) — measured on the same rows, in this run.  That gap is the "
+                      "card: x_lin is a frozen linearization point, so the old statistic "
+                      "withheld by where the first-epoch seed landed, and it could not see a "
+                      "jump between two epochs at all.  The scale is ROBUST and PEER-RELATIVE "
+                      "(1.4826·MAD of this epoch's steps, median removed — a common step is a "
+                      "frame move, not N receiver resets); a formal-σ version of this test "
+                      "erased 432/777 entries and destabilized the level.  Erase-not-overwrite "
+                      "is the invariant-#1 response: the entry goes cold for one epoch and the "
+                      "next harvest re-seeds it from data.",
+                      ctx.carry.lv4_step_checks, ctx.carry.lv4_step_resets,
+                      config_.networkRxCbCarryStepKSigma(), ctx.carry.lv4_max_step_z,
+                      ctx.carry.lv4_max_scale_m, ctx.carry.lv4_scale_standdown,
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      lv4_folds, ctx.carry.lv4_frame_gate_would_skip, would_pct);
+    }
+    // Card LV-1 (docs/SPEC_level_information_budget.md): armed-only run-end line.
+    // The per-station counters live on each station's StateInitializer (the reframe
+    // happens inside the PARALLEL produce phase), summed here serially — the same
+    // pattern as the SD-EWL and iono_var feed counters.
+    if (config_.networkIonoSeedFieldFrame()) {
+        long long reframed = 0, fb_raw = 0, fb_field = 0, offsets = 0;
+        for (const auto& st : stations) {
+            if (!st.mm) continue;
+            const auto& s = st.mm->getStateInitializer().ionoSeedFrameStats();
+            reframed += s.reframed;
+            fb_raw   += s.fallback_raw;
+            fb_field += s.field_missing;
+            offsets  += s.offsets;
+        }
+        if (reframed == 0)
+            log->warn("Network (LV-1 iono seed frame): ARMED but ZERO seeds were reframed "
+                      "({} raw fallback(s) for want of {} usable seeds, {} for want of a field "
+                      "value, {} station-epoch offsets) — the wiring is INERT (standing "
+                      "invariant #4).  Every per-LOS iono state was born in the receiver's "
+                      "bias-in frame.",
+                      fb_raw, config_.networkIonoSeedFieldFrameMinSats(), fb_field, offsets);
+        else
+            log->info("Network (LV-1 iono seed frame): {} per-LOS iono seed(s) born in the "
+                      "FIELD's frame ({} station-epoch median offsets; {} raw fallback(s) below "
+                      "the {}-seed floor, {} without a field value — degenerate IPP or a "
+                      "constellation outside the SH field's GPS/Galileo scope).  The lag-1 field "
+                      "was refreshed on {} epoch(s); seeds born before the first refresh used the "
+                      "a₀₀ climatology prior mean.  NOTE the absolute network solve is invariant "
+                      "to this linearization frame — grade it on the PREFIT consumers it moves "
+                      "(the rx-CB inject gate's skip rate, the prefit census), not on a level "
+                      "gradient.",
+                      reframed, offsets, fb_raw,
+                      config_.networkIonoSeedFieldFrameMinSats(), fb_field,
+                      ctx.carry.lv1_field_snapshots);
+    }
+    // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
+    // tell a live gauge from an armed-but-inert one is the fold count, so print it
+    // even (especially) when it is zero.
+    if (config_.networkRxCodeBiasDatum()) {
+        if (ctx.counters.n_rxcb_gauges == 0)
+            log->warn("Network (RXCB-DATUM): receiver code-bias datum is ARMED but folded ZERO "
+                      "prior row(s) over the run — no station ever presented a receiver DCB "
+                      "column, so the receiver-DCB common mode was NEVER gauged and this run is "
+                      "NOT the posture it claims (standing invariant #4).  Check that "
+                      "estimation.estimate_ifb is on and that the DCB states exist.");
+        else
+            log->info("Network (RXCB-DATUM): {} zero-mean receiver code-bias prior row(s) folded "
+                      "over the run (one per station-epoch per constellation, sigma {:.1f} m, "
+                      "realized common-mode information 1/sigma^2 = {:.3e} INDEPENDENT of station "
+                      "count).  Folded PRE-reduce through the diagonal prior channel, so it "
+                      "composes with the Card-4 DD priors that refuse a post-reduce Woodbury "
+                      "gauge.  This is the IGS zero-mean-over-receivers DCB convention, replacing "
+                      "the datum the satellite code-bias sum-to-zero silently also provided.",
+                      ctx.counters.n_rxcb_gauges,
+                      config_.networkRxCodeBiasDatumSigmaM(),
+                      1.0 / (config_.networkRxCodeBiasDatumSigmaM()
+                             * config_.networkRxCodeBiasDatumSigmaM()));
+    }
     if (mw_wl_on) {
         const double mean_R = mw_wl_run.rows_built > 0
             ? mw_wl_run.sum_R / static_cast<double>(mw_wl_run.rows_built) : 0.0;
@@ -2233,6 +2505,56 @@ int networkTeardown(
                       fc.first, fc.second.empty() ? std::string("*") : fc.second,
                       e.robust_floor, cfg_floor, rrat,
                       e.sigma[NetworkCarryVce::kFloor], mrat, e.n_rows);
+        }
+    }
+    if (ctx.knobs.vce_apply_on) {
+        // M2 v2 (docs/SPEC_carry_vce_apply.md §9.4): the ON-path telemetry.  "0
+        // steps" means the wiring is inert no matter how clean the log reads —
+        // standing invariant #4 — so the step / freeze split is printed against a
+        // denominator, per group, and a run that never left warm-up says so in one
+        // line rather than being inferred from a missing effect.
+        const NetworkCarryVceApply& va = ctx.carry.vce_apply;
+        log->info("Network (M2 v2 / LASER 5-95): carry variance-FACTOR summary — "
+                  "families='{}', slew {}, ceiling {}, min_rows {}; {} epoch(s) stepped "
+                  "the iteration.  alpha2 multiplies the carry fold variance; "
+                  "sigma_hat_post = target/alpha2 is the variance of unit weight under "
+                  "the weights the solve USED and should approach 1.  Trajectory: "
+                  "network_carry_vce_apply.csv.",
+                  config_.networkCarryVceApplyFamilies(), va.slew(), va.alpha2Max(),
+                  static_cast<long long>(va.minRows()), va.epochs());
+        if (va.groups().empty())
+            log->warn("  NO GROUPS: the apply path never saw a monitored (family, "
+                      "constellation) accumulator — the factor was unity for the whole run "
+                      "and this arm is INERT (check network.carry_vce_components and that "
+                      "the carry actually folded).");
+        for (const auto& kv : va.groups()) {
+            const NetworkCarryVceApply::Group& g = kv.second;
+            log->info("  [{}|{}] alpha2 = {:.3f} (max {:.3f}, target {:.3f}, "
+                      "sigma_hat_post {:.3f}); robust {:.3e} m2 vs hand fold {:.3e} m2; "
+                      "{} stepped / {} frozen ({}), {} slew-up / {} slew-down, "
+                      "{} ep at ceiling, {} ep at unit; n_eff {:.0f}.",
+                      NetworkCarryVceApply::familyName(g.family),
+                      g.sys ? std::string(1, g.sys) : std::string("*"),
+                      g.alpha2, g.alpha2_max, g.target, g.sigma_hat_post,
+                      g.robust_floor, g.hand_fold_var,
+                      g.n_steps, g.n_frozen,
+                      NetworkCarryVceApply::freezeName(g.freeze),
+                      g.n_slew_up, g.n_slew_down, g.n_ceiling_ep, g.n_unit_ep, g.n_eff);
+            if (g.n_steps == 0)
+                log->warn("    [{}|{}] NEVER STEPPED — the factor stayed at {:.3f} for the "
+                          "whole run (last freeze reason '{}').  Report this arm as "
+                          "apply-INERT for that group, not as apply-neutral.",
+                          NetworkCarryVceApply::familyName(g.family),
+                          g.sys ? std::string(1, g.sys) : std::string("*"),
+                          g.alpha2, NetworkCarryVceApply::freezeName(g.freeze));
+            if (g.n_ceiling_ep > 0)
+                log->warn("    [{}|{}] spent {} epoch(s) PINNED at the alpha2 ceiling {} "
+                          "(target {:.1f}) — the measured carry variance exceeded what the "
+                          "ceiling allows the model to admit, so those epochs folded a "
+                          "prior that is still stiffer than the data says.",
+                          NetworkCarryVceApply::familyName(g.family),
+                          g.sys ? std::string(1, g.sys) : std::string("*"),
+                          g.n_ceiling_ep, va.alpha2Max(), g.target);
         }
     }
     if (n_gated_epochs > 0)

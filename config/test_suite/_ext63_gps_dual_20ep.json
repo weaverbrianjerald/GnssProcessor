@@ -1,0 +1,41 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE — 20 epochs (600 s at 30 s = epochs 0..600 inclusive = 21 solved epochs).",
+  "Identical posture to _ext63_gps_dual_1h.json, cut to the staged-cadence smoke length.",
+  "",
+  "WHAT A PASS LOOKS LIKE (this is a WIRING + REACHABILITY smoke, not a science run):",
+  " 1. The loader echoes 'Network producer (EXT-CB): ... EXTERNAL .BIA ... SH-VTEC ionosphere",
+  "    CO-ESTIMATED' and 'Network producer: EXTERNAL-CLOCK HOLD ON ... sigma 0.0200 m'.",
+  "    Their ABSENCE means a knob did not take (unknown JSON keys are silently ignored).",
+  " 2. Solved epochs == walked epochs, 0 gate_withheld.  A 'declared S-basis dimension'",
+  "    failure here is the interesting failure: it would say the clock anchors did not close",
+  "    the gauge at this sigma, or that removing the CB columns opened a new near-null.",
+  " 3. READ nshared IN THE LOG.  It must DROP relative to the golden control (the ~130",
+  "    satellite code-bias columns are gone and the phase-bias set halves under dual).  An",
+  "    unchanged nshared means external_sat_code_bias did not take effect.",
+  " 4. Non-zero row counts after the two coverage gates.  require_atx_coverage +",
+  "    require_bia_for_signals both DROP observations; if either is over-eager on this",
+  "    fixture the station/observation counts collapse and everything downstream is",
+  "    meaningless.  Check the per-station observation counts before reading anything else.",
+  "",
+  "IF IT FAILS, BISECT IN THIS ORDER (5 variables move vs the golden control):",
+  "  a. drop require_atx_coverage + require_bia_for_signals  (coverage, cheapest to rule out)",
+  "  b. drop clock_datum_broadcast_anchored                  (rung B alone)",
+  "  c. drop external_sat_code_bias, keep dual               (leaves dual + W6 = known ZERO",
+  "     epochs, so this arm is the control that must FAIL — see _golden63_gps_1h_dual.json)",
+  "",
+  "20 epochs is INSIDE IGNITION on this lineage: no total_IF, no carry retention, no AR, no",
+  "position claim.  It answers 'does the posture run and is the wiring live', nothing more.",
+  "",
+  "FRESH LINEAGE ONLY.  Own paths; never resume onto another arm's snapshot."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "network": {
+  "max_duration_s": 600.0,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep/state_snapshot.bin"
+ }
+}

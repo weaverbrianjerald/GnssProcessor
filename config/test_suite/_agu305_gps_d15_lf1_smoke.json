@@ -1,0 +1,42 @@
+{
+ "_comment": [
+  "305-sta GPS deg-15 probe: KEEP the lane carry, make it fast (LF-1 knobs).",
+  "",
+  "The companion arm (_agu305_gps_d15_nolane_smoke) asks 'what if we drop the lane",
+  "carry entirely'.  This one asks 'what does it cost if we keep it', by arming the",
+  "two LF-1 optimizations that already exist and ship OFF:",
+  "",
+  "  network.lane_carry.parallel_components — fans the per-epoch lane folds across",
+  "    cores, one component per thread.  Documented BYTE-IDENTICAL to serial (the",
+  "    only lane knob that is).  Ceiling here is low: the K_c histogram shows ~3",
+  "    components per epoch (1 tiny + 2 in the 256+ bucket), so expect ~2x at best.",
+  "",
+  "  network.lane_carry.fold_blocked — hoists the per-row re-symmetrize to ONE pass",
+  "    per block per epoch.  That symmetrize is `blk.Pz = (0.5*(Pz + Pz^T)).eval()`",
+  "    on a 2K x 2K = 7732^2 (478 MB) block, i.e. ~1.4 GB of memory traffic PER ROW",
+  "    on top of the ~1 GB the rank-1 downdate itself moves -- so it is roughly half",
+  "    the per-row cost.  NOT bit-identical: it changes operation order and lands in",
+  "    the parallel_carry equivalence class (<=1e-12 vs sequential, per the card).",
+  "",
+  "GRADE: wall per settled epoch (read from epoch 4 on), and — because fold_blocked",
+  "is not bit-identical — the products/solve must be compared, not assumed equal.",
+  "",
+  "NOTE the deeper fix this arm does NOT make: the downdate is written as a full",
+  "dense `blk.Pz -= (Ph * Ph.transpose()) / S`.  As a triangular BLAS-2",
+  "`Pz.selfadjointView<Lower>().rankUpdate(Ph, -1/S)` it would move half the memory",
+  "AND stay exactly symmetric, making the re-symmetrize unnecessary rather than",
+  "merely hoisted.  That is a code card with its own LF-1 gates, not a config arm."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu305_gps_d15_smoke.json"
+ ],
+ "network": {
+  "lane_carry": {
+   "enable": true,
+   "fold_blocked": true,
+   "parallel_components": true
+  },
+  "product_output_path": "C:/GnssProcessor/runs/agu305_gps_d15_lf1_smoke/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu305_gps_d15_lf1_smoke/state_snapshot.bin"
+ }
+}

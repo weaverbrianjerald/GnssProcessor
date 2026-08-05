@@ -1,0 +1,57 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 16 — THE SPEC'S DECISIVE ARM: the arm-14 posture (single-layer",
+  "canonical + carry_rx_code_bias FALSE) with CARD LV-1 armed.  Two knobs vs arm 12,",
+  "one vs arm 14: network.iono_seed_field_frame.",
+  "",
+  "WHAT THE SPEC ASKED THIS ARM TO DECIDE (docs/SPEC_level_information_budget.md S3):",
+  "\"if the mechanism model is right, the -9 TECU/ep collapse largely DISAPPEARS without",
+  "the carry crutch (predict: a00 stays > 10 through 20 ep, in-band).  If it still",
+  "collapses, the model is wrong -- STOP, instrument the level-direction information",
+  "decomposition before touching anything else.\"",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN: IT STILL COLLAPSES.  a00 free-falls ~-9 TECU/ep to",
+  "-37..-39 and every emission is withheld, reproducing arm 14 to within trace noise.",
+  "",
+  "WHY, ANALYTICALLY, AHEAD OF THE RUN.  The seed-frame stiffness the model rests on",
+  "does not exist on this path: the per-station state vector is a frozen LINEARIZATION",
+  "POINT, the per-epoch absolute solve carries NO Kalman prior on local nuisances, and",
+  "every row on a GPS iono column carries x_lin with its own A_r coefficient -- so a seed",
+  "shift leaves the reduced RHS EXACTLY invariant (2026-08-01 invariance theorem, memory",
+  "project_network_xlin_invariance).  With the carry OFF, even LV-1's one genuine",
+  "actuator on the carry-ON leg (the rx-CB inject gate, a PREFIT screen on",
+  "|value_abs - x_lin(cb)|) is absent, so nothing but the trace-only prefit census can",
+  "move at all.",
+  "",
+  "SO THIS ARM IS RUN AS A FALSIFICATION, NOT AS A HOPE.  Reading it:",
+  " - Collapse reproduced (expected): the spec's per-LOS-ensemble gradient model is dead",
+  "   and the STOP clause is answered -- the level-direction decomposition is the next",
+  "   card, and LV-2 (which changes prior-row RHS, not a linearization frame) is the",
+  "   actuator that remains.",
+  " - Collapse GONE (unexpected): the invariance theorem has an exception on this",
+  "   lineage.  That is a bigger result than the card; find the non-invariant row before",
+  "   touching any other knob (candidates: a prefit-gated row set, the GLONASS-style",
+  "   y=0 anchors, anything thresholding a prefit residual)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "carry_rx_code_bias": false,
+  "iono_seed_field_frame": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv1_nc/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv1_nc/state_snapshot.bin"
+ }
+}

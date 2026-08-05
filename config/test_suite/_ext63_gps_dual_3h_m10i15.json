@@ -1,0 +1,35 @@
+{
+ "_comment": [
+  "ARM 33 - obs mask 10 (the OLD value), iono cutoff 15.  Isolates the IONO-CUTOFF half.",
+  "vs arm 31 (15/15) the ONLY difference is the observation mask.  Completes the 2x2 with",
+  "arms 24 (10/25), 31 (15/15) and 32 (15/25).",
+  "",
+  "Same build, same window, same lineage as arms 24/31/32.  Fresh lineage; own paths.",
+  "Grade: median postfit phase rms (network_pf_keyed.csv STA, settled 20-60 min AND h2-3) is",
+  "the INVARIANT-LEGAL grade; a00-GIM is a DIAGNOSTIC (invariant #5, SPEC 17 item 0).",
+  "NOTE observation counts DIFFER across the obs-mask arms (~10 %), so the rms comparison is",
+  "not the identical-observations control the LV factorial had -- read direction, not delta."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0,
+  "elevation_mask_deg": 10.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_3h_m10i15/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_3h_m10i15/state_snapshot.bin"
+ }
+}

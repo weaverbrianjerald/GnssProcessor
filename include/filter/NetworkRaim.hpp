@@ -39,9 +39,10 @@
  * `if (raim_on && carry_warm)` arming guard; this function is the guarded body.
  */
 
-#include "filter/NetworkEstimator.hpp"   // NetworkEstimator + NetworkEstimator::Datum
-#include "filter/NetworkRunTypes.hpp"    // NetStation / StationAssembly
-#include "rinex/MultiRinexSync.hpp"      // MultiRinexSync::SyncedEpoch
+#include "filter/NetworkEstimator.hpp"      // NetworkEstimator + NetworkEstimator::Datum
+#include "filter/NetworkPriorResidual.hpp"  // the constraint-aware global σ̂₀ data-side feed
+#include "filter/NetworkRunTypes.hpp"       // NetStation / StationAssembly
+#include "rinex/MultiRinexSync.hpp"         // MultiRinexSync::SyncedEpoch
 
 #include <Eigen/Core>
 
@@ -94,6 +95,20 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the 
  *                           (ura_retro || ura_refloat_inflate > 1.0).
  * @param n_arc_refloat_epoch [in/out] this epoch's isolated-arc refloat count
  *                           (heartbeat churn metric, read later in the epoch).
+ * @param prires             [in/out] the prior-residual census accumulator, here
+ *                           ONLY as the DATA-SIDE feed of the constraint-aware
+ *                           global variance component
+ *                           (docs/SPEC_sigma0_constraint_aware.md): the Pass-1
+ *                           row walk already holds every row's @c (w, v, r_i), so
+ *                           the feed is a multiply and two adds inside a loop
+ *                           that already runs.  Inert unless
+ *                           @c network.prior_residual_global_sigma0 is armed, and
+ *                           MEASURE-ONLY in every case — this seam's decisions
+ *                           (the σ̂0 pool, the consensus, the attribution, every
+ *                           refloat) read NOTHING back from it.  Ordering: the
+ *                           accumulator is drained in SB_STASH_STATUS, which runs
+ *                           after this seam, so the epoch's data side is complete
+ *                           when the column is written.
  */
 void networkPostFitRaim(NetworkRunContext& ctx,
                         const GnssConfig& config_,
@@ -110,6 +125,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         std::set<std::string>& clock_refloat_sats,
                         std::set<std::string>& retro_flag_sats,
                         bool retro_feed,
-                        int& n_arc_refloat_epoch);
+                        int& n_arc_refloat_epoch,
+                        NetworkPriorResidual& prires);
 
 } // namespace GnssProcessor

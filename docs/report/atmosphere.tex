@@ -177,7 +177,7 @@ $V_{nm},W_{nm}$ at the station co-latitude and longitude, the
 $91 = \sum_{n=0}^{12}(n+1)$ harmonic terms are accumulated against the
 stored \texttt{Vmf3Coeffs} tables, and each of $b_{\mathrm h},c_{\mathrm
 h},b_{\mathrm w},c_{\mathrm w}$ is then evaluated as a five-coefficient
-mean-plus-annual-plus-semiannual harmonic --- all three steps inside
+mean-plus-annual-plus-semiannual harmonic, with all three steps inside
 \texttt{Vmf3::computeMapping}:
 \begin{equation}
 v(\mathrm{doy}) = A_0 + A_1\cos\omega + B_1\sin\omega
@@ -307,7 +307,7 @@ so that $\stec = M(\elev)\,\vtec$
 IPP is $\psi = \tfrac\pi2 - \elev - z'$, and the IPP latitude and longitude come
 from the spherical-triangle solution along the satellite azimuth $\azim$
 (\texttt{computeIppGeometry}).  It propagates the receiver's geodetic latitude
-$\phi_\rx$ across the thin shell as though it were geocentric --- an
+$\phi_\rx$ across the thin shell as though it were geocentric, an
 approximation worth well under a millimetre of L1 delay, and the frame in which
 the reconstructed IPP is later consumed by the higher-order model
 \eqref{eq:atmos-dipole}:
@@ -395,7 +395,7 @@ not itself appear as a measurement.
 \subsubsection{The co-estimated spherical-harmonic VTEC field}\label{sec:atmos-shvtec}
 
 Rather than import an external map, the network producer can estimate the
-vertical TEC field itself --- a truncated real spherical-harmonic expansion
+vertical TEC field itself, a truncated real spherical-harmonic expansion
 on the same kind of thin shell, solved jointly with the satellite code
 biases.  The coefficients are \emph{shared} columns of the network normal
 equations, registered through \texttt{NetworkEstimator::registerVtecCoeff}
@@ -407,8 +407,8 @@ The switch is \texttt{network.estimate\_iono\_sh}.  It defaults false, but it
 is part of the standing armed network posture and is set by most shipped
 network configurations, so it is the ionosphere model the producer actually
 runs on rather than an experiment.  Arming it forces
-\texttt{network.estimate\_sat\_code\_bias} on --- the field is what makes the
-satellite code-bias slice observable --- and suppresses external GIM loading,
+\texttt{network.estimate\_sat\_code\_bias} on (the field is what makes the
+satellite code-bias slice observable) and suppresses external GIM loading,
 so the two ionosphere sources can never be applied to the same run
 (\texttt{config/GnssConfigLoadNetwork.cpp}; the SH-versus-GIM branch guards
 the \texttt{networkAppendGimIonoRows\_} call site in
@@ -440,7 +440,7 @@ chosen so the real surface harmonics $\{\bar P_{nm}\cos(m s),\ \bar
 P_{nm}\sin(m s)\}$ are orthonormal under $(1/4\pi)\int(\cdot)\,\mathrm
 d\Omega$ \cite{subirana2013gnss}.  Because \eqref{eq:atmos-sh-synth} is
 linear in the coefficients, the basis values \emph{are} the partial
-derivatives --- $\partial\vtec/\partial a_{nm}$ and
+derivatives: $\partial\vtec/\partial a_{nm}$ and
 $\partial\vtec/\partial b_{nm}$ are exactly what
 \texttt{SphericalHarmonicIonosphere::basis} returns, so no numerical
 differentiation enters the Jacobian.  One consequence is used repeatedly
@@ -510,7 +510,7 @@ unit-information rows before it joins the normal equations.  Reusing
 convenience.  The rank-one $\sigma_c^2\,\bm 1\bm 1^{\Tr}$ block leaves the
 per-(receiver, constellation) iono datum free, so the receiver DCB rides in
 the common mode and the field constrains only the \emph{between-satellite}
-slant structure --- which is the only thing a global VTEC surface can be
+slant structure, which is the only thing a global VTEC surface can be
 asked to know.  Its corollary is that $a_{00}$ is observable only weakly,
 through the spread of $M(\elev)$ across the network, and that is what the
 datum below has to handle.  GLONASS is excluded from the field entirely
@@ -553,7 +553,7 @@ per-(constellation, signal) sum-to-zero constraint of
 mean VTEC would re-import the very GIM dependency the co-estimation exists to
 remove, and would bias every emitted satellite code bias by the difference.
 
-\paragraph{Open extensions --- default OFF, not yet field-validated.}
+\paragraph{Open extensions: default OFF, not yet field-validated.}
 Two extensions of this model are built but off by default and still under
 validation; neither is the shipped behaviour.
 
@@ -565,7 +565,7 @@ pin row \eqref{eq:atmos-sh-pin} then sums the shells, each evaluated at
 Y_k(\mathrm{IPP}_l)\,c_{k,l}$ (\texttt{ShLayer}, assembled by
 \texttt{shLayers}, which every consumer of the field loops so a shell can
 never be evaluated at another shell's geometry).  The second shell's $a_{00}$
-anchor is deliberately \emph{tight} --- the mirror image of the argument
+anchor is deliberately \emph{tight}, the mirror image of the argument
 above.  The inter-layer split of the mean VTEC is quasi-null from ground-only
 geometry, since only the difference of the two shells' mapping profiles
 observes it, so the split must be held by prior information while the
@@ -595,8 +595,8 @@ with $U$ the data-only information recovered from $\hat V$
 also default OFF.  \texttt{rep\_error\_demean} (\texttt{shDevDemean}) removes
 the information-weighted global and per-station means of the carried priors
 once per epoch, because a deviation component that is common in vertical TECU
-has row signature $\kappa\,M(\elev)$ --- \emph{identical} to the $a_{00}$
-column's --- so the pair is exactly quasi-null and the
+has row signature $\kappa\,M(\elev)$, \emph{identical} to the $a_{00}$
+column's, so the pair is exactly quasi-null and the
 harvest--age--re-assert cycle ratchets it; the de-mean enforces the state's
 own contract, that it carries per-LOS structure only.
 \texttt{rep\_error\_d5\_keep} (\texttt{shDevD5Retap}) splits the slip
@@ -611,8 +611,8 @@ that arming the erase-policy split without the de-mean re-opens the ratchet.
 
 \subsubsection{Klobuchar broadcast seed}
 
-For a single-frequency a-priori only --- the cold-start seed of the slant
-state, never a dual-frequency correction --- the broadcast Klobuchar
+For a single-frequency a-priori only (the cold-start seed of the slant
+state, never a dual-frequency correction), the broadcast Klobuchar
 half-cosine model is available \cite{klobuchar1987ionospheric}
 (\texttt{Ionosphere::computeKlobucharDelay}).  With
 elevation and azimuth in semicircles, the earth-centred angle, geomagnetic

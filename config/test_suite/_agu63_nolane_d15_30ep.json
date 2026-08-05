@@ -1,0 +1,22 @@
+{
+ "_comment": [
+  "Arm B of the 30-epoch quick look: lane OFF *and* SH degree 15 SINGLE layer",
+  "(user preference, 2026-08-04).  Read against arm A (_agu63_nolane_30ep) to price",
+  "the SH change alone at 63 stations — the P3b ladder measured deg-15 at +34 % wall",
+  "there (vs only ~+5-8 % at 305, where per-station work dominates).",
+  "",
+  "Coefficients 81+25 = 106 -> 256, i.e. +150 shared columns.",
+  "",
+  "⚠️ Same 30-epoch caveat as arm A: this is a structural/wall check, NOT a grade."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu63_nolane_30ep.json"
+ ],
+ "estimation": {
+  "global_vtec_sh": { "max_degree": 15, "layer2_max_degree": 0 }
+ },
+ "network": {
+  "product_output_path": "C:/GnssProcessor/runs/agu63_nolane_d15_30ep/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu63_nolane_d15_30ep/state_snapshot.bin"
+ }
+}

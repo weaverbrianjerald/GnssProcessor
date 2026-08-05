@@ -45,6 +45,12 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
+      carry_vce_apply_trace_path(log_dir_ / "network_carry_vce_apply.csv"),
+      prior_residual_trace_path(log_dir_ / "network_prior_residual.csv"),
+      block_baarda_trace_path(log_dir_ / "network_block_baarda.csv"),
+      congruence_trace_path(log_dir_ / "network_congruence.csv"),
+      mdb_trace_path(log_dir_ / "network_mdb.csv"),
+      datum_graph_trace_path(log_dir_ / "network_datum_graph.csv"),
       estimability_trace_path(log_dir_ / "network_estimability.csv"),
       sh_spectrum_trace_path(log_dir_ / "network_sh_spectrum.csv"),
       sh_spectrum_mode_trace_path(log_dir_ / "network_sh_spectrum_mode.csv"),
@@ -243,6 +249,13 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     // emitEpochStatus agree by construction (the two writers are 300 lines apart).
     // Screening implies the columns, per spec §5.
     es_adm_columns_ = nc.adm_trace || nc.adm_screen;
+    // Prior-residual census schema flag (docs/SPEC_prior_residual_census.md) —
+    // same one-decision-point discipline, same STRUCTURAL byte-identity reason.
+    es_prires_columns_ = nc.prior_residual_census;
+    // Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) — its OWN
+    // schema flag, so a census-only run keeps exactly the columns it had before
+    // this rider existed and the census's §9.1 A/B stays a valid comparison.
+    es_s0g_columns_ = nc.prior_residual_census && nc.prior_residual_global_sigma0;
     if (nc.trace_epoch_status) {
         epoch_status_trace.open(epoch_status_trace_path);
         if (epoch_status_trace)
@@ -301,7 +314,34 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                // adm_net_worst_z = the network MAXIMUM (the extreme,
                                // whose identity goes to the ADMISSION events).
                                << (es_adm_columns_
-                                       ? ",adm_sta_worst_z,adm_net_worst_z\n" : "\n");
+                                       ? ",adm_sta_worst_z,adm_net_worst_z" : "")
+                               // docs/SPEC_prior_residual_census.md: the per-epoch
+                               // face of the carry-prior census.  Appended ONLY
+                               // when the card is armed (the adm precedent, not
+                               // the redundancy/prefit one) because this card's
+                               // OFF contract is STRUCTURAL byte-identity and its
+                               // §9.1 gate compares this file across arms.
+                               // prires_rows is the DENOMINATOR — a raw
+                               // "12 rows over 4-sigma" is uninterpretable without
+                               // it — and prires_rows_resp / _frame partition the
+                               // populations the card refuses to pool.
+                               << (es_prires_columns_
+                                       ? ",prires_rows,prires_rows_resp,prires_rows_frame,"
+                                         "prires_n_reported,prires_max_t"
+                                       : "")
+                               // docs/SPEC_sigma0_constraint_aware.md: the
+                               // constraint-aware global variance component.
+                               // sigma0_global is the LASER 5-74 scale (prior
+                               // residuals in the numerator, constraints in the
+                               // redundancy); prior_tension_ratio is the headline
+                               // — how much of the epoch's weighted misfit lives
+                               // in the CARRY, which the robust median sigma0 is
+                               // structurally blind to.  s0g_flags is the in-band
+                               // degradation bitmask: a degraded number SAYS SO
+                               // in its own row, never silently.
+                               << (es_s0g_columns_
+                                       ? ",sigma0_global,prior_tension_ratio,s0g_flags\n"
+                                       : "\n");
         else
             log->warn("Network: failed to open epoch-status trace {}",
                       epoch_status_trace_path.string());
@@ -461,6 +501,86 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network (M2/LS-VCE): failed to open carry-VCE trace {}",
                       carry_vce_trace_path.string());
+    }
+    if (config_.networkCarryVceApply()) {
+        // M2 v2 — the variance-factor trajectory.  Gated on the apply knob itself
+        // rather than on a trace_* knob: the file IS the mechanism's telemetry
+        // (α², its clamps, the σ̂²→1 convergence readout), and an armed apply with
+        // no trajectory is an ungradable run, not a quiet one.  The loader
+        // guarantees carry_vce, so the monitor digest next to it is always open too.
+        carry_vce_apply_trace.open(carry_vce_apply_trace_path);
+        if (carry_vce_apply_trace)
+            carry_vce_apply_trace << kCarryVceApplyHeader;
+        else
+            log->warn("Network (M2 v2): failed to open carry-VCE-apply trace {}",
+                      carry_vce_apply_trace_path.string());
+    }
+    if (nc.prior_residual_census) {
+        // docs/SPEC_prior_residual_census.md INC-1 — the exceedance ladder, the
+        // card's headline product.  ⚠ Durability: only health_trace flushes
+        // mid-run (see rotateServiceCsvs / writeHealthRow), so a long armed run
+        // should also carry network.health_interval_s if the ladder has to survive
+        // a kill.  The seam flushes this stream itself on the content-hour roll.
+        prior_residual_trace.open(prior_residual_trace_path);
+        if (prior_residual_trace)
+            prior_residual_trace << kPriorResidualHeader;
+        else
+            log->warn("Network (prior-residual census): failed to open trace {}",
+                      prior_residual_trace_path.string());
+    }
+    if (nc.block_baarda) {
+        // docs/SPEC_block_baarda.md INC-1 — the per-(family x label) exceedance
+        // ladder over t_B, the card's headline product.  Same durability caveat
+        // as the prior-residual ladder: only health_trace flushes mid-run, so a
+        // long armed run should also carry network.health_interval_s if these
+        // rows have to survive a kill.
+        block_baarda_trace.open(block_baarda_trace_path);
+        if (block_baarda_trace)
+            block_baarda_trace << kBlockBaardaHeader;
+        else
+            log->warn("Network (block-Baarda census): failed to open trace {}",
+                      block_baarda_trace_path.string());
+    }
+    if (nc.congruence_screen) {
+        // docs/SPEC_station_congruence.md INC-1 — one row per SWEPT STATION per
+        // epoch.  This file IS the card's headline product: SPEC §7.2's perturbed
+        // arm is graded on a per-station run-median of `d_e` and §7.3's MDB table
+        // is built from `mdb_*`, neither of which survives aggregation into a
+        // ladder.  Same durability caveat as the ladders above: only health_trace
+        // flushes mid-run, so a long armed run should carry
+        // network.health_interval_s if these rows have to survive a kill.
+        congruence_trace.open(congruence_trace_path);
+        if (congruence_trace)
+            congruence_trace << kCongruenceHeader;
+        else
+            log->warn("Network (station congruence): failed to open trace {}",
+                      congruence_trace_path.string());
+    }
+    if (nc.mdb) {
+        // docs/SPEC_network_mdb_reliability.md INC-1 — the per-(constellation x
+        // class) MDB distribution, the card's headline product.  Same durability
+        // caveat as the ladder above: only health_trace flushes mid-run, so a long
+        // armed run should carry network.health_interval_s if these rows have to
+        // survive a kill.
+        mdb_trace.open(mdb_trace_path);
+        if (mdb_trace)
+            mdb_trace << kNetworkMdbHeader;
+        else
+            log->warn("Network (MDB): failed to open reliability trace {}",
+                      mdb_trace_path.string());
+    }
+    if (nc.datum_graph_census) {
+        // docs/SPEC_datum_graph_census.md INC-2 — the predicted-vs-observed
+        // S-basis dimension contingency, the card's headline product.  Same
+        // durability caveat as the files above: only health_trace flushes
+        // mid-run, so a long armed run should carry network.health_interval_s if
+        // these rows have to survive a kill.
+        datum_graph_trace.open(datum_graph_trace_path);
+        if (datum_graph_trace)
+            datum_graph_trace << kNetworkDatumGraphHeader;
+        else
+            log->warn("Network (datum graph): failed to open census trace {}",
+                      datum_graph_trace_path.string());
     }
     if (nc.trace_estimability) {
         // Card DG5: the machine-readable twin of the Network[estimability] WARN
@@ -699,6 +819,37 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
             o << ',';
             if (r.adm_net_worst_z) o << fmt::format("{:.6e}", *r.adm_net_worst_z);
         }
+        // Prior-residual census: five columns, present in the schema only when the
+        // card is armed.  Blank on an epoch the census did not run — a genuine
+        // 0-row epoch (every carry family absent) and an un-run epoch say very
+        // different things, and standing invariant #4 turns on being able to tell
+        // "ran, saw nothing" from "never ran".
+        if (es_prires_columns_) {
+            o << ',';
+            if (r.prires_rows)        o << *r.prires_rows;
+            o << ',';
+            if (r.prires_rows_resp)   o << *r.prires_rows_resp;
+            o << ',';
+            if (r.prires_rows_frame)  o << *r.prires_rows_frame;
+            o << ',';
+            if (r.prires_n_reported)  o << *r.prires_n_reported;
+            o << ',';
+            if (r.prires_max_t)       o << fmt::format("{:.6e}", *r.prires_max_t);
+        }
+        // Constraint-aware global σ̂₀: three columns, present only when the rider
+        // is armed.  sigma0_global is BLANK (not 0) on an epoch whose Σr was
+        // non-positive — "not formed" and "formed at zero" are different states,
+        // and s0g_flags says which.  s0g_flags itself is written whenever the
+        // epoch ran, INCLUDING when it is 0: a reader must be able to tell a
+        // clean epoch from an un-run one without cross-referencing another file.
+        if (es_s0g_columns_) {
+            o << ',';
+            if (r.s0g_sigma0)  o << fmt::format("{:.6e}", *r.s0g_sigma0);
+            o << ',';
+            if (r.s0g_tension) o << fmt::format("{:.6e}", *r.s0g_tension);
+            o << ',';
+            if (r.s0g_flags)   o << *r.s0g_flags;
+        }
         o << '\n';
 }
 
@@ -718,6 +869,39 @@ void NetworkRunTraces::emitEvent(const GnssTime& t, const char* tier, const char
         o << ',';
         if (threshold) o << fmt::format("{:.6f}", *threshold);
         o << ',' << action << ',' << d << '\n';
+}
+
+void NetworkRunTraces::writeCarryVceApplyRows(const GnssTime& t,
+                                              const NetworkCarryVceApply& apply,
+                                              int& hour_state) {
+    if (!carry_vce_apply_trace.is_open()) return;
+    auto& o = carry_vce_apply_trace;
+    for (const auto& kv : apply.groups()) {
+        const NetworkCarryVceApply::Group& g = kv.second;
+        o << t.week << ',' << fmt::format("{:.3f}", t.tow) << ','
+          << NetworkCarryVceApply::familyName(g.family) << ','
+          << (g.sys ? std::string(1, g.sys) : std::string()) << ','
+          << fmt::format("{:.1f}", g.n_eff) << ','
+          << fmt::format("{:.6e}", g.robust_floor) << ','
+          << fmt::format("{:.6e}", g.hand_fold_var) << ','
+          << fmt::format("{:.6e}", g.target) << ','
+          << fmt::format("{:.6e}", g.alpha2) << ','
+          // The LASER 5-95 convergence readout.  Printed at full precision because
+          // "is it 1.0?" is the whole question and a 4-digit render of 1.0003 vs
+          // 1.3 is not the same reading.
+          << fmt::format("{:.6e}", g.sigma_hat_post) << ','
+          << NetworkCarryVceApply::freezeName(g.freeze) << ','
+          << (g.at_ceiling ? 1 : 0) << ',' << (g.at_unit ? 1 : 0) << ','
+          << g.n_steps << ',' << g.n_frozen << ','
+          << g.n_slew_up << ',' << g.n_slew_down << ','
+          << g.n_ceiling_ep << ',' << g.n_unit_ep << ','
+          << fmt::format("{:.6e}", g.alpha2_max) << '\n';
+    }
+    // Durability: nothing flushes this stream on its own (only health_trace does),
+    // and it is the card's graded artifact — an hourly flush bounds what a killed
+    // or WER-zombied run can lose to one content hour.
+    const int hour = static_cast<int>(t.tow / 3600.0);
+    if (hour != hour_state) { o.flush(); hour_state = hour; }
 }
 
 void NetworkRunTraces::writeEstimabilityEpochRow(const GnssTime& t, double tow, int n_shared,
@@ -1087,6 +1271,16 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.adm_revet_census ? "true" : "false",
                                      nc.adm_revet_hold ? "true" : "false")
                        : std::string())
+               // docs/SPEC_network_mdb_reliability.md: the arm provenance a §6 grader
+               // needs to tell a reliability leg from its control without re-reading
+               // the config.  Emitted ONLY when armed, so an unarmed run's manifest
+               // bytes are unchanged (the adm_screen precedent; the decomposition
+               // golden hashes this file).
+               << (nc.mdb
+                       ? fmt::format("\"mdb\":true,\"mdb_event_m\":{},"
+                                     "\"mdb_event_holdoff_ep\":{},",
+                                     nc.mdb_event_m, nc.mdb_event_holdoff_ep)
+                       : std::string())
                // RTB-6/P1: service-observability knobs (health heartbeat + trace rotation).
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
@@ -1140,6 +1334,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"phase_leveling_var_floor_m2\":{},", pl_var_floor)
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
+               // M2 (LS-VCE) monitor + v2 apply.  The apply knobs are in the manifest
+               // because they are SOLVE-AFFECTING and fingerprinted: an archived logs/
+               // folder has to be able to say which α² regime produced its products.
+               << "\"carry_vce\":" << (config_.networkCarryVce() ? "true" : "false") << ','
+               << "\"carry_vce_apply\":" << (config_.networkCarryVceApply() ? "true" : "false") << ','
+               << "\"carry_vce_apply_families\":\"" << config_.networkCarryVceApplyFamilies() << "\","
+               << fmt::format("\"carry_vce_apply_slew\":{},", config_.networkCarryVceApplySlew())
+               << fmt::format("\"carry_vce_apply_max\":{},", config_.networkCarryVceApplyMax())
+               << "\"carry_vce_apply_min_rows\":" << config_.networkCarryVceApplyMinRows() << ','
                << "\"carry_zwd\":" << (zwd_on ? "true" : "false") << ','
                << fmt::format("\"zwd_carry_q\":{},", zwd_q)
                << "\"raim\":" << (raim_on ? "true" : "false") << ','
@@ -1374,6 +1577,12 @@ void NetworkRunTraces::closeAll() {
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
     if (carry_vce_trace.is_open()) carry_vce_trace.close();
+    if (carry_vce_apply_trace.is_open()) carry_vce_apply_trace.close();
+    if (block_baarda_trace.is_open()) block_baarda_trace.close();
+    // Same rationale as the ladder above, and one more: this file is the ONLY
+    // place the per-station MDB table's inputs exist, so an unflushed tail costs
+    // exactly the deliverable the card was armed for.
+    if (congruence_trace.is_open()) congruence_trace.close();
     if (estimability_trace.is_open()) estimability_trace.close();   // Card DG5
     // The two MW/WL dumps are NEW members, not entries the INC-4 relocation moved off
     // the destructor, so the "do not widen" rule above does not cover them.  Closed
@@ -1382,6 +1591,12 @@ void NetworkRunTraces::closeAll() {
     // cost the last rows.
     if (d5_flags_trace.is_open()) d5_flags_trace.close();
     if (wl_lane_trace.is_open()) wl_lane_trace.close();
+    // Same rationale as the two dumps above: a NEW member, and the MDB
+    // distribution is the graded artifact of a reliability arm.
+    if (mdb_trace.is_open()) mdb_trace.close();
+    // Same rationale: a NEW member, and the contingency is the graded artifact
+    // of a datum-graph arm.
+    if (datum_graph_trace.is_open()) datum_graph_trace.close();
 }
 
 } // namespace GnssProcessor

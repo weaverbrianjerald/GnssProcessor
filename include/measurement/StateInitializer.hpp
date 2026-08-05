@@ -20,6 +20,7 @@
 #include "logging/LogManager.hpp"
 #include "common/PppTypes.hpp"
 #include <Eigen/Dense>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -167,6 +168,102 @@ public:
      */
     std::optional<double> computeIonosphereSeed(const PppObservation& obs) const;
 
+    // -------------------------------------------------------------------
+    // Card LV-1 — bias-free per-LOS iono seeding
+    // (docs/SPEC_level_information_budget.md)
+    // -------------------------------------------------------------------
+
+    /**
+     * @brief Per-station, per-epoch inputs for the LV-1 seed reframe.
+     *
+     * Installed by the NETWORK producer immediately before the PASS-B state
+     * pre-pass (@c MeasurementModel::computeMeasurementUpdate) and CONSUMED ONCE
+     * — the pre-pass disarms it — so a stale frame can never be applied to a
+     * later epoch's allocation.
+     */
+    struct IonoSeedFrame {
+        /// satellite → the field's slant value at THAT line of sight's pierce
+        /// point, in metres of L1 slant delay
+        /// (@f$\sum_l M_l(el)\cdot\text{tecu\_to\_L1m}\cdot \mathrm{SH}_l(IPP_l)@f$).
+        /// Built by the producer from the LAG-1 solved SH field, or from the a₀₀
+        /// climatology prior mean before the first solve.
+        std::map<std::string, double> field_slant_m;
+        /// Minimum usable raw seeds at this station-epoch for the median offset.
+        int min_sats = 5;
+        /// Station name — used once, for the cold-start offset log line.
+        std::string station;
+    };
+
+    /// LV-1 run tallies (standing invariant #4: an armed-but-inert reframe must
+    /// never read as working).  Summed over stations at the run-end readout.
+    struct IonoSeedFrameStats {
+        long long reframed = 0;      ///< seeds born in the field's frame.
+        long long fallback_raw = 0;  ///< no station offset (< min_sats) ⇒ RAW seed.
+        long long field_missing = 0; ///< offset OK but no field value for that LOS ⇒ RAW seed.
+        long long offsets = 0;       ///< station-epochs with a usable median offset.
+        double last_offset_m = 0.0;  ///< the most recent median offset (m of L1 slant GF).
+    };
+
+    /// Install this epoch's frame (consumed once by the next state pre-pass).
+    void setIonoSeedFrame(IonoSeedFrame frame) {
+        iono_seed_frame_ = std::move(frame);
+        iono_seed_frame_armed_ = true;
+    }
+    /// Drop any installed frame (the pre-pass calls this after consuming it).
+    void clearIonoSeedFrame() { iono_seed_frame_armed_ = false; }
+    bool ionoSeedFrameArmed() const { return iono_seed_frame_armed_; }
+    const IonoSeedFrame& ionoSeedFrame() const { return iono_seed_frame_; }
+    const IonoSeedFrameStats& ionoSeedFrameStats() const { return iono_seed_stats_; }
+
+    /**
+     * @brief The station-common content of this epoch's raw iono seeds.
+     *
+     * The MEDIAN of @p seeds — robust to a single bad channel, which a mean is
+     * not; the geometry-free code seed of one mis-tracked satellite can be tens
+     * of metres.  Physically this is (receiver GF hardware bias ⊕ the station's
+     * median slant ionosphere).
+     *
+     * @param seeds    Raw per-satellite seeds (REORDERED in place by the median).
+     * @param min_sats Minimum sample count; below it there is no robust estimate.
+     * @return The median, or @c std::nullopt when @c seeds.size() < min_sats.
+     */
+    static std::optional<double> stationSeedOffset(std::vector<double>& seeds,
+                                                    int min_sats);
+
+    /**
+     * @brief Gather this station's raw per-satellite seeds and reduce to the
+     *        median offset.
+     *
+     * Runs over ALL of @p observations (not only the ones being allocated), so a
+     * single mid-run re-birth still gets the full-station statistic.  The
+     * @c |seed| < 200 m sanity check inside @ref computeIonosphereSeed screens
+     * each contribution, so a garbage channel is rejected BEFORE it can move the
+     * median.
+     *
+     * Not const: it tallies the outcome and emits the ONE cold-start log line
+     * carrying the station's offset (a direct estimate of that receiver's GF
+     * hardware bias — cross-checkable against @c scripts/extcb_gim_verdict.py).
+     */
+    std::optional<double> computeStationSeedOffset(
+        const std::vector<PppObservation>& observations, int min_sats);
+
+    /**
+     * @brief Apply the installed frame to one raw seed (and tally the outcome).
+     *
+     *   seed' = raw − station_offset + field_slant(IPP)
+     *
+     * Falls back to @p raw_seed (counted) when the station offset is absent
+     * (< @c min_sats usable seeds) or the frame carries no field value for this
+     * satellite — a handful of bias-in lines of sight cannot move the field.
+     *
+     * @param satellite       The LOS's satellite id.
+     * @param raw_seed        The seed @ref computeIonosphereSeed returned.
+     * @param station_offset  The station median from @ref computeStationSeedOffset.
+     * @return The seed to allocate the state with.
+     */
+    double applyIonoSeedFrame(const std::string& satellite, double raw_seed,
+                               const std::optional<double>& station_offset);
+
     /**
      * @brief Map a System enum to its constellation name for ISB lookup.
      */
@@ -188,6 +285,13 @@ private:
     bool phase_clock_initialized_ = false;
     bool code_bias_initialized_ = false;
     bool clock_seed_initialized_ = false;
+
+    // Card LV-1 state.  Disarmed by default, so a PPP run (and any network run
+    // with network.iono_seed_field_frame off) never enters the reframe path.
+    IonoSeedFrame      iono_seed_frame_{};
+    bool               iono_seed_frame_armed_ = false;
+    bool               iono_seed_offset_logged_ = false;   ///< cold-start one-shot log latch.
+    IonoSeedFrameStats iono_seed_stats_{};
 };
 
 } // namespace GnssProcessor

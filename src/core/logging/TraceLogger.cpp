@@ -45,6 +45,7 @@ const auto residual_path = log_dir / "measurement_residuals.csv";
 const auto wls_path = log_dir / "wls_trace.csv";
 
 if (logging_config.enable_state_trace) {
+    ++requested_streams_;
     state_trace_.open(state_path, std::ios::out | std::ios::trunc);
     if (!state_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open state trace file '{}'", state_path.string()); }
@@ -53,6 +54,7 @@ if (logging_config.enable_state_trace) {
 }
 
 if (logging_config.enable_ambiguity_trace) {
+    ++requested_streams_;
     ambiguity_trace_.open(amb_path, std::ios::out | std::ios::trunc);
     if (!ambiguity_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open ambiguity trace file '{}'", amb_path.string()); }
@@ -61,6 +63,7 @@ if (logging_config.enable_ambiguity_trace) {
 }
 
 if (logging_config.enable_ionosphere_trace) {
+    ++requested_streams_;
     ionosphere_trace_.open(iono_path, std::ios::out | std::ios::trunc);
     if (!ionosphere_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open ionosphere trace file '{}'", iono_path.string()); }
@@ -69,6 +72,7 @@ if (logging_config.enable_ionosphere_trace) {
 }
 
 if (logging_config.enable_sat_bias_trace) {
+    ++requested_streams_;
     sat_bias_trace_.open(sat_bias_path, std::ios::out | std::ios::trunc);
     if (!sat_bias_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open sat-bias trace file '{}'", sat_bias_path.string()); }
@@ -77,6 +81,7 @@ if (logging_config.enable_sat_bias_trace) {
 }
 
 if (logging_config.enable_code_bias_trace) {
+    ++requested_streams_;
     code_bias_trace_.open(code_bias_path, std::ios::out | std::ios::trunc);
     if (!code_bias_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open code-bias trace file '{}'", code_bias_path.string()); }
@@ -87,6 +92,7 @@ if (logging_config.enable_code_bias_trace) {
 }
 
 if (logging_config.enable_sat_status_trace) {
+    ++requested_streams_;
     sat_status_trace_.open(sat_status_path, std::ios::out | std::ios::trunc);
     if (!sat_status_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open sat-status trace file '{}'", sat_status_path.string()); }
@@ -95,6 +101,7 @@ if (logging_config.enable_sat_status_trace) {
 }
 
 if (logging_config.enable_dop_trace) {
+    ++requested_streams_;
     dop_trace_.open(dop_path, std::ios::out | std::ios::trunc);
     if (!dop_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open DOP trace file '{}'", dop_path.string()); }
@@ -103,6 +110,7 @@ if (logging_config.enable_dop_trace) {
 }
 
 if (logging_config.enable_residual_trace) {
+    ++requested_streams_;
     residual_trace_.open(residual_path, std::ios::out | std::ios::trunc);
     if (!residual_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open residual trace file '{}'", residual_path.string()); }
@@ -111,6 +119,7 @@ if (logging_config.enable_residual_trace) {
 }
 
 if (logging_config.enable_wls_trace) {
+    ++requested_streams_;
     wls_trace_.open(wls_path, std::ios::out | std::ios::trunc);
     if (!wls_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open WLS trace file '{}'", wls_path.string()); }
@@ -181,14 +190,34 @@ if (logging_config.enable_wls_trace) {
                 || sat_bias_trace_.is_open() || code_bias_trace_.is_open() || sat_status_trace_.is_open()
                 || dop_trace_.is_open() || residual_trace_.is_open() || wls_trace_.is_open();
 
+    // Not-initialized has two entirely different causes, and only one of them is
+    // a fault.  With no enable_*_trace toggle armed nothing was ever opened, so
+    // there is nothing to report -- that is the common case on a network
+    // production run, where the producer's own traces come from NetworkRunTraces
+    // and the user-side streams are deliberately off.  A spurious [error] there
+    // trains readers to ignore the real ones, and run-time log severity is
+    // ON-path telemetry (standing invariant #4).  Only a wholly failed set of
+    // REQUESTED opens is a genuine error; per-file failures already warned above.
     if (!initialized_) {
-        try { log_manager_.getLogger("main_log")->error("TraceLogger failed to open any trace files in '{}'", log_dir.string()); }
-        catch (...) {}
+        try {
+            auto log = log_manager_.getLogger("main_log");
+            if (requested_streams_ == 0) {
+                log->debug("TraceLogger: no user-side trace streams armed; none opened in '{}'",
+                           log_dir.string());
+            } else {
+                log->error("TraceLogger opened none of the {} requested trace file(s) in '{}'",
+                           requested_streams_, log_dir.string());
+            }
+        } catch (...) { /* best-effort logging only */ }
     }
 }
 
 bool TraceLogger::isInitialized() const {
     return initialized_;
+}
+
+int TraceLogger::requestedStreamCount() const {
+    return requested_streams_;
 }
 
 void TraceLogger::flush() const {

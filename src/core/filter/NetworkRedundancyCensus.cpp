@@ -40,6 +40,7 @@
 #include <cstddef>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -47,8 +48,12 @@
 #include <fmt/format.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "filter/NetworkBlockBaarda.hpp" // BlockFormal LOS-block rider on this sweep (SPEC_block_baarda)
+#include "filter/NetworkCongruence.hpp" // Station congruence rider on this sweep (SPEC_station_congruence)
+#include "filter/NetworkMdb.hpp"        // Baarda MDB rider on the swept r_i (SPEC_network_mdb_reliability)
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkRowClassify.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
 
@@ -192,7 +197,8 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                              const NetworkEstimator& est,
                              const NetworkEstimator::Datum& plan_datum,
                              const std::vector<StationAssembly>& asm_res,
-                             const std::vector<int>& est_index_of) {
+                             const std::vector<int>& est_index_of,
+                             const Eigen::VectorXd& x_s) {
     // Alias preamble (seam contract) — the body reads the driver's names.
     const auto& nc      = config_.getNetworkConfig();
     auto& carry         = ctx.carry;
@@ -203,6 +209,25 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     const double escal_sig  = nc.redundancy_escalate_sigma;
     const int    stride     = nc.redundancy_census_stride;
     const int    holdoff    = std::max(0, nc.redundancy_event_holdoff_ep);
+    // docs/SPEC_network_mdb_reliability.md INC-0: the MDB rider on this sweep's
+    // r_i.  Swept-row MDB inherits the census's stride and escalation exactly —
+    // no new sweeps, no second covariance product, one division per swept row.
+    const bool   mdb_on     = ctx.knobs.mdb_on && ctx.knobs.mdb_from_census;
+    const double mdb_delta0 = baardaDelta0(config_.dataSnoopingCritical());
+    // docs/SPEC_block_baarda.md INC-1: the BlockFormal rider on this sweep's
+    // SWEPT stations.  It inherits the stride, the targeted escalation and the
+    // trip-forced full sweep exactly — SPEC §4 makes "no new scheduler" the
+    // design constraint, which is why it lives here rather than in a seam of its
+    // own.  It needs the POST-FIT residual, so an empty x_s disarms it: a rider
+    // that silently censused the PREFIT innovation would produce a plausible
+    // ladder of the wrong quantity.
+    const bool bb_on = ctx.knobs.bb_on && ctx.carry.bb.enabled() && x_s.size() > 0;
+    // docs/SPEC_station_congruence.md INC-1: the SECOND rider on this sweep — the
+    // coordinate-fault screen in position space.  Same host, same stride, same
+    // post-fit residual (formed once below and handed to both riders), and the
+    // same empty-x_s disarm: a screen run on the PREFIT innovation would produce a
+    // plausible delta_hat of the wrong quantity.
+    const bool cg_on = ctx.knobs.cg_on && ctx.carry.cg.enabled() && x_s.size() > 0;
 
     const auto t0 = std::chrono::steady_clock::now();
     ++counters.redun_passes;
@@ -342,6 +367,14 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         counters.redun_rows_all += static_cast<long long>(m);
 
+        // The MDB rider's feed for this station.  Constructed INSIDE the swept
+        // branch so it sees exactly the rows the census statistics below see —
+        // that identity of domain is what the run-end uncheckable JOIN checks.
+        std::optional<NetworkMdbStationFeed> mdb_feed;
+        if (mdb_on)
+            mdb_feed.emplace(ctx.carry.mdb, se.time.tow, mdb_delta0,
+                             ctx.knobs.mdb_event_m, sname, NetMdbSource::Census, eps);
+
         double sta_sum_r = 0.0;
         long long sta_rows = 0, sta_unchk = 0;
         for (Eigen::Index row = 0; row < m; ++row) {
@@ -349,6 +382,13 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             if (!isDataRowClass(k)) continue;
             ++sta_rows;
             sta_sum_r += r(row);
+            // One division per swept DATA row.  Fed unconditionally (before every
+            // usability screen below) so this seam's independent recount of
+            // "data rows" and "rows below eps" is over the SAME set the census
+            // counts — the join is only a check if both walk one domain.
+            if (mdb_on)
+                mdb_feed->add(sat[static_cast<std::size_t>(row)], k,
+                              (row < R.w.size()) ? R.w(row) : 1.0, r(row));
             const double s = pc.s[static_cast<std::size_t>(row)];
             if (!(r(row) < eps)) continue;
             ++sta_unchk;                     // uncheckable: counted, never acted on
@@ -392,11 +432,86 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                     rowClassName(k), se.time.tow);
             }
         }
+        if (mdb_on) mdb_feed->finish();   // commit this station's event candidates
         ep_rows_data += sta_rows;
         ep_unchk     += sta_unchk;
         counters.redun_rows        += sta_rows;
         counters.redun_uncheckable += sta_unchk;
         counters.redun_mass        += sta_sum_r;
+
+        // ---- BLOCKFORMAL rider: the (station, satellite) LOS blocks ---------
+        // docs/SPEC_block_baarda.md INC-1.  Same station, same rows, same
+        // hoisted covariance, same kernel slot the row census just used — the
+        // whole cost delta is one back-substitution, two GEMVs and a b×b solve
+        // per block with b ≤ 8.
+        if (bb_on || cg_on) {
+            // The post-fit residual.  The census's own statistic needs none of
+            // this (r_i is a property of the geometry), but T_B does, and
+            // StationAssembly::y is the PREFIT innovation.  The estimator wrapper
+            // is used deliberately over the raw kernel method so this cost lands
+            // in the D0 cov_consumers_ms line and SPEC §5's budget stays checkable.
+            //
+            // BOTH riders read it, and it is formed ONCE: the congruence screen
+            // (docs/SPEC_station_congruence.md) needs the same y − A_s x_s − A_r x_r
+            // over the same station, so a second reconstructStation here would
+            // double the one genuinely expensive call in either card's budget.
+            Eigen::VectorXd x_r;
+            try { x_r = est.reconstructStation(slot, x_s); }
+            catch (...) { x_r.resize(0); }
+            if (x_r.size() != R.A_r.cols()) {
+                if (bb_on) ++ctx.counters.bb.no_resid;
+                if (cg_on) ++ctx.counters.cg.no_resid;
+            } else {
+                const Eigen::VectorXd resid = R.y - R.A_s * x_s - R.A_r * x_r;
+                // The RESPONDED label's source, built once per station.  This is
+                // an ESTIMATOR-side signal (RAIM / slip refloat already marked the
+                // arc for reseeding this epoch) and is deliberately NOT the
+                // slip-QC raw verdict that INC-2 corroborates against: if the
+                // label and the corroboration shared a source, SPEC §8.2's
+                // positive control — the RESPONDED ladder against the CLEAN one —
+                // would be circular and could not fail.
+                //
+                // The SEAM ORDER is what makes this readable at all, and it is
+                // load-bearing: SB_LEVELING's carry harvest CLEARS the pending-
+                // reseed set (NetworkRunContext.cpp, clearPendingReseed) and only
+                // THEN does SB_RAIM mark this epoch's refloats — so by
+                // SB_FRAMEDIAG the set holds exactly the arcs an estimator-side
+                // mechanism responded to THIS epoch, which is the population the
+                // label means.  Move this feed above SB_RAIM and every block would
+                // silently read CLEAN.
+                const std::size_t bb_hits_before = ctx.carry.bb_hits.size();
+                if (bb_on) {
+                    std::set<std::string> responded;
+                    if (const StateManager* sm = stations[i].sm.get()) {
+                        for (const auto& kv : sm->getAmbiguities()) {
+                            if (!sm->isAmbiguityPendingReseed(kv.first)) continue;
+                            if (const auto parts = StateKeys::parseAmbiguityKey(kv.first))
+                                responded.insert(parts->satellite);
+                        }
+                    }
+                    networkBlockBaardaSweepStation(
+                        ctx.carry.bb, kernel, slot, static_cast<int>(i), R, cls, sat,
+                        resid, cov_free, responded, ctx.carry.last_datum_changed,
+                        ctx.counters.bb, ctx.carry.bb_hits);
+                }
+
+                // ---- CONGRUENCE rider: the station's coordinates -------------
+                // docs/SPEC_station_congruence.md INC-1.  AFTER the block sweep,
+                // deliberately: INC-3's separability join needs to know whether
+                // the per-LOS tier flagged anything at THIS station THIS epoch,
+                // and the hit-count delta is that verdict at its source.  Reading
+                // it from ctx.carry.bb_hits later would couple this card to the
+                // block census's emission seam, which DRAINS that vector.
+                if (cg_on)
+                    networkCongruenceSweepStation(
+                        ctx.carry.cg, kernel, slot, static_cast<int>(i), R, cls,
+                        resid, cov_free, mdb_delta0, ctx.carry.last_datum_changed,
+                        /*block_known=*/bb_on,
+                        /*block_flagged=*/bb_on
+                            && ctx.carry.bb_hits.size() > bb_hits_before,
+                        ctx.counters.cg, ctx.carry.cg_hits);
+            }
+        }
 
         // ---- INC-2: unobservable local columns ----------------------------
         Eigen::VectorXd piv;

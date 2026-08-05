@@ -1,0 +1,51 @@
+{
+ "_comment": [
+  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_sigma0_constraint_aware.md) -- THE",
+  "ARM THE CARD IS GRADED ON.  Extends _ft63_s0g_raimlive_off.json; the ONLY",
+  "delta is network.prior_residual_global_sigma0 (plus the run paths).",
+  "",
+  "This is the only shipped arm where BOTH SIDES OF THE STATISTIC ARE LIVE:",
+  "  * DATA side  -- phase_leveling is on (2-epoch warmup), so carry_warm becomes",
+  "    true and the post-fit RAIM row walk actually runs; raim_redundancy_normalize",
+  "    is on, so each row carries a real Baarda r_i and Sum-r_data is a redundancy",
+  "    rather than a row count.  No APPROX flag, no NO_DATA flag.",
+  "  * PRIOR side -- the census's folded rows, all five families armed.  On this",
+  "    lineage pl is LIVE (it is a phase_leveling lineage), which the census's own",
+  "    build record lists as its single largest open gap.",
+  "",
+  "WHAT IT MEASURES.  sigma0_global is LASER 5-74's constraint-aware scale --",
+  "prior residuals in the numerator, constraints in the redundancy -- against which",
+  "the network's own within-epoch sigma0 (a ROBUST MEDIAN of standardized DATA-row",
+  "residuals) can finally be compared.  prior_tension_ratio = Sum w*e^2 / Sum w*v^2",
+  "is the headline: how much of the epoch's weighted misfit lives in the CARRY, the",
+  "quantity the median sigma0 is structurally blind to.",
+  "",
+  "MEASURE-ONLY: the A4 raim_withhold_sigma0 guard, every gate and every deweight",
+  "stay on the median sigma0.  The solve must be byte-identical to the OFF arm.",
+  "",
+  "READ THE FLAGS COLUMN FIRST.  s0g_flags is the in-band degradation bitmask",
+  "(1 APPROX r==1, 2 NO_DATA, 4 NO_PRIOR, 8 DEGENERATE, 16 RNEG_DROP).  On this arm",
+  "it should be 0 on every settled epoch; a non-zero value means the number in that",
+  "row is degraded in a NAMED direction and the run-end line repeats the tally.",
+  "",
+  "10-EPOCH LIMITS.  This is a smoke and establishes gate 1 (byte-identity) and the",
+  "live-wiring half only.  The spec's gate 2 (THE TRIANGLE: sigma0_global vs the",
+  "median sigma0 vs M2's per-family robust sigma-hat, which must reconcile to about",
+  "a factor of 2) and gate 3 (THE CLIFF: prior_tension must spike with the M2",
+  "family spikes at hr-4 while the median sigma0 stays comparatively flat) need a",
+  "CONVERGED WARM window.  During ignition a free ambiguity absorbs its own arc's",
+  "misfit exactly, so BOTH the statistic and its calibration are structurally",
+  "distorted -- and the sigma0 warm-up (200 rows) has not been cleared, so every",
+  "census t is still the raw formal s.  Chain this arm onto a seed snapshot (legal:",
+  "the card is fingerprint-SAFE) and grade only the resumed leg.  Do NOT quote a",
+  "tension ratio from a cold 10-epoch run."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ft63_s0g_raimlive_off.json"
+ ],
+ "network": {
+  "prior_residual_global_sigma0": true,
+  "product_output_path": "C:/GnssProcessor/runs/ft63_s0g_raimlive/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ft63_s0g_raimlive/state_snapshot.bin"
+ }
+}

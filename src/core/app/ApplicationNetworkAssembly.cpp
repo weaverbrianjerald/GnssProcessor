@@ -919,6 +919,63 @@ void Application::networkAppendGimIonoRows_(NetStation& st,
     }
 }
 
+// Card LV-1 (docs/SPEC_level_information_budget.md): sample the SH-VTEC field at
+// one line of sight's pierce point(s) and return the SLANT value in metres of L1
+// delay — the same quantity a per-LOS iono state holds, so it can stand in for the
+// station-common content of that state's birth seed.
+//
+//     field_slant = Σ_l  M_l(el) · tecu_to_L1m · Σ_k Ȳ_k(IPP_l) · c_{l,k}
+//
+// Two sources for c, in order:
+//   1. @p coeff_lag1 — the previous epoch's SOLVED coefficients (the serial
+//      post-solve snapshot in ctx.carry.sh_field_lag1).  The field is quasi-static
+//      and sun-fixed, so one epoch of lag costs nothing; reading THIS epoch's field
+//      is impossible by construction (the seed is needed to build the rows the
+//      solve consumes).
+//   2. Before the first solve, the a₀₀ CLIMATOLOGY PRIOR MEAN of each shell — a
+//      uniform field, since the basis is orthonormal under (1/4π)∫dΩ so Ȳ₀₀ ≡ 1.
+//      That is precisely the designed level authority (the EXT-CB ladder's GIM
+//      anchor, or the self-contained posture's own climatology) doing its job at
+//      cold start, rather than the receiver's hardware bias doing it.
+//
+// Returns false on a degenerate LOS (below the horizon on the dominant shell), and
+// the caller then leaves that satellite out of the frame map — its seed stays raw
+// and is counted.  Pure read of const inputs: safe in the parallel produce phase.
+static bool networkShSlantAtLos_(const Eigen::Vector3d& rx_ecef,
+                                 const Eigen::Vector3d& sat_pos,
+                                 const std::vector<ShLayer>& layers,
+                                 const std::vector<std::vector<double>>& coeff_lag1,
+                                 double Re, double lon_sun, double tecu_to_L1m,
+                                 std::vector<double>& bvals, double& slant_m) {
+    if (layers.empty()) return false;
+    const IppGeometry g0 = computeIppGeometry(rx_ecef, sat_pos, Re,
+                                              layers[0].shell_height_m);
+    if (!g0.valid) return false;
+    const bool have_field = (coeff_lag1.size() == layers.size());
+    double acc = 0.0;
+    for (std::size_t l = 0; l < layers.size(); ++l) {
+        const IppGeometry gl = (l == 0)
+            ? g0
+            : computeIppGeometry(rx_ecef, sat_pos, Re, layers[l].shell_height_m);
+        if (!gl.valid) continue;             // this shell contributes nothing here
+        const double m_tecu = gl.mapping * tecu_to_L1m;
+        if (!have_field) {                   // cold start: uniform a₀₀ climatology
+            acc += m_tecu * layers[l].mean_prior_tecu;
+            continue;
+        }
+        const auto& c = coeff_lag1[l];
+        if (static_cast<int>(c.size()) != layers[l].model->numCoeffs()) return false;
+        layers[l].model->basis(gl.ipp_lat_rad, gl.ipp_lon_rad - lon_sun, bvals);
+        if (bvals.size() != c.size()) return false;
+        double vtec = 0.0;
+        for (std::size_t k = 0; k < c.size(); ++k) vtec += bvals[k] * c[k];
+        acc += m_tecu * vtec;
+    }
+    if (!std::isfinite(acc)) return false;
+    slant_m = acc;
+    return true;
+}
+
 // Co-estimated SH-VTEC ionosphere pseudo-observation (the design's hinge —
 // replaces the external-GIM target of appendGimIonoRows with the network's OWN
 // spherical-harmonic field).  Per GPS/Galileo satellite with a usable slant-iono
@@ -1795,6 +1852,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double pl_q_amb      = ctx.knobs.pl_q_amb;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
+    const auto&  vce_apply     = ctx.carry.vce_apply;     // M2 v2: carry variance factor α² (unity when off)
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // Card 1: conditional local carry (coupling rows) — requires fullcov_on (enforced at load)
     const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // Card 1b: JOINTLY whiten the coupling rows (departed cols → M_w) — requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // Card 1d: border time update of the coupling rows at injection (κ shrink + M²κq inflation) — requires carry_cpl_cond (enforced at load)
@@ -1802,9 +1860,23 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // B9: carry per-station ZWD across epochs
     const double zwd_q         = ctx.knobs.zwd_q;                // B9: ZWD carry random-walk process noise (m²/s)
     const bool   rx_cb_on      = ctx.knobs.rx_cb_on;             // rx-CB carry (SPEC_rx_cb_carry)
+    const bool   rx_cb_datum  = ctx.knobs.rx_cb_datum;           // RXCB-DATUM: zero-mean-over-receivers DCB datum (shares the pl_cb walk with the carry)
+    const double rx_cb_datum_sigma = ctx.knobs.rx_cb_datum_sigma; // RXCB-DATUM loose physical-bound sigma (m)
     const double rx_cb_q       = ctx.knobs.rx_cb_q;              // rx-CB carry RW process noise (m²/s)
+    const bool   rx_cb_demean  = ctx.knobs.rx_cb_demean;         // Card LV-2: fold η = λ(innov − μ), gate on |innov − μ|
+    const bool   rx_cb_step_gate = ctx.knobs.rx_cb_step_gate;    // Card LV-4: retire the frame-dependent inject screen (the harvest owns the event)
+    const auto&  rx_cb_demean_mu = ctx.carry.rx_cb_demean_mu;    // LV-2: lag-1 μ per code-bias family — READ-ONLY here (serial harvest writes it)
+    const bool   lv1_seed_frame = ctx.knobs.lv1_seed_frame;      // Card LV-1: seed per-LOS iono in the field's frame
+    const int    lv1_min_sats   = ctx.knobs.lv1_min_sats;        // LV-1: per-station median sample floor
+    const auto&  sh_field_lag1  = ctx.carry.sh_field_lag1;       // LV-1: lag-1 solved SH coefficients — READ-ONLY here
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     const bool carry_invariant         = ctx.knobs.carry_invariant;
+    // Station congruence screen, INC-0 (docs/SPEC_station_congruence.md).  The ONLY
+    // thing the assembly owes that card: retain each data row's position partial,
+    // which networkSplitStation_ is about to drop on the floor because the network
+    // holds every coordinate fixed.  OFF ⇒ the block below never runs and
+    // StationAssembly::row_pos_enu stays empty (byte-identical, zero allocation).
+    const bool congruence_rows         = ctx.knobs.cg_on;
     const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const double eq34_rpb_prior_sigma = ctx.knobs.eq34_rpb_prior_sigma;
@@ -2000,6 +2072,51 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         try {
             NetStation& st = stations[i];
 
+            // --- Card LV-1 (docs/SPEC_level_information_budget.md) -------------
+            // Install this station's seed frame BEFORE the state pre-pass inside
+            // computeMeasurementUpdate allocates (and seeds) any new per-LOS iono
+            // state.  The map is the lag-1 field sampled at each of this station's
+            // lines of sight; the pre-pass removes the station's MEDIAN raw seed
+            // (its receiver GF hardware bias ⊕ median slant iono) and puts the
+            // field's own value there instead, so a state born now — at cold start
+            // OR at a slip refloat / gap re-birth mid-run — inherits the CURRENT
+            // frame rather than the receiver's bias.  That "inside the seed path"
+            // placement IS the invariant-#1 event response.
+            //
+            // Read-only on ctx (knobs + the lag-1 coefficient snapshot) and pure
+            // per-station compute: safe in this parallel produce phase.  The frame
+            // is consumed once by the pre-pass; a station that never reaches this
+            // point simply seeds raw and is counted.
+            if (lv1_seed_frame && sh_model) {
+                const std::vector<ShLayer> lv1_lay =
+                    shLayers(shc, sh_model.get(), setup.sh_model2.get());
+                const double lv1_Re = shc.earth_radius_km * 1000.0;
+                const double lv1_tecu_to_L1m =
+                    40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+                const double lv1_lon_sun =
+                    shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
+                StateInitializer::IonoSeedFrame frame;
+                frame.min_sats = lv1_min_sats;
+                frame.station  = st.name;
+                std::vector<double> lv1_bvals;
+                for (const auto& o : modeled[i]) {
+                    // GPS/Galileo only — the same scope as the SH↔slant tie rows
+                    // (networkAppendShIonoRows_ excludes GLONASS so its FDMA
+                    // per-slot IFB cannot leak into the global field).  A GLONASS
+                    // LOS therefore has no tie to the field at all, and putting its
+                    // seed in the field's frame would put it in a frame nothing else
+                    // in its block shares; those births stay RAW and are counted as
+                    // lv1_field_missing.
+                    if (o.satellite.empty() || o.satellite.front() == 'R') continue;
+                    double slant = 0.0;
+                    if (networkShSlantAtLos_(st.ecef, o.sat_pos, lv1_lay, sh_field_lag1,
+                                             lv1_Re, lv1_lon_sun, lv1_tecu_to_L1m,
+                                             lv1_bvals, slant))
+                        frame.field_slant_m[o.satellite] = slant;
+                }
+                st.mm->getStateInitializer().setIonoSeedFrame(std::move(frame));
+            }
+
             EpochMeasurement em = st.mm->computeMeasurementUpdate(
                 modeled[i], st.sm->getStateVector());
             if (em.innovations.size() == 0) { R.empty_innov = true; continue; }
@@ -2013,6 +2130,49 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // for the post-solve slant-iono back-substitution (viz trace).
             std::map<int, int>& h2local = R.h2local;
             networkSplitStation_(st, est, em, R.A_s, R.A_r, R.w, R.y, h2local);
+
+            // --- INC-0, station congruence screen (docs/SPEC_station_congruence.md)
+            // Retain the per-row POSITION PARTIAL that networkSplitStation_ just
+            // discarded, rotated into the station's local ENU frame.  This is the
+            // one place in the run where the row geometry still exists: three
+            // columns of `em.H` that the fixed-coordinate network drops by design
+            // (the A6 linearity guard in networkSplitStation_ hard-fails if one ever
+            // survives into A_r), so without this block a wrong held coordinate has
+            // no observable footprint anywhere downstream.
+            //
+            // ∂y/∂δp_ENU = ∂y/∂δp_ECEF · R_{ENU→ECEF}, because δp_ECEF =
+            // R_{ENU→ECEF} δp_ENU and enuToEcefMatrix's COLUMNS are the E/N/U unit
+            // vectors in ECEF.  The partial itself is copied verbatim rather than
+            // rebuilt from obs.los: `em.H` and `em.innovations` are ONE
+            // linearization, so y ≈ H δx holds row by row for every observable the
+            // measurement model can produce, and a sign convention re-derived per
+            // row type would be a second source of truth waiting to disagree.
+            //
+            // Only the DATA rows exist at this point — every later fold (the datum
+            // pins, the GLONASS anchors, the SH/GIM iono ties, the SD-EWL rows, the
+            // Card-1 coupling rows) APPENDS — so sizing to em.H.rows() is exact and
+            // the consumer's `row < row_pos_enu.rows()` test is the structural bound
+            // on which rows can carry geometry at all.
+            //
+            // Thread-safety: pure per-station read of st.ecef + em, written into
+            // this station's own slot.  Safe in the parallel produce phase.
+            //
+            // A station with no usable ECEF would rotate through a garbage
+            // lat/lon, so it is left EMPTY instead: the sweep then counts its rows
+            // in `no_geom_rows` and reports the station as having no geometry,
+            // which is the honest reading.  A silently mis-rotated Jacobian would
+            // name a real offset in the wrong direction.
+            if (congruence_rows && em.H.rows() > 0 && st.ecef.norm() > 1.0) {
+                const Eigen::Index pos_i =
+                    static_cast<Eigen::Index>(st.sm->getPositionIndex());
+                if (pos_i >= 0 && pos_i + 2 < em.H.cols()) {
+                    const Coordinates::Llh llh = Coordinates::ecefToLlh(st.ecef);
+                    const Eigen::Matrix3d R_enu2ecef =
+                        Coordinates::enuToEcefMatrix(llh.lat_rad, llh.lon_rad);
+                    R.row_pos_enu.noalias() =
+                        em.H.middleCols(pos_i, 3) * R_enu2ecef;
+                }
+            }
 
             // Fix A (network.phase_datum_ensemble): record every present
             // ambiguity's (sat, signal, A_r column) so the driver can build the
@@ -2341,6 +2501,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // load-bearing here; this guards the OPPOSITE (lock-in) direction.
                     double var_eff = cit->second.var + pl_q_amb * std::max(0.0, gap);
                     if (pl_var_floor > 0.0) var_eff = std::max(var_eff, pl_var_floor);
+                    // M2 v2 (docs/SPEC_carry_vce_apply.md §2): the LASER 5-95 variance
+                    // FACTOR, applied last — "the hand model evaluated as today, then
+                    // × α²".  Read-only O(1) array lookup, safe in this parallel produce
+                    // phase; the table is refreshed once per epoch by the serial step at
+                    // the end of SB_STASH_STATUS, so every station in this pass and the
+                    // serial harvest that mirrors it read ONE value.  Exactly 1.0 when the
+                    // apply path is off or `pl` is unarmed ⇒ byte-identical.
+                    var_eff *= vce_apply.factor(NetworkCarryVceApply::kPl, parts->satellite);
                     if (!(var_eff > 0.0)) continue;
                     if (carry_cpl_cond) {
                         cb.buildCplRow(col, x_lin(amb_idx), cit->second, var_eff,
@@ -2404,7 +2572,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 //     even under carry_cpl_cond — the RPB rationale: a coupling row
                 //     would hand a strictly-local hardware state a shared-border
                 //     footprint.
-                if (rx_cb_on) {
+                // RXCB-DATUM shares this walk: the receiver code-bias DATUM needs the
+                // same (key, A_r column) records the CARRY collects, so pl_cb is filled
+                // whenever EITHER is armed and only the carry-injection half below stays
+                // behind rx_cb_on.  (The post-solve harvest that consumes pl_cb is itself
+                // gated on rx_cb_on, so a datum-only run fills the vector and no one
+                // harvests it — intended.)
+                if (rx_cb_on || rx_cb_datum) {
                     for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
                         if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;  // anchored family
                         const int cb_idx = static_cast<int>(cb_sidx);
@@ -2414,14 +2588,95 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (cbhit == h2local.end()) continue;
                         const Eigen::Index cbcol = static_cast<Eigen::Index>(cbhit->second);
                         R.pl_cb.emplace_back(cb_key, cbcol, x_lin(cb_idx));
+                        // --- RXCB-DATUM: loose zero-mean prior on the receiver DCB ----
+                        // The receiver-side counterpart of the W6 satellite code-bias
+                        // sum-to-zero, realized PRE-REDUCE through the same diagonal
+                        // prior channel Card KP uses for satellite OSBs — NOT as a
+                        // post-reduce cross-station SumZeroGauge, because
+                        // NetworkEstimator::solve rightly refuses to compose a
+                        // post-reduce Woodbury gauge with the Card-4 DD priors (both
+                        // fold against the same cached local factors; ambiguities and
+                        // code biases are correlated through the observation rows, so
+                        // "disjoint columns" does not make it exact).
+                        //
+                        // WHY A DIAGONAL PRIOR IS A DATUM HERE.  d_r ~ N(0, sigma^2) on
+                        // every station adds 1/sigma^2 along EVERY direction of the DCB
+                        // subspace.  The between-station DIFFERENCES are estimable and
+                        // carry orders more data information, so the prior does not move
+                        // them; the COMMON MODE has essentially none, so the prior alone
+                        // determines it — and sets it to zero-mean-over-receivers, which
+                        // is exactly the IGS DCB convention.  Note the realized
+                        // common-mode eigenvalue is 1/sigma^2, INDEPENDENT of the station
+                        // count (u = 1/sqrt(N) * 1 gives u^T (Lambda I) u = Lambda), the
+                        // same N-independence the broadcast-anchored clock datum documents.
+                        //
+                        // Target is the ABSOLUTE zero, so in the local block's
+                        // delta-around-x_lin coordinates the RHS is -Lambda * x_lin —
+                        // the same convention the rx-CB carry's innovation uses.
+                        if (rx_cb_datum && StateKeys::parseDcbKey(cb_key)) {
+                            const double lam = 1.0 / (rx_cb_datum_sigma * rx_cb_datum_sigma);
+                            const double eta = lam * (0.0 - x_lin(cb_idx));
+                            if (std::isfinite(lam) && std::isfinite(eta)) {
+                                inj.emplace_back(cbcol, lam, eta);
+                                ++R.pl_cb_datum_rows;
+                            }
+                        }
+                        if (!rx_cb_on) continue;   // datum-only: record the column, carry nothing
                         const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
                         if (cbit == rx_cb_carry.end()) continue;   // cold — the harvest seeds it
                         double cb_var_eff = 0.0;
-                        const double cb_innov = cbit->second.value_abs - x_lin(cb_idx);
+                        const double cb_innov_raw = cbit->second.value_abs - x_lin(cb_idx);
+                        // --- Card LV-2 (docs/SPEC_level_information_budget.md) -------
+                        // Subtract the information-weighted MEAN innovation of this
+                        // code-bias family, computed at the previous epoch's SERIAL
+                        // harvest (lag-1; the map is READ-ONLY in this parallel phase,
+                        // exactly like the carry itself).  Missing key = the first
+                        // epoch, or a frozen thin-mean era that never had one ⇒ μ = 0
+                        // ⇒ legacy behaviour, which is the intended one-epoch warm-up.
+                        //
+                        // Σλ(innov−μ) = 0 by construction: the carry keeps every
+                        // between-station DIFFERENCE at full stiffness (arm 14 proved
+                        // that rigidity load-bearing) while exerting ZERO net force on
+                        // the DCB common mode, which is a FRAME direction and belongs
+                        // to the designed authority (rx_code_bias_datum / the a₀₀
+                        // anchor / the satellite sum-to-zero), re-realized each epoch.
+                        //
+                        // The GATE judges the demeaned innovation too, deliberately: a
+                        // coherent frame move is not a per-receiver hardware jump, and
+                        // letting it mass-trigger the receiver-reset response withholds
+                        // exactly the rows whose DIFFERENCES are still good.
+                        double cb_mu = 0.0;
+                        if (rx_cb_demean) {
+                            const auto mit = rx_cb_demean_mu.find(cb_key);
+                            if (mit != rx_cb_demean_mu.end() && std::isfinite(mit->second)
+                                && mit->second != 0.0)
+                                cb_mu = mit->second;
+                        }
+                        const double cb_innov = cb_innov_raw - cb_mu;
+                        // --- Card LV-4 (docs/SPEC_level_information_budget.md §11) ---
+                        // With the invariant step gate armed the fold-time INNOVATION
+                        // test is switched off: |value_abs − x_lin(cb)| is a prefit
+                        // quantity in a FROZEN frame, so it withholds by where the
+                        // first-epoch seed landed rather than by anything the receiver
+                        // did, and it cannot see a jump between two epochs at all.
+                        // What survives here is frame-free (gap + variance sanity); the
+                        // event response moved to the serial harvest, which compares two
+                        // ABSOLUTE values.  The retired test is still EVALUATED, purely
+                        // to count what it would have withheld — the A/B lives inside
+                        // this one run instead of across two.
                         const RxCbInjectAction act = rxCbInjectGate(
                             pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/900.0,
                             cbit->second.var, rx_cb_q, cb_innov,
-                            /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff);
+                            /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
+                            /*innov_test=*/!rx_cb_step_gate);
+                        if (rx_cb_step_gate && act == RxCbInjectAction::Fold) {
+                            double shadow_var = 0.0;
+                            if (rxCbInjectGate(pl_now_s - cbit->second.last_seen_s, 900.0,
+                                               cbit->second.var, rx_cb_q, cb_innov,
+                                               10.0, 0.25, shadow_var, true)
+                                == RxCbInjectAction::SkipInnov)
+                                ++R.pl_cb_frame_gate_would_skip;
+                        }
                         if (act == RxCbInjectAction::SkipInnov) {
                             ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
                             continue;
@@ -2432,6 +2687,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         if (!std::isfinite(cb_eta)) continue;
                         inj.emplace_back(cbcol, cb_lambda, cb_eta);
                         ++R.pl_cb_injected;
+                        // LV-2 accumulation for NEXT epoch's μ.  Only FOLDED rows vote
+                        // (a withheld row exerts no force), and the RAW innovation is
+                        // what the mean is taken over — μ must estimate the common
+                        // content of the carry's actual pull, not of an already-demeaned
+                        // residual, or the correction would decay geometrically.
+                        if (rx_cb_demean) {
+                            R.pl_cb_sum_lam[cb_key]       += cb_lambda;
+                            R.pl_cb_sum_lam_innov[cb_key] += cb_lambda * cb_innov_raw;
+                            if (cb_mu != 0.0) ++R.pl_cb_demeaned;
+                        }
                     }
                 }
                 if (carry_cpl_cond) {
@@ -2446,6 +2711,25 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // ASCENDING column order → deterministic rank-1 update sequence.
                     std::sort(inj.begin(), inj.end(),
                               [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+                    // COALESCE duplicate columns.  A column can now receive TWO diagonal
+                    // rows — the RXCB-DATUM prior and the rx-CB carry prior — and
+                    // information is additive, so they must be summed into one entry
+                    // rather than handed to addStationPrior twice (which does not sum).
+                    // A no-op for every pre-RXCB-DATUM config: without the datum each
+                    // cb_key contributes at most one row, so the vector has no
+                    // duplicates and this leaves it byte-identical.
+                    if (inj.size() > 1) {
+                        std::size_t w = 0;
+                        for (std::size_t r = 1; r < inj.size(); ++r) {
+                            if (std::get<0>(inj[r]) == std::get<0>(inj[w])) {
+                                std::get<1>(inj[w]) += std::get<1>(inj[r]);
+                                std::get<2>(inj[w]) += std::get<2>(inj[r]);
+                            } else {
+                                inj[++w] = inj[r];
+                            }
+                        }
+                        inj.resize(w + 1);
+                    }
                     const Eigen::Index ninj = static_cast<Eigen::Index>(inj.size());
                     R.carry_cols.resize(static_cast<size_t>(ninj));
                     R.carry_dNrr.resize(ninj);
