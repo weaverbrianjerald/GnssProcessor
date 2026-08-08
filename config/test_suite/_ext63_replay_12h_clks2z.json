@@ -1,0 +1,18 @@
+{
+ "_comment": [
+  "EDGE-2 12 h consumer replay, S2Z arm product (evt_pl_clks2z12).  Identical to",
+  "_ext63_replay_12h_clkpin except the product path."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 43200.0, "elevation_mask_deg": 15.0 },
+ "logging": { "enable_rt_engine": true },
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 43200.0,
+  "closed_loop": { "replay_products_path": "C:/GnssProcessor/runs/evt_pl_clks2z12/products.txt" },
+  "product_output_path": "C:/GnssProcessor/runs/replay_12h_clks2z/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_12h_clks2z/state_snapshot.bin"
+ }
+}

@@ -359,6 +359,7 @@ add_executable(gnss_tests
     tests/test_level_information_budget.cpp
     tests/test_rx_cb_harvest_demean.cpp
     tests/test_h_heartbeat_rider.cpp
+    tests/test_bia_receiver_records.cpp
     tests/test_network_process_noise_config.cpp
     tests/test_config_extends.cpp
     tests/test_sd_ewl_prereduce.cpp

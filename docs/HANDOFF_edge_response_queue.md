@@ -530,6 +530,19 @@ solve changes, so grade on datum-invariant quantities).
 > A/B (this edge's actual verdict) needs the 12 h continuation of
 > `_ext63_1h_evt_pl_clk{pin,s2z}.json`.  `emit_clock_disc` counters armed in
 > both arms; nothing drove them in this window.
+>
+> ✅ **THE 12 h A/B RAN (2026-08-08, `SESSION_overnight_2026-08-07.md` F13/F15).**
+> On the EXT-derived leveled lineage BOTH datums' emitted clocks are
+> census-CLEAN (0 steps / 0 outliers / 12 h; pin took 1 handover, s2z 0) and the
+> consumer trade is TWO-SIDED (s2z: −15 % resets and no 60 m tails, but ~9 m vs
+> ~3–4 m steady median h1–h7) — **s2z does not graduate; the pin stays
+> default.**  The 13-jumps-class churn belongs to the INTERNAL lineage and is
+> far larger than the counter suggested: census common-mode steps on **613 of
+> 1440 epochs** (273 with per-sat outliers), riding on ONE wire mark — the
+> clock channel has no magnitude jump test by design, so the re-realization
+> class is wire-invisible.  Edge 2's real work is therefore NOT datum choice:
+> it is mediating (or at minimum marking) the internal clock re-realization
+> class.  FC-1's churn-ceiling analysis (2.3 %) is the design input.
 
 ## Edge 3 — the zero-mean rx datum's re-realizations (subsumed by the item-3 BUILD)
 

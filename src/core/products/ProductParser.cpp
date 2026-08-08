@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <regex>
+#include <set>            // item 0b: per-file receiver-station tally
 #include <string_view>
 
 namespace GnssProcessor {
@@ -1012,6 +1013,8 @@ namespace GnssProcessor {
             size_t line_count = 0;
             bool in_description_block = false;
             bool in_solution_block = false;
+            const size_t rx_bias_before = receiver_biases_.size();   // item 0b: per-file receiver tally
+            size_t sat_dsb_skipped = 0;   // satellite DSB records: out of scope, counted (never silent)
 
             auto parse_bias_time = [](const std::string& time_str) -> GnssTime {
                 if (time_str.length() < 14 || time_str[4] != ':' || time_str[8] != ':')
@@ -1089,16 +1092,28 @@ namespace GnssProcessor {
                     break;
                 }
 
-                if (!in_solution_block || line.length() < 4 || line.substr(0, 4) != "OSB ") {
+                // OSB = observable-specific bias (COD MGX); DSB = differential bias
+                // (the CAS MGEX DCB product's record type — the one that carries
+                // NONZERO receiver DCBs, item 0b's authority).  Anything else in the
+                // block stays a counted debug skip.
+                const bool is_osb_line = line.length() >= 4 && line.substr(0, 4) == "OSB ";
+                const bool is_dsb_line = line.length() >= 4 && line.substr(0, 4) == "DSB ";
+                if (!in_solution_block || (!is_osb_line && !is_dsb_line)) {
                     if (in_solution_block)
                         logger->debug("Non-OSB line in BIAS/SOLUTION block at line {}: {}", line_count, line);
                     continue;
                 }
 
-                // Fixed-width field extraction
+                // Fixed-width field extraction.  CLAMPED at end-of-line rather than
+                // empty-on-overrun: SINEX writers end the line at the last non-blank
+                // column, so the LAST field of a record is routinely shorter than its
+                // declared width — the COD MGX file's lines are 103 chars against the
+                // std-dev field's nominal [91,104), which silently blanked std_dev on
+                // EVERY record (satellite ones included) until 2026-08-08.  No solve
+                // consumer reads BiasData::std_dev, so the repair is output-neutral.
                 auto field = [&](size_t start, size_t len) -> std::string {
-                    if (line.length() < start + len) return {};
-                    std::string s = line.substr(start, len);
+                    if (line.length() <= start) return {};
+                    std::string s = line.substr(start, std::min(len, line.length() - start));
                     rtrim(s);
                     return s;
                 };
@@ -1115,7 +1130,77 @@ namespace GnssProcessor {
                 std::string bias_str = field(69, 21);
                 std::string std_str  = field(91, 13);
 
-                if (!station.empty()) continue;
+                // --- RECEIVER records (non-empty STATION field) --------------------
+                // Item 0b (docs/SPEC_level_information_budget.md §17): previously a
+                // silent `continue` — 6797 records/day dropped from the COD MGX file
+                // alone.  Receiver lines carry the SYSTEM char in the PRN/SVN field
+                // (1 char, e.g. "G") and a 4..9-char station.  Parsed into the
+                // SEPARATE receiver vector so every satellite-vector consumer is
+                // byte-identical; nothing consumes these yet (the estimation rung is
+                // its own default-OFF card).
+                if (!station.empty()) {
+                    if (obs1.empty() || start.empty() || end.empty() || unit.empty()
+                        || bias_str.empty() || station.length() < 4) {
+                        logger->warn("Invalid receiver {} line at line {}: {}",
+                                     is_dsb_line ? "DSB" : "OSB", line_count, line);
+                        continue;
+                    }
+                    if (unit != "ns") {
+                        logger->warn("Unexpected unit {} in receiver bias line {}, expected ns: {}",
+                                     unit, line_count, line);
+                        continue;
+                    }
+                    double rbias, rstd = 0;
+                    try {
+                        rbias = std::stod(bias_str);
+                        if (!std_str.empty()) rstd = std::stod(std_str);
+                    } catch (const std::exception&) {
+                        logger->warn("Invalid bias in receiver line {}: {}", line_count, line);
+                        continue;
+                    }
+                    if (!std::isfinite(rbias) || !std::isfinite(rstd)) {
+                        logger->warn("Non-finite bias in receiver line {}: {}", line_count, line);
+                        continue;
+                    }
+                    auto valid_code = [](const std::string& c) {
+                        return c.length() == 3
+                            && (c[0] == 'C' || c[0] == 'L' || c[0] == 'D' || c[0] == 'S')
+                            && std::isdigit(static_cast<unsigned char>(c[1]))
+                            && std::isupper(static_cast<unsigned char>(c[2]));
+                    };
+                    if (!valid_code(obs1) || (is_dsb_line && !valid_code(obs2))) {
+                        logger->warn("Invalid observation code in receiver line {}: {}", line_count, line);
+                        continue;
+                    }
+                    ReceiverBiasData rb;
+                    rb.station = station;
+                    // System char: the PRN field carries it on receiver lines ("G");
+                    // fall back to the SVN field, then '?' (counted valid — a station
+                    // bias with an undeclared system is still a record).
+                    rb.constellation = !prn.empty() ? prn[0] : (!svn.empty() ? svn[0] : '?');
+                    rb.signal  = obs1;
+                    rb.signal2 = is_dsb_line ? obs2 : std::string{};
+                    rb.is_dsb  = is_dsb_line;
+                    rb.bias    = rbias * Constants::SPEED_OF_LIGHT * 1e-9;
+                    rb.std_dev = rstd * Constants::SPEED_OF_LIGHT * 1e-9;
+                    rb.start_time = parse_bias_time(start);
+                    rb.end_time   = parse_bias_time(end);
+                    if (rb.start_time.week <= 0 || rb.end_time.week <= 0
+                        || rb.start_time.tow < 0.0 || rb.end_time.tow < 0.0) {
+                        logger->warn("Invalid time range in receiver bias line {}: {}", line_count, line);
+                        continue;
+                    }
+                    receiver_biases_.push_back(std::move(rb));
+                    continue;
+                }
+                // Satellite DSB records (CAS satellite DCBs) are NOT folded into the
+                // OSB vector — its consumers assume observable-specific semantics —
+                // and a satellite-DSB store is out of scope until something needs it.
+                // Counted skip, never silent.
+                if (is_dsb_line) {
+                    ++sat_dsb_skipped;
+                    continue;
+                }
                 if (type != "OSB" || prn.length() != 3 || obs1.empty() || start.empty() || end.empty() || unit.empty() || bias_str.empty()) {
                     logger->warn("Invalid OSB line at line {}: {}", line_count, line);
                     continue;
@@ -1171,11 +1256,26 @@ namespace GnssProcessor {
             }
 
             file.close();
-            if (biases.empty()) {
+            const size_t rx_parsed = receiver_biases_.size() - rx_bias_before;
+            // Item 0b: an all-receiver file (the CAS MGEX DCB product) is a legal
+            // parse — the old satellite-only emptiness check would have failed it.
+            // A file with NEITHER population is still the error it always was.
+            if (biases.empty() && rx_parsed == 0) {
                 logger->error("No valid bias data parsed from {}", bia_path.string());
                 return false;
             }
-            logger->info("Parsed {} bias entries from {}", biases.size(), bia_path.string());
+            if (biases.empty())
+                logger->warn("BIA file {} carries RECEIVER bias records only ({} parsed) — "
+                             "no satellite biases; satellite-bias consumers will see an "
+                             "empty set from this file.", bia_path.string(), rx_parsed);
+            std::set<std::string> rx_stations;
+            for (size_t i = rx_bias_before; i < receiver_biases_.size(); ++i)
+                rx_stations.insert(receiver_biases_[i].station);
+            logger->info("Parsed {} satellite bias entries + {} receiver bias record(s) "
+                         "({} station(s), {} satellite-DSB line(s) skipped as out of scope) "
+                         "from {}",
+                         biases.size(), rx_parsed, rx_stations.size(), sat_dsb_skipped,
+                         bia_path.string());
             return true;
         }
         catch (const std::exception& e) {

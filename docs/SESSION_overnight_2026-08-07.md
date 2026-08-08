@@ -306,6 +306,143 @@ jump-count A/B (the actual Edge-2 verdict) needs the 12 h pair and stays
 deferred.**  Configs `_ext63_1h_evt_pl_clk{pin,s2z}.json` carry the
 predictions; a 12 h continuation extends them directly.
 
+### F12. S2H STAGE 3 (12 h) — fold-side gates PASS stronger than 3 h; the level
+### target is NOT met by EITHER arm, and the wander is proven NOT-the-carry (2026-08-08)
+
+Arms `runs/s2h_12h_{ctl,on}`, 1440/1440 epochs each, ~14.5 min wall, same
+binary; predictions pre-registered in the configs.
+
+**P1/P2 — fold side + wire, at 12 h scale (all PASS, margins BETTER than 3 h):**
+
+| gate | ON | control |
+|---|---|---|
+| rms_phase med h2-6 / h6-12 | 12.70 / **16.00 mm (+0.8 % / +0.6 %)** | 12.60 / 15.90 |
+| prires rxcb med h2-6 / h6-12 | 8.43 (1.03×) / **10.91 (0.92× — quieter late)** | 8.17 / 11.91 |
+| prires era-growth h2-6 → h6-12 | **1.29×** | 1.46× |
+| fold fraction h2-6 / h6-12 | **0.608 / 0.596** | 0.570 / 0.542 |
+| wire: PB key-steps / epochs, clock | 197 / 131, 0/0 | 196 / 130, 0/0 |
+| S2H counters | 1440/1440 applied, 0 thin, 693 screened votes (~0.8 %), μ last +0.0000, mean |μ| 0.0040 m | — |
+
+**P3 — the tracking verdict: the ±4-at-h0-AND-h11 target is NOT reached — by
+EITHER posture — and the decisive finding is a COMMON mid-day dive.**
+Time-matched hourly a₀₀−GIM: control mean −9.60 sd 6.09 (reproducing the
+canonical −4…−15 band exactly), ON mean −12.21 sd **5.41** (~2.6 lower, spread
+SMALLER).  Both arms dive together h4–h7 (ctl −7.4 → −18.6; ON −12.5 → −19.9)
+and recover together.  **The carry's rolling memory is now EXCLUDED as the
+wander's cause** — S2H provably zeroes that memory every epoch (μ ≈ 0, 1440/1440)
+and the wander persists at nearly full amplitude.  What both postures share:
+(a) the per-epoch admitted GF data equilibrium (the fleet DCB convention), and
+(b) the FIXED a₀₀ anchor at 32.24 while the GIM's global mean runs a 32.0→36.9
+diurnal — the anchor's own mismatch contributes −4.6 TECU by h6 even for a
+perfectly anchor-tracking field.
+
+**Consequence (the §28 fork, second branch, now measured):** the a₀₀ anchor's
+authority is insufficient on this ladder, independent of the carry vehicle.
+The designed next authority is §17 item 0b — external RECEIVER DCBs (CAS MGEX)
+— whose only blocker is the known ProductParser 4-char-station card; a
+GIM-valued/diurnal anchor remains ladder-diagnostic-only under the
+no-external-data-dependence directive.  S2H's own standing is unchanged and
+strengthened: the correct-by-construction frame drain with zero measured cost,
+now through 12 h.
+
+### F13. Edge-2 12 h jump-count A/B — clean producers, a TWO-SIDED consumer trade;
+### the pin datum stays default (2026-08-08)
+
+Arms `runs/evt_pl_clk{pin,s2z}12` (1440/1440 each) + replays
+`runs/replay_12h_clk{pin,s2z}` on the same binary.
+
+- **Producer**: emitted clock census-CLEAN in BOTH datums (0 common-mode steps
+  > 0.1 m, 0 per-sat outliers > 0.5 m / 12 h).  Pin arm: exactly 1
+  datum_changed (sticky pivot held otherwise); s2z: 0, as predicted; the
+  feared s2z membership-redistribution wander never crossed the census floor.
+  PB churn posture-invariant (202 vs 195 key-steps, same events, same epochs);
+  68 R records both (the leveled mark chain at ~5.7/h).  ⚠ The 13-jumps/12 h
+  number did NOT reproduce here — it belongs to the FT63/golden lineage (the
+  internal run measures that directly).
+- **Consumer** (WTZZ replays; H-forwarding live at scale, 1440/1440 both):
+  s2z takes **106 resets vs 124 (−15 %)** and eliminates the pin arm's
+  excursion tails (60.9 m @h2 / 28.8 @h3 → worst hour 19.1) — but pays a
+  steadily HIGHER median through h1–h7 (~9 m vs ~3–4 m): the redistribution
+  expressed as a slow consumer bias instead of steps.
+- **Verdict**: s2z is wiring-validated and excursion-suppressing but does NOT
+  graduate as strictly better; **the pin datum stays the default**, both
+  signatures measured and on record.
+
+### F14. FIX from the 12 h analysis — the receiver-bias parser card (item 0b unblock)
+
+The S2H stage-3 verdict (F12) measured the a₀₀ anchor's authority insufficient
+in both carry postures, making §17 item 0b (external RECEIVER DCBs) the level
+endpoint's designed authority — and its only blocker was the BIA parser
+silently skipping every station-bearing record (`ProductParser.cpp` old :1118
+`if (!station.empty()) continue;` — 6797 records/day dropped from the COD MGX
+file alone) and rejecting DSB records outright (the CAS MGEX DCB product's
+record type, the one carrying NONZERO receiver DCBs).
+
+Built: `ReceiverBiasData` (ProductTypes) + `ProductParser::getReceiverBiases()`;
+the BIAS/SOLUTION loop now parses receiver OSB lines (COD format: 1-char
+system, 4-char station) and receiver DSB lines (CAS format, both signals) into
+the SEPARATE receiver vector — the satellite vector is structurally untouched
+(unit-tested identical with/without receiver content).  Satellite DSB lines
+are counted skips (out of scope until something needs them).  An all-receiver
+file (the CAS DCB shape) is now a legal parse; empty-both still fails loud.
+NOTHING consumes the receiver vector yet — the estimation rung (pinning rx-DCB
+states) is its own default-OFF card, gated on the CAS product being on disk.
+Tests: `tests/test_bia_receiver_records.cpp` (7 cases incl. the real COD file,
+fixture-gated, asserting the 6797 count and COD's GPS-receiver-zeros
+convention).
+
+### F15. THE INTERNAL (NO-EXTERNAL) 12 h STABILITY VERDICT (2026-08-08)
+
+Arm `runs/golden63_12h_internal` (`_golden63_gps_12h_internal.json`): the
+self-contained golden63 posture — own satellite clocks + phase biases, SP3
+orbits only, live WTZZ00DEU closed-loop consumer, full golden instrument set,
+plus the session's solve-neutral observability (contract, heartbeat, census
+σ̂₀).  1440/1440 emitted, 0 withheld, 0 SH-gate eras, 31 min wall.
+
+**STABLE in the divergence sense — a real milestone for this lineage:**
+- The consumer is BOUNDED all day: hourly medians 3.1–15.4 m, worst single
+  epoch **20.7 m** — the catastrophic excursion class (the 300–1000 m spikes
+  of the Aug-5 12 h replays) is GONE under the current armed set.
+- a₀₀ stays in the physical band (ends 40.8 TECU, W6-convention wander only);
+  no level collapse, no withhold eras, no gate flapping.
+- The H wire carries a live varying σ̂₀ on all 1440 epochs (`hsig=pc`) — the
+  internal lineage's first usable per-epoch health statistic.
+
+**NOT stable in the product-consistency sense — now precisely quantified:**
+- The emitted CLOCK re-realizes on **613 of 1440 epochs** (census common-mode
+  steps > 0.1 m; 273 epochs with per-sat outliers > 0.5 m) vs **0/0** on the
+  external-clock lineage measured the same morning.  CLAUDE.md amendment 5's
+  "13 product-wide jumps / 12 h" was the tip: at the 0.1 m census floor the
+  re-realization is ENDEMIC, not episodic.
+- PB churn 12.9 % of epochs (292 key-steps, |step| up to 129 m) vs ~9 % on the
+  EXT lineage.
+- All of that rides on **ONE datum_changed mark** — the wire is
+  event-blind to the churn class (the clock channel has no magnitude jump
+  test BY DESIGN; the churn is re-realization, not datum handover).
+- Consumer medians drift upward through the day (worst hour LAST); AR fixes
+  **0/1440** — the AGU26 churn-blocks-fixing verdict intact, with the churn
+  now instrumented end-to-end.
+
+**Answer to "is it finally stable": the divergence/excursion instability is
+fixed; the remaining instability is product-internal consistency — the
+network-estimated clock's continuous re-realization — and it is now measured,
+bounded, wire-visible (census), and the correct next card** (mediate or mark
+the clock re-realization class; the FC-1 fast-clock analysis already put its
+churn ceiling at 2.3 %).
+
+### F16. Golden-config promotion shortlist (user request: "ALWAYS use the best options")
+
+Staged as a RECOMMENDED diff for sign-off, per evidence class — no silent flips:
+
+| knob | evidence | class | recommendation |
+|---|---|---|---|
+| `serialize_sbasis_contract` | §1.7: replay consumer −12.7 % RMS, 45 spurious resets removed; header-only, solve-byte-identical | fingerprint-SAFE | **PROMOTE into the golden/base configs** |
+| `emit_epoch_status_record` + `h_sigma0_prefit_census` | record stream 0-diff (solve-neutral measured); live σ̂₀ on EXT and INTERNAL wires; H grammar's 0-sentinel preserved | wire-only | **PROMOTE** (pair them) |
+| `mark_refsat_reset_disc` | producer chain + consumer link PROVEN (F6); net value unquantified (reset transient trade); inert without phase_leveling | leveled lineages only | promote to LEVELED configs with the caveat noted |
+| `rx_cb_harvest_demean` (S2H) | zero fold-side cost through 12 h on EXT-CB; solve-affecting | fingerprinted | keep default-OFF; arm freely on EXT diagnostic arms; golden lineage needs its own A/B first |
+| `clock_datum_sum_to_zero` | 12 h A/B: excursion-suppressing but higher steady median — does not graduate | fingerprinted | do NOT promote; pin stays default |
+| root `elevation_cutoff_deg` 15→25 | mask study §26 (prior session) | posture | still awaiting the user's sign-off from Aug-5 |
+
 ### F11. Concurrent-workstream verification (for the compound commit)
 
 - sim workstream (`src/sim`, `include/sim`): `gnss_simulator_selftest` builds

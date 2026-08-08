@@ -104,6 +104,38 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief RECEIVER bias entry from a SINEX_BIAS file (OSB or DSB record with a
+     *        non-empty STATION field).
+     *
+     * Item 0b of the EXT-CB ladder (docs/SPEC_level_information_budget.md §17):
+     * external receiver DCBs are the ladder's final rung — the only soft-bias
+     * absorber the network cannot self-determine — and the 2026-08-08 12 h S2H
+     * verdict measured the a₀₀ anchor's authority insufficient in BOTH carry
+     * postures, promoting this record class from "known-latent parser gap" to
+     * the level endpoint's blocker.  The parser previously SKIPPED every
+     * station-bearing line silently (satellite-only by construction): COD MGX
+     * OSB carries 6797 of them on DOY-129 (4-char stations, 1-char PRN field —
+     * note COD's GPS receiver OSBs are 0.0000 by convention, their receiver
+     * group delay lives in the receiver clock), and the CAS MGEX DCB product
+     * publishes the NONZERO receiver DCBs as DSB records.
+     *
+     * Parsed and stored only — NOTHING consumes these yet.  The estimation rung
+     * (pinning receiver DCB states to product values) is its own default-OFF
+     * card with its own A/B, gated on the CAS product being on disk.
+     */
+    struct ReceiverBiasData {
+        std::string station;                         /**< Receiver/station id as written (4-char COD MGX, up to 9-char SINEX). */
+        char        constellation{ '?' };            /**< System char from the record's PRN/SVN field ('G','E','R','C','J','?'). */
+        std::string signal;                          /**< First (or only, for OSB) observation code, e.g. "C1C". */
+        std::string signal2;                         /**< Second observation code — non-empty iff this is a DSB (bias = signal − signal2). */
+        double      bias{ 0.0 };                     /**< Bias in meters (converted from ns like the satellite path). */
+        double      std_dev{ 0.0 };                  /**< Standard deviation in meters. */
+        GnssTime    start_time;                      /**< Validity interval start */
+        GnssTime    end_time;                        /**< Validity interval end */
+        bool        is_dsb{ false };                 /**< true = DSB (differential) record; false = OSB (observable-specific). */
+    };
+
+    /**
      * @brief Satellite clock reference observable pair parsed from the BIA DESCRIPTION block.
      *
      * The satellite clock for each GNSS system is estimated from an ionosphere-free

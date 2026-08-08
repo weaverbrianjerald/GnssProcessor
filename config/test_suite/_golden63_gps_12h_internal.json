@@ -1,0 +1,43 @@
+{
+ "_comment": [
+  "INTERNAL (NO-EXTERNAL) 12 h STABILITY ARM (2026-08-08, user directive: 'run our",
+  "internal network estimation and see if it is finally stable').  The golden63",
+  "self-contained posture: satellite clocks + phase biases NETWORK-ESTIMATED, no EXT-CB,",
+  "no clock hold, SP3 orbits only, WTZZ00DEU closed-loop consumer live in-process,",
+  "full golden instrument set via the chain.  Science posture rides the chain UNCHANGED",
+  "(15/15 root masks — this lineage's own denominators; do NOT graft the EXT 15/25).",
+  "ADDED, all byte-identity/solve-neutrality PROVEN on the 2026-08-07 record:",
+  "  serialize_sbasis_contract (piece-1 validated: replay emitter stops mis-thresholding),",
+  "  emit_epoch_status_record + h_sigma0_prefit_census (first INTERNAL wire with a live",
+  "  varying H sigma0; record stream 0-diff proven).",
+  "DELIBERATELY NOT ADDED (solve-affecting; each needs its own A/B on this lineage):",
+  "  rx_cb_harvest_demean (S2H — validated on EXT-CB; arm here only against a control),",
+  "  clock_datum_sum_to_zero (12 h A/B on the EXT-derived lineage read EQUIVALENT-clean;",
+  "  the pin datum stays this lineage's realization).",
+  "PREDICTIONS (stability = the verdict, graded vs the stored golden numbers):",
+  "P1 producer: 1440/1440 emitted, sh_health 0/0/0, no observability-gate withholds",
+  "   post-ignition; clock re-realizations MEASURED by emit_clock_disc + census clock",
+  "   channel (the 13-jumps/12h class question, now with sticky_pivot armed).",
+  "P2 wire: product_step_census PB channel — the internal lineage's endemic",
+  "   re-referencing churn rate, quantified at 12 h (AGU26 blocker: ~1 disc/128 min",
+  "   class); H sigma0 varying on every epoch (hsig=pc).",
+  "P3 consumer (live closed loop): hourly 3D stats — settled band, excursion count,",
+  "   the known stiff-state-ratchet signatures; AR fix rate (0% expected — the churn",
+  "   blocker is the thing being measured, not a defect of this run).",
+  "P4 counters, not crashes: every armed instrument's run-end line non-zero where its",
+  "   population exists (invariant #4).",
+  "FRESH lineage, own paths; ~2.3 s/epoch with the full instrument set => ~55 min wall."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 43200.0 },
+ "network": {
+  "max_duration_s": 43200.0,
+  "serialize_sbasis_contract": true,
+  "emit_epoch_status_record": true,
+  "h_sigma0_prefit_census": true,
+  "product_output_path": "C:/GnssProcessor/runs/golden63_12h_internal/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/golden63_12h_internal/state_snapshot.bin"
+ }
+}

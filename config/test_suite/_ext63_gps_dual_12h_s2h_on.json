@@ -1,0 +1,45 @@
+{
+ "_comment": [
+  "S2H STAGE 3 — THE 12 h TRACKING VERDICT ARM (2026-08-08).  One knob vs",
+  "_ext63_gps_dual_12h_s2h_ctl: network.rx_cb_harvest_demean.  Same binary, fresh",
+  "seamless lineage, own paths (fingerprinted rxcbharv: token).",
+  "",
+  "PRE-REGISTERED PREDICTIONS (SPEC §28's deferred questions):",
+  "P1 fold-side gates HOLD at 12 h: h2-12 rms_phase within ±5% of control;",
+  "   prires rxcb σ̂₀ ≤ 1.5× control (expect ~0.9× per the 3 h read) with growth",
+  "   ratio ≤ the control's own — the stage-3 σ̂₀-compounding read.",
+  "P2 μ stays ≈ 0 settled (no late-era drift or ring; thin-skips 0); wire step",
+  "   census statistically identical to control; folds ≥ control time-matched.",
+  "P3 THE VERDICT — time-matched level, |a00 − GIM(t)| at h0 AND h11, target ≲ 4",
+  "   TECU (never reached by any posture).  Honest expectation from the 3 h read",
+  "   (converging from below, −4.35±1.75 at h2): a settled band of −2…−6.  BOTH",
+  "   ends within ±4 ⇒ the level card CLOSES at 'authority = per-epoch data +",
+  "   datum, S2H drains the carry'.  Below −4 settled ⇒ the a00 anchor's 0.25 is",
+  "   still outvoted by per-epoch GF information and item 0b / a GIM-valued a00",
+  "   anchor is the designed next authority — that is a FINDING either way.",
+  "P4 footprint (field_vs_gim_footprint, correct flags) read alongside — expect",
+  "   it 1.5-2× the global residual per §18."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 43200.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "rx_cb_harvest_demean": true,
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+  "product_output_path": "C:/GnssProcessor/runs/s2h_12h_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/s2h_12h_on/state_snapshot.bin"
+ }
+}
