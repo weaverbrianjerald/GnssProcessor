@@ -221,6 +221,40 @@ PrefitStationCentres prefitStationCentres(const SharedColumnMap& cm,
 double prefitStandardizedDeviation(double y, double w, double m);
 
 /**
+ * @brief H-rider (edge-queue §1.6 item 3a): the pooled robust prefit σ̂₀ for the
+ *        H heartbeat's sigma0 field (@c network.h_sigma0_prefit_census).
+ *
+ * One light pass over this epoch's assembled rows — the same statistic, centres
+ * and class taxonomy as the INC-1 census (per-station per-type robust centres;
+ * @f$s = |y-m|\sqrt{w}@f$), pooled across stations over the classes in
+ * @p class_mask and reduced to @f$\hat\sigma_0 = 1.4826\cdot\mathrm{median}(s)@f$.
+ * Deliberate alignments with the census, so the wire statistic matches the
+ * event population a reader of `network_events.csv` sees:
+ *
+ *  - @c obs_phase should stay OUT of the mask by default (census deviation 2c:
+ *    phase prefit innovations are arc-specific, not a common-mode population);
+ *  - pin-regime rows (w ≥ @ref kNetPrefitPinWeight) are excluded;
+ *  - rows of a type with no usable centre are excluded (counted upstream);
+ *  - cells BORN this epoch are excluded where the shared labels name the
+ *    satellite (INC-1's "births are not exceedances"), read from the SAME lag-1
+ *    presence map the census maintains — which is why the loader requires
+ *    @c network.trace_prefit_census with this knob.  SH tie rows (no satellite
+ *    label without the slant-column recovery) pass through un-deferred — a
+ *    documented, cheap deviation; they are structural rows, not per-cell births.
+ *
+ * Computed PRE-solve at the top of @c networkSolveGlue so every H site —
+ * including the pre-solve observability-gate withhold — reads one per-epoch
+ * value.  Returns 0.0 on an empty pool, which is exactly the H grammar's
+ * "unavailable" sentinel.  MEASURE-ONLY: reads @c asm_res, writes nothing.
+ */
+double networkPrefitSigma0(const NetworkRunContext& ctx,
+                           const std::vector<NetStation>& stations,
+                           const NetworkEstimator& est,
+                           const std::vector<StationAssembly>& asm_res,
+                           const std::vector<int>& est_index_of,
+                           unsigned class_mask);
+
+/**
  * @brief INC-2: cap the fused weight of one station's over-threshold DATA rows.
  *
  * Call from the SERIAL pre-@c addStation site — the single point where every

@@ -154,6 +154,16 @@ struct SbasisContract {
     /// parameter.  Serialized as an optional trailing @c clkset=1 field ONLY
     /// when true (byte-identical OFF).
     bool              clock_disc_on_set_change{false};
+    /// H-rider (edge-queue §1.6 item 3a): which statistic the H heartbeat's
+    /// sigma0 field carries.  Empty = the RTA-10 default (the within-epoch
+    /// RAIM's σ̂₀, 0 when that tier did not run); "pc" = the always-on prefit
+    /// census's pooled robust σ̂₀ (@c network.h_sigma0_prefit_census) — a
+    /// PRE-solve, station-common-mode-removed statistic, a DIFFERENT population
+    /// from the RAIM one, which is exactly why the wire must say so.  Serialized
+    /// as an optional trailing @c hsig= field ONLY when non-empty (byte-identical
+    /// OFF).  An interpretation hint, not a replay-emitter parameter —
+    /// @c makeReplayEmitter ignores it and @c checkContract does not compare it.
+    std::string       h_sigma0_source;
     /// RTA-3: the producer's solution-generation id (0 = not stamped).  Serialized
     /// as an optional trailing @c gid= field on the S line ONLY when non-zero, so
     /// an OFF run's v2 header is byte-identical.  Lets a late joiner recover the
@@ -399,9 +409,21 @@ public:
     /// B6 overload: also surface the parsed S-basis contract (the v2 "S" header
     /// line).  @p contract_out->present is false for a v1 file / absent "S" line
     /// (backward-compatible: @p ok stays true and replay is unaffected).
+    ///
+    /// H-rider (edge-queue §1.6 item 3b): @p statuses_out, when non-null, is
+    /// filled with EVERY H heartbeat in file order — including the standalone
+    /// H's of fully WITHHELD epochs, which complete no product record and are
+    /// therefore invisible to both the returned records and the per-record
+    /// @c epoch_status field.  This is the batch-read analogue of
+    /// @c NetworkProductTail::lastStatus (the live surface); before it, a batch
+    /// replay dropped every H on the wire unread.  H still never feeds
+    /// @c replay — the caller decides what to do with the statuses (the
+    /// consumer-replay driver forwards them to
+    /// @c SsrCorrectionStore::setProducerStatus, mirroring the RT service loop).
     static std::vector<NetworkProductRecord> read(const std::string& path,
                                                   SbasisContract* contract_out,
-                                                  bool* ok);
+                                                  bool* ok,
+                                                  std::vector<NetworkProducerStatus>* statuses_out = nullptr);
 
     /// B6: cross-check a file's S-basis contract against the consumer's @p expected
     /// convention.  Returns true if compatible; on any mismatch returns false and

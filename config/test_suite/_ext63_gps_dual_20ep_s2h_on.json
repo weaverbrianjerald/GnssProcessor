@@ -1,0 +1,39 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — card S2H (the S-consistent harvest, SPEC §17 item 3 / §27",
+  "item 1) 20-epoch SMOKE, one knob vs _ext63_gps_dual_20ep_s2h_ctl on the same",
+  "binary (82B4450703C551109DCEFB0B6C212559).  The base arms carry_rx_code_bias +",
+  "RXCB-DATUM (EXT-CB coupling) + the prires rxcb family, so this is a true",
+  "one-knob A/B.",
+  "PREDICTIONS (written before the run):",
+  " P1 loader: 'S-CONSISTENT HARVEST on' banner; LV-2/LV-5 untouched (not armed here).",
+  " P2 run-end s2h line: ~19-20 epochs applied (first harvest epoch onward), 0 thin",
+  "    skips after warm-up, family GPS_DCB; screened votes 0-2 (quiet window).",
+  " P3 mu trajectory (s2h_mu events): ignition O(0.5-3 m) common mode, decaying,",
+  "    NO ~3-epoch alternation (nothing is fed back - there is no loop to ring).",
+  " P4 solve health: folds/erases/sh_health match control within the ignition window;",
+  "    rms_phase within ignition noise (rank-only window - NO level claims at 20 ep).",
+  " P5 the carried set's common mode after each harvest = 0 by construction; the",
+  "    fold-side rx-CB inject skip rate should NOT rise vs control (de-meaned targets",
+  "    sit closer to the solve than raw ones)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "rx_cb_harvest_demean": true,
+  "product_output_path": "C:/GnssProcessor/runs/s2h_20ep_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/s2h_20ep_on/state_snapshot.bin"
+ }
+}

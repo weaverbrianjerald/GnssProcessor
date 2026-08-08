@@ -19,6 +19,7 @@
 #include "filter/NetworkDatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "filter/NetworkPhaseDatum.hpp"
 #include "filter/NetworkPivotHandover.hpp"
+#include "filter/NetworkPrefitCensus.hpp"   // H-rider: networkPrefitSigma0 (census-fed H σ̂₀)
 #include "filter/NetworkRelevel.hpp"
 #include "filter/NetworkRhsAttrib.hpp"   // INC-5 flight-recorder trip latch + inline A4 dump
 #include "filter/NetworkRobustStats.hpp"
@@ -150,6 +151,18 @@ NetworkSolveGlueResult networkSolveGlue(
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     const auto& t = est.sectionTimers();
+    // H-rider (edge-queue §1.6 item 3a): the census-fed H σ̂₀, computed ONCE per
+    // epoch, PRE-solve, so every H site downstream — including the pre-solve
+    // observability-gate withhold just below — reads the same value.  The inputs
+    // (asm_res row stacks) are frozen at assembly; MEASURE-ONLY.  0.0 = the H
+    // grammar's "unavailable" (empty pool), and the reset keeps a knob-off run
+    // carrying an inert 0 rather than a stale value.
+    ctx.carry.ep_h_sigma0_census = 0.0;
+    if (ctx.knobs.h_sigma0_census) {
+        ctx.carry.ep_h_sigma0_census = networkPrefitSigma0(
+            ctx, stations, est, asm_res, est_index_of, ctx.knobs.h_sigma0_class_mask);
+        if (ctx.carry.ep_h_sigma0_census > 0.0) ++ctx.carry.h_sig0_census_nonzero;
+    }
     auto emitEpochStatus = [&](const char* disposition, const EpochStatusRow& r) {
         // Measurement-admission census (docs/SPEC_measurement_admission.md INC-3):
         // stamped HERE rather than at the four withhold sites below, because the
@@ -823,6 +836,10 @@ if (!gate_ok) {
         hst.time.week = se.time.week;
         hst.time.tow  = se.time.tow;
         hst.state     = NetworkProducerStatus::State::WithheldGate;
+        // H-rider: the census σ̂₀ is PRE-solve, so unlike the RAIM statistic it
+        // exists even on a gate-withheld epoch (0.0 stays the sentinel when
+        // the feed is off or the pool was empty).
+        if (ctx.knobs.h_sigma0_census) hst.sigma0 = ctx.carry.ep_h_sigma0_census;
         hst.withheld  = "*";
         product_writer->writeEpochStatus(hst);
         if (nc.product_flush_per_epoch) product_writer->flush();
@@ -1683,7 +1700,12 @@ if (a4_over_ceiling && !perconst_active) {
         hst.time.week = se.time.week;
         hst.time.tow  = se.time.tow;
         hst.state     = NetworkProducerStatus::State::WithheldSigma0;
-        hst.sigma0    = sigma0_adapt;
+        // H-rider: UNIFORM statistic per wire — when the census feed is armed
+        // EVERY H site carries it (a consumer thresholding field 5 needs one
+        // population; the withhold REASON is already in the state token, and
+        // the A4 ceiling itself still read sigma0_adapt above, unchanged).
+        hst.sigma0    = ctx.knobs.h_sigma0_census ? ctx.carry.ep_h_sigma0_census
+                                                  : sigma0_adapt;
         hst.withheld  = "*";
         product_writer->writeEpochStatus(hst);
         if (nc.product_flush_per_epoch) product_writer->flush();

@@ -1,0 +1,23 @@
+{
+ "_comment": [
+  "EDGE-1 PIECE 1 replay arm B (ARMED): consume the v2 (S contract, discfrac=0.25, emit_clock_disc=1) product of the SAME 3 h window.",
+  "The two products' E/C/P record streams are BYTE-IDENTICAL (verified, 0 diff lines);",
+  "the ONLY difference is the v2 S contract line.  So any difference in the consumer's",
+  "reaction census is caused by makeReplayEmitter's parameters and nothing else.",
+  "logging.enable_rt_engine is armed (solve-neutral, verified byte-identical on the 12 h",
+  "twin) so RealTimeEngineSsrBreaks reactions are visible at all.",
+  "Posture restated explicitly (obs 15 / iono 25) per the config-chain pairing rule."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 10800.0, "elevation_mask_deg": 15.0 },
+ "logging": { "enable_rt_engine": true },
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 10800.0,
+  "closed_loop": { "replay_products_path": "C:/GnssProcessor/runs/ext63_dual_3h_contract/products.txt" },
+  "product_output_path": "C:/GnssProcessor/runs/replay_3h_v2/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_3h_v2/state_snapshot.bin"
+ }
+}

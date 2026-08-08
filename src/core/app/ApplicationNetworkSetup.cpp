@@ -1065,6 +1065,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // an OFF (or agek=0) run's v2 header is byte-identical (agek= token absent).
             if (config_.networkEmitCombinedSigma())
                 pending_contract.age_scale_k = config_.networkCombinedSigmaAgek();
+            // H-rider: advertise which statistic the H heartbeat's sigma0 carries.
+            // ONLY when the census feed is armed (hsig= token absent otherwise,
+            // byte-identical) — the census σ̂₀ is a different population from the
+            // within-epoch RAIM's, and a consumer thresholding field 5 must know.
+            if (config_.networkHSigma0PrefitCensus())
+                pending_contract.h_sigma0_source = "pc";
             pending_contract.present            = true;
             contract_pending = true;
             // The deferred writer only opens (and truncates) at the FIRST emit; a run

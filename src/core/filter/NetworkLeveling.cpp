@@ -98,6 +98,23 @@ void networkLeveling(
                              : fmt::format("family={};n_sta={};sum_lambda={:.6g};mode=lag1",
                                            fam, rec.n_sta, rec.sum_lam));
 
+    // --- Card S2H (docs/SPEC_level_information_budget.md §17 item 3): trace μ --
+    // One `s2h_mu` row per family per epoch on the events stream (the LV-2
+    // pattern — no new stream for one scalar).  μ here is the common-mode
+    // content the harvest REMOVED from the carried set this epoch: near the
+    // per-epoch solve's own level wander in a healthy run, and the direct
+    // observable of a frame event when the member set changes (n / n_used move
+    // with it — invariant #7's edges, visible in the row rather than inferred).
+    // `action` distinguishes an APPLIED transform from a thin-set identity.
+    for (const auto& [fam, rec] : ctx.carry.rx_cb_harvest_last)
+        traces.emitEvent(se.time, "s2h", "rx_cb_harvest_mu", "", "",
+                         rec.mu, static_cast<double>(ctx.knobs.rx_cb_demean_min_sta),
+                         rec.applied ? "applied" : "identity",
+                         fmt::format("family={};n={};n_used={};n_screened={};"
+                                     "sum_lambda={:.6g};screen_z={:.3g}",
+                                     fam, rec.n, rec.n_used, rec.n_screened,
+                                     rec.sum_lam, ctx.knobs.rx_cb_harvest_screen_z));
+
     // --- T1d: SH-field convergence detector (latch + one-shot refloat) ----
     // Judge the co-estimated SH field "stationary" once the epoch-over-epoch coefficient
     // RMS change drops below the threshold AND a₀₀ is inside the physical band, then LATCH

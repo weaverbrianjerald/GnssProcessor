@@ -919,6 +919,151 @@ inline RxCbDemeanReduce rxCbDemeanMu(double sum_lam_innov, double sum_lam,
     return out;
 }
 
+/// Card S2H (docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1): the
+/// outcome of reducing one receiver-code-bias family's freshly harvested ABSOLUTE
+/// realizations into the Λ-weighted common-mode mean μ the caller subtracts from
+/// every carried entry of that family — the "S-consistent harvest".
+struct RxCbHarvestReduce {
+    double mu{0.0};        ///< Λ-weighted mean over the screened member set (m).
+    double sum_lam{0.0};   ///< Σλ over the voting members (drives the exact diagonal covariance co-transform, 1/Σλ).
+    int    n{0};           ///< usable family entries offered (finite value, var > 0).
+    int    n_used{0};      ///< entries that voted after the robust peer screen.
+    int    n_screened{0};  ///< entries excluded from the vote by the peer screen (still transformed).
+    bool   applied{false}; ///< false ⇒ IDENTITY transform this epoch (thin/degenerate set — counted, never a frozen μ).
+};
+
+/// Card S2H: μ = Σλ·value / Σλ over the family's harvested ABSOLUTE realizations,
+/// λ = 1/var, after a robust peer screen.  The caller subtracts μ from EVERY
+/// carried entry of the family (voters and screened alike — the frame moves for
+/// everyone), making the carried set zero-mean-by-construction and coherent with
+/// the per-station rx-CB datum row, whose target is the ABSOLUTE zero.
+///
+/// This is LASER's `applySTransformationForBigSystemOfEquations`
+/// (C:\LASER Net3DLsa.cpp:5573 — subset mean subtracted from all points, O(n))
+/// generalized to information weights: S = I − 1·λᵀ/(λᵀ1) per family, still a
+/// projector (S² = S).  TWO deliberate deviations from the LASER original, both
+/// load-bearing:
+///
+///  1. TARGET.  LASER de-means the correction about the a-priori ξ₀ (its
+///     minimum-norm objective).  Here the de-mean is about the DATUM ROW's
+///     target — absolute zero — because the objective is coherence with
+///     `rx_code_bias_datum` (η = λ(0 − x_lin)), not minimum shift from x_lin.
+///     De-meaning about x_lin is precisely card LV-2's measured failure: it
+///     pins the common mode to mean(x_lin), the frozen first-epoch seed frame
+///     (SPEC §13.2).  Zero-mean ABSOLUTES leave the carry with zero net force
+///     on the common mode in the fold's own metric: next epoch's folds pull the
+///     common mode toward mean_λ(value_abs) = 0 = where the datum row already
+///     points.  The frame is re-derived from THIS epoch's solution — no frozen
+///     pin, no lag-1 feedback, nothing fed back into any solve.
+///
+///  2. WEIGHTS.  LASER's mean is unweighted because its datum members carry
+///     equal (unit) D0 entries.  Our folds carry per-station λ = 1/var, and the
+///     common-mode force each fold exerts is proportional to λ — so only the
+///     Λ-weighted mean zeroes the NET force.  λ_i ≡ const reduces exactly to
+///     the LASER/oracle case (GPS3710_test_PMINOLESS).
+///
+/// Robust peer screen (SPEC §16/12.1 rider — a mean vote is a contamination
+/// window; one ~200 km cold-start realization must not move the frame):
+/// entries with |value − median| > screen_z · max(1.4826·MAD, median formal σ)
+/// are excluded from the VOTE (counted) but still receive the transform.
+/// screen_z ≤ 0 disables the screen (every usable entry votes).
+///
+/// Thin/degenerate epochs (n_used < min_n, or Σλ non-positive/non-finite)
+/// APPLY NOTHING — identity transform, counted by the caller.  Unlike LV-2's
+/// frozen μ there is no held frame to re-assert: the carried set simply keeps
+/// the zero-mean frame of the last applied epoch (invariant #7's decoupling
+/// edge, visible in the counters rather than silently defining a new frame).
+///
+/// @param values     harvested absolute realizations (screen scratch: copied).
+/// @param vars       matching posterior variances; entries with non-finite value
+///                   or var ≤ 0 are unusable (excluded from n and the vote; the
+///                   caller still transforms their value, never their var).
+/// @param min_n      vote floor (reuses network.rx_cb_carry_demean_min_stations,
+///                   the LV-4 precedent).
+/// @param screen_z   robust peer-screen threshold (≤ 0 disables).
+/// @param used_out   optional per-entry vote mask (1 = voted), sized to values.
+inline RxCbHarvestReduce rxCbHarvestMu(const std::vector<double>& values,
+                                       const std::vector<double>& vars,
+                                       int min_n, double screen_z,
+                                       std::vector<unsigned char>* used_out = nullptr) {
+    RxCbHarvestReduce out;
+    const std::size_t m = values.size() < vars.size() ? values.size() : vars.size();
+    if (used_out) used_out->assign(m, 0);
+    std::vector<double> usable;
+    usable.reserve(m);
+    for (std::size_t i = 0; i < m; ++i) {
+        const double v = values[i], w = vars[i];
+        if (v != v || !(v < 1e30) || !(v > -1e30)) continue;
+        if (!(w > 0.0) || w != w) continue;
+        usable.push_back(v);
+    }
+    out.n = static_cast<int>(usable.size());
+    if (out.n < 1) return out;
+    // Robust centre + scale of the usable values (LV-4 idiom: median / MAD,
+    // floored at the median formal σ so a family of near-identical values does
+    // not produce a zero scale that screens everything).
+    double med = 0.0, sig = 0.0;
+    bool screen_on = screen_z > 0.0 && out.n >= 2;
+    if (screen_on) {
+        std::vector<double> scratch = usable;
+        const std::size_t mid = scratch.size() / 2;
+        std::nth_element(scratch.begin(), scratch.begin() + mid, scratch.end());
+        med = scratch[mid];
+        if (scratch.size() % 2 == 0) {
+            std::nth_element(scratch.begin(), scratch.begin() + (mid - 1), scratch.end());
+            med = 0.5 * (scratch[mid - 1] + med);
+        }
+        std::vector<double> dev(scratch.size());
+        for (std::size_t i = 0; i < scratch.size(); ++i)
+            dev[i] = scratch[i] > med ? scratch[i] - med : med - scratch[i];
+        std::nth_element(dev.begin(), dev.begin() + mid, dev.end());
+        double mad = dev[mid];
+        if (dev.size() % 2 == 0) {
+            std::nth_element(dev.begin(), dev.begin() + (mid - 1), dev.end());
+            mad = 0.5 * (dev[mid - 1] + mad);
+        }
+        std::vector<double> fsig;
+        fsig.reserve(m);
+        for (std::size_t i = 0; i < m; ++i)
+            if (vars[i] > 0.0 && vars[i] == vars[i]) fsig.push_back(vars[i]);
+        double fs = 0.0;   // median formal σ = sqrt(median var) (monotonic map)
+        if (!fsig.empty()) {
+            const std::size_t fm = fsig.size() / 2;
+            std::nth_element(fsig.begin(), fsig.begin() + fm, fsig.end());
+            fs = std::sqrt(fsig[fm]);
+        }
+        sig = 1.4826 * mad;
+        if (fs > sig) sig = fs;
+        if (!std::isfinite(sig) || !(sig > 0.0)) screen_on = false;
+    }
+    double sum_lam = 0.0, sum_lam_v = 0.0;
+    int used = 0, screened = 0;
+    for (std::size_t i = 0; i < m; ++i) {
+        const double v = values[i], w = vars[i];
+        if (v != v || !(v < 1e30) || !(v > -1e30)) continue;
+        if (!(w > 0.0) || w != w) continue;
+        if (screen_on) {
+            const double d = v > med ? v - med : med - v;
+            if (d > screen_z * sig) { ++screened; continue; }
+        }
+        const double lam = 1.0 / w;
+        sum_lam += lam;
+        sum_lam_v += lam * v;
+        if (used_out && i < used_out->size()) (*used_out)[i] = 1;
+        ++used;
+    }
+    out.n_used = used;
+    out.n_screened = screened;
+    if (used < min_n || used < 1) return out;
+    if (!(sum_lam > 0.0) || sum_lam != sum_lam || sum_lam_v != sum_lam_v) return out;
+    const double mu = sum_lam_v / sum_lam;
+    if (mu != mu || !(mu < 1e30) || !(mu > -1e30)) return out;
+    out.mu = mu;
+    out.sum_lam = sum_lam;
+    out.applied = true;
+    return out;
+}
+
 /// Iono-2 v3k (erase-policy split): the D5-only slip response — KEEP the
 /// accumulated deviation level, re-tap the confidence to the GM steady state.
 /// Applied when a (station,sat) LOS is in the C3c funnel WITHOUT a raw-detector

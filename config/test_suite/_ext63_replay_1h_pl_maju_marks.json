@@ -1,0 +1,32 @@
+{
+ "_comment": [
+  "EDGE-1 PIECE 2 / Q4 POWER FIX (session 2026-08-07): the original Q4 replay pair used",
+  "the WTZZ00DEU holdout, which NEVER OBSERVES either marked satellite (G16 over the",
+  "Pacific, G11 over the South Atlantic; observer-set intersection EMPTY) — zero power.",
+  "This arm replays the SAME leveled product WITH its R records at MAJU00MHL, the",
+  "highest-elevation NON-ORIGIN observer of G16 at the R,G16 epoch (TOW 259470, el 62°).",
+  "CAVEAT: MAJU00MHL is IN-NETWORK (its data shaped the product), so this pair answers",
+  "the MECHANISM question only — does an R record cause a consumer reset on a satellite",
+  "the consumer tracks — not an accuracy grade.  Pair partner: _maju_nomarks.",
+  "Extends the base directly (depth-ceiling rule); posture restated (obs 15 / iono 25)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 3600.0, "elevation_mask_deg": 15.0 },
+ "logging": { "enable_rt_engine": true },
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 3600.0,
+  "closed_loop": {
+   "replay_products_path": "C:/GnssProcessor/runs/ext63_1h_evt_pl/products.txt",
+   "station": {
+    "name": "MAJU00MHL",
+    "rinex_path": "C:/GnssProcessor/data/2024-129/obs/maju00mhl/MAJU00MHL_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [ -6257572.0592, 950333.7779, 785215.7283 ]
+   }
+  },
+  "product_output_path": "C:/GnssProcessor/runs/replay_1h_pl_maju_marks/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_1h_pl_maju_marks/state_snapshot.bin"
+ }
+}

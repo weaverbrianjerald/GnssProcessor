@@ -1971,6 +1971,61 @@ int networkTeardown(
                       config_.networkRxCbCarryDemeanMinStations(),
                       lv4_folds, ctx.carry.lv4_frame_gate_would_skip, would_pct);
     }
+    // H-rider (edge-queue §1.6 item 3a): armed-only run-end line.  Invariant #4:
+    // a census-fed wire whose pool was empty every epoch shipped 1440 sentinel
+    // zeros while reading as "armed and healthy" — the counter is the tell.
+    if (config_.networkHSigma0PrefitCensus()) {
+        if (ctx.carry.h_sig0_census_nonzero == 0)
+            log->warn("Network (H-rider census σ̂₀): ARMED but NO epoch ever produced a "
+                      "usable pooled σ̂₀ — the H wire carried the 0.0000 'unavailable' "
+                      "sentinel all run (empty pool: check the class mask '{}' against "
+                      "the classified row population; standing invariant #4).",
+                      config_.networkHSigma0Classes());
+        else
+            log->info("Network (H-rider census σ̂₀): pooled prefit σ̂₀ on the H wire for "
+                      "{} epoch(s) (classes '{}'; hsig=pc advertised on the S contract; "
+                      "last value {:.4f}).  The A4 withhold ceiling still read "
+                      "sigma0_adapt, unchanged.",
+                      ctx.carry.h_sig0_census_nonzero, config_.networkHSigma0Classes(),
+                      ctx.carry.ep_h_sigma0_census);
+    }
+    // Card S2H (docs/SPEC_level_information_budget.md §17 item 3): armed-only
+    // run-end line.  Standing invariant #4 — "0 epochs applied" must be visible:
+    // a transform that never ran leaves the carry with its full common-mode
+    // force, indistinguishable from a healthy run in every other trace.  The
+    // headline is mean/max |μ| — the common-mode content removed per epoch — and
+    // the thin-skip count (identity epochs, invariant #7's decoupling edge).
+    if (config_.networkRxCbHarvestDemean()) {
+        const double mean_mu = ctx.carry.s2h_mu_n > 0
+            ? ctx.carry.s2h_mu_abs_sum / static_cast<double>(ctx.carry.s2h_mu_n)
+            : 0.0;
+        if (ctx.carry.s2h_epochs_applied == 0)
+            log->warn("Network (S2H S-consistent harvest): ARMED but NO epoch ever "
+                      "applied the transform — every family-epoch fell below the "
+                      "{}-station vote floor (or the carry map stayed empty), so the "
+                      "carried set kept its full common-mode content all run "
+                      "(standing invariant #4).  {} thin-skip(s).",
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      ctx.carry.s2h_thin_skips);
+        else
+            log->info("Network (S2H S-consistent harvest): transform applied on {} "
+                      "epoch(s) over {} family-epoch reduction(s); {} thin-skip "
+                      "identity epoch(s) below the {}-station vote floor; {} vote(s) "
+                      "excluded by the z={} peer screen.  μ last {:+.4f} m, mean |μ| "
+                      "{:.4f} m, max |μ| {:.4f} m — the common-mode content removed "
+                      "from the carried set each epoch.  The carried set is zero-mean "
+                      "by construction in the datum row's own absolute frame, so the "
+                      "carry exerted zero net common-mode force and the level "
+                      "authority was the datum + per-epoch data, with the frame "
+                      "re-derived every epoch (no frozen pin, no lag-1 feedback — "
+                      "SPEC §17 item 3; LASER big-system S-transform, Λ-weighted).",
+                      ctx.carry.s2h_epochs_applied, ctx.carry.s2h_mu_n,
+                      ctx.carry.s2h_thin_skips,
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      ctx.carry.s2h_screened_total,
+                      config_.networkRxCbHarvestScreenZ(),
+                      ctx.carry.s2h_last_mu_m, mean_mu, ctx.carry.s2h_max_abs_mu_m);
+    }
     // Card LV-1 (docs/SPEC_level_information_budget.md): armed-only run-end line.
     // The per-station counters live on each station's StateInitializer (the reframe
     // happens inside the PARALLEL produce phase), summed here serially — the same

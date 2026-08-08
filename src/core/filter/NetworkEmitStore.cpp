@@ -132,6 +132,8 @@ void networkEmitStore(
             hst.time.week = se.time.week;
             hst.time.tow  = se.time.tow;
             hst.state     = NetworkProducerStatus::State::WithheldShGate;
+            // H-rider: the census σ̂₀ exists on a withheld epoch too (pre-solve).
+            if (ctx.knobs.h_sigma0_census) hst.sigma0 = ctx.carry.ep_h_sigma0_census;
             hst.withheld  = "*";
             product_writer->writeEpochStatus(hst);
             if (nc.product_flush_per_epoch) product_writer->flush();
@@ -337,7 +339,15 @@ void networkEmitStore(
             hst.state            = epoch_withheld_consts.empty()
                                        ? NetworkProducerStatus::State::Ok
                                        : NetworkProducerStatus::State::Partial;
-            hst.sigma0           = sigma0_adapt;
+            // H-rider (network.h_sigma0_prefit_census): the census-fed σ̂₀,
+            // UNIFORM across every H site when armed (the S contract carries
+            // hsig=pc so a consumer knows which population field 5 is).  The
+            // legacy feed (sigma0_adapt) is structurally 0.0000 on every
+            // no-leveling lineage and a degenerate 1.0000 on quiet leveled
+            // ones — the wire shipped with no usable residual statistic.
+            hst.sigma0           = ctx.knobs.h_sigma0_census
+                                       ? ctx.carry.ep_h_sigma0_census
+                                       : sigma0_adapt;
             hst.n_sats_published = static_cast<int>(sol.sats.size());
             if (epoch_withheld_consts.empty()) {
                 hst.withheld = "-";

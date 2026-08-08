@@ -102,6 +102,8 @@ namespace GnssProcessor {
         bool rx_cb_demean_within{};  ///< Card LV-5 (SPEC_level_information_budget §12): reduce μ between PASS A and PASS B and fold against THIS epoch's value (no lag).  Loader guarantees rx_cb_demean.
         bool rx_cb_step_gate{};      ///< Card LV-4 (SPEC_level_information_budget §11): disable the frame-DEPENDENT inject screen; erase on a frame-INVARIANT step at the harvest.  Loader guarantees rx_cb_on.
         double rx_cb_step_k{};       ///< Card LV-4: k·σ of the invariant step screen.
+        bool rx_cb_harvest_demean{}; ///< Card S2H (SPEC_level_information_budget §17 item 3): post-solve Λ-weighted de-mean of the HARVESTED absolute rx-CB realization, per family — the "S-consistent harvest".  Loader guarantees rx_cb_on and forces LV-2/LV-5 OFF.
+        double rx_cb_harvest_screen_z{};  ///< Card S2H: robust peer-screen threshold for the μ vote (≤ 0 never reaches the run: loader validates > 0).
         bool lv1_seed_frame{};       ///< Card LV-1 (SPEC_level_information_budget): reframe per-LOS iono seeds into the field's frame at allocation; loader guarantees estimate_iono_sh.
         int lv1_min_sats{};          ///< Card LV-1: minimum raw seeds for the per-station median offset.
         double zwd_q{};
@@ -110,6 +112,7 @@ namespace GnssProcessor {
         bool ura_on{};
         double ura_alpha{};
         bool ura_retro{};
+        bool mark_refsat_reset_disc{};   ///< Edge-1 piece 2 (network.mark_refsat_reset_disc).
         double ura_refloat_inflate{};
         bool raim_on{};
         double raim_k{};
@@ -307,6 +310,8 @@ namespace GnssProcessor {
         double pc_birth_sigma{};      ///< INC-3 seed-birth tripwire threshold (0 = off).
         bool   pc_topo_on{};          ///< INC-4 TOPOLOGY events.
         bool   rec_on{};              ///< INC-5 flight recorder armed (trip latch + retention).
+        bool   h_sigma0_census{};     ///< H-rider: feed the H heartbeat's sigma0 from the pooled census σ̂₀ (network.h_sigma0_prefit_census).  Loader guarantees trace_prefit_census + emit_epoch_status_record.
+        unsigned h_sigma0_class_mask{};  ///< H-rider: DATA classes pooled into the H σ̂₀ (network.h_sigma0_classes; default code+sh+other — phase excluded per census deviation 2c).
         // --- datum graph census (docs/SPEC_datum_graph_census.md) ------------
         // `dg_on` is the single "does this run predict the S-basis dimension at
         // all" predicate, read at THREE sites: the driver's census call, the
@@ -797,6 +802,26 @@ namespace GnssProcessor {
         double    lv5_resid_sum = 0.0, lv5_max_abs_resid_m = 0.0;
         double    lv2_last_mu_m = 0.0;   ///< most recent μ (any constellation) for the run-end line.
         double    lv2_max_abs_mu_m = 0.0;
+        /// Card S2H (docs/SPEC_level_information_budget.md §17 item 3): THIS
+        /// epoch's S-consistent-harvest reduction per family, retained so the
+        /// caller can trace it (one `s2h_mu` row per family in
+        /// network_events.csv, the LV-2 pattern).  Rebuilt every armed epoch.
+        struct RxCbHarvestEpoch {
+            double mu{0.0};        ///< the subtracted Λ-weighted mean (m).
+            double sum_lam{0.0};   ///< Σλ over the voting members.
+            int    n{0};           ///< usable family entries.
+            int    n_used{0};      ///< votes after the peer screen.
+            int    n_screened{0};  ///< screened from the vote (still transformed).
+            bool   applied{false}; ///< false ⇒ identity transform (thin/degenerate).
+        };
+        std::map<std::string, RxCbHarvestEpoch> rx_cb_harvest_last;
+        // S2H run counters (armed-only run-end line).  `thin_skips` is the
+        // invariant-#7 decoupling edge: an epoch too thin to define the frame
+        // applies NOTHING (identity — the set keeps the last applied frame)
+        // and is counted, never silently frozen.
+        long long s2h_epochs_applied = 0, s2h_thin_skips = 0,
+                  s2h_screened_total = 0, s2h_mu_n = 0;
+        double    s2h_last_mu_m = 0.0, s2h_max_abs_mu_m = 0.0, s2h_mu_abs_sum = 0.0;
         /// Card LV-1: LAG-1 snapshot of the solved SH-VTEC coefficient vector, per
         /// active shell in @c shLayers order (TECU, in @c SphericalHarmonicIonosphere
         /// ::coeffs() order).  Written SERIALLY post-solve, read by the next epoch's
@@ -825,6 +850,19 @@ namespace GnssProcessor {
         // recovery is bumped ONCE (on its rising edge) — no per-constellation reset storm.
         std::set<std::string>        ura_retro_sats;
         std::set<std::string>        retro_active;
+        // Edge-1 piece 2 (network.mark_refsat_reset_disc, default OFF ⇒ this set is
+        // never written ⇒ byte-identical).  Satellites whose REFERENCE-path arc was
+        // reset by IF-TD slip QC this epoch, queued for a per-satellite discontinuity
+        // mark at the sat's NEXT ACTUAL emit.  Drained by NetworkSolPrep through the
+        // SAME mark-and-serialize path as ura_retro_sats — including the RT0-5
+        // "mark == land" rule (a sat absent from this epoch's emission stays pending)
+        // — so the R record always describes bumps that actually reached the product
+        // and replay re-marks exactly the landed sats on exactly those epochs.
+        // Rationale for marking at all (the emitter's jump test already catches most
+        // ref-path slips): SPEC §25.3 measured excursion onsets as refsat_reset-
+        // enriched 5.0x with PB value steps = 0, so the onset-relevant subset
+        // re-references with no value step and is invisible to the jump test.
+        std::set<std::string>        refsat_mark_sats;
         // RTB-7(b/c): startup quality-ramp state.  The DEGRADED URA floor
         // (nc.warmup_ura_floor_m) applies until ramp_lifted; the lift rule is
         // networkWarmupRampLifted (emitted-epoch horizon AND σ̂0-EWMA update count,
@@ -982,6 +1020,12 @@ namespace GnssProcessor {
         long long ep_pc_n_gt_10[kNetDataClasses]{};
         long long ep_pc_n_gt_1000[kNetDataClasses]{};
         long long ep_pc_rows         = 0;   ///< DATA rows in this epoch's census (0 ⇒ blank columns)
+        /// H-rider (edge-queue §1.6 item 3a): this epoch's pooled robust prefit
+        /// σ̂₀ for the H heartbeat (networkPrefitSigma0, computed pre-solve at
+        /// the top of networkSolveGlue).  0.0 = unavailable (empty pool, or the
+        /// knob is off) — the same sentinel the H grammar already defines.
+        double    ep_h_sigma0_census = 0.0;
+        long long h_sig0_census_nonzero = 0;   ///< run counter: epochs with a usable census σ̂₀ on the H wire (invariant #4)
 
         // --- Reduced-RHS class attribution (filter/NetworkRhsAttrib) ----------
         int rhs_attrib_done = 0;   ///< armed target epochs already dumped (caps network.rhs_attrib_n_ep)

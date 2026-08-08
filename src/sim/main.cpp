@@ -1411,6 +1411,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     tcfg.heading0_deg = scfg.trajectory.heading0_deg;
     tcfg.heading_amp_deg = scfg.trajectory.heading_amp_deg;
     tcfg.heading_period_s = scfg.trajectory.heading_period_s;
+    tcfg.static_prefix_s = scfg.trajectory.static_prefix_s;
     tcfg.heave_amp_m = scfg.trajectory.heave_amp_m;
     tcfg.heave_period_s = scfg.trajectory.heave_period_s;
     tcfg.clock_bias0_s = scfg.trajectory.clock_bias0_s;
@@ -1615,6 +1616,18 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     const double arc_s = tcfg.interval_s * static_cast<double>(truth.size() - 1);
     icfg.window_start_tow_s = truth.front().time.tow + scfg.iono.window_start_frac * arc_s;
     icfg.window_duration_s = scfg.iono.window_duration_frac * arc_s;
+    // Turbulence carries its OWN window (see IonoConfig): real roughness is episodic,
+    // so it must be free to sit in a different part of the arc from the SED/TID storm.
+    icfg.sed_bulk = scfg.iono.sed_bulk;
+    icfg.turb_sats = scfg.iono.turb_sats;
+    icfg.turb_sigma_tecu = scfg.iono.turb_sigma_tecu;
+    icfg.turb_step_s = (scfg.iono.turb_step_s > 0.0) ? scfg.iono.turb_step_s
+                                                    : tcfg.interval_s;
+    icfg.turb_window_start_tow_s =
+        truth.front().time.tow + scfg.iono.turb_window_start_frac * arc_s;
+    icfg.turb_window_duration_s = (scfg.iono.turb_window_duration_frac > 0.0)
+                                      ? scfg.iono.turb_window_duration_frac * arc_s
+                                      : 0.0;
     icfg.center_lat0_deg = tcfg.lat0_deg + scfg.iono.center_lat_offset_deg;
     icfg.center_lon0_deg = tcfg.lon0_deg + scfg.iono.center_lon_offset_deg; // default +0.20 = a touch east
     // storm_scale multiplies the STORM amplitudes only (1.0 = nominal storm;
@@ -1793,10 +1806,30 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         return (uni(aux_rng) < 0.5) ? -mag : mag;
     };
 
+    // Header APPROX POSITION = the (possibly quantized) reference, plus the deliberate
+    // ENU error from rinex.approx_offset_enu_m.  Applied HERE and nowhere else: the
+    // ocean-loading frozen reference above still uses the un-offset `approx_pos`, so the
+    // injected physics is bit-for-bit unchanged and only the DISCLOSED a priori moves.
+    // A header a priori is not a fix; a large offset makes a solver iterate its least
+    // squares from the seed instead of starting on top of the answer.
+    Eigen::Vector3d hdr_approx = approx_pos;
+    {
+        const auto& off = scfg.rinex.approx_offset_enu_m;
+        if (off[0] != 0.0 || off[1] != 0.0 || off[2] != 0.0) {
+            const Coordinates::Llh a = Coordinates::ecefToLlh(approx_pos);
+            hdr_approx += Coordinates::enuToEcefMatrix(a.lat_rad, a.lon_rad)
+                          * Eigen::Vector3d(off[0], off[1], off[2]);
+            const double dh = std::hypot(off[0], off[1]);
+            std::cout << "[" << tag << "] APPROX POSITION carries a deliberate a-priori error: "
+                      << "E " << off[0] << " N " << off[1] << " U " << off[2] << " m ("
+                      << dh / 1000.0 << " km horizontal) - the header is a coarse seed, not a fix\n";
+        }
+    }
+
     sim::ObsHeaderSpec hdr;
     hdr.run_date = "20260624 000000 UTC";
     hdr.marker_type = kinematic ? "KINEMATIC" : "GEODETIC";
-    hdr.approx_xyz = { approx_pos.x(), approx_pos.y(), approx_pos.z() };
+    hdr.approx_xyz = { hdr_approx.x(), hdr_approx.y(), hdr_approx.z() };
     hdr.interval_s = tcfg.interval_s;
     hdr.time_of_first_obs = tcfg.t0;
     // Declare the antenna whose pattern was actually injected.  SINGLE SOURCE OF TRUTH:
@@ -1905,12 +1938,34 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     // Integer carrier ambiguities are arc-constant per (sat, band) and recorded
     // once, the first epoch each (sat, signal) is seen.
     std::ofstream amb_csv(outdir / "truth_ambiguities.csv");
-    amb_csv << "satellite,signal,N_int,wavelength_m\n" << std::fixed << std::setprecision(6);
+    // setprecision(12), NOT 6.  The IF ambiguity is g*lam1*N1 + h*lam2*N2 with N ~ 1e6,
+    // so a wavelength rounded to 6 decimals (0.190294 vs 0.190293673) reconstructs B_IF
+    // 0.85 m wrong.  That was harmless while N was guessable from the PRN; now that the
+    // integers are randomised this file is the ONLY source for them, so it has to be
+    // usable.  Consumers should still prefer lambda = c/f.
+    amb_csv << "satellite,signal,N_int,wavelength_m\n" << std::fixed << std::setprecision(12);
     std::set<std::string> amb_seen;
     auto ambN = [](const std::string& sat, int prn, int band_idx) -> int {
-        // Deterministic, distinct per (sat, band); no separate satellite phase bias
-        // is injected, so the recovered float ambiguity differences equal these.
-        return (sat[0] == 'E' ? 700000 : 100000) + prn * 1000 + band_idx * 137;
+        // Deterministic pseudo-random per (satellite, band), from a SELF-CONTAINED
+        // splitmix64 hash so no shared RNG stream is consumed (noise / multipath /
+        // slip streams and therefore byte-identity of everything else are untouched).
+        //
+        // WHY NOT THE OLD FORMULA.  It was `(E?700000:100000) + prn*1000 + band_idx*137`,
+        // which made the WIDE-LANE N1-N2 the constant -137 on EVERY satellite and made
+        // N1 readable straight off the PRN.  A student who ran Melbourne-Wubbena on one
+        // satellite could then apply -137 to all of them, so the per-satellite work that
+        // makes wide-lane resolution a real exercise was absent.  Independent draws per
+        // band give a different, unguessable N1-N2 per satellite.  No separate satellite
+        // phase bias is injected, so the integers remain RESOLVABLE via the standard
+        // MW wide-lane -> narrow-lane cascade — that is the intended exercise.
+        unsigned long long h = 0x9E3779B97F4A7C15ull
+            ^ (static_cast<unsigned long long>(static_cast<unsigned char>(sat[0])) << 56)
+            ^ (static_cast<unsigned long long>(prn) << 32)
+            ^ (static_cast<unsigned long long>(band_idx) * 0xD1B54A32D192ED03ull);
+        h ^= h >> 30; h *= 0xBF58476D1CE4E5B9ull;
+        h ^= h >> 27; h *= 0x94D049BB133111EBull;
+        h ^= h >> 31;
+        return static_cast<int>(100000ull + h % 900000ull);  // same magnitude as before
     };
 
     // Observable-specific signal biases (OSB), injected only when corrections.signal_bias
@@ -1943,7 +1998,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     //   gim_*              the GIM's own geocentric IPP on ITS shell (450 km for CODE)
     //                      and the IONEX RMS as a slant-TEC sigma; 0 when no GIM.
     atmo_csv << "week,tow_s,satellite,elev_deg,az_deg,ipp_lat_deg,ipp_lon_deg,"
-                "stec_quiet_tecu,dstec_sed_tecu,dstec_tid_tecu,stec_total_tecu,"
+                "stec_quiet_tecu,dstec_sed_tecu,dstec_tid_tecu,dstec_turb_tecu,stec_total_tecu,"
                 "I_L1_m,dI_L1_m,in_storm_window,"
                 "obliquity,I_klob_L1_m,sf_iono_resid_m,"
                 "gim_ipp_lat_deg,gim_ipp_lon_deg,gim_stec_std_tecu\n"
@@ -2149,10 +2204,12 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 const sim::IonoSample samp = iono.evaluate(ts.lat_deg, ts.lon_deg, az, elev, t,
                                                            quiet_slant_stec, sgain,
                                                            tidPeriodOverride(sat), tidSlot(sat),
-                                                           tidVtecExplicit(sat, t.tow));
+                                                           tidVtecExplicit(sat, t.tow),
+                                                           iono.turbVtec(sat, t));
                 const double sigphi = iono.scintSigmaPhiRad(samp, elev) * sgain; // no scintillation on stable sats
                 const double dI_L1 = sim::IonoDisturbance::slantDelayMetres(
-                    samp.dstec_sed_tecu + samp.dstec_tid_tecu, f_L1); // disturbance-only L1 delay
+                    samp.dstec_sed_tecu + samp.dstec_tid_tecu + samp.dstec_turb_tecu,
+                    f_L1); // disturbance-only L1 delay (turbulence included: it IS disturbance)
                 if (std::abs(dI_L1) > peak_dI_L1) {
                     peak_dI_L1 = std::abs(dI_L1);
                     peak_dI_tow = t.tow;
@@ -2161,7 +2218,8 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 atmo_csv << t.week << "," << std::setprecision(3) << t.tow << "," << sat << ","
                          << std::setprecision(4) << elev << "," << az << "," << samp.ipp_lat_deg << ","
                          << samp.ipp_lon_deg << "," << samp.stec_quiet_tecu << "," << samp.dstec_sed_tecu
-                         << "," << samp.dstec_tid_tecu << "," << samp.stec_total_tecu << ","
+                         << "," << samp.dstec_tid_tecu << "," << samp.dstec_turb_tecu
+                         << "," << samp.stec_total_tecu << ","
                          << sim::IonoDisturbance::slantDelayMetres(samp.stec_total_tecu, f_L1) << ","
                          << dI_L1 << "," << (samp.in_storm_window ? 1 : 0) << ","
                          << samp.obliquity << "," << I_klob_L1 << "," << sf_iono_residual << ","
@@ -2456,6 +2514,31 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         js << "  \"first_tow_s\": " << std::setprecision(3) << truth.front().time.tow << ",\n";
         js << "  \"interval_s\": " << tcfg.interval_s << ",\n";
         js << "  \"n_epochs\": " << epochs_written << ",\n";
+        // Station-keeping prefix (trajectory.static_prefix_s).  Counted from the
+        // TRUTH rather than from the config so it reports what the data actually
+        // contains, not what was asked for.  The window (n_epochs / tow range) is
+        // DISCLOSED to students -- the brief tells them the vessel was holding
+        // position -- while position_* is the grading key for the fixed-point
+        // solution, and is whitelisted OUT of make_brief.py like every other truth.
+        std::size_t n_static = 0;
+        for (const auto& s : truth) {
+            if ((s.ecef - truth.front().ecef).norm() <= 1.0e-6) ++n_static;
+            else break;
+        }
+        if (n_static >= 2) {
+            const auto& s0 = truth.front();
+            const auto& sN = truth[n_static - 1];
+            js << "  \"static_segment\": {\n";
+            js << "    \"n_epochs\": " << n_static << ",\n";
+            js << "    \"tow_start_s\": " << std::setprecision(3) << s0.time.tow << ",\n";
+            js << "    \"tow_end_s\": " << sN.time.tow << ",\n";
+            js << "    \"duration_s\": " << (sN.time.tow - s0.time.tow) << ",\n";
+            js << "    \"position_ecef_m\": [" << std::setprecision(4) << s0.ecef.x() << ", "
+               << s0.ecef.y() << ", " << s0.ecef.z() << "],\n";
+            js << "    \"position_llh_deg_m\": [" << std::setprecision(7) << s0.lat_deg << ", "
+               << s0.lon_deg << ", " << std::setprecision(3) << s0.h_m << "]\n";
+            js << "  },\n";
+        }
         js << "  \"signals\": {\"GPS\": [\"C1C\",\"L1C\",\"C2W\",\"L2W\"], \"Galileo\": [\"C1C\",\"L1C\",\"C5Q\",\"L5Q\"]},\n";
         js << "  \"truth\": {\n";
         js << "    \"gps_galileo_isb_m\": " << std::setprecision(4) << isb_true_m << ",\n";

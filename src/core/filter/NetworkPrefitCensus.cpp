@@ -173,6 +173,60 @@ PrefitStationCentres prefitStationCentres(const SharedColumnMap& cm,
 }
 
 // =====================================================================
+//  H-rider — the pooled robust prefit σ̂₀ for the H heartbeat
+// =====================================================================
+
+double networkPrefitSigma0(const NetworkRunContext& ctx,
+                           const std::vector<NetStation>& stations,
+                           const NetworkEstimator& est,
+                           const std::vector<StationAssembly>& asm_res,
+                           const std::vector<int>& est_index_of,
+                           unsigned class_mask) {
+    const Eigen::Index n = est.numShared();
+    if (n <= 0 || class_mask == 0) return 0.0;
+    const SharedColumnMap cm = buildSharedColumnMap(est, n);
+
+    std::vector<double> pool;
+    const bool have_prior = ctx.carry.prefit_walk_seeded;
+    for (std::size_t i = 0; i < stations.size() && i < asm_res.size(); ++i) {
+        if (i >= est_index_of.size() || est_index_of[i] < 0) continue;
+        const StationAssembly& R = asm_res[i];
+        if (!R.ok || R.A_s.cols() != n || R.y.size() == 0) continue;
+
+        std::vector<RowTag> tags;
+        classifyStation(cm, R, tags);
+        const PrefitStationCentres c = centresFrom(R, tags);
+
+        for (Eigen::Index row = 0; row < R.y.size(); ++row) {
+            const RowTag& tg = tags[static_cast<std::size_t>(row)];
+            const int ti = dataClassIndex(tg.cls);
+            if (ti < 0) continue;                              // pins / coupling
+            if (!(class_mask & dataClassBit(tg.cls))) continue;
+            const double w = (row < R.w.size()) ? R.w(row) : 1.0;
+            const double y = R.y(row);
+            if (!std::isfinite(y) || !std::isfinite(w)) continue;
+            if (w >= kNetPrefitPinWeight) continue;            // pin-regime DATA row
+            if (!c.have[ti]) continue;                         // no usable centre
+            // INC-1's "births are not exceedances", where the labels can say so.
+            if (!tg.sat.empty() && have_prior
+                && ctx.carry.prefit_present_prev.count(
+                       {static_cast<int>(i), tg.sat}) == 0)
+                continue;
+            pool.push_back(prefitStandardizedDeviation(y, w, c.m[ti]));
+        }
+    }
+    if (pool.empty()) return 0.0;   // = the H grammar's "unavailable" sentinel
+    const std::size_t mid = pool.size() / 2;
+    std::nth_element(pool.begin(), pool.begin() + mid, pool.end());
+    double med = pool[mid];
+    if (pool.size() % 2 == 0) {
+        std::nth_element(pool.begin(), pool.begin() + (mid - 1), pool.end());
+        med = 0.5 * (pool[mid - 1] + med);
+    }
+    return std::isfinite(med) ? 1.4826 * med : 0.0;
+}
+
+// =====================================================================
 //  INC-2 — the structural fuse
 // =====================================================================
 

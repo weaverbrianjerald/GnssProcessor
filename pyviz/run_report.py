@@ -18,6 +18,10 @@ Exam dashboard (GnssSimulator answer key)
 (and, without it, auto-skip).  A ``verify_report.json`` (auto-detected under the
 run's log dir, or ``--verify-report``) adds the coloured PASS/FAIL gate banner.
 ``--plotly-js inline`` embeds plotly.js so the interactive report opens offline.
+
+The exam dashboard also drops a fixed set of viewers that duplicate a panel
+above them or are internal QC strips -- see :data:`EXAM_DASHBOARD_OFF`.  Add any
+of them back with ``--only <name>``, or all of them with ``--all``.
 """
 
 from __future__ import annotations
@@ -30,6 +34,31 @@ from functools import partial
 
 # Make the bundled gnssviz package importable when run as a loose script.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+#: Viewers dropped from the **exam dashboard** by default (professor review,
+#: 2026-08-06: the dashboard had grown too crowded to read).  Each entry is
+#: either already covered by a truth-referenced panel earlier in the report, or
+#: an internal QC strip that earns its place on demand rather than in the
+#: standing artifact.  This is a *dashboard composition* decision, not a judgement
+#: about the viewers: they all stay in ``REGISTRY`` and remain default-on for the
+#: ordinary (non-exam) ``gnss_report.html``.
+#:
+#: Bring one back with ``--only <name>`` (alone or alongside others), or the whole
+#: set with ``--all``.  ``gnss_simulator``'s C++ dashboard step passes an
+#: ``--exclude`` list that is a subset of this one; it is harmless duplication
+#: kept so an older binary still produces the same composition.
+EXAM_DASHBOARD_OFF = {
+    "exam_track": "plan-view, 95%-bound and cross/along-track panels",
+    "exam_otl_truth": "ocean loading is a mm-level error-budget item, not a figure",
+    "state": "State / position duplicates the truth-referenced position panels above",
+    "measurement_residuals": "residual panels (enable on demand once the loop is trusted)",
+    "residual_strip": "raster of the same residuals",
+    "plot_satellite_signals": "satellite signal-usage strip",
+    "dops": "DOPs & satellite counts duplicate the exam_visibility panel above",
+    "ambiguities": "raw float ambiguities are unreadable without time-differencing",
+    "slip_gate_strip": "internal slip-detector gate strip",
+}
 
 
 def _resolve_verify_report(log_dir: str, explicit):
@@ -131,6 +160,14 @@ def main(argv=None) -> int:
         print(f"    truth dir: {ctx.truth_dir}")
         print(f"    verify report: {verify_path or '(none found)'}")
     registry = _registry_for(std_residuals)
+    # Exam-dashboard composition (EXAM_DASHBOARD_OFF).  Skipped when the caller
+    # has already named an explicit subset (--only) or opted everything in (--all),
+    # so neither flag silently loses to this default.
+    if is_exam and not args.only and not args.all:
+        registry = [v for v in registry if v.name not in EXAM_DASHBOARD_OFF]
+        print("    dashboard: "
+              + ", ".join(sorted(EXAM_DASHBOARD_OFF))
+              + "  off by default (--all, or --only <name>, to include)")
     if args.exclude:
         drop = set(args.exclude)
         registry = [v for v in registry if v.name not in drop]

@@ -1,0 +1,31 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — 3 h CONTROL for the S2H stability/residual pair: the arm-32",
+  "posture (obs 15 / iono 25) re-run on the session binary gnss_processor_s2h.exe",
+  "(82B4450703C551109DCEFB0B6C212559), because controls must live on the SAME binary",
+  "as the ON arm (invariant #6).  serialize_sbasis_contract armed per the standing",
+  "recommendation (header-only, solve-byte-identical, makes the product replayable).",
+  "PREDICTION P1: gates match stored arm 32 within noise (folds ~44 %, settled sd",
+  "~4.9 TECU, h2-3 time-matched level ~+0.4 +/- 1.3 as DIAGNOSTICS), confirming the",
+  "rebuild moved nothing on the OFF path at 3 h scale."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 10800.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "serialize_sbasis_contract": true,
+  "product_output_path": "C:/GnssProcessor/runs/s2h_3h_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/s2h_3h_ctl/state_snapshot.bin"
+ }
+}

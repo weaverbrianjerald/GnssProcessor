@@ -1,0 +1,27 @@
+{
+ "_comment": [
+  "EDGE-1 PIECE 2 / Q4 POWER FIX — the NOMARKS twin of _ext63_replay_1h_pl_maju_marks:",
+  "identical in every way except the replayed product is products_noR.txt (the byte-exact",
+  "control with the 2 R records stripped; 0 diff lines outside the stripped rows).",
+  "Any reaction difference at MAJU00MHL is caused by R,G16 / R,G11 and nothing else."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 3600.0, "elevation_mask_deg": 15.0 },
+ "logging": { "enable_rt_engine": true },
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 3600.0,
+  "closed_loop": {
+   "replay_products_path": "C:/GnssProcessor/runs/ext63_1h_evt_pl/products_noR.txt",
+   "station": {
+    "name": "MAJU00MHL",
+    "rinex_path": "C:/GnssProcessor/data/2024-129/obs/maju00mhl/MAJU00MHL_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [ -6257572.0592, 950333.7779, 785215.7283 ]
+   }
+  },
+  "product_output_path": "C:/GnssProcessor/runs/replay_1h_pl_maju_nomarks/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_1h_pl_maju_nomarks/state_snapshot.bin"
+ }
+}

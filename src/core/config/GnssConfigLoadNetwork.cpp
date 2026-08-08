@@ -2648,6 +2648,15 @@ namespace GnssProcessor {
         network_rx_cb_carry_step_k_sigma_ =
             jval<double>(json, "network.rx_cb_carry_step_k_sigma",
                          "rx_cb_carry_step_k_sigma", 10.0);
+        // Card S2H (docs/SPEC_level_information_budget.md §17 item 3): the
+        // S-consistent harvest — post-solve Λ-weighted de-mean of the harvested
+        // ABSOLUTE rx-CB realization, per family.  Guard/banner in the post-parse
+        // block with the other LV cards (the carry can still be forced OFF there).
+        network_rx_cb_harvest_demean_ =
+            jval<bool>(json, "network.rx_cb_harvest_demean", "rx_cb_harvest_demean", false);
+        network_rx_cb_harvest_screen_z_ =
+            jval<double>(json, "network.rx_cb_harvest_screen_z",
+                         "rx_cb_harvest_screen_z", 8.0);
         // NOTE: validation (datum guard + banner) lives in the post-parse block next
         // to the carry_zwd validation — code_datum_time_linked parses AFTER this site.
         // M2 (LS-VCE carry-q): the carry-row variance-component MONITOR.  A
@@ -3984,6 +3993,16 @@ namespace GnssProcessor {
                           "the heartbeat — a live tail only sees the H line when the stream "
                           "flushes.");
         }
+        // --- H-rider (edge-queue §1.6 item 3a): census-fed H σ̂₀ ---
+        // Parsed here (after emit_epoch_status_record); the dependency GUARD lives
+        // in loadNetworkEmissionFilters_ — this helper is void, and the empty-mask
+        // case is a hard load error, which only a bool helper can signal.
+        network_h_sigma0_prefit_census_ =
+            jval<bool>(json, "network.h_sigma0_prefit_census",
+                       "network_h_sigma0_prefit_census", false);
+        network_h_sigma0_classes_ =
+            jval<std::string>(json, "network.h_sigma0_classes",
+                              "network_h_sigma0_classes", "code,sh,other");
         // --- B1: URA quality channel ---
         network_emit_ura_ =
             jval<bool>(json, "network.emit_ura", "network_emit_ura", false);
@@ -4026,6 +4045,9 @@ namespace GnssProcessor {
         // rejected-then-reset value).  See the load just past that block.
         network_ura_retro_bump_ =
             jval<bool>(json, "network.ura_retro_bump", "network_ura_retro_bump", false);
+        network_mark_refsat_reset_disc_ =
+            jval<bool>(json, "network.mark_refsat_reset_disc",
+                       "network_mark_refsat_reset_disc", false);
         network_ura_refloat_inflate_ =
             jval<double>(json, "network.ura_refloat_inflate", "network_ura_refloat_inflate", 1.0);
         // (RTB-8: service_mode was read at the very top of this section so ALL
@@ -4095,6 +4117,15 @@ namespace GnssProcessor {
                       "post-emit QC tier gets its discontinuity counter bumped on the NEXT emit "
                       "(edge-triggered, per-satellite) so the consumer resets the ambiguity that "
                       "integrated the contaminated epoch.");
+        if (network_mark_refsat_reset_disc_)
+            log->info("Network (edge-1 piece 2): network.mark_refsat_reset_disc on — an IF-TD "
+                      "REFERENCE-path slip marks that SATELLITE with a per-sat discontinuity at "
+                      "its next actual emit, serialized as an R record (not reconstructable on "
+                      "replay, so it must travel on the wire).  Targets the subset the emitter's "
+                      "value-jump test cannot see: SPEC 25.3 measured excursion onsets as "
+                      "refsat_reset-enriched 5.0x with PB value steps = 0.  PRODUCT-AFFECTING "
+                      "(adds R records); grade with scripts/product_step_census.py + "
+                      "scripts/edge_reaction_correlate.py.");
         if (network_ura_refloat_inflate_ > 1.0)
             log->info("Network (B1): network.ura_refloat_inflate {:.2f}x — a recently-refloated "
                       "satellite's URA is inflated for the phase-leveling warmup horizon (honest "
@@ -5004,6 +5035,51 @@ namespace GnssProcessor {
      */
     bool GnssConfig::loadNetworkEmissionFilters_(const nlohmann::json& json,
                                                  const std::shared_ptr<spdlog::logger>& log) {
+        // --- H-rider (edge-queue §1.6 item 3a): census-fed H σ̂₀ guard ----------
+        // Parsed in loadNetworkClockModelAndChannels_ (next to the heartbeat it
+        // feeds); validated HERE because the empty-mask case is a hard load error
+        // and that helper is void.  Both prerequisites are long parsed by now.
+        if (network_h_sigma0_prefit_census_) {
+            if (!network_emit_epoch_status_record_) {
+                log->warn("Network (H-rider): network.h_sigma0_prefit_census is ARMED but "
+                          "emit_epoch_status_record is OFF — there are no H records to "
+                          "feed, so this knob is INERT (standing invariant #4).  Arm "
+                          "network.emit_epoch_status_record, or drop the census feed.");
+                network_h_sigma0_prefit_census_ = false;
+            } else if (!network_config_.trace_prefit_census) {
+                log->warn("Network (H-rider): network.h_sigma0_prefit_census is ARMED but "
+                          "trace_prefit_census is OFF — the born-cell deferral reads the "
+                          "census walk's lag-1 presence map, so the statistic would count "
+                          "healthy births as exceedances.  Forced OFF; arm "
+                          "network.trace_prefit_census (fingerprint-SAFE, standard armed "
+                          "set) with it.");
+                network_h_sigma0_prefit_census_ = false;
+            } else {
+                std::vector<std::string> unknown;
+                const unsigned mask = parseDataClassMask(network_h_sigma0_classes_, &unknown);
+                for (const auto& tok : unknown)
+                    log->warn("Network (H-rider): unrecognized token '{}' in "
+                              "network.h_sigma0_classes ('{}') — ignored.",
+                              tok, network_h_sigma0_classes_);
+                if (mask == 0) {
+                    log->error("Network: network.h_sigma0_classes ('{}') resolves to an "
+                               "EMPTY class set — the census-fed H σ̂₀ would be a "
+                               "permanent 0.0000 masquerading as a measurement.  Fix the "
+                               "class list or drop network.h_sigma0_prefit_census.",
+                               network_h_sigma0_classes_);
+                    return false;
+                }
+                log->info("Network (H-rider): H heartbeat σ̂₀ fed from the PREFIT CENSUS "
+                          "pool (classes '{}') — pre-solve, station-common-mode-removed, "
+                          "1.4826·median, available on EVERY H site including the gate "
+                          "withhold.  A DIFFERENT statistic from the within-epoch RAIM's "
+                          "sigma0_adapt (which stays the A4 ceiling input, unchanged); "
+                          "the S contract advertises hsig=pc so consumers can tell the "
+                          "populations apart.  Product bytes change when armed (H field "
+                          "5 + the hsig token).",
+                          network_h_sigma0_classes_);
+            }
+        }
         // RTB-7(c): the branch-faithful carry blob requires the invariant carry to be
         // armed and a snapshot path to write to (parsed above); enforce + log here now
         // that network_carry_invariant_ is known.
@@ -6582,6 +6658,75 @@ namespace GnssProcessor {
                           "response; harvested outside the phase-leveling gate — live on "
                           "the carry_invariant lineage).",
                           network_rx_cb_carry_q_);
+            }
+        }
+        // Card S2H (docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1):
+        // the S-consistent harvest.  Validated BEFORE the LV-2/LV-5 guards because it
+        // SUPERSEDES them: both mechanisms act on the same channel (the carried
+        // rx-CB common mode) and composing them would de-mean a set that is already
+        // zero-mean-by-construction — the LV-2 μ would measure numerical noise and
+        // its fold-side subtraction would re-introduce exactly the lag this card
+        // removes.  Same post-carry-guard placement as the LV cards.
+        if (network_rx_cb_harvest_demean_) {
+            if (!(network_rx_cb_harvest_screen_z_ > 0.0)
+                || !std::isfinite(network_rx_cb_harvest_screen_z_)) {
+                log->error("Network: network.rx_cb_harvest_screen_z must be a finite "
+                           "value > 0 (got {}); the peer screen is a contamination "
+                           "guard on the μ vote — set it large to effectively disable "
+                           "it, never non-positive.",
+                           network_rx_cb_harvest_screen_z_);
+                return false;
+            }
+            // The vote floor is the shared LV knob; LV-2's own >= 1 validation only
+            // runs when LV-2 is armed, so repeat it here for the S2H-only posture.
+            if (network_rx_cb_carry_demean_min_stations_ < 1) {
+                log->error("Network: network.rx_cb_carry_demean_min_stations must be "
+                           ">= 1 (got {}); it is the S2H vote floor below which the "
+                           "harvest transform stands down (identity).",
+                           network_rx_cb_carry_demean_min_stations_);
+                return false;
+            }
+            if (!network_carry_rx_code_bias_) {
+                log->warn("Network (S2H): network.rx_cb_harvest_demean is ARMED but the "
+                          "rx-CB carry is OFF — there is no harvested set to transform, "
+                          "so this knob is INERT (standing invariant #4; the run-end s2h "
+                          "line will read 0 epochs).  Arm network.carry_rx_code_bias, or "
+                          "drop the harvest de-mean.");
+                network_rx_cb_harvest_demean_ = false;
+            } else {
+                if (network_rx_cb_carry_demean_ || network_rx_cb_carry_demean_within_) {
+                    log->warn("Network (S2H): network.rx_cb_carry_demean{} is armed "
+                              "alongside network.rx_cb_harvest_demean — SUPERSEDED "
+                              "mechanism on the same channel, forced OFF.  The harvest "
+                              "transform makes the carried set zero-mean-by-construction "
+                              "each epoch (frame re-derived from THIS epoch's solution); "
+                              "the fold-side de-mean would then measure noise and re-pin "
+                              "the mode to the frozen seed frame (SPEC §13.2).",
+                              network_rx_cb_carry_demean_within_ ? " (+_within)" : "");
+                    network_rx_cb_carry_demean_ = false;
+                    network_rx_cb_carry_demean_within_ = false;
+                }
+                log->info("Network (S2H, SPEC_level_information_budget §17 item 3): "
+                          "S-CONSISTENT HARVEST on — at the serial post-solve harvest "
+                          "(after the LV-4 erase pass and the gap prune, so the member "
+                          "set is exactly the fold-eligible set), the Λ-weighted mean "
+                          "of each family's harvested ABSOLUTE realizations is "
+                          "subtracted from every carried entry, and the variance leg is "
+                          "the exact diagonal of S·Q·Sᵀ (voters var − 1/Σλ, screened "
+                          "var + 1/Σλ).  The carried set is zero-mean-by-construction "
+                          "in the SAME absolute frame the rx-CB datum row targets, so "
+                          "the carry exerts zero net common-mode force and transports "
+                          "only between-station differences; the frame is re-derived "
+                          "per epoch (no frozen pin, no lag-1 feedback, nothing fed "
+                          "back).  LASER Net3DLsa big-system S-transform, Λ-generalized "
+                          "(λ ≡ const reduces to the GPS3710_test_PMINOLESS oracle "
+                          "case).  Peer screen z = {} (μ-vote contamination guard); "
+                          "vote floor {} stations (below it: IDENTITY transform, "
+                          "counted — never a frozen μ).  This changes what carried "
+                          "state MEANS, so it is appended to the snapshot fingerprint — "
+                          "never flip it mid-chain.",
+                          network_rx_cb_harvest_screen_z_,
+                          network_rx_cb_carry_demean_min_stations_);
             }
         }
         // Card LV-2 (docs/SPEC_level_information_budget.md): rx-CB carry common-mode

@@ -161,11 +161,13 @@ missed.  The observed resets are `L2W 52 / L1W 31` — i.e. the band carrying th
 spurious population is the majority channel.  **Fix is one default-OFF knob, not
 new code:** arm `network.serialize_sbasis_contract` on the producer; the contract
 already carries `discfrac=` (`ApplicationNetworkSetup.cpp:1062`) and
-`makeReplayEmitter` already consumes it.  ⚠ One latent bug to fix with it:
-`pending_contract.disc_threshold_m` is hardcoded to
-`NetworkProductEmitter::kDefaultDiscThresholdM` (`ApplicationNetworkSetup.cpp:1051`)
-rather than the configured value — harmless while `discfrac` > 0 dominates, wrong the moment a run
-sets a non-default flat threshold.
+`makeReplayEmitter` already consumes it.  **No code change is required.**
+(An earlier draft of this card called `pending_contract.disc_threshold_m =
+kDefaultDiscThresholdM` at `ApplicationNetworkSetup.cpp:1051` a latent bug — it is
+NOT.  There is no config knob for the flat threshold: the emitter itself is
+constructed with the same constant at `ApplicationNetworkSetup.cpp:950`, so the
+contract stamps exactly what the emitter used.  That is the "R9: single source of
+truth" comment working as designed.  Retracted.)
 
 ### 1.4 ★★ The load-bearing NEGATIVE result: the live reaction does not touch the excursions
 
@@ -247,6 +249,255 @@ inside h0–3).  Reproduction recipe for everything above:
 `gnss_processor_lv4stage1.exe` (= `f17`, md5 `383ad4a7…`), harvested to
 `runs/replay_ext63_12h_ref_twin/`.
 
+### 1.7 ✅ PIECE 1 EXECUTED AND PASSED (2026-08-05) — all four predictions confirmed
+
+Arms: producer `runs/ext63_dual_3h_contract` (`_ext63_gps_dual_3h_contract.json`,
+arm 32 + the single knob `network.serialize_sbasis_contract: true`, 260 s, exit 0);
+control = **arm 32 itself** (`runs/ext63_dual_3h_m15i25`); replays
+`runs/replay_3h_{v1ctl,v2}`.  Same binary throughout (`gnss_processor_edge1.exe`,
+md5 `383ad4a7…`).  **No code change was needed or made.**
+
+| prediction | result |
+|---|---|
+| **P1** v2 header carrying `discfrac=0.25` | ✅ `# gnss_network_product v2` + `S,MBAR00UGA,1,nominal,0,2,0,0,0.05,1,COD0MGX…,discfrac=0.25`; replay logs "S-contract present (v2)" |
+| **P2** record stream byte-identical (knob is header-only) | ✅ **0 diff lines** across all E/C/P records vs arm 32 — invariant #6 structural byte-identity holds; the 167-byte size delta is the S line + legend |
+| **P3** fewer resets, band-2/L2W dominated | ✅ **17 → 13 resets; all four removed are L2W. L1W unchanged 4 → 4** |
+| **P4** producer runtime/solve unaffected | ✅ 260 s vs arm 32's 248 s; records byte-identical |
+
+P3 is the sharp one: the reduction is **exactly the predicted spurious band-2
+population, with zero collateral on band 1.**  Position domain, same window,
+identical observations: **last-30 3D RMS 11.6777 → 10.1977 m (−12.7 %)**, first fix
+30 s earlier.  That is the cost of four spurious ambiguity resets over 3 h.
+
+**Recommendation: arm `network.serialize_sbasis_contract` on every producer run
+that will be replayed or tail-consumed.**  It is header-only, solve-byte-identical,
+free, and without it the consumer is provably reacting to the wrong event set.
+
+**⚠ Two corrections to §1.2/§1.3 above, both paid for by this run:**
+
+1. **RETRACTED: "the clock channel is killed in transit."**  Between §1.2 and this
+   run I found the 12 h producer had the A2 clock-disc channel ON while the replay
+   showed zero clock reactions, and inferred the v1 fallback (`emit_clock_disc =
+   false`) was suppressing it.  **The v2 arm disproves that**: the contract carried
+   `emit_clock_disc=1`, `makeReplayEmitter` built the emitter with it, and clock
+   reactions are **still 0**.  The real reason is structural — the clock counter has
+   **no magnitude jump test** (deliberate; `NetworkProductEmitter.cpp:271-281`), so
+   its only triggers are a forced datum bump (`datum_changed` / `R` records) or
+   `clock_disc_on_set_change`.  On this lineage `datum_changed ≡ 0`, there are no `R`
+   records, and the S line carries **no `clkset=` token** (the knob is off).  The
+   counter is enabled and nothing drives it.  **This reinforces §1.4 rather than
+   competing with it: the missing thing is the EVENT, not the channel.**
+2. **Scope of the v1 defect, stated correctly.**  A v1 wire silently defaults **all
+   five** replay-emitter parameters, not just the threshold — `disc_threshold_m`,
+   `emit_clock_disc`, `staleness_horizon_s`, `code_bias_jump_test`,
+   `clock_disc_on_set_change`, plus `disc_threshold_frac_cycles`
+   (`NetworkProductIO.cpp:892-901`).  That is the latent blast radius.  On THIS
+   lineage only `discfrac` is materially active, which is why the measured effect is
+   4 resets and not 40 — do not over-generalize the −12.7 % to other postures.
+
+**Incidental:** this 3 h window at the 15/25 posture has **zero epochs > 20 m** in
+both arms, so §1.4's onset-enrichment grade could not be re-run here.  The §25
+excursions live on the 10/25 12 h arms.  Re-running §1.4 after piece 2 therefore
+needs either a 12 h arm or a producer window known to excurse at 15/25 — **budget
+that before starting piece 2.**
+
+### 1.8 PIECE 2 BUILT — and its premise does not survive contact, for a reason worth keeping
+
+Knob `network.mark_refsat_reset_disc` (default OFF) routes an IF-TD **reference-path**
+slip to `markSatDiscontinuity`, draining through the B1 retro-bump's existing
+mark-and-serialize path so it lands as an `R` record.  Rationale was §1.4 + SPEC
+§25.3: most ref-path slips step the emitted bias past the jump gate and are already
+caught (the 83-reset population), but the excursion ONSETS measured
+refsat_reset-enriched 5.0× with **PB value steps = 0** — so the onset-relevant subset
+appeared invisible to the jump test.  Touchpoints:
+`NetworkSlipQc.{hpp,cpp}` (out-param), `NetworkRunContext.hpp` (carry set + knob),
+`NetworkRunContext.cpp`, `ApplicationNetworkAssembly.cpp` (call site),
+`NetworkSolPrep.cpp` (drain), `GnssConfig.hpp` + `GnssConfigLoadNetwork.cpp`.
+
+| gate | result |
+|---|---|
+| **OFF path byte-identical across the rebuild** (invariant #6) | ✅ pre-change `ext63_1h_evt_c0` vs post-change `ext63_1h_evt_off`: products md5 **`fa48369f56729fcc3628d47ccbb71ad0`** both |
+| **ON path drives the wire** (invariant #4) | ❌ **R = 0.  Feature INERT.** |
+
+**Why it is inert, and why that is the correct behaviour.**  The mark is gated on
+`carry_warm`, matching the event's own `refloat`/`diagnostic` action label.  That
+gate is right: `refloat_pair` (`NetworkSlipQc.cpp:366-378`) only calls
+`markAmbiguityPendingReseed` **`if (carry_warm)`**.  Cold carry ⇒ **no reseed at the
+producer** ⇒ the emitted phase bias for that satellite never re-references ⇒ nothing
+moved ⇒ a mark would be a **fabricated event** injecting spurious consumer resets.
+
+And `carry_warm` is never true here.  Not "not within 1 h" — **never on this
+lineage**: `carry_warm = pl_on && …` (`ApplicationNetwork.cpp:1416`) requires
+`phase_leveling`, which the EXT-CB lineage does not run (fingerprinted;
+fresh-convergence only).  Measured across every arm on hand:
+
+| arm | refsat_reset events | `refloat` | `diagnostic` |
+|---|---|---|---|
+| `ext63_1h_evt_*` (1 h) | 4 | **0** | 4 |
+| `ext63_dual_3h_contract` (3 h) | 8 | **0** | 8 |
+| `ext63_dual_12h_ref` (12 h) | 82 | **0** | 82 |
+
+**★ The finding that outlives the card: one precondition, three consumer-visible
+casualties.**  `phase_leveling` OFF ⇒ `carry_warm` false ⇒ (1) the within-epoch RAIM
+tier is inert (known, CLAUDE.md standard armed set); (2) the H heartbeat's σ₀ ≡ 0.000
+on the wire (§25.1, and §1.2's "structurally invisible" row); (3) **IF-TD ref-path
+slips never reseed, so the excursion event class §25.3 fingered does not move the
+producer's datum at all.**  These have been treated as three separate defects; they
+are one.
+
+**★ And it retires piece 2's premise for this event class.**  If a cold-carry
+refsat_reset performs no reseed, then the emitted product is unchanged by it — so the
+5.0× onset enrichment is **correlational, not transmitted**: the refsat_reset is a
+SYMPTOM of the stressor that also causes the excursion, not a cause reaching the
+consumer through the wire.  This is consistent with §25.3's own caveat (2–6 events
+per window, "suggestive, not mechanism-proof") and it means **marking this class
+cannot recover excursion mass** — the same verdict §1.4 reached for the phase-disc
+channel, now for the event channel too, and for a mechanical reason rather than a
+statistical one.
+
+**Status: built, correctly gated, default-OFF, byte-identical when OFF, and
+structurally inert on the EXT-CB lineage.**  Do not arm it here — it would do
+nothing, and if the gate were removed it would do harm.  It becomes testable only on
+a `phase_leveling` lineage, where `carry_warm` is true and the reseed actually
+happens.  **That is now the gating experiment for the whole edge**, and it is a
+fingerprinted fresh-convergence run (≥ 2 h), so it does not fit the 1 h fast tier.
+
+**Revised next move (supersedes §1.6 item 2).**  Before building any more marking:
+run ONE `phase_leveling` arm and check whether `carry_warm` actually goes true and
+refsat_resets become `refloat`.  → **DONE, see §1.9: it does.**
+
+### 1.9 ✅ THE GATING EXPERIMENT RAN — `phase_leveling` makes the whole producer chain live
+
+Arm `runs/ext63_1h_evt_pl` (`_ext63_1h_evt_pl.json` = the ON arm + `phase_leveling:
+true`, fresh-convergence lineage, own snapshot, 1 h, binary `gnss_processor_edge2`
+md5 `5e749970…`).  §1.8's ≥ 2 h worry did **not** bind: `carry_warm` is an
+emitted-epoch-count latch (`phase_leveling_warmup_epochs`, default **6**,
+`GnssConfigLoadNetwork.cpp:2507`), not a level claim, so 1 h answers it decisively.
+
+| Q | prediction | result |
+|---|---|---|
+| **Q1** `carry_warm` goes true | true from ~epoch 7 | ✅ split lands exactly on the warm-up boundary |
+| **Q2** refsat_reset flips `diagnostic` → `refloat` | yes | ✅ **2 diagnostic (pre-warmup) / 2 refloat (post-warmup)** |
+| **Q3** `R` records appear iff Q2 | yes | ✅ **`R,G16` and `R,G11`**, at exactly the two refloat epochs, with matching `RETRO/retro_bump` events |
+
+| TOW | sat | station | action | on the wire |
+|---|---|---|---|---|
+| 259230 | G31 | MAC100AUS | diagnostic | — |
+| 259320 | G10 | KOKV00USA | diagnostic | — |
+| 259470 | G16 | KOKV00USA | **refloat** | **`R,G16`** |
+| 262020 | G11 | STHL00GBR | **refloat** | **`R,G11`** |
+
+The producer chain is proven end-to-end: IF-TD `refsat_reset` (carry_warm) →
+`ctx.carry.refsat_mark_sats` → `NetworkSolPrep` drain → `markSatDiscontinuity` →
+`R` record → `RETRO` event.  The RT0-5 "mark == land" semantics held (both marks
+landed at their own epoch, nothing left pending).  Same window, unleveled: R = 0.
+
+> ✅ **Q4 RESOLVED POSITIVE (2026-08-07, overnight session — see §1.10).**  The
+> paragraph below stands as the honest record of why the FIRST attempt had no
+> power; the power-fixed replays proved the consumer link end-to-end.
+
+**Q4 — the consumer link — is UNTESTED, not disproven (underpowered).**  Replay pair
+against the SAME product with and without its 2 R records (byte-exact control:
+`products_noR.txt`, 0 diff lines outside the stripped rows):
+
+| | resets | last-30 3D RMS | `closed_loop_trace.csv` |
+|---|---|---|---|
+| marks | 11 | 3.7804 m | md5 `e12ae34433bc…` |
+| no-marks (R stripped) | 11 | 3.7804 m | **identical** |
+
+Zero effect — because **the held-out consumer never observes G16 or G11**: the
+string does not occur once in its `rt_engine.log`, and the satellites it does reset
+are `G05 G13 G15 G20 G30`.  With 2 marks per hour against a single station tracking
+~8 usable satellites, the overlap probability is small; this arm could not have
+detected an effect.  **Do not read this as "the marks do nothing at the consumer" —
+read it as "this experiment had no power."**  Fixes, in order of cost: a longer
+producer window (more marks), several held-out consumer stations rather than one, or
+selecting the consumer station from the marked satellites' visibility.
+
+**⚠ This partially REVERSES §1.8.**  §1.8 concluded that the 5.0× onset enrichment
+is "correlational, not transmitted", reasoning that a cold-carry refsat_reset
+performs no reseed so the product is unchanged.  That reasoning is sound **only on
+an unleveled lineage**.  On a leveled one the reseed genuinely happens, the emitted
+bias genuinely re-references, and the event IS transmitted — so §1.8's retirement of
+piece 2's premise is now **scoped to `carry_warm == false` lineages**, and the
+premise is live again wherever leveling is armed.  What survives §1.8 unchanged is
+the "one precondition, three casualties" finding — and it is now demonstrated
+constructively rather than inferred: arming `phase_leveling` flipped casualty (3)
+from dead to live in a single 1 h run.
+
+**Status of the knob:** built, default-OFF, OFF-path byte-identical (§1.8 gate 1),
+producer chain validated on a leveled lineage (§1.9), consumer effect not yet
+measurable.  It is now legitimately arm-able on any `phase_leveling` producer run,
+with the honest caveat that its downstream value is unquantified.
+
+**Next.**  The cheapest decisive follow-up is to re-run §1.4's onset-enrichment table
+on a LEVELED producer arm long enough to accumulate marks — the event channel is now
+live there, which is the precondition §1.4 was missing.  Also worth checking whether
+casualties (1) and (2) — the within-epoch RAIM tier and the H heartbeat's σ₀ ≡ 0 —
+come alive on this same leveled arm; if they do, the standard armed set's
+"decouple the within-epoch tier from `carry_warm`" fix can be graded against a
+working reference instead of a hypothesis.
+
+### 1.10 ✅ Q4 RESOLVED + the H rider EXECUTED (2026-08-07 overnight; full record in `SESSION_overnight_2026-08-07.md`)
+
+**Q4 — the consumer link is PROVEN end-to-end.**  The §1.9 power analysis was
+right: WTZZ00DEU observes NEITHER marked satellite, and no station in the network
+observes both (G16 over the Pacific, G11 over the South Atlantic — observer-set
+intersection EMPTY).  Power fix: two single-event replay pairs with the
+highest-elevation NON-ORIGIN observers as consumers, against the byte-exact
+marks/no-marks product twins, binary `gnss_processor_edge2.exe`:
+
+| pair | mark | marks arm | nomarks arm |
+|---|---|---|---|
+| MAJU00MHL (G16 el 62°) | `R,G16` @ 259470 | **reset G16 L1C+L2W @ exactly 259470** | none |
+| WIND00NAM (G11 el 48°) | `R,G11` @ 262020 | **reset G11 L1C+L2W @ exactly 262020** | none |
+
+Chain now validated END-TO-END: IF-TD refsat_reset (carry_warm) → mark → `R`
+record → `markSatDiscontinuity` → both-band consumer ambiguity reset at the
+event epoch.  Caveats on record: consumers are in-network (mechanism proof, not
+an accuracy grade), and the VALUE of marking (net benefit vs the reset
+transient — WIND marks hour-0 3D max 38.9 m vs 12.8 without) still needs the
+§1.4 onset-enrichment grade on a leveled long arm.
+Arms: `runs/replay_1h_pl_{maju,wind}_{marks,nomarks}`.
+
+**The H rider (§1.6 item 3) is EXECUTED, both halves, and validated:**
+
+- **(a) the batch replay reader now surfaces H.**  `NetworkProductReader::read`
+  gained an optional statuses out-param (standalone WITHHELD-epoch H's included
+  — the case invisible to both records and `epoch_status`);
+  `ApplicationConsumerReplay` forwards them to `setProducerStatus` interleaved
+  by content epoch (the batch analogue of the RTA-6 tail wiring), with an
+  invariant-#4 run-end count.  Gates: `closed_loop_trace.csv` byte-identical
+  across the change (`E12AE34433BC…`, `runs/replay_1h_pl_marks_s2hbin`); 121/121
+  forwarded; first `producer status: (none) -> ok` line in batch-replay history.
+- **(b) the σ₀ feed: `network.h_sigma0_prefit_census`** (default OFF; requires
+  `emit_epoch_status_record` + `trace_prefit_census`) — H σ̂₀ = the census pool's
+  1.4826·median over `h_sigma0_classes` (default "code,sh,other"; phase excluded
+  per census deviation 2c; born cells deferred via the census's lag-1 presence
+  map), computed PRE-solve so ALL FOUR H sites carry it (incl. the gate
+  withhold, whose σ₀ was structurally 0).  UNIFORM statistic per wire; the S
+  contract advertises `hsig=pc` (new optional token, legend updated); the A4
+  ceiling still reads `sigma0_adapt`, untouched.  Gates: record stream 0-diff
+  vs control over 2700 lines (solve-neutral BY MEASUREMENT); H σ̂₀ varying
+  2.08→3.32 on the smoke vs the control's dead 0.0000.
+- §1.9's casualty check on the leveled arm, resolved along the way: the
+  within-epoch tier came ALIVE with leveling (T2: 115 opportunities / 0 flags,
+  quiet hour) and H σ₀ became a **degenerate constant 1.0000** (vacuous pool,
+  `n_adapt = 0`) — leveling un-zeroes the field but never made it a statistic;
+  the census feed is the fix on BOTH lineages.
+
+**Edge 3 is BUILT and field-validated through 3 h — card S2H,
+`network.rx_cb_harvest_demean`** (the §17-item-3 S-consistent harvest; oracle
+`GPS3710_test_PMINOLESS` passes in-suite).  Every fold-side gate the card was
+designed to win, won: rms_phase +2.1–2.5 % (noise; LV-4 paid +32 %), prires
+rxcb σ̂₀ 0.89–0.90× (QUIETER, not growing with era; LV-4 doubled), time-matched
+fold fraction +19 %, wire step census statistically identical, μ → +0.0000 m
+settled (the transform's fixed point).  Level (diagnostic): sits lower
+(−4.35 ± 1.75 at h2-3 vs control's +0.44) — the zero-mean convention as a
+declared, per-epoch-drained frame; the 12 h tracking verdict stays DEFERRED,
+and item 0b / §13.4-option-1 remains the designed answer if the anchor's
+authority does not suffice.  Default-OFF, fingerprinted, no promotion.
+
 ## Edge 2 — the clock datum (worst re-realizer on the leveled lineage; candidates never validated)
 
 **What.**  CLAUDE.md amendment 5: 13 product-wide clock jumps post-convergence per
@@ -266,6 +517,19 @@ clock channel as the instrument on both sides of the A/B.
 `emit_clock_disc` counter population, consumer replay unchanged-or-better; solve-side
 byte-identity if the datum realization claims to be outputs-only (it does not — expect
 solve changes, so grade on datum-invariant quantities).
+
+> ✅ **FIRST VALIDATION RUN DONE (2026-08-07, wiring smoke, leveled 1 h pair —
+> `SESSION_overnight_2026-08-07.md` F10).**  `runs/evt_pl_clkpin` (pivot-pin
+> baseline: EXT-CB clock hold killed in both arms, sticky pivot live) vs
+> `runs/evt_pl_clks2z` (+`clock_datum_sum_to_zero`), session binary, both
+> 121/121 emitted.  Every predicted loader interlock fired (s2z banner,
+> sticky-INERT warn, datum-graph d=0 warn); clock-channel census CLEAN on both
+> (0 steps, 0 outliers); 0 pivot/handover/set-change events in the quiet hour —
+> exactly the power prediction, so **s2z upgrades from "never validated" to
+> "wiring-validated on the leveled lineage"**, and the 13-jumps/12 h jump-count
+> A/B (this edge's actual verdict) needs the 12 h continuation of
+> `_ext63_1h_evt_pl_clk{pin,s2z}.json`.  `emit_clock_disc` counters armed in
+> both arms; nothing drove them in this window.
 
 ## Edge 3 — the zero-mean rx datum's re-realizations (subsumed by the item-3 BUILD)
 

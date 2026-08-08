@@ -69,6 +69,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rx_cb_demean_within = config_.networkRxCbCarryDemeanWithin();  // loader guarantees rx_cb_demean
     k.rx_cb_step_gate = config_.networkRxCbCarryStepGate();   // loader guarantees rx_cb_on
     k.rx_cb_step_k = config_.networkRxCbCarryStepKSigma();
+    k.rx_cb_harvest_demean = config_.networkRxCbHarvestDemean();   // loader guarantees rx_cb_on, forces LV-2/LV-5 off
+    k.rx_cb_harvest_screen_z = config_.networkRxCbHarvestScreenZ();
     k.lv1_seed_frame = config_.networkIonoSeedFieldFrame();  // loader guarantees estimate_iono_sh
     k.lv1_min_sats = config_.networkIonoSeedFieldFrameMinSats();
     k.carry_vce = config_.networkCarryVce();
@@ -76,6 +78,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.ura_on = config_.networkEmitUra();
     k.ura_alpha = config_.networkUraEwmaAlpha();
     k.ura_retro = config_.networkUraRetroBump();
+    k.mark_refsat_reset_disc = config_.networkMarkRefsatResetDisc();
     k.ura_refloat_inflate = config_.networkUraRefloatInflate();
     k.raim_on = config_.networkRaim();
     k.raim_k = config_.networkRaimKSigma();
@@ -316,6 +319,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pc_birth_sigma   = std::max(0.0, nc.seed_birth_check_sigma);
     k.pc_topo_on       = nc.trace_topology;
     k.pc_walk_on       = k.pc_census_on || k.pc_birth_sigma > 0.0 || k.pc_topo_on;
+    // H-rider (edge-queue §1.6 item 3a): the census-fed H σ̂₀.  The loader has
+    // already forced it off without trace_prefit_census (the born-cell deferral
+    // reads the census walk's presence map) and without emit_epoch_status_record
+    // (no H records to feed).
+    k.h_sigma0_census      = config_.networkHSigma0PrefitCensus();
+    k.h_sigma0_class_mask  = parseDataClassMask(config_.networkHSigma0Classes());
     k.rec_on           = nc.rhs_attrib_on_trip;
     // Datum graph census (docs/SPEC_datum_graph_census.md).  Nothing to resolve
     // against the estimation configuration: the census reads the epoch's
@@ -519,6 +528,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             // nested conditional-append rule.
             if (ctx.knobs.rx_cb_step_gate)
                 add(fmt::format("rxcbstep:{}", ctx.knobs.rx_cb_step_k));
+            // Card S2H (docs/SPEC_level_information_budget.md §17 item 3): the
+            // S-consistent harvest re-zeros the carried set's common mode every
+            // epoch, so a stored snapshot's absolute rx-CB levels live in a
+            // different frame than an untransformed chain's — a resume must not
+            // cross the flip.  Same nested conditional-append rule.
+            if (ctx.knobs.rx_cb_harvest_demean)
+                add(fmt::format("rxcbharv:{}", ctx.knobs.rx_cb_harvest_screen_z));
         }
         // Card LV-1: the seed reframe changes the per-station LINEARIZATION POINT of
         // the per-LOS iono AND (through initializeCodeBiases, which subtracts the
@@ -2440,6 +2456,73 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             if (pl_now_s - it->second.last_seen_s > kRxCbMaxGapS)
                 it = rx_cb_carry.erase(it);
             else ++it;
+        }
+        // --- Card S2H: the S-consistent harvest (serial, all stations) ---------
+        // docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1.  Runs
+        // AFTER the LV-4 erase pass and the gap prune, so the member set is
+        // exactly the set that can FOLD next epoch — the S-transform re-realizes
+        // the carried representation that will actually exert force.  Per family
+        // (the CB state key: constellation + DCB/IFB kept apart, the LV-2 rule),
+        // subtract the Λ-weighted mean of the harvested ABSOLUTE realizations
+        // from every entry, fresh and stale-but-alive alike: the whole carried
+        // set moves to the zero-mean frame together, so next epoch's folds exert
+        // ZERO net force on the common mode in the fold's own metric — the datum
+        // row (whose target is the same absolute zero) owns the level, and the
+        // frame is re-derived from THIS epoch's solution.  No frozen pin (LV-2's
+        // failure: it pinned mean(x_lin)), no lag-1 feedback (nothing is fed
+        // back), no cross-station prior rows (the carry stays diagonal — this is
+        // LASER Net3DLsa::applySTransformationForBigSystemOfEquations, Λ-weighted;
+        // see rxCbHarvestMu for the two documented deviations).
+        //
+        // Covariance is co-transformed exactly (diag of S·Q·Sᵀ for diagonal Q):
+        // voters get var − 1/Σλ (their uncertainty ABOUT THE NEW FRAME is smaller
+        // — the common-mode variance left with μ), screened non-voters get
+        // var + 1/Σλ (μ's own variance adds, independence).  The floor guards the
+        // w→1 degenerate corner where one member IS the frame; with min_n ≥ 2 and
+        // comparable weights it never binds (1/Σλ ≈ var/n).
+        if (ctx.knobs.rx_cb_harvest_demean && !rx_cb_carry.empty()) {
+            std::map<std::string, std::vector<LocalCarry*>> fam_entries;
+            for (auto& [key, lc] : rx_cb_carry)
+                fam_entries[key.second].push_back(&lc);
+            bool any_applied = false;
+            ctx.carry.rx_cb_harvest_last.clear();
+            for (auto& [fam, entries] : fam_entries) {
+                std::vector<double> vals, vars;
+                vals.reserve(entries.size());
+                vars.reserve(entries.size());
+                for (const LocalCarry* e : entries) {
+                    vals.push_back(e->value_abs);
+                    vars.push_back(e->var);
+                }
+                std::vector<unsigned char> used;
+                const RxCbHarvestReduce red = rxCbHarvestMu(
+                    vals, vars, ctx.knobs.rx_cb_demean_min_sta,
+                    ctx.knobs.rx_cb_harvest_screen_z, &used);
+                auto& rec = ctx.carry.rx_cb_harvest_last[fam];
+                rec.mu = red.mu; rec.sum_lam = red.sum_lam; rec.n = red.n;
+                rec.n_used = red.n_used; rec.n_screened = red.n_screened;
+                rec.applied = red.applied;
+                if (!red.applied) { ++ctx.carry.s2h_thin_skips; continue; }
+                const double dvar = 1.0 / red.sum_lam;
+                for (std::size_t e = 0; e < entries.size(); ++e) {
+                    LocalCarry* lc = entries[e];
+                    if (std::isfinite(lc->value_abs)) lc->value_abs -= red.mu;
+                    if (std::isfinite(lc->var) && lc->var > 0.0) {
+                        if (e < used.size() && used[e])
+                            lc->var = std::max(lc->var - dvar, 0.1 * lc->var);
+                        else
+                            lc->var += dvar;
+                    }
+                }
+                ctx.carry.s2h_screened_total += red.n_screened;
+                ctx.carry.s2h_last_mu_m = red.mu;
+                ctx.carry.s2h_max_abs_mu_m =
+                    std::max(ctx.carry.s2h_max_abs_mu_m, std::abs(red.mu));
+                ctx.carry.s2h_mu_abs_sum += std::abs(red.mu);
+                ++ctx.carry.s2h_mu_n;
+                any_applied = true;
+            }
+            if (any_applied) ++ctx.carry.s2h_epochs_applied;
         }
         // --- Card LV-2: the common-mode mean, computed HERE (serial) -----------
         // docs/SPEC_level_information_budget.md.  The parallel produce phase

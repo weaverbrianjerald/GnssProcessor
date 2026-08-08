@@ -180,11 +180,15 @@ Two contract-relevant consequences:
   15.53 → **4.69** with the level ending on the GIM reference (32.68 vs 32.24) and
   the residual common-mode force measured at **0.02 m against max |μ| 8.50 m**.
 
-**Declared EXT-CB posture (2026-08-05): LV-1 + LV-2 + LV-4 + LV-5 together.**  The
-level is then owned by the a₀₀ anchor of §2.2 with the carry transporting
-differences only — which is what §2 asks for and what, before these cards, no
-posture actually did.  Note the pairing is load-bearing: LV-4 without LV-5
-oscillates, LV-5 without LV-4 is nearly inert.
+**~~Declared EXT-CB posture (2026-08-05): LV-1 + LV-2 + LV-4 + LV-5 together.~~
+SUPERSEDED same day by the 12 h verdict (SPEC §14): the stack's level RAMPS to
++15…+21 TECU past hour 2 — the 1 h landing this declaration was written on was an
+ignition transient.  The posture of record for settled work is the CANONICAL one
+(no LV level stack; SPEC §14.4/§17), and the principled replacement is the
+S-consistent harvest (SPEC §17 item 3 — built 2026-08-07 as
+`network.rx_cb_harvest_demean`, card S2H).**  What survives of this paragraph:
+the pairing note (LV-4 without LV-5 oscillates, LV-5 without LV-4 nearly inert)
+and both cards' validity as fixes to the defects they name (§11/§12).
 
 ## 5. What a consumer should be told (and what it currently is not)
 

@@ -1,0 +1,42 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — EDGE 2 arm A: the LEVELED PIVOT-PIN clock-datum BASELINE.",
+  "The 13-jumps/12h clock re-realization number belongs to the leveled lineage under",
+  "the pivot-pin datum (HANDOFF edge 2); the EXT-CB base instead HOLDS clocks at the",
+  "precise .CLK (clock_datum_broadcast_anchored @ 2 cm), which grades the anchor, not",
+  "the network.  So BOTH arms of this pair KILL the inherited hold; the datum falls",
+  "back to the pivot pin (clock_datum_station MBAR00UGA; sticky_pivot, inherited from",
+  "the golden chain and warned-INERT under the hold, goes LIVE again).",
+  "Restates the _ext63_1h_evt_pl leaf (leveled + marks + contract) per the depth rule;",
+  "emit_clock_disc armed in BOTH arms (invariant #4 — the counter IS the telemetry).",
+  "PREDICTIONS: P1 loader shows pivot-pin datum + sticky_pivot live (no INERT warn).",
+  "P2 product C records carry disc counters; emit_clock_disc fingerprint token in the",
+  "snapshot.  P3 product_step_census clock channel = the pair's BASELINE common-mode",
+  "step count.  P4 statistical power: ~1 pivot-class event/h expected — this pair is",
+  "a WIRING + census-baseline smoke (rank-only); the jump-count verdict needs 12 h.",
+  "FRESH lineage, own paths (emit_clock_disc + phase_leveling both fingerprinted)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 3600.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 3600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "serialize_sbasis_contract": true,
+  "phase_leveling": true,
+  "mark_refsat_reset_disc": true,
+  "clock_datum_broadcast_anchored": false,
+  "emit_clock_disc": true,
+  "product_output_path": "C:/GnssProcessor/runs/evt_pl_clkpin/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/evt_pl_clkpin/state_snapshot.bin"
+ }
+}

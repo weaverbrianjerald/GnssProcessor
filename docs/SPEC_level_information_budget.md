@@ -2067,8 +2067,20 @@ own claims.
    wire carries no S contract (`serialize_sbasis_contract` defaults false), so the
    replay emitter falls back to a flat 0.05 m disc threshold while the producer ran
    0.25·λ — **producer and consumer count different events** (45 spurious band-2
-   resets, 5 missed band-1, of 437 producer-true events).  Plus a latent hardcode at
-   `ApplicationNetworkSetup.cpp:1051`.
+   resets, 5 missed band-1, of 437 producer-true events).  Fix is arming that one
+   default-OFF knob; NO code change (the `disc_threshold_m` hardcode an earlier draft
+   flagged is correct — there is no config knob for the flat threshold, and the
+   emitter is built with the same constant at `ApplicationNetworkSetup.cpp:950`).
+   **EXECUTED AND PASSED 2026-08-05** (handoff §1.7, arms `ext63_dual_3h_contract`
+   vs arm 32, replays `replay_3h_{v1ctl,v2}`): arming the knob is header-only with
+   the E/C/P record stream **byte-identical** (0 diff lines, invariant #6 holds),
+   and it removes **exactly** the predicted spurious band-2 population — 17 → 13
+   resets, all four L2W, L1W unchanged — worth **last-30 3D RMS 11.68 → 10.20 m
+   (−12.7 %)** on identical observations.  Arm it on any producer run that will be
+   replayed or tail-consumed.  Correction recorded there: a v1 wire defaults ALL
+   FIVE replay-emitter parameters, but the clock channel's silence is NOT a
+   transit artifact — the clock counter has no magnitude jump test, so with
+   `emit_clock_disc=1` correctly carried it still fires 0 for want of an EVENT.
 4. **The load-bearing negative result (§1.4): the 83 live reactions have ZERO
    enrichment at excursion onsets** (0 resets at both onsets; 0.91× inside windows).
    §25.3's conclusion survives and sharpens: the excursion driver is the
@@ -2193,7 +2205,9 @@ with predictions written, posture-checked, run dirs created — ~26 min each whe
 session has the budget; the control doubles as the missing 12 h denominator at the
 new masks).  §17 item 0 fully discharged: the excursion attribution (§25) found a
 mark-free wire carrying endemic posture-invariant PB steps, onsets enriched in
-re-referencing events, and NO consumer reaction path; the diurnal rider (§25.6)
+re-referencing events — and (CORRECTED same day, §25.7 / edge-queue §1.0–§1.4) a
+consumer reaction path that EXISTS and FIRED 83×/12 h behind a default-OFF logger,
+with ZERO enrichment at the excursion onsets; the diurnal rider (§25.6)
 measured the fleet bias quasi-static, closing the receiver-thermal hypothesis.  Two
 instruments promoted: `scripts/product_step_census.py`, `scripts/fleet_bias_diurnal.py`.
 
@@ -2217,8 +2231,11 @@ Ranked next actions (supersedes §17's list):
    excursion mass through this channel" is not achievable.  The revised card:
    (a) make the live channel FAITHFUL — arm `network.serialize_sbasis_contract` so
    the replay emitter stops mis-thresholding (flat 0.05 m fallback vs the producer's
-   0.25·λ ⇒ 45 spurious band-2 resets, 5 missed band-1), and fix the hardcoded
-   `disc_threshold_m` at `ApplicationNetworkSetup.cpp:1051`; (b) give the ACTUAL
+   0.25·λ ⇒ 45 spurious band-2 resets, 5 missed band-1); no code change — the
+   `disc_threshold_m` "hardcode" at ApplicationNetworkSetup.cpp:1051 is NOT a defect
+   (single-source-of-truth with the emitter constant; edge-queue §1.3, retraction
+   recorded there) — **DONE, edge-queue §1.7: all four predictions confirmed,
+   −12.7 % last-30 3D RMS on the 3 h pair**; (b) give the ACTUAL
    excursion event class (refsat_reset / col_removed / sbc_engage / eq34_reattach —
    no wire representation of any kind) a record, via the existing `R` /
    `datum_changed` carriers behind a default-OFF knob, graded on onset ENRICHMENT,
@@ -2238,3 +2255,57 @@ for any level claim at 61 stations (§14) — the 305 network's transient is mil
 1 h remains a rank-only window; `product_step_census.py` on any product-affecting
 change (§25.2); postfit rms / prires / block-Baarda (≥ 3 h) / congruence as the
 four-instrument audit, expecting the congruence dissent (§23.4, §24.3, unexplained).
+
+## 28. Item 3 BUILT and validated through 3 h — card S2H, the S-consistent harvest (2026-08-07, overnight session)
+
+Knob `network.rx_cb_harvest_demean` (+ `rx_cb_harvest_screen_z`, default 8.0);
+default OFF, fingerprinted (`rxcbharv:`), forces the superseded LV-2/LV-5 OFF.
+Mechanism (§17 item 3's brief, implemented exactly): at the serial post-solve
+harvest, AFTER the LV-4 erase pass and the gap prune (member set = the
+fold-eligible set), per family, subtract the Λ-weighted mean of the harvested
+ABSOLUTE realizations from every carried entry (λ = 1/var), with the exact
+diagonal covariance co-transform (voters var − 1/Σλ, screened var + 1/Σλ =
+diag(S·Q·Sᵀ), unit-tested vs an Eigen brute force) and the §16/12.1 robust peer
+screen on the μ vote.  Thin epochs apply NOTHING (identity, counted) — never a
+frozen μ.  Two documented deviations from the LASER original, both load-bearing:
+the de-mean is about the DATUM ROW's target (absolute zero — de-meaning about
+x_lin is §13.2's measured failure), and it is Λ-weighted (only the weighted mean
+zeroes the NET common-mode force; λ ≡ const reduces to the
+`GPS3710_test_PMINOLESS` oracle case, which passes in-suite against the golden
+CSVs).  1299-case unit suite green.
+
+Validation (binary `gnss_processor_s2h.exe` md5 `82B4450703C551109DCEFB0B6C212559`;
+control = the arm-32 posture re-run on the same binary, reproducing arm 32's
+hourly GIM diffs EXACTLY; full record `SESSION_overnight_2026-08-07.md` F6–F9):
+
+- OFF path: products byte-identical across the rebuild (16,286/16,287 lines;
+  the single diff is the `#` legend line documenting the new `hsig=` token).
+- 20 ep smoke: applied 20/20, n = 61, 0 thin/screened; μ smooth, no alternation.
+- 1 h stability: ALL FIVE gates PASS (a₀₀ sd 2.92; time-matched hour-1 fold
+  fraction 0.425 vs 0.356 = +19 %; prires rxcb 0.90× QUIETER; rms_phase +2.5 %;
+  μ → +0.0000 settled — the projector's fixed point).
+- 3 h: ALL gates PASS — h2-3 rms_phase 9.60 vs 9.40 mm (+2.1 %, flat with era);
+  prires rxcb 4.43→4.95 vs 4.91→5.55 (0.89–0.90×, growth ratio = the control's,
+  where LV-4 DOUBLED); folds 0.523 vs 0.487; step census statistically
+  identical (60 vs 59 key-steps, clock 0/0 both) — the removed common mode is
+  datum-null, invisible on the wire.
+
+**The §24.5 vehicle question is answered on the fold side: a per-epoch
+post-solve transform carries the frame with ZERO fold-side tax** (priors
+quieter, folds more frequent, data side flat — the over-retention signature
+absent by construction AND by measurement).
+
+Level, DIAGNOSTIC (invariant #5): time-matched hourly a₀₀−GIM
+−13.58 → −11.36 → −4.35 ± 1.75 (ON) vs −7.23 → −5.52 → +0.44 (control);
+footprint mean −13.26 vs −2.76.  With the carry's common-mode memory zeroed
+each epoch the level sits at the per-epoch data+datum equilibrium — LOWER,
+toward the zero-mean convention, converging upward at h2-3, with NO
+carry-off-class collapse (a stable ±1.75 band vs that mode's −9 TECU/EPOCH).
+DEFECT 2's convention offset is now a DECLARED frame property drained per
+epoch.  Open, deliberately deferred: the 12 h tracking verdict
+(|a₀₀ − GIM(t)| ≲ 4 at h0 AND h11) — whether the a₀₀ anchor's authority (no
+longer outvoted by the carry, still outvoted by per-epoch GF data information)
+lands the level, or whether §13.4 option 1 / item 0b (external receiver DCBs)
+must supply the data-derived authority.  Configs
+`_ext63_gps_dual_{20ep,1h,3h}_s2h_*.json` carry the pre-registered predictions;
+runs `s2h_*` on disk.  NOT armed by default (no-promotion rule).

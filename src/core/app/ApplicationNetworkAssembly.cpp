@@ -1428,9 +1428,13 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
                               qc.counters, se, traces, log);
 
+    // Edge-1 piece 2: pass the mark sink ONLY when armed, so the OFF path passes
+    // nullptr and the driver's insert is not even reached (byte-identical).
     networkSlipIfTdDriver(pa, config_, stations, present, i_lo, n_sta_total,
                           carry_invariant, carry_warm, carry_slipped_ambs,
-                          trace_flag_rates, fr_if_slip, se, traces, log);
+                          trace_flag_rates, fr_if_slip, se, traces, log,
+                          config_.networkMarkRefsatResetDisc()
+                              ? &ctx.carry.refsat_mark_sats : nullptr);
 }
 
 void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,

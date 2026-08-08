@@ -1,0 +1,26 @@
+{
+ "_comment": [
+  "EDGE-1 PIECE 2 / Q4 POWER FIX — the NOMARKS twin of _ext63_replay_1h_pl_wind_marks:",
+  "identical except the replayed product is products_noR.txt (byte-exact control, R rows",
+  "stripped).  Any reaction difference at WIND00NAM is caused by the R records alone."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 3600.0, "elevation_mask_deg": 15.0 },
+ "logging": { "enable_rt_engine": true },
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 3600.0,
+  "closed_loop": {
+   "replay_products_path": "C:/GnssProcessor/runs/ext63_1h_evt_pl/products_noR.txt",
+   "station": {
+    "name": "WIND00NAM",
+    "rinex_path": "C:/GnssProcessor/data/2024-129/obs/wind00nam/WIND00NAM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [ 5633708.7989, 1732018.1244, -2433985.4318 ]
+   }
+  },
+  "product_output_path": "C:/GnssProcessor/runs/replay_1h_pl_wind_nomarks/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_1h_pl_wind_nomarks/state_snapshot.bin"
+ }
+}

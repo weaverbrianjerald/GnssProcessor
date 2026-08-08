@@ -96,6 +96,7 @@ NetworkSolPrepResult networkSolPrep(
     const int    pl_warmup     = ctx.knobs.pl_warmup;
     const bool   ura_on        = ctx.knobs.ura_on;                  // B1: emit per-sat URA quality channel
     const bool   ura_retro     = ctx.knobs.ura_retro;             // B1: retro-bump flagged SATELLITE(s) on next emit
+    const bool   mark_refsat   = ctx.knobs.mark_refsat_reset_disc; // Edge-1 piece 2: mark ref-path slips as per-sat disc
     const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate; // B1: URA multiplier post-refloat
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
     const double raim_withhold = ctx.knobs.raim_withhold; // A4: >0 withholds (not emits) an epoch whose post-adaptation σ̂0 exceeds this ceiling; 0 = off
@@ -614,7 +615,26 @@ NetworkSolPrepResult networkSolPrep(
         }
     }
     std::set<std::string> retro_emit_sats;   // B1 retro-bump applied this emit (serialized as an R record)
-    if (ura_retro && !ura_retro_sats.empty()) {
+    // Edge-1 piece 2 (network.mark_refsat_reset_disc): fold this epoch's queued
+    // ref-path-slip satellites into the SAME queue the B1 retro-bump drains, so they
+    // inherit its RT0-5 "mark == land" semantics verbatim — a sat absent from this
+    // epoch's emission stays PENDING rather than being consumed without landing, and
+    // the R record therefore always describes bumps that actually reached the product.
+    // Empty (never written) when the knob is off ⇒ this whole block is inert and the
+    // OFF path is byte-identical.  Folding rather than adding a parallel drain is
+    // deliberate: two independent drains would each need the pending/quarantine logic
+    // and could double-bump a sat flagged by both tiers in one epoch.
+    if (!ctx.carry.refsat_mark_sats.empty()) {
+        ura_retro_sats.insert(ctx.carry.refsat_mark_sats.begin(),
+                              ctx.carry.refsat_mark_sats.end());
+        ctx.carry.refsat_mark_sats.clear();
+    }
+    // Edge-1 piece 2: the drain must also run when the refsat mark is armed but the
+    // B1 retro-bump is NOT — otherwise queued sats would accumulate in ura_retro_sats
+    // forever and no mark would ever land (a silent leak that would read as "the
+    // feature does nothing").  mark_refsat is false by default, so the OFF-path
+    // condition reduces to the original `ura_retro` exactly.
+    if ((ura_retro || mark_refsat) && !ura_retro_sats.empty()) {
         // RT0-5 seam (P0-1: the R record must describe bumps that LANDED in the
         // emitted product): a flagged sat ABSENT from this epoch's emission —
         // its constellation quarantined above, or the sat itself vanished —

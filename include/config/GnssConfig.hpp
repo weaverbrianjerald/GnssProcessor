@@ -2166,6 +2166,68 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Card S2H — the "S-consistent harvest"
+         *        (@c network.rx_cb_harvest_demean,
+         *        docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1).
+         *
+         * At the serial post-solve harvest — after the LV-4 erase pass and the
+         * gap prune, so the member set is exactly the set that can fold — the
+         * Λ-weighted mean of each receiver-code-bias family's harvested ABSOLUTE
+         * realizations, @f$\mu = \Sigma\lambda v / \Sigma\lambda@f$ with
+         * @f$\lambda = 1/\mathrm{var}@f$, is subtracted from EVERY carried entry
+         * of that family (voters and screened alike).  The carried set is then
+         * zero-mean-by-construction in the same ABSOLUTE frame the
+         * @ref networkRxCodeBiasDatum row targets, so next epoch's folds exert
+         * zero net force on the receiver-DCB common mode in the fold's own
+         * metric: the datum row and the per-epoch data own the level, and the
+         * carry transports only between-station DIFFERENCES (whose rigidity arm
+         * 14 proved load-bearing).
+         *
+         * This is LASER's big-system S-transform
+         * (Net3DLsa::applySTransformationForBigSystemOfEquations — subset mean
+         * subtracted from all points, O(n)) generalized to information weights,
+         * @f$S = I - \mathbf{1}\lambda^{\mathsf T}/(\lambda^{\mathsf T}\mathbf{1})@f$
+         * per family, a projector.  Deliberately DISTINCT from card LV-2, which
+         * de-meaned the fold INNOVATION and thereby pinned the common mode to
+         * mean(x_lin), the frozen first-epoch seed frame (SPEC §13.2, measured):
+         * here the frame is re-derived from THIS epoch's solution every epoch —
+         * no frozen pin, no lag-1 feedback, nothing fed back into any solve, and
+         * the carry stays diagonal (the covariance leg is the exact diagonal of
+         * @f$SQS^{\mathsf T}@f$: voters var − 1/Σλ, screened var + 1/Σλ).
+         *
+         * Thin epochs (fewer than @ref networkRxCbCarryDemeanMinStations votes
+         * after the peer screen) apply NOTHING — identity transform, counted
+         * (invariant #7's decoupling edge stays visible; there is no held frame
+         * to silently re-assert).  Honest caveat carried from the SPEC: this
+         * declares receiver-physical common-mode drift a FRAME property; §13.4
+         * option 1 (a data-derived level authority) remains the answer if that
+         * attribution ever matters.
+         *
+         * Requires @ref networkCarryRxCodeBias (INERT-warn otherwise); forces
+         * @ref networkRxCbCarryDemean / @ref networkRxCbCarryDemeanWithin OFF
+         * with a warn (superseded mechanisms on the same channel).  Composes
+         * with LV-4 (which erases event outliers before this pass votes) and
+         * LV-1 (a seeding-time mechanism).  Default false; it changes what
+         * carried state MEANS, so it is fingerprinted when armed — never flip it
+         * mid-chain.
+         */
+        bool networkRxCbHarvestDemean() const { return network_rx_cb_harvest_demean_; }
+
+        /**
+         * @brief Card S2H robust peer-screen threshold
+         *        (@c network.rx_cb_harvest_screen_z, default 8.0).
+         *
+         * Entries with |value − family median| > z·max(1.4826·MAD, median formal
+         * σ) are excluded from the μ VOTE but still receive the transform.  This
+         * is the SPEC §16/12.1 contamination guard (one ~200 km cold-start
+         * realization must not move the frame), not an outlier-event policy —
+         * card LV-4 owns event responses.  Generous by design; set large to
+         * effectively disable.  Must be > 0 (loader-validated).  Used only when
+         * @ref networkRxCbHarvestDemean is on.
+         */
+        double networkRxCbHarvestScreenZ() const { return network_rx_cb_harvest_screen_z_; }
+
+        /**
          * @brief Card LV-1 — seed per-LOS slant ionosphere in the FIELD's frame
          *        (@c network.iono_seed_field_frame, docs/SPEC_level_information_budget.md).
          *
@@ -3736,6 +3798,50 @@ namespace GnssProcessor {
         bool networkEmitEpochStatusRecord() const { return network_emit_epoch_status_record_; }
 
         /**
+         * @brief H-rider — census-fed H heartbeat σ̂₀
+         *        (@c network.h_sigma0_prefit_census,
+         *        docs/HANDOFF_edge_response_queue.md §1.6 item 3a).
+         *
+         * The H record's sigma0 field is fed by the within-epoch RAIM's σ̂₀
+         * (@c sigma0_adapt), which is computed only inside
+         * @c if(within_epoch_armed && carry_warm) — so on every no-leveling
+         * lineage the wire carries a constant 0.0000 ("unavailable"), and on a
+         * quiet leveled run a degenerate 1.0000.  The emit path ships with no
+         * usable post-hoc residual statistic at all.
+         *
+         * When on, every H site instead carries the prefit census's pooled
+         * robust σ̂₀ (@c networkPrefitSigma0 — 1.4826·median of the per-station
+         * common-mode-removed standardized deviations over
+         * @ref networkHSigma0Classes, computed PRE-solve so even the
+         * observability-gate withhold's H has a value).  This is a DIFFERENT
+         * statistic from the RAIM one — pre-solve and common-mode-removed vs
+         * post-adaptation redundancy-normalized — so the S contract advertises
+         * it (@c hsig=pc) and a consumer thresholding σ̂₀ across producer
+         * versions can tell the populations apart.  It never feeds the A4
+         * withhold ceiling: that gate reads @c sigma0_adapt only, unchanged.
+         *
+         * Requires @ref networkEmitEpochStatusRecord (no H records otherwise)
+         * and @c network.trace_prefit_census (the born-cell deferral reads the
+         * census walk's lag-1 presence map) — the loader forces this knob off
+         * with a warn when either is missing.  Changes product-file BYTES when
+         * armed (H field 5 and the S line's hsig token) ⇒ default false.
+         */
+        bool networkHSigma0PrefitCensus() const { return network_h_sigma0_prefit_census_; }
+
+        /**
+         * @brief DATA classes pooled into the census-fed H σ̂₀
+         *        (@c network.h_sigma0_classes, default "code,sh,other").
+         *
+         * Same token grammar as the census domains (@c parseDataClassMask):
+         * code / phase / other / sh / all / none.  The default matches the
+         * census EVENT domain — @c obs_phase stays out because phase prefit
+         * innovations are arc-specific, not a common-mode population (census
+         * deviation 2c); pooling them would dilute the statistic with arc
+         * geometry.  Only used when @ref networkHSigma0PrefitCensus is on.
+         */
+        const std::string& networkHSigma0Classes() const { return network_h_sigma0_classes_; }
+
+        /**
          * @brief Whether the network RAIM standardizes by per-row redundancy
          *        (@c network.raim_redundancy_normalize, B2).
          *
@@ -4041,6 +4147,12 @@ namespace GnssProcessor {
         ///        (@c network.raim / @c raim_within_epoch / @c clock_monitor /
         ///        @c clock_model) or it can never fire (loader warns).
         bool networkUraRetroBump() const { return network_ura_retro_bump_; }
+        /// Edge-1 piece 2: mark an IF-TD REFERENCE-path slip as a per-satellite
+        /// discontinuity (R record) so the consumer resets that satellite's
+        /// ambiguity.  Targets the subset the emitter's value-jump test cannot
+        /// see (SPEC 25.3: excursion onsets are refsat_reset-enriched 5.0x with
+        /// PB value steps = 0).  Default OFF; product-affecting when armed.
+        bool networkMarkRefsatResetDisc() const { return network_mark_refsat_reset_disc_; }
         /// @brief Producer: URA multiplier on a flagged satellite for the phase-leveling
         ///        warmup horizon after a refloat (@c network.ura_refloat_inflate, B1).  1 = off.
         double networkUraRefloatInflate() const { return network_ura_refloat_inflate_; }
@@ -5376,6 +5488,8 @@ namespace GnssProcessor {
         bool   network_rx_cb_carry_demean_within_{false}; ///< Card LV-5 (SPEC_level_information_budget §12): reduce the LV-2 μ SERIALLY between PASS A and PASS B over the stations present THIS epoch and fold against it — removing the lag-1 feedback delay whose loop gain limit-cycles the level once LV-4 admits the full carry.  Requires rx_cb_carry_demean.  Fingerprinted when armed.  OFF = byte-identical.
         bool   network_rx_cb_carry_step_gate_{false};     ///< Card LV-4 (SPEC_level_information_budget §11): replace the FRAME-DEPENDENT inject screen |value_abs − x_lin(cb)| with the frame-INVARIANT epoch-over-epoch step of the absolute posterior, evaluated at the serial harvest; a step beyond k·σ ERASES the entry (reset-not-repair).  Requires carry_rx_code_bias.  Fingerprinted when armed.  OFF = byte-identical.
         double network_rx_cb_carry_step_k_sigma_{10.0};  ///< Card LV-4: k·σ of the invariant step screen (legacy k, inherited un-recalibrated together with the 0.5 m guard).  Only used when network.rx_cb_carry_step_gate.
+        bool   network_rx_cb_harvest_demean_{false};      ///< Card S2H (SPEC_level_information_budget §17 item 3 / §27 item 1): the "S-consistent harvest" — at the serial post-solve harvest, subtract the Λ-weighted mean of each family's harvested ABSOLUTE rx-CB realizations from every carried entry (LASER Net3DLsa big-system S-transform, Λ-generalized), making the carried set zero-mean-by-construction and coherent with the rx-CB datum row.  Frame re-derived per epoch: no frozen pin (LV-2's failure), no lag-1 feedback, carry stays diagonal.  Requires carry_rx_code_bias; forces LV-2/LV-5 OFF (superseded mechanisms on the same channel).  Fingerprinted when armed.  OFF = byte-identical.
+        double network_rx_cb_harvest_screen_z_{8.0};      ///< Card S2H: robust peer-screen z for the μ vote — entries with |value − median| > z·max(1.4826·MAD, median formal σ) do not vote (still transformed).  Contamination guard (SPEC §16/12.1), not an event policy — LV-4 owns events.  Must be > 0; only used when network.rx_cb_harvest_demean.
         bool   network_iono_seed_field_frame_{false};     ///< Card LV-1 (SPEC_level_information_budget): reframe every per-LOS iono seed at allocation — subtract the station's median raw seed (rx GF bias ⊕ median slant iono) and add the lag-1 SH field's own value at the LOS's IPP — so seeds are born in the FIELD's frame instead of the receiver-bias-in frame.  NETWORK path only; inert without estimate_iono_sh.  OFF = byte-identical.
         int    network_iono_seed_field_frame_min_sats_{5};  ///< Card LV-1: minimum usable raw seeds at a station-epoch for the median offset; below it the new LOS take the RAW seed (counted lv1_fallback_raw).  Only used when network.iono_seed_field_frame.
         bool   network_carry_vce_{false};                 ///< M2 (LS-VCE): run the carry-row variance-component MONITOR — estimate σ̂ (Floor m² + Rate m²/s) per carry family per constellation from the post-fit carry innovations and log it against the hand floors. Calibration/honesty instrument ONLY; no feedback into the solve. OFF = byte-identical (no accumulator, no logging).
@@ -5417,6 +5531,8 @@ namespace GnssProcessor {
         bool   network_per_const_withhold_{false};  ///< RTA-10: when the A4 σ̂0 withhold trips, carve the epoch per CONSTELLATION — publish each constellation whose own σ̂0_c (same standardized-residual pool, restricted to its rows) passes the SAME ceiling with ≥ min_rows rows; prune the rest (RT0-5-quarantine pattern). OFF = all-or-nothing withhold (byte-identical).
         int    network_per_const_withhold_min_rows_{20}; ///< RTA-10: minimum σ̂0-pool rows for a constellation to be JUDGEABLE by the carve-out; fewer ⇒ withheld (unjudgeable under a contaminated epoch). Inert unless network_per_const_withhold_.
         bool   network_emit_epoch_status_record_{false}; ///< RTA-10: write one positional H heartbeat record per epoch into the product file — including fully withheld epochs (gate + σ̂0), which otherwise emit nothing — so a tail consumer distinguishes "withheld" from "producer died". Positional (never feeds replay). OFF = no H records (byte-identical).
+        bool   network_h_sigma0_prefit_census_{false};   ///< H-rider (edge-queue §1.6 item 3a): feed the H heartbeat's sigma0 field from the ALWAYS-ON prefit census's pooled robust σ̂₀ instead of the carry_warm-gated within-epoch RAIM statistic (which is structurally 0.000 on every no-leveling lineage, and a degenerate constant on leveled quiet runs).  UNIFORM per wire: every H site carries the census statistic when armed, and the S contract says so (hsig=pc).  Never feeds the A4 withhold ceiling (that stays sigma0_adapt).  Requires emit_epoch_status_record + trace_prefit_census.  Changes H bytes ⇒ default OFF (byte-identical).
+        std::string network_h_sigma0_classes_{"code,sh,other"};   ///< H-rider: DATA classes pooled into the census-fed H σ̂₀ (token list: code/phase/other/sh/all/none).  Default matches the census EVENT domain — phase deliberately excluded (arc-specific innovations are not a common-mode population, census deviation 2c).  Only used when network.h_sigma0_prefit_census.
         bool   network_raim_surgical_station_{true};   ///< Within-epoch adaptation may peel a single (station,sat) ARC instead of excluding the whole station, and de-rates whole-station exclusion by @ref network_raim_station_drop_bias_; false = coarse sat-vs-whole-station peel (A/B baseline).
         double network_raim_station_drop_bias_{1.5};   ///< A whole-station exclusion is chosen only when its median-polish row effect / this factor still beats the best satellite/arc candidate (≥1; 1 disables the bias).
         bool   network_raim_redundancy_normalize_{false}; ///< B2: standardize the post-fit / within-epoch RAIM residual by v_i/(σ_i·√r_i) with the Baarda redundancy r_i = 1 − w_i·a_iᵀCov(θ)a_i (per-row, from the cached per-station Schur factors) before σ̂0 pooling / median-polish; low-redundancy arcs are otherwise under-flagged (response ∝ r_i·fault). OFF = plain |v|·√w (byte-identical); ON deliberately changes the statistic.
@@ -5503,6 +5619,7 @@ namespace GnssProcessor {
         double network_ura_ewma_alpha_{0.1};        ///< B1: EWMA α for the network-wide σ̂0 that scales the emitted URA.
         bool   network_consume_ura_{false};         ///< B1: consumer inflates measurement R by the network URA on corrected rows; OFF = R byte-identical.
         double network_ura_staleness_q2_{0.0};      ///< B1: consumer ZOH clock-staleness q² (m²/s³) folded as q²·dt³/3 into the applied clock variance; 0 = off.  Loader defaults it to network_clock_model_q2_ (P1-3) so it is active whenever consume_ura is on, not silently inert.
+        bool   network_mark_refsat_reset_disc_{false};  ///< Edge-1 piece 2: ref-path slip -> per-sat disc mark (R record); OFF = pre-existing behaviour, byte-identical.
         bool   network_ura_retro_bump_{false};      ///< B1: on a post-emit QC flag, retro-bump the flagged SATELLITE's disc counter on the NEXT emit (consumer resets the ambiguity that integrated the contaminated epoch); OFF = no bump.
         double network_ura_refloat_inflate_{1.0};   ///< B1: URA multiplier applied to a flagged sat for the phase-leveling warmup horizon after any refloat; 1 = off.
         // --- B1b: phase-bias σ channel (Tienstra product-covariance, phase-bias block) ---

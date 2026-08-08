@@ -1,0 +1,23 @@
+{
+ "_comment": [
+  "EDGE-1 PIECE 2 replay arm MARKS: the phase_leveling product WITH/WITHOUT its 2 R records.",
+  "The two products' E/C/P record streams are BYTE-IDENTICAL (verified, 0 diff lines);",
+  "the ONLY difference is the v2 S contract line.  So any difference in the consumer's",
+  "reaction census is caused by makeReplayEmitter's parameters and nothing else.",
+  "logging.enable_rt_engine is armed (solve-neutral, verified byte-identical on the 12 h",
+  "twin) so RealTimeEngineSsrBreaks reactions are visible at all.",
+  "Posture restated explicitly (obs 15 / iono 25) per the config-chain pairing rule."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 3600.0, "elevation_mask_deg": 15.0 },
+ "logging": { "enable_rt_engine": true },
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 3600.0,
+  "closed_loop": { "replay_products_path": "C:/GnssProcessor/runs/ext63_1h_evt_pl/products.txt" },
+  "product_output_path": "C:/GnssProcessor/runs/replay_1h_pl_marks/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_1h_pl_marks/state_snapshot.bin"
+ }
+}

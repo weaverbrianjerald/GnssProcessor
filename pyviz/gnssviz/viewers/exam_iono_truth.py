@@ -6,12 +6,12 @@ ionosphere the synthesizer *injected*, bound to a
 storm exactly as it was written into the observations, so the reviewer can read
 the injected disturbance off the same time base as the recovered solution:
 
-  1. A diverging ``imagesc``-style :class:`Raster` of the storm slant delay
-     ``dI_L1_m`` over (satellite rows × epoch columns): a symmetric red/blue map
-     centred on zero (``clim = ±max|dI|``) makes the enhancement (positive) vs
-     depletion (negative) lobes read at a glance; NaN (satellite not visible that
-     epoch) cells stay transparent, so each satellite's arc shows as a coloured
-     band across the storm window.
+  1. A symmetric ``imagesc``-style :class:`Raster` of the storm slant delay
+     ``dI_L1_m`` over (satellite rows × epoch columns), drawn in **turbo** on a
+     zero-centred range (``clim = ±max|dI|``) so the enhancement (positive) and
+     depletion (negative) lobes separate by colour; NaN (satellite not visible
+     that epoch) cells stay transparent, so each satellite's arc shows as a
+     coloured band across the storm window.
   2. A per-satellite ``dI_L1`` spaghetti plot vs GPS time — one gap-aware line per
      satellite coloured by PRN, the storm window drawn as paired :class:`VLine`s,
      and the storm peak (from ``scenario_summary.json`` when present, else the
@@ -39,6 +39,13 @@ from . import exam_common as ec
 _SYS_RANK = {"G": 0, "E": 1, "R": 2, "C": 3, "J": 4, "S": 5}
 _GAP_FACTOR = 3.0                       # NaN-break a line when dt > 3*median(dt)
 _PEAK_RING = (0.0, 0.0, 0.0)
+
+#: Vertical trim applied to BOTH sat×epoch rasters (total slant iono + storm
+#: enhancement).  They carry ~30 satellite rows of a smooth field, so the shared
+#: strip height is more than they need and it crowds the dashboard; 0.8 keeps
+#: every row legible while giving back 20% of the page (professor request,
+#: 2026-08-06).  The per-satellite spaghetti panel below is unaffected.
+_RASTER_HEIGHT_SCALE = 0.8
 
 
 # --------------------------------------------------------------------------- #
@@ -133,12 +140,23 @@ def _storm_peak(ctx, df):
 #  Build
 # --------------------------------------------------------------------------- #
 def _iono_raster(df, sats, value_col, *, diverging, title, cbar_label,
-                 width=13.0):
+                 width=13.0, height_scale=1.0):
     """A (sat × epoch) :class:`Raster` of ``value_col`` from truth_atmo.
 
-    ``diverging`` picks a symmetric red/blue map centred on 0 (for the storm
-    delta); otherwise a sequential viridis clamped at 0 (for the total delay).
-    Returns ``None`` if the column is absent.
+    Both tiles use **turbo** (professor request, 2026-08-06): the reader is
+    resolving fine structure inside a narrow band of a mostly-saturated field,
+    not ranking magnitudes, and the rainbow buys real perceptual resolution
+    there.  ``diverging`` still controls the *scaling* -- a symmetric ``±vmax``
+    range so zero lands mid-colormap for the storm delta, versus ``[0, vmax]``
+    clamped at zero for the total delay.  Note the trade this makes on the delta
+    tile: turbo's midpoint is green, not neutral, so the enhancement/depletion
+    sign flip reads as a colour change rather than as a pass through white.  Swap
+    the diverging branch back to ``"rdbu"`` if the zero crossing ever matters more
+    than the fine structure.
+
+    ``height_scale`` trims the shared satellite-strip height (0.8 = 20% shorter);
+    the tiles are otherwise taller than these two need.  Returns ``None`` if the
+    column is absent.
     """
     if value_col not in df.columns:
         return None
@@ -156,18 +174,19 @@ def _iono_raster(df, sats, value_col, *, diverging, title, cbar_label,
         vmax = float(np.nanmax(np.abs(vals))) if finite else 0.0
         if not (vmax > 0):
             vmax = 1.0
-        cmap, clim = strip_colormap("rdbu", 256), (-vmax, vmax)
+        cmap, clim = strip_colormap("turbo", 256), (-vmax, vmax)
     else:
         vmax = float(np.nanmax(vals)) if finite else 0.0
         if not (vmax > 0):
             vmax = 1.0
-        cmap, clim = strip_colormap("viridis", 256), (0.0, vmax)
+        cmap, clim = strip_colormap("turbo", 256), (0.0, vmax)
 
     ax = Axes(traces=[Raster(x=col_times, row_labels=sats, grid=grid)],
               title=title, xlabel="GPS Time", ylabel="Satellite",
               grid=False, x_is_datetime=True)
-    return Figure(name=title, axes=[ax], width=width,
-                  height=ec.sat_strip_height(len(sats)),   # shared tile height (SPEC: consistent cells)
+    # Shared tile height (SPEC: consistent cells), optionally trimmed.
+    height = ec.sat_strip_height(len(sats)) * float(height_scale)
+    return Figure(name=title, axes=[ax], width=width, height=height,
                   cmap=cmap, clim=clim, colorbar=ColorBar(label=cbar_label))
 
 
@@ -188,7 +207,7 @@ def build_exam_iono_truth(ctx) -> ViewerResult:
     # from the storm.  Sequential (all-positive) map, clamped at 0.
     fig_total = _iono_raster(df, sats, "I_L1_m", diverging=False,
                              title="Total slant iono I_L1 (Klobuchar + storm)",
-                             cbar_label="I_L1 (m)")
+                             cbar_label="I_L1 (m)", height_scale=_RASTER_HEIGHT_SCALE)
     if fig_total is not None:
         figures.append(fig_total)
 
@@ -198,7 +217,7 @@ def build_exam_iono_truth(ctx) -> ViewerResult:
     # depletion lobes.
     fig_delta = _iono_raster(df, sats, "dI_L1_m", diverging=True,
                              title="Storm enhancement dI_L1 (total - quiet)",
-                             cbar_label="dI_L1 (m)")
+                             cbar_label="dI_L1 (m)", height_scale=_RASTER_HEIGHT_SCALE)
     if fig_delta is not None:
         figures.append(fig_delta)
 

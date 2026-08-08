@@ -1,4 +1,6 @@
 """Report assembly: offline inline plotly, aspect_equal, and the exam CLI."""
+import math
+
 import numpy as np
 
 from gnssviz.backends import get_backend
@@ -140,6 +142,78 @@ def test_cli_exam_report_has_sections_and_banner(exam_fixture, tmp_path):
     assert "Exam scorecard" in html                      # exam section present
     assert "Position error vs truth" in html
     assert "banner pass" in html and "VERIFIER PASS" in html   # banner (§4.4)
+
+
+def test_plotly_log_axis_limits_are_exponents(tmp_path):
+    # Plotly expresses a LOG axis's `range` in EXPONENTS; matplotlib uses data units.
+    # Viewers speak data units, so the backend must convert -- passing 35 straight
+    # through renders the axis top at 10^35 (observed as a 1e32 y-limit on the
+    # station-keeping panel, whose data tops out near 10 m).
+    from gnssviz.backends import get_backend
+    from gnssviz.figures import Axes, Figure, Line
+    ax = Axes(title="log", xlabel="x", ylabel="y", yscale="log", ylim=(0.2, 35.0),
+              x_is_datetime=False,
+              traces=[Line(x=[0, 1, 2], y=[0.5, 5.0, 20.0])])
+    gofig = get_backend("plotly").render(Figure(name="log", axes=[ax], width=6, height=3))
+    rng = gofig.layout.yaxis.range
+    assert rng is not None
+    # log10(0.2) = -0.699, log10(35) = 1.544 -- NOT the raw 0.2/35.
+    assert abs(rng[0] - math.log10(0.2)) < 1e-9, rng
+    assert abs(rng[1] - math.log10(35.0)) < 1e-9, rng
+
+
+def test_plotly_linear_axis_limits_are_untouched(tmp_path):
+    from gnssviz.backends import get_backend
+    from gnssviz.figures import Axes, Figure, Line
+    ax = Axes(title="lin", yscale="linear", ylim=(-4.0, 9.0), x_is_datetime=False,
+              traces=[Line(x=[0, 1], y=[0.0, 1.0])])
+    gofig = get_backend("plotly").render(Figure(name="lin", axes=[ax], width=6, height=3))
+    assert list(gofig.layout.yaxis.range) == [-4.0, 9.0]
+
+
+def test_exam_dashboard_drops_the_crowding_viewers(exam_fixture, tmp_path):
+    # Dashboard composition (professor review 2026-08-06): a fixed set of viewers
+    # that duplicate a panel above them, or are internal QC strips, is off by
+    # default on the EXAM dashboard only.
+    import run_report
+    truth, logs = exam_fixture()
+    out = tmp_path / "dashboard.html"
+    assert run_report.main([logs, "--truth-dir", truth, "-o", str(out),
+                            "--backend", "matplotlib"]) == 0
+    html = out.read_text(encoding="utf-8")
+    for title in ("State / position", "Measurement residuals by signal",
+                  "Plan-view track vs truth", "Ocean tidal loading",
+                  "DOPs &amp; satellite counts", "Float ambiguities",
+                  "Slip-detector gate strip", "Satellite signal-usage strip"):
+        assert title not in html, f"{title!r} should be off by default"
+    # The panels they were duplicating are still there.
+    assert "Position error vs truth" in html and "Satellite visibility" in html
+
+
+def test_exam_dashboard_off_list_is_overridable(exam_fixture, tmp_path):
+    # --only names a viewer explicitly; --all opts everything back in. Neither
+    # may silently lose to the default off-list.
+    import run_report
+    truth, logs = exam_fixture()
+    only = tmp_path / "only.html"
+    assert run_report.main([logs, "--truth-dir", truth, "-o", str(only),
+                            "--backend", "matplotlib", "--only", "state"]) == 0
+    assert "State / position" in only.read_text(encoding="utf-8")
+
+    every = tmp_path / "all.html"
+    assert run_report.main([logs, "--truth-dir", truth, "-o", str(every),
+                            "--backend", "matplotlib", "--all"]) == 0
+    assert "Plan-view track vs truth" in every.read_text(encoding="utf-8")
+
+
+def test_plain_report_keeps_the_general_purpose_viewers(exam_fixture, tmp_path):
+    # The off-list is an EXAM-dashboard composition choice; the ordinary report
+    # must be unaffected.
+    import run_report
+    _truth, logs = exam_fixture()
+    out = tmp_path / "plain.html"
+    assert run_report.main([logs, "-o", str(out), "--backend", "matplotlib"]) == 0
+    assert "State / position" in out.read_text(encoding="utf-8")
 
 
 def test_cli_without_truth_skips_exam_viewers(exam_fixture, tmp_path):

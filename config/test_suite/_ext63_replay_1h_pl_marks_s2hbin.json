@@ -1,0 +1,19 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — H-rider (a) replay gate: the WTZZ marks replay re-run on the",
+  "session binary gnss_processor_s2h.exe, which now FORWARDS the wire's H heartbeats",
+  "into the consumer store (batch analogue of the RTA-6 tail).",
+  "PREDICTIONS: P1 closed_loop_trace.csv byte-identical to runs/replay_1h_pl_marks",
+  "(the status channel is observability, not a correction - solve untouched).",
+  "P2 the run log carries 'H heartbeats - 121 on the wire, 121 forwarded'.",
+  "P3 rt_engine.log gains producer-status transition lines (logProducerStatus fires",
+  "for the first time in batch replay history)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_replay_1h_pl_marks.json"
+ ],
+ "network": {
+  "product_output_path": "C:/GnssProcessor/runs/replay_1h_pl_marks_s2hbin/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_1h_pl_marks_s2hbin/state_snapshot.bin"
+ }
+}

@@ -9,7 +9,8 @@ from gnssviz.viewers.base import ViewerSkip
 # viewer module -> (build fn name, expected figure count on the full fixture)
 _VIEWERS = {
     "exam_scorecard": 0,
-    "exam_spp_reference": 7,
+    "exam_spp_reference": 6,      # 7 minus the opt-in A/B ablation figure
+    "exam_static_window": 2,
     "exam_position_truth": 3,
     "exam_truth_lines": 3,
     "exam_track": 3,
@@ -266,7 +267,7 @@ def test_spp_reference_survives_missing_summary_json(exam_fixture):
     # truth_spp.csv alone must still draw every panel; only the model ledger goes.
     truth, logs = exam_fixture(spp_summary=False)
     res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
-    assert len(res.figures) == 7
+    assert len(res.figures) == 6
     assert "truth_spp_summary.json absent" in res.summary
     assert "Estimator" not in res.summary
 
@@ -293,8 +294,83 @@ def test_spp_reference_sigma_panel_needs_the_sigma_columns(exam_fixture):
         _csv.writer(fh, lineterminator="\n").writerows([[r[i] for i in keep] for r in rd])
     res2 = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
     assert not any(f.name == "Formal sigma vs error" for f in res2.figures)
-    assert len(res2.figures) == 6
+    assert len(res2.figures) == 5
     assert "err/σ3D" not in res2.summary
+
+
+def test_static_window_needs_a_disclosed_window(exam_fixture):
+    # The viewer keys off scenario_summary.static_segment; an instance with no
+    # station-keeping prefix has nothing to draw and must SKIP, not fail.
+    import json
+    import os
+    truth, logs = exam_fixture()
+    p = os.path.join(truth, "scenario_summary.json")
+    with open(p, encoding="utf-8") as fh:
+        summ = json.load(fh)
+    summ.pop("static_segment")
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(summ, fh)
+    with pytest.raises(ViewerSkip):
+        _build("exam_static_window", TraceContext(logs, truth_dir=truth))
+
+
+def test_static_window_separates_bias_from_noise(exam_fixture):
+    # The panel's whole point: a static solve's error is the MEAN of the per-epoch
+    # errors (window truth is one point), and that mean is reported next to the
+    # spread about it, so a bias-limited leg is visibly not helped by averaging.
+    truth, logs = exam_fixture()
+    res = _build("exam_static_window", TraceContext(logs, truth_dir=truth))
+    assert [f.name for f in res.figures] == ["Static window: per-epoch vs static fix",
+                                             "Static window: horizontal scatter"]
+    assert "static 3D" in res.summary and "scatter" in res.summary
+    # Both SPP legs and the PPP trace are collapsed over the window.
+    for lbl in ("leg 1", "leg 2", "PPP"):
+        assert lbl in res.summary
+    # The PPP row must carry its caveat: it is a kinematic mean, not a static solve.
+    # (Match a fragment that cannot straddle the read-out's line wrapping.)
+    assert "KINEMATIC filter's window mean" in res.summary
+    # Per-epoch panel is log-scaled (three solutions spanning decades).
+    assert res.figures[0].axes[0].yscale == "log"
+
+
+def test_spp_reference_sigma_panel_is_a_correlated_scatter(exam_fixture):
+    # The panel is a per-leg SCATTER of realised error against formal sigma on
+    # log-log axes (not two time series), carrying a 1:1 reference and each leg's
+    # correlation — the professor's 2026-08-06 replacement.
+    from gnssviz.figures import Scatter
+    truth, logs = exam_fixture()
+    res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
+    fig = next(f for f in res.figures if f.name == "Formal sigma vs error")
+    ax = fig.axes[0]
+    assert (ax.xscale, ax.yscale) == ("log", "log")
+    assert ax.x_is_datetime is False
+    pts = [t for t in ax.traces if isinstance(t, Scatter)]
+    assert len(pts) == 2, "one cloud per leg"
+    # Every cloud is labelled with its own correlation, and the 1:1 line is drawn.
+    assert all("r_log" in (t.label or "") and "ρ" in (t.label or "") for t in pts)
+    assert any("1:1" in (getattr(t, "label", "") or "") for t in ax.traces)
+
+
+def test_spp_reference_crowded_panels_are_opt_in(exam_fixture):
+    # A/B ablations and the leg1−leg2 clock difference are off by default
+    # (dashboard de-crowding) but must come back when asked for, and their
+    # NUMBERS must survive in the read-out either way.
+    from gnssviz.viewers.exam_spp_reference import build_exam_spp_reference as B
+    truth, logs = exam_fixture()
+    ctx = TraceContext(logs, truth_dir=truth)
+
+    off = B(ctx)
+    assert not any(f.name == "A/B ablations" for f in off.figures)
+    assert "Paired A/B ablations" in off.summary          # table kept
+    assert "leg 1 − leg 2 c·dt median" in off.summary     # median kept
+    clock = next(f for f in off.figures if f.name == "Receiver clock")
+    assert len(clock.axes) == 1 and "about its own median" in clock.axes[0].title
+
+    on = B(ctx, show_ablations=True, show_clock_difference=True)
+    assert any(f.name == "A/B ablations" for f in on.figures)
+    assert len(on.figures) == len(off.figures) + 1
+    clock_on = next(f for f in on.figures if f.name == "Receiver clock")
+    assert len(clock_on.axes) == 2
 
 
 def test_spp_reference_flags_a_stale_summary(exam_fixture, tmp_path):
