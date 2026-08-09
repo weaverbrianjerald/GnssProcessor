@@ -147,6 +147,7 @@ add_library(gnss_core STATIC
     src/core/products/NetworkProductEmitter.cpp
     src/core/products/NetworkEmitRebase.cpp
     src/core/products/NetworkPbEmitFilter.cpp
+    src/core/products/NetworkClockEmitRebase.cpp
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
@@ -353,6 +354,7 @@ add_executable(gnss_tests
     tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp
+    tests/test_clock_emit_rebase.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp

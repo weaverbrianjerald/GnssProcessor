@@ -1,0 +1,23 @@
+{
+ "_comment": [
+  "Card CLK-R (docs/SPEC_clock_emit_rebase.md) G0/G3 CONTROL — the internal",
+  "12 h stability arm (_golden63_gps_12h_internal) re-run byte-for-byte on the",
+  "session binary with ONLY the output paths moved (the stored run must not be",
+  "overwritten).  G0 PREDICTION: products.txt record stream byte-identical to",
+  "runs/golden63_12h_internal/products.txt (rebuild determinism, the F6-gate-1",
+  "sense; this card adds no wire format and its OFF path never runs).  Doubles",
+  "as the same-build 12 h control for the G3 A/B (invariant #6)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 43200.0 },
+ "network": {
+  "max_duration_s": 43200.0,
+  "serialize_sbasis_contract": true,
+  "emit_epoch_status_record": true,
+  "h_sigma0_prefit_census": true,
+  "product_output_path": "C:/GnssProcessor/runs/clkr_12h_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/clkr_12h_ctl/state_snapshot.bin"
+ }
+}

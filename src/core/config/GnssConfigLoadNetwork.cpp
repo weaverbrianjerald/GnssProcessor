@@ -5155,6 +5155,55 @@ namespace GnssProcessor {
         network_emit_pb_filter_gate_v2_ =
             jval<bool>(json, "network.emit_pb_filter_gate_v2",
                        "network_emit_pb_filter_gate_v2", false);
+        // Card CLK-R (docs/SPEC_clock_emit_rebase.md): clock emission re-base —
+        // stage 1 holds the per-constellation common mode at emission (the
+        // 613/1440-census-epoch re-realization class), stage 2 marks the
+        // surviving per-sat step class via the R-record retro-bump.  Both
+        // outputs-only, independent, default OFF.
+        network_emit_clock_frame_hold_ =
+            jval<bool>(json, "network.emit_clock_frame_hold",
+                       "network_emit_clock_frame_hold", false);
+        network_clock_frame_leash_m_ =
+            jval<double>(json, "network.clock_frame_leash_m",
+                         "network_clock_frame_leash_m", 50.0);
+        network_clock_disc_jump_test_ =
+            jval<bool>(json, "network.clock_disc_jump_test",
+                       "network_clock_disc_jump_test", false);
+        network_clock_disc_jump_m_ =
+            jval<double>(json, "network.clock_disc_jump_m",
+                         "network_clock_disc_jump_m", 1.5);
+        if (network_emit_clock_frame_hold_) {
+            log->info("Network producer (Card CLK-R): CLOCK EMISSION FRAME HOLD ON — the emitted "
+                      "satellite clocks ride a per-constellation HELD frame (per-epoch median "
+                      "common-mode innovation drained into a frame accumulator that never re-enters "
+                      "the wire; between-sat differences preserved exactly).  Outputs-only: solve "
+                      "byte-identical, fingerprint-SAFE.  Leash |A_c| > {:.0f} m re-anchors WITH a "
+                      "datum mark (markDatumChange — invariant #7's marked re-coupling edge).",
+                      network_clock_frame_leash_m_);
+            if (network_clock_frame_leash_m_ > 0.0 && network_clock_frame_leash_m_ < 5.0)
+                log->warn("Network (Card CLK-R): network.clock_frame_leash_m = {:.1f} is BELOW 5 m — "
+                          "the measured 12 h frame wander is ~23 m, so a tight leash re-anchors (and "
+                          "datum-marks) repeatedly, defeating the hold.  Raise it or accept the churn.",
+                          network_clock_frame_leash_m_);
+        }
+        if (network_clock_disc_jump_test_) {
+            log->info("Network producer (Card CLK-R): CLOCK DISC JUMP TEST ON — per-sat common-"
+                      "removed emitted-clock steps > {:.2f} m route to the markSatDiscontinuity "
+                      "retro-bump (R record + per-sat phase/code/clock counters; the consumer resets "
+                      "that satellite at the event epoch).  The emitter's clock counter keeps NO "
+                      "internal magnitude test (RTA-11) — this test lives at the emission-prep tier"
+                      "{}.",
+                      network_clock_disc_jump_m_,
+                      network_emit_clock_frame_hold_
+                          ? "; statistic taken in the HELD frame (frame hold armed)"
+                          : "; statistic taken on the RAW wire (frame hold off)");
+            if (network_clock_disc_jump_m_ < 0.5)
+                log->warn("Network (Card CLK-R): network.clock_disc_jump_m = {:.2f} is BELOW the "
+                          "0.5 m census outlier floor — the per-sat channel is a random walk "
+                          "(robust step σ ≈ 0.1 m), so a sub-floor gate marks the walk itself "
+                          "(~70+/h) and storms the consumer with resets.",
+                          network_clock_disc_jump_m_);
+        }
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);

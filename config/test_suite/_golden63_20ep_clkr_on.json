@@ -1,0 +1,23 @@
+{
+ "_comment": [
+  "Card CLK-R (docs/SPEC_clock_emit_rebase.md) G1 smoke ON arm — the 20-epoch",
+  "control + BOTH card knobs (frame hold stage 1 + step marks stage 2).",
+  "PREDICTIONS: (P1) run-end CLK-R line live — Sigma|mu| drained > 0, 20 emit",
+  "epochs counted (invariant #4); (P2) E/B/P/H/S records byte-identical to the",
+  "control (outputs-only: the solve untouched, PB/CB channels untouched);",
+  "(P3) C values differ from the control by a per-constellation common shift;",
+  "between-sat differences preserved; (P4) 0-to-few CLK_STEP marks (quiet",
+  "20-epoch window; ignition steps land below the 1.5 m gate or as inits)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "network": {
+  "max_duration_s": 600.0,
+  "emit_clock_frame_hold": true,
+  "clock_disc_jump_test": true,
+  "product_output_path": "C:/GnssProcessor/runs/clkr_20ep_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/clkr_20ep_on/state_snapshot.bin"
+ }
+}

@@ -543,6 +543,22 @@ solve changes, so grade on datum-invariant quantities).
 > class is wire-invisible.  Edge 2's real work is therefore NOT datum choice:
 > it is mediating (or at minimum marking) the internal clock re-realization
 > class.  FC-1's churn-ceiling analysis (2.3 %) is the design input.
+>
+> ✅ **THAT CARD IS BUILT AND 12 h-VALIDATED (2026-08-09) — Card CLK-R,
+> `docs/SPEC_clock_emit_rebase.md`.**  `network.emit_clock_frame_hold` (emission
+> re-base of the clock ensemble onto the previous emission frame — the exact
+> clock analogue of the PB channel's NetworkEmitRebase) takes the internal
+> census **613 → 1, and the surviving step is the marked pivot handover** —
+> wire discontinuities and wire marks now coincide; outputs-only proven
+> byte-level, consumer neutral-to-better (live bisection `runs/clkr_12h_hold`).
+> `network.clock_disc_jump_test` (per-sat 1.5 m common-removed step →
+> markSatDiscontinuity/R) is mechanism-proven end-to-end but on a quiet day its
+> 68 resets COST the live consumer (1 → 106 epochs > 20 m) — default-OFF, arm
+> only for event-day/onset-enrichment studies (the §1.4 criterion).  Per-key
+> clock value smoothing was FALSIFIED at design time (the per-sat channel is a
+> walk; SPEC §2) — per-sat stiffness remains Q3 estimator work, and AR stays
+> 0/1440 as pre-registered.  Both knobs default-OFF (no-promotion rule);
+> stage 1 is the promotion candidate for the internal golden lineage.
 
 ## Edge 3 — the zero-mean rx datum's re-realizations (subsumed by the item-3 BUILD)
 

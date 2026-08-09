@@ -1,0 +1,19 @@
+{
+ "_comment": [
+  "Card CLK-R (docs/SPEC_clock_emit_rebase.md) G1 smoke CONTROL — the internal",
+  "golden63 posture (same chain as _golden63_gps_12h_internal) cut to 600 s =",
+  "20 epochs, knobs OFF, own lineage.  Pairs with _golden63_20ep_clkr_on:",
+  "prediction = E/B/P/H/S record streams byte-identical between the pair (the",
+  "card is outputs-only and its OFF path never runs), C values differing only",
+  "in the ON arm.  FRESH lineage; run alone; never resume onto another arm."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "network": {
+  "max_duration_s": 600.0,
+  "product_output_path": "C:/GnssProcessor/runs/clkr_20ep_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/clkr_20ep_ctl/state_snapshot.bin"
+ }
+}

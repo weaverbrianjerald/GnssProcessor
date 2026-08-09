@@ -1,0 +1,33 @@
+{
+ "_comment": [
+  "Card CLK-R (docs/SPEC_clock_emit_rebase.md) G3 — the 12 h ON arm: the",
+  "internal 12 h posture (_golden63_12h_clkr_ctl twin) + BOTH card knobs, one",
+  "config step from its control.  PRE-REGISTERED PREDICTIONS (SPEC §4 G3):",
+  "P1 census clock channel: common-mode step epochs 613 -> <= 5 (vs the ctl",
+  "   twin reproducing ~613); per-sat outlier epochs unchanged-ish but now",
+  "   DECLARED — R records ~ the mark count (~84 rows measured > 1.5 m on the",
+  "   stored wire), census 'wire marks' line non-empty.",
+  "P2 E/B/P/H/S record streams byte-identical to the ctl twin (outputs-only).",
+  "P3 run-end CLK-R line: 1440 epochs, Sigma|mu| ~ 100+ m drained, 0 leash",
+  "   re-anchors (measured wander 23 m vs 50 m leash), marks ~ 80-200.",
+  "P4 live WTZZ consumer: hourly medians unchanged-or-better; resets gain the",
+  "   marked per-sat class (R-driven both-band resets at event epochs).",
+  "P5 AR fix rate: EXPECTED UNCHANGED at 0/1440 — the AR blocker is the",
+  "   per-sat walk (SPEC §2), which is Q3 estimator work.  Pre-registered so",
+  "   the verdict cannot be quietly reframed."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 43200.0 },
+ "network": {
+  "max_duration_s": 43200.0,
+  "serialize_sbasis_contract": true,
+  "emit_epoch_status_record": true,
+  "h_sigma0_prefit_census": true,
+  "emit_clock_frame_hold": true,
+  "clock_disc_jump_test": true,
+  "product_output_path": "C:/GnssProcessor/runs/clkr_12h_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/clkr_12h_on/state_snapshot.bin"
+ }
+}

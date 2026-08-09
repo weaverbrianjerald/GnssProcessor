@@ -88,6 +88,7 @@
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkEmitRebase.hpp"   // Card 4 (M1) phase D: emit-layer frame re-base
 #include "products/NetworkPbEmitFilter.hpp" // M5 prereq: PB emission-continuity filter
+#include "products/NetworkClockEmitRebase.hpp" // Card CLK-R: clock emission re-base + per-sat step marks
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // M4: combined-correction σ arithmetic
 #include "products/NetworkStateSnapshot.hpp"   // RTB-7: atomic state snapshot + warm resume
@@ -883,6 +884,17 @@ int Application::runNetwork() {
     pb_filter_cfg.gate_v2        = config_.networkEmitPbFilterGateV2();  // PB-gate-v2 merge point (leaf wiring)
     NetworkPbEmitFilter pb_filter_engine(pb_filter_cfg);
     const bool pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
+    // Card CLK-R (docs/SPEC_clock_emit_rebase.md): clock emission re-base — the
+    // common-mode frame hold (stage 1) + per-sat step marks (stage 2).  Run-TU
+    // local like the PB engines (NetworkRunContext banner rule); both knobs
+    // default OFF ⇒ rebaseEpoch is never called (byte-identical).  Outputs-only:
+    // the solve is byte-identical even when armed.
+    NetworkClockEmitRebase::Config clk_rebase_cfg;
+    clk_rebase_cfg.frame_hold = ctx.knobs.clk_frame_hold;
+    clk_rebase_cfg.leash_m    = config_.networkClockFrameLeashM();
+    clk_rebase_cfg.jump_test  = ctx.knobs.clk_jump_test;
+    clk_rebase_cfg.jump_m     = config_.networkClockDiscJumpM();
+    NetworkClockEmitRebase clk_rebase_engine(clk_rebase_cfg);
     auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
     auto& carry_group_id = ctx.carry.carry_group_id;
     auto& carry_prev_tow = ctx.carry.carry_prev_tow;
@@ -2005,7 +2017,8 @@ int Application::runNetwork() {
         networkEmitStore(ctx, config_, log, traces, setup, se, est, x_s, pl_now_s,
                          datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,
                          serialized_consts, retro_emit_sats, emit_rebase_on, emit_pb_filter_on,
-                         pb_filter_emit_sigma, emit_rebase_engine, pb_filter_engine, present,
+                         pb_filter_emit_sigma, emit_rebase_engine, pb_filter_engine,
+                         clk_rebase_engine, present,
                          est_index_of, modeled, shared_phase_keys, carry_slipped_ambs,
                          we_t2_opp, we_t2_flag, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed,
                          cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d);
@@ -2251,7 +2264,7 @@ int Application::runNetwork() {
 
     if (parallel_on) Eigen::setNbThreads(eigen_threads_saved);  // restore Eigen's own threading
 
-    return networkTeardown(ctx, config_, log, traces, setup, est, carry_driver, carry_vce_est, prires_est, slip_qc, mw_wl_run, ewl_lanes, wl_run, wl_cons_run, emit_rebase_engine, pb_filter_engine, iono_deweight, sec_sub, kSubNames, synced, carry_innov_gate, mw_wl_on, ewl_on, wl_inject_on, uwl_on, lane_on, sh_dev_on, idw_on, emit_rebase_on, emit_pb_filter_on, sec_asm_wall_ms, sec_profiled_epochs, t_loop_begin, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed, cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d, cl_truth, cl_truth_llh, log_dir_);
+    return networkTeardown(ctx, config_, log, traces, setup, est, carry_driver, carry_vce_est, prires_est, slip_qc, mw_wl_run, ewl_lanes, wl_run, wl_cons_run, emit_rebase_engine, pb_filter_engine, clk_rebase_engine, iono_deweight, sec_sub, kSubNames, synced, carry_innov_gate, mw_wl_on, ewl_on, wl_inject_on, uwl_on, lane_on, sh_dev_on, idw_on, emit_rebase_on, emit_pb_filter_on, sec_asm_wall_ms, sec_profiled_epochs, t_loop_begin, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed, cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d, cl_truth, cl_truth_llh, log_dir_);
 }
 
 } // namespace GnssProcessor

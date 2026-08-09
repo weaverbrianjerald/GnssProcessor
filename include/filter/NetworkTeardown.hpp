@@ -31,6 +31,7 @@
 #include "filter/NetworkPriorResidual.hpp" // NetworkPriorResidual (prior-residual census run-end readout)
 #include "filter/NetworkMwWlLayer.hpp"    // NetworkMwWlLayer::Counters
 #include "filter/NetworkWlRunTypes.hpp"   // EwlLane / WlCounters / SubBlockTimer
+#include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (Card CLK-R)
 #include "products/NetworkEmitRebase.hpp"   // NetworkEmitRebase
 #include "products/NetworkPbEmitFilter.hpp" // NetworkPbEmitFilter
 #include "filter/NetworkIonoDeweightGate.hpp"
@@ -77,6 +78,7 @@ int networkTeardown(
     const std::map<char, WlCounters>& wl_cons_run,
     const NetworkEmitRebase& emit_rebase_engine,
     const NetworkPbEmitFilter& pb_filter_engine,
+    const NetworkClockEmitRebase& clk_rebase_engine,
     const NetworkIonoDeweightGate& iono_deweight,
     const std::vector<SubBlockTimer>& sec_sub,
     const char* const* kSubNames,

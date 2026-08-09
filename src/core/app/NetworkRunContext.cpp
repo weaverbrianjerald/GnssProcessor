@@ -114,6 +114,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.perconst_on = config_.networkPerConstWithhold();
     k.perconst_min_rows = config_.networkPerConstWithholdMinRows();
     k.emit_epoch_status = config_.networkEmitEpochStatusRecord();
+    // Card CLK-R (docs/SPEC_clock_emit_rebase.md): clock emission re-base knobs.
+    // The engine itself lives in NetworkCarryState (its per-sat baselines and
+    // frame accumulators must survive the epoch loop) and is configured by the
+    // driver next to the PB-filter setup.
+    k.clk_frame_hold = config_.networkEmitClockFrameHold();
+    k.clk_jump_test  = config_.networkClockDiscJumpTest();
     k.clk_model_on = config_.networkClockModel();
     k.clk_model_q1 = config_.networkClockModelQ1();
     k.clk_model_q2 = config_.networkClockModelQ2();

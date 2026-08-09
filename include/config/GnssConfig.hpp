@@ -3143,6 +3143,29 @@ namespace GnssProcessor {
         /// model-scaled k·√(Ppred+R) threshold + seed demoted to a numerical guard,
         /// so ONE jump_k (=4) transfers across cadences (30 s ↔ 300 s).  OFF ⇒ v1.
         bool networkEmitPbFilterGateV2() const { return network_emit_pb_filter_gate_v2_; }
+        /// Card CLK-R stage 1: emit the satellite clocks in a per-constellation
+        /// HELD frame — the per-epoch common-mode innovation (median vs the
+        /// previous emitted values) is accumulated into a frame offset that never
+        /// re-enters the wire.  Outputs-only (solve byte-identical); the removed
+        /// direction is the clock-ensemble gauge a consumer's per-epoch receiver
+        /// clock absorbs, and between-satellite differences are preserved exactly.
+        bool networkEmitClockFrameHold() const { return network_emit_clock_frame_hold_; }
+        /// Card CLK-R stage 1: |frame accumulator| bound (m) beyond which the
+        /// constellation re-anchors to the solve frame WITH a datum mark
+        /// (markDatumChange) — the marked re-coupling edge (invariant #7).
+        double networkClockFrameLeashM() const { return network_clock_frame_leash_m_; }
+        /// Card CLK-R stage 2: mark per-satellite common-removed clock steps
+        /// beyond networkClockDiscJumpM() via the markSatDiscontinuity retro-bump
+        /// (R record + per-sat counters — the proven consumer reset chain).
+        /// Independent of the frame hold: alone it marks the RAW wire with the
+        /// census's own statistic.  The emitter's clock counter keeps NO internal
+        /// magnitude test (RTA-11) — this test lives at the emission-prep tier.
+        bool networkClockDiscJumpTest() const { return network_clock_disc_jump_test_; }
+        /// Card CLK-R stage 2: flat per-sat step threshold (m).  Empirical
+        /// default 1.5 ≈ 16 σ of the measured per-epoch walk step (SPEC
+        /// clock_emit_rebase §1): ~7 marks/h on the reference internal lineage;
+        /// the census outlier floor (0.5 m) would mark ~10× as often.
+        double networkClockDiscJumpM() const { return network_clock_disc_jump_m_; }
 
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
@@ -5591,6 +5614,10 @@ namespace GnssProcessor {
         double network_emit_pb_filter_window_epochs_{60.0};///< PB filter: exponential-forgetting half-life (emitted epochs) of the σ̂_step estimator. INERT unless network_emit_pb_filter_.
         bool   network_emit_pb_filter_emit_sigma_{false};  ///< PB filter: stamp the filter posterior σ (√P) onto the emitted phase-bias σ (sigma_m) so a consumer weights by the shrunk uncertainty; false leaves the solve's per-epoch σ untouched. The M4 combined-σ token (sigc_m) is a solve-covariance quantity and is NOT refined in v1. INERT unless network_emit_pb_filter_.
         bool   network_emit_pb_filter_gate_v2_{false};     ///< PB filter v2: data/model-driven reset gate replacing the v1 hand-tuned (per-cadence) k/seed. Three coupled changes: (a) CENSORING-FREE σ̂_step feed (kInnovation rows feed too — kills the death-spiral where withheld gate-scale steps biased σ̂ low and tightened the gate); (b) MODEL-SCALED gate |innov| > jump_k·√(Ppred+R) so dt enters via the prior's q·gap term and ONE jump_k transfers 30 s↔300 s; (c) meas_sigma_m demoted to a numerical seed (floor becomes ~1 mm absolute, jump_k back to a universal 4). INERT unless network_emit_pb_filter_. OFF ⇒ v1 bit-for-bit.
+        bool   network_emit_clock_frame_hold_{false};      ///< Card CLK-R stage 1 (docs/SPEC_clock_emit_rebase.md): emit the satellite clocks in a per-constellation HELD frame — the per-epoch common-mode innovation (median vs the previous emitted values, ≥4 fresh unforced keys) accumulates into a frame offset A_c that never re-enters the wire. The removed direction is the per-epoch clock-ensemble gauge (a consumer's per-epoch receiver clock absorbs it; between-sat differences preserved exactly), measured at 613/1440 census step epochs (max 17.7 m) on the internal 12 h lineage — offline replay: 613 → 0. Outputs-only (solve byte-identical even when ON; fingerprint-SAFE); baked into the product (replay-safe). OFF = the leaf is never called (byte-identical).
+        double network_clock_frame_leash_m_{50.0};         ///< Card CLK-R stage 1: |A_c| re-anchor bound (m). Crossing it re-anchors the constellation to the solve frame WITH markDatumChange (the invariant-#7 marked re-coupling edge; never silent). Measured 12 h wander on the reference lineage: 23 m. INERT unless network_emit_clock_frame_hold_.
+        bool   network_clock_disc_jump_test_{false};       ///< Card CLK-R stage 2: mark per-satellite common-removed clock steps > network_clock_disc_jump_m_ via the markSatDiscontinuity retro-bump — R record + per-sat phase/code/clock counters, the consumer-reset chain Q4 proved end-to-end. Independent of the frame hold (alone it marks the RAW wire with the census's own statistic). RTA-11 stands: the emitter's clock counter keeps NO internal magnitude test — this test lives at the emission-prep tier and replay reproduces it from the serialized R/E records. OFF = byte-identical.
+        double network_clock_disc_jump_m_{1.5};            ///< Card CLK-R stage 2: flat per-sat step threshold (m). Empirical (SPEC clock_emit_rebase §1): 1.5 ≈ 16σ of the measured per-epoch walk step (robust σ 0.092 m) ⇒ ~7 marks/h on the reference internal lineage; the census outlier floor (0.5) would mark 73/h — a consumer reset storm. INERT unless network_clock_disc_jump_test_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.

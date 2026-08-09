@@ -148,6 +148,8 @@ namespace GnssProcessor {
         bool perconst_on{};
         int perconst_min_rows{};
         bool emit_epoch_status{};
+        bool clk_frame_hold{};  ///< Card CLK-R stage 1 (network.emit_clock_frame_hold): emit satellite clocks in the per-constellation HELD frame.  Engine = run-TU local (banner rule), like NetworkPbEmitFilter.
+        bool clk_jump_test{};   ///< Card CLK-R stage 2 (network.clock_disc_jump_test): mark per-sat common-removed clock steps via the R-record retro-bump.
         bool clk_model_on{};
         double clk_model_q1{};
         double clk_model_q2{};

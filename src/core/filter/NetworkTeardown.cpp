@@ -77,6 +77,7 @@ int networkTeardown(
     const std::map<char, WlCounters>& wl_cons_run,
     const NetworkEmitRebase& emit_rebase_engine,
     const NetworkPbEmitFilter& pb_filter_engine,
+    const NetworkClockEmitRebase& clk_rebase_engine,
     const NetworkIonoDeweightGate& iono_deweight,
     const std::vector<SubBlockTimer>& sec_sub,
     const char* const* kSubNames,
@@ -2493,6 +2494,24 @@ int networkTeardown(
                       pf.fed_rows, sig.empty() ? std::string("(none)") : sig,
                       config_.networkEmitPbFilterJumpK());
         }
+    }
+    if (ctx.knobs.clk_frame_hold || ctx.knobs.clk_jump_test) {
+        // Card CLK-R run-end telemetry (invariant #4 — the ON-path counters).
+        // Σ|μ| is the common-mode churn the wire no longer carries (stage 1);
+        // marks are the per-sat re-realizations the wire now DECLARES (stage 2);
+        // re-anchors count the leash's marked re-coupling edges (should be 0 on
+        // a ≤24 h run — the measured 12 h frame wander is ~23 m vs a 50 m leash).
+        const auto& cr = clk_rebase_engine.counters();
+        log->info("Network (Card CLK-R / clock emission re-base): {} emit epoch(s), {} row(s); "
+                  "frame hold {} — Σ|μ| drained {:.2f} m, max |A_c| {:.2f} m, {} leash "
+                  "re-anchor(s); step marks {} — {} mark(s) > {:.2f} m; {} init(s), {} gap "
+                  "re-init(s).  OUTPUTS-only: solve byte-identical; between-sat differences "
+                  "preserved exactly.",
+                  cr.epochs, cr.rows,
+                  ctx.knobs.clk_frame_hold ? "ON" : "off",
+                  cr.sum_abs_mu, cr.max_abs_acc, cr.reanchors,
+                  ctx.knobs.clk_jump_test ? "ON" : "off",
+                  cr.marks, config_.networkClockDiscJumpM(), cr.inits, cr.gaps);
     }
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "

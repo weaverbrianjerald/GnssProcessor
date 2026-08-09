@@ -60,6 +60,7 @@ void networkEmitStore(
                      bool pb_filter_emit_sigma,
                      NetworkEmitRebase& emit_rebase_engine,
                      NetworkPbEmitFilter& pb_filter_engine,
+                     NetworkClockEmitRebase& clk_rebase_engine,
                      const std::vector<bool>& present,
                      const std::vector<int>& est_index_of,
                      const std::vector<std::vector<PppObservation>>& modeled,
@@ -289,6 +290,93 @@ void networkEmitStore(
                 }
         }
     }
+    // Card CLK-R (docs/SPEC_clock_emit_rebase.md): clock emission re-base — the
+    // per-constellation common-mode FRAME HOLD (stage 1) + the census-aligned
+    // per-sat STEP MARKS (stage 2).  Baked into sol BEFORE emitToStore + the
+    // on-disk write, so both the in-process consumer and a NetworkProductIO
+    // replay carry the held-frame values, and the marks reproduce from the
+    // serialized E/R records with no re-run.  Outputs-only: the solve is
+    // byte-identical, and between-sat differences are preserved exactly (one
+    // shared subtrahend per constellation), so user SD/DD quantities are
+    // untouched by construction.  Both knobs OFF ⇒ this block never runs.
+    bool clk_reanchor_marked = false;
+    const std::set<char>*        ser_consts_use = &serialized_consts;
+    const std::set<std::string>* retro_use      = &retro_emit_sats;
+    std::set<char>        clk_ser_consts;    // alive until the writer call below
+    std::set<std::string> clk_retro_merged;  //   "
+    if ((ctx.knobs.clk_frame_hold || ctx.knobs.clk_jump_test) && !sol.sats.empty()) {
+        const double clk_epoch_s = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
+        // Forced keys: a per-sat retro bump or a datum-changed constellation this
+        // epoch — marked upstream already, so they must neither drag the μ vote
+        // nor double-mark.
+        auto clkForced = [&](const std::string& sat) {
+            if (retro_emit_sats.count(sat)) return true;
+            if (sat.empty()) return false;
+            return global_bump || serialized_consts.count(sat[0]) != 0;
+        };
+        std::vector<NetworkClockEmitRebase::Entry> ce;
+        ce.reserve(sol.sats.size());
+        for (const auto& s : sol.sats) {
+            if (!s.has_clock || s.sat.empty()) continue;
+            NetworkClockEmitRebase::Entry e;
+            e.sat    = s.sat;
+            e.c0_m   = s.clock_c0_m;
+            e.forced = clkForced(s.sat);
+            ce.push_back(std::move(e));
+        }
+        if (!ce.empty()) {
+            // F1 seam rule: a warm-resumed lineage's first ARMED epoch is a datum
+            // event — the engine cold-starts in the solve frame while a consumer
+            // may still hold the previous run's held-frame products.  Mark it.
+            const bool resume_seam = ctx.knobs.clk_frame_hold
+                                     && clk_rebase_engine.counters().epochs == 0
+                                     && n_emitted > 0;
+            std::set<char> reanchored;
+            clk_rebase_engine.rebaseEpoch(ce, clk_epoch_s, reanchored);
+            std::map<std::string, double> clk_held;
+            for (const auto& e : ce) {
+                clk_held[e.sat] = e.c0_m;
+                if (e.marked) {
+                    traces.emitEvent(se.time, "CLK_STEP", "mark", e.sat, "",
+                                     e.step_m, config_.networkClockDiscJumpM(),
+                                     "retro_bump",
+                                     "per-sat emitted-clock re-realization (common-removed step)");
+                }
+            }
+            for (auto& s : sol.sats) {
+                const auto it = clk_held.find(s.sat);
+                if (it != clk_held.end()) s.clock_c0_m = it->second;
+            }
+            if (resume_seam)
+                for (const auto& e : ce)
+                    if (!e.sat.empty()) reanchored.insert(e.sat.front());
+            if (!reanchored.empty()) {
+                // Invariant #7: the re-anchor (or resume seam) is a re-coupling
+                // edge — mark it so no consumer integrates across it silently.
+                emitter.markDatumChange(reanchored);
+                clk_ser_consts = serialized_consts;
+                clk_ser_consts.insert(reanchored.begin(), reanchored.end());
+                ser_consts_use     = &clk_ser_consts;
+                clk_reanchor_marked = true;
+                for (char cst : reanchored)
+                    traces.emitEvent(se.time, "CLK_FRAME",
+                                     resume_seam ? "resume_seam" : "reanchor",
+                                     std::string(1, cst), "",
+                                     clk_rebase_engine.counters().max_abs_acc,
+                                     config_.networkClockFrameLeashM(), "datum_mark",
+                                     "held frame re-anchored to the solve frame");
+            }
+            std::set<std::string> clk_marks;
+            for (const auto& e : ce)
+                if (e.marked) clk_marks.insert(e.sat);
+            if (!clk_marks.empty()) {
+                emitter.markSatDiscontinuity(clk_marks);   // R record + per-sat counters (B1 retro path)
+                clk_retro_merged = retro_emit_sats;
+                clk_retro_merged.insert(clk_marks.begin(), clk_marks.end());
+                retro_use = &clk_retro_merged;
+            }
+        }
+    }
     emitter.emitToStore(sol, network_store);
     // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
     // realized pivots) every N seconds of PRODUCT time, and additionally on any
@@ -313,7 +401,7 @@ void networkEmitStore(
         const std::string cur_pdr = (phase_datum_eq34 && !eq34_datum_rx.empty())
                                       ? eq34_datum_rx.begin()->second : std::string{};
         const bool eq34_root_changed = phase_datum_eq34 && cur_pdr != eq34_emitted_pdr;
-        if (due || datum_changed || eq34_root_changed) {
+        if (due || datum_changed || eq34_root_changed || clk_reanchor_marked) {
             for (const auto& [cst, sat] : last_pivot)
                 pending_contract.decl.clock_pivot_sat[cst] = sat;   // refresh realized pivots
             if (phase_datum_eq34) {
@@ -360,9 +448,13 @@ void networkEmitStore(
             }
             product_writer->writeEpochStatus(hst);
         }
-        const bool any_bump = global_bump || !serialized_consts.empty();
-        product_writer->write(sol, any_bump, global_bump ? std::set<char>{} : serialized_consts,
-                              retro_emit_sats,
+        // Card CLK-R: *_use point at the caller's sets unless this epoch added a
+        // frame re-anchor datum mark / step marks (then they point at the merged
+        // locals above) — the on-disk E/R records must describe every bump the
+        // emitToStore call above consumed, or replay diverges from live.
+        const bool any_bump = global_bump || !ser_consts_use->empty();
+        product_writer->write(sol, any_bump, global_bump ? std::set<char>{} : *ser_consts_use,
+                              *retro_use,
                               // RTA-4: post-emit counter source — emitToStore ran
                               // above, so the emitter's counters ARE this epoch's
                               // store-record values.
