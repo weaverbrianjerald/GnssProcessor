@@ -432,7 +432,19 @@ churn ceiling at 2.3 %).
 
 ### F16. Golden-config promotion shortlist (user request: "ALWAYS use the best options")
 
-Staged as a RECOMMENDED diff for sign-off, per evidence class — no silent flips:
+**✅ APPLIED 2026-08-08 (user sign-off: "apply all the confirmed enhancements"):**
+the three PROMOTE rows are now armed in the canonical golden nodes —
+`_golden63_gps_1h_laneoff.json` (+ the laneon twin, keeping the lane A/B
+one-knob-different) and `_golden305_gps.json`.  Every descendant, including the
+whole `_ext63` family, inherits (verified via chain flatten + posture check).
+⚠ Re-run products gain the S `hsig=` token + 1 H line/epoch vs stored
+pre-promotion arms: whole-file md5 pairing across this boundary breaks by
+design; record streams (E/C/B/P) stay comparable.  The historical
+`_golden0729_*` arms are stored denominators and were NOT touched.  The
+caveat/hold rows below were NOT applied (leveled-only mark knob, S2H pending a
+golden A/B, s2z rejected, 15→25 root cutoff still awaiting explicit sign-off).
+
+Original shortlist, per evidence class — no silent flips:
 
 | knob | evidence | class | recommendation |
 |---|---|---|---|

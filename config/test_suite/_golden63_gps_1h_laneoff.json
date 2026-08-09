@@ -45,6 +45,16 @@
   "SCOPE: 1 h grades wiring + cost + the lane retention delta.  It still cannot settle",
   "total_IF on this lineage (the LEVEL channel needs ~2 h)."
  ],
+ "_promotion_note": [
+  "PROMOTED 2026-08-08 (user sign-off; SESSION_overnight_2026-08-07.md F16):",
+  "serialize_sbasis_contract + emit_epoch_status_record + h_sigma0_prefit_census.",
+  "All three solve-byte-identical/record-stream-0-diff PROVEN and field-proven on",
+  "the EXT + INTERNAL 12h arms.  Applied to the laneon twin too so the lane A/B",
+  "stays one-knob-different.  ⚠ Every descendant (incl. the whole _ext63 family)",
+  "inherits: re-run products gain the S hsig token + 1 H line/epoch vs stored",
+  "pre-promotion arms — whole-file md5 pairing across this boundary breaks by",
+  "design; record streams stay comparable (E/C/B/P unchanged)."
+ ],
  "extends": [
   "C:/GnssProcessor/config/test_suite/_agu63.json"
  ],
@@ -59,6 +69,9 @@
   "trace_prefit_census": true,
   "trace_topology": true,
   "rhs_attrib_on_trip": true,
+  "serialize_sbasis_contract": true,
+  "emit_epoch_status_record": true,
+  "h_sigma0_prefit_census": true,
   "emit_clock_disc": true,
   "sticky_pivot": true,
   "cb_kaula_prior": true,
