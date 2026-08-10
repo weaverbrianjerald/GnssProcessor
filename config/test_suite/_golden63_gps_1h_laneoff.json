@@ -53,7 +53,20 @@
   "stays one-knob-different.  ⚠ Every descendant (incl. the whole _ext63 family)",
   "inherits: re-run products gain the S hsig token + 1 H line/epoch vs stored",
   "pre-promotion arms — whole-file md5 pairing across this boundary breaks by",
-  "design; record streams stay comparable (E/C/B/P unchanged)."
+  "design; record streams stay comparable (E/C/B/P unchanged).",
+  "",
+  "PROMOTED 2026-08-09 (user sign-off; docs/SPEC_clock_emit_rebase.md):",
+  "emit_clock_frame_hold (Card CLK-R stage 1) — outputs-only, fingerprint-SAFE,",
+  "solve byte-identical; internal clock census 613->1 (the 1 = the marked pivot",
+  "handover), between-sat differences preserved to rounding, consumer",
+  "neutral-to-better (12h live bisection runs/clkr_12h_hold; that run IS the",
+  "post-promotion 12h denominator for the internal posture).  NOT promoted:",
+  "clock_disc_jump_test (mechanism-proven but quiet-day HARMFUL live — 1->106",
+  "consumer epochs >20 m; event-day arms only).  ⚠ Re-run products' C VALUES",
+  "ride the held frame vs stored pre-promotion arms: C-channel value pairing",
+  "breaks by design (between-sat differences and E/B/P/H/S streams stay",
+  "comparable); pairing controls must pin emit_clock_frame_hold: false",
+  "explicitly (_golden63_{20ep,12h}_clkr_ctl.json do)."
  ],
  "extends": [
   "C:/GnssProcessor/config/test_suite/_agu63.json"
@@ -72,6 +85,7 @@
   "serialize_sbasis_contract": true,
   "emit_epoch_status_record": true,
   "h_sigma0_prefit_census": true,
+  "emit_clock_frame_hold": true,
   "emit_clock_disc": true,
   "sticky_pivot": true,
   "cb_kaula_prior": true,
