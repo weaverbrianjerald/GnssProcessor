@@ -232,3 +232,20 @@ byte-identity gates PASS; the live-consumer grade required a decomposition (belo
 - Wire-honesty net effect on the internal lineage: an ordinary day's product
   now carries ~0 unmarked clock discontinuities (was 613), 1 marked datum
   event, and (optionally) a declared per-sat re-realization class.
+
+## §7 Theory placement — the S-basis realization contract
+
+The Odijk et al. (2016) comparison prompted by this card is formalized in
+**`docs/SPEC_sbasis_realization_contract.md`**: the producer's realized S-basis
+in the paper's Table-2 notation (code-verified), the estimable interpretation
+of the emitted C/B/P/iono records (Table-3 analogue, incl. the measured
+DEFECT-2 Table-8 lumping), and the **realization-transfer contract** — which
+per-epoch re-occurring gauge is HELD by which emission-side S-transformation
+(NetworkEmitRebase / Card 2 / CLK-R stage 1) and MARKED on genuine change.
+In that frame this card is the clock-gauge row of the contract: the wire churn
+was solutions shipped from a per-epoch-changing S-system without the
+connecting S-transformation (the paper's Zhong-2015 artifact class), and the
+frame hold is that transformation applied at emission.  The two residues the
+contract cannot fix — the per-sat clock walk (precision of the estimable
+content; Q3) and the iono⊕rx-DCB level (authority; item 0b) — are named there
+with the theory's own localization.
