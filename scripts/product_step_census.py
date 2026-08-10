@@ -68,15 +68,29 @@ def census(path, pb_step, clk_common, clk_dev):
                 clk_prev[sat] = v
 
     clk_common_ep, clk_outl_ep = {}, {}
+    # Card Q3 (docs/SPEC_clock_temporal_anchor.md) grades the DEV CHANNEL — the
+    # per-satellite common-removed step, which is the datum-invariant estimable
+    # content the anchor is supposed to quieten.  Keep the whole population (and
+    # its per-satellite split) rather than only the outlier epochs: the card's
+    # target is a distribution shift (median 6.23 cm -> toward 2), not a count,
+    # and the PER-SATELLITE spread is the evidence that the walk is estimation
+    # noise rather than clock physics (measured 7.93..10.87 cm across 32
+    # satellites of three clock technologies -- 1.37x, which no physical fleet is).
+    dev_all = []
+    dev_by_sat = collections.defaultdict(list)
     for t, devs in clk_delta.items():
         ds = sorted(d for _, d in devs)
         med = ds[len(ds) // 2] if ds else 0.0
         if abs(med) > clk_common:
             clk_common_ep[t] = med
+        for s, d in devs:
+            dev_all.append(d - med)
+            dev_by_sat[s].append(d - med)
         outl = [(s, d - med) for s, d in devs if abs(d - med) > clk_dev]
         if outl:
             clk_outl_ep[t] = outl
-    return epochs, midarc, reinit, clk_common_ep, clk_outl_ep, marks
+    return (epochs, midarc, reinit, clk_common_ep, clk_outl_ep, marks,
+            dev_all, dev_by_sat)
 
 
 def main():
@@ -88,8 +102,8 @@ def main():
     a = ap.parse_args()
     for arg in a.products:
         path = os.path.join(arg, "products.txt") if os.path.isdir(arg) else arg
-        epochs, midarc, reinit, ckc, cko, marks = census(
-            path, a.pb_step, a.clk_common, a.clk_dev)
+        (epochs, midarc, reinit, ckc, cko, marks,
+         dev_all, dev_by_sat) = census(path, a.pb_step, a.clk_common, a.clk_dev)
         n_ep = max(len(epochs), 1)
         steps = [x for v in midarc.values() for x in v]
         mags = sorted((abs(d) for _, d in steps), reverse=True)
@@ -109,6 +123,22 @@ def main():
                     f"{s}/{sg} {d:+.2f}" for (s, sg), d in worst))
         print(f"  clock common-mode steps > {a.clk_common} m: {len(ckc)} epochs; "
               f"per-sat outliers > {a.clk_dev} m: {len(cko)} epochs")
+        # DEV CHANNEL (Card Q3's graded quantity).  Reported in cm because the
+        # target scale is centimetres: 6.23 cm median / robust sigma 9.23 cm on the
+        # reference 12 h internal lineage vs ~2 cm of physical change per 30 s.
+        if dev_all:
+            a_ = sorted(abs(x) for x in dev_all)
+            q = lambda f: a_[min(len(a_) - 1, int(f * (len(a_) - 1)))]
+            sig = 1.4826 * q(0.5)          # robust sigma of a zero-median population
+            per = sorted(1.4826 * sorted(abs(v) for v in vs)[len(vs) // 2]
+                         for vs in dev_by_sat.values() if vs)
+            print(f"  clock DEV channel ({len(a_)} rows, {len(dev_by_sat)} sats): "
+                  f"|step| med {100 * q(0.5):.2f} cm  p90 {100 * q(0.9):.2f}  "
+                  f"p99 {100 * q(0.99):.2f}  max {100 * a_[-1]:.1f}")
+            print(f"    robust sigma_w {100 * sig:.2f} cm/step; per-sat sigma_w "
+                  f"min {100 * per[0]:.2f} med {100 * per[len(per) // 2]:.2f} "
+                  f"max {100 * per[-1]:.2f} cm "
+                  f"(spread {per[-1] / per[0]:.2f}x -- a physical fleet spans orders)")
         print(f"  wire marks: " + (", ".join(f"{k}={v}" for k, v in marks.items())
                                    or "NONE (mark-free wire)"))
 

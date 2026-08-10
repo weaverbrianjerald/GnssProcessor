@@ -16,6 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkChainDatum.hpp"
+#include "filter/NetworkClockAnchor.hpp"   // Card Q3 guarded temporal clock anchor
 #include "filter/NetworkDatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "filter/NetworkPhaseDatum.hpp"
 #include "filter/NetworkPivotHandover.hpp"
@@ -986,6 +987,21 @@ int n_arc_refloat_epoch = 0;   // T2d: isolated-arc RAIM refloats executed this 
 // when a URA feature that consumes it is on; inert (byte-identical) otherwise.
 std::set<std::string> retro_flag_sats;
 const bool retro_feed = ura_retro || ura_refloat_inflate > 1.0;
+
+// --- Card Q3: the guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md) ---
+// MUST run here — after the primary solve, BEFORE the within-epoch adaptation
+// below.  A stiff clock prior fighting a genuine step dumps the tension into the
+// residuals and raises σ̂0; the adaptation would then attribute a PRIOR fault to a
+// satellite's or a station's DATA and drop it.  A prior fault is resolved first,
+// by refloating the prior (never by de-weighting a measurement) and re-solving the
+// epoch in place — so the assessment below sees the corrected solve and the epoch
+// EMITS (adapt-and-emit; a withhold here would be an adaptation failure).
+// clock_refloat_sats is empty at this point on every path except a warm carry of
+// the previous epoch's flags, so the guard's `ext` coupling reads exactly the
+// tiers that have already spoken.  No-op (not even a state allocation) when off.
+networkClockAnchorGuard(ctx, config_, log, traces, se.time, est, plan, x_s, ws,
+                        registered_clock_sats, clock_refloat_sats, datum_changed,
+                        changed_consts);
 
 // --- Within-epoch adaptation: drop the dominant culprit(s) and re-solve --------
 // When σ̂0 (the robust a-posteriori variance factor) shows the joint solve is

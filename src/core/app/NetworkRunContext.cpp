@@ -16,6 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "filter/NetworkCarryVce.hpp"
+#include "filter/NetworkClockAnchor.hpp"      // Card Q3 guarded temporal clock anchor
 #include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkInvariantCarryDriver.hpp"   // RTB-7(c) branch-faithful carry (de)serialize
 #include "filter/NetworkNormalEquations.hpp"
@@ -120,7 +121,22 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // driver next to the PB-filter setup.
     k.clk_frame_hold = config_.networkEmitClockFrameHold();
     k.clk_jump_test  = config_.networkClockDiscJumpTest();
+    // Card Q3 (docs/SPEC_clock_temporal_anchor.md): the guarded temporal clock
+    // anchor.  `cta_on` is resolved against its clock_model interlock HERE, so
+    // every downstream site reads one predicate: under the two-state oscillator
+    // the clock is never stashed to the D2 carry, so the anchor has nothing to
+    // fold and must not claim otherwise (the loader errors on the combination).
     k.clk_model_on = config_.networkClockModel();
+    k.cta_on             = config_.networkClockTemporalAnchor() && !k.clk_model_on;
+    k.cta_q              = config_.networkClockAnchorQ();
+    k.cta_var_floor      = config_.networkClockAnchorVarFloorM2();
+    k.cta_max_gap_s      = config_.networkClockAnchorMaxGapS();
+    k.cta_k              = config_.networkClockAnchorK();
+    k.cta_abs_m          = config_.networkClockAnchorAbsM();
+    k.cta_sigma_floor_m  = config_.networkClockAnchorSigmaFloorM();
+    k.cta_recouple_ep    = config_.networkClockAnchorRecoupleEpochs();
+    k.cta_mark           = config_.networkClockAnchorMark();
+    k.cta_resolve        = config_.networkClockAnchorResolve();
     k.clk_model_q1 = config_.networkClockModelQ1();
     k.clk_model_q2 = config_.networkClockModelQ2();
     k.clk_model_k = config_.networkClockModelKSigma();
@@ -259,9 +275,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                 else if (f == "cb")   k.prires_cb   = true;
                 else if (f == "zwd")  k.prires_zwd  = true;
                 else if (f == "rxcb") k.prires_rxcb = true;
+                else if (f == "clk")  k.prires_clk  = true;   // Card Q3 INC-0
             }
             k.prires_on = k.prires_pl || k.prires_pb || k.prires_cb
-                       || k.prires_zwd || k.prires_rxcb;
+                       || k.prires_zwd || k.prires_rxcb || k.prires_clk;
         }
         // The corroboration join is re-AND-ed with the master here rather than
         // trusted from the loader's hard error: belt-and-braces, so a hand-built
@@ -542,6 +559,19 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             if (ctx.knobs.rx_cb_harvest_demean)
                 add(fmt::format("rxcbharv:{}", ctx.knobs.rx_cb_harvest_screen_z));
         }
+        // Card Q3 (docs/SPEC_clock_temporal_anchor.md): the anchor changes the TEMPORAL
+        // MODEL of the carried satellite clock — a snapshot written by an anchored run
+        // carries variances produced by a different process, and its per-satellite
+        // ANCHORED/LOOSE state deliberately does not travel (a warm resume is an
+        // invariant-#1 event, so every satellite must re-earn the anchor).  Mixing the
+        // two inside one lineage would fold a stiffness whose evidence never existed.
+        // Conditional append, so every pre-card snapshot fingerprint is unchanged.
+        if (ctx.knobs.cta_on)
+            add(fmt::format("cta:{}:{}:{}:{}:{}:{}:{}:{}", ctx.knobs.cta_q,
+                            ctx.knobs.cta_var_floor, ctx.knobs.cta_max_gap_s,
+                            ctx.knobs.cta_k, ctx.knobs.cta_abs_m,
+                            ctx.knobs.cta_sigma_floor_m, ctx.knobs.cta_recouple_ep,
+                            ctx.knobs.cta_resolve));
         // Card LV-1: the seed reframe changes the per-station LINEARIZATION POINT of
         // the per-LOS iono AND (through initializeCodeBiases, which subtracts the
         // seeded iono) of the receiver DCB.  The absolute solve is invariant to that
@@ -1567,6 +1597,14 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     auto& cap_dense_cov = ws.cap_dense_cov;
     auto& clk_prior_info = ws.clk_prior_info;
     auto& anchor_info_trace = traces.anchor_info_trace;
+    // Card Q3 (docs/SPEC_clock_temporal_anchor.md): the guarded temporal clock
+    // anchor decides the CLOCK rows' fold variance in both branches below.  The
+    // per-satellite elapsed time it inflates over is continuous GPS seconds, NOT
+    // the driver's inter-epoch dt (see the seam header — every skip path advances
+    // dt while the carry survives).  Untouched, un-allocated when OFF.
+    const bool   cta_on    = ctx.knobs.cta_on;
+    const double cta_now_s = cta_on ? TimeUtils::continuousGpsSeconds(t) : 0.0;
+    if (cta_on) clockAnchorBeginEpoch(ctx);
     // RTA-2 scope predicate — re-declared verbatim over the explicit
     // (datum_changed, changed_consts) parameters; identical read points.
     const auto handover_affects = [&](const std::string& sat) {
@@ -1615,6 +1653,15 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // is loose enough for the data to walk a frozen clock back toward truth.
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
                                           : cp.var + q * std::max(0.0, dt);
+            // Card Q3 (docs/SPEC_clock_temporal_anchor.md): the satellite clock's
+            // temporal constraint.  An inflate_q key is deliberately EXCLUDED — that
+            // is a monitor-driven soft refloat, not the hand carry model, and
+            // overriding it with a stiff anchor would re-freeze exactly what the
+            // monitor just loosened.  OFF ⇒ the returned var_eff is the expression
+            // above, character for character.
+            if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q)
+                var_eff = clockAnchorFoldVariance(ctx, cp.sat, cp.var, dt,
+                                                  cta_now_s, cp.value).var_eff;
             // B4: floor the D2 phase-bias / code-bias carry variance (caps Λ so a stiff
             // zero-q carry cannot lock a biased product in), mirroring the ambiguity-carry
             // floor.  Only on the non-refloat path (a clk-monitor refloat is deliberately
@@ -1674,6 +1721,16 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                                                     : q_pb;
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
                                           : cp.var + q * std::max(0.0, dt);
+            // Card Q3: the SAME clock-anchor decision as the diagonal branch above.
+            // It must be the same, and it must be on the DIAGONAL of cov_eff: the
+            // marginal prior on any one state has to be identical on both branches
+            // (the property that makes the guard statistic path-independent), and
+            // the dense fold's off-diagonals are retained deliberately — the anchor
+            // does not re-create the independence assumption C1 removed on the very
+            // state it makes stiffest (SPEC §2.1, assessment deviation #1).
+            if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q)
+                var_eff = clockAnchorFoldVariance(ctx, cp.sat, cp.var, dt,
+                                                  cta_now_s, cp.value).var_eff;
             if (!cp.inflate_q) {
                 const double floor = (cp.kind == SharedParamKind::PhaseBias) ? pb_var_floor
                                    : (cp.kind == SharedParamKind::CodeBias)  ? cb_var_floor

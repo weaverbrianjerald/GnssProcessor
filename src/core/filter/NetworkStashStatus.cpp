@@ -148,7 +148,15 @@ void networkStashStatus(
     std::map<std::string, PriresSharedPrior> prires_shared_prior;
     const bool prires_pb = ctx.knobs.prires_pb && prires_est.enabled();
     const bool prires_cb = ctx.knobs.prires_cb && prires_est.enabled();
-    if (prires_pb || prires_cb) {
+    // Card Q3 INC-0 (docs/SPEC_clock_temporal_anchor.md §3): the satellite-CLOCK
+    // family.  It was excluded by one line ("Clock / VtecSh out of scope (own
+    // models)"), which is correct for a carry nobody is calibrating and exactly
+    // backwards for the card whose whole derivation is the measured dispersion of
+    // this prior.  The census already standardizes by `fold_var − post_var`, which
+    // IS Var(x̂ − μ) exactly and IS the anchor's guard statistic, so the clk family
+    // needs no new statistic — only the population.  Trace-only.
+    const bool prires_clk = ctx.knobs.prires_clk && prires_est.enabled();
+    if (prires_pb || prires_cb || prires_clk) {
         const double clk_mon_reinit_var = ctx.knobs.clk_mon_reinit_var;
         const bool   scoped_handover_k  = ctx.knobs.scoped_handover;
         // The injector's OUTER gate: with a changed datum and scoped handover OFF
@@ -158,14 +166,16 @@ void networkStashStatus(
         const bool outer_gate = (!datum_changed || scoped_handover_k)
                              && !prev_carry.empty();
         for (const CarryPrior& cp : prev_carry) {
-            const bool is_pb = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
-            const bool is_cb = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
-            if (!is_pb && !is_cb) continue;      // Clock / VtecSh out of scope (own models)
+            const bool is_pb  = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
+            const bool is_cb  = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
+            const bool is_clk = (cp.kind == SharedParamKind::Clock)     && prires_clk;
+            if (!is_pb && !is_cb && !is_clk) continue;   // VtecSh out of scope (own model)
+            if (is_clk && ctx.knobs.clk_model_on) continue;  // clock is on clock_osc, never stashed
             PriresSharedPrior p;
             p.value = cp.value;
             p.var   = cp.var;
-            const double q     = is_cb ? q_cb : q_pb;
-            const double floor = is_cb ? cb_var_floor : pb_var_floor;
+            const double q     = is_cb ? q_cb : (is_clk ? ctx.knobs.q_clock : q_pb);
+            const double floor = is_cb ? cb_var_floor : (is_clk ? 0.0 : pb_var_floor);
             // var_eff EXACTLY as the injector forms it: the reinit variance on a
             // clock-monitor-flagged key (a soft large-q reinitialization, NOT the
             // nominal q recompute), else q·Δt inflation with the B4 floor.
@@ -178,10 +188,21 @@ void networkStashStatus(
             // on the apply (field gate 4: σ̂₀,f on an applied family should walk
             // toward 1).  Mirrors the injector's exclusion of inflate_q keys.
             // Unity ⇒ byte-identical when the apply path is off.
-            if (!cp.inflate_q)
+            if (!cp.inflate_q && !is_clk)
                 var_eff *= ctx.carry.vce_apply.factor(
                                is_cb ? NetworkCarryVceApply::kCb
                                      : NetworkCarryVceApply::kPb, cp.sat);
+            // Card Q3: with the anchor armed the injector did NOT use the
+            // expression above for a clock key — it used the anchor's own
+            // (per-satellite Δt, floored) variance.  Read the decision back rather
+            // than re-derive it: re-deriving is precisely how a census ends up
+            // standardizing by a variance the mechanism never used, and the
+            // `folded` bit decides the dispersion branch.
+            if (is_clk && ctx.knobs.cta_on && !cp.inflate_q) {
+                const auto ait = ctx.carry.clk_anchor.sat.find(cp.sat);
+                if (ait != ctx.carry.clk_anchor.sat.end() && ait->second.last_var_eff > 0.0)
+                    var_eff = ait->second.last_var_eff;
+            }
             p.fold_var = var_eff;
             // The per-key skip chain, in the injector's own order.
             if (!outer_gate) {
@@ -217,6 +238,19 @@ void networkStashStatus(
                 if (cp.inflate_q) {
                     p.label = PriorResidualLabel::Frame;
                     p.mech  = "inflate_q";
+                }
+                // Card Q3: a clock key the anchor guard WITHDREW this epoch folded
+                // and was then un-folded before the emitted solve, so its residual
+                // is neither the folded nor the unfolded statistic.  FRAME, with the
+                // mechanism named — the same treatment the held phase bias gets.
+                if (is_clk && ctx.knobs.cta_on) {
+                    const auto ait = ctx.carry.clk_anchor.sat.find(cp.sat);
+                    if (ait != ctx.carry.clk_anchor.sat.end() && !ait->second.folded) {
+                        p.label  = PriorResidualLabel::Frame;
+                        p.mech   = "cta_refloat";
+                        p.folded = false;
+                        p.hold   = true;   // null dispersion undefined ⇒ no σ̂₀ weight
+                    }
                 }
             }
             prires_shared_prior.emplace(sharedCarryKey(cp.kind, cp.sat, cp.signal),
@@ -271,20 +305,51 @@ void networkStashStatus(
     // epoch (a fresh registration) and is correctly absent: there is no residual
     // of prior information when there was no prior.
     if (!prires_shared_prior.empty()) {
+        // Card Q3 INC-0: the satellite-CLOCK family's ê must be COMMON-MODE
+        // REMOVED per constellation before standardizing.  The clock is the one
+        // carried family with a FREE per-epoch gauge (receiver clocks are white,
+        // q = 1000), so the raw carried−solved difference carries the epoch's whole
+        // gauge re-realization on EVERY satellite: without the removal the family
+        // would report the gauge, not the per-satellite content, and its σ̂₀ — the
+        // instrument this card derives its q from — would be meaningless.  Standing
+        // invariant #5.  Same statistic the guard uses, so the ladder measured here
+        // IS the distribution the threshold is read off.
+        std::map<char, double> clk_med;
+        if (prires_clk) {
+            std::map<char, std::vector<double>> by_const;
+            for (const CarryPrior& cp : prev_carry) {
+                if (cp.kind != SharedParamKind::Clock || cp.sat.empty()) continue;
+                const auto it = prires_shared_prior.find(
+                    sharedCarryKey(cp.kind, cp.sat, cp.signal));
+                if (it == prires_shared_prior.end()) continue;
+                by_const[cp.sat[0]].push_back(it->second.value - cp.value);
+            }
+            for (auto& [c, v] : by_const) {
+                std::nth_element(v.begin(),
+                                 v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2),
+                                 v.end());
+                clk_med[c] = v[v.size() / 2];
+            }
+        }
         for (const CarryPrior& cp : prev_carry) {
-            const bool is_pb = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
-            const bool is_cb = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
-            if (!is_pb && !is_cb) continue;
+            const bool is_pb  = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
+            const bool is_cb  = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
+            const bool is_clk = (cp.kind == SharedParamKind::Clock)     && prires_clk;
+            if (!is_pb && !is_cb && !is_clk) continue;
             const auto it = prires_shared_prior.find(
                 sharedCarryKey(cp.kind, cp.sat, cp.signal));
             if (it == prires_shared_prior.end()) continue;
             const PriresSharedPrior& p = it->second;
             NetworkPriorResidual::Input in;
-            in.family   = is_cb ? "cb" : "pb";
+            in.family   = is_cb ? "cb" : (is_clk ? "clk" : "pb");
             in.sat      = cp.sat;
             in.signal   = cp.signal;
             in.station  = -1;                    // SHARED: this prior has no station
             in.e        = p.value - cp.value;    // carried − solved
+            if (is_clk && !cp.sat.empty()) {
+                const auto mit = clk_med.find(cp.sat[0]);
+                if (mit != clk_med.end()) in.e -= mit->second;
+            }
             in.fold_var = p.fold_var;
             in.post_var = cp.var;
             in.gap_s    = std::max(0.0, dt);

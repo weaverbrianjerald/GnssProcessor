@@ -181,6 +181,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkIonoDwRelease.cpp
     src/core/filter/NetworkRaim.cpp
     src/core/filter/NetworkClockQc.cpp
+    src/core/filter/NetworkClockAnchor.cpp
     src/core/filter/NetworkFrameDiag.cpp
     src/core/filter/NetworkRowClassify.cpp
     src/core/filter/NetworkRhsAttrib.cpp
@@ -355,6 +356,7 @@ add_executable(gnss_tests
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp
     tests/test_clock_emit_rebase.cpp
+    tests/test_clock_anchor.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp

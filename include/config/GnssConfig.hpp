@@ -3167,6 +3167,67 @@ namespace GnssProcessor {
         /// the census outlier floor (0.5 m) would mark ~10× as often.
         double networkClockDiscJumpM() const { return network_clock_disc_jump_m_; }
 
+        /// @name Card Q3 — the guarded temporal clock anchor
+        /// (docs/SPEC_clock_temporal_anchor.md).  The per-satellite clock's D2
+        /// carry currently folds at @c filter.process_noise.sat_clock_q, whose
+        /// one-epoch spread √(q·Δt) sits ABOVE the realized spread, so the prior
+        /// never binds and the emitted clock is re-drawn from each epoch's data
+        /// (measured: robust σ_w 9.23 cm/30 s, uniform to 1.37× across a 32-satellite
+        /// fleet of three clock technologies, against ~2 cm of physical change).
+        /// This card gives that estimable content temporal stiffness AND the event
+        /// response without which stiffness is a standing-invariant-#1 violation.
+        /// SOLVE-AFFECTING and FINGERPRINTED — fresh convergence only.
+        /// @{
+        /// Arm the anchor.  OFF (default) ⇒ the clock carry is byte-identical to
+        /// the legacy fold and none of the per-satellite state is allocated.
+        bool   networkClockTemporalAnchor() const { return network_clock_temporal_anchor_; }
+        /// The anchor's random-walk rate (m²/s).  The emitted per-satellite walk
+        /// is √(q·Δt) once the carry binds — an EXACT steady-state identity, so
+        /// this knob IS the walk target: 1e-4 → 5.5 cm, 3e-5 → 3.0, 1e-5 → 1.7.
+        double networkClockAnchorQ() const { return network_clock_anchor_q_; }
+        /// Consistency floor on the folded carry variance (m²) — the clock
+        /// analogue of the B4 @c phase_bias_var_floor / @c code_bias_var_floor.
+        /// Caps the folded prior information at 1/floor so an independence-
+        /// assuming carry cannot accumulate unbounded information against a
+        /// time-correlated error floor (assessment deviation #1, ranked-plan
+        /// item 3).  0 = no floor.
+        double networkClockAnchorVarFloorM2() const { return network_clock_anchor_var_floor_m2_; }
+        /// Per-satellite staleness bound (s).  Beyond it the carried clock is not
+        /// folded at the anchor — the satellite DECOUPLES.  Load-bearing: the
+        /// driver's @c dt is the inter-EPOCH gap and every skip path advances it
+        /// while the carry survives, so without a per-satellite elapsed time a
+        /// stiff prior folds an arbitrarily old value as if it were 30 s old.
+        double networkClockAnchorMaxGapS() const { return network_clock_anchor_max_gap_s_; }
+        /// Trip threshold on |w|, the standardized generalized predicted residual
+        /// (posterior − prior, common-mode removed, over √(P⁻ − P⁺)).  EMPIRICAL —
+        /// read off the measured prior-residual ladder, never from the stochastic
+        /// model.
+        double networkClockAnchorK() const { return network_clock_anchor_k_; }
+        /// Absolute backstop on |ê| (m): trips even if the standardizing variance
+        /// were mis-set.  0 = off.
+        double networkClockAnchorAbsM() const { return network_clock_anchor_abs_m_; }
+        /// Floor on √S (m) so a weak-data epoch — where the data removed no
+        /// information, P⁺ → P⁻ — yields w ≈ 0 instead of a 0/0 blow-up that would
+        /// false-trip the lowest-confidence satellites.  Same reasoning as the
+        /// two-state model's B3 @c clock_model_meas_std_m floor.
+        double networkClockAnchorSigmaFloorM() const { return network_clock_anchor_sigma_floor_m_; }
+        /// Consecutive in-band epochs a decoupled satellite must serve before the
+        /// anchor re-engages — the standing-invariant-#7 re-coupling re-validation.
+        int    networkClockAnchorRecoupleEpochs() const { return network_clock_anchor_recouple_epochs_; }
+        /// Wire-mark the DECOUPLING edge (per-satellite discontinuity through the
+        /// B1 retro-bump chain: R record + phase/code/clock counters).  A satellite
+        /// whose clock just changed BOTH temporal regime and value must not be
+        /// integrated across.
+        bool   networkClockAnchorMark() const { return network_clock_anchor_mark_; }
+        /// Adapt-and-EMIT: on a trip, withdraw the offending prior and RE-SOLVE the
+        /// epoch before emission, so the trip epoch publishes the data's value
+        /// rather than the stale anchor's.  The re-solve reuses the already-reduced
+        /// normals (no re-reduction, no re-assembly).  OFF degrades to
+        /// detect + mark + decouple-next-epoch, which is honest but ships one
+        /// anchor-warped epoch per event.
+        bool   networkClockAnchorResolve() const { return network_clock_anchor_resolve_; }
+        /// @}
+
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
          *        phase-bias anchor (@c network.phase_datum_pref_elev_deg).
@@ -5618,6 +5679,16 @@ namespace GnssProcessor {
         double network_clock_frame_leash_m_{50.0};         ///< Card CLK-R stage 1: |A_c| re-anchor bound (m). Crossing it re-anchors the constellation to the solve frame WITH markDatumChange (the invariant-#7 marked re-coupling edge; never silent). Measured 12 h wander on the reference lineage: 23 m. INERT unless network_emit_clock_frame_hold_.
         bool   network_clock_disc_jump_test_{false};       ///< Card CLK-R stage 2: mark per-satellite common-removed clock steps > network_clock_disc_jump_m_ via the markSatDiscontinuity retro-bump — R record + per-sat phase/code/clock counters, the consumer-reset chain Q4 proved end-to-end. Independent of the frame hold (alone it marks the RAW wire with the census's own statistic). RTA-11 stands: the emitter's clock counter keeps NO internal magnitude test — this test lives at the emission-prep tier and replay reproduces it from the serialized R/E records. OFF = byte-identical.
         double network_clock_disc_jump_m_{1.5};            ///< Card CLK-R stage 2: flat per-sat step threshold (m). Empirical (SPEC clock_emit_rebase §1): 1.5 ≈ 16σ of the measured per-epoch walk step (robust σ 0.092 m) ⇒ ~7 marks/h on the reference internal lineage; the census outlier floor (0.5) would mark 73/h — a consumer reset storm. INERT unless network_clock_disc_jump_test_.
+        bool   network_clock_temporal_anchor_{false};      ///< Card Q3 (docs/SPEC_clock_temporal_anchor.md): the GUARDED temporal clock anchor. The satellite clock's D2 carry folds at network_clock_anchor_q_ instead of filter.process_noise.sat_clock_q, over a PER-SATELLITE elapsed time, with a variance floor — plus the guard (standardized generalized predicted residual, common-mode removed), the in-epoch withdraw+re-solve, the LOOSE/ANCHORED re-validation state machine, and marks at the decoupling edge. Rationale: √(sat_clock_q·Δt) = 17.3 cm sits ABOVE the realized 9.2 cm walk, so the prior never binds and the emitted clock is per-epoch estimation noise (uniform to 1.37× across 32 satellites — not clock physics) against ~2 cm of physical change. SOLVE-AFFECTING + FINGERPRINTED. OFF = byte-identical (no fold change, no state allocated).
+        double network_clock_anchor_q_{1e-4};              ///< Card Q3: the anchor's random-walk rate (m²/s). Steady-state identity: the emitted per-satellite walk is √(q·Δt), so this knob IS the walk target (1e-4 → 5.5 cm, 3e-5 → 3.0, 1e-5 → 1.7; the FC-1 physical floor ~2 cm sits at 1.3e-5). Default 1e-4 is the conservative first rung, BELOW the measured binding knee and well above the physical floor. INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_var_floor_m2_{0.0};    ///< Card Q3: consistency floor on the folded carry variance (m²) — the clock analogue of the B4 pb/cb floors, whose own comment exempted the clock ("own two-state model / monitor"); that exemption ends with a binding carry. Caps folded prior information at 1/floor so an independence-assuming (diagonal OR dense-diagonal) carry cannot accumulate unbounded information against a time-correlated error floor — assessment deviation #1, ranked-plan item 3. 0 = no floor. INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_max_gap_s_{120.0};     ///< Card Q3: per-satellite staleness bound (s). Beyond it the carried clock is NOT folded at the anchor and the satellite decouples. Load-bearing, not hygiene: the driver's dt is the inter-EPOCH gap and every skip path (gate withhold, σ̂₀ withhold, solve failure) advances it while the D2 carry survives untouched — DOY-129's SH gate withheld 278 consecutive epochs — so without a per-satellite elapsed time a binding prior folds a 95-minute-old value as if it were 30 s old. Same defect class as the clock model's P0-3/R11 fix. INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_k_{6.0};               ///< Card Q3: trip threshold on |w|, the standardized generalized predicted residual ê/√(P⁻−P⁺) with the per-constellation common mode removed. EMPIRICAL — derived from the measured prior-residual ladder of the `clk` census family at the armed q, never from the stochastic model. Target trip rate ≈ 1–2 network-wide per hour on a quiet day (the CLK-R lesson: 16σ produced ~7 marks/h and 106 consumer epochs > 20 m). INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_abs_m_{2.0};           ///< Card Q3: floor-independent absolute backstop (m) on the common-removed innovation |ê| — trips even if the standardizing variance were mis-set. Empirical band: the 12 h dev-channel p99 is 0.68 m and its max 10.0 m, so 1.5–3 m isolates genuine steps without touching the body. 0 = off. INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_sigma_floor_m_{0.02};  ///< Card Q3: floor on √S (m). A weak-data epoch removes no information (P⁺ → P⁻ ⇒ S → 0) and would otherwise yield a 0/0 statistic that false-trips exactly the lowest-confidence satellites; the floor makes it read w ≈ 0 instead. A LOWER BOUND on the denominator, never an addition to it (that was the pre-B3 data-incest form). Default 2 cm = the measured physical per-30 s change. INERT unless network_clock_temporal_anchor_.
+        int    network_clock_anchor_recouple_epochs_{4};   ///< Card Q3: consecutive in-band epochs a decoupled satellite must serve before the anchor re-engages — standing invariant #7's "the RE-COUPLING edge must re-validate or re-seed what it reconnects". The re-engaged fold also RE-SEEDS (its first variance is cp.var + q·Δt off the LOOSE posterior, not the steady-state tight value). INERT unless network_clock_temporal_anchor_.
+        bool   network_clock_anchor_mark_{true};           ///< Card Q3: wire-mark the DECOUPLING edge (markSatDiscontinuity → R record + per-sat phase/code/clock counters, the chain Q4 proved end-to-end). A satellite whose clock changed BOTH temporal regime and value must not be integrated across. Unlike CLK-R stage 2 — whose marked population was ~98 % churn and cost the quiet-day consumer — this population is by construction NOT churn (the churn is what the anchor removes), but the rate discipline still applies and the knob exists so a 12 h A/B can bisect hold-vs-marks exactly as CLK-R's did. INERT unless network_clock_temporal_anchor_.
+        bool   network_clock_anchor_resolve_{true};        ///< Card Q3: adapt-and-EMIT. On a trip, withdraw the offending clock prior from the shared system and RE-SOLVE the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Placed BEFORE the within-epoch RAIM adaptation deliberately — a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's DATA. OFF degrades to detect+mark+decouple-next-epoch. INERT unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.

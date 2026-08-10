@@ -561,6 +561,38 @@ struct ClockOsc {
 /// One-step predicted ClockOsc (the carry-prior mean/variance) — Φ·x and Φ·P·Φᵀ + Q(dt).
 struct ClockOscPred { double x0, x1, p00, p01, p11; };
 
+/// Card Q3 (docs/SPEC_clock_temporal_anchor.md) — per-satellite state of the
+/// GUARDED temporal clock anchor.  Two states: ANCHORED (the clock's D2 carry
+/// folds at @c network.clock_anchor_q) and LOOSE (it folds at the legacy
+/// @c filter.process_noise.sat_clock_q — i.e. exactly the pre-card behaviour,
+/// which is what bounds a decoupled satellite; standing invariant #7).
+///
+/// A satellite is born LOOSE and must EARN the anchor by staying in band for
+/// @c network.clock_anchor_recouple_epochs consecutive epochs — the invariant-#7
+/// re-coupling re-validation.  Every transition is an event with an identity.
+struct ClockAnchorSat {
+    double t_last{0.0};        ///< continuous-GPS seconds of this satellite's last FOLD (0 = never).  The anchor inflates over `pl_now_s − t_last`, NEVER the global epoch dt: every skip path (gate withhold, σ̂₀ withhold, solve failure) advances prev_tow while the carry survives, so the global dt understates a stale carry's age without bound (DOY-129 withheld 278 consecutive epochs).  Same defect class as the clock model's own P0-3 / R11 fix.
+    double last_value{0.0};    ///< prior MEAN folded this epoch (the guard's μ)
+    double last_var_eff{0.0};  ///< prior VARIANCE folded this epoch (the guard's P⁻; marginal, so it is identical on the diagonal and dense D2 branches)
+    int    in_band{0};         ///< consecutive in-band epochs accumulated while LOOSE
+    bool   anchored{false};    ///< false = LOOSE (born LOOSE; re-validation required)
+    bool   folded{false};      ///< a clock prior is folded for this satellite THIS epoch and is still standing (guard eligibility; cleared when the guard withdraws it)
+    bool   folded_anchored{false};  ///< …and it was the ANCHORED variance
+    bool   stale_pending{false};    ///< the fold found the carry older than the staleness bound and fell back to the LOOSE variance; the guard owns the state transition + event + mark, so every decoupling edge lands through ONE path
+};
+
+/// Card Q3 — run state of the guarded temporal clock anchor.  Lives in
+/// NetworkCarryState; deliberately NOT snapshotted (three-place rule
+/// exemption): a warm resume IS an invariant-#1 event (the F1 rule), so every
+/// satellite must re-earn the anchor from LOOSE after a resume rather than
+/// inherit a stiffness whose evidence did not travel.
+struct ClockAnchorState {
+    std::map<std::string, ClockAnchorSat> sat;
+    /// Satellites decoupled THIS epoch (the guard's output for the epoch) —
+    /// consumed by the wire-mark queue and the event/counter tier.
+    std::set<std::string> tripped;
+};
+
 /// Predict a ClockOsc forward by @p dt with white-FM @p q1 and random-walk-FM @p q2.
 inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, double q2) {
     const double q11 = q1 * dt + q2 * dt * dt * dt / 3.0;

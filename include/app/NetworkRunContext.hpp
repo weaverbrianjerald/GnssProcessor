@@ -150,6 +150,20 @@ namespace GnssProcessor {
         bool emit_epoch_status{};
         bool clk_frame_hold{};  ///< Card CLK-R stage 1 (network.emit_clock_frame_hold): emit satellite clocks in the per-constellation HELD frame.  Engine = run-TU local (banner rule), like NetworkPbEmitFilter.
         bool clk_jump_test{};   ///< Card CLK-R stage 2 (network.clock_disc_jump_test): mark per-sat common-removed clock steps via the R-record retro-bump.
+        // --- Card Q3, the guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md) ---
+        // SOLVE-AFFECTING and FINGERPRINTED.  `cta_on` is the single "does this run
+        // touch the clock carry at all" predicate every site reads, so an OFF run
+        // never allocates the per-sat state and never diverges from the legacy fold.
+        bool   cta_on{};             ///< network.clock_temporal_anchor
+        double cta_q{};              ///< network.clock_anchor_q (m²/s) — the anchor's RW rate; emitted walk = √(q·Δt)
+        double cta_var_floor{};      ///< network.clock_anchor_var_floor_m2 — deviation-#1 consistency floor (clock analogue of the B4 pb/cb floors); 0 = off
+        double cta_max_gap_s{};      ///< network.clock_anchor_max_gap_s — per-sat staleness bound; beyond it the satellite DECOUPLES rather than folding a stale value
+        double cta_k{};              ///< network.clock_anchor_k — |w| trip threshold on the standardized predicted residual (empirical, §3)
+        double cta_abs_m{};          ///< network.clock_anchor_abs_m — floor-independent absolute backstop on |ê| (m); 0 = off
+        double cta_sigma_floor_m{};  ///< network.clock_anchor_sigma_floor_m — √S floor so a weak-data epoch gives w ≈ 0 instead of 0/0
+        int    cta_recouple_ep{};    ///< network.clock_anchor_recouple_epochs — consecutive in-band epochs a LOOSE satellite must serve before the anchor re-engages (invariant #7 re-validation)
+        bool   cta_mark{};           ///< network.clock_anchor_mark — wire-mark the DECOUPLING edge (per-sat disc via the B1 retro-bump chain)
+        bool   cta_resolve{};        ///< network.clock_anchor_resolve — adapt-and-EMIT: withdraw the tripped prior and RE-SOLVE the epoch before emission
         bool clk_model_on{};
         double clk_model_q1{};
         double clk_model_q2{};
@@ -263,6 +277,7 @@ namespace GnssProcessor {
         bool   prires_cb{};           ///< Satellite code-bias carry family armed.
         bool   prires_zwd{};          ///< INC-2 ZWD (B9) carry family armed.
         bool   prires_rxcb{};         ///< INC-2 receiver code-bias carry family armed.
+        bool   prires_clk{};          ///< Card Q3 INC-0: satellite-CLOCK carry family armed.  Unlike every other family its ê is COMMON-MODE REMOVED per constellation before standardizing — the clock is the one carry with a free per-epoch gauge, and the raw ê would report that gauge on every satellite (standing invariant #5).  Trace-only; this family is the empirical instrument the anchor's q and k are derived from (§3).
         bool   prires_corrob{};       ///< INC-3 raw-observable corroboration join armed.
         double prires_report_sigma{}; ///< Per-row TRACE threshold in σ̂₀ units (nothing acts on it).
         int    prires_event_holdoff{};///< Per-cell PRIORRES event rate limit, in census epochs.
@@ -360,6 +375,18 @@ namespace GnssProcessor {
     /// snapshot-exemption record).
     struct NetworkCarryState {
         std::vector<CarryPrior> prev_carry;                 // D2 stash from the last solve
+        // Card Q3 (docs/SPEC_clock_temporal_anchor.md): per-satellite guarded
+        // temporal clock anchor.  Empty and untouched unless network.clock_temporal_anchor.
+        // NOT snapshotted (three-place-rule exemption, deliberate): a warm resume is an
+        // invariant-#1 event, so every satellite re-earns the anchor from LOOSE — the
+        // stiffness must not outlive the evidence that justified it.  The knob is in the
+        // resume fingerprint, so a toggle change cold-starts anyway.
+        ClockAnchorState clk_anchor;
+        // Card Q3: satellites whose anchor DECOUPLED and whose per-sat wire mark has not
+        // yet landed in an emitted product.  Drained by networkSolPrep with the same
+        // present/pending split every other forced-bump queue uses (mark == land), so a
+        // replay reproduces the marks from the serialized R records.
+        std::set<std::string> clk_anchor_disc_pending;
         std::set<std::string> prev_clock_refloat_sats;      // Card 1d: clock-monitor flags at the last stash (hard-refloat mode skip-stashes the sat, so prev_carry cannot carry the flag)
         std::map<std::pair<SharedParamKind, std::string>, double> tu_reinit_hist;  // Card 1d: (kind, sat) → content time of the last reinit FOLD (multi-epoch-gap coverage)
         SharedCarryCov prev_carry_cov;                      // C1: dense covariance side-car of prev_carry (empty when OFF)
@@ -1434,6 +1461,30 @@ namespace GnssProcessor {
     /// @internal Service counters, health-window anchors, and B8 flag-rate
     /// tallies (decomposition INC-4) — verbatim relocation.
     struct NetworkServiceCounters {
+        // --- Card Q3, the guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md).
+        // Standing invariant #4: `cta_folded_anchored == 0` on an armed run means the
+        // mechanism is INERT no matter how clean the log reads, so every disposition is
+        // counted against a denominator.  Trips are split by REASON because the reasons
+        // are not interchangeable evidence — a `gap` trip proves the staleness guard
+        // works, an `nis` trip proves the detector works, and a run that only ever shows
+        // `resume` has tested neither.
+        long long cta_epochs = 0;            ///< epochs the anchor seam ran (denominator)
+        long long cta_folded_anchored = 0;   ///< (sat,epoch) clock priors folded at the ANCHOR variance
+        long long cta_folded_loose = 0;      ///< (sat,epoch) clock priors folded at the LEGACY variance (LOOSE)
+        long long cta_floor_hits = 0;        ///< folds where the variance FLOOR bound (the deviation-#1 cap actually binding)
+        long long cta_trip_nis = 0;          ///< decouples: |w| over network.clock_anchor_k
+        long long cta_trip_abs = 0;          ///< decouples: |ê| over network.clock_anchor_abs_m
+        long long cta_trip_gap = 0;          ///< decouples: per-sat elapsed time over network.clock_anchor_max_gap_s
+        long long cta_trip_datum = 0;        ///< decouples: a datum change retired this satellite's frame
+        long long cta_trip_ext = 0;          ///< decouples: an external tier (clock monitor / RAIM) already refloated this satellite
+        long long cta_resolves = 0;          ///< in-epoch re-solves executed (the adapt-and-EMIT half)
+        long long cta_resolve_failed = 0;    ///< in-epoch re-solves that threw and were reverted to the anchored solution
+        long long cta_recouples = 0;         ///< re-coupling edges: a LOOSE satellite re-earned the anchor
+        long long cta_marks = 0;             ///< per-sat wire discontinuities QUEUED at a decoupling edge
+        double    cta_max_w = 0.0;           ///< largest |w| seen (any disposition)
+        double    cta_max_w_tow = 0.0;       ///< …its epoch
+        std::string cta_max_w_sat;           ///< …its satellite
+
         // --- SD EWL Route-B integer decision (increment 2a) run tallies.  Standing
         // invariant #4: on an armed run `sdewl_dd_fixed == 0` means the decision never
         // fired, which is NOT the same as "the integers had no effect", so every

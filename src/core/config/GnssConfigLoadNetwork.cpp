@@ -58,6 +58,7 @@
 #include "products/StationInfoFile.hpp"         // resolveRosterCoordinate (RTA-12 SIF roster)
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
@@ -2828,7 +2829,7 @@ namespace GnssProcessor {
                 // The census would report it as "armed, zero rows" at run end,
                 // which is indistinguishable from a real negative result — so
                 // name it HERE, at load, where the typo is fixable.
-                static const char* kKnownFamilies[] = {"pl", "pb", "cb", "zwd", "rxcb"};
+                static const char* kKnownFamilies[] = {"pl", "pb", "cb", "zwd", "rxcb", "clk"};
                 for (const std::string& f :
                      NetworkCarryVce::parseComponents(pnc.prior_residual_families)) {
                     bool known = false;
@@ -2836,7 +2837,7 @@ namespace GnssProcessor {
                     if (!known)
                         log->warn("Network (prior-residual census): family '{}' in "
                                   "network.prior_residual_families has NO feed hook in this build "
-                                  "(known: pl, pb, cb, zwd, rxcb) — it will report zero rows, which "
+                                  "(known: pl, pb, cb, zwd, rxcb, clk) — it will report zero rows, which "
                                   "is indistinguishable from a genuine negative result.  Fix the "
                                   "spelling or drop it.", f);
                 }
@@ -5204,6 +5205,97 @@ namespace GnssProcessor {
                           "(~70+/h) and storms the consumer with resets.",
                           network_clock_disc_jump_m_);
         }
+        // Card Q3 (docs/SPEC_clock_temporal_anchor.md): the GUARDED temporal clock
+        // anchor.  Solve-affecting and fingerprinted — every knob is inert unless
+        // network.clock_temporal_anchor, so an unarmed run is byte-identical.
+        network_clock_temporal_anchor_ =
+            jval<bool>(json, "network.clock_temporal_anchor",
+                       "network_clock_temporal_anchor", false);
+        network_clock_anchor_q_ =
+            jval<double>(json, "network.clock_anchor_q",
+                         "network_clock_anchor_q", 1e-4);
+        network_clock_anchor_var_floor_m2_ =
+            jval<double>(json, "network.clock_anchor_var_floor_m2",
+                         "network_clock_anchor_var_floor_m2", 0.0);
+        network_clock_anchor_max_gap_s_ =
+            jval<double>(json, "network.clock_anchor_max_gap_s",
+                         "network_clock_anchor_max_gap_s", 120.0);
+        network_clock_anchor_k_ =
+            jval<double>(json, "network.clock_anchor_k",
+                         "network_clock_anchor_k", 6.0);
+        network_clock_anchor_abs_m_ =
+            jval<double>(json, "network.clock_anchor_abs_m",
+                         "network_clock_anchor_abs_m", 2.0);
+        network_clock_anchor_sigma_floor_m_ =
+            jval<double>(json, "network.clock_anchor_sigma_floor_m",
+                         "network_clock_anchor_sigma_floor_m", 0.02);
+        network_clock_anchor_recouple_epochs_ =
+            jval<int>(json, "network.clock_anchor_recouple_epochs",
+                      "network_clock_anchor_recouple_epochs", 4);
+        network_clock_anchor_mark_ =
+            jval<bool>(json, "network.clock_anchor_mark",
+                       "network_clock_anchor_mark", true);
+        network_clock_anchor_resolve_ =
+            jval<bool>(json, "network.clock_anchor_resolve",
+                       "network_clock_anchor_resolve", true);
+        if (network_clock_temporal_anchor_) {
+            // Realized walk once the carry binds is √(q·Δt) EXACTLY (steady-state
+            // scalar identity), so the armed q is reported as the walk it targets —
+            // the number the wire census will be graded against.
+            const double sigma_w_30 = std::sqrt(std::max(0.0, network_clock_anchor_q_) * 30.0);
+            log->info("Network producer (Card Q3): GUARDED TEMPORAL CLOCK ANCHOR ON — the satellite "
+                      "clock carry folds at q = {:.3e} m²/s (targets a √(q·Δt) = {:.2f} cm walk at "
+                      "30 s, vs the measured 9.23 cm and the ~2 cm physical) over a PER-SATELLITE "
+                      "elapsed time capped at {:.0f} s, variance floor {:.3e} m². Guard: |w| > {:.2f} "
+                      "on the common-removed predicted residual (√S floored at {:.3f} m) or |ê| > "
+                      "{:.2f} m ⇒ REFLOAT{}{}; re-coupling needs {} consecutive in-band epochs. "
+                      "SOLVE-AFFECTING + FINGERPRINTED: fresh convergence only.",
+                      network_clock_anchor_q_, 100.0 * sigma_w_30,
+                      network_clock_anchor_max_gap_s_, network_clock_anchor_var_floor_m2_,
+                      network_clock_anchor_k_, network_clock_anchor_sigma_floor_m_,
+                      network_clock_anchor_abs_m_,
+                      network_clock_anchor_resolve_ ? " + in-epoch re-solve (adapt-and-EMIT)"
+                                                    : " (NO in-epoch re-solve: one anchor-warped "
+                                                      "epoch ships per event, marked)",
+                      network_clock_anchor_mark_ ? " + wire mark" : " (UNMARKED — wire-invisible)",
+                      network_clock_anchor_recouple_epochs_);
+            // The interlocks that decide whether the mechanism can work at all.
+            if (!(network_clock_anchor_q_ > 0.0))
+                log->error("Network (Card Q3): network.clock_anchor_q = {:.3e} is not positive — the "
+                           "anchor cannot fold.  Set a positive rate or disarm the card.",
+                           network_clock_anchor_q_);
+            if (network_clock_anchor_q_ >= process_noise_.sat_clock)
+                log->warn("Network (Card Q3): network.clock_anchor_q ({:.3e}) is NOT tighter than "
+                          "filter.process_noise.sat_clock_q ({:.3e}) — the anchor is then looser than "
+                          "the carry it replaces and the card is inert by construction (its whole "
+                          "premise is that √(q·Δt) must fall BELOW the realized per-epoch spread).",
+                          network_clock_anchor_q_, process_noise_.sat_clock);
+            if (network_clock_anchor_max_gap_s_ <= 0.0)
+                log->warn("Network (Card Q3): network.clock_anchor_max_gap_s = {:.1f} disables the "
+                          "staleness guard — a binding prior would then fold an arbitrarily old "
+                          "carried clock as if it were one epoch old (the DOY-129 278-epoch withhold "
+                          "class).  This is a standing-invariant-#1 violation; raise it.",
+                          network_clock_anchor_max_gap_s_);
+            if (network_clock_anchor_var_floor_m2_ <= 0.0)
+                log->warn("Network (Card Q3): network.clock_anchor_var_floor_m2 = 0 leaves the stiff "
+                          "clock carry UNFLOORED.  A diagonal (or dense-diagonal) carry accumulates "
+                          "information ~n against a time-correlated error floor, so its formal "
+                          "variance drifts to 0 — assessment deviation #1, the mechanism behind the "
+                          "measured lock-ins.  The B4 phase/code-bias carries are floored for exactly "
+                          "this reason; the clock's historical exemption assumed a carry that never "
+                          "bound.");
+            if (network_clock_anchor_recouple_epochs_ < 1)
+                log->warn("Network (Card Q3): network.clock_anchor_recouple_epochs = {} re-engages the "
+                          "anchor with NO re-validation — standing invariant #7 requires the "
+                          "re-coupling edge to re-validate or re-seed what it reconnects.",
+                          network_clock_anchor_recouple_epochs_);
+            // NOTE the clock_model interlock is deliberately NOT here: service_mode
+            // FORCE-ARMS network_clock_model_ several hundred lines BELOW this parse
+            // site, so a check here would read the pre-arming value and affirmatively
+            // misreport the active mechanism — the exact defect the C1 card recorded
+            // against this very knob pair.  It lives in the P3 post-arming
+            // re-validation block instead.
+        }
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);
@@ -6501,6 +6593,23 @@ namespace GnssProcessor {
         // the parse-site pass already discharged (only the arming block writes
         // these values in between), so they fire — with their one warn — only when
         // the ARMING itself introduced the invalid value.
+        //
+        // (c) Card Q3 × network.clock_model.  Under the two-state oscillator the
+        //     satellite clock is carried by clock_osc and is NOT stashed to the D2
+        //     carry at all (networkStashCarry's `if (!clk_model_on)`), so the
+        //     temporal anchor has nothing to fold: it would be silently INERT while
+        //     its armed banner claimed otherwise.  This check MUST live post-arming —
+        //     service_mode force-arms the oscillator, and the C1 card's defect #2 is
+        //     precisely a clock-knob interaction logged from the pre-arming value.
+        if (network_clock_temporal_anchor_ && network_clock_model_) {
+            log->error("Network (Card Q3): network.clock_temporal_anchor is armed but "
+                       "network.clock_model is ON{} — the two-state oscillator owns the clock's "
+                       "cross-epoch memory and the D2 clock carry the anchor modifies is never "
+                       "stashed, so the anchor is INERT (0 folds; its run-end counters will say "
+                       "so).  The oscillator is a measured NO-GO on this lineage (Hadamard p ≈ 1 "
+                       "⇒ white-FM, RWFM undetectable); disarm network.clock_model.",
+                       network_service_mode_ ? " (FORCE-ARMED by network.service_mode)" : "");
+        }
         if (network_raim_withhold_sigma0_ != 0.0 && network_raim_withhold_sigma0_ <= 1.0) {
             log->warn("Network: network.raim_withhold_sigma0 {} (service-armed at 2x "
                       "network.raim_sigma0_trigger {}) is <= 1 — σ̂0 is floored at 1, so a "

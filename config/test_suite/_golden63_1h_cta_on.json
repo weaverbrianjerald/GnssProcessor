@@ -1,0 +1,39 @@
+{
+ "_comment": [
+  "Card Q3 (docs/SPEC_clock_temporal_anchor.md) G2 — 1 h ON, one knob different",
+  "from _golden63_1h_cta_ctl.json (plus the anchor's own parameter block).",
+  "q = 3e-5 targets a sqrt(q*dt) = 3.0 cm walk at 30 s.",
+  "",
+  "GATE (SPEC section 4, G2):",
+  "  * dev-channel |step| median and robust sigma_w vs the control (the control's",
+  "    own 12 h reference is 6.23 cm / 9.23 cm);",
+  "  * per-satellite sigma_w SPREAD should SHRINK toward the physical spread if",
+  "    the walk really is estimation noise -- that is the falsifiable half of the",
+  "    section-1 diagnosis, not a restatement of it;",
+  "  * sigma0_clk from the prior-residual census at the ARMED q (>= ~1 once the",
+  "    carry binds) and the |t| ladder from which k is derived;",
+  "  * trip rate within the ~1-2 network-wide per hour target;",
+  "  * NO new withholds and post-fit sigma0_code flat vs the control -- the",
+  "    ordering check for the common-mode interaction named in SPEC section 2.1.",
+  "1 h cannot settle total_IF on this lineage (the LEVEL channel needs ~2 h), so",
+  "no level verdict is taken here.  FRESH lineage; run alone."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "network": {
+  "clock_temporal_anchor": true,
+  "clock_anchor_q": 3e-5,
+  "clock_anchor_var_floor_m2": 4e-4,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_sigma_floor_m": 0.02,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cta_1h_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta_1h_on/state_snapshot.bin"
+ }
+}

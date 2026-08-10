@@ -707,6 +707,45 @@ NetworkSolPrepResult networkSolPrep(
                               std::nullopt, "disc_bump", "code_bias_carry_reinit");
         }
     }
+    // Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4): land the per-satellite
+    // discontinuity for a satellite whose temporal clock ANCHOR decoupled — the
+    // invariant-#7 decoupling edge, made visible on the wire.  Its clock changed
+    // BOTH temporal regime (stiff → loose) and, on a resolved trip, VALUE in the
+    // same epoch, so a consumer that integrates across it is integrating across a
+    // regime change it cannot see.  Same present/pending split as the three blocks
+    // above (mark == land), so a replay reproduces the marks from the serialized R
+    // records.  The set is empty unless network.clock_temporal_anchor AND
+    // network.clock_anchor_mark ⇒ byte-identical otherwise.
+    if (!ctx.carry.clk_anchor_disc_pending.empty()) {
+        std::set<std::string> present, mark, still_pending;
+        for (const auto& s : sol.sats) present.insert(s.sat);
+        for (const auto& sat : ctx.carry.clk_anchor_disc_pending)
+            (present.count(sat) ? mark : still_pending).insert(sat);
+        ctx.carry.clk_anchor_disc_pending = std::move(still_pending);
+        if (!mark.empty()) {
+            // A satellite the B1 retro drain above already marked this epoch must
+            // not have its counter bumped twice (one event, one step).
+            std::set<std::string> fresh;
+            for (const auto& s : mark)
+                if (!retro_emit_sats.count(s)) fresh.insert(s);
+            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            // …AND serialize it.  markSatDiscontinuity alone bumps only the
+            // emitter's in-process counters; on a lineage without
+            // network.serialize_disc_counters the per-record disc fields are not
+            // written, so the R record is the ONLY carrier a NetworkProductIO
+            // replay can read.  A mark visible to the live consumer and invisible
+            // to the replay would make the two graders disagree about the same
+            // wire — exactly the decomposition CLK-R's 3-way replay depended on.
+            // Folding into retro_emit_sats also gives these satellites the
+            // "forced" treatment downstream for free: a satellite whose clock was
+            // just refloated must not vote in the CLK-R frame-hold median.
+            retro_emit_sats.insert(mark.begin(), mark.end());
+            if (events_trace.is_open())
+                for (const auto& s : mark)
+                    emitEvent("CLK_ANCHOR", "cta_disc_landed", s, "", std::nullopt,
+                              std::nullopt, "disc_bump", "clock_anchor_decoupled");
+        }
+    }
     // T3c: land clock_signal_basis_hold RE-LATCH disc bumps this emit (same present/pending
     // split — a re-latched sat absent from this emission waits for its next actual emit).
     // markSatDiscontinuity bumps the per-sat phase/code/clock counters; the re-latch re-splits

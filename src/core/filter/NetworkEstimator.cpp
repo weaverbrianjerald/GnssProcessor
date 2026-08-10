@@ -485,32 +485,26 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
     neq_.addSharedInfo(delta_info, delta_rhs);
 }
 
-std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>& keys,
-                                                  const Eigen::MatrixXd& cov,
-                                                  Eigen::VectorXd* lambda_diag) {
+bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
+                                       const Eigen::MatrixXd& cov,
+                                       const std::set<std::string>& skip,
+                                       std::vector<Eigen::Index>& col,
+                                       std::vector<Eigen::Index>& in_idx,
+                                       Eigen::MatrixXd& Lambda,
+                                       Eigen::VectorXd& eta) const {
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
-    if (cov.rows() != nk || cov.cols() != nk) {
-        throw std::invalid_argument(
-            "NetworkEstimator::addSharedPriorDense: cov must be keys.size() square");
-    }
-    if (lambda_diag) *lambda_diag = Eigen::VectorXd::Zero(nk);
-    if (!epoch_open_ || solved_) {
-        throw std::logic_error(
-            "NetworkEstimator::addSharedPriorDense: call between beginEpoch() and "
-            "solve()");
-    }
-    if (nk == 0) return 0;
-
+    in_idx.clear();
+    col.clear();
     // Map identity keys onto this epoch's layout.  An absent key is MARGINALIZED:
     // its rows/cols of the prior COVARIANCE are dropped before the inversion.
     // (Dropping rows of Λ would instead condition on the departed key — wrong
-    // statistics for every survivor; see the header contract.)
-    std::vector<Eigen::Index> in_idx;   // position in `keys`
-    std::vector<Eigen::Index> col;      // shared-border column
+    // statistics for every survivor; see the header contract.)  Card Q3's
+    // refloat marginalizes on exactly the same footing via `skip`.
     in_idx.reserve(keys.size());
     col.reserve(keys.size());
     for (Eigen::Index i = 0; i < nk; ++i) {
         const SharedPrior& p = keys[static_cast<std::size_t>(i)];
+        if (p.kind == SharedParamKind::Clock && skip.count(p.sat)) continue;  // Q3 refloat
         const std::string pkey = (p.kind == SharedParamKind::VtecSh)
             ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
             : key_(p.sat, p.kind, p.signal);
@@ -520,7 +514,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
         col.push_back(it->second);
     }
     const Eigen::Index k = static_cast<Eigen::Index>(in_idx.size());
-    if (k == 0) return 0;
+    if (k == 0) return false;
 
     // Subset + symmetrize P, then invert in correlation scaling: P = D·C·D with
     // D = diag(√P_ii) ⇒ Λ = D⁻¹·C⁻¹·D⁻¹.  C carries a unit diagonal, so the LDLT
@@ -579,7 +573,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
                 "diagonal carry for this epoch");
         }
     }
-    Eigen::MatrixXd Lambda = ldlt.solve(Eigen::MatrixXd::Identity(k, k));
+    Lambda = ldlt.solve(Eigen::MatrixXd::Identity(k, k));
     Lambda = (dinv.asDiagonal() * Lambda * dinv.asDiagonal()).eval();
     // Explicit symmetry: the kernel symmetrizes only on the post-reduce fast path;
     // the within-epoch RAIM replay re-folds this block PRE-reduce, and the two
@@ -601,7 +595,32 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
             "conditioning budget (near-singular carried block) — fall back to the "
             "diagonal carry for this epoch");
     }
-    const Eigen::VectorXd eta = Lambda * v;
+    eta = Lambda * v;
+    return true;
+}
+
+std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>& keys,
+                                                  const Eigen::MatrixXd& cov,
+                                                  Eigen::VectorXd* lambda_diag) {
+    const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
+    if (cov.rows() != nk || cov.cols() != nk) {
+        throw std::invalid_argument(
+            "NetworkEstimator::addSharedPriorDense: cov must be keys.size() square");
+    }
+    if (lambda_diag) *lambda_diag = Eigen::VectorXd::Zero(nk);
+    if (!epoch_open_ || solved_) {
+        throw std::logic_error(
+            "NetworkEstimator::addSharedPriorDense: call between beginEpoch() and "
+            "solve()");
+    }
+    if (nk == 0) return 0;
+
+    static const std::set<std::string> kNoSkip;
+    std::vector<Eigen::Index> in_idx, col;
+    Eigen::MatrixXd Lambda;
+    Eigen::VectorXd eta;
+    if (!denseFoldTerms_(keys, cov, kNoSkip, col, in_idx, Lambda, eta)) return 0;
+    const Eigen::Index k = static_cast<Eigen::Index>(in_idx.size());
 
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
@@ -616,6 +635,74 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
     if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
     return static_cast<std::size_t>(k);
+}
+
+void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& priors) {
+    if (priors.empty()) return;
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    // Mirror addSharedPrior's accumulation exactly, negated: the withdrawal must
+    // be the arithmetic inverse of the fold, not an independent recomputation.
+    for (const SharedPrior& p : priors) {
+        if (!(p.info > 0.0)) continue;
+        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
+            : key_(p.sat, p.kind, p.signal);
+        const auto it = index_.find(pkey);
+        if (it == index_.end()) continue;   // parameter not in this epoch's layout
+        const Eigen::Index c = it->second;
+        delta_info(c, c) -= p.info;
+        delta_rhs(c)     -= p.info * p.value;
+    }
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+}
+
+std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
+    const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
+    const std::set<std::string>& drop_sats, bool restore) {
+    const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
+    if (cov.rows() != nk || cov.cols() != nk) {
+        throw std::invalid_argument(
+            "NetworkEstimator::refoldSharedPriorDenseDroppingClocks: cov must be "
+            "keys.size() square");
+    }
+    if (nk == 0 || drop_sats.empty()) return 0;
+
+    static const std::set<std::string> kNoSkip;
+    std::vector<Eigen::Index> old_in, old_col, new_in, new_col;
+    Eigen::MatrixXd L_old, L_new;
+    Eigen::VectorXd e_old, e_new;
+    // Both blocks are built BEFORE anything is folded, so a throw from either
+    // leaves the shared system untouched (the caller's restore path is then a
+    // plain "keep the pre-withdraw solution").
+    const bool had_old = denseFoldTerms_(keys, cov, kNoSkip, old_col, old_in, L_old, e_old);
+    if (!had_old) return 0;
+    const bool has_new = denseFoldTerms_(keys, cov, drop_sats, new_col, new_in, L_new, e_new);
+    const std::size_t dropped = old_in.size() - (has_new ? new_in.size() : 0u);
+    if (dropped == 0) return 0;
+
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    const auto accumulate = [&](const std::vector<Eigen::Index>& c,
+                                const Eigen::MatrixXd& L, const Eigen::VectorXd& e,
+                                double sign) {
+        const Eigen::Index k = static_cast<Eigen::Index>(c.size());
+        for (Eigen::Index a = 0; a < k; ++a) {
+            delta_rhs(c[static_cast<std::size_t>(a)]) += sign * e(a);
+            for (Eigen::Index b = 0; b < k; ++b)
+                delta_info(c[static_cast<std::size_t>(a)], c[static_cast<std::size_t>(b)])
+                    += sign * L(a, b);
+        }
+    };
+    const double sgn = restore ? -1.0 : +1.0;   // restore folds the inverse delta
+    accumulate(old_col, L_old, e_old, -sgn);           // remove the block as folded
+    if (has_new) accumulate(new_col, L_new, e_new, +sgn);  // re-fold the marginalized block
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return dropped;
 }
 
 void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,

@@ -646,6 +646,71 @@ public:
                                     Eigen::VectorXd* lambda_diag = nullptr);
 
     /**
+     * @brief Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4) — WITHDRAW
+     *        already-folded diagonal shared priors so the epoch can be RE-SOLVED
+     *        with those states refloated.
+     *
+     * The exact inverse of @ref addSharedPrior for the listed (identity, value,
+     * info) triples: it folds the NEGATED increment through
+     * @ref NetworkNormalEquations::addSharedInfo.  Legal AFTER @ref solve — that
+     * is the whole point.  A shared-border increment carries through the Schur
+     * reduction unchanged, so the kernel's reduction-preserving fast path keeps
+     * the cached reduced system current and a following @ref solve costs one
+     * datum + factorization of the K×K reduced system: **no re-reduction, no
+     * re-assembly**.
+     *
+     * The caller must pass the values/infos IT FOLDED (not a recomputation): the
+     * withdrawal is arithmetic, not a lookup, and a mismatched info would leave
+     * residual prior information behind.
+     *
+     * Withdrawing information can only make the reduced normals less definite.
+     * The intended population — a data-supported satellite clock column carried
+     * by tens of stations — cannot be driven singular this way, and the solve's
+     * own relative-pivot guard is the backstop; the caller owns the policy on a
+     * throw (restore the pre-withdraw solution).
+     *
+     * @param priors Identity + the folded value + the folded info of each prior
+     *               to remove.  Entries with @c info <= 0, or whose parameter is
+     *               absent from this epoch's layout, are skipped exactly as
+     *               @ref addSharedPrior skips them.
+     */
+    void withdrawSharedPrior(const std::vector<SharedPrior>& priors);
+
+    /**
+     * @brief Card Q3 — re-fold a DENSE carried block with some keys
+     *        MARGINALIZED, after @ref solve, so the epoch can be re-solved with
+     *        those states refloated.
+     *
+     * The dense (C1) form of @ref withdrawSharedPrior.  Folds
+     * @f$(\Lambda_{new} - \Lambda_{old})@f$ and
+     * @f$(\eta_{new} - \eta_{old})@f$, where @f$\Lambda_{old}@f$ is the block
+     * @ref addSharedPriorDense folded for @p keys / @p cov and @f$\Lambda_{new}@f$
+     * is the same construction over the SURVIVING keys with @p drop_sats'
+     * @ref SharedParamKind::Clock rows/columns of @p cov dropped before the
+     * inversion.  Marginalization — not conditioning — is the exact treatment of
+     * a refloated key, the same policy this class already applies to a key that
+     * has left the layout.
+     *
+     * Both Λ are built by the SAME private path @ref addSharedPriorDense uses, so
+     * a re-fold that drops nothing is an exact algebraic no-op.
+     *
+     * @param keys      The keys as originally folded (order defines @p cov).
+     * @param cov       The covariance as originally folded (P_prev + Q).
+     * @param drop_sats Satellites whose CLOCK key is to be marginalized.
+     * @param restore   Fold the INVERSE delta (Λ_old − Λ_new) instead — the exact
+     *                  undo of a previous call with the same arguments, used when
+     *                  the re-solve throws and the caller must put the epoch's
+     *                  shared system back the way it solved.
+     * @return Number of clock keys actually marginalized (0 ⇒ nothing folded).
+     * @throws Same conditions as @ref addSharedPriorDense (either block
+     *         non-finite / non-PD / over the information budget).  Nothing is
+     *         folded when it throws.
+     */
+    std::size_t refoldSharedPriorDenseDroppingClocks(
+        const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
+        const std::set<std::string>& drop_sats, bool restore = false);
+
+    /**
      * @brief Fold an explicit linear gauge constraint onto the shared border.
      *
      * Adds the information form of @p weight·‖@p H x − @p z‖² to the shared
@@ -928,6 +993,24 @@ private:
                             const std::string& signal);
     /// Throw unless the epoch is open and not yet solved (guards @ref addStation).
     void requireAccumulating_() const;
+
+    /// @internal Shared arithmetic of @ref addSharedPriorDense and
+    /// @ref refoldSharedPriorDenseDroppingClocks: map @p keys onto this epoch's
+    /// layout (absent OR @p skip keys are MARGINALIZED — their rows/cols of
+    /// @p cov are dropped before the inversion), then form Λ = P⁻¹ and η = Λv in
+    /// correlation scaling with the PD / ridge / information-budget guards.
+    /// Extracted verbatim so both callers fold bit-identical blocks.
+    /// @param skip   Satellites whose @ref SharedParamKind::Clock key is
+    ///               additionally marginalized (empty for the ordinary fold).
+    /// @param col    out: shared-border column of each retained key.
+    /// @param in_idx out: index into @p keys of each retained key.
+    /// @return false when nothing is retained (Λ / η left untouched).
+    bool denseFoldTerms_(const std::vector<SharedPrior>& keys,
+                         const Eigen::MatrixXd& cov,
+                         const std::set<std::string>& skip,
+                         std::vector<Eigen::Index>& col,
+                         std::vector<Eigen::Index>& in_idx,
+                         Eigen::MatrixXd& Lambda, Eigen::VectorXd& eta) const;
 
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor

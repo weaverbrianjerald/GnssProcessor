@@ -2513,6 +2513,50 @@ int networkTeardown(
                   ctx.knobs.clk_jump_test ? "ON" : "off",
                   cr.marks, config_.networkClockDiscJumpM(), cr.inits, cr.gaps);
     }
+    if (ctx.knobs.cta_on) {
+        // Card Q3 run-end telemetry (standing invariant #4 — the ON-path counters
+        // ARE the evidence).  `folded_anchored = 0` means the anchor never bound a
+        // single row: the mechanism is INERT and every downstream number in the run
+        // is the legacy carry, no matter how clean the log reads.  Trips are split
+        // by REASON because they are not interchangeable evidence — a run that only
+        // ever shows `resume`/`datum` has tested neither the detector nor the
+        // staleness guard, and per standing invariant #1 an untested guard is not a
+        // guard (the DOY-129 event-window arm is what closes that).
+        const auto& c = ctx.counters;
+        const long long folds = c.cta_folded_anchored + c.cta_folded_loose;
+        const long long trips = c.cta_trip_nis + c.cta_trip_abs + c.cta_trip_gap
+                              + c.cta_trip_datum + c.cta_trip_ext;
+        log->info("Network (Card Q3 / guarded temporal clock anchor): {} epoch(s); {} clock "
+                  "carry fold(s) — {} ANCHORED at q = {:.3e} m²/s (targets √(q·Δt) = {:.2f} cm "
+                  "at 30 s), {} LOOSE, {} at the variance floor.  Trips {} = {} nis + {} abs + "
+                  "{} gap + {} datum + {} ext; {} in-epoch re-solve(s) ({} failed), {} "
+                  "re-coupling edge(s), {} wire mark(s) queued.  Largest |w| {:.2f} (k = {:.2f}) "
+                  "on {} at TOW {:.1f}.",
+                  c.cta_epochs, folds, c.cta_folded_anchored, ctx.knobs.cta_q,
+                  100.0 * std::sqrt(std::max(0.0, ctx.knobs.cta_q) * 30.0),
+                  c.cta_folded_loose, c.cta_floor_hits, trips, c.cta_trip_nis,
+                  c.cta_trip_abs, c.cta_trip_gap, c.cta_trip_datum, c.cta_trip_ext,
+                  c.cta_resolves, c.cta_resolve_failed, c.cta_recouples, c.cta_marks,
+                  c.cta_max_w, ctx.knobs.cta_k,
+                  c.cta_max_w_sat.empty() ? std::string("(none)") : c.cta_max_w_sat,
+                  c.cta_max_w_tow);
+        if (c.cta_folded_anchored == 0)
+            log->warn("Network (Card Q3): the anchor folded ZERO anchored rows — it is INERT for "
+                      "this run.  Every satellite stayed LOOSE, so the emitted clock is the "
+                      "legacy carry's.  Check that satellites are surviving the re-coupling "
+                      "re-validation ({} consecutive in-band epochs) and that the staleness "
+                      "bound ({:.0f} s) is above this run's epoch spacing.",
+                      ctx.knobs.cta_recouple_ep, ctx.knobs.cta_max_gap_s);
+        if (ctx.knobs.cta_resolve && c.cta_resolves == 0 && trips > 0)
+            log->warn("Network (Card Q3): {} trip(s) but ZERO in-epoch re-solves — every trip was "
+                      "decoupled and marked WITHOUT the same-epoch value correction, so each one "
+                      "shipped an anchor-warped epoch.  See the per-trip warnings for the cause "
+                      "(prior-dominated column, or no captured prior to withdraw).", trips);
+        if (ctx.knobs.cta_var_floor > 0.0 && c.cta_floor_hits == 0 && c.cta_folded_anchored > 0)
+            log->info("Network (Card Q3): the variance floor never bound ({:.3e} m² vs the armed "
+                      "q·Δt) — the consistency cap is armed but inactive at this q, which is the "
+                      "expected reading while q·Δt stays above it.", ctx.knobs.cta_var_floor);
+    }
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "
                   "runaway (magnitude ceiling {:.0f} m / rate ceiling {:.2f} m/s).",
