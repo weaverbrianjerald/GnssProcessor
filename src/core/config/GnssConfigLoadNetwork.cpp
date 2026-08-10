@@ -5238,6 +5238,9 @@ namespace GnssProcessor {
         network_clock_anchor_resolve_ =
             jval<bool>(json, "network.clock_anchor_resolve",
                        "network_clock_anchor_resolve", true);
+        network_clock_anchor_gauge_free_ =
+            jval<bool>(json, "network.clock_anchor_gauge_free",
+                       "network_clock_anchor_gauge_free", false);
         if (network_clock_temporal_anchor_) {
             // Realized walk once the carry binds is √(q·Δt) EXACTLY (steady-state
             // scalar identity), so the armed q is reported as the walk it targets —
@@ -5259,6 +5262,18 @@ namespace GnssProcessor {
                                                       "epoch ships per event, marked)",
                       network_clock_anchor_mark_ ? " + wire mark" : " (UNMARKED — wire-invisible)",
                       network_clock_anchor_recouple_epochs_);
+            log->info("Network producer (Card Q3 §2.1): clock prior folds {} — {}.",
+                      network_clock_anchor_gauge_free_ ? "GAUGE-FREE" : "on the RAW state",
+                      network_clock_anchor_gauge_free_
+                          ? "the per-constellation clock common direction is marginalized out of "
+                            "the folded information, so the anchor constrains only the estimable "
+                            "between-satellite differences and the gauge is left to the datum "
+                            "(measured motive: the raw-state anchor suppressed CLK-R's drained "
+                            "common mode 49.4 -> 27.8 m over 3 h, i.e. the carry was doing 44 % of "
+                            "the gauge's work).  EXPECT the drained common mode to RETURN toward "
+                            "the control's level — that is the mechanism working, not a regression"
+                          : "it therefore competes with the S-basis datum for the per-constellation "
+                            "common mode; arm network.clock_anchor_gauge_free to stop it");
             // The interlocks that decide whether the mechanism can work at all.
             if (!(network_clock_anchor_q_ > 0.0))
                 log->error("Network (Card Q3): network.clock_anchor_q = {:.3e} is not positive — the "

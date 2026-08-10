@@ -137,6 +137,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_recouple_ep    = config_.networkClockAnchorRecoupleEpochs();
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
+    k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
     k.clk_model_q1 = config_.networkClockModelQ1();
     k.clk_model_q2 = config_.networkClockModelQ2();
     k.clk_model_k = config_.networkClockModelKSigma();
@@ -572,6 +573,11 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
                             ctx.knobs.cta_k, ctx.knobs.cta_abs_m,
                             ctx.knobs.cta_sigma_floor_m, ctx.knobs.cta_recouple_ep,
                             ctx.knobs.cta_resolve));
+        // §2.1 gauge-free fold: a snapshot written by a gauge-free run carries a
+        // carry whose clock information lives on a different SUBSPACE, so a resume
+        // must not cross the flip.  Conditional-append so a plain-anchor lineage's
+        // fingerprint is unchanged by this card.
+        if (ctx.knobs.cta_on && ctx.knobs.cta_gauge_free) add("cta:gf");
         // Card LV-1: the seed reframe changes the per-station LINEARIZATION POINT of
         // the per-LOS iono AND (through initializeCodeBiases, which subtracts the
         // seeded iono) of the receiver DCB.  The absolute solve is invariant to that
@@ -1682,7 +1688,19 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             priors.push_back(p);
         }
         est.attribTag("d2_carry");
-        est.addSharedPrior(priors);  // skips params absent from this epoch's layout
+        // Card Q3 §2.1: with the gauge-free fold armed, the CLOCK entries are
+        // folded with the per-constellation common direction marginalized out —
+        // the anchor then constrains the estimable between-satellite differences
+        // and leaves the gauge to the S-basis datum.  Non-clock entries fold
+        // identically either way, and the OFF path is the same single call it
+        // always was.
+        if (cta_on && ctx.knobs.cta_gauge_free) {
+            const std::size_t gf = est.addSharedPriorClockGaugeFree(priors);
+            ctx.counters.cta_gf_keys += static_cast<long long>(gf);
+            if (gf == 0) ++ctx.counters.cta_gf_inert;
+        } else {
+            est.addSharedPrior(priors);  // skips params absent from this epoch's layout
+        }
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), priors.begin(), priors.end());
     } else if ((!datum_changed || scoped_handover) && !prev_carry.empty()) {
@@ -1778,11 +1796,19 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 Eigen::VectorXd lam;
                 est.attribTag("dense_c1");
                 est.addSharedPriorDense(dkeys, cov_eff,
-                                        anchor_info_trace.is_open() ? &lam : nullptr);
+                                        anchor_info_trace.is_open() ? &lam : nullptr,
+                                        cta_on && ctx.knobs.cta_gauge_free);
                 if (anchor_info_trace.is_open())
                     for (std::size_t a = 0; a < kd; ++a)
                         if (dkeys[a].kind == SharedParamKind::Clock)
                             clk_prior_info[dkeys[a].sat] = lam(static_cast<Eigen::Index>(a));  // B7: folded Λ(c,c)
+                if (cta_on && ctx.knobs.cta_gauge_free) {
+                    std::size_t nclk = 0;
+                    for (std::size_t a = 0; a < kd; ++a)
+                        if (dkeys[a].kind == SharedParamKind::Clock) ++nclk;
+                    ctx.counters.cta_gf_keys += static_cast<long long>(nclk);
+                    if (nclk < 2) ++ctx.counters.cta_gf_inert;
+                }
                 if (within_epoch_armed) {
                     cap_dense_keys = dkeys;      // replayed in resolve_dropping
                     cap_dense_cov  = cov_eff;
@@ -1806,7 +1832,17 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             }
         }
         est.attribTag("d2_leftover");
-        est.addSharedPrior(leftovers);  // no-op when empty; skips absent keys
+        // Card Q3 §2.1: leftovers are the keys the dense fold could not take (no
+        // matrix row after a warm resume, or a non-finite screen).  Under the
+        // gauge-free fold they form their own group — and a constellation that
+        // contributes only ONE leftover clock is entirely gauge, so nothing is
+        // folded for it.  That is conservative by construction: the fallback can
+        // under-anchor, never re-introduce gauge information.
+        if (cta_on && ctx.knobs.cta_gauge_free)
+            ctx.counters.cta_gf_keys +=
+                static_cast<long long>(est.addSharedPriorClockGaugeFree(leftovers));
+        else
+            est.addSharedPrior(leftovers);  // no-op when empty; skips absent keys
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), leftovers.begin(), leftovers.end());
     }

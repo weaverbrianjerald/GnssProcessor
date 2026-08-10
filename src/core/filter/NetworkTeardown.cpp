@@ -2540,6 +2540,23 @@ int networkTeardown(
                   c.cta_max_w, ctx.knobs.cta_k,
                   c.cta_max_w_sat.empty() ? std::string("(none)") : c.cta_max_w_sat,
                   c.cta_max_w_tow);
+        if (ctx.knobs.cta_gauge_free) {
+            // §2.1: the gauge-free step's own denominator.  `gf_keys = 0` on an
+            // armed run means the downdate never reached a group of ≥ 2 carried
+            // clocks, so the anchor is STILL constraining the gauge — the exact
+            // failure the step exists to prevent, and invisible without this line.
+            log->info("Network (Card Q3 §2.1 / gauge-free fold): {} clock prior key(s) "
+                      "gauge-downdated over {} epoch(s); {} epoch(s) INERT (no constellation "
+                      "contributed 2+ carried clocks, or UᵀΛU was singular).  Expect the "
+                      "CLK-R drained common mode Σ|μ| to RETURN toward the control's level — "
+                      "the anchor no longer does the datum's work.",
+                      c.cta_gf_keys, c.cta_epochs, c.cta_gf_inert);
+            if (c.cta_gf_keys == 0)
+                log->warn("Network (Card Q3 §2.1): the gauge-free fold is ARMED but downdated "
+                          "ZERO keys — it is INERT for this run and the anchor is folding on "
+                          "the RAW state exactly as if the knob were off.  Any A/B against a "
+                          "raw-state arm is measuring nothing.");
+        }
         if (c.cta_folded_anchored == 0)
             log->warn("Network (Card Q3): the anchor folded ZERO anchored rows — it is INERT for "
                       "this run.  Every satellite stayed LOOSE, so the emitted clock is the "

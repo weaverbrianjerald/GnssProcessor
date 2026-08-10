@@ -119,8 +119,29 @@ The anchor rides the EXISTING D2 fold rather than adding a second prior:
 - The residual inconsistency of ANY stiff carry (information accumulating ~n
   against a time-correlated floor) is bounded by the variance floor above,
   which is a hard cap on the folded information regardless of branch.
-**⚠ OPEN DESIGN QUESTION — the anchor as built constrains the RAW x̃ˢ, not only
-its datum-invariant part.**  The per-constellation clock common mode is a
+**✔ BUILT 2026-08-10 as `network.clock_anchor_gauge_free` (default OFF, inside
+the anchor's fingerprint).  The paragraph below is the ORIGINAL statement of the
+question; the measurement that closed it and the corrected expectation follow.**
+
+**MEASURED (3 h pair `runs/cta_3h_{ctl,on}`): the defect is real and quantified.**
+The raw-state anchor cut CLK-R's drained common mode **Σ|μ| 49.43 m → 27.77 m**
+and the pivot's dev row (which IS the drained common mode — §4.1) **16.79 →
+10.03 cm**.  Two independent instruments, same 0.56–0.60 ratio: **the carry was
+doing ~44 % of the datum's work.**
+
+**⚠ CORRECTED EXPECTATION for the gauge-free arm — the obvious prediction has
+the sign backwards.**  It is tempting to expect the pivot's dev row to *fall*
+toward the fleet once the fold is gauge-free.  It must do the **opposite**:
+removing the prior's information along the gauge hands the common mode back to
+the data alone, so **Σ|μ| and the pivot dev row must RISE toward the control's
+level (49 m / 16.8 cm)**.  That rise is the mechanism working, not a regression
+— and it is harmless on the wire, because CLK-R's frame hold drains that
+channel at emission by construction.  What must IMPROVE, if the fold is worth
+arming, is the **estimable** side: the ex-pivot dev ceiling and floor, σ̂₀_code,
+and the consumer.  Pre-registered as such before the arm was run.
+
+**⚠ (historical) OPEN DESIGN QUESTION — the anchor as built constrains the RAW
+x̃ˢ, not only its datum-invariant part.**  The per-constellation clock common mode is a
 nuisance direction fixed by the pivot pin, and its measured emitted step is
 ~8.5 cm — above every rung of the ladder — so a binding anchor on the raw state
 resists it, and the resistance lands on the pivot satellite's rows rather than
@@ -298,12 +319,31 @@ not on the filter's self-assessment: `q_anchor ∈ {knee, knee/10, 1.3e-5}`
 
 **k (the guard threshold) is read off the measured |t| ladder** at the armed q,
 with the guard disarmed (`clock_anchor_k` set beyond the ladder's top rung) so
-the distribution is the un-truncated null.  Target rate: **≤ ~1–2 network-wide
-trips per hour** on a quiet day.  The CLK-R lesson is the calibration anchor
-here: 1.5 m ≈ 16 σ_w produced ~7 marks/h and 106 consumer epochs > 20 m on a
-quiet day, because ~98 % of the marked population was churn.  Q3's marked
-population is by construction NOT churn (the churn is what the anchor removes),
-but the rate discipline stands.
+the distribution is the un-truncated null.
+
+**⚠ The trip-rate target stated in v1 of this spec (“≤ ~1–2 network-wide trips
+per hour”) was MIS-SCOPED and is withdrawn.**  It was imported from CLK-R,
+whose marked population was ~98 % estimator churn, and applied to a population
+that is not churn at all.  Measured on the 3 h arm: **22 trips/h** through the
+DOY-129 hour-2–3 run-up, and the live consumer was BETTER in every hour of that
+window.  A trip is not a cost to be minimized — it is the guard reporting that
+this satellite's clock moved by more than the anchor's own model allows, on a
+day when satellite clocks were in fact moving.  **The rate is a property of the
+DATA, not a tuning target, and tuning k to hit a quiet-hour number would be
+tuning the detector to under-report activity on exactly the days the card
+exists for.**
+
+What replaces it, as the standing rule:
+
+- **Grade the trip population, never its count.**  A trip is healthy when it
+  (a) resolves in-epoch (`cta_resolves` tracks `trips`), (b) lands a wire mark
+  that ties out event ↔ R record ↔ counter, and (c) leaves the consumer
+  unchanged-or-better over the window that contains it.
+- **A rate floor is still meaningful in the other direction**: ~0 trips over a
+  window with known clock activity means the guard is not firing when it should
+  — that is the invariant-#1 failure, and it is what G4 exists to exclude.
+- k stays derived from the ladder for CALIBRATION (so |w| means the same thing
+  across arms), not from a target rate.
 
 **`clock_anchor_abs_m`** likewise from the census tail: the dev channel's p99 is
 0.68 m and its max is 10.0 m over 12 h, so a backstop in the 1.5–3 m band
@@ -321,10 +361,47 @@ isolates genuine steps without touching the body of the distribution.
   variance is the armed one; trips ≈ 0; no withholds; console shows the armed
   line.  A run with `folded = 0` FAILS regardless of how clean the log is.
 - **G2 — 1 h ON.**  σ̂₀_clk from the census (the knee read); dev-channel σ_w
-  vs the 9.23 cm control; no new withholds; trip rate within the §3 target;
-  `total_IF` no-regression; per-satellite σ_w spread (the uniformity signature
-  should SHRINK toward the physical spread if the anchor is doing what §1
-  claims).
+  vs the 9.23 cm control; no new withholds; `total_IF` no-regression; the trip
+  population healthy per §3 (resolve + mark + tie-out), NOT a trip count.
+- **⚠ The per-satellite σ_w SPREAD prediction is withdrawn.**  v1 pre-registered
+  that the spread should SHRINK toward a physical spread as the anchor binds.
+  It does not, and the reason is structural rather than a defect: **the
+  population bifurcates BY DESIGN.**  An anchored quiet satellite is driven
+  toward the process floor √(q·Δt) (measured floor sat: 2.37 cm ≈ FC-1's ~2 cm
+  physical), while a satellite the guard trips is deliberately handed back to
+  the LEGACY carry for its loose window and marked — so it keeps the pre-card
+  dispersion, on purpose, because that is what bounds a decoupled state
+  (invariant #7).  A statistic that mixes the two populations must widen when
+  the mechanism works.  Measured 3 h: spread 3.11× → 4.23× including the pivot,
+  2.61× → 2.95× excluding it.  **Grade the FLOOR (does the quiet population
+  reach the physical floor?) and the CEILING SEPARATELY (§4.1), never the
+  ratio.**
+
+### §4.1 Read the dev census PIVOT-AWARE — the ceiling row is a gauge
+
+With `emit_clock_frame_hold` armed (the golden posture), the pivot satellite's
+raw clock is pinned to 0, so its EMITTED value is exactly `−A_c`, the frame
+accumulator.  Its dev-channel row is therefore **`Δ(−A_c) = −μ`, the per-epoch
+drained common mode** — a gauge quantity, not estimable content, and the only
+row in the census that is.  Verified on the 3 h pair: the pivot G01 is the
+ceiling in BOTH arms (16.79 / 10.03 cm vs a fleet median of 8.64 / 4.33), and
+its σ ratio across the arms (0.60) matches CLK-R's own independent Σ|μ| counter
+ratio (27.77 / 49.43 = 0.56).
+
+Consequences, both load-bearing:
+
+1. **Quote the ex-pivot ceiling.**  Including the pivot row puts a gauge into a
+   statistic the card grades as estimable content — a standing-invariant-#5
+   contamination of the GRADER.  Ex-pivot ceiling on the 3 h pair: 14.08 →
+   6.98 cm (−50 %), against 16.79 → 10.03 (−40 %) with it.
+2. **The pivot row is the direct read of §2.1.**  It measures how much of the
+   gauge's work the carry is doing.  The raw-state anchor cut the drained
+   common mode 49.43 m → 27.77 m over 3 h — i.e. **the carry was doing 44 % of
+   the datum's job**, which is the §2.1 defect quantified on the wire.
+
+`scripts/product_step_census.py` reports the split directly (PIVOT / EX-PIVOT
+lines), reading the pivot identity off the product's own S-basis contract line.
+
 - **G3 — 12 h A/B (the verdict).**  ON vs the G0 control, same build, same
   config chain, fresh convergence both arms, runs never overlapping.
   - **headline**: dev-channel |step| median **6.23 cm → ≪, toward 2 cm**;
@@ -478,12 +555,133 @@ process floor — but it is not what was predicted, and it is not yet explained.
 It does not touch the headline (the level and the median both fell 40 %); it is
 flagged here so the 12 h arm and the FC-1 shadow table are read against it.
 
-### Not yet run (the gates this session did not reach)
+### G3 — the 3-arm 3 h ladder (2026-08-10)
 
-G3 (12 h A/B: FC-1 shadow hour table, consumer live + replay, total_IF, AR) and
-G4 (the DOY-129 20:47 event-window replay — invariant #1's actual bar).  Until
-G4 the guard has fired only on quiet-day ignition steps; **quiet-day
-cleanliness is explicitly not a pass**.
+Binary `gnss_processor_ctagf.exe` md5 `974714FB7174A8C9CE6FB239C71AB9EF`; arms
+`runs/cta3_{ctl,on,gf}`, configs `_cta3_{ctl,on,gf}.json`, one build, one chain,
+fresh convergence each, never overlapping.  Suite 1335 pass / 1 skip.
+
+**Provenance, free**: `cta3_ctl` and `cta3_on` came out **byte-identical** to the
+stored pre-gauge-free `runs/cta_3h_{ctl,on}`.  One comparison proving three
+things — the estimator refactor (`denseFoldTerms_` + the gauge-free branch) is
+arithmetically neutral on the OFF and raw-state paths; FC-1 `fast_clock.shadow`
+is genuinely measure-only; and the earlier 3 h numbers transfer to this build.
+
+| 3 h, 63 sta, DOY-129 00:00–03:00 | ctl | anchor | anchor + gauge-free |
+|---|---|---|---|
+| **dev channel** median / robust σ_w | 5.98 / 8.87 cm | **3.55 / 5.26** | 3.81 / 5.65 |
+| dev p99 / outlier epochs > 0.5 m | 73.81 / 78 | 50.92 / 48 | **33.57 / 43** |
+| **ex-pivot** floor / median / ceiling | 5.66 / 8.54 / 13.81 | **2.36** / 5.28 / **8.55** | 3.25 / **5.24** / 8.63 |
+| **PIVOT row** (= drained common mode, a GAUGE) | 18.03 | 11.27 | **21.53** |
+| CLK-R Σ\|μ\| drained (independent counter) | 49.43 m | 27.77 m | **79.53 m** |
+| post-fit σ̂₀ code | 4.0460 | 4.0323 | **4.0057** |
+| withholds / skipped epochs | 0 | 0 | 0 |
+| trips (nis / abs / gap) | — | 65 (63/0/2) | 3 (0/1/2) |
+| in-epoch re-solves / marks | — | 26 / 65 | 1 / 3 |
+| σ̂₀_clk (census) | 0.2803 | 0.7539 | 4.4806 |
+| consumer med / p95 / worst | 6.40 / 13.08 / 13.82 | **5.49** / 11.77 / 12.90 | 6.64 / **9.13** / **9.46** |
+| AR fixed | 0 | 0 | 0 |
+
+**The §2.1 mechanism is PROVEN, with the corrected sign.**  Σ|μ| 27.77 →
+**79.53 m**, i.e. above the control's 49.43 — the control's legacy carry still
+loads the gauge slightly, the gauge-free fold loads it exactly zero.  The census
+pivot row moves in lock-step (11.27 → 21.53).  10 922 keys downdated, **0 inert
+epochs**.  Two independent instruments, same conclusion.
+
+**The estimable side is a TRADE, not a win.**  Gauge-free buys the tail and
+pays in the body, consistently across three independent instruments:
+
+- dev p99 50.92 → **33.57** (−34 %), outlier epochs 48 → 43, but dev median
+  3.55 → 3.81 and the ex-pivot floor 2.36 → 3.25;
+- consumer worst 12.90 → **9.46** and p95 11.77 → **9.13** (both the best of the
+  three arms, control included), but the median 5.49 → 6.64 and hour 0 3.00 →
+  5.42 — a cold start converges more slowly with strictly less prior information;
+- σ̂₀ code is monotone best (4.0460 → 4.0323 → **4.0057**), the predicted §2.1
+  signature: the prior stops competing with the pin, so the pivot's rows stop
+  carrying the conflict.
+
+**Trips collapse 65 → 3, and the missing trips did NOT leave a fatter tail.**
+That is the discriminating evidence: a guard that had merely been desensitized
+would show its untreated events as a LARGER dev tail, and the gauge-free arm's
+p99 is the smallest of the three.  Supporting: the raw-state arm's 63 `nis`
+trips have |ê| median **0.28 m** (max 1.42 m) against a mean √S of **3.3 cm** —
+sub-metre residuals made significant by a denominator smaller than the arm's own
+realized dispersion (5.26 cm).  **0 of 63 would have been caught by the 2.0 m
+absolute backstop.**  So the raw-state guard was substantially firing on the
+walk's tail — inflated by the anchor's own conflict with the gauge — not on
+metre-class clock events.
+
+**⚠ CONFOUND, stated plainly: the gauge-free arm changed TWO things.**  The fold
+AND the guard's denominator (§2.3's matched common-removed posterior).  The
+matched denominator is the correct statistic for that fold — an unmatched one
+would trip on a widening the fold itself created — but it is also independently
+desensitizing, and this ladder cannot apportion the 65 → 3 collapse between
+them.  The tail evidence above argues against pure blinding; it does not
+substitute for the bisection.  **Owed: a `clock_anchor_gauge_free` arm with the
+statistic forced to the raw-state denominator.**  It needs a knob, hence a new
+binary, hence its own same-build pair — deliberately not half-done here.
+
+**⚠ Instrument defect found: `σ̂₀_clk` is not gauge-aware.**  0.2803 → 0.7539 →
+**4.4806**.  The census still standardizes by `last_var_eff`, the per-satellite
+RAW anchor variance, while the gauge-free fold carries strictly less information
+than that (by exactly the gauge direction), so `disp` under-states and σ̂₀ blows
+up.  The guard's denominator was matched to the fold; the census's was not.  The
+knee readings (§3) stand for the ctl/anchor arms and **must not be read across
+the gauge-free arm** until the census's fold_var is made gauge-aware.
+
+### The FC-1 shadow hour table — the score, and it says NO
+
+`project_fast_clock_card`'s standing instruction is that this table IS the score
+for Q3 work.  `scripts/q3_fc1_hours.py` (cross-validated against the project's
+own `scripts/fc1_grade.py shadow` — SD-RMS agrees to 3 decimals: 21.723 /
+27.114 cm):
+
+| 3 h, common-removed | ctl | anchor | gauge-free |
+|---|---|---|---|
+| producer, robust σ (**the body**) | 8.83 cm | **5.25** | 5.60 |
+| producer RMS, declared marks removed | 21.72 | 15.83 | **13.93** |
+| producer RMS, raw | 21.72 | 27.11 | **19.85** |
+| phase-measured (TDCP) | 0.30 | 0.30 | 0.30 |
+| **corr(producer, phase)** | −0.004 | **−0.004** | **−0.005** |
+| ratio phase / producer | 0.014 | 0.011 | 0.015 |
+
+**Not one arm moves the correlation off zero.**  The card's own pre-registered
+FC-1 gate — *"a successful anchor moves producer Δc0 toward the phase column AND
+lifts the correlation off zero"* — is **NOT met**.  Q3 at q = 3e-5 makes the
+emitted clock **quieter, not more real**: the body falls 41 %, the marks-removed
+RMS falls 27–36 %, and the fraction of the emitted motion that is information
+stays at ~1–1.5 %.
+
+Two methodological notes that fall out of it, both reusable:
+
+1. **An RMS is the wrong statistic for a guarded arm.**  The raw SD-RMS gets
+   WORSE with the anchor (21.72 → 27.11) purely because the guard's 65 marked
+   refloat steps are large one-epoch changes BY DESIGN, and RMS is
+   tail-dominated — while every satellite in the grader's own worst-5 table
+   improved (G22 16.1 → 13.9, G28 14.7 → 11.5, G29 13.6 → 9.6, G18 12.8 → 9.4).
+   A declared discontinuity is not an error the consumer integrates; it is one
+   it is told to reset at.  `q3_fc1_hours.py` therefore reports the raw RMS, the
+   robust body, AND the marks-removed RMS, and none of the three is quotable
+   alone.
+2. **The physical floor on this lineage is an OPEN NUMBER and it gates
+   everything.**  The TDCP column measures 0.30 cm per 30 s here, **6× smaller**
+   than the 1.7–2.0 cm `project_fast_clock_card` records (different roster, era
+   and possibly statistic).  If 0.30 cm is right, q_phys ≈ 3e-7 and the anchor
+   has two orders of magnitude of headroom left, which would reframe the whole q
+   ladder.  Resolve this before the next q rung — it is the difference between
+   "nearly done" and "barely started".
+
+### Not yet run
+
+- **G4 — the DOY-129 20:47 event-window replay** (invariant #1's actual bar).
+  Still OWED.  The guard has now fired on real data (65 trips incl. 2 genuine
+  staleness `gap` trips at TOW 262950 / 267750, on satellites whose carry had
+  aged past 120 s) but never on a KNOWN event with a known answer.  **Quiet-day
+  cleanliness is explicitly not a pass.**
+- The 12 h leg, and therefore the comparison against the `runs/clkr_12h_hold`
+  denominator: a 3 h window cannot settle the LEVEL channel (~2 h) and is not
+  like-for-like against a 12 h run.  `total_IF` is likewise not graded here.
+- The gauge-free bisection and the gauge-aware `σ̂₀_clk`, both named above.
 
 ---
 

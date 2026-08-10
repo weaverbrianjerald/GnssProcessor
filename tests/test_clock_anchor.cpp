@@ -502,3 +502,161 @@ TEST(ClockAnchorLoader, ClockModelInterlockDisarmsTheAnchor) {
     EXPECT_FALSE(ctx.knobs.cta_on);                  // …but the run cannot honour it
     std::error_code ec; fs::remove(p, ec);
 }
+
+// ===========================================================================
+// 9: Card Q3 §2.1 — the gauge-free fold
+// ===========================================================================
+//
+// The property that matters is ALGEBRAIC and checkable exactly: after the
+// downdate the folded prior must carry ZERO information along the
+// per-constellation clock common direction, while the information it carries on
+// the DIFFERENCES is untouched.  Both are pinned against a SOLVE rather than
+// against Λ, because "no information along u" has an operational meaning the
+// algebra alone does not show: shifting every carried clock of a constellation
+// by a common amount must move the solution not at all.
+
+namespace {
+
+/// Solve one epoch with satellite-clock priors folded raw or gauge-free.
+Eigen::VectorXd solveWithClockPriors(NetworkEstimator& est, const ToyNet& t,
+                                     const std::vector<double>& sat_clk,
+                                     const NetworkEstimator::Datum& datum,
+                                     const std::map<std::string, double>& carried,
+                                     double var, bool gauge_free,
+                                     std::size_t* downdated = nullptr) {
+    est.beginEpoch();
+    for (int r = 0; r < t.R; ++r) {
+        Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(t.S, t.S);
+        Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(t.S, 1);
+        Eigen::VectorXd w(t.S), y(t.S);
+        for (int s = 0; s < t.S; ++s) {
+            A_s(s, s) = 1.0; A_r(s, 0) = 1.0; w(s) = 100.0;
+            y(s) = sat_clk[static_cast<std::size_t>(s)] + t.rx[static_cast<std::size_t>(r)];
+        }
+        est.addStation(A_s, A_r, w, y);
+    }
+    std::vector<NetworkEstimator::SharedPrior> priors;
+    for (const auto& kv : carried) {
+        NetworkEstimator::SharedPrior p;
+        p.kind = SharedParamKind::Clock; p.sat = kv.first; p.value = kv.second;
+        p.info = 1.0 / var;
+        priors.push_back(p);
+    }
+    if (gauge_free) {
+        const std::size_t n = est.addSharedPriorClockGaugeFree(priors);
+        if (downdated) *downdated = n;
+    } else {
+        est.addSharedPrior(priors);
+    }
+    return est.solve(datum);
+}
+
+}  // namespace
+
+TEST(ClockAnchorGaugeFree, CommonShiftOfEveryCarriedClockDoesNotMoveTheSolution) {
+    ToyNet t;
+    const std::vector<double> truth{0.0, 1.0, -0.5, 2.0};
+    std::map<std::string, double> carried{{"G02", 1.0}, {"G03", -0.5}, {"G04", 2.0}};
+    std::map<std::string, double> shifted;
+    for (const auto& kv : carried) shifted[kv.first] = kv.second + 5.0;   // a pure GAUGE move
+
+    NetworkEstimator a, b, c;
+    for (auto* e : {&a, &b, &c}) for (const auto& s : t.sats) e->registerClock(s);
+    const NetworkEstimator::Datum da = {{a.clockColumn(t.sats[0]), 0.0}};
+    const NetworkEstimator::Datum db = {{b.clockColumn(t.sats[0]), 0.0}};
+    const NetworkEstimator::Datum dc = {{c.clockColumn(t.sats[0]), 0.0}};
+
+    std::size_t n_gf = 0;
+    const Eigen::VectorXd x_gf  = solveWithClockPriors(a, t, truth, da, carried, 4e-4, true, &n_gf);
+    const Eigen::VectorXd x_gfs = solveWithClockPriors(b, t, truth, db, shifted, 4e-4, true);
+    const Eigen::VectorXd x_raw = solveWithClockPriors(c, t, truth, dc, shifted, 4e-4, false);
+
+    EXPECT_EQ(n_gf, 3u);                                   // all three downdated
+    EXPECT_LT((x_gf - x_gfs).cwiseAbs().maxCoeff(), 1e-9);  // the gauge move is INVISIBLE
+    // …and the same shift drags a RAW fold.  Without this the test above would
+    // pass trivially on a prior that does nothing at all.
+    EXPECT_GT((x_gf - x_raw).cwiseAbs().maxCoeff(), 0.1);
+}
+
+TEST(ClockAnchorGaugeFree, DifferenceInformationSurvivesAndALoneClockFoldsNothing) {
+    ToyNet t;
+    const std::vector<double> truth{0.0, 1.0, -0.5, 2.0};
+    // G03 carried 1 m off truth, the others at truth: that is a DIFFERENCE, not
+    // the gauge, so a gauge-free anchor must still pull it.
+    std::map<std::string, double> carried{{"G02", 1.0}, {"G03", 0.5}, {"G04", 2.0}};
+    NetworkEstimator a;
+    for (const auto& s : t.sats) a.registerClock(s);
+    const NetworkEstimator::Datum da = {{a.clockColumn(t.sats[0]), 0.0}};
+    const Eigen::VectorXd x = solveWithClockPriors(a, t, truth, da, carried, 4e-4, true);
+    EXPECT_GT(x(a.clockColumn("G03")) - truth[2], 0.3);
+
+    // A constellation contributing a SINGLE carried clock is entirely gauge —
+    // no estimable content to anchor, so nothing may be folded.
+    NetworkEstimator b;
+    for (const auto& s : t.sats) b.registerClock(s);
+    const NetworkEstimator::Datum db = {{b.clockColumn(t.sats[0]), 0.0}};
+    std::size_t n_one = 0;
+    const std::map<std::string, double> lone{{"G03", 99.0}};
+    const Eigen::VectorXd x_one =
+        solveWithClockPriors(b, t, truth, db, lone, 4e-4, true, &n_one);
+    EXPECT_EQ(n_one, 0u);
+    EXPECT_NEAR(x_one(b.clockColumn("G03")), truth[2], 1e-6)
+        << "a lone carried clock IS the gauge — a 99 m carried value must not move it";
+}
+
+TEST(ClockAnchorGaugeFree, RefoldDroppingRebuildsTheMarginalizedGroupExactly) {
+    ToyNet t;
+    const std::vector<double> truth{0.0, 1.0, -0.5, 2.0};
+    const std::map<std::string, double> carried{{"G02", 1.0}, {"G03", 0.5}, {"G04", 2.0}};
+    std::vector<NetworkEstimator::SharedPrior> priors;
+    for (const auto& kv : carried) {
+        NetworkEstimator::SharedPrior p;
+        p.kind = SharedParamKind::Clock; p.sat = kv.first; p.value = kv.second;
+        p.info = 1.0 / 4e-4;
+        priors.push_back(p);
+    }
+    std::map<std::string, double> without = carried;
+    without.erase("G03");
+
+    NetworkEstimator a;
+    for (const auto& s : t.sats) a.registerClock(s);
+    const NetworkEstimator::Datum da = {{a.clockColumn(t.sats[0]), 0.0}};
+    const Eigen::VectorXd x_ref = solveWithClockPriors(a, t, truth, da, without, 4e-4, true);
+
+    NetworkEstimator b;
+    for (const auto& s : t.sats) b.registerClock(s);
+    const NetworkEstimator::Datum db = {{b.clockColumn(t.sats[0]), 0.0}};
+    const Eigen::VectorXd x_full = solveWithClockPriors(b, t, truth, db, carried, 4e-4, true);
+    EXPECT_GT((x_full - x_ref).cwiseAbs().maxCoeff(), 1e-3)
+        << "dropping G03 must actually matter, or the comparison is vacuous";
+    // A per-key subtraction cannot do this: removing one key moves the group's
+    // information-weighted mean, so every survivor's anchor target changes too.
+    EXPECT_EQ(b.refoldSharedPriorClockGaugeFreeDropping(priors, {"G03"}), 1u);
+    const Eigen::VectorXd x_drop = b.solve(db);
+    EXPECT_LT((x_drop - x_ref).cwiseAbs().maxCoeff(), 1e-9);
+
+    b.refoldSharedPriorClockGaugeFreeDropping(priors, {"G03"}, /*restore=*/true);
+    const Eigen::VectorXd x_back = b.solve(db);
+    EXPECT_LT((x_back - x_full).cwiseAbs().maxCoeff(), 1e-9);
+}
+
+TEST(ClockAnchorLoader, GaugeFreeDefaultsOffAndParses) {
+    LogManager log;
+    {
+        const fs::path p = writeTempConfig("gfdef", "");
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkClockAnchorGaugeFree());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("gfon",
+            std::string(kArmed) + "    \"clock_anchor_gauge_free\": true,\n");
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkClockAnchorGaugeFree());
+        NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+        EXPECT_TRUE(ctx.knobs.cta_gauge_free);
+        std::error_code ec; fs::remove(p, ec);
+    }
+}

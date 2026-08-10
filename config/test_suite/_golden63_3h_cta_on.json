@@ -1,0 +1,42 @@
+{
+ "_comment": [
+  "Card Q3 (docs/SPEC_clock_temporal_anchor.md) — 3 h ON arm for the quick-look",
+  "A/B (user request 2026-08-10).  The G2-validated 1 h ON posture verbatim",
+  "(q = 3e-5 -> sqrt(q*dt) = 3.0 cm walk target; k = 6; abs 2.0 m; floor",
+  "0.02 m; recouple 4; mark + resolve ON) extended to 10800 s — one",
+  "anchor-block different from _golden63_3h_cta_ctl.json.",
+  "PRE-REGISTERED GATES (SPEC section 4 G2 tier, at 3 h):",
+  "  * dev census: |step| median <= ~3.6 cm and robust sigma_w <= ~5.3 cm vs",
+  "    the control's ~6/9 class; outlier epochs down; per-sat sigma_w SPREAD",
+  "    shrinks (the falsifiable half of the diagnosis);",
+  "  * trips ~1-2 network-wide per hour, every trip = in-epoch re-solve +",
+  "    R mark on the wire (tie-out event/R/counter);",
+  "  * sigma0_code FLAT vs control (the section-2.1 common-mode ordering",
+  "    check) and NO new withholds;",
+  "  * consumer (live WTZZ): hourly medians / worst not worse; AR 0 expected",
+  "    both arms (Q3 alone is not the promised AR unblock at 3 h).",
+  "  * h2-h3 level read is RANK-ONLY (the level channel needs >= 2 h to",
+  "    settle; no absolute level verdicts off this window).",
+  "FRESH lineage; run alone."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 10800.0 },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_q": 3e-5,
+  "clock_anchor_var_floor_m2": 4e-4,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_sigma_floor_m": 0.02,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cta_3h_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta_3h_on/state_snapshot.bin"
+ }
+}

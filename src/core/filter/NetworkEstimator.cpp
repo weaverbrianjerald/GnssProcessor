@@ -491,7 +491,10 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
                                        std::vector<Eigen::Index>& col,
                                        std::vector<Eigen::Index>& in_idx,
                                        Eigen::MatrixXd& Lambda,
-                                       Eigen::VectorXd& eta) const {
+                                       Eigen::VectorXd& eta,
+                                       bool clock_gauge_free,
+                                       std::size_t* gauge_free_keys) const {
+    if (gauge_free_keys) *gauge_free_keys = 0;
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
     in_idx.clear();
     col.clear();
@@ -579,6 +582,53 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
     // the within-epoch RAIM replay re-folds this block PRE-reduce, and the two
     // paths must agree bit-for-bit.
     Lambda = (0.5 * (Lambda + Lambda.transpose())).eval();
+    // Card Q3 §2.1 — marginalize the per-constellation satellite-clock GAUGE
+    // direction out of the JOINT information (see addSharedPriorClockGaugeFree
+    // for the algebra).  Applied here, on Λ, rather than on the covariance,
+    // because "infinite prior variance along u" has no finite covariance
+    // representation; the downdate is its exact information-side image.  Doing it
+    // on the JOINT block is what keeps the clock↔code-bias off-diagonals the C1
+    // dense carry exists to retain — only the gauge direction is removed.
+    // Deliberately BEFORE the information-budget check below, so that check sees
+    // the information actually folded.
+    if (clock_gauge_free) {
+        std::map<char, std::vector<Eigen::Index>> grp;   // constellation -> rows of Λ
+        for (Eigen::Index a = 0; a < k; ++a) {
+            const SharedPrior& p = keys[static_cast<std::size_t>(in_idx[static_cast<std::size_t>(a)])];
+            if (p.kind == SharedParamKind::Clock && !p.sat.empty())
+                grp[p.sat[0]].push_back(a);
+        }
+        std::vector<Eigen::Index> used;
+        for (const auto& [c, rows] : grp) {
+            (void)c;
+            if (rows.size() < 2) continue;   // a lone carried clock IS the gauge — nothing estimable to anchor
+            used.insert(used.end(), rows.begin(), rows.end());
+        }
+        if (!used.empty()) {
+            // One column of U per constellation with >= 2 carried clocks.  Built as
+            // a matrix rather than looped rank-1 downdates because the groups are
+            // COUPLED through Λ (the carried posterior correlates constellations),
+            // so sequential downdates would not commute and the second would be
+            // taken against an already-modified Λ.
+            std::vector<char> cs;
+            for (const auto& [c, rows] : grp) if (rows.size() >= 2) cs.push_back(c);
+            Eigen::MatrixXd U = Eigen::MatrixXd::Zero(k, static_cast<Eigen::Index>(cs.size()));
+            for (std::size_t j = 0; j < cs.size(); ++j)
+                for (Eigen::Index a : grp.at(cs[j]))
+                    U(a, static_cast<Eigen::Index>(j)) = 1.0;
+            const Eigen::MatrixXd LU = Lambda * U;          // k x m
+            const Eigen::MatrixXd M  = U.transpose() * LU;  // m x m, PSD
+            const Eigen::LDLT<Eigen::MatrixXd> mf(M);
+            if (mf.info() == Eigen::Success && mf.vectorD().minCoeff() > 0.0) {
+                Lambda -= LU * mf.solve(LU.transpose());
+                Lambda = (0.5 * (Lambda + Lambda.transpose())).eval();
+                if (gauge_free_keys) *gauge_free_keys = used.size();
+            }
+            // A singular UᵀΛU means the block already carries no information along
+            // the gauge (nothing to remove) — leaving Λ untouched is the correct
+            // and only safe action; the caller's counter then reads 0 for the fold.
+        }
+    }
     // Absolute folded-information budget — the second half of the conditioning
     // guard (the κ check above bounds the RELATIVE amplification; this bounds the
     // ABSOLUTE injected stiffness, which is what the downstream solve guard sees).
@@ -601,7 +651,8 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
 
 std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>& keys,
                                                   const Eigen::MatrixXd& cov,
-                                                  Eigen::VectorXd* lambda_diag) {
+                                                  Eigen::VectorXd* lambda_diag,
+                                                  bool clock_gauge_free) {
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
     if (cov.rows() != nk || cov.cols() != nk) {
         throw std::invalid_argument(
@@ -619,7 +670,8 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
     std::vector<Eigen::Index> in_idx, col;
     Eigen::MatrixXd Lambda;
     Eigen::VectorXd eta;
-    if (!denseFoldTerms_(keys, cov, kNoSkip, col, in_idx, Lambda, eta)) return 0;
+    if (!denseFoldTerms_(keys, cov, kNoSkip, col, in_idx, Lambda, eta, clock_gauge_free))
+        return 0;
     const Eigen::Index k = static_cast<Eigen::Index>(in_idx.size());
 
     const Eigen::Index n = numShared();
@@ -635,6 +687,118 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
     if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
     return static_cast<std::size_t>(k);
+}
+
+std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
+    const std::vector<SharedPrior>& priors) {
+    if (priors.empty()) return 0;
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+
+    // Pass 1: resolve identities.  Non-clock priors accumulate exactly as
+    // addSharedPrior accumulates them (same order, same arithmetic); clock
+    // priors are grouped by constellation for the downdate below.
+    struct ClkRow { Eigen::Index col; double info, value; };
+    std::map<char, std::vector<ClkRow>> grp;
+    for (const SharedPrior& p : priors) {
+        if (!(p.info > 0.0)) continue;
+        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
+            : key_(p.sat, p.kind, p.signal);
+        const auto it = index_.find(pkey);
+        if (it == index_.end()) continue;   // parameter not in this epoch's layout
+        const Eigen::Index c = it->second;
+        if (p.kind == SharedParamKind::Clock && !p.sat.empty()) {
+            grp[p.sat[0]].push_back({c, p.info, p.value});
+        } else {
+            delta_info(c, c) += p.info;
+            delta_rhs(c)     += p.info * p.value;
+        }
+    }
+
+    // Pass 2: per constellation, Λ_gf = D − λλᵀ/Λ_tot with D = diag(λ), λ = info.
+    // (The general Λ − Λu(uᵀΛu)⁻¹uᵀΛ specialized to a diagonal Λ and u = 1.)
+    // η = Λ_gf v = λ ⊙ (v − v̄_λ): each clock is anchored to its carried value
+    // MINUS the information-weighted mean of the carried values, i.e. the
+    // DIFFERENCES are anchored and the gauge is left to the datum.
+    std::size_t downdated = 0;
+    for (const auto& [c, rows] : grp) {
+        (void)c;
+        if (rows.size() < 2) continue;   // a lone carried clock IS the gauge
+        double tot = 0.0, wsum = 0.0;
+        for (const ClkRow& r : rows) { tot += r.info; wsum += r.info * r.value; }
+        if (!(tot > 0.0)) continue;
+        const double vbar = wsum / tot;
+        for (std::size_t a = 0; a < rows.size(); ++a) {
+            delta_rhs(rows[a].col) += rows[a].info * (rows[a].value - vbar);
+            for (std::size_t b = 0; b < rows.size(); ++b) {
+                const double v = (a == b ? rows[a].info : 0.0)
+                               - rows[a].info * rows[b].info / tot;
+                delta_info(rows[a].col, rows[b].col) += v;
+            }
+        }
+        downdated += rows.size();
+    }
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return downdated;
+}
+
+std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
+    const std::vector<SharedPrior>& priors, const std::set<std::string>& drop_sats,
+    bool restore) {
+    if (priors.empty() || drop_sats.empty()) return 0;
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+
+    struct ClkRow { Eigen::Index col; double info, value; bool drop; };
+    std::map<char, std::vector<ClkRow>> grp;
+    for (const SharedPrior& p : priors) {
+        if (p.kind != SharedParamKind::Clock || p.sat.empty() || !(p.info > 0.0)) continue;
+        const auto it = index_.find(key_(p.sat, p.kind, p.signal));
+        if (it == index_.end()) continue;
+        grp[p.sat[0]].push_back({it->second, p.info, p.value, drop_sats.count(p.sat) > 0});
+    }
+    // The gauge-free block is NOT diagonal, so a per-key subtraction (the plain
+    // withdrawSharedPrior) would leave the rest of the group folded against a
+    // stale weighted mean.  Rebuild both blocks and fold the difference — the
+    // exact analogue of the dense path's marginalized re-fold.
+    const double sgn = restore ? -1.0 : +1.0;
+    const auto accumulate = [&](const std::vector<ClkRow>& rows, bool keep_dropped,
+                                double s) {
+        std::vector<const ClkRow*> use;
+        for (const ClkRow& r : rows)
+            if (keep_dropped || !r.drop) use.push_back(&r);
+        if (use.size() < 2) return;
+        double tot = 0.0, wsum = 0.0;
+        for (const ClkRow* r : use) { tot += r->info; wsum += r->info * r->value; }
+        if (!(tot > 0.0)) return;
+        const double vbar = wsum / tot;
+        for (std::size_t a = 0; a < use.size(); ++a) {
+            delta_rhs(use[a]->col) += s * use[a]->info * (use[a]->value - vbar);
+            for (std::size_t b = 0; b < use.size(); ++b) {
+                const double v = (a == b ? use[a]->info : 0.0)
+                               - use[a]->info * use[b]->info / tot;
+                delta_info(use[a]->col, use[b]->col) += s * v;
+            }
+        }
+    };
+    std::size_t dropped = 0;
+    for (const auto& [c, rows] : grp) {
+        (void)c;
+        std::size_t nd = 0;
+        for (const ClkRow& r : rows) if (r.drop) ++nd;
+        if (nd == 0) continue;
+        accumulate(rows, /*keep_dropped=*/true,  -sgn);   // remove the block as folded
+        accumulate(rows, /*keep_dropped=*/false, +sgn);   // re-fold it without the refloated keys
+        dropped += nd;
+    }
+    if (dropped == 0) return 0;
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return dropped;
 }
 
 void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& priors) {
@@ -661,7 +825,7 @@ void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& prior
 
 std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
     const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
-    const std::set<std::string>& drop_sats, bool restore) {
+    const std::set<std::string>& drop_sats, bool restore, bool clock_gauge_free) {
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
     if (cov.rows() != nk || cov.cols() != nk) {
         throw std::invalid_argument(
@@ -677,9 +841,11 @@ std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
     // Both blocks are built BEFORE anything is folded, so a throw from either
     // leaves the shared system untouched (the caller's restore path is then a
     // plain "keep the pre-withdraw solution").
-    const bool had_old = denseFoldTerms_(keys, cov, kNoSkip, old_col, old_in, L_old, e_old);
+    const bool had_old = denseFoldTerms_(keys, cov, kNoSkip, old_col, old_in, L_old, e_old,
+                                         clock_gauge_free);
     if (!had_old) return 0;
-    const bool has_new = denseFoldTerms_(keys, cov, drop_sats, new_col, new_in, L_new, e_new);
+    const bool has_new = denseFoldTerms_(keys, cov, drop_sats, new_col, new_in, L_new, e_new,
+                                         clock_gauge_free);
     const std::size_t dropped = old_in.size() - (has_new ? new_in.size() : 0u);
     if (dropped == 0) return 0;
 

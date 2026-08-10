@@ -198,12 +198,53 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     const double abs_m   = ctx.knobs.cta_abs_m;
     const double s_floor = std::max(1e-12, ctx.knobs.cta_sigma_floor_m
                                          * ctx.knobs.cta_sigma_floor_m);
+    const bool gf = ctx.knobs.cta_gauge_free;
     int pass = 0;
     for (; pass < kCtaMaxPasses; ++pass) {
         const Eigen::MatrixXd& cov = est.sharedCovariance();
         struct Row { std::string sat; double e{}, S{}, post_var{}, var_eff{}; bool anchored{}; };
         std::vector<Row> rows;
         std::map<char, std::vector<double>> e_by_const;
+        // Card Q3 §2.1: under the gauge-free fold the prior carries NO information
+        // along the clock common direction, so the POSTERIOR along it is data-only
+        // and its marginal variance cov(c,c) over-states Var(ê) — the statistic
+        // must be matched to the prior that was actually folded, or the guard
+        // trips on a widening it has itself created.  The matched denominator uses
+        // the COMMON-REMOVED posterior variance
+        //   Var(x̂_s − mean_c x̂) = C_ss − 2·mean_t C_st + mean_{t,u} C_tu,
+        // built here once per pass over each constellation's folded clock columns.
+        // On the raw-state path nothing changes (cov(c,c) as before), so the
+        // already-validated arm's statistic is untouched.
+        std::map<std::string, double> post_gf;
+        if (gf) {
+            std::map<char, std::vector<std::pair<std::string, Eigen::Index>>> by_c;
+            for (const std::string& sat : registered_clock_sats) {
+                if (sat.empty()) continue;
+                const auto it = anchor.sat.find(sat);
+                if (it == anchor.sat.end() || !it->second.folded) continue;
+                Eigen::Index col;
+                try { col = est.clockColumn(sat); } catch (...) { continue; }
+                if (col >= 0 && col < cov.rows() && col < cov.cols())
+                    by_c[sat[0]].emplace_back(sat, col);
+            }
+            for (const auto& [c, v] : by_c) {
+                (void)c;
+                const std::size_t n = v.size();
+                if (n < 2) continue;   // no estimable subspace ⇒ leave the raw marginal
+                double grand = 0.0;
+                std::vector<double> rowmean(n, 0.0);
+                for (std::size_t a = 0; a < n; ++a) {
+                    double sum = 0.0;
+                    for (std::size_t b = 0; b < n; ++b) sum += cov(v[a].second, v[b].second);
+                    rowmean[a] = sum / static_cast<double>(n);
+                    grand += sum;
+                }
+                grand /= static_cast<double>(n) * static_cast<double>(n);
+                for (std::size_t a = 0; a < n; ++a)
+                    post_gf[v[a].first] =
+                        cov(v[a].second, v[a].second) - 2.0 * rowmean[a] + grand;
+            }
+        }
         rows.reserve(registered_clock_sats.size());
         for (const std::string& sat : registered_clock_sats) {
             if (sat.empty()) continue;
@@ -219,6 +260,11 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             r.e        = z - it->second.last_value;
             r.var_eff  = it->second.last_var_eff;
             r.post_var = (col < cov.rows() && col < cov.cols()) ? cov(col, col) : 0.0;
+            if (gf) {
+                const auto pit = post_gf.find(sat);
+                if (pit != post_gf.end() && std::isfinite(pit->second) && pit->second >= 0.0)
+                    r.post_var = pit->second;
+            }
             // Var(x̂ − μ) = P⁻ − P⁺ EXACTLY.  The floor is a LOWER BOUND on the
             // denominator (never an addition to it — that was the pre-B3 incest
             // form): a weak-data epoch removes no information, so S → 0 and the
@@ -344,13 +390,26 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         try {
             if (!dense_drop.empty()) {
                 est.attribTag("cta_refloat");
+                // The gauge-free flag MUST match the fold, or the withdrawn block
+                // is not the block that was applied.
                 est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
-                                                         ws.cap_dense_cov, dense_drop);
+                                                         ws.cap_dense_cov, dense_drop,
+                                                         /*restore=*/false, gf);
                 folded_dense = true;
             }
             if (!diag_drop.empty()) {
                 est.attribTag("cta_refloat");
-                est.withdrawSharedPrior(diag_drop);
+                // A gauge-free diagonal block is NOT diagonal: removing one key
+                // moves the group's information-weighted mean, so every survivor's
+                // anchor target changes.  Re-fold the group instead of subtracting
+                // one entry.
+                if (gf) {
+                    std::set<std::string> ds;
+                    for (const auto& p : diag_drop) ds.insert(p.sat);
+                    est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds);
+                } else {
+                    est.withdrawSharedPrior(diag_drop);
+                }
             }
             x_try = est.solve(plan.shared_datum);
         } catch (const std::exception& ex) {
@@ -363,8 +422,17 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (folded_dense)
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
-                                                             /*restore=*/true);
-                if (!diag_drop.empty()) est.addSharedPrior(diag_drop);
+                                                             /*restore=*/true, gf);
+                if (!diag_drop.empty()) {
+                    if (gf) {
+                        std::set<std::string> ds;
+                        for (const auto& p : diag_drop) ds.insert(p.sat);
+                        est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds,
+                                                                    /*restore=*/true);
+                    } else {
+                        est.addSharedPrior(diag_drop);
+                    }
+                }
                 x_s = est.solve(plan.shared_datum);   // refresh shared_cov_ consistently
             } catch (const std::exception& ex2) {
                 log->error("Network (Card Q3): TOW {:.1f} the restore after a failed refloat "

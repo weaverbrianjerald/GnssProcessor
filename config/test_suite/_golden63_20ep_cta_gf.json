@@ -1,0 +1,8 @@
+{
+ "extends": [ "C:/GnssProcessor/config/test_suite/_golden63_20ep_cta_on.json" ],
+ "network": {
+  "clock_anchor_gauge_free": true,
+  "product_output_path": "C:/GnssProcessor/runs/cta_20ep_gf/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta_20ep_gf/state_snapshot.bin"
+ }
+}

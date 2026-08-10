@@ -3226,6 +3226,17 @@ namespace GnssProcessor {
         /// detect + mark + decouple-next-epoch, which is honest but ships one
         /// anchor-warped epoch per event.
         bool   networkClockAnchorResolve() const { return network_clock_anchor_resolve_; }
+        /// Card Q3 §2.1 — fold the clock prior GAUGE-FREE: marginalize the
+        /// per-constellation satellite-clock common direction out of the folded
+        /// information (rank-1 downdate Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ), so the anchor
+        /// constrains only the estimable between-satellite differences and leaves
+        /// the common mode entirely to the S-basis datum.  Motive is measured, not
+        /// theoretical: over 3 h the plain anchor suppressed CLK-R's drained
+        /// common mode Σ|μ| from 49.4 m to 27.8 m against its own control — the
+        /// carry was doing 44 % of the gauge's work, which is a standing-invariant-#5
+        /// violation at the MECHANISM level (the paper's datum-invariance: an
+        /// estimator should constrain estimable functions, not gauges).
+        bool   networkClockAnchorGaugeFree() const { return network_clock_anchor_gauge_free_; }
         /// @}
 
         /**
@@ -5688,6 +5699,7 @@ namespace GnssProcessor {
         double network_clock_anchor_sigma_floor_m_{0.02};  ///< Card Q3: floor on √S (m). A weak-data epoch removes no information (P⁺ → P⁻ ⇒ S → 0) and would otherwise yield a 0/0 statistic that false-trips exactly the lowest-confidence satellites; the floor makes it read w ≈ 0 instead. A LOWER BOUND on the denominator, never an addition to it (that was the pre-B3 data-incest form). Default 2 cm = the measured physical per-30 s change. INERT unless network_clock_temporal_anchor_.
         int    network_clock_anchor_recouple_epochs_{4};   ///< Card Q3: consecutive in-band epochs a decoupled satellite must serve before the anchor re-engages — standing invariant #7's "the RE-COUPLING edge must re-validate or re-seed what it reconnects". The re-engaged fold also RE-SEEDS (its first variance is cp.var + q·Δt off the LOOSE posterior, not the steady-state tight value). INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_mark_{true};           ///< Card Q3: wire-mark the DECOUPLING edge (markSatDiscontinuity → R record + per-sat phase/code/clock counters, the chain Q4 proved end-to-end). A satellite whose clock changed BOTH temporal regime and value must not be integrated across. Unlike CLK-R stage 2 — whose marked population was ~98 % churn and cost the quiet-day consumer — this population is by construction NOT churn (the churn is what the anchor removes), but the rate discipline still applies and the knob exists so a 12 h A/B can bisect hold-vs-marks exactly as CLK-R's did. INERT unless network_clock_temporal_anchor_.
+        bool   network_clock_anchor_gauge_free_{false};    ///< Card Q3 §2.1: fold the clock prior with the per-constellation clock GAUGE direction marginalized out (Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ; diagonally this is "anchor each clock to its carried value minus the information-weighted mean", i.e. anchor the DIFFERENCES). Applied to the JOINT dense block, so the clock↔code-bias off-diagonals the C1 carry retains are preserved — only the gauge is removed. A constellation with < 2 carried clocks contributes nothing (its lone key IS the gauge). SOLVE-AFFECTING; part of the anchor's fingerprint. INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_resolve_{true};        ///< Card Q3: adapt-and-EMIT. On a trip, withdraw the offending clock prior from the shared system and RE-SOLVE the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Placed BEFORE the within-epoch RAIM adaptation deliberately — a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's DATA. OFF degrades to detect+mark+decouple-next-epoch. INERT unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.

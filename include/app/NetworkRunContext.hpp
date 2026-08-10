@@ -163,6 +163,7 @@ namespace GnssProcessor {
         double cta_sigma_floor_m{};  ///< network.clock_anchor_sigma_floor_m — √S floor so a weak-data epoch gives w ≈ 0 instead of 0/0
         int    cta_recouple_ep{};    ///< network.clock_anchor_recouple_epochs — consecutive in-band epochs a LOOSE satellite must serve before the anchor re-engages (invariant #7 re-validation)
         bool   cta_mark{};           ///< network.clock_anchor_mark — wire-mark the DECOUPLING edge (per-sat disc via the B1 retro-bump chain)
+        bool   cta_gauge_free{};     ///< network.clock_anchor_gauge_free — Card Q3 §2.1: marginalize the per-constellation SATELLITE-CLOCK gauge direction out of the folded clock prior, so the anchor constrains only the estimable between-satellite differences and leaves the common mode to the datum.  Measured motive: the plain anchor suppressed CLK-R's drained Σ|μ| 49.4 → 27.8 m over 3 h, i.e. the carry was doing 44 % of the gauge's work.
         bool   cta_resolve{};        ///< network.clock_anchor_resolve — adapt-and-EMIT: withdraw the tripped prior and RE-SOLVE the epoch before emission
         bool clk_model_on{};
         double clk_model_q1{};
@@ -1481,6 +1482,8 @@ namespace GnssProcessor {
         long long cta_resolve_failed = 0;    ///< in-epoch re-solves that threw and were reverted to the anchored solution
         long long cta_recouples = 0;         ///< re-coupling edges: a LOOSE satellite re-earned the anchor
         long long cta_marks = 0;             ///< per-sat wire discontinuities QUEUED at a decoupling edge
+        long long cta_gf_keys = 0;           ///< (sat,epoch) clock priors whose information was gauge-downdated.  0 on an ARMED gauge-free run means the downdate never reached a group of >= 2 carried clocks — the step is inert and the anchor is still constraining the gauge.
+        long long cta_gf_inert = 0;          ///< epochs where the gauge-free step was armed but downdated NOTHING (every constellation contributed < 2 carried clocks, or UᵀΛU was singular)
         double    cta_max_w = 0.0;           ///< largest |w| seen (any disposition)
         double    cta_max_w_tow = 0.0;       ///< …its epoch
         std::string cta_max_w_sat;           ///< …its satellite

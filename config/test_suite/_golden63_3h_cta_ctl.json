@@ -1,0 +1,21 @@
+{
+ "_comment": [
+  "Card Q3 (docs/SPEC_clock_temporal_anchor.md) — 3 h CONTROL for the quick-look",
+  "A/B (user request 2026-08-10).  Sibling of _golden63_1h_cta_ctl extended to",
+  "10800 s: extends the golden base DIRECTLY (the chain sits at the depth",
+  "ceiling) with no anchor knobs — the golden posture incl. the promoted",
+  "emit_clock_frame_hold, which both arms of this pair inherit equally.",
+  "prior_residual_families restated to include clk so BOTH arms carry the",
+  "census instrument (trace-only, solve-neutral).  FRESH lineage; run alone."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 10800.0 },
+ "network": {
+  "max_duration_s": 10800.0,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cta_3h_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta_3h_ctl/state_snapshot.bin"
+ }
+}

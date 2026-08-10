@@ -31,6 +31,7 @@ def census(path, pb_step, clk_common, clk_dev):
     clk_delta = collections.defaultdict(list)
     marks = collections.Counter()
     epochs = []
+    pivots = set()          # SS4.1: per-constellation pivot satellites (S record)
     tow = None
     with open(path) as f:
         for line in f:
@@ -40,6 +41,11 @@ def census(path, pb_step, clk_common, clk_dev):
                 epochs.append(tow)
                 if len(p) > 6 and p[6] not in ("0", ""):
                     marks["E.datum_changed"] += 1
+            elif line.startswith("S,"):
+                # "<const>:<pivot_sat>" tokens on the B6 S-basis contract line.
+                for f in line.rstrip("\n").split(","):
+                    if len(f) > 2 and f[1] == ":" and f[0].isalpha():
+                        pivots.add(f[2:])
             elif line.startswith("R,"):
                 marks["R records"] += 1
             elif line.startswith("P,") and tow is not None:
@@ -90,7 +96,7 @@ def census(path, pb_step, clk_common, clk_dev):
         if outl:
             clk_outl_ep[t] = outl
     return (epochs, midarc, reinit, clk_common_ep, clk_outl_ep, marks,
-            dev_all, dev_by_sat)
+            dev_all, dev_by_sat, pivots)
 
 
 def main():
@@ -103,7 +109,7 @@ def main():
     for arg in a.products:
         path = os.path.join(arg, "products.txt") if os.path.isdir(arg) else arg
         (epochs, midarc, reinit, ckc, cko, marks,
-         dev_all, dev_by_sat) = census(path, a.pb_step, a.clk_common, a.clk_dev)
+         dev_all, dev_by_sat, pivots) = census(path, a.pb_step, a.clk_common, a.clk_dev)
         n_ep = max(len(epochs), 1)
         steps = [x for v in midarc.values() for x in v]
         mags = sorted((abs(d) for _, d in steps), reverse=True)
@@ -137,8 +143,26 @@ def main():
                   f"p99 {100 * q(0.99):.2f}  max {100 * a_[-1]:.1f}")
             print(f"    robust sigma_w {100 * sig:.2f} cm/step; per-sat sigma_w "
                   f"min {100 * per[0]:.2f} med {100 * per[len(per) // 2]:.2f} "
-                  f"max {100 * per[-1]:.2f} cm "
-                  f"(spread {per[-1] / per[0]:.2f}x -- a physical fleet spans orders)")
+                  f"max {100 * per[-1]:.2f} cm")
+            # SS4.1 -- READ THIS PIVOT-AWARE.  Under emit_clock_frame_hold the pivot's
+            # raw clock is pinned to 0, so its EMITTED value is exactly -A_c and its
+            # dev row is the per-epoch DRAINED COMMON MODE: a gauge, not estimable
+            # content, and the only such row in the census.  Quote the ex-pivot
+            # ceiling for product quality; read the pivot row as the direct measure
+            # of how much of the datum's work the carry is doing (Card Q3 SS2.1).
+            ps = sorted(p for p in pivots if p in dev_by_sat)
+            if ps:
+                ex = sorted(1.4826 * sorted(abs(v) for v in vs)[len(vs) // 2]
+                            for s2, vs in dev_by_sat.items() if s2 not in pivots and vs)
+                for p2 in ps:
+                    vs = dev_by_sat[p2]
+                    g = 1.4826 * sorted(abs(v) for v in vs)[len(vs) // 2]
+                    print(f"    PIVOT {p2} sigma_w {100 * g:.2f} cm = the drained COMMON MODE "
+                          f"(gauge, not estimable -- SPEC_clock_temporal_anchor SS4.1)")
+                if ex:
+                    print(f"    EX-PIVOT sigma_w min {100 * ex[0]:.2f} med "
+                          f"{100 * ex[len(ex) // 2]:.2f} max {100 * ex[-1]:.2f} cm "
+                          f"<-- the estimable channel; grade floor and ceiling, not the ratio")
         print(f"  wire marks: " + (", ".join(f"{k}={v}" for k, v in marks.items())
                                    or "NONE (mark-free wire)"))
 

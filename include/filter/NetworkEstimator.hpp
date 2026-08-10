@@ -641,9 +641,77 @@ public:
      *         retry — the caller (driver) owns the fallback policy (degrade to
      *         the diagonal carry for the epoch).
      */
+    /// @param clock_gauge_free Card Q3 §2.1: marginalize the per-constellation
+    ///        SATELLITE-CLOCK common direction out of the folded block before it
+    ///        is applied (see @ref addSharedPriorClockGaugeFree for the algebra
+    ///        and the rationale).  Applied to the JOINT Λ, so the clock↔code-bias
+    ///        off-diagonals the C1 dense carry exists to retain are preserved —
+    ///        only the gauge direction's information is removed.
     std::size_t addSharedPriorDense(const std::vector<SharedPrior>& keys,
                                     const Eigen::MatrixXd& cov,
-                                    Eigen::VectorXd* lambda_diag = nullptr);
+                                    Eigen::VectorXd* lambda_diag = nullptr,
+                                    bool clock_gauge_free = false);
+
+    /**
+     * @brief Card Q3 §2.1 — fold diagonal shared priors with the per-constellation
+     *        satellite-clock GAUGE direction marginalized out.
+     *
+     * ## Why
+     *
+     * The per-constellation clock common mode is a GAUGE: it is fixed by the
+     * S-basis (the pivot-satellite pin), not by the carried prior, and a
+     * consumer's per-epoch receiver clock absorbs it identically.  A carry that
+     * puts information on it is competing with the datum, and the conflict lands
+     * on the pivot's observation rows rather than on the estimable
+     * between-satellite differences.  Measured on the wire (3 h, 63 sta): the
+     * anchored arm suppressed CLK-R's drained common mode Σ|μ| 49.4 m → 27.8 m
+     * vs its control — the carry was doing 44 % of the gauge's work.
+     *
+     * ## The algebra
+     *
+     * Removing the prior's information along a direction (equivalently: giving
+     * that direction infinite prior variance) is the rank-1 downdate
+     * @f[ \Lambda_{gf} = \Lambda - \Lambda u (u^\top \Lambda u)^{-1} u^\top \Lambda,
+     *     \qquad \eta_{gf} = \Lambda_{gf} v @f]
+     * (the Sherman–Morrison limit of @f$(P + \sigma^2 uu^\top)^{-1}@f$ as
+     * @f$\sigma^2 \to \infty@f$), with @f$u@f$ the indicator of one
+     * constellation's carried clock keys.  @f$\Lambda_{gf} u = 0@f$ exactly, and
+     * @f$\Lambda_{gf}@f$ stays PSD with rank one lower.  For the diagonal case
+     * this reduces to anchoring each clock to its carried value MINUS the
+     * information-weighted mean of the carried values — i.e. it anchors the
+     * DIFFERENCES, which is precisely the estimable content (Odijk
+     * datum-invariance; the GKF "carry on FUNCTIONS, not states" form).
+     *
+     * A constellation contributing FEWER THAN TWO carried clock keys has no
+     * estimable content to anchor (its single key IS the gauge), so nothing is
+     * folded for it — a real outcome, not an error, and one the caller counts.
+     *
+     * Non-clock priors in @p priors are folded exactly as @ref addSharedPrior
+     * folds them.
+     *
+     * @return Number of clock keys whose information was downdated (0 ⇒ the
+     *         gauge-free step was inert for this fold).
+     */
+    std::size_t addSharedPriorClockGaugeFree(const std::vector<SharedPrior>& priors);
+
+    /**
+     * @brief Card Q3 — the gauge-free diagonal analogue of
+     *        @ref refoldSharedPriorDenseDroppingClocks: re-fold a gauge-free
+     *        clock prior set with @p drop_sats REFLOATED.
+     *
+     * A gauge-free block is NOT diagonal, so @ref withdrawSharedPrior cannot undo
+     * one key of it — removing a key also moves the group's information-weighted
+     * mean, and every survivor is anchored against that mean.  This rebuilds both
+     * blocks (with and without the refloated keys) and folds the difference.
+     * Only @ref SharedParamKind::Clock entries of @p priors are touched.
+     *
+     * @param restore Fold the inverse delta — the exact undo, for the path where
+     *                the re-solve throws and the anchored solve must survive.
+     * @return Number of clock keys refloated (0 ⇒ nothing folded).
+     */
+    std::size_t refoldSharedPriorClockGaugeFreeDropping(
+        const std::vector<SharedPrior>& priors,
+        const std::set<std::string>& drop_sats, bool restore = false);
 
     /**
      * @brief Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4) — WITHDRAW
@@ -706,9 +774,12 @@ public:
      *         non-finite / non-PD / over the information budget).  Nothing is
      *         folded when it throws.
      */
+    /// @param clock_gauge_free MUST match the flag the original fold used, or the
+    ///        withdrawn block is not the block that was applied.
     std::size_t refoldSharedPriorDenseDroppingClocks(
         const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
-        const std::set<std::string>& drop_sats, bool restore = false);
+        const std::set<std::string>& drop_sats, bool restore = false,
+        bool clock_gauge_free = false);
 
     /**
      * @brief Fold an explicit linear gauge constraint onto the shared border.
@@ -1010,7 +1081,9 @@ private:
                          const std::set<std::string>& skip,
                          std::vector<Eigen::Index>& col,
                          std::vector<Eigen::Index>& in_idx,
-                         Eigen::MatrixXd& Lambda, Eigen::VectorXd& eta) const;
+                         Eigen::MatrixXd& Lambda, Eigen::VectorXd& eta,
+                         bool clock_gauge_free = false,
+                         std::size_t* gauge_free_keys = nullptr) const;
 
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
