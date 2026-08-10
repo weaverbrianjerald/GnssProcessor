@@ -273,6 +273,23 @@ struct SimConfig {
             double duration_s{ 600.0 };          ///< Bump full width (s); ~600 = 10 min.
         };
         std::vector<TidPulse> tid_pulses{};
+        /// Epoch-to-epoch ionospheric TURBULENCE on a few rays (see
+        /// IonoDisturbance::turbVtec).  The only non-smooth term in the model, and
+        /// therefore the only one a geometry-free QC plot reads as "activity": the GIM
+        /// background and the raised-cosine pulses are differentiable, which is why a
+        /// 120 TECU arc still looked quiet in gnss-qc-lite.  Calibrated against ADIS
+        /// (equatorial, Gannon storm): |GF rate| p50 ~0.02, p95 ~0.21, p99 ~0.6 cycles.
+        /// Windowed by turb_window_* fractions of the arc so the roughness is EPISODIC
+        /// (post-sunset), matching that reference rather than running flat all day.
+        /// SED blob is a BULK field: every ray sees it per its own pierce point,
+        /// not per the storm-gain hash (which explicit tid_pulses pin to the pulse
+        /// satellites alone).  false = legacy gating, byte-identical.
+        bool sed_bulk{ false };
+        std::vector<std::string> turb_sats{};    ///< PRNs carrying turbulence ({} = off).
+        double turb_sigma_tecu{ 0.0 };           ///< VERTICAL 1-sigma (TECU) at the window peak.
+        double turb_step_s{ 0.0 };               ///< Epoch spacing (s) for the correlation; <=0 => 30.
+        double turb_window_start_frac{ 0.0 };    ///< Turbulence window start, fraction of the arc.
+        double turb_window_duration_frac{ 0.0 }; ///< Turbulence window length, fraction (<=0 => whole arc).
         double sed_elev_exp{ 0.0 };              ///< Extra low-elev emphasis: slant *= obliquity^this (0 = none).
         bool   tid_positive{ false };            ///< TID as a positive-definite pulse (no negative I_L1); false = bipolar sin.
         double storm_active_fraction{ 1.0 };     ///< Fraction of sats that get the storm; the rest stay on quiet background (1 = all).
@@ -332,6 +349,12 @@ struct SimConfig {
         double heading0_deg{ 35.0 };        ///< Mean heading (deg).
         double heading_amp_deg{ 60.0 };     ///< Heading weave amplitude (deg, kinematic).
         double heading_period_s{ 1200.0 };  ///< Heading weave period (s, kinematic).
+        /// Seconds of exact station-keeping before any motion starts (0 = off).
+        /// The vessel holds the start position, then ramps up and still reaches
+        /// the destination at the final epoch.  Used by the exam hero so the arc
+        /// opens with a genuinely STATIC segment students can solve as a fixed
+        /// point (Parts B and C), which no other part of the record offers.
+        double static_prefix_s{ 0.0 };
         double heave_amp_m{ 1.0 };          ///< Sea-state heave amplitude (m, kinematic).
         double heave_period_s{ 8.0 };       ///< Sea-state heave period (s, kinematic).
         double clock_bias0_s{ 1.0e-4 };     ///< Initial receiver clock bias (s).
@@ -370,6 +393,16 @@ struct SimConfig {
         /// undulation, ~+48 m at the hero LKP.)
         std::string approx_position_mode{ "truth" };
         double approx_quantize_deg{ 0.001 };   ///< Lat/lon rounding grid (deg); ~110 m at the equator.
+        /// Deliberate ENU error (m) added to the header APPROX POSITION *only* -- the
+        /// value a receiver/analyst reads as an a priori.  Applied AFTER quantization and
+        /// AFTER the ocean-loading reference is frozen, so the injected physics is
+        /// untouched and only the disclosed a priori moves.  Deterministic (no RNG).
+        /// A header a priori is not a fix, and RINEX does not promise it is close; a
+        /// large value here forces a solver to actually ITERATE its least squares from the
+        /// header seed instead of coasting on a near-truth start (single-iteration residual
+        /// scales as |offset|^2 / range, so ~25 km leaves tens of metres on the table).
+        /// {0,0,0} = off (byte-identical to the historical behaviour).
+        std::array<double, 3> approx_offset_enu_m{ { 0.0, 0.0, 0.0 } };
         /// Header cosmetics.  EMPTY = keep the writer's current value (byte-identical).
         std::string pgm{};        ///< PGM field (cols 0-19), e.g. "SARV-LOGGER 1.0".
         std::string run_by{};     ///< RUN BY field (cols 20-39).

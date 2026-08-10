@@ -118,6 +118,7 @@ void networkBuildCarryDdPriors(
     std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
     std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+    const std::set<std::pair<int, std::string>>& carry_slipped_raw,
     const std::set<std::string>* carry_we_drop_sats,
     const std::map<int, std::set<std::string>>* carry_we_drop_arcs,
     int n_threads,
@@ -171,6 +172,11 @@ void networkBuildCarryDdPriors(
     auto& lane_resid_arcs = ctx.carry.lane_resid_arcs;
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
     auto& uwl_warned_cons = ctx.carry.uwl_warned_cons;
+    // Card 4 (M1) D5 v4: keep a D5-ONLY funnel entry out of the carry-membership
+    // exclusion (see ambSlipped below).  The loader already forces it false without
+    // carry_innov_gate, so the && is belt-and-braces against a hand-built ctx.
+    const bool retap_only =
+        carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly();
 
     if (!carry_invariant) return;
     constexpr int kSatBase = 1000000;   // satellite vertices sit above every receiver index
@@ -541,7 +547,35 @@ void networkBuildCarryDdPriors(
             // it) or a within-epoch RAIM culprit (§3) invalidates this arc's carried
             // DD — re-tap it fresh this epoch instead of folding a stiff pre-slip prior.
             auto ambSlipped = [&](const std::string& amb_key) -> bool {
-                if (carry_slipped_ambs.count({static_cast<int>(i), amb_key})) return true;
+                if (carry_slipped_ambs.count({static_cast<int>(i), amb_key})) {
+                    // D5 v4 (network.carry_invariant_innov_retap_only): a funnel entry made
+                    // by a D5 innovation flag whose arc the RAW observables MEASURED as
+                    // continuous has no integer jump behind it, and the flag has already
+                    // done everything it usefully can — installPosterior re-tapped the chord
+                    // in-epoch last epoch (mean ẑ+v, variance σ̂₀²·Cov(v)_ii, cross zeroed).
+                    // Excluding the arc from A_old here would additionally throw that reset
+                    // away and refloat the DD from a diffuse prior.  Under a stable tree a
+                    // CHORD arc lies in exactly ONE fundamental cycle — its own (GATE 8) —
+                    // so the exclusion protects no OTHER carried DD; on this population it
+                    // is pure churn, and it is what pinned mean chord lifetime at 4.3
+                    // epochs and dd_sigma_cyc at ~3.9 cyc on `runs/ft63_24h_conv`.
+                    //
+                    // NOT a general removal of the refloat.  GATE 10b measures the refloat
+                    // completing a REAL slip's reset to 0.48 cyc, so membership in the flat
+                    // set requires POSITIVE evidence of continuity (measured-and-flat at
+                    // flag time), and this ALSO re-checks the CURRENT epoch's raw funnel:
+                    // a detector that fired since still kills the cycle.  Stepped and
+                    // unmeasurable arcs were never in the set.  Standing invariant #1.
+                    //
+                    // The funnel ENTRY is untouched either way — the Iono-2 v3k erase
+                    // classifier, the WL-3 MW-row slip-skip, anchor hygiene, the PB emit
+                    // filter and Card G all read the same union they always read.
+                    const std::pair<int, std::string> sk{static_cast<int>(i), amb_key};
+                    if (!(retap_only && ctx.carry.carry_innov_flat_now.count(sk)
+                          && !carry_slipped_raw.count(sk)))
+                        return true;
+                    ++ctx.carry.carry_innov_kill_suppressed;
+                }
                 if (carry_we_drop_sats
                     && carry_we_drop_sats->count(parts->satellite)) return true;
                 if (carry_we_drop_arcs) {

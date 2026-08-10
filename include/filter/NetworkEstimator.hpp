@@ -321,7 +321,8 @@ public:
      *         the station has no locals.  Requires a prior @ref solve.
      */
     Eigen::MatrixXd conditionalLocalCovariance(std::size_t station,
-                                               const Datum& datum) const;
+                                               const Datum& datum,
+                                               bool carry_aware = false) const;
 
     /**
      * @brief Joint conditional covariance of local parameters drawn from one or
@@ -337,12 +338,18 @@ public:
      *
      * @param requests @c (station, local_col) pairs.
      * @param datum    The same datum passed to @ref solve.
+     * @param carry_aware Include the folded DD priors' rank-K term
+     *                 (@ref NetworkNormalEquations::hasCarryCovCorrection).  @c false
+     *                 (default) is the pre-card expression, verbatim.  Armed, the
+     *                 sentence above about cross-station entries no longer holds — the
+     *                 rank-K downdate couples every column inside a DD block, and a
+     *                 chord spans two stations by construction.
      * @return The @c k×k joint conditional covariance; empty if @p requests is
      *         empty.  Requires a prior @ref solve.
      */
     Eigen::MatrixXd jointConditionalCovariance(
         const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
-        const Datum& datum) const;
+        const Datum& datum, bool carry_aware = false) const;
 
     /**
      * @brief Diagonal conditional variances for a SUBSET of a station's local
@@ -364,7 +371,7 @@ public:
      */
     Eigen::VectorXd conditionalLocalVarianceDiag(
         std::size_t station, const std::vector<Eigen::Index>& local_cols,
-        const Datum& datum) const;
+        const Datum& datum, bool carry_aware = false) const;
 
     /**
      * @brief Regression of one local column on the shared border and its pure
@@ -386,7 +393,8 @@ public:
      * @return @ref NetworkNormalEquations::StationRegression.
      */
     NetworkNormalEquations::StationRegression stationRegression(
-        std::size_t station, Eigen::Index local_col) const;
+        std::size_t station, Eigen::Index local_col,
+        bool carry_aware = false) const;
 
     /**
      * @brief Baarda per-row redundancy numbers for one station's measurement rows
@@ -633,9 +641,145 @@ public:
      *         retry — the caller (driver) owns the fallback policy (degrade to
      *         the diagonal carry for the epoch).
      */
+    /// @param clock_gauge_free Card Q3 §2.1: marginalize the per-constellation
+    ///        SATELLITE-CLOCK common direction out of the folded block before it
+    ///        is applied (see @ref addSharedPriorClockGaugeFree for the algebra
+    ///        and the rationale).  Applied to the JOINT Λ, so the clock↔code-bias
+    ///        off-diagonals the C1 dense carry exists to retain are preserved —
+    ///        only the gauge direction's information is removed.
     std::size_t addSharedPriorDense(const std::vector<SharedPrior>& keys,
                                     const Eigen::MatrixXd& cov,
-                                    Eigen::VectorXd* lambda_diag = nullptr);
+                                    Eigen::VectorXd* lambda_diag = nullptr,
+                                    bool clock_gauge_free = false);
+
+    /**
+     * @brief Card Q3 §2.1 — fold diagonal shared priors with the per-constellation
+     *        satellite-clock GAUGE direction marginalized out.
+     *
+     * ## Why
+     *
+     * The per-constellation clock common mode is a GAUGE: it is fixed by the
+     * S-basis (the pivot-satellite pin), not by the carried prior, and a
+     * consumer's per-epoch receiver clock absorbs it identically.  A carry that
+     * puts information on it is competing with the datum, and the conflict lands
+     * on the pivot's observation rows rather than on the estimable
+     * between-satellite differences.  Measured on the wire (3 h, 63 sta): the
+     * anchored arm suppressed CLK-R's drained common mode Σ|μ| 49.4 m → 27.8 m
+     * vs its control — the carry was doing 44 % of the gauge's work.
+     *
+     * ## The algebra
+     *
+     * Removing the prior's information along a direction (equivalently: giving
+     * that direction infinite prior variance) is the rank-1 downdate
+     * @f[ \Lambda_{gf} = \Lambda - \Lambda u (u^\top \Lambda u)^{-1} u^\top \Lambda,
+     *     \qquad \eta_{gf} = \Lambda_{gf} v @f]
+     * (the Sherman–Morrison limit of @f$(P + \sigma^2 uu^\top)^{-1}@f$ as
+     * @f$\sigma^2 \to \infty@f$), with @f$u@f$ the indicator of one
+     * constellation's carried clock keys.  @f$\Lambda_{gf} u = 0@f$ exactly, and
+     * @f$\Lambda_{gf}@f$ stays PSD with rank one lower.  For the diagonal case
+     * this reduces to anchoring each clock to its carried value MINUS the
+     * information-weighted mean of the carried values — i.e. it anchors the
+     * DIFFERENCES, which is precisely the estimable content (Odijk
+     * datum-invariance; the GKF "carry on FUNCTIONS, not states" form).
+     *
+     * A constellation contributing FEWER THAN TWO carried clock keys has no
+     * estimable content to anchor (its single key IS the gauge), so nothing is
+     * folded for it — a real outcome, not an error, and one the caller counts.
+     *
+     * Non-clock priors in @p priors are folded exactly as @ref addSharedPrior
+     * folds them.
+     *
+     * @return Number of clock keys whose information was downdated (0 ⇒ the
+     *         gauge-free step was inert for this fold).
+     */
+    std::size_t addSharedPriorClockGaugeFree(const std::vector<SharedPrior>& priors);
+
+    /**
+     * @brief Card Q3 — the gauge-free diagonal analogue of
+     *        @ref refoldSharedPriorDenseDroppingClocks: re-fold a gauge-free
+     *        clock prior set with @p drop_sats REFLOATED.
+     *
+     * A gauge-free block is NOT diagonal, so @ref withdrawSharedPrior cannot undo
+     * one key of it — removing a key also moves the group's information-weighted
+     * mean, and every survivor is anchored against that mean.  This rebuilds both
+     * blocks (with and without the refloated keys) and folds the difference.
+     * Only @ref SharedParamKind::Clock entries of @p priors are touched.
+     *
+     * @param restore Fold the inverse delta — the exact undo, for the path where
+     *                the re-solve throws and the anchored solve must survive.
+     * @return Number of clock keys refloated (0 ⇒ nothing folded).
+     */
+    std::size_t refoldSharedPriorClockGaugeFreeDropping(
+        const std::vector<SharedPrior>& priors,
+        const std::set<std::string>& drop_sats, bool restore = false);
+
+    /**
+     * @brief Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4) — WITHDRAW
+     *        already-folded diagonal shared priors so the epoch can be RE-SOLVED
+     *        with those states refloated.
+     *
+     * The exact inverse of @ref addSharedPrior for the listed (identity, value,
+     * info) triples: it folds the NEGATED increment through
+     * @ref NetworkNormalEquations::addSharedInfo.  Legal AFTER @ref solve — that
+     * is the whole point.  A shared-border increment carries through the Schur
+     * reduction unchanged, so the kernel's reduction-preserving fast path keeps
+     * the cached reduced system current and a following @ref solve costs one
+     * datum + factorization of the K×K reduced system: **no re-reduction, no
+     * re-assembly**.
+     *
+     * The caller must pass the values/infos IT FOLDED (not a recomputation): the
+     * withdrawal is arithmetic, not a lookup, and a mismatched info would leave
+     * residual prior information behind.
+     *
+     * Withdrawing information can only make the reduced normals less definite.
+     * The intended population — a data-supported satellite clock column carried
+     * by tens of stations — cannot be driven singular this way, and the solve's
+     * own relative-pivot guard is the backstop; the caller owns the policy on a
+     * throw (restore the pre-withdraw solution).
+     *
+     * @param priors Identity + the folded value + the folded info of each prior
+     *               to remove.  Entries with @c info <= 0, or whose parameter is
+     *               absent from this epoch's layout, are skipped exactly as
+     *               @ref addSharedPrior skips them.
+     */
+    void withdrawSharedPrior(const std::vector<SharedPrior>& priors);
+
+    /**
+     * @brief Card Q3 — re-fold a DENSE carried block with some keys
+     *        MARGINALIZED, after @ref solve, so the epoch can be re-solved with
+     *        those states refloated.
+     *
+     * The dense (C1) form of @ref withdrawSharedPrior.  Folds
+     * @f$(\Lambda_{new} - \Lambda_{old})@f$ and
+     * @f$(\eta_{new} - \eta_{old})@f$, where @f$\Lambda_{old}@f$ is the block
+     * @ref addSharedPriorDense folded for @p keys / @p cov and @f$\Lambda_{new}@f$
+     * is the same construction over the SURVIVING keys with @p drop_sats'
+     * @ref SharedParamKind::Clock rows/columns of @p cov dropped before the
+     * inversion.  Marginalization — not conditioning — is the exact treatment of
+     * a refloated key, the same policy this class already applies to a key that
+     * has left the layout.
+     *
+     * Both Λ are built by the SAME private path @ref addSharedPriorDense uses, so
+     * a re-fold that drops nothing is an exact algebraic no-op.
+     *
+     * @param keys      The keys as originally folded (order defines @p cov).
+     * @param cov       The covariance as originally folded (P_prev + Q).
+     * @param drop_sats Satellites whose CLOCK key is to be marginalized.
+     * @param restore   Fold the INVERSE delta (Λ_old − Λ_new) instead — the exact
+     *                  undo of a previous call with the same arguments, used when
+     *                  the re-solve throws and the caller must put the epoch's
+     *                  shared system back the way it solved.
+     * @return Number of clock keys actually marginalized (0 ⇒ nothing folded).
+     * @throws Same conditions as @ref addSharedPriorDense (either block
+     *         non-finite / non-PD / over the information budget).  Nothing is
+     *         folded when it throws.
+     */
+    /// @param clock_gauge_free MUST match the flag the original fold used, or the
+    ///        withdrawn block is not the block that was applied.
+    std::size_t refoldSharedPriorDenseDroppingClocks(
+        const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
+        const std::set<std::string>& drop_sats, bool restore = false,
+        bool clock_gauge_free = false);
 
     /**
      * @brief Fold an explicit linear gauge constraint onto the shared border.
@@ -686,6 +830,7 @@ public:
     void setPhaseSumZeroGauges(std::vector<NetworkNormalEquations::SumZeroGauge> gauges) {
         phase_sumzero_gauges_ = std::move(gauges);
     }
+
 
     /**
      * @brief Card-4 (M1) invariant carry: set the rank-K double-difference priors the
@@ -773,6 +918,73 @@ public:
     /// @return Number of DD-prior blocks folded this epoch.
     std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
 
+    // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) — forwarders ---
+
+    /// Arm the PD-safe DD-prior fold arithmetic (@c network.carry_invariant_pd_safe;
+    /// @ref NetworkNormalEquations::setDdFoldPdSafe).  Set once before the epoch loop —
+    /// it survives @ref reset, like @ref setPerfTiming.  OFF ⇒ byte-identical.
+    void setDdFoldPdSafe(bool on) { neq_.setDdFoldPdSafe(on); }
+    /// @return Whether the PD-safe fold arithmetic is armed.
+    bool ddFoldPdSafe() const { return neq_.ddFoldPdSafe(); }
+    /// @return INC-0 diagnostics of the LAST DD-prior fold's PD screen (per-fold, so a
+    ///         within-epoch RAIM re-solve overwrites them — the install seam therefore
+    ///         always reads the ACCEPTED solve).  @ref NetworkNormalEquations::DdFoldStats.
+    const NetworkNormalEquations::DdFoldStats& ddFoldStats() const { return neq_.ddFoldStats(); }
+    /// @return Whether DD-prior block @p b folded INERTLY (PD screen tripped ⇒ M = 0).
+    bool ddPriorBlockDegenerate(std::size_t b) const { return neq_.ddPriorBlockDegenerate(b); }
+    /// @return DD-prior block @p b's relative pivot d_min/d_max at the fold.
+    double ddPriorBlockMinPivotRel(std::size_t b) const { return neq_.ddPriorBlockMinPivotRel(b); }
+
+    // --- Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md) ---
+
+    /// @return Whether this epoch's fold left a DD-prior block for a @c carry_aware
+    ///         readback to correct (@ref NetworkNormalEquations::hasCarryCovCorrection).
+    bool hasCarryCovCorrection() const { return neq_.hasCarryCovCorrection(); }
+    /// @return Run-cumulative carry-aware readback telemetry
+    ///         (@ref NetworkNormalEquations::CarryCovStats) — the run-end readout, and the
+    ///         first measurement anywhere of the fold's cross-block approximation error.
+    const NetworkNormalEquations::CarryCovStats& carryCovStats() const {
+        return neq_.carryCovStats();
+    }
+
+    // --- Reduced-RHS class attribution (diagnostics; filter/NetworkRhsAttrib) ---
+
+    /// One captured shared-info RHS increment: the tag active at the call site
+    /// (a string LITERAL — the recorder stores the pointer, not a copy) plus the
+    /// delta the call folded into the shared RHS.
+    struct AttribCapture {
+        const char*     tag;        ///< class tag (string literal only)
+        Eigen::VectorXd delta_rhs;  ///< the folded shared-RHS increment (n_shared)
+    };
+
+    /**
+     * @brief Arm / disarm the shared-info capture recorder for THIS epoch.
+     *
+     * Armed, every @ref addSharedPrior / @ref addSharedPriorDense /
+     * @ref addSharedConstraintRows call appends its RHS increment under the tag
+     * last set by @ref attribTag.  @ref beginEpoch clears the captures but keeps
+     * the armed flag, so a within-epoch re-solve leaves exactly the FINAL
+     * build's captures (matching the kernel state the attribution reads).
+     * Disarmed (the default), the recorder costs one branch per call.
+     */
+    void attribArm(bool on) {
+        attrib_armed_ = on;
+        if (on) attrib_shared_.clear();
+    }
+    /// @return Whether the capture recorder is armed this epoch.
+    bool attribArmed() const { return attrib_armed_; }
+    /// Set the class tag for subsequent shared-info folds (string literal only —
+    /// the pointer is stored verbatim).  Cheap enough to call unconditionally.
+    void attribTag(const char* tag) { attrib_tag_ = tag; }
+    /// @return This epoch's captured shared-info RHS increments (armed builds only).
+    const std::vector<AttribCapture>& attribCaptures() const { return attrib_shared_; }
+    /// @return The INPUT DD-prior blocks set by @ref setDdPriors this epoch — the
+    ///         (station, local column, coefficient) structure the attribution
+    ///         recompute needs (the kernel's folded factors do not retain it).
+    const std::vector<NetworkNormalEquations::DdPriorBlock>& ddPriorInputs() const {
+        return dd_priors_;
+    }
+
     /**
      * @brief Map a shared estimate to an emittable @c NetworkSolutionEpoch.
      * @param x_s        The shared estimate from @ref solve.
@@ -853,12 +1065,35 @@ private:
     /// Throw unless the epoch is open and not yet solved (guards @ref addStation).
     void requireAccumulating_() const;
 
+    /// @internal Shared arithmetic of @ref addSharedPriorDense and
+    /// @ref refoldSharedPriorDenseDroppingClocks: map @p keys onto this epoch's
+    /// layout (absent OR @p skip keys are MARGINALIZED — their rows/cols of
+    /// @p cov are dropped before the inversion), then form Λ = P⁻¹ and η = Λv in
+    /// correlation scaling with the PD / ridge / information-budget guards.
+    /// Extracted verbatim so both callers fold bit-identical blocks.
+    /// @param skip   Satellites whose @ref SharedParamKind::Clock key is
+    ///               additionally marginalized (empty for the ordinary fold).
+    /// @param col    out: shared-border column of each retained key.
+    /// @param in_idx out: index into @p keys of each retained key.
+    /// @return false when nothing is retained (Λ / η left untouched).
+    bool denseFoldTerms_(const std::vector<SharedPrior>& keys,
+                         const Eigen::MatrixXd& cov,
+                         const std::set<std::string>& skip,
+                         std::vector<Eigen::Index>& col,
+                         std::vector<Eigen::Index>& in_idx,
+                         Eigen::MatrixXd& Lambda, Eigen::VectorXd& eta,
+                         bool clock_gauge_free = false,
+                         std::size_t* gauge_free_keys = nullptr) const;
+
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
     std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< Card 4 (M1): per-component invariant-carry DD priors (empty = OFF, byte-identical)
+    bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)
+    const char* attrib_tag_{"shared_untagged"};  ///< class tag for the next shared-info fold (string literal)
+    std::vector<AttribCapture> attrib_shared_;   ///< captured shared-info RHS increments (armed epochs only)
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
     int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = OFF; >1 relaxes ~1e-X on the reduction, byte-id on the middle inverse; set by the driver)

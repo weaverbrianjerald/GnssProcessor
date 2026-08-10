@@ -158,7 +158,7 @@ namespace GnssProcessor {
         , reference_position_ecef_{ 0.0, 0.0, 0.0 }
         , stochastic_model_{ StochasticModelType::Elevation }
         , code_elevation_power_{ 1.0 }
-        , phase_elevation_power_{ 0.5 }
+        , phase_elevation_power_{ 1.0 }
         , data_source_{ DataSource::Internal }
         , app_mode_{ AppMode::PostProcessing }
         , ar_mode_{ 0 }

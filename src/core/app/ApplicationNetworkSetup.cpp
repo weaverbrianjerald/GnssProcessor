@@ -671,6 +671,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             (config_.networkPhaseDatumPrioritized() || !is_pivot)
             && config_.networkPhaseLeveling()
             && (config_.networkCycleSlipTurboEdit() || config_.networkCycleSlipMwDetect());
+        // Adaptive iono q (network.adaptive_iono_q): per-station GF-TD2 variability
+        // monitor.  Station-local (fed in the PARALLEL PASS A produce, same contract
+        // as st.mw_slip below); consumed SERIALLY by the T5v2 GM deviation aging —
+        // on the network path the per-(station,satellite) deviation channel is the
+        // only time-linked slant-iono element, so the storm response scales ITS
+        // innovation term, not a slant q.  OFF ⇒ null pointer, byte-identical.
+        if (config_.getNetworkConfig().adaptive_iono_q)
+            st.iono_var = std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
+
         // M5 card WL-2 (SPEC_ewl_wl_cascade_card.md §4): the EWL/WL lanes also need the
         // per-station MW detector running (its per-arc Welford means feed the EWL/MW(1,2)
         // statistics).  OFF (all lanes disabled) ⇒ unchanged.
@@ -1056,6 +1065,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // an OFF (or agek=0) run's v2 header is byte-identical (agek= token absent).
             if (config_.networkEmitCombinedSigma())
                 pending_contract.age_scale_k = config_.networkCombinedSigmaAgek();
+            // H-rider: advertise which statistic the H heartbeat's sigma0 carries.
+            // ONLY when the census feed is armed (hsig= token absent otherwise,
+            // byte-identical) — the census σ̂₀ is a different population from the
+            // within-epoch RAIM's, and a consumer thresholding field 5 must know.
+            if (config_.networkHSigma0PrefitCensus())
+                pending_contract.h_sigma0_source = "pc";
             pending_contract.present            = true;
             contract_pending = true;
             // The deferred writer only opens (and truncates) at the FIRST emit; a run
@@ -1093,7 +1108,26 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     setup.consumer_config = config_.deriveClosedLoopConsumerConfig();
     GnssConfig& consumer_config = setup.consumer_config;
     auto& consumer = setup.consumer;
+    setup.cl_truth_arp = Eigen::Vector3d(cl.station.position_ecef.data());
     if (closed_loop_on) {
+        // Reduce the configured (monument-referenced) truth into the ARP frame the
+        // consumer estimates in, using the held-out station's own RINEX header.  A
+        // zero eccentricity leaves the value bit-identical, so every station in the
+        // current fixture set (CIT1, NRMG: 0/0/0) grades exactly as before.
+        if (const RinexParser* cl_parser = sync.parserOf(cl.station.name)) {
+            setup.cl_truth_hen = cl_parser->getAntennaDeltaHen();
+            setup.cl_truth_arp = Coordinates::markerToArp(setup.cl_truth_arp, setup.cl_truth_hen);
+            if (setup.cl_truth_hen.norm() > 1e-6)
+                log->info("Network closed-loop: truth for '{}' reduced marker -> ARP via "
+                          "ANTENNA: DELTA H/E/N ({:.4f}, {:.4f}, {:.4f}) m — the consumer state "
+                          "is antenna-referenced, the configured coordinate is the monument; "
+                          "grading them directly would bias up_m by the eccentricity.",
+                          cl.station.name, setup.cl_truth_hen(0),
+                          setup.cl_truth_hen(1), setup.cl_truth_hen(2));
+        } else {
+            log->warn("Network closed-loop: no parser for held-out station '{}' — truth used "
+                      "as configured (no marker -> ARP eccentricity reduction).", cl.station.name);
+        }
         // Point the consumer's RinexParser at the held-out station so its header
         // (antenna type, approximate position) seeds the consumer correctly; the
         // per-epoch observations themselves come from the synced roster below.

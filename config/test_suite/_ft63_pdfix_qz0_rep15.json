@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "ADDITIVE IONO LADDER, arm A2 (2026-08-03) - representation_sigma_tecu 5.0 -> 1.5.",
+    "",
+    "WHY THE qz0 SUBSTRATE: identical reasoning to _ft63_pdfix_qz0_deg15.json - at qz=1e-4",
+    "the carried-DD walk IS q_z and swamps the representation term (P2/P3), so the additive",
+    "direction is only visible against the qz0 floor (mature steps 0.168/0.096/0.030, SF k=32",
+    "flat at 1.51).  Same caveat: qz0 FAILED P2's clock-QC gate (clk_std 4.86 -> 5.29), so it",
+    "is a DIAGNOSTIC substrate.  A win here is a lead, not a posture; it must be re-run on the",
+    "qz=1e-4 posture (control runs/pdfix_v3) before promotion.",
+    "",
+    "THE ONE VARIABLE - AND IT IS NOT ONE MECHANISM.  This single config key sets TWO things",
+    "(GnssConfigTypes.hpp): (a) the per-LOS single-layer representativeness sigma on the",
+    "SH<->slant pin row, and (b) the STEADY-STATE sigma of the mech-B Gauss-Markov per-LOS",
+    "deviation channel (rep_error_tau_s = 900 on this lineage).  So 5.0 -> 1.5 tightens the",
+    "pin AND shrinks the deviation channel's asymptotic amplitude at the same time.  One key,",
+    "two mechanisms - record it that way, and if the arm moves, the mech-B-off control from",
+    "P3 is the disambiguator.",
+    "",
+    "THIS IS THE UNTESTED DIRECTION.  P3 already ran the LOOSENING leg (sigma_rep 5 -> 50) and",
+    "measured a complete null.  Tightening is the untested half, and it runs straight at a",
+    "DOCUMENTED hazard: the field's own doxygen says the prior 'is an INFORMATIVE prior on the",
+    "slant states, not a tight constraint - too tight aliases unrepresentable small-scale TEC",
+    "into huge low-degree coefficients at global scale.'  The arm exists to find out whether",
+    "that hazard is real at 63 sta / degree 8, or whether the 5.0 default is simply loose.",
+    "",
+    "GRADE (control = runs/pdfix_qz0):",
+    "  1. THE HAZARD FIRST - the SH a00 band and the sh_health gate.  'Huge low-degree",
+    "     coefficients' is a00 leaving its band.  If a00 blows up, the arm is answered and",
+    "     nothing below matters.  Also count iono-deweight engagements: a too-tight pin makes",
+    "     ordinary stations look hostile to the robust-z screen.",
+    "  2. scripts/grade_dd_spillway.py - mature steps against the 0.168/0.096/0.030 floor and",
+    "     the structure function.",
+    "  3. CROSS-BAND RATIO - the same discriminator as A1.  Every arm so far sits at",
+    "     1.263-1.265 vs the common-cycle 1.2833 signature.  Absorbing iono means MOVING this;",
+    "     tightening steps without moving it means the residual is unchanged in kind.",
+    "  4. scripts/chain_stability.py total_IF hr2 + clk_std vs the qz0 control.",
+    "  5. scripts/parse_carry_psd.py - the PD gate must still pass.",
+    "  6. Post-fit sigma0 (code and phase) - a tightened pin that the data cannot support",
+    "     shows up as a raised sigma0 before it shows up anywhere else."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_qz0.json"
+  ],
+  "estimation": {
+    "global_vtec_sh": {
+      "representation_sigma_tecu": 1.5
+    }
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_qz0_rep15/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_qz0_rep15/state_snapshot.bin"
+  }
+}

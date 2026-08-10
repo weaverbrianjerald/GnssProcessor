@@ -1,0 +1,49 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 8 — arm 4 (rxcb) with SH degree 8 -> 15.  THE DEFECT-2 DISCRIMINATOR.",
+  "",
+  "THE ONE VARIABLE: estimation.global_vtec_sh.max_degree 8 -> 15.  Layer 2 stays at",
+  "degree 4, kaula_scale_tecu stays 10, q_per_degree stays 0.01, representation sigma",
+  "stays 5.0 — same single-knob convention as _ft63_pdfix_qz0_deg15.json on this root.",
+  "",
+  "DEFECT 2: every EXT-CB arm ignites a00 at ~12.7 TECU where the COD GIM's area-weighted",
+  "global mean is 32.24 and the W6 self-contained control ignites 23.1 -> 28.7 and holds.",
+  "The only structural difference left: the control has 32 free satellite code-bias states,",
+  "EXT-CB has none.  Leading reading (project_network_code_bias_scope: our DCBs vs COD's",
+  "correlate 0.67, rms 1.16 m): the free satellite DCBs have been absorbing the deg-8 SH",
+  "representation error; pin them to COD and the error lands in the field level.",
+  "",
+  "PREDICTION (stated before the run):",
+  " - If the reading is RIGHT, a richer surface shrinks the representation error and the",
+  "   ignition level moves materially up from 12.78 toward the ~20-26 band the deg-15",
+  "   single-layer self-contained control ignites in (agu63_nolane_d15_30ep: 20.7 -> 25.7,",
+  "   Kaula ratios <= ~1, healthy at 61 sta).  Full recovery to 32 is NOT required — deg-15",
+  "   still has representation error — but the move must be well outside the ~0.2 TECU",
+  "   arm-to-arm scatter (dual/triple/el10 all ignite 12.6-12.8).",
+  " - If a00 stays ~12.7, degree is not the lever and DEFECT 2 is an S-BASIS OFFSET in the",
+  "   GF chain (rx-DCB common-mode convention vs COD's receiver-group-delay-in-clock",
+  "   convention, or a bias-application defect upstream), not representation error.",
+  "",
+  "ALIASING WATCH (the pdfix deg-15 card's failure mode, outside the POSTURE ledger's",
+  "n_sta >= 150 envelope deliberately): kaula_ratio_deg9..15 sitting >> 1 means the fine",
+  "degrees are eating unmodeled signal, and the a00 band is where it shows first.  256",
+  "layer-1 coefficients against ~370-380 LOS/epoch is ~1.5 LOS per coefficient — thin;",
+  "the Kaula prior is the only regularizer above the data's resolving power.",
+  "",
+  "20 epochs is inside ignition: LEVEL read + wiring only, no settled-science claim."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": { "max_degree": 15 }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_d15/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_d15/state_snapshot.bin"
+ }
+}

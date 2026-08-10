@@ -39,21 +39,21 @@ This document is the mathematical companion to \texttt{GnssProcessor}, a
 C\texttt{++}17 post-processing and real-time GNSS engine implementing
 PPP, PPP-RTK (single-receiver and network), and double-differenced
 baseline modes.  Its scope is the estimation mathematics and design
-rationale --- the material that ages slowly because it is settled theory
+rationale: the material that ages slowly because it is settled theory
 or algebra, not churning code.
 
 The reference is organised as a set of \emph{component documents}, each of
 which also compiles to a standalone PDF.  This combined volume gathers
 them in roughly the order the engine applies them:
 \begin{itemize}[leftmargin=*]
-\item \textbf{Foundations} (\Cref{sec:notation,sec:state,sec:obs,sec:diff})
-      --- notation, the variable-dimension state vector, the
+\item \textbf{Foundations} (\Cref{sec:notation,sec:state,sec:obs,sec:diff}):
+      notation, the variable-dimension state vector, the
       \emph{uncombined} pseudorange / carrier-phase observation model, and
       the between-satellite single-difference (BSSD) and double-difference
       (DD) transformations.  Every other component builds on this.
 \item \textbf{Reference systems and measurement models}
-      (\Cref{sec:frames,sec:products,sec:atmos,sec:sitedisp,sec:obsphys})
-      --- the deterministic substrate and physics behind the observation
+      (\Cref{sec:frames,sec:products,sec:atmos,sec:sitedisp,sec:obsphys}):
+      the deterministic substrate and physics behind the observation
       model the Foundations document writes abstractly: the coordinate
       frames and time systems every other chapter assumes; the baseline
       satellite orbit/clock product evaluation that SSR refines;
@@ -62,43 +62,65 @@ them in roughly the order the engine applies them:
       correct the receiver coordinate; and the antenna, attitude,
       relativity, and range corrections that map the raw measurement to
       the modelled observable.
-\item \textbf{Estimation engine} (\Cref{sec:kf,sec:stoch,sec:estinfra}) ---
+\item \textbf{Estimation engine} (\Cref{sec:kf,sec:stoch,sec:estinfra}):
       the variable-dimension Kalman filter (Joseph-form update,
       prior-anchored iterated relinearisation, robust gating) and the
       backward RTS smoother; the measurement stochastic model and the
       a-posteriori quality-control layer (variance factor, Baarda
       data-snooping, minimal detectable bias); and the supporting
-      infrastructure that bootstraps the filter --- the weighted
+      infrastructure that bootstraps the filter: the weighted
       least-squares seed, the first-epoch residual-difference state
       initialisation, and the pivot selection / disturbance logic.
-\item \textbf{Cycle-slip detection and repair} (\Cref{sec:slip}) --- the
+\item \textbf{Cycle-slip detection and repair} (\Cref{sec:slip}): the
       linear-combination test statistics (Melbourne--W\"ubbena,
       geometry-free, GRAPHIC, extra-wide-lane) and the TurboEdit
       $2\times2$ integer repair.
-\item \textbf{Integer ambiguity resolution} (\Cref{sec:ar}) --- the
+\item \textbf{Integer ambiguity resolution} (\Cref{sec:ar}): the
       \textsc{MLAMBDA} integer least-squares search, wide-lane /
-      narrow-lane decomposition, validation, and constrained feedback.
-\item \textbf{Inertial aiding} (\Cref{sec:imu}) --- the strapdown
+      narrow-lane decomposition, validation, constrained feedback, and
+      the (default-off) network-producer AR machinery.
+\item \textbf{Inertial aiding} (\Cref{sec:imu}): the strapdown
       mechanisation and 15-state INS error model of the tightly-coupled
       IMU path.
-\item \textbf{Real-time SSR corrections} (\Cref{sec:ssr}) --- how State
+\item \textbf{Real-time SSR corrections} (\Cref{sec:ssr}): how State
       Space Representation orbit, clock, and bias corrections refine the
       undifferenced observation model.
-\item \textbf{Real-time engine} (\Cref{sec:rt}) --- the streaming
+\item \textbf{Real-time engine} (\Cref{sec:rt}): the streaming
       architecture: NTRIP transport, RTCM/MSM decoding, observation/SSR
       time synchronisation, and the per-epoch real-time update path.
-\item \textbf{Network mode} (\Cref{sec:net}) --- the multi-station
+\item \textbf{Network mode} (\Cref{sec:net}): the multi-station
       PPP-RTK network estimator that \emph{generates} the SSR-style
       corrections consumed by the single-receiver modes: the joint
-      observation model, the S-basis / minimum-constraint datum, and the
-      per-station Schur reduction.
+      observation model, the S-basis / minimum-constraint datum, the
+      per-station Schur reduction, and the single-concern seam
+      architecture of the per-epoch producer loop.
+\item \textbf{Between-epoch carry} (\Cref{sec:net-carry}): how
+      information reaches that arrowhead system from outside the
+      current epoch: the three folds an arrowhead admits and where each
+      must be applied, the double-difference cycle basis (the spanning
+      tree's \emph{chords}) that is the only gauge-free quantity worth
+      time-linking, the Woodbury algebra that folds it, and a fully
+      numerical minimum-parameter example.
+\item \textbf{Pipeline and architecture diagrams} (\Cref{sec:diagrams}):
+      the per-mode data-flow figures that place every chapter above
+      in the epoch loop.
+\item \textbf{Generated reference tables} (\Cref{sec:gentables},
+      appendix): processing modes, feature toggles, the cycle-slip
+      detector registry, and the state-vector key schema, produced
+      directly from the source tree by
+      \texttt{scripts/gen\_report\_tables.py} rather than maintained by
+      hand.
 \end{itemize}
 
 Implementation details (function signatures, class responsibilities,
 config field reference) live in the headers under \texttt{include/}
 and are rendered via Doxygen.  When this document references a
-specific algorithmic component, it cites the source file directly
-(e.g.\ \texttt{src/core/filter/KalmanFilter.cpp}).
+specific algorithmic component, it cites the responsible \emph{symbol}
+(a function, class, or JSON config key) together with its source
+file (e.g.\ \texttt{KalmanFilter::update} in
+\texttt{src/core/filter/KalmanFilter.cpp}, or
+\texttt{network.cold\_clock\_seed}).  Line numbers are deliberately
+never cited: they rot within weeks, symbol names do not.
 
 The notation follows the IGS conventions adopted by
 \textcite{subirana2013gnss} and \textcite{teunissen2017handbook};
@@ -140,6 +162,7 @@ see \Cref{sec:notation} for the symbol table this document depends on.
 \part{Network mode}
 \subfile{network}
 \subfile{network_example}
+\subfile{network_carry}
 
 \part{Reference}
 \subfile{pipeline_diagrams}

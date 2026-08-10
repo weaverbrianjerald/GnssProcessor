@@ -17,9 +17,16 @@ Panels:
   (c) signed E/N/U on ONE shared scale — leg 1's error is almost entirely Up
       (the iono projects onto the vertical), leg 2's is not;
   (d) the four paired A/B ablations (Klobuchar, TGD, broadcast-vs-precise orbits,
-      OSB) as per-epoch differences about their mean — the rubric's credit items;
+      OSB) as per-epoch differences about their mean — the rubric's credit items.
+      **Figure off by default** (``show_ablations``); the numbers stay in the
+      read-out;
+  (d2) formal σ3D vs realised 3D error as a per-leg **scatter** on log-log axes,
+      with a 1:1 reference and each leg's correlation — the covariance-honesty
+      exhibit;
   (e) receiver clock: the leg-1-minus-leg-2 ``c·dt`` difference, i.e. the
-      common-mode ionosphere the single-frequency solution hides in its clock;
+      common-mode ionosphere the single-frequency solution hides in its clock.
+      **Figure off by default** (``show_clock_difference``); the median stays in
+      the read-out. The "each leg about its own median" panel still draws;
   (f) satellites used + PDOP per leg — leg 1 screens the broadcast-unhealthy G01,
       leg 2 keeps it (the precise products carry it).
 
@@ -41,7 +48,7 @@ import os
 
 import numpy as np
 
-from ..figures import Axes, Figure, HLine, Legend, Line, TextBox
+from ..figures import Axes, Figure, HLine, Legend, Line, Scatter, TextBox
 from ..io import first_col, gps_to_datetime
 from .base import Viewer, ViewerResult, ViewerSkip
 from . import exam_common as ec
@@ -136,7 +143,44 @@ def _need(df, *names):
     return col.to_numpy(float)
 
 
-def build_exam_spp_reference(ctx) -> ViewerResult:
+def _rank(a):
+    """Ordinal ranks of a 1-D array (ties broken by position).
+
+    Enough for a Spearman ρ on continuous per-epoch series -- exact ties are
+    vanishingly unlikely in metre-scale floats, and this keeps the viewer layer
+    free of a scipy dependency.
+    """
+    order = np.argsort(a, kind="stable")
+    r = np.empty(a.size, dtype=float)
+    r[order] = np.arange(a.size, dtype=float)
+    return r
+
+
+def _corr(x, y):
+    """(Pearson r on log10, Spearman ρ, n) for a strictly-positive pair."""
+    fin = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
+    n = int(fin.sum())
+    if n < 3:
+        return float("nan"), float("nan"), n
+    lx, ly = np.log10(x[fin]), np.log10(y[fin])
+    def _p(a, b):
+        sa, sb = a.std(), b.std()
+        return float(((a - a.mean()) * (b - b.mean())).mean() / (sa * sb)) if sa > 0 and sb > 0 \
+            else float("nan")
+    return _p(lx, ly), _p(_rank(lx), _rank(ly)), n
+
+
+def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
+                             show_clock_difference: bool = False) -> ViewerResult:
+    """Part-B reference dashboard.
+
+    ``show_ablations`` / ``show_clock_difference`` default **off** (professor
+    review 2026-08-06: the dashboard was too crowded).  Both are figure-level
+    switches only -- the ablation table and the clock-difference median stay in
+    the text read-out either way, so nothing is lost from the grader record.
+    Turn them back on by binding the partial, the way ``run_report._registry_for``
+    already does for the standardized residual panels.
+    """
     spp = ec.require_truth(ctx, "truth_spp.csv")
     if "week" not in spp.columns or "tow_s" not in spp.columns:
         raise ViewerSkip("truth_spp.csv lacks week/tow_s")
@@ -247,6 +291,9 @@ def build_exam_spp_reference(ctx) -> ViewerResult:
         figures.append(Figure(name="ENU by leg", axes=[axc1, axc2], width=13, height=7.0))
 
     # ------------------------------------------------------- (d) A/B ablations
+    # Statistics are always computed (they feed the read-out); the FIGURE is
+    # opt-in — four overlaid difference traces are the densest panel here and the
+    # numbers below carry the same information.
     ab_rows = []
     axd = Axes(title="Paired A/B ablations (per-epoch Δ3D; dotted = mean)",
                xlabel="GPS Time", ylabel="Δ 3D error (m)", legend=Legend(loc="best"))
@@ -264,7 +311,7 @@ def build_exam_spp_reference(ctx) -> ViewerResult:
         axd.traces.append(Line(x=t, y=d, color=color, width=0.9,
                                label=f"{label} (mean {mean:+.2f} m)"))
         axd.traces.append(HLine(y=mean, color=color, style=":"))
-    if axd.traces:
+    if show_ablations and axd.traces:
         axd.traces.append(HLine(y=0.0, color=_C_REF, style="-"))
         axd.traces += storm
         figures.append(Figure(name="A/B ablations", axes=[axd], width=13, height=4.6))
@@ -277,33 +324,64 @@ def build_exam_spp_reference(ctx) -> ViewerResult:
     # while leg 1's does not -- its error is a systematic the covariance cannot
     # see, so it reports a SMALLER sigma than leg 2 while being several times
     # worse.  That is the Part-B/D lesson in the covariance domain.
+    # Drawn as a SCATTER of realised error against formal sigma (log-log), one
+    # cloud per leg, rather than four overlaid time series (professor request,
+    # 2026-08-06).  Two independent things are readable off it, and they are not
+    # the same question:
+    #
+    #   * DISTANCE FROM 1:1 = is the covariance honest.  Leg 2 sits on the line
+    #     (median err/sigma3D 0.91x); leg 1 sits a factor ~4.5 ABOVE it, because
+    #     its error is an ionospheric systematic the stochastic model cannot see.
+    #     This is the Part-B/D lesson and it is what the ratio in the box states.
+    #   * CORRELATION = does sigma track the error epoch to epoch.  Measured on
+    #     the hero: leg 1 r_log +0.37, leg 2 +0.03 -- i.e. WEAK for both, and
+    #     weakest for the honest leg.  That is not a contradiction: leg 2's sigma
+    #     is nearly constant (geometry-driven) while its error is noise, so there
+    #     is little covariation to find.  A leg can be perfectly calibrated in
+    #     magnitude and still uncorrelated in time.
+    #
+    # Correlation is reported per leg both ways -- Pearson on log10 (the plotted
+    # coordinates) and Spearman rho (rank, outlier-robust).
     sig_rows = []
     if all(c in spp.columns for c in ("l1_sig_e_m", "l1_sig_n_m", "l1_sig_u_m")):
-        axg = Axes(title="Formal 1σ (a-posteriori scaled) vs realised 3D error, per leg",
-                   xlabel="GPS Time", ylabel="metres (log)", yscale="log",
+        axg = Axes(title="Formal σ3D (a-posteriori scaled) vs realised 3D error, per leg",
+                   xlabel="formal σ3D (m, log)", ylabel="realised 3D error (m, log)",
+                   xscale="log", yscale="log", x_is_datetime=False,
                    legend=Legend(loc="best"))
         axg.traces = []
+        corr_rows, lo, hi = [], np.inf, -np.inf
         for pre, lbl, color in (("l1", "leg 1", _C_L1), ("if", "leg 2", _C_IF)):
             se = spp[f"{pre}_sig_e_m"].to_numpy(float)
             sn = spp[f"{pre}_sig_n_m"].to_numpy(float)
             su = spp[f"{pre}_sig_u_m"].to_numpy(float)
             e3 = spp[f"{pre}_3d_m"].to_numpy(float)
             s3 = np.sqrt(se ** 2 + sn ** 2 + su ** 2)
-            axg.traces.append(Line(x=t, y=np.where(e3 > 0, e3, np.nan), color=color,
-                                   width=1.1, label=f"{lbl} actual 3D"))
-            axg.traces.append(Line(x=t, y=np.where(s3 > 0, s3, np.nan), color=color,
-                                   width=1.1, style="--", label=f"{lbl} formal σ3D"))
-            fin = np.isfinite(e3) & np.isfinite(s3) & (s3 > 0)
+            fin = np.isfinite(e3) & np.isfinite(s3) & (s3 > 0) & (e3 > 0)
             ratio = float(np.median(e3[fin] / s3[fin])) if fin.any() else float("nan")
             sig_rows.append((lbl, float(np.nanmedian(np.hypot(se, sn))),
                              float(np.nanmedian(su)), float(np.nanmedian(e3)), ratio))
-        if sig_rows:
+            r_log, rho, n = _corr(s3, e3)
+            corr_rows.append((lbl, r_log, rho, n, ratio))
+            if fin.any():
+                lo = min(lo, float(np.min(s3[fin])), float(np.min(e3[fin])))
+                hi = max(hi, float(np.max(s3[fin])), float(np.max(e3[fin])))
+            # Small, translucent markers: ~1400 epochs per leg, and the shape of
+            # the cloud is the message, not any individual epoch.
+            axg.traces.append(Scatter(
+                x=s3[fin], y=e3[fin], color=color, size=7, alpha=0.30,
+                label=f"{lbl}  (r_log {r_log:+.2f}, ρ {rho:+.2f}, n {n})"))
+        # 1:1 reference — "the covariance is honest" — spanning the pooled range.
+        if np.isfinite(lo) and np.isfinite(hi) and lo > 0 and hi > lo:
+            axg.traces.append(Line(x=[lo, hi], y=[lo, hi], color=_C_REF, style="--",
+                                   width=1.2, label="1:1 (error = σ3D)"))
+        if corr_rows:
             axg.traces.append(TextBox(
                 x=0.02, y=0.97, mono=True, boxed=True,
-                text="\n".join(f"{l:<6} error/σ3D median {r:5.2f}x" for l, _h, _u, _e, r in sig_rows)
-                     + "\n(1.0 = covariance honest)"))
-        axg.traces += storm
-        figures.append(Figure(name="Formal sigma vs error", axes=[axg], width=13, height=4.4))
+                text="\n".join(f"{l:<6} err/σ3D median {rt:5.2f}x   r_log {rl:+.2f}   ρ {rp:+.2f}"
+                               for l, rl, rp, _n, rt in corr_rows)
+                     + "\n(on the 1:1 line = covariance honest in MAGNITUDE;"
+                       "\n r/ρ = does σ track the error epoch to epoch)"))
+        figures.append(Figure(name="Formal sigma vs error", axes=[axg], width=13, height=5.6))
 
     # ------------------------------------------------------------- (e) clock
     cdt_med = None
@@ -313,15 +391,22 @@ def build_exam_spp_reference(ctx) -> ViewerResult:
         dc = c1 - c2
         fin = dc[np.isfinite(dc)]
         cdt_med = float(np.median(fin)) if fin.size else None
-        axe1 = Axes(title="Receiver clock: leg 1 − leg 2 c·dt — the common-mode "
-                          "ionosphere the single-frequency solution absorbs",
-                    xlabel="", ylabel="Δ c·dt (m)", legend=Legend(loc="best"))
-        axe1.traces = [Line(x=t, y=dc, color=(0.35, 0.15, 0.55), width=1.1,
-                            label="leg 1 − leg 2 c·dt")]
-        if cdt_med is not None:
-            axe1.traces.append(HLine(y=cdt_med, color=_C_REF, style="--",
-                                     label=f"median {cdt_med:+.2f} m"))
-        axe1.traces += storm
+        # The leg-1-minus-leg-2 difference panel is opt-in: its one number (the
+        # median, i.e. the common-mode ionosphere the single-frequency solution
+        # absorbs into its clock) is in the read-out below, and the trace itself
+        # is a restatement of the leg-1 error already plotted twice above.
+        axes_e = []
+        if show_clock_difference:
+            axe1 = Axes(title="Receiver clock: leg 1 − leg 2 c·dt — the common-mode "
+                              "ionosphere the single-frequency solution absorbs",
+                        xlabel="", ylabel="Δ c·dt (m)", legend=Legend(loc="best"))
+            axe1.traces = [Line(x=t, y=dc, color=(0.35, 0.15, 0.55), width=1.1,
+                                label="leg 1 − leg 2 c·dt")]
+            if cdt_med is not None:
+                axe1.traces.append(HLine(y=cdt_med, color=_C_REF, style="--",
+                                         label=f"median {cdt_med:+.2f} m"))
+            axe1.traces += storm
+            axes_e.append(axe1)
         # Each leg about its own median: the receiver clock's real behaviour is
         # common to both, so this panel should show two overlapping curves.
         axe2 = Axes(title="Each leg's c·dt about its own median (the shared clock model)",
@@ -330,7 +415,9 @@ def build_exam_spp_reference(ctx) -> ViewerResult:
             Line(x=t, y=c1 - np.nanmedian(c1), color=_C_L1, width=1.0, label="leg 1"),
             Line(x=t, y=c2 - np.nanmedian(c2), color=_C_IF, width=1.0, label="leg 2"),
         ] + storm
-        figures.append(Figure(name="Receiver clock", axes=[axe1, axe2], width=13, height=6.6))
+        axes_e.append(axe2)
+        figures.append(Figure(name="Receiver clock", axes=axes_e, width=13,
+                              height=6.6 if len(axes_e) == 2 else 3.6))
 
     # ------------------------------------------------------ (f) sats + PDOP
     if "l1_n" in spp.columns and "if_n" in spp.columns:

@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "PD-SAFE FOLD CARD (docs/SPEC_pd_safe_dd_fold.md) - THE FIX ARM (3 h, 63 sta, DOY-129, cold).",
+    "",
+    "Sole functional delta over _ft63_churn_base.json: network.carry_invariant_pd_safe.  The",
+    "knob is FINGERPRINTED, so this arm must converge FRESH - never warm-resume it off an OFF",
+    "arm's snapshot, and never flip the knob mid-chain.  (A pre-card blob restored into an",
+    "armed run is separately handled: the INC-2c restore guard rebirths any non-PD block it",
+    "finds, and says so.)",
+    "",
+    "GRADE (SPEC 7; all datum-invariant, standing invariant #5):",
+    "  1. THE GATE - scripts/parse_carry_psd.py on runs/pdfix_on/state_snapshot.bin: every",
+    "     carried block PD, and diffuse rows ~ current-epoch births only.  The OFF arm's",
+    "     snapshot is the control and is expected to FAIL it.",
+    "  2. scripts/grade_dd_spillway.py - do the giant block's keys leave the 2 cyc/ep pin?",
+    "     Prediction: gain-limited ~0.5-1.5 cyc/ep at qz=1e-4.  med|frac| movement is NOT",
+    "     promised at 3 h (block-0 needed hours to reach 0.14 cyc; iono physics sets the pace).",
+    "  3. scripts/chain_stability.py total_IF hr2 vs runs/churn_v5b - the no-harm check, WITH",
+    "     EYES OPEN: 78 % of the carry starts WORKING, so products may move well beyond the",
+    "     +-1 % churn-card band in EITHER direction.  A move is not an auto-fail; a clock-QC",
+    "     degradation is.  Grade direction + magnitude + clock QC, and treat any large move as",
+    "     its own investigation before arming this anywhere else.",
+    "  4. D5 behaviour: flags will RISE (stiff priors now actually resist the iono walk, so",
+    "     the tension becomes visible for the first time).  Watch sigma0-hat (2.5 -> ?), refloat",
+    "     rates, and whether the v3k erase/keep split and the funnel keep invariant #1",
+    "     satisfied at the new operating point.  A flag storm here is SIGNAL, not regression.",
+    "  5. Run-end ddfold counters: repairs should be DUST-rate and rebirths rare.  A non-zero",
+    "     ddfold_repair_loud means a block arrived genuinely broken - investigate, do not",
+    "     read the repaired covariance as healthy.",
+    "  6. Perf: fold_minv_ms / install timers delta < 25 % at 63 sta."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "network": {
+    "carry_invariant_pd_safe": true,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_on/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_on/state_snapshot.bin"
+  }
+}

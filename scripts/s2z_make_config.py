@@ -43,6 +43,16 @@ import argparse
 import json
 import os
 
+import sys
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+# Resolve any "extends" chain the base may grow.  These bases are self-contained
+# today, so this is byte-identical now; it is here so the script does not silently
+# read a four-key DELTA as a whole config the day someone rebases it (the failure
+# scripts/config_posture_check.py shipped with).
+from gnss_config_chain import load_config_flat  # noqa: E402
+
 BASE = r"C:\GnssProcessor\config\test_suite\_night305_conv.json"
 OUT = r"C:\GnssProcessor\config\test_suite\_day129_s2z_conv.json"
 RUNROOT = r"C:\GnssProcessor\runs\s2z_ab"
@@ -71,7 +81,7 @@ GUARDS_MUST_BE_ABSENT = [
 
 
 def build(seed_dir, max_duration_s):
-    cfg = json.load(open(BASE, encoding="utf-8"))
+    cfg = load_config_flat(BASE)
     net = cfg["network"]
 
     for key in S2Z_COUPLED_MUST_BE_ABSENT + GUARDS_MUST_BE_ABSENT:

@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "CHURN CARD \u2014 BASE RE-RUN on the LATER exe.  Byte-for-byte the same treatment as",
+    "_ft63_churn_base.json (zero functional keys over it; only the output paths differ), run",
+    "on the build that additionally carries the D5 v5 carried-only gate and the Card-3/4",
+    "slip-aware election.  Both of those are default-OFF, so this arm must reproduce",
+    "runs/churn_base EXACTLY.",
+    "",
+    "WHY IT EXISTS.  base / v3 / v4 were run on one exe; v5 needs a later one.  Standing",
+    "invariant #6 forbids reading a cross-build delta as a treatment effect \u2014 verification",
+    "integers are build-sensitive at the ppm level.  This arm makes the v5-vs-base comparison",
+    "a SAME-BUILD one, and simultaneously discharges the OFF-path byte-identity gate the two",
+    "new knobs owe: if churn_base2 differs from churn_base anywhere, the default-OFF claim is",
+    "false and every ON-arm number in this card is unattributable."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/churn_base2/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_base2/state_snapshot.bin"
+  }
+}

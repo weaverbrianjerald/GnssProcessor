@@ -16,6 +16,7 @@
 
 #include "app/NetworkRunContext.hpp"          // ctx.knobs / ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"              // config_ getters
+#include "filter/NetworkMdb.hpp"              // Baarda MDB rider on B2's r_i (SPEC_network_mdb_reliability)
 #include "filter/NetworkRobustStats.hpp"      // medianPolish2Way / robustProminence / medianCopy / MedianPolish
 #include "filter/StateManager.hpp"            // stations[i].sm->markAmbiguityPendingReseed
 #include "logging/NetworkRunTraces.hpp"       // trace streams + emitEvent
@@ -51,7 +52,8 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         std::set<std::string>& clock_refloat_sats,
                         std::set<std::string>& retro_flag_sats,
                         bool retro_feed,
-                        int& n_arc_refloat_epoch) {
+                        int& n_arc_refloat_epoch,
+                        NetworkPriorResidual& prires) {
     // --- Alias preamble: byte-copies of the former Application::runNetwork alias
     //     block, so the relocated SB_RAIM body below reads the original names. ---
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
@@ -62,6 +64,18 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const bool   raim_maturity_gate   = ctx.knobs.raim_maturity_gate;   // T2d: gate isolated-arc refloats on maturity
     const int    raim_maturity_epochs = ctx.knobs.raim_maturity_epochs;  // T2d: maturity horizon
     const bool   raim_redun    = ctx.knobs.raim_redun; // B2: Baarda per-row r_i normalization of the RAIM residual
+    // docs/SPEC_network_mdb_reliability.md INC-0: the MDB rider on B2's r_i.  NOT
+    // part of the relocated body — a measure-only addition that reads the (w, r_i)
+    // pairs the Pass-1 row walk already visits.  Both conjuncts matter: mdb_on is
+    // the master, mdb_from_raim says THIS feed site is the armed one.
+    const bool   mdb_on        = ctx.knobs.mdb_on && ctx.knobs.mdb_from_raim;
+    const double mdb_delta0    = baardaDelta0(config_.dataSnoopingCritical());
+    // docs/SPEC_sigma0_constraint_aware.md §2: the DATA SIDE of the
+    // constraint-aware global variance component.  Also NOT part of the relocated
+    // body — a measure-only rider reading the same (w, v, r_i) triples the Pass-1
+    // walk already visits, and nothing in this seam reads a single number back.
+    // globalOn() already ANDs the rider with a live census, so this is one bool.
+    const bool   s0g_on        = prires.globalOn();
     const bool   clk_mon_couple = ctx.knobs.clk_mon_couple;  // also refloat RAIM-flagged sats' clocks (opt-in)
     const bool   ura_on        = ctx.knobs.ura_on;                  // B1: emit per-sat URA quality channel
     const double ura_alpha     = ctx.knobs.ura_alpha;             // B1: s0 EWMA smoothing
@@ -132,6 +146,33 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                           R.A_s, R.A_r, R.w, shared_datum);
             } catch (...) { row_r.resize(0); }
         }
+        // --- MDB rider (docs/SPEC_network_mdb_reliability.md INC-0) ------------
+        // Every row this loop is about to visit already has (w, r_i) in hand, so
+        // its minimal detectable bias costs one division.  The visited mask exists
+        // because the loop below is keyed on AMBIGUITY COLUMNS, not on rows: a row
+        // touched by two carried ambiguities would otherwise be binned twice and
+        // the join against the census would drift by exactly those duplicates.
+        const bool mdb_here = mdb_on && raim_redun && row_r.size() == R.A_r.rows();
+        std::vector<char> mdb_seen;
+        std::optional<NetworkMdbStationFeed> mdb_feed;
+        if (mdb_here) {
+            mdb_seen.assign(static_cast<std::size_t>(R.A_r.rows()), 0);
+            mdb_feed.emplace(ctx.carry.mdb, se.time.tow, mdb_delta0,
+                             ctx.knobs.mdb_event_m, stations[i].name,
+                             NetMdbSource::Raim, 0.0);
+        }
+        // --- constraint-aware global σ̂₀, data side (SPEC_sigma0_constraint_aware) --
+        // Its OWN visited mask, deliberately not shared with the MDB one: MDB
+        // needs `raim_redun` to exist at all, this rider does not (it degrades to
+        // r ≡ 1 and FLAGS the epoch), so the two populations are not the same set
+        // and one mask would silently give whichever card ran second a subset.
+        // The mask itself is mandatory for the identical reason MDB's is: the
+        // loop below is keyed on AMBIGUITY COLUMNS, not on rows, so a row touched
+        // by two carried ambiguities would be counted twice — inflating BOTH sums
+        // and leaving the ratio perfectly plausible.
+        const bool s0g_redun_here = raim_redun && row_r.size() == R.A_r.rows();
+        std::vector<char> s0g_seen;
+        if (s0g_on) s0g_seen.assign(static_cast<std::size_t>(R.A_r.rows()), 0);
         // Largest measurement-standardized post-fit phase residual PER SATELLITE at this
         // station (a carried ambiguity's phase rows carry +1 on its A_r column; uncombined).
         std::map<std::string, double> sat_rmax;
@@ -141,9 +182,32 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
                 if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;  // not a phase row of this ambiguity
                 const double w = (row < R.w.size()) ? R.w(row) : 1.0;
+                // MDB is fed HERE, ahead of the uncheckable `continue` below: a row
+                // RAIM drops from its σ̂0 pool because r_i ≤ 1e-6 is precisely the
+                // row whose MDB is +infinity, and that is the number this card
+                // exists to publish.  Binning only the rows that survive the drop
+                // would report the network as perfectly checkable by construction.
+                if (mdb_here && !mdb_seen[static_cast<std::size_t>(row)]) {
+                    mdb_seen[static_cast<std::size_t>(row)] = 1;
+                    mdb_feed->add(pa.sat, NetRowClass::ObsPhase, w, row_r(row));
+                }
+                // The global variance component is fed HERE, ahead of the
+                // uncheckable `continue` below, for the reason the identity
+                // itself supplies: E[w·v²] = r_i, so an r_i ≈ 0 row contributes
+                // ~0 to the numerator AND ~0 to the denominator and cannot bias
+                // the ratio — while DROPPING it would delete a real row from
+                // Σr_data and report the pool as more redundant than it is.
+                // (Same conclusion as MDB's, reached from the arithmetic rather
+                // than from what the card publishes.)
+                if (s0g_on && !s0g_seen[static_cast<std::size_t>(row)]) {
+                    s0g_seen[static_cast<std::size_t>(row)] = 1;
+                    prires.addDataRow(w, resid(row),
+                                      s0g_redun_here ? row_r(row) : 1.0,
+                                      /*r_is_approx=*/!s0g_redun_here);
+                }
                 double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
                 if (raim_redun && row < row_r.size()) {   // B2: standardize v/(σ·√r_i)
-                    constexpr double kRedFloor = 1e-6;
+                    constexpr double kRedFloor = kBaardaRedundancyFloor;
                     const double ri = row_r(row);
                     if (ri <= kRedFloor) continue;   // uncheckable row: exclude from σ̂0 pool + r_max
                     r /= std::sqrt(ri);
@@ -155,6 +219,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             if (r_max > cur) cur = r_max;
             if (need_attrib) cells.push_back({static_cast<int>(i), pa.sat, pa.signal, r_max});
         }
+        if (mdb_here) mdb_feed->finish();   // commit this station's event candidates
         for (const auto& [sat, rmax] : sat_rmax)
             amb_stats.push_back({sat, static_cast<int>(i), rmax});
     }

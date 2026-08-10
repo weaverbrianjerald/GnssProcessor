@@ -198,6 +198,25 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
             cfg.iono.tid_sats.push_back(e.get<std::string>());
         }
     }
+    if (const nlohmann::json* us = resolvePath(s, "iono.turb_sats")) {
+        if (!us->is_array())
+            return fail("sim config 'iono.turb_sats' must be an array of PRN strings (e.g. [\"E13\",\"G18\"])");
+        cfg.iono.turb_sats.clear();
+        for (const auto& e : *us) {
+            if (!e.is_string())
+                return fail("sim config 'iono.turb_sats' entries must be PRN strings (e.g. \"G18\")");
+            cfg.iono.turb_sats.push_back(e.get<std::string>());
+        }
+    }
+    cfg.iono.sed_bulk = jval(s, "iono.sed_bulk", "", cfg.iono.sed_bulk);
+    cfg.iono.turb_sigma_tecu = jval(s, "iono.turb_sigma_tecu", "", cfg.iono.turb_sigma_tecu);
+    if (cfg.iono.turb_sigma_tecu < 0.0)
+        return fail("sim config 'iono.turb_sigma_tecu' must be >= 0");
+    cfg.iono.turb_step_s = jval(s, "iono.turb_step_s", "", cfg.iono.turb_step_s);
+    cfg.iono.turb_window_start_frac =
+        jval(s, "iono.turb_window_start_frac", "", cfg.iono.turb_window_start_frac);
+    cfg.iono.turb_window_duration_frac =
+        jval(s, "iono.turb_window_duration_frac", "", cfg.iono.turb_window_duration_frac);
     if (const nlohmann::json* fs = resolvePath(s, "iono.tid_fast_sat")) {
         if (!fs->is_string())
             return fail("sim config 'iono.tid_fast_sat' must be a PRN string (e.g. \"G23\")");
@@ -282,6 +301,7 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.trajectory.heading0_deg    = jval(s, "trajectory.heading0_deg",    "", cfg.trajectory.heading0_deg);
     cfg.trajectory.heading_amp_deg = jval(s, "trajectory.heading_amp_deg", "", cfg.trajectory.heading_amp_deg);
     cfg.trajectory.heading_period_s= jval(s, "trajectory.heading_period_s","", cfg.trajectory.heading_period_s);
+    cfg.trajectory.static_prefix_s = jval(s, "trajectory.static_prefix_s", "", cfg.trajectory.static_prefix_s);
     cfg.trajectory.heave_amp_m     = jval(s, "trajectory.heave_amp_m",     "", cfg.trajectory.heave_amp_m);
     cfg.trajectory.heave_period_s  = jval(s, "trajectory.heave_period_s",  "", cfg.trajectory.heave_period_s);
     cfg.trajectory.clock_bias0_s   = jval(s, "trajectory.clock_bias0_s",   "", cfg.trajectory.clock_bias0_s);
@@ -323,6 +343,15 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
             cfg.rinex.approx_position_mode != "quantized")
             return fail("sim config 'rinex.approx_position_mode' is '" + cfg.rinex.approx_position_mode +
                         "'; must be \"truth\" or \"quantized\"");
+    }
+    if (const nlohmann::json* off = resolvePath(s, "rinex.approx_offset_enu_m")) {
+        if (!off->is_array() || off->size() != 3)
+            return fail("sim config 'rinex.approx_offset_enu_m' must be [east_m, north_m, up_m]");
+        for (int i = 0; i < 3; ++i) {
+            if (!(*off)[i].is_number())
+                return fail("sim config 'rinex.approx_offset_enu_m' entries must be numbers");
+            cfg.rinex.approx_offset_enu_m[i] = (*off)[i].get<double>();
+        }
     }
     cfg.rinex.approx_quantize_deg = jval(s, "rinex.approx_quantize_deg", "", cfg.rinex.approx_quantize_deg);
     if (!(cfg.rinex.approx_quantize_deg > 0.0))

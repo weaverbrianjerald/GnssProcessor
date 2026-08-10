@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "PD-SAFE FOLD CARD (docs/SPEC_pd_safe_dd_fold.md) - OFF ARM / invariant-#6 gate.",
+    "",
+    "Byte-for-byte the churn baseline config, on the NEW exe.  Its ONLY job is the standing",
+    "invariant #6 gate: the solve artifacts (network_solution.csv, the emitted product file,",
+    "the snapshot's solve content) must be md5-IDENTICAL to runs/churn_base2, which was",
+    "produced by the pre-card exe on the same config.  If they are not, INC-0's counters are",
+    "not solve-neutral and nothing else in this card may be believed.",
+    "",
+    "EXPECTED TRACE DELTA (not a failure).  network_epoch_status.csv gains three columns -",
+    "ddfold_degen_blocks, ddfold_degen_rows, ddfold_min_pivot_rel - appended AFTER every",
+    "pre-existing column, and the run-end log gains the Card-4 PD-safe INC-0 block.  Readers",
+    "read epoch-status columns BY NAME.  The solve artifacts are the gate; the traces are not.",
+    "",
+    "WHAT THIS ARM WILL SHOW FOR THE FIRST TIME.  INC-0 is always-on, so this OFF arm is also",
+    "the first direct measurement of the defect: ddfold_degen_rows / ddfold_fold_rows is the",
+    "78 % figure the snapshot audit inferred, and ddfold_transitions dates the freeze."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_off/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_off/state_snapshot.bin"
+  }
+}

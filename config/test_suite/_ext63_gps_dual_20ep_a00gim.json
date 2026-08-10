@@ -1,0 +1,48 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 9 — arm 4 (rxcb) + a00 ANCHORED TO THE COD GIM.  The ROOT-CAUSE",
+  "VALIDATION arm (docs/HANDOFF_ext_cb_iono_level.md, ROOT CAUSE section).",
+  "",
+  "Measured cause of DEFECT 2: the 61 stations' receiver C1C-C2W GF biases have mean",
+  "~-5 ns (-15 slant-TECU) and clustered spread (std ~21 TECU).  rx_code_bias_datum's",
+  "zero-MEAN convention forces that mean into the confounded direction = the field level",
+  "(field-vs-GIM at its own IPPs: -13.5 TECU).  The level defect is an S-basis realization",
+  "mismatch, so the fix is a FRAME CHOICE: adopt COD's iono level by anchoring a00 to the",
+  "GIM's area-weighted global mean (32.24 TECU at DOY-129 00:00) through the EXISTING",
+  "per-epoch mean-reverting a00 prior (NetworkRunContext ~:1309 — clim anchor folded",
+  "EVERY epoch in information space, so it stands against the walk, unlike an",
+  "initial-only prior).  sigma 2.0 -> info 0.25/ep, SOFT: the border stays non-empty and",
+  "the field remains data-shaped; only the confounded LEVEL direction is informed.",
+  "",
+  "PREDICTION (stated before the run):",
+  " - a00 ignites and HOLDS in ~28-33 (equilibrium offset vs the ~1 TECU/ep walk pump is",
+  "   ~pump/info = ~4 TECU at sigma 2; if it sags below ~28, tighten sigma to 1).",
+  " - sh_health gate: a00_in_band stays 1 all 20 epochs (arm 4: left band at ep 8).",
+  " - The OPEN question this arm answers: does the DEG-1 DIPOLE (30-40 TECU rms_deg1,",
+  "   control 8-12) survive a correct level?  The dipole is attributed to the CLUSTERED",
+  "   rx-bias spread, not the mean, so prediction is PARTIAL persistence — if it collapses",
+  "   too, the level and dipole shared one mechanism; if it persists, the next lever is",
+  "   the per-LOS iono x_lin seed (charged with rx bias at birth).",
+  " - rxcb prires family may get louder (states now fight the zero-mean datum) — expected,",
+  "   MEASURE-ONLY.",
+  "",
+  "20 epochs is inside ignition: LEVEL + gate wiring read only, no settled-science claim."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00gim/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00gim/state_snapshot.bin"
+ }
+}

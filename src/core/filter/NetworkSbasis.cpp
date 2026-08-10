@@ -215,6 +215,142 @@ std::vector<NetworkEstimator::SharedPrior> NetworkSbasis::buildCodeBiasKaulaPrio
     return out;
 }
 
+NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
+    const Eigen::MatrixXd& reduced_N_ss, int declared_dim, double tol,
+    const Eigen::VectorXd& x_prev,
+    const std::function<std::string(Eigen::Index)>& labelOf,
+    int max_extra) const {
+    GaugeCompletion out;
+    const Eigen::Index n = reduced_N_ss.rows();
+    if (n == 0 || reduced_N_ss.cols() != n || declared_dim < 0) return out;
+
+    // Same decomposition family and cutoff arithmetic as assertNullSpaceRank —
+    // the completion must count exactly what the gate will count, or it would
+    // "complete" against a decision the gate does not make (the DG2 lesson,
+    // extended to a fourth consumer).  Vectors are needed here (the rows ARE
+    // the eigenvectors); this runs only when armed, and the gate-failure heal
+    // already pays the same decomposition on exactly the epochs that fire.
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(reduced_N_ss,
+                                                      Eigen::ComputeEigenvectors);
+    if (es.info() != Eigen::Success) return out;   // the gate will report it loudly
+    const Eigen::VectorXd& ev = es.eigenvalues();  // ascending
+    const double smax   = ev.size() > 0 ? ev(ev.size() - 1) : 0.0;
+    const double cutoff = tol * std::max(smax, 1.0);
+
+    int observed = 0;
+    for (Eigen::Index i = 0; i < ev.size(); ++i)
+        if (ev(i) < cutoff) ++observed;
+    out.observed = observed;
+    // observed < declared is the gate's "over-specified" verdict (a tolerance
+    // below this config's gauge depth) — nothing to complete either way.
+    if (observed <= declared_dim) return out;
+
+    // Per-DIRECTION degeneracy skip: the structural gauges sit at machine-zero
+    // (locals absorb them exactly); an extra unseparated from that cluster (not
+    // ≥ 1 decade above the running cluster top, or below the 1e-14·λmax
+    // machine-zero floor — the relative test alone is defeated by an exactly-
+    // 0.0 gauge, since 10·0 = 0 admits everything) is SKIPPED, because
+    // eigenvectors mix arbitrarily within a degenerate cluster and a row there
+    // could re-target a combination the declared pins own; an extra AT machine
+    // zero is an orphaned EXACT gauge — Card PA's class.  Each skipped extra
+    // extends the cluster (its |ev| joins the running top), so the first
+    // CONSTRAINED extra is ≥ 1 decade above everything left unpinned below it
+    // and cannot mix with any of it.  With declared_dim == 0 and no skips
+    // there is nothing to mix with — exact-zero orphans are then legitimately
+    // completable (the constraint-realized clock datums leave no pins to
+    // conflict with).  |·| because near-zero eigenvalues carry rounding sign.
+    // Attribution shared by constrained AND skipped directions: every column
+    // at |component| ≥ kSbasisAttrSpan, heaviest first; the heaviest column is
+    // always named even when the direction is spread below the threshold (an
+    // anonymous direction would make the engage/skip event un-actionable).
+    const auto attribute = [&](Eigen::Index j) {
+        GaugeCompletion::Dir d;
+        d.ev = ev(j);
+        const Eigen::VectorXd v = es.eigenvectors().col(j);
+        std::vector<std::pair<double, Eigen::Index>> part;
+        Eigen::Index cmax = 0;
+        double amax = -1.0;
+        for (Eigen::Index c = 0; c < n; ++c) {
+            const double a = std::abs(v(c));
+            if (a > amax) { amax = a; cmax = c; }
+            if (a >= kSbasisAttrSpan) part.emplace_back(a, c);
+        }
+        if (part.empty() && n > 0) part.emplace_back(amax, cmax);
+        std::sort(part.begin(), part.end(),
+                  [](const std::pair<double, Eigen::Index>& a,
+                     const std::pair<double, Eigen::Index>& b) {
+                      if (a.first != b.first) return a.first > b.first;
+                      return a.second < b.second;   // deterministic tie-break
+                  });
+        for (std::size_t p = 0; p < part.size(); ++p) {
+            const std::string lab = labelOf
+                ? labelOf(part[p].second)
+                : fmt::format("col{}", static_cast<long long>(part[p].second));
+            if (p == 0) { d.top_span = part[p].first; d.top_label = lab; }
+            if (p < 6) {
+                if (!d.detail.empty()) d.detail += ',';
+                d.detail += fmt::format("{}:{:.2f}", lab, part[p].first);
+            }
+            // Satellite identity from the per-sat label kinds ("CLK:<sat>",
+            // "CB:<sat>:<sig>", "PB:<sat>:<sig>"); SH coefficients carry none.
+            if (lab.rfind("CLK:", 0) == 0 || lab.rfind("CB:", 0) == 0 ||
+                lab.rfind("PB:", 0) == 0) {
+                const auto p1 = lab.find(':');
+                const auto p2 = lab.find(':', p1 + 1);
+                const auto len =
+                    (p2 == std::string::npos ? lab.size() : p2) - (p1 + 1);
+                if (len > 0) d.sats.insert(lab.substr(p1 + 1, len));
+            }
+        }
+        return d;
+    };
+
+    const double floor_abs = 1e-14 * std::max(smax, 1.0);
+    double cluster_top = declared_dim > 0 ? std::abs(ev(declared_dim - 1)) : -1.0;
+    Eigen::Index first = declared_dim;
+    while (first < observed) {
+        const double a = std::abs(ev(first));
+        const bool in_cluster =
+            cluster_top >= 0.0 && (a < 10.0 * cluster_top || a < floor_abs);
+        if (!in_cluster) break;
+        out.skipped.push_back(attribute(first));
+        cluster_top = std::max(cluster_top, a);
+        ++first;
+    }
+    out.n_skipped  = static_cast<int>(first - declared_dim);
+    out.degenerate = out.n_skipped > 0;
+    const int n_extra = observed - static_cast<int>(first);
+    if (n_extra <= 0) return out;
+
+    // K2 anti-fragility: the folded row must land ≥ 2 decades above the armed
+    // cutoff, or the "completion" itself sits at the cutoff it exists to clear.
+    if (kSbasisCompleteWeight < 100.0 * cutoff) {
+        out.weight_marginal = true;
+        return out;
+    }
+    // No silent mass-pinning: a deficiency burst beyond the cap is a
+    // pathological epoch (or a mis-calibrated tolerance) — withhold honestly.
+    if (max_extra > 0 && n_extra > max_extra) {
+        out.capped = true;
+        return out;
+    }
+
+    out.n_extra = n_extra;
+    out.H.resize(n_extra, n);
+    out.z.resize(n_extra);
+    const bool have_prev = x_prev.size() == n;
+    for (int k = 0; k < n_extra; ++k) {
+        const Eigen::Index j = first + k;
+        const Eigen::VectorXd v = es.eigenvectors().col(j);
+        out.H.row(k) = v.transpose();
+        out.z(k)     = have_prev ? v.dot(x_prev) : 0.0;
+        GaugeCompletion::Dir d = attribute(j);
+        d.target = out.z(k);
+        out.dirs.push_back(std::move(d));
+    }
+    return out;
+}
+
 void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
                                         int declared_dim, double tol,
                                         int* observed_out) const {

@@ -1,0 +1,34 @@
+{
+ "_comment": [
+  "PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md) -- the 0.08 h",
+  "byte-identity CONTROL for _ft63_prires_smoke.json.  Extends the same base with",
+  "the census OFF and nothing else changed, so gate 1 (spec section 9.1) is",
+  "runnable at SMOKE scale, which is where a byte-identity break should be caught",
+  "-- not after a 3 h pair.",
+  "",
+  "EXPECTED DIFFS, and no others: network_prior_residual.csv exists only in the ON",
+  "arm; network_events.csv gains PRIORRES rows; network_epoch_status.csv gains the",
+  "five prires_* COLUMNS (they are appended to the schema only when armed, so the",
+  "OFF file is byte-identical to a pre-card build's); the run manifest and every",
+  "wall-clock field differ.  Everything else -- products, network_trace.csv,",
+  "network_solution.csv, the RAIM/clock/DD artifacts -- must be byte-identical.",
+  "A diff anywhere else is a STOP: the card claims the solve is untouched, and",
+  "that claim IS the acceptance criterion (standing invariant #6).",
+  "",
+  "Run both arms from the SAME BUILD (verification integers are build-config",
+  "sensitive at the ppm level) and from DISTINCT working directories, since",
+  "logs/ is the fixed output root."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+ ],
+ "processing": {
+  "max_duration_s": 300.0
+ },
+ "network": {
+  "max_duration_s": 300.0,
+  "prior_residual_census": false,
+  "product_output_path": "C:/GnssProcessor/runs/ft63_prires_smoke_off/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ft63_prires_smoke_off/state_snapshot.bin"
+ }
+}

@@ -81,12 +81,10 @@ void networkInstallCarry(
     const auto& nc  = config_.getNetworkConfig();
     const auto& nmw = config_.getNetworkConfig().mw_wl;
     auto& trace = traces.trace;
-    auto& lane_trace_header_written = ctx.carry.lane_trace_header_written;
     auto& d5_ewl_stasat = ctx.carry.d5_ewl_stasat;
     auto& d5_hold_chords = ctx.carry.d5_hold_chords;
     auto& d5_inject_chords_prev = ctx.carry.d5_inject_chords_prev;
     auto& d5_inject_chords_now = ctx.carry.d5_inject_chords_now;
-    auto& d5_dump_header_written = ctx.carry.d5_dump_header_written;
     auto& carry_prev_tow = ctx.carry.carry_prev_tow;
     auto& carry_epochs = ctx.carry.carry_epochs;
     auto& carry_born_total = ctx.carry.carry_born_total;
@@ -101,6 +99,10 @@ void networkInstallCarry(
     auto& carry_innov_flags_total = ctx.carry.carry_innov_flags_total;
     auto& carry_innov_retaps_total = ctx.carry.carry_innov_retaps_total;
     auto& carry_innov_map_miss = ctx.carry.carry_innov_map_miss;
+    // Card 4 (M1) D5 v4: tag corroborated-FLAT flags so next epoch's carry-membership
+    // test can spare them.  The loader already forces it false without innov_gate.
+    const bool retap_only =
+        carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly();
     auto wlAccumulate = [](WlCounters& a, const WlCounters& b) {
         a.rows_seen           += b.rows_seen;
         a.cycles_decided      += b.cycles_decided;
@@ -135,6 +137,39 @@ void networkInstallCarry(
         a.sib_abs_frac_sum    += b.sib_abs_frac_sum;
     };
 
+    // Card 4 (M1) D5 v3: hand the driver this epoch's CORROBORATION set before the install
+    // consumes it — the chords whose underlying arc the raw MW/GF observables measured as
+    // CONTINUOUS.  Built here because this is the one seam holding all three inputs at once:
+    // slip_qc (the raw verdicts, computed in PASS A before the solve), carry_arc_amb_key
+    // (the group→chord→ambiguity reverse map rebuilt with the blocks), and carry_driver.
+    //
+    // MEMBERSHIP IS "MEASURED AND FLAT", NEVER "NO EVIDENCE" — verdict.measured must be true
+    // AND the (station, satellite) must be absent from epoch.stepped.  An unmeasured arc is
+    // deliberately left OUT so it still re-taps: suppressing on absence of evidence would
+    // silently disable the fine-slip response on exactly the arcs we know least about
+    // (standing invariant #1).  Same tri-state the network_d5_flags.csv `raw_stepped` column
+    // encodes, so the trace and the gate cannot disagree.
+    if (carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()
+        && slip_qc.epoch.computed) {
+        std::set<std::pair<int, ArcKey>> flat;
+        for (const auto& [group, by_chord] : carry_arc_amb_key) {
+            for (const auto& [chord, amb] : by_chord) {
+                if (amb.empty() || chord.u < 0
+                    || static_cast<std::size_t>(chord.u) >= slip_qc.epoch.verdict.size())
+                    continue;
+                const auto parts = StateKeys::parseAmbiguityKey(amb);
+                if (!parts) continue;
+                const std::string& sat = parts->satellite;
+                if (slip_qc.epoch.stepped.count({ chord.u, sat })) continue;  // real step ⇒ re-tap
+                const auto& vmap = slip_qc.epoch.verdict[static_cast<std::size_t>(chord.u)];
+                const auto vit = vmap.find(sat);
+                if (vit != vmap.end() && vit->second.measured)
+                    flat.insert({ group, chord });   // measured AND flat ⇒ suppressible
+            }
+        }
+        carry_driver.setInnovFlatChords(std::move(flat));
+    }
+
     // parallel_carry: thread installPosterior's posterior-cov GEMMs.  Run it
     // SERIAL-over-blocks (n_threads=1, its byte-identical-to-serial path) so Eigen's
     // threading does not nest with the seam's per-block OpenMP.
@@ -147,6 +182,176 @@ void networkInstallCarry(
         carry_driver.reset();
     }
     carry_prev_tow = se.time.tow;
+
+    // === PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) telemetry =======
+    // INC-0 is ALWAYS-ON and solve-neutral.  It exists because the fold's `M := 0`
+    // response to a non-PD Pᶻ+B had no counter, no log and no event: a block that went
+    // indefinite between epoch 2 and epoch 122 froze forever, its posterior pinned to its
+    // prior, while dd_sigma_cyc / the D5 gate / the AR probe all stayed carry-blind.
+    // Measured 2026-08-02 on `runs/churn_base` (63 sta, 3 h, DOY-129): 568 of 686 carried
+    // rows — 78 % of the state — were diffusing behind exactly that silence, in the
+    // control AND in every arm of the lineage.  Three weeks of campaigns were graded on
+    // that substrate.  Read here rather than in the kernel because this is the one seam
+    // that holds the ACCEPTED solve's fold, the block layout, the station roster and the
+    // trace sinks at once.
+    //
+    // Per-fold, not cumulative: a within-epoch RAIM re-solve re-folds and overwrites the
+    // kernel's stats, so what we read is always the accepted solve's screen.
+    {
+        const auto& fs  = est.ddFoldStats();
+        auto&       cnt = ctx.counters;
+        if (fs.blocks > 0) {
+            ++cnt.ddfold_epochs;
+            cnt.ddfold_folds     += fs.blocks;
+            cnt.ddfold_fold_rows += fs.rows;
+            cnt.ddfold_min_pivot_rel =
+                std::min(cnt.ddfold_min_pivot_rel, fs.min_pivot_rel);
+        }
+        cnt.ddfold_degen_blocks += fs.degen_blocks;
+        cnt.ddfold_degen_rows   += fs.degen_rows;
+        if (fs.degen_blocks > 0) ++cnt.ddfold_degen_epochs;
+        cnt.ddfold_repairs      += fs.repairs;
+        cnt.ddfold_repair_rows  += fs.repaired_rows;
+        cnt.ddfold_repair_worst  = std::max(cnt.ddfold_repair_worst, fs.repair_worst);
+        // NOTE: no per-epoch stamp into ctx.carry.  The epoch-status columns are read
+        // straight off est.ddFoldStats() at both writer sites (NetworkStashStatus for an
+        // accepted epoch, NetworkSolveGlue for a withheld one) — see the rationale on
+        // NetworkCarryState.  This seam owns only the RUN-cumulative roll-up above, the
+        // cross-epoch transition ledger below, and the events.
+
+        // INC-1c: a repair is HYGIENE only while it stays dust.  A clamp above 1e-6·λmax
+        // means the block was not merely rounding-damaged — that is a NEW bug and it must
+        // scream rather than be silently laundered into a PD matrix.  Warned once (the
+        // run-end summary carries the totals); the counter is the population.
+        if (fs.repair_worst > 1e-6 && ++cnt.ddfold_repair_loud == 1)
+            log->warn("Network (Card 4 PD-safe fold, INC-1c): a DD-fold eigenvalue REPAIR "
+                      "clamped a magnitude of {:.3e}·λmax at TOW {:.1f} — far above the "
+                      "1e-12 dust floor the repair exists for.  The block was not merely "
+                      "rounding-damaged; treat this as a NEW defect and investigate rather "
+                      "than trusting the repaired covariance.  (Further occurrences are "
+                      "counted, not logged.)",
+                      fs.repair_worst, se.time.tow);
+
+        // Invariant #7 — BOTH edges of the decoupling.  The healthy→degenerate edge is the
+        // DECOUPLING one (a block stops taking data); the degenerate→healthy edge is a
+        // spontaneous RE-COUPLING (the block factored again on its own, without a
+        // rebirth).  Warned on the TRANSITION only: a per-epoch line over 360 epochs
+        // teaches readers to ignore it, which is precisely how this defect stayed
+        // invisible.  Keyed by (group, first chord) — components merge and split, so no
+        // block index is stable across epochs, but a giant block keeps its leading chord.
+        std::set<std::string> ddfold_degen_now;
+        const std::size_t ddfold_nb =
+            std::min(carry_driver.numBlocks(), est.numDdPriorBlocks());
+        for (std::size_t b = 0; b < ddfold_nb; ++b) {
+            if (!est.ddPriorBlockDegenerate(b)) continue;
+            const ArcKey c0 = carry_driver.blockFirstChord(b);
+            const int    grp = carry_driver.blockGroup(b);
+            const std::string key = fmt::format("{}:{}-{}", grp, c0.u, c0.v);
+            ddfold_degen_now.insert(key);
+            if (ctx.carry.ddfold_degen_prev.count(key)) continue;   // already reported
+            ++cnt.ddfold_transitions;
+            const std::string sta =
+                (c0.u >= 0 && c0.u < static_cast<int>(stations.size()))
+                    ? stations[static_cast<std::size_t>(c0.u)].name : std::string{};
+            const double piv = est.ddPriorBlockMinPivotRel(b);
+            const long long kk =
+                static_cast<long long>(carry_driver.blockChordsForTest(b).size());
+            log->warn("Network (Card 4 PD-safe fold, INC-0): DD-prior block {} (group {}, "
+                      "{} chord(s), lead chord {}→{}{}) went DEGENERATE at TOW {:.1f} — its "
+                      "Pᶻ+B failed the PD screen, so the fold is INERT (M=0) and the block's "
+                      "posterior IS its prior: it takes NO data this epoch.  Without "
+                      "network.carry_invariant_pd_safe this is PERMANENT (the prior never "
+                      "improves, so it never factors again).  min pivot d_min/d_max = {:.3e}.",
+                      b, grp, kk, c0.u, c0.v,
+                      sta.empty() ? std::string{} : fmt::format(" / {}", sta),
+                      se.time.tow, piv);
+            // The pivot also rides `detail` in exponential form: emitEvent renders the
+            // statistic column with {:.6f}, which turns a −2.9e-10 pivot — the entire
+            // point of the row — into "-0.000000".
+            traces.emitEvent(se.time, "DD_FOLD", "DD_FOLD_DEGENERATE", "", sta, piv,
+                             1e-12, "freeze",
+                             fmt::format("block={} group={} k={} chord={}-{} min_pivot={:.6e}",
+                                         b, grp, kk, c0.u, c0.v, piv));
+        }
+        for (const std::string& key : ctx.carry.ddfold_degen_prev) {
+            if (ddfold_degen_now.count(key)) continue;
+            ++cnt.ddfold_recoveries;
+            log->warn("Network (Card 4 PD-safe fold, INC-0): DD-prior block {} RECOVERED at "
+                      "TOW {:.1f} — it factors again (or its component was re-formed).  The "
+                      "re-coupling edge is reported for the same reason the decoupling one "
+                      "is: a block that silently rejoins the solve after an unbounded frozen "
+                      "era is invariant #7's exact failure mode.",
+                      key, se.time.tow);
+            traces.emitEvent(se.time, "DD_FOLD", "DD_FOLD_RECOVERED", "", "",
+                             std::nullopt, std::nullopt, "recouple",
+                             fmt::format("block_key={}", key));
+        }
+        ctx.carry.ddfold_degen_prev.swap(ddfold_degen_now);
+
+        // INC-2a: the bounded, LOUD re-coupling — a block that could not be rescued is
+        // rebirthed (means kept, Pᶻ re-seeded diffuse) rather than frozen.  Empty unless
+        // network.carry_invariant_pd_safe.
+        for (const auto& rb : carry_driver.lastFoldRebirths()) {
+            ++cnt.ddfold_rebirths;
+            cnt.ddfold_rebirth_rows += rb.k;
+            const std::string sta =
+                (rb.chord0.u >= 0 && rb.chord0.u < static_cast<int>(stations.size()))
+                    ? stations[static_cast<std::size_t>(rb.chord0.u)].name : std::string{};
+            log->warn("Network (Card 4 PD-safe fold, INC-2a): DD-prior block {} (group {}, "
+                      "{} carried row(s), lead chord {}→{}{}) REBIRTHED at TOW {:.1f} — its "
+                      "Pᶻ+B could not be factored even after the eigenvalue repair, so the "
+                      "means were kept as the seed and Pᶻ was reset to the diffuse "
+                      "fresh-chord prior.  ONE bounded epoch of information lost (the block "
+                      "takes its data-only tap-off next epoch), which is the whole point: "
+                      "the alternative is a silent permanent freeze.  min pivot = {:.3e}.",
+                      rb.block, rb.group, rb.k, rb.chord0.u, rb.chord0.v,
+                      sta.empty() ? std::string{} : fmt::format(" / {}", sta),
+                      se.time.tow, rb.min_pivot_rel);
+            traces.emitEvent(se.time, "DD_FOLD", "DD_FOLD_REBIRTH", "", sta,
+                             rb.min_pivot_rel, 1e-12, "rebirth",
+                             fmt::format("block={} group={} k={} chord={}-{} min_pivot={:.6e}",
+                                         rb.block, rb.group, rb.k,
+                                         rb.chord0.u, rb.chord0.v, rb.min_pivot_rel));
+        }
+    }
+
+    // D5 v2 σ̂₀ CLAMP VISIBILITY.  The gate's threshold is k·σ̂₀ and σ̂₀ reports 1.00× in FOUR
+    // distinct states, three of which mean the gate silently degraded to the raw formal (v1)
+    // test.  Log the TRANSITION, not the state (the INC-0 rule: a per-epoch line over 360
+    // epochs teaches readers to ignore it — which is exactly how the `churn_base2` lineage
+    // ran an entire campaign on a v1 gate while its run-end line said "calibration armed").
+    {
+        using Infl = NetworkInvariantCarryDriver::InflationState;
+        const auto  st  = carry_driver.innovInflationStatus();
+        const char* tag = NetworkInvariantCarryDriver::inflationStateName(st.state);
+        // `Off` is not a transition worth announcing — calibration was never armed, and
+        // every non-D5 network run would open with the line.  The counters still tally it,
+        // so the run-end summary can still distinguish "v1 by config" from "v2 that never
+        // engaged", which is the distinction that matters.
+        if (st.state != Infl::Off && ctx.carry.d5_calib_state_prev != tag) {
+            // Only the SILENT degradations warn.  Warm-up is expected and self-clearing at
+            // the start of every calibrated run, so warning on it would put a WARN on epoch
+            // 1 of every run and train readers to skip the line — the failure this
+            // instrument exists to end.  A run that never LEAVES warm-up is caught by the
+            // run-end summary instead.
+            const bool degraded = (st.state == Infl::Floored || st.state == Infl::Capped);
+            const std::string from = ctx.carry.d5_calib_state_prev.empty()
+                ? std::string{"(start)"} : ctx.carry.d5_calib_state_prev;
+            const char* meaning =
+                (st.state == Infl::Off)     ? "calibration is not armed — the gate is the raw formal (v1) test by config"
+              : (st.state == Infl::WarmUp)  ? "armed but still below the warm-up row count — the gate is running as RAW FORMAL (v1)"
+              : (st.state == Infl::Floored) ? "armed and warm, but the RAW σ̂₀² is BELOW 1 and the floor clamp bound it up — the gate is running as RAW FORMAL (v1) while reporting 1.00×"
+              : (st.state == Infl::Capped)  ? "the RAW σ̂₀² exceeded the divergence cap and was bound DOWN — the gate is pinned, not calibrated"
+                                            : "calibrated: σ̂₀ is the unclamped empirical estimate";
+            const std::string line = fmt::format(
+                "Network (Card 4/M1 D5 v2 calibration): σ̂₀ state {} → {} at TOW {:.1f} — {}.  "
+                "raw σ̂₀² = {:.4g}, n_eff = {:.0f}, σ̂₀ in force = {:.2f}×.",
+                from, tag, se.time.tow, meaning, st.raw_sigma0_sq, st.n_eff, st.sigma0);
+            if (degraded) log->warn("{}", line); else log->info("{}", line);
+            ctx.carry.d5_calib_state_prev = tag;
+        }
+    }
+
     // M5 card WL-1: fold the accepted build's WL eligibility tallies into the run
     // totals (this install runs only for an accepted epoch; the last buildCarryDdPriors
     // before the accepted solve set mw_wl_epoch).  Invariant #4: counters or it didn't happen.
@@ -376,14 +581,11 @@ void networkInstallCarry(
         if (mw_lane_trace && !lane_trace_epoch.empty()) {
             std::map<ArcKey, double> w_of;   // decided cycles' integer targets
             for (const auto& pl : wl_inject_epoch) w_of[pl.chord] = pl.w;
-            std::error_code ec_lt;
-            std::filesystem::create_directories(log_dir_, ec_lt);
-            std::ofstream ltf(log_dir_ / "network_wl_lane_trace.csv", std::ios::app);
+            // Stream + header are owned by NetworkRunTraces (opened TRUNCATING once in
+            // openMwWlDumps).  This used to re-open the path per epoch in std::ios::app,
+            // which silently concatenated a re-run onto the previous run's rows.
+            auto& ltf = traces.wl_lane_trace;
             if (ltf) {
-                if (!lane_trace_header_written && ltf.tellp() == std::streampos(0))
-                    ltf << "week,tow,chord_u,chord_v,station,sat,lane_cyc,frac_cyc,"
-                           "w,decided,held,injected\n";
-                lane_trace_header_written = true;
                 for (const auto& e : lane_trace_epoch) {
                     double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
                     if (lane_on
@@ -465,6 +667,50 @@ void networkInstallCarry(
             // arrives twice and only the first insert is a real re-tap.
             const bool first_this_epoch =
                 carry_innov_pending.insert({chord.u, ait->second}).second;
+            // Card 4 (M1) D5 v4 (network.carry_invariant_innov_retap_only): tag the flag
+            // with the SAME tri-state raw verdict the v3 corroboration gate consults, so
+            // next epoch's carry-membership test can tell "the arc did not step, this is
+            // model tension" from "the arc stepped, or nobody could look".
+            //
+            // The funnel entry above is UNCONDITIONAL and stays that way — every side
+            // consumer (the Iono-2 v3k erase classifier, the WL-3 MW-row slip-skip, anchor
+            // hygiene, the PB emit filter, Card G's bridge classifier) keeps reading the
+            // union it always read.  This set only decides whether the arc is additionally
+            // excluded from next epoch's A_old membership, i.e. whether the DD the gate
+            // just re-tapped in-epoch is ALSO thrown away and refloated from nothing.
+            //
+            // MEASURED (tests/test_network_invariant_carry_driver.cpp, GATE 10b): after a
+            // REAL slip the refloat is what completes the reset — suppressing it leaves
+            // 0.48 cyc on the table, because the in-epoch reset moves only by the post-fit
+            // innovation v, which the fold's −GᵀΣG border term has already shrunk.  So
+            // membership here requires POSITIVE evidence of continuity, exactly as v3 does:
+            //   stepped           ⇒ absent ⇒ refloats (a real discontinuity)
+            //   measured and flat ⇒ PRESENT ⇒ keeps its carry (nothing to complete)
+            //   no evidence       ⇒ absent ⇒ refloats (arc start / gap / single band)
+            // Absence of evidence is never evidence of absence — standing invariant #1's
+            // response is narrowed to the diagnosed population, never removed.
+            if (retap_only && slip_qc.epoch.computed && chord.u >= 0
+                && static_cast<std::size_t>(chord.u) < slip_qc.epoch.verdict.size()) {
+                if (const auto pk = StateKeys::parseAmbiguityKey(ait->second)) {
+                    const auto& vmap = slip_qc.epoch.verdict[static_cast<std::size_t>(chord.u)];
+                    const auto vit = vmap.find(pk->satellite);
+                    if (vit != vmap.end() && vit->second.measured
+                        && !slip_qc.epoch.stepped.count({chord.u, pk->satellite})) {
+                        ctx.carry.carry_innov_pending_flat.insert({chord.u, ait->second});
+                        // WL-3 §3.4: the pair partner rides the same graph edge and the
+                        // same raw verdict, so it must be tagged with it — otherwise the
+                        // pair refloats on band 2 and the suppression is silently half-on.
+                        if (lane_on) {
+                            const auto g2 = carry_arc_amb_key2.find(gk);
+                            if (g2 != carry_arc_amb_key2.end()) {
+                                const auto a2 = g2->second.find(chord);
+                                if (a2 != g2->second.end())
+                                    ctx.carry.carry_innov_pending_flat.insert({chord.u, a2->second});
+                            }
+                        }
+                    }
+                }
+            }
             // Card G(c): make the D5 re-tap counter ATTRIBUTABLE.  The audit's
             // 1 560 re-taps were un-decomposable — a raw-step coincidence test
             // at the same (station, satellite, epoch) separates "the gate caught
@@ -516,15 +762,15 @@ void networkInstallCarry(
     if (mw_d5_dump && carry_innov_gate) {
         const auto& flags  = carry_driver.lastInnovFlags();
         const auto& sigmas = carry_driver.lastInnovFlagSigmas();
+        const auto& terms  = carry_driver.lastInnovFlagTerms();
         if (!flags.empty()) {
-            std::error_code ec_d5;
-            std::filesystem::create_directories(log_dir_, ec_d5);
-            std::ofstream d5f(log_dir_ / "network_d5_flags.csv", std::ios::app);
+            // Stream + header are owned by NetworkRunTraces (opened TRUNCATING once in
+            // openMwWlDumps, under the SAME arming expression this block tests).  The
+            // former per-epoch std::ios::app re-open glued consecutive runs into one
+            // file — an A/B whose arms had been re-run unequal numbers of times showed
+            // a pure-artifact row-count divergence (hit for real, FC-1 INC-1, 2026-07-30).
+            auto& d5f = traces.d5_flags_trace;
             if (d5f) {
-                if (!d5_dump_header_written && d5f.tellp() == std::streampos(0))
-                    d5f << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
-                           "ewl_stasat,hold_chord,injected_prev,raw_stepped\n";
-                d5_dump_header_written = true;
                 for (std::size_t fi = 0; fi < flags.size(); ++fi) {
                     const auto& [gk, chord] = flags[fi];
                     std::string amb, sat;
@@ -557,6 +803,26 @@ void networkInstallCarry(
                                 raw_stepped = "0";
                         }
                     }
+                    // Churn card (2026-08-02): the ALGEBRA behind std_innov, so the
+                    // Cov(v)-vs-wander question is answerable from this file alone.
+                    // Written blank rather than zero when the driver has no term for the
+                    // row — a fabricated 0.0 on ẑ or var_v would read as a measurement.
+                    std::string t_zhat, t_v, t_var, t_s0, t_zpost;
+                    if (fi < terms.size()) {
+                        const auto& T = terms[fi];
+                        t_zhat  = fmt::format("{:.6f}", T.zhat);
+                        t_v     = fmt::format("{:.6f}", T.v);
+                        t_var   = fmt::format("{:.6e}", T.var_v);
+                        t_s0    = fmt::format("{:.4f}", T.sigma0);
+                        t_zpost = fmt::format("{:.6f}", T.z_post);
+                    }
+                    // This epoch's SH-constraint deweight weight for the station (the
+                    // topology ledger's snapshot, taken pre-solve).  Blank without
+                    // network.trace_topology — the map is simply never filled there.
+                    std::string t_dw;
+                    if (const auto wit = ctx.carry.topo_prev_w.find(chord.u);
+                        wit != ctx.carry.topo_prev_w.end())
+                        t_dw = fmt::format("{:.4g}", wit->second);
                     d5f << se.time.week << ',' << fmt::format("{:.1f}", se.time.tow)
                         << ',' << gk << ',' << chord.u << ',' << chord.v << ','
                         << sta_name << ',' << amb << ','
@@ -565,7 +831,9 @@ void networkInstallCarry(
                         << (d5_ewl_stasat.count({ chord.u, sat }) ? 1 : 0) << ','
                         << (d5_hold_chords.count(chord) ? 1 : 0) << ','
                         << (d5_inject_chords_prev.count(chord) ? 1 : 0) << ','
-                        << raw_stepped << '\n';
+                        << raw_stepped << ','
+                        << t_zhat << ',' << t_v << ',' << t_var << ','
+                        << t_s0 << ',' << t_zpost << ',' << t_dw << '\n';
                 }
             }
         }

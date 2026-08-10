@@ -347,13 +347,21 @@ int Application::runBaseline() {
                 rover_name, overlap, synced.size());
         }
 
-        // Rover a-priori position: config-supplied > RINEX header approx > zero fallback.
+        // Rover a-priori position: config-supplied > RINEX header ARP > zero fallback.
+        // The header path reduces marker -> ARP (getArpPositionXyz), because the
+        // rover position state is antenna-referenced; a config-supplied coordinate is
+        // taken at face value (the user owns its reference point).
         Eigen::Vector3d rov_apriori{ 0.0, 0.0, 0.0 };
         if (rover_cfg.has_position) {
             rov_apriori = Eigen::Vector3d(rover_cfg.position_ecef.data());
         }
         else {
-            rov_apriori = rov_parser->getApproxPositionXyz();
+            rov_apriori = rov_parser->getArpPositionXyz();
+            const Eigen::Vector3d hen = rov_parser->getAntennaDeltaHen();
+            if (hen.norm() > 1e-6)
+                log->info("Rover '{}' a-priori reduced marker -> ARP via "
+                    "ANTENNA: DELTA H/E/N ({:.4f}, {:.4f}, {:.4f}) m",
+                    rover_name, hen(0), hen(1), hen(2));
         }
         const double apriori_baseline_km = (rov_apriori - ref_pos).norm() / 1000.0;
         log->info("Rover '{}' a-priori ECEF=({:.3f}, {:.3f}, {:.3f}) m, baseline={:.3f} km",
@@ -405,6 +413,7 @@ int Application::runBaseline() {
             ar_config.wl_max_frac          = config_.getArWlMaxFrac();
             ar_config.min_success_rate     = config_.getArMinSuccessRate();
             ar_config.nl_max_per_pair_frac = config_.getArNlMaxPerPairFrac();
+            ar_config.nl_iono_free_row     = config_.getArNlIonoFreeRow();
             ar_config.enable_partial_ar    = config_.getArEnablePartialAr();
             ar_config.ar_active_systems    = config_.getArActiveSystems();
             ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
@@ -439,7 +448,9 @@ int Application::runBaseline() {
         }
         trace_logger_ = std::make_unique<TraceLogger>(
             log_manager_, rover_trace_dir, /*is_ppp_rtk=*/false, config_.getLoggingConfig());
-        if (!trace_logger_->isInitialized()) {
+        // See Application.cpp: uninitialized with zero requested streams is the
+        // by-design "no traces armed" case, not a failure.
+        if (!trace_logger_->isInitialized() && trace_logger_->requestedStreamCount() > 0) {
             log->warn("Rover '{}' TraceLogger did not initialise; continuing without CSV traces",
                 rover_name);
         }

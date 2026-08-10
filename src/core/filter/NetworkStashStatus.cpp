@@ -12,6 +12,7 @@
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
+#include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -45,6 +46,7 @@ void networkStashStatus(
     const Eigen::VectorXd& x_s,
     const NetworkSbasis::Plan& plan,
     NetworkCarryVce& carry_vce_est,
+    NetworkPriorResidual& prires_est,
     const std::set<std::string>& clock_refloat_sats,
     int n_arc_refloat_epoch,
     const std::vector<std::string>& registered_clock_sats,
@@ -114,6 +116,148 @@ void networkStashStatus(
         }
     }
 
+    // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md §6): the SAME
+    // pre-clear prior snapshot, WIDENED to the kinds the monitor above skips.
+    // Widening the population IS the whole change — those skips are correct for
+    // estimating a variance component and exactly backwards for a detector,
+    // because they remove precisely the rows a screen exists to find.
+    //
+    // The fold decision and its variance are REPRODUCED here from
+    // networkInjectD2CarryPrior's predicate, clause for clause, rather than
+    // mirrored approximately: every input (prev_carry, datum_changed,
+    // changed_consts, eq34_reref, phase_hold_on, dt, the q ladder, the B4 floors,
+    // clk_mon_reinit_var) is still in scope and unchanged at this point.  That
+    // matters because the `folded` bit decides the DISPERSION BRANCH, and using
+    // the folded form on an unfolded row inflates |t| by ~x3000 through the ε
+    // clamp — every FRAME row would land in the top ladder bin by construction.
+    //
+    // Two rows deliberately carry no calibration weight (spec §INC-2):
+    //  * a `phase_hold` PB — the hold PINS the posterior, so ê measures
+    //    carry-vs-hold disagreement and NEITHER branch's null applies.  Its null
+    //    dispersion is UNDEFINED, which is the one admissible reason to censor a
+    //    row from σ̂₀ (never because its value is large).
+    //  * anything whose fold variance could not be reconstructed — reported RAW
+    //    FORMAL and flagged, rather than silently standardized under a nominal q
+    //    the mechanism never used.
+    struct PriresSharedPrior {
+        double value = 0.0, var = 0.0, fold_var = 0.0;
+        bool   folded = false, hold = false;
+        PriorResidualLabel label = PriorResidualLabel::Clean;
+        const char* mech = "";
+    };
+    std::map<std::string, PriresSharedPrior> prires_shared_prior;
+    const bool prires_pb = ctx.knobs.prires_pb && prires_est.enabled();
+    const bool prires_cb = ctx.knobs.prires_cb && prires_est.enabled();
+    // Card Q3 INC-0 (docs/SPEC_clock_temporal_anchor.md §3): the satellite-CLOCK
+    // family.  It was excluded by one line ("Clock / VtecSh out of scope (own
+    // models)"), which is correct for a carry nobody is calibrating and exactly
+    // backwards for the card whose whole derivation is the measured dispersion of
+    // this prior.  The census already standardizes by `fold_var − post_var`, which
+    // IS Var(x̂ − μ) exactly and IS the anchor's guard statistic, so the clk family
+    // needs no new statistic — only the population.  Trace-only.
+    const bool prires_clk = ctx.knobs.prires_clk && prires_est.enabled();
+    if (prires_pb || prires_cb || prires_clk) {
+        const double clk_mon_reinit_var = ctx.knobs.clk_mon_reinit_var;
+        const bool   scoped_handover_k  = ctx.knobs.scoped_handover;
+        // The injector's OUTER gate: with a changed datum and scoped handover OFF
+        // the whole D2 carry block is skipped, so NOTHING folded this epoch — a
+        // whole-network FRAME edge, and one of the most informative populations
+        // this card measures (standing invariant #7 on the carry layer).
+        const bool outer_gate = (!datum_changed || scoped_handover_k)
+                             && !prev_carry.empty();
+        for (const CarryPrior& cp : prev_carry) {
+            const bool is_pb  = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
+            const bool is_cb  = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
+            const bool is_clk = (cp.kind == SharedParamKind::Clock)     && prires_clk;
+            if (!is_pb && !is_cb && !is_clk) continue;   // VtecSh out of scope (own model)
+            if (is_clk && ctx.knobs.clk_model_on) continue;  // clock is on clock_osc, never stashed
+            PriresSharedPrior p;
+            p.value = cp.value;
+            p.var   = cp.var;
+            const double q     = is_cb ? q_cb : (is_clk ? ctx.knobs.q_clock : q_pb);
+            const double floor = is_cb ? cb_var_floor : (is_clk ? 0.0 : pb_var_floor);
+            // var_eff EXACTLY as the injector forms it: the reinit variance on a
+            // clock-monitor-flagged key (a soft large-q reinitialization, NOT the
+            // nominal q recompute), else q·Δt inflation with the B4 floor.
+            double var_eff = cp.inflate_q ? clk_mon_reinit_var
+                                          : cp.var + q * std::max(0.0, dt);
+            if (!cp.inflate_q && floor > 0.0) var_eff = std::max(var_eff, floor);
+            // M2 v2 (SPEC_carry_vce_apply.md §3): the census standardizes by the
+            // fold variance AS USED, so its s absorbs α² automatically — which is
+            // what makes the census's per-family σ̂₀ a free cross-instrument check
+            // on the apply (field gate 4: σ̂₀,f on an applied family should walk
+            // toward 1).  Mirrors the injector's exclusion of inflate_q keys.
+            // Unity ⇒ byte-identical when the apply path is off.
+            if (!cp.inflate_q && !is_clk)
+                var_eff *= ctx.carry.vce_apply.factor(
+                               is_cb ? NetworkCarryVceApply::kCb
+                                     : NetworkCarryVceApply::kPb, cp.sat);
+            // Card Q3: with the anchor armed the injector did NOT use the
+            // expression above for a clock key — it used the anchor's own
+            // (per-satellite Δt, floored) variance.  Read the decision back rather
+            // than re-derive it: re-deriving is precisely how a census ends up
+            // standardizing by a variance the mechanism never used, and the
+            // `folded` bit decides the dispersion branch.
+            if (is_clk && ctx.knobs.cta_on && !cp.inflate_q) {
+                const auto ait = ctx.carry.clk_anchor.sat.find(cp.sat);
+                if (ait != ctx.carry.clk_anchor.sat.end() && ait->second.last_var_eff > 0.0)
+                    var_eff = ait->second.last_var_eff;
+            }
+            p.fold_var = var_eff;
+            // The per-key skip chain, in the injector's own order.
+            if (!outer_gate) {
+                p.label = PriorResidualLabel::Frame;
+                p.mech  = datum_changed ? "datum_changed" : "no_carry";
+            } else if (is_pb && phase_hold_on) {
+                p.label = PriorResidualLabel::Frame;
+                p.mech  = "phase_hold";
+                p.hold  = true;                  // null dispersion undefined ⇒ no σ̂₀ weight
+            } else if (handover_affects(cp.sat)) {
+                p.label = PriorResidualLabel::Frame;
+                p.mech  = "handover";
+            } else if (is_pb && eq34_reref.count({cp.sat, cp.signal})) {
+                p.label = PriorResidualLabel::Frame;
+                p.mech  = "eq34_reref";
+            } else if (!(var_eff > 0.0)) {
+                p.mech  = "var_nonpos";          // injector's `continue`; nothing fired
+            } else {
+                // NOTE the C1 dense branch (network.shared_carry_full_cov) folds
+                // the SAME key set with the SAME var_eff on the diagonal — only
+                // the retained off-diagonals differ, and the MARGINAL prior on any
+                // one state is unchanged.  That is the same property that makes
+                // the M2 carry innovation representation-independent, so `folded`
+                // and `fold_var` are identical on both branches and this chain
+                // does not have to fork.  (A dense fold that THREW degrades
+                // per-key to the diagonal path with the same var_eff, so even the
+                // fallback agrees.)
+                p.folded = true;
+                // An inflate_q key DID fold — with the large reinit variance, not
+                // the nominal q.  That is a FRAME event (a soft reinitialization),
+                // and standardizing it under the nominal q is exactly the error
+                // spec §INC-2 names.
+                if (cp.inflate_q) {
+                    p.label = PriorResidualLabel::Frame;
+                    p.mech  = "inflate_q";
+                }
+                // Card Q3: a clock key the anchor guard WITHDREW this epoch folded
+                // and was then un-folded before the emitted solve, so its residual
+                // is neither the folded nor the unfolded statistic.  FRAME, with the
+                // mechanism named — the same treatment the held phase bias gets.
+                if (is_clk && ctx.knobs.cta_on) {
+                    const auto ait = ctx.carry.clk_anchor.sat.find(cp.sat);
+                    if (ait != ctx.carry.clk_anchor.sat.end() && !ait->second.folded) {
+                        p.label  = PriorResidualLabel::Frame;
+                        p.mech   = "cta_refloat";
+                        p.folded = false;
+                        p.hold   = true;   // null dispersion undefined ⇒ no σ̂₀ weight
+                    }
+                }
+            }
+            prires_shared_prior.emplace(sharedCarryKey(cp.kind, cp.sat, cp.signal),
+                                        std::move(p));
+        }
+    }
+
     networkStashCarry(ctx, config_, est, x_s, plan, sh_model.get(), sh_model2.get(),
                       clock_refloat_sats, registered_clock_sats,
                       shared_phase_keys, registered_code_keys, log);
@@ -137,12 +281,137 @@ void networkStashStatus(
             const double var_prev = it->second.second;
             const double q     = is_cb ? q_cb : q_pb;
             const double floor = is_cb ? cb_var_floor : pb_var_floor;
-            double fold_var = var_prev + q * std::max(0.0, dt);
-            if (floor > 0.0) fold_var = std::max(fold_var, floor);
+            double fold_var_hand = var_prev + q * std::max(0.0, dt);
+            if (floor > 0.0) fold_var_hand = std::max(fold_var_hand, floor);
+            // M2 v2: the D2 injector multiplied this same hand value by α² before
+            // folding (networkInjectD2CarryPrior's vce_scale_shared), and the factor
+            // table has not moved since — the step below is the epoch's only write.
+            // So the used weight is reconstructed exactly, and the hand value rides
+            // alongside as the factor iteration's α²-independent denominator.
+            const double fold_var =
+                fold_var_hand * ctx.carry.vce_apply.factor(
+                                    is_cb ? NetworkCarryVceApply::kCb
+                                          : NetworkCarryVceApply::kPb, cp.sat);
             carry_vce_est.addRow(is_cb ? "cb" : "pb", cp.sat,
                                  it->second.first - cp.value,   // carried − solved
-                                 dt, cp.var, fold_var);
+                                 dt, cp.var, fold_var, fold_var_hand);
         }
+    }
+
+    // PRIOR-RESIDUAL CENSUS: the same innovation over the WIDENED population.
+    // In the re-stashed prev_carry, cp.value / cp.var are the SOLVED value and
+    // posterior variance; the prior and its fold decision come from the snapshot
+    // taken before the clear.  A key with no snapshot entry had no prior last
+    // epoch (a fresh registration) and is correctly absent: there is no residual
+    // of prior information when there was no prior.
+    if (!prires_shared_prior.empty()) {
+        // Card Q3 INC-0: the satellite-CLOCK family's ê must be COMMON-MODE
+        // REMOVED per constellation before standardizing.  The clock is the one
+        // carried family with a FREE per-epoch gauge (receiver clocks are white,
+        // q = 1000), so the raw carried−solved difference carries the epoch's whole
+        // gauge re-realization on EVERY satellite: without the removal the family
+        // would report the gauge, not the per-satellite content, and its σ̂₀ — the
+        // instrument this card derives its q from — would be meaningless.  Standing
+        // invariant #5.  Same statistic the guard uses, so the ladder measured here
+        // IS the distribution the threshold is read off.
+        std::map<char, double> clk_med;
+        if (prires_clk) {
+            std::map<char, std::vector<double>> by_const;
+            for (const CarryPrior& cp : prev_carry) {
+                if (cp.kind != SharedParamKind::Clock || cp.sat.empty()) continue;
+                const auto it = prires_shared_prior.find(
+                    sharedCarryKey(cp.kind, cp.sat, cp.signal));
+                if (it == prires_shared_prior.end()) continue;
+                by_const[cp.sat[0]].push_back(it->second.value - cp.value);
+            }
+            for (auto& [c, v] : by_const) {
+                std::nth_element(v.begin(),
+                                 v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2),
+                                 v.end());
+                clk_med[c] = v[v.size() / 2];
+            }
+        }
+        for (const CarryPrior& cp : prev_carry) {
+            const bool is_pb  = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
+            const bool is_cb  = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
+            const bool is_clk = (cp.kind == SharedParamKind::Clock)     && prires_clk;
+            if (!is_pb && !is_cb && !is_clk) continue;
+            const auto it = prires_shared_prior.find(
+                sharedCarryKey(cp.kind, cp.sat, cp.signal));
+            if (it == prires_shared_prior.end()) continue;
+            const PriresSharedPrior& p = it->second;
+            NetworkPriorResidual::Input in;
+            in.family   = is_cb ? "cb" : (is_clk ? "clk" : "pb");
+            in.sat      = cp.sat;
+            in.signal   = cp.signal;
+            in.station  = -1;                    // SHARED: this prior has no station
+            in.e        = p.value - cp.value;    // carried − solved
+            if (is_clk && !cp.sat.empty()) {
+                const auto mit = clk_med.find(cp.sat[0]);
+                if (mit != clk_med.end()) in.e -= mit->second;
+            }
+            in.fold_var = p.fold_var;
+            in.post_var = cp.var;
+            in.gap_s    = std::max(0.0, dt);
+            in.folded   = p.folded;
+            in.label    = p.label;
+            in.mech     = p.mech;
+            // The one admissible censoring: a held phase bias has NO null
+            // dispersion (the hold pins the posterior), so its ê is neither the
+            // folded nor the unfolded statistic.  Count it, report it RAW FORMAL,
+            // and keep it out of the calibration — because the null is undefined,
+            // NOT because the value is large.
+            if (p.hold) { in.calibrate = false; in.var_nominal = true; }
+            prires_est.addRow(in);
+        }
+    }
+
+    // PRIOR-RESIDUAL CENSUS: drain the epoch.  MUST sit here — after the pb/cb
+    // feed above (the last of the five) and BEFORE the L1 epoch-status row below,
+    // which reads the ctx.carry.ep_prires_* scalars this call stamps.  Calling it
+    // from the driver instead would publish the census columns one epoch late.
+    // (Same reason networkStashCarry is called from this seam rather than the
+    // driver.)  No-op when the census is unarmed.
+    if (prires_est.enabled())
+        networkPriorResidualEmit(ctx, config_, log, traces, se, stations, prires_est);
+
+    // M2 v2 (docs/SPEC_carry_vce_apply.md §2): ONE LASER 5-95 factor iteration per
+    // epoch.  MUST sit HERE and nowhere else.  This point is AFTER the last feed
+    // into the monitor (SB_LEVELING's pl harvest, then the pb/cb feed a few lines
+    // above) and BEFORE any fold of the next epoch, which is what makes the card's
+    // contract literally true:
+    //
+    //     the fold of epoch N is scaled by α² estimated from every clean carry row
+    //     through epoch N−1
+    //
+    // — a strict predict-then-update with no self-reference, and the minimum
+    // achievable lag (a row cannot exist until the solve that produced it has run,
+    // and that solve already consumed the fold).  It also means the injector and
+    // the harvest mirrors above, which all ran earlier in THIS epoch, necessarily
+    // read one and the same factor table.
+    //
+    // `!datum_changed` is the monitor's own clean gate (NetworkCarryVce::beginEpoch),
+    // inherited deliberately: a handover's re-levels are frame steps, not carry
+    // noise, and a factor that ate them would be inflating on a datum change.
+    // Every clamp / freeze edge lands in ctx.carry.vce_apply_edges and is emitted
+    // below (standing invariant #7: this mechanism changes how much information a
+    // carried prior injects, so BOTH of its edges are evented with identities).
+    if (ctx.knobs.vce_apply_on) {
+        auto& edges = ctx.carry.vce_apply_edges;
+        edges.clear();
+        ctx.carry.vce_apply.stepEpoch(carry_vce_est, !datum_changed, &edges);
+        for (const auto& e : edges)
+            traces.emitEvent(se.time, "VCE_APPLY",
+                             e.entered ? e.what : "release",
+                             /*sat=*/std::string(1, e.sys ? e.sys : '?'),
+                             /*station=*/"",
+                             e.alpha2, e.target,
+                             e.entered ? "hold" : "resume",
+                             fmt::format("family={} edge={} reason={}",
+                                         NetworkCarryVceApply::familyName(e.family),
+                                         e.what, e.reason));
+        traces.writeCarryVceApplyRows(se.time, ctx.carry.vce_apply,
+                                      ctx.carry.vce_apply_trace_hour);
     }
 
     // --- Trace ----------------------------------------------------------
@@ -196,6 +465,77 @@ void networkStashStatus(
             es.sigma0_pf_code  = ctx.carry.ep_sigma0_pf_code;
             es.sigma0_pf_phase = ctx.carry.ep_sigma0_pf_phase;
             es.n_pf_rows       = ctx.carry.ep_pf_rows;
+        }
+        // Redundancy census (docs/SPEC_redundancy_census.md): the seam stamps the
+        // TOW it computed for, so a strided run leaves these BLANK on the epochs
+        // between sweeps instead of repeating the last sweep's numbers.  The
+        // census seam runs in SB_FRAMEDIAG, i.e. before this block, every epoch.
+        if (std::abs(ctx.carry.redun_ep_tow - se.time.tow) < 1e-6) {
+            es.n_redun_rows         = ctx.carry.ep_redun_rows;
+            es.n_uncheckable_rows   = ctx.carry.ep_uncheckable_rows;
+            es.uncheckable_max_s    = ctx.carry.ep_uncheckable_max_s;
+            es.n_unobservable_local = ctx.carry.ep_unobservable_local;
+        }
+        // PREFIT census (docs/SPEC_prefit_census_observability.md INC-1): the walk
+        // runs in SB_FRAMEDIAG, i.e. before this block, and sets ep_pc_rows > 0
+        // only on an epoch it actually classified rows for.  Blank otherwise.
+        if (ctx.carry.ep_pc_rows > 0) {
+            EpochStatusRow::PrefitCensusStats pc;
+            for (int t = 0; t < kNetDataClasses; ++t) {
+                pc.max_s[t]     = ctx.carry.ep_pc_max_s[t];
+                pc.p99_s[t]     = ctx.carry.ep_pc_p99_s[t];
+                pc.n_gt_10[t]   = ctx.carry.ep_pc_n_gt_10[t];
+                pc.n_gt_1000[t] = ctx.carry.ep_pc_n_gt_1000[t];
+            }
+            es.prefit_census = pc;
+        }
+        // Measurement-admission census (docs/SPEC_measurement_admission.md INC-3):
+        // the seam runs pre-assembly, i.e. long before this block, and stamps the
+        // TOW it screened.  An epoch it skipped (every station under adm_min_sats,
+        // or the card disarmed) leaves the columns BLANK rather than repeating the
+        // last screened epoch's numbers.
+        if (std::abs(ctx.carry.adm_ep_tow - se.time.tow) < 1e-6) {
+            es.adm_sta_worst_z = ctx.carry.ep_adm_sta_worst_z;
+            es.adm_net_worst_z = ctx.carry.ep_adm_net_worst_z;
+        }
+        // PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md INC-0): read STRAIGHT off the
+        // kernel, which by this point holds the ACCEPTED solve's fold (a within-epoch RAIM
+        // re-solve re-folds and overwrites, and NetworkEstimator::beginEpoch resets it once
+        // per epoch).  `blocks == 0` means NO fold ran this epoch — carry off, no chords —
+        // and the columns correctly stay BLANK.  Going through a ctx.carry stamp instead
+        // would report a default-constructed min_pivot_rel of 1.0 on a chordless epoch,
+        // i.e. a perfectly conditioned factorization that was never computed, and 1.0 is
+        // ALSO what a genuine single-chord block reports (caught by the card's own review,
+        // 2026-08-03).  "Zero degenerate blocks" and "the carry never ran" are different
+        // statements, and conflating them is how the frozen 78 % stayed invisible.
+        if (const auto& dfs = est.ddFoldStats(); dfs.blocks > 0) {
+            es.ddfold_degen_blocks  = dfs.degen_blocks;
+            es.ddfold_degen_rows    = dfs.degen_rows;
+            es.ddfold_min_pivot_rel = dfs.min_pivot_rel;
+        }
+        // Prior-residual census (docs/SPEC_prior_residual_census.md): the emission
+        // seam ran a few lines above THIS epoch and stamped the TOW it drained, so
+        // an epoch the census did not reach leaves the columns BLANK rather than
+        // repeating stale numbers.  A genuine 0-row epoch (every carry family
+        // absent) still writes 0 — "ran, saw nothing" and "never ran" are exactly
+        // the two states standing invariant #4 requires a reader to distinguish.
+        if (std::abs(ctx.carry.prires_ep_tow - se.time.tow) < 1e-6) {
+            es.prires_rows       = ctx.carry.ep_prires_rows;
+            es.prires_rows_resp  = ctx.carry.ep_prires_resp;
+            es.prires_rows_frame = ctx.carry.ep_prires_frame;
+            es.prires_n_reported = ctx.carry.ep_prires_reported;
+            es.prires_max_t      = ctx.carry.ep_prires_max_t;
+            // Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md):
+            // same TOW stamp, same "unavailable is not 0" convention.  The FLAGS
+            // are written whenever the rider ran — including as 0 — because a
+            // clean epoch and an un-run one must be distinguishable from this
+            // file alone; the two VALUES stay blank when the epoch could not
+            // form them, so "not formed" never reads as "formed at zero".
+            if (ctx.knobs.prires_s0g) {
+                es.s0g_flags = ctx.carry.ep_s0g_flags;
+                if (ctx.carry.ep_s0g_formed)      es.s0g_sigma0  = ctx.carry.ep_s0g_sigma0;
+                if (ctx.carry.ep_s0g_tension_def) es.s0g_tension = ctx.carry.ep_s0g_tension;
+            }
         }
         std::vector<double> cvals; cvals.reserve(registered_clock_sats.size());
         for (const std::string& sat : registered_clock_sats)

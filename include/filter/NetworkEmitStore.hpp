@@ -34,6 +34,7 @@
 #include "app/NetworkSetupResult.hpp"        // NetworkSetupResult
 #include "common/PppObservation.hpp"         // PppObservation (modeled)
 #include "filter/NetworkEstimator.hpp"       // NetworkEstimator
+#include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (Card CLK-R)
 #include "products/NetworkEmitRebase.hpp"    // NetworkEmitRebase
 #include "products/NetworkPbEmitFilter.hpp"  // NetworkPbEmitFilter
 #include "products/NetworkProductEmitter.hpp"// NetworkSolutionEpoch
@@ -86,6 +87,7 @@ void networkEmitStore(
                      bool pb_filter_emit_sigma,
                      NetworkEmitRebase& emit_rebase_engine,
                      NetworkPbEmitFilter& pb_filter_engine,
+                     NetworkClockEmitRebase& clk_rebase_engine,
                      const std::vector<bool>& present,
                      const std::vector<int>& est_index_of,
                      const std::vector<std::vector<PppObservation>>& modeled,

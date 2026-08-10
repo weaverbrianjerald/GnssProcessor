@@ -58,6 +58,27 @@ struct AmbiguityResolverConfig {
     double hold_variance{ 0.001 };     ///< Pseudo-observation variance for fix-and-hold (m^2).
     int    ar_mode{ 0 };               ///< 0: float-only, 1: continuous, 2: instantaneous, 3: fix-and-hold.
     int    min_epochs{ 10 };           ///< Convergence guard: skip AR for the first N invocations.
+    /**
+     * @brief Per-candidate maturity gate: minimum accumulated @f$\Sigma\sin^2(el)@f$
+     *        on BOTH constituent arcs before a candidate may enter the search.
+     *
+     * @c min_epochs is a GLOBAL filter-epoch counter and does not gate individual
+     * candidates, so a satellite that rose one minute ago is searched alongside
+     * one tracked for four hours.  Measured on a 24 h ALGO run: the worst NL
+     * direction is the youngest arc in 85.5% of epochs, and the full-set ratio
+     * test consequently fails 98% of the time — one immature candidate spoils
+     * the set.
+     *
+     * Units are epoch-equivalents at zenith (an epoch at 30 deg contributes
+     * 0.25).  0 (default) disables the gate and is byte-identical to the
+     * pre-gate behaviour.
+     *
+     * @warning This gate makes AR SAFE, not USEFUL.  It admits candidates only
+     * once they are already well determined, which is precisely when the float
+     * needs no help — see the caveat in @ref AmbiguityResolver.  It is a
+     * wrong-fix guard, not a convergence accelerator.
+     */
+    double min_arc_info{ 0.0 };
     double max_position_sigma_m{ 0.05 };  ///< Convergence guard: skip AR when 3D position σ exceeds this (m).
     double ratio_upper_bound{ 1e4 };   ///< Reject fixes whose ratio exceeds this (degenerate covariance).
     bool   wl_only{ false };           ///< If true, AR only applies MW-resolved WL integers as Kalman pseudo-observations; no LAMBDA NL search.
@@ -65,6 +86,30 @@ struct AmbiguityResolverConfig {
     double wl_max_frac{ 0.40 };        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
     double min_success_rate{ 0.999 };  ///< Min bootstrap success rate (FFR-style; 0.999 = 0.1% target failure rate).
     double nl_max_per_pair_frac{ 0.15 }; ///< Max |N_1_float − N_1_fixed| per NL pair / DD; rejects marginal fixes.
+    bool   nl_iono_free_row{ false };
+        ///< Search functional for the WL-constrained N_1 step (@ref
+        ///< AmbiguityResolver::resolveWlConstrained).  Both choices target the
+        ///< SAME integer N_1 and differ only in which row of the (L1,L2) plane
+        ///< is used to observe it:
+        ///<
+        ///< - @c false (default, legacy): the NARROWLANE row
+        ///<   @f$(f_1,f_2)/(f_1{+}f_2)@f$.  Cheap in noise, but it is NOT
+        ///<   iono-free — its slant-iono sensitivity is
+        ///<   @f$T\cdot\alpha = 5.907@f$ NL cyc per metre of slant iono
+        ///<   (0.959 cyc/TECU), so a 0.15-cycle @ref nl_max_per_pair_frac cap
+        ///<   implicitly demands the ionosphere to 0.156 TECU.
+        ///< - @c true: the exact IONOSPHERE-FREE row
+        ///<   @f$(f_1^2,-f_2^2)/(f_1^2-f_2^2)@f$, for which
+        ///<   @f$c_{IF}\cdot\alpha = 0@f$ EXACTLY — the N_1 target carries no
+        ///<   slant-iono error at all.
+        ///<
+        ///< @warning Not free.  Both the row norm and the widelane sensitivity
+        ///< grow by exactly @f$(f_1{+}f_2)/(f_1{-}f_2) = 8.06@f$ (GPS L1/L2):
+        ///< a 1-cycle WL error shifts the N_1 target by 3.53 cyc instead of
+        ///< 0.438, and the searched covariance inflates ~65× in variance.  This
+        ///< trades an ionospheric BIAS for widelane/noise AMPLIFICATION and is
+        ///< only a win with a near-perfect widelane — arm it together with WL
+        ///< hardening, never alone.  Byte-identical to legacy when off.
     bool   enable_partial_ar{ false };   ///< If true, when the full-set LAMBDA fix fails its
         ///< acceptance gates, retry on progressively smaller subsets (drop the
         ///< least-fixable ambiguity, re-validate ratio/bootstrap/frac) so a few
@@ -200,6 +245,46 @@ private:
     // without widening the public API; it has no effect on production
     // translation units (the type is only ever defined in the test binary).
     friend struct MlambdaTestAccess;
+    /// Test seam for @ref nlRowCoefficients (tests/test_nl_search_row.cpp).
+    friend struct NlRowTestAccess;
+
+    // -----------------------------------------------------------------------
+    // WL-constrained N_1 search functional
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Coefficients that define which row of the (L1,L2) ambiguity plane
+     *        observes the narrow-lane integer N_1, once the widelane is known.
+     *
+     * All four are exact functions of the frequency pair.  @ref t_1 / @ref t_2
+     * carry DD ambiguities from METRES into search cycles; @ref shift and
+     * @ref bt_2 undo the known-widelane displacement in each direction.
+     */
+    struct NlRowCoefficients {
+        double t_1;    ///< Row entry on the higher-frequency DD [1/m].
+        double t_2;    ///< Row entry on the lower-frequency DD [1/m].
+        double shift;  ///< y_search = y_reduced + shift·WL ≡ N_1; also N_1 = y_reduced_fixed + shift·WL.
+        double bt_2;   ///< N_2 = y_reduced_fixed + bt_2·WL.  Algebraically shift − 1.
+    };
+
+    /**
+     * @brief Build the N_1 search-row coefficients for one dual-frequency pair.
+     *
+     * @param f1        Higher frequency [Hz].
+     * @param f2        Lower frequency [Hz].
+     * @param lam1      Wavelength on @p f1 [m].
+     * @param lam2      Wavelength on @p f2 [m].
+     * @param iono_free Select the exact iono-free row @f$(f_1^2,-f_2^2)/(f_1^2-f_2^2)@f$
+     *                  instead of the narrowlane row @f$(f_1,f_2)/(f_1+f_2)@f$.
+     *                  See @ref AmbiguityResolverConfig::nl_iono_free_row.
+     * @return The four coefficients; both rows target the same integer N_1.
+     *
+     * @note Caller must reject a pair with @f$f_1 \le f_2@f$ before requesting
+     *       the iono-free row — it divides by @f$f_1-f_2@f$.
+     */
+    static NlRowCoefficients nlRowCoefficients(double f1, double f2,
+                                               double lam1, double lam2,
+                                               bool iono_free);
 
     // -----------------------------------------------------------------------
     // MLAMBDA core routines
@@ -352,6 +437,54 @@ private:
     LogManager& log_manager_;
     PppUtils ppp_utils_;   ///< For frequency/wavelength lookups in NL computation.
     int      epoch_count_{ 0 };  ///< Counts resolve()/resolveDd() invocations for the min-epochs convergence gate.
+
+    /**
+     * @brief Per-arc maturity for an ambiguity key (@c "SAT|SIGNAL").
+     *
+     * Nothing else in the tree tracks this — @c StateManager registers
+     * ambiguities by (satellite, signal) with no birth epoch, and the MW
+     * detector's arc state is per-(satellite, channel-pair) and private to the
+     * slip layer.
+     *
+     * @c epochs is the raw age.  @c info is the load-bearing one: an
+     * ambiguity's precision is set by ACCUMULATED CODE INFORMATION, and under
+     * the elevation stochastic model each epoch contributes weight
+     * @f$\sin^2(\mathrm{el})@f$.  Two arcs of equal age are NOT equally mature —
+     * one climbing from the mask and one sitting at zenith differ by ~5x per
+     * epoch.  Measured: the hold-free log-log slope of sigma vs raw AGE is
+     * -0.816 rather than the -0.5 of white-noise averaging, and an
+     * elevation-weighted limb (@f$\Sigma \propto N^{1.4-1.5}@f$) predicts
+     * about -0.7 of that gap.  So @c info is the right maturity axis and
+     * @c epochs is only a proxy.
+     */
+    struct ArcState {
+        int    epochs{ 0 };   ///< Consecutive epochs since arc birth / last refloat.
+        double info{ 0.0 };   ///< Sum of sin^2(elevation) over those epochs.
+    };
+
+    /// Per-ambiguity-key arc maturity, maintained by @ref refreshArcAges_.
+    std::map<std::string, ArcState> arcs_;
+
+    /**
+     * @brief Bump/expire @ref arcs_ against the state vector.  Call ONCE per
+     *        epoch, before any candidate is built.
+     *
+     * Two ways an arc ends, and BOTH must reset the counter:
+     *   - the key leaves the state vector (set-out / prune) — detected by absence;
+     *   - the key is REFLOATED IN PLACE by @c StateManager::resetAmbiguity, which
+     *     zeroes the covariance row/col and re-inflates the variance but KEEPS
+     *     the key (StateManager.cpp:1150-1160).  Presence-counting alone misses
+     *     this and logs a freshly refloated arc as fully mature — the defect this
+     *     signature exists to close.  @c isAmbiguityPendingReseed is the marker.
+     */
+    void refreshArcAges_(const StateManager& state_manager,
+                         const std::vector<PppObservation>& observations);
+
+    /// Arc age (epochs) of @c "SAT|SIGNAL"; 0 if unknown.
+    int arcAgeOf_(const std::string& sat, const std::string& signal) const;
+
+    /// Accumulated sin^2(el) information of @c "SAT|SIGNAL"; 0 if unknown.
+    double arcInfoOf_(const std::string& sat, const std::string& signal) const;
     /// Last DD WL integer applied per (sat_i, sat_ref, sig_hi, sig_lo) key,
     /// used by resolveWlOnly to detect when MW has re-locked at a different
     /// integer and the L1/L2 SD ambiguity covariance must be inflated so

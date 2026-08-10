@@ -27,6 +27,9 @@
  * envelope, the caller draws and applies it.
  */
 
+#include <string>            // turb_sats
+#include <vector>            // turb_sats
+
 #include "math/TimeUtils.hpp" // GnssTime
 
 namespace GnssProcessor {
@@ -81,6 +84,32 @@ struct IonoConfig {
     // high-elevation ones (0 = no extra emphasis, i.e. plain obliquity mapping).
     double sed_elev_exp{ 0.0 };
 
+    // --- Epoch-to-epoch ionospheric TURBULENCE (see IonoDisturbance::turbVtec) ---
+    // A storm-roughened field: unpredictable STEC jumps between consecutive epochs on
+    // a handful of rays, with no trend and no period.  This is the only term in the
+    // model that is not smooth in time, and therefore the only one a geometry-free QC
+    // plot can see as "activity" rather than as a slowly-varying level.
+    // It is still ONE slant STEC scaled by 1/f^2 per band, so the dual-frequency
+    // ionosphere-free combination cancels it exactly and Melbourne-Wubbena (which is
+    // iono-free) is untouched: a student can still separate slips from ionosphere.
+    // Real roughness is EPISODIC, not constant: the ADIS (equatorial, Gannon-storm)
+    // reference is flat all day and then blows up after local sunset.  So the
+    // turbulence carries its own raised-cosine window, independent of the SED/TID
+    // storm window, which the caller fills from arc fractions.
+    // The SED blob is a BULK SPATIAL feature: which rays see it is decided by their
+    // pierce point (spatial_weight), not by the per-satellite storm-gain hash.  With
+    // explicit tid_pulses configured that hash is 1 only for the pulse satellites, which
+    // silently confined a 200 TECU enhancement to 8 rays.  true = every ray sees the
+    // blob according to its own IPP.  Default false keeps the legacy gating (and every
+    // existing scenario byte-identical); the TID term stays gated either way.
+    bool sed_bulk{ false };
+
+    std::vector<std::string> turb_sats{};   ///< PRNs carrying turbulence ({} = none).
+    double turb_sigma_tecu{ 0.0 };          ///< VERTICAL 1-sigma (TECU) at the window PEAK; 0 = off.
+    double turb_step_s{ 0.0 };              ///< Epoch spacing (s) for the MA smoothing; <=0 => 30.
+    double turb_window_start_tow_s{ 0.0 };  ///< Turbulence window start (GPS tow, s).
+    double turb_window_duration_s{ 0.0 };   ///< Turbulence window length (s); <=0 => whole arc.
+
     // When true the TID contributes a POSITIVE-DEFINITE oscillation 0.5*(1-cos)
     // (an amplification that pulses between 0 and the amplitude) instead of the
     // bipolar sin -- so the ionosphere is only ever ENHANCED, never depleted, and
@@ -107,6 +136,7 @@ struct IonoSample {
     double stec_quiet_tecu{ 0.0 };    ///< Slant quiet background (TECU).
     double dstec_sed_tecu{ 0.0 };     ///< Slant SED disturbance (TECU).
     double dstec_tid_tecu{ 0.0 };     ///< Slant TID disturbance (TECU).
+    double dstec_turb_tecu{ 0.0 };    ///< Slant epoch-to-epoch turbulence (TECU); see turbVtec().
     double stec_total_tecu{ 0.0 };    ///< Slant total (TECU).
     double time_window{ 0.0 };        ///< Raised-cosine weight in [0,1].
     double spatial_weight{ 0.0 };     ///< SED Gaussian in [0,1] (scintillation co-location).
@@ -145,12 +175,35 @@ public:
      *        (main.cpp) has already summed this satellite's explicit tid_pulses at this
      *        epoch.  It is mapped to slant by the STANDARD obliquity only (no sed_elev_exp
      *        emphasis).  <0 (default) = compute the TID from the config as before.
+     * @param turb_vtec This ray's VERTICAL turbulence amplitude (TECU) for this epoch,
+     *        from turbVtec() — a caller-supplied signed value, mapped to slant by the
+     *        standard obliquity like the explicit pulses.  0 (default) = no turbulence.
      */
     IonoSample evaluate(double rx_lat_deg, double rx_lon_deg,
                         double az_deg, double el_deg, const GnssTime& t,
                         double quiet_slant_stec_tecu, double storm_gain = 1.0,
                         double tid_period_override_s = 0.0, int tid_slot = -1,
-                        double tid_vtec_explicit = -1.0) const;
+                        double tid_vtec_explicit = -1.0, double turb_vtec = 0.0) const;
+
+    /**
+     * @brief Deterministic epoch-to-epoch ionospheric turbulence, VERTICAL TECU.
+     *
+     * A severe geomagnetic storm does not only raise the TEC level; it makes the field
+     * *rough*, so a ray's STEC jumps between epochs with no trend and no period.  The
+     * smooth GIM background plus raised-cosine pulses cannot produce that: they are
+     * differentiable, which is exactly why a geometry-free QC plot of this data looked
+     * quiet even at 120 TECU.
+     *
+     * Returns a zero-mean draw with 1-sigma @c cfg.turb_sigma_tecu, scaled per satellite
+     * by a stable factor in [0.6, 1.4] so the affected satellites are not uniformly bad.
+     * The draw is a HASH of (PRN, epoch), not an RNG stream: it is reproducible, it is
+     * independent between epochs (white, so consecutive differences carry ~sqrt(2) times
+     * the sigma and show no pattern), and above all it consumes no shared random stream,
+     * so enabling turbulence cannot shift the noise/multipath/slip realisation.
+     *
+     * Only satellites listed in @c cfg.turb_sats are affected; everything else returns 0.
+     */
+    double turbVtec(const std::string& prn, const GnssTime& t) const;
 
     /**
      * @brief First-order slant ionospheric delay (metres) at carrier @p f_hz.

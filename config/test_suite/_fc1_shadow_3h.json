@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "FC-1 INC-2 gate (a), CONVERGED window.  50-station GPS+Galileo all-on golden posture,",
+    "30 s, 3 h (361 epochs inclusive), COLD start at 00:00 DOY-129, fast_clock in SHADOW.",
+    "",
+    "WHY 3 h and not the 11-epoch smoke: the 11-epoch shadow measured the producer's own",
+    "per-epoch satellite-clock change at 0.3-3.7 m (common-mode removed, and unchanged by",
+    "detrending), against 1-2.5 cm of physically-measured phase change, with correlation",
+    "~0.  Cold-start churn is documented at 20-40x its converged level, so an 11-epoch",
+    "window cannot separate 'the producer churns' from 'the producer is still converging'.",
+    "This run grades hr0 against hr2 to settle that, which is the input the INC-4 verdict",
+    "depends on: if the producer's clock churn stays orders above the physical clock",
+    "motion once converged, then no fast tier can beat ZOH against it, because what ZOH",
+    "fails to predict is the churn and the fast tier measures the physics.",
+    "",
+    "Shadow only — no decimation, no emission.  Estimation outputs stay byte-identical to",
+    "the same config with the tier off (the INC-0/INC-1 isolation gate)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep.json"
+  ],
+  "processing": {
+    "max_duration_s": 10800.0
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/fc1_shadow_3h/products.txt",
+    "fast_clock": {
+      "enable": true,
+      "shadow": true,
+      "trace": true,
+      "trace_sat_stride": 1
+    }
+  }
+}

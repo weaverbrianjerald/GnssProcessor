@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "CARD: carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md) - arm P1.",
+    "",
+    "ONE variable vs _ft63_cacov_off.json: network.carry_aware_covariance.",
+    "",
+    "THE GATE IS UNUSUAL AND IT IS THE STRONGEST ONE THIS PROJECT CAN STATE.  Both consumers",
+    "of the corrected covariance are READ-ONLY - dd_sigma_cyc is a trace column and the",
+    "producer AR is log-only ('Phase 2 is READ-ONLY (no re-pin / re-solve yet)').  So the",
+    "requirement is not 'OFF is byte-identical to the pre-edit exe'; it is that ARMED and",
+    "DISARMED produce BYTE-IDENTICAL SOLVE ARTIFACTS - identical products.txt md5, identical",
+    "snapshot but for its ISO write timestamp, unchanged fingerprint - and differ in exactly",
+    "two trace files.  Any solve-artifact difference is a WIRING BUG, not a result.",
+    "",
+    "WHAT THE ARM IS FOR.  med|frac| ~ 0.25 is the EXPECTED reading whenever sigma_DD >~ 0.3",
+    "cyc, so RUNQUEUE_pdfix_reask's P6(b) null - 'the DD integer information is not present",
+    "at this cadence/geometry', the strongest negative in the campaign - cannot be tested",
+    "against a carry-blind sigma, and the only sigma the producer emitted was carry-blind",
+    "(pinned near 3.9 cyc; grade_pdfix_arms.py excludes it ON PURPOSE).  This arm produces",
+    "the sigma that can carry that test.",
+    "",
+    "GRADE, in order:",
+    "  1. THE gate above (md5 identity vs cacov_off).",
+    "  2. Run-end 'carry-aware covariance' line: ratio min/mean/max, and nonpos_rows.  A",
+    "     ratio identically 1.00 means the correction reached nothing - dead wiring, not a",
+    "     quiet run (invariant #4).  A NON-ZERO nonpos_rows is a result about the FOLD (the",
+    "     per-block Woodbury composition is inexact wherever a station sits in two blocks)",
+    "     and opens its own card - it is not a defect of this readback.",
+    "  3. dd_sigma_cyc by chord age, ON vs OFF: the mature bins must fall by orders; the",
+    "     freshly-born bins must NOT move (a diffuse prior carries no information).",
+    "  4. THE PAYOFF: med|frac| CONDITIONED on dd_sigma_cyc bins",
+    "     (scripts/grade_ddfrac_sigma_conditioned.py).  On the sigma < 0.25 cyc population,",
+    "     is the fractional part still uniform?"
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "network": {
+    "carry_aware_covariance": true,
+    "product_output_path": "C:/GnssProcessor/runs/cacov_on/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/cacov_on/state_snapshot.bin"
+  }
+}

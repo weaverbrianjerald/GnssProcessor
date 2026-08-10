@@ -57,9 +57,31 @@ public:
     /**
      * @brief Check whether trace files were successfully opened.
      * @return true If the TraceLogger is ready to write traces.
-     * @return false If initialization failed or files are not writable.
+     * @return false If no trace stream was requested at all, or every requested
+     *         stream failed to open.
+     *
+     * @note A false return is NOT by itself a fault: it is the normal state when
+     *       no @c logging_config.enable_*_trace toggle is armed.  Pair it with
+     *       requestedStreamCount() before reporting an error -- see
+     *       requestedStreamCount() for the disambiguation rule.
      */
     bool isInitialized() const;
+
+    /**
+     * @brief Number of trace streams the logging configuration asked to open.
+     *
+     * Counts one per armed @c logging_config.enable_*_trace toggle, i.e. the
+     * number of files an open was actually ATTEMPTED for.  Combined with
+     * isInitialized() this separates the two reasons the logger can be inactive:
+     *
+     * - @c requestedStreamCount() @c == @c 0 -- nothing was asked for, nothing was
+     *   attempted, nothing failed.  Benign; do not log at warn/error.
+     * - @c requestedStreamCount() @c > @c 0 and !isInitialized() -- every requested
+     *   stream failed to open.  A genuine fault worth reporting.
+     *
+     * @return Count of requested trace streams (0-9).
+     */
+    int requestedStreamCount() const;
 
     /**
      * @brief Flush all open trace streams to disk.
@@ -264,7 +286,8 @@ public:
 private:
     LogManager& log_manager_;   /**< Reference to LogManager used for internal logging. */
     bool is_ppp_rtk_{false};    /**< Mode flag: true when running PPP-RTK variant. */
-    bool initialized_{false};   /**< True when trace files were successfully opened. */
+    bool initialized_{false};   /**< True when at least one requested trace file opened. */
+    int requested_streams_{0};  /**< Count of enable_*_trace toggles armed, i.e. opens attempted. */
 
     /** Streams are written from const methods; mark mutable to allow logging. */
     mutable std::ofstream state_trace_;     /**< Output stream for state trace file. */

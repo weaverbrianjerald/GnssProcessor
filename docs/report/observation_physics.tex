@@ -9,7 +9,7 @@
 %  realisation of the abstract B/b terms.
 % ============================================================
 
-% --- doc-local macros (defined in the body, never in a section title) ---
+% doc-local macros (defined in the body, never in a section title)
 \newcommand{\bframe}{\bm{F}}                       % satellite body-frame matrix [i_s j_s k_s]
 \newcommand{\isun}{\hat{\bm{x}}_\sat}              % sat body +X (toward Sun)
 \newcommand{\jcross}{\hat{\bm{y}}_\sat}            % sat body +Y (cross-track)
@@ -118,14 +118,14 @@ $\bm{a}\times(\bm{b}\times\bm{c})$ identity,
       = \esun - \knad\,(\knad\cdot\esun),
 \label{eq:obsphys-xsun-gramschmidt}
 \end{equation}
-i.e. $\isun$ is the component of $\esun$ orthogonal to nadir, normalised
---- the $+X$ axis points half-toward the Sun, as required by the ANTEX
+i.e. $\isun$ is the component of $\esun$ orthogonal to nadir, normalised;
+the $+X$ axis points half-toward the Sun, as required by the ANTEX
 convention.  The body-frame matrix collecting the three columns,
 \begin{equation}
 \bframe = \big[\,\isun\;\;\jcross\;\;\knad\,\big],
 \label{eq:obsphys-bodyframe-matrix}
 \end{equation}
-is orthonormal, so its inverse is its transpose --- the property exploited
+is orthonormal, so its inverse is its transpose, the property exploited
 below to rotate a body-frame offset into ECEF.
 
 \paragraph{Sun elevation and the mode switch.}
@@ -192,7 +192,9 @@ geometric umbra, not a photometric penumbra model.
 
 The range measurement is realised between the satellite and receiver
 \emph{antenna phase centres}, but the estimated states refer to the
-satellite centre of mass and the receiver antenna reference point (ARP).
+satellite centre of mass and the receiver antenna reference point (ARP):
+the ANTEX receiver PCO/PCV below are ARP-referenced, so the position
+state must be too.
 The antenna correction $A^\sat_{\rx,\sigl}$ reconciles the two, summing
 four geometric terms plus the wind-up:
 \begin{empheq}[box=\fbox]{equation}
@@ -214,12 +216,29 @@ $\los^\sat_{\hat{\rx}}$ of \dcref{sec:obs-geometry}{the geometry section}
 in \dcref{eq:los}{its line-of-sight definition}).  The sign conventions are derived once and reused for
 each term below.
 
+\paragraph{Which coordinate is the ARP.}
+The ARP frame asserted above holds for every position the engine derives
+from a RINEX \emph{header}: the marker coordinate is reduced to the ARP
+through the header eccentricity before it seeds the state
+(\texttt{Coordinates::markerToArp}, packaged as
+\texttt{RinexParser::getArpPositionXyz}; \dcref{sec:frame-arp}{the
+marker/ARP section of the Coordinate Frames document}).  A coordinate
+supplied directly in the configuration is \emph{not} reduced; it is
+used at face value, on the policy that the user owns its reference
+point.  That exception is load-bearing in the network producer, whose
+station coordinates come from the configuration
+(\texttt{StationConfig::position\_ecef}) and are held fixed, their
+position columns dropped from the normal equations: a
+monument-referenced coordinate there is not absorbed by a position state
+but survives into the residuals, and so into the estimated clocks,
+biases, and ionosphere.
+
 \paragraph{Satellite PCO (subtracted).}
 The satellite phase-centre offset $\pco^\sat_{\mathrm{body}}$ is published
 in the body frame (millimetres in ANTEX).  It is rotated to ECEF by the
-body-frame matrix --- because $\bframe$ collects the body axes as
+body-frame matrix; because $\bframe$ collects the body axes as
 \emph{columns}, $\bframe$ itself maps body $\to$ ECEF (and the orthonormal
-$\bframe^\Tr=\bframe^{-1}$ maps ECEF $\to$ body) --- and projected onto the
+$\bframe^\Tr=\bframe^{-1}$ maps ECEF $\to$ body).  It is then projected onto the
 LOS:
 \begin{equation}
 \delta_{\mathrm{PCO}}^{\sat}
@@ -242,7 +261,7 @@ reference-point dialect that drives it is documented with
 
 \paragraph{Satellite PCV (added).}
 The satellite phase-centre variation is a function of the \emph{nadir
-angle} --- the angle between the boresight $\knad$ and the line of sight ---
+angle}, the angle between the boresight $\knad$ and the line of sight,
 and of the azimuth in the body frame.  With $\cos\theta_{\mathrm{nad}} =
 \knad\cdot\los$,
 \begin{equation}
@@ -287,8 +306,8 @@ same bilinear interpolation over $z-\mathtt{zen1}$
 \paragraph{ATX frequency fallback.}
 ANTEX entries frequently omit the newest carriers (L5/E5a/B2a on older
 spacecraft, and many receiver antennas published before triple-frequency
-tracking).  Rather than dropping the antenna correction to zero --- which
-leaves a several-centimetre vertical bias --- the engine walks a
+tracking).  Rather than dropping the antenna correction to zero, which
+leaves a several-centimetre vertical bias, the engine walks a
 \emph{nearest-carrier} substitution chain when the requested ANTEX
 frequency key is absent (\texttt{pickAtxFrequencyKey},
 \texttt{model/Antenna.cpp}).  The chains are ordered by carrier-frequency
@@ -298,7 +317,7 @@ for Galileo $\mathtt{E05}\to\{\mathtt{E08},\mathtt{E07},\mathtt{E06},
 is typically below a centimetre.  The PCO and PCV chains are walked
 \emph{independently} (an antenna may carry the PCO but not the PCV at a
 given key).  For the \emph{satellite} antenna only the intra-system chain
-is permitted --- borrowing another constellation's spacecraft entry would
+is permitted, since borrowing another constellation's spacecraft entry would
 be meaningless.  For the \emph{receiver} antenna, after the intra-system
 chain is exhausted and only when
 \texttt{enable\_receiver\_cross\_system\_atx\_fallback} is set, a
@@ -332,7 +351,7 @@ $(\bm{x}_\rx,\bm{y}_\rx)$ the receiver local North/East axes, the
 \dipR = \bm{x}_\rx - \bm{k}\,(\bm{k}\cdot\bm{x}_\rx) + \bm{k}\times\bm{y}_\rx,
 \label{eq:obsphys-windup-dipoles}
 \end{equation}
-the standard Wu construction --- each dipole is the antenna $X$ axis
+the standard Wu construction: each dipole is the antenna $X$ axis
 projected into the plane orthogonal to $\bm{k}$, plus the $\bm{k}\times Y$
 quadrature term (\texttt{corrections/GnssCorrections.cpp}).  The receiver
 North and East axes are built directly from the geodetic latitude
@@ -427,7 +446,7 @@ cross-product is orthogonal to $\satpos$; so the same scalar results from
 either velocity, and the broadcast-ephemeris ECEF velocity may be used
 directly.  Second, the periodic term is computed \emph{here}, separately,
 because the IGS precise CLK product by convention carries only the
-constant-plus-drift clock and excludes the periodic eccentricity term ---
+constant-plus-drift clock and excludes the periodic eccentricity term, so
 applying \eqref{eq:obsphys-rel} restores the missing piece consistently
 for both precise and broadcast clock sources.
 
@@ -491,7 +510,7 @@ after which $\geomrange^\sat_\rx=\lVert\satpos-\rxpos_\rx\rVert$ and the
 line of sight are computed from the rotated $\satpos$
 (\texttt{model/ModelGeometry.cpp}, the \texttt{rotateAndComputeTopo}
 lambda).  The Sagnac correction is thus \emph{folded into the geometric
-range itself} rather than added as a separate term --- which is why
+range itself} rather than added as a separate term, which is why
 \eqref{eq:obsphys-assembly} carries no explicit Sagnac entry.  An
 equivalent scalar form,
 $(\omega_\oplus/\sLight)\,(x_\sat y_\rx - y_\sat x_\rx)$, exists in the
@@ -511,9 +530,9 @@ identical rotation documented with the products.
 \subsection{Group delays and inter-frequency biases}\label{sec:obsphys-bias}
 % ============================================================
 
-The abstract bias terms of the Foundations observation equations --- the
+The abstract bias terms of the Foundations observation equations (the
 satellite code/phase biases $B^\sat_\sigl,\,b^\sat_\sigl$ and the receiver
-biases $B_{\rx,\sigl},\,b_{\rx,\sigl}$ --- are realised deterministically by
+biases $B_{\rx,\sigl},\,b_{\rx,\sigl}$) are realised deterministically by
 two products, which this section ties to the equation symbols.
 
 \paragraph{Broadcast group delay.}
@@ -553,9 +572,9 @@ signals onto the estimated-state path
 (\texttt{corrections/GnssCorrections.cpp}).
 
 \paragraph{Estimated vs.\ deterministic biases.}
-Whatever the deterministic bias leaves uncorrected --- principally the
+Whatever the deterministic bias leaves uncorrected, principally the
 receiver hardware delay $B_{\rx,\sigl},\,b_{\rx,\sigl}$, and any satellite
-delay not covered by a product --- is handled by the estimator.  The
+delay not covered by a product, is handled by the estimator.  The
 receiver biases are common to all satellites on a signal and so collapse
 into the receiver clock / inter-system bias states or cancel under
 between-satellite differencing
@@ -563,9 +582,9 @@ between-satellite differencing
 satellite code bias may be \emph{estimated} as a state when no product
 covers it (\texttt{estimation.estimate\_sat\_biases},
 \texttt{measurement/MeasurementModel.cpp}).  The state-allocation gate
-that prevents estimating a bias the products already supply ---
+that prevents estimating a bias the products already supply,
 $\mathrm{hasBIA}(\sat,\sigl)$ from the static product, OR'd with
-$\mathrm{hasSsrCB}(\sat,\sigl)$ from the live stream --- is documented with
+$\mathrm{hasSsrCB}(\sat,\sigl)$ from the live stream, is documented with
 the SSR overlay (\dcref{sec:ssr}{the SSR corrections document},
 \Cref{eq:ssr-satbias-gate} there); the present document supplies only the
 \emph{deterministic} half of that OR.
@@ -581,7 +600,7 @@ conflated: the SSR bias is a per-(\sat,\sigl) scalar like
 radial/along/cross (RAC) delta frame
 (\dcref{sec:ssr}{the SSR document}'s \Cref{eq:ssr-rac-frame}) that is
 \emph{not} the satellite attitude body frame
-\eqref{eq:obsphys-bodyframe-matrix} of this document --- the RAC frame is
+\eqref{eq:obsphys-bodyframe-matrix} of this document: the RAC frame is
 built from the broadcast position and velocity to express an orbit
 correction, whereas the body frame is built from the Sun direction to
 orient the antenna.  They coincide neither in construction nor in purpose.

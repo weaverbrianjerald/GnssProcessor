@@ -40,14 +40,26 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       slip_raw_trace_path(log_dir_ / "network_slip_raw.csv"),
       epoch_status_trace_path(log_dir_ / "network_epoch_status.csv"),
       health_trace_path(log_dir_ / "network_service_health.csv"),
+      fast_clock_trace_path(log_dir_ / "network_fast_clock.csv"),
       events_trace_path(log_dir_ / "network_events.csv"),
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
+      carry_vce_apply_trace_path(log_dir_ / "network_carry_vce_apply.csv"),
+      prior_residual_trace_path(log_dir_ / "network_prior_residual.csv"),
+      block_baarda_trace_path(log_dir_ / "network_block_baarda.csv"),
+      congruence_trace_path(log_dir_ / "network_congruence.csv"),
+      mdb_trace_path(log_dir_ / "network_mdb.csv"),
+      datum_graph_trace_path(log_dir_ / "network_datum_graph.csv"),
       estimability_trace_path(log_dir_ / "network_estimability.csv"),
       sh_spectrum_trace_path(log_dir_ / "network_sh_spectrum.csv"),
       sh_spectrum_mode_trace_path(log_dir_ / "network_sh_spectrum_mode.csv"),
       pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
+      phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
+      sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
+      sd_ewl_ar_trace_path(log_dir_ / "network_sd_ewl_ar.csv"),
+      d5_flags_trace_path(log_dir_ / "network_d5_flags.csv"),
+      wl_lane_trace_path(log_dir_ / "network_wl_lane_trace.csv"),
       manifest_path(log_dir_ / "network_run_manifest.json") {}
 
 void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& nc,
@@ -200,8 +212,14 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // dd_cyc − round(dd_cyc)) so the CSV is directly a fractional-cycle histogram —
             // the go/no-go instrument for float-bias user AR.  GLONASS (FDMA) and the pivot
             // station (pinned ambiguities) are excluded from the pool below.
+            // sigma_carry_aware APPENDED (readers read by name): 1 = dd_sigma_cyc came from
+            // the carry-aware readback (docs/SPEC_carry_aware_covariance.md), 0 = the
+            // carry-blind N_rr⁻¹ form every pre-card run emitted.  Without it a reader
+            // cannot tell a 0.14-cyc σ that means something from a 3.9-cyc σ that means
+            // "this covariance never saw the carry".
             dd_frac_trace << "week,tow,cons,signal,sat_i,ref_sat,sta_a,sta_b,"
-                             "dd_m,lambda_m,dd_cyc,frac_cyc,dd_sigma_cyc\n";  // T2a: +dd_sigma_cyc
+                             "dd_m,lambda_m,dd_cyc,frac_cyc,dd_sigma_cyc,"
+                             "sigma_carry_aware\n";  // T2a: +dd_sigma_cyc
             // (B5 wavelength provider dd_ppp_utils is constructed by the CALLER,
             //  gated on this stream being open — it needs the LogManager.)
         } else {
@@ -226,6 +244,18 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       slip_raw_trace_path.string());
         }
     }
+    // Measurement-admission census schema flag (docs/SPEC_measurement_admission.md
+    // INC-3) — decided ONCE, here, so the header below and every row written by
+    // emitEpochStatus agree by construction (the two writers are 300 lines apart).
+    // Screening implies the columns, per spec §5.
+    es_adm_columns_ = nc.adm_trace || nc.adm_screen;
+    // Prior-residual census schema flag (docs/SPEC_prior_residual_census.md) —
+    // same one-decision-point discipline, same STRUCTURAL byte-identity reason.
+    es_prires_columns_ = nc.prior_residual_census;
+    // Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) — its OWN
+    // schema flag, so a census-only run keeps exactly the columns it had before
+    // this rider existed and the census's §9.1 A/B stays a valid comparison.
+    es_s0g_columns_ = nc.prior_residual_census && nc.prior_residual_global_sigma0;
     if (nc.trace_epoch_status) {
         epoch_status_trace.open(epoch_status_trace_path);
         if (epoch_status_trace)
@@ -247,7 +277,71 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                   "sigma0_trigger,withhold_ceiling,n_arc_refloat,"   // T2d
                                   "n_d5_flags,n_d5_retaps,n_chord_births,n_slip_refloats,"
                                   "n_dw_engaged,n_dw_zero,dw_min_w,dw_mean_w,"
-                                  "sigma0_pf,sigma0_pf_code,sigma0_pf_phase,n_pf_rows\n";
+                                  "sigma0_pf,sigma0_pf_code,sigma0_pf_phase,n_pf_rows,"
+                                  // docs/SPEC_redundancy_census.md INC-1/INC-2:
+                                  // blank on epochs the census did not sweep.
+                                  "n_redun_rows,n_uncheckable_rows,uncheckable_max_s,"
+                                  "n_unobservable_local,"
+                                  // docs/SPEC_prefit_census_observability.md INC-1:
+                                  // per DATA class, the COMMON-MODE-REMOVED
+                                  // standardized prefit deviation s.  Blank on
+                                  // epochs the census did not walk.
+                                  "pc_code_max_s,pc_code_p99_s,pc_code_n10,pc_code_n1k,"
+                                  "pc_phase_max_s,pc_phase_p99_s,pc_phase_n10,pc_phase_n1k,"
+                                  "pc_other_max_s,pc_other_p99_s,pc_other_n10,pc_other_n1k,"
+                                  "pc_sh_max_s,pc_sh_p99_s,pc_sh_n10,pc_sh_n1k,"
+                                  // docs/SPEC_pd_safe_dd_fold.md INC-0: the DD-prior
+                                  // fold's PD screen.  UNCONDITIONAL (the redundancy /
+                                  // prefit precedent, not the adm one) because INC-0 is
+                                  // an always-on instrument, not an armed card: the
+                                  // branch it observes — `M := 0` on a non-PD Pᶻ+B —
+                                  // had no counter, no log and no event, and 78 % of
+                                  // the carried state was measured diffusing behind it.
+                                  // Blank on epochs the invariant carry did not fold on.
+                                  "ddfold_degen_blocks,ddfold_degen_rows,"
+                                  "ddfold_min_pivot_rel"
+                               // docs/SPEC_measurement_admission.md INC-3: the
+                               // ABSOLUTE product-referenced |z| census.  Appended
+                               // ONLY when the card is armed — unlike the two
+                               // censuses above, whose unconditional columns changed
+                               // every unarmed run's artifact (the deweight card's
+                               // gate-1 record had to say so: "29 -> 48 -> 49 columns
+                               // over the session").  This card's OFF contract is
+                               // STRUCTURAL byte-identity, and its own §7 gates are
+                               // same-build A/B comparisons of this very file.
+                               // adm_sta_worst_z = the MEDIAN over screened stations
+                               // of each station's worst |z| (the healthy sea);
+                               // adm_net_worst_z = the network MAXIMUM (the extreme,
+                               // whose identity goes to the ADMISSION events).
+                               << (es_adm_columns_
+                                       ? ",adm_sta_worst_z,adm_net_worst_z" : "")
+                               // docs/SPEC_prior_residual_census.md: the per-epoch
+                               // face of the carry-prior census.  Appended ONLY
+                               // when the card is armed (the adm precedent, not
+                               // the redundancy/prefit one) because this card's
+                               // OFF contract is STRUCTURAL byte-identity and its
+                               // §9.1 gate compares this file across arms.
+                               // prires_rows is the DENOMINATOR — a raw
+                               // "12 rows over 4-sigma" is uninterpretable without
+                               // it — and prires_rows_resp / _frame partition the
+                               // populations the card refuses to pool.
+                               << (es_prires_columns_
+                                       ? ",prires_rows,prires_rows_resp,prires_rows_frame,"
+                                         "prires_n_reported,prires_max_t"
+                                       : "")
+                               // docs/SPEC_sigma0_constraint_aware.md: the
+                               // constraint-aware global variance component.
+                               // sigma0_global is the LASER 5-74 scale (prior
+                               // residuals in the numerator, constraints in the
+                               // redundancy); prior_tension_ratio is the headline
+                               // — how much of the epoch's weighted misfit lives
+                               // in the CARRY, which the robust median sigma0 is
+                               // structurally blind to.  s0g_flags is the in-band
+                               // degradation bitmask: a degraded number SAYS SO
+                               // in its own row, never silently.
+                               << (es_s0g_columns_
+                                       ? ",sigma0_global,prior_tension_ratio,s0g_flags\n"
+                                       : "\n");
         else
             log->warn("Network: failed to open epoch-status trace {}",
                       epoch_status_trace_path.string());
@@ -290,6 +384,77 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open keyed post-fit trace {}",
                       pf_keyed_trace_path.string());
     }
+    if (nc.trace_phase_anchor) {
+        // S1 anchor partition (docs/SPEC_lane_spectrometer.md §3.3).  One row per
+        // gauge-PINNED ambiguity: `anchor_sta` is the station whose ambiguity pin
+        // realizes the phase datum for that (constellation, signal, satellite)
+        // freedom.  Under the legacy single-pivot datum every freedom is pinned at the
+        // pivot, so the column is constant and the partition degenerates — which is
+        // itself the honest answer (it exonerates the election mechanism by
+        // construction, exactly as the SPEC says).  Under the prioritized / eq34
+        // realizations the column varies and the same/cross-anchor split becomes a
+        // real test.
+        phase_anchor_trace.open(phase_anchor_trace_path);
+        if (phase_anchor_trace)
+            phase_anchor_trace << "week,tow,cons,signal,sat,anchor_sta\n";
+        else
+            log->warn("Network: failed to open phase-anchor trace {}",
+                      phase_anchor_trace_path.string());
+    }
+    if (nc.sd_ewl.trace) {
+        // SPEC_sd_ewl_prereduce §6: one row per (station, epoch, satellite) the SD
+        // pre-reduce EWL appender considered.  `status` names the outcome in the
+        // appender's own vocabulary (BUILT / PIVOT / NO_ARC / IMMATURE /
+        // FRAME_RECON / NO_AMB_COL / NO_SHARED_COL / NO_CODE / BAD_LAMBDA / BIG_Z /
+        // MIXED_FRAME / CAPPED), so the file is a direct per-satellite expansion of
+        // the run-end skip tallies — the only way to see WHICH (band1,band2) signal
+        // pair carries an arc rather than just how many did not.  sig1/sig2 are the
+        // ELECTED phase pair (empty when none had both ambiguity columns);
+        // code1/code2 are the code channels the arc's MW actually consumed.
+        sd_ewl_trace.open(sd_ewl_trace_path);
+        if (sd_ewl_trace)
+            // mean_m = the arc's ZD MW mean (raw, hundreds of metres — it carries
+            // λ_EWL·N_EWL); pred_m = this arc's half of H·x_lin; resid_m = the
+            // CORRECTION-frame value actually folded, (mean_s−mean_p)−(pred_s−pred_p).
+            // resid_m is the row's residual and the quantity to judge: it should sit at
+            // the metre scale, and a per-satellite offset in it is a frame problem.
+            // Increment 2b appends three columns ONLY when the integer path is armed,
+            // so an increment-1 artifact set stays byte-identical (the same armed-only
+            // header rule the dual-layer SH coefficient trace uses above).
+            // n_fix_cyc = the folded SD integer (cycles of lambda_EWL, 0 for a float
+            // row); fixed = whether THIS row folded the integer; grp_fixed = whether
+            // the row's whitened group was the all-fixed group.
+            sd_ewl_trace << "week,tow,station,cons,sat,pivot_sat,status,"
+                            "sig1,sig2,code1,code2,n_cand_pairs,arc_count,bia,"
+                            "lambda_ewl_m,mean_m,pred_m,resid_m,sigma_m"
+                         << (nc.sd_ewl.fix_enable ? ",n_fix_cyc,fixed,grp_fixed\n"
+                                                  : "\n");
+        else
+            log->warn("Network: failed to open SD-EWL trace {}",
+                      sd_ewl_trace_path.string());
+    }
+    if (nc.sd_ewl.trace && nc.sd_ewl.fix_enable) {
+        // Increment 2a's own decision trace.  Kept SEPARATE from network_sd_ewl.csv
+        // because it is a different unit of observation: that file has one row per
+        // ROW-BUILD attempt (station x satellite x epoch, in the parallel produce
+        // phase), this one has one row per INTEGER DECISION (the serial pre-assembly
+        // seam), and the two do not correspond one-to-one — a satellite can get an
+        // integer and still fail to build a row, or vice versa.
+        sd_ewl_ar_trace.open(sd_ewl_ar_trace_path);
+        if (sd_ewl_ar_trace)
+            // status ∈ {R0 (the component reference, integers ≡ 0 by definition),
+            // FIXED, LINK (the per-station gauge integer — inherited, not measured),
+            // REJ_FRAC, REJ_FFR, FLIP (disagreed with the previous epoch on a
+            // continuous arc — counted and vetoed), NO_LINK, SKIP_CHANNEL (arc on a
+            // different tracking pair than the network-common election), SKIP_FRAME,
+            // NO_GRAPH}.  dd_cyc is the rounded DD's pre-rounding value in cycles.
+            sd_ewl_ar_trace << "week,tow,cons,sat,station,status,sig1,sig2,r0,parent,"
+                               "link_sat,arc_count,dd_cyc,frac_cyc,sigma_cyc,ffr,"
+                               "n_cyc,n_prev_cyc\n";
+        else
+            log->warn("Network: failed to open SD-EWL AR trace {}",
+                      sd_ewl_ar_trace_path.string());
+    }
     if (nc.health_interval_s > 0.0) {
         // RTB-6: periodic operator health heartbeat.  Cumulative epoch tallies +
         // σ̂0 EWMA + windowed ms/epoch + last-emit age + stations/clock-sats +
@@ -317,6 +482,18 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       config_.networkEmitUra(), config_.networkRaim(),
                       config_.networkPhaseLeveling());
     }
+    if (nc.fast_clock.enable && nc.fast_clock.trace) {
+        // FC-1: the per-tick fast-clock trace.  Gated on the tier master as well as its
+        // own knob — the tick tier runs on epochs the full pipeline skips, so a trace
+        // armed without the tier would produce an empty file that reads like a quiet run
+        // rather than an unarmed one (standing invariant #4).
+        fast_clock_trace.open(fast_clock_trace_path);
+        if (fast_clock_trace)
+            fast_clock_trace << kFastClockHeader;
+        else
+            log->warn("Network (FC-1): failed to open fast-clock trace {}",
+                      fast_clock_trace_path.string());
+    }
     if (config_.networkCarryVce()) {
         carry_vce_trace.open(carry_vce_trace_path);
         if (carry_vce_trace)
@@ -324,6 +501,86 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network (M2/LS-VCE): failed to open carry-VCE trace {}",
                       carry_vce_trace_path.string());
+    }
+    if (config_.networkCarryVceApply()) {
+        // M2 v2 — the variance-factor trajectory.  Gated on the apply knob itself
+        // rather than on a trace_* knob: the file IS the mechanism's telemetry
+        // (α², its clamps, the σ̂²→1 convergence readout), and an armed apply with
+        // no trajectory is an ungradable run, not a quiet one.  The loader
+        // guarantees carry_vce, so the monitor digest next to it is always open too.
+        carry_vce_apply_trace.open(carry_vce_apply_trace_path);
+        if (carry_vce_apply_trace)
+            carry_vce_apply_trace << kCarryVceApplyHeader;
+        else
+            log->warn("Network (M2 v2): failed to open carry-VCE-apply trace {}",
+                      carry_vce_apply_trace_path.string());
+    }
+    if (nc.prior_residual_census) {
+        // docs/SPEC_prior_residual_census.md INC-1 — the exceedance ladder, the
+        // card's headline product.  ⚠ Durability: only health_trace flushes
+        // mid-run (see rotateServiceCsvs / writeHealthRow), so a long armed run
+        // should also carry network.health_interval_s if the ladder has to survive
+        // a kill.  The seam flushes this stream itself on the content-hour roll.
+        prior_residual_trace.open(prior_residual_trace_path);
+        if (prior_residual_trace)
+            prior_residual_trace << kPriorResidualHeader;
+        else
+            log->warn("Network (prior-residual census): failed to open trace {}",
+                      prior_residual_trace_path.string());
+    }
+    if (nc.block_baarda) {
+        // docs/SPEC_block_baarda.md INC-1 — the per-(family x label) exceedance
+        // ladder over t_B, the card's headline product.  Same durability caveat
+        // as the prior-residual ladder: only health_trace flushes mid-run, so a
+        // long armed run should also carry network.health_interval_s if these
+        // rows have to survive a kill.
+        block_baarda_trace.open(block_baarda_trace_path);
+        if (block_baarda_trace)
+            block_baarda_trace << kBlockBaardaHeader;
+        else
+            log->warn("Network (block-Baarda census): failed to open trace {}",
+                      block_baarda_trace_path.string());
+    }
+    if (nc.congruence_screen) {
+        // docs/SPEC_station_congruence.md INC-1 — one row per SWEPT STATION per
+        // epoch.  This file IS the card's headline product: SPEC §7.2's perturbed
+        // arm is graded on a per-station run-median of `d_e` and §7.3's MDB table
+        // is built from `mdb_*`, neither of which survives aggregation into a
+        // ladder.  Same durability caveat as the ladders above: only health_trace
+        // flushes mid-run, so a long armed run should carry
+        // network.health_interval_s if these rows have to survive a kill.
+        congruence_trace.open(congruence_trace_path);
+        if (congruence_trace)
+            congruence_trace << kCongruenceHeader;
+        else
+            log->warn("Network (station congruence): failed to open trace {}",
+                      congruence_trace_path.string());
+    }
+    if (nc.mdb) {
+        // docs/SPEC_network_mdb_reliability.md INC-1 — the per-(constellation x
+        // class) MDB distribution, the card's headline product.  Same durability
+        // caveat as the ladder above: only health_trace flushes mid-run, so a long
+        // armed run should carry network.health_interval_s if these rows have to
+        // survive a kill.
+        mdb_trace.open(mdb_trace_path);
+        if (mdb_trace)
+            mdb_trace << kNetworkMdbHeader;
+        else
+            log->warn("Network (MDB): failed to open reliability trace {}",
+                      mdb_trace_path.string());
+    }
+    if (nc.datum_graph_census) {
+        // docs/SPEC_datum_graph_census.md INC-2 — the predicted-vs-observed
+        // S-basis dimension contingency, the card's headline product.  Same
+        // durability caveat as the files above: only health_trace flushes
+        // mid-run, so a long armed run should carry network.health_interval_s if
+        // these rows have to survive a kill.
+        datum_graph_trace.open(datum_graph_trace_path);
+        if (datum_graph_trace)
+            datum_graph_trace << kNetworkDatumGraphHeader;
+        else
+            log->warn("Network (datum graph): failed to open census trace {}",
+                      datum_graph_trace_path.string());
     }
     if (nc.trace_estimability) {
         // Card DG5: the machine-readable twin of the Network[estimability] WARN
@@ -383,6 +640,51 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     // INC-4: capture the L1/L15 config echoes once (pure getter reads).
     es_sigma0_trigger_   = config_.networkRaimSigma0Trigger();
     es_withhold_ceiling_ = config_.networkRaimWithholdSigma0();
+}
+
+// The openAll tail for the two MW/WL dumps.  Split out (not folded into openAll)
+// because their arming expressions are derived in the run TU from the WL zone-2
+// booleans — carry_invariant, ewl_on, wl_inject_on, lane_fix_on, carry_innov_gate —
+// which are established well after openAll runs; re-deriving that chain here would
+// bit-rot against the driver.  The LIFECYCLE is what matters and it is now identical
+// to every other stream: one truncating open with the header, once per run, before
+// the epoch loop, closed in closeAll.
+void NetworkRunTraces::openMwWlDumps(bool d5_armed, bool lane_trace_armed,
+                                     const std::shared_ptr<spdlog::logger>& log) {
+    std::error_code ec;
+    std::filesystem::create_directories(log_dir_, ec);
+    if (d5_armed) {
+        d5_flags_trace.open(d5_flags_trace_path);
+        if (d5_flags_trace)
+            // raw_stepped is deliberately TRI-STATE (1 / 0 / blank) — see the writer
+            // banner in NetworkInstallCarry.cpp.  Blank means "no evidence", which is
+            // NOT the same claim as 0 ("a step could be formed and it was flat").
+            // The five algebra columns after raw_stepped are the churn card's instrument
+            // (2026-08-02): std_innov alone cannot say whether a standing 230σ means the
+            // innovation is large or the formal Cov(v) is small.  z_post differenced across
+            // epochs for ONE chord is the estimate's measured wander; var_v is the formal
+            // claim about exactly that quantity, so the ratio is readable per chord without
+            // re-running anything.  dw_w is the station's SH-constraint deweight weight
+            // (ctx.carry.topo_prev_w, this epoch — blank unless network.trace_topology is
+            // armed), carried here because the chronic-flagger roster was measured to
+            // overlap the deweight gate's chronic >3σ SH-misfit roster and the correlation
+            // should be gradeable from one file.
+            d5_flags_trace << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
+                              "ewl_stasat,hold_chord,injected_prev,raw_stepped,"
+                              "zhat,v,var_v,sigma0,z_post,dw_w\n";
+        else
+            log->warn("Network: failed to open D5 flag dump {}",
+                      d5_flags_trace_path.string());
+    }
+    if (lane_trace_armed) {
+        wl_lane_trace.open(wl_lane_trace_path);
+        if (wl_lane_trace)
+            wl_lane_trace << "week,tow,chord_u,chord_v,station,sat,lane_cyc,frac_cyc,"
+                             "w,decided,held,injected\n";
+        else
+            log->warn("Network: failed to open WL lane trace {}",
+                      wl_lane_trace_path.string());
+    }
 }
 
 void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
@@ -474,6 +776,80 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
         if (r.sigma0_pf_phase) o << fmt::format("{:.4f}", *r.sigma0_pf_phase);
         o << ',';
         if (r.n_pf_rows)       o << *r.n_pf_rows;
+        o << ',';
+        if (r.n_redun_rows)         o << *r.n_redun_rows;
+        o << ',';
+        if (r.n_uncheckable_rows)   o << *r.n_uncheckable_rows;
+        o << ',';
+        if (r.uncheckable_max_s)    o << fmt::format("{:.6e}", *r.uncheckable_max_s);
+        o << ',';
+        if (r.n_unobservable_local) o << *r.n_unobservable_local;
+        // INC-1 prefit census: four columns per DATA class, in NetRowClass order.
+        // Absent ⇒ 16 blank fields (the census did not walk this epoch), so the
+        // row width is constant and an old reader that stops at the previous
+        // column keeps working.
+        for (int t = 0; t < 4; ++t) {
+            o << ',';
+            if (r.prefit_census) o << fmt::format("{:.6e}", r.prefit_census->max_s[t]);
+            o << ',';
+            if (r.prefit_census) o << fmt::format("{:.6e}", r.prefit_census->p99_s[t]);
+            o << ',';
+            if (r.prefit_census) o << r.prefit_census->n_gt_10[t];
+            o << ',';
+            if (r.prefit_census) o << r.prefit_census->n_gt_1000[t];
+        }
+        // PD-safe fold INC-0: three UNCONDITIONAL columns (see the header write in
+        // openAll).  Blank on an epoch the invariant carry did not fold on — "zero
+        // degenerate blocks" and "the carry never ran" are different statements, and
+        // conflating them is exactly how the frozen 78 % stayed invisible.
+        o << ',';
+        if (r.ddfold_degen_blocks) o << *r.ddfold_degen_blocks;
+        o << ',';
+        if (r.ddfold_degen_rows) o << *r.ddfold_degen_rows;
+        o << ',';
+        if (r.ddfold_min_pivot_rel) o << fmt::format("{:.6e}", *r.ddfold_min_pivot_rel);
+        // INC-3 measurement-admission census: two columns, present in the schema
+        // only when the card is armed (see the header write in openAll).  Blank on
+        // an epoch the screen did not run — the file's "unavailable is not 0"
+        // convention, which matters here because a genuine 0.0 worst-|z| and a
+        // skipped epoch are very different statements.
+        if (es_adm_columns_) {
+            o << ',';
+            if (r.adm_sta_worst_z) o << fmt::format("{:.6e}", *r.adm_sta_worst_z);
+            o << ',';
+            if (r.adm_net_worst_z) o << fmt::format("{:.6e}", *r.adm_net_worst_z);
+        }
+        // Prior-residual census: five columns, present in the schema only when the
+        // card is armed.  Blank on an epoch the census did not run — a genuine
+        // 0-row epoch (every carry family absent) and an un-run epoch say very
+        // different things, and standing invariant #4 turns on being able to tell
+        // "ran, saw nothing" from "never ran".
+        if (es_prires_columns_) {
+            o << ',';
+            if (r.prires_rows)        o << *r.prires_rows;
+            o << ',';
+            if (r.prires_rows_resp)   o << *r.prires_rows_resp;
+            o << ',';
+            if (r.prires_rows_frame)  o << *r.prires_rows_frame;
+            o << ',';
+            if (r.prires_n_reported)  o << *r.prires_n_reported;
+            o << ',';
+            if (r.prires_max_t)       o << fmt::format("{:.6e}", *r.prires_max_t);
+        }
+        // Constraint-aware global σ̂₀: three columns, present only when the rider
+        // is armed.  sigma0_global is BLANK (not 0) on an epoch whose Σr was
+        // non-positive — "not formed" and "formed at zero" are different states,
+        // and s0g_flags says which.  s0g_flags itself is written whenever the
+        // epoch ran, INCLUDING when it is 0: a reader must be able to tell a
+        // clean epoch from an un-run one without cross-referencing another file.
+        if (es_s0g_columns_) {
+            o << ',';
+            if (r.s0g_sigma0)  o << fmt::format("{:.6e}", *r.s0g_sigma0);
+            o << ',';
+            if (r.s0g_tension) o << fmt::format("{:.6e}", *r.s0g_tension);
+            o << ',';
+            if (r.s0g_flags)   o << *r.s0g_flags;
+        }
         o << '\n';
 }
 
@@ -493,6 +869,39 @@ void NetworkRunTraces::emitEvent(const GnssTime& t, const char* tier, const char
         o << ',';
         if (threshold) o << fmt::format("{:.6f}", *threshold);
         o << ',' << action << ',' << d << '\n';
+}
+
+void NetworkRunTraces::writeCarryVceApplyRows(const GnssTime& t,
+                                              const NetworkCarryVceApply& apply,
+                                              int& hour_state) {
+    if (!carry_vce_apply_trace.is_open()) return;
+    auto& o = carry_vce_apply_trace;
+    for (const auto& kv : apply.groups()) {
+        const NetworkCarryVceApply::Group& g = kv.second;
+        o << t.week << ',' << fmt::format("{:.3f}", t.tow) << ','
+          << NetworkCarryVceApply::familyName(g.family) << ','
+          << (g.sys ? std::string(1, g.sys) : std::string()) << ','
+          << fmt::format("{:.1f}", g.n_eff) << ','
+          << fmt::format("{:.6e}", g.robust_floor) << ','
+          << fmt::format("{:.6e}", g.hand_fold_var) << ','
+          << fmt::format("{:.6e}", g.target) << ','
+          << fmt::format("{:.6e}", g.alpha2) << ','
+          // The LASER 5-95 convergence readout.  Printed at full precision because
+          // "is it 1.0?" is the whole question and a 4-digit render of 1.0003 vs
+          // 1.3 is not the same reading.
+          << fmt::format("{:.6e}", g.sigma_hat_post) << ','
+          << NetworkCarryVceApply::freezeName(g.freeze) << ','
+          << (g.at_ceiling ? 1 : 0) << ',' << (g.at_unit ? 1 : 0) << ','
+          << g.n_steps << ',' << g.n_frozen << ','
+          << g.n_slew_up << ',' << g.n_slew_down << ','
+          << g.n_ceiling_ep << ',' << g.n_unit_ep << ','
+          << fmt::format("{:.6e}", g.alpha2_max) << '\n';
+    }
+    // Durability: nothing flushes this stream on its own (only health_trace does),
+    // and it is the card's graded artifact — an hourly flush bounds what a killed
+    // or WER-zombied run can lose to one content hour.
+    const int hour = static_cast<int>(t.tow / 3600.0);
+    if (hour != hour_state) { o.flush(); hour_state = hour; }
 }
 
 void NetworkRunTraces::writeEstimabilityEpochRow(const GnssTime& t, double tow, int n_shared,
@@ -584,6 +993,11 @@ void NetworkRunTraces::rotateServiceCsvs(const NetworkConfig& nc,
             {&trace,        &trace_path,        kTraceHeader},
             {&soln,         &soln_path,         kSolnHeader},
             {&health_trace, &health_trace_path, kHealthHeader},
+            // FC-1: a fast tick writes a row per DECIMATED-OUT epoch, so at an RT 1 s
+            // cadence this stream grows faster than any other here — it belongs in the
+            // rotation set by construction, not as an afterthought.  maybeRotateCsv is a
+            // strict no-op while the stream is closed (unarmed tier).
+            {&fast_clock_trace, &fast_clock_trace_path, kFastClockHeader},
         };
         for (const auto& r : rotating)
             if (maybeRotateCsv(*r.os, *r.path, r.header,
@@ -826,10 +1240,62 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"trace_zwd\":" << (nc.trace_zwd ? "true" : "false") << ','
                << "\"trace_clock_full\":" << (nc.trace_clock_full ? "true" : "false") << ','
                << "\"trace_station_residuals\":" << (nc.trace_station_residuals ? "true" : "false") << ','
+               // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
+               // needs to tell a screened leg from its control without re-reading the
+               // config — and, because `adm_screen` is solve-affecting, to know that
+               // it is NOT comparing like with like.  Emitted ONLY when armed, so an
+               // unarmed run's manifest bytes are unchanged (the same
+               // structural-byte-identity rule the epoch-status columns follow; the
+               // decomposition golden hashes this file).
+               << ((nc.adm_screen || nc.adm_trace)
+                       ? fmt::format("\"adm_screen\":{},\"adm_trace\":{},"
+                                     "\"adm_bound_m\":{},\"adm_min_sats\":{},"
+                                     "\"adm_heal_ep\":{},\"adm_max_frac\":{},",
+                                     nc.adm_screen ? "true" : "false",
+                                     nc.adm_trace ? "true" : "false",
+                                     nc.adm_bound_m, nc.adm_min_sats,
+                                     nc.adm_heal_ep, nc.adm_max_frac)
+                       : std::string())
+               // INC-4 re-entry vet, gated on its OWN arming rather than on the
+               // block's: an unarmed-vet run's manifest keeps the exact six fields it
+               // had before this increment, so the card's own §9.7 conditional-column
+               // contract still holds one level down.
+               << (nc.adm_revet
+                       ? fmt::format("\"adm_revet\":true,\"adm_revet_gap_ep\":{},"
+                                     "\"adm_revet_ep\":{},"
+                                     "\"adm_revet_bound_scale\":{},"
+                                     "\"adm_revet_census\":{},"
+                                     "\"adm_revet_hold\":{},",
+                                     nc.adm_revet_gap_ep, nc.adm_revet_ep,
+                                     nc.adm_revet_bound_scale,
+                                     nc.adm_revet_census ? "true" : "false",
+                                     nc.adm_revet_hold ? "true" : "false")
+                       : std::string())
+               // docs/SPEC_network_mdb_reliability.md: the arm provenance a §6 grader
+               // needs to tell a reliability leg from its control without re-reading
+               // the config.  Emitted ONLY when armed, so an unarmed run's manifest
+               // bytes are unchanged (the adm_screen precedent; the decomposition
+               // golden hashes this file).
+               << (nc.mdb
+                       ? fmt::format("\"mdb\":true,\"mdb_event_m\":{},"
+                                     "\"mdb_event_holdoff_ep\":{},",
+                                     nc.mdb_event_m, nc.mdb_event_holdoff_ep)
+                       : std::string())
                // RTB-6/P1: service-observability knobs (health heartbeat + trace rotation).
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
                << "\"trace_rotate_keep\":" << nc.trace_rotate_keep << ','
+               // FC-1: split-cadence fast clock.  The manifest is how a grader tells a
+               // SPLIT arm from a full-rate REF arm without re-reading the config.
+               << "\"fast_clock_enable\":" << (nc.fast_clock.enable ? "true" : "false") << ','
+               << "\"fast_clock_shadow\":" << (nc.fast_clock.shadow ? "true" : "false") << ','
+               << "\"fast_clock_emit\":" << (nc.fast_clock.emit ? "true" : "false") << ','
+               << "\"fast_clock_min_stations_per_sat\":" << nc.fast_clock.min_stations_per_sat << ','
+               << "\"fast_clock_min_sats_per_station\":" << nc.fast_clock.min_sats_per_station << ','
+               << fmt::format("\"fast_clock_screen_k_sigma\":{},", nc.fast_clock.screen_k_sigma)
+               << "\"fast_clock_allow_single_band\":" << (nc.fast_clock.allow_single_band ? "true" : "false") << ','
+               << fmt::format("\"fast_clock_emit_max_gap_s\":{},", nc.fast_clock.emit_max_gap_s)
+               << "\"fast_clock_trace\":" << (nc.fast_clock.trace ? "true" : "false") << ','
                // RTB-7: startup quality ramp + state snapshot / warm resume.
                << fmt::format("\"warmup_ura_floor_m\":{},", nc.warmup_ura_floor_m)
                << "\"warmup_epochs\":" << nc.warmup_epochs << ','
@@ -868,6 +1334,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"phase_leveling_var_floor_m2\":{},", pl_var_floor)
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
+               // M2 (LS-VCE) monitor + v2 apply.  The apply knobs are in the manifest
+               // because they are SOLVE-AFFECTING and fingerprinted: an archived logs/
+               // folder has to be able to say which α² regime produced its products.
+               << "\"carry_vce\":" << (config_.networkCarryVce() ? "true" : "false") << ','
+               << "\"carry_vce_apply\":" << (config_.networkCarryVceApply() ? "true" : "false") << ','
+               << "\"carry_vce_apply_families\":\"" << config_.networkCarryVceApplyFamilies() << "\","
+               << fmt::format("\"carry_vce_apply_slew\":{},", config_.networkCarryVceApplySlew())
+               << fmt::format("\"carry_vce_apply_max\":{},", config_.networkCarryVceApplyMax())
+               << "\"carry_vce_apply_min_rows\":" << config_.networkCarryVceApplyMinRows() << ','
                << "\"carry_zwd\":" << (zwd_on ? "true" : "false") << ','
                << fmt::format("\"zwd_carry_q\":{},", zwd_q)
                << "\"raim\":" << (raim_on ? "true" : "false") << ','
@@ -902,6 +1377,10 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"emit_clock_disc\":" << (emit_clock_disc ? "true" : "false") << ','
                << "\"sticky_pivot\":" << (sticky_pivot ? "true" : "false") << ','
                << "\"carry_invariant\":" << (config_.networkCarryInvariant() ? "true" : "false") << ','
+               << "\"carry_invariant_pd_safe\":"
+               << (config_.networkCarryInvariantPdSafe() ? "true" : "false") << ','
+               << "\"carry_aware_covariance\":"
+               << (config_.networkCarryAwareCovariance() ? "true" : "false") << ','
                << fmt::format("\"carry_invariant_qz\":{},", config_.networkCarryInvariantQz())
                << "\"carry_invariant_emit_rebase\":"
                << (config_.networkCarryInvariantEmitRebase() ? "true" : "false") << ','
@@ -940,7 +1419,26 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"start_offset_hours\":{},", config_.networkStartOffsetHours())
                << fmt::format("\"process_noise_sat_clock\":{},", q_clock)
                << fmt::format("\"process_noise_sat_phase_bias\":{},", q_pb)
-               << fmt::format("\"process_noise_sat_code_bias\":{}", q_cb)
+               << fmt::format("\"process_noise_sat_code_bias\":{},", q_cb)
+               << "\"process_noise\":{";
+            // L15: the full scoped table (network.process_noise), one object per
+            // parameter class, with the RESOLVED rate and the precedence rung that
+            // supplied it.  The three flat fields above are kept verbatim so the
+            // existing manifest readers (scripts/analyze_net_sh.py, pyviz) keep
+            // parsing; this object is the auditable record.  Provenance is the
+            // point: a class reading "default" when the operator believed they had
+            // set it is exactly the inert-wiring failure that run-end telemetry
+            // exists to catch — and it is invisible from the rate alone, because a
+            // typo'd override and a documented default look identical in the value.
+            for (std::size_t i = 0; i < kNetworkQClassCount; ++i) {
+                const NetworkQDesc& d = kNetworkQClassTable[i];
+                const auto c = static_cast<NetworkQClass>(i);
+                mf << fmt::format(
+                    "{}\"{}\":{{\"q\":{},\"source\":\"{}\",\"units\":\"{}\"}}",
+                    i ? "," : "", d.name, nc.process_noise.get(c),
+                    NetworkProcessNoise::sourceLabel(nc.process_noise.source(c)), d.units);
+            }
+            mf << "}"
                << "}}\n";
             mf.close();
         } else {
@@ -1071,11 +1569,34 @@ void NetworkRunTraces::closeAll() {
     if (raim_attrib_trace.is_open()) raim_attrib_trace.close();
     if (epoch_status_trace.is_open()) epoch_status_trace.close();
     if (health_trace.is_open()) health_trace.close();
+    // FC-1: closed explicitly (not left to the destructor) because it ROTATES — rotation
+    // reads tellp() on a live handle, so the stream's lifetime is already coupled to the
+    // rotation set, and an unflushed tail here is the tick tier's only evidence.
+    if (fast_clock_trace.is_open()) fast_clock_trace.close();
     if (events_trace.is_open()) events_trace.close();
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
     if (carry_vce_trace.is_open()) carry_vce_trace.close();
+    if (carry_vce_apply_trace.is_open()) carry_vce_apply_trace.close();
+    if (block_baarda_trace.is_open()) block_baarda_trace.close();
+    // Same rationale as the ladder above, and one more: this file is the ONLY
+    // place the per-station MDB table's inputs exist, so an unflushed tail costs
+    // exactly the deliverable the card was armed for.
+    if (congruence_trace.is_open()) congruence_trace.close();
     if (estimability_trace.is_open()) estimability_trace.close();   // Card DG5
+    // The two MW/WL dumps are NEW members, not entries the INC-4 relocation moved off
+    // the destructor, so the "do not widen" rule above does not cover them.  Closed
+    // here so their tail is flushed at teardown rather than at scope exit — these are
+    // the graded artifacts of a D5/lane arm, and a crash after teardown should not
+    // cost the last rows.
+    if (d5_flags_trace.is_open()) d5_flags_trace.close();
+    if (wl_lane_trace.is_open()) wl_lane_trace.close();
+    // Same rationale as the two dumps above: a NEW member, and the MDB
+    // distribution is the graded artifact of a reliability arm.
+    if (mdb_trace.is_open()) mdb_trace.close();
+    // Same rationale: a NEW member, and the contingency is the graded artifact
+    // of a datum-graph arm.
+    if (datum_graph_trace.is_open()) datum_graph_trace.close();
 }
 
 } // namespace GnssProcessor

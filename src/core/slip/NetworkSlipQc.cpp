@@ -308,7 +308,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                            bool trace_flag_rates, FlagRate& fr_if_slip,
                            const SyncedEpoch& se, NetworkRunTraces& traces,
-                           const std::shared_ptr<spdlog::logger>& log) {
+                           const std::shared_ptr<spdlog::logger>& log,
+                           std::set<std::string>* refsat_mark_sats) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -492,6 +493,14 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 emitEvent("T1_if_slip", "refsat_reset", sat, stations[i].name,
                           std::nullopt, std::nullopt,
                           carry_warm ? "refloat" : "diagnostic", sig1 + ";" + sig2);
+                // Edge-1 piece 2 (network.mark_refsat_reset_disc; nullptr ⇒ OFF ⇒
+                // byte-identical).  Queue the satellite for a per-sat discontinuity
+                // mark at its next actual emit.  Gated on carry_warm for the same
+                // reason the event's action field is: while the carry is cold the
+                // detection is DIAGNOSTIC — no refloat happened, so there is no
+                // datum re-reference for a consumer to react to, and marking one
+                // would be a fabricated event.
+                if (refsat_mark_sats && carry_warm) refsat_mark_sats->insert(sat);
                 ++n_if_arcs;
                 if (n_if_arcs <= 12)
                     if_detail += fmt::format("{}{}/{} (refsat)", if_detail.empty() ? "" : ", ",

@@ -1,5 +1,6 @@
 #include "rinex/RinexParser.hpp"
 #include "products/ProductParser.hpp"
+#include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"
 #include <fstream>
 #include <sstream>
@@ -241,6 +242,7 @@ namespace GnssProcessor {
         try {
             observations_.clear();
             obs_layouts_.clear();   // rebuilt per-system from this file's header
+            zero_sentinels_skipped_ = 0;
             header_ = RinexHeader(); // Reset header
             time_of_first_obs_ = GnssTime{ 0, 0.0 };
             glonass_freq_slots_.clear();
@@ -672,6 +674,18 @@ namespace GnssProcessor {
                                 }
                                 try {
                                     double value = std::stod(value_str);
+                                    // RINEX 3 zero-sentinel guard (gated;
+                                    // docs/SPEC_rinex_zero_sentinel.md): the standard
+                                    // writes missing observations "as 0.0 or blanks",
+                                    // so a written zero is data-not-available, not a
+                                    // measurement.  The 2.x branch below has always
+                                    // skipped these; the 3.x path ingested them (a
+                                    // 0-cycle phase = a ~2e7 m pseudo-observation when
+                                    // the cell sits above the elevation mask).
+                                    if (value == 0.0 && config_.rinexSkipZeroValues()) {
+                                        ++zero_sentinels_skipped_;
+                                        continue;
+                                    }
                                     /*
                                     if (system == System::GLONASS && glonass_freq_slots_.count(sat_id)) {
                                         value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
@@ -1009,6 +1023,12 @@ namespace GnssProcessor {
                 }
             }
             file.close();
+            if (zero_sentinels_skipped_ > 0) {
+                log_manager_.getLogger("rinex_parser")->info(
+                    "RINEX 3 zero-sentinel guard: skipped {} written-0.0 observation "
+                    "value(s) in {} (missing-observation sentinels, RINEX 3 convention)",
+                    zero_sentinels_skipped_, rinex_path.string());
+            }
             log_manager_.getLogger("rinex_parser")->info("Parsed RINEX file: {}, {} observations, version: {}, time_system: {}, "
                 "marker_name: {}, marker_number: {}, antenna_type: {}, antenna_hen: ({:.3f}, {:.3f}, {:.3f}), "
                 "azimuth: {:.3f} deg, elevation: {:.3f} deg, mode: {}",
@@ -1048,6 +1068,13 @@ namespace GnssProcessor {
      * @return true if the header interval (if present) and all epoch intervals are
      *         within allowed ranges; false if any invalid interval is detected.
      */
+    Eigen::Vector3d RinexParser::getArpPositionXyz() const {
+        // Marker -> ARP through the header eccentricity.  The conversion itself
+        // lives in Coordinates (one owner of the H/E/N convention); this accessor
+        // only pairs the two header fields that belong together.
+        return Coordinates::markerToArp(getApproxPositionXyz(), getAntennaDeltaHen());
+    }
+
     bool RinexParser::validateMeasurementRate() const {
         if (observations_.empty()) return true;
 

@@ -53,6 +53,16 @@ struct TrajectoryConfig {
     double clock_bias0_s{ 1.0e-4 };
     double clock_drift_sps{ 0.0 };
 
+    /// Seconds of EXACT station-keeping at the start of the arc before any motion
+    /// begins (0 = disabled, the historical behaviour).  During the hold the
+    /// along-track distance stays at zero, so every epoch in the window resolves
+    /// to the identical start ECEF -- a genuine static segment a student can solve
+    /// as a fixed point.  The speed ramp-up (and, in landfall mode, the path-length
+    /// normalisation) start AFTER the hold, so the vessel still reaches the
+    /// destination exactly at the final epoch; it simply has less of the arc in
+    /// which to do it.  Applies to both the landfall and the analytic-weave model.
+    double static_prefix_s{ 0.0 };
+
     // --- Optional "landfall" mode ------------------------------------------
     // When BOTH dest_* are finite, the vessel drifts from (lat0,lon0) to the
     // destination over the arc and *decelerates to a stop at grounding* (a SAR

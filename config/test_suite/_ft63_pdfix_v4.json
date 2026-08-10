@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "RUN QUEUE P1 (docs/RUNQUEUE_pdfix_reask.md) - D5 policy matrix on the WORKING fold.",
+    "",
+    "Control is runs/pdfix_on (D5 v2 as-is): 18559 flags, 23675 births, 20330 refloats,",
+    "sigma0-hat 4.05, mature steps 1.015/0.883/0.509 cyc/ep, SF k=1 0.83 cyc,",
+    "total_IF hr2 8.812 / 22.14 / clk_std 5.00.",
+    "ONE variable vs that control; everything else is _ft63_pdfix_on.json verbatim.",
+    "",
+    "ARM v4 (OPTIONAL middle ground) - re-tap IN-EPOCH but do NOT also refloat the arc next",
+    "epoch, and only for chords the raw observables measured as CONTINUOUS.  Between the v2",
+    "control (reset + refloat) and v3 (neither).",
+    "",
+    "Run this only if v3 degrades total_IF/clock QC and v5b does not go far enough - it is the",
+    "hypothesis that the HARM in the v2 loop is the next-epoch REFLOAT (which throws the DD",
+    "away entirely) rather than the in-epoch reset.  GATE-10b measured the refloat as the part",
+    "that completes a REAL slip reset, so suppressing it is not free."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_on.json"
+  ],
+  "network": {
+    "carry_invariant_innov_retap_only": true,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_v4/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_v4/state_snapshot.bin"
+  }
+}

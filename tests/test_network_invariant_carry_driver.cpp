@@ -405,6 +405,115 @@ TEST(NetworkInvariantCarryDriverTest, ResumeBlobV2SeedsSigma0AndV1IsLegacy) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// RTB-7(d) RE-1 — the σ̂₀ SEED-REASON defect.  Same shape as the σ̂₀ CLAMP VISIBILITY
+// gate one layer up (SPEC_pd_safe_dd_fold.md §11): `resumeSigma0Seeded()` is a bare
+// bool, and the run-end line ASSERTED a cause for its false — "(v1 blob / calibration
+// off)" — printed on the not-seeded branch unconditionally.  On a COLD run with
+// calibration ARMED both clauses are false and the line printed them anyway
+// (`runs/pdfix_qz0_deg15/run.log`, whose config line says CALIBRATION ON).
+//
+// FOUR distinct conditions suppress the seed and they call for four different actions.
+// The readout must name the one that actually held, and must stay a pure refactor of
+// the bool it explains — never a second opinion about whether the seed was taken.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) {
+    using Seed = NetworkInvariantCarryDriver::ResumeSeedState;
+    NetworkInvariantCarryDriver::Config cfg_on;
+    cfg_on.innov_gate = true;
+    cfg_on.innov_calibrate = true;            // allocates the σ̂₀² accumulator
+    NetworkInvariantCarryDriver::Config cfg_off = cfg_on;
+    cfg_off.innov_calibrate = false;          // no accumulator exists at all
+
+    Eigen::VectorXd z; Eigen::MatrixXd Pz;
+    NetworkInvariantCarryDriver src(cfg_on);
+    seedSimple(src, 0, z, Pz);
+    std::ostringstream os; src.serializeCarry(os);
+    const std::string no_s = os.str();        // v2 header, no S line (accumulator empty)
+    ASSERT_EQ(no_s.find("\nS,"), std::string::npos) << "fixture must carry no S line";
+
+    auto withS = [&](const std::string& s2, const std::string& rows) {
+        std::string blob = no_s;
+        blob.insert(blob.find('\n') + 1, "S," + s2 + "," + rows + "\n");
+        return blob;
+    };
+    auto restoreInto = [](NetworkInvariantCarryDriver& d, const std::string& blob) {
+        std::istringstream is(blob); std::string err;
+        EXPECT_TRUE(d.restoreCarry(is, &err)) << err;
+    };
+    // The whole point of the accessor: it EXPLAINS the bool, it does not re-decide it.
+    auto consistent = [](const NetworkInvariantCarryDriver& d) {
+        const auto st = d.resumeSigma0Status();
+        EXPECT_EQ(st.state == Seed::Seeded, d.resumeSigma0Seeded())
+            << "the state must be a pure refactor of resumeSigma0Seeded(), not a "
+               "second opinion";
+        EXPECT_DOUBLE_EQ(st.sigma0, d.resumeSigma0Value());
+    };
+
+    // --- (a) THE FIELD CASE: cold run, calibration ARMED.  The pre-fix text claimed
+    //         "v1 blob / calibration off" here — BOTH clauses false. ---
+    {
+        NetworkInvariantCarryDriver d(cfg_on);
+        const auto st = d.resumeSigma0Status();
+        EXPECT_FALSE(d.resumeCarryRestored());
+        EXPECT_EQ(st.state, Seed::NotRestored)
+            << "a cold run must report COLD — not a blob-version claim and not a config "
+               "claim, neither of which was checked";
+        EXPECT_STREQ(NetworkInvariantCarryDriver::resumeSeedStateName(st.state), "cold");
+        consistent(d);
+    }
+    // --- (b) a blob that DOES carry a seed, restored by a calibration-OFF run: nothing
+    //         consulted it, and the gate is v1 BY CONFIG — not pending a warm-up count. ---
+    {
+        NetworkInvariantCarryDriver d(cfg_off);
+        restoreInto(d, withS("2.25", "512"));
+        const auto st = d.resumeSigma0Status();
+        EXPECT_EQ(st.state, Seed::CalibrationOff);
+        EXPECT_TRUE(d.resumeCarryRestored());
+        EXPECT_DOUBLE_EQ(st.blob_sigma0_sq, 2.25)
+            << "the offer the run ignored must stay reportable — that IS the diagnosis";
+        consistent(d);
+    }
+    // --- (c) the genuine legacy case the old text described: restored, no S line. ---
+    {
+        NetworkInvariantCarryDriver d(cfg_on);
+        restoreInto(d, no_s);
+        const auto st = d.resumeSigma0Status();
+        EXPECT_EQ(st.state, Seed::NoSeedLine);
+        EXPECT_DOUBLE_EQ(st.blob_sigma0_sq, 0.0);
+        consistent(d);
+    }
+    // --- (d) an S line that PARSES but fails the >0 seed guard.  A writer-side defect,
+    //         and the case the legacy wording would have mis-read as an old blob. ---
+    for (const auto& bad : {withS("0", "512"), withS("2.25", "0")}) {
+        NetworkInvariantCarryDriver d(cfg_on);
+        restoreInto(d, bad);
+        const auto st = d.resumeSigma0Status();
+        EXPECT_EQ(st.state, Seed::Rejected)
+            << "a rejected seed is not a legacy blob — the writing run serialized a "
+               "degenerate accumulator";
+        consistent(d);
+    }
+    // --- (e) the healthy path, unchanged. ---
+    {
+        NetworkInvariantCarryDriver d(cfg_on);
+        restoreInto(d, withS("2.25", "512"));
+        const auto st = d.resumeSigma0Status();
+        EXPECT_EQ(st.state, Seed::Seeded);
+        EXPECT_NEAR(st.sigma0, std::sqrt(2.25), 1e-12);
+        EXPECT_DOUBLE_EQ(st.blob_rows, 512.0);
+        EXPECT_STREQ(NetworkInvariantCarryDriver::resumeSeedStateName(st.state), "seeded");
+        consistent(d);
+    }
+    // --- every state has a distinct tag (a log the reader cannot grep by state is the
+    //     defect again, one layer down). ---
+    std::set<std::string> tags;
+    for (Seed s : {Seed::NotRestored, Seed::CalibrationOff, Seed::NoSeedLine,
+                   Seed::Rejected, Seed::Seeded})
+        tags.insert(NetworkInvariantCarryDriver::resumeSeedStateName(s));
+    EXPECT_EQ(tags.size(), 5u) << "every ResumeSeedState needs its own greppable tag";
+}
+
 TEST(NetworkInvariantCarryDriverTest, RestoreCarryResetsPriorSideState) {
     // RE-4: restoreCarry is a general install API — it must not inherit stale
     // per-epoch side state (block layout / counters) from earlier driver work.
@@ -426,6 +535,10 @@ TEST(NetworkInvariantCarryDriverTest, RestoreCarryResetsPriorSideState) {
     ASSERT_TRUE(d.restoreCarry(is, &err)) << err;
     EXPECT_EQ(d.numBlocks(), 0u)        << "stale block layout survived restoreCarry";
     EXPECT_EQ(d.counters().epochs, 0)   << "stale counters survived restoreCarry";
+    EXPECT_EQ(d.counters().chords_born, 0)
+        << "restoreCarry is the ONE place the run tallies are dropped — installing a "
+           "FOREIGN carry starts a fresh instrument.  Plain reset() must PRESERVE them "
+           "(MidRunResetPreservesRunCumulativeCounters); this is the contrast.";
 }
 
 TEST(NetworkInvariantCarryDriverTest, ValidateCarryBindingRejectsUnboundVertices) {
@@ -1341,6 +1454,208 @@ TEST(NetworkInvariantCarryDriverTest, MidSlipCaughtByInnovationGateVsControl) {
 }
 
 // ---------------------------------------------------------------------------
+// GATE 10b (D5 v4, network.carry_invariant_innov_retap_only) — WHAT THE FUNNEL REFLOAT
+// COSTS, AND WHAT IT BUYS.  This test exists to keep both halves on the record, because
+// the churn investigation (2026-08-02, `runs/ft63_24h_conv`) got the second half wrong.
+//
+// GATE 8 pins the topology: a slip on a CHORD arc refloats exactly ONE chord, its own
+// (`slip_kills` delta == 1).  So when the D5 gate flags a chord and the caller feeds that
+// arc into the next epoch's slipped set, the only DD the exclusion can kill is the one
+// installPosterior just reset.  Read as "therefore it protects nothing", that motivated
+// removing the feed-back outright — 513 482 of 525 009 "slip refloats" and a mean chord
+// lifetime of 4.3 epochs are that loop.
+//
+// The premise is FALSE for a genuine slip, and this test measures by how much.  Two arms,
+// IDENTICAL noise and gate, differing only in whether the flags are fed back (arm A =
+// today's ApplicationNetwork plumbing, arm B = feed-back suppressed):
+//   (1) arm A re-converges to the post-slip integer; arm B does NOT — the in-epoch reset
+//       is a partial move and the re-established stiff carry locks the remainder in;
+//   (2) arm B refloats nothing (slip_kills stays 0) — that IS the churn the knob removes;
+//   (3) arm B's carried variance ends tighter — the accumulated carry survives.
+// (2) and (3) are the win, (1) is the price, and it is only acceptable to pay it where
+// there is no jump to complete.  Hence the shipped knob suppresses the kill ONLY on arcs
+// the raw observables MEASURED as continuous; stepped and unmeasurable arcs refloat as
+// before (standing invariant #1).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, D5FunnelRefloatCompletesResetAndCostsTheCarry) {
+    const int R = 4, S = 4, WARM = 8;
+    Net nA = makeNet(53, R, S);
+    const int p = 0, q = 0;
+    const ArcKey slipArc(rxV(2), satV(3));   // a chord under star(0,0)
+
+    NetworkInvariantCarryDriver::Config gcfg; gcfg.innov_gate = true; gcfg.innov_k = 4.0;
+    NetworkInvariantCarryDriver drvFun(gcfg);   // arm A: flags fed into next epoch's slip set
+    NetworkInvariantCarryDriver drvRto(gcfg);   // arm B: flags NOT fed (retap_only)
+
+    std::mt19937 gen(17);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+    // Both arms see the SAME network object and the SAME noise stream at every epoch, so
+    // the only difference between them is the funnel feed.
+    std::vector<std::vector<std::vector<double>>> warmNoise;
+    for (int e = 0; e < WARM; ++e) warmNoise.push_back(noiseEpoch());
+    for (int e = 0; e < WARM; ++e) {
+        driveEpoch(drvFun, nA, p, q, &warmNoise[e], 1.0);
+        driveEpoch(drvRto, nA, p, q, &warmNoise[e], 1.0);
+    }
+    const double trueDD_old = double(nA.z[2][3] - nA.z[2][0] - nA.z[0][3] + nA.z[0][0]);
+
+    // The UNSIGNALED integer jump the coarse layer missed — the gate's own population.
+    nA.z[2][3] += 12;
+    const double trueDD_new = trueDD_old + 12.0;
+    const auto jumpNoise = noiseEpoch();
+    driveEpoch(drvFun, nA, p, q, &jumpNoise, 1.0, /*slipped=*/nullptr);
+    driveEpoch(drvRto, nA, p, q, &jumpNoise, 1.0, /*slipped=*/nullptr);
+    ASSERT_EQ(drvFun.counters().innov_flags, 1) << "both arms must flag the same single chord";
+    ASSERT_EQ(drvRto.counters().innov_flags, 1);
+    const long long skFun0 = drvFun.counters().slip_kills;
+    const long long skRto0 = drvRto.counters().slip_kills;
+
+    // Arm A feeds each epoch's flags forward (the C3c membership exclusion); arm B does not.
+    std::set<std::pair<int, int>> feed = innovSlips(drvFun);
+    double ddFun = 0.0, ddRto = 0.0;
+    for (int e = 0; e < 7; ++e) {
+        auto ns = noiseEpoch();
+        ddFun = estimableDD(driveEpoch(drvFun, nA, p, q, &ns, 1.0, &feed), 2, 3, 0, 0);
+        feed  = innovSlips(drvFun);
+        ddRto = estimableDD(driveEpoch(drvRto, nA, p, q, &ns, 1.0, /*slipped=*/nullptr), 2, 3, 0, 0);
+    }
+
+    // (1) MEASURED 2026-08-02, and it FALSIFIES the "the funnel entry protects nothing"
+    //     premise for a GENUINE slip: the in-epoch reset is a PARTIAL move (v is the
+    //     post-fit innovation, reduced from the true jump by the fold's border absorption
+    //     −GᵀΣG), and with the stiff carry re-established at σ̂₀²·Cov(v)_ii the residual does
+    //     NOT wash out — 0.48 cyc after 7 epochs here, versus 0.006 for the arm that
+    //     refloats.  Topologically the kill does hit exactly one chord, its own; but that
+    //     chord's refloat is what COMPLETES the reset.  This is why the production knob is
+    //     scoped to CORROBORATED-FLAT arcs only (no jump to complete) and why a stepped or
+    //     unmeasurable arc still refloats — standing invariant #1 is not negotiable and this
+    //     number is what it costs.
+    EXPECT_NEAR(ddFun, trueDD_new, 0.05)
+        << "the funnel arm re-converges to the post-slip integer";
+    EXPECT_GT(std::abs(ddRto - trueDD_new), std::abs(ddFun - trueDD_new) + 0.1)
+        << "REGRESSION GUARD on the invariant-#1 cost: suppressing the refloat after a REAL "
+           "slip must leave a visible residual.  If this ever passes silently, the in-epoch "
+           "reset became sufficient and the flat-scoping below can be widened — re-measure "
+           "before doing so.";
+    // (2) ...and arm B never refloated, while arm A did.  This delta IS the removed churn.
+    EXPECT_GE(drvFun.counters().slip_kills - skFun0, 1)
+        << "the funnel arm must refloat the chord the gate already reset";
+    EXPECT_EQ(drvRto.counters().slip_kills - skRto0, 0)
+        << "suppressing the feed-back must refloat NOTHING — the flag's own arc is the only "
+           "cycle it could kill (GATE 8's cycle-support-1 property)";
+    // (3) Arm B kept accumulating on the reset value; arm A restarted from nothing.
+    double zF, vF, zR, vR;
+    ASSERT_TRUE(drvFun.carriedDdForTest(0, slipArc, zF, vF));
+    ASSERT_TRUE(drvRto.carriedDdForTest(0, slipArc, zR, vR));
+    EXPECT_LT(vR, vF)
+        << "the un-refloated chord must end TIGHTER — that variance is the chord lifetime the "
+           "limit cycle was destroying";
+}
+
+// ---------------------------------------------------------------------------
+// GATE 10c (D5 v5, network.carry_invariant_innov_carried_only) — the gate must not test
+// a chord it has no prior for.  THIS IS THE CHURN'S ENGINE, not a tidiness fix.
+//
+// The test statistic is |v_i| / sqrt(Cov(v)_ii), and Cov(v) is the H0 covariance of the
+// innovation ABOUT THE CARRIED PRIOR.  A chord born this epoch has no carried prior — its
+// prior is the diffuse Config::fresh_prior_var — so the ratio is not a hypothesis test,
+// the "reset" it triggers is a no-op (a diffuse chord's posterior already IS the data-only
+// tap-off), and the flag's one lasting consequence is the funnel entry that re-borns the
+// chord next epoch, where it flags again.  Measured 2026-08-02 on `runs/churn_base`
+// (63 sta, 3 h, DOY-129): 32 062 of 33 628 flags — 95.3 % — sit on born chords at exactly
+// sqrt(var_v) = 1000.000 m (= sqrt(1e6), the diffuse prior) with median |v| 19.2 km, and
+// 27 chords are born-flagged on over half of all flagged epochs (URUM00CHN/G22 at duty
+// 0.99).  A chord re-born every epoch has by construction never accumulated anything.
+//
+// The first epoch of any run is entirely born chords, which makes it the cleanest possible
+// probe: gate OFF-by-birth must flag NOTHING there, while the unrestricted gate flags on
+// nothing but the correction frame's distance from x_lin.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, InnovationGateSkipsBornChordsUnderCarriedOnly) {
+    const int R = 4, S = 4;
+    // A LARGE true ambiguity set: in the correction frame a fresh chord's innovation is
+    // its distance from x_lin, and the fixture's x_lin is 0.  This is the field shape —
+    // a cold-start ambiguity is tens of km from the linearization point.
+    Net n = makeNet(71, R, S);
+    for (int r = 0; r < R; ++r)
+        for (int s = 0; s < S; ++s) n.z[r][s] += 500 * (r + 1) * (s + 2);
+    const int p = 0, q = 0;
+
+    NetworkInvariantCarryDriver::Config gOn;  gOn.innov_gate = true; gOn.innov_k = 4.0;
+    NetworkInvariantCarryDriver::Config gCo = gOn; gCo.innov_carried_only = true;
+    NetworkInvariantCarryDriver drvAll(gOn), drvCar(gCo);
+
+    std::mt19937 gen(23);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+
+    // EPOCH 1 — every chord is born.  This is the whole defect in one epoch.
+    const auto e1 = noiseEpoch();
+    driveEpoch(drvAll, n, p, q, &e1, 1.0);
+    driveEpoch(drvCar, n, p, q, &e1, 1.0);
+    EXPECT_GT(drvAll.counters().innov_flags, 0)
+        << "the unrestricted gate must flag born chords — if it does not, the fixture no "
+           "longer reproduces the field shape and the rest of this test proves nothing";
+    EXPECT_EQ(drvCar.counters().innov_flags, 0)
+        << "carried-only must flag NOTHING in an all-born epoch: there is no carried prior, "
+           "so there is no H0 and no test";
+    EXPECT_GT(drvCar.counters().innov_born_skipped, 0)
+        << "and the skip must be COUNTED (standing invariant #4)";
+    // The skip is counted BEFORE the threshold test, so it covers the whole born
+    // population — including the rows that would have passed anyway.
+    EXPECT_GE(drvCar.counters().innov_born_skipped, drvAll.counters().innov_flags);
+
+    // ...and the SOLVE is untouched: skipping a born chord's gate cannot change the
+    // epoch's estimates, because the flag's in-epoch action (install ẑ+v at the data-only
+    // variance) is exactly what a diffuse chord's posterior already is.
+    const auto xrAll = driveEpoch(drvAll, n, p, q, &e1, 1.0);
+    const auto xrCar = driveEpoch(drvCar, n, p, q, &e1, 1.0);
+    EXPECT_NEAR(estimableDD(xrAll, 2, 3, 0, 0), estimableDD(xrCar, 2, 3, 0, 0), 1e-6)
+        << "the DD after a born-chord epoch must not depend on whether the gate looked";
+
+    // A CARRIED chord is still gated: warm both arms, then jump one arc unsignaled.
+    for (int e = 0; e < 8; ++e) {
+        const auto ns = noiseEpoch();
+        driveEpoch(drvAll, n, p, q, &ns, 1.0);
+        driveEpoch(drvCar, n, p, q, &ns, 1.0);
+    }
+    const long long carBefore = drvCar.counters().innov_flags;
+    n.z[2][3] += 12;
+    const auto jump = noiseEpoch();
+    driveEpoch(drvCar, n, p, q, &jump, 1.0, /*slipped=*/nullptr);
+    EXPECT_GT(drvCar.counters().innov_flags, carBefore)
+        << "carried-only must NOT blunt the gate on a genuinely carried chord — that is the "
+           "fine-slip response (standing invariant #1) and it is not what this knob touches";
+
+    // Every flag the knob DID let through must have an informative prior.  This is the
+    // regression guard for the defect the v5 field leg exposed: the first implementation
+    // keyed on chord_carried ALONE, which is topological (cycle in A_old, no slip) and
+    // says nothing about information — a chord carried from a diffuse predecessor inherits
+    // a diffuse projected prior and sails through.  80.4 % of that arm's surviving flags
+    // were still at sqrt(Cov(v)) = 1000 m, i.e. still untestable.
+    for (const double s : drvCar.lastInnovFlagTerms().empty()
+                              ? std::vector<double>{}
+                              : [&] {
+                                    std::vector<double> out;
+                                    for (const auto& t : drvCar.lastInnovFlagTerms())
+                                        out.push_back(t.var_v);
+                                    return out;
+                                }())
+        EXPECT_LT(s, 0.5 * gCo.fresh_prior_var)
+            << "a flag survived carried-only with a (near-)diffuse prior — there is no H0 "
+               "to test against it, so this is the born-chord loop wearing a carried label";
+}
+
+// ---------------------------------------------------------------------------
 // GATE 11 — FalseAlarmFloor: no slip, many noisy epochs, k=4 ⇒ (near) zero flags.
 // Validates that Cov(v) is well-calibrated (the standardized innovation is ~N(0,1)
 // under H0): too-small a Cov(v) would storm the carry with spurious refloats.
@@ -1544,6 +1859,97 @@ TEST(NetworkInvariantCarryDriverTest, CalibrationRetainsDetection) {
     bool found = false;
     for (const auto& [g, key] : drv.lastInnovFlags()) if (key == slipArc) found = true;
     EXPECT_TRUE(found) << "the slipped chord must be the one flagged";
+}
+
+// ---------------------------------------------------------------------------
+// GATE 16 — σ̂₀ CLAMP VISIBILITY.  A reported σ̂₀ of 1.00× is produced by FOUR distinct
+// states and only one of them means "calibrated"; the `churn_base2` / `pdfix_off`
+// lineage ran a whole campaign on a v1 gate because the run-end line could not tell
+// them apart (raw σ̂₀² = 0.0099 clamped up to 1 — SPEC_pd_safe_dd_fold.md §10 finding 2).
+//
+// Reproduces the field case: innovations far SMALLER than the formal Cov(v) (the
+// signature of a carry that is not taking data) drive the raw σ̂₀² below 1, the floor
+// clamp binds, σ̂₀ still reads exactly 1.00 — and the STATE must say `floored`, not
+// `active`, with a counter proving how long it lasted.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, Sigma0FloorClampIsVisibleNotSilent) {
+    using Infl = NetworkInvariantCarryDriver::InflationState;
+    const int R = 4, S = 4;
+    const Net n = makeNet(71, R, S);
+
+    // (a) calibration OFF ⇒ Off, σ̂₀ = 1, and the tally says "v1 BY CONFIG".
+    NetworkInvariantCarryDriver::Config c_off; c_off.innov_gate = true; c_off.innov_k = 4.0;
+    NetworkInvariantCarryDriver drvOff(c_off);
+    // (b) calibration ON against innovations FAR below the formal σ ⇒ raw σ̂₀² < 1 ⇒ floored.
+    NetworkInvariantCarryDriver::Config c_lo = c_off;
+    c_lo.innov_calibrate = true; c_lo.innov_calibrate_window = 40.0;
+    NetworkInvariantCarryDriver drvLo(c_lo);
+    // (c) the same knobs against a MISSPECIFIED R (formal Cov(v) optimistic) ⇒ active.
+    NetworkInvariantCarryDriver drvHi(c_lo);
+
+    std::mt19937 gen(4211);
+    std::normal_distribution<double> quiet(0.0, 0.02);  // ≪ formal σ ⇒ raw σ̂₀² ≪ 1
+    std::normal_distribution<double> loud (0.0, 4.0);   // ≫ formal σ ⇒ raw σ̂₀² ≫ 1
+    auto epochOf = [&](std::normal_distribution<double>& d) {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = d(gen);
+        return v;
+    };
+
+    // Warm-up is ~200 rows / 9 chords ≈ 23 epochs; before it BOTH calibrated arms must
+    // report WarmUp — armed, but the gate is still the raw formal test.
+    for (int e = 0; e < 5; ++e) {
+        auto q = epochOf(quiet); driveEpoch(drvLo, n, 0, 0, &q, 1.0);
+        auto l = epochOf(loud);  driveEpoch(drvHi, n, 0, 0, &l, 1.0);
+        auto o = epochOf(quiet); driveEpoch(drvOff, n, 0, 0, &o, 1.0);
+    }
+    EXPECT_EQ(drvLo.innovInflationStatus().state, Infl::WarmUp);
+    EXPECT_EQ(drvLo.innovInflationSigma0(), 1.0) << "warm-up must run the raw formal test";
+
+    for (int e = 0; e < 30; ++e) {
+        auto q = epochOf(quiet); driveEpoch(drvLo, n, 0, 0, &q, 1.0);
+        auto l = epochOf(loud);  driveEpoch(drvHi, n, 0, 0, &l, 1.0);
+        auto o = epochOf(quiet); driveEpoch(drvOff, n, 0, 0, &o, 1.0);
+    }
+
+    // --- (a) OFF: no state churn, and the counters name it as config, not warm-up. ---
+    const auto s_off = drvOff.innovInflationStatus();
+    EXPECT_EQ(s_off.state, Infl::Off);
+    EXPECT_EQ(s_off.sigma0, 1.0);
+    EXPECT_EQ(drvOff.counters().d5_calib_off_epochs, drvOff.counters().d5_calib_epochs);
+    EXPECT_EQ(drvOff.counters().d5_calib_floored_epochs, 0);
+
+    // --- (b) THE FIELD CASE: floored, reporting 1.00×, with the raw value recoverable. ---
+    const auto s_lo = drvLo.innovInflationStatus();
+    EXPECT_EQ(s_lo.state, Infl::Floored)
+        << "innovations below the formal Cov(v) must report FLOORED, not a calibrated 1.00×"
+        << " (raw σ̂₀² = " << s_lo.raw_sigma0_sq << ")";
+    EXPECT_EQ(s_lo.sigma0, 1.0) << "the clamp itself is unchanged — only its visibility";
+    EXPECT_LT(s_lo.raw_sigma0_sq, 1.0) << "the raw estimate is what the clamp hid";
+    EXPECT_GT(drvLo.counters().d5_calib_floored_epochs, 0)
+        << "invariant #4: a clamped run must be COUNTABLE, not merely inspectable";
+    EXPECT_EQ(drvLo.counters().d5_calib_active_epochs, 0);
+    EXPECT_LT(drvLo.counters().d5_calib_raw_min, 1.0);
+
+    // --- (c) genuinely calibrated: active, σ̂₀ > 1, no floor tally. ---
+    const auto s_hi = drvHi.innovInflationStatus();
+    EXPECT_EQ(s_hi.state, Infl::Active);
+    EXPECT_GT(s_hi.sigma0, 1.0);
+    EXPECT_EQ(drvHi.counters().d5_calib_floored_epochs, 0);
+    EXPECT_GT(drvHi.counters().d5_calib_active_epochs, 0);
+
+    // --- the refactor is a no-op on the VALUE at every state (byte-identity of the fix). ---
+    for (const auto* d : {&drvOff, &drvLo, &drvHi})
+        EXPECT_EQ(d->innovInflationSigma0(), d->innovInflationStatus().sigma0);
+
+    // --- and the tallies partition the installs exactly (no state is unreachable). ---
+    for (const auto* d : {&drvOff, &drvLo, &drvHi}) {
+        const auto& c = d->counters();
+        EXPECT_EQ(c.d5_calib_epochs,
+                  c.d5_calib_off_epochs + c.d5_calib_warmup_epochs + c.d5_calib_floored_epochs
+                      + c.d5_calib_capped_epochs + c.d5_calib_active_epochs);
+        EXPECT_GT(c.d5_calib_epochs, 0);
+    }
 }
 
 // ===========================================================================
@@ -2199,6 +2605,114 @@ TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipOffIsInert) {
     driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
         [&](DdBlocks& b) { (void)b; skippable = drv.laneIncrementSkippable(0, 0); });
     EXPECT_FALSE(skippable) << "skip is inert (never fires) when the toggle is off";
+}
+
+// ===========================================================================
+// SPEC_pd_safe_dd_fold.md INC-0 — reset() is a CARRY cold start, NOT an
+// instrument reset.
+//
+// The install seam calls reset() MID-RUN from its exception handler (the catch
+// around installPosterior in NetworkInstallCarry — reachable because the
+// ddPriorPosterior* read-backs throw).  Both readers of these counters are
+// run-scoped: NetworkTeardown's run-end INC-0 line reads the LIVE driver
+// counter, and the seam ASSIGNS the cumulative totals into ctx.carry and then
+// DIFFERENCES them against the previous epoch's snapshot.  Zeroing on reset
+// therefore under-reported the run total AND drove the per-epoch churn deltas
+// negative.  Standing invariant #4: an instrument that loses its own history
+// reads clean while lying.
+// ===========================================================================
+TEST(NetworkInvariantCarryDriverTest, MidRunResetPreservesRunCumulativeCounters) {
+    const int R = 4, S = 4;
+    const Net n = makeNet(4242, R, S);
+    NetworkInvariantCarryDriver drv;
+
+    std::mt19937 gen(9);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+    for (int e = 0; e < 4; ++e) { auto ns = noiseEpoch(); driveEpoch(drv, n, 0, 0, &ns, 1.0); }
+
+    const NetworkInvariantCarryDriver::Counters before = drv.counters();
+    // Non-vacuous precondition: there must be real history available to lose.
+    ASSERT_GT(before.epochs, 0);
+    ASSERT_GT(before.chords_born, 0);
+    ASSERT_GT(before.chords_carried, 0);
+    ASSERT_GT(before.max_z_dim, 0);
+    ASSERT_GT(drv.totalZDim(), 0);
+
+    drv.reset();   // == the install seam's catch: the carry dies mid-run
+
+    // The CARRY half of the contract is unchanged (GATE 5 covers it; re-asserted here
+    // because "counters survive" must not be bought by weakening the cold start).
+    EXPECT_EQ(drv.totalZDim(), 0) << "reset() must still cold-start the carry";
+    EXPECT_EQ(drv.numBlocks(), 0u);
+    EXPECT_EQ(drv.counters().z_dim, 0)
+        << "z_dim is a live dimension, not a tally — it tracks the carry it describes";
+
+    // The INSTRUMENT half — the defect.
+    EXPECT_EQ(drv.counters().epochs, before.epochs)
+        << "the run instrument must SURVIVE a mid-run carry reset (invariant #4)";
+    EXPECT_EQ(drv.counters().chords_born,        before.chords_born);
+    EXPECT_EQ(drv.counters().chords_carried,     before.chords_carried);
+    EXPECT_EQ(drv.counters().slip_kills,         before.slip_kills);
+    EXPECT_EQ(drv.counters().innov_flags,        before.innov_flags);
+    EXPECT_EQ(drv.counters().innov_retaps,       before.innov_retaps);
+    EXPECT_EQ(drv.counters().d5_nonpos_var_rows, before.d5_nonpos_var_rows);
+    EXPECT_EQ(drv.counters().max_z_dim, before.max_z_dim)
+        << "run MAXIMA are history too — a reset must not lower the run's peak";
+
+    // The field symptom itself: the seam differences these totals epoch-over-epoch, so
+    // monotonicity ACROSS the reset — not just survival of the snapshot — is the gate.
+    { auto ns = noiseEpoch(); driveEpoch(drv, n, 0, 0, &ns, 1.0); }
+    EXPECT_GT(drv.counters().chords_born, before.chords_born)
+        << "post-reset births must EXTEND the run total, never restart it (a restart "
+           "makes NetworkInstallCarry's ep_chord_births delta negative)";
+    EXPECT_GE(drv.counters().epochs, before.epochs + 1);
+}
+
+// SPEC_pd_safe_dd_fold.md INC-0 — d5_nonpos_var_rows specifically.  This counter is
+// the D5 gate's blind-spot tally and its ONLY readout is the run-end INC-0 line, so a
+// mid-run reset erased it with no second source.  It had no coverage at all before
+// this gate; drive it the way the field did — an indefinite carried Pᶻ with pd_safe
+// OFF leaves the fold inert (M := 0), so Cov(v) = Minv − GᵀΣG inherits the negative
+// diagonals and every affected row is skipped inside the gate.
+TEST(NetworkInvariantCarryDriverTest, D5NonPosVarRowsSurviveMidRunReset) {
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.innov_gate = true;    // the gate that owns the skip
+    cfg.pd_safe    = false;   // legacy fold: no repair, no rebirth — the inert path
+    NetworkInvariantCarryDriver drv(cfg);
+
+    const int R = 3, S = 3;
+    std::set<int> verts;
+    for (int r = 0; r < R; ++r) verts.insert(rxV(r));
+    for (int s = 0; s < S; ++s) verts.insert(satV(s));
+    std::set<ArcKey> arcs;
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) arcs.emplace(rxV(r), satV(s));
+    std::vector<ArcKey> ch;
+    for (int r = 1; r < R; ++r) for (int s = 1; s < S; ++s) ch.emplace_back(rxV(r), satV(s));
+    const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
+    // One eigenvalue far negative against a B of order 1 — the shape the corrupt field
+    // snapshots actually hold (the DegenerateBlockRebirthsLoudly fixture, pd_safe OFF).
+    Eigen::MatrixXd Pz = Eigen::MatrixXd::Identity(K, K) * 1.0e-2;
+    Pz(0, 0) = -1.0e6;
+    drv.seedCarriedForTest(0, ch, Eigen::VectorXd::Zero(K), Pz, verts, arcs);
+
+    const Net n = makeNet(20260803u, R, S);
+    std::vector<std::vector<double>> noise(R, std::vector<double>(S, 0.0));
+    driveEpoch(drv, n, 0, 0, &noise, 1.0);
+
+    const long long nonpos = drv.counters().d5_nonpos_var_rows;
+    ASSERT_GT(nonpos, 0)
+        << "precondition: the inert fold must actually yield a non-positive Cov(v) row, "
+           "or this gate is asserting 0 == 0 — the exact failure the card exists to end";
+
+    drv.reset();
+    EXPECT_EQ(drv.counters().d5_nonpos_var_rows, nonpos)
+        << "d5_nonpos_var_rows is reported ONLY by the run-end INC-0 line; a mid-run "
+           "carry reset must not erase it (there is no second source)";
 }
 
 }  // namespace GnssProcessor

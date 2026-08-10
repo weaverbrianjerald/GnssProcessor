@@ -7,8 +7,8 @@ whose dimension $n_k$ \emph{varies across epochs}: per-satellite and
 per-(satellite, signal) substates are added when a new sat/signal is
 first observed and pruned (or marked stale) when the satellite drops
 below the elevation mask or its phase track is interrupted by a cycle
-slip without recovery.  All bookkeeping --- key$\to$index maps, free-list
-re-use, and dimensional reshaping of $\stateV$ and $\covM$ --- is
+slip without recovery.  All bookkeeping (key$\to$index maps, free-list
+re-use, and dimensional reshaping of $\stateV$ and $\covM$) is
 encapsulated in \texttt{StateManager}; \texttt{KalmanFilter} consumes
 the state through that interface and never indexes raw memory by
 hard-coded offsets.
@@ -38,9 +38,12 @@ where
 \item $\mathcal{A}_k \subseteq \mathcal{V}_k \times \sigset$ is the set
       of phase-tracked (satellite, signal) pairs,
 \item $\mathcal{D}_k \subseteq \mathcal{V}_k \times \sigset$ is the
-      subset of (satellite, signal) pairs for which the BIA product
-      lacks a satellite OSB and a state-space estimate is therefore
-      created (see \texttt{estimation.estimate\_sat\_biases}).
+      subset of (satellite, signal) pairs carrying a satellite
+      code-bias state: the pairs for which the BIA product lacks a
+      satellite OSB or, under the network producer's satellite-OSB
+      mode, every raw code pair (see
+      \texttt{estimation.estimate\_sat\_biases} and
+      \texttt{network.estimate\_sat\_code\_bias}).
 \end{itemize}
 For brevity the schematic suppresses several conditional refinements
 detailed below: the rate states that accompany velocity (a receiver
@@ -83,7 +86,7 @@ oscillator drift without imposing a stochastic model that may not
 match the receiver's actual oscillator.  Under the BSSD
 (between-satellite single-difference) parameterisation
 (\Cref{sec:bssd}) the receiver clock is unobservable and the state is
-dropped entirely --- as are the inter-system offsets below --- so the
+dropped entirely, as are the inter-system offsets below, so the
 whole receiver-side clock block vanishes in PPP-RTK SD mode.
 
 \paragraph{Inter-system time offsets $\sLight\,\delta t^{(g)}_\rx$.}
@@ -146,7 +149,7 @@ state rather than repairing it: the ambiguity's covariance row and column
 are zeroed and its diagonal reset to $\sigma_m^2$, while the state
 \emph{value} is left unchanged (it is overwritten by the geometry-based
 seed in \texttt{ensureRequiredStates}).  This follows the project's
-reset-not-repair convention --- a slipped ambiguity carries no
+reset-not-repair convention: a slipped ambiguity carries no
 trustworthy correlation to the rest of the state, so the cross-state
 correlations are broken, not preserved.
 
@@ -158,7 +161,18 @@ signal: \texttt{StateInitializer::resolveReceiverBias} keys them per
 (\texttt{"<system>\_IFB<band>"}) plus, in the alternative scheme, a
 single per-system differential code bias (\texttt{"<system>\_DCB"}).
 Like the receiver clock they are receiver-common and so are suppressed
-under BSSD.
+under BSSD.  On the network path these columns have no Kalman time update
+at all, because the producer runs no \texttt{KalmanFilter}
+(\dcref{sec:kf}{the filtering document}), so they are re-estimated
+afresh each epoch unless \texttt{network.carry\_rx\_code\_bias} is armed:
+an opt-in, default-off diagonal random-walk carry
+($\mathrm{var} + q\,\dt$) held in the network run context rather than in
+\texttt{StateManager}, guarded at load by the requirement of a time-linked
+code datum (\texttt{network.code\_datum\_time\_linked}, absent which the
+loader forces the carry off) and at inject time by an innovation gate
+(\texttt{rxCbInjectGate} in \texttt{filter/NetworkRunTypes}) that withholds
+the fold when the carried level and the station's own estimate disagree at
+receiver-reset scale.  It is not yet field-validated.
 
 \paragraph{Per-slot GLONASS inter-frequency bias $B^{(g,b)}_{\rx,k}$.}
 Optional, off by default.  GLONASS FDMA assigns each slot $k\in[-7,+6]$
@@ -175,16 +189,24 @@ constant is absorbed by the GLONASS inter-system time offset.  CDMA
 bands (G3/G4/G6) have a slot-independent frequency and retain the
 ordinary per-band treatment above.  Crucially, unlike the
 receiver-common biases these columns \emph{survive} between-satellite
-single differencing --- two GLONASS satellites on different slots do not
-cancel --- so \texttt{BssdTransform} and \texttt{StateManager}
+single differencing, since two GLONASS satellites on different slots do not
+cancel, so \texttt{BssdTransform} and \texttt{StateManager}
 special-case them (via \texttt{isGlonassPerSlotIfbKey}) to exempt them
 from the receiver-block zeroing; only the inter-slot \emph{differences}
 remain estimable in SD.
 
 \paragraph{Satellite code biases $B^\sat_\sigl$.}
 Per (satellite, signal) pair, but \emph{only when the BIA file does
-not supply an OSB} for that pair --- typically a third-frequency
-signal in a triple-frequency setup.  When present, these states are
+not supply an OSB} for that pair, typically a third-frequency
+signal in a triple-frequency setup.  That fallback rule is the user-path
+and network-V1 behaviour.  Under the network producer's satellite-OSB mode
+(\texttt{network.estimate\_sat\_code\_bias}, also implied and forced on by
+\texttt{network.estimate\_iono\_sh}) the loader instead \emph{promotes} the
+state to every raw code $(\sat,\sigl)$ rather than only the uncovered
+pairs, and suppresses the external \texttt{.BIA} entirely so the network's
+own estimate is the single code-bias source; the datum that makes it
+estimable is derived in \dcref{sec:net}{the network-mode document}.
+When present, these states are
 weakly stochastic (\texttt{sat\_bias\_q} $\sim 10^{-10}$) since the
 underlying physical biases are nearly stationary on the daily
 timescale.
@@ -192,8 +214,15 @@ timescale.
 \paragraph{Satellite phase biases $\bar b^\sat_\sigl$ (network mode).}
 Present only in the network producer
 (\texttt{ProcessingMode::PPP\_RTK\_Network}) and gated by
-\texttt{estimation.estimate\_sat\_phase\_biases} (default off, inert in
-every other mode).  The user side imports the satellite phase bias as a
+\texttt{estimation.estimate\_sat\_phase\_biases}.  The JSON default is off
+and the flag is inert in every other mode, but this is not an experimental
+opt-in: in the one mode where the states exist the network-producer loader
+force-enables it unconditionally (the \emph{forcing estimate\_sat\_clocks
++ estimate\_sat\_phase\_biases} branch in
+\texttt{GnssConfigLoadNetwork}), and the mirror
+\texttt{GnssConfig::applyNetworkConsumerCouplings} turns it back off for the
+closed-loop consumer, which \emph{consumes} these states rather than
+estimating them.  The user side imports the satellite phase bias as a
 known SSR correction (\dcref{sec:ssr}{the SSR-corrections document}) or
 absorbs it into the float
 ambiguity; the network instead carries an \emph{explicit}
@@ -205,8 +234,10 @@ stations in the joint network estimator (\dcref{sec:net}{the network-mode
 document}).  It lives in a
 \emph{distinct} state map from the satellite \emph{code} biases above
 (\texttt{StateManager::sat\_phase\_bias\_indices\_}), keyed
-\texttt{"<sat>|<signal>|PB"}, and carries near-stationary process noise
-(\texttt{sat\_phase\_bias\_q} $\sim 10^{-12}$).
+\texttt{"<sat>|<signal>|PB"}, and is near-stationary between epochs at the
+rate \texttt{sat\_phase\_bias\_q}, which on the network path is applied
+as the inflation of a shared-border \emph{carry prior}, not as a Kalman
+$\Qmat(\dt)$ entry (see the satellite-clock paragraph below).
 
 \paragraph{Receiver phase biases $\delta_{\rx,\sigl}$ (network mode).}
 The receiver-side counterpart of the satellite phase bias, present only in
@@ -220,28 +251,55 @@ so the emitted between-satellite reference stays integer-consistent across
 is per (receiver, system, signal), keyed \texttt{"<system>\_RPB\_<signal>"}
 in its own map (\texttt{StateManager::receiver\_phase\_bias\_indices\_}).
 Structurally it is unlike every other bias block described here: these are
-\emph{local} states (each observed by a single station) that are
-\emph{re-estimated fresh every epoch} --- no process noise, no cross-epoch
-carry.  The receiver-side wander sinks into $\delta_{\rx,\sigl}$ while the
-time-linked integer information stays in the ambiguity carry.
+\emph{local} states, each observed by a single station.  Whether they carry
+across epochs is a knob.  At
+\texttt{network.phase\_datum\_eq34\_rpb\_q\_m2s} $=0$ each
+$\delta_{\rx,\sigl}$ is re-estimated fresh every epoch (the original Card-3
+behaviour); at the non-zero default the producer folds a local time-linking
+prior toward the previous estimate with variance $\mathrm{var} + q\,\dt$,
+which suppresses the per-epoch bounce that an only weakly observable local
+state otherwise injects, anti-correlated, into every individual ambiguity
+float.  That carry lives \emph{outside} \texttt{StateManager}, in the
+network run context (the \texttt{rpb\_carry} map of
+\texttt{app/NetworkRunContext}), read during the parallel block assembly,
+harvested post-solve, and erased for any $(\sat,\sigl)$ whose chain frame
+stepped at that epoch's election (\texttt{filter/NetworkChainDatum}).  It is
+forced off under \texttt{network.carry\_invariant}, where the loader warns
+that the $q$ is inert.  Either way the receiver-side wander sinks into
+$\delta_{\rx,\sigl}$ while the time-linked integer information stays in the
+ambiguity carry.
 
 \paragraph{Satellite clocks $\sLight\,\Delta\delta t^\sat$ (network mode).}
-Also network-producer-only, gated by \texttt{estimation.estimate\_sat\_clocks}
-(default off, inert in every other mode).  The network estimates an
+Also network-producer-only, gated by \texttt{estimation.estimate\_sat\_clocks}.
+Like the phase bias above, it is off by JSON default and inert elsewhere, but
+force-enabled unconditionally by the network-producer loader at the same
+site.  The network estimates an
 \emph{explicit} per-satellite clock correction $\Delta\delta t^\sat$ (in
 metres, relative to the a-priori precise/real-time product clock already
 removed from \texttt{obs.modeled}) so the emitted clocks stay consistent with
-the chosen S-system datum.  It is \emph{per satellite}, not per signal --- one
-state per satellite, with no signal field --- and the satellite \emph{orbit}
+the chosen S-system datum.  It is \emph{per satellite}, not per signal: one
+state per satellite, with no signal field.  The satellite \emph{orbit}
 stays fixed from the product; only the clock is estimated.  It lives in a
 distinct map (\texttt{StateManager::sat\_clock\_indices\_}), keyed
-\texttt{"<sat>|SC"}, with near-white process noise
-(\texttt{sat\_clock\_q} $\sim 10^{-2}$).
+\texttt{"<sat>|SC"}.  Its cross-epoch rate \texttt{sat\_clock\_q} is
+near-white, but on the network path it is \emph{not} a Kalman $\Qmat(\dt)$
+entry: the producer runs no \texttt{KalmanFilter}
+(\dcref{sec:kf}{the filtering document}), and the rate instead inflates the
+shared-border carry prior as $\mathrm{var} + q\,\dt$.  The same holds for
+\texttt{sat\_phase\_bias\_q} and \texttt{sat\_code\_bias\_q}; all three are
+authorable either through their legacy \texttt{filter.process\_noise.*} keys
+or through the network-scoped \texttt{network.process\_noise} class table,
+whose per-class fallbacks equal those legacy defaults.  Between full solves
+the emitted clock may additionally be refreshed by the split-cadence fast
+tier (\texttt{network.fast\_clock}, default off and currently gate-failed);
+that tier estimates a clock \emph{delta} in its own least-squares tick and
+creates no state-vector row, so it does not appear here; see
+\dcref{sec:net}{the network-mode document}.
 
 \paragraph{Inertial augmentation.}
 When a tightly-coupled IMU is active the core state grows by nine
-further entries --- a three-axis attitude error and the accelerometer
-and gyroscope biases --- propagated by the strapdown mechanisation
+further entries (a three-axis attitude error and the accelerometer
+and gyroscope biases) propagated by the strapdown mechanisation
 rather than the random-walk process model.  These are treated in full
 in \dcref{sec:imu}{the inertial-aiding document}.
 
@@ -259,23 +317,23 @@ defined once in \texttt{include/filter/StateKeySchema.hpp}, each with a
 \texttt{make}/\texttt{parse} pair:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item iono key: \texttt{"<sys><prn>"}, e.g.\ \texttt{"G05"} (delimiter-free);
-\item ambiguity key: \texttt{"<sys><prn>\_<signal>"}, e.g.\ \texttt{"G05\_L1C"}
-      --- split on the \emph{first} underscore, so an iono-free combination
+\item ambiguity key: \texttt{"<sys><prn>\_<signal>"}, e.g.\ \texttt{"G05\_L1C"},
+      split on the \emph{first} underscore, so an iono-free combination
       \texttt{"G05\_L1C\_L5Q"} retains its compound signal;
 \item satellite signal-bias key (code): \texttt{"<sys><prn>|<signal>"},
-      e.g.\ \texttt{"G05|C1W"} --- a \emph{pipe} delimiter and a distinct
+      e.g.\ \texttt{"G05|C1W"}, with a \emph{pipe} delimiter and a distinct
       map, \emph{not} the underscore ambiguity namespace;
 \item satellite phase-bias key (network): \texttt{"<sys><prn>|<signal>|PB"},
-      e.g.\ \texttt{"G05|L1C|PB"} --- the trailing \texttt{|PB} keeps it
+      e.g.\ \texttt{"G05|L1C|PB"}, where the trailing \texttt{|PB} keeps it
       disjoint from the code-bias namespace, in its own map
       (\texttt{sat\_phase\_bias\_indices\_});
 \item receiver phase-bias key (network): \texttt{"<system>\_RPB\_<signal>"},
-      e.g.\ \texttt{"Galileo\_RPB\_L5Q"} --- the \texttt{\_RPB\_} infix keeps
+      e.g.\ \texttt{"Galileo\_RPB\_L5Q"}, where the \texttt{\_RPB\_} infix keeps
       it disjoint from the receiver code-bias namespace (which matches on
       \texttt{IFB}/\texttt{DCB}), in its own map
       (\texttt{receiver\_phase\_bias\_indices\_});
 \item satellite clock key (network): \texttt{"<sat>|SC"}, e.g.\
-      \texttt{"G05|SC"} --- per satellite, \emph{not} per signal; the trailing
+      \texttt{"G05|SC"}, per satellite and \emph{not} per signal; the trailing
       \texttt{|SC} discriminator gives the clock its own map
       (\texttt{sat\_clock\_indices\_});
 \item receiver code-bias key: \texttt{"<system>\_IFB<band>"} or
@@ -291,6 +349,18 @@ This single source of truth eliminates the off-by-one errors that
 plague hand-managed dynamic state vectors and makes the BSSD/DD
 S-transforms (\Cref{sec:diff}) implementable as block operations on the
 relevant key sets.
+
+Two further categories in the schema header are deliberately absent from
+the list above, because they are not rows of $\stateV$: the BSSD pivot
+absolute-seed lookup key (\texttt{"<cons>|<band>"}), and the shared
+spherical-harmonic VTEC coefficient keys (\texttt{"SH|<n>|<m>|<C|S>"},
+with the second shell carried on the distinct \texttt{SH2} prefix), which
+name columns of the network estimator's \emph{shared border} rather than
+\texttt{StateManager} states.  Both nonetheless follow the same
+\texttt{make}/\texttt{parse} discipline, and both appear in
+\dcref{tab:gen-state-keys}{the generated key-format table of the appendix},
+machine-derived from the schema header, and therefore the completeness
+reference against which the list above should be checked.
 
 \paragraph{Ambiguity basis.}
 By default the ambiguity block carries one per-band float ambiguity per

@@ -1,0 +1,55 @@
+{
+ "_comment": [
+  "AGU consumer-replay arm 'obe4' against products.txt.",
+  "Producer does NOT run; runNetwork short-circuits to the replay",
+  "driver, so the 2-station roster is load-validation ballast only.",
+  "Consumer: OBE400DEU; truth is ITRF2020 from the SSC, which the",
+  "engine consumes nowhere, so grading stays solver-independent."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu63_pbv2.json"
+ ],
+ "processing": {},
+ "network": {
+  "stations": [
+   {
+    "name": "MBAR00UGA",
+    "rinex_path": "C:/GnssProcessor/data/2024-129/obs/mbar00uga/MBAR00UGA_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5482951.0692,
+     3260442.9625,
+     -66519.5412
+    ]
+   },
+   {
+    "name": "JPLM00USA",
+    "rinex_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2493304.9886,
+     -4655214.7866,
+     3565497.6745
+    ]
+   }
+  ],
+  "product_output_path": "C:/GnssProcessor/runs/agu63pv2_rp_obe4/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu63pv2_rp_obe4/state_snapshot.bin",
+  "closed_loop": {
+   "enable": true,
+   "replay_products_path": "C:/GnssProcessor/runs/agu63_pbv2/products.txt",
+   "station": {
+    "name": "OBE400DEU",
+    "rinex_path": "C:/GnssProcessor/data/2024-129/obs/obe400deu/OBE400DEU_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4186704.2141,
+     834903.7857,
+     4723664.9317
+    ]
+   },
+   "consume_network_products": true,
+   "consume_network_clock": true,
+   "consume_network_iono": true,
+   "ar_mode": 1,
+   "ar_wl_only": true
+  }
+ }
+}

@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "FC-1 shadow instrument + INC-4 REF arm, RE-RUN for the 2026-07-30 emit-frame fix",
+    "(a-priori satellite clock corrected out of the lump).  Identical posture to",
+    "_fc1_shadow_3h.json; fresh output directory because (a) the stored run is the",
+    "pre-fix provenance and stays untouched, (b) append-mode service CSVs concatenate",
+    "into a reused directory (the network_d5_flags.csv trap).",
+    "",
+    "What this re-run must show: the shadow instrument's numbers DO NOT MOVE at reported",
+    "precision (the S-row dc is beyond-trend and self-consistent; the fix only re-frames",
+    "the lump RATE, whose second difference over 30 s is sub-mm) — the §2.1/§2.2 churn",
+    "measurement in docs/REPORT_fc1_split_cadence.md survives the fix untouched."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_fc1_shadow_3h.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/fc1_shadow_3h_v2/products.txt"
+  }
+}

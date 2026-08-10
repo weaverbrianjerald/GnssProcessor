@@ -1,0 +1,30 @@
+{
+ "_comment": [
+  "GOLDEN-63, 30 epoch, SH-ON CONTROL — the matched baseline for",
+  "_golden63_gps_30ep_slant.json.  Identical to the golden-63 fast arm",
+  "(_golden63_gps_1h_laneoff: 61 in-network GPS-only, WTZZ00DEU colocated consumer holdout,",
+  "channel_mode single, frequency_mode triple, lane_carry OFF, full golden instrumentation)",
+  "with duration cut to 900 s = 30 epochs and its own lineage.",
+  "",
+  "WHY A NEW CONTROL rather than reusing _golden63_gps_1h_laneoff's 2266.8 ms median: that",
+  "arm ran 15:03-15:08 while a sibling 305-station job held roughly half the 20-thread box.",
+  "Its timing is contention-contaminated and cannot baseline a speed claim.  This arm and",
+  "the slant arm run back-to-back on a CLEAN machine, 30 epochs each, so the SH-vs-slant",
+  "delta is measured on equal footing.",
+  "",
+  "RUN IT ALONE and grade on D0/D0b section medians over settled epochs, never on wall.",
+  "30 epochs is enough for a COST comparison but NOT for any science claim — it is inside",
+  "ignition on this lineage, so do not read total_IF, carry retention or AR from it.",
+  "",
+  "FRESH LINEAGE ONLY.  Own paths; never resume onto another arm's snapshot."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 900.0 },
+ "network": {
+  "max_duration_s": 900.0,
+  "product_output_path": "C:/GnssProcessor/runs/golden63_gps_30ep_shon/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/golden63_gps_30ep_shon/state_snapshot.bin"
+ }
+}

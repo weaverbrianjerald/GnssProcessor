@@ -665,6 +665,22 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Whether the RINEX 3 observation parser skips written 0.0 values.
+         *
+         * Per RINEX 3.0x §6 "Missing observations are written as 0.0 or blanks":
+         * a written zero is a receiver's data-not-available sentinel (Trimble
+         * ALLOY emits them for weak-signal tracking), not a measurement.  The
+         * RINEX 2.x branch has always skipped them; the 3.x branch historically
+         * ingested them as real 0-cycle phases / 0-m ranges — a ~2·10⁷ m
+         * pseudo-observation when the cell sits above the elevation mask
+         * (DOY-129 GOPE/GOP6 zero cells were all sub-mask, hence latent).
+         * Default false preserves the legacy 3.x byte-identity; new configs arm
+         * it via @c processing.rinex_skip_zero_values (see
+         * docs/SPEC_rinex_zero_sentinel.md; promotion-ledger candidate).
+         */
+        bool rinexSkipZeroValues() const { return rinex_skip_zero_values_; }
+
+        /**
          * @brief Get the list of satellites excluded from processing.
          * @return Vector of satellite identifiers (e.g. "E14", "E18").
          */
@@ -801,18 +817,20 @@ namespace GnssProcessor {
         /**
          * @brief σ-power for elevation amplification on phase observations.
          *
-         * Defaults to 0.5, giving a 1/sin(elev) variance scaling
-         * (gentler than code's 1/sin²(elev)).  Justification: phase
-         * noise at low elevation is dominated by carrier-loop SNR
-         * (which falls slowly with elevation, not as csc²) and
+         * Defaults to 1.0, giving the symmetric 1/sin²(elev) variance
+         * scaling used for code — the project standard (every shipped
+         * production config sets 1.0 explicitly; the loader default
+         * matches it as of 2026-07-31).
+         *
+         * Setting @c phase_elevation_power = 0.5 in the JSON selects
+         * the gentler 1/sin(elev) scaling.  Rationale for that option:
+         * phase noise at low elevation is dominated by carrier-loop
+         * SNR (which falls slowly with elevation, not as csc²) and
          * antenna PCV miscalibration — neither follows the csc²(θ)
-         * mapping function that drives code multipath.  At a 10°
-         * mask, p=0.5 amplifies σ by 2.4× rather than 5.8×, keeping
+         * mapping that drives code multipath.  At a 10° mask, p=0.5
+         * amplifies σ by 2.4× rather than 5.8×, keeping
          * standardized-residual cycle-slip detection effective at
          * low elevation.
-         *
-         * Setting @c phase_elevation_power = 1.0 in the JSON
-         * recovers the legacy symmetric csc²(θ) phase weighting.
          *
          * Configurable via @c filter.phase_elevation_power.
          */
@@ -1469,8 +1487,107 @@ namespace GnssProcessor {
          * the external-GIM target to the co-estimated SH field.  Mutually exclusive
          * with loading an external GIM for the same purpose (no double-apply).
          * Default false keeps the external-GIM W6 path byte-identical.
+         *
+         * @note EXT-CB exception: under @ref networkExternalSatCodeBias the W6 force
+         *       is SUPPRESSED — the satellite code bias comes from the external
+         *       `.BIA`, so the SH field needs no satellite DCB column to be
+         *       separable.  Everything else about the SH slice is unchanged (same
+         *       model construction, same row builder, same elevation cutoff).
          */
         bool estimateNetworkIonoSh() const { return estimate_network_iono_sh_; }
+
+        /**
+         * @brief Take the satellite code AND phase biases from the external `.BIA`
+         *        product instead of estimating them (@c network.external_sat_code_bias).
+         *
+         * The "EXT-CB" rung of the external-constraint ladder.  The network producer
+         * has two reachable satellite-bias postures today and this adds the third:
+         *
+         *  | posture | sat code bias | iono constraint |
+         *  |---|---|---|
+         *  | V1 (default) | absorbed by the free slant iono | none |
+         *  | W6 (@ref estimateNetworkSatCodeBias) | estimated (own OSB) | SH-VTEC or GIM |
+         *  | **EXT-CB (this)** | **external `.BIA`** | **SH-VTEC (or none)** |
+         *
+         * The gap it closes: @c estimate_iono_sh previously force-chained
+         * @c estimate_sat_code_bias on, which in turn force-set
+         * @c model_corrections.enable_code_phase_bias OFF — so "SH-VTEC ionosphere
+         * WITH external satellite biases" (the classical known-DCB global-iono
+         * setup) was UNREACHABLE.  Arming this knob suppresses that force chain.
+         *
+         * What it forces, as ONE coupled slice (mirroring W6 minus the satellite
+         * column):
+         *  - @c estimate_sat_biases / @c promote_sat_code_bias stay OFF (no
+         *    satellite code-bias state — the product supplies it);
+         *  - @c model_corrections.enable_code_phase_bias ON (the `.BIA` IS the
+         *    source now; an explicit @c false in the JSON is a hard error, not a
+         *    silent override);
+         *  - @c estimate_ifb ON — estimability trap #4 of the W6 slice applies
+         *    unchanged: on undifferenced rows the per-(rx,constellation) GF code
+         *    lump must have an explicit receiver-DCB state, or it rides inside the
+         *    slant iono and fights the SH field;
+         *  - @c ionosphere_weighting.enable ON when the SH field is co-estimated,
+         *    so the posture ledger's SH bundle stays honest.
+         *
+         * @warning The `.BIA` is applied to BOTH code and phase rows — the lookup in
+         *          @c PppModel::computeBaseModeledValue is keyed on the raw signal
+         *          string, so `"L1W"` hits the phase OSB exactly as `"C1W"` hits the
+         *          code one.  A product without phase OSBs for a signal simply
+         *          contributes 0 there and the float ambiguity absorbs the bias.
+         * @warning Product COVERAGE is the binding constraint, not the code.  COD
+         *          MGX FIN OSB carries GPS L1/L2 only (no C5/L5 entry), so a
+         *          `frequency_mode: triple` arm leaves the third band's satellite
+         *          delay uncorrected with no state to absorb it.  Pair this knob
+         *          with a frequency mode the product actually covers, and consider
+         *          @c estimation.require_bia_for_signals to make the gap fail loud.
+         *
+         * Post-processing only: hard error under @c network.apriori_source =
+         * @c brdc_rts (a daily bias product is not available to the self-sufficient
+         * real-time service — the same reasoning that makes the external-GIM path
+         * post-processing-only).  Mutually exclusive with
+         * @c network.estimate_sat_code_bias.  Default false ⇒ byte-identical.
+         *
+         * @see estimateNetworkSatCodeBias, estimateNetworkIonoSh
+         */
+        bool networkExternalSatCodeBias() const { return network_external_sat_code_bias_; }
+
+        /**
+         * @brief Gauge the receiver code-bias set with one @f$\sum_r d_{r,c}=0@f$
+         *        per constellation (@c network.rx_code_bias_datum).
+         *
+         * The receiver-side counterpart of the W6 per-(constellation,signal)
+         * SATELLITE code-bias sum-to-zero, and the standard IGS zero-mean-over-
+         * receivers DCB convention.  Needed whenever the satellite half of that
+         * gauge is absent — i.e. under @ref networkExternalSatCodeBias, where the
+         * satellite code biases come from the product and take their datum with
+         * them, leaving the receiver-DCB common mode confounded with the global
+         * ionosphere level.
+         *
+         * Realized as a hard cross-station gauge through the same
+         * @ref NetworkNormalEquations::SumZeroGauge Woodbury fold the ensemble
+         * phase-bias datum uses (the receiver DCB is a LOCAL state, so it cannot
+         * be a shared-border row).  Requires @c estimation.estimate_ifb — without
+         * an explicit receiver-DCB state there is nothing to gauge and the toggle
+         * is INERT (warned).  Default false ⇒ byte-identical.
+         *
+         * @see networkExternalSatCodeBias, networkBuildRxCodeBiasGauges
+         */
+        bool networkRxCodeBiasDatum() const { return network_rx_code_bias_datum_; }
+
+        /**
+         * @brief Loose physical-bound sigma (m) for the receiver code-bias datum
+         *        (@c network.rx_code_bias_datum_sigma_m, default 10.0).
+         *
+         * The datum is a diagonal @f$d_r\sim N(0,\sigma^2)@f$ prior on every
+         * station's receiver DCB, so @f$\sigma@f$ must be LOOSE against the real
+         * per-station DCB spread (tens of ns, i.e. metres) — it is a bound, not a
+         * measurement.  The realized common-mode information is @f$1/\sigma^2@f$,
+         * INDEPENDENT of the station count, so it must still clear the per-epoch
+         * rank-gate cutoff (@f$pprox 10^{-9}\lambda_{\max}@f$): 10 m gives 0.01,
+         * ~45x the cutoff measured on the 63-station EXT-CB arm.  Same
+         * loose-physical-bound role as @ref networkCbKaulaSigmaM on the satellite side.
+         */
+        double networkRxCodeBiasDatumSigmaM() const { return network_rx_code_bias_datum_sigma_m_; }
 
         /**
          * @brief Pre-seed a cold receiver clock from GPS code before the first
@@ -1862,6 +1979,309 @@ namespace GnssProcessor {
         double networkZwdCarryQ() const { return network_zwd_carry_q_; }
 
         /**
+         * @brief Carry per-station RECEIVER code biases across epochs in the network
+         *        producer as diagonal random-walk priors (@c network.carry_rx_code_bias,
+         *        docs/SPEC_rx_cb_carry.md).
+         *
+         * Receiver code biases are hardware-stable (cm over hours); the per-epoch
+         * network solve re-estimates them white at the 10 m initial σ, so the level
+         * allocation (rx CB ↔ iono level ↔ SH field) is re-derived from code noise
+         * every epoch.  When on, each station's present code-bias columns are carried
+         * as diagonal information priors on its own local block (same
+         * @ref NetworkEstimator::addStationPrior path as the ambiguity/ZWD carries)
+         * with @c var_eff = var + q·Δt, and harvested post-solve OUTSIDE the
+         * phase-leveling gate — the carry is live on the carry_invariant lineage.
+         *
+         * Guards: forced OFF (with a warning) unless @ref networkCodeDatumTimeLinked
+         * (a time-linked code datum is what makes the carried lump frame-continuous);
+         * a loader warning recommends arming @c estimation.global_vtec_sh.rep_error_demean
+         * with it (the rx-CB ↔ iono-level ↔ deviation-mean three-way quasi-null).
+         * Event response (invariant #1): an inject-time innovation gate withholds the
+         * fold at receiver-reset scale and the harvest overwrites the stale entry.
+         * Default false = byte-identical.
+         */
+        bool networkCarryRxCodeBias() const { return network_carry_rx_code_bias_; }
+
+        /**
+         * @brief rx-CB carry random-walk process noise (m²/s)
+         *        (@c network.rx_cb_carry_q, docs/SPEC_rx_cb_carry.md).
+         *
+         * @c var_eff = var + q·Δt_since_last_seen.  Hardware code biases drift at
+         * the mm-over-hours class, so the default 1e-9 (≈ 3 mm 1σ over 3 h) models
+         * temperature-scale drift while remaining far stiffer than the per-epoch
+         * white re-estimate.  Must be @c >= 0.  Used only when
+         * @ref networkCarryRxCodeBias is on.
+         */
+        double networkRxCbCarryQ() const { return network_rx_cb_carry_q_; }
+
+        /**
+         * @brief Card LV-2 — remove the rx-CB carry's net COMMON-MODE force
+         *        (@c network.rx_cb_carry_demean, docs/SPEC_level_information_budget.md).
+         *
+         * The carried receiver code biases put ~100 information units on the DCB
+         * common mode (var ≈ 1e-2 m² × ~60 stations) against the
+         * @ref networkRxCodeBiasDatum's 1/σ² = 0.01 — so the FRAME is owned by last
+         * epoch's realization (memory), not by the designed authority, and the level
+         * ↔ rx-DCB ↔ field-null degeneracy is held closed by a crutch (measured: arm
+         * 14, carry OFF ⇒ a₀₀ collapses −9 TECU/epoch).  This knob keeps the carry's
+         * per-station DIFFERENCE rigidity (which arm 14 proves is load-bearing) and
+         * subtracts only the information-weighted MEAN innovation:
+         *
+         *   μ_c = Σ_i λ_i·innov_i / Σ_i λ_i      (per constellation, over all stations)
+         *   η_i = λ_i·(innov_i − μ_c)            (instead of λ_i·innov_i)
+         *
+         * By construction Σλ(innov−μ) = 0 in the fold's DELTA coordinates, so the
+         * carry stops re-asserting LAST EPOCH's common-mode realization — the
+         * flywheel — while transporting differences at full stiffness.  μ is computed
+         * at the SERIAL post-solve harvest and applied LAG-1 (race-free: the parallel
+         * produce phase only reads it) — the Iono-2 v3 @c rep_error_demean idiom — or
+         * WITHIN the epoch under @ref networkRxCbCarryDemeanWithin.  The inject-time
+         * innovation gate also judges @c |innov−μ|, so a coherent frame move no longer
+         * mass-triggers the receiver-reset response.
+         *
+         * ⚠ **It does NOT leave the common mode FREE** (measured 2026-08-05; this card
+         * was written believing it did).  The de-mean moves the fold's RHS, never its
+         * information, so the carry still puts Σλ ≈ 100 units on that direction.  In
+         * ABSOLUTE terms each row now targets @c value_abs_i−μ, whose
+         * information-weighted mean is exactly @c mean_λ(x_lin) — so the de-meaned
+         * carry PINS the receiver-DCB common mode to the frozen first-epoch code-bias
+         * seed frame.  A rolling memory is swapped for a frozen one; the designed
+         * authority (rx-DCB datum 0.01, a₀₀ anchor 0.25) is still outvoted ~400:1.
+         * Consequence: card LV-1, which changes what
+         * @c StateInitializer::initializeCodeBiases seeds, moves the ionosphere level
+         * by ~10 TECU through this channel and no other (arm 23 vs 27: settled 35.24
+         * vs 26.45, row sets identical).  docs/SPEC_level_information_budget.md §13.
+         *
+         * Events (invariant #7): epoch 1 has no μ ⇒ injects un-demeaned; an epoch
+         * whose folded set is too thin (fewer than
+         * @ref networkRxCbCarryDemeanMinStations contributing stations) FREEZES μ at
+         * its previous value rather than trusting a thin mean (counted).
+         *
+         * NOT the "demeaned target" variant (pulling every state toward mean-free
+         * ABSOLUTE values): that would convert the carry into a ~100-info STIFF
+         * zero-mean datum and import the measured −5 ns rx-DCB convention offset into
+         * the level at 400× the designed datum stiffness.
+         *
+         * Requires @ref networkCarryRxCodeBias.  Default false; it changes the
+         * meaning of carried state mid-chain, so it is appended to the state-snapshot
+         * fingerprint when armed.
+         */
+        bool networkRxCbCarryDemean() const { return network_rx_cb_carry_demean_; }
+
+        /**
+         * @brief Minimum contributing stations for a fresh LV-2 μ
+         *        (@c network.rx_cb_carry_demean_min_stations, default 8).
+         *
+         * Below this the epoch's Σλ is judged too thin to define the common mode
+         * (mass re-seed / RAIM re-reduce epochs) and μ FREEZES at its previous value
+         * — counted as @c lv2_mu_frozen in the run-end readout.  Used only when
+         * @ref networkRxCbCarryDemean is on.
+         */
+        int networkRxCbCarryDemeanMinStations() const {
+            return network_rx_cb_carry_demean_min_stations_;
+        }
+
+        /**
+         * @brief Card LV-5 — compute the LV-2 de-mean μ WITHIN the epoch
+         *        (@c network.rx_cb_carry_demean_within,
+         *        docs/SPEC_level_information_budget.md §12).
+         *
+         * LV-2 reduces μ at the serial post-solve harvest and applies it to the NEXT
+         * epoch's folds.  That lag is a feedback delay, and its loop gain scales with
+         * how much carry information folds: harmless while the (defective) frame
+         * screen was withholding ~⅔ of the priors, but once LV-4 admits them all the
+         * level LIMIT-CYCLES — measured 1 h, a₀₀ settled sd 4.98 → 15.53 TECU on a
+         * ~3-epoch period, max |μ| 1.96 → 10.15 m.
+         *
+         * The lag is not necessary.  The carry innovation is
+         * @c value_abs − x_lin(cb), and BOTH terms are already known before PASS B:
+         * the carried posterior is last epoch's stash and @c x_lin is the frozen
+         * linearization point.  So when this knob is on, μ is reduced SERIALLY
+         * between PASS A and PASS B over the stations present THIS epoch, and PASS B
+         * folds against the current-epoch μ — zero lag, same race-free split (one
+         * serial writer, parallel readers).
+         *
+         * The harvest still reduces the folded set's mean afterwards, now purely as a
+         * DIAGNOSTIC: it is the residual common-mode force that survived the
+         * correction, and it is what the run-end line reports next to the applied μ.
+         *
+         * Requires @ref networkRxCbCarryDemean.  Default false; it changes which μ is
+         * applied and therefore what carried state means, so it is fingerprinted when
+         * armed.
+         */
+        bool networkRxCbCarryDemeanWithin() const {
+            return network_rx_cb_carry_demean_within_;
+        }
+
+        /**
+         * @brief Card LV-4 — screen the rx-CB carry on a FRAME-INVARIANT step
+         *        (@c network.rx_cb_carry_step_gate,
+         *        docs/SPEC_level_information_budget.md §11).
+         *
+         * The legacy inject gate tests @c |value_abs − x_lin(cb)| at 10σ + 0.5 m.
+         * Both terms are absolute, but @c x_lin is a FROZEN linearization point
+         * (@ref StateInitializer::initializeCodeBiases seeds it once; the network
+         * solve is never written back), so the statistic measures where that seed
+         * happened to land — not what the receiver did.  Measured on DOY-129:
+         * 48–67 % of ALL carry priors withheld for the whole run with no receiver
+         * event anywhere, and a genuine jump between epochs t−1 and t is invisible
+         * to it (at t's inject the carried value is still pre-jump and x_lin has
+         * not moved).
+         *
+         * When on, the fold-time gate keeps only its frame-free checks (gap,
+         * variance sanity) and the EVENT RESPONSE moves to the serial post-solve
+         * harvest, where both quantities are absolute and their difference is
+         * therefore invariant under any reframing:
+         *
+         *   e = value_abs_new − value_abs_prev,
+         *   z = |e| / √(var_new + var_prev + q·Δt + guard),
+         *   z > @ref networkRxCbCarryStepKSigma ⇒ the receiver's own estimate
+         *   STEPPED at hardware-jump scale ⇒ ERASE that entry.
+         *
+         * Erase, not overwrite (reset-not-repair): the post-jump posterior was
+         * solved in the same epoch that folded a stale pre-jump prior, so it is
+         * itself suspect.  The entry goes cold for exactly one epoch and the next
+         * harvest re-seeds it from data.
+         *
+         * Both decisions stay counted, including what the OLD gate WOULD have
+         * withheld on the same run — the A/B is visible inside one run rather than
+         * across two.  Requires @ref networkCarryRxCodeBias.  Default false; it
+         * changes which priors fold, so it is fingerprinted when armed.
+         */
+        bool networkRxCbCarryStepGate() const { return network_rx_cb_carry_step_gate_; }
+
+        /**
+         * @brief k·σ threshold of the LV-4 invariant step screen
+         *        (@c network.rx_cb_carry_step_k_sigma, default 10.0).
+         *
+         * Inherited from the legacy gate's k so the two screens are compared at the
+         * same nominal confidence; the 0.5 m physical guard is inherited with it and
+         * NEITHER is independently calibrated for the step statistic (σ_step ≈
+         * √(2·1e-2 + 0.25) ≈ 0.52 m ⇒ a ~5 m detection floor).  Check the run-end
+         * reset count before trusting it on a new lineage.  Used only when
+         * @ref networkRxCbCarryStepGate is on.
+         */
+        double networkRxCbCarryStepKSigma() const {
+            return network_rx_cb_carry_step_k_sigma_;
+        }
+
+        /**
+         * @brief Card S2H — the "S-consistent harvest"
+         *        (@c network.rx_cb_harvest_demean,
+         *        docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1).
+         *
+         * At the serial post-solve harvest — after the LV-4 erase pass and the
+         * gap prune, so the member set is exactly the set that can fold — the
+         * Λ-weighted mean of each receiver-code-bias family's harvested ABSOLUTE
+         * realizations, @f$\mu = \Sigma\lambda v / \Sigma\lambda@f$ with
+         * @f$\lambda = 1/\mathrm{var}@f$, is subtracted from EVERY carried entry
+         * of that family (voters and screened alike).  The carried set is then
+         * zero-mean-by-construction in the same ABSOLUTE frame the
+         * @ref networkRxCodeBiasDatum row targets, so next epoch's folds exert
+         * zero net force on the receiver-DCB common mode in the fold's own
+         * metric: the datum row and the per-epoch data own the level, and the
+         * carry transports only between-station DIFFERENCES (whose rigidity arm
+         * 14 proved load-bearing).
+         *
+         * This is LASER's big-system S-transform
+         * (Net3DLsa::applySTransformationForBigSystemOfEquations — subset mean
+         * subtracted from all points, O(n)) generalized to information weights,
+         * @f$S = I - \mathbf{1}\lambda^{\mathsf T}/(\lambda^{\mathsf T}\mathbf{1})@f$
+         * per family, a projector.  Deliberately DISTINCT from card LV-2, which
+         * de-meaned the fold INNOVATION and thereby pinned the common mode to
+         * mean(x_lin), the frozen first-epoch seed frame (SPEC §13.2, measured):
+         * here the frame is re-derived from THIS epoch's solution every epoch —
+         * no frozen pin, no lag-1 feedback, nothing fed back into any solve, and
+         * the carry stays diagonal (the covariance leg is the exact diagonal of
+         * @f$SQS^{\mathsf T}@f$: voters var − 1/Σλ, screened var + 1/Σλ).
+         *
+         * Thin epochs (fewer than @ref networkRxCbCarryDemeanMinStations votes
+         * after the peer screen) apply NOTHING — identity transform, counted
+         * (invariant #7's decoupling edge stays visible; there is no held frame
+         * to silently re-assert).  Honest caveat carried from the SPEC: this
+         * declares receiver-physical common-mode drift a FRAME property; §13.4
+         * option 1 (a data-derived level authority) remains the answer if that
+         * attribution ever matters.
+         *
+         * Requires @ref networkCarryRxCodeBias (INERT-warn otherwise); forces
+         * @ref networkRxCbCarryDemean / @ref networkRxCbCarryDemeanWithin OFF
+         * with a warn (superseded mechanisms on the same channel).  Composes
+         * with LV-4 (which erases event outliers before this pass votes) and
+         * LV-1 (a seeding-time mechanism).  Default false; it changes what
+         * carried state MEANS, so it is fingerprinted when armed — never flip it
+         * mid-chain.
+         */
+        bool networkRxCbHarvestDemean() const { return network_rx_cb_harvest_demean_; }
+
+        /**
+         * @brief Card S2H robust peer-screen threshold
+         *        (@c network.rx_cb_harvest_screen_z, default 8.0).
+         *
+         * Entries with |value − family median| > z·max(1.4826·MAD, median formal
+         * σ) are excluded from the μ VOTE but still receive the transform.  This
+         * is the SPEC §16/12.1 contamination guard (one ~200 km cold-start
+         * realization must not move the frame), not an outlier-event policy —
+         * card LV-4 owns event responses.  Generous by design; set large to
+         * effectively disable.  Must be > 0 (loader-validated).  Used only when
+         * @ref networkRxCbHarvestDemean is on.
+         */
+        double networkRxCbHarvestScreenZ() const { return network_rx_cb_harvest_screen_z_; }
+
+        /**
+         * @brief Card LV-1 — seed per-LOS slant ionosphere in the FIELD's frame
+         *        (@c network.iono_seed_field_frame, docs/SPEC_level_information_budget.md).
+         *
+         * @c StateInitializer::computeIonosphereSeed seeds every per-LOS iono state
+         * at allocation from the geometry-free combination of product-referenced code
+         * residuals.  The modeled term carries the satellite side and the geometry but
+         * NOT the receiver DCB, so the station's own
+         * @f$(d_{r,1}-d_{r,2})/(\alpha_1-\alpha_2)@f$ rides into EVERY seed of that
+         * station — a bias-in frame.  Measured on DOY-129: rx GF biases have network
+         * mean ≈ −15 slant-TECU with continent-clustered spread, and the per-LOS
+         * ensemble's stiffness toward that frame (~0.04 info × ~376 LOS ≈ 15 units)
+         * dwarfs the a₀₀ climatology anchor (0.25) and the rx-DCB datum's common mode
+         * (0.01, N-independent) — the level's information budget is accidental.
+         *
+         * When on (NETWORK path only), the station-common content of each new seed is
+         * REPLACED by the field's own value at the line of sight's pierce point:
+         *
+         *   seed' = seed_raw − median_r(seed_raw over this station's satellites)
+         *                    + m(el)·VTEC_SH(IPP)
+         *
+         * The median (not the mean) is the robust station-common content — rx GF bias
+         * ⊕ median slant iono — so a single bad channel cannot move it; the
+         * @c |seed| < 200 m sanity check still screens the RAW seed before it enters
+         * the median.  The field is the LAG-1 solved SH-VTEC field (the serial
+         * post-solve snapshot; the parallel produce phase only reads it); at true cold
+         * start there is no field yet and the a₀₀ climatology PRIOR MEAN stands in —
+         * which is precisely the designed level authority doing its job.
+         *
+         * Events (invariant #1): this lives INSIDE the seed path, so every
+         * re-allocation — slip refloat, gap re-birth, a station joining mid-run —
+         * inherits the CURRENT frame instead of the raw bias-in frame.  A station with
+         * fewer than @ref networkIonoSeedFieldFrameMinSats usable seeds this epoch
+         * falls back to the raw seed and is counted (a handful of bias-in LOS cannot
+         * move the field).
+         *
+         * INERT without @c network.estimate_iono_sh (no field to reframe against —
+         * the loader warns).  Default false.
+         */
+        bool networkIonoSeedFieldFrame() const { return network_iono_seed_field_frame_; }
+
+        /**
+         * @brief Minimum per-station seeds for the LV-1 median offset
+         *        (@c network.iono_seed_field_frame_min_sats, default 5).
+         *
+         * Fewer usable raw seeds than this at a station-epoch ⇒ no robust
+         * station-common estimate ⇒ that station's new LOS take the RAW seed
+         * (counted as @c lv1_fallback_raw).  Used only when
+         * @ref networkIonoSeedFieldFrame is on.
+         */
+        int networkIonoSeedFieldFrameMinSats() const {
+            return network_iono_seed_field_frame_min_sats_;
+        }
+
+        /**
          * @brief Run the M2 LS-VCE carry-row variance-component MONITOR
          *        (@c network.carry_vce).
          *
@@ -1880,15 +2300,59 @@ namespace GnssProcessor {
         bool networkCarryVce() const { return network_carry_vce_; }
 
         /**
-         * @brief M2 v2 APPLY path — feed the estimated σ̂ back into the carry
+         * @brief M2 v2 APPLY path — feed the measured σ̂ back into the carry
          *        stochastic model (@c network.carry_vce_apply).
          *
-         * NOT IMPLEMENTED in this build: v1 is monitor-only.  Requires
-         * @ref networkCarryVce; setting it true is a hard load error (rather than
-         * a silent no-op).  Reserved so configs and the loader validate the
-         * dependency now.
+         * Implements NGS LASER Guide v2.7 5-93..5-95 "VCE by use of factors"
+         * (Koch 1999 §§3.6.1–3.6.2): per (family × constellation) the fold
+         * variance of every carry pseudo-observation is multiplied by a variance
+         * factor α² that iterates toward the monitor's measured
+         * @c robust_floor / @c hand_fold_var ratio, INFLATE-ONLY (α² ≥ 1),
+         * slew-limited, and frozen on contaminated / under-populated epochs.  See
+         * @ref NetworkCarryVceApply and docs/SPEC_carry_vce_apply.md.
+         *
+         * SOLVE-AFFECTING and FINGERPRINTED — a warm resume with this armed is a
+         * hard run error (v1 is fresh-convergence-only; α² restarting at 1
+         * mid-chain would change the solve across the seam).  Requires
+         * @ref networkCarryVce.  Default false = no factor, byte-identical.
          */
         bool networkCarryVceApply() const { return network_carry_vce_apply_; }
+
+        /**
+         * @brief Carry families the M2 v2 apply path SCALES
+         *        (@c network.carry_vce_apply_families, default @c "pl").
+         *
+         * Must be a subset of @ref networkCarryVceComponents (a family that is
+         * not monitored has no σ̂ to apply — a hard load error, not a silent
+         * no-op).  Only used when @ref networkCarryVceApply.
+         */
+        const std::string& networkCarryVceApplyFamilies() const { return network_carry_vce_apply_families_; }
+
+        /**
+         * @brief Per-epoch maximum multiplicative step of α², both directions
+         *        (@c network.carry_vce_apply_slew, default 1.05).
+         *
+         * Keeps the solve's conditioning quiet while the factor tracks; it is
+         * explicitly NOT the safety argument (era-2 discharged at its configured
+         * rate limit) — the inflate-only clamp is.  @c <=1 disables the limiter.
+         */
+        double networkCarryVceApplySlew() const { return network_carry_vce_apply_slew_; }
+
+        /**
+         * @brief Ceiling on α² (@c network.carry_vce_apply_max, default 1000).
+         *
+         * Entry and exit are EVENTS (standing invariant #7).  The floor is 1 by
+         * construction (inflate-only) and is not configurable.
+         */
+        double networkCarryVceApplyMax() const { return network_carry_vce_apply_max_; }
+
+        /**
+         * @brief Effective (forgetting-weighted) monitor rows a group needs before
+         *        its factor may move (@c network.carry_vce_apply_min_rows, 200).
+         *
+         * Below it the group FREEZES at its current α² and the trace flags it.
+         */
+        int networkCarryVceApplyMinRows() const { return network_carry_vce_apply_min_rows_; }
 
         /**
          * @brief Carry families the M2 monitor accumulates
@@ -2633,6 +3097,20 @@ namespace GnssProcessor {
         bool networkCarryInvariantInnovCalibrate() const { return network_carry_invariant_innov_calibrate_; }
         /// Card 4 (M1, D5 v2): σ̂₀² forgetting half-life in epochs (@c network.carry_invariant_innov_calibrate_window).
         double networkCarryInvariantInnovCalibrateWindow() const { return network_carry_invariant_innov_calibrate_window_; }
+        /// Card 4 (M1, D5 v3): require raw-observable corroboration before a D5 re-tap (@c network.carry_invariant_innov_corroborate).
+        bool networkCarryInvariantInnovCorroborate() const { return network_carry_invariant_innov_corroborate_; }
+        /// Card 4 (M1, D5 v3): magnitude backstop for the corroboration gate (@c network.carry_invariant_innov_corroborate_backstop_k).
+        double networkCarryInvariantInnovCorroborateBackstopK() const { return network_carry_invariant_innov_corroborate_backstop_k_; }
+        /// Card 4 (M1, D5 v4): a D5 flag re-taps its chord IN-EPOCH only — it no longer also refloats the arc next epoch (@c network.carry_invariant_innov_retap_only).
+        bool networkCarryInvariantInnovRetapOnly() const { return network_carry_invariant_innov_retap_only_; }
+        /// Card 4 (M1, D5 v5): gate only chords genuinely CARRIED into the epoch — a born chord has no H0 to test (@c network.carry_invariant_innov_carried_only).
+        bool networkCarryInvariantInnovCarriedOnly() const { return network_carry_invariant_innov_carried_only_; }
+        /// Card 4 (M1): PD-safe DD fold — scale-following posterior/factorization + counted repair + bounded degenerate-block rebirth (@c network.carry_invariant_pd_safe).
+        bool networkCarryInvariantPdSafe() const { return network_carry_invariant_pd_safe_; }
+        /// Carry-aware covariance readback — dd_sigma_cyc and the AR probe read Cov(x_r) from the model the solve actually used (@c network.carry_aware_covariance).
+        bool networkCarryAwareCovariance() const { return network_carry_aware_covariance_; }
+        /// Card 3/4: keep this epoch's SLIPPED arcs out of the eq34 spanning tree so a slip costs one chord, not every cycle through a tree edge (@c network.phase_datum_eq34_slip_aware_election).
+        bool networkPhaseDatumEq34SlipAwareElection() const { return network_phase_datum_eq34_slip_aware_election_; }
 
         /// M5 card WL-1: the MW-seeded wide-lane pseudo-observation layer master
         /// (@c network.mw_wl.enable).  When on, the per-station MW detector is built
@@ -2665,6 +3143,101 @@ namespace GnssProcessor {
         /// model-scaled k·√(Ppred+R) threshold + seed demoted to a numerical guard,
         /// so ONE jump_k (=4) transfers across cadences (30 s ↔ 300 s).  OFF ⇒ v1.
         bool networkEmitPbFilterGateV2() const { return network_emit_pb_filter_gate_v2_; }
+        /// Card CLK-R stage 1: emit the satellite clocks in a per-constellation
+        /// HELD frame — the per-epoch common-mode innovation (median vs the
+        /// previous emitted values) is accumulated into a frame offset that never
+        /// re-enters the wire.  Outputs-only (solve byte-identical); the removed
+        /// direction is the clock-ensemble gauge a consumer's per-epoch receiver
+        /// clock absorbs, and between-satellite differences are preserved exactly.
+        bool networkEmitClockFrameHold() const { return network_emit_clock_frame_hold_; }
+        /// Card CLK-R stage 1: |frame accumulator| bound (m) beyond which the
+        /// constellation re-anchors to the solve frame WITH a datum mark
+        /// (markDatumChange) — the marked re-coupling edge (invariant #7).
+        double networkClockFrameLeashM() const { return network_clock_frame_leash_m_; }
+        /// Card CLK-R stage 2: mark per-satellite common-removed clock steps
+        /// beyond networkClockDiscJumpM() via the markSatDiscontinuity retro-bump
+        /// (R record + per-sat counters — the proven consumer reset chain).
+        /// Independent of the frame hold: alone it marks the RAW wire with the
+        /// census's own statistic.  The emitter's clock counter keeps NO internal
+        /// magnitude test (RTA-11) — this test lives at the emission-prep tier.
+        bool networkClockDiscJumpTest() const { return network_clock_disc_jump_test_; }
+        /// Card CLK-R stage 2: flat per-sat step threshold (m).  Empirical
+        /// default 1.5 ≈ 16 σ of the measured per-epoch walk step (SPEC
+        /// clock_emit_rebase §1): ~7 marks/h on the reference internal lineage;
+        /// the census outlier floor (0.5 m) would mark ~10× as often.
+        double networkClockDiscJumpM() const { return network_clock_disc_jump_m_; }
+
+        /// @name Card Q3 — the guarded temporal clock anchor
+        /// (docs/SPEC_clock_temporal_anchor.md).  The per-satellite clock's D2
+        /// carry currently folds at @c filter.process_noise.sat_clock_q, whose
+        /// one-epoch spread √(q·Δt) sits ABOVE the realized spread, so the prior
+        /// never binds and the emitted clock is re-drawn from each epoch's data
+        /// (measured: robust σ_w 9.23 cm/30 s, uniform to 1.37× across a 32-satellite
+        /// fleet of three clock technologies, against ~2 cm of physical change).
+        /// This card gives that estimable content temporal stiffness AND the event
+        /// response without which stiffness is a standing-invariant-#1 violation.
+        /// SOLVE-AFFECTING and FINGERPRINTED — fresh convergence only.
+        /// @{
+        /// Arm the anchor.  OFF (default) ⇒ the clock carry is byte-identical to
+        /// the legacy fold and none of the per-satellite state is allocated.
+        bool   networkClockTemporalAnchor() const { return network_clock_temporal_anchor_; }
+        /// The anchor's random-walk rate (m²/s).  The emitted per-satellite walk
+        /// is √(q·Δt) once the carry binds — an EXACT steady-state identity, so
+        /// this knob IS the walk target: 1e-4 → 5.5 cm, 3e-5 → 3.0, 1e-5 → 1.7.
+        double networkClockAnchorQ() const { return network_clock_anchor_q_; }
+        /// Consistency floor on the folded carry variance (m²) — the clock
+        /// analogue of the B4 @c phase_bias_var_floor / @c code_bias_var_floor.
+        /// Caps the folded prior information at 1/floor so an independence-
+        /// assuming carry cannot accumulate unbounded information against a
+        /// time-correlated error floor (assessment deviation #1, ranked-plan
+        /// item 3).  0 = no floor.
+        double networkClockAnchorVarFloorM2() const { return network_clock_anchor_var_floor_m2_; }
+        /// Per-satellite staleness bound (s).  Beyond it the carried clock is not
+        /// folded at the anchor — the satellite DECOUPLES.  Load-bearing: the
+        /// driver's @c dt is the inter-EPOCH gap and every skip path advances it
+        /// while the carry survives, so without a per-satellite elapsed time a
+        /// stiff prior folds an arbitrarily old value as if it were 30 s old.
+        double networkClockAnchorMaxGapS() const { return network_clock_anchor_max_gap_s_; }
+        /// Trip threshold on |w|, the standardized generalized predicted residual
+        /// (posterior − prior, common-mode removed, over √(P⁻ − P⁺)).  EMPIRICAL —
+        /// read off the measured prior-residual ladder, never from the stochastic
+        /// model.
+        double networkClockAnchorK() const { return network_clock_anchor_k_; }
+        /// Absolute backstop on |ê| (m): trips even if the standardizing variance
+        /// were mis-set.  0 = off.
+        double networkClockAnchorAbsM() const { return network_clock_anchor_abs_m_; }
+        /// Floor on √S (m) so a weak-data epoch — where the data removed no
+        /// information, P⁺ → P⁻ — yields w ≈ 0 instead of a 0/0 blow-up that would
+        /// false-trip the lowest-confidence satellites.  Same reasoning as the
+        /// two-state model's B3 @c clock_model_meas_std_m floor.
+        double networkClockAnchorSigmaFloorM() const { return network_clock_anchor_sigma_floor_m_; }
+        /// Consecutive in-band epochs a decoupled satellite must serve before the
+        /// anchor re-engages — the standing-invariant-#7 re-coupling re-validation.
+        int    networkClockAnchorRecoupleEpochs() const { return network_clock_anchor_recouple_epochs_; }
+        /// Wire-mark the DECOUPLING edge (per-satellite discontinuity through the
+        /// B1 retro-bump chain: R record + phase/code/clock counters).  A satellite
+        /// whose clock just changed BOTH temporal regime and value must not be
+        /// integrated across.
+        bool   networkClockAnchorMark() const { return network_clock_anchor_mark_; }
+        /// Adapt-and-EMIT: on a trip, withdraw the offending prior and RE-SOLVE the
+        /// epoch before emission, so the trip epoch publishes the data's value
+        /// rather than the stale anchor's.  The re-solve reuses the already-reduced
+        /// normals (no re-reduction, no re-assembly).  OFF degrades to
+        /// detect + mark + decouple-next-epoch, which is honest but ships one
+        /// anchor-warped epoch per event.
+        bool   networkClockAnchorResolve() const { return network_clock_anchor_resolve_; }
+        /// Card Q3 §2.1 — fold the clock prior GAUGE-FREE: marginalize the
+        /// per-constellation satellite-clock common direction out of the folded
+        /// information (rank-1 downdate Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ), so the anchor
+        /// constrains only the estimable between-satellite differences and leaves
+        /// the common mode entirely to the S-basis datum.  Motive is measured, not
+        /// theoretical: over 3 h the plain anchor suppressed CLK-R's drained
+        /// common mode Σ|μ| from 49.4 m to 27.8 m against its own control — the
+        /// carry was doing 44 % of the gauge's work, which is a standing-invariant-#5
+        /// violation at the MECHANISM level (the paper's datum-invariance: an
+        /// estimator should constrain estimable functions, not gauges).
+        bool   networkClockAnchorGaugeFree() const { return network_clock_anchor_gauge_free_; }
+        /// @}
 
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
@@ -2816,6 +3389,56 @@ namespace GnssProcessor {
          * sits deliberately at the loose end of the physical bound.
          */
         double networkCbKaulaSigmaM() const { return network_cb_kaula_sigma_m_; }
+
+        /**
+         * @brief SBC — arm the per-epoch S-basis dimension completion
+         *        (@c network.sbasis_complete).  Default OFF ⇒ byte-identical.
+         *
+         * The declared S-basis dimension counts only the STRUCTURAL gauges (one
+         * clock gauge per constellation in PIN mode).  A multi-constellation
+         * epoch can REALIZE more near-null directions than that — measured on
+         * FT63 GPS+Galileo (12 h, DOY-129): 41% of epochs carried 1–3
+         * per-satellite phase-bias↔slant-iono trade directions confined to one
+         * receiver channel family (the Galileo C/Q-vs-X tracking split), with
+         * eigenvector components ∝ μ_σ over that family's phase biases and only
+         * the SH-VTEC prior resisting (λ ≈ 1e-6 ≪ cutoff) when the family's
+         * code support thins.  The rank gate then withheld the epoch (7/1433)
+         * or Card PA soft-anchored columns (589/1433 — a COLUMN prior that also
+         * touches the estimable part and misses spread directions).
+         *
+         * Armed, the producer instead derives the epoch's REALIZED dimension
+         * from the reduced normals and folds ONE minimum-constraint gauge row
+         * per residual direction — the direction's own unit eigenvector, RHS =
+         * its carried level (continuity: the unobservable combination HOLDS
+         * instead of stepping, and nothing estimable moves — S-transform
+         * invariance).  Both edges are events (@c sbc_engage / @c sbc_release,
+         * tier GATE — standing invariant #7) with per-direction attribution,
+         * and every refusal path is counted (see
+         * @ref networkSbasisCompleteMax).  Card PA stays armed as the backstop
+         * for what the completion refuses (orphaned EXACT gauges land in the
+         * degenerate refusal on purpose).
+         *
+         * @see NetworkSbasis::completeSbasisDimension for the derivation and
+         *      the refusal contract; @c NetworkSbasis::kSbasisCompleteWeight
+         *      for the row weight and its K2 margin rule.
+         */
+        bool networkSbasisComplete() const { return network_sbasis_complete_; }
+
+        /**
+         * @brief SBC — per-epoch cap on completed (constrained) directions
+         *        (@c network.sbasis_complete_max).  Default 6.
+         *
+         * Beyond the cap the completion REFUSES (nothing folded, epoch falls
+         * through to the gate → withhold) rather than mass-pinning: a
+         * deficiency burst that size is a pathological epoch or a
+         * @c network.rank_gate_tol counting weak-but-REAL directions as null,
+         * and silently constraining dozens of them would fabricate a solution.
+         * Refusals are counted and reported at run end (standing invariant #3:
+         * a bound that trips is never silent).  Measured need on the FT63
+         * GPS+Gal arm: 1–3 extras per firing epoch, so 6 leaves headroom
+         * without admitting a storm; ≤ 0 removes the cap (diagnostic only).
+         */
+        int networkSbasisCompleteMax() const { return network_sbasis_complete_max_; }
 
         /**
          * @brief Whether the network kernel's per-station local-block positive-
@@ -3270,6 +3893,50 @@ namespace GnssProcessor {
         bool networkEmitEpochStatusRecord() const { return network_emit_epoch_status_record_; }
 
         /**
+         * @brief H-rider — census-fed H heartbeat σ̂₀
+         *        (@c network.h_sigma0_prefit_census,
+         *        docs/HANDOFF_edge_response_queue.md §1.6 item 3a).
+         *
+         * The H record's sigma0 field is fed by the within-epoch RAIM's σ̂₀
+         * (@c sigma0_adapt), which is computed only inside
+         * @c if(within_epoch_armed && carry_warm) — so on every no-leveling
+         * lineage the wire carries a constant 0.0000 ("unavailable"), and on a
+         * quiet leveled run a degenerate 1.0000.  The emit path ships with no
+         * usable post-hoc residual statistic at all.
+         *
+         * When on, every H site instead carries the prefit census's pooled
+         * robust σ̂₀ (@c networkPrefitSigma0 — 1.4826·median of the per-station
+         * common-mode-removed standardized deviations over
+         * @ref networkHSigma0Classes, computed PRE-solve so even the
+         * observability-gate withhold's H has a value).  This is a DIFFERENT
+         * statistic from the RAIM one — pre-solve and common-mode-removed vs
+         * post-adaptation redundancy-normalized — so the S contract advertises
+         * it (@c hsig=pc) and a consumer thresholding σ̂₀ across producer
+         * versions can tell the populations apart.  It never feeds the A4
+         * withhold ceiling: that gate reads @c sigma0_adapt only, unchanged.
+         *
+         * Requires @ref networkEmitEpochStatusRecord (no H records otherwise)
+         * and @c network.trace_prefit_census (the born-cell deferral reads the
+         * census walk's lag-1 presence map) — the loader forces this knob off
+         * with a warn when either is missing.  Changes product-file BYTES when
+         * armed (H field 5 and the S line's hsig token) ⇒ default false.
+         */
+        bool networkHSigma0PrefitCensus() const { return network_h_sigma0_prefit_census_; }
+
+        /**
+         * @brief DATA classes pooled into the census-fed H σ̂₀
+         *        (@c network.h_sigma0_classes, default "code,sh,other").
+         *
+         * Same token grammar as the census domains (@c parseDataClassMask):
+         * code / phase / other / sh / all / none.  The default matches the
+         * census EVENT domain — @c obs_phase stays out because phase prefit
+         * innovations are arc-specific, not a common-mode population (census
+         * deviation 2c); pooling them would dilute the statistic with arc
+         * geometry.  Only used when @ref networkHSigma0PrefitCensus is on.
+         */
+        const std::string& networkHSigma0Classes() const { return network_h_sigma0_classes_; }
+
+        /**
          * @brief Whether the network RAIM standardizes by per-row redundancy
          *        (@c network.raim_redundancy_normalize, B2).
          *
@@ -3575,6 +4242,12 @@ namespace GnssProcessor {
         ///        (@c network.raim / @c raim_within_epoch / @c clock_monitor /
         ///        @c clock_model) or it can never fire (loader warns).
         bool networkUraRetroBump() const { return network_ura_retro_bump_; }
+        /// Edge-1 piece 2: mark an IF-TD REFERENCE-path slip as a per-satellite
+        /// discontinuity (R record) so the consumer resets that satellite's
+        /// ambiguity.  Targets the subset the emitter's value-jump test cannot
+        /// see (SPEC 25.3: excursion onsets are refsat_reset-enriched 5.0x with
+        /// PB value steps = 0).  Default OFF; product-affecting when armed.
+        bool networkMarkRefsatResetDisc() const { return network_mark_refsat_reset_disc_; }
         /// @brief Producer: URA multiplier on a flagged satellite for the phase-leveling
         ///        warmup horizon after a refloat (@c network.ura_refloat_inflate, B1).  1 = off.
         double networkUraRefloatInflate() const { return network_ura_refloat_inflate_; }
@@ -4486,6 +5159,8 @@ namespace GnssProcessor {
          * critical and acceptance latency matters.
          */
         double getArMinSuccessRate() const { return ar_min_success_rate_; }
+        /// @brief Per-candidate AR arc-maturity gate (@c estimation.ambiguity_resolution.min_arc_info), in zenith-epoch-equivalents; 0 = off.
+        double getArMinArcInfo() const { return ar_min_arc_info_; }
 
         /**
          * @brief Maximum per-NL-pair |float − fixed| residual (cycles)
@@ -4503,6 +5178,33 @@ namespace GnssProcessor {
          * AR is too aggressive on rejecting otherwise-good fixes.
          */
         double getArNlMaxPerPairFrac() const { return ar_nl_max_per_pair_frac_; }
+
+        /**
+         * @brief Use the exact ionosphere-free row for the WL-constrained N_1
+         *        search (@c estimation.ambiguity_resolution.nl_iono_free_row).
+         *
+         * The legacy search functional is the narrowlane row
+         * @f$(f_1,f_2)/(f_1{+}f_2)@f$, which sits only 6.66° off the
+         * ionospheric direction @f$\alpha=(1,(f_1/f_2)^2)@f$ and therefore
+         * carries 0.959 cycles of error per TECU of slant-iono error.  Against
+         * the default 0.15-cycle @ref getArNlMaxPerPairFrac cap that demands
+         * the ionosphere to 0.156 TECU — roughly 20× better than any available
+         * ionospheric representation delivers.
+         *
+         * With this flag the same integer is observed through
+         * @f$(f_1^2,-f_2^2)/(f_1^2-f_2^2)@f$, whose inner product with
+         * @f$\alpha@f$ is identically zero: the N_1 target becomes exactly
+         * iono-free.
+         *
+         * @warning The two effects that make it cheap are the same one that
+         * makes it dangerous.  The iono-free row's norm and its widelane
+         * sensitivity both scale by @f$(f_1{+}f_2)/(f_1{-}f_2)@f$ = 8.06 for
+         * GPS L1/L2, so a 1-cycle widelane error moves the N_1 target 3.53
+         * cycles rather than 0.438.  Arm this only alongside a hardened
+         * widelane; on its own it converts an ionospheric bias into
+         * deterministic wrong integers.  Default false (byte-identical).
+         */
+        bool getArNlIonoFreeRow() const { return ar_nl_iono_free_row_; }
 
         /**
          * @brief Get the list of constellations eligible for AR.
@@ -4597,19 +5299,150 @@ namespace GnssProcessor {
         void loadAppModeAndRealtimeSection_(const nlohmann::json& json, LogManager& log_manager);
         bool loadBaselineSection_(const nlohmann::json& json, LogManager& log_manager);
         bool loadNetworkSection_(const nlohmann::json& json, LogManager& log_manager);
-        /**
-         * @brief Log the network POSTURE readout: which field-recommended knobs are armed for
-         *        THIS run's regime, which are not, and whether each COUPLED bundle is complete.
-         *
-         * Closes the project's missing PROMOTION step — new work ships default-OFF by
-         * convention and nothing ever moves it to default-ON, so validated options accumulate
-         * unarmed.  Regime-gated (a knob validated at 50 stations may be harmful at 305) and
-         * bundle-aware (a strict subset of a coupled set is its own failure mode).  Log-only.
-         *
-         * @param log  the "gnss_config" logger.
-         * @see docs/CONFIG_promotion_ledger.md, scripts/config_posture_check.py
-         */
+
+        // -------------------------------------------------------------
+        //  network subsection helpers   (GnssConfigLoadNetwork.cpp)
+        //
+        //  The `network` section carries more knobs than the other eleven
+        //  top-level sections combined and every card adds to it, so it
+        //  gets a second level of the same split: loadNetworkSection_ is a
+        //  thin orchestrator over one helper per JSON subsection.  That is
+        //  what keeps two concurrent sessions' knob additions out of one
+        //  merge hunk, and it is where a new knob goes — find the helper
+        //  that owns your subsection rather than appending to the driver.
+        //
+        //  CALL ORDER IS LOAD-BEARING and is fixed in loadNetworkSection_.
+        //  Every cross-knob forcing in the section is expressed as "a later
+        //  helper reads what an earlier one resolved": the
+        //  parallel_carry/parallel_reduce mutex, the FC-1 and RTF-3
+        //  inert-arming refusals, the D5 corroboration gate auto-arming the
+        //  slip-QC instrumentation that feeds it, the RAIM tier
+        //  auto-couplings, the RTB-8 service arming and its P3
+        //  re-validation, and the network.process_noise table (resolved
+        //  first, settled last).  Add a new subsection as a new helper at
+        //  the point where its prerequisites are final; never reorder the
+        //  existing calls.
+        //
+        //  Helpers that can reject the config return bool (the driver
+        //  propagates false straight out of loadFromJson); the rest return
+        //  void.  A helper that takes no `json` is a pure cross-knob
+        //  validator over already-parsed state.  Each is documented at its
+        //  definition.
+        // -------------------------------------------------------------
+        bool loadNetworkProcessNoise_(const nlohmann::json& json,
+                                      const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkRosterAndDatum_(const nlohmann::json& json,
+                                        const nlohmann::json& nw,
+                                        const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkProducerAr_(const nlohmann::json& json,
+                                    const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkLaneLayers_(const nlohmann::json& json,
+                                    const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkOutputAndParallel_(const nlohmann::json& json,
+                                           const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkFastClock_(const nlohmann::json& json,
+                                   const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkStreaming_(const nlohmann::json& json,
+                                   const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkObservabilityAndSnapshot_(const nlohmann::json& json,
+                                                  const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkSharedStateForcings_(const nlohmann::json& json,
+                                             const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkAprioriAndGlonass_(const nlohmann::json& json,
+                                           const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkCarries_(const nlohmann::json& json,
+                                 const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkSlipDetectors_(const nlohmann::json& json,
+                                       const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkQcTiers_(const nlohmann::json& json,
+                                 const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkClockModelAndChannels_(const nlohmann::json& json,
+                                               const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkDatumSignalling_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkReattachHygiene_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkDeweightReleaseHygiene_(const nlohmann::json& json,
+                                                const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkSignalIntegrity_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        bool loadNetworkEmissionFilters_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        bool validateNetworkDatumCoherence_(const std::shared_ptr<spdlog::logger>& log);
+        bool validateNetworkLaneLayers_(const nlohmann::json& json,
+                                        const std::shared_ptr<spdlog::logger>& log);
+        bool validateNetworkPhaseDatum_(const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkContractHardening_(const nlohmann::json& json,
+                                           const std::shared_ptr<spdlog::logger>& log);
+        void applyNetworkServiceProfile_(const nlohmann::json& json,
+                                         const std::shared_ptr<spdlog::logger>& log);
+        bool validateNetworkCarryPosture_(const nlohmann::json& json,
+                                          const std::shared_ptr<spdlog::logger>& log);
+        void loadNetworkClosedLoop_(const nlohmann::json& nw,
+                                    const std::shared_ptr<spdlog::logger>& log);
+        void logNetworkSummary_(const std::shared_ptr<spdlog::logger>& log) const;
+        void finalizeNetworkProcessNoise_(const nlohmann::json& json,
+                                          const std::shared_ptr<spdlog::logger>& log);
+
+        // -------------------------------------------------------------
+        //  network POSTURE readout   (GnssConfigNetworkPosture.cpp)
+        //
+        //  Closes the project's missing PROMOTION step — new work ships
+        //  default-OFF by convention and nothing ever moves it to
+        //  default-ON, so validated options accumulate unarmed and get
+        //  re-discovered by accident one wasted run at a time.  The loader
+        //  logs everything it ARMS; this logs the inverse.  Regime-gated (a
+        //  knob validated at 50 stations may be harmful at 305) and
+        //  bundle-aware (a strict subset of a coupled set is its own
+        //  failure mode).  Log-only.
+        //
+        //  Its own TU because it churns for a DIFFERENT reason than the
+        //  loader: landing a knob edits the loader, VALIDATING one adds a
+        //  row here.
+        //
+        //  @see docs/CONFIG_promotion_ledger.md, scripts/config_posture_check.py
+        // -------------------------------------------------------------
+        /// Which of the two recommendation tiers a row belongs to: an ON-tier
+        /// gap WARNs (no known counter-scope in this regime), a SCOPED-tier
+        /// gap only INFOs (there are 40+, and warning on all would drown ON).
+        enum class PostureTier { ON, SCOPED };
+        /// One recommendation row.
+        ///
+        /// `fp` = the knob is part of the WARM-RESUME FINGERPRINT (the add() set at
+        /// NetworkRunContext.cpp:180-315).  This is the CHAIN axis, and it is the reason a
+        /// recommendation cannot be read as an instruction: on a resumed leg, arming a
+        /// fingerprinted knob does not take effect mid-chain.  With state_snapshot_require ON
+        /// the leg hard-aborts; with it OFF the leg SILENTLY cold-starts, which is the worse
+        /// failure and the one this readout exists to prevent.  Such a knob has to be armed in
+        /// a FRESH lineage (a new seed), never bolted onto an existing chain.
+        struct PostureItem { bool applies; bool on; PostureTier tier; bool fp;
+                             const char* knob; const char* why; };
+        /// One companion knob of a coupled bundle.
+        struct PostureMember { const char* knob; bool on; };
+        /// A set of knobs that is only correct armed TOGETHER.
+        struct PostureBundle { bool engaged; const char* name; const char* rule;
+                               std::vector<PostureMember> members; };
+        /// The regime predicates every row filters on, computed once per run.
+        struct PostureRegime {
+            std::size_t n_sta;        ///< Roster size.
+            std::size_t n_sys;        ///< Active-constellation count.
+            bool        tri;          ///< Triple/All frequency mode.
+            bool        warm;         ///< A state-snapshot path is set (warm-resume lineage).
+            bool        lane;         ///< Any MW/WL lane layer is armed.
+            bool        rt;           ///< Real-time or service posture.
+            bool        par;          ///< Per-station parallelism actually engages at this size.
+            double      spacing_s;    ///< Config-determinable epoch spacing (0 = native RINEX rate).
+            bool        gps_only;     ///< active_systems == {GPS}.
+            bool        gps_gal_only; ///< active_systems ⊆ {GPS, Galileo}.
+        };
+        PostureRegime networkPostureRegime_() const;
+        void appendNetworkPostureItemsOn_(const PostureRegime& r,
+                                          std::vector<PostureItem>& out) const;
+        void appendNetworkPostureItemsScoped_(const PostureRegime& r,
+                                              std::vector<PostureItem>& out) const;
+        std::vector<PostureBundle> networkPostureBundles_(const PostureRegime& r) const;
         void logNetworkPosture_(const std::shared_ptr<spdlog::logger>& log) const;
+
         void loadLoggingSection_(const nlohmann::json& json, LogManager& log_manager);
         void logConfigurationSummary_(LogManager& log_manager) const;
 
@@ -4645,6 +5478,7 @@ namespace GnssProcessor {
         bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.
         double obs_ssr_sync_max_hold_s_{ 30.0 };          ///< RT-only: max seconds to hold obs for SSR before degraded fallback (obs↔SSR sync liveness bound).
         std::string rinex_types_;                        ///< Enabled RINEX observation type letters (subset of "CLDS"); default code+phase.
+        bool rinex_skip_zero_values_{false};             ///< RINEX 3 parser: skip written 0.0 values (the standard's missing-observation sentinel).  Default false = legacy ingest (see rinexSkipZeroValues()).
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
         bool enable_rx_antenna_orientation_{ false };  ///< Apply receiver antenna azimuth orientation to the RX PCV look-up (off → byte-identical).
         bool enable_rx_antenna_substitution_{ false }; ///< Allow rule-driven receiver antenna model substitution (deprecated-code table + radome→NONE) when no exact ATX match.
@@ -4715,7 +5549,10 @@ namespace GnssProcessor {
         bool enable_glonass_ifb_;                         ///< Estimate per-FCN-slot GLONASS receiver code IFB (requires estimate_ifb + uncombined).
         bool enable_glonass_network_{false};              ///< Admit GLONASS to the PPP-RTK network producer (code-only: sat clock + per-slot rx IFB; no FDMA phase bias).
         bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite CODE bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb/iono-weighting on, .BIA off).
-        bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6; replaces external GIM as the iono constraint).
+        bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6 UNLESS EXT-CB is armed; replaces external GIM as the iono constraint).
+        bool network_external_sat_code_bias_{false};      ///< EXT-CB: take satellite code+phase biases from the external .BIA instead of estimating them (suppresses the estimate_iono_sh -> W6 force; forces enable_code_phase_bias + estimate_ifb on).  Default OFF => byte-identical.
+        bool network_rx_code_bias_datum_{false};          ///< RXCB-DATUM: one sum-to-zero-over-receivers gauge per constellation on the receiver DCB set (the IGS convention; replaces the satellite-side zero-mean that EXT-CB gives away).  Default OFF => byte-identical.
+        double network_rx_code_bias_datum_sigma_m_{10.0};  ///< RXCB-DATUM loose physical-bound sigma (m); realized common-mode info = 1/sigma^2, station-count independent.
         bool network_cb_admission_{false};                ///< CB-ADM: run-latched W6 code-bias admission census + station-local quarantine (replaces the per-epoch >=2-station gate; BeiDou-sparsity remedy).  Default OFF => legacy path byte-identical.
         int  network_cb_admission_min_stations_{4};       ///< CB-ADM min supporting-station count for an admitted code pair; effective_min = max(2, min(this, n_census_stations)).
         int  network_cb_admission_census_epochs_{15};     ///< CB-ADM census window length K (epochs from the loop start); clamped to the available span.
@@ -4739,8 +5576,23 @@ namespace GnssProcessor {
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Only used when network.carry_zwd.
+        bool   network_carry_rx_code_bias_{false};        ///< rx-CB carry (SPEC_rx_cb_carry): carry per-station receiver code biases across epochs as diagonal RW priors, harvested OUTSIDE the phase-leveling gate. Forced off without code_datum_time_linked. OFF = byte-identical.
+        double network_rx_cb_carry_q_{1e-9};              ///< rx-CB carry RW process noise (m²/s); var_eff = var + q·Δt. Only used when network.carry_rx_code_bias.
+        bool   network_rx_cb_carry_demean_{false};        ///< Card LV-2 (SPEC_level_information_budget): subtract the information-weighted MEAN innovation (per constellation, computed at the serial harvest, applied lag-1) from every rx-CB carry fold, so the carry transports between-station DIFFERENCES at full stiffness and stops re-asserting last epoch's common-mode realization.  ⚠ It does NOT free that direction: in absolute terms it re-pins the DCB common mode to mean(x_lin), the frozen first-epoch seed frame (SPEC §13).  Requires carry_rx_code_bias.  Fingerprinted when armed.  OFF = byte-identical.
+        int    network_rx_cb_carry_demean_min_stations_{8};  ///< Card LV-2: minimum contributing stations for a FRESH μ; below it μ freezes at its previous value (counted lv2_mu_frozen).  Only used when network.rx_cb_carry_demean.
+        bool   network_rx_cb_carry_demean_within_{false}; ///< Card LV-5 (SPEC_level_information_budget §12): reduce the LV-2 μ SERIALLY between PASS A and PASS B over the stations present THIS epoch and fold against it — removing the lag-1 feedback delay whose loop gain limit-cycles the level once LV-4 admits the full carry.  Requires rx_cb_carry_demean.  Fingerprinted when armed.  OFF = byte-identical.
+        bool   network_rx_cb_carry_step_gate_{false};     ///< Card LV-4 (SPEC_level_information_budget §11): replace the FRAME-DEPENDENT inject screen |value_abs − x_lin(cb)| with the frame-INVARIANT epoch-over-epoch step of the absolute posterior, evaluated at the serial harvest; a step beyond k·σ ERASES the entry (reset-not-repair).  Requires carry_rx_code_bias.  Fingerprinted when armed.  OFF = byte-identical.
+        double network_rx_cb_carry_step_k_sigma_{10.0};  ///< Card LV-4: k·σ of the invariant step screen (legacy k, inherited un-recalibrated together with the 0.5 m guard).  Only used when network.rx_cb_carry_step_gate.
+        bool   network_rx_cb_harvest_demean_{false};      ///< Card S2H (SPEC_level_information_budget §17 item 3 / §27 item 1): the "S-consistent harvest" — at the serial post-solve harvest, subtract the Λ-weighted mean of each family's harvested ABSOLUTE rx-CB realizations from every carried entry (LASER Net3DLsa big-system S-transform, Λ-generalized), making the carried set zero-mean-by-construction and coherent with the rx-CB datum row.  Frame re-derived per epoch: no frozen pin (LV-2's failure), no lag-1 feedback, carry stays diagonal.  Requires carry_rx_code_bias; forces LV-2/LV-5 OFF (superseded mechanisms on the same channel).  Fingerprinted when armed.  OFF = byte-identical.
+        double network_rx_cb_harvest_screen_z_{8.0};      ///< Card S2H: robust peer-screen z for the μ vote — entries with |value − median| > z·max(1.4826·MAD, median formal σ) do not vote (still transformed).  Contamination guard (SPEC §16/12.1), not an event policy — LV-4 owns events.  Must be > 0; only used when network.rx_cb_harvest_demean.
+        bool   network_iono_seed_field_frame_{false};     ///< Card LV-1 (SPEC_level_information_budget): reframe every per-LOS iono seed at allocation — subtract the station's median raw seed (rx GF bias ⊕ median slant iono) and add the lag-1 SH field's own value at the LOS's IPP — so seeds are born in the FIELD's frame instead of the receiver-bias-in frame.  NETWORK path only; inert without estimate_iono_sh.  OFF = byte-identical.
+        int    network_iono_seed_field_frame_min_sats_{5};  ///< Card LV-1: minimum usable raw seeds at a station-epoch for the median offset; below it the new LOS take the RAW seed (counted lv1_fallback_raw).  Only used when network.iono_seed_field_frame.
         bool   network_carry_vce_{false};                 ///< M2 (LS-VCE): run the carry-row variance-component MONITOR — estimate σ̂ (Floor m² + Rate m²/s) per carry family per constellation from the post-fit carry innovations and log it against the hand floors. Calibration/honesty instrument ONLY; no feedback into the solve. OFF = byte-identical (no accumulator, no logging).
-        bool   network_carry_vce_apply_{false};           ///< M2 v2: feed σ̂ back into the carry stochastic model (replace the hand floors). REQUIRES carry_vce. NOT IMPLEMENTED in this build (monitor v1 only) — setting it true is a hard load error.
+        bool   network_carry_vce_apply_{false};           ///< M2 v2 (docs/SPEC_carry_vce_apply.md): LASER 5-95 variance-FACTOR iteration — multiply every carry fold variance by a measured, inflate-only, slew-limited α² per (family × constellation). REQUIRES carry_vce. SOLVE-AFFECTING + FINGERPRINTED; a warm resume with it armed is a hard error (fresh-convergence-only). OFF = byte-identical.
+        std::string network_carry_vce_apply_families_{"pl"}; ///< M2 v2: carry families the factor scales (comma list of pl / pb / cb). Must be a SUBSET of carry_vce_components (hard error otherwise). Only used when carry_vce_apply.
+        double network_carry_vce_apply_slew_{1.05};       ///< M2 v2: per-epoch max multiplicative step of α² (× and ÷); <=1 disables the limiter. Conditioning hygiene, NOT the safety argument (the inflate-only clamp is).
+        double network_carry_vce_apply_max_{1000.0};      ///< M2 v2: ceiling on α² (the floor is 1 by construction — inflate-only). Entry/exit are evented.
+        int    network_carry_vce_apply_min_rows_{200};    ///< M2 v2: effective (forgetting-weighted) monitor rows a group needs before its factor may move; below it the group FREEZES and the trace flags it.
         std::string network_carry_vce_components_{"pl"};  ///< M2: carry families the monitor accumulates (comma list of pl / pb / cb). Default "pl" (the phase-leveling ambiguity carry — the primary floor). Only used when carry_vce.
         int    network_carry_vce_window_epochs_{60};      ///< M2: exponential-forgetting half-life (emitted epochs) of the VCE accumulator; ≤0 ⇒ whole-run accumulation. Only used when carry_vce.
         bool   network_cycle_slip_turbo_edit_{false};     ///< T0 per-station MW/GF cycle-slip REPAIR of the carried ambiguities (phase-leveling Increment 2); OFF = Increment-1 byte-identical.
@@ -4774,6 +5626,8 @@ namespace GnssProcessor {
         bool   network_per_const_withhold_{false};  ///< RTA-10: when the A4 σ̂0 withhold trips, carve the epoch per CONSTELLATION — publish each constellation whose own σ̂0_c (same standardized-residual pool, restricted to its rows) passes the SAME ceiling with ≥ min_rows rows; prune the rest (RT0-5-quarantine pattern). OFF = all-or-nothing withhold (byte-identical).
         int    network_per_const_withhold_min_rows_{20}; ///< RTA-10: minimum σ̂0-pool rows for a constellation to be JUDGEABLE by the carve-out; fewer ⇒ withheld (unjudgeable under a contaminated epoch). Inert unless network_per_const_withhold_.
         bool   network_emit_epoch_status_record_{false}; ///< RTA-10: write one positional H heartbeat record per epoch into the product file — including fully withheld epochs (gate + σ̂0), which otherwise emit nothing — so a tail consumer distinguishes "withheld" from "producer died". Positional (never feeds replay). OFF = no H records (byte-identical).
+        bool   network_h_sigma0_prefit_census_{false};   ///< H-rider (edge-queue §1.6 item 3a): feed the H heartbeat's sigma0 field from the ALWAYS-ON prefit census's pooled robust σ̂₀ instead of the carry_warm-gated within-epoch RAIM statistic (which is structurally 0.000 on every no-leveling lineage, and a degenerate constant on leveled quiet runs).  UNIFORM per wire: every H site carries the census statistic when armed, and the S contract says so (hsig=pc).  Never feeds the A4 withhold ceiling (that stays sigma0_adapt).  Requires emit_epoch_status_record + trace_prefit_census.  Changes H bytes ⇒ default OFF (byte-identical).
+        std::string network_h_sigma0_classes_{"code,sh,other"};   ///< H-rider: DATA classes pooled into the census-fed H σ̂₀ (token list: code/phase/other/sh/all/none).  Default matches the census EVENT domain — phase deliberately excluded (arc-specific innovations are not a common-mode population, census deviation 2c).  Only used when network.h_sigma0_prefit_census.
         bool   network_raim_surgical_station_{true};   ///< Within-epoch adaptation may peel a single (station,sat) ARC instead of excluding the whole station, and de-rates whole-station exclusion by @ref network_raim_station_drop_bias_; false = coarse sat-vs-whole-station peel (A/B baseline).
         double network_raim_station_drop_bias_{1.5};   ///< A whole-station exclusion is chosen only when its median-polish row effect / this factor still beats the best satellite/arc candidate (≥1; 1 disables the bias).
         bool   network_raim_redundancy_normalize_{false}; ///< B2: standardize the post-fit / within-epoch RAIM residual by v_i/(σ_i·√r_i) with the Baarda redundancy r_i = 1 − w_i·a_iᵀCov(θ)a_i (per-row, from the cached per-station Schur factors) before σ̂0 pooling / median-polish; low-redundancy arcs are otherwise under-flagged (response ∝ r_i·fault). OFF = plain |v|·√w (byte-identical); ON deliberately changes the statistic.
@@ -4817,6 +5671,13 @@ namespace GnssProcessor {
         bool   network_carry_invariant_innov_refold_{false}; ///< Card 4 (M1, D5 v2, DEFERRED): when ≥N chords flag in one epoch, route the flagged set into the existing within-epoch re-solve so the epoch itself is cleaned (v1 keeps the one already-solved epoch's bounded contamination, q_z the backstop). Parsed for the config contract; NOT yet implemented (warned). INERT unless network_carry_invariant_innov_gate_.
         bool   network_carry_invariant_innov_calibrate_{false}; ///< Card 4 (M1, D5 v2): standardize the innovation gate by the LS-VCE-estimated EMPIRICAL innovation variance σ̂₀² (robust geo-mean of the standardized innovations, the M2 NetworkCarryVce instrument) instead of the raw formal Cov(v), which the M2 monitor measured 10-30× optimistic. Makes network_carry_invariant_innov_k a TRUE Nσ threshold that auto-adapts per regime (so one k serves both low- and high-elevation masks). OFF = raw formal Cov(v) (v1; k is an uncalibrated knob). INERT unless network_carry_invariant_innov_gate_.
         double network_carry_invariant_innov_calibrate_window_{60.0}; ///< Card 4 (M1, D5 v2): exponential-forgetting half-life (emitted epochs) of the σ̂₀² accumulator; larger = smoother/slower-adapting. INERT unless network_carry_invariant_innov_calibrate_.
+        bool   network_carry_invariant_innov_corroborate_{false}; ///< Card 4 (M1, D5 v3): suppress a D5 re-tap when the RAW observables positively measured the arc as continuous (no MW/GF step). Measured 2026-07-30: only 2.1% of D5 re-taps coincide with a raw step, vs 95% on the same run's known arc resumptions — the gate fires on persistent model error, not slips, and re-taps continuous arcs indefinitely (97.4% of inter-reset gaps are 1 epoch), pinning dd_sigma_cyc at ~3.9 cyc so DD fractions stay uniform at every baseline. FAIL-SAFE: only measured-and-flat suppresses; no-evidence still re-taps, so standing invariant #1's response is narrowed, never removed. INERT unless network_carry_invariant_innov_gate_ AND a slip-QC consumer computed the raw observables. OFF = byte-identical to D5 v2.
+        double network_carry_invariant_innov_corroborate_backstop_k_{0.0}; ///< Card 4 (M1, D5 v3): re-tap regardless of corroboration when the standardized innovation exceeds this MULTIPLE of the gate threshold (k·σ̂₀). 0 = inert (pure corroboration), the default and the recommended value: corroboration was measured to FALL with innovation size (2.1% below 25σ, 0.0% at 100-200σ, 1.2% above 200σ), so a magnitude backstop re-admits precisely the population with the least evidence of being a real slip. Provided for sweeps only. INERT unless network_carry_invariant_innov_corroborate_.
+        bool   network_carry_invariant_innov_retap_only_{false}; ///< Card 4 (M1, D5 v4): on a D5-flagged chord whose arc the RAW observables MEASURED as continuous, the in-epoch re-tap (installPosterior: mean ẑ+v, variance σ̂₀²·Cov(v)_ii, cross zeroed) is the WHOLE response — the funnel entry no longer also excludes the arc from next epoch's A_old membership, so the DD keeps its history instead of being refloated from a diffuse prior. Under a stable tree a CHORD arc has cycle support exactly 1 (its own fundamental cycle), so on that population the exclusion protects no other DD and is pure churn: 2026-08-02 measured 513 482 of 525 009 "slip refloats" on `runs/ft63_24h_conv` as the gate's own flag→re-tap→funnel limit cycle (mean chord lifetime 4.3 epochs, dd_sigma_cyc pinned ~3.9 cyc). NOT a general removal of the refloat — tests/test_network_invariant_carry_driver.cpp GATE 10b measures the refloat COMPLETING a real slip's reset (the in-epoch move is partial: v is the post-fit innovation, already shrunk by the fold's −GᵀΣG border term) to 0.48 cyc, so the same fail-safe tri-state as the v3 corroboration gate applies: stepped ⇒ refloat · measured-and-flat ⇒ keep the carry · no evidence ⇒ refloat. An arc a raw detector flags in the CURRENT epoch refloats regardless. Standing invariant #1 is narrowed to the diagnosed population, never removed. The funnel INSERT is untouched, so every side consumer (Iono-2 v3k erase classifier, WL-3 MW-row slip-skip, anchor hygiene, PB emit filter, Card G) is unaffected. Composes with `_innov_corroborate`, which suppresses the flat population one level earlier — with v3 armed this knob is largely inert by construction, and the pair is the "re-centre the DD" vs "leave it alone" A/B on model tension. INERT unless network_carry_invariant_innov_gate_ AND a slip-QC consumer computed the raw observables. OFF = byte-identical to D5 v3.
+        bool   network_carry_invariant_innov_carried_only_{false}; ///< Card 4 (M1, D5 v5): evaluate the innovation gate ONLY on chords genuinely carried into this epoch. The test is |v_i| > k·σ̂₀·√Cov(v)_ii with Cov(v) the H0 covariance about the CARRIED prior; a chord born this epoch has no carried prior (its prior is the diffuse fresh_prior_var), so there is no hypothesis to test, the reset it triggers is a no-op — a diffuse chord's posterior ALREADY is the data-only tap-off — and the flag's only lasting effect is the funnel entry that re-borns it next epoch, which flags again. MEASURED 2026-08-02 on runs/churn_base (63 sta, 3 h, DOY-129): 32 062 of 33 628 flags (95.3 %) sit on born chords at exactly the diffuse √var = 1000.000 m with median |v| 19.2 km, and 27 chords are born-flagged on more than half of all flagged epochs (URUM00CHN/G22 at duty 0.99). A chord re-born every epoch has by construction never accumulated anything — that is why dd_sigma_cyc cannot fall off its pin and med|frac_cyc| stays uniform at 0.25. This is the ENGINE of the D5 churn, upstream of both the v3 corroboration gate and the v4 re-tap-only knob, which suppress the same population for incidental reasons. The D5 v2 design already excluded born chords from the σ̂₀ accumulator for exactly this reason ("a born chord's diffuse Cov(v) would tank σ̂₀²") and simply never applied the same exclusion to the gate DECISION; this reuses the identical chord_carried mask so the two cannot drift. INERT unless network_carry_invariant_innov_gate_. OFF = byte-identical.
+        bool   network_carry_invariant_pd_safe_{false};    ///< Card 4 (M1): PD-SAFE DD fold (docs/SPEC_pd_safe_dd_fold.md). The carried Pz's positive-definiteness is an ALGEBRAIC INVARIANT of the exact recursion (independent chords => full-row-rank W => W.PSD.W' + fresh diagonal is PD; the exact posterior of a PD prior is PD) and breaks only NUMERICALLY. Armed, the fold (a) reads the posterior back in PRODUCT form sym(Pz.M.B) instead of subtracting two 1e6-scale operands to reach a 1e-4-scale mature row, (b) factorizes the EQUILIBRATED S(Pz+B)S against a scale-RELATIVE pivot floor (1e-12.dmax) instead of the absolute minCoeff()<=0 screen, (c) repairs a still-tripping block by clamping its eigenvalues and COUNTS it, and (d) REBIRTHS a block that still cannot factor (means kept, Pz re-seeded diffuse) at install and at warm-resume restore rather than freezing it forever. Measured 2026-08-02: 78% of the carried state was diffusing behind the silent M:=0 branch this replaces. INERT unless network_carry_invariant_; FINGERPRINTED (fresh convergence only). OFF = byte-identical.
+        bool   network_carry_aware_covariance_{false};     ///< CARRY-AWARE COVARIANCE READBACK (docs/SPEC_carry_aware_covariance.md). foldReducedDdPriors is a per-block rank-K Woodbury update on the pristine per-station factors, i.e. exactly the Schur complement of A~^-1 = N_rr^-1 - SUM_b Y_b M_b Y_b' (Y_b = N_rr^-1 C_b'), and reconstructStation ALREADY reads that model back on the MEAN (the kappa correction). The four covariance readbacks did not: they used N_rr^-1 while NetworkEstimator's shared covariance -- inverted from the FOLDED reduced normals -- was carry-AWARE, so every sigma the producer published was a HYBRID that is the covariance of no estimator at all. Armed, jointConditionalCovariance (dd_sigma_cyc, the AR probe's Q_cyc) uses A~^-1 and A~^-1.N_rs instead, including the CROSS-STATION local term N_rr^-1 cannot express and a between-station DD needs. HONEST WITH RESPECT TO THE FOLD THAT RAN, not to the true posterior: the fold composes ONE Woodbury update per block against the pristine N_rr^-1, which is exact only if no station is touched by two blocks -- and a block is one connected component of ONE (const,signal) group, so a station tracking two signals sits in both. The correction therefore inherits the same block-Jacobi truncation the SOLVE made (deliberately: a covariance from a different model than the mean would be the defect restated), and its non-positive-variance guard -- refuse, never clamp, always count -- is the first measurement anywhere of that truncation's size. rowRedundancy deliberately gets NO carry_aware flag: it is on the armed RAIM path and the correction would make the detector fire LESS. Both consumers are READ-ONLY (NetworkProducerAr is log-only, Phase 2 read-only), so ON must be BYTE-IDENTICAL to OFF on the SOLVE -- that is the gate. Why it matters: med|frac| ~ 0.25 is the EXPECTED reading whenever sigma_DD >~ 0.3 cyc, so the campaign's strongest negative ("no DD integer information at this cadence/geometry", 6 h + GPS+Gal) cannot be tested without a valid sigma, and the only sigma emitted was carry-blind (pinned ~3.9 cyc; scripts/grade_pdfix_arms.py excludes it ON PURPOSE). NOT fingerprinted (no stored state changes meaning). INERT unless network_carry_invariant_. OFF = byte-identical.
+        bool   network_phase_datum_eq34_slip_aware_election_{false}; ///< Card 3/4: make the eq34 spanning-tree election SLIP-AWARE, so a slipped arc is kept OUT of the tree wherever the graph allows it. Two effects, both fail-safe: a slipped INCUMBENT is not sticky-seeded (it must re-win as a new edge), and a slipped arc ranks below every clean arc in the I4 longevity order (inert unless network_phase_datum_eq34_longevity_election_). WHY: a slipped TREE edge poisons every fundamental cycle through it, so all dependent chords refloat at once; a slipped CHORD costs exactly one DD (its cycle support is 1). Demoting the arc to a chord converts the mass kill into a rank-1 kill without discarding any information — the DD through the slipped arc still refloats, only its neighbours stop dying with it. If the arc is the component's ONLY connection the completion re-admits it and the mass kill happens anyway, which is correct: the topology, not the policy, forced it. Under network_carry_invariant_ the resulting basis change is a non-event by construction (the driver re-expresses exactly). OFF = byte-identical.
         bool   network_emit_pb_filter_{false};             ///< PB emission-continuity filter (M5 prerequisite): slip-gated per-key scalar KF on the POST-REBASE emitted phase biases + a self-tuning k·σ̂_step jump gate — an outputs-only, S-transparent smoother that clears the ~200/epoch threshold-in-noise discontinuity floor without touching the solve (user DDs + dd-frac grading byte-unchanged). Baked into the emitted product (replay-safe, like the re-base); the emitter jump test stays the SOLE, unchanged disc authority. INERT unless network_carry_invariant_ + network_carry_invariant_emit_rebase_ (it filters the re-based emission frame). OFF = the leaf is never constructed/called (byte-identical).
         double network_emit_pb_filter_q_{3E-07};           ///< PB filter: random-walk process noise of the emitted bias (m²/s); ≈(3 mm)² per 30 s epoch (the quasi-static drift class). INERT unless network_emit_pb_filter_.
         double network_emit_pb_filter_jump_k_{4.0};        ///< PB filter: reset gate |innovation| > k·σ̂_step (Nσ; mirrors carry_invariant_innov_k). k<~2 leaves the noise floor uncleared; k too large smears events — but genuine events are ≫k·σ̂_step. INERT unless network_emit_pb_filter_.
@@ -4825,12 +5686,29 @@ namespace GnssProcessor {
         double network_emit_pb_filter_window_epochs_{60.0};///< PB filter: exponential-forgetting half-life (emitted epochs) of the σ̂_step estimator. INERT unless network_emit_pb_filter_.
         bool   network_emit_pb_filter_emit_sigma_{false};  ///< PB filter: stamp the filter posterior σ (√P) onto the emitted phase-bias σ (sigma_m) so a consumer weights by the shrunk uncertainty; false leaves the solve's per-epoch σ untouched. The M4 combined-σ token (sigc_m) is a solve-covariance quantity and is NOT refined in v1. INERT unless network_emit_pb_filter_.
         bool   network_emit_pb_filter_gate_v2_{false};     ///< PB filter v2: data/model-driven reset gate replacing the v1 hand-tuned (per-cadence) k/seed. Three coupled changes: (a) CENSORING-FREE σ̂_step feed (kInnovation rows feed too — kills the death-spiral where withheld gate-scale steps biased σ̂ low and tightened the gate); (b) MODEL-SCALED gate |innov| > jump_k·√(Ppred+R) so dt enters via the prior's q·gap term and ONE jump_k transfers 30 s↔300 s; (c) meas_sigma_m demoted to a numerical seed (floor becomes ~1 mm absolute, jump_k back to a universal 4). INERT unless network_emit_pb_filter_. OFF ⇒ v1 bit-for-bit.
+        bool   network_emit_clock_frame_hold_{false};      ///< Card CLK-R stage 1 (docs/SPEC_clock_emit_rebase.md): emit the satellite clocks in a per-constellation HELD frame — the per-epoch common-mode innovation (median vs the previous emitted values, ≥4 fresh unforced keys) accumulates into a frame offset A_c that never re-enters the wire. The removed direction is the per-epoch clock-ensemble gauge (a consumer's per-epoch receiver clock absorbs it; between-sat differences preserved exactly), measured at 613/1440 census step epochs (max 17.7 m) on the internal 12 h lineage — offline replay: 613 → 0. Outputs-only (solve byte-identical even when ON; fingerprint-SAFE); baked into the product (replay-safe). OFF = the leaf is never called (byte-identical).
+        double network_clock_frame_leash_m_{50.0};         ///< Card CLK-R stage 1: |A_c| re-anchor bound (m). Crossing it re-anchors the constellation to the solve frame WITH markDatumChange (the invariant-#7 marked re-coupling edge; never silent). Measured 12 h wander on the reference lineage: 23 m. INERT unless network_emit_clock_frame_hold_.
+        bool   network_clock_disc_jump_test_{false};       ///< Card CLK-R stage 2: mark per-satellite common-removed clock steps > network_clock_disc_jump_m_ via the markSatDiscontinuity retro-bump — R record + per-sat phase/code/clock counters, the consumer-reset chain Q4 proved end-to-end. Independent of the frame hold (alone it marks the RAW wire with the census's own statistic). RTA-11 stands: the emitter's clock counter keeps NO internal magnitude test — this test lives at the emission-prep tier and replay reproduces it from the serialized R/E records. OFF = byte-identical.
+        double network_clock_disc_jump_m_{1.5};            ///< Card CLK-R stage 2: flat per-sat step threshold (m). Empirical (SPEC clock_emit_rebase §1): 1.5 ≈ 16σ of the measured per-epoch walk step (robust σ 0.092 m) ⇒ ~7 marks/h on the reference internal lineage; the census outlier floor (0.5) would mark 73/h — a consumer reset storm. INERT unless network_clock_disc_jump_test_.
+        bool   network_clock_temporal_anchor_{false};      ///< Card Q3 (docs/SPEC_clock_temporal_anchor.md): the GUARDED temporal clock anchor. The satellite clock's D2 carry folds at network_clock_anchor_q_ instead of filter.process_noise.sat_clock_q, over a PER-SATELLITE elapsed time, with a variance floor — plus the guard (standardized generalized predicted residual, common-mode removed), the in-epoch withdraw+re-solve, the LOOSE/ANCHORED re-validation state machine, and marks at the decoupling edge. Rationale: √(sat_clock_q·Δt) = 17.3 cm sits ABOVE the realized 9.2 cm walk, so the prior never binds and the emitted clock is per-epoch estimation noise (uniform to 1.37× across 32 satellites — not clock physics) against ~2 cm of physical change. SOLVE-AFFECTING + FINGERPRINTED. OFF = byte-identical (no fold change, no state allocated).
+        double network_clock_anchor_q_{1e-4};              ///< Card Q3: the anchor's random-walk rate (m²/s). Steady-state identity: the emitted per-satellite walk is √(q·Δt), so this knob IS the walk target (1e-4 → 5.5 cm, 3e-5 → 3.0, 1e-5 → 1.7; the FC-1 physical floor ~2 cm sits at 1.3e-5). Default 1e-4 is the conservative first rung, BELOW the measured binding knee and well above the physical floor. INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_var_floor_m2_{0.0};    ///< Card Q3: consistency floor on the folded carry variance (m²) — the clock analogue of the B4 pb/cb floors, whose own comment exempted the clock ("own two-state model / monitor"); that exemption ends with a binding carry. Caps folded prior information at 1/floor so an independence-assuming (diagonal OR dense-diagonal) carry cannot accumulate unbounded information against a time-correlated error floor — assessment deviation #1, ranked-plan item 3. 0 = no floor. INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_max_gap_s_{120.0};     ///< Card Q3: per-satellite staleness bound (s). Beyond it the carried clock is NOT folded at the anchor and the satellite decouples. Load-bearing, not hygiene: the driver's dt is the inter-EPOCH gap and every skip path (gate withhold, σ̂₀ withhold, solve failure) advances it while the D2 carry survives untouched — DOY-129's SH gate withheld 278 consecutive epochs — so without a per-satellite elapsed time a binding prior folds a 95-minute-old value as if it were 30 s old. Same defect class as the clock model's P0-3/R11 fix. INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_k_{6.0};               ///< Card Q3: trip threshold on |w|, the standardized generalized predicted residual ê/√(P⁻−P⁺) with the per-constellation common mode removed. EMPIRICAL — derived from the measured prior-residual ladder of the `clk` census family at the armed q, never from the stochastic model. Target trip rate ≈ 1–2 network-wide per hour on a quiet day (the CLK-R lesson: 16σ produced ~7 marks/h and 106 consumer epochs > 20 m). INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_abs_m_{2.0};           ///< Card Q3: floor-independent absolute backstop (m) on the common-removed innovation |ê| — trips even if the standardizing variance were mis-set. Empirical band: the 12 h dev-channel p99 is 0.68 m and its max 10.0 m, so 1.5–3 m isolates genuine steps without touching the body. 0 = off. INERT unless network_clock_temporal_anchor_.
+        double network_clock_anchor_sigma_floor_m_{0.02};  ///< Card Q3: floor on √S (m). A weak-data epoch removes no information (P⁺ → P⁻ ⇒ S → 0) and would otherwise yield a 0/0 statistic that false-trips exactly the lowest-confidence satellites; the floor makes it read w ≈ 0 instead. A LOWER BOUND on the denominator, never an addition to it (that was the pre-B3 data-incest form). Default 2 cm = the measured physical per-30 s change. INERT unless network_clock_temporal_anchor_.
+        int    network_clock_anchor_recouple_epochs_{4};   ///< Card Q3: consecutive in-band epochs a decoupled satellite must serve before the anchor re-engages — standing invariant #7's "the RE-COUPLING edge must re-validate or re-seed what it reconnects". The re-engaged fold also RE-SEEDS (its first variance is cp.var + q·Δt off the LOOSE posterior, not the steady-state tight value). INERT unless network_clock_temporal_anchor_.
+        bool   network_clock_anchor_mark_{true};           ///< Card Q3: wire-mark the DECOUPLING edge (markSatDiscontinuity → R record + per-sat phase/code/clock counters, the chain Q4 proved end-to-end). A satellite whose clock changed BOTH temporal regime and value must not be integrated across. Unlike CLK-R stage 2 — whose marked population was ~98 % churn and cost the quiet-day consumer — this population is by construction NOT churn (the churn is what the anchor removes), but the rate discipline still applies and the knob exists so a 12 h A/B can bisect hold-vs-marks exactly as CLK-R's did. INERT unless network_clock_temporal_anchor_.
+        bool   network_clock_anchor_gauge_free_{false};    ///< Card Q3 §2.1: fold the clock prior with the per-constellation clock GAUGE direction marginalized out (Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ; diagonally this is "anchor each clock to its carried value minus the information-weighted mean", i.e. anchor the DIFFERENCES). Applied to the JOINT dense block, so the clock↔code-bias off-diagonals the C1 carry retains are preserved — only the gauge is removed. A constellation with < 2 carried clocks contributes nothing (its lone key IS the gauge). SOLVE-AFFECTING; part of the anchor's fingerprint. INERT unless network_clock_temporal_anchor_.
+        bool   network_clock_anchor_resolve_{true};        ///< Card Q3: adapt-and-EMIT. On a trip, withdraw the offending clock prior from the shared system and RE-SOLVE the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Placed BEFORE the within-epoch RAIM adaptation deliberately — a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's DATA. OFF degrades to detect+mark+decouple-next-epoch. INERT unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
         bool   network_cb_kaula_prior_{false};             ///< Card KP (network.cb_kaula_prior): fold a LOOSE physical-bound prior (value 0, info 1/sigma^2) onto every ADMITTED satellite code-bias column, lifting a CODE-dominated near-null direction the phase drop-and-heal structurally cannot reach (it anchors PB columns only). Real prior information — satellite OSBs are bounded at tens of ns — not a fudge. Folded through the diagonal SharedPrior channel, NOT into the tight kCodeBiasGaugeWeight datum rows, so declared_dimension is unchanged by construction. OFF = byte-identical; INERT unless estimate_sat_code_bias.
         double network_cb_kaula_sigma_m_{10.0};            ///< Card KP: sigma (m) of the admitted-OSB prior; 10 m ~ 33 ns, the loose end of the physical bound. K2 anti-fragility rule: 1/sigma^2 must sit >= 2 decades ABOVE the armed rank-gate cutoff (the CB-ADM card rejected a loose prior that sat AT the cutoff); the producer computes and logs that margin once and warns below 2 decades. INERT unless network_cb_kaula_prior_.
         double network_rank_gate_tol_{1e-9};               ///< Card DG (network.rank_gate_tol): RELATIVE eigenvalue tolerance of the shared-border null-space rank gate, resolved once into NetworkEstimator::setRankGateTol and read by ALL THREE consumers (gate / estimability dump / prioritized drop-and-heal). Default 1e-9 == NetworkEstimator::kNullSpaceTol ⇒ byte-identical. A calibration parameter, not a constant: "null" is a placement decision in a spectral gap that moves with the constellation mix (1e-6→1e-9 happened once already for GPS+Gal; BeiDou's weak-but-real layer sits ~3 decades deeper relatively). PER-CONFIG and dump-justified — the gate is exact-equality/both-direction, so a value below a config's own gauge depth withholds a HEALTHY config ("over-specified"). See the getter for the binding placement rule.
+        bool   network_sbasis_complete_{false};            ///< SBC (network.sbasis_complete): derive the epoch's REALIZED S-basis dimension pre-gate and fold one minimum-constraint eigenvector gauge row (RHS = the combination's carried level) per near-null direction BEYOND the declared structural dimension — the constellation-scaling phase-bias-datum fix for the FT63 GPS+Gal observed-4-vs-declared-2 withholds/PA-storms (per-satellite channel-family PB↔iono trades the anchor pins cannot close). Engage/release events (invariant #7), every refusal counted. OFF = byte-identical; the gate/PA path is untouched.
+        int    network_sbasis_complete_max_{6};            ///< SBC: per-epoch cap on completed directions; beyond it the completion REFUSES (counted) and the epoch withholds — a burst that size is a pathological epoch or a mis-placed rank_gate_tol, not a datum to auto-fabricate. Measured need 1-3; <=0 = uncapped (diagnostic only). INERT unless network_sbasis_complete_.
         bool   network_station_pd_pin_aware_{false};       ///< Pin-aware station PD guard: the addStation local-block rank test references the MEDIAN |LDLᵀ pivot| instead of the max, so the prioritized datum's in-block 1e10 anchor pins no longer inflate the rejection bar ~10 orders and eject healthy marginal stations every epoch (TWTF/VOIM class). OFF = legacy max-pivot test (byte-identical).
         bool   network_emit_generation_id_{false};         ///< RTA-3: stamp a solution-GENERATION id (uint32 = first-emitted epoch's week·604800+⌊tow⌋) on every epoch (optional I record + store field + S-line gid=); a consumer treats a CHANGE as a global datum break; OFF = no I record, store generation unset (byte-identical).
         bool   network_serialize_disc_counters_{false};    ///< RTA-4: append the POST-EMIT discontinuity-counter VALUES as optional trailing fields (C field 5 clock / B field 5 code / P field 7 phase) so a tail reader reconstructs counters without replaying from epoch 1; OFF = old field counts (byte-identical).
@@ -4851,6 +5729,7 @@ namespace GnssProcessor {
         double network_ura_ewma_alpha_{0.1};        ///< B1: EWMA α for the network-wide σ̂0 that scales the emitted URA.
         bool   network_consume_ura_{false};         ///< B1: consumer inflates measurement R by the network URA on corrected rows; OFF = R byte-identical.
         double network_ura_staleness_q2_{0.0};      ///< B1: consumer ZOH clock-staleness q² (m²/s³) folded as q²·dt³/3 into the applied clock variance; 0 = off.  Loader defaults it to network_clock_model_q2_ (P1-3) so it is active whenever consume_ura is on, not silently inert.
+        bool   network_mark_refsat_reset_disc_{false};  ///< Edge-1 piece 2: ref-path slip -> per-sat disc mark (R record); OFF = pre-existing behaviour, byte-identical.
         bool   network_ura_retro_bump_{false};      ///< B1: on a post-emit QC flag, retro-bump the flagged SATELLITE's disc counter on the NEXT emit (consumer resets the ambiguity that integrated the contaminated epoch); OFF = no bump.
         double network_ura_refloat_inflate_{1.0};   ///< B1: URA multiplier applied to a flagged sat for the phase-leveling warmup horizon after any refloat; 1 = off.
         // --- B1b: phase-bias σ channel (Tienstra product-covariance, phase-bias block) ---
@@ -4904,7 +5783,7 @@ namespace GnssProcessor {
         ModelCorrections model_corrections_;                            ///< Enable/disable flags for model corrections.
         StochasticModelType stochastic_model_; ///< Measurement stochastic model selection.
         double code_elevation_power_;  ///< σ-power on the elevation amplification for **code** observations: σ = σ_zen / sin^p(elev).  p=1.0 reproduces the legacy 1/sin²(elev) variance scaling.  See @c getCodeElevationPower().
-        double phase_elevation_power_; ///< σ-power for **phase**: default 0.5 gives variance scaling 1/sin(elev), much gentler than the code's 1/sin²(elev).  See @c getPhaseElevationPower().
+        double phase_elevation_power_; ///< σ-power for **phase**: default 1.0 gives the symmetric 1/sin²(elev) variance scaling (matching code); 0.5 selects the gentler 1/sin(elev).  See @c getPhaseElevationPower().
         SnrModelParams snr_model_params_;                                ///< SNR-based model parameters.
         SatBlockNoiseParams sat_block_noise_params_;                      ///< Satellite-block stochastic model parameters.
         ImuConfig imu_config_;                                           ///< IMU integration configuration.
@@ -4930,7 +5809,9 @@ namespace GnssProcessor {
         double ar_wl_only_pseudo_var_; ///< Pseudo-obs variance (cycles²) for WL-only constraints.
         double ar_wl_max_frac_;        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
         double ar_min_success_rate_;  ///< Min bootstrap success rate (FFR-style) for AR fix acceptance.
+        double ar_min_arc_info_{ 0.0 };   ///< Per-candidate AR maturity gate: minimum accumulated sin^2(el) on BOTH arcs of a candidate. 0 = off (byte-identical). Makes AR SAFE, not useful — see AmbiguityResolverConfig::min_arc_info.
         double ar_nl_max_per_pair_frac_; ///< Max per-NL-pair |float − fixed| (cyc); rejects marginal fixes.
+        bool   ar_nl_iono_free_row_{ false }; ///< WL-constrained N_1 search runs on the exact iono-free row instead of the narrowlane row. Default off (byte-identical) — see AmbiguityResolverConfig::nl_iono_free_row for the 8.06× WL-sensitivity trade.
         bool   ar_enable_partial_ar_;    ///< Partial AR: on full-set fix failure, retry on the largest gate-passing subset.
         std::vector<std::string> ar_active_systems_; ///< Constellations eligible for AR (empty = all).
 

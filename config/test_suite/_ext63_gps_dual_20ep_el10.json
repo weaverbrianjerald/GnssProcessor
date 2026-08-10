@@ -1,0 +1,54 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 7 — arm 4 with the SINGLE change",
+  "estimation.ionosphere_weighting.elevation_cutoff_deg 25.0 -> 10.0.",
+  "",
+  "WHY THIS LEVER.  The receiver-DCB datum (arm 4) fixed the DRIFT but not the OFFSET: a00",
+  "starts at 12.78 TECU in every EXT-CB arm against COD's own GIM at 32.24 TECU for this",
+  "epoch.  Arm 6 eliminated frequency mode as the cause (triple reproduced dual to 0.1 TECU).",
+  "What is left is the physics that separates the ionosphere LEVEL from the receiver DCBs:",
+  "a uniform DCB shift is compensated by a slant-iono shift, and slant maps to VTEC through",
+  "M(el), so ONLY THE MAPPING-FUNCTION SPREAD over the admitted elevation range breaks the",
+  "confounding.  The FT63 lineage admits iono rows only above 25 deg, which is a deliberately",
+  "NARROW spread.  Widening to 10 deg roughly doubles the M range and is the most direct test",
+  "of whether the offset is a separability failure.",
+  "",
+  "⚠️ THIS TRADES AGAINST A KNOWN, DOCUMENTED EFFECT — do not read a move as a free win.",
+  "The posture ledger records the 25 deg cutoff as LOAD-BEARING precisely because the SH",
+  "field is fed a per-epoch CODE-derived slant iono, so low-elevation code multipath and",
+  "residual troposphere contaminate a00.  Lowering the cutoff therefore buys separability and",
+  "pays in contamination.  Both effects move a00, in the SAME direction for the wrong",
+  "reasons, so this arm alone cannot promote the setting.",
+  "",
+  "READ IT AS A MECHANISM TEST:",
+  "  a00 moves substantially toward 32 TECU  => the offset IS a separability failure driven",
+  "        by the mapping-function spread.  The FIX is then not this knob but a richer iono",
+  "        representation and/or an explicit receiver-DCB tie to an external reference; this",
+  "        arm only identifies the mechanism.",
+  "  a00 stays near 13 TECU  => separability is NOT the binding constraint, and the leading",
+  "        remaining hypothesis is a REPRESENTATION MISMATCH: COD's satellite DCBs were",
+  "        determined against COD's OWN ionosphere (deg-15 IONEX, their mapping function,",
+  "        their weighting).  Holding their DCBs fixed while our deg-8 SH field at a 450 km",
+  "        shell represents the same field differently forces OUR field to absorb the",
+  "        difference.  That is consistent with the standing W6 finding that the satellite-DCB",
+  "        residual is SYSTEMATIC ('deg-8 SH representation leaking into the GF split') and",
+  "        that 'a richer iono field is the lever'.  Next test would then be SH degree 8 -> 15.",
+  "",
+  "Dual frequency, since arm 6 exonerated it and it is the faster of the two.",
+  "FRESH LINEAGE ONLY."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "ionosphere_weighting": { "elevation_cutoff_deg": 10.0 }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_el10/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_el10/state_snapshot.bin"
+ }
+}

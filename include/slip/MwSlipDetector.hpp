@@ -436,6 +436,25 @@ namespace GnssProcessor {
             double      lambda_wl{ 0.0 };                                          ///< cached wide-lane wavelength (m).
             bool        bia_corrected{ false };                                    ///< satellite-bias frame of the underlying arc (true = BIA-subtracted).  Cycle-level satellite-bias cancellation requires a UNIFORM frame — the WL layer skips mixed-frame cycles.
             bool        valid{ false };                                            ///< the arc exists, has ≥2 LAGGED samples, and a finite ZD mean/variance was recovered.
+            /// The (satellite, signal-pair) arc KEY is present in the accumulator at
+            /// all — i.e. the detector has ever formed an MW on this exact pair.
+            /// Strictly weaker than @c valid, and the ONLY way for a caller to tell
+            /// "this pair was never built" (a band the detector does not pair, or a
+            /// tracking channel it did not choose) from "built but not yet usable"
+            /// (young, or an SD arc whose group pivot is missing).  Those are
+            /// different defects with different fixes, and a single invalid flag
+            /// conflates them — which is exactly how an EWL consumer can spend a run
+            /// reporting "immature arc" for a pair that does not exist.
+            bool        exists{ false };
+            /// The RINEX CODE observables the MW combination actually consumed on
+            /// (@c sig1, @c sig2) — @c matchChannel's same-tracking-attribute pick, with
+            /// its in-band fallback (see @ref collectUncombinedPairs).  Served because a
+            /// consumer that models the arc's satellite CODE bias must name the SAME
+            /// per-signal OSB column the observable carries: deriving "C"+band+attribute
+            /// from the phase key is right only when the fallback did not fire, and a
+            /// silently mis-attributed OSB column is an undetectable modelling error.
+            /// Empty on an arc fed before this was recorded (never within one run).
+            std::string code1, code2;
         };
 
         /**
@@ -777,6 +796,15 @@ namespace GnssProcessor {
             int    rounded_wl{ 0 };         /**< Rounded WL integer once locked (only valid when bia_corrected). */
             bool   wl_locked{ false };      /**< True once the WL integer has been locked by rounding. */
             double lambda_wl{ 0.0 };        /**< Wide-lane wavelength (meters) cached for slip repair. */
+            /** The RINEX code observables this arc's MW combination was formed
+             *  from, recorded per accepted sample so a consumer can name the
+             *  satellite CODE-bias columns the observable actually carries (see
+             *  @ref MwArcZdMean::code1).  The arc key holds only the two PHASE
+             *  signals, so without these the code channel is unrecoverable and a
+             *  consumer must guess it from the phase attribute.  Short RINEX-3
+             *  codes ("C2W") — inside std::string's small-buffer, so the
+             *  per-epoch @c arc_snapshots_ copy stays allocation-free. */
+            std::string code1, code2;
             double last_dev{ 0.0 };         /**< Active-reference deviation at the most recent epoch (meters). */
             double last_sigma{ std::numeric_limits<double>::quiet_NaN() }; /**< Active-reference sigma at the most recent epoch (meters). */
             std::array<double, kMwLocalWindowCap> mw_window{}; /**< Ring of recent accepted raw MW values (meters); valid entries are [0, mw_window_size). */
@@ -1595,6 +1623,13 @@ namespace GnssProcessor {
          *                       are old-frame).
          * @param pivot_zd_known_in Whether the pivot's ZD slip integer is
          *                       known; false likewise marks the frame moved.
+         * @param code1          RINEX code observable the MW combination consumed on
+         *                       @p sig1 — recorded on the arc so a consumer can name
+         *                       the satellite CODE-bias column the observable carries
+         *                       (@ref MwArcZdMean::code1).  Trace/bookkeeping only:
+         *                       the MW value itself arrives pre-computed in @p mw_m,
+         *                       so passing these does not change any detection.
+         * @param code2          RINEX code observable on @p sig2 (see @p code1).
          * @return True if a slip was detected (caller should generate reset keys).
          */
         bool processMwSample(const PppObservation& obs,
@@ -1608,7 +1643,9 @@ namespace GnssProcessor {
             double* out_slip_wl_float = nullptr,
             const std::string& pivot_sat = {},
             int pivot_zd_slip_in = 0,
-            bool pivot_zd_known_in = true);
+            bool pivot_zd_known_in = true,
+            const std::string& code1 = {},
+            const std::string& code2 = {});
 
         /** Output stream for MWWL trace CSV file (mutable for const access). */
         mutable std::ofstream mwwl_trace_;

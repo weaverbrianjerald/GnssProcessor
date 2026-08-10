@@ -1,0 +1,78 @@
+#!/bin/sh
+#
+# commit-msg — strip Claude/Anthropic attribution from commit messages.
+#
+# WHY THIS EXISTS
+#   Standing user directive: no `Co-Authored-By: Claude ...` trailer on any
+#   commit in this repo. The directive was previously recorded only in a
+#   per-session agent memory file, which binds nothing — 44 of the 63 commits in
+#   the 2026-07-29 master->main merge carried the trailer from sessions that
+#   never saw it. This hook enforces the rule mechanically, for every tool and
+#   every model, regardless of what any agent remembers.
+#
+# WHY STRIP RATHER THAN REJECT
+#   Rejecting would fail the commit and the author (often an agent that does not
+#   know the rule) would simply retry with the same trailer — a loop. Stripping
+#   guarantees the outcome in one pass. It is not silent: the hook reports what
+#   it removed on stderr.
+#
+# WHAT IT MATCHES
+#   - `Co-Authored-By:` lines naming Claude, in ANY model/version variant
+#     ("Claude Opus 4.8", "Claude Fable 5", "Claude Opus 5", ...), and any
+#     `Co-Authored-By:` line pointing at an @anthropic.com address.
+#   - The "Generated with Claude Code" advertisement line, with or without emoji.
+#
+#   Co-author trailers for HUMAN collaborators are deliberately left alone —
+#   those are legitimate provenance.
+#
+# INSTALL (per clone; git cannot auto-install hooks, by design)
+#   git config core.hooksPath .githooks
+#
+#   NOTE: core.hooksPath REPLACES .git/hooks wholesale. If you ever add a hook,
+#   put it here, not in .git/hooks, or it will not run.
+#
+# TEST
+#   printf 'subject\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n' > /tmp/m
+#   .githooks/commit-msg /tmp/m && cat /tmp/m
+
+set -e
+
+msg_file="$1"
+[ -n "$msg_file" ] || exit 0
+[ -f "$msg_file" ] || exit 0
+
+# Cheap pre-check: do nothing (and say nothing) when the message is already clean.
+if ! grep -Eiq 'co-authored-by:.*(claude|anthropic\.com)|generated with .*claude code' "$msg_file"; then
+    exit 0
+fi
+
+removed=$(grep -Eic 'co-authored-by:.*(claude|anthropic\.com)|generated with .*claude code' "$msg_file")
+
+tmp="${msg_file}.declaw.$$"
+
+# One pass: drop the offending lines, then trim the blank lines they left behind
+# at the end of the message so the body does not gain trailing whitespace.
+# [ \t\r] rather than [[:space:]] so a CRLF checkout's lone \r counts as blank.
+awk '
+    tolower($0) ~ /co-authored-by:.*(claude|anthropic\.com)/ { next }
+    tolower($0) ~ /generated with .*claude code/             { next }
+    { lines[++n] = $0 }
+    END {
+        while (n > 0 && lines[n] ~ /^[ \t\r]*$/) n--
+        for (i = 1; i <= n; i++) print lines[i]
+    }
+' "$msg_file" > "$tmp"
+
+# Never hand git an empty message: if stripping emptied it, the message was
+# nothing but attribution. Leave the original alone and let git reject it, so the
+# author sees "empty commit message" rather than a silently mangled commit.
+if [ ! -s "$tmp" ]; then
+    rm -f "$tmp"
+    echo "commit-msg: message is attribution only — leaving it for git to reject." >&2
+    exit 0
+fi
+
+mv -f "$tmp" "$msg_file"
+
+echo "commit-msg: stripped ${removed} Claude attribution line(s) — project directive, see CLAUDE.md." >&2
+exit 0

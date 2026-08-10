@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "RUN QUEUE P1 (docs/RUNQUEUE_pdfix_reask.md) - D5 policy matrix on the WORKING fold.",
+    "",
+    "Control is runs/pdfix_on (D5 v2 as-is): 18559 flags, 23675 births, 20330 refloats,",
+    "sigma0-hat 4.05, mature steps 1.015/0.883/0.509 cyc/ep, SF k=1 0.83 cyc,",
+    "total_IF hr2 8.812 / 22.14 / clk_std 5.00.",
+    "ONE variable vs that control; everything else is _ft63_pdfix_on.json verbatim.",
+    "",
+    "ARM v3 - corroboration gate: a flagged chord is re-tapped ONLY unless the raw MW/GF",
+    "observables positively measured its arc CONTINUOUS.  THE HIGH-STAKES ARM of P1.",
+    "",
+    "It suppresses the measured-and-flat population - on the corrupt substrate 96.5% of flags -",
+    "so chords are allowed to MATURE THROUGH iono tension instead of being reset by it.  That",
+    "is the point AND the risk: standing invariant #1 says a stiff time-linked quantity",
+    "carrying a stale value past a real event warps the whole solution.  The tension does not",
+    "vanish; it has to land somewhere.",
+    "",
+    "GRADE WHERE IT LANDS, not whether flags fell: total_IF hr2 (does the undischarged",
+    "tension reach the products?), the SH a00 band, post-fit sigma0_phase, clock QC, and the",
+    "arc-refloat / IF-TD coarse layer (which is UNTOUCHED and must still catch real slips).",
+    "A total_IF or clock-QC degradation here is a STOP, not a trade."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_on.json"
+  ],
+  "network": {
+    "carry_invariant_innov_corroborate": true,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_v3/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_v3/state_snapshot.bin"
+  }
+}

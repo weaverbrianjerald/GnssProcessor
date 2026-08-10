@@ -1,0 +1,51 @@
+{
+ "_comment": [
+  "EXT-63, arm 23 \u2014 the 1 h SETTLED-WINDOW grading of the full stack:",
+  "canonical single-layer EXT-CB + LV-1 (seed frame) + LV-2 (carry de-mean) + LV-4",
+  "(frame-invariant carry screen) + LV-5 (within-epoch mu).",
+  "Read against arm 19 (LV-1+2, settled sd 4.98) and arm 21 (+LV-4, settled sd 15.53).",
+  "",
+  "WHAT IS BEING GRADED.  LV-4 removed a screen that had been withholding ~74 % of the",
+  "carry priors on a frame artifact; admitting them exposed that LV-2's mu was applied",
+  "LAG-1, whose loop gain scales with the folded fraction -- the level limit-cycled",
+  "(~3-epoch period, range 54 TECU).  LV-5 removes the lag: mu is reduced serially",
+  "between PASS A and PASS B and folded against the SAME epoch.  The arm-22 smoke",
+  "showed the cycle damped (20-ep sd 13.06 -> 5.99) with the residual common mode",
+  "measured at mean |resid| 0.0057 m against max |mu| 8.50 m -- i.e. the correction",
+  "nulls the frame force to ~0.07 % of its size.  1 h is where that has to hold.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - Settled (20-60 min) sd BELOW arm 19's 4.98 TECU, and far below arm 21's 15.53.",
+  "   If sd lands between them, the lag was only part of the loop and the next suspect",
+  "   is the carry variance itself (q=1e-9 with var ~1e-2 m^2 is a very stiff prior to",
+  "   admit at 97 % once nothing screens it).",
+  " - Fold fraction ~97 % (arm 21's), erases order 100 over 121 epochs, 0 stand-downs.",
+  " - mean |resid| stays ~1e-2 m or below.  A residual that GROWS with the window is",
+  "   the candidate-vs-folded set divergence, and the honest fix is a two-pass PASS B.",
+  " - a00: settled mean within a few TECU of GIM 32.24.  Arm 22's 20-ep settle was ~38",
+  "   (high), so a drift DOWN toward 32 over the hour is the expected shape; a level",
+  "   that parks at 38-40 means the admitted carry is re-importing a level offset that",
+  "   the de-mean does not see -- report it rather than tuning k."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "rx_cb_carry_demean_within": true,
+  "rx_cb_carry_step_gate": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv125/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv125/state_snapshot.bin"
+ }
+}

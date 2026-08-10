@@ -138,8 +138,10 @@ public:
     /// pivot handover this epoch) ⇒ discard this epoch's observations and HOLD all weights.
     void advance(bool clean) {
         last_transitions_.clear();   // P1-2: per-CALL, so a held epoch reports none
+        last_released_.clear();      // release hygiene: same per-CALL contract
         if (!adaptive_) return;
         if (!clean) { pending_.clear(); return; }
+        ++advances_;                 // counts only advances that actually ran
         // (1) EWMA update per observed station.
         for (const auto& kv : pending_) {
             Gate& g = gates_[kv.first];
@@ -178,9 +180,14 @@ public:
                 }
                 if (g.engaged) target = rampTarget(g.z);
             }
+            const double w_prev = g.w;   // pre-slew; the release edge is w_prev -> g.w
             const double d = target - g.w;
             g.w += std::min(rate_, std::max(-rate_, d));
             g.w = std::min(1.0, std::max(floor_, g.w));
+            // Release edge: the zero-weight era ENDS here.  Captured around the slew
+            // rather than off the transition list — see enableReleaseTracking.
+            if (release_track_ && w_prev <= release_eps_ && g.w > release_eps_)
+                last_released_.push_back(kv.first);
             // P1-2: report the POST-slew weight (what the next epoch's assembly
             // will actually multiply the SH rows by), not the pre-slew value.
             if (!last_transitions_.empty() && last_transitions_.back().station == kv.first)
@@ -237,6 +244,47 @@ public:
     /// @ref advance call (empty on a held / non-adaptive epoch).
     const std::vector<Transition>& lastTransitions() const { return last_transitions_; }
 
+    // ---- SPEC_deweight_release_hygiene: the RELEASE EDGE -------------------
+    // The engage/release TRANSITION list above cannot serve the release-hygiene
+    // response, for two independent reasons:
+    //   (a) a station's weight can rise off the floor with NO flag flip — an
+    //       engaged station whose z decays toward sigma_lo gets rampTarget(z) > floor
+    //       (and exactly 1.0 at z == sigma_lo) while `engaged` is still true, and a
+    //       station that stops qualifying (n < min_epochs, or mad_sigma == 0) skips
+    //       the whole engage/release block with target 1.0 — both slew UP silently;
+    //   (b) Transition::w is PATCHED to the post-slew value, so a consumer cannot
+    //       recover the pre-slew weight and therefore cannot tell a rise off zero
+    //       from any other slew.
+    // Hence the edge is captured where it physically happens — around the slew
+    // itself — as "w was <= eps and is now > eps", i.e. this station's SH-tie rows
+    // were NOT folded last epoch and WILL be folded next epoch.  Opt-in: an
+    // unarmed run never allocates the list.
+
+    /// Arm per-epoch release-edge capture with the zero-weight threshold @p eps
+    /// (<= 0 falls back to @ref kZeroW, the same constant @ref aggregate uses for
+    /// its n_zero count).  Idempotent; call once at construction time.
+    void enableReleaseTracking(double eps) {
+        release_track_ = true;
+        release_eps_   = (eps > 0.0) ? eps : kZeroW;
+    }
+    /// Stations whose weight ROSE above the tracking eps in the LAST @ref advance
+    /// call — i.e. whose zero-weight era ended.  Empty unless
+    /// @ref enableReleaseTracking was called.  Refilled per-CALL, exactly like
+    /// @ref lastTransitions.
+    const std::vector<std::string>& lastReleased() const { return last_released_; }
+    /// Number of @ref advance calls that actually ran (adaptive AND clean).
+    ///
+    /// A consumer OUTSIDE the caller's `if (sh_want_gate)` block MUST compare this
+    /// against its own last-seen value before reading @ref lastReleased: on a
+    /// datum-change epoch the producer skips advance() entirely (it does not call
+    /// `advance(false)` — that branch has no caller in the tree), so both lists
+    /// retain the PREVIOUS epoch's contents and an unguarded consumer double-fires.
+    long long advanceCount() const { return advances_; }
+
+    /// Zero-weight threshold: at or below this a station's SH block is dropped
+    /// entirely (@ref weight <= 0 makes the assembly append no rows at all).
+    static constexpr double kZeroW = 1e-9;
+
     /// P1-2: cheap per-epoch aggregate of the CURRENT weight field.
     struct Aggregate {
         int    n_engaged{0};  ///< adaptive gates currently engaged (excludes the static list)
@@ -248,7 +296,6 @@ public:
     /// SERIAL harvest site (it only reads, but keep it on the same thread as
     /// @ref advance for consistency with the class's threading contract).
     Aggregate aggregate() const {
-        constexpr double kZeroW = 1e-9;
         Aggregate a;
         double sum = 0.0; std::size_t n = 0;
         for (const auto& kv : gates_) {
@@ -304,6 +351,11 @@ private:
     std::size_t peak_{0};
     std::set<std::string> ever_;
     std::vector<Transition> last_transitions_;   ///< P1-2: refilled per advance()
+    // --- SPEC_deweight_release_hygiene release-edge capture (opt-in) ---
+    bool   release_track_{false};                ///< enableReleaseTracking() called.
+    double release_eps_{kZeroW};                 ///< "decoupled" threshold for the edge.
+    std::vector<std::string> last_released_;     ///< refilled per advance(); empty unless tracking.
+    long long advances_{0};                      ///< advance() calls that ran (adaptive && clean).
 };
 
 }  // namespace GnssProcessor

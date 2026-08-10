@@ -251,6 +251,30 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @param traces             Trace unit (T1_if_slip event rows + the deep
  *                           if_slip_trace CSV stream).
  * @param log                Run logger.
+ * @param refsat_mark_sats   Edge-1 piece 2 (@c network.mark_refsat_reset_disc,
+ *                           default OFF ⇒ nullptr ⇒ byte-identical).  When
+ *                           non-null, every satellite whose REFERENCE-path arc is
+ *                           reset here is inserted for a per-satellite
+ *                           discontinuity mark at its next actual emit
+ *                           (@c NetworkSolPrep drains it through the same
+ *                           mark-and-serialize path as the B1 retro-bump, so it
+ *                           lands as an @c R record).
+ *
+ *                           Why an EXPLICIT mark rather than relying on the
+ *                           emitter's replay-safe bias-jump test (the reason
+ *                           eq34_reattach / anchor handovers deliberately do NOT
+ *                           mark — see NetworkSolPrep.cpp:787,801): most ref-path
+ *                           slips DO step the emitted bias past the jump gate and
+ *                           are already caught (that is the 83-reset population of
+ *                           HANDOFF_edge_response_queue.md §1.1).  But SPEC §25.3
+ *                           measured the excursion ONSETS as refsat_reset-enriched
+ *                           5.0x with **PB value steps = 0** — i.e. the
+ *                           onset-relevant subset re-references WITHOUT a value
+ *                           step, so the jump test provably cannot see it.  This
+ *                           mark targets exactly that subset.  It is NOT
+ *                           reconstructable from the serialized epoch (replay does
+ *                           not re-run slip QC), which is why it must travel as an
+ *                           R record rather than being recomputed.
  */
 void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::vector<NetStation>& stations,
@@ -260,6 +284,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                            bool trace_flag_rates, FlagRate& fr_if_slip,
                            const SyncedEpoch& se, NetworkRunTraces& traces,
-                           const std::shared_ptr<spdlog::logger>& log);
+                           const std::shared_ptr<spdlog::logger>& log,
+                           std::set<std::string>* refsat_mark_sats = nullptr);
 
 } // namespace GnssProcessor

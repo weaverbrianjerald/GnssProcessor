@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "CARD: carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md) - arm P0.",
+    "",
+    "The OFF arm.  Byte-for-byte the _ft63_pdfix_v3.json posture (the P1 winner, i.e. the",
+    "current best substrate) on the NEW exe, with the knob ABSENT.  Its job is invariant #6:",
+    "solve artifacts md5-identical to runs/pdfix_v3.",
+    "",
+    "It is ALSO the same-build control for the ON arm.  That matters more here than usual:",
+    "the ON arm's gate is not 'did the products move acceptably', it is 'did the products",
+    "move AT ALL' - see _ft63_cacov_on.json.  A cross-build comparison could not state that,",
+    "and the parent card already paid for one cross-build claim (its withdrawn '42% faster')."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/cacov_off/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/cacov_off/state_snapshot.bin"
+  }
+}

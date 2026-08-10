@@ -1,0 +1,46 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — EDGE 2 arm B: clock_datum_sum_to_zero's FIRST VALIDATION on a",
+  "leveled lineage (the candidate has never had one — HANDOFF edge 2 'do not arm",
+  "blind').  One knob vs _ext63_1h_evt_pl_clkpin: the per-constellation Σδtˢ=0 gauge",
+  "row replaces the pivot pin (no pivot, no handover seam, declared_dimension 0).",
+  "Same build, same chain, fresh lineage.",
+  "EXPECTED LOADER BEHAVIOR (not defects): clock_datum_satellite/sticky_pivot",
+  "IGNORED/INERT warns; T3c AUTO-ARMS clock_disc_on_set_change (s2z + emit_clock_disc)",
+  "— do not set it by hand; datum-graph d=1 semantics change (loader warn).",
+  "PREDICTIONS: P1 zero pivot handovers by construction; the pin arm's handover-class",
+  "discs vanish.  P2 the KNOWN s2z caveat is the thing to measure: the absolute clock",
+  "frame WANDERS with satellite-set membership (survivors redistribute by -/+ dC0/N on",
+  "rise/set) — product_step_census clock common-mode steps at set-change epochs,",
+  "flagged by clock_disc_on_set_change bumps (counter populates on set changes).",
+  "P3 consumer replay of this product: unchanged-or-better vs the pin arm (prior 305",
+  "evidence: s2z set-event step +0.334 m vs bca -0.0003 — the redistribution is the",
+  "risk; measure, do not assume).  P4 power: 1 h = wiring/counter smoke, rank-only;",
+  "the 13-jump comparison needs 12 h.  Grade on datum-invariant quantities (the knob",
+  "is NOT outputs-only — expect solve changes)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 3600.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 3600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "serialize_sbasis_contract": true,
+  "phase_leveling": true,
+  "mark_refsat_reset_disc": true,
+  "clock_datum_broadcast_anchored": false,
+  "emit_clock_disc": true,
+  "clock_datum_sum_to_zero": true,
+  "product_output_path": "C:/GnssProcessor/runs/evt_pl_clks2z/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/evt_pl_clks2z/state_snapshot.bin"
+ }
+}

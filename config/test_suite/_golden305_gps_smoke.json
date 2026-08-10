@@ -1,0 +1,22 @@
+{
+ "_comment": [
+  "Smoke for the golden v2 candidate (staged-cadence directive: smoke first).",
+  "30 epochs / 15 min. Certifies: loader accepts the full arm set, every armed",
+  "instrument's counters are LIVE at run-end (invariant #4 — an absent counter",
+  "block means that card is not in this build), cost per epoch at scale, and the",
+  "expected in-band flags (s0g NO_DATA on this posture; prires pl/zwd 0-row WARNs).",
+  "Nothing science-graded from this window — ignition only. Pair with an OFF twin",
+  "(same build, instrumentation knobs stripped) if byte-identity needs re-proving",
+  "after the concurrent landings merge; the solve must be byte-identical since",
+  "every new arm is measure-only."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden305_gps.json"
+ ],
+ "processing": { "max_duration_s": 900.0 },
+ "network": {
+  "max_duration_s": 900.0,
+  "product_output_path": "C:/GnssProcessor/runs/golden305_gps_smoke/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/golden305_gps_smoke/state_snapshot.bin"
+ }
+}

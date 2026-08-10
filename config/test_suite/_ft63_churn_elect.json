@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "CHURN CARD \u2014 SLIP-AWARE eq34 ELECTION, 3 h field arm.  One functional key over",
+    "_ft63_churn_base.json: network.phase_datum_eq34_slip_aware_election.  None of the D5",
+    "knobs (v3/v4/v5) is armed \u2014 this is a Card-3/4 CORRECTNESS mechanism on a different",
+    "axis and mixing it with a D5 treatment would make neither readable.",
+    "",
+    "WHAT IT DOES.  A slipped arc is kept OUT of the eq34 spanning tree wherever the graph",
+    "allows: a slipped incumbent loses its sticky seed, and a slipped arc is refused in the",
+    "new-edge walk's FIRST pass (the same two-pass shape INC-1 uses for cold hosts) and",
+    "admitted only in the second.  A slipped TREE edge refloats every fundamental cycle that",
+    "closes through it; a slipped CHORD costs exactly one DD.",
+    "",
+    "THE NUMBER THIS ARM EXISTS FOR: eq34_slip_readmitted / eq34_slip_deseeded.  Near 0 means",
+    "the graph almost always had an alternative and the policy converted mass refloats into",
+    "rank-1 kills.  Near 1 means the observation graph, not the election, is the binding",
+    "constraint and the knob is not worth arming.  The 10-epoch wiring smoke measured 3/21 =",
+    "0.14, but 10 cold epochs carry almost no slip traffic and that number cannot be trusted",
+    "as a rate.",
+    "",
+    "SECONDARY: chord births / slip refloats per epoch vs runs/churn_base2, and total_IF as",
+    "the NO-HARM check.  Do NOT expect med|frac_cyc| or dd_sigma_cyc to move \u2014 this card's 3 h",
+    "legs already established four times over that churn reduction does not touch them."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "network": {
+    "phase_datum_eq34_slip_aware_election": true,
+    "product_output_path": "C:/GnssProcessor/runs/churn_elect/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_elect/state_snapshot.bin"
+  }
+}

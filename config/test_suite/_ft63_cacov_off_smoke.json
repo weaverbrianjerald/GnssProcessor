@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "10-EPOCH SMOKE of _ft63_cacov_off.json (staged cadence).  Sole deltas are the 300 s",
+    "duration and its own output/snapshot paths.  Checks that the knob BINDS (its loader",
+    "line prints), that the run-end 'carry-aware covariance' line appears, and — on the ON",
+    "arm — that the correction's counters MOVE (invariant #4).  It cannot show convergence,",
+    "and it is NOT the md5 gate: 300 s is enough to catch a wiring fault, not enough to",
+    "certify the 3 h byte-identity."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_cacov_off.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/cacov_off_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/cacov_off_smoke/state_snapshot.bin"
+  }
+}

@@ -11,7 +11,11 @@
 %  validation, and constrained pseudo-observation feedback.
 %  Impl: driver in src/core/filter/AmbiguityResolver.{hpp,cpp};
 %  MLAMBDA numerical kernels + acceptance battery in
-%  src/core/filter/IlsCore.{hpp,cpp} (ils:: free functions)
+%  src/core/filter/IlsCore.{hpp,cpp} (ils:: free functions);
+%  network-producer AR seams (both default-OFF) in
+%  src/core/filter/NetworkProducerAr.{hpp,cpp} (log-only fixability
+%  probe) and src/core/filter/NetworkSdEwlAr.{hpp,cpp} (SD
+%  extra-wide-lane integer decision, Route B + A2 datum)
 % ============================================================
 
 Integer ambiguity resolution (AR) converts the real-valued,
@@ -43,14 +47,14 @@ document}),
 where the additional between-receiver difference cancels the satellite
 bias as well, so $\dd N$ is integer intrinsically.  We retain the
 resolver's internal label $\dd{}$ for the differenced ambiguity in the
-equations below --- the algebra is identical either way --- with the
+equations below (the algebra is identical either way), with the
 understanding that it denotes the between-satellite single difference
 $\bsd{}$ in the single-receiver case and the full double difference
 only in baseline mode.  The implementation is split along a
 driver/kernel seam: \texttt{src/core/filter/AmbiguityResolver.cpp} is the
-\emph{driver} --- state-vector assembly, metre$\leftrightarrow$cycle
+\emph{driver}, covering state-vector assembly, metre$\leftrightarrow$cycle
 rescaling, per-pair $\lambda$ lookup, DD formation, the WL/NL
-decomposition, and application of the returned integer fix --- while the
+decomposition, and application of the returned integer fix, while the
 decorrelation-agnostic \emph{numerical core} (the $LDL^{\Tr}$
 factorisation, the $\Zmat$-reduction, the Schnorr--Euchner search, the
 bootstrap success rate, and the full acceptance battery, all as pure
@@ -58,9 +62,12 @@ free functions over $(\ambfloat\ \text{cycles},\,\ambcov\
 \text{cycles}^2)$ with no \texttt{StateManager} / \texttt{KalmanFilter} /
 config coupling) lives in the \texttt{GnssProcessor::ils} namespace of
 \texttt{src/core/filter/IlsCore.\{hpp,cpp\}}.  That same \texttt{ils}
-core is the single implementation shared with the PPP-RTK network
-producer, which drives the identical battery under its own stricter gate
-set (\Cref{sec:net}).  Configuration is under the JSON path
+core is the single implementation the PPP-RTK network producer also
+calls (\dcref{sec:net}{the Network mode document}), though there it runs
+under its own gate set and purely as a read-only fixability probe, since
+the producer is float-only at the time of writing
+(\Cref{sec:ar-network}).  Configuration for the single-receiver and
+baseline paths described below is under the JSON path
 \texttt{estimation.ambiguity\_resolution.*}.
 
 \subsection{The integer least-squares problem}\label{sec:ar-ils}
@@ -84,10 +91,10 @@ closest-lattice-point problem
 i.e.\ minimisation of the squared Mahalanobis distance from $\ambfloat$
 to a lattice point $\bm{a}$ in the metric of $\ambcov^{-1}$.  This is an
 NP-hard integer least-squares (ILS) program; \textsc{LAMBDA} and its
-\textsc{MLAMBDA} variant make it tractable in three invariant stages ---
+\textsc{MLAMBDA} variant make it tractable in three invariant stages:
 (i) an $LDL^{\Tr}$ factorisation of $\ambcov$, (ii) a decorrelating
 integer $\Zmat$-transform (lattice reduction), and (iii) a depth-first
-shrinking-ellipsoid search over the reduced lattice --- none of which
+shrinking-ellipsoid search over the reduced lattice, none of which
 carries a tuning parameter.  We follow the hat/check convention of the
 notation block: $\ambfloat$ is the float estimate, $\ambfix$ the
 integer-fixed solution.
@@ -122,11 +129,20 @@ float quality.  The per-pair wavelength $\lambda_k$ is resolved with
 GLONASS FDMA per-satellite frequencies where applicable, and
 $\bm{Q}^{\dd{}}$ is symmetrised, $\bm{Q}^{\dd{}} \leftarrow
 \tfrac12(\bm{Q}^{\dd{}} + \bm{Q}^{\dd{}\Tr})$, before factorisation.
-The DD pivot $\piv{g}$ is the highest-elevation satellite within each
-$(\text{constellation},\,\text{signal})$ group, consistent with the
-BSSD pivot of \dcref{sec:diff}{the differencing section of the
-Foundations document}; all remaining satellites in the group
-are differenced against it.
+The resolver elects its own DD reference: the highest-elevation member
+of each $(\text{constellation},\,\text{signal})$ group among the
+AR-eligible ambiguities, with all remaining members of the group
+differenced against it.  This is deliberately \emph{not} the filter's
+BSSD pivot: under BSSD the pivot's ambiguity is frozen at exactly
+zero variance, which excludes it from the candidate set
+(\Cref{sec:ar-partial}), so the resolver differences against a second
+reference and the resulting quantity is a difference of single
+differences.  The two elections also run on different rules: the BSSD
+pivot is chosen on a hard phase-coverage tier plus a
+convergence/elevation score and an ephemeris-freshness bar
+(\dcref{sec:diff}{the differencing section of the Foundations
+document}), the AR reference on elevation alone
+(\texttt{AmbiguityResolver::buildDdPairs}).
 
 \subsection{Decorrelation: $LDL^{\Tr}$ factorisation and the integer
 $\Zmat$-transform}\label{sec:ar-lambda}
@@ -168,7 +184,7 @@ $\bar{\bm{z}} := \Zmat^{\Tr}\ambfloat$ (the quantity the search of
 $\bar{z}_k$.  Because $\Zmat$ is unimodular the integer minimiser maps back
 exactly, $\ambfix = (\Zmat^{\Tr})^{-1}\check{\bm{z}}$ with
 $(\Zmat^{\Tr})^{-1}$ also integer; decorrelation therefore does not
-alter the solution of \eqref{eq:ils} --- it only makes the search
+alter the solution of \eqref{eq:ils}; it only makes the search
 ellipsoid closer to spherical, collapsing the enumeration count by
 orders of magnitude.  The reduction interleaves two operations sweeping
 $j = n-2$ downward.
@@ -237,7 +253,7 @@ when Melbourne--W\"ubbena (MW)-resolved wide-lane (WL) integers are
 available, halving the search dimension and exploiting the long WL
 wavelength~\cite{laurichesse2009integer}.  The driver attempts the
 WL-constrained narrow-lane (NL) fix before any unconstrained
-\textsc{LAMBDA} and --- critically --- does \emph{not} fall through to
+\textsc{LAMBDA} and, critically, does \emph{not} fall through to
 an unconstrained search when WL information exists but the constrained
 fix fails: a wrong-WL fix is worse than no fix, so ``no NL AR for
 satellites whose WL is float'' is the enforced hierarchy
@@ -278,7 +294,7 @@ test.
 The float $\hat{n}_{\mathrm{NL}}$ is \emph{not} integer-valued in
 general: substituting $N_2 = N_1 - \mathrm{WL}$ gives
 $\hat{n}_{\mathrm{NL}} = N_1 - \tfrac{f_2}{f_1+f_2}\,\mathrm{WL}$, which
-for GPS L1/L2 with $\mathrm{WL} = 1$ sits at $N_1 - 0.4379$ --- neither
+for GPS L1/L2 with $\mathrm{WL} = 1$ sits at $N_1 - 0.4379$, so neither
 integer is meaningfully closer and the ratio test degenerates near
 $1.6$ regardless of float quality.  The resolver therefore adds the
 known-WL offset so the search variable is integer in expectation,
@@ -351,23 +367,43 @@ Subset selection begins when the DD pairs are built
 ambiguity is admitted to the integer set only if it passes every
 filter:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
-\item \textbf{Initialised} --- the state entry is non-zero (seeded by
-      data), and \textbf{non-frozen} --- its variance is non-zero
+\item \textbf{Initialised}: the state entry is non-zero (seeded by
+      data), and \textbf{non-frozen}: its variance is non-zero
       (excludes a BSSD-frozen pivot).
-\item \textbf{Elevation} --- $\theta^\sat_\rx \ge \theta_{\mathrm{AR}}$
+\item \textbf{Elevation}: $\theta^\sat_\rx \ge \theta_{\mathrm{AR}}$
       (\texttt{elevation\_mask}).
-\item \textbf{Resolvable} --- the satellite is not flagged
+\item \textbf{Resolvable}: the satellite is not flagged
       unresolvable for want of bias/ATX (BIA, ATX) coverage
       (single-receiver path; in baseline DD the analogous filter is the
       \texttt{exclude\_keys} set of non-integer-capable DDs from
       \texttt{MeasurementModel}).
-\item \textbf{Constellation} --- $g(\sat) \in$
+\item \textbf{Constellation}: $g(\sat) \in$
       \texttt{active\_systems}, when that list is non-empty.
-\item \textbf{Pairable} --- the $(\text{constellation},\,\text{signal})$
+\item \textbf{Pairable}: the $(\text{constellation},\,\text{signal})$
       group holds $\ge 2$ satellites, so a pivot difference exists.
+\item \textbf{Mature} (\texttt{min\_arc\_info}, default $0$ = off):
+      both constituent arcs of a candidate have accumulated at least
+      $\sum_k \sin^2\theta^\sat_{\rx,k}$ of elevation-weighted code
+      information since arc birth.  Maturity is measured in
+      \emph{information}, not epochs, because an arc climbing off the
+      mask and one at zenith accumulate at very different rates under
+      the elevation stochastic model, so two arcs of equal age are not
+      equally determined.  The counter restarts on \emph{both} ways an
+      arc can end: the key leaving the state vector, and a refloat in
+      place, which keeps the key and would otherwise let a fresh arc
+      inherit its pre-slip age (\texttt{AmbiguityResolver::refreshArcAges\_},
+      keyed on \texttt{StateManager::isAmbiguityPendingReseed}).  Scope
+      is narrow: the gate is tested only on the WL-constrained NL
+      candidate set of \Cref{sec:ar-wlnl}, not on the baseline DD,
+      WL-only, or unconstrained full-set paths.  Its purpose is
+      defensive, since one immature candidate spoils the joint ratio test
+      of \eqref{eq:ratio} for the whole set, but it is a wrong-fix
+      guard, not a convergence accelerator: it admits a candidate once
+      it is already well determined, which is precisely when the float
+      needs least help.
 \end{itemize}
 The constellation filter keeps a system in the \emph{float} solution
-while excluding it from the candidate set --- useful when one
+while excluding it from the candidate set, useful when one
 constellation's residual model bias would drag down the ratio test.
 
 \paragraph{Dynamic backward-elimination subset
@@ -383,7 +419,7 @@ triggers a greedy backward elimination
 straight back to float.  Starting from the full candidate set, each iteration re-runs the
 complete \textsc{MLAMBDA} pipeline of
 \Crefrange{sec:ar-ils}{sec:ar-lambda} on the current subset and re-tests
-the \emph{same} acceptance battery --- ratio lower/upper bound
+the \emph{same} acceptance battery: ratio lower/upper bound
 \eqref{eq:ratio}, bootstrap success rate \eqref{eq:ffr}, and per-entry
 fractional cap \eqref{eq:perpair}.  On any failure it drops one entry
 and retries, down to a single ambiguity:
@@ -392,9 +428,9 @@ and retries, down to a single ambiguity:
       the largest $|\ambfloat_k - \ambfix_k|$ (nearest a half-cycle
       boundary) is removed;
 \item otherwise the entry with the largest formal float variance
-      $(\ambcov)_{kk}$ --- the least precise ambiguity, whose removal
-      most improves both the bootstrap rate and the search conditioning
-      --- is removed.
+      $(\ambcov)_{kk}$, the least precise ambiguity, whose removal
+      most improves both the bootstrap rate and the search conditioning,
+      is removed.
 \end{itemize}
 Because the accepted subset is always re-validated by the full battery
 on its own covariance sub-block, this can only fix \emph{fewer}
@@ -424,8 +460,8 @@ with $s_1, s_2$ from the search of \Cref{sec:ar-lambda} and threshold
 $\tau_{\mathrm{ratio}}$ (\texttt{ratio\_threshold}).  A second
 upper-bound rejection $\mathrm{ratio} > \tau_{\mathrm{ratio}}^{\max}$
 (\texttt{ratio\_upper\_bound}) catches the pathological case of a
-degenerate covariance direction --- a near-zero $s_1$ left by a previous
-wrong-integer hold --- that would otherwise produce ultra-confident but
+degenerate covariance direction, a near-zero $s_1$ left by a previous
+wrong-integer hold, that would otherwise produce ultra-confident but
 meaningless ratios.
 
 \paragraph{Fixed-failure-rate gate (bootstrap success rate).}
@@ -440,9 +476,9 @@ P_{s,\mathrm{boot}}
 \end{empheq}
 where the $d_i$ are the post-reduction $LDL^{\Tr}$ conditional variances
 of \eqref{eq:ldlt} and $P_s^{\min}$ is \texttt{min\_success\_rate}.  Per
-dimension the factor is $\Pr\bigl(|\mathcal{N}(0,d_i)| < \tfrac12\bigr)$
---- the probability that sequential bootstrapped rounding lands on the
-correct integer --- and the product is the standard Teunissen lower
+dimension the factor is $\Pr\bigl(|\mathcal{N}(0,d_i)| < \tfrac12\bigr)$,
+the probability that sequential bootstrapped rounding lands on the
+correct integer, and the product is the standard Teunissen lower
 bound on the true ILS success rate.  This ties the acceptance threshold
 to the actual problem geometry rather than to a fixed ratio alone.
 
@@ -460,9 +496,9 @@ with $\kappa_{\mathrm{frac}}$ = \texttt{nl\_max\_per\_pair\_frac}.
 
 \paragraph{Convergence guards.}
 Before any search the resolver short-circuits AR while the float is
-immature --- if the epoch count is below \texttt{min\_epochs} or the
+immature, meaning the epoch count is below \texttt{min\_epochs} or the
 position standard deviation $\sqrt{\covM_{00} + \covM_{11} +
-\covM_{22}}$ exceeds \texttt{max\_position\_sigma\_m} --- because a
+\covM_{22}}$ exceeds \texttt{max\_position\_sigma\_m}, because a
 marginal fix accepted before the covariance settles can lock onto wrong
 integers and then poison every subsequent epoch.
 
@@ -489,9 +525,19 @@ but via a \emph{finite-variance Joseph-form pseudo-observation}
 $\approx 0$ variance, so the next epoch's \textsc{LAMBDA} sees a
 near-singular $\bm{Q}^{\dd{}}$ and emits meaningless inflated ratios
 that trip the upper-bound guard of \eqref{eq:ratio} indefinitely.  A
-finite-variance pseudo-observation instead keeps $\covM$
-well-conditioned and lets subsequent epochs re-confirm the integer
-(asymptoting toward it) or detect a slip through its residual.
+finite-variance pseudo-observation is \emph{intended} to keep $\covM$
+well-conditioned so that subsequent epochs can re-confirm the integer
+(asymptoting toward it) or detect a slip through its residual.  Whether
+it in fact does so is an open question at the time of writing: the
+resolver carries a read-only conditioning probe
+(\texttt{qbCondition} / \texttt{rebuildQbCycles} in
+\texttt{src/core/filter/AmbiguityResolver.cpp}) that eigen-decomposes
+the cycle-domain DD covariance either side of every fix and reject,
+added precisely because tightening $\sigma^2_{\mathrm{hold}}$ was
+observed to \emph{reduce} the fix count and destabilise the kinematic
+solution, the signature of a covariance being driven singular by the
+constraint rather than merely tightened by it.  The mechanism argued
+for below is therefore the design intent, not a validated result.
 
 For each accepted DD pair $k$ the constraint row, innovation and noise
 are
@@ -518,21 +564,171 @@ destabilisation that the earlier $R = 0$ form \eqref{eq:backsub}
 induced; \eqref{eq:backsub} survives in the code only as the documented,
 rejected legacy approach.
 
+\subsection{Network-producer AR (both mechanisms default
+off)}\label{sec:ar-network}
+
+The PPP-RTK network producer of \dcref{sec:net}{the Network mode
+document} is \emph{float-only}.  Two integer mechanisms exist in the
+producer's per-epoch seam sequence, both default-off, and neither
+changes the emitted satellite-bias product in its shipped state.  They
+are documented here because their algebra is settled, not because they
+are in use.
+
+\paragraph{Producer AR: a log-only fixability probe.}
+Under \texttt{network.ambiguity\_resolution.enable} (default
+\texttt{false}) the seam \texttt{filter/NetworkProducerAr} reconstructs
+each station's float ambiguities from the reduced solution
+(\texttt{NetworkEstimator::reconstructStation}), forms an
+\emph{independent} between-station double-difference basis (a star
+topology per $(\text{constellation},\,\text{signal})$, restricted to GPS
+and Galileo because GLONASS FDMA leaves a per-slot receiver term that
+survives the difference), builds the exact DD covariance from
+\texttt{NetworkEstimator::jointConditionalCovariance}, rescales it to
+cycles by \eqref{eq:m2c}, and calls \texttt{ils::ilsFix}.  The result is
+\emph{logged and discarded}: nothing is re-pinned, nothing is re-solved,
+and the run is byte-identical whether the block executes or not.  The
+one piece of invariant algebra that makes the probe meaningful is that
+the between-station DD ambiguity
+\begin{equation}
+\dd N^{\sat,\piv{g}}_{\rx_1\rx_2,\sigl}
+\;=\;
+\bsd N^{\sat,\piv{g}}_{\rx_1,\sigl} - \bsd N^{\sat,\piv{g}}_{\rx_2,\sigl}
+\label{eq:net-dd-invariant}
+\end{equation}
+is invariant under the producer's choice of phase-bias S-basis: the
+satellite bias $b^\sat_\sigl$ cancels in the between-receiver
+difference exactly as it does in the baseline DD of
+\dcref{sec:dd}{the double-difference section of the Foundations
+document}, so the probe reports the network's intrinsic integer
+recoverability rather than a property of the datum it happens to hold.
+The convergence gauge the probe emits is the median DD formal standard
+deviation in cycles; it has to fall well below the half-cycle scale
+before \eqref{eq:ils} is reachable at all, and it is the quantity to
+watch rather than the fix count.  Two configuration caveats:
+\texttt{ils\_max\_dim} (default $0$ = uncapped) exists because the
+search does not return on the full-network basis at operational station
+counts, and caps it to the lowest-formal-$\sigma$ subset in the manner
+of \Cref{sec:ar-partial}; and \texttt{wl\_cascade} is parsed and echoed
+in the load-time log but has no consumer anywhere in the tree: it is
+inert.
+
+\paragraph{SD extra-wide-lane integers: Route B and the A2 datum.}
+The second mechanism (\texttt{filter/NetworkSdEwlAr}, gated on
+\texttt{network.sd\_ewl.fix\_enable}, default \texttt{false}) decides an
+integer for the between-satellite single-differenced extra-wide-lane
+ambiguity.  Its motivation is a rank argument: the float
+Melbourne--W\"ubbena row that the enclosing SD-EWL layer folds is a
+linear combination of observables the epoch's normal equations already
+contain, so it adds \emph{no new rank}; the only genuinely new content
+available from that row is integrality.  Rounding the SD statistic
+directly is circular, since it would require the satellite bias difference
+$b^\sat_{\mathrm{EWL}} - b^{\piv{g}}_{\mathrm{EWL}}$ the network is
+solving for.  Route B breaks the circle by differencing the SD MW
+statistic \emph{between stations}, which is the same double difference
+as \eqref{eq:net-dd-invariant}:
+\begin{empheq}[box=\fbox]{equation}
+\bigl(\mwc^\sat_{\rx_1} - \mwc^{\piv{g}}_{\rx_1}\bigr)
+- \bigl(\mwc^\sat_{\rx_2} - \mwc^{\piv{g}}_{\rx_2}\bigr)
+\;=\;
+\lamewl\,\dd N^{\sat,\piv{g}}_{\rx_1\rx_2,\mathrm{EWL}}
+\;+\; \dd{\varepsilon^{\mwc}},
+\label{eq:sdewl-routeb}
+\end{empheq}
+in which the satellite bias pair cancels exactly (same satellite pair on
+both sides; each station's receiver term already cancelled inside its own
+single difference), leaving a pure integer against averaged MW noise at
+the extra-wide-lane wavelength.  An integer decided this way uses no
+a-priori satellite bias and therefore cannot be poisoned by a wrong one,
+the reason Route B is preferred over rounding against a bias product.
+The cancellation in \eqref{eq:sdewl-routeb} carries a precondition that
+is easy to overlook and is not an implementation detail: $b_{\mathrm{EWL}}$
+is a per-\emph{signal} combination, so both stations' arcs must sit on the
+same two tracking channels, or a per-signal bias difference is folded in
+as though it were an integer.  The seam therefore elects a network-common
+channel pair per satellite by station consensus and admits only stations
+holding that exact pair.
+
+What \eqref{eq:sdewl-routeb} yields is a double difference, while the row
+to be constrained needs a single-differenced integer per (station,
+satellite).
+The A2 datum supplies one: within each connected component elect a
+reference station $\rx_0$, define $\bsd n^{\sat,\piv{g}}_{\rx_0} := 0$,
+and propagate the rounded DD fixes outward along a spanning tree, the
+per-station free integer being absorbed by the link satellite.  The
+asserted quantity is then
+\begin{equation}
+\bsd n^{\sat,\piv{g}}_{\rx}
+\;=\;
+\bsd N^{\sat,\piv{g}}_{\rx,\mathrm{EWL}}
+- \bsd N^{\sat,\piv{g}}_{\rx_0,\mathrm{EWL}},
+\label{eq:sdewl-a2}
+\end{equation}
+the true SD integer minus a constant per (satellite pair, component),
+which is exactly the classical wide-lane fractional-cycle-bias
+convention modulo $\lamewl$~\cite{laurichesse2009integer,geng2013triple},
+and is absorbed harmlessly into the estimated bias the network reports.
+Two consequences follow from \eqref{eq:sdewl-a2} and are load-bearing:
+the per-station free integer, and hence the spanning tree itself,
+cancels at the point of use, so tree churn is not a defect to be
+defended against; and $\rx_0$'s own integers are absorbed into the
+constant, making the choice of $\rx_0$ a datum decision rather than a
+measurement.
+
+Acceptance is the scalar case of the battery in \Cref{sec:ar-accept}:
+a rounded DD is admitted on its fractional residual, as in
+\eqref{eq:perpair}, together with the $n = 1$ instance of the bootstrap
+bound \eqref{eq:ffr},
+\begin{equation}
+P_{s,\mathrm{round}}
+= \operatorname{erf}\!\left(\frac{1}{2\sqrt{2}\,\sigma}\right),
+\qquad \sigma \text{ in cycles},
+\label{eq:sdewl-ffr}
+\end{equation}
+so the same failure-rate semantics apply to a single rounding as to the
+$n$-dimensional search.  Finally, the mechanism is subject to the
+standing rule that a stiff, time-linked quantity needs a wired event
+response: the fixed row writes a $\lamewl$-quantised value into
+satellite bias states that run at very small process noise, so an
+integer that \emph{changes} between epochs would inject a step those
+states relax out of only over hours.  The wired response is
+withhold-on-disagreement: when this epoch's integer differs from the
+previous one on a \emph{continuous} arc the fix is withheld for that arc
+rather than repaired, since on a disagreement epoch neither value is
+known to be right; an arc that restarted (slip, gap, re-acquisition)
+replaces the memory without being charged a disagreement, because there
+the integer legitimately changed.  The memory is used only to veto, never
+to supply a value, which is what keeps this short of a carried
+zero-process-noise hold; that increment is deliberately not built.
+
+\paragraph{Status.}  Both mechanisms are default-off and neither has a
+graded, datum-invariant field result.  \texttt{network.sd\_ewl.fix\_enable}
+is additionally force-disarmed at load unless the float row layer
+(\texttt{network.sd\_ewl.enable}) is armed, and that layer is itself inert
+without \texttt{network.phase\_leveling} and an MW-class slip detector,
+since it reads the arc accumulator those build.  A reader should assume
+the emitted network product is float.
+
 \subsection{Configuration summary}\label{sec:ar-config}
 
 All tunable thresholds live under the JSON path
 \texttt{estimation.ambiguity\_resolution.*}, parsed in
 \texttt{src/core/config/GnssConfigLoad.cpp} with defaults in
 \texttt{include/filter/AmbiguityResolver.hpp}.  The invariant estimator
-theory of \Crefrange{sec:ar-ils}{sec:ar-feedback} carries no knobs ---
-changing it changes the mathematics, not a policy.
+theory of \Crefrange{sec:ar-ils}{sec:ar-feedback} carries no knobs, since
+changing it changes the mathematics, not a policy.  The two
+network-producer mechanisms of \Cref{sec:ar-network} are configured
+elsewhere and separately, under \texttt{network.ambiguity\_resolution.*}
+and \texttt{network.sd\_ewl.*} (parsed in
+\texttt{src/core/config/GnssConfigLoadNetwork.cpp}); both master
+switches default to \texttt{false} and are omitted from the table below.
 
 \begin{center}
+\footnotesize
 \begin{tabular}{@{}lllp{0.32\linewidth}@{}}
 \toprule
 Symbol & Config key (\texttt{...ambiguity\_resolution.}) & Default & Role \\
 \midrule
----                       & \texttt{mode}                 & \texttt{0}      & 0 float / 1 continuous / 2 instantaneous / 3 fix-and-hold \\
+                          & \texttt{mode}                 & \texttt{0}      & 0 float / 1 continuous / 2 instantaneous / 3 fix-and-hold \\
 $\tau_{\mathrm{ratio}}$   & \texttt{ratio\_threshold}     & \texttt{3.0}    & ratio-test acceptance \eqref{eq:ratio} \\
 $\tau_{\mathrm{ratio}}^{\max}$ & \texttt{ratio\_upper\_bound} & \texttt{1e4} & degenerate-covariance reject \eqref{eq:ratio} \\
 $P_s^{\min}$              & \texttt{min\_success\_rate}   & \texttt{0.999}  & FFR gate \eqref{eq:ffr} \\
@@ -541,16 +737,17 @@ $\theta_{\mathrm{AR}}$    & \texttt{elevation\_mask}  & \texttt{20\textdegree} &
 $\sigma^2_{\mathrm{hold}}$ & \texttt{hold\_variance}      & \texttt{0.001} m$^2$ & pseudo-obs $\bm{R}$ \eqref{eq:pseudo} \\
 $n_{\min}^{\text{ep}}$    & \texttt{min\_epochs}          & \texttt{10}     & convergence guard \\
 $\sigma_{\mathrm{pos}}^{\max}$ & \texttt{max\_position\_sigma\_m} & \texttt{0.05} m & convergence guard \\
----                       & \texttt{wl\_only}             & \texttt{false}  & MW-WL-only, no NL search \\
+$\textstyle\sum\sin^2\!\theta_{\min}$ & \texttt{min\_arc\_info} & \texttt{0.0} (off) & per-candidate arc-maturity gate, WL/NL path only (\Cref{sec:ar-partial}) \\
+                          & \texttt{wl\_only}             & \texttt{false}  & MW-WL-only, no NL search \\
 $\sigma^2_{\mathrm{wl}}$  & \texttt{wl\_only\_pseudo\_var} & \texttt{1e-4} cyc$^2$ & WL-constraint pseudo-obs $\bm{R}$ (\Cref{sec:ar-wlnl}) \\
----                       & \texttt{wl\_max\_frac}        & \texttt{0.40}   & per-arc WL fractional-residual gate (\Cref{sec:ar-wlnl}) \\
----                       & \texttt{enable\_partial\_ar}  & \texttt{false}  & backward-elimination subset fix (\Cref{sec:ar-partial}) \\
----                       & \texttt{active\_systems}  & \texttt{[]} (all) & constellation subset (\Cref{sec:ar-partial}) \\
----                       & \texttt{state\_ambiguity\_basis}\,$^{\dagger}$ & \texttt{per\_band} & \texttt{per\_band} vs \texttt{nl\_wl} dispatch \\
+                          & \texttt{wl\_max\_frac}        & \texttt{0.40}   & per-arc WL fractional-residual gate (\Cref{sec:ar-wlnl}) \\
+                          & \texttt{enable\_partial\_ar}  & \texttt{false}  & backward-elimination subset fix (\Cref{sec:ar-partial}) \\
+                          & \texttt{active\_systems}  & \texttt{[]} (all) & constellation subset (\Cref{sec:ar-partial}) \\
+                          & \texttt{state\_ambiguity\_basis}\,$^{\dagger}$ & \texttt{per\_band} & \texttt{per\_band} vs \texttt{nl\_wl} dispatch \\
 \bottomrule
 \end{tabular}
 
-{\footnotesize $^{\dagger}$\,Path is \texttt{estimation.state\_ambiguity\_basis} --- one level above the \texttt{ambiguity\_resolution} block.}
+{\footnotesize $^{\dagger}$\,Path is \texttt{estimation.state\_ambiguity\_basis}, one level above the \texttt{ambiguity\_resolution} block.}
 \end{center}
 
 \ifSubfilesClassLoaded{\printbibliography}{}

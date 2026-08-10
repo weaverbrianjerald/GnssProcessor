@@ -123,6 +123,14 @@ public:
                                           ///  variance (m²) — a tail-robust estimate of r̄·(true carry
                                           ///  var); dominated by the TYPICAL carry, not the rare
                                           ///  frame-churn re-levels the arithmetic mean chases.
+        double        hand_fold_var = 0.0;///< M2 v2 (docs/SPEC_carry_vce_apply.md): geometric mean of the
+                                          ///  HAND-model fold variance (m²) over the same forgetting
+                                          ///  window — i.e. `max(var_prev + q·Δt, var_floor)` BEFORE any
+                                          ///  variance factor is applied.  The denominator of the LASER
+                                          ///  5-95 factor iteration's target, and deliberately
+                                          ///  α²-INDEPENDENT so the apply loop carries no feedback lag
+                                          ///  (see NetworkCarryVceApply.hpp §"why the target is
+                                          ///  lag-free").  Falls back to @c seedFloor() with no rows.
         std::array<double, kNumComponents> sigma{{0.0, 0.0}};  ///< arithmetic-mean LS-VCE σ̂ (Floor m², Rate m²/s) — event-INCLUSIVE.
         std::array<double, kNumComponents> std{{0.0, 0.0}};    ///< formal 1σ of the mean σ̂ (√ of 2·N⁻¹ diag).
         double        cond      = 0.0;    ///< condition number of the DATA normal matrix (Rate separability).
@@ -210,6 +218,13 @@ public:
         a.n_eff      = n_eff;
         a.n_rows     = n_rows;
         a.sum_log_e2 = n_eff * std::log(robust_floor_m2 * kChi2GeoMean);
+        // M2 v2: the snapshot carries no fold-variance history, so the seeded mass
+        // is credited to the a-priori floor.  That makes Estimate::hand_fold_var
+        // DEFINED (never a 0/0) on a resumed instance without pretending to know
+        // what those rows were folded at — and it is why v2's apply path is
+        // fresh-convergence-only (SPEC_carry_vce_apply.md §8, the one BLOCKING
+        // deferral).  The D5 consumer of this seed reads robust_floor + n_eff only.
+        a.sum_log_fv = n_eff * std::log(seed_floor_);
     }
 
     /**
@@ -235,7 +250,14 @@ public:
      * @param innovation_m  ê = carried_prior − solved (m).
      * @param gap_s         arc gap Δt since the carry was last seen (s).
      * @param post_var_m2   posterior variance v of the state after the solve (m²).
-     * @param fold_var_m2   the prior variance the fold used (m²) = 1/w.
+     * @param fold_var_m2   the prior variance the fold ACTUALLY used (m²) = 1/w.
+     * @param hand_fold_var_m2  M2 v2: the same variance as the HAND model would
+     *                      have formed it, i.e. before @c network.carry_vce_apply
+     *                      multiplied in the variance factor α².  Pass ≤0 (the
+     *                      default) when no factor is applied, and the fold value
+     *                      is used — so every pre-v2 call site is unchanged and
+     *                      the accumulated @c Estimate::hand_fold_var is identical
+     *                      to what it would have been.
      *
      * No-op unless the monitor is enabled, the epoch is clean, @p family is
      * requested, and the inputs are finite.  The innovation feeds BOTH the
@@ -246,7 +268,8 @@ public:
      */
     void addRow(const std::string& family, const std::string& sat,
                 double innovation_m, double gap_s,
-                double post_var_m2, double fold_var_m2) {
+                double post_var_m2, double fold_var_m2,
+                double hand_fold_var_m2 = -1.0) {
         if (!epoch_clean_ || !wants(family)) return;
         if (!(fold_var_m2 > 0.0) || !std::isfinite(fold_var_m2)) return;
         if (!std::isfinite(innovation_m) || !std::isfinite(post_var_m2)) return;
@@ -258,6 +281,14 @@ public:
         // arithmetic mean) — a single 100 m² outlier adds only log(100) to a sum
         // over 10⁵ rows.  Reads the TYPICAL carry disagreement, the honest floor.
         a.sum_log_e2 += std::log(e2 > kTinyE2 ? e2 : kTinyE2);
+        // M2 v2: the HAND fold variance on the SAME rows and the SAME forgetting
+        // window, so the factor iteration's target ê²/fv is formed from two
+        // quantities that were measured over one population.  Geometric mean for
+        // the same reason the numerator is one: the fold variance inherits the
+        // innovation's re-level tail through var_prev.
+        const double fv_hand = (hand_fold_var_m2 > 0.0 && std::isfinite(hand_fold_var_m2))
+                             ? hand_fold_var_m2 : fold_var_m2;
+        a.sum_log_fv += std::log(fv_hand);
         a.n_eff += 1.0;
         ++a.n_rows;
         // Arithmetic-mean LS-VCE normals (event-inclusive; secondary).  Clamp the
@@ -301,8 +332,10 @@ public:
         if (a.n_eff > 0.0) {
             const double geo = std::exp(a.sum_log_e2 / a.n_eff);   // geometric mean of ê²
             out.robust_floor = geo / kChi2GeoMean;                 // ÷ e^(−1.96351)
+            out.hand_fold_var = std::exp(a.sum_log_fv / a.n_eff);  // M2 v2 target denominator
         } else {
-            out.robust_floor = seed_floor_;
+            out.robust_floor  = seed_floor_;
+            out.hand_fold_var = seed_floor_;
         }
 
         // --- SECONDARY: arithmetic-mean LS-VCE (event-inclusive) ------------
@@ -405,12 +438,14 @@ private:
     /// One (family, constellation) sufficient-statistics block.
     struct Accum {
         double sum_log_e2 = 0.0;                   ///< Σ log(ê²) — the robust geometric-mean accumulator.
+        double sum_log_fv = 0.0;                   ///< M2 v2: Σ log(hand fold var) over the SAME rows.
         double n00 = 0.0, n01 = 0.0, n11 = 0.0;   ///< symmetric LS-VCE normal matrix N.
         double l0  = 0.0, l1  = 0.0;              ///< LS-VCE right-hand side l.
         double n_eff = 0.0;                        ///< forgetting-weighted row count.
         long long n_rows = 0;                      ///< undecayed total rows.
         void decay(double phi) {
             sum_log_e2 *= phi;
+            sum_log_fv *= phi;
             n00 *= phi; n01 *= phi; n11 *= phi;
             l0  *= phi; l1  *= phi; n_eff *= phi;
         }

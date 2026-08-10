@@ -1,0 +1,39 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — card S2H 1 h STABILITY gate (staged cadence: runs only after",
+  "the 20-ep smoke passes).  One knob vs the control lineage on the session binary",
+  "(82B4450703C551109DCEFB0B6C212559); fresh seamless convergence, own snapshot.",
+  "GATES (stage-1 template, SPEC §17 item 1, adapted to S2H; 1 h = rank-only window,",
+  "NO level claims):",
+  " G1 settled (20-60 min) a00 sd <= 5 TECU and NO ~3-epoch alternation (S2H has no",
+  "    feedback loop to ring - nothing is fed back; alternation here would falsify",
+  "    the no-loop claim).",
+  " G2 sh_health 0/0/0; folds >= control's (de-meaned targets sit closer to the",
+  "    solve, so the 10-sigma inject gate should skip FEWER, never more).",
+  " G3 prires rxcb sigma-hat-0 NOT inflated: <= 1.5x the control's same-window value",
+  "    (the fold-side tax LV-4 paid was 4.9-6.6x - S2H's design claim is ZERO tax).",
+  " G4 rms_phase settled 20-60 min within +/-5 % of control.",
+  " G5 s2h counters: applied every epoch post-warm-up, 0 thin skips, mu trajectory",
+  "    smooth (ignition decay, then sub-meter wander tracking the per-epoch frame)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 3600.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 3600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "rx_cb_harvest_demean": true,
+  "serialize_sbasis_contract": true,
+  "product_output_path": "C:/GnssProcessor/runs/s2h_1h_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/s2h_1h_on/state_snapshot.bin"
+ }
+}

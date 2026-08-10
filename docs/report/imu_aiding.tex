@@ -18,7 +18,7 @@
 When an IMU is configured (\texttt{imu.enabled}; the sibling boolean
 \texttt{estimation.aiding.imu} is the \texttt{AidingSourceManager}
 selector and back-compat-defaults to \texttt{imu.enabled}, so enabling
-the legacy flag also enables the aiding-IMU source --- an explicit
+the legacy flag also enables the aiding-IMU source, though an explicit
 \texttt{estimation.aiding.imu} wins, see
 \texttt{src/core/config/GnssConfigLoad.cpp}), the inter-epoch time
 update of \dcref{sec:kf-predict}{the time update} is replaced by a
@@ -34,14 +34,14 @@ routes through \texttt{Application::run} $\to$
 (\texttt{src/core/filter/KalmanFilter.cpp}).  The real-time engine
 (\texttt{RealTimeEngine::run}) drives the identical \texttt{predictAided}
 $/$ \texttt{collectPredict} path; the only difference from the batch run is
-ingest --- a live sensor feeds \texttt{ImuIntegrator::addSample}, the
+ingest: a live sensor feeds \texttt{ImuIntegrator::addSample}, the
 streaming counterpart to the CSV \texttt{loadData}, which appends to the
 same sorted sample buffer so streaming and batch yield identical
 \texttt{integrate} results.
 
 This \texttt{IAidingSource} / \texttt{AidingSourceManager} abstraction
 (\texttt{include/aiding/}) is the composable seam through which every
-non-GNSS modality --- IMU, ZUPT, NHC, baro, wheel odometry, vision ---
+non-GNSS modality (IMU, ZUPT, NHC, baro, wheel odometry, vision)
 contributes up to three things (a \texttt{StateManager}-owned state
 block, a predict-time $\Phi/Q$ sub-block, and either independent
 measurement rows or extra Jacobian \emph{columns} on existing GNSS
@@ -49,7 +49,7 @@ rows).  The IMU is its first and privileged client; the legacy
 monolithic \texttt{KalmanFilter::predictImu} is retained but no longer
 on the live path (superseded by \texttt{predictAided}).  The
 \texttt{ImuAidingSource} replicates \texttt{predictImu}'s arithmetic
-verbatim --- the strapdown equations below are unchanged by the
+verbatim, so the strapdown equations below are unchanged by the
 refactor.
 
 The formulation is an \emph{error-state} extended Kalman filter.  The
@@ -255,7 +255,7 @@ the feedback of \cref{eq:imu-att-feedback}.
 \paragraph{Tightly coupled.}
 Tightly-coupled mode requires the velocity block, so the loader
 force-enables it independently of the user's
-\texttt{estimation.estimate\_velocity} --- a
+\texttt{estimation.estimate\_velocity}: a
 \texttt{TightCoupled} \texttt{coupling\_mode} with the flag left false
 flips it true and logs \texttt{"forcing estimate\_velocity=true"}
 (\texttt{GnssConfigLoad.cpp}), guaranteeing the three velocity states and
@@ -285,7 +285,7 @@ The specific force fed into \cref{eq:imu-tc-jac} is a static-rest
 approximation $\imuf \approx (\Cbe)^{\Tr}\!\bigl(-\gravec\bigr) - \biasa$
 (\texttt{ImuAidingSource.cpp}); it is exact only when the platform's
 true acceleration is negligible against gravity.  The \emph{code and
-carrier-phase rows carry no attitude or bias partials in either mode} ---
+carrier-phase rows carry no attitude or bias partials in either mode};
 only Doppler couples directly to the inertial errors.
 
 \begin{remark}[Relinearisation under tight coupling]

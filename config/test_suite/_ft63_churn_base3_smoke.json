@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "OFF-PATH IDENTITY PROBE for the churn6 build (corrected v5 guard + the relocated loader",
+    "advisory).  Byte-for-byte the base treatment; only the output paths differ from",
+    "_ft63_churn_base_smoke.json.  Compared against runs/churn_base_smoke, which was produced",
+    "by the ORIGINAL build.  10 epochs is enough for this: the question is whether the OFF",
+    "path is inert, not whether anything converges, and a solve difference shows up at epoch 1.",
+    "",
+    "Cheaper than a third 3 h baseline and answers the same invariant-#6 question: the",
+    "churn5->churn6 delta is confined to a branch behind `if (!innov_carried_only) return",
+    "false;` plus a log-only advisory relocation, and this is the check that says so rather",
+    "than assuming it."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/churn_base3_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_base3_smoke/state_snapshot.bin"
+  }
+}

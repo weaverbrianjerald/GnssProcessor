@@ -317,11 +317,7 @@ bool Application::initializePosition() {
         // Apply antenna H/E/N offset (from marker to ARP) to get antenna phase center position.
         Eigen::Vector3d hen = rinex_parser_->getAntennaDeltaHen();
         if (hen.norm() > 1e-6 && marker_pos.norm() > 1e3) {
-            Coordinates::Llh ref_llh = Coordinates::ecefToLlh(marker_pos);
-            // RINEX H/E/N: H=Up, E=East, N=North -> ENU order is (E, N, U) = (hen[1], hen[2], hen[0])
-            Eigen::Vector3d enu_offset(hen(1), hen(2), hen(0));
-            Eigen::Vector3d ecef_offset = Coordinates::enuToEcef(enu_offset, ref_llh);
-            initial_position_ = marker_pos + ecef_offset;
+            initial_position_ = Coordinates::markerToArp(marker_pos, hen);
 
             log_manager_.getLogger("main_log")->info(
                 "Applied antenna H/E/N offset ({:.4f}, {:.4f}, {:.4f}) m: marker ({:.3f}, {:.3f}, {:.3f}) -> ARP ({:.3f}, {:.3f}, {:.3f})",
@@ -1630,22 +1626,28 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         ar_config.wl_only_pseudo_var    = config_.getArWlOnlyPseudoVar();
         ar_config.wl_max_frac           = config_.getArWlMaxFrac();
         ar_config.min_success_rate      = config_.getArMinSuccessRate();
+        ar_config.min_arc_info          = config_.getArMinArcInfo();
         ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
+        ar_config.nl_iono_free_row      = config_.getArNlIonoFreeRow();
         ar_config.enable_partial_ar     = config_.getArEnablePartialAr();
         ar_config.ar_active_systems     = config_.getArActiveSystems();
         ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
         ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
         log_manager_.getLogger("main_log")->info(
-            "Ambiguity resolution enabled: mode={}, wl_only={}, partial_ar={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
+            "Ambiguity resolution enabled: mode={}, wl_only={}, partial_ar={}, nl_row={}, "
+            "ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
             "min_epochs={}, max_pos_σ={:.3f} m",
             ar_config.ar_mode, ar_config.wl_only ? "on" : "off", ar_config.enable_partial_ar ? "on" : "off",
+            ar_config.nl_iono_free_row ? "iono-free" : "narrowlane",
             ar_config.ratio_threshold, ar_config.ratio_upper_bound,
             ar_config.elevation_mask_ar, ar_config.min_epochs, ar_config.max_position_sigma_m);
     }
 
     const bool is_ppp_rtk = (config_.getProcessingMode() == ProcessingMode::PPP_RTK);
     trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir_, is_ppp_rtk, config_.getLoggingConfig());
-    if (!trace_logger_->isInitialized()) {
+    // Only a FAILED set of requested opens is worth a warning; an unarmed set of
+    // enable_*_trace toggles leaves the logger uninitialized by design.
+    if (!trace_logger_->isInitialized() && trace_logger_->requestedStreamCount() > 0) {
         log_manager_.getLogger("main_log")->warn(
             "TraceLogger could not open CSV trace files in '{}'; continuing without CSV traces", log_dir_.string());
     }

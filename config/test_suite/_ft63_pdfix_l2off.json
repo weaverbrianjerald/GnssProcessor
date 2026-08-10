@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "RUN QUEUE P3 (docs/RUNQUEUE_pdfix_reask.md) - iono-representation ladder, SUBTRACTIVE.",
+    "BASE IS THE P1 WINNER (_ft63_pdfix_v3.json = pdfix_on + carry_invariant_innov_corroborate), per the queue's 'winner becomes the base posture for P2-P6'.  P1 measured: informational lifetime 12.0 -> 55.3 ep, mature steps 1.015/0.883/0.509 -> 0.953/0.789/0.485, SF k=1 0.83 -> 0.77, total_IF and clock QC NEUTRAL-to-better, coarse IF-TD slip layer BYTE-IDENTICAL (129 flags / 201253 opp on every arm incl. pdfix_off), tension landing only in post-fit sigma0_phase 0.120 -> 0.171.",
+    "",
+    "The base lineage IS dual-layer SH + mech-B v3k, so each arm REMOVES one layer.",
+    "Control runs/pdfix_on: SF k=1 0.83 / k=16 11.00 / k=32 20.87 cyc, mature steps",
+    "1.015/0.883/0.509, cross-band ratio 1.270 (COMMON-CYCLE = the residual is still iono",
+    "representation), worst pair 3.41 cyc/ep, total_IF hr2 8.812/22.14/5.00.",
+    "Metric per the queue: SF k=16/32 (the spillway walk), equatorial-pair step ranking,",
+    "the SH a00 band, total_IF.",
+    "",
+    "ARM l2off - SINGLE-SHELL SH (layer 2 removed; its height/kaula/q knobs go inert with it).",
+    "The old l2off null (+-0.1%) was measured on the CORRUPT substrate, where 78% of the carry",
+    "could not respond to ANY iono change - so it could not have detected a layer-2 effect",
+    "even if one existed.  This re-asks it on a carry that can move."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "estimation": {
+    "global_vtec_sh": {
+      "layer2_max_degree": 0
+    }
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_l2off/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_l2off/state_snapshot.bin"
+  }
+}

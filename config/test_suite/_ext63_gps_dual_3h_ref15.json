@@ -1,0 +1,65 @@
+{
+ "_comment": [
+  "EXT-63, arm 31 — 3 h CANONICAL at the NEW 15/15 MASKS.  The re-established denominator.",
+  "",
+  "WHY THIS RUN IS MANDATORY, not optional.  On 2026-08-05 the masks were unified by user",
+  "directive at the lineage root _ft63_24h_conv.json:",
+  "    processing.elevation_mask_deg                       10 -> 15",
+  "    estimation.ionosphere_weighting.elevation_cutoff_deg 25 -> 15",
+  "Every arm in SPEC_level_information_budget §9-§20 ran at 10/25.  Under invariant #6 a",
+  "shared-path posture change requires a same-build, same-posture golden comparison, so no",
+  "new arm can be graded until the canonical denominator exists at 15/15.  This is it.",
+  "",
+  "WHAT IT TESTS (prediction stated before the run, SPEC §20.3): the ionosphere LEVEL",
+  "deficit gets WORSE.  Basis: the 25 deg iono cutoff was VALIDATED and SHIPPED because at",
+  "10 deg the 305-sta field diverged a00 296 -> -305 TECU with clock-delta rms 77x worse",
+  "(memory project_global_sh_iono).  Lowering the mask historically pushed a00 DOWN, and",
+  "DEFECT 2 is a00 too LOW.  15 deg re-admits the 15-25 deg elevation band into the SH",
+  "constraint, and the recorded path down (lever 2: carrier-smooth the code GF seed FIRST)",
+  "is NOT built -- the seed is still a per-epoch code GF estimate, ~0.26-0.37 m scatter.",
+  "",
+  "Quantitative predictions against the SAME arm at 10/25 (runs/ext63_dual_12h_ref h0-3):",
+  "  a00-GIM h0  was -15.83, h1 -8.20, h2 -3.89, h3 -3.81   -> predict MORE negative",
+  "  postfit phase rms h2-3 was 0.00900 m                    -> predict roughly flat or",
+  "     slightly BETTER (raising the OBS mask 10->15 drops the noisiest low-el observations,",
+  "     which is the half of this change that should help the residuals)",
+  "  sh_health was 0/0/0                                     -> at risk if a00 nears the",
+  "     2 TECU band floor",
+  "Note the two edits push OPPOSITE ways and this arm cannot separate them: raising the obs",
+  "mask removes low-el multipath (helps), lowering the iono cutoff re-admits low-el code",
+  "contamination into a00 (hurts).  Separating them needs a 15/25 arm, which is the natural",
+  "follow-up if this one degrades.",
+  "",
+  "The POSTURE CHECK will now WARN (it requires elevation_cutoff_deg >= 24.9,",
+  "GnssConfigNetworkPosture.cpp:369-373 and :553-565).  That warning is EXPECTED here and is",
+  "not evidence of a misconfiguration -- but do not silence it.",
+  "",
+  "GRADE (CLAUDE.md amendment 6): scripts/gim_global_mean_series.py AND",
+  "scripts/field_vs_gim_footprint.py, time-matched, plus median postfit phase rms from",
+  "network_pf_keyed.csv STA rows over the settled 20-60 min window.  Per invariant #5 and",
+  "SPEC §17 item 0 the a00 number is a DIAGNOSTIC; the residual is the grade.",
+  "",
+  "FRESH LINEAGE ONLY: own paths; never resume onto a 10/25 snapshot."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_3h_ref15/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_3h_ref15/state_snapshot.bin"
+ }
+}

@@ -14,6 +14,8 @@
 
 #include "filter/NetworkSolPrep.hpp"
 
+#include "filter/NetworkRhsAttrib.hpp"   // INC-5 flight-recorder trip latch
+
 #include "app/NetworkRunContext.hpp"            // ctx.* aliases
 #include "config/GnssConfig.hpp"                // config_ getters + getNetworkConfig
 #include "logging/NetworkRunTraces.hpp"         // events_trace + emitEvent
@@ -94,6 +96,7 @@ NetworkSolPrepResult networkSolPrep(
     const int    pl_warmup     = ctx.knobs.pl_warmup;
     const bool   ura_on        = ctx.knobs.ura_on;                  // B1: emit per-sat URA quality channel
     const bool   ura_retro     = ctx.knobs.ura_retro;             // B1: retro-bump flagged SATELLITE(s) on next emit
+    const bool   mark_refsat   = ctx.knobs.mark_refsat_reset_disc; // Edge-1 piece 2: mark ref-path slips as per-sat disc
     const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate; // B1: URA multiplier post-refloat
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
     const double raim_withhold = ctx.knobs.raim_withhold; // A4: >0 withholds (not emits) an epoch whose post-adaptation σ̂0 exceeds this ceiling; 0 = off
@@ -116,6 +119,7 @@ NetworkSolPrepResult networkSolPrep(
     auto& n_perconst_diffuse_published = ctx.counters.n_perconst_diffuse_published;
     const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
+    const bool anchor_hygiene_on       = ctx.knobs.anchor_hygiene_on;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
 
     auto emitEvent = [&](const char* tier, const char* event,
@@ -305,6 +309,12 @@ NetworkSolPrepResult networkSolPrep(
                 }
             }
         }
+        // INC-5 flight-recorder trigger (docs/SPEC_prefit_census_observability.md
+        // §7): the RUNAWAY era.  Consulted on every epoch the check evaluates —
+        // an empty `runaway` clears the era and re-arms the latch, which is what
+        // makes the counter's denominator honest.  SB_SOLPREP runs before
+        // SB_FRAMEDIAG, so the pending trip is consumed later this same epoch.
+        networkRhsTripEdge(ctx, "clk_runaway", !runaway.empty());
         if (!runaway.empty()) {
             std::vector<NetworkSatSolution> kept;
             kept.reserve(sol.sats.size());
@@ -605,7 +615,26 @@ NetworkSolPrepResult networkSolPrep(
         }
     }
     std::set<std::string> retro_emit_sats;   // B1 retro-bump applied this emit (serialized as an R record)
-    if (ura_retro && !ura_retro_sats.empty()) {
+    // Edge-1 piece 2 (network.mark_refsat_reset_disc): fold this epoch's queued
+    // ref-path-slip satellites into the SAME queue the B1 retro-bump drains, so they
+    // inherit its RT0-5 "mark == land" semantics verbatim — a sat absent from this
+    // epoch's emission stays PENDING rather than being consumed without landing, and
+    // the R record therefore always describes bumps that actually reached the product.
+    // Empty (never written) when the knob is off ⇒ this whole block is inert and the
+    // OFF path is byte-identical.  Folding rather than adding a parallel drain is
+    // deliberate: two independent drains would each need the pending/quarantine logic
+    // and could double-bump a sat flagged by both tiers in one epoch.
+    if (!ctx.carry.refsat_mark_sats.empty()) {
+        ura_retro_sats.insert(ctx.carry.refsat_mark_sats.begin(),
+                              ctx.carry.refsat_mark_sats.end());
+        ctx.carry.refsat_mark_sats.clear();
+    }
+    // Edge-1 piece 2: the drain must also run when the refsat mark is armed but the
+    // B1 retro-bump is NOT — otherwise queued sats would accumulate in ura_retro_sats
+    // forever and no mark would ever land (a silent leak that would read as "the
+    // feature does nothing").  mark_refsat is false by default, so the OFF-path
+    // condition reduces to the original `ura_retro` exactly.
+    if ((ura_retro || mark_refsat) && !ura_retro_sats.empty()) {
         // RT0-5 seam (P0-1: the R record must describe bumps that LANDED in the
         // emitted product): a flagged sat ABSENT from this epoch's emission —
         // its constellation quarantined above, or the sat itself vanished —
@@ -676,6 +705,45 @@ NetworkSolPrepResult networkSolPrep(
                 for (const auto& s : mark)
                     emitEvent("CB_EXC", "cb_excursion_disc_landed", s, "", std::nullopt,
                               std::nullopt, "disc_bump", "code_bias_carry_reinit");
+        }
+    }
+    // Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4): land the per-satellite
+    // discontinuity for a satellite whose temporal clock ANCHOR decoupled — the
+    // invariant-#7 decoupling edge, made visible on the wire.  Its clock changed
+    // BOTH temporal regime (stiff → loose) and, on a resolved trip, VALUE in the
+    // same epoch, so a consumer that integrates across it is integrating across a
+    // regime change it cannot see.  Same present/pending split as the three blocks
+    // above (mark == land), so a replay reproduces the marks from the serialized R
+    // records.  The set is empty unless network.clock_temporal_anchor AND
+    // network.clock_anchor_mark ⇒ byte-identical otherwise.
+    if (!ctx.carry.clk_anchor_disc_pending.empty()) {
+        std::set<std::string> present, mark, still_pending;
+        for (const auto& s : sol.sats) present.insert(s.sat);
+        for (const auto& sat : ctx.carry.clk_anchor_disc_pending)
+            (present.count(sat) ? mark : still_pending).insert(sat);
+        ctx.carry.clk_anchor_disc_pending = std::move(still_pending);
+        if (!mark.empty()) {
+            // A satellite the B1 retro drain above already marked this epoch must
+            // not have its counter bumped twice (one event, one step).
+            std::set<std::string> fresh;
+            for (const auto& s : mark)
+                if (!retro_emit_sats.count(s)) fresh.insert(s);
+            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            // …AND serialize it.  markSatDiscontinuity alone bumps only the
+            // emitter's in-process counters; on a lineage without
+            // network.serialize_disc_counters the per-record disc fields are not
+            // written, so the R record is the ONLY carrier a NetworkProductIO
+            // replay can read.  A mark visible to the live consumer and invisible
+            // to the replay would make the two graders disagree about the same
+            // wire — exactly the decomposition CLK-R's 3-way replay depended on.
+            // Folding into retro_emit_sats also gives these satellites the
+            // "forced" treatment downstream for free: a satellite whose clock was
+            // just refloated must not vote in the CLK-R frame-hold median.
+            retro_emit_sats.insert(mark.begin(), mark.end());
+            if (events_trace.is_open())
+                for (const auto& s : mark)
+                    emitEvent("CLK_ANCHOR", "cta_disc_landed", s, "", std::nullopt,
+                              std::nullopt, "disc_bump", "clock_anchor_decoupled");
         }
     }
     // T3c: land clock_signal_basis_hold RE-LATCH disc bumps this emit (same present/pending
@@ -791,6 +859,19 @@ NetworkSolPrepResult networkSolPrep(
                 // round.  Disc still rides the emitter's replay-safe bias-jump
                 // test (NEVER markSatDiscontinuity — not reconstructable on
                 // NetworkProductIO replay).  Trace event only.
+                //
+                // ⚠ THE INTEGER CLAIM ABOVE HOLDS ONLY IF THE NEW HOST'S AMBIGUITY
+                // HAS CONVERGED.  On a one-epoch-old arc the float is code-seeded
+                // (± metres), so the "integer" step is an arbitrary re-level of the
+                // whole component — the DOY-129 19:25:30 mechanism (this exact event,
+                // G29 GAMB00PYF->INEG00MEX, followed one epoch later by a00 SUM
+                // 38.7 → 5739 TECU and a 181 m total_IF scar that never healed).
+                // That is now guarded in the ELECTION, not here:
+                // docs/SPEC_eq34_reattach_hygiene.md /
+                // filter/NetworkAnchorHygiene.hpp (network.eq34_anchor_min_arc_ep).
+                // With the guard armed this event only fires for a host that has
+                // cleared the arc-age threshold; a refused one is traced as
+                // PHASE_DATUM/reattach_blocked_cold instead.
                 emitEvent(phase_datum_eq34 ? "PHASE_DATUM" : "PHASE_ANCHOR",
                           phase_datum_eq34 ? "eq34_reattach" : "anchor_handover",
                           amb.substr(0, amb.find('_')), sta,
@@ -799,6 +880,14 @@ NetworkSolPrepResult networkSolPrep(
                 ++n_handover;
             }
             emitted_anchor[amb] = sta;
+            // eq34 reattach hygiene, WARM CONDITIONING: stamp WHEN this key's datum was
+            // last realized AND emitted.  The eligibility block is only warranted while
+            // that memory is fresh — see filter/NetworkAnchorHygiene.hpp.  Advanced on
+            // the same emit-only discipline as the baseline above (a withheld epoch
+            // must not refresh it, or a long withhold would look warm forever).
+            if (anchor_hygiene_on)
+                ctx.carry.emitted_anchor_s[amb] =
+                    TimeUtils::continuousGpsSeconds(se.time);
         }
         if (n_handover > 0)
             log->debug("Network: {} per-(sat,signal) phase-bias anchor handover(s) at "

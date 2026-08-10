@@ -10,14 +10,21 @@ Every channel combination across DISTINCT frequency bands, per constellation
 Ordered by lambda descending: the integer-accessibility ladder, measured.
 
 Usage: python mw_census_allpairs.py [n_epochs] [obs_glob]
+
+IMPORTABLE PARSER
+-----------------
+``parse_station_tow(path, sod_lo, sod_hi, n_epochs)`` is the one RINEX MW
+implementation in the tree: it returns the same per-(satellite, channel-pair)
+MW series but TIME-STAMPED with the seconds-of-day of each epoch, so a consumer
+can window-match it against an estimator trace (``scripts/lane_spectrometer.py``
+does exactly that for the measurement side of the lane ladder).
+``parse_station`` is the census's own thin wrapper over it.  The census itself
+runs under a ``__main__`` guard so importing this module costs nothing.
 """
 import glob, math, os, sys, statistics as st
 from collections import defaultdict
 
 C = 299792458.0
-N_EP = int(sys.argv[1]) if len(sys.argv) > 1 else 10
-OBS_GLOB = sys.argv[2] if len(sys.argv) > 2 else 'C:/GnssProcessor/data/2024-129/obs/*/*_30S_MO.rnx'
-MIN_ARC = max(4, int(0.6 * N_EP))   # samples per (sta,sat,pair) arc for a usable median
 
 FREQ = {
     'G': {'1': 1575.42e6, '2': 1227.60e6, '5': 1176.45e6},
@@ -26,12 +33,36 @@ FREQ = {
           '7': 1207.14e6, '8': 1191.795e6},
 }
 
-def parse_station(path):
-    """-> {(sat, pairkey): [mw_cyc,...]} over the first N_EP epochs.
-    pairkey = (sys, 'L1C/L5Q') with the HIGHER-frequency side first."""
+def parse_station_tow(path, sod_lo=None, sod_hi=None, n_epochs=None):
+    """-> {(sat, pairkey): [(sod, mw_cyc), ...]} over the selected epochs.
+
+    pairkey = (sys, 'L1C/L5Q') with the HIGHER-frequency side first.
+    ``sod``   = seconds of day of the epoch record (GPS time, as written in the
+                RINEX epoch line) — the join key for any time-windowed consumer.
+    Epoch selection, applied in this order:
+      * ``n_epochs``      stop after this many epoch records (the census's mode);
+      * ``sod_lo/sod_hi`` keep only epochs inside the closed window (either may
+                          be None for an open end).  Skipped epochs are not
+                          counted against ``n_epochs``-free operation, so a tail
+                          window costs one linear scan of the file and no more.
+    A window that would wrap midnight (``sod_lo > sod_hi``) is treated as the
+    UNION of [sod_lo, 86400) and [0, sod_hi]."""
     types = {}          # sys char -> [obs types]
     cur_sys, remaining = None, 0
     series = defaultdict(list)
+    wrap = (sod_lo is not None and sod_hi is not None and sod_lo > sod_hi)
+
+    def in_window(sod):
+        if sod_lo is None and sod_hi is None:
+            return True
+        if wrap:
+            return sod >= sod_lo or sod <= sod_hi
+        if sod_lo is not None and sod < sod_lo:
+            return False
+        if sod_hi is not None and sod > sod_hi:
+            return False
+        return True
+
     with open(path, 'r', errors='replace') as f:
         for line in f:
             if 'SYS / # / OBS TYPES' in line:
@@ -67,13 +98,24 @@ def parse_station(path):
         if not sides:
             return series
         ep = 0
+        sod = None
+        keep = False
         for line in f:
             if line.startswith('>'):
                 ep += 1
-                if ep > N_EP:
+                if n_epochs is not None and ep > n_epochs:
                     break
+                # A1,1X,I4,4(1X,I2),F11.7 — tokenised rather than column-sliced so a
+                # writer that pads differently cannot silently shift the time.
+                tok = line[1:].split()
+                try:
+                    sod = float(tok[3]) * 3600.0 + float(tok[4]) * 60.0 + float(tok[5])
+                except (IndexError, ValueError):
+                    sod, keep = None, False
+                    continue
+                keep = in_window(sod)
                 continue
-            if ep == 0:
+            if ep == 0 or not keep:
                 continue
             s = line[0]
             if s not in sides or not sides[s]:
@@ -105,76 +147,103 @@ def parse_station(path):
                         continue
                     lam_wl = C / (f1 - f2)
                     mw = (l1 - l2) - (f1 * p1 + f2 * p2) / ((f1 + f2) * lam_wl)
-                    series[(sat, (s, f'L{b1}{c1}/L{b2}{c2}'))].append(mw)
+                    series[(sat, (s, f'L{b1}{c1}/L{b2}{c2}'))].append((sod, mw))
     return series
 
-stations = {}
-for p in sorted(glob.glob(OBS_GLOB)):
-    name = os.path.basename(os.path.dirname(p)).upper()
-    s = parse_station(p)
-    if s:
-        stations[name] = s
-print(f"stations parsed: {len(stations)}; epochs: {N_EP}")
 
-# (sys,pair) -> station -> {sat: (median, per-sample sigma)}
-groups = defaultdict(lambda: defaultdict(dict))
-for sta, ser in stations.items():
-    for (sat, pk), vals in ser.items():
-        if len(vals) >= MIN_ARC:
-            groups[pk][sta][sat] = (st.median(vals),
-                                    st.pstdev(vals) if len(vals) > 1 else float('nan'))
+def parse_station(path, n_epochs=None):
+    """-> {(sat, pairkey): [mw_cyc,...]} over the first ``n_epochs`` epochs.
 
-rows = []
+    The census's view: the same series as @ref parse_station_tow with the epoch
+    stamps dropped.  ``n_epochs`` defaults to the module-level ``N_EP`` the CLI
+    sets, so the historical call ``parse_station(path)`` is unchanged."""
+    n = N_EP if n_epochs is None else n_epochs
+    return {k: [mw for _, mw in v] for k, v in parse_station_tow(path, n_epochs=n).items()}
+
+
 def freq_of(sysc, band, ch):
     if sysc == 'C' and band == '1' and ch in 'IQ':
         return 1561.098e6   # RINEX 3.02 legacy B1I (see header parse)
     return FREQ[sysc][band]
 
-for (sysc, pair), g in groups.items():
-    b1, c1, b2, c2 = pair[1], pair[2], pair[5], pair[6]
-    lam = C / (freq_of(sysc, b1, c1) - freq_of(sysc, b2, c2))
-    # star-basis DD within the exact channel pair
-    sat_count = defaultdict(int)
-    for s in g.values():
-        for sat in s:
-            sat_count[sat] += 1
-    if not sat_count:
-        continue
-    ref_sat = max(sat_count, key=lambda k: (sat_count[k], k))
-    cands = [s for s in g if ref_sat in g[s]]
-    if not cands:
-        continue
-    ref_sta = max(cands, key=lambda s: (len(g[s]), s))
-    fracs = []
-    for sta, sats in g.items():
-        if sta == ref_sta or ref_sat not in sats:
-            continue
-        for sat, (v, _) in sats.items():
-            if sat == ref_sat or sat not in g[ref_sta]:
-                continue
-            dd = v - sats[ref_sat][0] - g[ref_sta][sat][0] + g[ref_sta][ref_sat][0]
-            fracs.append(dd - round(dd))
-    sig = [sg for s in g.values() for (_, sg) in s.values() if not math.isnan(sg)]
-    med_sig = st.median(sig) if sig else float('nan')
-    n_arcs = sum(len(s) for s in g.values())
-    if fracs:
-        n = len(fracs)
-        af = sorted(abs(x) for x in fracs)
-        R = math.hypot(sum(math.cos(2 * math.pi * x) for x in fracs) / n,
-                       sum(math.sin(2 * math.pi * x) for x in fracs) / n)
-        stats = (n, af[n // 2], sum(1 for x in af if x < 0.10) / n,
-                 sum(1 for x in af if x < 0.15) / n, R)
-    else:
-        stats = (0, float('nan'), float('nan'), float('nan'), float('nan'))
-    rows.append((sysc, lam, pair, len(g), len(sat_count), n_arcs, med_sig, stats))
 
-print(f"{'sys':>3} {'lam_m':>8} {'pair':>12} {'sta':>4} {'sat':>4} {'arcs':>5} "
-      f"{'sig1(cyc)':>9} | {'nDD':>5} {'med|f|':>6} {'P<.10':>5} {'P<.15':>5} {'circR':>6}")
-for sysc in 'GEC':
-    for (s, lam, pair, nsta, nsat, narc, msig, (n, mf, p10, p15, R)) in \
-            sorted(rows, key=lambda r: -r[1]):
-        if s != sysc:
+def main(argv):
+    global N_EP, OBS_GLOB, MIN_ARC
+    N_EP = int(argv[1]) if len(argv) > 1 else 10
+    OBS_GLOB = argv[2] if len(argv) > 2 else 'C:/GnssProcessor/data/2024-129/obs/*/*_30S_MO.rnx'
+    MIN_ARC = max(4, int(0.6 * N_EP))   # samples per (sta,sat,pair) arc for a usable median
+
+    stations = {}
+    for p in sorted(glob.glob(OBS_GLOB)):
+        name = os.path.basename(os.path.dirname(p)).upper()
+        s = parse_station(p)
+        if s:
+            stations[name] = s
+    print(f"stations parsed: {len(stations)}; epochs: {N_EP}")
+
+    # (sys,pair) -> station -> {sat: (median, per-sample sigma)}
+    groups = defaultdict(lambda: defaultdict(dict))
+    for sta, ser in stations.items():
+        for (sat, pk), vals in ser.items():
+            if len(vals) >= MIN_ARC:
+                groups[pk][sta][sat] = (st.median(vals),
+                                        st.pstdev(vals) if len(vals) > 1 else float('nan'))
+
+    rows = []
+    for (sysc, pair), g in groups.items():
+        b1, c1, b2, c2 = pair[1], pair[2], pair[5], pair[6]
+        lam = C / (freq_of(sysc, b1, c1) - freq_of(sysc, b2, c2))
+        # star-basis DD within the exact channel pair
+        sat_count = defaultdict(int)
+        for s in g.values():
+            for sat in s:
+                sat_count[sat] += 1
+        if not sat_count:
             continue
-        print(f"{s:>3} {lam:8.3f} {pair:>12} {nsta:4d} {nsat:4d} {narc:5d} "
-              f"{msig:9.4f} | {n:5d} {mf:6.3f} {p10:5.2f} {p15:5.2f} {R:6.3f}")
-print("[uniform baseline: med|f|=0.250 P<.10=0.20 P<.15=0.30 circR=0.00]")
+        ref_sat = max(sat_count, key=lambda k: (sat_count[k], k))
+        cands = [s for s in g if ref_sat in g[s]]
+        if not cands:
+            continue
+        ref_sta = max(cands, key=lambda s: (len(g[s]), s))
+        fracs = []
+        for sta, sats in g.items():
+            if sta == ref_sta or ref_sat not in sats:
+                continue
+            for sat, (v, _) in sats.items():
+                if sat == ref_sat or sat not in g[ref_sta]:
+                    continue
+                dd = v - sats[ref_sat][0] - g[ref_sta][sat][0] + g[ref_sta][ref_sat][0]
+                fracs.append(dd - round(dd))
+        sig = [sg for s in g.values() for (_, sg) in s.values() if not math.isnan(sg)]
+        med_sig = st.median(sig) if sig else float('nan')
+        n_arcs = sum(len(s) for s in g.values())
+        if fracs:
+            n = len(fracs)
+            af = sorted(abs(x) for x in fracs)
+            R = math.hypot(sum(math.cos(2 * math.pi * x) for x in fracs) / n,
+                           sum(math.sin(2 * math.pi * x) for x in fracs) / n)
+            stats = (n, af[n // 2], sum(1 for x in af if x < 0.10) / n,
+                     sum(1 for x in af if x < 0.15) / n, R)
+        else:
+            stats = (0, float('nan'), float('nan'), float('nan'), float('nan'))
+        rows.append((sysc, lam, pair, len(g), len(sat_count), n_arcs, med_sig, stats))
+
+    print(f"{'sys':>3} {'lam_m':>8} {'pair':>12} {'sta':>4} {'sat':>4} {'arcs':>5} "
+          f"{'sig1(cyc)':>9} | {'nDD':>5} {'med|f|':>6} {'P<.10':>5} {'P<.15':>5} {'circR':>6}")
+    for sysc in 'GEC':
+        for (s, lam, pair, nsta, nsat, narc, msig, (n, mf, p10, p15, R)) in \
+                sorted(rows, key=lambda r: -r[1]):
+            if s != sysc:
+                continue
+            print(f"{s:>3} {lam:8.3f} {pair:>12} {nsta:4d} {nsat:4d} {narc:5d} "
+                  f"{msig:9.4f} | {n:5d} {mf:6.3f} {p10:5.2f} {p15:5.2f} {R:6.3f}")
+    print("[uniform baseline: med|f|=0.250 P<.10=0.20 P<.15=0.30 circR=0.00]")
+
+
+# Defaults for an IMPORT (no argv): the CLI overrides them in main().
+N_EP = 10
+OBS_GLOB = 'C:/GnssProcessor/data/2024-129/obs/*/*_30S_MO.rnx'
+MIN_ARC = max(4, int(0.6 * N_EP))
+
+if __name__ == '__main__':
+    main(sys.argv)

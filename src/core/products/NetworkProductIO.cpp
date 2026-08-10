@@ -52,6 +52,13 @@ struct LineAssembler {
     /// caller asked for the contract (the 2-arg overload treats it as a valid,
     /// ignored line).  The tail always tracks the contract.
     bool track_contract{false};
+    /// H-rider (edge-queue §1.6 item 3b): collect EVERY H heartbeat in file
+    /// order when the caller asks (4-arg read).  Required because a fully
+    /// withheld epoch's H completes no product record — the per-record
+    /// @c epoch_status field alone would miss exactly the states H exists for.
+    /// Off by default: the tail and the 2/3-arg reads carry no vector.
+    bool track_statuses{false};
+    std::vector<NetworkProducerStatus> statuses;
 
     NetworkProductRecord               cur;
     std::map<std::string, std::size_t> sat_index;   ///< sat -> index into cur.epoch.sats
@@ -135,7 +142,10 @@ struct LineAssembler {
                 }
                 have_cur = true;
             } else if (tag == "C") {
-                if (!have_cur || f.size() < 3) { ok = false; return completed; }
+                // FC-1: a fast record must carry K lines and nothing else.  A C/B/P/U
+                // inside one means the writer mixed a full epoch into a fast marker,
+                // which would put slow-era values on the fast path.
+                if (!have_cur || cur.is_fast || f.size() < 3) { ok = false; return completed; }
                 NetworkSatSolution& s = satSolution(f[1]);
                 s.has_clock  = true;
                 s.clock_c0_m = std::stod(f[2]);
@@ -233,6 +243,34 @@ struct LineAssembler {
                 latest_status   = st;
                 pending_h       = st;
                 pending_h_valid = true;
+                if (track_statuses) statuses.push_back(st);
+            } else if (tag == "F") {   // FC-1: split-cadence FAST epoch marker
+                if (f.size() < 5) { ok = false; return completed; }
+                // Like H, an F line always BEGINS a new unit: a fast epoch is its own
+                // record, never a continuation of the full epoch under assembly.  Flush
+                // first so the previous epoch reaches the consumer intact.
+                if (have_cur) {
+                    completed = std::move(cur);
+                    cur       = NetworkProductRecord{};
+                    sat_index.clear();
+                    have_cur = false;
+                }
+                cur = NetworkProductRecord{};
+                sat_index.clear();
+                cur.is_fast               = true;
+                cur.epoch.epoch_time.week = std::stoi(f[1]);
+                cur.epoch.epoch_time.tow  = std::stod(f[2]);
+                cur.fast_anchor.week      = std::stoi(f[3]);
+                cur.fast_anchor.tow       = std::stod(f[4]);
+                // A pending S / H does NOT attach to a fast record: both describe a full
+                // solve's contract and status, and a fast epoch re-declares neither.
+                have_cur = true;
+            } else if (tag == "K") {   // FC-1: fast satellite clock (value + age only)
+                if (!have_cur || !cur.is_fast || f.size() < 3) { ok = false; return completed; }
+                double sig = 0.0;
+                for (std::size_t i = 3; i < f.size(); ++i)
+                    if (f[i].rfind("sigk=", 0) == 0) sig = std::stod(f[i].substr(5));
+                cur.fast_clocks[f[1]] = {std::stod(f[2]), sig};
             } else if (tag == "S") {   // B6: S-basis contract (v2 header / RTA-5 re-broadcast)
                 if (f.size() >= 11) {
                     SbasisContract c;
@@ -274,6 +312,8 @@ struct LineAssembler {
                             c.age_scale_k = std::stod(f[k].substr(5));      // M4: age-scaling coeff
                         } else if (f[k].rfind("discfrac=", 0) == 0) {
                             c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // H3: per-λ jump gate
+                        } else if (f[k].rfind("hsig=", 0) == 0) {
+                            c.h_sigma0_source = f[k].substr(5);   // H-rider: sigma0 statistic id
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
                             // §1.5: code-bias IF pin pair, "<const>:<s1>-<s2>".
                             // Must dispatch BEFORE the ':' pivot fallback below —
@@ -416,6 +456,12 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // checkContract compares it (a per-λ vs flat mismatch mis-counts discontinuities).
     if (contract.disc_threshold_frac_cycles > 0.0)
         out_ << ",discfrac=" << fmt::format("{}", contract.disc_threshold_frac_cycles);
+    // H-rider: which statistic the H heartbeat's sigma0 field carries.  ONLY when
+    // non-empty, so a producer on the RTA-10 default writes the S line
+    // byte-for-byte.  An interpretation hint (a consumer thresholding σ̂₀ needs to
+    // know which population it reads) — makeReplayEmitter / checkContract ignore it.
+    if (!contract.h_sigma0_source.empty())
+        out_ << ",hsig=" << contract.h_sigma0_source;
     // §1.5 (day-129 frame-guards report): the code-bias IF PIN PAIR per
     // constellation — the signal pair the emitted OSB stream is internally
     // consistent in ("cbpin=G:C1C-C2L").  selectIfPinPair pins the lexically-
@@ -434,6 +480,25 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
 void NetworkProductWriter::writeContract(const SbasisContract& contract) {
     if (!out_) return;
     writeSLine_(contract);   // RTA-5: mid-file re-broadcast, header grammar verbatim
+}
+
+void NetworkProductWriter::writeFastClock(
+    const GnssTime& epoch, const GnssTime& anchor,
+    const std::vector<std::tuple<std::string, double, double>>& sats) {
+    if (!out_ || sats.empty()) return;
+    // F marker + one K line per satellite.  Both tags are private to FC-1 so a pre-FC-1
+    // reader drops the WHOLE record (see writeFastClock's header doc) rather than
+    // re-attaching a familiar C line to the previous full epoch.  The tow uses the same
+    // shortest-round-trip formatting as E/H so a consumer can compare epochs exactly.
+    out_ << "F," << epoch.week << ',' << fmt::format("{}", epoch.tow)
+         << ',' << anchor.week << ',' << fmt::format("{}", anchor.tow)
+         << ',' << sats.size() << '\n';
+    for (const auto& s : sats) {
+        out_ << "K," << std::get<0>(s) << ',' << fmt::format("{}", std::get<1>(s));
+        const double sig = std::get<2>(s);
+        if (sig > 0.0 && std::isfinite(sig)) out_ << ",sigk=" << fmt::format("{}", sig);
+        out_ << '\n';
+    }
 }
 
 void NetworkProductWriter::writeEpochStatus(const NetworkProducerStatus& status) {
@@ -488,10 +553,13 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "# R,retro_sat[,retro_sat...]    (B1 per-satellite discontinuity bump)\n"
             "# U,sat,clock_ura_m             (B1 per-satellite URA quality, 1-sigma m)\n"
             "# H,week,tow,status,sigma0,n_sats_published,withheld   (RTA-10 epoch-status heartbeat)\n"
+            "# F,week,tow,anchor_week,anchor_tow,n_sats   (FC-1 split-cadence FAST epoch marker)\n"
+            "# K,sat,clock_c0_m[,sigk=<m>]   (FC-1 fast satellite clock; refreshes clock VALUE and AGE"
+            " only — never a bias, never a discontinuity)\n"
             "# S,ref_rx,bias_sign,windup_id,amb_datum,isb_datum,emit_cb,cb_datum,disc_thresh_m,"
             "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
-            "[,discfrac=<c>][,cbpin=<const>:<s1>-<s2>...]   (B6 S-basis contract)\n";
+            "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]   (B6 S-basis contract)\n";
 }
 
 void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_changed,
@@ -617,9 +685,11 @@ std::vector<NetworkProductRecord> NetworkProductReader::read(const std::string& 
 
 std::vector<NetworkProductRecord> NetworkProductReader::read(const std::string& path,
                                                              SbasisContract* contract_out,
-                                                             bool* ok) {
+                                                             bool* ok,
+                                                             std::vector<NetworkProducerStatus>* statuses_out) {
     std::vector<NetworkProductRecord> out;
     if (contract_out) *contract_out = SbasisContract{};   // present=false until an S line is seen
+    if (statuses_out) statuses_out->clear();
     std::ifstream in(path);
     if (!in) { if (ok) *ok = false; return out; }
 
@@ -628,6 +698,7 @@ std::vector<NetworkProductRecord> NetworkProductReader::read(const std::string& 
     // and flushes the trailing epoch at EOF.
     LineAssembler assembler;
     assembler.track_contract = (contract_out != nullptr);
+    assembler.track_statuses = (statuses_out != nullptr);
 
     std::string line;
     while (std::getline(in, line))
@@ -636,12 +707,35 @@ std::vector<NetworkProductRecord> NetworkProductReader::read(const std::string& 
 
     if (contract_out && assembler.contract.present) *contract_out = assembler.contract;
     if (ok) *ok = assembler.ok;
+    if (statuses_out) *statuses_out = std::move(assembler.statuses);
     return out;
 }
 
 void NetworkProductReader::replay(const NetworkProductRecord& rec,
                                   SsrCorrectionStore& store,
                                   NetworkProductEmitter& emitter) {
+    // FC-1: a split-cadence FAST record refreshes the satellite clock VALUE and AGE and
+    // nothing else, so it must NOT go through emitToStore.  That path would, all
+    // documented behaviours of the emitter: replace the code-satset / band-tuple
+    // trackers with empty maps (suppressing the NEXT full epoch's structural code-datum
+    // triggers), register a satellite subset as a clock-set change and step every
+    // survivor's discontinuity counter, consume a pending markDatumChange onto the fast
+    // record, and re-stamp the shared per-satellite header — ageing the bias, URA and
+    // slant-iono channels off a clock refresh.  Every one of those is a slow-era
+    // decision that a fast tick has no standing to make.
+    if (rec.is_fast) {
+        for (const auto& kv : rec.fast_clocks) {
+            SsrClockCorrection c;
+            c.sat           = kv.first;
+            c.c0            = kv.second.first;
+            c.received_time = rec.epoch.epoch_time;
+            c.epoch_time    = rec.epoch.epoch_time;
+            // pushFastClock refuses to CREATE a record, so a fast row for a satellite no
+            // full epoch has established is correctly ignored rather than half-supplied.
+            store.pushFastClock(c);
+        }
+        return;
+    }
     // Discontinuity counters are NOT serialized — for phase OR for code.  The
     // emitter recomputes them deterministically from two inputs, both of which
     // are reproduced here: (1) the per-epoch solution itself (phase-bias jumps;

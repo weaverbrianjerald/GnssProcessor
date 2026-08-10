@@ -1,0 +1,86 @@
+{
+ "_comment": [
+  "ARM 39 — SPEC_level_information_budget §17 item 1, STAGE 3 (12 h): THE TRACKING",
+  "VERDICT.  LV-4 alone (network.rx_cb_carry_step_gate); de-mean OFF => loader forces",
+  "LV-5 off; LV-1 OFF.  Earned by the stage-2 pass (arm 37, runs/ext63_dual_3h_lv4_m15i25:",
+  "all §17 stage-2 gates passed — h2-3 level −0.67±2.09 inside the ±4..9 band, breathing",
+  "sd 2.40 vs control 4.42, folds 99.6 %, erases 0.10 %, sh_health 0/0/0, no lane-trade",
+  "over-retention signature).  Fresh SEAMLESS 12 h lineage from day start, own paths.",
+  "",
+  "WHAT STAGE 3 DECIDES (§17 item 1): whether the full-admission rolling carry is a",
+  "TRACKING AUTHORITY across the GIM's own diurnal wander (32.0 → 36.9 → 33.9 TECU over",
+  "this day) — the target NO posture has reached: |a00 − GIM(t)| ≲ 4 at hour 0 AND hour",
+  "11, end within ±4.  The canonical 10/25 12 h arm wandered to −8.4 and ended +1.0 only",
+  "on a sign crossing; the LV stack rode its pin to +15..+21.  Stage 2 measured the LV-4",
+  "arm FLAT at −2.6 / −0.6 / −0.7 over h0-h2 — three hours cannot distinguish 'tracks",
+  "the diurnal' from 'converged flat'; twelve can.",
+  "",
+  "PREDICTIONS, STATED BEFORE THE RUN:",
+  "",
+  " 1. TRACKING (the stage-3 gate, DIAGNOSTIC under invariant #5 but the question this",
+  "    stage exists to answer): PASS.  h0 reproduces ~−2.6; hourly means stay inside ±4",
+  "    through h11 including the h9.5-11.5 refsat_reset/sbc_engage storm era (the era",
+  "    the 12 h replay attribution found elevated in BOTH postures); end within ±4.",
+  "    Basis: full admission feeds the rolling memory the per-epoch code GF information",
+  "    2.3× as fast as the canonical's 44 % admission, and the stage-2 sd (1.81 settled)",
+  "    says the tracker is not paying in noise.",
+  "",
+  " 2. ERASE CLUSTERING (the gate's second clause): erases ≤ 0.5 % overall BUT clustered",
+  "    AT the storm hours (h9.5-11.5) — the step gate IS the receiver-event response, and",
+  "    the storm is when re-referencing events spike.  A cluster at a frame-event hour is",
+  "    the gate WORKING; the §17 language ('no erase clusters at frame events') was",
+  "    written before the attribution found the storm — score it honestly either way.",
+  "",
+  " 3. DATA SIDE (invariant-legal): the +32 % settled cost NEITHER heals NOR compounds.",
+  "    h2-3 reproduces 0.0115 ± 0.0005 (same window, same posture, fresh run); h6-12",
+  "    settled median rms_phase 0.0110-0.0125.  Against the 12 h control arm 40 (predict",
+  "    control h6-12 ≈ 0.0085-0.0095), the ratio stays +25..40 %.",
+  "",
+  " 4. PRIOR-SIDE TENSION (the compounding watch — this is the stage-3 number that",
+  "    matters for item 3's design): prires rxcb σ̂₀ grew 3.10 (settled 1 h) → 6.33",
+  "    (h2-3) in stage 2.  Predict it keeps growing into the 8-13 band by h6-12 (the",
+  "    §14 stack read 12.62 at 12 h).  If it PLATEAUS ≤ 7 instead, the tension is",
+  "    bounded and the full-admission posture is healthier than the stack was —",
+  "    that would be the surprise worth a section.",
+  "",
+  "GRADE PROTOCOL: scripts/gim_global_mean_series.py (time-matched hourly, both arms",
+  "of the 12 h pair) + scripts/field_vs_gim_footprint.py; rms_phase from pf_keyed on",
+  "matched windows; prires rxcb σ̂₀ settled series; erase timestamps vs the event-storm",
+  "hours from network_events.csv (refsat_reset / sbc_engage / col_removed).",
+  "",
+  "KNOWN instrument holes (§19.4): prires emits rxcb only; pf_keyed n_code == 0;",
+  "block-Baarda unfloored-fraction rises with window (usable ≥ 3 h — 0 % floored at",
+  "h2-3 in stage 2)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 43200.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": {
+   "elevation_cutoff_deg": 25.0
+  }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+
+  "rx_cb_carry_step_gate": true,
+
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_12h_lv4_m15i25/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_12h_lv4_m15i25/state_snapshot.bin"
+ }
+}

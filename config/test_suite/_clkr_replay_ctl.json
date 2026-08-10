@@ -1,0 +1,20 @@
+{
+ "_comment": [
+  "Card CLK-R G3/P4 decomposition replay (docs/SPEC_clock_emit_rebase.md S5):",
+  "WTZZ consumer replay of the ctl product.  The three-way set (ctl / on /",
+  "on_nomarks = ON with its 42 R rows stripped, byte-exact otherwise) separates",
+  "the frame hold's effect from the marks' reset transients.  enable_rt_engine",
+  "is solve-neutral (edge-queue S1.1 proof) and makes the resets countable."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 43200.0 },
+ "logging": { "enable_rt_engine": true },
+ "network": {
+  "max_duration_s": 43200.0,
+  "closed_loop": { "replay_products_path": "C:/GnssProcessor/runs/clkr_12h_ctl/products.txt" },
+  "product_output_path": "C:/GnssProcessor/runs/clkr_replay_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/clkr_replay_ctl/state_snapshot.bin"
+ }
+}

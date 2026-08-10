@@ -1,0 +1,59 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 6 — arm 4 with the SINGLE change frequency_mode dual -> triple.",
+  "",
+  "PURPOSE: remove a confound I introduced.  Every arm with a CORRECT ionosphere level",
+  "(the W6 self-contained lineage, a00 30-46 TECU against COD's own GIM at 32.24) is TRIPLE;",
+  "every EXT-CB arm, all of which start at a00 ~13 TECU, is DUAL.  Dual was chosen for good",
+  "reasons (COD .BIA has zero GPS C5/L5 entries; their clock is IF(C1W,C2W)) but it is now",
+  "entangled with external-vs-internal biases and has to be separated.",
+  "",
+  "WHAT HAPPENS TO L5 HERE.  estimation.require_bia_for_signals is inherited ON, and it",
+  "gates CODE signals with no .BIA entry — so GPS C5 is DROPPED while L5 PHASE is kept and",
+  "its satellite bias is carried by the estimated satellite phase-bias state plus the float",
+  "ambiguity.  That is the only coherent triple posture available without new code: with",
+  "require_bia_for_signals OFF the L5 code would enter UNCORRECTED at full weight",
+  "(no_bia_code_downweight is 1.0 on this lineage) with no state to absorb it, injecting a",
+  "satellite bias straight into the iono field — strictly worse and strictly more confounded.",
+  "",
+  "⚠️ PREDICTION, stated BEFORE the run so the result cannot be rationalized afterwards:",
+  "this arm may well be a NULL for the level.  The absolute ionosphere level is set by the",
+  "GEOMETRY-FREE CODE, and with C5 dropped the GF code content here is L1/L2 — IDENTICAL to",
+  "the dual arm.  L5 phase adds geometry-free information but carries an ambiguity, so it",
+  "constrains iono TIME-VARIATION, not the absolute level.",
+  "",
+  "So read it as an ELIMINATION, not a fix:",
+  "  a00 still ~13 TECU  => the -19 TECU offset is INDEPENDENT of frequency mode.  The dual",
+  "                        choice is exonerated, and the next lever is the mapping-function",
+  "                        spread (estimation.ionosphere_weighting.elevation_cutoff_deg 25 ->",
+  "                        10), which is what physically separates level from DCB.",
+  "  a00 moves toward 32  => frequency mode WAS load-bearing for the level, which would be a",
+  "                        surprise worth chasing on its own terms.",
+  "",
+  "The genuinely complete triple posture is different and needs a card: estimate the",
+  "satellite OSB for BAND 5 ONLY (external .BIA for bands 1/2).  Odijk 2016: from f=3 onward",
+  "each extra band's code bias is unabsorbed and estimable, REFERRED TO THE (1,2) IF BASIS —",
+  "which is exactly the basis COD's .BIA and .CLK already put us in, so it lands in the right",
+  "frame by construction.  Not reachable today: W6 is all-signals-or-nothing and is",
+  "hard-errored against external_sat_code_bias, and the W6 code-bias datum builds an IF pin",
+  "across two frequencies which a band-5-only OSB must NOT have (it is already IF-referenced;",
+  "it needs the per-(const,signal) sum-to-zero alone).",
+  "",
+  "Everything else is identical to arm 4, so the pair is a clean single-knob A/B.",
+  "FRESH LINEAGE ONLY: frequency_mode is fingerprinted."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 600.0,
+  "frequency_mode": "triple"
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_triple_20ep_rxcb/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_triple_20ep_rxcb/state_snapshot.bin"
+ }
+}

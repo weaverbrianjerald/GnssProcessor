@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "SD pre-reduce EWL — TAIL-GUARD + HONEST-SIGMA arm.  One functional key over",
+    "_sdewl_on30_guard.json: network.sd_ewl.sigma_floor_m 0.05 -> 1.0.",
+    "",
+    "Isolates the SECOND question: is the lift over-weighting?  arcZdMean serves a VARIANCE",
+    "OF THE MEAN (~1/n), which on the unguarded arm came out at 0.08 m while the row's own",
+    "residual spread measured 1.02 m median — the row claimed ~13x the information it has.",
+    "Part of that overlap is with the carries (Card-4 DD carry + the shared bias carry",
+    "already transmit the arc's temporal constancy, and the fold carries no cross-covariance",
+    "with them).  1.0 m is the MEASURED spread, not a guess.",
+    "",
+    "Read as a 3-point ladder against runs/golden_0729/net50_wl1off (ev1 0.1390):",
+    "  sdewl_on30        unguarded, sigma 0.05  -> ev1 0.1485 (+6.8%)",
+    "  sdewl_on30_guard  tail cut,   sigma 0.05 -> ?",
+    "  this arm          tail cut,   sigma 1.00 -> ?",
+    "A lift that survives BOTH is structure.  A lift that needs the tail or the optimistic",
+    "sigma is an artifact and the knob stays off."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_sdewl_on30_guard.json"
+  ],
+  "network": {
+    "sd_ewl": { "sigma_floor_m": 1.0 },
+    "product_output_path": "C:/GnssProcessor/runs/sdewl_on30_guard_sig/products.txt"
+  }
+}

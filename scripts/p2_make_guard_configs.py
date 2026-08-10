@@ -44,13 +44,23 @@ import argparse
 import json
 import os
 
+import sys
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+# Resolve any "extends" chain the base may grow.  These bases are self-contained
+# today, so this is byte-identical now; it is here so the script does not silently
+# read a four-key DELTA as a whole config the day someone rebases it (the failure
+# scripts/config_posture_check.py shipped with).
+from gnss_config_chain import load_config_flat  # noqa: E402
+
 BASE = r"C:\GnssProcessor\config\test_suite\_night305_conv.json"
 OUT = r"C:\GnssProcessor\config\test_suite\_day129_guards_conv.json"
 RUNROOT = r"C:\GnssProcessor\runs\day129_guards"
 
 
 def build(seed_dir, max_duration_s):
-    cfg = json.load(open(BASE, encoding="utf-8"))
+    cfg = load_config_flat(BASE)
     cfg["processing"]["max_duration_s"] = float(max_duration_s)
     net = cfg["network"]
     # --- seed anchoring (offset skip runs BEFORE the max-duration anchor latch) --
@@ -88,6 +98,19 @@ def build(seed_dir, max_duration_s):
     # RTA-10 H heartbeat: on the wire, a WITHHELD epoch (A4 / SH gate) must be
     # distinguishable from "producer died" — the smoke showed 0 H lines without it.
     net["emit_epoch_status_record"] = True
+    # --- observability, prefit tier (SPEC_prefit_census_observability.md §9;
+    #     promoted 2026-08-01 after the FT63 leg-19 gates).  All three are
+    #     trace-class and fingerprint-SAFE, so they are legal on a warm resume.
+    #     The census is the only ALWAYS-ON pre-solve screen the producer has —
+    #     postfit sigma0 launders a parked cell through the free ambiguities, and
+    #     raim_within_epoch is carry_warm-gated and inert without leveling.  The
+    #     topology ledger is what makes standing invariant #7's two edges visible
+    #     at all.  The recorder makes the next discharge attribute itself.
+    #     NOTE the FUSE (network.prefit_fuse_sigma) is deliberately NOT here: it
+    #     is solve-affecting and stays a default-OFF guard (user directive).
+    net["trace_prefit_census"] = True
+    net["trace_topology"] = True
+    net["rhs_attrib_on_trip"] = True
     return cfg
 
 

@@ -194,7 +194,13 @@ namespace GnssProcessor {
         const auto it = mw_stats_.find(key);
         if (it == mw_stats_.end()) return out;   // no arc on this (sat, signal-pair)
         const MwArcStats& s = it->second;
+        out.exists = true;                 // the arc key is present — see MwArcZdMean::exists
         out.bia_corrected = s.bia_corrected;
+        // The code channels are a property of THIS arc's observable and are served
+        // regardless of maturity (a caller that skips an immature arc still wants to
+        // report which channels it looked at).
+        out.code1 = s.code1;
+        out.code2 = s.code2;
         if (s.count_lag < 2 || !(s.lambda_wl > 0.0)) { out.count = s.count_lag; return out; }
 
         if (!s.bia_corrected) {
@@ -373,7 +379,10 @@ namespace GnssProcessor {
         const auto it = mw_stats_.find(key);
         if (it == mw_stats_.end()) return out;
         const MwArcStats& s = it->second;
+        out.exists        = true;          // same contract as arcZdMean (key present)
         out.bia_corrected = s.bia_corrected;
+        out.code1         = s.code1;
+        out.code2         = s.code2;
         out.count         = s.count;
         if (s.count < 1 || !(s.lambda_wl > 0.0)) return out;
 
@@ -1391,7 +1400,9 @@ namespace GnssProcessor {
         double* out_slip_wl_float,
         const std::string& pivot_sat,
         int pivot_zd_slip_in,
-        bool pivot_zd_known_in) {
+        bool pivot_zd_known_in,
+        const std::string& code1,
+        const std::string& code2) {
 
         if (out_slip_cycles) *out_slip_cycles = 0;
         if (out_wl_known)    *out_wl_known = false;
@@ -1424,6 +1435,14 @@ namespace GnssProcessor {
                 stats = MwArcStats{};          // reset to default-initialized
             }
         }
+
+        // Record the code channels the caller formed this MW from (after the gap
+        // reset, so a fresh arc is stamped too).  Bookkeeping only — mw_m arrives
+        // pre-computed, so this cannot change a detection.  Served by arcZdMean so a
+        // consumer modelling the arc's satellite CODE bias names the OSB column the
+        // observable actually carries instead of guessing it from the phase attribute.
+        if (!code1.empty()) stats.code1 = code1;
+        if (!code2.empty()) stats.code2 = code2;
 
         // Snapshot the pre-update arc state for potential rollback
         // by resetSatellite / resetSatelliteSignal.  Used when the KF
@@ -2534,7 +2553,9 @@ namespace GnssProcessor {
                         double slip_wl_f = std::numeric_limits<double>::quiet_NaN();
                         if (processMwSample(obs, stats_key, mw_raw, lambda_wl, s1, s2,
                                             /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
-                                            &slip_cyc, &wl_known, &slip_frac, &slip_wl_f)) {
+                                            &slip_cyc, &wl_known, &slip_frac, &slip_wl_f,
+                                            /*pivot_sat=*/{}, /*pivot_zd_slip_in=*/0,
+                                            /*pivot_zd_known_in=*/true, c1, c2)) {
                             results.push_back({ obs.satellite + "_" + ifp.phase_key,
                                                 slip_cyc, wl_known, lambda_wl,
                                                 s1, s2, obs.satellite, slip_frac, slip_wl_f });
@@ -2598,7 +2619,9 @@ namespace GnssProcessor {
                         double slip_wl_f = std::numeric_limits<double>::quiet_NaN();
                         if (processMwSample(obs, stats_key, mw_raw, lambda_wl, pair.phase1, pair.phase2,
                                             /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
-                                            &slip_cyc, &wl_known, &slip_frac, &slip_wl_f)) {
+                                            &slip_cyc, &wl_known, &slip_frac, &slip_wl_f,
+                                            /*pivot_sat=*/{}, /*pivot_zd_slip_in=*/0,
+                                            /*pivot_zd_known_in=*/true, pair.code1, pair.code2)) {
                             // Supplementary pairs produce per-signal reset entries
                             // with full signal info for the multi-frequency solver.
                             results.push_back({ obs.satellite + "_" + pair.phase1,
@@ -2691,7 +2714,9 @@ namespace GnssProcessor {
                         double slip_wl_f = std::numeric_limits<double>::quiet_NaN();
                         if (processMwSample(obs, stats_key, mw_raw, lambda_wl, pair.phase1, pair.phase2,
                                             /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
-                                            &slip_cyc, &wl_known, &slip_frac, &slip_wl_f)) {
+                                            &slip_cyc, &wl_known, &slip_frac, &slip_wl_f,
+                                            /*pivot_sat=*/{}, /*pivot_zd_slip_in=*/0,
+                                            /*pivot_zd_known_in=*/true, pair.code1, pair.code2)) {
                             results.push_back({ obs.satellite + "_" + pair.phase1,
                                                 slip_cyc, wl_known, lambda_wl,
                                                 pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f });
@@ -3009,7 +3034,9 @@ namespace GnssProcessor {
                                     pivot_entry.lambda_wl, pivot_entry.pair.phase1,
                                     pivot_entry.pair.phase2, /*bia_corrected=*/false,
                                     pivot_entry.sat_mw_bias, &pcyc, &pknown, &pfrac,
-                                    &pfloat, best_pivot)) {
+                                    &pfloat, best_pivot, /*pivot_zd_slip_in=*/0,
+                                    /*pivot_zd_known_in=*/true,
+                                    pivot_entry.pair.code1, pivot_entry.pair.code2)) {
                     pivot_zd_slip  = pcyc;
                     pivot_zd_known = pknown;
                     // The pivot is processed in its own (ZD) frame: its
@@ -3058,7 +3085,8 @@ namespace GnssProcessor {
                                     &slip_cyc, &wl_known, &slip_frac, &slip_wl_f,
                                     best_pivot,
                                     /*pivot_zd_slip_in=*/pivot_zd_slip,
-                                    /*pivot_zd_known_in=*/pivot_zd_known)) {
+                                    /*pivot_zd_known_in=*/pivot_zd_known,
+                                    entry.pair.code1, entry.pair.code2)) {
                     // Re-reference the SD jump to this satellite's OWN ZD slip:
                     // dN_sat = SD + dN_pivot.  Adding an integer leaves the
                     // rounding fraction (slip_frac) unchanged.  Unusable if the

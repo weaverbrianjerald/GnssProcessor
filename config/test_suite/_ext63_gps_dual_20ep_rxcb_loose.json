@@ -1,0 +1,35 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 5 — arm 4 with the clock anchor LOOSENED 0.02 -> 3.0 m.",
+  "",
+  "WHY: arm 2 reported 'clock-delta rms 0.008 m' at epoch 1, which reads as an 8 mm",
+  "agreement between our satellite-clock estimate and COD's .CLK.  It is NOT a free",
+  "measurement — the 0.02 m anchor is itself pulling that residual toward zero with",
+  "information 1/sigma^2 = 2500, so the number is partly the anchor enforcing itself.",
+  "",
+  "It is not vacuous either: a genuinely wrong model would FIGHT a 2 cm anchor and show up",
+  "as either a large residual or an inflated sigma0, and neither happened.  But the honest",
+  "measurement of how far our network's clock sits from COD's is the same arm with the",
+  "anchor loose enough not to determine the answer.  At sigma 3 m the anchor still realizes",
+  "the gauge (1/sigma^2 = 0.111, the validated brdc_rts value, far above the rank cutoff)",
+  "while leaving the data free to place each satellite clock to well under a metre.",
+  "",
+  "READ: clock-delta rms per epoch.  If it stays at the cm level with a 3 m anchor, the",
+  "agreement is REAL and independently measured.  If it opens to decimetres or metres, then",
+  "arm 4's 8 mm was the anchor talking and the true agreement is that much worse.",
+  "",
+  "Everything else is identical to arm 4, so the pair is a clean single-knob A/B."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "apriori_clock_anchor_sigma_m": 3.0,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_rxcb_loose/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_rxcb_loose/state_snapshot.bin"
+ }
+}

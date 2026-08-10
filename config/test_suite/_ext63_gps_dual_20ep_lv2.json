@@ -1,0 +1,59 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 17 — arm 12 (single-layer canonical) + CARD LV-2, the rx-CB carry",
+  "COMMON-MODE DE-MEAN (docs/SPEC_level_information_budget.md).  Single knob:",
+  "network.rx_cb_carry_demean.  Carry stays ON -- that is the point: arm 14 proved the",
+  "carry's per-station DIFFERENCE rigidity load-bearing (turning it off free-falls a00 at",
+  "-9 TECU/ep), so the fix is to remove only its net FRAME force.",
+  "",
+  "MECHANISM.  Each fold injects eta_i = lambda_i * (innov_i - mu) instead of",
+  "lambda_i * innov_i, with mu = SUM(lambda*innov)/SUM(lambda) over every station that",
+  "actually FOLDED that code-bias family, computed at the SERIAL post-solve harvest and",
+  "applied LAG-1 (the produce phase only reads it -- race-free by construction, the",
+  "Iono-2 v3 rep_error_demean idiom).  SUM lambda*(innov-mu) = 0 identically, so the",
+  "carry keeps every between-station difference at full stiffness while exerting ZERO net",
+  "force on the DCB common mode -- a FRAME direction that belongs to the designed",
+  "authority (rx_code_bias_datum's 1/sigma^2 = 0.01, the a00 GIM anchor's 0.25), not to",
+  "last epoch's realization (~100 info units).  The 10-sigma inject gate judges",
+  "|innov - mu| too: a coherent frame move is not a per-receiver hardware jump and must",
+  "not mass-trigger the receiver-reset response.",
+  "",
+  "This is a REAL actuator, unlike LV-1: it changes a prior row's RHS by -lambda*mu, and",
+  "no linearization-frame algebra compensates that (see arm 15/16's headers).",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - The inject-gate skip rate collapses from arm 13's ~58 % (run-end LV-2 line prints",
+  "   skips/(skips+folds) on the demeaned innovation).  If it does NOT move, mu is tiny",
+  "   compared with the per-station spread and the 58 % is a FRAME artifact of a frozen",
+  "   x_lin(cb) rather than a coherent common-mode move -- in which case LV-1 (which",
+  "   re-centres x_lin(cb)) is the knob that fixes it, and arm 19 shows that.",
+  " - Ignition trajectory similar or mildly improved vs arm 12 (ignition ~24.7, trough",
+  "   ~6-7 rising by ~ep 16, gate 0/0/0, in-band 20/20).  LV-2 targets the BREATHING",
+  "   (the +/-6 TECU 20-30 min cycle of arms 11/13), which 20 epochs cannot show.",
+  " - mu itself, traced per epoch as `lv2_mu` rows in network_events.csv, sits near zero",
+  "   in a healthy epoch and swings during a frame move.  A mu that grows monotonically",
+  "   is the flywheel being drained and is the headline plot of this card.",
+  " - lv2_mu_frozen should be 0 at 61 stations (floor is 8 contributing stations); any",
+  "   freeze marks an epoch whose folded set collapsed -- name it before reading mu."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "rx_cb_carry_demean": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv2/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv2/state_snapshot.bin"
+ }
+}

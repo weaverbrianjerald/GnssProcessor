@@ -328,6 +328,118 @@ std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservati
 }
 
 // ===========================================================================
+// Card LV-1 — bias-free per-LOS iono seeding
+// (docs/SPEC_level_information_budget.md)
+// ===========================================================================
+//
+// WHAT THE RAW SEED IS.  computeIonosphereSeed above returns the geometry-free
+// combination of product-referenced code residuals,
+//
+//     raw = ((P1 − mod1) − (P2 − mod2)) / (α1 − α2)
+//         = I_los  +  (d_{r,1} − d_{r,2})/(α1 − α2)          [m of L1 slant]
+//
+// `mod` carries the satellite side and the geometry but NOT the receiver DCB, so
+// the SECOND term — the station's own GF hardware bias — rides into EVERY seed of
+// that station.  Measured on DOY-129 (61 GPS stations, scripts/extcb_gim_verdict.py):
+// mean ≈ −15 slant-TECU with continent-clustered spread (std ≈ 21 TECU).  The
+// downstream consequence is not confined to the iono state: initializeCodeBiases
+// below subtracts (α_b − α_1)·x(iono) when it seeds the receiver DCB, so with a
+// bias-IN iono seed the receiver's whole GF lump is booked into the ionosphere and
+// the DCB linearization point is left near zero — the opposite of the physical
+// split.
+//
+// THE REFRAME.  Replace the station-common content with the field's own value at
+// each line of sight's pierce point:
+//
+//     seed' = raw − median_r(raw)  +  m(el)·VTEC_SH(IPP)
+//
+// The median (not the mean) is the robust station-common estimate, and it is a
+// direct estimate of that receiver's GF bias — the run logs it once per station
+// for exactly that reason (cross-check against extcb_gim_verdict.py's bias_TECU).
+//
+// SCOPE HONESTY (read this before predicting a level change).  On the NETWORK path
+// the per-station StateManager vector is a frozen LINEARIZATION POINT: it is
+// written once at setup, never written back from the solve, and every row that
+// touches a local column forms its RHS against it with that row's own A_r
+// coefficient (data rows through em.innovations; the SH↔slant tie through
+// innov = −x(iono_idx)).  Shifting x_lin on local column c by δ therefore gives
+// y → y − A_r e_c δ, hence u_s → u_s − N_sr e_c δ and u_r → u_r − N_rr e_c δ, and
+// the reduced RHS b_red = u_s − N_sr N_rr⁻¹ u_r is EXACTLY invariant — the shared
+// solution does not move and x_r absorbs the shift, so the ABSOLUTE estimate
+// x_lin + x_r is unchanged too (proven Aug-1 2026; the per-epoch absolute network
+// solve deliberately carries NO Kalman prior on the local nuisances, so there is
+// no row pulling a GPS/Galileo iono column toward its seed).  This reframe is
+// consequently NOT a level actuator through the seed's "stiffness" — that channel
+// does not exist here.  What it DOES change is every consumer that reads a PREFIT
+// quantity in the x_lin frame:
+//   * the receiver-DCB linearization point (via initializeCodeBiases, above), and
+//     with it the rx-CB carry's inject-time innovation gate, which tests
+//     |value_abs − x_lin(cb)| — a prefit, frame-dependent screen that WITHHOLDS
+//     rows (measured ~58 % skips on the EXT-CB arms);
+//   * the prefit census / fuse screens, which threshold prefit residuals;
+//   * the GLONASS local-nuisance anchors, whose rows pull toward x_lin with y = 0
+//     (GPS-only postures never build them).
+// Those are row-set effects, and row-set changes DO move the solve.  Grade this
+// card on them — not on a seed-frame gradient.
+
+std::optional<double> StateInitializer::stationSeedOffset(std::vector<double>& seeds,
+                                                           int min_sats) {
+    if (min_sats < 1) min_sats = 1;
+    if (seeds.size() < static_cast<std::size_t>(min_sats)) return std::nullopt;
+    return computeMedian(seeds);
+}
+
+std::optional<double> StateInitializer::computeStationSeedOffset(
+    const std::vector<PppObservation>& observations, int min_sats) {
+    std::vector<double> seeds;
+    seeds.reserve(observations.size());
+    for (const auto& obs : observations) {
+        const auto s = computeIonosphereSeed(obs);   // |seed| < 200 m screened inside
+        if (s.has_value() && std::isfinite(*s)) seeds.push_back(*s);
+    }
+    const std::size_t n = seeds.size();
+    const auto offset = stationSeedOffset(seeds, min_sats);
+    if (!offset.has_value()) return offset;
+    ++iono_seed_stats_.offsets;
+    iono_seed_stats_.last_offset_m = *offset;
+    if (!iono_seed_offset_logged_) {
+        iono_seed_offset_logged_ = true;
+        // TECU conversion at L1 for the cross-check against the GIM verdict
+        // script's `bias_TECU` column: 1 TECU = 40.3e16/f_L1² metres of delay.
+        constexpr double kTecuToL1M =
+            40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+        log_manager_.getLogger("main_log")->info(
+            "Network (LV-1): station '{}' seed-frame offset {:+.3f} m "
+            "({:+.2f} slant-TECU at L1) from {} raw per-satellite seeds — this is a "
+            "direct estimate of the receiver GF (C1C−C2W class) hardware bias ⊕ the "
+            "station's median slant ionosphere; it is REMOVED from every per-LOS seed "
+            "and the field's value at the IPP put in its place.",
+            iono_seed_frame_.station, *offset, *offset / kTecuToL1M, n);
+    }
+    return offset;
+}
+
+double StateInitializer::applyIonoSeedFrame(const std::string& satellite, double raw_seed,
+                                             const std::optional<double>& station_offset) {
+    if (!station_offset.has_value()) {
+        ++iono_seed_stats_.fallback_raw;   // < min_sats usable seeds this station-epoch
+        return raw_seed;
+    }
+    const auto fit = iono_seed_frame_.field_slant_m.find(satellite);
+    if (fit == iono_seed_frame_.field_slant_m.end() || !std::isfinite(fit->second)) {
+        ++iono_seed_stats_.field_missing;  // degenerate IPP / satellite outside the field
+        return raw_seed;
+    }
+    const double reframed = raw_seed - *station_offset + fit->second;
+    if (!std::isfinite(reframed)) {
+        ++iono_seed_stats_.field_missing;
+        return raw_seed;
+    }
+    ++iono_seed_stats_.reframed;
+    return reframed;
+}
+
+// ===========================================================================
 // First-epoch ISB initialization
 // ===========================================================================
 

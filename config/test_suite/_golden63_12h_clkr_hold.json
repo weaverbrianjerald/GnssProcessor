@@ -1,0 +1,25 @@
+{
+ "_comment": [
+  "Card CLK-R G3 decomposition — 12 h LIVE arm with STAGE 1 ONLY (frame hold,",
+  "no jump test), one knob from _golden63_12h_clkr_ctl.  Motivated by the G3",
+  "finding: the full-ON arm's LIVE consumer tail worsened (106 epochs > 20 m vs",
+  "ctl's 1; p95 14.6 -> 21.3) while the REPLAY consumer of the same product did",
+  "not — live-only coupling, marks vs hold confounded.  This arm isolates the",
+  "hold in the live posture.  PREDICTION (from the replay evidence + the gauge",
+  "argument): consumer ~ ctl (reactions identical, tail unchanged); census",
+  "common steps 613 -> 1 (the marked pivot handover)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 43200.0 },
+ "network": {
+  "max_duration_s": 43200.0,
+  "serialize_sbasis_contract": true,
+  "emit_epoch_status_record": true,
+  "h_sigma0_prefit_census": true,
+  "emit_clock_frame_hold": true,
+  "product_output_path": "C:/GnssProcessor/runs/clkr_12h_hold/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/clkr_12h_hold/state_snapshot.bin"
+ }
+}

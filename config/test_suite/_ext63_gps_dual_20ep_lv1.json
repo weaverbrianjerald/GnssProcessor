@@ -1,0 +1,64 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 15 — arm 12 (single-layer canonical) + CARD LV-1, the bias-free",
+  "per-LOS iono seeding (docs/SPEC_level_information_budget.md).  Single knob:",
+  "network.iono_seed_field_frame.  Carry stays ON (this is the carry-ON leg).",
+  "",
+  "WHAT LV-1 DOES.  StateInitializer::computeIonosphereSeed returns the geometry-free",
+  "code combination raw = I_los + (d_r1-d_r2)/(a1-a2): `mod` removes the satellite side",
+  "and the geometry but NOT the receiver DCB, so every seed of a station carries that",
+  "station's own GF hardware bias (measured DOY-129: mean -15 slant-TECU, continent-",
+  "clustered, std 21).  LV-1 replaces the station-common content with the field's own",
+  "value at each LOS's IPP:  seed' = raw - median_r(raw) + m(el)*VTEC_SH(IPP), field",
+  "taken lag-1 (a00 climatology prior = 32.24 TECU before the first solve).",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN — and it is NOT the SPEC's original one.  The spec",
+  "attributes the a00 collapse to ~0.04 info x ~376 LOS of per-LOS stiffness toward the",
+  "bias-in seed frame.  THAT CHANNEL DOES NOT EXIST ON THIS PATH.  The per-station",
+  "StateManager vector is a frozen LINEARIZATION POINT (written once at setup, never",
+  "written back), the per-epoch absolute network solve carries NO Kalman prior on the",
+  "local nuisances, and every row touching a GPS iono column forms its RHS against x_lin",
+  "with that row's own A_r coefficient (data rows via em.innovations; the SH tie via",
+  "innov = -x(iono_idx)).  So a seed shift delta gives y -> y - A_r e_c delta and the",
+  "reduced RHS b_red = u_s - N_sr N_rr^-1 u_r is EXACTLY invariant (proven 2026-08-01,",
+  "memory project_network_xlin_invariance).  Therefore:",
+  " - a00 trajectory: UNCHANGED to within trace noise vs arm 12 (ignition ~24.7, trough",
+  "   ~6-7, inflection up by ~ep 16, gate 0/0/0, in-band 20/20).  A material a00 change",
+  "   here would FALSIFY the invariance theorem and is the more interesting outcome.",
+  " - What SHOULD move, because they read PREFIT quantities in the x_lin frame:",
+  "   (a) the receiver-DCB linearization point.  initializeCodeBiases subtracts",
+  "       (alpha_b - alpha_1)*x(iono) when it seeds the DCB, so with a bias-IN iono seed",
+  "       the receiver's GF lump is booked into the ionosphere and x_lin(DCB) is left",
+  "       near zero; with LV-1 it lands near the true bias.  The rx-CB carry's inject",
+  "       gate tests |value_abs - x_lin(cb)| against 10 sigma + 0.5 m -- a PREFIT,",
+  "       frame-dependent screen -- so PREDICT the innovation-skip rate FALLS well below",
+  "       arm 13's 58 % and the fold count rises.",
+  "   (b) network_prefit_census.csv statistics (trace-only, no solve effect).",
+  " - Run-end LV-1 line: non-zero `reframed`, ~61 station-epoch offsets at cold start,",
+  "   and the per-station offset log lines should agree in sign and scale with",
+  "   scripts/extcb_gim_verdict.py's bias_TECU column (Europe ~ -20..-25, KRGG/OAFA/GAMB",
+  "   +40..+47).  That agreement is the free cross-validation this arm is really for.",
+  "",
+  "20 epochs is inside ignition: gate wiring + counters + offsets read only."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv1/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv1/state_snapshot.bin"
+ }
+}

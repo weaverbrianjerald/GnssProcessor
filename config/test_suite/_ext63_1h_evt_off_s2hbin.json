@@ -1,0 +1,18 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 GATE 1 — structural byte-identity of tonight's default-OFF code",
+  "(card S2H + the H-rider) across the rebuild.  Posture-identical twin of",
+  "_ext63_1h_evt_off (inherits everything; only the output paths differ), run on the",
+  "NEW binary gnss_processor_s2h.exe (md5 82B4450703C551109DCEFB0B6C212559).",
+  "PREDICTION P1: runs/ext63_1h_evt_off_s2hbin/products.txt md5 ==",
+  "fa48369f56729fcc3628d47ccbb71ad0 (the §1.8 gate-1 anchor, already held across the",
+  "edge2 rebuild).  Any mismatch = tonight's OFF path is NOT byte-identical → stop."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_1h_evt_off.json"
+ ],
+ "network": {
+  "product_output_path": "C:/GnssProcessor/runs/ext63_1h_evt_off_s2hbin/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_1h_evt_off_s2hbin/state_snapshot.bin"
+ }
+}

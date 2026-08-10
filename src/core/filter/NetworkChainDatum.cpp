@@ -36,6 +36,8 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             std::vector<NetStation>& stations,
                             const std::vector<bool>& present,
                             const PhaseDatumCandidates& cnd,
+                            const AnchorHygiene& hyg,
+                            const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys) {
 auto& prev_carry = ctx.carry.prev_carry;
 auto& anchor_incumbent = ctx.carry.anchor_incumbent;
@@ -59,6 +61,19 @@ const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
 const bool eq34_longevity = ctx.knobs.eq34_longevity;
 const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
+const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
+
+    // Card 3/4 slip-aware election: did THIS arc slip this epoch?  The funnel is
+    // complete here by the ordering contract (every PASS-A drain, signal integrity
+    // and measurement admission run ahead of the election).  Keyed per
+    // (station, ambiguity) exactly as the C3c membership test is, so the election and
+    // the DD-prior build can never disagree about which arcs are slipped.
+    auto arcSlipped = [&](std::size_t ri, const std::string& sat,
+                          const std::string& sig) -> bool {
+        return eq34_slip_aware
+            && carry_slipped_ambs.count({static_cast<int>(ri),
+                                         StateKeys::makeAmbiguityKey(sat, sig)}) != 0;
+    };
 
     const auto& sat_el      = cnd.sat_el;
     const auto& usable_keys = cnd.usable_keys;
@@ -89,6 +104,7 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
     for (auto& st : stations) {
         st.pinned_amb_targets.clear();
         st.pinned_rpb_keys.clear();
+        st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (empty ⇒ no scaling)
     }
     this_epoch_anchor.clear();
     shared_phase_keys.clear();
@@ -184,7 +200,19 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
             const double el = ei->second;
             auto pe = eq34_prev_el.find({ri, sat});
             const bool rising = (pe != eq34_prev_el.end() && el > pe->second + 1e-6);
-            return el + (rising ? 90.0 : 0.0);
+            // Slip-aware (Card 3/4): an arc that slipped THIS epoch is the worst possible
+            // new tree edge whatever its elevation — seating it poisons every fundamental
+            // cycle that closes through it, so the whole dependent chord set refloats
+            // instead of the one DD the slip actually invalidated.  Demote it below every
+            // clean arc (the clean band is [0,180]) while keeping the ordering WITHIN the
+            // slipped set, so if the graph leaves no alternative the completion still picks
+            // the most durable of a bad lot rather than an arbitrary one.
+            const double life = el + (rising ? 90.0 : 0.0);
+            if (arcSlipped(ri, sat, grp_sig)) {
+                ++ctx.counters.eq34_slip_demoted;
+                return life - 1000.0;
+            }
+            return life;
         };
 
         // STICKY-tree seed (spec D2 step 3): the incumbent tree edges —
@@ -205,6 +233,19 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
         auto seedEdge = [&](const std::string& sta, const std::string& sat) {
             auto ni = name2idx.find(sta);
             if (ni == name2idx.end() || !arc_set.count({ni->second, sat})) return;
+            // Slip-aware (Card 3/4): a slipped INCUMBENT loses its sticky seed.  The
+            // incumbent queue drains ahead of the new-edge walk, so a seeded edge is
+            // effectively unconditional — and an incumbent that slipped this epoch is
+            // exactly the edge that must NOT stay in the tree, because every chord whose
+            // fundamental cycle runs through it dies with it.  Dropping the seed does not
+            // discard the edge: it demotes it to the new-edge walk, where arcLife has it
+            // ranked last, so it is re-admitted only if the component has no other way to
+            // reach the vertex.  In that case the mass refloat still happens and that is
+            // correct — the topology forced it, not the policy.
+            if (arcSlipped(ni->second, sat, grp_sig)) {
+                ++ctx.counters.eq34_slip_deseeded;
+                return;
+            }
             inc_adj[rV(ni->second)].push_back(sV(sat));
             inc_adj[sV(sat)].push_back(rV(ni->second));
         };
@@ -336,6 +377,12 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
             auto recordEdge = [&](size_t ri, const std::string& sat,
                                   bool sat_is_child) {
                 const std::string amb = sat + "_" + grp_sig;
+                // Slip-aware (Card 3/4): this arc is becoming a TREE EDGE.  If it slipped
+                // this epoch the election tried and failed to avoid it — the component has
+                // no other route to the vertex — so every cycle through it will refloat
+                // anyway.  Counted so "deseeded > 0" can never be misread as "no slipped
+                // arc ended up in the tree".
+                if (arcSlipped(ri, sat, grp_sig)) ++ctx.counters.eq34_slip_readmitted;
                 // I2 metric: this edge was retained across a gap (its
                 // carry outlived the row absence) and is resuming now —
                 // the incumbent seed made it a recognized edge, so the
@@ -402,6 +449,23 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
                 new_prev_target[{static_cast<int>(ri), amb}] = target;
                 stations[ri].pinned_amb_targets[amb] = target;
                 ++eq34_n_pins;
+                // eq34 REATTACH HYGIENE (docs/SPEC_eq34_reattach_hygiene.md): this
+                // pin's HOST arc is (ri, amb) whichever endpoint the edge attaches.
+                // Count the reattach (the sat-side host actually moved — the event
+                // NetworkSolPrep traces as PHASE_DATUM/eq34_reattach) and, when the
+                // eligible pass could not avoid a fresh host, hand the pin fold an
+                // INC-3 σ multiplier so the datum row is soft enough for the data to
+                // pull the cold ambiguity instead of re-levelling the component onto
+                // its code-seeded value.  Inert (no map entry, no counter) when the
+                // card is off.
+                if (hyg.active) {
+                    if (edge_changed && sat_is_child) ++ctx.counters.hyg.reattaches;
+                    const double sc = hyg.pinSigmaScale(ri, amb);
+                    if (sc > 1.0) {
+                        stations[ri].pinned_amb_sigma_scale[amb] = sc;
+                        ++ctx.counters.hyg.fresh_pin_ramps;
+                    }
+                }
                 order.emplace_back(sat_is_child ? sV(sat) : rV(ri),
                                    sat_is_child ? rV(ri) : sV(sat),
                                    pinmove, known);
@@ -412,7 +476,68 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
                 new_q.push_back(v);
             };
             attach(rV(r1));
-            while (!inc_q.empty() || !new_q.empty()) {
+            // eq34 REATTACH HYGIENE INC-2: a BRIDGED satellite's gauge is realized on
+            // the SHARED side — a soft pseudo-obs row holding b_s at its last solved
+            // level (networkInjectPinBridgePrior) — so it enters the walk already
+            // GROUNDED: no parent edge, no ambiguity pin, and the walk may traverse
+            // THROUGH it to reach receivers.  The spanning structure is then a
+            // FOREST rooted at {r1} ∪ {bridged sats}, and the rank arithmetic still
+            // closes exactly: 1 RPB pin + B bridge rows + (n_c + m_c − 1 − B) tree
+            // edges = n_c + m_c.  Counted as pins for that cross-check.
+            std::vector<std::string> bridged_roots;
+            if (hyg.active && !hyg.bridged.empty()) {
+                for (const auto& s : comp_sat[root]) {
+                    if (!hyg.isBridged(s + "_" + grp_sig)) continue;
+                    if (visited.count(sV(s))) continue;
+                    attach(sV(s));
+                    bridged_roots.push_back(sV(s));
+                    ++eq34_n_pins;
+                }
+            }
+            // INC-1: a NEW tree edge may only be grown onto an arc whose ambiguity
+            // has converged (age ≥ eq34_anchor_min_arc_ep).  Run the walk TWICE: the
+            // first pass admits eligible edges only, so a mature host wins over a
+            // fresh one regardless of the I4/longevity rank order; if that leaves
+            // vertices unreachable (their only connection to the component runs
+            // through a fresh arc) the second pass admits everything, counting each
+            // unavoidable cold pin.  The INCUMBENT queue is deliberately NOT filtered
+            // — keeping the incumbent is not a reattach, and blocking it would CAUSE
+            // the handover this card exists to prevent.
+            const std::size_t comp_vertices =
+                rx_list.size() + comp_sat[root].size();
+            bool allow_cold = !hyg.active || hyg.min_arc_ep <= 0;
+            // Card 3/4 slip-aware: a SLIPPED arc is refused in the first pass on exactly
+            // the same terms as a cold host, and admitted in the second.  It has to be
+            // here and not only in the arcLife ranking: arcLife is read ONLY under the
+            // longevity election, so gating slip-avoidance on it would make this knob
+            // silently half-inert wherever longevity is off — which is the shipped field
+            // configuration.  Avoiding a slipped tree edge is a CORRECTNESS preference,
+            // not a longevity heuristic, so it gets its own second-chance flag rather
+            // than riding one.  De-seeding an incumbent (above) without this is worse
+            // than doing nothing: it hands the edge straight back through the walk and
+            // pays a datum handover for it.
+            bool allow_slipped = !eq34_slip_aware;
+            auto newEdgeOk = [&](size_t ri, const std::string& sat) {
+                if (!allow_slipped && arcSlipped(ri, sat, grp_sig)) return false;
+                if (hyg.eligibleHost(ri, sat + "_" + grp_sig)) return true;
+                if (!allow_cold) return false;
+                ++ctx.counters.hyg.cold_fallback_pins;
+                return true;
+            };
+            for (int pass = 0; pass < 2; ++pass) {
+                if (pass == 1) {
+                    // Everything reachable through eligible edges is in; anything
+                    // left needs the cold fallback.  `visited` is an ordered set, so
+                    // the rebuilt frontier is deterministic.  Both refusals share the
+                    // pass: a vertex still unreached may be behind a cold host, a
+                    // slipped arc, or both, and there is no third pass to separate them.
+                    if ((allow_cold && allow_slipped) || visited.size() >= comp_vertices)
+                        break;
+                    allow_cold = true;
+                    allow_slipped = true;
+                    for (const auto& v : visited) new_q.push_back(v);
+                }
+                while (!inc_q.empty() || !new_q.empty()) {
                 if (!inc_q.empty()) {
                     const std::string v = inc_q.front(); inc_q.pop_front();
                     auto ia = inc_adj.find(v);
@@ -451,6 +576,7 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
                             std::sort(ss.begin(), ss.end());
                         for (const auto& s : ss) {
                             if (visited.count(sV(s))) continue;
+                            if (!newEdgeOk(ri, s)) continue;   // INC-1: fresh host
                             recordEdge(ri, s, /*sat_is_child=*/true);
                             attach(sV(s));
                         }
@@ -477,10 +603,12 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
                             std::sort(rr.begin(), rr.end());
                         for (size_t ri : rr) {
                             if (visited.count(rV(ri))) continue;
+                            if (!newEdgeOk(ri, s)) continue;   // INC-1: fresh host
                             recordEdge(ri, s, /*sat_is_child=*/false);
                             attach(rV(ri));
                         }
                     }
+                }
                 }
             }
             // Shift walk — the carry S-TRANSFORMATION (spec D4 "v2 =
@@ -500,6 +628,15 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
             std::map<std::string, bool>   vknown;
             vshift[rV(r1)] = 0.0;
             vknown[rV(r1)] = true;
+            // INC-2: a bridged satellite is a second root whose frame provably does
+            // NOT move — the bridge row holds b_s at exactly its previous value — so
+            // it seeds the walk with a KNOWN zero shift.  That is the whole point of
+            // the bridge: the subtree hanging off it keeps its carries instead of
+            // being re-referenced (no eq34_reref entry, no local-carry erase).
+            for (const auto& v : bridged_roots) {
+                vshift[v] = 0.0;
+                vknown[v] = true;
+            }
             for (const auto& [v, p, pinmove, known] : order) {
                 // Shift OFF (default): any nonzero pin displacement is
                 // treated as unknown ⇒ the erase/skip hygiene handles it

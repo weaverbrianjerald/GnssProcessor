@@ -28,8 +28,10 @@
 #include "filter/NetworkEstimator.hpp"    // NetworkEstimator
 #include "filter/NetworkInvariantCarryDriver.hpp"
 #include "filter/NetworkCarryVce.hpp"     // NetworkCarryVce
+#include "filter/NetworkPriorResidual.hpp" // NetworkPriorResidual (prior-residual census run-end readout)
 #include "filter/NetworkMwWlLayer.hpp"    // NetworkMwWlLayer::Counters
 #include "filter/NetworkWlRunTypes.hpp"   // EwlLane / WlCounters / SubBlockTimer
+#include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (Card CLK-R)
 #include "products/NetworkEmitRebase.hpp"   // NetworkEmitRebase
 #include "products/NetworkPbEmitFilter.hpp" // NetworkPbEmitFilter
 #include "filter/NetworkIonoDeweightGate.hpp"
@@ -68,6 +70,7 @@ int networkTeardown(
     const NetworkEstimator& est,
     const NetworkInvariantCarryDriver& carry_driver,
     const NetworkCarryVce& carry_vce_est,
+    const NetworkPriorResidual& prires_est,
     const SlipQcChannel& slip_qc,
     const NetworkMwWlLayer::Counters& mw_wl_run,
     const std::vector<EwlLane>& ewl_lanes,
@@ -75,6 +78,7 @@ int networkTeardown(
     const std::map<char, WlCounters>& wl_cons_run,
     const NetworkEmitRebase& emit_rebase_engine,
     const NetworkPbEmitFilter& pb_filter_engine,
+    const NetworkClockEmitRebase& clk_rebase_engine,
     const NetworkIonoDeweightGate& iono_deweight,
     const std::vector<SubBlockTimer>& sec_sub,
     const char* const* kSubNames,

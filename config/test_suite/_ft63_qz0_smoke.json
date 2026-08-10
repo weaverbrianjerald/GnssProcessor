@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "Smoke twin of _ft63_qz0.json — 300 s (10 ep), staged-cadence directive.",
+    "Sanity: 10-11/11 emitted, innov_born_skipped counter live, no withhold storm."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_qz0.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/qz0_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/qz0_smoke/state_snapshot.bin"
+  }
+}

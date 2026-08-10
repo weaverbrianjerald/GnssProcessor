@@ -35,7 +35,9 @@
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // Card 4 (M1) C3b: DD cycle-basis invariant carry
 #include "filter/NetworkMwWlLayer.hpp"             // M5 card WL-1: MW-seeded wide-lane pseudo-obs layer
+#include "filter/NetworkSdEwlAr.hpp"               // SD EWL: the shared EWL band table (sdEwlBands) + increment-2a decision
 #include "filter/NetworkCoupling.hpp"       // INC-7b: Card-1/1b/1d conditional coupling-row builder
+#include "filter/NetworkPrefitCensus.hpp"   // INC-2 structural fuse (SPEC_prefit_census_observability)
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
 #include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
@@ -215,6 +217,50 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         A_r.col(static_cast<Eigen::Index>(j)) = em.H.col(local_cols[j]);
 
     w = em.R_v.cwiseInverse();   // per-obs information = 1/σ²
+    // --- flicker/gap signal integrity INC-2 (docs/SPEC_flicker_gap_integrity.md) ---
+    // Demote the PHASE rows of every line of sight that is currently UNVETTED — one
+    // that re-entered, flickered a band, is degraded, or is brand new, i.e. one
+    // inside the structural window where NO time-difference detector can operate (MW
+    // needs Welford history, IF-TD needs three consecutive epochs, LLI is
+    // receiver-discretionary, GF is doctrine-barred at 30 s).  Across a loss of lock
+    // the slip magnitude is unbounded and unknowable — a proportional counter reset
+    // is invisible to BOTH MW and GF — so the only safe posture is to stop trusting
+    // the phase until something can watch it again.
+    //
+    // CODE rows are deliberately untouched (`sig[0] != 'L'`): they are slip-immune,
+    // and they are what re-anchors the float to a bounded error.  This is
+    // prefer-fallback, not exclusion — the row still contributes, at σ × scale.
+    //
+    // This is the ONLY place that needs it, and the cheapest: `em.satellite_ids` /
+    // `em.signal_types` are row-aligned with H/R_v by an asserted invariant, so
+    // phase-vs-code and the satellite are O(1) lookups with no matrix scan — the
+    // three existing post-assembly sites (WE-CI, frame-diag) each have to re-derive
+    // "is this a phase row" from shared-column label archaeology.  Everything folded
+    // later — the datum pins, the GLONASS anchors, the SH/GIM iono rows, the SD-EWL
+    // rows, the Card-1 coupling rows — APPENDS, so rows [0, em.H.rows()) are
+    // structurally the data rows and nothing else can be caught here.
+    //
+    // Thread-safety: `st.phase_sigma_scale` is republished SERIALLY by
+    // @ref networkSignalIntegrity before the parallel produce and only find-read here
+    // (the pinned_amb_sigma_scale / iono-deweight contract).  OFF byte-identity: the
+    // map is never populated when the card is disarmed, so `w` keeps the exact
+    // cwiseInverse result with zero additional floating-point operations.
+    if (!st.phase_sigma_scale.empty()) {
+        const Eigen::Index mr = std::min<Eigen::Index>(
+            m, static_cast<Eigen::Index>(em.signal_types.size()));
+        long long n_dem = 0;
+        for (Eigen::Index r = 0; r < mr; ++r) {
+            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            if (sig.empty() || sig[0] != 'L') continue;          // CODE UNTOUCHED
+            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
+            const auto sc = st.phase_sigma_scale.find(
+                em.satellite_ids[static_cast<std::size_t>(r)]);
+            if (sc == st.phase_sigma_scale.end() || !(sc->second > 1.0)) continue;
+            w(r) /= sc->second * sc->second;                      // σ × scale
+            ++n_dem;
+        }
+        st.si_rows_demoted += n_dem;
+    }
     y = em.innovations;
 }
 
@@ -231,6 +277,587 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
 // the station's diagonal-weight block.  GLONASS is handled by its own loose
 // anchors above (no satellite code bias).  Built into the station's own block —
 // no shared write, safe in the parallel produce phase (GIM query is const).
+// SD PRE-REDUCE EWL constraint (docs/SPEC_sd_ewl_prereduce.md).  Between-satellite
+// single-differenced extra-wide-lane MW statistic as a pseudo-observation row in this
+// station's OWN pre-reduce block.  See the header for the algebra and the thread-safety
+// contract.  Default OFF => returns immediately => byte-identical.
+void Application::networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator& est,
+                                          const std::vector<PppObservation>& sta_obs,
+                                          const std::map<int, int>& h2local,
+                                          const GnssTime& t,
+                                          Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
+                                          Eigen::VectorXd& w, Eigen::VectorXd& y,
+                                          std::vector<std::string>& trace_rows,
+                                          const std::map<std::pair<std::size_t, char>,
+                                                         std::map<std::string, SdEwlFix>>* fix,
+                                          std::size_t station_index) const {
+    const auto& cfg = config_.getNetworkConfig().sd_ewl;
+    if (!cfg.enable) return;
+    auto& ctr = st.sd_ewl_ctr;
+    // Increment 2b: the three trailing trace columns exist ONLY when the integer path
+    // is armed, so an increment-1 artifact set stays byte-identical (the header in
+    // NetworkRunTraces::openAll follows the same rule).
+    const bool fix_on = cfg.fix_enable && fix != nullptr;
+    // Per-satellite trace sink (§6).  Formatted here, drained by PASS B's SERIAL
+    // consume — the produce phase must not touch a shared stream.
+    const auto tr2 = [&](const char* status, const std::string& sat,
+                         const std::string& pivot, const std::string& s1,
+                         const std::string& s2, const std::string& c1,
+                         const std::string& c2, std::size_t n_cand,
+                         std::size_t n_arc, bool bia, double lam, double mean_m,
+                         double pred_m, double resid_m, double sigma_m,
+                         long long n_fix, bool row_fixed, bool grp_fixed) {
+        if (!cfg.trace) return;
+        std::string row = fmt::format(
+            "{},{:.3f},{},{},{},{},{},{},{},{},{},{},{},{},{:.4f},{:.4f},{:.4f},"
+            "{:.4f},{:.4f}",
+            t.week, t.tow, st.name, sat.empty() ? '?' : sat.front(), sat, pivot,
+            status, s1, s2, c1, c2, n_cand, n_arc, bia ? 1 : 0, lam, mean_m, pred_m,
+            resid_m, sigma_m);
+        if (cfg.fix_enable)
+            row += fmt::format(",{},{},{}", n_fix, row_fixed ? 1 : 0, grp_fixed ? 1 : 0);
+        row += '\n';
+        trace_rows.push_back(std::move(row));
+    };
+    const auto tr = [&](const char* status, const std::string& sat,
+                        const std::string& pivot, const std::string& s1,
+                        const std::string& s2, const std::string& c1,
+                        const std::string& c2, std::size_t n_cand,
+                        std::size_t n_arc, bool bia, double lam, double mean_m,
+                        double pred_m, double resid_m, double sigma_m) {
+        tr2(status, sat, pivot, s1, s2, c1, c2, n_cand, n_arc, bia, lam, mean_m,
+            pred_m, resid_m, sigma_m, 0, false, false);
+    };
+    // The MW arc accumulator is built only for NON-pivot stations, and only under
+    // phase_leveling && (mw_detect || turbo_edit).  Count the station-epoch and bail —
+    // an uncounted skip is how a feature ends up armed and dead (invariant #4).
+    if (!st.mw_slip || !st.sm) {
+        ++ctr.skip_no_detector;
+        tr("NO_DETECTOR", {}, {}, {}, {}, {}, {}, 0, 0, false, 0.0, 0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    // --- The extra-wide-lane band pair per constellation (the UWL-1 tier table). ------
+    // Shared with the increment-2a integer decision via @ref sdEwlBands (one definition,
+    // so the row and the integer folded into it can never disagree about which lane
+    // they are on).  GPS (L2,L5) lambda_EWL 5.861 m; Galileo (E5b,E5a) 9.768 m; BeiDou
+    // deferred and GLONASS excluded, both by simply producing no rows.
+    auto bandsFor = [](char cons, char& b1, char& b2, double& f1, double& f2) -> bool {
+        return sdEwlBands(cons, b1, b2, f1, f2);
+    };
+
+    // One resolved arc: the ZD-consistent EWL statistic plus the four state columns the
+    // row needs (two local ambiguities, and the shared PB/CB pair per band).
+    struct Arc {
+        std::string sat;
+        double      mean_m{ 0.0 };
+        double      var_m2{ 0.0 };
+        std::size_t count{ 0 };
+        bool        bia{ false };
+        double      lam_ewl{ 0.0 }, lam_b1{ 0.0 }, lam_b2{ 0.0 };
+        double      f1{ 0.0 }, f2{ 0.0 };
+        int         amb_col_b1{ -1 }, amb_col_b2{ -1 };
+        Eigen::Index pb_b1{ -1 }, pb_b2{ -1 }, cb_b1{ -1 }, cb_b2{ -1 };
+        /// This arc's LINEARIZED prediction of the MW observable, i.e. its half of
+        /// @f$H\,x_{lin}@f$ — see the correction-frame note at the row build.  Split in
+        /// two because increment 2b's fixed row DROPS its local ambiguity coefficients,
+        /// and the linearization point must lose exactly the same terms in the same
+        /// place or the row is folded in a mixed frame.
+        double      pred_amb_m{ 0.0 };   ///< the two local ambiguity terms of H·x_lin
+        double      pred_bias_m{ 0.0 };  ///< the four shared PB/CB terms of H·x_lin
+        double      pred_m{ 0.0 };       ///< pred_amb_m + pred_bias_m (the float row's frame)
+        // Trace-only provenance (§6): the elected phase pair, the code channels the
+        // MW actually consumed, and how many candidate pairs were searched.
+        std::string sig1, sig2, code1, code2;
+        std::size_t n_cand{ 0 };
+        // Increment 2b: the published integer for this arc, if any.  `n_cyc` is in the
+        // r0-anchored frame, so only the between-satellite DIFFERENCE against the
+        // group's pivot is meaningful.
+        bool        has_fix{ false };
+        long long   n_fix_cyc{ 0 };
+        /// The integer came from a ROUNDED double difference rather than from a frame
+        /// choice.  A fixed group must contain at least one of these (see the group
+        /// split below) or it asserts a hard constraint with no measurement behind it.
+        bool        fix_measured{ false };
+    };
+
+    // --- Correction frame -------------------------------------------------------------
+    // The station's whole block is in the CORRECTION frame: networkSplitStation_ fills
+    // y from `em.innovations` = z − h(x_lin), with x_lin = st.sm->getStateVector().  A
+    // pseudo-observation must obey the SAME convention or it asserts an absolute value
+    // against a design that solves for a correction — here catastrophically so, because
+    // the raw MW mean carries λ_EWL·N_EWL with N_EWL in the thousands of cycles
+    // (measured |z_SD| mean 203 m, max 4162 m, against a 0.13 m row σ).
+    //
+    // Which columns need the x_lin term: the LOCAL ambiguity states are seeded from
+    // code-minus-phase and reseeded on slips, so theirs is large and load-bearing —
+    // exactly the term NetworkMwWlLayer subtracts as `z_lin` (its z_corr = z_mw − z_lin).
+    // The SHARED satellite phase/code-bias states are allocated at 0 and never written
+    // back from the solve (MeasurementModel: "Allocated at value 0 ... a SHARED state the
+    // network solves"), so their term is identically zero today — it is included anyway
+    // rather than asserted, so a future seeding change cannot silently skew the frame.
+    const Eigen::VectorXd x_lin = st.sm->getStateVector();
+    const auto xAt = [&x_lin](int idx) -> double {
+        return (idx >= 0 && idx < static_cast<int>(x_lin.size())) ? x_lin(idx) : 0.0;
+    };
+    // Shared PB/CB STATE indices at this station (distinct from the estimator's border
+    // COLUMN indices): a column may be registered by another station, in which case this
+    // station holds no state and its x_lin contribution is 0 — which is precisely what
+    // its real rows do (em.H has no such column, so the innovations omit it).
+    std::map<std::pair<std::string, std::string>, int> pb_state, cb_state;
+    for (const auto& kv : st.sm->getSatPhaseBiasStates()) {
+        const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
+        if (p) pb_state[{ p->satellite, p->signal }] = static_cast<int>(kv.second);
+    }
+    for (const auto& kv : st.sm->getSatBiasStates()) {
+        const auto p = StateKeys::parseSatBiasKey(kv.first);
+        if (p) cb_state[{ p->satellite, p->signal }] = static_cast<int>(kv.second);
+    }
+    const auto stateOf = [](const std::map<std::pair<std::string, std::string>, int>& m,
+                            const std::string& sat, const std::string& sig) -> int {
+        const auto it = m.find({ sat, sig });
+        return it == m.end() ? -1 : it->second;
+    };
+
+    // --- This station's per-(satellite, band) ambiguity candidates ---------------------
+    // Built ONCE from StateManager's own key map (the authority) rather than by
+    // reconstructing a key string per candidate: the ambiguity key format is the state
+    // layer's business, and a reconstructed key that does not round-trip fails SILENTLY
+    // (every arc looks absent).  A candidate additionally needs a LOCAL COLUMN this
+    // epoch — h2local presence is exactly "this arc has a phase row in A_r now".
+    // Sorted ascending by signal name so the pair search below is a strict total order
+    // (byte-identity: an insertion-order-dependent pick changes the row set run to run).
+    // Entries are (signal, A_r local column, global state index) — the state index is
+    // needed for the correction-frame x_lin term, the local column for the design.
+    using Cand = std::tuple<std::string, int, int>;
+    std::map<std::pair<std::string, char>, std::vector<Cand>> cand;
+    for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
+        const auto parts = StateKeys::parseAmbiguityKey(key);
+        if (!parts) continue;
+        const std::string& sig = parts->signal;
+        if (sig.size() < 2 || sig[0] != 'L') continue;
+        const auto hit = h2local.find(static_cast<int>(sidx));
+        if (hit == h2local.end()) continue;         // no phase row on this arc this epoch
+        cand[{ parts->satellite, sig[1] }].emplace_back(sig, hit->second,
+                                                        static_cast<int>(sidx));
+    }
+    for (auto& kv : cand)
+        std::sort(kv.second.begin(), kv.second.end());   // ascending signal name first
+
+    // --- Resolve every eligible arc, grouped by constellation (sorted => determinism). -
+    // The MW arc key carries the two PHASE signal names, and which channel the detector
+    // holds an arc on is ITS choice (collectUncombinedPairs' KF-chosen / attribute-
+    // priority pick), not ours.  So SEARCH the candidate pairs in ascending order and
+    // take the first that actually HAS a usable arc, instead of electing one channel and
+    // declaring the arc missing when the detector picked the other.  A one-channel band
+    // (the common case) has exactly one candidate, so this reduces to the direct lookup.
+    std::map<char, std::vector<Arc>> by_const;
+    for (const auto& o : sta_obs) {
+        if (o.satellite.empty()) continue;
+        const char cons = o.satellite.front();
+        char b1 = 0, b2 = 0;
+        double fb1 = 0.0, fb2 = 0.0;
+        if (!bandsFor(cons, b1, b2, fb1, fb2)) continue;
+        ++ctr.sat_seen;
+
+        const auto c1it = cand.find({ o.satellite, b1 });
+        const auto c2it = cand.find({ o.satellite, b2 });
+        if (c1it == cand.end() || c2it == cand.end()) {
+            ++ctr.skip_missing_amb_col;
+            tr("NO_AMB_COL", o.satellite, {}, {}, {}, {}, {}, 0, 0, false,
+               0.0, 0.0, 0.0, 0.0, 0.0);
+            continue;
+        }
+        // First candidate pair with a MATURE arc wins; remember the best near-miss so
+        // the skip is attributed to a CAUSE (never formed / young / unreconstructable)
+        // rather than lumped into one uninformative tally.
+        MwSlipDetector::MwArcZdMean zd;                 // the winner
+        std::string sig1, sig2;
+        int col1 = -1, col2 = -1, sidx1 = -1, sidx2 = -1;
+        std::size_t n_cand = 0, best_n = 0;
+        bool any_exists = false, any_recon_fail = false;
+        std::string near_s1, near_s2;
+        // Increment 2b: the published integer, if any, for this (station, satellite).
+        // Looked up but NOT allowed to influence the channel search below.  An earlier
+        // version tried the decision's pair FIRST, on the reasoning that the row must
+        // fold on the pair the integer was decided on — true, but it made the integer
+        // path able to change which pair the FLOAT path elects, and therefore to change
+        // the solve even when no integer is ultimately folded.  Measured: the `inert`
+        // A/B arm (fix armed, FFR gate set unreachable) differed from the float arm on 17
+        // artifacts.  The dependency runs the other way now — the row elects its pair
+        // exactly as increment 1 does, and the fix is used only if it was decided on THAT
+        // pair (else `fix_pair_mismatch`, measured 0, because 2a searches the same
+        // candidates in the same ascending order).
+        const SdEwlFix* my_fix = nullptr;
+        if (fix_on) {
+            const auto git = fix->find({ station_index, cons });
+            if (git != fix->end()) {
+                const auto sit = git->second.find(o.satellite);
+                if (sit != git->second.end() && sit->second.usable)
+                    my_fix = &sit->second;
+            }
+        }
+        for (const auto& [s1, k1, i1] : c1it->second) {
+            for (const auto& [s2, k2, i2] : c2it->second) {
+                ++n_cand;
+                if (!sig1.empty()) continue;            // already decided; just count
+                const auto q = st.mw_slip->arcZdMean(o.satellite, s1, s2);
+                if (!q.exists) continue;                // this pair was never formed
+                any_exists = true;
+                // arcZdMean reports !valid for TWO different reasons — under two
+                // lagged samples, and an SD arc whose group MW pivot arc is missing.
+                // Only the latter is a frame-reconstruction failure; conflating them
+                // reports a warm-up epoch as a datum defect.
+                if (!q.valid && q.count >= 2) any_recon_fail = true;
+                if (q.count > best_n) { best_n = q.count; near_s1 = s1; near_s2 = s2; }
+                if (q.valid && q.count >= static_cast<std::size_t>(cfg.min_arc_epochs)) {
+                    zd = q; sig1 = s1; sig2 = s2;
+                    col1 = k1; col2 = k2; sidx1 = i1; sidx2 = i2;
+                }
+            }
+        }
+        if (sig1.empty()) {
+            // Ordered most- to least-specific: a pair that exists but cannot be framed
+            // is a DIFFERENT defect from one that is merely young, and both are
+            // different from a pair the detector never built at all.
+            const char* why = !any_exists      ? "NO_ARC"
+                            : any_recon_fail   ? "FRAME_RECON"
+                                               : "IMMATURE";
+            if (!any_exists)          ++ctr.skip_no_arc;
+            else if (any_recon_fail)  ++ctr.skip_frame_recon;
+            else                      ++ctr.skip_immature;
+            tr(why, o.satellite, {}, near_s1, near_s2, {}, {}, n_cand, best_n,
+               false, 0.0, 0.0, 0.0, 0.0, 0.0);
+            continue;
+        }
+        const double f1 = fb1, f2 = fb2;
+        // λ cross-check: the detector's own λ_WL comes from the ACTUAL signal
+        // frequencies, so a disagreement with the tier's nominal c/(f1−f2) means the
+        // elected pair is not the tier this row's coefficients assume (a mis-tiered
+        // row would fold a wrong-wavelength constraint silently).
+        const double lam_nom = Constants::SPEED_OF_LIGHT / (f1 - f2);
+        if (!(f1 > 0.0) || !(f2 > 0.0) || std::abs(f1 - f2) < 1.0
+            || !(zd.lambda_wl > 0.0) || !std::isfinite(zd.lambda_wl)
+            || std::abs(zd.lambda_wl - lam_nom) > 1e-6 * std::abs(lam_nom)) {
+            ++ctr.skip_bad_lambda;
+            tr("BAD_LAMBDA", o.satellite, {}, sig1, sig2, zd.code1, zd.code2, n_cand,
+               zd.count, zd.bia_corrected, zd.lambda_wl, zd.mean_m, 0.0, 0.0, 0.0);
+            continue;
+        }
+        // The satellite CODE-BIAS columns must be the ones the MW observable actually
+        // carries.  The arc serves its own code channels (matchChannel's same-attribute
+        // pick, with an in-band fallback), so no guessing: without them the OSB
+        // attribution would be an assumption, and a wrong OSB column is undetectable
+        // downstream.
+        if (zd.code1.empty() || zd.code2.empty()) {
+            ++ctr.skip_missing_code;
+            tr("NO_CODE", o.satellite, {}, sig1, sig2, zd.code1, zd.code2, n_cand,
+               zd.count, zd.bia_corrected, zd.lambda_wl, zd.mean_m, 0.0, 0.0, 0.0);
+            continue;
+        }
+        Arc a;
+        a.sat = o.satellite;
+        a.mean_m = zd.mean_m;
+        // Increment 2b: attach the published integer ONLY if the arc the search settled
+        // on is the pair the integer was decided on.  A mismatch is not an error — the
+        // decision runs before assembly and does not know which pairs will have local
+        // columns this epoch — but folding across it would silently substitute one bias
+        // frame's integer into another's row, so it is counted and the arc goes float.
+        if (my_fix) {
+            if (sig1 == my_fix->sig1 && sig2 == my_fix->sig2) {
+                a.has_fix = true;
+                a.n_fix_cyc = my_fix->n_cyc;
+                a.fix_measured = my_fix->measured;
+            } else {
+                ++ctr.fix_pair_mismatch;
+            }
+        }
+        // arcZdMean serves a VARIANCE OF THE MEAN (~1/n); floor it so a long quiet arc
+        // cannot dominate the shared border with an unphysically tight row.  A FIXED row
+        // takes the per-SAMPLE floor instead (amendment A1): the accumulator is
+        // arc-cumulative, so consecutive-epoch rows share n−1 of n samples and refolding
+        // a variance-of-mean as white every epoch over-claims information as sqrt(k) —
+        // and the over-claim grows exactly as the fixed-row residuals fall to code-noise
+        // scale.  Folding the current mean at per-sample weight accretes ~1 sample of
+        // information per epoch instead, which is asymptotically honest.
+        a.var_m2 = a.has_fix
+                       ? std::max(zd.var_of_mean_m2,
+                                  cfg.fix_sigma_floor_m * cfg.fix_sigma_floor_m)
+                       : std::max(zd.var_of_mean_m2,
+                                  cfg.sigma_floor_m * cfg.sigma_floor_m);
+        a.count = zd.count;
+        a.bia = zd.bia_corrected;
+        a.lam_ewl = zd.lambda_wl;
+        a.lam_b1 = Constants::SPEED_OF_LIGHT / f1;
+        a.lam_b2 = Constants::SPEED_OF_LIGHT / f2;
+        a.f1 = f1;
+        a.f2 = f2;
+        a.amb_col_b1 = col1;
+        a.amb_col_b2 = col2;
+        // NON-THROWING shared lookups: phaseBiasColumn / codeBiasColumn are `index_.at()`
+        // and THROW when the key is unregistered.  Bare calls here would escape into the
+        // parallel produce loop's catch and silently drop the WHOLE station's block
+        // (losing its good phase rows) for a merely absent bias column.
+        const auto pbCol = [&est, &o](const std::string& sig) -> Eigen::Index {
+            try { return est.phaseBiasColumn(o.satellite, sig); }
+            catch (...) { return -1; }
+        };
+        const auto cbCol = [&est, &o](const std::string& code) -> Eigen::Index {
+            try { return est.codeBiasColumn(o.satellite, code); }
+            catch (...) { return -1; }
+        };
+        a.pb_b1 = pbCol(sig1);
+        a.pb_b2 = pbCol(sig2);
+        a.cb_b1 = cbCol(zd.code1);
+        a.cb_b2 = cbCol(zd.code2);
+        if (a.pb_b1 < 0 || a.pb_b2 < 0 || a.cb_b1 < 0 || a.cb_b2 < 0) {
+            ++ctr.skip_missing_shared_col;
+            tr("NO_SHARED_COL", o.satellite, {}, sig1, sig2, zd.code1, zd.code2,
+               n_cand, zd.count, a.bia, a.lam_ewl, a.mean_m, 0.0, 0.0, 0.0);
+            continue;
+        }
+        // This arc's half of H·x_lin, with EXACTLY the coefficients the row folds below
+        // (kept in one place so design and frame cannot drift apart).  Split into its
+        // ambiguity and bias halves so the FIXED row, whose design drops the ambiguity
+        // columns, can drop the matching linearization terms in the same breath.
+        a.pred_amb_m = (a.lam_ewl / a.lam_b1) * xAt(sidx1)
+                     - (a.lam_ewl / a.lam_b2) * xAt(sidx2);
+        a.pred_bias_m = (f1 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig1))
+                      - (f2 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig2))
+                      - (f1 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code1))
+                      - (f2 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code2));
+        a.pred_m = a.pred_amb_m + a.pred_bias_m;
+        a.sig1 = sig1;
+        a.sig2 = sig2;
+        a.code1 = zd.code1;
+        a.code2 = zd.code2;
+        a.n_cand = n_cand;
+        by_const[cons].push_back(std::move(a));
+    }
+
+    // --- Build the rows. --------------------------------------------------------------
+    // Increment 1: ONE whitened group per constellation.  Increment 2b: TWO — the arcs
+    // whose integer is FIXED and the rest — because a group cannot be mixed.  R is
+    // whitened by a dense L^-1, which would re-populate a fixed row's deliberately
+    // zeroed local ambiguity columns out of its float siblings; and the pivot arc's
+    // ambiguity columns appear in EVERY row of a group, so one mixed group would
+    // simultaneously REMOVE and ESTIMATE the pivot ambiguity.  Splitting keeps both
+    // halves exact and makes "a fixed row carries no local coefficients" true of the
+    // whitened block, not just of H.  With the integer path off there is exactly one
+    // group holding every arc, so the float behaviour is unchanged.
+    const auto emitGroup = [&](const std::vector<const Arc*>& g, bool fixed_group) {
+        if (g.size() < 2) {
+            ++ctr.skip_no_pivot;
+            for (const Arc* a : g)
+                tr2("NO_PIVOT", a->sat, {}, a->sig1, a->sig2, a->code1, a->code2,
+                    a->n_cand, a->count, a->bia, a->lam_ewl, a->mean_m, a->pred_m,
+                    0.0, 0.0, a->n_fix_cyc, false, fixed_group);
+            return;
+        }
+        const Arc& p = *g.front();
+        tr2("PIVOT", p.sat, p.sat, p.sig1, p.sig2, p.code1, p.code2, p.n_cand, p.count,
+            p.bia, p.lam_ewl, p.mean_m, p.pred_m, 0.0, std::sqrt(p.var_m2),
+            p.n_fix_cyc, false, fixed_group);
+
+        struct Row { const Arc* s; double z; double var; };
+        std::vector<Row> rows;
+        for (std::size_t k = 1; k < g.size(); ++k) {
+            const Arc& s = *g[k];
+            // Satellite-bias cancellation needs ONE frame across the difference — the
+            // same rule NetworkMwWlLayer applies per cycle (skip_mixed_frame).
+            if (s.bia != p.bia) {
+                ++ctr.skip_mixed_frame;
+                tr2("MIXED_FRAME", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2,
+                    s.n_cand, s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m, 0.0, 0.0,
+                    s.n_fix_cyc, false, fixed_group);
+                continue;
+            }
+            // CORRECTION FRAME: y = z_SD − H·x_lin, with H·x_lin = pred(s) − pred(p)
+            // (the row's H is exactly the s-terms minus the p-terms).  The raw SD
+            // difference is hundreds of metres; this residual is the only thing the
+            // station's block can legally be handed.
+            //
+            // FIXED row (increment 2b): the integer leaves the RHS and the ambiguity
+            // columns leave H, so H·x_lin must lose exactly its ambiguity half — a row
+            // whose design changed and whose linearization point did not is folded in a
+            // MIXED frame.  Both edits are here, in one expression, for that reason.
+            const double z =
+                fixed_group
+                    ? (s.mean_m - p.mean_m)
+                          - p.lam_ewl * static_cast<double>(s.n_fix_cyc - p.n_fix_cyc)
+                          - (s.pred_bias_m - p.pred_bias_m)
+                    : (s.mean_m - p.mean_m) - (s.pred_m - p.pred_m);
+            // The limit gates the CORRECTION-frame residual, which is the quantity the
+            // cold-clock x_lin pathology inflates (a 256 km x_lin makes pred absurd
+            // while the raw statistic looks ordinary).
+            if (cfg.max_abs_z_m > 0.0 && std::abs(z) > cfg.max_abs_z_m) {
+                ++ctr.skip_big_z;
+                tr2("BIG_Z", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2, s.n_cand,
+                    s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m, z, 0.0,
+                    s.n_fix_cyc, false, fixed_group);
+                continue;
+            }
+            if (!std::isfinite(z)) {   // never poison u_r with a non-finite RHS
+                ++ctr.skip_bad_lambda;
+                tr2("BAD_LAMBDA", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2,
+                    s.n_cand, s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m, z, 0.0,
+                    s.n_fix_cyc, false, fixed_group);
+                continue;
+            }
+            rows.push_back(Row{ &s, z, s.var_m2 });
+        }
+        if (rows.empty()) return;
+        if (cfg.max_rows_per_station > 0
+            && rows.size() > static_cast<std::size_t>(cfg.max_rows_per_station)) {
+            std::stable_sort(rows.begin(), rows.end(),
+                             [](const Row& a, const Row& b) { return a.var < b.var; });
+            const std::size_t keep = static_cast<std::size_t>(cfg.max_rows_per_station);
+            ctr.rows_capped += static_cast<long long>(rows.size() - keep);
+            for (std::size_t k = keep; k < rows.size(); ++k) {
+                const Arc& s = *rows[k].s;
+                tr2("CAPPED", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2, s.n_cand,
+                    s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m, rows[k].z,
+                    std::sqrt(rows[k].var), s.n_fix_cyc, false, fixed_group);
+            }
+            rows.resize(keep);
+        }
+
+        const int mc = static_cast<int>(rows.size());
+        const Eigen::Index m0 = A_s.rows();
+        const Eigen::Index ncol_s = A_s.cols();
+        const Eigen::Index ncol_r = A_r.cols();
+        A_s.conservativeResize(m0 + mc, Eigen::NoChange);
+        A_s.bottomRows(mc).setZero();
+        A_r.conservativeResize(m0 + mc, Eigen::NoChange);
+        A_r.bottomRows(mc).setZero();
+        w.conservativeResize(m0 + mc);
+        y.conservativeResize(m0 + mc);
+
+        // Every row shares the pivot arc's noise => R = diag(var_s) + var_p * 11^T,
+        // structurally the GIM common-mode R.
+        Eigen::MatrixXd R = Eigen::MatrixXd::Constant(mc, mc, p.var_m2);
+        Eigen::MatrixXd Hr = Eigen::MatrixXd::Zero(mc, ncol_r);
+        Eigen::MatrixXd Hs = Eigen::MatrixXd::Zero(mc, ncol_s);
+        Eigen::VectorXd zc(mc);
+        for (int k = 0; k < mc; ++k) {
+            const Arc& s = *rows[static_cast<std::size_t>(k)].s;
+            R(k, k) += rows[static_cast<std::size_t>(k)].var;
+            zc(k) = rows[static_cast<std::size_t>(k)].z;
+            ctr.sum_var_m2 += R(k, k);
+            // Local: lambda_EWL * (amb_b1/lambda_b1 - amb_b2/lambda_b2), s minus p.
+            // A FIXED row has NONE of these: the local degree of freedom is REMOVED
+            // (rank reduction), not constrained with a tight weight — a tight prior on
+            // a gauge-adjacent local column is a stiff prior, and the whole point of
+            // increment 2 is to stop the local nuisance absorbing the row's information
+            // so the shared satellite bias receives it.
+            if (!fixed_group) {
+                Hr(k, s.amb_col_b1) += s.lam_ewl / s.lam_b1;
+                Hr(k, s.amb_col_b2) -= s.lam_ewl / s.lam_b2;
+                Hr(k, p.amb_col_b1) -= p.lam_ewl / p.lam_b1;
+                Hr(k, p.amb_col_b2) += p.lam_ewl / p.lam_b2;
+            }
+            // Shared: MW = phi_WL - P_NL, and the satellite code bias enters the
+            // pseudorange with +, hence the negative CB coefficients.
+            const double wl_s1 = s.f1 / (s.f1 - s.f2), wl_s2 = -s.f2 / (s.f1 - s.f2);
+            const double nl_s1 = -s.f1 / (s.f1 + s.f2), nl_s2 = -s.f2 / (s.f1 + s.f2);
+            const double wl_p1 = p.f1 / (p.f1 - p.f2), wl_p2 = -p.f2 / (p.f1 - p.f2);
+            const double nl_p1 = -p.f1 / (p.f1 + p.f2), nl_p2 = -p.f2 / (p.f1 + p.f2);
+            Hs(k, s.pb_b1) += wl_s1;  Hs(k, s.pb_b2) += wl_s2;
+            Hs(k, s.cb_b1) += nl_s1;  Hs(k, s.cb_b2) += nl_s2;
+            Hs(k, p.pb_b1) -= wl_p1;  Hs(k, p.pb_b2) -= wl_p2;
+            Hs(k, p.cb_b1) -= nl_p1;  Hs(k, p.cb_b2) -= nl_p2;
+        }
+        // Whiten by L^-1 (LL^T = R) into unit-information rows, so the block contributes
+        // exactly H^T R^-1 H / H^T R^-1 z and stays in the diagonal-weight path.
+        const Eigen::LLT<Eigen::MatrixXd> llt(R);
+        if (llt.info() != Eigen::Success) {
+            // UNWIND the append.  conservativeResize leaves the new w/y entries
+            // UNINITIALIZED; leaving them behind — even against all-zero design rows —
+            // risks 0·NaN = NaN poisoning N_rr/u_r, so the rows must go, not just be
+            // zeroed.  (Cannot happen for a positive-variance R; belt-and-suspenders.)
+            A_s.conservativeResize(m0, Eigen::NoChange);
+            A_r.conservativeResize(m0, Eigen::NoChange);
+            w.conservativeResize(m0);
+            y.conservativeResize(m0);
+            ctr.skip_bad_lambda += mc;
+            return;
+        }
+        A_r.middleRows(m0, mc) = llt.matrixL().solve(Hr);
+        A_s.middleRows(m0, mc) = llt.matrixL().solve(Hs);
+        y.segment(m0, mc) = llt.matrixL().solve(zc);
+        w.segment(m0, mc).setOnes();
+        ctr.rows_built += mc;
+        if (fixed_group) { ctr.rows_fixed += mc; ++ctr.groups_fixed; }
+        else             { ctr.rows_float += mc; }
+        for (int k = 0; k < mc; ++k) {
+            const Arc& s = *rows[static_cast<std::size_t>(k)].s;
+            tr2("BUILT", s.sat, p.sat, s.sig1, s.sig2, s.code1, s.code2, s.n_cand,
+                s.count, s.bia, s.lam_ewl, s.mean_m, s.pred_m,
+                rows[static_cast<std::size_t>(k)].z, std::sqrt(R(k, k)),
+                s.n_fix_cyc - p.n_fix_cyc, fixed_group, fixed_group);
+        }
+    };
+
+    for (auto& [cons, arcs] : by_const) {
+        // Pivot election: most mature arc, tie-break ASCENDING satellite name.  Must be
+        // deterministic or the row set (and hence byte-identity) drifts run to run.
+        // Sorted ONCE over the whole constellation, so each partition inherits the same
+        // ordering and elects its own most-mature member as its pivot.
+        std::sort(arcs.begin(), arcs.end(), [](const Arc& a, const Arc& b) {
+            if (a.count != b.count) return a.count > b.count;
+            return a.sat < b.sat;
+        });
+        if (!fix_on) {
+            std::vector<const Arc*> all;
+            all.reserve(arcs.size());
+            for (const Arc& a : arcs) all.push_back(&a);
+            emitGroup(all, false);
+            continue;
+        }
+        std::vector<const Arc*> fixed_g, float_g;
+        for (const Arc& a : arcs) (a.has_fix ? fixed_g : float_g).push_back(&a);
+        // A fixed group needs at least one MEASURED integer.  Datum-valued integers (the
+        // component reference station's own satellites, each station's link satellite, a
+        // satellite framed on first sighting) carry no rounding decision, so no gate can
+        // reject them — a group built only from those would assert a hard constraint with
+        // ZERO integer information while still removing a real local degree of freedom,
+        // and it would make the whole feature impossible to disarm through its own gates.
+        // Measured: without this test the S2 `inert` arm (fix armed, FFR gate set
+        // unreachable) still differed from the float arm on 17 artifacts.  A MIXED group
+        // is correct and wanted — the datum value is the reference the measurement is
+        // relative to.
+        if (!fixed_g.empty()
+            && std::none_of(fixed_g.begin(), fixed_g.end(),
+                            [](const Arc* a) { return a->fix_measured; })) {
+            ctr.fix_datum_only += static_cast<long long>(fixed_g.size());
+            float_g.insert(float_g.end(), fixed_g.begin(), fixed_g.end());
+            std::stable_sort(float_g.begin(), float_g.end(),
+                             [](const Arc* a, const Arc* b) {
+                                 if (a->count != b->count) return a->count > b->count;
+                                 return a->sat < b->sat;
+                             });
+            fixed_g.clear();
+        }
+        // A single fixed arc cannot form a group of its own (there is nothing to
+        // difference against), and demoting it to the float group would be honest but
+        // would silently change which arc is the float pivot between the ON and OFF legs
+        // of an A/B.  Counting it as an unusable fix keeps the partition a pure function
+        // of the published integers.
+        if (fixed_g.size() == 1) {
+            ++ctr.fix_lone_arc;
+            float_g.insert(float_g.begin(), fixed_g.front());
+            std::sort(float_g.begin(), float_g.end(),
+                      [](const Arc* a, const Arc* b) {
+                          if (a->count != b->count) return a->count > b->count;
+                          return a->sat < b->sat;
+                      });
+            fixed_g.clear();
+        }
+        emitGroup(fixed_g, true);
+        emitGroup(float_g, false);
+    }
+}
+
 void Application::networkAppendGimIonoRows_(NetStation& st,
                                             const std::vector<PppObservation>& sta_obs,
                                             const std::map<int, int>& h2local,
@@ -292,6 +919,63 @@ void Application::networkAppendGimIonoRows_(NetStation& st,
     }
 }
 
+// Card LV-1 (docs/SPEC_level_information_budget.md): sample the SH-VTEC field at
+// one line of sight's pierce point(s) and return the SLANT value in metres of L1
+// delay — the same quantity a per-LOS iono state holds, so it can stand in for the
+// station-common content of that state's birth seed.
+//
+//     field_slant = Σ_l  M_l(el) · tecu_to_L1m · Σ_k Ȳ_k(IPP_l) · c_{l,k}
+//
+// Two sources for c, in order:
+//   1. @p coeff_lag1 — the previous epoch's SOLVED coefficients (the serial
+//      post-solve snapshot in ctx.carry.sh_field_lag1).  The field is quasi-static
+//      and sun-fixed, so one epoch of lag costs nothing; reading THIS epoch's field
+//      is impossible by construction (the seed is needed to build the rows the
+//      solve consumes).
+//   2. Before the first solve, the a₀₀ CLIMATOLOGY PRIOR MEAN of each shell — a
+//      uniform field, since the basis is orthonormal under (1/4π)∫dΩ so Ȳ₀₀ ≡ 1.
+//      That is precisely the designed level authority (the EXT-CB ladder's GIM
+//      anchor, or the self-contained posture's own climatology) doing its job at
+//      cold start, rather than the receiver's hardware bias doing it.
+//
+// Returns false on a degenerate LOS (below the horizon on the dominant shell), and
+// the caller then leaves that satellite out of the frame map — its seed stays raw
+// and is counted.  Pure read of const inputs: safe in the parallel produce phase.
+static bool networkShSlantAtLos_(const Eigen::Vector3d& rx_ecef,
+                                 const Eigen::Vector3d& sat_pos,
+                                 const std::vector<ShLayer>& layers,
+                                 const std::vector<std::vector<double>>& coeff_lag1,
+                                 double Re, double lon_sun, double tecu_to_L1m,
+                                 std::vector<double>& bvals, double& slant_m) {
+    if (layers.empty()) return false;
+    const IppGeometry g0 = computeIppGeometry(rx_ecef, sat_pos, Re,
+                                              layers[0].shell_height_m);
+    if (!g0.valid) return false;
+    const bool have_field = (coeff_lag1.size() == layers.size());
+    double acc = 0.0;
+    for (std::size_t l = 0; l < layers.size(); ++l) {
+        const IppGeometry gl = (l == 0)
+            ? g0
+            : computeIppGeometry(rx_ecef, sat_pos, Re, layers[l].shell_height_m);
+        if (!gl.valid) continue;             // this shell contributes nothing here
+        const double m_tecu = gl.mapping * tecu_to_L1m;
+        if (!have_field) {                   // cold start: uniform a₀₀ climatology
+            acc += m_tecu * layers[l].mean_prior_tecu;
+            continue;
+        }
+        const auto& c = coeff_lag1[l];
+        if (static_cast<int>(c.size()) != layers[l].model->numCoeffs()) return false;
+        layers[l].model->basis(gl.ipp_lat_rad, gl.ipp_lon_rad - lon_sun, bvals);
+        if (bvals.size() != c.size()) return false;
+        double vtec = 0.0;
+        for (std::size_t k = 0; k < c.size(); ++k) vtec += bvals[k] * c[k];
+        acc += m_tecu * vtec;
+    }
+    if (!std::isfinite(acc)) return false;
+    slant_m = acc;
+    return true;
+}
+
 // Co-estimated SH-VTEC ionosphere pseudo-observation (the design's hinge —
 // replaces the external-GIM target of appendGimIonoRows with the network's OWN
 // spherical-harmonic field).  Per GPS/Galileo satellite with a usable slant-iono
@@ -318,6 +1002,8 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
                                            const NetworkIonoDeweightGate& iono_deweight,
                                            const GlobalVtecShConfig& shc, bool sh_dev_on,
                                            const std::map<std::string, ShDevCarry>& sh_dev_carry,
+                                           const std::set<std::string>& dw_row_held,
+                                           const std::set<std::string>* dw_tie_admitted,
                                            Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
                                            Eigen::VectorXd& w, Eigen::VectorXd& y) const {
     if (!sh_model) return;
@@ -360,6 +1046,24 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
         if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
         const auto hit = h2local.find(iono_idx);
         if (hit == h2local.end()) continue;   // iono not in this station's local block this epoch
+        // Iono-deweight release hygiene (docs/SPEC_deweight_release_hygiene.md).  Two
+        // dispositions keep a tie row OUT of this station's stack:
+        //   INC-3  — the LOS failed the release screen: its solved deviation is still
+        //            too far from the field for the row to be folding information
+        //            rather than garbage, so it stays decoupled until the serial seam
+        //            re-tests it next epoch.
+        //   INC-3b — the LOS has not been ADMITTED yet.  This is a POSITIVE list, not a
+        //            hold list, and it has to be: at a LOS's first sighting the seam has
+        //            never run for that key, so there is nothing that could have put it
+        //            in a hold list — and its first tie row is precisely the coupling
+        //            event this card exists to screen (the measured DOY-129 valve).
+        // Both are EMPTY / null unless armed, so the OFF path costs one empty() test and
+        // one null test and never looks a key up (byte-identical).
+        if (!dw_row_held.empty() || dw_tie_admitted) {
+            const std::string dw_key = st.name + "|" + o.satellite;
+            if (!dw_row_held.empty() && dw_row_held.count(dw_key)) continue;
+            if (dw_tie_admitted && !dw_tie_admitted->count(dw_key)) continue;
+        }
         const IppGeometry g0 =
             computeIppGeometry(st.ecef, o.sat_pos, Re, layers[0].shell_height_m);
         if (!g0.valid) continue;
@@ -613,6 +1317,19 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                 st.mm->ensureNetworkSharedStates(modeled[i], shared_phase_keys, cbadm_admit);
             a_ok[i] = 1;
 
+            // Adaptive iono q (network.adaptive_iono_q): roll this station's GF-TD2
+            // variability monitor forward.  Station-local state, no shared write
+            // (same parallel contract as the T0 slip scan below); the per-satellite
+            // multipliers are consumed SERIALLY by the T5v2 GM deviation aging later
+            // this epoch.  Best-effort like the slip scan: a monitor failure costs
+            // this station's boosts this epoch, never the station.
+            if (st.iono_var) {
+                try {
+                    st.iono_var->update(modeled[i]);
+                    ++st.iono_var_epochs_fed;
+                } catch (...) { /* best-effort: no boosts from this station this epoch */ }
+            }
+
             // T0 slip detection: roll this station's MW + GF arcs forward and
             // collect per-(sat,signal) integer repairs.  Station-local detector
             // state — no shared write, safe in the parallel region.  Run EVERY
@@ -711,9 +1428,13 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
                               qc.counters, se, traces, log);
 
+    // Edge-1 piece 2: pass the mark sink ONLY when armed, so the OFF path passes
+    // nullptr and the driver's insert is not even reached (byte-identical).
     networkSlipIfTdDriver(pa, config_, stations, present, i_lo, n_sta_total,
                           carry_invariant, carry_warm, carry_slipped_ambs,
-                          trace_flag_rates, fr_if_slip, se, traces, log);
+                          trace_flag_rates, fr_if_slip, se, traces, log,
+                          config_.networkMarkRefsatResetDisc()
+                              ? &ctx.carry.refsat_mark_sats : nullptr);
 }
 
 void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,
@@ -1102,8 +1823,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                        NetworkRunTraces& traces,
                                        NetworkEstimator& est,
                                        const NetworkIonoDeweightGate& iono_deweight,
-                                       double sh_dev_tau, bool sh_dev_on,
+                                       double sh_dev_tau, bool sh_dev_on, bool sh_dev_demean,
+                                       bool sh_dev_d5_keep,
                                        const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                                       const std::set<std::pair<int, std::string>>& carry_slipped_raw,
                                        bool carry_warm, double pl_now_s,
                                        std::vector<std::vector<PppObservation>>& modeled,
                                        std::vector<bool>& present,
@@ -1133,14 +1856,31 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double pl_q_amb      = ctx.knobs.pl_q_amb;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
+    const auto&  vce_apply     = ctx.carry.vce_apply;     // M2 v2: carry variance factor α² (unity when off)
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // Card 1: conditional local carry (coupling rows) — requires fullcov_on (enforced at load)
     const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // Card 1b: JOINTLY whiten the coupling rows (departed cols → M_w) — requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // Card 1d: border time update of the coupling rows at injection (κ shrink + M²κq inflation) — requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_shmarg = ctx.knobs.carry_cpl_shmarg; // Card 1d-SH: fully marginalize VtecSh coupling terms (GM border ≠ RW κ model — severs the amb↔SH carry feedback) — requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // B9: carry per-station ZWD across epochs
     const double zwd_q         = ctx.knobs.zwd_q;                // B9: ZWD carry random-walk process noise (m²/s)
+    const bool   rx_cb_on      = ctx.knobs.rx_cb_on;             // rx-CB carry (SPEC_rx_cb_carry)
+    const bool   rx_cb_datum  = ctx.knobs.rx_cb_datum;           // RXCB-DATUM: zero-mean-over-receivers DCB datum (shares the pl_cb walk with the carry)
+    const double rx_cb_datum_sigma = ctx.knobs.rx_cb_datum_sigma; // RXCB-DATUM loose physical-bound sigma (m)
+    const double rx_cb_q       = ctx.knobs.rx_cb_q;              // rx-CB carry RW process noise (m²/s)
+    const bool   rx_cb_demean  = ctx.knobs.rx_cb_demean;         // Card LV-2: fold η = λ(innov − μ), gate on |innov − μ|
+    const bool   rx_cb_step_gate = ctx.knobs.rx_cb_step_gate;    // Card LV-4: retire the frame-dependent inject screen (the harvest owns the event)
+    const auto&  rx_cb_demean_mu = ctx.carry.rx_cb_demean_mu;    // LV-2: lag-1 μ per code-bias family — READ-ONLY here (serial harvest writes it)
+    const bool   lv1_seed_frame = ctx.knobs.lv1_seed_frame;      // Card LV-1: seed per-LOS iono in the field's frame
+    const int    lv1_min_sats   = ctx.knobs.lv1_min_sats;        // LV-1: per-station median sample floor
+    const auto&  sh_field_lag1  = ctx.carry.sh_field_lag1;       // LV-1: lag-1 solved SH coefficients — READ-ONLY here
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     const bool carry_invariant         = ctx.knobs.carry_invariant;
+    // Station congruence screen, INC-0 (docs/SPEC_station_congruence.md).  The ONLY
+    // thing the assembly owes that card: retain each data row's position partial,
+    // which networkSplitStation_ is about to drop on the floor because the network
+    // holds every coordinate fixed.  OFF ⇒ the block below never runs and
+    // StationAssembly::row_pos_enu stays empty (byte-identical, zero allocation).
+    const bool congruence_rows         = ctx.knobs.cg_on;
     const bool phase_datum_ensemble    = ctx.knobs.phase_datum_ensemble;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const double eq34_rpb_prior_sigma = ctx.knobs.eq34_rpb_prior_sigma;
@@ -1156,6 +1896,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     auto& zwd_carry = ctx.carry.zwd_carry;
     auto& rpb_carry = ctx.carry.rpb_carry;
     auto& sh_dev_carry = ctx.carry.sh_dev_carry;
+    auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // rx-CB carry: produce phase READS only
     auto& n_cpl_joint_fallback = ctx.counters.n_cpl_joint_fallback;
     auto& n_cpl_terms_present = ctx.counters.n_cpl_terms_present;
     auto& n_cpl_terms_departed = ctx.counters.n_cpl_terms_departed;
@@ -1198,6 +1939,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // deviation never constrains a post-slip row.
     if (sh_dev_on) {
         std::set<std::string> slipped_los;   // "STATION|SAT" projection of the funnel
+        std::set<std::string> raw_los;       // v3k: the RAW-detector-confirmed subset
         for (const auto& sk : carry_slipped_ambs) {
             if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
             const auto parts = StateKeys::parseAmbiguityKey(sk.second);
@@ -1205,14 +1947,54 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             slipped_los.insert(stations[static_cast<std::size_t>(sk.first)].name
                                + "|" + parts->satellite);
         }
+        if (sh_dev_d5_keep) {
+            for (const auto& sk : carry_slipped_raw) {
+                if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
+                const auto parts = StateKeys::parseAmbiguityKey(sk.second);
+                if (!parts) continue;
+                raw_los.insert(stations[static_cast<std::size_t>(sk.first)].name
+                               + "|" + parts->satellite);
+            }
+        }
+        // Adaptive iono q (network.adaptive_iono_q): per-LOS GM boost factors from
+        // the PASS-A station monitors (already rolled forward this epoch — PASS A
+        // precedes this serial block).  The multiplier inflates ONLY the innovation
+        // term σ_ss²(1−λ²) below — the GM shape (τ) and the carried level are
+        // untouched, so a quiet LOS (m=1) ages byte-identically and the disarmed
+        // path never builds the map.
+        std::map<std::string, double> aiq_mult;
+        const bool aiq_on = nc.adaptive_iono_q;
+        if (aiq_on) {
+            for (const auto& sta : stations) {
+                if (!sta.iono_var) continue;
+                for (const auto& [aiq_sat, aiq_m] : sta.iono_var->multipliers())
+                    if (aiq_m > 1.0) aiq_mult.emplace(sta.name + "|" + aiq_sat, aiq_m);
+            }
+        }
         const double now_s = se.time.week * 604800.0 + se.time.tow;
         for (auto it = sh_dev_carry.begin(); it != sh_dev_carry.end();) {
             ShDevCarry& dc = it->second;
             const double dt = now_s - dc.t_s;
             if (!slipped_los.empty() && slipped_los.count(it->first)) {
-                ++ctx.carry.shdev_slip_resets_total;
-                it = sh_dev_carry.erase(it);
-                continue;
+                // v3k erase-policy split (SPEC_iono2_mechB_v3 addendum): a
+                // RAW-confirmed slip (MW/LLI/IF-TD this epoch) aliases n·λ into
+                // the GF iono — the pre-slip deviation is poison, ERASE
+                // (invariant #1, unchanged).  A D5-ONLY re-tap (97 % have no
+                // raw observable step) is iono tension the deviation exists to
+                // ABSORB: keep the accumulated level, re-tap the confidence to
+                // steady state (weak prior — a genuinely missed fine slip gets
+                // re-estimated away within a few harvests instead of being
+                // carried stiffly).  The v3 de-mean drains any common mode of
+                // the kept levels, so the keep cannot re-open the ratchet.
+                if (!sh_dev_d5_keep || raw_los.count(it->first)) {
+                    ++ctx.carry.shdev_slip_resets_total;
+                    it = sh_dev_carry.erase(it);
+                    continue;
+                }
+                shDevD5Retap(dc);
+                ++ctx.carry.shdev_d5_keeps_total;
+                // falls through to staleness + GM aging (retap is idempotent
+                // under the aging step: λ²σ_ss² + (1−λ²)σ_ss² = σ_ss²).
             }
             if (dc.t_s <= 0.0 || dt > 5.0 * sh_dev_tau) {
                 it = sh_dev_carry.erase(it);
@@ -1221,9 +2003,39 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             if (dt > 0.0) {
                 const double lam = std::exp(-dt / sh_dev_tau);
                 dc.dev *= lam;
-                dc.var  = lam * lam * dc.var + dc.var_ss * (1.0 - lam * lam);
+                // Adaptive iono q: storm-scaled innovation for this LOS (1.0 when
+                // disarmed / quiet / unmonitored — the legacy expression exactly).
+                double aiq_scale = 1.0;
+                if (aiq_on && !aiq_mult.empty()) {
+                    const auto mit = aiq_mult.find(it->first);
+                    if (mit != aiq_mult.end()) {
+                        aiq_scale = mit->second;
+                        ++ctx.counters.aiq_boosts_total;
+                        if (aiq_scale > ctx.counters.aiq_max_mult)
+                            ctx.counters.aiq_max_mult = aiq_scale;
+                    }
+                }
+                dc.var  = lam * lam * dc.var + aiq_scale * dc.var_ss * (1.0 - lam * lam);
             }
             ++it;
+        }
+        // Iono-2 v3 anti-ratchet (docs/SPEC_iono2_mechB_v3.md): remove the
+        // information-weighted global + per-station means from the carried
+        // priors.  A common vertical-TECU deviation shares the a00 column's
+        // exact row signature (M(el)·tecu_to_m), so the pair is quasi-null and
+        // the harvest→age→re-assert alternation ratchets it (measured a00
+        // 25 → 104 TECU/3 h carry-alone, 207–255 with the dual layer).  The
+        // common component belongs to a00 / the receiver DCB, which each
+        // epoch's data re-derives; the carry must not re-assert it as an
+        // independent prior.  Same serial context as the aging above.
+        // Thresholds 30/4 per the spec (constants, not knobs).
+        if (sh_dev_demean) {
+            const ShDevDemeanStats ds = shDevDemean(sh_dev_carry, 30, 4);
+            if (ds.applied) {
+                ++ctx.carry.shdev_demean_epochs_total;
+                ctx.carry.shdev_demean_sta_total += ds.n_sta;
+                ctx.carry.shdev_demean_abs_g_sum += std::abs(ds.g_tecu);
+            }
         }
     }
 
@@ -1264,6 +2076,51 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         try {
             NetStation& st = stations[i];
 
+            // --- Card LV-1 (docs/SPEC_level_information_budget.md) -------------
+            // Install this station's seed frame BEFORE the state pre-pass inside
+            // computeMeasurementUpdate allocates (and seeds) any new per-LOS iono
+            // state.  The map is the lag-1 field sampled at each of this station's
+            // lines of sight; the pre-pass removes the station's MEDIAN raw seed
+            // (its receiver GF hardware bias ⊕ median slant iono) and puts the
+            // field's own value there instead, so a state born now — at cold start
+            // OR at a slip refloat / gap re-birth mid-run — inherits the CURRENT
+            // frame rather than the receiver's bias.  That "inside the seed path"
+            // placement IS the invariant-#1 event response.
+            //
+            // Read-only on ctx (knobs + the lag-1 coefficient snapshot) and pure
+            // per-station compute: safe in this parallel produce phase.  The frame
+            // is consumed once by the pre-pass; a station that never reaches this
+            // point simply seeds raw and is counted.
+            if (lv1_seed_frame && sh_model) {
+                const std::vector<ShLayer> lv1_lay =
+                    shLayers(shc, sh_model.get(), setup.sh_model2.get());
+                const double lv1_Re = shc.earth_radius_km * 1000.0;
+                const double lv1_tecu_to_L1m =
+                    40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+                const double lv1_lon_sun =
+                    shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
+                StateInitializer::IonoSeedFrame frame;
+                frame.min_sats = lv1_min_sats;
+                frame.station  = st.name;
+                std::vector<double> lv1_bvals;
+                for (const auto& o : modeled[i]) {
+                    // GPS/Galileo only — the same scope as the SH↔slant tie rows
+                    // (networkAppendShIonoRows_ excludes GLONASS so its FDMA
+                    // per-slot IFB cannot leak into the global field).  A GLONASS
+                    // LOS therefore has no tie to the field at all, and putting its
+                    // seed in the field's frame would put it in a frame nothing else
+                    // in its block shares; those births stay RAW and are counted as
+                    // lv1_field_missing.
+                    if (o.satellite.empty() || o.satellite.front() == 'R') continue;
+                    double slant = 0.0;
+                    if (networkShSlantAtLos_(st.ecef, o.sat_pos, lv1_lay, sh_field_lag1,
+                                             lv1_Re, lv1_lon_sun, lv1_tecu_to_L1m,
+                                             lv1_bvals, slant))
+                        frame.field_slant_m[o.satellite] = slant;
+                }
+                st.mm->getStateInitializer().setIonoSeedFrame(std::move(frame));
+            }
+
             EpochMeasurement em = st.mm->computeMeasurementUpdate(
                 modeled[i], st.sm->getStateVector());
             if (em.innovations.size() == 0) { R.empty_innov = true; continue; }
@@ -1277,6 +2134,49 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // for the post-solve slant-iono back-substitution (viz trace).
             std::map<int, int>& h2local = R.h2local;
             networkSplitStation_(st, est, em, R.A_s, R.A_r, R.w, R.y, h2local);
+
+            // --- INC-0, station congruence screen (docs/SPEC_station_congruence.md)
+            // Retain the per-row POSITION PARTIAL that networkSplitStation_ just
+            // discarded, rotated into the station's local ENU frame.  This is the
+            // one place in the run where the row geometry still exists: three
+            // columns of `em.H` that the fixed-coordinate network drops by design
+            // (the A6 linearity guard in networkSplitStation_ hard-fails if one ever
+            // survives into A_r), so without this block a wrong held coordinate has
+            // no observable footprint anywhere downstream.
+            //
+            // ∂y/∂δp_ENU = ∂y/∂δp_ECEF · R_{ENU→ECEF}, because δp_ECEF =
+            // R_{ENU→ECEF} δp_ENU and enuToEcefMatrix's COLUMNS are the E/N/U unit
+            // vectors in ECEF.  The partial itself is copied verbatim rather than
+            // rebuilt from obs.los: `em.H` and `em.innovations` are ONE
+            // linearization, so y ≈ H δx holds row by row for every observable the
+            // measurement model can produce, and a sign convention re-derived per
+            // row type would be a second source of truth waiting to disagree.
+            //
+            // Only the DATA rows exist at this point — every later fold (the datum
+            // pins, the GLONASS anchors, the SH/GIM iono ties, the SD-EWL rows, the
+            // Card-1 coupling rows) APPENDS — so sizing to em.H.rows() is exact and
+            // the consumer's `row < row_pos_enu.rows()` test is the structural bound
+            // on which rows can carry geometry at all.
+            //
+            // Thread-safety: pure per-station read of st.ecef + em, written into
+            // this station's own slot.  Safe in the parallel produce phase.
+            //
+            // A station with no usable ECEF would rotate through a garbage
+            // lat/lon, so it is left EMPTY instead: the sweep then counts its rows
+            // in `no_geom_rows` and reports the station as having no geometry,
+            // which is the honest reading.  A silently mis-rotated Jacobian would
+            // name a real offset in the wrong direction.
+            if (congruence_rows && em.H.rows() > 0 && st.ecef.norm() > 1.0) {
+                const Eigen::Index pos_i =
+                    static_cast<Eigen::Index>(st.sm->getPositionIndex());
+                if (pos_i >= 0 && pos_i + 2 < em.H.cols()) {
+                    const Coordinates::Llh llh = Coordinates::ecefToLlh(st.ecef);
+                    const Eigen::Matrix3d R_enu2ecef =
+                        Coordinates::enuToEcefMatrix(llh.lat_rad, llh.lon_rad);
+                    R.row_pos_enu.noalias() =
+                        em.H.middleCols(pos_i, 3) * R_enu2ecef;
+                }
+            }
 
             // Fix A (network.phase_datum_ensemble): record every present
             // ambiguity's (sat, signal, A_r column) so the driver can build the
@@ -1329,7 +2229,20 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // uses the general form.
                     pin_y.push_back(target == 0.0 ? -piv_x(amb_idx)
                                                   : target - piv_x(amb_idx));
-                    pin_w.push_back(1e10);   // hard pin (exact gauge)
+                    // eq34 reattach hygiene INC-3: a pin the election could not avoid
+                    // placing on a FRESH host is folded with an inflated sigma (weight
+                    // /= scale²), decaying to the hard pin as the arc matures — the
+                    // gauge is still fixed, but the data can pull the code-seeded
+                    // ambiguity instead of the whole component re-levelling onto it.
+                    // The map is EMPTY unless the ramp is armed, so the lookup misses
+                    // and the weight is the exact legacy 1e10 (byte-identical).
+                    double w = 1e10;         // hard pin (exact gauge)
+                    if (!st.pinned_amb_sigma_scale.empty()) {
+                        const auto sc = st.pinned_amb_sigma_scale.find(amb_key);
+                        if (sc != st.pinned_amb_sigma_scale.end() && sc->second > 1.0)
+                            w /= (sc->second * sc->second);
+                    }
+                    pin_w.push_back(w);
                 };
                 // eq34: r1's RPB pin — δ_{r1,σ}=0 on the RPB column in this
                 // station's OWN block (the receiver half of the chain gauge).
@@ -1491,10 +2404,27 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 networkAppendShIonoRows_(st, est, modeled[i], h2local, se.time,
                                          sh_model, setup.sh_model2, iono_deweight,
                                          shc, sh_dev_on,
-                                         sh_dev_carry, R.A_s, R.A_r, R.w, R.y);
+                                         sh_dev_carry, ctx.carry.dw_row_held,
+                                         // INC-3b: inert until the seam's one-shot
+                                         // start/resume seed has run, or the very first
+                                         // epoch would withhold EVERY tie row.
+                                         (ctx.knobs.dw_admit_validate_k > 0.0
+                                          && ctx.carry.dw_tie_seeded)
+                                             ? &ctx.carry.dw_tie_seen : nullptr,
+                                         R.A_s, R.A_r, R.w, R.y);
             else if (config_.estimateNetworkSatCodeBias())
                 networkAppendGimIonoRows_(st, modeled[i], h2local, se.time,
                                           R.A_s, R.A_r, R.w, R.y);
+
+            // --- SD PRE-REDUCE EWL constraint (docs/SPEC_sd_ewl_prereduce.md) --------
+            // Appended AFTER the iono rows and BEFORE the block reaches
+            // addStationObservations, so it folds into N_rr/N_sr/N_ss pre-reduce and
+            // composes EXACTLY with the post-reduce Card-4 DD fold.  Default OFF =>
+            // returns immediately => byte-identical.
+            if (config_.getNetworkConfig().sd_ewl.enable)
+                networkAppendSdEwlRows_(st, est, modeled[i], h2local, se.time,
+                                        R.A_s, R.A_r, R.w, R.y, R.sd_ewl_trace,
+                                        &ctx.carry.sd_ewl_fix, i);
 
             // --- Phase-leveling carry: record present ambiguities + build the
             //     diagonal carried prior (Increment 1) ----------------------
@@ -1506,7 +2436,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // define the phase-bias gauge exactly, so a carried diagonal there is
             // redundant.  Pure per-station compute + read-only local_carry lookup
             // — no shared write, safe in the parallel produce phase.
-            if (carry_warm && (phase_datum_prioritized || !st.is_pivot || zwd_on)) {
+            // rx-CB carry (SPEC_rx_cb_carry): the legacy predicate is hoisted so the
+            // receiver code-bias carry can enter this block WITHOUT the carry_warm
+            // (phase-leveling) gate — the legacy interior below keeps its exact
+            // original condition, so rx_cb_on=false is byte-identical.
+            const bool legacy_local_inject =
+                carry_warm && (phase_datum_prioritized || !st.is_pivot || zwd_on);
+            if (legacy_local_inject || rx_cb_on) {
                 const Eigen::VectorXd x_lin = st.sm->getStateVector();
                 std::vector<std::tuple<Eigen::Index, double, double>> inj;  // (col, Λ, η) — legacy diagonal path
                 // Card 1 (network.carry_conditional_coupling): each carried local column
@@ -1518,6 +2454,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 CouplingRowBuilder cb{est, shc, q_clock, q_cb, q_pb,
                                       carry_cpl_joint, carry_cpl_tu, carry_cpl_shmarg,
                                       tu_reinit_hist, R};
+                if (legacy_local_inject) {
                 // Ambiguity carry.  Legacy: the whole pivot station is skipped (all
                 // its ambiguities are gauge pins).  Prioritized: every station
                 // carries the arcs it does NOT anchor, so the skip is PER-(sat,
@@ -1568,6 +2505,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // load-bearing here; this guards the OPPOSITE (lock-in) direction.
                     double var_eff = cit->second.var + pl_q_amb * std::max(0.0, gap);
                     if (pl_var_floor > 0.0) var_eff = std::max(var_eff, pl_var_floor);
+                    // M2 v2 (docs/SPEC_carry_vce_apply.md §2): the LASER 5-95 variance
+                    // FACTOR, applied last — "the hand model evaluated as today, then
+                    // × α²".  Read-only O(1) array lookup, safe in this parallel produce
+                    // phase; the table is refreshed once per epoch by the serial step at
+                    // the end of SB_STASH_STATUS, so every station in this pass and the
+                    // serial harvest that mirrors it read ONE value.  Exactly 1.0 when the
+                    // apply path is off or `pl` is unarmed ⇒ byte-identical.
+                    var_eff *= vce_apply.factor(NetworkCarryVceApply::kPl, parts->satellite);
                     if (!(var_eff > 0.0)) continue;
                     if (carry_cpl_cond) {
                         cb.buildCplRow(col, x_lin(amb_idx), cit->second, var_eff,
@@ -1621,15 +2566,174 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         }
                     }
                 }
+                }   // legacy_local_inject
+                // --- rx-CB carry (docs/SPEC_rx_cb_carry.md): receiver code-bias
+                //     columns as carried RW priors.  OUTSIDE the legacy gate above —
+                //     live on the carry_invariant / no-leveling lineage.  The carry
+                //     map is READ-ONLY here (parallel produce phase); decisions are
+                //     counted in R and the serial harvest applies every consequence
+                //     (stale-entry overwrite = the implicit drop).  Diagonal fold
+                //     even under carry_cpl_cond — the RPB rationale: a coupling row
+                //     would hand a strictly-local hardware state a shared-border
+                //     footprint.
+                // RXCB-DATUM shares this walk: the receiver code-bias DATUM needs the
+                // same (key, A_r column) records the CARRY collects, so pl_cb is filled
+                // whenever EITHER is armed and only the carry-injection half below stays
+                // behind rx_cb_on.  (The post-solve harvest that consumes pl_cb is itself
+                // gated on rx_cb_on, so a datum-only run fills the vector and no one
+                // harvests it — intended.)
+                if (rx_cb_on || rx_cb_datum) {
+                    for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
+                        if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;  // anchored family
+                        const int cb_idx = static_cast<int>(cb_sidx);
+                        if (cb_idx < 0 || cb_idx >= x_lin.size()) continue;
+                        if (!std::isfinite(x_lin(cb_idx))) continue;
+                        const auto cbhit = h2local.find(cb_idx);
+                        if (cbhit == h2local.end()) continue;
+                        const Eigen::Index cbcol = static_cast<Eigen::Index>(cbhit->second);
+                        R.pl_cb.emplace_back(cb_key, cbcol, x_lin(cb_idx));
+                        // --- RXCB-DATUM: loose zero-mean prior on the receiver DCB ----
+                        // The receiver-side counterpart of the W6 satellite code-bias
+                        // sum-to-zero, realized PRE-REDUCE through the same diagonal
+                        // prior channel Card KP uses for satellite OSBs — NOT as a
+                        // post-reduce cross-station SumZeroGauge, because
+                        // NetworkEstimator::solve rightly refuses to compose a
+                        // post-reduce Woodbury gauge with the Card-4 DD priors (both
+                        // fold against the same cached local factors; ambiguities and
+                        // code biases are correlated through the observation rows, so
+                        // "disjoint columns" does not make it exact).
+                        //
+                        // WHY A DIAGONAL PRIOR IS A DATUM HERE.  d_r ~ N(0, sigma^2) on
+                        // every station adds 1/sigma^2 along EVERY direction of the DCB
+                        // subspace.  The between-station DIFFERENCES are estimable and
+                        // carry orders more data information, so the prior does not move
+                        // them; the COMMON MODE has essentially none, so the prior alone
+                        // determines it — and sets it to zero-mean-over-receivers, which
+                        // is exactly the IGS DCB convention.  Note the realized
+                        // common-mode eigenvalue is 1/sigma^2, INDEPENDENT of the station
+                        // count (u = 1/sqrt(N) * 1 gives u^T (Lambda I) u = Lambda), the
+                        // same N-independence the broadcast-anchored clock datum documents.
+                        //
+                        // Target is the ABSOLUTE zero, so in the local block's
+                        // delta-around-x_lin coordinates the RHS is -Lambda * x_lin —
+                        // the same convention the rx-CB carry's innovation uses.
+                        if (rx_cb_datum && StateKeys::parseDcbKey(cb_key)) {
+                            const double lam = 1.0 / (rx_cb_datum_sigma * rx_cb_datum_sigma);
+                            const double eta = lam * (0.0 - x_lin(cb_idx));
+                            if (std::isfinite(lam) && std::isfinite(eta)) {
+                                inj.emplace_back(cbcol, lam, eta);
+                                ++R.pl_cb_datum_rows;
+                            }
+                        }
+                        if (!rx_cb_on) continue;   // datum-only: record the column, carry nothing
+                        const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
+                        if (cbit == rx_cb_carry.end()) continue;   // cold — the harvest seeds it
+                        double cb_var_eff = 0.0;
+                        const double cb_innov_raw = cbit->second.value_abs - x_lin(cb_idx);
+                        // --- Card LV-2 (docs/SPEC_level_information_budget.md) -------
+                        // Subtract the information-weighted MEAN innovation of this
+                        // code-bias family, computed at the previous epoch's SERIAL
+                        // harvest (lag-1; the map is READ-ONLY in this parallel phase,
+                        // exactly like the carry itself).  Missing key = the first
+                        // epoch, or a frozen thin-mean era that never had one ⇒ μ = 0
+                        // ⇒ legacy behaviour, which is the intended one-epoch warm-up.
+                        //
+                        // Σλ(innov−μ) = 0 by construction: the carry keeps every
+                        // between-station DIFFERENCE at full stiffness (arm 14 proved
+                        // that rigidity load-bearing) while exerting ZERO net force on
+                        // the DCB common mode, which is a FRAME direction and belongs
+                        // to the designed authority (rx_code_bias_datum / the a₀₀
+                        // anchor / the satellite sum-to-zero), re-realized each epoch.
+                        //
+                        // The GATE judges the demeaned innovation too, deliberately: a
+                        // coherent frame move is not a per-receiver hardware jump, and
+                        // letting it mass-trigger the receiver-reset response withholds
+                        // exactly the rows whose DIFFERENCES are still good.
+                        double cb_mu = 0.0;
+                        if (rx_cb_demean) {
+                            const auto mit = rx_cb_demean_mu.find(cb_key);
+                            if (mit != rx_cb_demean_mu.end() && std::isfinite(mit->second)
+                                && mit->second != 0.0)
+                                cb_mu = mit->second;
+                        }
+                        const double cb_innov = cb_innov_raw - cb_mu;
+                        // --- Card LV-4 (docs/SPEC_level_information_budget.md §11) ---
+                        // With the invariant step gate armed the fold-time INNOVATION
+                        // test is switched off: |value_abs − x_lin(cb)| is a prefit
+                        // quantity in a FROZEN frame, so it withholds by where the
+                        // first-epoch seed landed rather than by anything the receiver
+                        // did, and it cannot see a jump between two epochs at all.
+                        // What survives here is frame-free (gap + variance sanity); the
+                        // event response moved to the serial harvest, which compares two
+                        // ABSOLUTE values.  The retired test is still EVALUATED, purely
+                        // to count what it would have withheld — the A/B lives inside
+                        // this one run instead of across two.
+                        const RxCbInjectAction act = rxCbInjectGate(
+                            pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/900.0,
+                            cbit->second.var, rx_cb_q, cb_innov,
+                            /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
+                            /*innov_test=*/!rx_cb_step_gate);
+                        if (rx_cb_step_gate && act == RxCbInjectAction::Fold) {
+                            double shadow_var = 0.0;
+                            if (rxCbInjectGate(pl_now_s - cbit->second.last_seen_s, 900.0,
+                                               cbit->second.var, rx_cb_q, cb_innov,
+                                               10.0, 0.25, shadow_var, true)
+                                == RxCbInjectAction::SkipInnov)
+                                ++R.pl_cb_frame_gate_would_skip;
+                        }
+                        if (act == RxCbInjectAction::SkipInnov) {
+                            ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
+                            continue;
+                        }
+                        if (act != RxCbInjectAction::Fold) continue;
+                        const double cb_lambda = 1.0 / cb_var_eff;
+                        const double cb_eta = cb_lambda * cb_innov;
+                        if (!std::isfinite(cb_eta)) continue;
+                        inj.emplace_back(cbcol, cb_lambda, cb_eta);
+                        ++R.pl_cb_injected;
+                        // LV-2 accumulation for NEXT epoch's μ.  Only FOLDED rows vote
+                        // (a withheld row exerts no force), and the RAW innovation is
+                        // what the mean is taken over — μ must estimate the common
+                        // content of the carry's actual pull, not of an already-demeaned
+                        // residual, or the correction would decay geometrically.
+                        if (rx_cb_demean) {
+                            R.pl_cb_sum_lam[cb_key]       += cb_lambda;
+                            R.pl_cb_sum_lam_innov[cb_key] += cb_lambda * cb_innov_raw;
+                            if (cb_mu != 0.0) ++R.pl_cb_demeaned;
+                        }
+                    }
+                }
                 if (carry_cpl_cond) {
                     // Card 1/1b: batch-append this station's conditional coupling rows into
-                    // R.A_s/R.A_r (joint-whitened when carry_cpl_joint, else scalar per-row);
-                    // R.carry_cols stays EMPTY so the serial addStationPrior is skipped.
+                    // R.A_s/R.A_r (joint-whitened when carry_cpl_joint, else scalar per-row).
                     cb.appendCouplingRows();
-                } else {
+                }
+                {
+                    // Diagonal fold — under carry_cpl_cond the legacy paths routed through
+                    // buildCplRow, so inj here holds ONLY rx-CB rows (empty when off —
+                    // resize(0) leaves R.carry_* exactly as before: byte-identical).
                     // ASCENDING column order → deterministic rank-1 update sequence.
                     std::sort(inj.begin(), inj.end(),
                               [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+                    // COALESCE duplicate columns.  A column can now receive TWO diagonal
+                    // rows — the RXCB-DATUM prior and the rx-CB carry prior — and
+                    // information is additive, so they must be summed into one entry
+                    // rather than handed to addStationPrior twice (which does not sum).
+                    // A no-op for every pre-RXCB-DATUM config: without the datum each
+                    // cb_key contributes at most one row, so the vector has no
+                    // duplicates and this leaves it byte-identical.
+                    if (inj.size() > 1) {
+                        std::size_t w = 0;
+                        for (std::size_t r = 1; r < inj.size(); ++r) {
+                            if (std::get<0>(inj[r]) == std::get<0>(inj[w])) {
+                                std::get<1>(inj[w]) += std::get<1>(inj[r]);
+                                std::get<2>(inj[w]) += std::get<2>(inj[r]);
+                            } else {
+                                inj[++w] = inj[r];
+                            }
+                        }
+                        inj.resize(w + 1);
+                    }
                     const Eigen::Index ninj = static_cast<Eigen::Index>(inj.size());
                     R.carry_cols.resize(static_cast<size_t>(ninj));
                     R.carry_dNrr.resize(ninj);
@@ -1657,6 +2761,41 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             se.time.tow, log,
                             n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
                             n_cpl_row_dump);
+
+    // SD pre-reduce EWL trace drain (SERIAL, post-produce — SPEC_sd_ewl_prereduce §6).
+    // The rows were formatted per station inside the parallel produce; writing them
+    // here in station index order makes the file thread-count independent.  Flushed
+    // per epoch: this stream exists to diagnose runs that get killed mid-flight, and
+    // an unflushed tail is exactly the evidence that would be missing.
+    if (config_.getNetworkConfig().sd_ewl.trace && traces.sd_ewl_trace) {
+        for (size_t i = 0; i < asm_res.size(); ++i)
+            for (const std::string& row : asm_res[i].sd_ewl_trace)
+                traces.sd_ewl_trace << row;
+        traces.sd_ewl_trace.flush();
+    }
+
+    // --- INC-2 STRUCTURAL FUSE (docs/SPEC_prefit_census_observability.md §4) ---
+    // The single last-touch site for every data row's weight: every appender
+    // (splitStation, the GLONASS anchors, the SH/GIM iono ties, the SD-EWL rows)
+    // has finished, and nothing between here and est.addStation writes R.w.
+    // SERIAL on purpose — the row build is parallel, so a fuse inside it would
+    // make the event order thread-count dependent.  s_fuse <= 0 (the default)
+    // skips the whole block: no shared-column map, no classification, no
+    // allocation — structurally byte-identical OFF.
+    const double pc_fuse_sigma = ctx.knobs.pc_fuse_sigma;
+    if (pc_fuse_sigma > 0.0) {
+        const SharedColumnMap fuse_cm = buildSharedColumnMap(est, est.numShared());
+        if (fuse_cm.n > 0) {
+            ++ctx.counters.pc.fuse_epochs;
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!present[i]) continue;
+                StationAssembly& R = asm_res[i];
+                if (!R.ok || R.threw || R.state_mismatch || R.empty_innov) continue;
+                networkPrefitFuseStation(ctx, traces, se.time, fuse_cm,
+                                         stations[i].name, R, pc_fuse_sigma);
+            }
+        }
+    }
 
     // Serial consume: scatter each station's block into the shared arrowhead
     // in deterministic station order, preserving the exact pivot-aborts-epoch
@@ -1731,7 +2870,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         // pivot R.carry_cols holds at most the ZWD column, and is empty (no call,
         // byte-identical) unless network.carry_zwd is on.  A reject here drops only
         // this station's carry, not the station — its data is already in the system.
-        if (carry_warm && !R.carry_cols.empty()) {
+        // rx-CB carry (SPEC_rx_cb_carry): rx_cb_on joins the gate — when carry_warm
+        // is false the produce phase built ONLY rx-CB rows (the legacy inject paths
+        // sit inside legacy_local_inject = carry_warm && …), so the extended gate
+        // folds exactly them and rx_cb_on=false remains byte-identical.
+        if ((carry_warm || rx_cb_on) && !R.carry_cols.empty()) {
             try {
                 est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                     R.carry_cols, R.carry_dNrr, R.carry_dur);

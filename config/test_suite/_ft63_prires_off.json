@@ -1,0 +1,32 @@
+{
+ "_comment": [
+  "PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md) -- gate 1 CONTROL arm.",
+  "Extends _ft63_pdfix_v3.json (PD-safe DD fold + D5 v3 corroboration + Jul-28",
+  "armed set + Aug-1 prefit observability tier + W6 self-contained satellite OSB).",
+  "",
+  "THE ONLY DELTA vs _ft63_prires_on.json is network.prior_residual_census.",
+  "Nothing else differs, which is what makes gate 1 a valid SAME-BUILD A/B",
+  "(standing invariant #6): every solve and QC artifact must be byte-identical",
+  "between this arm and the ON arm, and only the census columns, the PRIORRES",
+  "events, network_prior_residual.csv, the manifest and the wall-clock fields may",
+  "differ.  A diff anywhere else is a STOP -- the card claims the solve is",
+  "untouched, and that claim is the acceptance criterion, not a limitation.",
+  "",
+  "Note the census is deliberately ABSENT from this arm's epoch-status schema, not",
+  "merely blank: the columns are appended only when the card is armed (the",
+  "measurement-admission precedent), so an unarmed run's network_epoch_status.csv",
+  "is byte-identical to a pre-card build's.  Diff the two files with that in mind."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "prior_residual_census": false,
+  "product_output_path": "C:/GnssProcessor/runs/ft63_prires_off/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ft63_prires_off/state_snapshot.bin"
+ }
+}

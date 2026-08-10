@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Smoke twin of _ft63_qz0_iofloat.json — 300 s (10 ep), staged-cadence directive.",
+    "Sanity: 10-11/11 emitted (sh_health off so no withholds), a00 finite, no crash in",
+    "the loose-tie + zero-q combination, loader clean of rep_error warnings."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_qz0_iofloat.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/qz0_iofloat_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/qz0_iofloat_smoke/state_snapshot.bin"
+  }
+}

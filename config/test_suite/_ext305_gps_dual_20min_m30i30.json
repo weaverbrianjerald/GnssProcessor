@@ -1,0 +1,84 @@
+{
+ "_comment": [
+  "ARM 35 — the MASK EXTREME at scale, CONTROL half.  303-station EXT-CB, obs mask 30,",
+  "iono cutoff 30, 20 min (40 epochs).  Paired with arm 36 (_lv4), which differs by the",
+  "single knob network.rx_cb_carry_step_gate.",
+  "",
+  "WHY 30/30 AT 305 STATIONS (user direction, 2026-08-05).  Three measured results point",
+  "here and they do not obviously agree:",
+  "  §21    the LEVEL gain belongs to the OBSERVATION mask (10 -> 15 is worth 5-6 TECU at",
+  "         either iono cutoff); the RESIDUAL cost belongs to the IONO cutoff (25 -> 15",
+  "         costs +27..46 % postfit phase rms at either obs mask).",
+  "  §20.2  station support halves every level metric; the 303-sta IGNITION hour (-1.98)",
+  "         beats any settled hour the 61-sta canonical reaches in twelve.",
+  "  arm 34 LV-4's level effect INVERTS with the obs mask: -28.4 TECU vs GIM at obs 10,",
+  "         -2.6 at obs 15 (same iono cutoff 25, same everything else).",
+  "So both the mask axis and the station axis point the same way, and LV-4's sign follows",
+  "the mask.  This arm asks whether that continues, or turns around.",
+  "",
+  "AT 30/30 THE IONO CUTOFF STOPS BINDING.  With every surviving LOS already >= 30 deg,",
+  "a cutoff of 30 admits all of them as SH constraint rows.  So this is not '15/15 but",
+  "more so' — it is 'the 15-30 deg band deleted from the solution entirely, and no",
+  "further screening on what remains'.  §21's two knobs collapse into one here, which is",
+  "why the pair is run at a single mask setting rather than as another 2x2.",
+  "",
+  "THE PREDICTION IS THAT THIS DOES NOT KEEP HELPING, AND THE REASON IS §21.1.  a00's",
+  "only handle is MAPPING-FUNCTION SPREAD; it needs low-elevation lines of sight to be",
+  "separable from the receiver-DCB common mode at all.  Raising the obs mask trades two",
+  "effects against each other — less low-elevation code multipath reaching the SH field",
+  "(helps, and is the whole of §21's +5..6 TECU) versus less mapping spread to estimate",
+  "a00 with (hurts).  At 10 -> 15 the first dominates.  At 30 the second should.",
+  "",
+  "THE DIAGNOSTIC THAT DECIDES IT, and it is cheap: a00's POSTERIOR sigma against its",
+  "own 32.24 +- 2.0 TECU prior (network_vtec_sh.csv, n=0 m=0, std_tecu).  Measured today:",
+  "",
+  "    ext305_dual_1h        (obs 10)  a00 std median 0.4335",
+  "    ext63_dual_3h_m15i25  (obs 15)  a00 std median 0.7099",
+  "    ext63_dual_1h_lv4_m15i25        a00 std median 0.6488",
+  "",
+  "All are data-dominated with wide margin to the prior's 2.0.  If obs mask 30 pushes",
+  "std_tecu toward 2.0, a00 is being set by the PRIOR and not by the network, and any",
+  "level agreement with GIM at 30/30 is CIRCULAR (the prior is 32.24, the GIM 00h global",
+  "mean is 32.0).  Read std_tecu BEFORE reading the level in these two arms.",
+  "",
+  "WHAT IS AND IS NOT GRADEABLE HERE:",
+  " - INVARIANT-LEGAL: median postfit phase rms (network_pf_keyed.csv, STA rows) between",
+  "   arm 35 and arm 36.  The two arms are one knob apart at identical masks, so the",
+  "   observation set is identical and the LV-4 data-side cost is directly comparable to",
+  "   §19.3's +64 % (obs 10) and arm 34's +35 % (obs 15).  This is the grade.",
+  " - DIAGNOSTIC ONLY: a00 and a00-GIM (frame quantities, invariant #5 / §17 item 0).",
+  " - NOT COMPARABLE ACROSS THE MASK: arm 35 vs any 10/25 or 15/25 arm.  Observation",
+  "   counts differ by construction, so read DIRECTION, not delta — §21's own caveat.",
+  "",
+  "20 MIN IS IGNITION AND IS LABELLED AS SUCH.  §14 measured a ~2 h level convergence",
+  "budget at 61 stations; §20.2 found essentially no ignition transient at 303 (hour-0",
+  "mean -1.98 +- 3.66), which is the only reason a 40-epoch level read is worth taking at",
+  "all.  It is still a third of that hour.  No settled-level verdict comes out of this",
+  "pair; what comes out is the mask DIRECTION, the a00 sigma, and the LV-4 rms delta.",
+  "",
+  "Extends _ext305_gps_dual_1h.json for the 303-station list, overriding its pinned 10/25",
+  "masks.  Fresh lineage, own paths; never resume onto another arm's snapshot."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext305_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 1200.0,
+  "elevation_mask_deg": 30.0
+ },
+ "estimation": {
+  "ionosphere_weighting": {
+   "elevation_cutoff_deg": 30.0
+  }
+ },
+ "network": {
+  "max_duration_s": 1200.0,
+
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+
+  "product_output_path": "C:/GnssProcessor/runs/ext305_dual_20min_m30i30/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext305_dual_20min_m30i30/state_snapshot.bin"
+ }
+}

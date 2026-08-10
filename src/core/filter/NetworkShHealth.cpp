@@ -12,8 +12,10 @@
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
+#include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
+#include "filter/NetworkRhsAttrib.hpp"   // INC-5 flight-recorder trip latch
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
@@ -48,6 +50,7 @@ void networkShHealth(
     const std::vector<std::vector<PppObservation>>& modeled,
     NetworkIonoDeweightGate& iono_deweight,
     NetworkCarryVce& carry_vce_est,
+    NetworkPriorResidual& prires_est,
     bool datum_changed,
     double pl_now_s,
     double& first_vce_s,
@@ -87,6 +90,14 @@ void networkShHealth(
         if (std::isfinite(a00)) {
             const bool in_band =
                 (a00 >= shc.a00_warn_low_tecu && a00 <= shc.a00_warn_high_tecu);
+            // INC-5 flight-recorder trigger
+            // (docs/SPEC_prefit_census_observability.md §7): the a00-BAND era.
+            // Distinct from the SH GATE era above it in the pipeline — the WARN
+            // fires on the FIRST out-of-band epoch while the gate waits
+            // sh_gate_min_epochs, so this is the earliest of the four triggers
+            // and the one most likely to catch a discharge in progress.
+            // SB_T1A precedes SB_FRAMEDIAG, so the trip lands this same epoch.
+            networkRhsTripEdge(ctx, "a00_band", !in_band);
             if (!in_band && (sh_a00_was_in_band || n_emitted % 60 == 0)) {
                 log->warn("Network (SH-iono): a₀₀ = {:.1f} TECU OUTSIDE physical band "
                           "[{:.1f}, {:.1f}] — global VTEC field diverging (TOW {:.1f}); the "
@@ -378,6 +389,22 @@ void networkShHealth(
         }
         carry_vce_est.beginEpoch(pl_now_s, !datum_changed);
     }
+
+    // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md §6): advance the
+    // census alongside the VCE monitor above — this is the ONE point in the epoch
+    // that precedes every feed (SB_LEVELING's pl/zwd/rxcb harvest and
+    // SB_STASH_STATUS's pb/cb snapshot both run later), which is what makes the
+    // PREDICT-THEN-UPDATE contract enforceable: beginEpoch FREEZES the
+    // through-previous-epoch σ̂₀ that this epoch's rows are standardized against,
+    // so no row can calibrate against itself.
+    //
+    // The census passes `clean = true` UNCONDITIONALLY — deliberately NOT
+    // `!datum_changed`.  A datum-changed epoch is exactly the FRAME population
+    // this card exists to MEASURE (standing invariant #7's re-coupling edge on
+    // the carry layer); dropping it, as the variance-component monitor correctly
+    // does, would discard the rows the census was built for.
+    if (prires_est.enabled())
+        prires_est.beginEpoch(pl_now_s, se.time.tow);
 }
 
 } // namespace GnssProcessor

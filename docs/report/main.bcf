@@ -2407,30 +2407,35 @@
     <bcf:citekey order="28" intorder="1">landskron2018vmf3</bcf:citekey>
     <bcf:citekey order="29" intorder="1">landskron2018vmf3</bcf:citekey>
     <bcf:citekey order="30" intorder="1">chen1997effects</bcf:citekey>
-    <bcf:citekey order="31" intorder="1">klobuchar1987ionospheric</bcf:citekey>
-    <bcf:citekey order="32" intorder="1">hoque2008estimate</bcf:citekey>
-    <bcf:citekey order="33" intorder="1">iers2010</bcf:citekey>
+    <bcf:citekey order="31" intorder="1">subirana2013gnss</bcf:citekey>
+    <bcf:citekey order="32" intorder="1">klobuchar1987ionospheric</bcf:citekey>
+    <bcf:citekey order="33" intorder="1">hoque2008estimate</bcf:citekey>
     <bcf:citekey order="34" intorder="1">iers2010</bcf:citekey>
-    <bcf:citekey order="35" intorder="1">desai2002ocean</bcf:citekey>
-    <bcf:citekey order="36" intorder="1">wuebbena1985software</bcf:citekey>
-    <bcf:citekey order="37" intorder="1">subirana2013gnss</bcf:citekey>
+    <bcf:citekey order="35" intorder="1">iers2010</bcf:citekey>
+    <bcf:citekey order="36" intorder="1">desai2002ocean</bcf:citekey>
+    <bcf:citekey order="37" intorder="1">wuebbena1985software</bcf:citekey>
     <bcf:citekey order="38" intorder="1">subirana2013gnss</bcf:citekey>
-    <bcf:citekey order="39" intorder="1">rauch1965</bcf:citekey>
-    <bcf:citekey order="40" intorder="1">teunissen2017handbook</bcf:citekey>
-    <bcf:citekey order="41" intorder="1">subirana2013gnss</bcf:citekey>
-    <bcf:citekey order="42" intorder="1">teunissen2017handbook</bcf:citekey>
-    <bcf:citekey order="42" intorder="2">teunissen1985generalised</bcf:citekey>
-    <bcf:citekey order="43" intorder="1">geng2013triple</bcf:citekey>
-    <bcf:citekey order="44" intorder="1">yunck1993coping</bcf:citekey>
-    <bcf:citekey order="44" intorder="2">banville2013mitigating</bcf:citekey>
-    <bcf:citekey order="45" intorder="1">teunissen1995lambda</bcf:citekey>
+    <bcf:citekey order="39" intorder="1">subirana2013gnss</bcf:citekey>
+    <bcf:citekey order="40" intorder="1">rauch1965</bcf:citekey>
+    <bcf:citekey order="41" intorder="1">teunissen2017handbook</bcf:citekey>
+    <bcf:citekey order="42" intorder="1">subirana2013gnss</bcf:citekey>
+    <bcf:citekey order="43" intorder="1">teunissen2017handbook</bcf:citekey>
+    <bcf:citekey order="43" intorder="2">teunissen1985generalised</bcf:citekey>
+    <bcf:citekey order="44" intorder="1">geng2013triple</bcf:citekey>
+    <bcf:citekey order="45" intorder="1">yunck1993coping</bcf:citekey>
+    <bcf:citekey order="45" intorder="2">banville2013mitigating</bcf:citekey>
     <bcf:citekey order="46" intorder="1">teunissen1995lambda</bcf:citekey>
-    <bcf:citekey order="47" intorder="1">laurichesse2009integer</bcf:citekey>
-    <bcf:citekey order="48" intorder="1">rtcm10403</bcf:citekey>
-    <bcf:citekey order="48" intorder="2">igsssr</bcf:citekey>
-    <bcf:citekey order="49" intorder="1">odijk2003fast</bcf:citekey>
-    <bcf:citekey order="50" intorder="1">teunissen1985generalised</bcf:citekey>
-    <bcf:citekey order="51" intorder="1">teunissen1985generalised</bcf:citekey>
+    <bcf:citekey order="47" intorder="1">teunissen1995lambda</bcf:citekey>
+    <bcf:citekey order="48" intorder="1">laurichesse2009integer</bcf:citekey>
+    <bcf:citekey order="49" intorder="1">laurichesse2009integer</bcf:citekey>
+    <bcf:citekey order="49" intorder="2">geng2013triple</bcf:citekey>
+    <bcf:citekey order="50" intorder="1">rtcm10403</bcf:citekey>
+    <bcf:citekey order="50" intorder="2">igsssr</bcf:citekey>
+    <bcf:citekey order="51" intorder="1">odijk2003fast</bcf:citekey>
+    <bcf:citekey order="52" intorder="1">teunissen1985generalised</bcf:citekey>
+    <bcf:citekey order="53" intorder="1">teunissen1985generalised</bcf:citekey>
+    <bcf:citekey order="54" intorder="1">deJonge1998processing</bcf:citekey>
+    <bcf:citekey order="55" intorder="1">deJonge1998processing</bcf:citekey>
   </bcf:section>
   <!-- SORTING TEMPLATES -->
   <bcf:sortingtemplate name="nyt">

@@ -81,6 +81,7 @@ int healNearNullPhaseBias(NetworkEstimator& est,
             healed_out->push_back(PhaseHealEvent{p.sat, p.signal, a.second, a.first});
         }
     }
+    est.attribTag("pb_heal");
     est.addSharedPrior(hp);
     if (within_epoch_armed)
         cap_priors.insert(cap_priors.end(), hp.begin(), hp.end());
@@ -221,6 +222,7 @@ void networkElectEnsembleDatum(
     for (auto& st : stations) {
         st.pinned_amb_targets.clear();
         st.pinned_rpb_keys.clear();
+        st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (never set here)
     }
     this_epoch_anchor.clear();
     shared_phase_keys.clear();
@@ -232,6 +234,8 @@ void networkElectPhaseAnchors(
         std::vector<NetStation>& stations,
         const std::vector<bool>& present,
         const PhaseDatumCandidates& cnd,
+        const AnchorHygiene& hyg,
+        NetworkAnchorTallies& tally,
         std::map<std::string, std::string>& anchor_incumbent,
         std::map<std::string, std::string>& this_epoch_anchor,
         std::set<std::string>& shared_phase_keys) {
@@ -265,12 +269,22 @@ void networkElectPhaseAnchors(
     for (auto& st : stations) {
         st.pinned_amb_targets.clear();
         st.pinned_rpb_keys.clear();   // eq34-only; always empty here (no-op)
+        st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (empty ⇒ no scaling)
     }
     this_epoch_anchor.clear();
     shared_phase_keys.clear();
     std::map<std::string, std::string> new_incumbent;
     for (const auto& [amb, pbkey] : union_keys) {
         const char c = amb.empty() ? char(0) : amb.front();
+        // eq34 REATTACH HYGIENE INC-2: a BRIDGED key's gauge is the soft shared
+        // pseudo-obs row (networkInjectPinBridgePrior), not a receiver pin.  It stays
+        // in the shared set — the column is registered and solved — but NO station
+        // anchors it and no handover is signalled, so the emitted bias keeps the
+        // level the bridge holds instead of stepping onto a cold host's ambiguity.
+        if (hyg.isBridged(amb)) {
+            shared_phase_keys.insert(pbkey);
+            continue;
+        }
         size_t anchor = static_cast<size_t>(-1);
         if (sticky) {
             auto it = anchor_incumbent.find(amb);
@@ -279,14 +293,40 @@ void networkElectPhaseAnchors(
                     if (present[i] && stations[i].name == it->second
                         && usable_keys[i].count(amb)) { anchor = i; break; }
         }
+        // INC-1: on a REATTACH prefer, in the existing coverage rank order, a
+        // candidate whose arc has actually converged; only if none has does the
+        // second sweep accept a fresh host (counted — an unavoidable cold pin is not
+        // the same event as a clean handover, and INC-3 can ramp its σ).  The sticky
+        // incumbent above is deliberately exempt: keeping it is not a reattach.
         if (anchor == static_cast<size_t>(-1)) {
             auto cit = cand.find(c);
-            if (cit != cand.end())
+            if (cit != cand.end()) {
                 for (size_t i : cit->second)
-                    if (usable_keys[i].count(amb)) { anchor = i; break; }
+                    if (usable_keys[i].count(amb) && hyg.eligibleHost(i, amb)) {
+                        anchor = i;
+                        break;
+                    }
+                if (anchor == static_cast<size_t>(-1))
+                    for (size_t i : cit->second)
+                        if (usable_keys[i].count(amb)) {
+                            anchor = i;
+                            ++tally.cold_fallback_pins;
+                            break;
+                        }
+            }
         }
         if (anchor == static_cast<size_t>(-1)) continue;   // no tracker (unreachable)
         stations[anchor].pinned_amb_targets[amb] = 0.0;   // prioritized: pin to 0
+        {
+            const auto inc = anchor_incumbent.find(amb);
+            if (inc != anchor_incumbent.end() && inc->second != stations[anchor].name)
+                ++tally.reattaches;
+            const double sc = hyg.pinSigmaScale(anchor, amb);
+            if (sc > 1.0) {
+                stations[anchor].pinned_amb_sigma_scale[amb] = sc;
+                ++tally.fresh_pin_ramps;
+            }
+        }
         this_epoch_anchor[amb] = stations[anchor].name;
         new_incumbent[amb]     = stations[anchor].name;
         shared_phase_keys.insert(pbkey);

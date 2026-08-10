@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "GOLDEN 2026-07-29 — full 305-station GPS+Galileo all-on, 30 s cadence, 30 epochs,",
+    "COLD start at 00:00:00 GPS on DOY-129 (2024-05-08).",
+    "Roster + carry/datum posture from _net305_timing_gps_allon_10ep.json (the val305",
+    "all-bias config that produced the 27.7 s/ep GPS-only all-on timing baseline, so the",
+    "per-epoch cost here is directly comparable modulo the added Galileo satellites);",
+    "arm set from _golden0729_allon_delta.json.  Runs BEHIND the 50-station arm."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_net305_timing_gps_allon_10ep.json",
+    "C:/GnssProcessor/config/test_suite/_golden0729_allon_delta.json"
+  ],
+
+  "processing": {
+    "max_duration_s": 900.0,
+    "eigen_threads": 10
+  },
+
+  "network": {
+    "parallel_max_threads": 10,
+    "product_output_path": "C:/GnssProcessor/runs/golden_0729/net305/products.txt"
+  }
+}

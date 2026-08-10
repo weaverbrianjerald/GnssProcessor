@@ -30,6 +30,11 @@ import os
 import shutil
 import sys
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+from gnss_config_chain import load_config, ConfigChainError  # noqa: E402
+
 # First synced epoch of DOY-129 = 2024-05-08 00:00:00 GPS, in continuous GPS
 # seconds (week 2313, tow 259200).  This is the anchor the epoch loop latches
 # on -- it is NOT restored from the snapshot, so it is always the file start.
@@ -94,11 +99,21 @@ def main():
     if os.path.abspath(args.snapshot) != leg_snap:
         shutil.copyfile(args.snapshot, leg_snap)
 
-    with open(args.base, "r", encoding="utf-8") as fh:
-        cfg = json.load(fh)
+    # FLATTEN the base's "extends" chain.  This script writes a WHOLE config, not a delta,
+    # and reading the base file raw breaks two ways on an inheriting base: the section
+    # subscripts below KeyError on a thin delta that has no "processing"/"network" of its
+    # own, and any base that survived that would carry the parent's `extends` list into
+    # legdir, where a RELATIVE base path no longer resolves against the declaring file's
+    # directory.  Flattening also makes the leg reproducible: a self-contained leg.json
+    # cannot be retro-changed by someone editing a base after the leg has run.
+    try:
+        cfg, base_chain = load_config(args.base)
+    except ConfigChainError as e:
+        print(f"cannot read --base {args.base}: {e}", file=sys.stderr)
+        return 2
 
-    cfg["processing"]["max_duration_s"] = args.max_duration
-    net = cfg["network"]
+    cfg.setdefault("processing", {})["max_duration_s"] = args.max_duration
+    net = cfg.setdefault("network", {})
     net["start_offset_hours"] = offset_h
     net["state_snapshot_path"] = leg_snap.replace("\\", "/")
     net["state_snapshot_require"] = True          # never silently cold-start
@@ -141,6 +156,11 @@ def main():
               f"{args.sh_spectrum_stride}, trace_postfit_sigma0, "
               f"trace_dd_fractional max_pairs {args.dd_frac_max_pairs})")
     print(f"config            {cfg_path}")
+    if base_chain:
+        # The leg is written FLAT, so the merged-away provenance would otherwise be lost.
+        print(f"base chain        {args.base} <- "
+              + " <- ".join(os.path.basename(c) for c in reversed(base_chain))
+              + "  (flattened into the leg)")
     return 0
 
 

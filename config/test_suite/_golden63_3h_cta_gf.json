@@ -1,0 +1,54 @@
+{
+ "_comment": [
+  "Card Q3 SS2.1 -- 3 h GAUGE-FREE arm.  ONE knob different from",
+  "_golden63_3h_cta_on.json: network.clock_anchor_gauge_free.  Third arm of the",
+  "G3 ladder (ctl / anchor / anchor+gauge-free), same build, same config chain,",
+  "fresh convergence, runs never overlapping.",
+  "",
+  "WHAT IT FIXES (measured, not theoretical).  The raw-state anchor puts prior",
+  "information on the per-constellation clock COMMON MODE, which is a GAUGE fixed",
+  "by the S-basis pivot pin, not by the carry.  Measured over the 3 h pair: the",
+  "anchored arm cut CLK-R's drained common mode Sigma|mu| 49.43 -> 27.77 m and the",
+  "pivot's dev row (which IS that drained common mode -- SPEC SS4.1) 16.79 -> 10.03",
+  "cm.  The carry was doing ~44 % of the datum's work.  This arm marginalizes the",
+  "gauge direction out of the folded information (rank-1 downdate",
+  "Lambda <- Lambda - Lambda u (u' Lambda u)^-1 u' Lambda), applied to the JOINT",
+  "dense block so the clock<->code-bias off-diagonals the C1 carry retains survive.",
+  "",
+  "PRE-REGISTERED, AND THE SIGN IS THE OPPOSITE OF THE OBVIOUS GUESS:",
+  "  * Sigma|mu| and the PIVOT dev row must RISE toward the control (49 m / 16.8",
+  "    cm).  That is the mechanism working -- the gauge goes back to the data --",
+  "    and it is harmless on the wire because CLK-R's frame hold drains that",
+  "    channel at emission by construction.  A FALL would mean the downdate is",
+  "    inert (check cta_gf_keys > 0 before reading anything else).",
+  "  * EX-PIVOT dev ceiling and floor: unchanged or BETTER vs the anchor arm.",
+  "  * sigma0_code: flat or better (the prior no longer competes with the pin, so",
+  "    the pivot's rows stop carrying the conflict).",
+  "  * consumer (live WTZZ): unchanged or better; 0 withholds; trips resolve and",
+  "    mark exactly as in the anchor arm.",
+  "FRESH lineage (fingerprinted: the fold lives on a different subspace); run alone."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_q": 3e-05,
+  "clock_anchor_var_floor_m2": 0.0004,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_sigma_floor_m": 0.02,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cta_3h_gf/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta_3h_gf/state_snapshot.bin",
+  "clock_anchor_gauge_free": true
+ }
+}

@@ -1,0 +1,29 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — 20-epoch CONTROL for the S2H / H-rider smoke pairs, on the",
+  "session binary gnss_processor_s2h.exe (82B4450703C551109DCEFB0B6C212559).  Arm-32",
+  "posture (obs 15 / iono 25) restated per the config-chain pairing rule; extends the",
+  "base directly (depth-ceiling rule).  Controls must live on the SAME binary as the",
+  "ON arms — never compare across a rebuild.",
+  "PREDICTION P1: zero 's2h' lines and zero 'H-rider' lines in the run log (both knobs",
+  "default OFF).  P2: H records carry the legacy constant 0.0000 sigma0 (no leveling)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/s2h_20ep_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/s2h_20ep_ctl/state_snapshot.bin"
+ }
+}

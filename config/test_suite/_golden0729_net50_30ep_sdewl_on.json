@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "SUPERSEDED by _sdewl_on30.json \u2014 do NOT grade from this arm.  Two reasons:",
+    " (1) its run (runs/golden_0729/sdewl_on) predates the SPEC \u00a73b correction-frame fix",
+    "     and the \u00a75b channel search, so it built ZERO rows and silently dropped 961",
+    "     station-epochs on a throwing shared-column lookup \u2014 see SPEC \u00a710;",
+    " (2) it also lowers eigen_threads / parallel_max_threads to 6 while the baseline",
+    "     ran at 8, making the spectrum comparison a two-treatment test.",
+    "Kept only as the provenance record of the first attempt.",
+    "",
+    "SD PRE-REDUCE EWL constraint \u2014 first ON run (docs/SPEC_sd_ewl_prereduce.md).",
+    "One functional key over _golden0729_net50_30ep_wl1off.json: network.sd_ewl.enable.",
+    "PRIMARY metric: network_sh_spectrum.csv ev1 must move from the 0.142 plateau by",
+    "MUCH more than the 0.6% that mw_wl.ewl_fold_rows bought on the DD chord basis.",
+    "SECONDARY: must not degrade clock_std_m / worst_dev_m / D5 churn."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+  "processing": {
+    "eigen_threads": 6
+  },
+  "network": {
+    "parallel_max_threads": 6,
+    "sd_ewl": {
+      "enable": true,
+      "trace": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/golden_0729/sdewl_on/products.txt"
+  }
+}

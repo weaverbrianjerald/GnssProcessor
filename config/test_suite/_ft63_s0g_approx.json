@@ -1,0 +1,42 @@
+{
+ "_comment": [
+  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_sigma0_constraint_aware.md) -- the",
+  "DEGRADED-PATH arm.  Extends _ft63_s0g_raimlive.json and turns OFF exactly one",
+  "thing: network.raim_redundancy_normalize.",
+  "",
+  "IT MUST EXTEND THE raimlive LINEAGE, NOT THE CENSUS ONE.  MEASURED 2026-08-04:",
+  "on a lineage without phase_leveling the post-fit RAIM pass is never called at",
+  "all (carry_warm = phase_leveling && warmup brackets it), so the data side sees",
+  "ZERO rows and the r == 1 fallback NEVER FIRES -- an 'approx' arm built there",
+  "would exercise the NO_DATA path and quietly test nothing about APPROX.  The",
+  "first draft of this file made that mistake; it is recorded here so the next",
+  "reader does not repeat it.",
+  "",
+  "WHY AN ARM FOR A DEGRADED PATH AT ALL.  Standing invariant #4: a degraded output",
+  "must SAY SO, and the only way to know the saying-so works is to run it.  This",
+  "arm exercises, on real data:",
+  "  * the loader WARN naming raim_redundancy_normalize and the DIRECTION of the",
+  "    bias (Sum-r_data becomes a ROW COUNT, so the denominator is too large and",
+  "    sigma0_global reads LOW -- a known direction, not an unknown error);",
+  "  * the one-shot run-time WARN at the first affected epoch, with its row counts;",
+  "  * the APPROX bit (value 1) in the s0g_flags column of every affected epoch;",
+  "  * the run-end tally of each degradation mode.",
+  "It is also the mode most FT63-class runs will actually be in, because the",
+  "standing armed set does not include raim_redundancy_normalize -- so this is what",
+  "an ordinary reader will see, and its numbers have to be interpretable.",
+  "",
+  "NOT AN A/B CONTROL.  raim_redundancy_normalize is SOLVE-AFFECTING (it changes",
+  "the RAIM residual standardization, hence which arcs refloat).  Compare",
+  "sigma0_global between this arm and _ft63_s0g_raimlive.json only to CONFIRM THE",
+  "DIRECTION of the degradation, never to quote a difference: the two solves are",
+  "not the same solve."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ft63_s0g_raimlive.json"
+ ],
+ "network": {
+  "raim_redundancy_normalize": false,
+  "product_output_path": "C:/GnssProcessor/runs/ft63_s0g_approx/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ft63_s0g_approx/state_snapshot.bin"
+ }
+}

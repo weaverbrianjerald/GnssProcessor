@@ -1,0 +1,72 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 20 — arm 18 (canonical + LV-1 + LV-2) + CARD LV-4, the",
+  "FRAME-INVARIANT rx-CB carry screen (docs/SPEC_level_information_budget.md S11).",
+  "Single knob vs arm 18: network.rx_cb_carry_step_gate.",
+  "",
+  "THE DEFECT BEING FIXED (measured, arms 12-19).  The carry's inject gate tests",
+  "|value_abs - x_lin(cb)| against 10 sigma + 0.5 m.  Both terms are absolute, but",
+  "x_lin is a FROZEN linearization point -- initializeCodeBiases seeds it once at the",
+  "first estimating epoch and the network solve is never written back -- so the",
+  "statistic is just the standing correction x_r: a property of where that seed",
+  "landed, not of anything the receiver did.  Two measured consequences:",
+  " (1) 48-67 % of ALL carry priors withheld for whole runs with no receiver event",
+  "     anywhere (arm 13: 4127/7304; arm 19: 3511/7304);",
+  " (2) it is structurally BLIND to the jump it exists for: a receiver step between",
+  "     epochs t-1 and t leaves the carried value pre-jump and x_lin unmoved, so the",
+  "     statistic contains no information about the event at t's inject.",
+  "",
+  "THE FIX.  The fold-time gate keeps only its frame-free checks (gap, variance",
+  "sanity).  The event response moves to the SERIAL post-solve harvest, the one place",
+  "where two ABSOLUTE realizations of the same receiver bias exist side by side -- the",
+  "fresh posterior (x_lin + x_r) and the carried value -- so their difference is",
+  "invariant under any reframing, reseeding or datum change:",
+  "   z = |value_abs_new - value_abs_prev| / sqrt(var_new + var_prev + q*dt + 0.25)",
+  "z > 10 ERASES the entry (reset-not-repair: the post-jump posterior was solved in",
+  "the epoch that folded a stale pre-jump prior, so it is suspect too).  One epoch",
+  "cold, then the next harvest re-seeds from data.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - Fold count RISES sharply -- the withheld population was frame, not physics.",
+  "   Expect folds to approach the harvest count (arm 18: 381 folded / 777 withheld of",
+  "   1158; predict > 900 folded here) and pl_cb_innov_skips to read 0 (the test that",
+  "   produced them is off).",
+  " - The run-end LV-4 line reports the SAME-RUN A/B: `would have withheld N of those",
+  "   folds`.  Predict N is large (order 700) and the invariant erase count is SMALL",
+  "   (order 0-10 over 20 epochs at 61 quiet stations).  A large would-skip against a",
+  "   near-zero erase count IS the finding: the old screen was measuring the seed.",
+  " - a00: MORE carry information folds, and arm 14 says carry stiffness holds the",
+  "   level up while arms 15/17 say its common-mode content drags it down.  With LV-2",
+  "   already draining the common mode, predict a00 lands at or above arm 18's",
+  "   (trough 19.09, mean 25.80) -- i.e. the extra folds are DIFFERENCE information,",
+  "   which is what the carry is for.  If a00 instead sags back toward arm 12, then",
+  "   LV-2's de-mean is not fully draining the frame content of the newly admitted",
+  "   rows and mu should be re-read against the larger folded set.",
+  " - Watch max z on the run-end line.  If it never approaches 10, the threshold is",
+  "   inert on this lineage (k and the 0.5 m guard are INHERITED from the legacy gate",
+  "   and NOT recalibrated for a step statistic -- detection floor ~5 m).  That is a",
+  "   calibration item, not a defect, but it must be named rather than assumed."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "rx_cb_carry_step_gate": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv12_ig/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv12_ig/state_snapshot.bin"
+ }
+}

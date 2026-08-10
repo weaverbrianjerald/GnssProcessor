@@ -1,0 +1,368 @@
+{
+  "frozen": "runs/rtseam_goldens/pre/src/RealTimeEngine.cpp.frozen",
+  "seams": [
+    {
+      "file": "src/core/realtime/RealTimeEngineAdmit.cpp",
+      "func": "RealTimeEngine::admitBacklogAndSync",
+      "head": [
+        835,
+        915
+      ],
+      "dedent": 8,
+      "skip": 4,
+      "subs": {},
+      "tail": "return true;"
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineAdmit.cpp",
+      "func": "RealTimeEngine::gateMaxDuration",
+      "head": [
+        924,
+        935
+      ],
+      "dedent": 4,
+      "skip": 3,
+      "subs": {},
+      "tail": "return true;"
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineAdmit.cpp",
+      "func": "RealTimeEngine::stepTimeAndDetectGap",
+      "head": [
+        940,
+        978
+      ],
+      "dedent": 4,
+      "skip": 5,
+      "subs": {
+        "const GnssTime aiding_t_prev = prev_epoch_time_;": "ctx.aiding_t_prev = prev_epoch_time_;",
+        "const bool     aiding_first  = first_epoch_;": "ctx.aiding_first  = first_epoch_;"
+      },
+      "tail": "return true;"
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineAdmit.cpp",
+      "func": "RealTimeEngine::gateCorrectionsReady",
+      "head": [
+        1019,
+        1120
+      ],
+      "dedent": 4,
+      "skip": 4,
+      "subs": {},
+      "tail": "return true;"
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineSsrDiag.cpp",
+      "func": "RealTimeEngine::logSsrCoverage",
+      "head": [
+        1130,
+        1144
+      ],
+      "dedent": 4,
+      "skip": 4,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineSsrDiag.cpp",
+      "func": "RealTimeEngine::traceSsrConsumer",
+      "head": [
+        1156,
+        1225
+      ],
+      "dedent": 4,
+      "skip": 2,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEnginePrepare.cpp",
+      "func": "RealTimeEngine::dropBroadcastGrade",
+      "head": [
+        1235,
+        1244
+      ],
+      "dedent": 4,
+      "skip": 3,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEnginePrepare.cpp",
+      "func": "RealTimeEngine::seedClockFromWls",
+      "head": [
+        1249,
+        1271
+      ],
+      "dedent": 4,
+      "skip": 5,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEnginePrepare.cpp",
+      "func": "RealTimeEngine::regaugeBssd",
+      "head": [
+        1300,
+        1333
+      ],
+      "dedent": 4,
+      "skip": 3,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineSlipQc.cpp",
+      "func": "RealTimeEngine::detectAndRepairSlips",
+      "head": [
+        1371,
+        1631
+      ],
+      "dedent": 8,
+      "skip": 5,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineSsrBreaks.cpp",
+      "func": "RealTimeEngine::reactToGenerationChange",
+      "head": [
+        1648,
+        1670
+      ],
+      "dedent": 8,
+      "skip": 2,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineSsrBreaks.cpp",
+      "func": "RealTimeEngine::logProducerStatus",
+      "head": [
+        1684,
+        1699
+      ],
+      "dedent": 8,
+      "skip": 2,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineSsrBreaks.cpp",
+      "func": "RealTimeEngine::resetOnPhaseBiasDisc",
+      "head": [
+        1708,
+        1751
+      ],
+      "dedent": 8,
+      "skip": 3,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineSsrBreaks.cpp",
+      "func": "RealTimeEngine::reinflateOnCodeBiasDisc",
+      "head": [
+        1766,
+        1868
+      ],
+      "dedent": 4,
+      "skip": 3,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineSsrBreaks.cpp",
+      "func": "RealTimeEngine::reinflateOnClockDisc",
+      "head": [
+        1889,
+        1943
+      ],
+      "dedent": 8,
+      "skip": 3,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineEstimate.cpp",
+      "func": "RealTimeEngine::runMeasurementUpdate",
+      "head": [
+        1961,
+        2045
+      ],
+      "dedent": 8,
+      "skip": 4,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineEstimate.cpp",
+      "func": "RealTimeEngine::applyZwdConstraint",
+      "head": [
+        2063,
+        2076
+      ],
+      "dedent": 8,
+      "skip": 0,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineEstimate.cpp",
+      "func": "RealTimeEngine::applyNetworkIonoPrior",
+      "head": [
+        2100,
+        2163
+      ],
+      "dedent": 4,
+      "skip": 3,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineEstimate.cpp",
+      "func": "RealTimeEngine::resolveAmbiguities",
+      "head": [
+        2169,
+        2193
+      ],
+      "dedent": 4,
+      "skip": 4,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineEstimate.cpp",
+      "func": "RealTimeEngine::writeEpochTraces",
+      "head": [
+        2196,
+        2243
+      ],
+      "dedent": 4,
+      "skip": 8,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineInit.cpp",
+      "func": "RealTimeEngine::armSsrStoreOptions",
+      "head": [
+        98,
+        130
+      ],
+      "dedent": 4,
+      "skip": 1,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineInit.cpp",
+      "func": "RealTimeEngine::initProducts",
+      "head": [
+        132,
+        181
+      ],
+      "dedent": 4,
+      "skip": 1,
+      "subs": {},
+      "tail": "return true;"
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineInit.cpp",
+      "func": "RealTimeEngine::initStateManagerAndApriori",
+      "head": [
+        183,
+        211
+      ],
+      "dedent": 4,
+      "skip": 1,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineInit.cpp",
+      "func": "RealTimeEngine::initProcessingComponents",
+      "head": [
+        213,
+        305
+      ],
+      "dedent": 4,
+      "skip": 1,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineInit.cpp",
+      "func": "RealTimeEngine::initAmbiguityResolver",
+      "head": [
+        307,
+        331
+      ],
+      "dedent": 4,
+      "skip": 1,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineInit.cpp",
+      "func": "RealTimeEngine::seedInitialState",
+      "head": [
+        333,
+        347
+      ],
+      "dedent": 4,
+      "skip": 1,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineInit.cpp",
+      "func": "RealTimeEngine::initTraceLoggers",
+      "head": [
+        349,
+        373
+      ],
+      "dedent": 4,
+      "skip": 1,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineIngest.cpp",
+      "func": "RealTimeEngine::ingestSsrRecords",
+      "head": [
+        518,
+        542
+      ],
+      "dedent": 4,
+      "skip": 2,
+      "subs": {},
+      "tail": "return n_ssr_dropped;"
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineIngest.cpp",
+      "func": "RealTimeEngine::logRtcmIngestCounters",
+      "head": [
+        550,
+        582
+      ],
+      "dedent": 4,
+      "skip": 3,
+      "subs": {},
+      "tail": null
+    },
+    {
+      "file": "src/core/realtime/RealTimeEngineIngest.cpp",
+      "func": "RealTimeEngine::seedAprioriFromStationCoords",
+      "head": [
+        583,
+        686
+      ],
+      "dedent": 4,
+      "skip": 0,
+      "subs": {},
+      "tail": null
+    }
+  ]
+}

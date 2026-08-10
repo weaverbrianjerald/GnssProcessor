@@ -1,0 +1,35 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — H-rider (b): census-fed H sigma0, 20-epoch SMOKE, one knob vs",
+  "_ext63_gps_dual_20ep_s2h_ctl on the same binary (82B4450703C551109DCEFB0B6C212559).",
+  "The base arms emit_epoch_status_record + trace_prefit_census (both prerequisites).",
+  "PREDICTIONS (written before the run):",
+  " P1 the product's S line carries hsig=pc; H records carry VARYING nonzero sigma0",
+  "    (not the legacy constant 0.0000, not a constant 1.0000).",
+  " P2 the E/C/B/P record stream is BYTE-IDENTICAL to the control (the knob touches",
+  "    only H field 5 and the S token) - diff minus H/S/# lines = 0.  This is the",
+  "    invariant-#6 gate for the ON path itself: the feed must be solve-neutral.",
+  " P3 sigma0 values O(1-30) (code+sh standardized deviations; ignition larger early,",
+  "    decaying as the network converges).",
+  " P4 run-end H-rider line: 20/20 epochs with a usable pooled sigma-hat-0."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "h_sigma0_prefit_census": true,
+  "product_output_path": "C:/GnssProcessor/runs/hsig_20ep_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/hsig_20ep_on/state_snapshot.bin"
+ }
+}

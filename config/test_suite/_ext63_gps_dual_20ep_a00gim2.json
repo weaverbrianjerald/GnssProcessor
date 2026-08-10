@@ -1,0 +1,49 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 10 — arm 9 + the LAYER-2 level pinned (3 ± 0.5 TECU).  The COMPLETE",
+  "level fix at smoke scale.  Single knob vs arm 9 (layer2_mean_vtec_prior_sigma 5 -> 0.5).",
+  "",
+  "Arm 9 confirmed the ROOT CAUSE by response: the GIM anchor (32.24±2, per-epoch) lifted",
+  "L1 a00 to 28.3 and held it in band 20/20 — and the confounded level direction escaped",
+  "into the UNANCHORED layer-2 a00 instead (3±5, info 0.04/ep -> dived -15.9 -> -32.8, so",
+  "the TOTAL level stayed defective and the SH health gate rightly withheld 12 epochs on",
+  "the summed band).  The tension re-routes to whatever level-like direction is loosest:",
+  "arms 2-4 the L1 field, arm 9 the L2 field.  This arm closes the last one: L2's level is",
+  "pinned at plasmaspheric climatology (info 4.0/ep), leaving the rx-DCB states (loose",
+  "10 m priors) as the only remaining home for the re-realization tension — their CORRECT",
+  "physical home.",
+  "",
+  "PREDICTION (stated before the run):",
+  " - L1 a00 ignites 28-33 and sags LESS than arm 9's (which fed the L2 dive); L2 a00",
+  "   stays 3 ± ~1.5.  TOTAL (L1+L2) in the sh_health band all 20 epochs, gate engagements",
+  "   -> 0 (arm 9: 1 engagement, 12 withholds).",
+  " - The rx-CB carry innovation-gate withhold count (arm 9: 710/1219) stays high or grows",
+  "   — the rx-DCB states absorbing their true biases IS the fix working; MEASURE-ONLY.",
+  " - The deg-1 dipole (30-40 TECU vs control 8-12) PERSISTS — it is attributed to the",
+  "   clustered rx-bias spread coupling through the field, not to the mean.  If it",
+  "   collapses instead, level and dipole shared one mechanism and the x_lin-seed lead",
+  "   closes.  Its fate here decides the next card either way.",
+  "",
+  "20 epochs is inside ignition: LEVEL + gate wiring read only.  If clean, the next step",
+  "is the 1 h arm for the settled-window grade (walk saturation, consumer, prires)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0,
+   "layer2_mean_vtec_prior_tecu": 3.0,
+   "layer2_mean_vtec_prior_sigma_tecu": 0.5
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00gim2/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00gim2/state_snapshot.bin"
+ }
+}

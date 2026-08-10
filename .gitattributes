@@ -1,0 +1,11 @@
+# Git hooks must be checked out with LF endings.
+#
+# core.autocrlf is true in this repo, which would otherwise give a fresh clone
+# `#!/bin/sh\r` — the trailing CR becomes part of the interpreter path and the
+# hook dies with "bad interpreter: no such file or directory". The failure is
+# quiet in the sense that it only shows up at commit time on a machine nobody
+# tested, so pin the endings rather than relying on the checkout default.
+#
+# Deliberately scoped to .githooks/ only: a repo-wide normalization rule would
+# re-touch every source file and is a separate decision.
+.githooks/** text eol=lf

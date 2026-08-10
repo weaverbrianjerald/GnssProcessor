@@ -1,0 +1,23 @@
+// RT seam gate — ARM B: SBF file replay with between-satellite SD armed.
+//
+// Exists for ONE reason: seedClockFromWls and regaugeBssd are MUTUALLY
+// EXCLUSIVE (hasClock() vs !hasClock()).  Arm A executes the WLS-seed branch
+// and leaves the BSSD re-gauge dead; this arm inverts that.  Without both, half
+// of RealTimeEnginePrepare.cpp is certified by an arm that never runs it.
+//
+// Also flips the corrections-ready gate's drop_broadcast_grade branch on, so
+// dropBroadcastGrade executes with a non-zero drop count instead of no-op'ing.
+{
+  "extends": "_rtseam_sbf.json",
+
+  "estimation": {
+    "between_satellite_sd": { "enabled": true },
+    "corrections_ready_gate": {
+      "enabled": true,
+      "min_satellites": 4,
+      "min_satellites_per_system": 2,
+      "timeout_s": 60.0,
+      "drop_broadcast_grade": true
+    }
+  }
+}

@@ -29,6 +29,9 @@
 #include "filter/AmbiguityResolver.hpp"
 #include "model/PppModel.hpp"
 #include "common/PppTypes.hpp"
+#include "common/PppObservation.hpp"     // RtEpochContext::modeled_obs element type
+#include "common/EpochMeasurement.hpp"   // RtEpochContext::meas_update
+#include "common/GnssTypes.hpp"          // DropReason (RtEpochContext::drop_reasons)
 #include "products/ProductParser.hpp"
 #include "rinex/RinexParser.hpp"
 #include "rtcm/RtcmParser.hpp"
@@ -379,6 +382,185 @@ private:
     /// same two hooks as the RTA-13 summary: periodically from @c processEpoch
     /// and once from @c flush() (end-of-run).
     void logOrbitEchoMismatchSummary(const char* tag);
+
+    // =====================================================================
+    // processEpoch seams
+    // =====================================================================
+    //
+    // @c processEpoch was a single ~1,440-line epoch-loop body accreting SSR
+    // sync, ephemeris reaction, measurement build, filter update, AR and emit —
+    // structurally what @c Application::runNetwork looked like before its
+    // INC-0..12 decomposition.  It is now a thin ordered driver over the
+    // single-concern seams below, cut BEFORE the RT service queue (RTF-4..9,
+    // 305-station scale) lands more of the same.
+    //
+    // **Seam contract** (adapted from the network one; see CLAUDE.md "Network
+    // producer — where new code goes"):
+    //
+    //  1. Seams are PRIVATE MEMBER functions, not free functions over a context
+    //     struct.  The network needed @c NetworkRunContext because @c runNetwork
+    //     kept its state in function locals; every persistent value here is
+    //     already a @c RealTimeEngine member, so a member function reaches
+    //     @c state_manager_ / @c config_ / @c ssrStore() with no plumbing.
+    //  2. Each seam opens with an ALIAS PREAMBLE reconstructing the driver's
+    //     local names (@c log, @c epoch_prefix, @c modeled_obs, …) so the body
+    //     reads exactly as it did in the driver.  This is what makes the
+    //     relocation mechanically verifiable — see @c scripts/rt_seam_verify.py,
+    //     which reconstitutes each body and asserts a character-exact match
+    //     against the frozen pre-cut source.
+    //  3. A seam owns NO state.  Cross-seam values travel in @ref RtEpochContext,
+    //     which lives on the stack for exactly one @c processEpoch call.
+    //  4. @c void seams cannot abort the epoch.  @c bool seams return
+    //     false == "epoch is done, return false to the caller"; the driver reads
+    //     @c if (!seam(ctx)) return false.  Only the four admission gates are
+    //     bool — every seam from the SSR coverage census onward is
+    //     unconditionally straight-line, which is why the cut is safe.
+    //
+    // **Where new code goes** (anti-regrowth): a new per-epoch QC/estimation step
+    // goes in the seam matching its concern or a new one, NOT inline in the
+    // driver.  Admission/deferral → @c RealTimeEngineAdmit.cpp; observability →
+    // @c RealTimeEngineSsrDiag.cpp; measurement-set conditioning →
+    // @c RealTimeEnginePrepare.cpp; slip/repair → @c RealTimeEngineSlipQc.cpp;
+    // SSR datum-break reactions → @c RealTimeEngineSsrBreaks.cpp; update /
+    // constraint / AR / trace → @c RealTimeEngineEstimate.cpp.  New @c .cpp
+    // seams need a manual @c CMakeLists.txt entry (no globbing).
+
+    /**
+     * @brief Per-epoch working set threaded through the @c processEpoch seams.
+     *
+     * Transport only — it owns nothing that outlives the epoch.  Every value
+     * that must survive to the next epoch is a @c RealTimeEngine member
+     * (@c prev_tow_, @c first_epoch_, @c ssr_phase_bias_applied_, …); putting
+     * one of those here instead would silently cold-start it every epoch.
+     *
+     * These eleven fields are precisely the locals that crossed a block
+     * boundary in the pre-cut driver.  Anything a single seam computes and
+     * consumes itself stays local to that seam and does NOT belong here.
+     */
+    struct RtEpochContext {
+        /// Raw epoch input, as handed to @c processEpoch.  Held by reference —
+        /// the caller's vector outlives the context.  Read by the satellite-status
+        /// trace, which surfaces BelowMask rows for sats @c ModelGeometry dropped
+        /// and therefore needs the pre-filter set.
+        const std::vector<RinexObservation>& epoch_obs;
+
+        GnssTime    current_time{ 0, 0.0 };  ///< Epoch time (from @c epoch_obs.front()).
+        std::string epoch_prefix;            ///< "[RT] " console tag.
+
+        double dt{ 1.0 };                    ///< Time step to this epoch (s); 1.0 on the first.
+        bool   gap_detected{ false };        ///< dt exceeded the data-gap tolerance (drives WLS re-seed).
+
+        /// Pre-update epoch boundary + first-epoch flag captured for the aiding
+        /// predict: @c prev_epoch_time_ and @c first_epoch_ are both clobbered
+        /// before the predict site, but @c predictAided needs the (prev, current]
+        /// integration interval and the first-epoch skip.
+        GnssTime aiding_t_prev{ 0, 0.0 };
+        bool     aiding_first{ false };
+
+        /// The epoch's modeled observations — the spine of the whole loop.
+        /// MUTATED in place by the broadcast-grade drop and the BSSD re-gauge,
+        /// so seams take it by reference and order matters.
+        std::vector<PppObservation> modeled_obs;
+
+        /// Per-satellite drop attribution from @c computeModels, carried the full
+        /// length of the epoch purely so the satellite-status trace can report it.
+        std::map<std::string, DropReason> drop_reasons;
+
+        EpochMeasurement meas_update{};      ///< Committed measurement update (residual/DOP traces read it).
+        bool update_applied{ false };        ///< A float update committed — gates AR and the trace "have_applied" flag.
+    };
+
+    // --- Admission gates (RealTimeEngineAdmit.cpp) ------------------------
+    // The only seams that can abort the epoch.  Each returns false to mean
+    // "processEpoch returns false"; every early exit they contain was already a
+    // `return false` in the pre-cut driver, so the bodies are verbatim and the
+    // transformation is confined to appending `return true`.
+
+    /// Real-time obs/wall-clock lag: backlog warn, obs↔SSR hold, skip-to-latest.
+    /// Returns false when the epoch is deferred (held for SSR) or dropped (stale).
+    bool admitBacklogAndSync(RtEpochContext& ctx);
+
+    /// processing.max_duration_s data-time cutoff; latches @c max_duration_reached_.
+    bool gateMaxDuration(RtEpochContext& ctx);
+
+    /// Time step / gap detection; fills @c ctx.dt, @c ctx.gap_detected and the
+    /// aiding capture, and advances @c prev_tow_ / @c prev_epoch_time_.
+    /// Returns false on a non-advancing TOW (duplicate epoch).
+    bool stepTimeAndDetectGap(RtEpochContext& ctx);
+
+    /// Corrections-ready startup gate: defers ALL estimation until every modeled
+    /// above-mask satellite is broadcast+SSR.  Returns false while deferring.
+    bool gateCorrectionsReady(RtEpochContext& ctx);
+
+    // --- Observability (RealTimeEngineSsrDiag.cpp) ------------------------
+    void logSsrCoverage(RtEpochContext& ctx);    ///< Per-epoch SSR coverage summary line.
+    void traceSsrConsumer(RtEpochContext& ctx);  ///< L10 consumer-side SSR-application CSV.
+
+    // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
+    void dropBroadcastGrade(RtEpochContext& ctx); ///< Drop broadcast-grade sats from the precise solution.
+    void seedClockFromWls(RtEpochContext& ctx);   ///< WLS clock seed (non-BSSD only — see regaugeBssd).
+    void regaugeBssd(RtEpochContext& ctx);        ///< BSSD code/phase re-gauge (BSSD only — mutually exclusive with the above).
+
+    // --- Slip detection / repair (RealTimeEngineSlipQc.cpp) ---------------
+    /// MW / TurboEdit / soft-LLI-bridge cycle-slip detection and repair, run
+    /// pre-estimation.  The single largest seam; ~two thirds of it is reachable
+    /// only with @c estimation.cycle_slip.turbo_edit armed.
+    void detectAndRepairSlips(RtEpochContext& ctx);
+
+    // --- SSR datum-break reactions (RealTimeEngineSsrBreaks.cpp) ----------
+    // Five handlers for "the producer moved its datum under us".  All five are
+    // no-ops without SSR content, which is why live RTCM streams are unaffected.
+    void reactToGenerationChange(RtEpochContext& ctx);  ///< RTA-3 generation-id change → GLOBAL datum break.
+    void logProducerStatus(RtEpochContext& ctx);        ///< RTA-10 producer heartbeat → one-shot transition log.
+    void resetOnPhaseBiasDisc(RtEpochContext& ctx);     ///< Phase-bias discontinuity / freshness flip → ambiguity reset.
+    void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
+    void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
+
+    // --- Estimation tail (RealTimeEngineEstimate.cpp) ---------------------
+    void runMeasurementUpdate(RtEpochContext& ctx);     ///< KF update with the outlier / pivot-handover rebuild loop.
+    void applyZwdConstraint(RtEpochContext& ctx);       ///< Soft a-priori ZWD pseudo-observation.
+    void applyNetworkIonoPrior(RtEpochContext& ctx);    ///< Network slant-iono BLUP prior (ionosphere-weighted).
+    void resolveAmbiguities(RtEpochContext& ctx);       ///< Integer ambiguity resolution (MLAMBDA).
+    void writeEpochTraces(RtEpochContext& ctx);         ///< Posterior extract, epoch log line, trace-logger sweep.
+
+    // =====================================================================
+    // initialize() seams (RealTimeEngineInit.cpp)
+    // =====================================================================
+    // Construction phase, run once before any frame is decoded.  ORDER IS A
+    // DEPENDENCY CHAIN, not a style choice: the product parsers feed the
+    // StateManager a-priori, which the processing components bind to, which the
+    // resolver and the state seed then read.  seedInitialState() in particular
+    // MUST follow initProcessingComponents() — PppModel::initializeState would
+    // otherwise clobber the a-priori with ppp_state_'s zero position, which on a
+    // live stream (no RINEX APPROX POSITION) leaves every satellite below the
+    // mask and the filter unable to bootstrap.
+
+    void armSsrStoreOptions();          ///< Leap-second override + the opt-in process-wide SSR store policies.
+    bool initProducts();                ///< Product/RINEX parsers, antenna seeding, product load + cache. False on cache failure.
+    void initStateManagerAndApriori();  ///< StateManager + the coarse a-priori position seed.
+    void initProcessingComponents();    ///< Models, filter, aiding, WLS, slip detectors + the "not wired into RT" warnings.
+    void initAmbiguityResolver();       ///< MLAMBDA resolver setup.
+    void seedInitialState();            ///< initializeState + the Earth-centred a-priori fallback.
+    void initTraceLoggers();            ///< TraceLogger, the L10 SSR-consumer trace, slip traces.
+
+    // =====================================================================
+    // feedRtcmFrame() seams (RealTimeEngineIngest.cpp)
+    // =====================================================================
+    // The observation-buffering loop and the broadcast-ephemeris push are
+    // deliberately NOT cut: both call anonymous-namespace helpers
+    // (isSystemActive, refreshGlonassSlots) that are file-local to
+    // RealTimeEngine.cpp by design, and hoisting those into a new internal
+    // header to relocate 51 lines is a worse trade than leaving them in place.
+
+    /// Push decoded SSR records under the per-stream RTA-8(b) accept policy.
+    /// @return the number of records the policy DROPPED (never pushed).
+    std::size_t ingestSsrRecords(RtcmParser& parser, SsrAcceptPolicy accept);
+
+    /// Per-frame SSR / ephemeris ingest counters + the obs↔SSR drain trigger.
+    void logRtcmIngestCounters(RtcmParser& parser, std::size_t n_ssr_dropped);
+
+    /// RTCM 1005/1006 reference-station ARP → filter a-priori seed (RTA-12(3) gated).
+    void seedAprioriFromStationCoords(RtcmParser& parser);
 
     GnssConfig&  config_;
     LogManager&  log_manager_;

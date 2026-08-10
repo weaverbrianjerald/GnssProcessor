@@ -1,0 +1,58 @@
+{
+ "_comment": [
+  "EXT-63, arm 21 — the 1 h SETTLED-WINDOW grading of arm 20 (canonical + LV-1 + LV-2",
+  "+ LV-4, the frame-invariant carry screen).  Counterpart of arm 19 (LV-1+LV-2, no",
+  "LV-4), which is the reference this arm is read against.",
+  "",
+  "WHY 1 h IS REQUIRED HERE.  The arm-20 smoke did exactly what the card intended to",
+  "the SCREEN -- 1148 of 1219 harvests folded (arm 18: 381), 11 erases on genuine",
+  "peer-relative outliers, and the retired frame screen would have withheld 852 of",
+  "those same folds (74.2 %) -- but the LEVEL over those 20 epochs got noisier",
+  "(mean 39.2 vs arm 18's 25.8 against GIM 32.24, swinging 19.5-61.6).  20 epochs is",
+  "inside ignition, where the confounded direction is re-realizing by metres per",
+  "epoch; that window cannot separate 'the extra carry information is harmful' from",
+  "'ignition is louder when more priors fold'.  The standing rule applies: grade on a",
+  "settled window.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - Fold fraction >> arm 19's 51.9 % -- approaching the harvest count, since the",
+  "   withheld population was a frame artifact, not receiver health.",
+  " - Erase count stays SMALL (order 10-100 over 121 epochs at 61 stations) and the",
+  "   max robust sigma-hat stays order 1-2 m.  A run where erases climb into the",
+  "   hundreds means the peer-relative scale is tracking a real per-station",
+  "   instability, which is a finding about the network, not about the screen.",
+  " - a00: the settled second half sits closer to GIM 32.24 than arm 19's (which",
+  "   ended 33.08 with mean 35.09).  The load-bearing question is the VARIANCE: if",
+  "   the extra folds mostly carry between-station DIFFERENCE information, the",
+  "   breathing amplitude should NARROW; if they re-import frame content faster than",
+  "   LV-2's mu drains it, the amplitude WIDENS and mu grows -- arm 20 already showed",
+  "   max |mu| 1.96 -> 8.87 m when the folds tripled, so read mu against the fold",
+  "   count, not on its own.",
+  " - If the amplitude widens at 1 h: the honest reading is that the carry's",
+  "   information is worth admitting only once its common mode is drained on a",
+  "   per-epoch basis faster than lag-1 -- i.e. the next card is mu's LAG, not the",
+  "   screen.  Say that rather than re-tightening the screen to hide it.",
+  " - Watch the two sigma0 families (the lane A/B lesson): prior side quieter while",
+  "   the post-fit data side gets louder is OVER-RETENTION, not improvement."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "rx_cb_carry_step_gate": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv12_ig/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv12_ig/state_snapshot.bin"
+ }
+}

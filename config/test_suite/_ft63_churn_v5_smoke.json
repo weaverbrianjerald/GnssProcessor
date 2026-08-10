@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "CHURN CARD \u2014 10-EPOCH SMOKE of the v5 arm (staged cadence).  Sole deltas over the leg",
+    "config are the 300 s duration and its own output/snapshot paths."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_v5.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/churn_v5_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_v5_smoke/state_snapshot.bin"
+  }
+}

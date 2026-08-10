@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "PD-SAFE FOLD CARD - 10-EPOCH SMOKE of the OFF arm (staged cadence: smoke first, >=1 h",
+    "only once it is clean).  Sole deltas over the leg config are the 300 s duration and its",
+    "own output/snapshot paths.",
+    "",
+    "WHAT A SMOKE CAN SHOW: that the INC-0 wiring FIRES (the run-end Card-4 PD-safe block",
+    "prints, ddfold_epochs > 0) and that the solve is unchanged.  It CANNOT show convergence -",
+    "10 epochs from cold is still ignition, and no dd_sigma_cyc or med|frac_cyc| verdict may",
+    "be read from it."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_off.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_off_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_off_smoke/state_snapshot.bin"
+  }
+}

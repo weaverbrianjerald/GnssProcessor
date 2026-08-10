@@ -1,0 +1,518 @@
+/**
+ * @file NetworkSdEwlAr.cpp
+ * @brief Implementation of @ref networkSdEwlAr — the SD extra-wide-lane integer
+ *        decision (increment 2a, Route B + the A2 DD-to-SD datum propagation).
+ *        See the header for the algebra, the channel-identity precondition, and the
+ *        standing-invariant-#1 flip response.
+ */
+
+#include "filter/NetworkSdEwlAr.hpp"
+
+#include "app/NetworkRunContext.hpp"
+#include "common/Constants.hpp"
+#include "config/GnssConfig.hpp"
+#include "filter/NetworkRunTypes.hpp"
+#include "filter/NetworkSbasis.hpp"
+#include "filter/StateKeySchema.hpp"
+#include "filter/StateManager.hpp"
+#include "logging/NetworkRunTraces.hpp"
+#include "slip/MwSlipDetector.hpp"
+
+#include <fmt/format.h>
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cmath>
+#include <deque>
+#include <map>
+#include <set>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+namespace GnssProcessor {
+
+bool sdEwlBands(char cons, char& b1, char& b2, double& f1, double& f2) {
+    if (cons == 'G') {   // GPS EWL (L2,L5): lambda_EWL = c/(f2-f5) = 5.861 m
+        b1 = '2'; b2 = '5';
+        f1 = Constants::GPS_L2_FREQ; f2 = Constants::GPS_L5_FREQ;
+        return true;
+    }
+    if (cons == 'E') {   // Galileo UWL (E5b,E5a): lambda = c/(f7-f5) = 9.768 m
+        b1 = '7'; b2 = '5';
+        f1 = Constants::GAL_E5B_FREQ; f2 = Constants::GAL_E5A_FREQ;
+        return true;
+    }
+    return false;        // BeiDou deferred (clock divergence), GLONASS excluded (FDMA)
+}
+
+SdEwlFlipVerdict sdEwlFlipCheck(bool have_prev, long long n_prev,
+                                std::size_t count_prev, long long n_now,
+                                std::size_t count_now) {
+    if (!have_prev) return SdEwlFlipVerdict::Fresh;
+    if (count_now < count_prev) return SdEwlFlipVerdict::Restart;
+    return n_now == n_prev ? SdEwlFlipVerdict::Stable : SdEwlFlipVerdict::Flip;
+}
+
+double sdEwlRoundingFfr(double sigma_cyc) {
+    if (!(sigma_cyc > 0.0)) return 1.0;          // a noiseless scalar rounds perfectly
+    return std::erf(0.5 / (sigma_cyc * std::sqrt(2.0)));
+}
+
+std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
+    const std::map<std::string, std::map<std::string, SdEwlArcStat>>& arcs,
+    const std::string& r0,
+    double max_frac_cyc,
+    double min_ffr,
+    SdEwlPropagateTally& tally) {
+    std::map<std::string, std::map<std::string, SdEwlDecision>> out;
+    const auto r0it = arcs.find(r0);
+    if (arcs.size() < 2 || r0it == arcs.end()) return out;
+
+    // Adjacency: two stations can form a DD only if they share >= 2 satellites — one to
+    // BE the quantity and one to be the link that removes the two station terms.
+    std::map<std::string, std::set<std::string>> adj;
+    for (auto a = arcs.begin(); a != arcs.end(); ++a) {
+        auto b = a; ++b;
+        for (; b != arcs.end(); ++b) {
+            std::size_t common = 0;
+            for (const auto& [sat, st] : a->second) {
+                (void)st;
+                if (b->second.count(sat) && ++common >= 2) break;
+            }
+            if (common >= 2) { adj[a->first].insert(b->first);
+                               adj[b->first].insert(a->first); }
+        }
+    }
+    if (!adj.count(r0)) return out;
+
+    // A2: N_SD(r0) == 0.  r0's own true integers are absorbed into the per-satellite
+    // frame constant, which is exactly the classical WL-FCB modulo-lambda definition.
+    //
+    // `framed` tracks which satellites have a frame constant yet.  r0 seeds it, and a
+    // satellite that r0 cannot see is FRAMED AT THE FIRST STATION THAT REACHES IT —
+    // otherwise it could never receive an integer at all, since the propagation only
+    // relays satellites the parent already holds.  That extension is legitimate, and
+    // this is exactly why: the frame constant is per SATELLITE, so wherever it is
+    // defined, the residual offset in any SD difference stays ONE constant per
+    // (satellite pair) and is identical at every station reading it — which is the only
+    // property A2 needs (and what SdEwlDatumTest pins).  At a 50-station global roster
+    // r0 sees roughly a third of a constellation at once, so without this the yield
+    // would be a third of the arcs.
+    std::set<std::string> framed;
+    for (const auto& [sat, st] : r0it->second) {
+        (void)st;
+        out[r0][sat] = SdEwlDecision{ 0, 0.0, 1.0, false };
+        framed.insert(sat);
+        ++tally.datum;
+    }
+
+    const auto statOf = [&](const std::string& sta,
+                            const std::string& sat) -> const SdEwlArcStat* {
+        const auto it = arcs.find(sta);
+        if (it == arcs.end()) return nullptr;
+        const auto jt = it->second.find(sat);
+        return jt == it->second.end() ? nullptr : &jt->second;
+    };
+
+    // One propagation step: assign station `r` from an already-assigned station `q`.
+    const auto propagate = [&](const std::string& q, const std::string& r) -> bool {
+        const auto qit = out.find(q);
+        if (qit == out.end()) return false;
+        // Link satellite: co-visible, already assigned at q, maximizing the WEAKER of
+        // the two arc maturities; tie-break ascending satellite name.  The link absorbs
+        // the per-station free integer a_r, so it is a DATUM choice — deliberately NOT
+        // gated, because gating a gauge only shrinks coverage without adding rigour.
+        std::string link;
+        std::size_t link_n = 0;
+        for (const auto& [sat, dec] : qit->second) {
+            (void)dec;
+            const SdEwlArcStat* aq = statOf(q, sat);
+            const SdEwlArcStat* ar = statOf(r, sat);
+            if (!aq || !ar) continue;
+            const std::size_t m = std::min(aq->count, ar->count);
+            if (m > link_n || (m == link_n && !link.empty() && sat < link)) {
+                link = sat; link_n = m;
+            }
+        }
+        if (link.empty()) return false;
+        const SdEwlArcStat* aq_l = statOf(q, link);
+        const SdEwlArcStat* ar_l = statOf(r, link);
+        auto& dst = out[r];
+        if (!dst.count(link)) {
+            dst[link] = SdEwlDecision{ qit->second.at(link).n_cyc, 0.0, 1.0, false };
+            ++tally.datum;
+        }
+        for (const auto& [sat, dec] : qit->second) {
+            if (sat == link || dst.count(sat)) continue;
+            const SdEwlArcStat* aq = statOf(q, sat);
+            const SdEwlArcStat* ar = statOf(r, sat);
+            if (!aq || !ar) continue;
+            // Route B, in cycles:
+            //   DD = [u(q,s) - u(q,link)] - [u(r,s) - u(r,link)]
+            // The receiver EWL bias cancels inside each station's own SD; the satellite
+            // bias pair cancels between the two stations.  Pure integer + noise.
+            const double dd = (aq->u_cyc - aq_l->u_cyc) - (ar->u_cyc - ar_l->u_cyc);
+            if (!std::isfinite(dd)) continue;
+            ++tally.attempts;
+            const double nd = std::round(dd);
+            const double frac = dd - nd;
+            const double sigma = std::sqrt(aq->var_cyc2 + aq_l->var_cyc2
+                                           + ar->var_cyc2 + ar_l->var_cyc2);
+            const double ffr = sdEwlRoundingFfr(sigma);
+            if (std::abs(frac) > max_frac_cyc) { ++tally.reject_frac; continue; }
+            if (ffr < min_ffr)                 { ++tally.reject_ffr;  continue; }
+            // n(r,s) = n(q,s) - round(DD(q,r; s,link))
+            dst[sat] = SdEwlDecision{ dec.n_cyc - static_cast<long long>(nd),
+                                      std::abs(frac), ffr, true };
+            framed.insert(sat);
+            ++tally.fixed;
+        }
+        // Frame extension: any satellite this station holds that has NO frame constant
+        // yet gets one here, as a datum (see the `framed` note above).  Station r's own
+        // constant a_r is already fixed by the link assigned above, so this is a
+        // well-defined choice of b_s and not a measurement — hence no gate.
+        for (const auto& [sat, st] : arcs.at(r)) {
+            (void)st;
+            if (framed.count(sat) || dst.count(sat)) continue;
+            dst[sat] = SdEwlDecision{ 0, 0.0, 1.0, false };
+            framed.insert(sat);
+            ++tally.datum;
+        }
+        return true;
+    };
+
+    // BFS spanning tree from r0, neighbours in ascending station NAME so the traversal
+    // — and therefore every rounding — is deterministic.
+    std::set<std::string> done{ r0 };
+    std::deque<std::string> queue{ r0 };
+    while (!queue.empty()) {
+        const std::string q = queue.front();
+        queue.pop_front();
+        for (const std::string& r : adj[q]) {
+            if (done.count(r)) continue;
+            if (!propagate(q, r)) continue;   // no admissible link: try another parent
+            done.insert(r);
+            queue.push_back(r);
+        }
+    }
+    // Bounded closure sweeps: a satellite visible at r but not at r's tree PARENT gets
+    // no integer from the tree alone, while a different neighbour may carry both it and
+    // a link.  This is coverage, not a second estimator, and it must terminate: four
+    // sweeps, stopping early once a sweep changes nothing.
+    for (int sweep = 0; sweep < 4; ++sweep) {
+        bool changed = false;
+        for (const auto& [r, st] : arcs) {
+            (void)st;
+            for (const std::string& q : adj[r]) {
+                if (!out.count(q)) continue;
+                const std::size_t before = out[r].size();
+                propagate(q, r);
+                if (out[r].size() != before) changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    return out;
+}
+
+namespace {
+
+using PairKey = std::pair<std::string, std::string>;
+
+/// One admitted arc: @ref SdEwlArcStat plus the BIA frame (a per-row property the
+/// propagation never sees, because the caller keeps each graph frame-uniform).
+struct Arc {
+    double      u_cyc{ 0.0 };
+    double      var_cyc2{ 0.0 };
+    std::size_t count{ 0 };
+    bool        bia{ false };
+};
+
+}  // namespace
+
+void networkSdEwlAr(
+    NetworkRunContext& ctx,
+    const GnssConfig& config_,
+    const std::shared_ptr<spdlog::logger>& log,
+    NetworkRunTraces& traces,
+    NetworkSetupResult& setup,
+    const SyncedEpoch& se,
+    double now_s,
+    const std::vector<std::vector<PppObservation>>& modeled,
+    const std::vector<bool>& present) {
+    const auto& cfg = config_.getNetworkConfig().sd_ewl;
+    auto& fix = ctx.carry.sd_ewl_fix;
+    // Cleared UNCONDITIONALLY and first: with the knob off, PASS B must see an empty
+    // map, and a stale publication from a previous epoch would be a silent hold.
+    fix.clear();
+    if (!cfg.enable || !cfg.fix_enable) return;
+
+    auto& stations = setup.stations;
+    auto& C = ctx.counters;
+    auto& prev = ctx.carry.sd_ewl_prev;
+    auto& r0_sticky = ctx.carry.sd_ewl_r0;
+    ++C.sdewl_epochs;
+    (void)now_s;   // arc continuity is judged by the detector's own sample count
+
+    const auto tr = [&](const char* status, char cons, const std::string& sat,
+                        const std::string& sta, const PairKey& pk,
+                        const std::string& r0, const std::string& parent,
+                        const std::string& link, std::size_t count, double dd,
+                        double frac, double sigma, double ffr, long long n,
+                        long long n_prev) {
+        if (!traces.sd_ewl_ar_trace) return;
+        traces.sd_ewl_ar_trace
+            << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
+            << cons << ',' << sat << ',' << sta << ',' << status << ','
+            << pk.first << ',' << pk.second << ',' << r0 << ',' << parent << ','
+            << link << ',' << count << ','
+            << fmt::format("{:.4f},{:.4f},{:.4f},{:.6f}", dd, frac, sigma, ffr) << ','
+            << n << ',' << n_prev << '\n';
+    };
+
+    // ---------------------------------------------------------------------------
+    // 1. Collect every mature EWL arc, keyed by the CHANNEL PAIR it sits on.
+    //    Candidate phase signals come from StateManager's own ambiguity key map (the
+    //    authority — a reconstructed key that fails to round-trip makes every arc look
+    //    absent), NOT from h2local: this seam runs before assembly, and an arc without
+    //    a local column this epoch still carries perfectly good MW information for the
+    //    DD.  The row builder applies its own column test later.
+    // ---------------------------------------------------------------------------
+    // cons -> sat -> channel pair -> station index -> Arc
+    std::map<char, std::map<std::string, std::map<PairKey, std::map<std::size_t, Arc>>>> pool;
+
+    for (std::size_t i = 0; i < stations.size(); ++i) {
+        if (i >= present.size() || !present[i]) continue;
+        NetStation& st = stations[i];
+        if (!st.mw_slip || !st.sm) continue;      // no MW accumulator at this station
+
+        // (satellite, band) -> the estimated phase signals on that band, ascending.
+        std::map<std::pair<std::string, char>, std::vector<std::string>> cand;
+        for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
+            (void)sidx;
+            const auto parts = StateKeys::parseAmbiguityKey(key);
+            if (!parts) continue;
+            const std::string& sig = parts->signal;
+            if (sig.size() < 2 || sig[0] != 'L') continue;
+            cand[{ parts->satellite, sig[1] }].push_back(sig);
+        }
+        for (auto& kv : cand) std::sort(kv.second.begin(), kv.second.end());
+
+        const std::vector<PppObservation>& obs =
+            (i < modeled.size()) ? modeled[i] : std::vector<PppObservation>{};
+        std::set<std::string> seen_sats;
+        for (const auto& o : obs) {
+            if (o.satellite.empty() || !seen_sats.insert(o.satellite).second) continue;
+            const char cons = o.satellite.front();
+            char b1 = 0, b2 = 0;
+            double f1 = 0.0, f2 = 0.0;
+            if (!sdEwlBands(cons, b1, b2, f1, f2)) continue;
+            const auto c1 = cand.find({ o.satellite, b1 });
+            const auto c2 = cand.find({ o.satellite, b2 });
+            if (c1 == cand.end() || c2 == cand.end()) continue;
+            const double lam_nom = Constants::SPEED_OF_LIGHT / (f1 - f2);
+            for (const std::string& s1 : c1->second) {
+                for (const std::string& s2 : c2->second) {
+                    const auto q = st.mw_slip->arcZdMean(o.satellite, s1, s2);
+                    if (!q.exists || !q.valid) continue;
+                    if (q.count < static_cast<std::size_t>(cfg.min_arc_epochs)) continue;
+                    // Mis-tiering guard: the detector's lambda comes from the ACTUAL
+                    // frequencies, so a mismatch means this pair is not the tier whose
+                    // lambda the integer would be expressed in.
+                    if (!(q.lambda_wl > 0.0) || !std::isfinite(q.lambda_wl)
+                        || std::abs(q.lambda_wl - lam_nom) > 1e-6 * std::abs(lam_nom))
+                        continue;
+                    if (!std::isfinite(q.mean_m)) continue;
+                    Arc a;
+                    a.u_cyc = q.mean_m / q.lambda_wl;
+                    // Variance OF THE MEAN, floored from the per-sample scale: the
+                    // served variance shrinks as 1/n and measured 13-60x optimistic
+                    // against the rows' own residual spread, and an optimistic sigma
+                    // inflates FFR into buying wrong fixes (A1, decision half).
+                    const double n = static_cast<double>(std::max<std::size_t>(q.count, 1));
+                    const double floor_m2 =
+                        cfg.fix_sigma_floor_m * cfg.fix_sigma_floor_m / n;
+                    a.var_cyc2 = std::max(q.var_of_mean_m2, floor_m2)
+                                 / (q.lambda_wl * q.lambda_wl);
+                    a.count = q.count;
+                    a.bia = q.bia_corrected;
+                    if (!std::isfinite(a.var_cyc2)) continue;
+                    pool[cons][o.satellite][PairKey{ s1, s2 }][i] = a;
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // 2. Per (constellation, satellite): elect the NETWORK-COMMON channel pair.
+    //    B_EWL^s is a per-SIGNAL combination of the satellite phase and code biases,
+    //    so it cancels in the between-station DD only if both stations' MW sits on the
+    //    SAME two channels.  Consensus (most stations), tie-break ascending pair name
+    //    for byte-identity.  Stations on any other pair are EXCLUDED and counted.
+    // ---------------------------------------------------------------------------
+    // cons -> sat -> (elected pair, station -> Arc)
+    std::map<char, std::map<std::string, std::pair<PairKey, std::map<std::size_t, Arc>>>> chan;
+    for (const auto& [cons, sats] : pool) {
+        for (const auto& [sat, pairs] : sats) {
+            const PairKey* best = nullptr;
+            std::size_t best_n = 0;
+            for (const auto& [pk, bysta] : pairs) {
+                if (bysta.size() > best_n || (bysta.size() == best_n && best
+                                              && pk < *best)) {
+                    best = &pk; best_n = bysta.size();
+                }
+            }
+            if (!best) continue;
+            const PairKey pk = *best;
+            // A station EXCLUDED by the consensus is one with no arc on the elected pair
+            // at all.  Counting every non-elected (pair, station) entry instead would
+            // double-count the stations that hold arcs on SEVERAL pairs and were
+            // admitted on the elected one — measured 41 % of resolved arcs have two
+            // candidates, so that error is large, not cosmetic.
+            std::size_t excluded = 0;
+            for (const auto& [other, bysta] : pairs) {
+                if (other == pk) continue;
+                for (const auto& [sta, a] : bysta) {
+                    (void)a;
+                    if (!pairs.at(pk).count(sta)) ++excluded;
+                }
+            }
+            C.sdewl_dd_skip_channel += static_cast<long long>(excluded);
+            // BIA frame must be uniform across the DD's four legs: the satellite-bias
+            // cancellation needs ONE frame (the same rule NetworkMwWlLayer applies per
+            // cycle).  Majority vote within the elected pair, minority dropped and
+            // counted — measured, every EWL arc came back bia_corrected = false, so this
+            // is a guard against a future mixed state, not a routine loss.
+            const auto& bysta = pairs.at(pk);
+            std::size_t n_bia = 0;
+            for (const auto& [sta, a] : bysta) { (void)sta; if (a.bia) ++n_bia; }
+            const bool want_bia = 2 * n_bia > bysta.size();
+            std::map<std::size_t, Arc> keep;
+            for (const auto& [sta, a] : bysta) {
+                if (a.bia == want_bia) keep[sta] = a;
+                else ++C.sdewl_dd_skip_frame;
+            }
+            if (keep.empty()) continue;
+            C.sdewl_dd_pairs_seen += static_cast<long long>(keep.size());
+            chan[cons][sat] = { pk, std::move(keep) };
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // 3. Per constellation: elect r0 (STICKY), propagate, respond to flips, publish.
+    // ---------------------------------------------------------------------------
+    for (auto& [cons, sats] : chan) {
+        // Re-key into the name-addressed graph the pure propagation takes, and keep the
+        // name -> index map for the publication (the produce loop is index-addressed).
+        std::map<std::string, std::map<std::string, SdEwlArcStat>> graph;
+        std::map<std::string, std::size_t> idx_of;
+        for (const auto& [sat, ps] : sats)
+            for (const auto& [sta, a] : ps.second) {
+                const std::string& nm = stations[sta].name;
+                idx_of[nm] = sta;
+                graph[nm][sat] = SdEwlArcStat{ a.u_cyc, a.var_cyc2, a.count };
+            }
+        if (graph.size() < 2) {
+            C.sdewl_dd_no_graph += static_cast<long long>(graph.size());
+            continue;
+        }
+        // r0: STICKY — the previous epoch's choice if it is still in the graph, else the
+        // station with the most admitted arcs, tie-break ascending NAME.  Only r0 sets
+        // the SD frame (the spanning tree and each station's link satellite cancel in
+        // the between-satellite difference), so stability HERE is what keeps the folded
+        // integers from re-datuming under ordinary topology churn — and a change is a
+        // counted event, because it shifts every propagated integer in the component.
+        std::string r0 = graph.begin()->first;
+        {
+            const auto it = r0_sticky.find(cons);
+            if (it != r0_sticky.end() && graph.count(it->second)) {
+                r0 = it->second;
+            } else {
+                std::size_t best_n = 0;
+                for (const auto& [nm, ss] : graph)
+                    if (ss.size() > best_n) { r0 = nm; best_n = ss.size(); }
+                if (it != r0_sticky.end()) ++C.sdewl_sd_ref_reelected;
+                r0_sticky[cons] = r0;
+            }
+        }
+        ++C.sdewl_components;
+
+        SdEwlPropagateTally tally;
+        const auto decided = sdEwlPropagate(graph, r0, cfg.fix_max_frac_cyc,
+                                            cfg.fix_min_ffr, tally);
+        C.sdewl_dd_fix_attempts += tally.attempts;
+        C.sdewl_dd_reject_frac  += tally.reject_frac;
+        C.sdewl_dd_reject_ffr   += tally.reject_ffr;
+        C.sdewl_dd_datum        += tally.datum;
+
+        // -----------------------------------------------------------------------
+        // 4. Flip response (standing invariant #1) and publication.
+        // -----------------------------------------------------------------------
+        for (const auto& [nm, ss] : graph) {
+            const std::size_t sta = idx_of.at(nm);
+            const auto dit = decided.find(nm);
+            for (const auto& [sat, stat] : ss) {
+                const PairKey& pk = sats.at(sat).first;
+                const bool have = dit != decided.end() && dit->second.count(sat);
+                if (!have) {
+                    ++C.sdewl_dd_no_link;
+                    tr("NO_LINK", cons, sat, nm, pk, r0, "", "", stat.count,
+                       0.0, 0.0, 0.0, 0.0, 0, 0);
+                    continue;
+                }
+                const SdEwlDecision& d = dit->second.at(sat);
+                const auto key = std::make_tuple(sta, cons, sat);
+                const auto pit = prev.find(key);
+                const long long n_prev = pit != prev.end() ? pit->second.first : 0;
+                const SdEwlFlipVerdict v =
+                    sdEwlFlipCheck(pit != prev.end(), n_prev,
+                                   pit != prev.end() ? pit->second.second : 0,
+                                   d.n_cyc, stat.count);
+                if (v == SdEwlFlipVerdict::Restart) ++C.sdewl_dd_restart;
+                if (v == SdEwlFlipVerdict::Flip)    ++C.sdewl_dd_flip;
+                const bool vetoed = (v == SdEwlFlipVerdict::Flip);
+                prev[key] = { d.n_cyc, stat.count };
+                SdEwlFix f;
+                f.n_cyc = d.n_cyc;
+                f.sig1 = pk.first;
+                f.sig2 = pk.second;
+                f.frac_cyc = d.frac_cyc;
+                f.ffr = d.ffr;
+                f.measured = d.measured;
+                f.usable = !vetoed;
+                fix[{ sta, cons }][sat] = f;
+                if (f.usable) ++C.sdewl_dd_fixed;
+                tr(vetoed ? "FLIP" : (nm == r0 ? "R0" : (d.ffr >= 1.0 ? "LINK"
+                                                                      : "FIXED")),
+                   cons, sat, nm, pk, r0, "", "", stat.count, 0.0, d.frac_cyc, 0.0,
+                   d.ffr, d.n_cyc, n_prev);
+            }
+        }
+    }
+
+    // Drop the flip memory of arcs that vanished, so a satellite that disappears for
+    // an hour and returns is not compared against a stale integer (that comparison
+    // would charge a spurious flip and veto a legitimate fix forever after).
+    for (auto it = prev.begin(); it != prev.end();) {
+        const auto& [sta, cons, sat] = it->first;
+        const auto cit = chan.find(cons);
+        const bool alive = cit != chan.end() && cit->second.count(sat)
+                           && cit->second.at(sat).second.count(sta);
+        it = alive ? std::next(it) : prev.erase(it);
+    }
+
+    if (traces.sd_ewl_ar_trace) traces.sd_ewl_ar_trace.flush();
+    log->debug("Network (SD EWL 2a) TOW {:.1f}: {} arc(s) admitted, {} DD attempt(s), "
+               "{} fixed, {} rej-frac, {} rej-FFR, {} flip-vetoed, {} restart, "
+               "{} component(s), r0 {}",
+               se.time.tow, C.sdewl_dd_pairs_seen, C.sdewl_dd_fix_attempts,
+               C.sdewl_dd_fixed, C.sdewl_dd_reject_frac, C.sdewl_dd_reject_ffr,
+               C.sdewl_dd_flip, C.sdewl_dd_restart, C.sdewl_components,
+               [&] { std::string s; for (const auto& [c, nm] : r0_sticky)
+                                        s += fmt::format("{}={} ", c, nm);
+                     return s; }());
+}
+
+} // namespace GnssProcessor

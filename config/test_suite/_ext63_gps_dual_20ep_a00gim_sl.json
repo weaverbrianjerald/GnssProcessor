@@ -1,0 +1,45 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 12 — SINGLE-LAYER alternative to arm 10 (user direction, 2026-08-04):",
+  "kill iono layer 2 outright instead of pinning its level.  layer2_max_degree: 0; the a00",
+  "GIM anchor and the rxcb datum stay as in arms 9-11.",
+  "",
+  "WHY (vs arm 10's L2 pin): (1) the grading reference — the COD GIM — IS a single thin",
+  "shell at 450 km, so single-layer makes the level directly commensurate, no summed-shell",
+  "bookkeeping; (2) arm 9's lesson is that the confounded level tension re-routes to the",
+  "loosest level-like direction — REMOVING the direction is strictly stronger than pinning",
+  "it; (3) the dual-layer field earned its keep on the SELF-CONTAINED lineage (Iono-2",
+  "mech-A, representation) — EXT-CB's question is level realization, and the second shell",
+  "adds nothing this campaign needs.  Keep dual-layer where it was validated.",
+  "",
+  "PREDICTION (stated before the run): reproduces arm 10's layer-1 dynamics — ignition",
+  "~24 (arm 10: 23.9), dip through the ignition era, upward inflection by ~ep 16, deg-1",
+  "dipole peak ~ep 6 then decay, sh_health gate 0/0/0, a00_in_band 20/20 — because arm",
+  "10's L2 pin (info 4.0/ep) had already effectively blocked the escape, so removing the",
+  "shell should be dynamically near-equivalent.  If it matches, single-layer + a00 GIM",
+  "anchor + rxcb datum is the CANONICAL EXT-CB posture and the next 1 h validation runs",
+  "this shape.  A material mismatch means the L2 shell was interacting with the pump",
+  "beyond its level dof — name it before choosing.",
+  "",
+  "20 epochs is inside ignition: LEVEL + gate wiring read only, no settled-science claim."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00gim_sl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00gim_sl/state_snapshot.bin"
+ }
+}

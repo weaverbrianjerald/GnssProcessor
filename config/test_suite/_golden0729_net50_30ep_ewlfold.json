@@ -1,0 +1,57 @@
+{
+  "_comment": [
+    "EWL-FOLD BENEFIT arm — the measurement nobody ever made.",
+    "",
+    "Baseline is _golden0729_net50_30ep_wl1off.json (WL-1 float layer OFF, since that is",
+    "measured net-harmful this session), so the ONLY functional delta is:",
+    "    network.mw_wl.ewl_fold_rows : false -> true",
+    "That isolates 'what does injecting the near-perfect EWL/UWL integers BUY?' with no",
+    "WL-1 confound.",
+    "",
+    "WHY: the EWL/UWL decision tiers fix ~8792 integers per 31 epochs at mean R = 0.0001",
+    "cyc^2 (100% FFR-fixed) on bands 5/6/7/8 — and network_estimability.csv shows that the",
+    "two SOFTEST ESTIMABLE directions of the reduced shared normal matrix, every single",
+    "epoch, are third-band Galileo phase/code biases on exactly those bands:",
+    "    ep1  ev 1.29e-2  PB|E08|L5X, PB|E08|L8X, PB|E14|L5X, PB|E13|L5X",
+    "    ep1  ev 1.24e-2  PB|E09|L5X, CB|E09|C5X, PB|E09|L8X, PB|E09|L7X",
+    "    ep3  ev 1.62e-2  PB|E18|L5X, PB|E18|L8X, PB|E18|L7X, PB|E18|L6X",
+    "against ev_max ~4.8e5.  The stranded integer information sits precisely on the states",
+    "the network is worst at determining.",
+    "",
+    "PRIOR ART + THE GAP: ewl_fold_rows was previously rejected on CHURN COST (D5 679 vs",
+    "348 on a healthy network).  No one measured the BENEFIT.  The loader warns this is an",
+    "'F-A STUDY SHAPE'; that is exactly what this is — a diagnostic study arm, default-OFF.",
+    "",
+    "PRIMARY METRIC (network_sh_spectrum.csv, per epoch, 31 rows): ev1..ev5 (the five",
+    "smallest eigenvalues) and mass_pb / span_pb (eigenvector mass partitioned by family).",
+    "If folding the EWL integers lifts the soft end of the spectrum materially, the prize is",
+    "real and fixing the foldReducedDdPriors composition is justified.  If ev1..ev5 barely",
+    "move, the integer information is not where we think it is and the whole MW/WL cascade",
+    "can be closed with confidence.  Either result is decisive.",
+    "",
+    "SECONDARY (the known cost, for the trade): n_d5_flags / n_slip_refloats /",
+    "sigma0_pf_code / clock_std_m / worst_dev_m from network_epoch_status.csv.",
+    "",
+    "CAVEAT: these rows fold through the SAME foldReducedDdPriors call as the Card-4 carry",
+    "blocks and share ambiguity columns, so they inherit the documented non-composition",
+    "(NetworkNormalEquations.hpp:395; dropped cross term).  A measured benefit here is",
+    "therefore a LOWER BOUND on what an exactly-composed injection would give."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+
+  "processing": {
+    "eigen_threads": 6
+  },
+
+  "network": {
+    "parallel_max_threads": 6,
+    "mw_wl": {
+      "ewl_fold_rows": true,
+      "f6_max_rows": 200000,
+      "f6_all_blocks": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/golden_0729/ewlfold/products.txt"
+  }
+}

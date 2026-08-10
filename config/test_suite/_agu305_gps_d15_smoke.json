@@ -1,0 +1,39 @@
+{
+ "_comment": [
+  "305-station GPS-only, SH degree 15 SINGLE layer, 10-epoch speed probe.",
+  "",
+  "CHANGES vs _agu305_gps_smoke.json:",
+  "  1. estimation.global_vtec_sh.max_degree 8 -> 15 and layer2_max_degree 4 -> 0",
+  "     (single shell).  Coefficient count 81+25 = 106 -> 256, i.e. +150 SHARED",
+  "     columns.  This is a MODELLING choice, and it pushes cost UP, not down:",
+  "     the shared border grows and cov-consumers/reduce scale superlinearly in",
+  "     it.  The P3b ladder measured deg-15 at +34.4 % wall on 63 stations.",
+  "  2. processing.frequency_mode triple -> all.  NOTE this is a NO-OP for a",
+  "     GPS-only run: PppModel.cpp:82 maps BOTH Triple and All to {L1,L2,L5} for",
+  "     GPS.  It only differs for Galileo (adds E6,E5), GLONASS, BeiDou, QZSS.",
+  "     channel_mode was ALREADY 'single' in this lineage.",
+  "",
+  "TIMING NOTE: epochs 1-2 of a 305 run are NOT representative -- the previous",
+  "probe ran 37 s, 37 s, then 298/303/323 s once the DD carry populated.  Read",
+  "the rate from epoch 4 onward."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu305_gps_smoke.json"
+ ],
+ "processing": {
+  "frequency_mode": "all",
+  "channel_mode": "single",
+  "max_duration_s": 300.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 15,
+   "layer2_max_degree": 0
+  }
+ },
+ "network": {
+  "max_duration_s": 300.0,
+  "product_output_path": "C:/GnssProcessor/runs/agu305_gps_d15_smoke/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu305_gps_d15_smoke/state_snapshot.bin"
+ }
+}

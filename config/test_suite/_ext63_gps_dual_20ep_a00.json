@@ -1,0 +1,71 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 3 — arm 2 plus ONE key: the a00 Kaula prior tightened from",
+  "sigma 30 TECU to 5 TECU.  This is a MECHANISM TEST, not a proposed fix.",
+  "",
+  "WHAT ARM 2 MEASURED.  With sbasis_complete armed the datum closed (0 gate withholds,",
+  "20/20 epochs SOLVED), but the SH health gate withheld 19 of 20 emissions and never",
+  "released ('STILL ENGAGED at run end — the era outlived the data').  The a00 trajectory",
+  "from network_vtec_sh_health.csv:",
+  "",
+  "    ep 1  a00 = +12.77 TECU   sigma 3.94",
+  "    ep 2  a00 = -49.98        sigma 2.40    <- SBC released its epoch-1 gauge row here",
+  "    ep 5  a00 = -51.92        sigma 1.24",
+  "    ep10  a00 = -69.43        sigma 0.98",
+  "    ep20  a00 = -80.15        sigma 0.91",
+  "",
+  "The estimate walks monotonically away from the DOY-129 field truth (30-33 TECU) while",
+  "its FORMAL SIGMA COLLAPSES — confident and wrong.  That is the diagonal-carry lock-in",
+  "signature, riding a direction that has no datum.",
+  "",
+  "THE DIAGNOSIS.  EXT-CB removes the satellite code-bias columns and, with them, the",
+  "per-(constellation,signal) SUM-TO-ZERO code-bias gauge.  That gauge was silently doing",
+  "double duty: it also anchored the RECEIVER-DCB common mode, which trades one-for-one",
+  "against the global ionosphere LEVEL (Odijk's i~ = i + d_r,GF - d^s,GF — hand d^s to the",
+  "product and the d_r half is left ungauged).  The rx DCB is a LOCAL, Schur-eliminated",
+  "state, so in the shared border the free direction shows up spread across the phase-bias",
+  "and SH columns — matching the sbc_engage attribution, whose top span was only 0.12",
+  "(PB:G06:L2X), i.e. a diffuse direction with no dominant column, NOT a per-satellite one.",
+  "Corroborating: the rx-CB carry withheld 869 of 1158 folds on its 10-sigma innovation",
+  "gate, and the rxcb prior-residual contingency is raw_flat-above 24 of 24 (100%) — the",
+  "receiver code-bias estimates jump while the raw observables are provably FLAT.",
+  "",
+  "WHAT THIS ARM DECIDES.  a00's Kaula prior (15 +- 30 TECU) is currently the ONLY thing",
+  "resisting that direction, and 1/30^2 leaves it 1.7x short of the rank-gate cutoff.  At",
+  "sigma 5 the information rises 36x (eigenvalue ~1.3e-4 -> ~4.8e-3, ~21x above cutoff).",
+  "Two outcomes, both informative, and the prior MEAN is deliberately left at its wrong-ish",
+  "15 TECU so the test is not tuned to the answer:",
+  "",
+  "  a00 settles near 25-35 TECU (i.e. it PULLS AWAY from the 15 TECU prior mean toward the",
+  "  true field): the data DOES determine the level; the prior only had to be strong enough",
+  "  to keep the solve out of the runaway basin.  Then the honest fix is a real receiver-DCB",
+  "  datum (the standard IGS zero-mean-over-receivers convention that replaces the",
+  "  satellite-DCB zero-mean we gave away), and this prior is a crutch.",
+  "",
+  "  a00 pins at ~15 TECU (sits on the prior mean): the data does NOT determine the level at",
+  "  all and the prior IS the entire datum.  That is the more serious reading, and it says",
+  "  the same about the W6 arms — where the level is being set by the satellite code-bias",
+  "  datum CONVENTION rather than by the observations.",
+  "",
+  "Either way this is a DIAGNOSTIC arm.  Do not inherit it into a science lineage."
+ ],
+ "_chain_note": [
+  "Extends the 1 h PARENT, not the arm-2 child: the loader refuses an extends chain deeper",
+  "than 8 levels and _ext63_gps_dual_1h.json already sits at 7 (it inherits the whole FT63",
+  "-> AGU63 -> golden63 lineage).  So arm 2's two deltas (duration, sbasis_complete) are",
+  "restated here rather than inherited."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": { "mean_vtec_prior_sigma_tecu": 5.0 }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "sbasis_complete": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00/state_snapshot.bin"
+ }
+}

@@ -24,6 +24,11 @@
 #include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
 #include "filter/NetworkWlRunTypes.hpp" // INC-9b: hoisted runNetwork()-local WL/RAII types
 #include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
+#include "filter/NetworkBlockBaarda.hpp"       // BlockFormal LOS-block census (networkBlockBaardaReport)
+#include "filter/NetworkCongruence.hpp"        // station congruence screen (networkCongruenceReport)
+#include "filter/NetworkMdb.hpp"               // Baarda MDB (networkMdbReport — the run-end body lives there)
+#include "filter/NetworkRedundancyCensus.hpp"  // redundancy census (kCensusMinPoolRows for the run-end line)
+#include "filter/NetworkPrefitCensus.hpp"      // prefit census (kNetPrefitMinTypeRows / kNetPrefitPinWeight for the run-end line)
 #include "app/NetworkSetupResult.hpp"   // INC-5: setup-phase handoff (setup) + navAvailabilityGpsSeconds
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
 #include "common/Constants.hpp"
@@ -64,6 +69,7 @@ int networkTeardown(
     const NetworkEstimator& est,
     const NetworkInvariantCarryDriver& carry_driver,
     const NetworkCarryVce& carry_vce_est,
+    const NetworkPriorResidual& prires_est,
     const SlipQcChannel& slip_qc,
     const NetworkMwWlLayer::Counters& mw_wl_run,
     const std::vector<EwlLane>& ewl_lanes,
@@ -71,6 +77,7 @@ int networkTeardown(
     const std::map<char, WlCounters>& wl_cons_run,
     const NetworkEmitRebase& emit_rebase_engine,
     const NetworkPbEmitFilter& pb_filter_engine,
+    const NetworkClockEmitRebase& clk_rebase_engine,
     const NetworkIonoDeweightGate& iono_deweight,
     const std::vector<SubBlockTimer>& sec_sub,
     const char* const* kSubNames,
@@ -362,6 +369,94 @@ int networkTeardown(
                   n_emitted, ctx.counters.n_gate_withheld_under,
                   ctx.counters.n_gate_withheld_over,
                   ctx.counters.nullspace_obs_min, ctx.counters.nullspace_obs_max);
+    // SBC (network.sbasis_complete) run-end telemetry.  Standing invariant #4
+    // with the WE-CI twist: an armed completion that never fired on a
+    // multi-constellation run means the deficiency it was built for never
+    // materialized (fine) OR the block is miswired — the observed-count
+    // envelope in the Card-DG line above tells the two apart (a max above the
+    // declared dim with n_sbc_epochs == 0 is the miswire).  Refusals are
+    // per-cause because each demands a different fix.
+    if (ctx.knobs.sbasis_complete_on) {
+        log->info("Network (SBC): S-basis completion constrained {} extra near-null "
+                  "direction(s) on {} epoch(s) (max {}/epoch); {} release edge(s) "
+                  "(satellite re-observed); {} unseparated direction(s) skipped to "
+                  "the drop-and-heal (machine-zero orphan class).  Refused: {} "
+                  "capped (> {} dirs — pathological epoch or rank_gate_tol counting "
+                  "real directions), {} weight-marginal (K2).  Per-direction "
+                  "attribution: network_events.csv tier GATE, events "
+                  "sbc_engage/sbc_release/sbc_skip/sbc_refuse (network.trace_events).",
+                  ctx.counters.n_sbc_dirs, ctx.counters.n_sbc_epochs,
+                  ctx.counters.sbc_max_dirs, ctx.counters.n_sbc_release,
+                  ctx.counters.n_sbc_degenerate,
+                  ctx.counters.n_sbc_capped, ctx.knobs.sbasis_complete_max,
+                  ctx.counters.n_sbc_weight_marginal);
+        if (ctx.counters.n_sbc_epochs == 0 && ctx.counters.nullspace_obs_max
+                                                  > ctx.counters.nullspace_obs_min)
+            log->warn("Network (SBC): ARMED but never fired while the observed "
+                      "near-null count moved ({}..{}) — if the max exceeds the "
+                      "declared dimension the completion is being bypassed "
+                      "(miswire), not idle.",
+                      ctx.counters.nullspace_obs_min,
+                      ctx.counters.nullspace_obs_max);
+    }
+    // DATUM GRAPH CENSUS (docs/SPEC_datum_graph_census.md) run-end telemetry.
+    // Standing invariant #4 in the form this card owns: the EXPECTED healthy
+    // reading is "k = 1 everywhere, zero predictions", which is byte-for-byte
+    // what a seam that was never called produces.  So `epochs` and
+    // `epochs_quiet` are BOTH printed, and a run that walked zero support edges
+    // is called out as a miswire rather than reported as a clean network.
+    if (ctx.knobs.dg_on) {
+        const auto& dg = ctx.counters.dg;
+        log->info("Network (datum graph): census ran {} epoch(s) — {} quiet (k = 1 on "
+                  "every constellation AND zero tier-2 predictions), {} fragmented "
+                  "(max k = {}), {} admitted support edge(s) walked.  PREDICTED: {} "
+                  "tier-1 (k-1)*d deficiencies, {} tier-2 zero-code-key directions over "
+                  "{} (sat, family) cell(s) ({} cell(s) had no code-bias layer, both "
+                  "predicates held off); companion zero-support predicate {}.  OBSERVED: "
+                  "{} extra direction(s) by count, {} with identities.  CONTINGENCY — "
+                  "predicted AND observed {}, predicted ONLY {}, observed ONLY {} "
+                  "(directions matching a prediction: {}); companion cells {} / {}.  "
+                  "Events: {} emitted, {} held.  Cost {:.2f} ms total, {:.3f} ms worst "
+                  "epoch (spec budget 0.5, hard limit 2.0).  MEASURE-ONLY: no weight, "
+                  "state, gate, SBC or declared dimension was touched.",
+                  dg.epochs, dg.epochs_quiet, dg.epochs_frag, dg.max_k, dg.edges,
+                  dg.pred_tier1, dg.pred_tier2, dg.cells_tier2, dg.cells_no_cb_layer,
+                  dg.pred_support, dg.obs_extras_count, dg.obs_dirs,
+                  dg.cell_pred_obs, dg.cell_pred_only, dg.cell_obs_only,
+                  dg.cell_obs_matched, dg.support_pred_obs, dg.support_pred_only,
+                  dg.events, dg.events_held, dg.ms, dg.ms_max);
+        if (dg.epochs == 0)
+            log->warn("Network (datum graph): ARMED but never ran a single census pass — "
+                      "the seam is not being reached (miswire), which is a different "
+                      "finding from a quiet network.");
+        else if (dg.edges == 0)
+            log->warn("Network (datum graph): ran {} epoch(s) and walked ZERO admitted "
+                      "support edges.  Tier 1 saw no graph at all, so its k = 1 reading "
+                      "is vacuous — the support source (modeled observations of FOLDED "
+                      "stations) is empty, not the network.",
+                      dg.epochs);
+        if (dg.epochs_count_only > 0)
+            log->info("Network (datum graph): {} epoch(s) reconciled at COUNT level only "
+                      "(extras observed, no identities) — arm network.sbasis_complete for "
+                      "the per-direction attribution the contingency needs; without it "
+                      "every prediction falls into `predicted only` for want of a "
+                      "right-hand side.",
+                      dg.epochs_count_only);
+        if (static_cast<std::size_t>(std::max<long long>(dg.epochs, 0))
+            < ctx.counters.n_gate_evaluated)
+            log->info("Network (datum graph): {} of {} gate-evaluated epoch(s) never "
+                      "reached the census — a WITHHELD epoch skips before SB_FRAMEDIAG, "
+                      "so the epochs whose datum actually failed are precisely the ones "
+                      "with no census row.  Read this line next to the Card-DG withhold "
+                      "counts, not on its own.",
+                      ctx.counters.n_gate_evaluated - static_cast<std::size_t>(dg.epochs),
+                      ctx.counters.n_gate_evaluated);
+        if (dg.ms_max > 2.0)
+            log->warn("Network (datum graph): worst census pass {:.3f} ms exceeds the "
+                      "card's 2.0 ms hard limit (§7) — the implementation is walking "
+                      "something it should not.",
+                      dg.ms_max);
+    }
     if (config_.networkRaimWeCodeIono()) {
         log->info("Network (WE-CI): within-epoch code/iono screening — {} code trip(s), "
                   "{} iono trip(s), {} station exclusion(s), {} satellite code de-weight(s); "
@@ -399,6 +494,1044 @@ int networkTeardown(
                   ctx.counters.n_cb_late_quarantined,
                   ctx.admission.active ? "ran" : "did-not-run", ctx.admission.active,
                   ctx.counters.n_cbadm_phase_orphan_key_epochs);
+    // --- Adaptive iono q run-end telemetry (network.adaptive_iono_q) ---
+    // Standing invariant #4: an armed run with zero boosts is either genuinely quiet
+    // iono (feeds high, max multiplier ~1 — the monitor ran and said "calm") or DEAD
+    // WIRING (feeds == 0) — the two are distinguished explicitly, never left to look
+    // alike.
+    if (config_.getNetworkConfig().adaptive_iono_q) {
+        long long aiq_fed = 0;
+        for (const auto& st : stations) aiq_fed += st.iono_var_epochs_fed;
+        const auto& aiq_cfg = config_.getAdaptiveIonoQConfig();
+        log->info("Network (adaptive iono q): {} station-epoch monitor feed(s); {} GM "
+                  "deviation innovation boost(s) applied, max multiplier {:.1f}x "
+                  "(tuning recent/baseline/min/max = {}/{}/{}/{:.0f} from "
+                  "estimation.adaptive_iono_process_noise).",
+                  aiq_fed, ctx.counters.aiq_boosts_total, ctx.counters.aiq_max_mult,
+                  aiq_cfg.recent_window, aiq_cfg.baseline_window, aiq_cfg.min_epochs,
+                  aiq_cfg.max_multiplier);
+        if (aiq_fed == 0)
+            log->warn("Network (adaptive iono q): ARMED but ZERO monitor feeds — the "
+                      "wiring never ran (invariant #4: a clean log over dead wiring is "
+                      "not 'no effect').");
+    }
+
+    // --- eq34 reattach hygiene run-end telemetry -------------------------------
+    // (docs/SPEC_eq34_reattach_hygiene.md).  Standing invariant #4: an armed run whose
+    // gate never RAN is a different failure from one that ran and found nothing to
+    // block, so the denominators (`epochs`, `arcs_tracked`) are reported first and an
+    // all-zero feed is called out explicitly rather than left to look quiet.
+    if (ctx.knobs.anchor_hygiene_on) {
+        const auto& h = ctx.counters.hyg;
+        log->info("Network (eq34 hygiene): {} election pass(es), {} arc-epoch(s) aged; "
+                  "{} reattach(es) performed, {} BLOCKED cold (min_arc_ep {}) held for "
+                  "{} key-epoch(s), {} released on a converged host; {} unavoidable "
+                  "fresh pin(s) taken for connectivity, {} sigma-ramped pin(s).",
+                  h.epochs, h.arcs_tracked, h.reattaches, h.reattach_blocked_cold,
+                  ctx.knobs.eq34_min_arc_ep, h.blocked_key_epochs, h.blocks_released,
+                  h.cold_fallback_pins, h.fresh_pin_ramps);
+        log->info("Network (eq34 hygiene): {} cold key-epoch(s) ALLOWED with no fresh "
+                  "prior realization (warm-conditioning horizon {:.0f} s) — the "
+                  "restart / long-outage path, where a cold pin has no warm memory to "
+                  "fight and blocking would only extend the outage.  A cold-start run "
+                  "is EXPECTED to show a large number here and zero blocks.",
+                  h.reattach_cold_allowed_no_prior,
+                  ctx.knobs.prior_realization_max_gap_s);
+        if (h.reattach_blocked_cold > 0 && h.blocks_released == 0)
+            log->warn("Network (eq34 hygiene): {} hold(s) entered and NONE released — "
+                      "every held-out key stayed out for the whole run.  That is only "
+                      "correct if those arcs never reached {} continuous epochs; "
+                      "otherwise the release path is not firing and the guard is "
+                      "silently withholding columns.",
+                      h.reattach_blocked_cold, ctx.knobs.eq34_min_arc_ep);
+        if (ctx.knobs.pin_bridge_on)
+            log->info("Network (eq34 hygiene INC-2): {} bridge(s) opened, {} row-fold(s) "
+                      "(sigma {:g} m, margin {:.1f} decades over the rank-gate cutoff, "
+                      "max {} epoch(s) each); dropped slip {} / datum {} / stale {} / "
+                      "left_set {}, healed {}.",
+                      h.bridges_opened, h.bridge_folds, ctx.knobs.pin_bridge_sigma,
+                      h.bridge_margin_decades, ctx.knobs.pin_bridge_max_ep,
+                      h.bridge_drop_slip, h.bridge_drop_datum, h.bridge_drop_stale,
+                      h.bridge_drop_leftset, h.bridge_drop_healed);
+        if (h.epochs == 0)
+            log->warn("Network (eq34 hygiene): ARMED but the seam ran on ZERO epochs — "
+                      "the wiring never executed (invariant #4).  Check that a "
+                      "prioritized / eq34 phase datum is actually active.");
+        else if (h.arcs_tracked == 0)
+            log->warn("Network (eq34 hygiene): ARMED and the seam ran, but it aged ZERO "
+                      "arcs — every eligibility answer was the default, so the gate is "
+                      "INERT despite looking live (invariant #4).");
+        else if (h.reattaches == 0 && h.reattach_blocked_cold == 0)
+            log->info("Network (eq34 hygiene): no reattach occurred this run — the "
+                      "guard had zero opportunity, which is NOT evidence that it works "
+                      "(grade it on a run that contains a handover).");
+        if (ctx.knobs.pin_bridge_on && h.bridges_opened == 0)
+            log->warn("Network (eq34 hygiene INC-2): ARMED but ZERO bridges opened — "
+                      "either no handover needed one, or no solved level was ever "
+                      "harvested (pb_level_prev empty).  With {} blocked-cold "
+                      "reattach(es) recorded the second is the likely cause.",
+                      h.reattach_blocked_cold);
+    }
+
+    // --- iono-deweight RELEASE hygiene run-end telemetry -----------------------
+    // (docs/SPEC_deweight_release_hygiene.md).  Standing invariant #4, with a twist
+    // this card has to state out loud: at the event it was SPEC'd against, the
+    // station carrying the parked column was never deweighted, so INC-1 / INC-2 have
+    // ZERO OPPORTUNITY there by construction.  A run reporting zero releases is
+    // therefore NOT evidence that the release response works or fails — the
+    // denominators (`epochs`, `gate_advances`, `releases_seen`) are reported first so
+    // "the seam never ran", "it ran and the gate never advanced", and "the gate
+    // advanced and nothing ever released" are three distinguishable answers.
+    if (ctx.knobs.dw_hygiene_on) {
+        const auto& d = ctx.counters.dwr;
+        log->info("Network (dw release hygiene): {} seam pass(es), {} gate advance(s), "
+                  "{} station release(s) seen.",
+                  d.epochs, d.gate_advances, d.releases_seen);
+        if (ctx.knobs.dw_release_reseed)
+            log->info("Network (dw release hygiene INC-1): {} station(s) reseeded — {} "
+                      "slant state(s) rewritten from the field, {} deviation stash "
+                      "entr(ies) erased, {} ambiguity refloat(s) queued and {} "
+                      "delivered into the funnel.  NOTE the slant rewrite is "
+                      "BOOKKEEPING, not an actuator: the producer forms every "
+                      "innovation against the linearization point, so shifting it "
+                      "leaves the reduced shared RHS algebraically unchanged.  INC-1's "
+                      "actuators are the stash erase and the refloat.",
+                      d.reseed_stations, d.reseed_slants, d.reseed_stash_erased,
+                      d.reseed_refloats, d.refloats_drained);
+        if (ctx.knobs.dw_park_bound_tecu > 0.0)
+            log->info("Network (dw release hygiene INC-2): {} park-bound reset(s) while "
+                      "DECOUPLED + {} while the gate was COLD (bound {:g} slant TECU; "
+                      "largest reset {:.4g} slant TECU).",
+                      d.park_reset_decoupled, d.park_reset_cold,
+                      ctx.knobs.dw_park_bound_tecu, d.park_max_tecu);
+        if (ctx.knobs.dw_release_validate_k > 0.0)
+            log->info("Network (dw release hygiene INC-3): {} tie-row LOS-epoch(s) held "
+                      "on the release screen (k = {:g}); {} hold(s) entered, {} released "
+                      "on a LOS that finally passed.",
+                      d.rows_held, ctx.knobs.dw_release_validate_k,
+                      d.rows_held_entered, d.rows_released);
+        if (ctx.knobs.dw_admit_validate_k > 0.0) {
+            log->info("Network (dw release hygiene INC-3b): {} tie-row LOS-epoch(s) held "
+                      "pending admission (k = {:g}), {} LOS admitted, {} REJECTED on a "
+                      "harvested deviation over k.  Every rising satellite serves ONE "
+                      "quarantine epoch, so `held` scales with the constellation churn; "
+                      "only `rejected` is the guarded event.  {} LOS were admitted "
+                      "UNSCREENED by the one-shot start/resume seed — on a short leg "
+                      "that number being large relative to `admitted` means most of the "
+                      "run's tie rows were never screened at all.  {} more were "
+                      "admitted with NO deviation ever harvested (decoupled station or "
+                      "no local column) — the guard failing open on absent evidence "
+                      "rather than starving the row for the whole run.",
+                      d.admit_held, ctx.knobs.dw_admit_validate_k,
+                      d.admit_admitted, d.admit_rejected, d.admit_seeded,
+                      d.admit_nodev);
+            if (d.admit_admitted == 0)
+                log->warn("Network (dw release hygiene INC-3b): ARMED but ZERO LOS were "
+                          "ever admitted — every tie row in the run was withheld.  That "
+                          "is a rank-starved solve, not a guard; check k and the "
+                          "representativeness sigma (invariant #4).");
+            else if (d.admit_rejected == 0)
+                log->info("Network (dw release hygiene INC-3b): no LOS was ever rejected "
+                          "— the screen had opportunity ({} quarantines) and found "
+                          "nothing over k.  Loosen nothing on that basis; grade it on a "
+                          "run that contains a known coupling event.", d.admit_held);
+        }
+        if (d.epochs == 0)
+            log->warn("Network (dw release hygiene): ARMED but the seam ran on ZERO "
+                      "epochs — the wiring never executed (invariant #4).");
+        else if (d.gate_advances == 0 && ctx.knobs.dw_release_reseed)
+            log->warn("Network (dw release hygiene): ARMED and the seam ran, but the "
+                      "deweight gate NEVER advanced — no release edge can exist, so "
+                      "INC-1 is inert regardless of what the other counters say.  Check "
+                      "network.iono_constraint_deweight_adaptive.");
+        else if (d.releases_seen == 0 && ctx.knobs.dw_release_reseed)
+            log->info("Network (dw release hygiene INC-1): the gate advanced on {} "
+                      "epoch(s) and no station ever released — the response had ZERO "
+                      "OPPORTUNITY this run, which is NOT evidence that it works.  Grade "
+                      "it only on a run containing a release (the DOY-129 day had 22 "
+                      "engage / 15 release events; the 19:26 break was NOT one of them).",
+                      d.gate_advances);
+    }
+
+    // --- flicker/gap signal integrity run-end telemetry ------------------------
+    // (docs/SPEC_flicker_gap_integrity.md).  Standing invariant #4: the classifier
+    // is the ON-path telemetry for this card — a clean-looking run with zero
+    // classified lines of sight is DEAD WIRING, not a quiet network, and only the
+    // denominators can tell those apart.  The demoted-ROW count is summed from the
+    // per-station counters here because the fold runs inside the PARALLEL produce:
+    // a live map with zero demoted rows means the map was WRITTEN and never READ,
+    // which is the exact live-counters-dead-wiring trap the rx-CB carry card paid
+    // for.  The census block reports the INC-0 audit answer explicitly rather than
+    // leaving a reader to infer it from two raw counts.
+    if (ctx.knobs.sig_integrity_on) {
+        auto& s = ctx.counters.sig;
+        for (const auto& st : stations) s.demoted_rows += st.si_rows_demoted;
+        log->info("Network (signal integrity): {} classifier pass(es), {} line-of-sight "
+                  "epoch(s) classified; {} first sighting(s), {} re-entry(ies) "
+                  "(gap 1 / 2-5 / >5 = {} / {} / {}), {} LOS disappearance(s) of which "
+                  "{} were DUAL at their last epoch.",
+                  s.epochs, s.los_epochs, s.new_arcs, s.reentries, s.reentry_gap_1,
+                  s.reentry_gap_2_5, s.reentry_gap_gt5, s.los_vanished,
+                  s.los_vanished_dual);
+        log->info("Network (signal integrity BAND census): {} band loss(es) while the "
+                  "LOS stayed present, {} regained inside {} epoch(s) (FLICKER), {} "
+                  "dropped from the reference set as permanently gone, {} band "
+                  "gain(s); {} degraded LOS-epoch(s); {} code-only LOS-epoch(s).",
+                  s.band_lost, s.band_regain, ctx.knobs.sig_flicker_max_ep,
+                  s.band_dropped_perm, s.band_gained, s.degraded_epochs,
+                  s.no_phase_epochs);
+        // THE INC-0 AUDIT ANSWER.  The spec asks whether a DUAL-born arc that
+        // degrades mid-arc ever CONTINUES single-frequency (an unmonitorable phase
+        // at full weight, no gap registered).  The two numbers are reported together
+        // and interpreted in-line, because either one alone is ambiguous.
+        log->info("Network (signal integrity AUDIT — spec INC-0): {} LOS-epoch(s) in "
+                  "which an EVER-DUAL arc contributed with fewer than two phase "
+                  "bands, against {} disappearance(s) of a dual arc.  A large first "
+                  "number means the producer CONTINUES a degraded arc "
+                  "single-frequency; a large second with a small first means it drops "
+                  "the line of sight instead.  Separately, {} arc(s) were never once "
+                  "observed dual ({} LOS-epoch(s)) — the standing single-frequency "
+                  "class, whose permanent-demotion policy this card deliberately "
+                  "leaves open (spec section 7).",
+                  s.sf_continuation_epochs, s.los_vanished_dual, s.standing_sf_arcs,
+                  s.standing_sf_epochs);
+        log->info("Network (signal integrity INC-2): {} unvetted LOS-epoch(s) "
+                  "(re-vet window {} epoch(s), {} completion(s)), of which {} were "
+                  "EXEMPT as never-converged arcs and {} were carried by the RESUME "
+                  "WARMUP; {} deweighted LOS-epoch(s) driving {} PHASE row(s) at "
+                  "sigma x {:g}; {} withheld LOS-epoch(s) removing {} phase "
+                  "observable(s) and pruning {} phase-bias state(s).  CODE rows were "
+                  "never touched.",
+                  s.unvetted_los_epochs, ctx.knobs.sig_revet_ep, s.vet_completions,
+                  s.birth_exempt_los_epochs, s.resume_warmup_los_epochs,
+                  s.demoted_los_epochs, s.demoted_rows, ctx.knobs.sig_unvetted_scale,
+                  s.withheld_los_epochs, s.withheld_rows, s.withheld_pb_pruned);
+        log->info("Network (signal integrity INC-3): {} flicker-regain refloat(s) -> "
+                  "{} funnel insertion(s) + {} pending-reseed(s); re-entry premise "
+                  "ASSERTED: {} already refloated by a PASS-A detector vs {} NOT, "
+                  "with {} carrying a surviving ambiguity STATE; LLI on a re-entry "
+                  "epoch {} of which {} reached a refloat funnel.",
+                  s.refloat_regain, s.refloat_regain_ambs, s.refloat_regain_reseeds,
+                  s.reentry_already_refloated, s.reentry_unrefloated,
+                  s.reentry_amb_state_live, s.lli_at_reentry,
+                  s.lli_at_reentry_funnelled);
+        // --- invariant #4: distinguish "ran and found nothing" from "never ran" ---
+        if (s.epochs == 0)
+            log->warn("Network (signal integrity): ARMED but the classifier ran on ZERO "
+                      "epochs — the wiring never executed (invariant #4).  Nothing in "
+                      "this run is evidence about the card.");
+        else if (s.los_epochs == 0)
+            log->warn("Network (signal integrity): ARMED and the classifier ran, but it "
+                      "classified ZERO lines of sight — every verdict was the default, "
+                      "so the census is INERT despite looking live (invariant #4).");
+        if (ctx.knobs.sig_unvetted_scale > 1.0 && s.demoted_los_epochs > 0
+            && s.demoted_rows == 0)
+            log->warn("Network (signal integrity INC-2): {} LOS-epoch(s) published a "
+                      "sigma scale and ZERO phase rows were folded at it — the map is "
+                      "WRITTEN and never READ.  That is live counters over dead wiring "
+                      "(invariant #4), not a quiet run: check that the demotion hook "
+                      "in networkSplitStation_ is compiled in and that the satellite "
+                      "keys match em.satellite_ids.",
+                      s.demoted_los_epochs);
+        if (ctx.knobs.sig_refloat_regain && s.refloat_regain > 0
+            && s.refloat_regain_ambs == 0 && s.refloat_regain_reseeds == 0)
+            log->warn("Network (signal integrity INC-3): {} regain(s) fired and NOT ONE "
+                      "ambiguity was reset — neither refloat feed is live (the funnel "
+                      "insert needs network.carry_invariant, the pending-reseed needs "
+                      "a warm network.phase_leveling).  The regains are being COUNTED "
+                      "and nothing is happening.",
+                      s.refloat_regain);
+        if (s.reentry_amb_state_live > 0)
+            log->warn("Network (signal integrity): {} re-entry(ies) arrived with a "
+                      "SURVIVING ambiguity state, which should be structurally "
+                      "impossible (ensureRequiredStates prunes an ambiguity the epoch "
+                      "its phase observable is absent, with no grace).  The card's "
+                      "re-entry reasoning assumes that prune; re-derive it before "
+                      "trusting any re-entry verdict from this run.",
+                      s.reentry_amb_state_live);
+        if (s.lli_at_reentry > s.lli_at_reentry_funnelled)
+            log->warn("Network (signal integrity INC-3c): {} of {} loss-of-lock "
+                      "assertion(s) raised ON a re-entry epoch did NOT reach a refloat "
+                      "funnel.  The MW/LLI drain matches an assertion against the "
+                      "StateManager's ambiguities, and a re-entering arc's ambiguity "
+                      "has just been pruned — so the receiver said 'loss of lock', "
+                      "nothing was marked, and any carried invariant-DD chord for that "
+                      "arc (keyed independently of the StateManager) was not re-tapped. "
+                      "This card MEASURES that hole and deliberately does not close it.",
+                      s.lli_at_reentry - s.lli_at_reentry_funnelled, s.lli_at_reentry);
+        if (s.reentry_unrefloated > 0)
+            log->warn("Network (signal integrity INC-3a): {} of {} re-entry(ies) were "
+                      "NOT already refloated by a PASS-A detector.  The spec's premise "
+                      "is that a true re-entry already refloats via the funnel (Card G "
+                      "measured 0 bridged); this run FALSIFIES it at that rate.  Per "
+                      "spec section 2 this card asserts the premise and does not act "
+                      "on it — report the number, do not read it as a defect this card "
+                      "left unfixed.",
+                      s.reentry_unrefloated, s.reentries);
+        if (s.arcs_forgotten > 0)
+            log->info("Network (signal integrity): {} LOS record(s) forgotten after a "
+                      "very long absence (memory bound) — their eventual return is "
+                      "classified as a first sighting rather than a re-entry.",
+                      s.arcs_forgotten);
+    }
+
+    // --- prior-residual census run-end telemetry ------------------------------
+    // (docs/SPEC_prior_residual_census.md §6).  Standing invariant #4, ladder
+    // edition: THE LADDER IS THE TELEMETRY, and a family with n_rows = 0 must
+    // read as "ran, saw nothing" rather than "never ran".  Body in
+    // filter/NetworkPriorResidual.cpp, next to the emission that produced it.
+    if (ctx.knobs.prires_on)
+        networkPriorResidualReport(ctx, config_, log, setup.stations, prires_est);
+
+    // --- redundancy / testability census run-end telemetry --------------------
+    // (docs/SPEC_redundancy_census.md).  Standing invariant #4, statistical
+    // edition.  The claim this card makes is "the cross-flag has essentially zero
+    // false-positive surface", and the ONLY way a reader can check it here is to
+    // see the denominators next to the findings: how many passes, how many
+    // sweeps, how many ROWS, how many were uncheckable, and how many of THOSE
+    // were also hot.  A run reporting 0 hot cells over 0 swept rows says nothing
+    // about the network; a run reporting 0 hot cells over 400k swept rows with
+    // 2k uncheckable ones is a real negative result.  Reported in that order.
+    if (ctx.knobs.redun_census_on) {
+        const auto& q = ctx.counters;
+        log->info("Network (redundancy census): {} seam pass(es), {} sweep epoch(s) "
+                  "({} full / {} targeted, {} forced by a flight-recorder trip), {} "
+                  "station-sweep(s), {} escalation(s) taken; {:.1f} ms total wall "
+                  "({:.2f} ms per station-sweep).",
+                  q.redun_passes, q.redun_sweeps, q.redun_sweeps_full,
+                  q.redun_sweeps_targeted, q.redun_sweeps_trip, q.redun_station_sweeps,
+                  q.redun_escalations, q.redun_wall_ms,
+                  (q.redun_station_sweeps > 0)
+                      ? q.redun_wall_ms / static_cast<double>(q.redun_station_sweeps)
+                      : 0.0);
+        log->info("Network (redundancy census INC-1): {} DATA row(s) examined ({} rows "
+                  "total incl. pins/coupling), redundancy mass {:.1f} (mean r = {:.4f}); "
+                  "{} UNCHECKABLE row(s) at r < {:g} ({:.3f}% of data rows), of which {} "
+                  "ALSO exceeded s > {:g} — the CROSS-FLAG.  {} event(s) emitted after "
+                  "the {}-pass per-cell holdoff.",
+                  q.redun_rows, q.redun_rows_all, q.redun_mass,
+                  (q.redun_rows > 0) ? q.redun_mass / static_cast<double>(q.redun_rows)
+                                     : 0.0,
+                  q.redun_uncheckable, nc.redundancy_eps,
+                  (q.redun_rows > 0) ? 100.0 * static_cast<double>(q.redun_uncheckable)
+                                             / static_cast<double>(q.redun_rows)
+                                     : 0.0,
+                  q.redun_uncheckable_hot, nc.redundancy_hot_sigma, q.redun_events,
+                  std::max(0, nc.redundancy_event_holdoff_ep));
+        if (q.redun_uncheckable_hot > 0)
+            log->warn("Network (redundancy census): WORST cross-flagged cell was {} at "
+                      "s = {:.4e} — an UNCHECKABLE row carrying a {:.0f}-sigma centred "
+                      "prefit deviation.  Its misfit is invisible to post-fit RAIM, to "
+                      "sigma0 and to robust weighting by construction (MDB ~ 1/sqrt(r)), "
+                      "so nothing downstream would have flagged it.  This is the parked-"
+                      "garbage signature; read it against the topology at that epoch.",
+                      q.redun_max_hot_id, q.redun_max_hot_s, q.redun_max_hot_s);
+        // The prefer-fallback control.  Uncheckable-but-quiet rows are exactly the
+        // healthy single-frequency risers the directive says to KEEP; naming the
+        // worst one turns "we counted them and none was hot" into a claim a reader
+        // can check rather than one they have to take on faith.
+        if (q.redun_uncheckable > q.redun_uncheckable_hot)
+            log->info("Network (redundancy census): {} uncheckable row(s) stayed BELOW "
+                      "the cross-flag and were counted, never evented and never "
+                      "weight-touched (prefer-fallback directive).  Worst of them: {} at "
+                      "s = {:.4e}.",
+                      q.redun_uncheckable - q.redun_uncheckable_hot,
+                      q.redun_max_cold_id.empty() ? std::string("(none finite)")
+                                                  : q.redun_max_cold_id,
+                      q.redun_max_cold_s);
+        log->info("Network (redundancy census INC-2): {} local column(s) examined, {} "
+                  "column-epoch(s) below the {:g} x median pivot floor; {} DECOUPLING "
+                  "edge(s) evented and {} RE-COUPLING edge(s) counted.",
+                  q.redun_pivot_cols, q.redun_pivot_flagged, nc.redundancy_pivot_eps,
+                  q.redun_unobs_entered, q.redun_unobs_cleared);
+        // Closure: trace(H) over the swept rows may never exceed the free
+        // parameters they span.  A negative slack means the covariance or the row
+        // stack does not describe the system that was solved, which invalidates
+        // every r_i above — so it is reported as a WARN, not buried.
+        if (q.redun_closure_any)
+            log->info("Network (redundancy census): closure worst slack "
+                      "n_free - trace(H) = {:.4e} over {} sweep(s) (must be >= 0); {} "
+                      "row(s) hit the kernel's r in [0,1] clamp at 0, and {} centring "
+                      "pool(s) were skipped for population < {}.",
+                      q.redun_closure_min_slack, q.redun_sweeps, q.redun_r_clamped,
+                      q.redun_pool_skips, kCensusMinPoolRows);
+        if (q.redun_closure_neg > 0)
+            log->warn("Network (redundancy census): {} sweep(s) VIOLATED the closure "
+                      "bound.  Every redundancy number in this run is untrusted — do not "
+                      "grade the cross-flag on it.", q.redun_closure_neg);
+        // --- invariant #4: separate "ran and found nothing" from "never ran" ---
+        if (q.redun_passes == 0)
+            log->warn("Network (redundancy census): ARMED but the seam ran on ZERO "
+                      "epochs — the wiring never executed.  Nothing in this run is "
+                      "evidence about the card.");
+        else if (q.redun_sweeps == 0)
+            log->warn("Network (redundancy census): ARMED and the seam ran on {} "
+                      "epoch(s), but NOT ONE sweep completed — with stride {} and "
+                      "escalation {}, either no epoch matched the stride phase or every "
+                      "rowRedundancy call threw.  The census is INERT despite looking "
+                      "live.", q.redun_passes, nc.redundancy_census_stride,
+                      (nc.redundancy_escalate_sigma > 0.0) ? "armed" : "off");
+        else if (q.redun_rows == 0)
+            log->warn("Network (redundancy census): ARMED, {} sweep(s) ran and ZERO DATA "
+                      "rows were examined — every row classified as a pin or a coupling "
+                      "row, or every station was skipped on a dimension mismatch.  The "
+                      "statistic has no domain.", q.redun_sweeps);
+        else if (q.redun_uncheckable == 0)
+            log->info("Network (redundancy census): {} data row(s) swept and NOT ONE was "
+                      "uncheckable at r < {:g}.  That is a genuine negative result — this "
+                      "network's topology cross-checked everything it folded — and it is "
+                      "the state in which the cross-flag CANNOT fire, so do not read a "
+                      "quiet run as validation of the alarm.",
+                      q.redun_rows, nc.redundancy_eps);
+        // The escalation path needs BOTH numbers to be readable.  "0 escalations"
+        // alone is ambiguous and, under stride 1, GUARANTEED — the scheduled sweep
+        // already covered every station, so no latch could ever need acting on.
+        // Reporting only the action would be a conclusion the counters do not
+        // support, which is the failure this project calls a live-counter over
+        // dead wiring in reverse.
+        if (nc.redundancy_escalate_sigma > 0.0) {
+            if (q.redun_escalate_flagged == 0)
+                log->info("Network (redundancy census): the free tier ran and NEVER "
+                          "flagged a station — no station's centred prefit deviation "
+                          "reached {:g} all run.  The targeted path had ZERO "
+                          "opportunity, which is NOT evidence that it works.",
+                          nc.redundancy_escalate_sigma);
+            else if (q.redun_escalations == 0)
+                log->info("Network (redundancy census): the free tier raised {} "
+                          "station-epoch latch(es) over {:g} and NONE became a targeted "
+                          "sweep — expected at stride {} , where the scheduled sweep "
+                          "already covers every station.  Grade the targeted path only "
+                          "on a stride-0 arm.",
+                          q.redun_escalate_flagged, nc.redundancy_escalate_sigma,
+                          nc.redundancy_census_stride);
+            else
+                log->info("Network (redundancy census): the free tier raised {} "
+                          "station-epoch latch(es) over {:g}, of which {} became a "
+                          "targeted single-station sweep the stride would have missed.",
+                          q.redun_escalate_flagged, nc.redundancy_escalate_sigma,
+                          q.redun_escalations);
+        }
+    }
+
+    // --- Baarda reliability numbers / MDB run-end telemetry -------------------
+    // (docs/SPEC_network_mdb_reliability.md §4).  Standing invariant #4 in its
+    // reliability form: the aggregates must distinguish "ran, all rows checkable"
+    // from "never ran", and the two are reported by the SAME line only if the
+    // denominators come first.  Body in filter/NetworkMdb.cpp, next to the
+    // aggregation that produced the numbers.
+    if (ctx.knobs.mdb_on)
+        networkMdbReport(ctx, config_, log);
+
+    // --- BLOCKFORMAL LOS-block census run-end telemetry ----------------------
+    // (docs/SPEC_block_baarda.md §10.4).  Standing invariant #4 in this card's
+    // form: "the block tier found no smearing" and "there was never a block to
+    // smear across" produce identical ladders, so the BLOCK-SIZE HISTOGRAM is
+    // reported before any occupancy and INC-3's fraction is reported last, with
+    // its denominator.  Body in filter/NetworkBlockBaarda.cpp, next to the sweep
+    // that produced the numbers.
+    if (ctx.knobs.bb_on)
+        networkBlockBaardaReport(ctx, log, setup.stations);
+
+    // --- STATION CONGRUENCE run-end telemetry --------------------------------
+    // (docs/SPEC_station_congruence.md §7.3).  Standing invariant #4 in this
+    // card's form: "every held coordinate on this network is right" and "the
+    // screen never swept a station" produce identical silence, so the
+    // denominators come first — and then THE MDB TABLE, which is the card's
+    // service deliverable rather than a diagnostic: the smallest coordinate fault
+    // this network can see, per station, per direction.  Body in
+    // filter/NetworkCongruence.cpp, next to the sweep that produced the numbers.
+    if (ctx.knobs.cg_on)
+        networkCongruenceReport(ctx, log, setup.stations);
+
+    // --- PREFIT census / fuse / seed-birth / topology / flight-recorder --------
+    // (docs/SPEC_prefit_census_observability.md §10).  Standing invariant #4 in
+    // its sharpest form for this card: a TRIPWIRE that never fires and a tripwire
+    // that was never CONNECTED produce identical logs.  Only the denominators
+    // (`epochs`, `station_epochs`, `rows`, `rec_consults`) separate them, so they
+    // are reported first and every zero-finding line names which one it is.
+    {
+        const auto& p = ctx.counters.pc;
+        if (ctx.knobs.pc_walk_on) {
+            log->info("Network (prefit census): {} walk pass(es) over {} station-epoch(s), "
+                      "{} DATA row(s) classified; {} (station, epoch, type) median(s) "
+                      "skipped for population < {}, {} non-finite row(s) dropped.",
+                      p.epochs, p.station_epochs, p.rows, p.type_skips,
+                      kNetPrefitMinTypeRows, p.nonfinite_rows);
+            if (ctx.knobs.pc_census_on) {
+                log->info("Network (prefit census INC-1): {} row-cell exceedance(s) over "
+                          "s = {:g} on ESTABLISHED cells; {} event(s) emitted, {} "
+                          "suppressed by the {}-epoch per-cell holdoff, {} outside the "
+                          "event domain [{}].  Run maximum s = {:.4g}{}.",
+                          p.exceedances, ctx.knobs.pc_event_sigma, p.events,
+                          p.events_held, ctx.knobs.pc_event_holdoff,
+                          p.events_class_skipped,
+                          dataClassMaskName(ctx.knobs.pc_event_mask), p.max_s,
+                          p.max_s_id.empty()
+                              ? std::string()
+                              : fmt::format(" on {} at TOW {:.1f}", p.max_s_id,
+                                            p.max_s_tow));
+                // The hand-off to INC-3 is reported whether or not INC-3 is armed:
+                // "the census went quiet" and "the census deferred N births to a
+                // DISARMED birth check" are different states and must not read the
+                // same (invariant #4 applied to a filter rather than to wiring).
+                log->info("Network (prefit census INC-1): {} row(s) in {} born cell(s) "
+                          "were DEFERRED to INC-3 rather than counted here — a fresh "
+                          "arc is seeded to ~0 innovation against a station level that "
+                          "can be 1e5 m, so an established-cell statistic is the only "
+                          "one that means anything.  {}",
+                          p.rows_born_deferred, p.cells_born_deferred,
+                          (ctx.knobs.pc_birth_sigma > 0.0)
+                              ? "INC-3 is armed and graded them."
+                              : "INC-3 is OFF, so nothing graded them — arm "
+                                "network.seed_birth_check_sigma to see what was in "
+                                "there.");
+                if (p.exceedances == 0 && p.rows > 0)
+                    log->info("Network (prefit census INC-1): {} row(s) walked and NOT ONE "
+                              "exceeded s = {:g}.  That is a genuine negative — no cell in "
+                              "this run carried a fault-scale common-mode-removed "
+                              "innovation — and it is also the state in which the tripwire "
+                              "cannot demonstrate that it works.  Grade it on a leg with a "
+                              "known injector.", p.rows, ctx.knobs.pc_event_sigma);
+            }
+            if (ctx.knobs.pc_birth_sigma > 0.0) {
+                log->info("Network (prefit census INC-3): {} LOS birth(s) over {} row(s), "
+                          "{} seed_birth_exceedance event(s) at s > {:g}; {} first-epoch "
+                          "presence(s) suppressed (no prior map — a first sighting is not "
+                          "a birth).",
+                          p.births, p.birth_rows, p.birth_events,
+                          ctx.knobs.pc_birth_sigma, p.birth_seed_suppressed);
+                if (p.births == 0)
+                    log->warn("Network (prefit census INC-3): ARMED but ZERO births were "
+                              "detected all run — with satellites rising and setting that "
+                              "is a MISWIRE (the presence map never advanced), not a quiet "
+                              "network.");
+                else if (p.birth_events == 0)
+                    log->info("Network (prefit census INC-3): {} birth(s) and NOT ONE fired "
+                              "— every self-seeded LOS started consistent with its "
+                              "network.  That RULES OUT the seed path for this window; a "
+                              "mid-arc poisoning mechanism owns whatever came later.",
+                              p.births);
+            }
+            if (ctx.knobs.pc_topo_on) {
+                log->info("Network (prefit census INC-4): topology events — {} SH-tie "
+                          "row-count delta(s), {} (station, sat) row-kind change(s), "
+                          "{} shared column(s) added / {} removed{}.",
+                          p.topo_tie_events, p.topo_kind_events, p.topo_col_add,
+                          p.topo_col_rm,
+                          p.topo_truncated > 0
+                              ? fmt::format(" ({} column event(s) TRUNCATED by the "
+                                            "per-epoch cap of {} — the totals here are "
+                                            "complete, the event rows are not)",
+                                            p.topo_truncated, 64)
+                              : std::string());
+                if (p.topo_tie_events == 0 && p.epochs > 1)
+                    log->info("Network (prefit census INC-4): NOT ONE station's SH-tie row "
+                              "set changed all run.  The deweight valve never moved a tie "
+                              "row here — so this run contains no instance of the era-2 "
+                              "topology event and cannot be used to grade the ledger "
+                              "against it.");
+            }
+            if (p.epochs == 0)
+                log->warn("Network (prefit census): ARMED but the walk ran on ZERO epochs "
+                          "— the wiring never executed.  Nothing in this run is evidence "
+                          "about the card.");
+            else if (p.rows == 0)
+                log->warn("Network (prefit census): ARMED, {} walk(s) ran and ZERO DATA "
+                          "rows were classified — every station was skipped (no solve "
+                          "membership or a shared-dimension mismatch).  The census is "
+                          "INERT despite looking live.", p.epochs);
+        }
+        if (ctx.knobs.pc_fuse_sigma > 0.0) {
+            log->info("Network (prefit fuse INC-2): {} epoch(s) x {} station-epoch(s), "
+                      "{} DATA row(s) screened at S_fuse = {:g}; {} row(s) CAPPED "
+                      "(deepest cut w_eff/w = {:.3g}, largest pre-cap s = {:.4g}), "
+                      "{} event(s) emitted / {} held.  Domain [{}]: {} row(s) skipped "
+                      "out of domain, of which {} WOULD have been capped.  Skipped: {} "
+                      "pin-weight row(s) (w >= {:g}), {} row(s) whose station "
+                      "type-median was unavailable.",
+                      p.fuse_epochs, p.fuse_station_epochs, p.fuse_rows,
+                      ctx.knobs.pc_fuse_sigma, p.fuse_capped, p.fuse_min_ratio,
+                      p.fuse_max_s, p.fuse_events, p.fuse_events_held,
+                      dataClassMaskName(ctx.knobs.pc_fuse_mask), p.fuse_skip_class,
+                      p.fuse_would_class,
+                      p.fuse_skip_pin_w, kNetPrefitPinWeight, p.fuse_skip_thin);
+            if (p.fuse_rows == 0)
+                log->warn("Network (prefit fuse INC-2): ARMED but ZERO rows were screened "
+                          "— the assembly hook never ran.  The solve in this run is the "
+                          "UNFUSED one; do not report it as a fuse arm.");
+            else if (p.fuse_capped == 0)
+                log->info("Network (prefit fuse INC-2): {} row(s) screened and NOT ONE "
+                          "exceeded S_fuse = {:g} — this arm is byte-identical to its "
+                          "control by construction, which is the correct null result but "
+                          "is NOT evidence the cap works.",
+                          p.fuse_rows, ctx.knobs.pc_fuse_sigma);
+        }
+        if (ctx.knobs.rec_on) {
+            log->info("Network (rhs-attrib INC-5): flight recorder — {} trigger-site "
+                      "consultation(s), {} era trip(s), {} dump(s) written ({} of them "
+                      "retained PREVIOUS-epoch frames); {} epoch(s) retained, last frame "
+                      "{:.1f} MB.",
+                      p.rec_consults, p.rec_trips, p.rec_dumps, p.rec_prev_dumps,
+                      p.rec_frames_retained,
+                      static_cast<double>(p.rec_prev_bytes_last) / (1024.0 * 1024.0));
+            if (p.rec_consults == 0)
+                log->warn("Network (rhs-attrib INC-5): ARMED but NO trigger site ever "
+                          "consulted the latch — the four trip sites (SH-gate engage, "
+                          "sigma0 withhold, clock runaway, a00 band) are all gated behind "
+                          "their own feature toggles, and none of them ran.  The recorder "
+                          "is DEAD WIRING in this configuration, not a quiet run.");
+            else if (p.rec_trips == 0)
+                log->info("Network (rhs-attrib INC-5): {} consultation(s) and NOT ONE era "
+                          "tripped — the run stayed inside every QC band.  The recorder "
+                          "had ZERO opportunity, which is not evidence that it works.",
+                          p.rec_consults);
+            if (ctx.knobs.rec_on && nc.rhs_attrib_on_trip_prev
+                && p.rec_frames_retained == 0)
+                log->warn("Network (rhs-attrib INC-5): previous-epoch retention is ON but "
+                          "ZERO frames were captured — every epoch failed the capture "
+                          "(no reduced system) or the network exceeded "
+                          "network.rhs_attrib_prev_max_stations = {}.  A trip would dump "
+                          "the aftermath only.", nc.rhs_attrib_prev_max_stations);
+        }
+    }
+
+    // --- product-referenced measurement admission run-end telemetry -----------
+    // (docs/SPEC_measurement_admission.md).  Standing invariant #4 in its purest
+    // form: this card's entire claim is that an ABSOLUTE screen sees a class every
+    // differential check passes by construction, and the ONLY way a reader can
+    // check that claim from a log is to see the denominators next to the findings.
+    // A run reporting 0 rejections over 0 screened channels says nothing about the
+    // network; a run reporting 0 rejections over 400k screened channels with a
+    // worst |z| of 38 m is a real negative result — and one reporting two
+    // rejections at 1e5 m against that same sea is the positive one the card was
+    // written for.  Reported in that order: denominators, then the census
+    // separation, then the response, then the warns.
+    if (ctx.knobs.adm_on) {
+        const auto& a = ctx.counters.adm;
+        log->info("Network (measurement admission): {} screen pass(es), {} station-epoch "
+                  "block(s) with a usable median, {} line-of-sight epoch(s), {} CODE "
+                  "channel(s) screened; {} station-epoch(s) SKIPPED below the {}-satellite "
+                  "median floor, {} observable(s) skipped as non-finite.{}",
+                  a.epochs, a.station_epochs, a.los_epochs, a.channels, a.skips_thin,
+                  ctx.knobs.adm_min_sats, a.skips_nonfinite,
+                  a.resume_passes > 0
+                      ? "  One pass ran the warm-resume RESTORE rule."
+                      : "");
+        log->info("Network (measurement admission CENSUS): {} channel-epoch(s) over the "
+                  "{:g} m bound; run maximum |z| {:.6g} m at {} (TOW {:.1f}).  The bound "
+                  "sits >= 10x above the worst legitimate |z| and >= 100x below the "
+                  "observed corrupt class, so this number is a SEPARATION, not a "
+                  "threshold crossing — read it against the per-epoch "
+                  "adm_sta_worst_z column, which is the healthy sea.",
+                  a.over_bound, ctx.knobs.adm_bound_m, a.max_z,
+                  a.max_z_id.empty() ? std::string("-") : a.max_z_id, a.max_z_tow);
+        if (ctx.knobs.adm_screen) {
+            log->info("Network (measurement admission INC-1/INC-2): {} birth "
+                      "screening(s) -> {} admitted, {} REJECTED AT BIRTH, {} rejected on "
+                      "a warm-resume RESTORE; {} mid-arc onset(s), {} heal(s) after {} "
+                      "clean epoch(s), {} channel-epoch(s) held while already rejected "
+                      "({} of them advancing a heal counter); {} station event(s) "
+                      "holding {} channel-epoch(s) off an untrusted median.",
+                      a.births, a.admits_birth, a.reject_birth, a.reject_resume,
+                      a.onsets, a.heals, ctx.knobs.adm_heal_ep, a.rejects_held,
+                      a.heal_progress, a.station_events, a.station_held_channels);
+            log->info("Network (measurement admission RESPONSE): {} channel-epoch(s) "
+                      "withheld, removing {} observable(s) and pruning {} phase-bias / "
+                      "{} code-bias / {} satellite-clock state(s); {} funnel "
+                      "insertion(s) + {} pending-reseed(s).  A withhold removes BOTH "
+                      "observables of the band — the corruption rides code and phase "
+                      "together, which is exactly why no differential test sees it.",
+                      a.withheld_channels, a.withheld_obs, a.withheld_pb_pruned,
+                      a.withheld_cb_pruned, a.withheld_clk_pruned,
+                      a.refloat_ambs, a.refloat_reseeds);
+        }
+        if (ctx.knobs.adm_revet) {
+            log->info("Network (measurement admission INC-4 RE-ENTRY VET): {} re-entry "
+                      "screening(s) after >= {} absent screened epoch(s) -> {} admitted, "
+                      "{} REFUSED on the return epoch{}; {} channel-epoch(s) inside a vet "
+                      "window, {} window(s) run to completion.  Refusals the plain {:g} m "
+                      "bound would NOT have made, by trigger: {} from the tighter {:g} m "
+                      "VET BOUND (large-on-arrival), {} from the PREFIT CENSUS ({} "
+                      "consultation(s), {} with no fresh flag to read) (slow-ramp).",
+                      a.reentries, ctx.knobs.adm_revet_gap_ep, a.admits_reentry,
+                      a.reject_reentry,
+                      ctx.knobs.adm_revet_hold
+                          ? fmt::format(", {} clean re-entry channel-epoch(s) WITHHELD by "
+                                        "the strict posture", a.revet_hold_ep)
+                          : std::string(),
+                      a.revet_window_ep, a.revet_expired,
+                      ctx.knobs.adm_bound_m,
+                      a.revet_bound_refusals, ctx.knobs.adm_revet_bound_m,
+                      a.revet_census_refusals, a.revet_census_reads,
+                      a.revet_census_absent);
+            // The headline field readout of this increment, stated as a ratio rather
+            // than left for the reader to compute.  On the FT63 24 h control, 16 of
+            // 17 mid-arc onsets were re-entries wearing an onset's label; an armed
+            // run should move that population into reject_reentry and leave `onsets`
+            // holding only channels that genuinely went bad while continuously
+            // present.  If `onsets` is still the larger of the two, the vet is not
+            // reaching the class this increment was built for.
+            if (a.reject_reentry + a.onsets > 0)
+                log->info("Network (measurement admission INC-4): mid-arc withhold split "
+                          "-- {} refused as RE-ENTRIES vs {} as true onsets on a "
+                          "continuously-present channel.  The control run "
+                          "(runs/ft63_24h_conv, INC-4 off) scored 0 vs 17, of which 16 "
+                          "were re-entries in everything but the label.",
+                          a.reject_reentry, a.onsets);
+        }
+        log->info("Network (measurement admission): {} ADMISSION event(s) emitted, {} "
+                  "suppressed by the per-cell holdoff; {} admission record(s) forgotten "
+                  "after a very long absence.",
+                  a.events, a.events_held, a.arcs_forgotten);
+        // --- invariant #4: distinguish "ran and found nothing" from "never ran" ---
+        if (a.epochs == 0)
+            log->warn("Network (measurement admission): ARMED but the screen ran on ZERO "
+                      "epochs — the wiring never executed (invariant #4).  Nothing in "
+                      "this run is evidence about the card.");
+        else if (a.channels == 0)
+            log->warn("Network (measurement admission): ARMED and the screen ran, but it "
+                      "screened ZERO code channels — every station fell under the median "
+                      "floor, or no observation carried a `modeled` counterpart.  The "
+                      "card is INERT despite looking live (invariant #4); check that the "
+                      "producer is on the UNCOMBINED path, where `observed` and "
+                      "`modeled` are keyed by raw RINEX-3 codes.");
+        else if (a.station_epochs == 0)
+            log->warn("Network (measurement admission): {} screen pass(es) and NOT ONE "
+                      "station reached the {}-satellite median floor — every verdict was "
+                      "skipped, so this run says nothing about any channel.",
+                      a.epochs, ctx.knobs.adm_min_sats);
+        if (ctx.knobs.adm_screen && a.withheld_channels > 0 && a.withheld_obs == 0)
+            log->warn("Network (measurement admission): {} channel-epoch(s) counted as "
+                      "withheld and ZERO observables were actually removed — the "
+                      "counters are live over dead wiring (invariant #4), not a quiet "
+                      "run.  Check that the band predicate matches the observable keys "
+                      "this run is using.", a.withheld_channels);
+        if (ctx.knobs.adm_screen
+            && (a.onsets + a.reject_resume + a.station_events) > 0
+            && a.refloat_ambs == 0 && a.refloat_reseeds == 0)
+            log->warn("Network (measurement admission): {} response(s) that MUST refloat "
+                      "(onset / resume-restore / station event) fired and NOT ONE "
+                      "ambiguity was reset — neither feed is live (the funnel insert "
+                      "needs network.carry_invariant, the pending-reseed a warm "
+                      "network.phase_leveling).  A hole was punched in a stiff "
+                      "time-linked carry with no re-tap behind it, which is standing "
+                      "invariant #1 violated, not a tuning detail.",
+                      a.onsets + a.reject_resume + a.station_events);
+        // --- INC-4, invariant #4 -------------------------------------------
+        // Every one of these separates "the vet ran and found nothing" from "the vet
+        // never got the chance", which no amount of clean log output distinguishes.
+        if (ctx.knobs.adm_revet && a.channels > 0 && a.reentries == 0)
+            log->warn("Network (measurement admission INC-4): the re-entry vet is ARMED "
+                      "and {} channel(s) were screened, yet NOT ONE re-entry was seen. "
+                      "A 63-station day carries ~4650 of them, so on anything longer "
+                      "than a short leg this means the gap test never fires — check "
+                      "network.adm_revet_gap_ep ({}) and that arcs are actually leaving "
+                      "the screened set.  The card is INERT despite looking live.",
+                      a.channels, ctx.knobs.adm_revet_gap_ep);
+        if (ctx.knobs.adm_revet && ctx.knobs.adm_revet_census
+            && a.revet_census_reads > 0
+            && a.revet_census_absent == a.revet_census_reads)
+            log->warn("Network (measurement admission INC-4): the census trigger is ARMED "
+                      "and every one of its {} consultation(s) found NO fresh flag to "
+                      "read — the prefit walk is off, or its flags never carried the "
+                      "previous loop epoch's stamp.  The vet ran on the |z| bound ALONE, "
+                      "which is the configuration the four exposed re-entries of the FT63 "
+                      "day survived for 2-8 epochs.  Arm one of "
+                      "network.trace_prefit_census / seed_birth_check_sigma / "
+                      "trace_topology.", a.revet_census_reads);
+        if (ctx.knobs.adm_revet && !ctx.knobs.adm_revet_hold && a.reentries > 0
+            && a.reject_reentry == 0 && a.revet_census_refusals == 0
+            && a.revet_bound_refusals == 0)
+            log->info("Network (measurement admission INC-4): {} re-entry screening(s) and "
+                      "not one refusal — every arc that came back was inside the bound on "
+                      "arrival and was never flagged by the census while vetting.  That is "
+                      "the expected reading on clean data (the increment is inert by "
+                      "construction on a healthy re-entry: no withhold, no refloat, no "
+                      "solve change), NOT evidence that the vet is broken; the "
+                      "denominators above are what says it ran.", a.reentries);
+        if (ctx.knobs.adm_screen && a.over_bound > 0 && a.withheld_channels == 0)
+            log->warn("Network (measurement admission): {} channel-epoch(s) exceeded the "
+                      "bound and NOTHING was withheld.  Either every one of them landed "
+                      "inside a station event whose channel set was empty, or the "
+                      "response path is not reached — investigate before reading this "
+                      "run as clean.", a.over_bound);
+        if (ctx.knobs.adm_screen && a.station_events > 0)
+            log->warn("Network (measurement admission): {} station event(s) fired — more "
+                      "than {:g} of a station's screened channels disagreed with the "
+                      "products at once, so its MEDIAN was untrusted and every "
+                      "per-channel verdict was REFUSED (the IF-TD incoherent-station "
+                      "precedent).  That is a station-level data or a-priori-coordinate "
+                      "problem, not a channel one; the per-channel counts above exclude "
+                      "these epochs entirely.",
+                      a.station_events, ctx.knobs.adm_max_frac);
+        if (!ctx.knobs.adm_screen && a.over_bound > 0)
+            log->warn("Network (measurement admission): the census is MEASURE-ONLY this "
+                      "run and found {} channel-epoch(s) over the bound — they were "
+                      "folded into the solve exactly as if nothing had been seen.  Arm "
+                      "network.adm_screen to act on them.", a.over_bound);
+    }
+
+    // --- PD-safe invariant-DD fold run-end telemetry (SPEC_pd_safe_dd_fold.md) ------
+    // Standing invariant #4 in its most expensive instance to date.  Before this card the
+    // fold's response to a non-PD Pᶻ+B was `M := 0` with NO counter, NO log and NO event:
+    // the block's posterior became its prior forever, the D5 gate skipped its rows because
+    // Cov(v) inherited the negative diagonals, and dd_sigma_cyc / the AR probe read a
+    // covariance that never noticed.  Measured 2026-08-02 on `runs/churn_base` (63 sta,
+    // 3 h, DOY-129): 568 of 686 carried rows — 78 % of the state — diffusing behind that
+    // silence, in the control AND every arm of the lineage.  INC-0 is always-on, so a
+    // carry_invariant run ALWAYS gets a line here, armed or not — the branch below carries
+    // the zero-fold case rather than letting it fall through silently (SPEC §3, "Run-end
+    // summary always").  Keep those two branches exhaustive over `carry_invariant`.
+    if (ctx.knobs.carry_invariant && ctx.counters.ddfold_epochs > 0) {
+        const auto& c = ctx.counters;
+        const double degen_frac = (c.ddfold_fold_rows > 0)
+            ? static_cast<double>(c.ddfold_degen_rows)
+              / static_cast<double>(c.ddfold_fold_rows) : 0.0;
+        log->info("Network (Card 4 PD-safe fold, INC-0): {} epoch(s) folded {} DD-prior "
+                  "block(s) / {} carried row(s); {} block-epoch(s) and {} row-epoch(s) "
+                  "({:.2f} % of the carried dimension) folded INERTLY on a failed PD "
+                  "screen, over {} epoch(s).  Worst relative pivot d_min/d_max = {:.6g}.  "
+                  "Edges: {} healthy->degenerate, {} degenerate->healthy.  D5 rows the "
+                  "gate could not test (Cov(v) not positive): {}.",
+                  c.ddfold_epochs, c.ddfold_folds, c.ddfold_fold_rows,
+                  c.ddfold_degen_blocks, c.ddfold_degen_rows, 100.0 * degen_frac,
+                  c.ddfold_degen_epochs, c.ddfold_min_pivot_rel,
+                  c.ddfold_transitions, c.ddfold_recoveries,
+                  carry_driver.counters().d5_nonpos_var_rows);
+        if (ctx.knobs.carry_invariant_pd_safe) {
+            log->info("Network (Card 4 PD-safe fold, INC-1/2): ARMED — {} eigen-clamp "
+                      "repair(s) over {} row(s) (worst clamped |lambda|/lambda_max = "
+                      "{:.6g}; {} fold(s) above the 1e-6 'this is not dust' bar), {} "
+                      "block rebirth(s) re-seeding {} carried row(s), {} block(s) "
+                      "rebirthed at warm-resume restore.",
+                      c.ddfold_repairs, c.ddfold_repair_rows, c.ddfold_repair_worst,
+                      c.ddfold_repair_loud, c.ddfold_rebirths, c.ddfold_rebirth_rows,
+                      carry_driver.resumeCarryRebirthBlocks());
+            if (c.ddfold_repair_loud > 0)
+                log->warn("Network (Card 4 PD-safe fold, INC-1c): {} fold(s) needed a "
+                          "repair LARGER than 1e-6 x lambda_max.  The repair exists for "
+                          "round-off dust; a clamp this size means the block arrived "
+                          "genuinely broken.  Do NOT read the repaired covariance as "
+                          "healthy — find the upstream defect.", c.ddfold_repair_loud);
+            if (c.ddfold_degen_rows > 0 && c.ddfold_rebirths == 0)
+                log->warn("Network (Card 4 PD-safe fold, INC-2a): {} row-epoch(s) folded "
+                          "inertly yet ZERO blocks were rebirthed — the re-coupling edge "
+                          "never fired, so those blocks were decoupled with no bounded "
+                          "response (standing invariant #7).  This is a WIRING failure, "
+                          "not a quiet run.", c.ddfold_degen_rows);
+        } else if (c.ddfold_degen_rows > 0) {
+            log->warn("Network (Card 4 PD-safe fold): {} row-epoch(s) ({:.2f} % of the "
+                      "carried dimension) folded INERTLY and network."
+                      "carry_invariant_pd_safe is OFF — those blocks took NO data and, "
+                      "their priors never improving, will not factor again: the "
+                      "decoupling is PERMANENT and unbounded.  Anything graded on this "
+                      "run's carry is graded on a frozen substrate.",
+                      c.ddfold_degen_rows, 100.0 * degen_frac);
+        }
+    } else if (ctx.knobs.carry_invariant) {
+        // SPEC §3: "Run-end summary always."  The gate above is `ddfold_epochs > 0`, and
+        // that counter only advances on an ACCEPTED install whose fold saw blocks
+        // (NetworkInstallCarry, under `if (fs.blocks > 0)`).  Zero is genuinely reachable
+        // with no fault at all — buildCarryDdPriors emits nothing when there is no shared
+        // datum or no foldable chord, and the fold early-returns before it ever tallies —
+        // so without this branch a carry_invariant run could print NO INC-0 line and take
+        // d5_nonpos_var_rows down with it (its only readout is the block above).  The
+        // per-epoch trace columns are gated on the same `blocks > 0`, so there is no
+        // fallback there either: the run would be silent, and silence reads as "clean".
+        log->warn("Network (Card 4 PD-safe fold, INC-0): network.carry_invariant is ON but "
+                  "the DD-prior fold ran on ZERO epochs — no accepted install ever reached a "
+                  "factorization, so every INC-0 tally is structurally empty and this run is "
+                  "evidence about NOTHING in the card (standing invariant #4: inert wiring "
+                  "must be VISIBLE — this line is the only place it is).  Expected on a run "
+                  "with no shared datum or no foldable chord; unexpected otherwise, and then "
+                  "it means the carry never engaged.{}  D5 rows the gate could not test "
+                  "(Cov(v) not positive): {}.",
+                  ctx.knobs.carry_invariant_pd_safe
+                      ? "  network.carry_invariant_pd_safe is ARMED and likewise never "
+                        "executed — the arm proves nothing on this run."
+                      : "",
+                  carry_driver.counters().d5_nonpos_var_rows);
+    } else if (ctx.knobs.carry_invariant_pd_safe) {
+        log->warn("Network (Card 4 PD-safe fold): ARMED but the DD-prior fold ran on ZERO "
+                  "epochs — the wiring never executed (invariant #4).  Nothing in this run "
+                  "is evidence about the card.");
+    }
+
+    // --- Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §4) -----
+    // ALWAYS on a carry_invariant run, armed or not: the whole point of the card is that a
+    // σ published without its covariance mode is unreadable, and the run that most needs
+    // to be told its σ is carry-BLIND is the one that did not arm the knob.
+    if (ctx.knobs.carry_invariant) {
+        const auto& cc = est.carryCovStats();
+        if (ctx.knobs.carry_aware_covariance) {
+            const double mean_ratio = (cc.ratio_n > 0)
+                ? cc.ratio_sum / static_cast<double>(cc.ratio_n) : 1.0;
+            log->info("Network (carry-aware covariance): ARMED — {} readback call(s) over "
+                      "{} requested (station,column) entr(ies); {} corrected, {} REFUSED "
+                      "for a non-positive corrected variance ({} matrix call(s) fell back "
+                      "wholesale).  Variance ratio corrected/blind: min {:.6g}, mean "
+                      "{:.6g}, max {:.6g}.  dd_sigma_cyc and the AR probe's Q_cyc are the "
+                      "estimator's own uncertainty on this run.",
+                      cc.calls, cc.rows, cc.corrected_rows, cc.nonpos_rows,
+                      cc.refused_calls, cc.ratio_min, mean_ratio, cc.ratio_max);
+            if (cc.calls == 0)
+                log->warn("Network (carry-aware covariance): ARMED but ZERO readback calls "
+                          "reached the correction — no consumer asked, or every epoch was "
+                          "chordless.  The wiring never executed (invariant #4); nothing "
+                          "in this run is evidence about the card.");
+            else if (cc.ratio_n > 0 && cc.ratio_min >= 1.0)
+                log->warn("Network (carry-aware covariance): ARMED and the correction moved "
+                          "NOTHING (min ratio {:.6g} >= 1).  The carry can only ADD "
+                          "information, so a readback it never tightens means the rank-K "
+                          "term reached no requested column — dead wiring, not a quiet "
+                          "run.", cc.ratio_min);
+            if (cc.nonpos_rows > 0)
+                log->warn("Network (carry-aware covariance): {} corrected variance(s) came "
+                          "out NON-POSITIVE and were refused (never clamped).  This is not "
+                          "a readback bug: the FOLD composes one Woodbury update per block "
+                          "against the pristine N_rr⁻¹, which is exact only when no station "
+                          "is touched by two blocks — and a block is one connected "
+                          "component of ONE (const,signal) group.  This counter is the "
+                          "first measurement anywhere of that cross-block approximation "
+                          "error.  It is a result about the SOLVE; open it its own card.",
+                          cc.nonpos_rows);
+        } else {
+            log->info("Network (carry-aware covariance): OFF — dd_sigma_cyc and the AR "
+                      "probe's Q_cyc are CARRY-BLIND on this run (Cov(x_r) from the "
+                      "prior-free N_rr⁻¹ while the shared block was carry-aware, i.e. the "
+                      "covariance of no estimator).  Read them as an epoch-local float "
+                      "bound only; in particular a uniform med|frac| is the EXPECTED "
+                      "reading at these σ and is NOT evidence about integer information.");
+        }
+    }
+
+    // --- SD pre-reduce EWL constraint run-end telemetry (SPEC_sd_ewl_prereduce.md) ---
+    // Standing invariant #4: rows_built == 0 on an armed run means the wiring never fired,
+    // which is NOT "the feature had no effect" — so the skip tallies are reported too, and
+    // an all-zero build is called out explicitly rather than left to look quiet.
+    if (config_.getNetworkConfig().sd_ewl.enable) {
+        NetStation::SdEwlCounters t;
+        for (const auto& st : stations) t += st.sd_ewl_ctr;
+        const double mean_var = t.rows_built > 0
+                                    ? t.sum_var_m2 / static_cast<double>(t.rows_built)
+                                    : 0.0;
+        log->info("Network (SD pre-reduce EWL): {} row(s) built over the run from {} "
+                  "(station,epoch,satellite) visit(s) on an EWL-tier constellation "
+                  "(mean SD variance {:.5f} m^2, i.e. sigma ~ {:.4f} m); {} capped.  "
+                  "Skips — {} no-detector station-epoch(s), {} no-pivot (<2 arcs at the "
+                  "station), {} NO MW ARC on any candidate signal pair, {} immature arc "
+                  "(< {} lagged samples), {} unreconstructable SD frame (group MW pivot "
+                  "arc absent), {} mixed BIA frame, {} no ambiguity-column pair, {} "
+                  "missing shared PB/CB column, {} arc without code channels, {} bad "
+                  "lambda, {} |z| over limit.  FLOAT rows only (increment 1); these fold "
+                  "PRE-reduce so they compose exactly with the Card-4 post-reduce DD fold.",
+                  t.rows_built, t.sat_seen, mean_var, std::sqrt(std::max(mean_var, 0.0)),
+                  t.rows_capped, t.skip_no_detector, t.skip_no_pivot, t.skip_no_arc,
+                  t.skip_immature, config_.getNetworkConfig().sd_ewl.min_arc_epochs,
+                  t.skip_frame_recon, t.skip_mixed_frame, t.skip_missing_amb_col,
+                  t.skip_missing_shared_col, t.skip_missing_code, t.skip_bad_lambda,
+                  t.skip_big_z);
+        if (t.rows_built == 0) {
+            // Name the DOMINANT cause: "zero rows" plus a table of ten tallies is a
+            // puzzle, and the three failure classes have entirely different fixes
+            // (wiring / signal availability / maturity).
+            const char* lead =
+                t.sat_seen == 0                                  ? "the appender never saw a single EWL-tier satellite — the hook is not running, or no GPS/Galileo station-epoch reached PASS B"
+              : t.skip_missing_amb_col >= t.sat_seen / 2         ? "the dominant cause is NO AMBIGUITY-COLUMN PAIR: the second EWL band (GPS L5 / Galileo E5a) is not being ESTIMATED at these stations — check processing.frequency_mode / signal_priorities, not the detector"
+              : t.skip_no_arc >= t.sat_seen / 4                  ? "the dominant cause is NO MW ARC on the (band1,band2) pair: the detector never formed that pair — check mw_frequency_mode (Mirror reads obs.observed, so an unprocessed band yields no pair) and mw_channel_mode"
+              : t.skip_immature >= t.sat_seen / 4                ? "the dominant cause is IMMATURE arcs: the run is shorter than sd_ewl.min_arc_epochs, or arcs keep refloating"
+              : t.skip_frame_recon >= t.sat_seen / 4             ? "the dominant cause is an UNRECONSTRUCTABLE SD frame: the arcs are BIA-differenced but their group MW pivot arc is missing"
+                                                                : "no single cause dominates — read the tallies above";
+            log->warn("Network (SD pre-reduce EWL): ARMED but built ZERO rows — the "
+                      "feature is INERT on this run.  {}.  (An all-zero no-detector "
+                      "count with sat_seen > 0 means the hook DID run; a large "
+                      "no-detector count means phase_leveling / cycle_slip.mw_detect "
+                      "are off or every station is the clock datum.)", lead);
+        }
+        // --- increment 2a+2b: the INTEGER path (docs/SPEC_sd_ewl_integer_hold.md) -----
+        if (config_.getNetworkConfig().sd_ewl.fix_enable) {
+            const auto& K = ctx.counters;
+            log->info("Network (SD EWL integer fix, 2a decision): {} epoch(s), {} "
+                      "component(s), {} arc(s) admitted to the integer graph; {} DD "
+                      "rounding attempt(s) -> {} usable integer(s), of which {} are DATUM "
+                      "values (reference/link/first-sighting frame choices that carry no "
+                      "rounding decision and so cannot be wrong).  Rejected — {} on "
+                      "|frac| > {:.3f} cyc, {} on FFR < {:.4f}.  Events — {} FLIP "
+                      "(disagreed with the previous epoch on a continuous arc: counted "
+                      "AND vetoed, the standing-invariant-#1 response), {} arc restart "
+                      "(no flip charged), {} reference-station re-election (re-datums a "
+                      "whole component's SD frame).  Excluded — {} on a non-consensus "
+                      "tracking-channel pair (B^s would NOT cancel in the DD), {} on a "
+                      "mixed BIA frame, {} with no admissible link satellite, {} with no "
+                      "DD graph.",
+                      K.sdewl_epochs, K.sdewl_components, K.sdewl_dd_pairs_seen,
+                      K.sdewl_dd_fix_attempts, K.sdewl_dd_fixed, K.sdewl_dd_datum,
+                      K.sdewl_dd_reject_frac,
+                      config_.getNetworkConfig().sd_ewl.fix_max_frac_cyc,
+                      K.sdewl_dd_reject_ffr,
+                      config_.getNetworkConfig().sd_ewl.fix_min_ffr,
+                      K.sdewl_dd_flip, K.sdewl_dd_restart, K.sdewl_sd_ref_reelected,
+                      K.sdewl_dd_skip_channel, K.sdewl_dd_skip_frame,
+                      K.sdewl_dd_no_link, K.sdewl_dd_no_graph);
+            log->info("Network (SD EWL integer fix, 2b fold): {} FIXED row(s) in {} "
+                      "all-fixed whitened group(s) + {} float row(s) (of {} built).  {} "
+                      "arc(s) had an integer on a DIFFERENT channel pair than the row "
+                      "settled on and went float; {} lone fixed arc(s) had nothing to "
+                      "difference against; {} arc(s) were demoted because their group "
+                      "held DATUM values only (a frame choice carries no integer "
+                      "information, so it does not earn a removed local DOF).  A fixed row carries ZERO local ambiguity "
+                      "coefficients — the local DOF is removed, not constrained — and is "
+                      "weighted at the per-SAMPLE sigma floor {:.2f} m (amendment A1: "
+                      "arcZdMean is arc-CUMULATIVE, so refolding a variance-of-mean as "
+                      "white every epoch over-claims information as sqrt(k)).",
+                      t.rows_fixed, t.groups_fixed, t.rows_float, t.rows_built,
+                      t.fix_pair_mismatch, t.fix_lone_arc, t.fix_datum_only,
+                      config_.getNetworkConfig().sd_ewl.fix_sigma_floor_m);
+            if (t.rows_fixed == 0) {
+                // Invariant #4 again, one level down: the row layer can be healthy and
+                // the INTEGER layer still inert, and the two have completely different
+                // fixes.  Name the dominant cause rather than leaving nine tallies.
+                const char* lead2 =
+                    K.sdewl_epochs == 0
+                        ? "the 2a decision seam never ran — the call site is not reached "
+                          "(every epoch skipped before pre-assembly?)"
+                  : K.sdewl_dd_pairs_seen == 0
+                        ? "no arc reached the integer graph: the MW accumulator has no "
+                          "MATURE EWL arc at any station (raise the run length or lower "
+                          "sd_ewl.min_arc_epochs), or no station has both EWL bands "
+                          "ESTIMATED"
+                  : K.sdewl_dd_no_graph >= K.sdewl_dd_pairs_seen / 2
+                        ? "the DD GRAPH is empty: stations do not share two co-visible "
+                          "satellites on a consensus channel pair, so no double "
+                          "difference can be formed at all"
+                  : K.sdewl_dd_skip_channel >= K.sdewl_dd_pairs_seen / 2
+                        ? "channel DIVERSITY: most arcs sit on a non-consensus tracking "
+                          "pair, so they are excluded to keep the satellite-bias "
+                          "cancellation exact — check processing.channel_mode and "
+                          "signal_priorities"
+                  : K.sdewl_dd_reject_ffr >= K.sdewl_dd_fix_attempts / 2
+                        ? "the FFR gate: the DDs are too noisy to round confidently "
+                          "(arcs are short, or sd_ewl.fix_min_ffr is set too tight for "
+                          "this maturity)"
+                  : K.sdewl_dd_reject_frac >= K.sdewl_dd_fix_attempts / 2
+                        ? "the |frac| gate: the DDs are NOT sitting on integers, which "
+                          "is itself the finding — Route B's cancellation is failing, so "
+                          "suspect channel identity or the BIA frame before the gate"
+                  : K.sdewl_dd_flip >= K.sdewl_dd_fixed
+                        ? "FLIP vetoes: integers are decided but disagree epoch to "
+                          "epoch, so none is ever folded.  That is the invariant-#1 "
+                          "response doing its job; the integers are not stable enough "
+                          "to fold"
+                  : t.fix_pair_mismatch > 0
+                        ? "CHANNEL MISMATCH between the decision and the row: integers "
+                          "exist but the row builder settles on a different pair"
+                        : "no single cause dominates — read the 2a tallies above";
+                log->warn("Network (SD EWL integer fix): ARMED but folded ZERO fixed "
+                          "rows.  {}.", lead2);
+            }
+        }
+    }
+
     // --- Slip-QC hardening run-end telemetry (docs/SPEC_slip_qc_hardening.md) ---
     // Standing invariant #4: a card whose counters are all zero on an armed run
     // is a MISWIRE, not a quiet run.  Card E's line is unconditional under
@@ -524,6 +1657,31 @@ int networkTeardown(
                   "integer), {} pin/gauge-mismatch epoch(s) over the run.",
                   eq34_reref_total, eq34_erase_total, eq34_shift_total,
                   eq34_gap_repin_total, eq34_mismatch_epochs);
+    if (config_.networkPhaseDatumEq34SlipAwareElection()) {
+        const long long ds = ctx.counters.eq34_slip_deseeded;
+        const long long ra = ctx.counters.eq34_slip_readmitted;
+        log->info("Network (Card 3/4 slip-aware election): {} slipped incumbent(s) DE-SEEDED "
+                  "from the sticky tree, {} arcLife demotion(s) (sort comparisons, inert "
+                  "without the longevity election), and {} slipped arc(s) became a tree edge "
+                  "ANYWAY because the component had no other route to the vertex.  A slipped "
+                  "TREE edge refloats every fundamental cycle through it; a slipped CHORD "
+                  "costs one DD — so (de-seeded − re-admitted) is the mass-refloat this "
+                  "converted to a rank-1 kill, and the re-admitted count is the share the "
+                  "graph topology, not the policy, still forces.",
+                  ds, ctx.counters.eq34_slip_demoted, ra);
+        if (ds == 0)
+            log->warn("Network (Card 3/4): the slip-aware election is ARMED but DE-SEEDED "
+                      "NOTHING — no slipped arc was ever an incumbent tree edge this run.  "
+                      "Standing invariant #4: that is INERT, not proof the policy works.  "
+                      "Check that slips reached the funnel at all (the slip-QC lines above); "
+                      "with few slips and a dense graph a zero here is genuinely expected.");
+        else if (ra >= ds)
+            log->warn("Network (Card 3/4): the slip-aware election de-seeded {} arc(s) but {} "
+                      "slipped arc(s) still ended up in the tree — the graph, not the "
+                      "election, is the binding constraint here and this knob is buying "
+                      "little.  A denser observation graph (or a per-component redundancy "
+                      "check) is the lever, not this policy.", ds, ra);
+    }
     if (carry_invariant)
         log->info("Network (Card 4/M1 invariant carry): {} epoch(s) driven, {} carried DD(s) at "
                   "run end; {} chord birth(s), {} marginalization(s), {} slip refloat(s), "
@@ -534,21 +1692,113 @@ int networkTeardown(
                   carry_slipkills_total, carry_dropped_total,
                   carry_swaps_total, carry_merges_total, carry_splits_total,
                   config_.networkCarryInvariantQz());
+    // FC-1 (network.fast_clock): the split-cadence fast tier runs on epochs the full
+    // pipeline SKIPS, so it leaves no trace in any of the per-epoch readouts above.  These
+    // counters ARE its ON-path telemetry (standing invariant #4) — a clean log proves
+    // nothing about whether a single tick ever fired.
+    if (config_.getNetworkConfig().fast_clock.enable) {
+        const auto& fcc = config_.getNetworkConfig().fast_clock;
+        const auto& c = ctx.counters;
+        const double ms_per_tick =
+            c.fc_ticks_driven ? c.fc_wall_ms / static_cast<double>(c.fc_ticks_driven) : 0.0;
+        log->info("Network (FC-1 split-cadence fast clock): {} tick(s) driven, {} estimated, "
+                  "{} emitted; {} LOS used / {} screened ({} slip-scale); {} sat-below-floor, "
+                  "{} datum-withheld tick(s), {} gap-withheld tick(s).",
+                  c.fc_ticks_driven, c.fc_ticks_estimated, c.fc_ticks_emitted,
+                  c.fc_los_used, c.fc_los_screened, c.fc_screen_slips,
+                  c.fc_sat_below_floor, c.fc_datum_withheld_ticks, c.fc_gap_withheld_ticks);
+        log->info("Network (FC-1)   tick wall: {:.1f} ms total, {:.3f} ms/tick mean, "
+                  "{:.3f} ms max (§7.3 budget: <= 50 ms/tick at 305 stations — a MAX bound, "
+                  "since an over-budget tick at an RT cadence is a MISSED epoch, not a "
+                  "slower average).",
+                  c.fc_wall_ms, ms_per_tick, c.fc_wall_ms_max);
+        if (c.fc_ticks_driven == 0)
+            log->warn("Network (FC-1): armed but ZERO ticks were driven — the T2e decimation "
+                      "hook never fired.  With epoch_decimation_n > 1 that means no epoch was "
+                      "decimated out (too few synced epochs); with shadow on it means no full "
+                      "epoch was reached.  This is inert WIRING, not a quiet run: do NOT read "
+                      "this run as evidence about the fast tier (invariant #4).");
+        else if (c.fc_ticks_estimated == 0)
+            log->warn("Network (FC-1): {} tick(s) ran but NONE produced a satellite clock "
+                      "delta — the anchor never armed (it needs two consecutive EMITTED full "
+                      "epochs) or every satellite missed the {}-station floor.  The tier is "
+                      "wired but measured nothing.",
+                      c.fc_ticks_driven, fcc.min_stations_per_sat);
+        else if (fcc.emit && c.fc_ticks_emitted == 0)
+            log->warn("Network (FC-1): emit is armed and {} tick(s) estimated, but NOTHING "
+                      "reached the product wire — every tick was withheld by the datum guard "
+                      "({}) or the R11 emission-gap bound of {:.0f} s ({}).  The consumer saw "
+                      "no fast clocks at all.",
+                      c.fc_ticks_estimated, c.fc_datum_withheld_ticks, fcc.emit_max_gap_s,
+                      c.fc_gap_withheld_ticks);
+        if (c.fc_los_used + c.fc_los_screened > 0) {
+            const double screen_frac =
+                static_cast<double>(c.fc_los_screened)
+                / static_cast<double>(c.fc_los_used + c.fc_los_screened);
+            if (screen_frac > 0.01)
+                log->warn("Network (FC-1): screen rate {:.2f}% of LOS exceeds the 1% quiet-data "
+                          "expectation (§6 INC-4) — either the window is genuinely eventful or "
+                          "screen_k_sigma ({:.1f}) is mis-scaled against the prediction spread.",
+                          100.0 * screen_frac, fcc.screen_k_sigma);
+        }
+        if (c.fc_wall_ms_max > 50.0)
+            log->warn("Network (FC-1): slowest tick {:.1f} ms exceeds the §7.3 50 ms budget — "
+                      "profile before threading; the WLS must stay serial-deterministic.",
+                      c.fc_wall_ms_max);
+    }
     // RTB-7(d) RE-4 / invariant #4: the resume event's wiring is only visible through
     // counters — "0 restored / no shock" must be stated, never inferred from absence.
     if (carry_invariant && !config_.getNetworkConfig().state_snapshot_path.empty()) {
-        log->info("Network (RTB-7d resume event): carry restored {}{}; sigma0 {}; resume "
+        // RE-1 σ̂₀ SEED PROVENANCE.  The old text asserted a cause the code never checked —
+        // it printed "(v1 blob / calibration off)" on the not-seeded branch unconditionally,
+        // so a COLD run with calibration ARMED published two false clauses while its own
+        // config line said CALIBRATION ON (`runs/pdfix_qz0_deg15/run.log`).  Four distinct
+        // conditions suppress the seed; the driver knows which one held, so say THAT
+        // (invariant #4, and the same instrument fix as SPEC_pd_safe_dd_fold.md §11).
+        using Seed = NetworkInvariantCarryDriver::ResumeSeedState;
+        const auto seed_st = carry_driver.resumeSigma0Status();
+        std::string sigma0_txt;
+        switch (seed_st.state) {
+            case Seed::Seeded:
+                sigma0_txt = fmt::format("SEEDED {:.4f} from the blob's 'S,' line ({:.0f} "
+                                         "row(s)) — the D5 gate trusts the restored "
+                                         "inflation immediately",
+                                         seed_st.sigma0, seed_st.blob_rows);
+                break;
+            case Seed::NotRestored:
+                sigma0_txt = "NOT seeded — COLD: no carry blob was restored this run, so "
+                             "there was no σ̂₀ to seed from; the gate runs raw-formal until "
+                             "its warm-up count is met";
+                break;
+            case Seed::CalibrationOff:
+                sigma0_txt = "NOT seeded — network.carry_invariant_innov_calibrate is OFF, "
+                             "so no σ̂₀² accumulator exists and any 'S,' line in the blob "
+                             "was never consulted; the gate is raw-formal BY CONFIG, not "
+                             "pending a warm-up count";
+                break;
+            case Seed::NoSeedLine:
+                sigma0_txt = "NOT seeded — the restored blob carried no 'S,' line (a v1/"
+                             "legacy blob, or one written by a calibration-off run); the "
+                             "gate runs raw-formal until its warm-up count is met";
+                break;
+            case Seed::Rejected:
+                sigma0_txt = fmt::format(
+                    "NOT seeded — the blob's 'S,' line was REJECTED (σ̂₀² = {:.4g}, rows = "
+                    "{:.0f}; the seed guard needs both strictly positive).  That is a "
+                    "WRITER-side defect, not a legacy blob — the run that wrote this "
+                    "snapshot serialized a degenerate accumulator; the gate runs raw-formal "
+                    "until its warm-up count is met",
+                    seed_st.blob_sigma0_sq, seed_st.blob_rows);
+                break;
+        }
+        log->info("Network (RTB-7d resume event): carry restored {}{}; sigma0 [{}] {}; resume "
                   "shock {}; restored Pᶻ {}.",
                   carry_driver.resumeCarryRestored() ? "YES" : "NO",
                   carry_driver.resumeCarryRestored()
                       ? fmt::format(" ({} carried DD at restore)",
                                     carry_driver.resumeCarryChords())
                       : std::string{},
-                  carry_driver.resumeSigma0Seeded()
-                      ? fmt::format("SEEDED {:.4f} (D5 gate trusts the restored inflation "
-                                    "immediately)", carry_driver.resumeSigma0Value())
-                      : std::string("NOT seeded (v1 blob / calibration off) — the gate runs "
-                                    "raw-formal until its warm-up count is met"),
+                  NetworkInvariantCarryDriver::resumeSeedStateName(seed_st.state), sigma0_txt,
                   carry_driver.resumeShockSigmaM() > 0.0
                       ? fmt::format("APPLIED sigma={:.3f} m", carry_driver.resumeShockSigmaM())
                       : std::string("NONE"),
@@ -571,7 +1821,7 @@ int networkTeardown(
                           ? "DIAGONAL-ONLY (v3 — Sum K_c numbers)"
                           : "dense (v2 — Sum K_c^2 numbers)");
     }
-    if (sh_dev_on)
+    if (sh_dev_on) {
         log->info("Network (Iono-2/T5v2 per-LOS deviation carry): {} warm harvest(s), "
                   "{} cold seed(s), {} slip reset(s) (C3c funnel), {} no-information "
                   "harvest skip(s), {} deviation(s) carried at run end (τ={} s, "
@@ -580,6 +1830,261 @@ int networkTeardown(
                   ctx.carry.shdev_slip_resets_total, ctx.carry.shdev_nodata_total,
                   sh_dev_carry.size(), shc.rep_error_tau_s,
                   shc.representation_sigma_tecu);
+        // v3k clause only when armed — the v2/v3 OFF lines stay byte-identical.
+        if (shc.rep_error_d5_keep)
+            log->info("Network (Iono-2/v3k D5-keep): {} D5-only re-tap(s) KEPT the level "
+                      "(variance re-tapped to σ_ss), {} raw-confirmed erase(s) — the erase "
+                      "policy split (SPEC_iono2_mechB_v3 addendum).",
+                      ctx.carry.shdev_d5_keeps_total, ctx.carry.shdev_slip_resets_total);
+        // v3 clause only when armed — the v2 OFF line stays byte-identical.
+        if (shc.rep_error_demean)
+            log->info("Network (Iono-2/v3 de-mean): global common-mode removed on {} epoch(s) "
+                      "(mean |g| = {:.3f} TECU), per-station means removed {} station-epoch(s) "
+                      "(anti-ratchet; the a00-twin / receiver-lump quasi-null directions stay "
+                      "with the field and receiver states — SPEC_iono2_mechB_v3).",
+                      ctx.carry.shdev_demean_epochs_total,
+                      ctx.carry.shdev_demean_epochs_total > 0
+                          ? ctx.carry.shdev_demean_abs_g_sum
+                                / static_cast<double>(ctx.carry.shdev_demean_epochs_total)
+                          : 0.0,
+                      ctx.carry.shdev_demean_sta_total);
+    }
+    // rx-CB carry (SPEC_rx_cb_carry): armed-only run-end line, independent of iono2.
+    if (config_.networkCarryRxCodeBias())
+        log->info("Network (rx-CB carry): {} receiver code-bias prior(s) folded, {} withheld "
+                  "by the 10σ innovation gate (receiver-reset response), {} harvest(s); {} "
+                  "carried at run end (RW q={} m²/s; harvested outside the phase-leveling "
+                  "gate — SPEC_rx_cb_carry).",
+                  ctx.carry.rx_cb_injected_total, ctx.carry.rx_cb_innov_skips_total,
+                  ctx.carry.rx_cb_harvested_total, ctx.carry.rx_cb_carry.size(),
+                  config_.networkRxCbCarryQ());
+    // Card LV-2 (docs/SPEC_level_information_budget.md): armed-only run-end line.
+    // Standing invariant #4 — "0 demeaned" must be visible, never silent, because a
+    // de-mean that never fired is indistinguishable from a healthy one in every
+    // other trace.  The skip rate is printed against its own denominator: the whole
+    // point of judging |innov − μ| is that a coherent frame move stops
+    // mass-triggering the receiver-reset response.
+    if (config_.networkRxCbCarryDemean()) {
+        const long long lv2_seen = ctx.carry.rx_cb_injected_total
+                                 + ctx.carry.rx_cb_innov_skips_total;
+        const double skip_pct = lv2_seen > 0
+            ? 100.0 * static_cast<double>(ctx.carry.rx_cb_innov_skips_total)
+                    / static_cast<double>(lv2_seen)
+            : 0.0;
+        if (ctx.carry.lv2_mu_epochs == 0)
+            log->warn("Network (LV-2 rx-CB de-mean): ARMED but NO epoch ever produced a μ "
+                      "— every epoch fell below the {}-station floor (or no carry row ever "
+                      "folded), so the carry ran with its FULL common-mode force all run "
+                      "(standing invariant #4).  {} μ-freeze event(s).",
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      ctx.carry.lv2_mu_frozen);
+        else
+            log->info("Network (LV-2 rx-CB de-mean): μ computed on {} epoch(s), FROZEN {} time(s) "
+                      "by the {}-station thin-mean floor (invariant #7 decoupling edge); last μ "
+                      "{:+.4f} m, max |μ| {:.4f} m, applied {}.  {}  Σλ(innov−μ) = 0 by "
+                      "construction (in DELTA coordinates): the carry transported "
+                      "between-station differences at full stiffness and stopped re-asserting "
+                      "last epoch's common-mode realization.  It did NOT free that direction — "
+                      "in absolute terms the de-meaned targets pin the receiver-DCB common "
+                      "mode to mean(x_lin), the frozen first-epoch seed frame (SPEC §13).",
+                      ctx.carry.lv2_mu_epochs, ctx.carry.lv2_mu_frozen,
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      ctx.carry.lv2_last_mu_m, ctx.carry.lv2_max_abs_mu_m,
+                      config_.networkRxCbCarryDemeanWithin()
+                          ? "WITHIN the epoch (LV-5: no lag)"
+                          : "LAG-1 (next epoch's folds)",
+                      // The skip figure is only a statement about anything when the
+                      // innovation test is still live: under LV-4 it is switched off by
+                      // construction, so printing "0.0 %" as if it were an outcome would
+                      // read as a result the run did not produce.
+                      config_.networkRxCbCarryStepGate()
+                          ? std::string("The prefit innovation test is RETIRED on this run "
+                                        "(LV-4) — see the invariant-gate line for the erase "
+                                        "count and the same-run A/B.")
+                          : fmt::format("Inject gate skipped {}/{} rows ({:.1f} %) on the "
+                                        "DEMEANED innovation.",
+                                        ctx.carry.rx_cb_innov_skips_total, lv2_seen, skip_pct));
+    }
+    // Card LV-5 (docs/SPEC_level_information_budget.md §12): armed-only run-end line.
+    // The load-bearing number is the RESIDUAL — the folded set's own common mode
+    // minus the μ that was applied to it.  Near zero means the within-epoch
+    // correction actually nulled the force on the frame direction; a residual of the
+    // same size as μ means it did not, and the de-mean is decorative.
+    if (config_.networkRxCbCarryDemeanWithin()) {
+        const double mean_resid = ctx.carry.lv5_resid_n > 0
+            ? ctx.carry.lv5_resid_sum / static_cast<double>(ctx.carry.lv5_resid_n)
+            : 0.0;
+        if (ctx.carry.lv5_within_epochs == 0)
+            log->warn("Network (LV-5 within-epoch μ): ARMED but NO epoch reduced a μ "
+                      "before PASS B — every epoch fell below the thin-mean floor or the "
+                      "carry map was empty, so the folds ran UN-demeaned (standing "
+                      "invariant #4).");
+        else
+            log->info("Network (LV-5 within-epoch μ): μ reduced between PASS A and PASS B "
+                      "on {} epoch(s) and folded against the SAME epoch — no lag.  Residual "
+                      "common mode measured on the folded set afterwards: mean |resid| "
+                      "{:.4f} m, max {:.4f} m over {} family-epoch(s), against max |μ| "
+                      "{:.4f} m.  The residual is what the correction LEFT: near zero means "
+                      "the de-mean tracked the folded set's own common mode this run (NOT "
+                      "that the direction is free — in absolute terms the carry still pins it "
+                      "to mean(x_lin), SPEC §13); residual ≈ μ would mean the de-mean was "
+                      "decorative.  Removing the lag "
+                      "is what makes full carry admission (LV-4) stable — the lag-1 loop "
+                      "gain scales with the folded fraction and limit-cycled the level.",
+                      ctx.carry.lv5_within_epochs, mean_resid,
+                      ctx.carry.lv5_max_abs_resid_m, ctx.carry.lv5_resid_n,
+                      ctx.carry.lv2_max_abs_mu_m);
+    }
+    // Card LV-4 (docs/SPEC_level_information_budget.md §11): armed-only run-end line.
+    // The headline is the SAME-RUN A/B — how many folds the retired frame-dependent
+    // screen would have withheld on exactly these rows, against how many genuine
+    // invariant steps the new screen found.  A large first number with a near-zero
+    // second one IS the finding: the old screen was measuring the seed, not the
+    // receiver.
+    if (config_.networkRxCbCarryStepGate()) {
+        const long long lv4_folds = ctx.carry.rx_cb_injected_total;
+        const double would_pct = lv4_folds > 0
+            ? 100.0 * static_cast<double>(ctx.carry.lv4_frame_gate_would_skip)
+                    / static_cast<double>(lv4_folds)
+            : 0.0;
+        if (ctx.carry.lv4_step_checks == 0)
+            log->warn("Network (LV-4 invariant carry gate): ARMED but ZERO step checks ran "
+                      "— no carried receiver code bias was ever re-harvested, so the event "
+                      "screen never looked at anything (standing invariant #4).");
+        else
+            log->info("Network (LV-4 invariant carry gate): {} step check(s) at the harvest, "
+                      "{} ERASE(s) beyond {}·σ̂ peer-relative (max z {:.2f}, max robust σ̂ "
+                      "{:.3f} m), {} epoch-family stand-down(s) below the {}-entry floor; "
+                      "{} prior(s) folded.  The RETIRED frame-dependent screen "
+                      "(|value_abs − x_lin(cb)|) would have withheld {} of those folds "
+                      "({:.1f} %) — measured on the same rows, in this run.  That gap is the "
+                      "card: x_lin is a frozen linearization point, so the old statistic "
+                      "withheld by where the first-epoch seed landed, and it could not see a "
+                      "jump between two epochs at all.  The scale is ROBUST and PEER-RELATIVE "
+                      "(1.4826·MAD of this epoch's steps, median removed — a common step is a "
+                      "frame move, not N receiver resets); a formal-σ version of this test "
+                      "erased 432/777 entries and destabilized the level.  Erase-not-overwrite "
+                      "is the invariant-#1 response: the entry goes cold for one epoch and the "
+                      "next harvest re-seeds it from data.",
+                      ctx.carry.lv4_step_checks, ctx.carry.lv4_step_resets,
+                      config_.networkRxCbCarryStepKSigma(), ctx.carry.lv4_max_step_z,
+                      ctx.carry.lv4_max_scale_m, ctx.carry.lv4_scale_standdown,
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      lv4_folds, ctx.carry.lv4_frame_gate_would_skip, would_pct);
+    }
+    // H-rider (edge-queue §1.6 item 3a): armed-only run-end line.  Invariant #4:
+    // a census-fed wire whose pool was empty every epoch shipped 1440 sentinel
+    // zeros while reading as "armed and healthy" — the counter is the tell.
+    if (config_.networkHSigma0PrefitCensus()) {
+        if (ctx.carry.h_sig0_census_nonzero == 0)
+            log->warn("Network (H-rider census σ̂₀): ARMED but NO epoch ever produced a "
+                      "usable pooled σ̂₀ — the H wire carried the 0.0000 'unavailable' "
+                      "sentinel all run (empty pool: check the class mask '{}' against "
+                      "the classified row population; standing invariant #4).",
+                      config_.networkHSigma0Classes());
+        else
+            log->info("Network (H-rider census σ̂₀): pooled prefit σ̂₀ on the H wire for "
+                      "{} epoch(s) (classes '{}'; hsig=pc advertised on the S contract; "
+                      "last value {:.4f}).  The A4 withhold ceiling still read "
+                      "sigma0_adapt, unchanged.",
+                      ctx.carry.h_sig0_census_nonzero, config_.networkHSigma0Classes(),
+                      ctx.carry.ep_h_sigma0_census);
+    }
+    // Card S2H (docs/SPEC_level_information_budget.md §17 item 3): armed-only
+    // run-end line.  Standing invariant #4 — "0 epochs applied" must be visible:
+    // a transform that never ran leaves the carry with its full common-mode
+    // force, indistinguishable from a healthy run in every other trace.  The
+    // headline is mean/max |μ| — the common-mode content removed per epoch — and
+    // the thin-skip count (identity epochs, invariant #7's decoupling edge).
+    if (config_.networkRxCbHarvestDemean()) {
+        const double mean_mu = ctx.carry.s2h_mu_n > 0
+            ? ctx.carry.s2h_mu_abs_sum / static_cast<double>(ctx.carry.s2h_mu_n)
+            : 0.0;
+        if (ctx.carry.s2h_epochs_applied == 0)
+            log->warn("Network (S2H S-consistent harvest): ARMED but NO epoch ever "
+                      "applied the transform — every family-epoch fell below the "
+                      "{}-station vote floor (or the carry map stayed empty), so the "
+                      "carried set kept its full common-mode content all run "
+                      "(standing invariant #4).  {} thin-skip(s).",
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      ctx.carry.s2h_thin_skips);
+        else
+            log->info("Network (S2H S-consistent harvest): transform applied on {} "
+                      "epoch(s) over {} family-epoch reduction(s); {} thin-skip "
+                      "identity epoch(s) below the {}-station vote floor; {} vote(s) "
+                      "excluded by the z={} peer screen.  μ last {:+.4f} m, mean |μ| "
+                      "{:.4f} m, max |μ| {:.4f} m — the common-mode content removed "
+                      "from the carried set each epoch.  The carried set is zero-mean "
+                      "by construction in the datum row's own absolute frame, so the "
+                      "carry exerted zero net common-mode force and the level "
+                      "authority was the datum + per-epoch data, with the frame "
+                      "re-derived every epoch (no frozen pin, no lag-1 feedback — "
+                      "SPEC §17 item 3; LASER big-system S-transform, Λ-weighted).",
+                      ctx.carry.s2h_epochs_applied, ctx.carry.s2h_mu_n,
+                      ctx.carry.s2h_thin_skips,
+                      config_.networkRxCbCarryDemeanMinStations(),
+                      ctx.carry.s2h_screened_total,
+                      config_.networkRxCbHarvestScreenZ(),
+                      ctx.carry.s2h_last_mu_m, mean_mu, ctx.carry.s2h_max_abs_mu_m);
+    }
+    // Card LV-1 (docs/SPEC_level_information_budget.md): armed-only run-end line.
+    // The per-station counters live on each station's StateInitializer (the reframe
+    // happens inside the PARALLEL produce phase), summed here serially — the same
+    // pattern as the SD-EWL and iono_var feed counters.
+    if (config_.networkIonoSeedFieldFrame()) {
+        long long reframed = 0, fb_raw = 0, fb_field = 0, offsets = 0;
+        for (const auto& st : stations) {
+            if (!st.mm) continue;
+            const auto& s = st.mm->getStateInitializer().ionoSeedFrameStats();
+            reframed += s.reframed;
+            fb_raw   += s.fallback_raw;
+            fb_field += s.field_missing;
+            offsets  += s.offsets;
+        }
+        if (reframed == 0)
+            log->warn("Network (LV-1 iono seed frame): ARMED but ZERO seeds were reframed "
+                      "({} raw fallback(s) for want of {} usable seeds, {} for want of a field "
+                      "value, {} station-epoch offsets) — the wiring is INERT (standing "
+                      "invariant #4).  Every per-LOS iono state was born in the receiver's "
+                      "bias-in frame.",
+                      fb_raw, config_.networkIonoSeedFieldFrameMinSats(), fb_field, offsets);
+        else
+            log->info("Network (LV-1 iono seed frame): {} per-LOS iono seed(s) born in the "
+                      "FIELD's frame ({} station-epoch median offsets; {} raw fallback(s) below "
+                      "the {}-seed floor, {} without a field value — degenerate IPP or a "
+                      "constellation outside the SH field's GPS/Galileo scope).  The lag-1 field "
+                      "was refreshed on {} epoch(s); seeds born before the first refresh used the "
+                      "a₀₀ climatology prior mean.  NOTE the absolute network solve is invariant "
+                      "to this linearization frame — grade it on the PREFIT consumers it moves "
+                      "(the rx-CB inject gate's skip rate, the prefit census), not on a level "
+                      "gradient.",
+                      reframed, offsets, fb_raw,
+                      config_.networkIonoSeedFieldFrameMinSats(), fb_field,
+                      ctx.carry.lv1_field_snapshots);
+    }
+    // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
+    // tell a live gauge from an armed-but-inert one is the fold count, so print it
+    // even (especially) when it is zero.
+    if (config_.networkRxCodeBiasDatum()) {
+        if (ctx.counters.n_rxcb_gauges == 0)
+            log->warn("Network (RXCB-DATUM): receiver code-bias datum is ARMED but folded ZERO "
+                      "prior row(s) over the run — no station ever presented a receiver DCB "
+                      "column, so the receiver-DCB common mode was NEVER gauged and this run is "
+                      "NOT the posture it claims (standing invariant #4).  Check that "
+                      "estimation.estimate_ifb is on and that the DCB states exist.");
+        else
+            log->info("Network (RXCB-DATUM): {} zero-mean receiver code-bias prior row(s) folded "
+                      "over the run (one per station-epoch per constellation, sigma {:.1f} m, "
+                      "realized common-mode information 1/sigma^2 = {:.3e} INDEPENDENT of station "
+                      "count).  Folded PRE-reduce through the diagonal prior channel, so it "
+                      "composes with the Card-4 DD priors that refuse a post-reduce Woodbury "
+                      "gauge.  This is the IGS zero-mean-over-receivers DCB convention, replacing "
+                      "the datum the satellite code-bias sum-to-zero silently also provided.",
+                      ctx.counters.n_rxcb_gauges,
+                      config_.networkRxCodeBiasDatumSigmaM(),
+                      1.0 / (config_.networkRxCodeBiasDatumSigmaM()
+                             * config_.networkRxCodeBiasDatumSigmaM()));
+    }
     if (mw_wl_on) {
         const double mean_R = mw_wl_run.rows_built > 0
             ? mw_wl_run.sum_R / static_cast<double>(mw_wl_run.rows_built) : 0.0;
@@ -725,12 +2230,121 @@ int networkTeardown(
                   "chord re-taps data-only + marks its arc slipped for the next epoch).",
                   carry_innov_flags_total, carry_innov_retaps_total,
                   config_.networkCarryInvariantInnovK());
-    if (carry_innov_gate && config_.networkCarryInvariantInnovCalibrate())
-        log->info("Network (Card 4/M1 D5 v2 LS-VCE calibration): final empirical inflation σ̂₀ = "
-                  "{:.2f}× (the gate threshold is k·σ̂₀ = {:.1f} formal-σ; σ̂₀>1 quantifies how "
-                  "optimistic the formal Cov(v) is — the M2 monitor's finding, now closing the loop "
-                  "on the gate itself).", carry_driver.innovInflationSigma0(),
-                  config_.networkCarryInvariantInnovK() * carry_driver.innovInflationSigma0());
+    if (carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()) {
+        const long long sup = carry_driver.counters().innov_suppressed;
+        const long long tripped = carry_innov_flags_total + sup;
+        log->info("Network (Card 4/M1 D5 v3 corroboration gate): {} of {} gate trips SUPPRESSED "
+                  "({:.1f}%) because the raw observables measured the arc as CONTINUOUS; {} "
+                  "re-tapped (raw step, or no raw evidence — absence of evidence never "
+                  "suppresses).  Backstop k = {}.",
+                  sup, tripped,
+                  tripped > 0 ? 100.0 * static_cast<double>(sup) / static_cast<double>(tripped) : 0.0,
+                  carry_innov_flags_total,
+                  config_.networkCarryInvariantInnovCorroborateBackstopK());
+        if (sup == 0)
+            log->warn("Network (Card 4/M1 D5 v3): the corroboration gate is ARMED but suppressed "
+                      "NOTHING — the flat set never reached the driver.  Standing invariant #4: "
+                      "check that a slip-QC consumer computed the raw observables this run "
+                      "(network.cycle_slip.gap_instrument / .mw_lli_corroborate / "
+                      "network.trace_slip_raw); without one the gate is INERT, not permissive.");
+    }
+    if (carry_innov_gate && config_.networkCarryInvariantInnovCarriedOnly()) {
+        const long long bs = carry_driver.counters().innov_born_skipped;
+        log->info("Network (Card 4/M1 D5 v5 carried-only): {} chord-row(s) NOT gated because "
+                  "the chord was BORN this epoch — no carried prior, so Cov(v) is the diffuse "
+                  "fresh-chord variance and the standardized ratio is not a hypothesis test.  "
+                  "Read against the {} flag(s) that DID fire: on the untreated 3 h reference "
+                  "95.3% of all flags were born chords, and a chord re-borned every epoch can "
+                  "never accumulate, which is what pins dd_sigma_cyc.  This is counted before "
+                  "the threshold test, so it is the whole born population, not just the part "
+                  "that would have flagged.",
+                  bs, carry_innov_flags_total);
+        if (bs == 0)
+            log->warn("Network (Card 4/M1 D5 v5): carried-only is ARMED but skipped NOTHING — "
+                      "no born chord ever reached the gate.  Standing invariant #4: INERT, not "
+                      "benign.  Either the carry never births chords (check the invariant-carry "
+                      "line's birth count) or the chord_carried mask is not being populated.");
+    }
+    if (carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly()) {
+        const long long sup = ctx.carry.carry_innov_kill_suppressed;
+        log->info("Network (Card 4/M1 D5 v4 re-tap-only): {} carry-arc membership kill(s) "
+                  "SUPPRESSED over the run — a D5 flag whose arc the raw observables MEASURED "
+                  "as continuous no longer excludes that arc from A_old, so the in-epoch "
+                  "re-tap the gate already installed survives instead of being refloated from "
+                  "a diffuse prior.  A chord arc has cycle support 1 under a stable tree, so "
+                  "no OTHER carried DD was protected.  Stepped / unmeasurable arcs, and any "
+                  "arc a raw detector flagged in the same epoch, still killed their cycle.  "
+                  "Read this against the {} slip refloat(s) the driver counted: the difference "
+                  "is the churn this knob removed, and n_chord_births in "
+                  "network_epoch_status.csv is where the chord-lifetime effect shows up.  "
+                  "[Counted per arc per build call — a within-epoch RAIM re-solve counts its "
+                  "arcs twice, the same convention as chords_born.]",
+                  sup, carry_slipkills_total);
+        if (sup == 0)
+            log->warn("Network (Card 4/M1 D5 v4): re-tap-only is ARMED but suppressed NOTHING — "
+                      "no corroborated-flat D5 flag ever reached a carry arc.  Standing "
+                      "invariant #4: the knob is INERT this run, not benign.  Check, in order: "
+                      "did the D5 gate flag at all (the innovation-gate line above); did a "
+                      "slip-QC consumer COMPUTE the raw verdicts (without one every flag is "
+                      "'no evidence' and none is taggable); did the flags resolve through the "
+                      "reverse map (carry_innov_map_miss); and is "
+                      ".carry_invariant_innov_corroborate also armed, which suppresses the same "
+                      "population one level earlier and leaves this correctly at zero.");
+    }
+    if (carry_innov_gate && config_.networkCarryInvariantInnovCalibrate()) {
+        // σ̂₀ CLAMP VISIBILITY.  The old line published the CLAMPED σ̂₀ alone, and a clamped
+        // 1.00× is indistinguishable from a calibrated 1.00× — which is how the whole
+        // `churn_base2` / `pdfix_off` lineage ran its D5 gate as the raw formal (v1) test
+        // for entire campaigns while this line said "calibration armed" (raw σ̂₀² was 0.0099,
+        // clamped up to 1; SPEC_pd_safe_dd_fold.md §10 finding 2).  Report the STATE
+        // HISTOGRAM, the RAW range, and warn when the calibration was inert for most of the
+        // run — standing invariant #4: an armed knob at its neutral value is not benign.
+        const auto& cc  = carry_driver.counters();
+        const auto  st  = carry_driver.innovInflationStatus();
+        const long long den = std::max<long long>(1, cc.d5_calib_epochs);
+        const long long inert = cc.d5_calib_warmup_epochs + cc.d5_calib_floored_epochs;
+        const double inert_pct = 100.0 * static_cast<double>(inert) / static_cast<double>(den);
+        const std::string raw_range =
+            (cc.d5_calib_raw_max > 0.0)
+                ? fmt::format("{:.4g} … {:.4g}", cc.d5_calib_raw_min, cc.d5_calib_raw_max)
+                : std::string{"(never estimated past warm-up)"};
+        // NOTE the two σ̂₀² figures are deliberately different quantities: the FINAL one is
+        // the post-run accumulator state (it includes the last install's own rows, which no
+        // gate ever consulted), while the range is over the values the gate actually USED.
+        // The final can therefore sit outside the range — that is correct, not a bug.
+        log->info("Network (Card 4/M1 D5 v2 LS-VCE calibration): post-run empirical inflation "
+                  "σ̂₀ = {:.2f}× in state '{}' (raw σ̂₀² = {:.4g}, n_eff = {:.0f}; gate threshold "
+                  "k·σ̂₀ = {:.1f} formal-σ).  Over {} install(s) the σ̂₀ state was: active {} / "
+                  "floored {} / warm-up {} / capped {}.  RAW σ̂₀² the gate CONSULTED past "
+                  "warm-up: {} (the post-run value above is one accumulator step later).  "
+                  "σ̂₀>1 quantifies how optimistic the formal Cov(v) is — the M2 monitor's "
+                  "finding, closing the loop on the gate itself.",
+                  st.sigma0, NetworkInvariantCarryDriver::inflationStateName(st.state),
+                  st.raw_sigma0_sq, st.n_eff,
+                  config_.networkCarryInvariantInnovK() * st.sigma0,
+                  cc.d5_calib_epochs, cc.d5_calib_active_epochs, cc.d5_calib_floored_epochs,
+                  cc.d5_calib_warmup_epochs, cc.d5_calib_capped_epochs, raw_range);
+        if (cc.d5_calib_floored_epochs > 0)
+            log->warn("Network (Card 4/M1 D5 v2 LS-VCE calibration): the σ̂₀² FLOOR CLAMP bound "
+                      "on {} of {} install(s) ({:.1f}% of the run counting warm-up) — over "
+                      "those epochs the calibration was ARMED but the gate ran as the RAW "
+                      "FORMAL (v1) test, because the raw σ̂₀² fell below 1 (min {:.4g}) and the "
+                      "clamp only RAISES the threshold.  A reported σ̂₀ of 1.00× over a floored "
+                      "run is NOT evidence that the formal Cov(v) is honest; it is evidence "
+                      "the calibration was inert.  A raw σ̂₀² far below 1 means the "
+                      "innovations are far SMALLER than the formal Cov(v) predicts — the "
+                      "classic signature of a carry that is not taking data (frozen or "
+                      "over-diffuse priors), so read the ddfold counters above before reading "
+                      "any D5 conclusion from this run.",
+                      cc.d5_calib_floored_epochs, cc.d5_calib_epochs, inert_pct,
+                      cc.d5_calib_raw_min);
+        else if (cc.d5_calib_active_epochs == 0)
+            log->warn("Network (Card 4/M1 D5 v2 LS-VCE calibration): the calibration NEVER "
+                      "reached the active state over {} install(s) — {} in warm-up, {} capped. "
+                      " Standing invariant #4: the knob is INERT this run, not benign; every "
+                      "D5 number below came from a gate that was not calibrated.",
+                      cc.d5_calib_epochs, cc.d5_calib_warmup_epochs, cc.d5_calib_capped_epochs);
+    }
     if (idw_on) {
         std::string idw_list;
         for (const auto& nm : iono_deweight.everDeweighted()) {
@@ -881,6 +2495,85 @@ int networkTeardown(
                       config_.networkEmitPbFilterJumpK());
         }
     }
+    if (ctx.knobs.clk_frame_hold || ctx.knobs.clk_jump_test) {
+        // Card CLK-R run-end telemetry (invariant #4 — the ON-path counters).
+        // Σ|μ| is the common-mode churn the wire no longer carries (stage 1);
+        // marks are the per-sat re-realizations the wire now DECLARES (stage 2);
+        // re-anchors count the leash's marked re-coupling edges (should be 0 on
+        // a ≤24 h run — the measured 12 h frame wander is ~23 m vs a 50 m leash).
+        const auto& cr = clk_rebase_engine.counters();
+        log->info("Network (Card CLK-R / clock emission re-base): {} emit epoch(s), {} row(s); "
+                  "frame hold {} — Σ|μ| drained {:.2f} m, max |A_c| {:.2f} m, {} leash "
+                  "re-anchor(s); step marks {} — {} mark(s) > {:.2f} m; {} init(s), {} gap "
+                  "re-init(s).  OUTPUTS-only: solve byte-identical; between-sat differences "
+                  "preserved exactly.",
+                  cr.epochs, cr.rows,
+                  ctx.knobs.clk_frame_hold ? "ON" : "off",
+                  cr.sum_abs_mu, cr.max_abs_acc, cr.reanchors,
+                  ctx.knobs.clk_jump_test ? "ON" : "off",
+                  cr.marks, config_.networkClockDiscJumpM(), cr.inits, cr.gaps);
+    }
+    if (ctx.knobs.cta_on) {
+        // Card Q3 run-end telemetry (standing invariant #4 — the ON-path counters
+        // ARE the evidence).  `folded_anchored = 0` means the anchor never bound a
+        // single row: the mechanism is INERT and every downstream number in the run
+        // is the legacy carry, no matter how clean the log reads.  Trips are split
+        // by REASON because they are not interchangeable evidence — a run that only
+        // ever shows `resume`/`datum` has tested neither the detector nor the
+        // staleness guard, and per standing invariant #1 an untested guard is not a
+        // guard (the DOY-129 event-window arm is what closes that).
+        const auto& c = ctx.counters;
+        const long long folds = c.cta_folded_anchored + c.cta_folded_loose;
+        const long long trips = c.cta_trip_nis + c.cta_trip_abs + c.cta_trip_gap
+                              + c.cta_trip_datum + c.cta_trip_ext;
+        log->info("Network (Card Q3 / guarded temporal clock anchor): {} epoch(s); {} clock "
+                  "carry fold(s) — {} ANCHORED at q = {:.3e} m²/s (targets √(q·Δt) = {:.2f} cm "
+                  "at 30 s), {} LOOSE, {} at the variance floor.  Trips {} = {} nis + {} abs + "
+                  "{} gap + {} datum + {} ext; {} in-epoch re-solve(s) ({} failed), {} "
+                  "re-coupling edge(s), {} wire mark(s) queued.  Largest |w| {:.2f} (k = {:.2f}) "
+                  "on {} at TOW {:.1f}.",
+                  c.cta_epochs, folds, c.cta_folded_anchored, ctx.knobs.cta_q,
+                  100.0 * std::sqrt(std::max(0.0, ctx.knobs.cta_q) * 30.0),
+                  c.cta_folded_loose, c.cta_floor_hits, trips, c.cta_trip_nis,
+                  c.cta_trip_abs, c.cta_trip_gap, c.cta_trip_datum, c.cta_trip_ext,
+                  c.cta_resolves, c.cta_resolve_failed, c.cta_recouples, c.cta_marks,
+                  c.cta_max_w, ctx.knobs.cta_k,
+                  c.cta_max_w_sat.empty() ? std::string("(none)") : c.cta_max_w_sat,
+                  c.cta_max_w_tow);
+        if (ctx.knobs.cta_gauge_free) {
+            // §2.1: the gauge-free step's own denominator.  `gf_keys = 0` on an
+            // armed run means the downdate never reached a group of ≥ 2 carried
+            // clocks, so the anchor is STILL constraining the gauge — the exact
+            // failure the step exists to prevent, and invisible without this line.
+            log->info("Network (Card Q3 §2.1 / gauge-free fold): {} clock prior key(s) "
+                      "gauge-downdated over {} epoch(s); {} epoch(s) INERT (no constellation "
+                      "contributed 2+ carried clocks, or UᵀΛU was singular).  Expect the "
+                      "CLK-R drained common mode Σ|μ| to RETURN toward the control's level — "
+                      "the anchor no longer does the datum's work.",
+                      c.cta_gf_keys, c.cta_epochs, c.cta_gf_inert);
+            if (c.cta_gf_keys == 0)
+                log->warn("Network (Card Q3 §2.1): the gauge-free fold is ARMED but downdated "
+                          "ZERO keys — it is INERT for this run and the anchor is folding on "
+                          "the RAW state exactly as if the knob were off.  Any A/B against a "
+                          "raw-state arm is measuring nothing.");
+        }
+        if (c.cta_folded_anchored == 0)
+            log->warn("Network (Card Q3): the anchor folded ZERO anchored rows — it is INERT for "
+                      "this run.  Every satellite stayed LOOSE, so the emitted clock is the "
+                      "legacy carry's.  Check that satellites are surviving the re-coupling "
+                      "re-validation ({} consecutive in-band epochs) and that the staleness "
+                      "bound ({:.0f} s) is above this run's epoch spacing.",
+                      ctx.knobs.cta_recouple_ep, ctx.knobs.cta_max_gap_s);
+        if (ctx.knobs.cta_resolve && c.cta_resolves == 0 && trips > 0)
+            log->warn("Network (Card Q3): {} trip(s) but ZERO in-epoch re-solves — every trip was "
+                      "decoupled and marked WITHOUT the same-epoch value correction, so each one "
+                      "shipped an anchor-warped epoch.  See the per-trip warnings for the cause "
+                      "(prior-dominated column, or no captured prior to withdraw).", trips);
+        if (ctx.knobs.cta_var_floor > 0.0 && c.cta_floor_hits == 0 && c.cta_folded_anchored > 0)
+            log->info("Network (Card Q3): the variance floor never bound ({:.3e} m² vs the armed "
+                      "q·Δt) — the consistency cap is armed but inactive at this q, which is the "
+                      "expected reading while q·Δt stays above it.", ctx.knobs.cta_var_floor);
+    }
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "
                   "runaway (magnitude ceiling {:.0f} m / rate ceiling {:.2f} m/s).",
@@ -947,6 +2640,56 @@ int networkTeardown(
                       fc.first, fc.second.empty() ? std::string("*") : fc.second,
                       e.robust_floor, cfg_floor, rrat,
                       e.sigma[NetworkCarryVce::kFloor], mrat, e.n_rows);
+        }
+    }
+    if (ctx.knobs.vce_apply_on) {
+        // M2 v2 (docs/SPEC_carry_vce_apply.md §9.4): the ON-path telemetry.  "0
+        // steps" means the wiring is inert no matter how clean the log reads —
+        // standing invariant #4 — so the step / freeze split is printed against a
+        // denominator, per group, and a run that never left warm-up says so in one
+        // line rather than being inferred from a missing effect.
+        const NetworkCarryVceApply& va = ctx.carry.vce_apply;
+        log->info("Network (M2 v2 / LASER 5-95): carry variance-FACTOR summary — "
+                  "families='{}', slew {}, ceiling {}, min_rows {}; {} epoch(s) stepped "
+                  "the iteration.  alpha2 multiplies the carry fold variance; "
+                  "sigma_hat_post = target/alpha2 is the variance of unit weight under "
+                  "the weights the solve USED and should approach 1.  Trajectory: "
+                  "network_carry_vce_apply.csv.",
+                  config_.networkCarryVceApplyFamilies(), va.slew(), va.alpha2Max(),
+                  static_cast<long long>(va.minRows()), va.epochs());
+        if (va.groups().empty())
+            log->warn("  NO GROUPS: the apply path never saw a monitored (family, "
+                      "constellation) accumulator — the factor was unity for the whole run "
+                      "and this arm is INERT (check network.carry_vce_components and that "
+                      "the carry actually folded).");
+        for (const auto& kv : va.groups()) {
+            const NetworkCarryVceApply::Group& g = kv.second;
+            log->info("  [{}|{}] alpha2 = {:.3f} (max {:.3f}, target {:.3f}, "
+                      "sigma_hat_post {:.3f}); robust {:.3e} m2 vs hand fold {:.3e} m2; "
+                      "{} stepped / {} frozen ({}), {} slew-up / {} slew-down, "
+                      "{} ep at ceiling, {} ep at unit; n_eff {:.0f}.",
+                      NetworkCarryVceApply::familyName(g.family),
+                      g.sys ? std::string(1, g.sys) : std::string("*"),
+                      g.alpha2, g.alpha2_max, g.target, g.sigma_hat_post,
+                      g.robust_floor, g.hand_fold_var,
+                      g.n_steps, g.n_frozen,
+                      NetworkCarryVceApply::freezeName(g.freeze),
+                      g.n_slew_up, g.n_slew_down, g.n_ceiling_ep, g.n_unit_ep, g.n_eff);
+            if (g.n_steps == 0)
+                log->warn("    [{}|{}] NEVER STEPPED — the factor stayed at {:.3f} for the "
+                          "whole run (last freeze reason '{}').  Report this arm as "
+                          "apply-INERT for that group, not as apply-neutral.",
+                          NetworkCarryVceApply::familyName(g.family),
+                          g.sys ? std::string(1, g.sys) : std::string("*"),
+                          g.alpha2, NetworkCarryVceApply::freezeName(g.freeze));
+            if (g.n_ceiling_ep > 0)
+                log->warn("    [{}|{}] spent {} epoch(s) PINNED at the alpha2 ceiling {} "
+                          "(target {:.1f}) — the measured carry variance exceeded what the "
+                          "ceiling allows the model to admit, so those epochs folded a "
+                          "prior that is still stiffer than the data says.",
+                          NetworkCarryVceApply::familyName(g.family),
+                          g.sys ? std::string(1, g.sys) : std::string("*"),
+                          g.n_ceiling_ep, va.alpha2Max(), g.target);
         }
     }
     if (n_gated_epochs > 0)

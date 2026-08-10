@@ -43,11 +43,22 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
                                  : 1.0;
             return tf + (1.0 - tf) * d;                        // floor at tf (0 = dead stop; >0 = still creeping)
         };
+        // Station-keeping prefix: the shape is IDENTICALLY zero for the first
+        // `static_prefix_s`, so `along` never advances and every epoch in the
+        // window maps to the same lat/lon => an exactly static segment.  The
+        // 300 s ramp-up is measured from the END of the hold, and because the
+        // normalisation sum S below integrates this same shape, the path length
+        // still comes out exactly L (the vessel reaches the destination at the
+        // last epoch, just travelling slightly faster for the rest of the arc).
+        const double hold = std::max(0.0, c.static_prefix_s);
         auto shape = [&](double tt) {                          // speed shape in [0,1]
-            const double up = tt < 300.0 ? 0.5 * (1.0 - std::cos(Constants::PI * tt / 300.0)) : 1.0;
+            if (tt < hold) return 0.0;
+            const double s = tt - hold;
+            const double up = s < 300.0 ? 0.5 * (1.0 - std::cos(Constants::PI * s / 300.0)) : 1.0;
             return up * decel(tt);
         };
         auto heave = [&](double tt) {                          // sea-state, fading as it grounds
+            if (tt < hold) return 0.0;                         // held station => exactly static, vertically too
             return c.heave_amp_m * std::sin(2.0 * Constants::PI * tt / c.heave_period_s) * decel(tt);
         };
 
@@ -198,17 +209,20 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
     }
 
     // Smooth analytic motion as functions of elapsed time (s).
+    const double hold = std::max(0.0, c.static_prefix_s);      // station-keeping prefix (see header)
     auto speed = [&](double tt) -> double {
-        if (!c.kinematic) return 0.0;
-        const double ramp = tt < 300.0 ? 0.5 * (1.0 - std::cos(Constants::PI * tt / 300.0)) : 1.0;
-        const double surge = 1.0 + 0.10 * std::sin(2.0 * Constants::PI * tt / 120.0);
+        if (!c.kinematic || tt < hold) return 0.0;
+        const double s = tt - hold;
+        const double ramp = s < 300.0 ? 0.5 * (1.0 - std::cos(Constants::PI * s / 300.0)) : 1.0;
+        const double surge = 1.0 + 0.10 * std::sin(2.0 * Constants::PI * s / 120.0);
         return c.cruise_speed_mps * ramp * surge;
     };
     auto heading = [&](double tt) -> double {
         return (c.heading0_deg + c.heading_amp_deg * std::sin(2.0 * Constants::PI * tt / c.heading_period_s)) * deg;
     };
     auto heave = [&](double tt) -> double {
-        return c.kinematic ? c.heave_amp_m * std::sin(2.0 * Constants::PI * tt / c.heave_period_s) : 0.0;
+        if (!c.kinematic || tt < hold) return 0.0;             // held station => exactly static
+        return c.heave_amp_m * std::sin(2.0 * Constants::PI * tt / c.heave_period_s);
     };
 
     auto record = [&](double tt, double E, double N) {

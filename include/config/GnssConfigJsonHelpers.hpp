@@ -105,6 +105,18 @@ T jval(const nlohmann::json& root, const std::string& newPath,
     return defaultVal;
 }
 
+/// @brief Was a scalar EXPLICITLY set, under either spelling?
+///
+/// Same lookup order as @ref jval, but reports presence instead of a value —
+/// the discriminator a precedence rule needs when "absent" and "set to the
+/// default value" must be told apart (e.g. deciding whether a scattered legacy
+/// key should shadow the scoped @c network.process_noise table).
+inline bool jhas(const nlohmann::json& root, const std::string& newPath,
+                 const std::string& legacyKey) {
+    if (resolvePath(root, newPath)) return true;
+    return !legacyKey.empty() && root.contains(legacyKey);
+}
+
 /// Return a reference to a nested JSON object (new path or legacy key).
 /// Falls back to a static empty object so callers can use @c .value(...)
 /// against the result without checking @c is_object first.

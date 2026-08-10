@@ -89,6 +89,21 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Per-satellite dimensionless variability multipliers from the
+         *        most recent update() — the clamped recent/baseline TD2
+         *        MAD-sigma ratio squared, before any q scaling.
+         *
+         * For consumers whose noise base is NOT ProcessNoise::ionosphere
+         * (e.g. the network T5v2 GM deviation innovation), which scale their
+         * own base by this factor instead of adopting the zenith q override.
+         *
+         * @return Map from satellite ID to multiplier in [1, max_multiplier].
+         */
+        const std::map<std::string, double>& multipliers() const {
+            return multipliers_;
+        }
+
+        /**
          * @brief Clear all GF arc history for a satellite (e.g. on a slip).
          * @param satellite Satellite identifier (e.g. "G01").
          */
@@ -125,6 +140,9 @@ namespace GnssProcessor {
 
         /// Per-satellite zenith process-noise overrides (m^2/s) from last update().
         std::map<std::string, double> overrides_;
+
+        /// Per-satellite dimensionless multipliers from last update() (see multipliers()).
+        std::map<std::string, double> multipliers_;
 
         /// Maximum inter-epoch gap (seconds) before an arc is reset.
         static constexpr double kMaxGapSeconds = 120.0;

@@ -13,6 +13,7 @@ from .base import Viewer, ViewerResult
 # Exam / simulator truth (truth-referenced; auto-skip without --truth-dir)
 from .exam_scorecard import viewer as _exam_scorecard
 from .exam_spp_reference import viewer as _exam_spp_reference
+from .exam_static_window import viewer as _exam_static_window
 from .exam_position_truth import viewer as _exam_position_truth
 from .exam_truth_lines import viewer as _exam_truth_lines
 from .exam_track import viewer as _exam_track
@@ -70,7 +71,7 @@ from .network_manifest import viewer as _network_manifest
 REGISTRY = [
     # Exam / simulator truth (lead the dashboard; each auto-skips without a truth dir)
     # Part B (SPP reference, truth-only) leads Part C (PPP vs truth) — student order.
-    _exam_scorecard, _exam_spp_reference,
+    _exam_scorecard, _exam_spp_reference, _exam_static_window,
     _exam_position_truth, _exam_truth_lines, _exam_track, _exam_map,
     _exam_visibility, _exam_iono_truth, _exam_otl_truth,
     _exam_skyplot_slips, _exam_slip_timeline,

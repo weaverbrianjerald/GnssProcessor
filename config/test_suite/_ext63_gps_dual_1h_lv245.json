@@ -1,0 +1,51 @@
+{
+ "_comment": [
+  "EXT-63, arm 27 \u2014 1 h, LV-2 + LV-4 + LV-5 with LV-1 DELIBERATELY OFF.",
+  "The inertness check, and a claim that needs testing rather than asserting.",
+  "",
+  "THE CLAIM.  LV-1 (iono_seed_field_frame) has exactly ONE actuator on this path.  A",
+  "seed is a linearization point and the network solve is exactly invariant to it",
+  "(2026-08-01 theorem; arm 16 confirmed it empirically with the carry off).  Its only",
+  "measured effect came through the rx-CB inject gate, which thresholded the PREFIT",
+  "|value_abs - x_lin(cb)| and therefore depended on where the seed put x_lin(cb) via",
+  "initializeCodeBiases.  Card LV-4 RETIRED that test.  So with LV-4 armed, LV-1 should",
+  "have no channel left at all.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN: this arm reproduces arm 23 (LV-1+2+4+5, 1 h:",
+  "settled mean 35.24, sd 4.69, end 32.68, 7182 folds, 124 erases) to within run-to-run",
+  "noise -- NOT bit-identical (the seed still moves x_lin, and every innovation is",
+  "formed against it, so the arithmetic differs at the ulp level and a near-null level",
+  "direction amplifies that), but with no systematic difference in level, folds or",
+  "erases.",
+  "",
+  "IF IT DIFFERS MATERIALLY: LV-1 has a second actuator nobody has named, and finding",
+  "it matters more than the level numbers -- candidates are any other PREFIT-thresholded",
+  "consumer (the prefit census fuse, the admission screens) or a row set that depends on",
+  "the seed's magnitude.  Do not proceed with the stack until it is named.",
+  "",
+  "IF IT MATCHES: LV-1 is INERT in the recommended posture and should be dropped from",
+  "it -- keeping a knob that cannot act is exactly the armed-but-inert failure standing",
+  "invariant #4 exists to forbid.  Its lasting value is then the per-station offset",
+  "DIAGNOSTIC, not the reframe."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "rx_cb_carry_demean": true,
+  "rx_cb_carry_demean_within": true,
+  "rx_cb_carry_step_gate": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv245/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_1h_lv245/state_snapshot.bin"
+ }
+}

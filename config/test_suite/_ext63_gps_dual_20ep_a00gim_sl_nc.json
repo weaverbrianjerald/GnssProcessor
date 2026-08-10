@@ -1,0 +1,52 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 14 — arm 12 (single-layer canonical) with the rx-CB CARRY OFF.",
+  "THE PUMP-ATTRIBUTION DISCRIMINATOR.  Single knob: network.carry_rx_code_bias false",
+  "(the datum KEEPS the pl_cb walk and stays armed; datum-only fills the vector and no",
+  "one harvests it — the documented intended shape).",
+  "",
+  "MECHANISM UNDER TEST (ApplicationNetworkAssembly.cpp ~:2458): the carry injects each",
+  "station's rx-DCB as a diagonal prior toward its ABSOLUTE harvested value at q=1e-9",
+  "m²/s.  A converged carry (var ~1e-2 m²) puts ~100 information units on the",
+  "common-mode direction vs the datum's 1/sigma² = 0.01 — the FRAME direction is held",
+  "10,000:1 by last epoch's frame instead of being datum-realized fresh.  A frame",
+  "flywheel: invariant #1's stiff time-linked quantity, sitting on a gauge direction.",
+  "Fits every measured symptom: arm 2's -80 walk, arm 10's sag-to-8, arm 11's breathing,",
+  "and the innovation gate (built for receiver resets) withholding 56 % of injections.",
+  "",
+  "PREDICTION (stated before the run):",
+  " - FLYWHEEL CONFIRMED: the ignition dip largely VANISHES (a00 holds ~22-30 through all",
+  "   20 ep instead of diving to ~6 by ep 15), the deg-1 peak shrinks materially below arm",
+  "   12's 34.6, and pl_cb innovation-skip counting is moot (no carry).  Cost: noisier",
+  "   per-epoch rx-DCB estimates — acceptable; the datum + differences remain determined.",
+  " - FLYWHEEL REFUTED (dip/dipole unchanged): the pump lives elsewhere — next suspects",
+  "   in order: the per-LOS iono carry / phase-leveling era dynamics, the SH coefficient",
+  "   RW-toward-previous carry.  Name it before touching any knob (invariant #7).",
+  "",
+  "If confirmed, the internal fix is NOT 'carry off' (the differences ARE worth carrying):",
+  "it is DE-MEANING the carried set per constellation at injection — carry the estimable",
+  "between-station differences, let the common mode re-realize on the datum each epoch.",
+  "In-tree precedent: Iono-2 v3 rep_error_demean (the anti-ratchet idiom).  Default-OFF",
+  "toggle (network.rx_cb_carry_demean), byte-identical when off, per the standing rules."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "carry_rx_code_bias": false,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00gim_sl_nc/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_a00gim_sl_nc/state_snapshot.bin"
+ }
+}

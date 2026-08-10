@@ -86,6 +86,52 @@
          */
         Eigen::Vector3d enuToEcef(const Eigen::Vector3d& enu, const Llh& ref_llh);
 
+        /**
+         * @brief Raise a marker (monument) ECEF coordinate to the antenna
+         *        reference point using a RINEX antenna eccentricity.
+         *
+         * The single source of truth for the `ANTENNA: DELTA H/E/N` convention.
+         * RINEX orders the eccentricity (H, E, N) = (Up, East, North) — note this
+         * is NOT the ENU order the rotation expects — and it is defined as the
+         * offset FROM the marker TO the antenna reference point (ARP) in the local
+         * topocentric frame at the marker.
+         *
+         * Why this matters: published station coordinates (IGS SINEX/SSC, NGS SIF,
+         * a surveyed RINEX `APPROX POSITION XYZ`) reference the **monument**,
+         * whereas the estimator's position state is the **ARP** (`igs20.atx` PCO/PCV
+         * are defined relative to the ARP).  Mixing the two frames puts a constant
+         * bias, equal to the eccentricity, straight into the vertical — and 184 of
+         * the 305 stations in the bundled 2024-129 fixture set carry a nonzero
+         * eccentricity (up to 6.2 m).  A zero eccentricity makes this an exact
+         * no-op, so header-less streams and 0/0/0 stations are unaffected.
+         *
+         * @param marker_ecef Monument/marker ECEF position (meters).
+         * @param delta_hen   RINEX `ANTENNA: DELTA H/E/N` eccentricity (meters),
+         *                    in RINEX (H, E, N) order.
+         * @return ARP ECEF position (meters).
+         * @see arpToMarker for the inverse reduction.
+         */
+        Eigen::Vector3d markerToArp(const Eigen::Vector3d& marker_ecef,
+                                    const Eigen::Vector3d& delta_hen);
+
+        /**
+         * @brief Reduce an antenna-reference-point ECEF coordinate back to the marker.
+         *
+         * Inverse of @c markerToArp — use when an ARP-referenced estimate has to be
+         * compared against, or published in, the monument frame.  The local frame
+         * belongs at the marker (the unknown), so the implementation takes one
+         * fixed-point step; a single-shot rotation at the ARP would leave an
+         * O(|ecc|²/R) closure error (~4 um on a 6 m tower).  Round-trips with
+         * @c markerToArp below a picometre.
+         *
+         * @param arp_ecef  Antenna reference point ECEF position (meters).
+         * @param delta_hen RINEX `ANTENNA: DELTA H/E/N` eccentricity (meters), in
+         *                  RINEX (H, E, N) order.
+         * @return Marker/monument ECEF position (meters).
+         */
+        Eigen::Vector3d arpToMarker(const Eigen::Vector3d& arp_ecef,
+                                    const Eigen::Vector3d& delta_hen);
+
     } // namespace Coordinates
 
 } // namespace GnssProcessor

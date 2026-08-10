@@ -33,6 +33,7 @@ namespace GnssProcessor {
 
 class GnssConfig;
 class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
+class NetworkPriorResidual; // filter/NetworkPriorResidual.hpp — included in the .cpp only
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
@@ -57,6 +58,7 @@ void networkShHealth(
     const std::vector<std::vector<PppObservation>>& modeled,
     NetworkIonoDeweightGate& iono_deweight,
     NetworkCarryVce& carry_vce_est,
+    NetworkPriorResidual& prires_est,
     bool datum_changed,
     double pl_now_s,
     double& first_vce_s,

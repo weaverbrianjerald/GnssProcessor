@@ -148,8 +148,15 @@ int Application::runConsumerReplay() {
     // from-the-start read is what makes every discontinuity counter exact.
     SbasisContract file_contract{};
     bool products_ok = false;
+    // H-rider (edge-queue §1.6 item 3b): collect the H heartbeats too.  Before
+    // this, the batch replay dropped every H on the wire unread (1440/12 h
+    // measured) — only the live tail surfaced them — so the consumer's
+    // producer-status channel (logProducerStatus, and any future RTF-9 gating)
+    // was structurally blind in replay.
+    std::vector<NetworkProducerStatus> statuses;
     const auto records =
-        NetworkProductReader::read(cl.replay_products_path, &file_contract, &products_ok);
+        NetworkProductReader::read(cl.replay_products_path, &file_contract, &products_ok,
+                                   &statuses);
     if (records.empty()) {
         log->error("Consumer replay: product file '{}' yielded 0 epochs.",
                    cl.replay_products_path);
@@ -257,7 +264,19 @@ int Application::runConsumerReplay() {
     cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
                 "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate\n";
 
-    const Eigen::Vector3d truth(cl.station.position_ecef.data());
+    // Truth in the frame the consumer estimates: the configured coordinate is a
+    // published (monument-referenced) position, the state is the ARP.  Reduce via the
+    // consumer's own RINEX eccentricity so up_m carries no antenna-height offset —
+    // an exact no-op on a 0/0/0 header, which keeps replayed arms comparable to the
+    // live-harness numbers they are graded against.
+    Eigen::Vector3d truth(cl.station.position_ecef.data());
+    if (const RinexParser* cl_parser = sync.parserOf(cl.station.name)) {
+        const Eigen::Vector3d hen = cl_parser->getAntennaDeltaHen();
+        truth = Coordinates::markerToArp(truth, hen);
+        if (hen.norm() > 1e-6)
+            log->info("Consumer replay: truth reduced marker -> ARP via ANTENNA: DELTA "
+                      "H/E/N ({:.4f}, {:.4f}, {:.4f}) m", hen(0), hen(1), hen(2));
+    }
     const Coordinates::Llh truth_llh = Coordinates::ecefToLlh(truth);
 
     // --- Phase 6: the replay loop --------------------------------------------
@@ -273,6 +292,8 @@ int Application::runConsumerReplay() {
     const double max_duration_s = config_.getMaxDuration();
 
     std::size_t rec_cursor = 0;
+    std::size_t h_cursor = 0, n_h_pushed = 0;   // H-rider: heartbeat stream cursor + forwarded count
+    double      last_status_pushed_s = -1.0;   // content-epoch dedup key (mirrors ApplicationRealtime)
     std::size_t n_processed = 0, n_no_products = 0, n_ar_ran = 0, n_ar_fixed = 0;
     long long   sum_fixed = 0;
     double first_fix_tow = -1.0; int first_fix_week = -1;
@@ -317,6 +338,27 @@ int Application::runConsumerReplay() {
             NetworkProductReader::replay(records[rec_cursor], store, emitter);
             ++rec_cursor;
             ++replayed_here;
+        }
+        // H-rider: advance the heartbeat stream in step and forward each H into
+        // the owned store — the batch analogue of the RTA-6 tail wiring in
+        // ApplicationRealtime (keyed on the content epoch, pushed once).  This
+        // includes the standalone H's of fully WITHHELD epochs, which complete
+        // no product record and are exactly when the consumer must hear about
+        // the producer.  The engine reads the store surface per processed epoch
+        // (logProducerStatus one-shot transitions); replay determinism of the
+        // solve is unaffected — the status channel is observability, not a
+        // correction.
+        while (h_cursor < statuses.size()
+               && TimeUtils::continuousGpsSeconds(statuses[h_cursor].time)
+                      <= now_s + sync_tol) {
+            const double hkey = statuses[h_cursor].time.week * 604800.0
+                              + statuses[h_cursor].time.tow;
+            if (hkey != last_status_pushed_s) {
+                last_status_pushed_s = hkey;
+                store.setProducerStatus(statuses[h_cursor]);
+                ++n_h_pushed;
+            }
+            ++h_cursor;
         }
         if (replayed_here == 0) ++n_no_products;
         // The engine buffers observations that arrived ahead of their corrections;
@@ -406,6 +448,12 @@ int Application::runConsumerReplay() {
                    "the product stream.  Check the station's date and the config window.");
         return 1;
     }
+    // H-rider (invariant #4): the heartbeat channel's own counter.  "0 of N
+    // forwarded" with H records on the wire means the interleave is mis-wired;
+    // "0 on the wire" means the producer ran without emit_epoch_status_record.
+    log->info("Consumer replay: H heartbeats — {} on the wire, {} forwarded to the "
+              "consumer store (batch analogue of the RTA-6 tail surface).",
+              statuses.size(), n_h_pushed);
     if (rec_cursor == 0) {
         log->error("Consumer replay: 0 product records replayed over {} processed epochs — "
                    "the store was never filled, so this run graded plain PPP, not the "

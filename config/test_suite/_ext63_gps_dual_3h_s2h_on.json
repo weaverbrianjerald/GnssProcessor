@@ -1,0 +1,43 @@
+{
+ "_comment": [
+  "SESSION 2026-08-07 — card S2H 3 h RESIDUAL/STABILITY read (staged cadence: runs",
+  "only after the 1 h gates pass).  One knob vs _ext63_gps_dual_3h_s2h_ctl, same",
+  "binary (82B4450703C551109DCEFB0B6C212559), fresh seamless lineage.",
+  "GATES / PREDICTIONS (the card's central claim is ZERO fold-side cost):",
+  " G1 h2-3 median rms_phase within +/-5 % of control (LV-4 paid +32 % here - the",
+  "    carry was the wrong vehicle; the harvest transform must not pay it).",
+  " G2 prires rxcb sigma-hat-0 (settled AND h2-3) <= 1.5x control (LV-4: 4.9->6.6x).",
+  " G3 folds >= control, erases n/a (LV-4 off), sh_health 0/0/0, no alternation.",
+  " G4 LEVEL: DIAGNOSTIC ONLY (invariant #5; 3 h = first legal rank read, h2-3).",
+  "    Record a00 - GIM(t) hourly (time-matched) + the footprint read.  Honest",
+  "    expectation, not a gate: with the carry's common-mode memory removed each",
+  "    epoch, the level sits at the per-epoch data+datum equilibrium - plausibly",
+  "    NEAR THE ZERO-MEAN CONVENTION (i.e. LOW, toward the -15 TECU class) WITHOUT",
+  "    the carry-off collapse (differences stay stiff; no -9 TECU/ep runaway).",
+  "    If instead it tracks the GIM, the admitted per-epoch data owns the level",
+  "    through the datum drain - the better outcome; measure, do not assume.",
+  " G5 product wire: mid-arc step census (product_step_census.py) not worse than",
+  "    control - the per-epoch re-frame must NOT add emitted-bias churn (the",
+  "    common mode the harvest removes is datum-null, invisible to SD consumers)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 10800.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "rx_cb_harvest_demean": true,
+  "serialize_sbasis_contract": true,
+  "product_output_path": "C:/GnssProcessor/runs/s2h_3h_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/s2h_3h_on/state_snapshot.bin"
+ }
+}

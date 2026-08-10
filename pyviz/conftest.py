@@ -183,6 +183,14 @@ def exam_fixture(tmp_path):
                 "truth": {"gps_galileo_isb_m": 8.0 if galileo else 0.0, "zwd_m": 0.15,
                           "final_position_ecef_m": [_X0, _Y0, _Z0]},
                 "noise": {"seed": 20240315},
+                # Station-keeping prefix (2026-08-06): the disclosed window Parts B/C
+                # solve as a fixed point, and what exam_static_window keys off.  The
+                # fixture's truth is not actually stationary there, which does not
+                # matter -- the viewer only needs the window to select epochs.
+                "static_segment": {"n_epochs": 3, "tow_start_s": _TOW0,
+                                   "tow_end_s": _TOW0 + 2 * _STEP,
+                                   "duration_s": 2 * _STEP,
+                                   "position_ecef_m": [_X0, _Y0, _Z0]},
             }
             if storm:
                 summary["storm"] = {"window_tow_s": [s0, s1],

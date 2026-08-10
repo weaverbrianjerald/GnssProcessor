@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "D5 v3 corroboration gate — ON ARM.  One functional key over _corrob_off.json:",
+    "network.carry_invariant_innov_corroborate.  Everything else, including the Card-G",
+    "arming that supplies the raw MW/GF verdicts, is inherited unchanged, so the arms are",
+    "a true one-treatment pair.",
+    "",
+    "WHAT IT DOES.  A chord that trips the D5 k*sigma0 test is re-tapped UNLESS the raw",
+    "observables positively measured its arc as continuous.  Tri-state and fail-safe:",
+    "stepped => re-tap; measured-and-flat => SUPPRESS; no evidence => re-tap.  The coarse",
+    "MW/LLI/IF-TD layer is untouched, so standing invariant #1's slip response is narrowed,",
+    "never removed.  Backstop left at the default 0 (pure corroboration) because",
+    "corroboration was measured to FALL with innovation size (2.1% below 25 sigma, 0.0% at",
+    "100-200, 1.2% above 200) — a magnitude backstop would re-admit exactly the population",
+    "with the least evidence of being a real slip.",
+    "",
+    "EXPECTED.  runs/rawstep_smoke measured 97.0% of D5 flags as raw_stepped=0, so the",
+    "suppression rate should land near that.  PRIMARY read is the run-end D5 v3 line",
+    "(suppressed / tripped) and then dd_sigma_cyc: if the re-tap loop is what pins the DD",
+    "ambiguity variance at ~3.9 cyc, suppressing ~97% of unjustified re-taps should let it",
+    "start falling.  10 epochs cannot show convergence — this arm proves the MECHANISM",
+    "fires and is byte-safe; the sigma-vs-time verdict needs a >=3 h run.",
+    "",
+    "WATCH: a run-end WARN saying the gate suppressed NOTHING means the flat set never",
+    "reached the driver (no slip-QC consumer computed the raw observables) — inert, not",
+    "permissive.  That warn is the invariant-#4 tripwire for this feature."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_corrob_off.json"
+  ],
+  "network": {
+    "carry_invariant_innov_corroborate": true,
+    "product_output_path": "C:/GnssProcessor/runs/corrob_on/products.txt"
+  }
+}

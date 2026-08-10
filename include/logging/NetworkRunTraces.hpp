@@ -52,6 +52,7 @@ namespace GnssProcessor {
     struct EpochStatusRow;          // filter/NetworkRunTypes.hpp (INC-4 hoist)
     struct NetworkKnobs;            // app/NetworkRunContext.hpp (INC-4)
     struct NetworkServiceCounters;  // app/NetworkRunContext.hpp (INC-4)
+    class  NetworkCarryVceApply;    // filter/NetworkCarryVceApply.hpp (M2 v2)
 
     /// B8: pure observation counter — {opportunities, flags} for one QC tier,
     /// summarized at end of run as realized rate vs the implied one-sided
@@ -69,11 +70,218 @@ namespace GnssProcessor {
         "week,tow,n_emitted,n_skipped,n_gate_withheld,n_sigma0_withheld,"
         "n_runaway_epochs,sigma0_ewma,n_present,n_clock_sats,"
         "ms_per_epoch_window,last_emit_age_s,pivot,cold_start_grade_s\n";
+    /// network_fast_clock.csv header (re-written verbatim on every P1 rotation reopen).
+    /// Two row kinds share the stream, discriminated by @c kind: "T" = one per fast tick
+    /// (the summary), "S" = per-satellite detail, written only every
+    /// @c network.fast_clock.trace_sat_stride ticks.  A per-tick per-satellite row at a
+    /// 1 s RT cadence would be an unbounded firehose, hence the stride and the rotation.
+    inline constexpr const char* kFastClockHeader =
+        "week,tow,kind,dt_s,shadow,n_los,n_screened,n_sat_est,emitted,sat,dc_m,sigma_m\n";
     /// network_carry_vce.csv header (M2/LS-VCE hourly rows).
     inline constexpr const char* kCarryVceHeader =
         "week,tow,hour,family,const,n_rows,n_eff,robust_floor_m2,mean_floor_m2,"
         "mean_floor_std,rate_m2ps,rate_std,cond,rate_frozen,cfg_floor_m2,"
         "robust_ratio,mean_ratio,floor_clamp,rate_clamp\n";
+    /// network_carry_vce_apply.csv header (docs/SPEC_carry_vce_apply.md — M2 v2).
+    /// One row per (carry family x constellation) per emitted epoch, i.e. the LIVE
+    /// trajectory of the LASER 5-95 variance factor, not an hourly digest — this is
+    /// the file the card's acceptance is read off.
+    ///
+    /// `sigma_hat_post` = target/alpha2 IS LASER's sigma-hat-i-squared: the variance
+    /// of unit weight of that group under the weights the solve ACTUALLY used.  It
+    /// is the convergence readout the slide prescribes and it goes to 1 when the
+    /// factor has caught its target.  `target` = robust_floor/hand_fold_var is what
+    /// alpha2 is chasing and is deliberately alpha2-INDEPENDENT (both halves come
+    /// from the monitor unscaled), which is why the loop cannot ring — see
+    /// NetworkCarryVceApply.hpp "why the target is lag-free".
+    ///
+    /// `frozen` is a REASON string, never a bare flag: warmup / epoch_dirty /
+    /// no_target say different things, and a run whose groups sat in `warmup` all
+    /// day is an inert arm no matter how clean the log reads (standing invariant
+    /// #4).  `at_ceiling` / `at_unit` are the two clamps; their EDGES are also in
+    /// network_events.csv under tier VCE_APPLY, with identities.
+    inline constexpr const char* kCarryVceApplyHeader =
+        "week,tow,family,const,n_eff,robust_floor_m2,hand_fold_var_m2,target,"
+        "alpha2,sigma_hat_post,frozen,at_ceiling,at_unit,"
+        "n_steps,n_frozen,n_slew_up,n_slew_down,n_ceiling_ep,n_unit_ep,alpha2_max\n";
+    /// network_prior_residual.csv header (docs/SPEC_prior_residual_census.md INC-1).
+    /// One row per (family x label) per censused epoch that saw at least one row.
+    ///
+    /// `n_gt_*` are CUMULATIVE exceedances of the FIXED ladder |t| > {1,2,3,4,6,8,
+    /// 12,20,50,100,200}; the ladder never moves, which is what makes a family
+    /// comparable against another family, against D5's own numbers, and against
+    /// itself a month later.  `geo_t2` is the chi2-corrected geometric mean of
+    /// t^2 — 1.0 means the empirical SCALE calibration has converged, and it can
+    /// sit at 1.0 while `n_gt_4` is grossly over-occupied: a scale calibration
+    /// cannot flatten a non-Gaussian tail (that IS the D5 lesson).  `sigma0_warm`
+    /// 0 means the family is below its warm-up row count and every `t` in the row
+    /// is the RAW FORMAL `s` — never read a cold ladder as a calibrated one.
+    /// `n_raw_formal` counts those rows individually.  The `c_*` columns are the
+    /// INC-3 contingency table (a/b/c = above the report threshold, d/e/f = at or
+    /// below it) and are all zero unless corroboration is armed; `c_hi_flat` is
+    /// the b-cell, the number that matters — on the DD family it measured 97 %.
+    ///
+    /// ⚠ `corrob_domain` is the MEAN corroboration-domain size, and it is the
+    /// ROSTER-DEPENDENCE DETECTOR: 1.0 on `pl`, ~12 on the receiver-level
+    /// families, ~n_stations on `pb`/`cb`.  `corrob_or_step` is what v1's
+    /// saturating OR would have called Stepped; `corrob_step` is what the
+    /// consensus rule actually used (@ref priorResidualConsensus).  The gap
+    /// between the two is how much the fix moved.  Because the consensus can
+    /// only move rows Stepped → Flat — i.e. only RAISE the b-cell — a b-cell
+    /// read without these three columns is not auditable.  `corrob_max_frac` is
+    /// the SENSITIVITY column: the highest stepped fraction any domain reached,
+    /// against the rule's strict-majority bar of 0.5.  A run whose maximum never
+    /// approaches 0.5 has a consensus count that is UNINFORMATIVE — the bar was
+    /// out of range of the data, not merely unmet.
+    inline constexpr const char* kPriorResidualHeader =
+        "week,tow,family,label,n_rows,n_folded,n_raw_formal,n_r_clamped,n_r_negative,"
+        "n_no_sigma0,"
+        "sigma0,sigma0_warm,sigma0_neff,geo_t2,"
+        "n_gt_1,n_gt_2,n_gt_3,n_gt_4,n_gt_6,n_gt_8,n_gt_12,n_gt_20,n_gt_50,"
+        "n_gt_100,n_gt_200,"
+        "max_abs_t,max_station,max_sat,max_signal,max_mech,max_e_m,max_disp_m2,"
+        "max_fold_var_m2,max_post_var_m2,max_gap_s,"
+        "c_hi_noev,c_hi_flat,c_hi_step,c_lo_noev,c_lo_flat,c_lo_step,"
+        "corrob_domain,corrob_or_step,corrob_step,corrob_max_frac\n";
+    /// network_block_baarda.csv header (docs/SPEC_block_baarda.md INC-1..3).
+    /// One row per (constellation family x label) per epoch that swept a block.
+    ///
+    /// ⚠ THE UNIT OF `t_B` IS A VARIANCE RATIO, NOT A SIGMA.  T_B carries the
+    /// 1/b, so E[t_B] = 1 under H0 for EVERY block size and the `n_gt_*` rungs
+    /// mean "this block carries k times the variance the model allows".  The
+    /// rungs are deliberately the SAME as network_prior_residual.csv's so one
+    /// reader handles both files — but that card's |t| is in sigma units, and
+    /// comparing the two occupancy columns as though they were one quantity is a
+    /// category error.
+    ///
+    /// `n_uncheckable` counts blocks whose residual cofactor was singular or
+    /// non-finite: counted with their identity, NEVER inverted through (a pinv'd
+    /// T_B has an unknown effective dof).  `n_block_only` is INC-3's deliverable
+    /// — blocks that cleared the threshold while EVERY one of their rows sat
+    /// below it, i.e. the population invisible to every existing tier.  The `c_*`
+    /// columns are the INC-2 contingency table (hi = above the report threshold,
+    /// lo = at or below), all zero unless corroboration is armed; `c_hi_flat` is
+    /// the b-cell.  `geo_cal` is the CALIBRATION indicator (1.0 = the family's
+    /// sigma0 has converged), NOT the geometric mean of t_B: under H0 that mean is
+    /// 2exp(psi(b/2))/b, which runs 0.281/0.763/0.878 at b = 1/4/8 and would drift
+    /// with the constellation's band plan.
+    inline constexpr const char* kBlockBaardaHeader =
+        "week,tow,family,label,n_blocks,n_rows,n_uncheckable,n_raw_formal,"
+        "n_reported,n_block_only,"
+        "sigma0,sigma0_warm,sigma0_neff,geo_cal,"
+        "n_gt_1,n_gt_2,n_gt_3,n_gt_4,n_gt_6,n_gt_8,n_gt_12,n_gt_20,n_gt_50,"
+        "n_gt_100,n_gt_200,"
+        "max_t,max_T,max_row_t,max_b,max_station,max_sat,max_block_only,"
+        "c_hi_noev,c_hi_flat,c_hi_step,c_lo_noev,c_lo_flat,c_lo_step\n";
+    /// network_congruence.csv header (docs/SPEC_station_congruence.md INC-1..3).
+    /// One row per SWEPT STATION per epoch — not a ladder, unlike the two censuses
+    /// above: SPEC §7.2 grades a per-station run-median of `d_e` and §7.3's MDB
+    /// table is a per-station, per-direction quantity, and neither survives
+    /// aggregation.  The ladders are a run-end readout instead.
+    ///
+    /// ⚠ `d_e/d_n/d_u` (metres, ENU) is the **HELD COORDINATE'S ERROR**, not a
+    /// correction: +East means the held mark sits that far East of where the data
+    /// puts the antenna, so SUBTRACT it to correct the station.  A +5 cm East
+    /// perturbation injected into a held coordinate reads `d_e = +0.05`.
+    ///
+    /// ⚠ THE UNIT OF `t` IS A VARIANCE RATIO, NOT A SIGMA.  `T_raw` carries the
+    /// 1/q, so E[t] = 1 under H0 for every observable dimension.  The run-end
+    /// ladder shares its rungs with network_prior_residual.csv and
+    /// network_block_baarda.csv so one reader handles all three — but that card's
+    /// |t| is in sigma units and comparing occupancies is a category error.
+    ///
+    /// `q` is the number of ENU directions that carried information; `q < 3` means
+    /// the station clock and ZWD absorbed a direction, and `null_geom = 1` means
+    /// NONE was observable (counted, never inverted through).  `mdb_*` are FORMAL
+    /// (delta_0 / sqrt of the pseudo-inverse diagonal, metres) and `mdb_s_*` are
+    /// those times the empirical sigma0 — the formal/scaled split the MDB card
+    /// uses, so the formal model's optimism stays auditable.  Both are written as
+    /// the literal `inf` when the direction is not estimable: that is a CATEGORY,
+    /// never a large number to act on.  `eig_min`/`eig_max` are M's extreme
+    /// eigenvalues (1/m^2) and `null_e/n/u` the ENU components of the weakest
+    /// direction — which way the absorption points.  `block_flag` is INC-3's join:
+    /// 1 = block-Baarda flagged >= 1 LOS of this station this epoch, 0 = it did
+    /// not, -1 = that census was not armed, so there is NO verdict (distinct from
+    /// a negative one).
+    inline constexpr const char* kCongruenceHeader =
+        "week,tow,station,label,b,n_code,n_phase,q,null_geom,"
+        "d_e,d_n,d_u,T_raw,t,sigma0,raw_formal,sigma0_warm,sigma0_neff,"
+        "mdb_e,mdb_n,mdb_u,mdb_s_e,mdb_s_n,mdb_s_u,"
+        "eig_min,eig_max,null_e,null_n,null_u,block_flag,reported\n";
+    /// network_datum_graph.csv header (docs/SPEC_datum_graph_census.md INC-2).
+    /// One row per (epoch × constellation) the census touched — tier 1 saw the
+    /// constellation, or a tier-2 cell / a contingency identity named it.  The
+    /// pseudo-constellation `?` collects directions whose participants carry no
+    /// satellite at all (SH-only modes): they belong somewhere visible, and
+    /// attributing them to a constellation nobody parsed would be a guess.
+    ///
+    /// ⚠ THE TWO CONTINGENCY PARTITIONS ARE OVER DIFFERENT POPULATIONS.  The
+    /// join is many-to-many — one direction can span several (sat, family) cells
+    /// and one cell can appear in several directions — so
+    /// `c_pred_obs + c_pred_only` counts PREDICTIONS while
+    /// `c_obs_only + c_obs_matched` counts DIRECTIONS, and the two totals are
+    /// not expected to agree.  Adding them into a single 2×2 would require
+    /// double-counting one side.  `c_pred_*` / `c_obs_only` are per-CONSTELLATION
+    /// (the row's own share); `c_obs_matched` and the `s_*` companion cells are
+    /// EPOCH-WIDE and repeat identically on every row of the epoch, because a
+    /// direction is not owned by one constellation.
+    ///
+    /// ⚠ `obs_src` is the honest label on the right-hand side of the join:
+    /// `sbc` = the directions carry (sat, family) IDENTITIES (network.sbasis_complete
+    /// armed); `count` = the spectrum reported extras but no identities, so only
+    /// `obs_extras` is meaningful and every prediction lands in `predicted only`
+    /// for lack of anything to match against; `absent` = the epoch never reached
+    /// a rank evaluation.  Reading a coverage number off a `count` epoch is a
+    /// category error.
+    ///
+    /// ⚠ `pred_t2` is the SPEC's strict predicate (registered PB columns, zero
+    /// registered code KEYS in the family) and is the only one feeding the
+    /// contingency.  `pred_sup` is the companion predicate (registered code
+    /// columns with zero admitted SUPPORT) — strictly weaker, nested, reported
+    /// beside it so §6.3's falsification question is answered from the same run.
+    /// `no_layer` counts cells whose constellation registered no code-bias column
+    /// at all, where BOTH predicates are held off by construction.
+    ///
+    /// `ms` is the EPOCH's total census cost, repeated on every row of the epoch
+    /// (there is one measurement per pass, not one per constellation).
+    inline constexpr const char* kNetworkDatumGraphHeader =
+        "week,tow,cons,datum_mode,k,d,pred_k1,n_sta,n_sat,n_edges,comps,"
+        "n_cells,no_layer,pred_t2,pred_sup,"
+        "obs_src,declared,observed,obs_extras,obs_dirs,"
+        "c_pred_obs,c_pred_only,c_obs_only,c_obs_matched,s_pred_obs,s_pred_only,"
+        "kp_armed,pred_obs_ids,pred_only_ids,obs_only_ids,ms\n";
+    /// network_mdb.csv header (docs/SPEC_network_mdb_reliability.md INC-1).
+    /// One row per (constellation x row class) per epoch that binned a row.
+    ///
+    /// `n_rows` = `n_inf` + `n_finite`.  The order statistics are over the FINITE
+    /// rows only: a median of a pool containing +infinity is either meaningless
+    /// or silently censored depending on the sort, so the uncheckable rows are
+    /// reported as their own COUNT and kept out of every quantile.  `n_over`
+    /// counts finite rows above `network.mdb_event_m` — the full population the
+    /// per-cell event stream only samples.
+    ///
+    /// ⚠ `mdb_*` are FORMAL: they inherit the formal-σ optimism D5 measured at
+    /// 10–30x on this data, because MDB scales linearly with σ.  The
+    /// `mdb_scaled_*` columns are `mdb_* x sigma0_f`, the per-family empirical
+    /// inflation from the P1-4 post-fit pass — and they are BLANK, never
+    /// back-filled with the formal value or with 1.0, whenever `sigma0_src` says
+    /// `absent*`.  `absent_sigma0_zero` on a phase row is the NORMAL state under
+    /// free ambiguities (each phase row is fitted exactly by its own ambiguity),
+    /// and it is itself the finding: those rows carry no redundancy at all.
+    /// Quoting `mdb_med` alone to a consumer is repeating D5 v1.
+    ///
+    /// ⚠ `sigma0_src` ending in `_deflating` means σ̂₀ < 1, so `mdb_scaled_*` is
+    /// SMALLER than `mdb_formal` — which reads as a TIGHTER guarantee and on the
+    /// phase family is the exact opposite.  Measured on the FT63 cold smoke:
+    /// σ̂₀,phase = 0.041 pulls the phase median from 4.58 m to 0.19 m on rows that
+    /// are 78 % uncheckable.  The value is reported rather than clamped (the
+    /// prior-residual census's rule — the deflation IS the measurement), but a
+    /// deflating bin must be read together with its `n_inf`, never quoted alone.
+    inline constexpr const char* kNetworkMdbHeader =
+        "week,tow,const,class,n_rows,n_inf,n_finite,n_over,"
+        "mdb_med_m,mdb_p95_m,mdb_max_m,sigma0_f,sigma0_src,"
+        "mdb_scaled_med_m,mdb_scaled_p95_m,mdb_scaled_max_m,"
+        "worst_station,worst_sat,worst_r,worst_sigma_m\n";
 
     /**
      * @internal Owns every trace stream of one runNetwork() invocation plus its
@@ -175,6 +383,15 @@ namespace GnssProcessor {
         /// docs/rt_service_operations.md.
         std::ofstream health_trace;
         const std::filesystem::path health_trace_path;
+        /// FC-1: per-tick split-cadence fast-clock trace (network.fast_clock.trace) — one
+        /// summary row per fast tick plus strided per-satellite detail rows.  The tick tier
+        /// runs on epochs the full pipeline SKIPS, so this stream (with the run-end
+        /// counters) is the only evidence the tier ran at all; in shadow mode it is also
+        /// the grading instrument, carrying fast-vs-full deltas on FULL epochs.  Rotates
+        /// (P1) because a 1 s RT tick makes it unbounded.  Off by default (byte-identical
+        /// when OFF: no file opened, no rows written).
+        std::ofstream fast_clock_trace;
+        const std::filesystem::path fast_clock_trace_path;
         /// L2: structured per-event QC log (network.trace_events).  One LONG-format row per
         /// discrete QC action across every tier — the machine-readable replacement for
         /// spdlog regex-scraping.  Off by default (byte-identical when OFF).
@@ -196,6 +413,52 @@ namespace GnssProcessor {
         /// default (byte-identical: no file, no rows).
         std::ofstream carry_vce_trace;
         const std::filesystem::path carry_vce_trace_path;
+        /// M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor
+        /// trajectory — one row per (family, constellation) per emitted epoch with
+        /// α², its target, the σ̂²-under-used-weights convergence readout, and the
+        /// clamp / freeze state.  PER-EPOCH on purpose: the hourly monitor digest
+        /// next to it cannot show a slew ramp or a clamp excursion, and those are
+        /// what the acceptance is argued on.  Opened only when
+        /// @c network.carry_vce_apply is armed (byte-identical: no file, no rows).
+        std::ofstream carry_vce_apply_trace;
+        const std::filesystem::path carry_vce_apply_trace_path;
+        /// PRIOR-RESIDUAL census (docs/SPEC_prior_residual_census.md INC-1): the
+        /// card's HEADLINE product — one row per (family x label) per censused
+        /// epoch carrying the fixed |t| exceedance ladder, the row population, the
+        /// chi2-corrected geometric mean of t^2, the per-family sigma0 with its
+        /// warm-up state, the worst row's FULL identity, and (INC-3) the six
+        /// contingency cells.  Answers the question D5 took three field cycles to
+        /// ask: what would a k*sigma0 gate on this family actually COST, before
+        /// anyone wires a response to it?  Off by default (byte-identical when
+        /// OFF: no file opened, no rows written).
+        std::ofstream prior_residual_trace;
+        const std::filesystem::path prior_residual_trace_path;
+        std::ofstream block_baarda_trace;                       ///< docs/SPEC_block_baarda.md INC-1..3 ladder rows.
+        const std::filesystem::path block_baarda_trace_path;
+        std::ofstream congruence_trace;                         ///< docs/SPEC_station_congruence.md INC-1..3 per-station coordinate-offset rows (the MDB table's source).
+        const std::filesystem::path congruence_trace_path;
+        /// BAARDA RELIABILITY / MDB (docs/SPEC_network_mdb_reliability.md INC-1):
+        /// the card's HEADLINE product — one row per (constellation x row class)
+        /// per epoch that binned a row, carrying the FORMAL MDB distribution
+        /// (median / p95 / max, metres), the count of UNCHECKABLE rows whose MDB
+        /// is +infinity, the count above the reporting threshold, the worst finite
+        /// row's full identity, and the SCALED variant with the per-family
+        /// empirical σ̂₀ that produced it.  Answers, per row and in fault units,
+        /// the question the redundancy census only answers yes/no: how large a
+        /// fault could hide here right now.  Off by default (byte-identical when
+        /// OFF: no file opened, no rows written).
+        std::ofstream mdb_trace;
+        const std::filesystem::path mdb_trace_path;
+        /// DATUM GRAPH CENSUS (docs/SPEC_datum_graph_census.md INC-2): the card's
+        /// HEADLINE product — one row per (epoch × constellation) carrying the
+        /// tier-1 component multiplicity with its roster, the tier-2 channel-family
+        /// predictions, and the predicted-vs-observed contingency against the
+        /// epoch's SPECTRAL near-null count.  Answers the question the null-space
+        /// gate and SBC cannot: not how many null directions there are, but WHY —
+        /// in station and satellite identities, before the gate throws.  Off by
+        /// default (byte-identical when OFF: no file opened, no rows written).
+        std::ofstream datum_graph_trace;
+        const std::filesystem::path datum_graph_trace_path;
         /// Card DG5 (network.trace_estimability): the machine-readable twin of the
         /// @c Network[estimability] WARN dump.  LONG format with a leading @c kind
         /// column so three record shapes share one file:
@@ -238,6 +501,60 @@ namespace GnssProcessor {
         /// which satellites, which signals (dispersive split).
         std::ofstream pf_keyed_trace;
         const std::filesystem::path pf_keyed_trace_path;
+        /// S1 (@c network.trace_phase_anchor): one row per GAUGE-PINNED ambiguity per
+        /// PROCESSED epoch — @c week,tow,cons,signal,sat,anchor_sta.  The
+        /// (constellation, signal, satellite) -> anchoring STATION map that realizes the
+        /// phase datum, which the lane-ladder spectrometer's ANCHOR PARTITION needs and
+        /// which no other artifact carries (@c network_anchor_info.csv is the a-priori
+        /// CLOCK anchor — no signal, no station — and the DD-fractional trace skips
+        /// pinned ambiguities by construction).  Log-only: read off the election that
+        /// already ran, so the solve is identical with it armed.
+        std::ofstream phase_anchor_trace;
+        const std::filesystem::path phase_anchor_trace_path;
+        /// SPEC_sd_ewl_prereduce §6 (@c network.sd_ewl.trace): one row per
+        /// (station, epoch, satellite) visit that the SD pre-reduce EWL appender
+        /// considered — the elected (band1, band2) phase pair and its code channels,
+        /// the MW arc outcome (@c status), the arc's ZD mean / lagged count, and, for
+        /// a built row, the SD @f$z@f$ and its floored σ.  The instrument for the
+        /// question the run-end counters can only aggregate: WHICH signal pair the
+        /// detector actually holds an EWL arc on, per satellite.  Log-only — the
+        /// solve is identical with the trace armed.  Rows are buffered per station in
+        /// @c StationAssembly::sd_ewl_trace and drained by PASS B's serial consume, so
+        /// the file order is thread-count independent.
+        std::ofstream sd_ewl_trace;
+        const std::filesystem::path sd_ewl_trace_path;
+        /// Increment 2a (@c network.sd_ewl.trace AND @c network.sd_ewl.fix_enable): one
+        /// row per (station, satellite) the Route-B integer decision considered — the
+        /// elected NETWORK-COMMON channel pair, the component reference station r0, the
+        /// spanning-tree parent and link satellite, the DD it rounded with that DD's
+        /// fractional residue / sigma / FFR, the resulting frame integer, and a
+        /// @c status naming the outcome.  This is the only place the DD arithmetic
+        /// behind a fixed row is visible; the run-end tallies can only aggregate it.
+        /// Armed only WITH the integer path, so an increment-1 artifact set is
+        /// unchanged.  Serial seam — written in place, no per-station buffering needed.
+        std::ofstream sd_ewl_ar_trace;
+        const std::filesystem::path sd_ewl_ar_trace_path;
+        /// Card-4 F-A attribution dump (@c network.mw_wl.d5_dump AND the D5 innovation
+        /// gate): one row per D5 innovation flag per epoch with its adjacency tags —
+        /// EWL-fixed (station,sat) membership, hold-cycle chord, injected-last-epoch
+        /// chord — plus the D2 tri-state @c raw_stepped tag.  Log-only: the solve never
+        /// reads it.  Written from @ref networkInstallCarry through this handle.
+        ///
+        /// Opened by @ref openMwWlDumps, NOT openAll: its arming expression
+        /// (@c (ewl_on||wl_inject_on||lane_on) && nmw.d5_dump && carry_innov_gate) is
+        /// derived in the run TU well after openAll runs, and re-deriving it here would
+        /// bit-rot against the driver.  Same lifecycle either way — one truncating open
+        /// with the header, per run, before the epoch loop.
+        std::ofstream d5_flags_trace;
+        const std::filesystem::path d5_flags_trace_path;
+        /// Card WL-2/WL-3 F-B lane trace (@c network.mw_wl.lane_trace): per epoch, the
+        /// POST-install carried WL lane value of every primary cycle carried in both
+        /// bands, with the decided/held/injected tags — the constrained and
+        /// unconstrained populations in one file, so an injected cycle's circular R is
+        /// gradable (@c scripts/grade_lane_trace.py).  Log-only.  Opened by
+        /// @ref openMwWlDumps for the same reason as @ref d5_flags_trace.
+        std::ofstream wl_lane_trace;
+        const std::filesystem::path wl_lane_trace_path;
         /// L15: run-provenance manifest path (startup record written by
         /// writeRunManifestStartup, end-of-run record APPENDED by
         /// writeRunManifestComplete — one member so both target the same file).
@@ -247,6 +564,29 @@ namespace GnssProcessor {
         /// the L15 manifest) — captured once in openAll().
         double es_sigma0_trigger_   = 0.0;
         double es_withhold_ceiling_ = 0.0;
+        /// L1: are the two product-referenced admission census columns part of this
+        /// run's epoch-status schema (docs/SPEC_measurement_admission.md INC-3)?
+        /// Captured in openAll() because @ref emitEpochStatus receives neither the
+        /// config nor the run context, and the card's OFF contract is structural
+        /// byte-identity — appending the columns unconditionally, as the redundancy
+        /// and prefit censuses did, would change the artifact of every unarmed run
+        /// and break exactly the same-build A/B this card's §7 gates depend on.
+        bool es_adm_columns_ = false;
+        /// L1: are the five prior-residual census columns part of this run's
+        /// epoch-status schema (docs/SPEC_prior_residual_census.md)?  Captured in
+        /// openAll() for the same reason as @ref es_adm_columns_ and by the same
+        /// precedent: this card's OFF contract is STRUCTURAL byte-identity and its
+        /// own §9.1 gate is a same-build A/B comparison of this very file, so the
+        /// columns may not appear on an unarmed run.
+        bool es_prires_columns_ = false;
+
+        /// L1: are the three constraint-aware global-σ̂₀ columns part of this
+        /// run's epoch-status schema (docs/SPEC_sigma0_constraint_aware.md)?
+        /// DELIBERATELY a separate flag from @ref es_prires_columns_ rather than
+        /// three more columns under the census's own arm: the census's §9.1 gate
+        /// is a same-build A/B of this very file, so a census-only run must keep
+        /// byte-for-byte the schema it had before this rider existed.
+        bool es_s0g_columns_ = false;
 
         /**
          * @brief Open every armed trace stream and write its header row (verbatim
@@ -274,6 +614,30 @@ namespace GnssProcessor {
                      const SphericalHarmonicIonosphere* sh_model,
                      bool cl_trace_armed,
                      const std::shared_ptr<spdlog::logger>& log);
+
+        /**
+         * @brief Open the two MW/WL diagnostic dumps (@ref d5_flags_trace,
+         *        @ref wl_lane_trace) with their headers — the openAll tail for the
+         *        streams whose arming expression is only known later in setup.
+         *
+         * Called ONCE from the run TU, before the epoch loop, after the WL zone-2
+         * arming booleans are derived.  Both open TRUNCATING like every other trace
+         * stream: re-running a config into an already-used log directory replaces the
+         * file instead of concatenating onto the previous run's rows.  (They used to
+         * be re-opened per epoch in @c std::ios::app from inside networkInstallCarry,
+         * which silently glued consecutive runs together — a false D5-divergence
+         * generator for any A/B whose two arms had been re-run unequal numbers of
+         * times.)  An unarmed dump opens nothing and writes nothing.
+         *
+         * @param d5_armed         @c mw_d5_dump && carry_innov_gate — the exact
+         *                         condition the per-epoch writer tests, so an armed
+         *                         run with zero flags yields a header-only file rather
+         *                         than an absent one, and an inert gate yields neither.
+         * @param lane_trace_armed @c mw_lane_trace.
+         * @param log              main_log logger for open-failure warnings.
+         */
+        void openMwWlDumps(bool d5_armed, bool lane_trace_armed,
+                           const std::shared_ptr<spdlog::logger>& log);
 
         /**
          * @brief Write the one-shot station-roster CSV (network_stations.csv).
@@ -344,6 +708,26 @@ namespace GnssProcessor {
                        const std::string& sat, const std::string& station,
                        std::optional<double> statistic, std::optional<double> threshold,
                        const char* action, const std::string& detail);
+
+        /**
+         * @brief M2 v2 — write this epoch's variance-factor row for every group.
+         *
+         * One @c kCarryVceApplyHeader row per (family × constellation) known to
+         * @p apply, written every emitted epoch the apply path stepped.  No-op when
+         * the stream is closed (the apply path unarmed), so the call site needs no
+         * second gate.
+         *
+         * @param t          epoch time (week/tow of the row).
+         * @param apply      the factor engine (read-only).
+         * @param hour_state caller-owned content-hour bucket; the stream is FLUSHED
+         *                   when it rolls.  Trace durability is not automatic here —
+         *                   only @c health_trace flushes on its own, and this file is
+         *                   the card's graded artifact, so a killed run must not lose
+         *                   the whole trajectory.
+         */
+        void writeCarryVceApplyRows(const GnssTime& t,
+                                    const NetworkCarryVceApply& apply,
+                                    int& hour_state);
 
         /// Card DG5: the @c EPOCH record of ONE estimability dump (no-op when the
         /// trace is OFF).  Fed straight from

@@ -1,0 +1,37 @@
+{
+ "_comment": [
+  "Card Q3 (docs/SPEC_clock_temporal_anchor.md §3 pass 1) — the MEASUREMENT arm.",
+  "The internal golden63 1 h posture, the anchor OFF, with the prior-residual",
+  "census's `clk` family armed.  Trace-only: the product is byte-identical to the",
+  "base, so this arm is simultaneously the G0 OFF-path denominator at 1 h.",
+  "",
+  "WHAT IT MEASURES.  The census standardizes the clock carry's predicted",
+  "residual by fold_var - post_var, which is Var(x_hat - mu) EXACTLY, and keeps a",
+  "quantile ladder of |t| plus a per-family sigma0.  Two numbers come out:",
+  "  (1) sigma0_clk locates the BINDING KNEE.  Non-binding: the realized",
+  "      dispersion is data-set, so sigma0 = sqrt((sigma_true^2 + R)/(q*dt)) < 1",
+  "      and falls as q rises.  Binding: sigma0 -> sqrt(1 + sigma_true^2/R) ~ 1,",
+  "      INDEPENDENT of q.  So sigma0 = 1 marks the knee exactly, from data.",
+  "      Expected near q*dt ~ sigma_w^2 = 8.5e-3, i.e. q ~ 2.8e-4 -- to be",
+  "      MEASURED, not assumed (the armed carry here is 1e-3).",
+  "  (2) the |t| LADDER is the null distribution the guard threshold k is read",
+  "      off.  Target trip rate ~1-2 network-wide per hour on a quiet day; the",
+  "      CLK-R calibration anchor is that 16 sigma produced ~7 marks/h and 106",
+  "      consumer epochs > 20 m, so the rate discipline is the binding constraint,",
+  "      not the sigma count.",
+  "The clk family's e is COMMON-MODE REMOVED per constellation before",
+  "standardizing (unlike pb/cb): the clock is the one carried family with a free",
+  "per-epoch gauge, so the raw residual would report the gauge on every satellite",
+  "(standing invariant #5).",
+  "FRESH lineage; run alone."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "network": {
+  "clock_temporal_anchor": false,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cta_1h_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta_1h_ctl/state_snapshot.bin"
+ }
+}

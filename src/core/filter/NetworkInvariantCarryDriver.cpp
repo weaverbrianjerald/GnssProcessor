@@ -111,19 +111,72 @@ std::string chomp(std::string line) {
     return line;
 }
 
+/// PD-safe INC-2c (docs/SPEC_pd_safe_dd_fold.md §5c): the EQUILIBRATED positive-definiteness
+/// screen of §4(b), applied to a bare carried @f$P^z@f$ (no data information @f$B@f$ yet).
+///
+/// Same shape as the fold's screen so the two cannot disagree about what "PD" means: scale
+/// each row/col by @f$1/\sqrt{P_{ii}}@f$ so every pivot is O(1), then require
+/// @f$d_{\min}\ge 10^{-12} d_{\max}@f$.  A non-positive or non-finite DIAGONAL is decided
+/// up front — a variance that is not a positive number needs no factorization to reject,
+/// and the corrupt blobs on disk carry exactly that (−2.9e7 m² diagonals measured
+/// 2026-08-02).
+///
+/// Deliberately a PREDICATE, not a repair: at restore the caller's response is the bounded,
+/// counted REBIRTH (means kept, covariance re-seeded diffuse), not a silent patch of a
+/// covariance whose provenance is already suspect.
+bool carriedBlockIsPd(const Eigen::MatrixXd& P) {
+    const Eigen::Index K = P.rows();
+    if (K == 0) return true;              // a chordless block has nothing to violate
+    if (P.cols() != K) return false;
+    if (!P.allFinite()) return false;
+    const Eigen::VectorXd dg = P.diagonal();
+    const double dmax_abs = dg.cwiseAbs().maxCoeff();
+    if (!(dmax_abs > 0.0)) return false;  // an all-zero Pᶻ carries no information either
+    const double eps = 1e-16 * dmax_abs;
+    Eigen::VectorXd s(K);
+    for (Eigen::Index i = 0; i < K; ++i) {
+        if (!(dg(i) > 0.0)) return false;
+        s(i) = 1.0 / std::sqrt(std::max(dg(i), eps));
+    }
+    Eigen::MatrixXd At = s.asDiagonal() * P * s.asDiagonal();
+    At = (0.5 * (At + At.transpose())).eval();
+    const Eigen::LDLT<Eigen::MatrixXd> ldlt(At);
+    if (ldlt.info() != Eigen::Success) return false;
+    const Eigen::VectorXd d = ldlt.vectorD();
+    const double dmax = d.cwiseAbs().maxCoeff();
+    const double dmin = d.minCoeff();
+    return (dmax > 0.0) && (dmin > 0.0) && (dmin >= 1e-12 * dmax);
+}
+
 }  // namespace
 
-void NetworkInvariantCarryDriver::reset() {
+void NetworkInvariantCarryDriver::resetCarryState_() {
     carried_.clear();
     block_meta_.clear();
     last_innov_flags_.clear();
     last_innov_sigmas_.clear();
+    last_innov_terms_.clear();
     gate_exempt_.clear();
+    innov_flat_.clear();       // D5 v3: the corroboration set dies with the carry too
     lane_fix_w_.clear();       // WL-3: the fold-on-change memory dies with the carry
     lane_fix_staged_.clear();
     lane_fix_epoch_.clear();   // LF-1 INC-2: the skip grace clock dies with the carry
     install_epoch_index_ = 0;
-    counters_ = Counters{};
+}
+
+void NetworkInvariantCarryDriver::reset() {
+    resetCarryState_();
+    // The CARRY dies here; the run INSTRUMENT does not.  reset() is reachable mid-run
+    // from the install seam's catch around installPosterior, and `counters_ = Counters{}`
+    // there silently discarded the run history: the run-end line reads the live counter,
+    // so every total behind it under-reported, and the seam's per-epoch churn deltas
+    // (cumulative − previous-snapshot) went NEGATIVE for that epoch.  Standing invariant
+    // #4 in its own plumbing — an instrument that loses its history reads clean and lies.
+    //
+    // z_dim is the one member that is NOT a tally but a live dimension, so it tracks the
+    // carry it describes: the carry is now empty, and so is it.  The run MAXIMA
+    // (max_z_dim / max_component_kc) are history and stay.
+    counters_.z_dim = 0;
 }
 
 void NetworkInvariantCarryDriver::serializeCarry(std::ostream& os, bool diagonal_only) const {
@@ -189,10 +242,17 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
     if (line.rfind("CARRY,", 0) != 0) return fail("bad carry header: '" + line + "'");
     // RE-4: this is a general "install this carry" API — start from a clean driver so
     // no stale lane-fix / gate-exemption / innovation side-state survives the install.
+    // Counters go too, and ONLY here: reset() alone now preserves the run tallies (it is
+    // a mid-run carry cold start), but installing a FOREIGN carry is the start of a new
+    // instrument — tallies inherited from earlier driver work would be attributed to a
+    // carry that never produced them.
     reset();
+    counters_ = Counters{};
 
     double seed_sigma0_sq = 0.0, seed_rows = 0.0;   // RE-1: from the optional v2 S line
+    bool   saw_seed_line = false;                   // RE-1 provenance: an S line was PRESENT
     long long n_diag_blocks = 0;                    // RTB-7(e): blocks read from a PD row
+    long long n_rebirth_blocks = 0;                 // PD-safe INC-2c: blocks rebirthed at restore
     std::vector<CarriedBlock> restored;
     while (std::getline(is, line)) {
         line = chomp(line);
@@ -202,6 +262,13 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
             // inflation immediately (v1 blob / calibration off ⇒ legacy seed start).
             resume_sigma0_seeded_ = false;
             resume_sigma0_value_  = 1.0;
+            // RE-1 provenance: keep WHAT the blob offered alongside WHETHER it was taken.
+            // The bool alone collapses four causes (cold / calibration off / no S line /
+            // rejected seed) onto one word, and the run-end line used to assert one of
+            // them unconditionally — see ResumeSeedState.
+            resume_seed_line_ = saw_seed_line;
+            resume_seed_sq_   = seed_sigma0_sq;
+            resume_seed_rows_ = seed_rows;
             if (inflation_ && seed_sigma0_sq > 0.0 && seed_rows > 0.0) {
                 inflation_->seedRobustFloor(kInflationFamily, kInflationSat,
                                             seed_sigma0_sq, seed_rows,
@@ -215,6 +282,7 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
             // run reports "warm + branch-faithful" and every carry counter looks normal
             // while the chord cross-covariances are gone.  Count it and say so.
             resume_carry_diag_blocks_ = n_diag_blocks;
+            resume_carry_rebirth_blocks_ = n_rebirth_blocks;   // PD-safe INC-2c
             return true;
         }
         if (line.rfind("S,", 0) == 0) {             // RE-1 (v2 only; optional)
@@ -222,6 +290,7 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
             if (sf.size() != 3 || !parseDbl(sf[1], seed_sigma0_sq)
                 || !parseDbl(sf[2], seed_rows))
                 return fail("malformed S (sigma0) line: '" + line + "'");
+            saw_seed_line = true;
             continue;
         }
         // Component header.
@@ -277,6 +346,20 @@ bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* er
                         if (!parseDbl(pf[static_cast<std::size_t>(c + 1)], b.Pz(r, c)))
                             return fail("carry: bad P value");
                 }
+            }
+            // --- PD-safe INC-2c: the restore guard (SPEC §5c) --------------------
+            // Every carry blob written before this card can hold the corrupt joint lane
+            // block — an indefinite Pᶻ with negative diagonals (−2.9e7 m²) and
+            // super-fresh entries (+4.7e6 > the 1e6 diffuse prior).  Restoring it verbatim
+            // re-imports the disease into a FIXED build and the resumed run silently
+            // inherits the frozen 78 % of state the fix exists to release.  Rebirth it
+            // here instead: keep the means (the branch — which integer realization the
+            // phase side landed on — lives in ẑ), reset the covariance to the fresh
+            // diffuse diagonal, and COUNT it.  Bounded and loud, per invariant #7.
+            if (cfg_.pd_safe && !carriedBlockIsPd(b.Pz)) {
+                b.Pz.setZero(zdim, zdim);
+                b.Pz.diagonal().setConstant(cfg_.fresh_prior_var);
+                ++n_rebirth_blocks;
             }
         }
         // Chords (H), vertices (X), arcs (A).
@@ -390,12 +473,74 @@ void NetworkInvariantCarryDriver::beginEpoch(double dt_s, double content_s, bool
 }
 
 double NetworkInvariantCarryDriver::innovInflationSigma0() const {
-    if (!inflation_) return 1.0;
+    return innovInflationStatus().sigma0;
+}
+
+const char* NetworkInvariantCarryDriver::inflationStateName(InflationState s) {
+    switch (s) {
+        case InflationState::Off:     return "off";
+        case InflationState::WarmUp:  return "warmup";
+        case InflationState::Floored: return "floored";
+        case InflationState::Capped:  return "capped";
+        case InflationState::Active:  return "active";
+    }
+    return "?";
+}
+
+// D5 v2.  The ARITHMETIC here is byte-for-byte the pre-visibility body (same branches, same
+// clamp, same order of operations) — only the PROVENANCE is new.  See InflationState: a bare
+// σ̂₀ of 1.00 is reported by three degraded states plus one healthy one, and the campaign that
+// paid for this could not tell them apart from the run-end line.
+NetworkInvariantCarryDriver::InflationStatus
+NetworkInvariantCarryDriver::innovInflationStatus() const {
+    InflationStatus st;
+    if (!inflation_) return st;                        // Off, σ̂₀ = 1 (v1 by config)
     const NetworkCarryVce::Estimate est = inflation_->estimate(kInflationFamily, kInflationSat);
-    if (!(est.n_eff >= kInflationWarmupRows) || !(est.robust_floor > 0.0)) return 1.0;  // warm-up ⇒ raw formal (v1)
+    st.n_eff         = est.n_eff;
+    st.raw_sigma0_sq = est.robust_floor;
+    if (!(est.n_eff >= kInflationWarmupRows) || !(est.robust_floor > 0.0)) {
+        st.state = InflationState::WarmUp;             // warm-up ⇒ raw formal (v1)
+        return st;                                     // σ̂₀ stays 1.0
+    }
     double f2 = est.robust_floor;                       // σ̂₀² = geo_mean(sᵢ²)/χ²₁-geomean
     f2 = std::min(std::max(f2, 1.0), kInflationFactorCap);  // only RAISE the threshold; cap a diverged σ̂₀
-    return std::sqrt(f2);
+    st.state  = (est.robust_floor < 1.0)                 ? InflationState::Floored
+              : (est.robust_floor > kInflationFactorCap) ? InflationState::Capped
+                                                         : InflationState::Active;
+    st.sigma0 = std::sqrt(f2);
+    return st;
+}
+
+const char* NetworkInvariantCarryDriver::resumeSeedStateName(ResumeSeedState s) {
+    switch (s) {
+        case ResumeSeedState::NotRestored:    return "cold";
+        case ResumeSeedState::CalibrationOff: return "calib-off";
+        case ResumeSeedState::NoSeedLine:     return "no-S-line";
+        case ResumeSeedState::Rejected:       return "rejected";
+        case ResumeSeedState::Seeded:         return "seeded";
+    }
+    return "?";
+}
+
+// RTB-7(d) RE-1.  Pure readout over state restoreCarry already recorded — it decides
+// NOTHING and the seed arithmetic above is untouched; only the PROVENANCE is new.  The
+// branch order is the causal chain, most-fundamental first: with no blob there is nothing
+// to seed from, with no accumulator nothing to seed INTO (and the gate is v1 by config
+// whatever the blob said), and only then does the blob's own content decide.
+NetworkInvariantCarryDriver::ResumeSeedStatus
+NetworkInvariantCarryDriver::resumeSigma0Status() const {
+    ResumeSeedStatus st;
+    st.blob_sigma0_sq = resume_seed_sq_;
+    st.blob_rows      = resume_seed_rows_;
+    if (!resume_restored_)      { st.state = ResumeSeedState::NotRestored;    return st; }
+    if (!inflation_)            { st.state = ResumeSeedState::CalibrationOff; return st; }
+    if (!resume_seed_line_)     { st.state = ResumeSeedState::NoSeedLine;     return st; }
+    if (!(resume_seed_sq_ > 0.0 && resume_seed_rows_ > 0.0)) {
+        st.state = ResumeSeedState::Rejected;                                 return st;
+    }
+    st.state  = ResumeSeedState::Seeded;
+    st.sigma0 = resume_sigma0_value_;
+    return st;
 }
 
 Eigen::Index NetworkInvariantCarryDriver::totalZDim() const {
@@ -1162,6 +1307,8 @@ void NetworkInvariantCarryDriver::installPosterior(
     const NetworkEstimator::Datum& datum, int n_threads) {
     last_innov_flags_.clear();
     last_innov_sigmas_.clear();
+    last_innov_terms_.clear();
+    last_fold_rebirths_.clear();   // PD-safe INC-2a
     // Hoist the datum-frame shared covariance (the n_shared² Σ_ss copy) to ONCE per install —
     // every block's posterior-cov AND innovation readout consumes the same matrix.
     const Eigen::MatrixXd cov_free = est.datumFrameSharedCov(datum);
@@ -1169,8 +1316,25 @@ void NetworkInvariantCarryDriver::installPosterior(
     // then-update — this epoch's standardized innovations are fed AFTER gating, below).  It
     // is 1.0 (= the raw formal test, v1) when calibration is off or still in warm-up, so the
     // gate becomes a TRUE Nσ test: |v_i| > k·σ̂₀·√Cov(v)_ii.
-    const double sigma0 = innovInflationSigma0();
+    const InflationStatus infl = innovInflationStatus();
+    const double sigma0 = infl.sigma0;
     const double k2f    = cfg_.innov_k * cfg_.innov_k * sigma0 * sigma0;   // (k·σ̂₀)²
+    // ...and tally WHICH of the four 1.00×-reporting states produced it.  Always-on
+    // instrument (invariant #4): "σ̂₀ = 1.00" from a calibrated run and "σ̂₀ = 1.00" because
+    // the floor clamp bound a raw 0.0099 back up to 1 are the same number and opposite
+    // findings.  Solve-neutral — nothing below reads these.
+    ++counters_.d5_calib_epochs;
+    switch (infl.state) {
+        case InflationState::Off:     ++counters_.d5_calib_off_epochs;     break;
+        case InflationState::WarmUp:  ++counters_.d5_calib_warmup_epochs;  break;
+        case InflationState::Floored: ++counters_.d5_calib_floored_epochs; break;
+        case InflationState::Capped:  ++counters_.d5_calib_capped_epochs;  break;
+        case InflationState::Active:  ++counters_.d5_calib_active_epochs;  break;
+    }
+    if (infl.state != InflationState::Off && infl.state != InflationState::WarmUp) {
+        counters_.d5_calib_raw_min = std::min(counters_.d5_calib_raw_min, infl.raw_sigma0_sq);
+        counters_.d5_calib_raw_max = std::max(counters_.d5_calib_raw_max, infl.raw_sigma0_sq);
+    }
 
     // ---- Deterministic-parallel readout (network.parallel_seam) -----------------
     // The per-block posterior mean/cov + innovation are CONST readouts of the folded
@@ -1183,6 +1347,86 @@ void NetworkInvariantCarryDriver::installPosterior(
     // the default) is left completely UNTOUCHED — keep the two per-chord bodies in lockstep.
     // WL-3: a D5-flagged pair chord loses its fold-on-change memory (it re-taps and must
     // re-earn its FFR fix, §3.4) — shared by all install shapes below.
+    // D5 v3 corroboration gate (Cfg::innov_corroborate).  Called ONLY after a chord has
+    // already tripped the k·σ̂₀ test, and returns true when the re-tap must be SUPPRESSED.
+    //
+    // Suppress only on POSITIVE evidence of continuity — membership of innov_flat_ means the
+    // caller measured the raw MW/GF level and found it flat.  An arc with no evidence is not
+    // in the set and is therefore re-tapped as before, so this narrows the slip response
+    // rather than removing it (standing invariant #1).  The optional magnitude backstop
+    // re-admits very large innovations; it defaults to 0 (inert) because corroboration was
+    // measured to FALL with innovation size, not rise.
+    //
+    // NOTE the ordering contract: the σ̂₀ accumulator (inflation_->addRow) is fed BEFORE this
+    // is consulted at both call sites, so suppression never censors the calibration input —
+    // the D5 v2 design note ("feeding above-threshold rows into σ̂₀ is NECESSARY, not merely
+    // safe") holds unchanged whether or not the re-tap happens.
+    const double corr_backstop2 =
+        (cfg_.innov_corroborate && cfg_.innov_corroborate_backstop_k > 0.0)
+            ? cfg_.innov_corroborate_backstop_k * cfg_.innov_corroborate_backstop_k * k2f
+            : 0.0;
+    auto d5Suppressed = [&](int group, const ArcKey& chord, double v2, double var) {
+        if (!cfg_.innov_corroborate) return false;
+        if (!innov_flat_.count({ group, chord })) return false;   // no positive evidence ⇒ re-tap
+        if (corr_backstop2 > 0.0 && v2 > corr_backstop2 * var) return false;  // backstop wins
+        ++counters_.innov_suppressed;
+        return true;
+    };
+    // D5 v5 (Cfg::innov_carried_only): do not gate a chord that was BORN this epoch.
+    //
+    // The test is |v_i| > k·σ̂₀·√Cov(v)_ii where Cov(v) is the H0 covariance of the
+    // innovation ABOUT THE CARRIED PRIOR.  A fresh chord has no carried prior — its
+    // "prior" is the diffuse fresh_prior_var (1e6 by default), so Cov(v)_ii ≈ 1e6 and v is
+    // whatever the correction frame's distance from x_lin happens to be.  There is no H0
+    // to test, the "reset" it triggers is a no-op (a diffuse chord's posterior ALREADY is
+    // the data-only tap-off), and the one thing the flag does accomplish is to put the arc
+    // in the next epoch's slip funnel — which re-BORNS the chord, which flags again.
+    //
+    // MEASURED 2026-08-02 on `runs/churn_base` (63 sta, 3 h, DOY-129): 32 062 of 33 628
+    // flags — 95.3 % — carry √var_v = 1000.000 m EXACTLY, i.e. the diffuse prior, with a
+    // median |v| of 19.2 km.  27 chords are born-flagged on more than half of all flagged
+    // epochs (URUM/G22 at duty 0.99).  A chord re-born every epoch has by construction
+    // never accumulated anything, which is why dd_sigma_cyc cannot fall and med|frac_cyc|
+    // stays uniform at 0.25.  This is the engine of the churn, not a symptom of it.
+    //
+    // The D5 v2 design already identified born chords as pathological here and excluded
+    // them from the σ̂₀ accumulator ("a born chord's diffuse Cov(v) would tank σ̂₀²",
+    // immediately above).  The same exclusion was simply never applied to the gate
+    // DECISION.  This uses the identical chord_carried mask, so the two can never drift.
+    //
+    // Kept as an armable knob rather than made unconditional only because the project's
+    // discipline is default-OFF + byte-identity; on the argument it is a correctness fix.
+    // The condition is INFORMATIONAL, not topological, and getting that wrong was measured.
+    // `chord_carried` says the cycle lay in A_old and no arc slipped — it does NOT say the
+    // carried prior contains information.  A chord carried from a predecessor that was
+    // itself diffuse inherits a diffuse PROJECTED prior and passes chord_carried anyway.
+    // Measured 2026-08-02: keying only on chord_carried left 7 082 of 8 807 surviving flags
+    // (80.4 %) still sitting at √Cov(v) = 1000 m, i.e. still untestable, after skipping
+    // 13 643 rows.  So test the prior directly as well.
+    //
+    // Cov(v) = (Pᶻ + B) − GᵀΣG is the PRIOR-predictive variance, so Cov(v)_ii at or near
+    // fresh_prior_var means Pᶻ_ii is diffuse whatever the topology says.  Half the fresh
+    // prior is a deliberately loose bar: one epoch of real data collapses a DD's variance
+    // by orders, so anything still within a factor of two of the diffuse prior has learned
+    // essentially nothing and there is no H0 to test against it.
+    const double kDiffusePriorFrac = 0.5;
+    auto bornSkipped = [this, kDiffusePriorFrac](bool have_carried,
+                                                 const std::vector<char>& carried,
+                                                 std::size_t idx, double var) {
+        if (!cfg_.innov_carried_only) return false;
+        // No mask ⇒ cannot tell born from carried ⇒ fall through to the variance test only.
+        // The fail-safe direction is toward KEEPING the slip response: a missing mask must
+        // never silently disarm standing invariant #1's fine-scale layer.  (In practice
+        // buildDdPriors always emits one chord_carried entry per chord, so this is
+        // defensive — but the σ̂₀ feed just above treats an absent mask as "feed
+        // everything", and the two must not fail in opposite directions.)
+        const bool topologically_born = have_carried && !carried[idx];
+        const bool informationally_diffuse =
+            cfg_.fresh_prior_var > 0.0 && var >= kDiffusePriorFrac * cfg_.fresh_prior_var;
+        if (!topologically_born && !informationally_diffuse) return false;
+        ++counters_.innov_born_skipped;
+        return true;
+    };
     auto laneFixErase = [this](int group, const ArcKey& chord) {
         if (!lane_fix_w_.empty())      lane_fix_w_.erase({group, chord});
         if (!lane_fix_staged_.empty()) lane_fix_staged_.erase({group, chord});
@@ -1199,20 +1443,29 @@ void NetworkInvariantCarryDriver::installPosterior(
             return;
         for (Eigen::Index i = 0; i < K; ++i) {
             const double var = cov_v(i, i);
-            if (!(var > 0.0)) continue;
+            // PD-safe INC-0: this skip is where a degenerate block vanishes from view — an
+            // inert fold caches the RAW non-PD Pᶻ+B as Minv, so Cov(v) inherits its
+            // negative diagonals and every row here is dropped WITHOUT a trace.  Count it.
+            if (!(var > 0.0)) { ++counters_.d5_nonpos_var_rows; continue; }
             if (gate_exempt_.count({ bm.group, bm.chords[static_cast<std::size_t>(i)] }))
                 continue;
             if (inflation_ && (!have_carried || bm.chord_carried[static_cast<std::size_t>(i)]))
                 inflation_->addRow(kInflationFamily, kInflationSat,
                                    v(i) / std::sqrt(var), /*gap_s=*/0.0,
                                    /*post_var=*/0.0, /*fold_var=*/1.0);
+            if (bornSkipped(have_carried, bm.chord_carried,
+                            static_cast<std::size_t>(i), var)) continue;
             if (v(i) * v(i) <= k2f * var) continue;
+            if (d5Suppressed(bm.group, bm.chords[static_cast<std::size_t>(i)],
+                             v(i) * v(i), var))
+                continue;
             cb.z(off + i) = bm.zhat(i) + v(i);
             cb.Pz.row(off + i).setZero();
             cb.Pz.col(off + i).setZero();
             cb.Pz(off + i, off + i) = sigma0 * sigma0 * var;
             last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
             last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
+            last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(off + i)});
             ++counters_.innov_flags;
             ++counters_.innov_retaps;
             laneFixErase(bm.group, bm.chords[static_cast<std::size_t>(i)]);
@@ -1231,25 +1484,83 @@ void NetworkInvariantCarryDriver::installPosterior(
         for (Eigen::Index i = 0; i < K2; ++i) {
             const Eigen::Index c = (i < K) ? i : i - K;
             const double var = cov_v(i, i);
-            if (!(var > 0.0)) continue;
+            // PD-safe INC-0: see d5GateHalf — an inert (degenerate) fold's Cov(v) has
+            // non-positive diagonals and every affected row is skipped silently.
+            if (!(var > 0.0)) { ++counters_.d5_nonpos_var_rows; continue; }
             if (gate_exempt_.count({ bm.group, bm.chords[static_cast<std::size_t>(c)] }))
                 continue;   // a pair inject's exemption spans both band rows
             if (inflation_ && (!have_carried || bm.chord_carried[static_cast<std::size_t>(c)]))
                 inflation_->addRow(kInflationFamily, kInflationSat,
                                    v(i) / std::sqrt(var), /*gap_s=*/0.0,
                                    /*post_var=*/0.0, /*fold_var=*/1.0);
+            if (bornSkipped(have_carried, bm.chord_carried,
+                            static_cast<std::size_t>(c), var)) continue;
             if (v(i) * v(i) <= k2f * var) continue;
+            // WL-3: a pair chord's corroboration keys by the GRAPH chord, so BOTH band rows
+            // are suppressed together — exactly like gate_exempt_ above.  Splitting them
+            // would re-tap one band of a continuous pair and leave the other carried.
+            if (d5Suppressed(bm.group, bm.chords[static_cast<std::size_t>(c)],
+                             v(i) * v(i), var))
+                continue;
             cb.z(i) = bm.zhat(i) + v(i);
             cb.Pz.row(i).setZero();
             cb.Pz.col(i).setZero();
             cb.Pz(i, i) = sigma0 * sigma0 * var;
             last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(c)]);
             last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
+            last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(i)});
             ++counters_.innov_flags;
             ++counters_.innov_retaps;
             laneFixErase(bm.group, bm.chords[static_cast<std::size_t>(c)]);
         }
     };
+    // --- PD-safe INC-2a: the degenerate-block REBIRTH (SPEC §5a) ------------------
+    // A block whose Pᶻ+B still could not factor after the equilibrated screen and the
+    // eigenvalue-clamp repair folded INERTLY (M = 0): it took NO data this epoch and its
+    // posterior IS its prior.  Left alone, that is the silent permanent decoupling this
+    // card exists to end — the prior never improves, so it never factors, forever.
+    //
+    // Standing invariant #7 requires the RE-COUPLING edge to re-seed what it reconnects.
+    // Rebirth does exactly that: keep the means ẑ (they are the block's branch — which
+    // integer realization the phase side landed on, and the fold left them untouched),
+    // reset Pᶻ to the fresh diffuse diagonal.  Next epoch's diffuse prior then takes the
+    // data-only tap-off — a whole-block mass birth, ONE bounded epoch of information lost,
+    // exactly the semantics chord births already have.
+    //
+    // Runs AFTER the D5 gate on purpose: a degenerate block's Cov(v) has non-positive
+    // diagonals, so the gate skipped those rows anyway (counted), and any row it COULD
+    // test keeps its data-only mean while the covariance is uniformly re-seeded.
+    //
+    // The fresh diagonal is isotropic even on a PAIR block: the lane-shaped fresh prior
+    // (@c sigma_wl_fresh_cyc) is a buildDdPriors-time concern, and an isotropic diffuse
+    // reset is the strictly conservative statement about a block we have just declared
+    // unusable.  A rebirth is a PRIOR RESET, not a slip — the funnel is NOT touched.
+    auto rebirthBand = [this](CarriedBlock& cb, Eigen::Index off, Eigen::Index n,
+                              std::size_t b, const BlockMeta& bm, double min_pivot_rel) {
+        if (n <= 0 || cb.Pz.rows() < off + n || cb.Pz.cols() < off + n) return;
+        cb.Pz.middleRows(off, n).setZero();
+        cb.Pz.middleCols(off, n).setZero();
+        cb.Pz.block(off, off, n, n).diagonal().setConstant(cfg_.fresh_prior_var);
+        FoldRebirth fr;
+        fr.block         = b;
+        fr.group         = bm.group;
+        fr.k             = static_cast<long long>(n);
+        fr.min_pivot_rel = min_pivot_rel;
+        if (!bm.chords.empty()) fr.chord0 = bm.chords.front();
+        last_fold_rebirths_.push_back(fr);
+        ++counters_.ddfold_rebirths;
+        counters_.ddfold_rebirth_rows += static_cast<long long>(n);
+    };
+    // Query the kernel's per-block PD verdict, defensively bounded (block_meta_ and the
+    // kernel's fold slots are index-aligned by contract, but an install against a stale
+    // estimator must degrade to "not degenerate", never throw).
+    auto foldDegenerate = [&est](std::size_t b) {
+        return b < est.numDdPriorBlocks() && est.ddPriorBlockDegenerate(b);
+    };
+    auto foldMinPivot = [&est](std::size_t b) {
+        return b < est.numDdPriorBlocks() ? est.ddPriorBlockMinPivotRel(b) : 0.0;
+    };
+
     // WL-3: commit this epoch's staged fold-on-change decisions (a D5 flag above already
     // erased its chord from BOTH maps, so flag wins over fix) and purge memory for chords
     // no longer carried as pair chords.  No-op (no allocation, no fp) on the per-band path.
@@ -1320,6 +1631,8 @@ void NetworkInvariantCarryDriver::installPosterior(
             if (bm.pair_band == 0) {
                 if (cfg_.innov_gate && K > 0 && S.has_innov)
                     d5GateHalf(bm, S.v, S.cov_v, S.cb, 0);
+                if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // INC-2a
+                    rebirthBand(S.cb, 0, S.cb.Pz.rows(), b, bm, foldMinPivot(b));
                 next.push_back(std::move(S.cb));
                 continue;
             }
@@ -1343,16 +1656,25 @@ void NetworkInvariantCarryDriver::installPosterior(
                     if (S.has_innov)  d5GateHalf(bm, S.v, S.cov_v, cb, 0);
                     if (S2.has_innov) d5GateHalf(block_meta_[b + 1], S2.v, S2.cov_v, cb, K);
                 }
+                if (cfg_.pd_safe && K > 0) {   // INC-2a: each emitted half screens on its own
+                    if (foldDegenerate(b))     rebirthBand(cb, 0, K, b, bm, foldMinPivot(b));
+                    if (foldDegenerate(b + 1)) rebirthBand(cb, K, K, b + 1,
+                                                           block_meta_[b + 1],
+                                                           foldMinPivot(b + 1));
+                }
             } else {   // pair_band == 3: the joint lane-shape block (coupling retained)
                 cb.z  = std::move(S.cb.z);
                 cb.Pz = std::move(S.cb.Pz);
                 if (cfg_.innov_gate && K > 0 && S.has_innov)
                     d5GateJoint(bm, S.v, S.cov_v, cb);
+                if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // INC-2a: the joint 2K block
+                    rebirthBand(cb, 0, cb.Pz.rows(), b, bm, foldMinPivot(b));
             }
             next.push_back(std::move(cb));
         }
         carried_.swap(next);
         gate_exempt_.clear();   // WL-2 §3.3: the one-epoch inject exemption is consumed here
+        innov_flat_.clear();    // D5 v3: the one-epoch corroboration set is consumed here too
         laneFixCommit();        // WL-3 §3.3: fold-on-change memory commits on the accepted epoch
         ++install_epoch_index_; // LF-1 INC-2: advance the skip grace clock (accepted install only)
         counters_.z_dim = static_cast<long long>(totalZDim());
@@ -1406,6 +1728,11 @@ void NetworkInvariantCarryDriver::installPosterior(
                 est.ddPriorInnovation(b + 1, x_s, cov_free, v, cov_v);
                 d5GateHalf(bm2, v, cov_v, cb, K);
             }
+            if (cfg_.pd_safe && K > 0) {   // INC-2a: each emitted half screens on its own
+                if (foldDegenerate(b))     rebirthBand(cb, 0, K, b, bm, foldMinPivot(b));
+                if (foldDegenerate(b + 1)) rebirthBand(cb, K, K, b + 1, bm2,
+                                                       foldMinPivot(b + 1));
+            }
             next.push_back(std::move(cb));
             continue;
         }
@@ -1426,6 +1753,8 @@ void NetworkInvariantCarryDriver::installPosterior(
                 est.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
                 d5GateJoint(bm, v, cov_v, cb);
             }
+            if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // INC-2a: the joint 2K block
+                rebirthBand(cb, 0, cb.Pz.rows(), b, bm, foldMinPivot(b));
             next.push_back(std::move(cb));
             continue;
         }
@@ -1454,10 +1783,13 @@ void NetworkInvariantCarryDriver::installPosterior(
             est.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
             d5GateHalf(bm, v, cov_v, cb, 0);
         }
+        if (cfg_.pd_safe && K > 0 && foldDegenerate(b))   // INC-2a
+            rebirthBand(cb, 0, cb.Pz.rows(), b, bm, foldMinPivot(b));
         next.push_back(std::move(cb));
     }
     carried_.swap(next);
     gate_exempt_.clear();   // WL-2 §3.3: the one-epoch inject exemption is consumed here
+    innov_flat_.clear();    // D5 v3: the one-epoch corroboration set is consumed here too
     laneFixCommit();        // WL-3 §3.3: fold-on-change memory commits on the accepted epoch
     ++install_epoch_index_; // LF-1 INC-2: advance the skip grace clock (accepted install only)
     counters_.z_dim = static_cast<long long>(totalZDim());

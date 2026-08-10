@@ -1,0 +1,20 @@
+{
+ "_comment": [
+  "EDGE-2 12 h consumer replay, PIN arm product (evt_pl_clkpin12).  WTZZ00DEU holdout",
+  "consumer; rt_engine armed so status/reset reactions are visible.  Pair partner:",
+  "_ext63_replay_12h_clks2z.  Grade: reset census + last-30 3D RMS, s2z unchanged-or-",
+  "better required for the s2z datum to graduate (P3 of the 12 h pair)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 43200.0, "elevation_mask_deg": 15.0 },
+ "logging": { "enable_rt_engine": true },
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 43200.0,
+  "closed_loop": { "replay_products_path": "C:/GnssProcessor/runs/evt_pl_clkpin12/products.txt" },
+  "product_output_path": "C:/GnssProcessor/runs/replay_12h_clkpin/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_12h_clkpin/state_snapshot.bin"
+ }
+}

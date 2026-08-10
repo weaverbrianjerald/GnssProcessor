@@ -1,0 +1,34 @@
+{
+ "_comment": [
+  "EDGE-2 12 h ARM A (2026-08-08): the leveled PIVOT-PIN baseline at 12 h — the window",
+  "the 13-jumps/12h clock re-realization number lives on.  Identical leaf to",
+  "_ext63_1h_evt_pl_clkpin.json except duration and paths.  PREDICTIONS:",
+  "P1 the pin lineage accumulates pivot-handover-class clock discontinuities over 12 h",
+  "   (emit_clock_disc counters + census clock channel populate — the baseline count);",
+  "P2 the mark chain stays live (R records at refsat resets, ~2/h per the 1 h arms);",
+  "P3 consumer replay of this product = the pin-side consumer reference."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 43200.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "serialize_sbasis_contract": true,
+  "phase_leveling": true,
+  "mark_refsat_reset_disc": true,
+  "clock_datum_broadcast_anchored": false,
+  "emit_clock_disc": true,
+  "product_output_path": "C:/GnssProcessor/runs/evt_pl_clkpin12/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/evt_pl_clkpin12/state_snapshot.bin"
+ }
+}

@@ -1,0 +1,58 @@
+{
+ "_comment": [
+  "EXT-63 SMOKE, arm 18 — arm 12 (single-layer canonical) + BOTH level cards:",
+  "network.iono_seed_field_frame (LV-1) and network.rx_cb_carry_demean (LV-2).",
+  "The combined posture the spec nominates as the candidate to re-open the 305-station",
+  "gate (docs/SPEC_level_information_budget.md S4).",
+  "",
+  "WHY BOTH TOGETHER IS NOT REDUNDANT.  They act on the SAME defective screen from",
+  "opposite sides.  The rx-CB inject gate tests the PREFIT quantity",
+  "|value_abs - x_lin(cb)| = |x_r,prev| against 10 sigma + 0.5 m -- and x_lin(cb) is a",
+  "FROZEN first-epoch seed, so a station whose true DCB sits far from that seed is",
+  "withheld EVERY epoch for the whole run, which no amount of receiver health explains.",
+  " - LV-1 fixes the frame: seeding the iono in the field's frame lets",
+  "   initializeCodeBiases book the receiver's GF lump into the DCB where it belongs, so",
+  "   x_lin(cb) starts near truth and the prefit innovation is small.",
+  " - LV-2 fixes the statistic: the gate (and the fold) judge |innov - mu|, so a",
+  "   COHERENT move of the whole set is no longer read as 61 simultaneous receiver",
+  "   resets.",
+  "Either alone should cut the ~58 % skip rate; the two together should very nearly",
+  "eliminate it, and that decomposition is what this arm measures against arms 15 and 17.",
+  "",
+  "PREDICTION, STATED BEFORE THE RUN:",
+  " - Skip rate lowest of the four arms (12 / 15 / 17 / 18); fold count highest.",
+  " - a00 trajectory: same family as arm 12 (ignition ~24.7, ignition trough, upward",
+  "   inflection by ~ep 16, gate 0/0/0, in-band 20/20).  LV-1 cannot move the level",
+  "   directly (linearization invariance) and LV-2 targets the breathing, which 20",
+  "   epochs cannot resolve -- so a LARGE a00 change here is a warning, not a win: it",
+  "   would mean the extra folds LV-1+LV-2 admit are stiffening the level crutch rather",
+  "   than replacing it, exactly the over-retention signature the lane A/B taught us to",
+  "   read (quieter priors, louder data residuals).  Check the postfit sigma0 families",
+  "   before celebrating any level improvement.",
+  " - Both run-end lines non-zero: LV-1 `reframed` ~ the LOS count, LV-2 `mu computed on",
+  "   N epochs` with 0 freezes.",
+  "",
+  "Only promote to the 1 h arm (_ext63_gps_dual_1h_lv12.json) if this smoke matches."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 600.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "iono_seed_field_frame": true,
+  "rx_cb_carry_demean": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv12/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_20ep_lv12/state_snapshot.bin"
+ }
+}

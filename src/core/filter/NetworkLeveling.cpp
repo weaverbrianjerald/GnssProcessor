@@ -47,6 +47,7 @@ void networkLeveling(
     const std::vector<StationAssembly>& asm_res,
     const std::vector<int>& est_index_of,
     NetworkCarryVce& carry_vce_est,
+    NetworkPriorResidual& prires_est,
     bool carry_warm,
     double pl_now_s,
     const std::vector<std::string>& registered_clock_sats,
@@ -68,9 +69,51 @@ void networkLeveling(
 
     networkHarvestLocalCarries(ctx, config_, est, x_s, stations, est_index_of,
                                asm_res, plan, sh_model.get(), sh_model2.get(),
-                               carry_vce_est,
+                               carry_vce_est, prires_est,
                                carry_warm, pl_now_s, registered_clock_sats,
                                shared_phase_keys, registered_code_keys);
+
+    // --- Card LV-2 (docs/SPEC_level_information_budget.md): trace μ ------------
+    // One `lv2_mu` row per receiver-code-bias family per epoch on the EXISTING
+    // events stream (the spec's "do not create a new stream for one scalar").  μ is
+    // the direct observable of the flywheel this card removes: it should sit near
+    // zero in a healthy run and swing during a frame move, and `action` says
+    // whether this epoch's value was FRESH or FROZEN by the thin-mean floor —
+    // invariant #7's decoupling edge, visible rather than inferred.  The harvest
+    // above has just reduced it; emitted here because the trace sinks and the
+    // epoch time live on this side of the seam.
+    // Under LV-5 the row carries BOTH numbers: the μ actually folded against this
+    // epoch, and the folded set's own raw common mode measured afterwards — their
+    // difference is the residual force the correction left behind, which is the only
+    // honest way to tell a working de-mean from one that merely ran.
+    for (const auto& [fam, rec] : ctx.carry.rx_cb_demean_last)
+        traces.emitEvent(se.time, "lv2", "rx_cb_demean_mu", "", "",
+                         rec.mu, static_cast<double>(ctx.knobs.rx_cb_demean_min_sta),
+                         rec.fresh ? "fresh" : "frozen",
+                         ctx.knobs.rx_cb_demean_within
+                             ? fmt::format("family={};n_sta={};sum_lambda={:.6g};"
+                                           "mode=within;folded_mu={:.6g};resid={:.6g}",
+                                           fam, rec.n_sta, rec.sum_lam,
+                                           rec.folded_mu, rec.folded_mu - rec.mu)
+                             : fmt::format("family={};n_sta={};sum_lambda={:.6g};mode=lag1",
+                                           fam, rec.n_sta, rec.sum_lam));
+
+    // --- Card S2H (docs/SPEC_level_information_budget.md §17 item 3): trace μ --
+    // One `s2h_mu` row per family per epoch on the events stream (the LV-2
+    // pattern — no new stream for one scalar).  μ here is the common-mode
+    // content the harvest REMOVED from the carried set this epoch: near the
+    // per-epoch solve's own level wander in a healthy run, and the direct
+    // observable of a frame event when the member set changes (n / n_used move
+    // with it — invariant #7's edges, visible in the row rather than inferred).
+    // `action` distinguishes an APPLIED transform from a thin-set identity.
+    for (const auto& [fam, rec] : ctx.carry.rx_cb_harvest_last)
+        traces.emitEvent(se.time, "s2h", "rx_cb_harvest_mu", "", "",
+                         rec.mu, static_cast<double>(ctx.knobs.rx_cb_demean_min_sta),
+                         rec.applied ? "applied" : "identity",
+                         fmt::format("family={};n={};n_used={};n_screened={};"
+                                     "sum_lambda={:.6g};screen_z={:.3g}",
+                                     fam, rec.n, rec.n_used, rec.n_screened,
+                                     rec.sum_lam, ctx.knobs.rx_cb_harvest_screen_z));
 
     // --- T1d: SH-field convergence detector (latch + one-shot refloat) ----
     // Judge the co-estimated SH field "stationary" once the epoch-over-epoch coefficient

@@ -177,6 +177,10 @@ void NetworkEstimator::beginEpoch() {
     // that sets none cannot re-fold a stale block — keeps the OFF path byte-identical
     // and makes carry_invariant robust to an epoch with no carry available.
     dd_priors_.clear();
+    // RHS-attribution recorder: a re-opened epoch (including the within-epoch
+    // RAIM re-solve) must retain only the FINAL build's captures — clear the
+    // list, keep the armed flag (see attribArm()).
+    if (attrib_armed_) attrib_shared_.clear();
     epoch_open_ = true;
     solved_ = false;
 }
@@ -337,7 +341,7 @@ void NetworkEstimator::zeroPhaseGaugeColumns(Eigen::MatrixXd& cov) const {
 }
 
 Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
-    std::size_t station, const Datum& datum) const {
+    std::size_t station, const Datum& datum, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
     // (variance 0), not as carrying the Dirichlet pin's artificial 1/pin_scale.
@@ -350,7 +354,7 @@ Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
     }
     // Fix A: the ensemble phase-bias gauges are exact datum columns too.
     zeroPhaseGaugeColumns(cov_free);
-    return neq_.reconstructStationCovariance(station, cov_free);
+    return neq_.reconstructStationCovariance(station, cov_free, carry_aware);
 }
 
 Eigen::MatrixXd NetworkEstimator::datumFrameSharedCov(const Datum& datum) const {
@@ -384,7 +388,7 @@ void NetworkEstimator::ddPriorInnovation(
 
 Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
     const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
-    const Datum& datum) const {
+    const Datum& datum, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
     // (variance 0), mirroring conditionalLocalCovariance so the between-station
@@ -397,12 +401,12 @@ Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
         }
     }
     zeroPhaseGaugeColumns(cov_free);
-    return neq_.jointConditionalCovariance(requests, cov_free);
+    return neq_.jointConditionalCovariance(requests, cov_free, carry_aware);
 }
 
 Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
     std::size_t station, const std::vector<Eigen::Index>& local_cols,
-    const Datum& datum) const {
+    const Datum& datum, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Same datum-as-known frame as conditionalLocalCovariance: the pinned shared
     // columns are EXACT (variance 0), not carrying the Dirichlet pin's 1/pin_scale.
@@ -418,14 +422,17 @@ Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
     // conditional variance → the phase-leveling carry goes inert → the ensemble
     // reference churns → runaway (see zeroPhaseGaugeColumns).
     zeroPhaseGaugeColumns(cov_free);
-    return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_free);
+    return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_free,
+                                                carry_aware);
 }
 
 NetworkNormalEquations::StationRegression NetworkEstimator::stationRegression(
-    std::size_t station, Eigen::Index local_col) const {
+    std::size_t station, Eigen::Index local_col, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer)
     // Pure normals — no datum frame (M_r and (N_rr⁻¹)_{rr} are datum-independent).
-    return neq_.stationRegression(station, local_col);
+    // The carry-aware form is datum-independent too: Ã⁻¹ = N_rr⁻¹ − Σ_b Y_b M_b Y_bᵀ is
+    // built from the accumulated normals and the fold's own factors, not from Σ_ss.
+    return neq_.stationRegression(station, local_col, carry_aware);
 }
 
 Eigen::VectorXd NetworkEstimator::rowRedundancy(
@@ -474,35 +481,33 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
         delta_info(c, c) += p.info;          // diagonal info prior (D2 carry-forward)
         delta_rhs(c)     += p.info * p.value;
     }
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
 }
 
-std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>& keys,
-                                                  const Eigen::MatrixXd& cov,
-                                                  Eigen::VectorXd* lambda_diag) {
+bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
+                                       const Eigen::MatrixXd& cov,
+                                       const std::set<std::string>& skip,
+                                       std::vector<Eigen::Index>& col,
+                                       std::vector<Eigen::Index>& in_idx,
+                                       Eigen::MatrixXd& Lambda,
+                                       Eigen::VectorXd& eta,
+                                       bool clock_gauge_free,
+                                       std::size_t* gauge_free_keys) const {
+    if (gauge_free_keys) *gauge_free_keys = 0;
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
-    if (cov.rows() != nk || cov.cols() != nk) {
-        throw std::invalid_argument(
-            "NetworkEstimator::addSharedPriorDense: cov must be keys.size() square");
-    }
-    if (lambda_diag) *lambda_diag = Eigen::VectorXd::Zero(nk);
-    if (!epoch_open_ || solved_) {
-        throw std::logic_error(
-            "NetworkEstimator::addSharedPriorDense: call between beginEpoch() and "
-            "solve()");
-    }
-    if (nk == 0) return 0;
-
+    in_idx.clear();
+    col.clear();
     // Map identity keys onto this epoch's layout.  An absent key is MARGINALIZED:
     // its rows/cols of the prior COVARIANCE are dropped before the inversion.
     // (Dropping rows of Λ would instead condition on the departed key — wrong
-    // statistics for every survivor; see the header contract.)
-    std::vector<Eigen::Index> in_idx;   // position in `keys`
-    std::vector<Eigen::Index> col;      // shared-border column
+    // statistics for every survivor; see the header contract.)  Card Q3's
+    // refloat marginalizes on exactly the same footing via `skip`.
     in_idx.reserve(keys.size());
     col.reserve(keys.size());
     for (Eigen::Index i = 0; i < nk; ++i) {
         const SharedPrior& p = keys[static_cast<std::size_t>(i)];
+        if (p.kind == SharedParamKind::Clock && skip.count(p.sat)) continue;  // Q3 refloat
         const std::string pkey = (p.kind == SharedParamKind::VtecSh)
             ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
             : key_(p.sat, p.kind, p.signal);
@@ -512,7 +517,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
         col.push_back(it->second);
     }
     const Eigen::Index k = static_cast<Eigen::Index>(in_idx.size());
-    if (k == 0) return 0;
+    if (k == 0) return false;
 
     // Subset + symmetrize P, then invert in correlation scaling: P = D·C·D with
     // D = diag(√P_ii) ⇒ Λ = D⁻¹·C⁻¹·D⁻¹.  C carries a unit diagonal, so the LDLT
@@ -571,12 +576,59 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
                 "diagonal carry for this epoch");
         }
     }
-    Eigen::MatrixXd Lambda = ldlt.solve(Eigen::MatrixXd::Identity(k, k));
+    Lambda = ldlt.solve(Eigen::MatrixXd::Identity(k, k));
     Lambda = (dinv.asDiagonal() * Lambda * dinv.asDiagonal()).eval();
     // Explicit symmetry: the kernel symmetrizes only on the post-reduce fast path;
     // the within-epoch RAIM replay re-folds this block PRE-reduce, and the two
     // paths must agree bit-for-bit.
     Lambda = (0.5 * (Lambda + Lambda.transpose())).eval();
+    // Card Q3 §2.1 — marginalize the per-constellation satellite-clock GAUGE
+    // direction out of the JOINT information (see addSharedPriorClockGaugeFree
+    // for the algebra).  Applied here, on Λ, rather than on the covariance,
+    // because "infinite prior variance along u" has no finite covariance
+    // representation; the downdate is its exact information-side image.  Doing it
+    // on the JOINT block is what keeps the clock↔code-bias off-diagonals the C1
+    // dense carry exists to retain — only the gauge direction is removed.
+    // Deliberately BEFORE the information-budget check below, so that check sees
+    // the information actually folded.
+    if (clock_gauge_free) {
+        std::map<char, std::vector<Eigen::Index>> grp;   // constellation -> rows of Λ
+        for (Eigen::Index a = 0; a < k; ++a) {
+            const SharedPrior& p = keys[static_cast<std::size_t>(in_idx[static_cast<std::size_t>(a)])];
+            if (p.kind == SharedParamKind::Clock && !p.sat.empty())
+                grp[p.sat[0]].push_back(a);
+        }
+        std::vector<Eigen::Index> used;
+        for (const auto& [c, rows] : grp) {
+            (void)c;
+            if (rows.size() < 2) continue;   // a lone carried clock IS the gauge — nothing estimable to anchor
+            used.insert(used.end(), rows.begin(), rows.end());
+        }
+        if (!used.empty()) {
+            // One column of U per constellation with >= 2 carried clocks.  Built as
+            // a matrix rather than looped rank-1 downdates because the groups are
+            // COUPLED through Λ (the carried posterior correlates constellations),
+            // so sequential downdates would not commute and the second would be
+            // taken against an already-modified Λ.
+            std::vector<char> cs;
+            for (const auto& [c, rows] : grp) if (rows.size() >= 2) cs.push_back(c);
+            Eigen::MatrixXd U = Eigen::MatrixXd::Zero(k, static_cast<Eigen::Index>(cs.size()));
+            for (std::size_t j = 0; j < cs.size(); ++j)
+                for (Eigen::Index a : grp.at(cs[j]))
+                    U(a, static_cast<Eigen::Index>(j)) = 1.0;
+            const Eigen::MatrixXd LU = Lambda * U;          // k x m
+            const Eigen::MatrixXd M  = U.transpose() * LU;  // m x m, PSD
+            const Eigen::LDLT<Eigen::MatrixXd> mf(M);
+            if (mf.info() == Eigen::Success && mf.vectorD().minCoeff() > 0.0) {
+                Lambda -= LU * mf.solve(LU.transpose());
+                Lambda = (0.5 * (Lambda + Lambda.transpose())).eval();
+                if (gauge_free_keys) *gauge_free_keys = used.size();
+            }
+            // A singular UᵀΛU means the block already carries no information along
+            // the gauge (nothing to remove) — leaving Λ untouched is the correct
+            // and only safe action; the caller's counter then reads 0 for the fold.
+        }
+    }
     // Absolute folded-information budget — the second half of the conditioning
     // guard (the κ check above bounds the RELATIVE amplification; this bounds the
     // ABSOLUTE injected stiffness, which is what the downstream solve guard sees).
@@ -593,7 +645,34 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
             "conditioning budget (near-singular carried block) — fall back to the "
             "diagonal carry for this epoch");
     }
-    const Eigen::VectorXd eta = Lambda * v;
+    eta = Lambda * v;
+    return true;
+}
+
+std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>& keys,
+                                                  const Eigen::MatrixXd& cov,
+                                                  Eigen::VectorXd* lambda_diag,
+                                                  bool clock_gauge_free) {
+    const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
+    if (cov.rows() != nk || cov.cols() != nk) {
+        throw std::invalid_argument(
+            "NetworkEstimator::addSharedPriorDense: cov must be keys.size() square");
+    }
+    if (lambda_diag) *lambda_diag = Eigen::VectorXd::Zero(nk);
+    if (!epoch_open_ || solved_) {
+        throw std::logic_error(
+            "NetworkEstimator::addSharedPriorDense: call between beginEpoch() and "
+            "solve()");
+    }
+    if (nk == 0) return 0;
+
+    static const std::set<std::string> kNoSkip;
+    std::vector<Eigen::Index> in_idx, col;
+    Eigen::MatrixXd Lambda;
+    Eigen::VectorXd eta;
+    if (!denseFoldTerms_(keys, cov, kNoSkip, col, in_idx, Lambda, eta, clock_gauge_free))
+        return 0;
+    const Eigen::Index k = static_cast<Eigen::Index>(in_idx.size());
 
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
@@ -605,8 +684,191 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
                        col[static_cast<std::size_t>(b)]) += Lambda(a, b);
         if (lambda_diag) (*lambda_diag)(in_idx[static_cast<std::size_t>(a)]) = Lambda(a, a);
     }
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
     return static_cast<std::size_t>(k);
+}
+
+std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
+    const std::vector<SharedPrior>& priors) {
+    if (priors.empty()) return 0;
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+
+    // Pass 1: resolve identities.  Non-clock priors accumulate exactly as
+    // addSharedPrior accumulates them (same order, same arithmetic); clock
+    // priors are grouped by constellation for the downdate below.
+    struct ClkRow { Eigen::Index col; double info, value; };
+    std::map<char, std::vector<ClkRow>> grp;
+    for (const SharedPrior& p : priors) {
+        if (!(p.info > 0.0)) continue;
+        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
+            : key_(p.sat, p.kind, p.signal);
+        const auto it = index_.find(pkey);
+        if (it == index_.end()) continue;   // parameter not in this epoch's layout
+        const Eigen::Index c = it->second;
+        if (p.kind == SharedParamKind::Clock && !p.sat.empty()) {
+            grp[p.sat[0]].push_back({c, p.info, p.value});
+        } else {
+            delta_info(c, c) += p.info;
+            delta_rhs(c)     += p.info * p.value;
+        }
+    }
+
+    // Pass 2: per constellation, Λ_gf = D − λλᵀ/Λ_tot with D = diag(λ), λ = info.
+    // (The general Λ − Λu(uᵀΛu)⁻¹uᵀΛ specialized to a diagonal Λ and u = 1.)
+    // η = Λ_gf v = λ ⊙ (v − v̄_λ): each clock is anchored to its carried value
+    // MINUS the information-weighted mean of the carried values, i.e. the
+    // DIFFERENCES are anchored and the gauge is left to the datum.
+    std::size_t downdated = 0;
+    for (const auto& [c, rows] : grp) {
+        (void)c;
+        if (rows.size() < 2) continue;   // a lone carried clock IS the gauge
+        double tot = 0.0, wsum = 0.0;
+        for (const ClkRow& r : rows) { tot += r.info; wsum += r.info * r.value; }
+        if (!(tot > 0.0)) continue;
+        const double vbar = wsum / tot;
+        for (std::size_t a = 0; a < rows.size(); ++a) {
+            delta_rhs(rows[a].col) += rows[a].info * (rows[a].value - vbar);
+            for (std::size_t b = 0; b < rows.size(); ++b) {
+                const double v = (a == b ? rows[a].info : 0.0)
+                               - rows[a].info * rows[b].info / tot;
+                delta_info(rows[a].col, rows[b].col) += v;
+            }
+        }
+        downdated += rows.size();
+    }
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return downdated;
+}
+
+std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
+    const std::vector<SharedPrior>& priors, const std::set<std::string>& drop_sats,
+    bool restore) {
+    if (priors.empty() || drop_sats.empty()) return 0;
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+
+    struct ClkRow { Eigen::Index col; double info, value; bool drop; };
+    std::map<char, std::vector<ClkRow>> grp;
+    for (const SharedPrior& p : priors) {
+        if (p.kind != SharedParamKind::Clock || p.sat.empty() || !(p.info > 0.0)) continue;
+        const auto it = index_.find(key_(p.sat, p.kind, p.signal));
+        if (it == index_.end()) continue;
+        grp[p.sat[0]].push_back({it->second, p.info, p.value, drop_sats.count(p.sat) > 0});
+    }
+    // The gauge-free block is NOT diagonal, so a per-key subtraction (the plain
+    // withdrawSharedPrior) would leave the rest of the group folded against a
+    // stale weighted mean.  Rebuild both blocks and fold the difference — the
+    // exact analogue of the dense path's marginalized re-fold.
+    const double sgn = restore ? -1.0 : +1.0;
+    const auto accumulate = [&](const std::vector<ClkRow>& rows, bool keep_dropped,
+                                double s) {
+        std::vector<const ClkRow*> use;
+        for (const ClkRow& r : rows)
+            if (keep_dropped || !r.drop) use.push_back(&r);
+        if (use.size() < 2) return;
+        double tot = 0.0, wsum = 0.0;
+        for (const ClkRow* r : use) { tot += r->info; wsum += r->info * r->value; }
+        if (!(tot > 0.0)) return;
+        const double vbar = wsum / tot;
+        for (std::size_t a = 0; a < use.size(); ++a) {
+            delta_rhs(use[a]->col) += s * use[a]->info * (use[a]->value - vbar);
+            for (std::size_t b = 0; b < use.size(); ++b) {
+                const double v = (a == b ? use[a]->info : 0.0)
+                               - use[a]->info * use[b]->info / tot;
+                delta_info(use[a]->col, use[b]->col) += s * v;
+            }
+        }
+    };
+    std::size_t dropped = 0;
+    for (const auto& [c, rows] : grp) {
+        (void)c;
+        std::size_t nd = 0;
+        for (const ClkRow& r : rows) if (r.drop) ++nd;
+        if (nd == 0) continue;
+        accumulate(rows, /*keep_dropped=*/true,  -sgn);   // remove the block as folded
+        accumulate(rows, /*keep_dropped=*/false, +sgn);   // re-fold it without the refloated keys
+        dropped += nd;
+    }
+    if (dropped == 0) return 0;
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return dropped;
+}
+
+void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& priors) {
+    if (priors.empty()) return;
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    // Mirror addSharedPrior's accumulation exactly, negated: the withdrawal must
+    // be the arithmetic inverse of the fold, not an independent recomputation.
+    for (const SharedPrior& p : priors) {
+        if (!(p.info > 0.0)) continue;
+        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
+            : key_(p.sat, p.kind, p.signal);
+        const auto it = index_.find(pkey);
+        if (it == index_.end()) continue;   // parameter not in this epoch's layout
+        const Eigen::Index c = it->second;
+        delta_info(c, c) -= p.info;
+        delta_rhs(c)     -= p.info * p.value;
+    }
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+}
+
+std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
+    const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
+    const std::set<std::string>& drop_sats, bool restore, bool clock_gauge_free) {
+    const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
+    if (cov.rows() != nk || cov.cols() != nk) {
+        throw std::invalid_argument(
+            "NetworkEstimator::refoldSharedPriorDenseDroppingClocks: cov must be "
+            "keys.size() square");
+    }
+    if (nk == 0 || drop_sats.empty()) return 0;
+
+    static const std::set<std::string> kNoSkip;
+    std::vector<Eigen::Index> old_in, old_col, new_in, new_col;
+    Eigen::MatrixXd L_old, L_new;
+    Eigen::VectorXd e_old, e_new;
+    // Both blocks are built BEFORE anything is folded, so a throw from either
+    // leaves the shared system untouched (the caller's restore path is then a
+    // plain "keep the pre-withdraw solution").
+    const bool had_old = denseFoldTerms_(keys, cov, kNoSkip, old_col, old_in, L_old, e_old,
+                                         clock_gauge_free);
+    if (!had_old) return 0;
+    const bool has_new = denseFoldTerms_(keys, cov, drop_sats, new_col, new_in, L_new, e_new,
+                                         clock_gauge_free);
+    const std::size_t dropped = old_in.size() - (has_new ? new_in.size() : 0u);
+    if (dropped == 0) return 0;
+
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    const auto accumulate = [&](const std::vector<Eigen::Index>& c,
+                                const Eigen::MatrixXd& L, const Eigen::VectorXd& e,
+                                double sign) {
+        const Eigen::Index k = static_cast<Eigen::Index>(c.size());
+        for (Eigen::Index a = 0; a < k; ++a) {
+            delta_rhs(c[static_cast<std::size_t>(a)]) += sign * e(a);
+            for (Eigen::Index b = 0; b < k; ++b)
+                delta_info(c[static_cast<std::size_t>(a)], c[static_cast<std::size_t>(b)])
+                    += sign * L(a, b);
+        }
+    };
+    const double sgn = restore ? -1.0 : +1.0;   // restore folds the inverse delta
+    accumulate(old_col, L_old, e_old, -sgn);           // remove the block as folded
+    if (has_new) accumulate(new_col, L_new, e_new, +sgn);  // re-fold the marginalized block
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return dropped;
 }
 
 void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
@@ -619,6 +881,7 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
     if (H.rows() == 0 || !(weight > 0.0)) return;
     const Eigen::MatrixXd delta_info = weight * (H.transpose() * H);
     const Eigen::VectorXd delta_rhs  = weight * (H.transpose() * z);
+    if (attrib_armed_) attrib_shared_.push_back({attrib_tag_, delta_rhs});
     neq_.addSharedInfo(delta_info, delta_rhs);
 }
 

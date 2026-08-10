@@ -173,6 +173,18 @@ namespace GnssProcessor {
         const std::vector<BiasData>& getBiases() const { return biases_; }
 
         /**
+         * @brief Get parsed RECEIVER bias entries (item 0b of the EXT-CB ladder).
+         *
+         * Station-bearing OSB and DSB records from the BIAS/SOLUTION block —
+         * previously skipped silently.  Satellite entries never appear here and
+         * receiver entries never appear in @ref getBiases, so every existing
+         * consumer of the satellite vector is byte-identical.  Populated by
+         * @ref parseBia; empty until then, and empty for satellite-only files.
+         * NOTHING consumes these yet (the estimation rung is its own card).
+         */
+        const std::vector<ReceiverBiasData>& getReceiverBiases() const { return receiver_biases_; }
+
+        /**
          * @brief Get parsed Klobuchar ionospheric coefficients.
          * @return Const reference to the internal vector of double coefficients.
          */
@@ -227,6 +239,7 @@ namespace GnssProcessor {
         std::vector<ClockData> clocks_;    ///< Parsed satellite clock data (CLK).
         std::vector<AntennaData> antennas_;///< Parsed antenna corrections (ATX).
         std::vector<BiasData> biases_;     ///< Parsed differential bias data (BIA).
+        std::vector<ReceiverBiasData> receiver_biases_;  ///< Parsed RECEIVER bias records (item 0b; stored, not yet consumed).
         ClockRefMap clock_refs_;              ///< Per-system satellite clock reference observables from BIA DESCRIPTION.
         std::vector<ErpData> erps_;        ///< Parsed Earth rotation parameters (ERP).
         std::vector<double> klobuchar_coeffs_; ///< Parsed Klobuchar ionospheric coefficients.

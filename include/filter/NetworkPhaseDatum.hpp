@@ -39,6 +39,7 @@
 
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkRunTypes.hpp"    // NetStation / PhaseDatumCandidates
+#include "filter/NetworkAnchorHygiene.hpp"  // AnchorHygiene / NetworkAnchorTallies
 
 #include <cstddef>
 #include <map>
@@ -185,6 +186,17 @@ void networkElectEnsembleDatum(
  *
  * @param sticky            network.phase_datum_sticky (passed as a scalar so
  *                          this header needs no GnssConfig definition).
+ * @param hyg               eq34 REATTACH HYGIENE verdicts (see
+ *                          filter/NetworkAnchorHygiene.hpp).  Default-constructed
+ *                          (inactive) this is the pre-card election exactly.  When
+ *                          active it makes a converged candidate outrank a fresh one
+ *                          on a REATTACH (the sticky incumbent is exempt — keeping it
+ *                          is not a reattach), leaves a BRIDGED key in the shared set
+ *                          with no pin at all (its soft shared row is the datum), and
+ *                          supplies the INC-3 σ multiplier for an unavoidable fresh
+ *                          pin.
+ * @param tally             [in/out] run counters (reattaches / cold fallbacks /
+ *                          ramped pins).  Pass @c ctx.counters.hyg.
  * @param anchor_incumbent  [in/out] sticky baseline; swapped at the end.  MUST
  *                          be the run's ctx.carry instance — a copy silently
  *                          degrades the election to a fresh one every epoch,
@@ -196,6 +208,8 @@ void networkElectPhaseAnchors(
         std::vector<NetStation>& stations,
         const std::vector<bool>& present,
         const PhaseDatumCandidates& cnd,
+        const AnchorHygiene& hyg,
+        NetworkAnchorTallies& tally,
         std::map<std::string, std::string>& anchor_incumbent,
         std::map<std::string, std::string>& this_epoch_anchor,
         std::set<std::string>& shared_phase_keys);

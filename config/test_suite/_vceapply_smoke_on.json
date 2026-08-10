@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "M2 v2 (docs/SPEC_carry_vce_apply.md) — WIRING SMOKE, arm ON (apply on `pl`).",
+    "",
+    "Sole delta vs _vceapply_smoke_off.json is carry_vce_apply plus its four knobs, so the",
+    "pair is a single-variable same-build A/B.  What this arm has to show, and nothing more:",
+    "",
+    "  1. the loader banner prints and the FINGERPRINT line changes (solve-affecting);",
+    "  2. network_carry_vce_apply.csv exists and alpha2 MOVES off 1.0 for pl|G",
+    "     (standing invariant #4 — 0 steps means the wiring is dead however clean the log);",
+    "  3. the run-end 'carry variance-FACTOR summary' block appears with a live group;",
+    "  4. the emitted products DIFFER from the OFF arm — this is a prior-variance change,",
+    "     so identical products would mean the factor never reached a fold site.",
+    "",
+    "It CANNOT show convergence: warmup_epochs 2 leaves ~7 folding epochs and the 1.05 slew",
+    "caps the excursion near 1.4x, while the FT63 hand floor is 30-120x optimistic.  Any",
+    "quality claim needs the section 7 controls.  Warm resume is refused by design when this",
+    "is armed (alpha2 is not snapshotted), which is why neither arm sets a snapshot path."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_mdb_raimlive.json"
+  ],
+  "processing": {
+    "max_duration_s": 3600.0
+  },
+  "network": {
+    "max_duration_s": 3600.0,
+    "phase_leveling_var_floor_m2": 4e-05,
+    "carry_vce": true,
+    "carry_vce_components": "pl",
+    "carry_vce_window_epochs": 60,
+    "carry_vce_apply": true,
+    "carry_vce_apply_families": "pl",
+    "carry_vce_apply_slew": 1.05,
+    "carry_vce_apply_max": 1000.0,
+    "carry_vce_apply_min_rows": 200,
+    "product_output_path": "C:/GnssProcessor/runs/vceapply_smoke_on/products.txt"
+  }
+}

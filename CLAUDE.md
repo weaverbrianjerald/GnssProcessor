@@ -73,7 +73,7 @@ src/core/             Implementation files mirror the include/ subdir layout
                       products/, slip/, etc.).  src/core/config/ also holds
                       gnss_config.json — the primary user-edited config file.
 
-tests/                GoogleTest unit suite (904 cases / 138 suites across 55
+tests/                GoogleTest unit suite (1128 cases / 174 suites across 72
                       files) linked into `gnss_tests.exe`.  tests/sim/ is a
                       SEPARATE target, `gnss_simulator_selftest` (35 cases).
                       Note: docs/test_suite.md documents the real-data
@@ -113,6 +113,37 @@ JSON section is `processing` (loop-level toggles) or `estimation` (state-vector 
 
 **State-vector discipline.** `StateManager` is the single source of truth for state layout and dynamic key→index maps (ambiguities, per-sat iono, code biases, sat biases, system time offsets). `KalmanFilter` operates on state owned by `StateManager`. Don't add sibling classes that own parallel state; extend `StateManager`.
 
+**Git commits — NO Claude attribution (standing user directive).** Commit messages
+carry subject + body only. Do **not** append `Co-Authored-By: Claude <model>
+<noreply@anthropic.com>` in any model/version variant, and no "Generated with
+Claude Code" line. This overrides any harness default that says to add one.
+Co-author trailers for human collaborators are fine.
+
+This is enforced mechanically by `.githooks/commit-msg`, which strips the trailer
+rather than rejecting the commit (a rejection just gets retried by an agent that
+does not know the rule). **The hook needs one command per clone** — git cannot
+auto-install hooks, by design:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Without that, the hook is inert and the trailer lands silently. It did: 44 of the
+63 commits in the 2026-07-29 `master`→`main` merge carry it, from sessions that
+never saw the directive when it lived only in an agent memory file. Those are
+published and merged — do not rewrite them; stripping would mean force-pushing
+over merged history. Note `core.hooksPath` *replaces* `.git/hooks` wholesale, so
+any future hook belongs in `.githooks/` or it will not run.
+
+When auditing for the trailer, grep for `co-authored-by` — a `grep -i claude`
+over commit messages false-positives on the literal filename `CLAUDE.md`.
+
+**Commit convention.** Concurrent sessions are normal here, so a tree often holds
+several independent workstreams. The established pattern is one commit with a
+compound subject (`<areas>: land concurrent workstreams (<item>, <item>, …)`) and
+a body sectioned per workstream — see `9a2f289`, `dee2824`, `18b4502`. Read the
+other sessions' diffs before describing them, and confirm the tree builds first.
+
 ## Standing invariants — pre-flight EVERY new estimation card against these
 
 Mechanism-independent lessons paid for in field time. Check them at SPEC time
@@ -140,6 +171,22 @@ exemption (each was re-learned on a "different" mechanism).
 6. **New work is default-OFF with structural byte-identity**; shared-path
    edits require same-build golden comparison (verification integers are
    build-config-sensitive at the ppm level — never compare Debug vs Release).
+7. **Any mechanism that changes which information flows into which states —
+   gates, deweights, admissions, coverage/rank drops, datum handovers, holds,
+   withhold eras — is an EVENT at BOTH edges, with counters and identities.
+   The DECOUPLING edge must bound what the decoupled states can accumulate;
+   the RE-COUPLING edge must re-validate or re-seed what it reconnects.
+   "The weight ramps smoothly" is not an exemption — era-2's valve ramped at
+   the configured rate limit and discharged anyway.**
+   Field-demonstrated: the FT63 leg-19 topology ledger
+   (`network.trace_topology`) recovered 13 re-coupling edges that were
+   previously silent, including the three stations (SAVO/OAFA/POVE) whose
+   SH-tie weight went 0.25 → 0.5 at TOW 329190 one epoch after the era-2
+   discharge. Every one of them had been invisible because a station with zero
+   tie rows dropped out of the baseline map and its return read as a *first
+   sighting* rather than a re-coupling — the exact failure this invariant
+   names. The open valve inventory (which valves still have a bare edge) lives
+   in `docs/SPEC_prefit_census_observability.md` §13.
 
 ## Standard armed set — every NETWORK run uses these (directive, Jul-28)
 
@@ -167,7 +214,149 @@ network CONFIG derives from a base that arms this set explicitly
 - **Observability**: `write_run_manifest`, `trace_epoch_status`,
   `trace_events`, `trace_flag_rates`, `health_interval_s: 300`,
   `emit_epoch_status_record`, `trace_postfit_sigma0`, `trace_postfit_keyed`.
+- **Observability, prefit tier** (promoted Aug-1 on the FT63 leg-19 gates —
+  all three trace-class and fingerprint-SAFE, so legal on a warm resume):
+  `trace_prefit_census` (the ONLY always-on PRE-solve screen: postfit σ̂₀
+  launders a parked cell through the free ambiguities, and `raim_within_epoch`
+  is carry_warm-gated and inert without leveling; 7.6 ms/epoch at 63 sta,
+  solve byte-identical), `trace_topology` (invariant #7's two edges), and
+  `rhs_attrib_on_trip` (the next discharge attributes itself — reproduced the
+  era-2 attribution with no armed TOW).  The FUSE
+  (`network.prefit_fuse_sigma`) is deliberately NOT in this set: it is
+  solve-affecting and stays a validated default-OFF guard until total_IF
+  grading and a second event.
 - **Parallel**: `parallel_carry: true` / `parallel_reduce: false` (mutex).
+- **Lane layer**: OFF **on large networks only** (~300 sta); at ~60 sta it is a
+  small net LOSS. Scale-dependent — see below.
+
+### Amendments from the AGU-26 campaign (2026-08-04) — measured, not inferred
+
+**1. The MW/WL lane layer is OFF on LARGE networks — the win is scale-dependent
+and it is NOT a blanket default.**
+`applyLaneMeasurement` is **84.7 % of total runtime at 305 stations** — 232 ms
+per row of dense O(dim²) downdate on a **2K×2K joint block** (max K_c 3866, so
+7732² = 478 MB touched per row, twice, because the per-row re-symmetrize
+allocates a second copy). Settled 305-sta GPS epoch:
+
+| arm | s/epoch | note |
+|---|---|---|
+| `lane_carry.enable: true` (the old default) | **310–325** | 3 h of data = 33 h wall |
+| + `fold_blocked` + `parallel_components` | **115** | 2.8×; fold_blocked is NOT bit-identical |
+| `lane_carry.enable: false` | **26.7** | **12×**; 3 h of data = 2.7 h wall |
+
+Turning it off also shrinks the largest carried component **3866 → 2359** (the
+pair-block both merges the two bands into one component and doubles its
+dimension). It buys nothing measurable on DOY-129: AR fix rate is **0 %** and
+med|frac_cyc| is **uniform 0.25** with the layer ON, i.e. the lane layer costs
+85 % of the run to support integer fixing that is not happening. Consistent with
+the standing "MW/WL as conditioning — do NOT arm; net-harmful" verdict.
+
+**~~It does NOT transfer to ~60 stations~~ — SUPERSEDED 2026-08-04. Lane OFF
+wins at 63 stations too, once the window is settled.** The earlier reading
+(30-epoch arms `runs/agu63_nolane_30ep`: dd-build 895 → 241 ms but `install-post`
+108 → 291 and `solve-glue` 233 → 308, TOTAL 2084 → 2207 ms = a small net LOSS)
+was measured **entirely inside ignition** — the same objection this section
+already raises against 30-epoch arms below. Re-measured on matched 1 h arms
+(`_golden63_gps_1h_laneoff` / `_laneon`, 121 epochs, median over the 101 settled
+epochs, single knob differing):
+
+| section (median, settled) | lane OFF | lane ON | ON/OFF |
+|---|---|---|---|
+| **total epoch** | **2266.8 ms** | **2940.1 ms** | **1.30×** |
+| dd-build | 173.3 | 1150.0 | 6.64× |
+| install-post | 706.9 | 526.8 | 0.75× |
+| solve-glue | 363.6 | 386.1 | 1.06× |
+| assembly / reduce / cov-consumers | 250.6 / 134.2 / 163.6 | 252.7 / 93.3 / 163.8 | flat |
+
+It attributes exactly: +977 ms dd-build, −180 ms install-post, net +673 ms =
+the observed median gap. Both component DIRECTIONS matched the old 30-epoch
+reading and the install-post penalty is nearly identical (+183 then, +180 now);
+what flipped the total is the much larger settled dd-build saving (−977 vs −654).
+**Lane OFF is now the speed call at BOTH scales** — the old "decide it on speed
+only above ~100 stations; below that decide it on science" no longer applies,
+though science still points the same way.
+
+**⚠️ It changes carry RETENTION — now measured (2026-08-04), and the answer cuts
+both ways.** Same 1 h arms. Whole-block marginalizations: lane ON = **0**, lane
+OFF = **2549** over 121 epochs (reproducing the ON=0 / OFF=many pattern; the
+earlier figures were ON = 0 over 1440 ep, OFF = 735 over 31 ep). Lane ON ends
+with **726 carried DDs from 2113 births** vs OFF's **498 from 4312** — 46 % more
+retained carry from half the births, and max K_c 460 → 708 (the pair-block
+dimension doubling). Without pair-joining, a per-band component whose chords all
+refloat is discarded wholesale, where the joint block survived if either band did.
+
+**But the two σ̂₀ families split, and that is the finding.** Prior side gets
+QUIETER with lane ON (prires `cb` σ̂₀ 2.3372 → 2.0233, `rxcb` 1.5249 → 1.1417,
+global prior-only σ̂₀ 2.1051 → 1.8463, rows > 4σ̂₀ 717 → 223) while the post-fit
+DATA side gets ~2.3× LOUDER on two independent instruments (block-Baarda G σ̂₀
+6.372 → 15.51; station-congruence σ̂₀ 17.69 → 40.53). The prires drop is not a
+moved-threshold artifact — lane ON's σ̂₀ is *lower*, so its 4σ̂₀ bar is tighter,
+and it still flags 3.2× fewer rows. **Interpretation (consistent with the data,
+not independently proven): that split is what OVER-RETENTION looks like — the
+lane keeps state the data does not support, the carry stays self-consistent
+because it is stiff, and the observation residuals pay for it.** Consistent with
+the standing "MW/WL as conditioning — do NOT arm; net-harmful" verdict, now with
+a visible mechanism. **Still ungraded: total_IF** — 1 h cannot settle the LEVEL
+channel, so grade that on a ≥2 h run before quoting it.
+
+*A/B sanity gate worth reusing:* the block-Baarda block-size histogram and the
+datum-graph census came out **bit-identical** across the two arms (7259 blocks,
+`b1:17 b2:25 b3:15 b4:3672 b5:2 b6:3528`; 67518 edges, 438 tier-2). Both key off
+observation / S-basis structure rather than carry structure, so a lane A/B that
+moves them has a second variable loose.
+
+**2. Do NOT arm `emit_pb_filter_gate_v2` on this lineage.** Tested Aug-4
+(`runs/agu63_pbv2`, 12 h): solve byte-identical (CLK and CB max |Δ| = 0.0, so
+invariant #6 passes), but the effect is null-to-negative — ref-path-slip resets
+unchanged at 538, innovation resets **0 → 31**, PB discontinuity rate 1/128 min
+→ 1/124 min, consumer unchanged at 0 % fix. Its advertised win ("innovation
+resets 5707 → 32") has an **empty target population** here because the inherited
+`emit_pb_filter_jump_k: 8.0` already suppressed them. **91 % of emitted
+phase-bias discontinuities are ref-path SLIP re-referencing**, which no emission
+filter touches.
+
+**3. `emit_pb_filter_jump_k: 8.0` in the FT63 lineage is the RETIRED v1 hand
+tuning** — the code default is 4.0.
+
+**4. `trace_ionosphere` is a DIAGNOSTIC, and `network_ionosphere.csv` is
+frame-broken.** It emits `x_r` alone while the per-LOS iono state is seeded at
+allocation, so it is a CORRECTION, not absolute slant ionosphere (medians 9.9
+TECU against the field's own 30–33 TECU a00, 37 % negative). For anything that
+needs the estimated ionosphere, synthesize `network_vtec_sh.csv` —
+`scripts/sh_vtec.py` (ported basis + `--selftest`).
+
+**5. Candidates that still need their first validation run** (do not arm blind):
+`network.clock_datum_sum_to_zero` (or `_broadcast_anchored`) — both are
+`declared_dimension = 0` with "no pivot, no handover seam", and the clock is the
+worst re-realizer measured (**13 product-wide jumps** post-convergence over 12 h
+vs 2 for code bias and 0 for phase bias); and `network.emit_clock_disc: true` —
+without it the per-satellite clock disc counter is never populated, so all 13 of
+those jumps are **silent to the consumer**.
+
+**6. NEVER grade the ionosphere LEVEL against a single GIM number, and never on a
+1 h window** (2026-08-05, `docs/SPEC_level_information_budget.md` §14).  Two
+independent traps, both paid for:
+
+- The GIM's own **global mean VTEC moves through the day** — measured on DOY-129:
+  32.0 TECU at 00 UT, 36.9 at 08, 33.9 at 24.  Every level verdict on the EXT-CB
+  ladder before this was quoted against "GIM 32.24", the 00:00 map alone, so a run
+  tracking the ionosphere reads as drifting and vice versa.  Use
+  `python scripts/gim_global_mean_series.py <run_dir> …`, which reports
+  `a₀₀(t) − GIM_mean(t)` hourly (a sun-fixed a₀₀ **is** the global mean: Ȳ₀₀ ≡ 1).
+- **DEFECT 2 is about half an ignition transient.**  Graded time-matched, the
+  canonical EXT-CB posture starts −15.8 TECU (what every 20-epoch and 1 h arm
+  measured) and from hour 2 wanders in a −4…−15 band, mean ≈ −9.  The level
+  channel's convergence budget is ~2 h; any level claim from a shorter window is
+  measuring ignition.  The LV-1/2/4/5 stack inverts the trade — best ignition on
+  the ladder (+4) and then a ramp to +15…+21 — so **it is NOT armed for settled
+  work**; its cards remain valid fixes to the defects they name.
+- Corollary, measured over four 12 h postures (§15): **the rx-CB carry's rolling
+  common-mode memory is what TRACKS the level**, and the ±6 TECU breathing is its
+  price.  Freezing that memory (de-mean) drifts +20; loosening it (`rx_cb_carry_q`
+  1e-9 → 1e-6) drifts +25 — the frozen pin was RESISTING the drift; removing the
+  carry entirely collapses at −9 TECU/epoch.  Do not "fix" the level by tuning the
+  carry's memory model in either direction; it needs a per-epoch data-derived
+  authority instead.
 
 Grading note: the response doctrine is adapt-and-EMIT within the detected
 epoch; a withhold is the backstop and is graded as an adaptation failure
@@ -302,8 +491,8 @@ JSON to retain the compressed copy (for byte-exact archival).
 
 ## Known state
 
-- **Test suite.** `gnss_tests.exe` runs 904 GoogleTest cases across 138 suites in 55 files (~76 s, full Debug run; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (35 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
-  - Suite hygiene: every suite name is owned by exactly one file (138 suites, zero cross-file overlap) — keep it that way, and prefer a new file over widening an existing one. At 29.5k test LOC against 136.9k production LOC the suite is *thin* (0.22 ratio, ~1 case per 151 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
+- **Test suite.** `gnss_tests.exe` runs 1128 GoogleTest cases across 174 suites in 72 files (~69 s, full Debug run; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (35 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
+  - Suite hygiene: every suite name is owned by exactly one file (174 suites, zero cross-file overlap — re-verified 2026-08-03) — keep it that way, and prefer a new file over widening an existing one. At 39.7k test LOC against 150.5k production LOC the suite is *thin* (0.26 ratio, ~1 case per 138 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
 - **Pre-existing C4828 warnings** (illegal characters at codepage 65001) are from older mixed-encoding files and unrelated to new work. Ignore unless the user asks to clean them up.
 - **`vswhere.exe not recognized`** messages from cmd subshells are benign noise when using the vcvars64 pattern above — the build proceeds.
 - **Real-time mode** uses a separate path (`Application::runRealTime` → `RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `Application::run` and should guard against `AppMode::RealTime`.
@@ -330,3 +519,45 @@ JSON to retain the compressed copy (for byte-exact archival).
 - **Setup** (validation / sinks / consumer) → `app/ApplicationNetworkSetup`; **assembly** (PASS A/B) → `app/ApplicationNetworkAssembly`.
 
 Seam contract: a free function over `(NetworkRunContext& ctx, const GnssConfig& config_, log, NetworkRunTraces&, …)` opening with an alias preamble that reconstructs the driver's `ctx.*` / `setup.*` aliases so the body reads the original names; it owns NO state (every carry object is a reference into `ctx`). The driver keeps only the `subBegin/subEnd` brackets and the call. New `.cpp` seams need a manual `CMakeLists.txt` entry (no globbing).
+
+### Real-time engine — where new code goes (anti-regrowth decision-tree)
+
+`src/core/realtime/RealTimeEngine.cpp` got the same treatment (2,366 → 625 lines;
+`processEpoch` 1,438 → 135, `initialize` 343 → 19, `feedRtcmFrame` 256 → 78),
+cut **before** the RTF-4..9 service queue lands more accretion. The driver is now
+thin ordered orchestration. **Keep it thin** — new code goes in the seam matching
+its concern:
+
+- **New per-epoch admission / deferral rule** → `RealTimeEngineAdmit.cpp`. These
+  are the ONLY seams that may end an epoch: `bool`, false ⇒ `processEpoch`
+  returns false. Everything downstream is unconditionally straight-line.
+- **New consumer-side observability** → `RealTimeEngineSsrDiag.cpp`.
+- **New measurement-set conditioning** (drop/seed/re-gauge, pre-predict) →
+  `RealTimeEnginePrepare.cpp`. Note `seedClockFromWls` and `regaugeBssd` are
+  mutually exclusive (`hasClock()` vs not) — a matrix that arms only one leaves
+  the other uncertified.
+- **New slip detection / repair** → `RealTimeEngineSlipQc.cpp`.
+- **New "the producer moved its datum" reaction** → `RealTimeEngineSsrBreaks.cpp`.
+  Order is load-bearing: `reactToGenerationChange` applies the union globally and
+  must precede the per-signal handlers.
+- **New update / constraint / AR / trace step** → `RealTimeEngineEstimate.cpp`.
+  Pseudo-observation constraints belong after the update and before AR.
+- **New construction step** → `RealTimeEngineInit.cpp` (the order there is a real
+  dependency chain — `seedInitialState` must follow `initProcessingComponents`).
+- **New RTCM ingest step** → `RealTimeEngineIngest.cpp`. The obs-buffering loop
+  and ephemeris push stay in the driver on purpose: they call the file-local
+  anon-namespace helpers `isSystemActive` / `refreshGlonassSlots`.
+
+Seam contract: a **private member function** (not a free function — every
+persistent value is already a `RealTimeEngine` member, so no `NetworkRunContext`
+equivalent is needed) opening with an alias preamble reconstructing the driver's
+local names. Cross-seam per-epoch values travel in `RtEpochContext`, which owns
+nothing that outlives the epoch — **a value that must survive to the next epoch
+is a member, and putting it in the context silently cold-starts it every epoch.**
+
+Gate: `scripts/rt_seamcut.py` (generator, one canonical seam table),
+`scripts/rt_seam_verify.py` (proves each relocated body character-exact against
+the frozen pre-cut source — 30/30 verbatim), `scripts/rt_seam_gate.ps1` +
+`scripts/rt_seam_compare.py` (4-arm same-build byte-identity A/B, all PASS).
+Re-run the verifier after touching a seam body; see `docs/rt_seam_decomposition.md`
+for the coverage the A/B does and does NOT certify.

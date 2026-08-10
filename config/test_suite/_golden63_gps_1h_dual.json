@@ -1,0 +1,47 @@
+{
+ "_comment": [
+  "GOLDEN-63, 1 h, DUAL-FREQUENCY arm — the 'fast version' (_golden63_gps_1h_laneoff.json,",
+  "lane_carry OFF) with the ONLY change being processing.frequency_mode triple -> dual.",
+  "Everything else is inherited verbatim: 61 in-network stations, WTZZ00DEU colocated",
+  "consumer holdout, GPS-only, channel_mode single, lane_carry OFF, the full golden",
+  "instrumentation tier, and the parallel posture (pcarry on / preduce off).",
+  "",
+  "PURPOSE: measure how much faster the producer runs on two bands instead of three.",
+  "The a-priori expectation is that the saving is NOT proportional to band count — the",
+  "63-sta epoch measured 2266.8 ms median settled with lane OFF, attributed as",
+  "install-post 706.9 / solve-glue 363.6 / assembly 250.6 / dd-build 173.3 /",
+  "cov-consumers 163.6 / reduce 134.2.  The band-scaling terms are the ambiguity-carrying",
+  "ones (dd-build, install-post, solve-glue via K_c); assembly, cov-consumers and reduce",
+  "scale with STATIONS and shared dimension, not bands, so they should be roughly flat.",
+  "Grade the delta on the D0/D0b section medians over settled epochs, not on wall.",
+  "",
+  "BAND SCOPE: FrequencyMode::Dual = two bands per constellation = GPS L1+L2",
+  "(GnssConfigTypes.hpp:1914).  Triple would add L5.  Note not every GPS satellite on",
+  "DOY-129 broadcasts L5 (Block IIF/III only), so the realised state-vector reduction is",
+  "smaller than a flat 1/3 — read the actual carried-DD and K_c counters, not the ratio.",
+  "",
+  "⚠️ KNOWN SIDE EFFECT, not a misconfiguration: the WL-2 EWL statistic tier is defined on",
+  "GPS (L2,L5) and the UWL-1 top tier likewise needs the third band.  With dual there is no",
+  "L5, so those tiers go INERT.  The loader does NOT fail-loud on this — it is an advisory",
+  "log->info ('Requires frequency_mode with the 3rd band (GPS L5 / Galileo E5b)',",
+  "GnssConfigLoadNetwork.cpp:5532), so mw_wl.ewl_enable will still read ARMED in the log",
+  "while producing no EWL rows.  That is inherent to dual-frequency, not a defect, but it",
+  "means this arm is NOT a clean single-variable A/B against the triple arm: it changes",
+  "both the band scope AND the (already lane-OFF) EWL statistic availability.  Read the",
+  "run-end MW/WL counters to confirm the tier is reporting zero rows rather than silently",
+  "contributing.",
+  "",
+  "FRESH LINEAGE ONLY: frequency_mode changes the state vector, so this must converge",
+  "fresh.  Its output paths are its own — never resume it onto the triple arm's snapshot.",
+  "",
+  "SCOPE: like its parent, 1 h grades wiring + cost.  It cannot grade total_IF."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "frequency_mode": "dual" },
+ "network": {
+  "product_output_path": "C:/GnssProcessor/runs/golden63_gps_1h_dual/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/golden63_gps_1h_dual/state_snapshot.bin"
+ }
+}

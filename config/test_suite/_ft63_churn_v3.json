@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "CHURN CARD — D5 v3 ARM.  One functional key over _ft63_churn_base.json:",
+    "network.carry_invariant_innov_corroborate.  Everything else is inherited, so this is a",
+    "true single-treatment pair.",
+    "",
+    "WHAT IT DOES.  A chord that trips the k*sigma0 test is re-tapped UNLESS the raw",
+    "observables positively measured its arc as continuous.  Tri-state and fail-safe:",
+    "stepped => re-tap; measured-and-flat => SUPPRESS; no evidence => re-tap.  Backstop left",
+    "at 0 (pure corroboration): corroboration was measured to FALL with innovation size, so a",
+    "magnitude backstop re-admits exactly the population with the least evidence of being a",
+    "real slip.",
+    "",
+    "THIS IS THE OWED RUN.  The gate was built and gate-1 passed on 2026-07-30 (11 epochs,",
+    "305 sta: 5 174 of 5 318 trips suppressed = 97.3 %, OFF arm byte-identical), and the",
+    "24 h ft63_24h_conv leg the churn was decomposed on did NOT have it armed.  10 epochs",
+    "prove the mechanism fires; they do not prove it helps.  Expect ~97 % of D5 flags to",
+    "vanish and, if the re-tap loop is what pins the DD variance, dd_sigma_cyc to start",
+    "falling off ~3.9 cyc.",
+    "",
+    "WATCH: innov_suppressed == 0 at run end means the flat set never reached the driver —",
+    "INERT, not permissive (standing invariant #4).  The loader auto-arms",
+    "cycle_slip.gap_instrument if no slip-QC consumer would compute the raw verdicts; this",
+    "config already arms it explicitly via the base."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "network": {
+    "carry_invariant_innov_corroborate": true,
+    "product_output_path": "C:/GnssProcessor/runs/churn_v3/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_v3/state_snapshot.bin"
+  }
+}

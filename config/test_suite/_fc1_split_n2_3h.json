@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "FC-1 INC-4 decisive gate, SPLIT arm.  50-station GPS+Galileo golden posture, 3 h.",
+    "epoch_decimation_n = 2: a FULL solve every 60 s, a clocks-only fast TICK every 30 s,",
+    "with emission on.",
+    "",
+    "n=2 rather than the SPEC's n=10.  At n=10 the full solve runs at 300 s spacing, which",
+    "is a measured carry-collapse regime (33%/ep refloat, arc life ~15 min, SH runaway at",
+    "hr 4) — a verdict there would confound 'the fast tier works' with 'the full solve",
+    "degraded'.  At 60 s the full solve is in the validated tier (D5 184/ep, sigma0 1.00),",
+    "so the only thing under test is the fast tier.  The ZOH floor to beat is correspondingly",
+    "0.157*sqrt(2) ~ 0.22 m rather than ~0.50 m.",
+    "",
+    "REF arm: runs/fc1_shadow_3h/products.txt — the same build, same data, same posture at",
+    "epoch_decimation_n = 1.  Using the shadow run as REF is legitimate precisely because",
+    "the INC-0/INC-1 isolation gate proved its estimation outputs byte-identical to the",
+    "tier-off arm; shadow ticks are computed and discarded."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep.json"
+  ],
+  "processing": {
+    "max_duration_s": 10800.0
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/fc1_split_n2_3h/products.txt",
+    "epoch_decimation_n": 2,
+    "fast_clock": {
+      "enable": true,
+      "emit": true,
+      "trace": true,
+      "trace_sat_stride": 1,
+      "emit_max_gap_s": 120.0
+    }
+  }
+}

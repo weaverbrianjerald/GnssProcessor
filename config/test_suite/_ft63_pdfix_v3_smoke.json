@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "10-EPOCH SMOKE of _ft63_pdfix_v3.json (staged cadence).  Sole deltas are the 300 s",
+    "duration and its own output/snapshot paths.  Checks the knob BOUND (its loader line",
+    "prints) and that its counter MOVES (invariant #4); it cannot show convergence."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_v3_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_v3_smoke/state_snapshot.bin"
+  }
+}

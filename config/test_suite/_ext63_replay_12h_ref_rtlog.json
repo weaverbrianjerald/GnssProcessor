@@ -1,0 +1,51 @@
+{
+ "_comment": [
+  "EDGE-1 PROBE (docs/HANDOFF_edge_response_queue.md edge 1): is the closed-loop /",
+  "replay consumer's SSR datum-break reaction path actually INERT, as SPEC",
+  "SS25.5 / SS27 item 2 assert, or merely SILENT?",
+  "",
+  "Finding that motivated this arm: runConsumerReplay drives a RealTimeEngine, and",
+  "RealTimeEngine::processEpoch calls all five RealTimeEngineSsrBreaks handlers",
+  "UNCONDITIONALLY (RealTimeEngine.cpp:479-483) — including resetOnPhaseBiasDisc,",
+  "which resets an ambiguity on every producer phase-bias discontinuity-counter",
+  "step.  The counters are recomputed deterministically on replay",
+  "(NetworkProductReader::replay -> emitter.emitToStore), and the emitter's phase",
+  "jump test is UNGATED at kDefaultDiscThresholdM = 0.05 m — below every one of the",
+  "387 mid-arc steps > 0.1 m the SS25.2 census found.  So the reactions should be",
+  "firing.  The reason runs/replay_ext63_12h_ref/logs/rt_engine.log is EMPTY is that",
+  "logging.enable_rt_engine defaults to FALSE (GnssConfigLoad.cpp:3075), so every",
+  "reaction line was suppressed.",
+  "",
+  "This arm is byte-identical in SOLVE to _ext63_replay_12h_ref.json — the ONLY",
+  "delta is logging.enable_rt_engine, which writes a log file and changes no state.",
+  "Grade: count 'SSR phase-bias discontinuity: reset' / 'code-bias discontinuity' /",
+  "'clock discontinuity' / 'generation-id changed' lines in rt_engine.log, and",
+  "confirm closed_loop_trace.csv reproduces the reference arm exactly.",
+  "",
+  "Extends _ext63_gps_dual_1h.json DIRECTLY and restates every override of",
+  "_ext63_replay_12h_ref.json (SPEC SS23.7 extends-chain depth ceiling is 8; the",
+  "reference replay config already sits at 8, so this is a SIBLING, not a child)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 43200.0 },
+ "logging": { "enable_rt_engine": true },
+ "_comment_iono_cutoff": [
+  "MEASURED CONFOUND, do not delete: the first probe run (logs_iono15/) resolved",
+  "estimation.ionosphere_weighting.elevation_cutoff_deg = 15 while the reference arm",
+  "runs/replay_ext63_12h_ref (07:52 Aug-5) resolved 25 — a base config in the shared",
+  "chain moved between the two runs, so the arms were NOT twins (AR fixed 5 vs 2,",
+  "last-30 RMS 6.70 vs 2.78 m).  The loader default is 10 (GnssConfigLoad.cpp:1416)",
+  "and config_posture_check flags the 2/3 SH-VTEC bundle as PARTIAL without it.",
+  "Restated explicitly here to pin the twin AND to match the SS26.2 unified 15/25",
+  "posture the arm-32 / arm-38 denominators are measured at."
+ ],
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 43200.0,
+  "closed_loop": { "replay_products_path": "C:/GnssProcessor/runs/ext63_dual_12h_ref/products.txt" },
+  "product_output_path": "C:/GnssProcessor/runs/replay_ext63_12h_ref_rtlog/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_ext63_12h_ref_rtlog/state_snapshot.bin"
+ }
+}

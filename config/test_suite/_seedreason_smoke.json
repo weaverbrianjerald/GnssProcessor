@@ -1,0 +1,13 @@
+{
+  "_comment": [
+    "SOLVE-NEUTRALITY A/B of the RE-1 sigma0 seed-reason log fix.",
+    "Identical to _ft63_pdfix_qz0_smoke.json except the output paths."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_qz0_smoke.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/seedreason_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/seedreason_smoke/state_snapshot.bin"
+  }
+}

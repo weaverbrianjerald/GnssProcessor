@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "RUN QUEUE P2 - q_z = 0 AND the iono ties RELEASED (the uncombined-PPP-RTK cell).",
+    "",
+    "BASE IS THE P1 WINNER (_ft63_pdfix_v3.json = pdfix_on + carry_invariant_innov_corroborate), per the queue's 'winner becomes the base posture for P2-P6'.  P1 measured: informational lifetime 12.0 -> 55.3 ep, mature steps 1.015/0.883/0.509 -> 0.953/0.789/0.485, SF k=1 0.83 -> 0.77, total_IF and clock QC NEUTRAL-to-better, coarse IF-TD slip layer BYTE-IDENTICAL (129 flags / 201253 opp on every arm incl. pdfix_off), tension landing only in post-fit sigma0_phase 0.120 -> 0.171.",
+    "",
+    "Ties released exactly as _ft63_qz0_iofloat.json defines them: SH representation sigma",
+    "50 TECU, mech-B off (tau/demean/d5_keep), layer 2 off, sh_health_gate off,",
+    "iono_constraint_deweight_adaptive off.  This is the most permissive iono cell the",
+    "producer has: if the DD steps do NOT collapse here, no amount of carry stiffness will",
+    "reach them and the residual IS the iono representation (project_why_non_integer_rootcause",
+    "predicts exactly that - NL is 99.3% iono).",
+    "",
+    "TWO variables on purpose (q_z AND ties) - it is the CELL, not an axis.  Read it against",
+    "pdfix_qz0 (q_z alone) to separate them."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "estimation": {
+    "global_vtec_sh": {
+      "representation_sigma_tecu": 50.0,
+      "rep_error_tau_s": 0.0,
+      "rep_error_demean": false,
+      "rep_error_d5_keep": false,
+      "layer2_max_degree": 0
+    }
+  },
+  "network": {
+    "carry_invariant_qz": 0.0,
+    "sh_health_gate": false,
+    "iono_constraint_deweight_adaptive": false,
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_qz0_iofloat/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_qz0_iofloat/state_snapshot.bin"
+  }
+}

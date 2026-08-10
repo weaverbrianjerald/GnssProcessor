@@ -18,6 +18,7 @@ axis.
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 import numpy as np
@@ -315,12 +316,30 @@ class PlotlyBackend(Backend):
             gofig.update_yaxes(type="log", row=row, col=1, secondary_y=False)
         if spec.xscale == "log":
             gofig.update_xaxes(type="log", row=row, col=1)
+        # Plotly expresses a LOG axis's `range` in EXPONENTS, matplotlib in data units.
+        # Viewers speak data units (that is the contract Axes.xlim/ylim documents), so a
+        # log axis has to be converted here or a perfectly sane limit like 35 m renders as
+        # 10^35.  Non-positive bounds are dropped rather than passed to log10.
+        def _rng(lim, is_log):
+            if not is_log:
+                return list(lim)
+            out = []
+            for v in lim:
+                if v is None or v <= 0:
+                    return None                  # cannot express on a log axis; autorange
+                out.append(math.log10(v))
+            return out
+
         if spec.xlim is not None:
-            gofig.update_xaxes(range=list(spec.xlim), row=row, col=1)
+            r = _rng(spec.xlim, spec.xscale == "log")
+            if r is not None:
+                gofig.update_xaxes(range=r, row=row, col=1)
         if spec.ylim is not None:
             lo, hi = spec.ylim
             if lo is not None and hi is not None:
-                gofig.update_yaxes(range=[lo, hi], row=row, col=1)
+                r = _rng((lo, hi), spec.yscale == "log")
+                if r is not None:
+                    gofig.update_yaxes(range=r, row=row, col=1)
             elif lo is not None:            # half-open (e.g. (0, None)) -> floor only
                 gofig.update_yaxes(autorangeoptions=dict(minallowed=lo), row=row, col=1)
             elif hi is not None:

@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "CHURN CARD — D5 v5 ARM.  One functional key over _ft63_churn_base.json:",
+    "network.carry_invariant_innov_carried_only.  Neither v3's corroborate nor v4's",
+    "retap_only is armed here — all three act on the same population and arming more than",
+    "one per arm makes the A/B unreadable.",
+    "",
+    "WHAT IT DOES.  The gate no longer evaluates a chord that was BORN this epoch.  The",
+    "test is |v| > k*sigma0*sqrt(Cov(v)) with Cov(v) the H0 covariance about the CARRIED",
+    "prior; a fresh chord's prior is the diffuse fresh-chord variance, so the ratio is not",
+    "a hypothesis test at all.  Its 'reset' is a no-op — a diffuse chord's posterior",
+    "ALREADY is the data-only tap-off — and the flag's only lasting effect is the funnel",
+    "entry that re-borns the chord next epoch, where it flags again.",
+    "",
+    "WHY THIS IS THE ROOT ARM.  Measured on runs/churn_base (this arm's own baseline,",
+    "3 h, 63 sta, DOY-129) with the new algebra columns: 32 062 of 33 628 flags — 95.3% —",
+    "sit on born chords at EXACTLY sqrt(var_v) = 1000.000 m, the diffuse prior, with a",
+    "median |v| of 19.2 km (an x_lin-frame distance, not a physical DD disagreement).  27",
+    "chords are born-flagged on more than half of all flagged epochs; URUM00CHN/G22 runs at",
+    "duty 0.99.  A chord re-born every epoch has by construction never accumulated",
+    "anything, which is precisely why dd_sigma_cyc cannot leave its pin and med|frac_cyc|",
+    "stays uniform at 0.25.  v3 and v4 suppress this same population for INCIDENTAL",
+    "reasons (a born chord's arc usually reads measured-and-flat); v5 removes it at the",
+    "source, and it is the one of the three that is defensible as a correctness fix rather",
+    "than a policy: D5 v2 already excluded born chords from the sigma0 accumulator for this",
+    "exact reason and simply never applied the same exclusion to the DECISION.",
+    "",
+    "WATCH: a run-end born-skipped count of 0 means no born chord ever reached the gate —",
+    "INERT, not benign (standing invariant #4)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "network": {
+    "carry_invariant_innov_carried_only": true,
+    "product_output_path": "C:/GnssProcessor/runs/churn_v5/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_v5/state_snapshot.bin"
+  }
+}

@@ -1,0 +1,44 @@
+{
+ "_comment": [
+  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_sigma0_constraint_aware.md) -- the",
+  "OFF CONTROL of the arm where BOTH SIDES ARE LIVE.",
+  "",
+  "WHY THIS LINEAGE AND NOT _ft63_prires_*.  MEASURED 2026-08-04 on the first",
+  "smoke: the FT63 census lineage runs carry_invariant WITHOUT phase_leveling, and",
+  "the driver brackets networkPostFitRaim with `raim_on && carry_warm` where",
+  "carry_warm = phase_leveling && warmup (ApplicationNetwork.cpp:1318).  So the",
+  "post-fit RAIM pass NEVER RUNS there: network.raim reads ARMED in every log",
+  "line, the data side sees ZERO rows, prior_tension_ratio is UNDEFINED and",
+  "sigma0_global degrades to a prior-only variance component.  The card's headline",
+  "is not measurable on that lineage at all.",
+  "",
+  "So this pair extends _ft63_mdb_raimlive.json -- the MDB card's own answer to",
+  "exactly this problem: 63 stations, GPS triple, phase_leveling on with a 2-epoch",
+  "warmup, raim + raim_redundancy_normalize on, carry_vce on.  It is the same",
+  "lineage the B2 per-row Baarda r_i was validated on, which is what makes",
+  "Sum-r_data an honest redundancy here rather than the r == 1 fallback.",
+  "",
+  "This file is the census WITHOUT the rider.  The ONLY delta against",
+  "_ft63_s0g_raimlive.json is network.prior_residual_global_sigma0, so gate 1 is a",
+  "clean same-build byte-identity A/B with both sides of the statistic live."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ft63_mdb_raimlive.json"
+ ],
+ "processing": {
+  "max_duration_s": 600.0
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "prior_residual_census": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+  "prior_residual_window_epochs": 60,
+  "prior_residual_min_rows": 200,
+  "prior_residual_report_sigma": 4.0,
+  "prior_residual_event_holdoff_ep": 20,
+  "prior_residual_corroborate": true,
+  "prior_residual_global_sigma0": false,
+  "product_output_path": "C:/GnssProcessor/runs/ft63_s0g_raimlive_off/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ft63_s0g_raimlive_off/state_snapshot.bin"
+ }
+}

@@ -1,0 +1,32 @@
+{
+ "_comment": [
+  "305-station (303 in-network) GPS-only, 1 h, on the fast posture:",
+  "deg-15 SINGLE-layer SH, lane_carry OFF, adm_screen + PD-safe fold + D5 v3 + W6",
+  "self-contained OSB inherited from _ft63_pdfix_v3.  Held-out consumer WTZZ00DEU.",
+  "",
+  "Expected wall: ~10 min RINEX ingest for 303 stations + 120 epochs at the measured",
+  "26.7 s/epoch = ~55 min, so ~65 min total.",
+  "",
+  "⚠️ WHAT 1 h CAN AND CANNOT SHOW.  The measured convergence budget on this lineage",
+  "is ~2 h for the total_IF clock/code-bias LEVEL channel (at 1 h it still reads ~50 %",
+  "high) and ~1 h for everything else.  So this run CAN establish: that 305 runs clean",
+  "on the new posture, the true settled per-epoch cost at scale, PD-fold health,",
+  "carried-DD population and largest-component size, the a00 band, and emit/withhold",
+  "counts.  It CANNOT grade total_IF, and the held-out consumer number will be pure",
+  "ignition — the 61-station run was still wandering 3-7 m at 6 h.  Do not read the",
+  "consumer trace from this run as a product-quality result.",
+  "",
+  "It also does NOT settle the lane-off retention question (whole-block",
+  "marginalizations 0-over-1440 with the lane ON vs 735-over-31 with it OFF); that",
+  "needs >=2 h to grade."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu305_gps.json"
+ ],
+ "processing": { "max_duration_s": 3600.0 },
+ "network": {
+  "max_duration_s": 3600.0,
+  "product_output_path": "C:/GnssProcessor/runs/agu305_gps_1h/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu305_gps_1h/state_snapshot.bin"
+ }
+}

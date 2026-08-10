@@ -1,0 +1,23 @@
+{
+ "_comment": [
+  "Card CLK-R (docs/SPEC_clock_emit_rebase.md) G2 — 1 h ON arm (both knobs).",
+  "PREDICTIONS: (P1) product_step_census clock channel: 0 common-mode step",
+  "epochs (the stored internal control ran ~60/h in hour 1) and the per-sat",
+  "dev distribution UNCHANGED (stage 1 provably cannot touch it); (P2) marks",
+  "at roughly the 1.5 m tail rate (~7/h Poisson, ignition may add a few) each",
+  "carried as an R record; (P3) run-end line: 121 epochs, 0 re-anchors,",
+  "max |A_c| well under the 50 m leash.  RANK/WIRING gate only — no level or",
+  "consumer verdicts off 1 h (run-length law)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": { "max_duration_s": 3600.0 },
+ "network": {
+  "max_duration_s": 3600.0,
+  "emit_clock_frame_hold": true,
+  "clock_disc_jump_test": true,
+  "product_output_path": "C:/GnssProcessor/runs/clkr_1h_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/clkr_1h_on/state_snapshot.bin"
+ }
+}

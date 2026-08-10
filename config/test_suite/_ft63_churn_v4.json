@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "CHURN CARD — D5 v4 ARM.  One functional key over _ft63_churn_base.json:",
+    "network.carry_invariant_innov_retap_only.  v3's corroborate is deliberately NOT armed",
+    "here — the two are ALTERNATIVE responses to the same population and v3 suppresses it one",
+    "level earlier, so arming both would leave v4 inert by construction and the arm would",
+    "measure nothing (the loader warns about exactly this).",
+    "",
+    "WHAT IT DOES.  A D5 flag whose arc the raw observables MEASURED as continuous re-taps",
+    "its chord in-epoch as before, but its arc is no longer excluded from the NEXT epoch's",
+    "A_old membership — so the DD the gate just reset keeps its history instead of being",
+    "refloated from a diffuse prior.  Under a stable tree a chord arc lies in exactly one",
+    "fundamental cycle (its own), so on this population the exclusion protected no other",
+    "carried DD; it is the 97.8 % limit cycle.",
+    "",
+    "WHAT IT DOES NOT DO, and why the scoping is not negotiable.  The funnel refloat is what",
+    "COMPLETES a real slip's reset: the in-epoch move is only the post-fit innovation v, which",
+    "the fold's -G'SG border term has already shrunk, and the re-established stiff carry locks",
+    "the remainder in.  Measured at 0.48 cyc residual in",
+    "tests/test_network_invariant_carry_driver.cpp GATE 10b.  So stepped and UNMEASURABLE",
+    "arcs still refloat, and so does any arc a raw detector flags in the current epoch.",
+    "Standing invariant #1 is narrowed to the diagnosed population, never removed.",
+    "",
+    "THE CONTRAST WITH v3.  Same population, opposite response: v3 leaves the DD alone",
+    "(suppress the flag entirely), v4 re-centres it on the data but keeps its identity.  If",
+    "the innovation really is SH-iono / conditioning tension rather than a slip, v3 holds the",
+    "DD stiff against it and the tension has to land somewhere else; v4 lets the DD absorb it",
+    "without ratcheting.  Grading the two against the SAME base is the point of the triple.",
+    "",
+    "WATCH: a run-end suppressed-kill count of 0 means no corroborated-flat flag ever reached",
+    "a carry arc — INERT, not benign (standing invariant #4)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_base.json"
+  ],
+  "network": {
+    "carry_invariant_innov_retap_only": true,
+    "product_output_path": "C:/GnssProcessor/runs/churn_v4/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_v4/state_snapshot.bin"
+  }
+}

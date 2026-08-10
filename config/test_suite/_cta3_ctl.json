@@ -1,0 +1,29 @@
+{
+ "_comment": [
+  "Card Q3 G3 -- 3 h CTL arm of the 3-arm ladder (ctl / anchor / anchor+gauge-free).",
+  "Derived from _golden63_3h_cta_ctl.json, re-pathed, plus FC-1 fast_clock SHADOW:",
+  "measure-only (the phase-derived tick is computed on FULL epochs and discarded), so",
+  "the solve and the product are untouched.  Its hour table -- producer delta-c0 vs the",
+  "carrier-phase measured change, common-mode removed, with the correlation -- IS the",
+  "score for Q3 work (memory project_fast_clock_card).  All three arms are the SAME",
+  "build and the SAME chain; runs never overlap; each is a fresh lineage."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cta3_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta3_ctl/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  }
+ }
+}

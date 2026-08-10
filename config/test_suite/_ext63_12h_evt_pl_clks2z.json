@@ -1,0 +1,38 @@
+{
+ "_comment": [
+  "EDGE-2 12 h ARM B (2026-08-08): clock_datum_sum_to_zero at 12 h — THE jump-count A/B",
+  "vs _ext63_12h_evt_pl_clkpin.  One knob, same binary, fresh lineage.  PREDICTIONS:",
+  "P1 ZERO pivot-handover discs by construction (no pivot exists);",
+  "P2 the s2z caveat is the measured trade: clock common-mode WANDERS with satellite-set",
+  "   membership (survivors redistribute ∓ΔC0/N on rise/set) — census common-mode steps",
+  "   at set-change epochs, counted by the T3c-auto-armed clock_disc_on_set_change;",
+  "P3 the A/B verdict = which lineage's emitted clock is QUIETER FOR A CONSUMER:",
+  "   census clock channel (steps + outliers) both sides + consumer replays of both",
+  "   products, unchanged-or-better required for s2z to graduate;",
+  "P4 solve changes expected (the knob is not outputs-only) — grade datum-invariant."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 43200.0, "elevation_mask_deg": 15.0 },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8, "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24, "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "serialize_sbasis_contract": true,
+  "phase_leveling": true,
+  "mark_refsat_reset_disc": true,
+  "clock_datum_broadcast_anchored": false,
+  "emit_clock_disc": true,
+  "clock_datum_sum_to_zero": true,
+  "product_output_path": "C:/GnssProcessor/runs/evt_pl_clks2z12/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/evt_pl_clks2z12/state_snapshot.bin"
+ }
+}

@@ -1,0 +1,64 @@
+{
+ "_comment": [
+  "EDGE-1 PIECE 1 (docs/HANDOFF_edge_response_queue.md §1.3/§1.6): make the ONE live",
+  "consumer reaction channel FAITHFUL by arming network.serialize_sbasis_contract, so",
+  "the emitted product carries a v2 S contract line and the replay consumer's",
+  "NetworkProductReader::makeReplayEmitter reconstructs the producer's ACTUAL per-λ",
+  "discontinuity threshold (discfrac=0.25) instead of silently falling back to the flat",
+  "kDefaultDiscThresholdM = 0.05 m.",
+  "",
+  "Measured on the 12 h v1 wire (scripts/edge_reaction_correlate.py, tie-out: reproduces",
+  "SS25.2's 387 mid-arc steps > 0.1 m exactly):",
+  "  fire at producer 0.25·λ  437     fire at consumer flat 0.05 m  477",
+  "  producer flags / consumer MISSES    5  (all band 1; 0.25λ=0.0476 < 0.05)",
+  "  consumer flags / producer did NOT  45  (all band 2; 0.25λ=0.0611 > 0.05)",
+  "So the fallback is band-asymmetric and mostly SPURIOUS, and band 2 (L2W) is the",
+  "majority reset channel (observed resets L2W 52 / L1W 31).",
+  "",
+  "PRE-REGISTERED PREDICTIONS for this 3 h arm (grade against them, do not re-derive",
+  "after the fact):",
+  "  P1  header is v2 and carries discfrac=0.25; replay logs 'S-contract present (v2)'.",
+  "  P2  the E/C/B/P record stream is BYTE-IDENTICAL to the S-stripped control — the",
+  "      knob is header-only (NetworkProductIO: 'per-epoch records unchanged; only the",
+  "      header differs'), so structural byte-identity holds on the solve side.",
+  "  P3  the v2 replay fires FEWER total phase-disc resets than the v1 control, the",
+  "      difference being band-2/L2W-dominated (the spurious population), with a small",
+  "      band-1/L1W INCREASE (the 5-per-12h miss population, so ~1 expected at 3 h).",
+  "  P4  producer runtime and solve are unaffected (knob touches only the writer).",
+  "",
+  "NO code change is involved: the contract already carries discfrac=",
+  "(ApplicationNetworkSetup.cpp:1062) and makeReplayEmitter already consumes it.",
+  "",
+  "Denominator/posture: arm 32 (_ext63_gps_dual_3h_m15i25) verbatim — obs 15 / iono 25,",
+  "the SS26.2 unified posture — plus the single knob.  elevation_mask_deg is restated",
+  "EXPLICITLY (it is 15 in the chain root today, so this is a no-op) per the new",
+  "config-chain pairing rule: a concurrently-edited base must not re-posture this arm.",
+  "Extends _ext63_gps_dual_1h.json directly (SS23.7 depth ceiling 8)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0,
+  "elevation_mask_deg": 15.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": {
+   "elevation_cutoff_deg": 25.0
+  }
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "serialize_sbasis_contract": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_dual_3h_contract/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_dual_3h_contract/state_snapshot.bin"
+ }
+}

@@ -11,6 +11,7 @@
  */
 
 #include "filter/KalmanFilter.hpp"
+#include "filter/BaardaReliability.hpp"   // δ₀ / MDB — shared with the network path
 #include "logging/GatedSink.hpp"
 #include "logging/KalmanFilterLogger.hpp"
 #include "measurement/MeasurementModel.hpp"
@@ -1725,10 +1726,16 @@ namespace GnssProcessor {
         // to scale the minimal detectable bias; δ₀≈4.13 for the default
         // k=3.29.  The a-priori variance of unit weight σ₀² is 1 (R is in
         // absolute units), so MDBᵢ = σᵢ·δ₀/√rᵢ.
-        const double delta_0 = config_.dataSnoopingCritical() + 0.8416;
-        constexpr double kRedFloor = 1e-6;    // guard /√r
+        //
+        // δ₀, the r-floor and the r→0 ⇒ ∞ convention now come from
+        // filter/BaardaReliability.hpp so the NETWORK path's MDB
+        // (docs/SPEC_network_mdb_reliability.md) is commensurable with this one
+        // by construction rather than by a second copy of the formula.  Same
+        // arithmetic, same order of operations — the PPP path is unchanged.
+        // (The r-floor and the r→0 ⇒ +infinity sentinel now live inside
+        // baardaMinimalDetectableBias — kBaardaRedundancyFloor is the same 1e-6.)
+        const double delta_0 = baardaDelta0(config_.dataSnoopingCritical());
         constexpr double kSrFloor  = 1e-12;   // guard /√Sr
-        const double kInf = std::numeric_limits<double>::infinity();
 
         Eigen::VectorXd redundancy(m);
         Eigen::VectorXd wtest(m);
@@ -1762,7 +1769,7 @@ namespace GnssProcessor {
                             std::isfinite(Srinv_v(i)))
                     ? Srinv_v(i) / std::sqrt(srinv_ii) : 0.0;
                 const double sigma_i = (R(i, i) > 0.0) ? std::sqrt(R(i, i)) : 0.0;
-                mdb(i) = (r_i > kRedFloor) ? sigma_i * delta_0 / std::sqrt(r_i) : kInf;
+                mdb(i) = baardaMinimalDetectableBias(sigma_i, r_i, delta_0);
             }
         } else {
             // Diagonal (uncorrelated) path — the common PPP case.
@@ -1779,7 +1786,7 @@ namespace GnssProcessor {
                 const double srii_pos = std::max(srii, kSrFloor);
                 wtest(i) = std::isfinite(v_i) ? v_i / std::sqrt(srii_pos) : 0.0;
                 const double sigma_i = (Rii > 0.0) ? std::sqrt(Rii) : 0.0;
-                mdb(i) = (r_i > kRedFloor) ? sigma_i * delta_0 / std::sqrt(r_i) : kInf;
+                mdb(i) = baardaMinimalDetectableBias(sigma_i, r_i, delta_0);
             }
         }
 

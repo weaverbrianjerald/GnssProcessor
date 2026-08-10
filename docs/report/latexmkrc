@@ -31,6 +31,7 @@ $bibtex_use = 2;    # run biber; remove .bbl on a full clean
     'realtime_engine.tex',
     'network.tex',
     'network_example.tex',
+    'network_carry.tex',
     'pipeline_diagrams.tex',
     'generated_tables.tex',
 );

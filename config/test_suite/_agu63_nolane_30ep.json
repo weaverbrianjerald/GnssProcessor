@@ -1,0 +1,25 @@
+{
+ "_comment": [
+  "63-sta (61 in-network) 30-epoch quick look: ONE variable vs runs/agu63 —",
+  "network.lane_carry.enable false.  SH stays deg-8 + layer-2 deg-4 so the delta is",
+  "attributable to the lane layer alone; the deg-15 single-layer question is arm B",
+  "(_agu63_nolane_d15_30ep.json).",
+  "",
+  "⚠️ 30 epochs = 15 min of data.  This CANNOT grade total_IF, a00 or DD steps — the",
+  "measured convergence budget is ~2 h for the clock/CB level channel and ~1 h for",
+  "everything else, and the whole window sits inside ignition.  What it CAN show:",
+  "wall per epoch, PD-fold health, carried-DD population, largest component size,",
+  "post-fit sigma0_code, and whether anything breaks.  Grade against the SAME first",
+  "30 epochs of runs/agu63, never against its converged hours."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu63.json"
+ ],
+ "processing": { "max_duration_s": 900.0 },
+ "network": {
+  "max_duration_s": 900.0,
+  "lane_carry": { "enable": false },
+  "product_output_path": "C:/GnssProcessor/runs/agu63_nolane_30ep/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/agu63_nolane_30ep/state_snapshot.bin"
+ }
+}

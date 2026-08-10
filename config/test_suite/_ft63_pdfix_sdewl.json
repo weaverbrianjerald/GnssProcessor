@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "RUN QUEUE P5 (docs/RUNQUEUE_pdfix_reask.md) - integer re-asks on the working fold.",
+    "GATED on the P1 winner: re-parent this to the winning D5 arm before running it if P1",
+    "does not leave pdfix_on as the base.",
+    "Control runs/pdfix_on.  Baseline to beat: WL DD step already 0.32 cyc/ep; NL frac is",
+    "still UNIFORM at med|frac| 0.24-0.25 (zero integer information) after the fold fix.",
+    "",
+    "ARM sdewl - the SD-EWL integer HOLD (network.sd_ewl.fix_enable).  Built, gate-3 field",
+    "verdict still owed.  Its 'float MW row adds ZERO rank' falsification",
+    "(project_sd_ewl_prereduce) was about the PRE-REDUCE float row, not this integer hold.",
+    "",
+    "EXPECT LOW YIELD on GPS-only: channel consensus needs signal diversity.  If the fixed",
+    "count is starved, pair this with P4 rather than concluding the mechanism is inert -",
+    "0 fixes on a starved pool is not evidence (standing invariant #4 cuts both ways).",
+    "GRADE per its own SPEC: fixed-group CB/PB redistribution, and NO datum-only fixes.",
+    "",
+    "BASE RE-POINTED TO THE P1 WINNER 2026-08-03 eve: extends _ft63_pdfix_v3.json, not",
+    "_ft63_pdfix_on.json.  The queue states P5 is 'gated on P1 winner' and graded 'vs P1",
+    "winner'; extending pdfix_on would have made this TWO variables (the lane knob AND the",
+    "absence of corroborate) and left it non-comparable with P2/P3/P3b/P6, which all run v3.",
+    "Control is therefore runs/pdfix_v3: mature steps 0.953/0.789/0.485 cyc/ep, SF k=1 0.77,",
+    "med|frac| 0.248/0.249/0.261, cross-band 1.263, total_IF hr2 spread_med 8.779 / worst_med",
+    "21.78 / clk_std 4.86, D5 307 flags.",
+    "",
+    "READ THE sigma0 STATE LINE (SPEC_pd_safe_dd_fold.md section 11): a run-end 'sigma0 =",
+    "1.00x' without a state histogram is a pre-fix exe; with one, 'floored' means the D5 gate",
+    "silently ran as v1 and no D5 number from the run is comparable.",
+    "",
+    "CONTEXT FROM P6 (6 h, 2026-08-03): med|frac| is flat at 0.246-0.254 across all six hours",
+    "and cross-band is 1.262, i.e. the NL fractional part carries no integer information at",
+    "this cadence/geometry even with a working fold and 55-epoch chord lifetimes.  These lane",
+    "arms operate at much longer wavelengths, so that negative does NOT settle them - but it",
+    "does mean a lane result must be graded on the LANE's own DD step and yield, never on a",
+    "downstream NL frac improvement that the P6 null says is not available."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
+  ],
+  "network": {
+    "sd_ewl": {
+      "enable": true,
+      "fix_enable": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/pdfix_sdewl/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/pdfix_sdewl/state_snapshot.bin"
+  }
+}

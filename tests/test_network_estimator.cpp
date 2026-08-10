@@ -1781,6 +1781,130 @@ TEST(NetworkEstimatorTest, DensePriorWithDiagonalCovMatchesScalarPath) {
     EXPECT_LT((x_diag - x_dense).cwiseAbs().maxCoeff(), 1e-9);
 }
 
+// ---------------------------------------------------------------------------
+// Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4) — the post-solve refloat
+// primitives.  Both exist so an epoch can be RE-SOLVED with one carried prior
+// withdrawn, which is what turns the clock anchor's guard from an annotation
+// into a correction (adapt-and-EMIT).  Their whole contract is exactness: the
+// withdrawal must leave the system in the state it would have been in had the
+// prior never been folded, or the "corrected" epoch is corrected to the wrong
+// thing.  Both cases therefore compare against a never-folded reference rather
+// than against a tolerance on the delta.
+// ---------------------------------------------------------------------------
+
+TEST(NetworkEstimatorTest, WithdrawSharedPriorIsTheExactInverseOfTheFold) {
+    const Truth t = makeTruth(/*seed=*/7717, /*R=*/4, /*S=*/5);
+    const std::string signal = "L1";
+
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+    }
+    const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+
+    NetworkEstimator::SharedPrior pr;
+    pr.kind = SharedParamKind::Clock;
+    pr.sat  = t.sats[2];
+    pr.value = 4.25;          // deliberately far off, so a residue would show
+    pr.info  = 1.0 / 4e-4;    // the anchor's own scale (σ = 2 cm)
+
+    auto addStations = [&]() {
+        est.beginEpoch();
+        for (int r = 0; r < t.R; ++r) {
+            Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y;
+            buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);
+            est.addStation(A_s, A_r, w, y);
+        }
+    };
+
+    addStations();                       // reference: the prior is never folded
+    const Eigen::VectorXd x_free = est.solve(datum);
+
+    addStations();                       // fold it, solve, then withdraw + re-solve
+    est.addSharedPrior({pr});
+    const Eigen::VectorXd x_prior = est.solve(datum);
+    EXPECT_GT((x_prior - x_free).cwiseAbs().maxCoeff(), 0.1)
+        << "the prior must actually have moved the solve, or the test proves nothing";
+    est.withdrawSharedPrior({pr});
+    const Eigen::VectorXd x_back = est.solve(datum);
+    EXPECT_LT((x_back - x_free).cwiseAbs().maxCoeff(), 1e-9);
+
+    // …and a second solve after the withdrawal must not drift (the kernel's
+    // reduced form stays current through the shared-border fast path — this is
+    // what makes the in-epoch re-solve cheap enough to do at all).
+    const Eigen::VectorXd x_again = est.solve(datum);
+    EXPECT_LT((x_again - x_back).cwiseAbs().maxCoeff(), 1e-12);
+}
+
+TEST(NetworkEstimatorTest, RefoldDenseDroppingClocksEqualsMarginalizedFold) {
+    const Truth t = makeTruth(/*seed=*/8821, /*R=*/4, /*S=*/5);
+    const std::string signal = "L1";
+
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+    }
+    const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+
+    // A CORRELATED block — clock ↔ phase bias, the coupling the C1 dense carry
+    // exists to retain.  Correlation is what makes "drop the row/col of the
+    // covariance" (marginalize) differ from "drop the row/col of Λ" (condition),
+    // so a diagonal block would not test the property that matters.
+    std::vector<NetworkEstimator::SharedPrior> keys(3);
+    keys[0].kind = SharedParamKind::Clock;      keys[0].sat = t.sats[1]; keys[0].value = 1.5;
+    keys[1].kind = SharedParamKind::PhaseBias;  keys[1].sat = t.sats[1]; keys[1].signal = signal;
+    keys[1].value = -0.3;
+    keys[2].kind = SharedParamKind::Clock;      keys[2].sat = t.sats[2]; keys[2].value = -2.0;
+    Eigen::MatrixXd cov(3, 3);
+    cov << 4e-4,  1.2e-4, 0.0,
+           1.2e-4, 9e-4,  0.0,
+           0.0,    0.0,   4e-4;
+
+    auto addStations = [&]() {
+        est.beginEpoch();
+        for (int r = 0; r < t.R; ++r) {
+            Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y;
+            buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);
+            est.addStation(A_s, A_r, w, y);
+        }
+    };
+
+    // Reference: fold the block with sat[1]'s CLOCK already marginalized out.
+    std::vector<NetworkEstimator::SharedPrior> kept{keys[1], keys[2]};
+    Eigen::MatrixXd kept_cov(2, 2);
+    kept_cov << cov(1, 1), cov(1, 2),
+                cov(2, 1), cov(2, 2);
+    addStations();
+    est.addSharedPriorDense(kept, kept_cov);
+    const Eigen::VectorXd x_ref = est.solve(datum);
+
+    // The card's path: fold the FULL block, solve, then re-fold it marginalized.
+    addStations();
+    est.addSharedPriorDense(keys, cov);
+    const Eigen::VectorXd x_full = est.solve(datum);
+    EXPECT_GT((x_full - x_ref).cwiseAbs().maxCoeff(), 1e-3)
+        << "the dropped clock prior must actually have mattered";
+    EXPECT_EQ(est.refoldSharedPriorDenseDroppingClocks(keys, cov, {t.sats[1]}), 1u);
+    const Eigen::VectorXd x_drop = est.solve(datum);
+    EXPECT_LT((x_drop - x_ref).cwiseAbs().maxCoeff(), 1e-9);
+
+    // The restore branch puts the epoch back exactly — the path taken when the
+    // re-solve throws and the anchored solution must survive.
+    est.refoldSharedPriorDenseDroppingClocks(keys, cov, {t.sats[1]}, /*restore=*/true);
+    const Eigen::VectorXd x_restored = est.solve(datum);
+    EXPECT_LT((x_restored - x_full).cwiseAbs().maxCoeff(), 1e-9);
+
+    // Dropping nothing is an algebraic no-op (both Λ built by the same path).
+    EXPECT_EQ(est.refoldSharedPriorDenseDroppingClocks(keys, cov, {}), 0u);
+    EXPECT_EQ(est.refoldSharedPriorDenseDroppingClocks(keys, cov, {"G99"}), 0u);
+    const Eigen::VectorXd x_noop = est.solve(datum);
+    EXPECT_LT((x_noop - x_full).cwiseAbs().maxCoeff(), 1e-12);
+}
+
 // Absent-key policy: a key not in the layout is MARGINALIZED — its rows/cols of
 // the prior covariance are dropped BEFORE inversion.  With a strong correlation
 // to a present key, marginalizing leaves 1/P(0,0) of information on the

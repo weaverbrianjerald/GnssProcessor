@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "CHURN CARD \u2014 10-EPOCH SMOKE of the v3 arm (staged cadence: smoke first, >=1 h only",
+    "once it is clean).  Sole deltas over the leg config are the 300 s duration and its own",
+    "output/snapshot paths, so the treatment is identical.",
+    "",
+    "WHAT A SMOKE CAN AND CANNOT SHOW.  It proves the wiring FIRES and is byte-safe: the OFF",
+    "arm must reproduce the base arm exactly, and each ON arm must show a NON-ZERO counter",
+    "(innov_suppressed for v3, the suppressed-kill count for v4).  It cannot show convergence",
+    "\u2014 10 epochs from cold is still ignition, and no dd_sigma_cyc or med|frac_cyc| verdict may",
+    "be read from it.  That is what the 3 h legs are for."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_churn_v3.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "max_duration_s": 300.0,
+    "product_output_path": "C:/GnssProcessor/runs/churn_v3_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/churn_v3_smoke/state_snapshot.bin"
+  }
+}

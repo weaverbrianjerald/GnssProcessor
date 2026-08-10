@@ -30,6 +30,16 @@ import copy
 import json
 import os
 
+import sys
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+# Resolve any "extends" chain the base may grow.  These bases are self-contained
+# today, so this is byte-identical now; it is here so the script does not silently
+# read a four-key DELTA as a whole config the day someone rebases it (the failure
+# scripts/config_posture_check.py shipped with).
+from gnss_config_chain import load_config_flat  # noqa: E402
+
 ANCHOR = r"C:\GnssProcessor\runs\guards_cont\leg.json"
 OUT_ROOT = r"C:\GnssProcessor\runs\mwwl_cond"
 
@@ -53,7 +63,7 @@ def main():
                          "cycle-geometry population.")
     a = ap.parse_args()
 
-    cfg = json.load(open(ANCHOR, encoding="utf-8"))
+    cfg = load_config_flat(ANCHOR)
     net = cfg["network"]
     name = a.arm + (("_" + a.tag) if a.tag else "")
     armdir = os.path.join(OUT_ROOT, name)

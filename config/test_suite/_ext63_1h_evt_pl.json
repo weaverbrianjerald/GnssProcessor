@@ -1,0 +1,67 @@
+{
+ "_comment": [
+  "EDGE-1 GATING EXPERIMENT (handoff SS1.8): does phase_leveling make carry_warm TRUE,",
+  "and do IF-TD refsat_resets then become refloat rather than diagnostic?",
+  "",
+  "carry_warm = pl_on && (n_emitted >= phase_leveling_warmup_epochs) with the default",
+  "warmup = 6 EMITTED EPOCHS (GnssConfigLoadNetwork.cpp:2507) and warmup_on_convergence",
+  "off -- so the latch should flip ~3 min in and a 1 h arm answers it decisively.  The",
+  "SS14/SS26 >=2 h rule binds LEVEL claims; this arm makes none.",
+  "",
+  "phase_leveling is FINGERPRINTED: this is a FRESH-CONVERGENCE lineage with its own",
+  "state_snapshot_path (cold start, never a warm resume off an unleveled snapshot).",
+  "Invariant #1 (zero-q needs a wired slip response) is satisfied by the chain: the",
+  "MW detector is already on (mw=on) alongside the IF-TD tier.",
+  "",
+  "mark_refsat_reset_disc is ALSO armed so ONE run answers both questions: whether the",
+  "carry warms, and whether the mark then reaches the wire as R records.",
+  "",
+  "PREDICTIONS: (Q1) carry_warm true from ~epoch 7; (Q2) refsat_reset action flips",
+  "diagnostic->refloat; (Q3) R records appear iff Q2 holds.  A NEGATIVE on Q1 means the",
+  "carry_warm precondition itself is the edge (handoff SS1.8 revised next move).",
+  "MAX per run for fast turnaround.",
+  "",
+  "This is the PRE-CHANGE golden for the default-OFF byte-identity check: run with the",
+  "binary that predates the refsat_reset->markSatDiscontinuity edit, then re-run the",
+  "SAME config with the post-edit binary and the knob OFF.  The two products must be",
+  "byte-identical or the edit leaks into the OFF path (invariant #6).",
+  "",
+  "Posture: arm-32 denominator (obs 15 / iono 25, the SS26.2 unified posture), restated",
+  "EXPLICITLY per the config-chain pairing rule.  serialize_sbasis_contract is ARMED —",
+  "that is piece 1's validated result (handoff SS1.7: header-only, records byte-identical,",
+  "removes exactly the spurious band-2 reset population, RMS 11.68 -> 10.20 m).  With it",
+  "the replay consumer reconstructs the producer's real emitter parameters, so any",
+  "reaction difference measured here is caused by the EVENT wiring and not by a",
+  "mis-thresholded fallback.",
+  "",
+  "Extends _ext63_gps_dual_1h.json directly (SS23.7 depth ceiling 8)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": {
+  "max_duration_s": 3600.0,
+  "elevation_mask_deg": 15.0
+ },
+ "estimation": {
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "layer2_max_degree": 0,
+   "mean_vtec_prior_tecu": 32.24,
+   "mean_vtec_prior_sigma_tecu": 2.0
+  },
+  "ionosphere_weighting": {
+   "elevation_cutoff_deg": 25.0
+  }
+ },
+ "network": {
+  "max_duration_s": 3600.0,
+  "rx_code_bias_datum": true,
+  "sbasis_complete": true,
+  "serialize_sbasis_contract": true,
+  "phase_leveling": true,
+  "mark_refsat_reset_disc": true,
+  "product_output_path": "C:/GnssProcessor/runs/ext63_1h_evt_pl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/ext63_1h_evt_pl/state_snapshot.bin"
+ }
+}

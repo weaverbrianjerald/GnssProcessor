@@ -7,7 +7,8 @@
 %  RtcmStreamReader}.cpp, src/core/rtcm/{RtcmParser,RtcmMsmDecoder,
 %  RtcmSsrDecoder,RtcmNavDecoder}.cpp, src/core/sbf/{SbfStreamReader,
 %  SbfParser,Meas3Decoder,SbfSignalMap,SubframeAssembler}.cpp,
-%  src/core/app/ApplicationRealtime.cpp, src/core/math/TimeUtils.cpp,
+%  src/core/app/ApplicationRealtime.cpp, src/core/math/{TimeUtils,
+%  Coordinates}.cpp, src/core/rinex/RinexParser.cpp,
 %  src/core/products/{SsrCorrectionStore,LiveEphemerisStore}.cpp.
 % ============================================================
 \documentclass[main.tex]{subfiles}
@@ -93,9 +94,9 @@ GNSS-only / IGS-IP run is unaffected.
 
 \paragraph{Reconnection.}
 The receive loop reconnects automatically.  After any transfer ends it
-classifies the outcome --- transport error, a genuine non-200 HTTP
+classifies the outcome (transport error, a genuine non-200 HTTP
 status (with actionable hints for 401 / 403 / 404), a zero-byte idle
-mountpoint, or a clean stream end --- logs it, and always backs off for
+mountpoint, or a clean stream end), logs it, and always backs off for
 \texttt{reconnect\_delay\_s} before retrying, so a misconfigured
 mountpoint surfaces as an error rather than spinning invisibly.  A
 non-200 \emph{ICY} response (NTRIP\,v1 casters answer ``ICY 200 OK'',
@@ -118,7 +119,7 @@ the \texttt{0xD3} preamble (discarding non-preamble bytes), reads the
 10-bit payload length, waits until the full $3+L+3$ bytes are buffered,
 and verifies the trailing 24-bit Qualcomm CRC (CRC-24Q, table-driven)
 computed over header$+$payload.  A CRC mismatch advances past the
-candidate preamble byte and keeps scanning --- a corrupt or misframed
+candidate preamble byte and keeps scanning, so a corrupt or misframed
 byte never wedges the reader.  Only CRC-valid frames are emitted, so
 the downstream parser (\texttt{RtcmParser}) may assume frame integrity.
 The reader tracks frames-extracted and bytes-discarded counters for
@@ -132,9 +133,16 @@ sync and CRC-16/XMODEM check, \texttt{SbfParser} dispatches blocks by
 ID, \texttt{Meas3Decoder} unpacks the \texttt{MeasEpoch} /
 \texttt{Meas3Ranges} observations (GLONASS FDMA slots resolved through
 \texttt{SbfSignalMap}), and \texttt{SubframeAssembler} rebuilds
-broadcast ephemeris from raw-nav subframes.  The SBF observation-decode
-mathematics is documented separately; only the framing and feed seam
-(\Cref{sec:rt-flow,sec:rt-apriori}) are covered here.
+broadcast ephemeris from raw-nav subframes.  Only the framing and feed seam
+(\Cref{sec:rt-flow,sec:rt-apriori}) are covered here.  The
+\texttt{Meas3Ranges} differential range reconstruction, the direct
+analogue of \eqref{eq:rt-msm-code} and \eqref{eq:rt-msm-phase} below, and the
+one part of the SBF path that is report-worthy algebra rather than ICD
+bookkeeping, is \emph{not} yet derived in this reference; it is a known
+gap, not material documented elsewhere.  The remaining SBF detail
+(\texttt{SubframeAssembler} ICD scaling, the \texttt{SbfSignalMap} tables,
+the framing constants) belongs in the Doxygen headers and is deliberately
+out of scope here.
 
 The top-level \texttt{RtcmParser} (\texttt{src/core/rtcm/RtcmParser.cpp})
 reads the 12-bit message type DF002 from the \emph{first 12 bits of the
@@ -201,7 +209,7 @@ concerns:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item \emph{bitstream consumption} is gated on the MSM variant
       (\texttt{honour\_ext\_sat\_info}, true for MSM5/MSM7, false for
-      MSM4/MSM6) --- when set, $4\,N_{\text{sat}}$ bits are read for all
+      MSM4/MSM6): when set, $4\,N_{\text{sat}}$ bits are read for all
       systems;
 \item \emph{interpretation} is gated separately on the system
       descriptor; only GLONASS maps the value to a channel.
@@ -212,7 +220,7 @@ per-satellite block by $4\,N_{\text{sat}}$ bits, so the per-cell fine
 pseudoranges are read from the wrong bit offset.  The corruption
 preserves the rough range but biases the fine terms, producing an
 L1/L2 split of order hundreds of metres with the wrong sign on the
-geometry-free combination --- plausible-looking but wrong observations
+geometry-free combination: plausible-looking but wrong observations
 that survive a naive over-read check.  The gate matches RTCM\,10403.3
 and the cssrlib reference.  A complementary framing guard in the parser
 (\texttt{warnIfUnderConsumed}) warns whenever a decode leaves
@@ -240,8 +248,8 @@ provider solution rather than wall-clock receipt.  Orbit, clock,
 combined, code-bias, phase-bias, URA and high-rate-clock records are
 stored per satellite; the orbit / clock query paths consult the store
 transparently, so no per-epoch wiring is needed.  The correction
-\emph{mathematics} --- the radial/along/cross orbit projection, the
-clock and bias application, the iono model --- is documented in
+\emph{mathematics} (the radial/along/cross orbit projection, the
+clock and bias application, the iono model) is documented in
 \dcref{sec:ssr}{the SSR-corrections section} and is not repeated here.
 Two real-time-specific reactions to the stream are worth noting:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
@@ -267,7 +275,7 @@ Streaming messages carry truncated, system-specific epoch fields that
 must be promoted to a common GPS-time \texttt{GnssTime}.  Each parser
 instance keeps a continuous-GPS-seconds tracker of the last decoded
 stream epoch and promotes every mod-week / time-of-day field by
-\emph{nearest continuation} to that tracker --- the week (or day)
+\emph{nearest continuation} to that tracker, the week (or day)
 minimising $|\Delta t|$, RTKLIB's \texttt{adjweek} semantics
 (\texttt{RtcmParser::anchorGpsSeconds}).  The host clock
 (\texttt{TimeUtils::nowContinuousGpsSeconds}, POSIX UTC plus the leap
@@ -282,7 +290,7 @@ it.  The anchor below is this tracker's current value.
       the 30-bit epoch is milliseconds-of-week; BeiDou adds the constant
       \SI{14}{\second} BDT$\to$GPS offset (with a week-rollover guard).
 \item \textbf{GLONASS} carries its 30-bit MSM epoch as a 3-bit
-      day-of-week plus a 27-bit time-of-day in ms --- not 27 bits total;
+      day-of-week plus a 27-bit time-of-day in ms, not 27 bits total;
       reading it short misaligns the satellite mask and corrupts the
       whole GLONASS decode.  The ms-of-day is promoted by
       \texttt{TimeUtils::glonassTodToGpsTime}, which carries the
@@ -336,7 +344,7 @@ t_{\text{horizon}} =
 \end{equation}
 The decision is:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
-\item $t_{\text{obs}} \le t_{\text{horizon}}$: SSR covers the epoch ---
+\item $t_{\text{obs}} \le t_{\text{horizon}}$: SSR covers the epoch, so
       process normally and clear any hold;
 \item $t_{\text{obs}} > t_{\text{horizon}}$: \emph{defer} the epoch.
       The held buffer keeps the latest such epoch only (skip-to-latest
@@ -388,8 +396,9 @@ is appropriate. Two policies matter in real time.
 
 \subsection{A-priori seeding from RTCM 1005/1006}\label{sec:rt-apriori}
 
-A live SBF/RTCM observation stream carries no RINEX \texttt{APPROX
-POSITION} record.  Without a finite a-priori the first
+A \emph{live} SBF/RTCM observation stream carries no RINEX \texttt{APPROX
+POSITION} record (a file-fed source does; see the third bullet below).
+Without a finite a-priori the first
 \texttt{computeModels} rejects every satellite on a position-sanity
 check (almost all sit below the elevation mask when the seed is the
 default Earth-centred fallback at the geographic pole), so WLS never
@@ -402,7 +411,21 @@ ownership of the position:
 \item from an RTCM \emph{1005/1006} station ARP
       (\texttt{feedRtcmFrame}), the RTCM analogue of the PVT seed,
       which makes \texttt{receiver.reference\_position} optional for any
-      station streaming 1005/1006.
+      station streaming 1005/1006; and
+\item from the RINEX header of a \emph{file-fed} source, reduced from the
+      marker to the antenna reference point through
+      \texttt{ANTENNA: DELTA H/E/N}
+      (\texttt{RinexParser::getArpPositionXyz}, over
+      \texttt{Coordinates::markerToArp}).  The ARP, not the monument, is the
+      frame the position state and the ATX PCO/PCV applied to it live in, so
+      seeding on \texttt{APPROX POSITION XYZ} verbatim would start the filter
+      one eccentricity out of frame.  The reduction is an exact no-op on a
+      zero or absent eccentricity, so a live SBF/RTCM stream is unaffected;
+      it is observable only for the file-fed closed-loop consumer, whose
+      header carries a real eccentricity.  There is no double
+      application: \texttt{PppModel::initializeState} reduces from the
+      \emph{raw} marker, and only while the state position is still
+      zero or non-finite.
 \end{itemize}
 A configured \texttt{reference\_position} always wins.  The seed is
 applied only while \texttt{first\_epoch\_} holds; the startup-defer gate
@@ -410,7 +433,7 @@ keeps that flag set through warmup, so a 1005/1006 message arriving a
 few seconds into the stream (these come less often than the \SI{1}{\hertz}
 obs) still seeds before the first estimation epoch.  Once the first
 epoch is fully processed the flag clears and the filter owns the
-position --- the ARP / PVT is thereafter only logged for comparison, not
+position; the ARP / PVT is thereafter only logged for comparison, not
 re-applied.
 
 \subsection{The per-epoch real-time update}\label{sec:rt-epoch}
@@ -426,7 +449,7 @@ and the post-processing-only stages removed.  In order:
 \item \textbf{Step / gap detection.}  $\dt = t_k - t_{k-1}$ (with a
       week-rollover correction).  A non-advancing $\dt \le 0$ is a
       duplicate (a co-timestamped second SBF block or a retransmit) and
-      is skipped cleanly --- folding it in would double-count the
+      is skipped cleanly, since folding it in would double-count the
       measurement and feed $\dt = 0$ into the process-noise build, which
       hard-throws.  A $\dt$ beyond the gap tolerance flags a gap.
 \item \textbf{Model + startup gate.}  Observations are filtered to the
@@ -442,10 +465,10 @@ and the post-processing-only stages removed.  In order:
       gap, or first epoch.  Under BSSD (no receiver-clock state) a
       single per-epoch median-of-code-innovations receiver clock,
       common to all satellites, is subtracted from every code and phase
-      observable --- an exactly SD-invariant re-gauge that keeps the
+      observable, an exactly SD-invariant re-gauge that keeps the
       per-satellite bias states at DCB scale rather than absorbing the
       full unsteered receiver clock.
-\item \textbf{Predict.}  \texttt{predictAided} over $(t_{k-1}, t_k]$ ---
+\item \textbf{Predict.}  \texttt{predictAided} over $(t_{k-1}, t_k]$,
       identical to the shared aiding path; for a GNSS-only stream it
       delegates byte-identically to \texttt{predict}$(\dt)$ of
       \dcref{sec:kf}{the estimation-engine section}.
@@ -477,7 +500,7 @@ The non-causal and batch stages have no place in a streaming, look-ahead-free
 pipeline and are deliberately absent:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item the backward RTS \dcref{sec:kf}{smoother} is force-disabled under
-      \texttt{AppMode::RealTime} --- smoothing requires the full forward
+      \texttt{AppMode::RealTime}, since smoothing requires the full forward
       trajectory and cannot run causally;
 \item geometry relinearisation (the IEKF second pass) is a
       post-processing-only refinement and is not replicated here;

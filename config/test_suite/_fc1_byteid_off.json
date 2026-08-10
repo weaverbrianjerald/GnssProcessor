@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "FC-1 INC-0 byte-identity gate, arm A (OFF).  50-station GPS+Galileo all-on golden",
+    "posture, 30 s cadence, 11 epochs (max_duration_s 300 -> N+1 inclusive), COLD start.",
+    "",
+    "No network.fast_clock block at all: the tier is off by loader default, so the T2e",
+    "decimation hook keeps its bare `continue` and no FC-1 code path is entered.  This is",
+    "the reference every INC-0 comparison is made against.",
+    "",
+    "Paired with _fc1_byteid_shadow.json, which arms the tier in SHADOW mode so the tick",
+    "body runs on EVERY epoch.  If ON-with-shadow reproduces this arm's products.txt and",
+    "estimation CSVs byte-for-byte, then OFF-vs-pre-card is identical a fortiori: the only",
+    "difference between OFF and the pre-card binary is a branch that is not taken.",
+    "That is a STRICTLY STRONGER runtime test than comparing two default-OFF builds, and",
+    "it is the isolation contract (SPEC section 7.1) rather than just the arming contract."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/fc1_byteid_off/products.txt"
+  }
+}

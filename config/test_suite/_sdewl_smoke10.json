@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "SD pre-reduce EWL — 10-epoch DIAGNOSTIC smoke (staged-cadence: smoke before any >=1h arm).",
+    "Purpose is NOT a verdict: it answers the one open question from the first ON run, which",
+    "built ZERO rows and attributed 5041 skips to 'immature arc' and 4274 to 'missing ambiguity",
+    "column' — does the detector hold an MW arc on the (band2, band5) EWL pair at all?",
+    "",
+    "min_arc_epochs is dropped to 2 so a 10-epoch run can reach maturity; that is a DIAGNOSTIC",
+    "setting, not the shipping one (the 0.05 m sigma floor still bounds a 2-sample row's",
+    "information).  network.sd_ewl.trace writes logs/network_sd_ewl.csv — one row per",
+    "(station, epoch, satellite) with the ELECTED signal pair, its code channels, and the",
+    "outcome, so 'no such arc' and 'arc too young' are distinguishable per satellite.",
+    "",
+    "Read: the run-end 'Network (SD pre-reduce EWL)' line (sat_seen vs skip_no_arc vs",
+    "skip_immature vs skip_missing_amb_col) and the status column of network_sd_ewl.csv."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net50_30ep_wl1off.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0,
+    "eigen_threads": 6
+  },
+  "network": {
+    "parallel_max_threads": 6,
+    "sd_ewl": {
+      "enable": true,
+      "trace": true,
+      "min_arc_epochs": 2
+    },
+    "product_output_path": "C:/GnssProcessor/runs/sdewl_smoke10/products.txt"
+  }
+}

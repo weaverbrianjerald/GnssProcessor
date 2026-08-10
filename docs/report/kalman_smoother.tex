@@ -12,7 +12,7 @@ optional prior-anchored iterated (IEKF) relinearisation pass, robust
 post-fit residual gating, and a backward Rauch--Tung--Striebel (RTS)
 smoother for post-processing modes.  The state vector $\stateV$ is the
 uncombined PPP / PPP-RTK parameterisation of
-\dcref{sec:diff}{the differencing-transformations section of the
+\dcref{sec:state}{the state-vector-layout section of the
 Foundations document}: receiver position (and optionally velocity),
 receiver clock and per-system time offsets, zenith wet troposphere and
 gradients, per-satellite slant ionosphere, receiver/satellite code and
@@ -59,9 +59,9 @@ level/rate integrator
 \label{eq:kf-F-iono}
 \end{equation}
 realising $I^{\sat}(k{+}1) = I^{\sat}(k) + \dt\,\dot I^{\sat}(k)$.  Every
-remaining state --- ambiguities, zenith wet delay, gradients, code and
+remaining state, meaning ambiguities, zenith wet delay, gradients, code and
 satellite biases, any rate-free inter-system offset, and (absent
-\texttt{enable\_iono\_rate}) the per-satellite ionosphere --- has
+\texttt{enable\_iono\_rate}) the per-satellite ionosphere, has
 $\Fmat = \bm{I}$ and is propagated as a pure random walk with its mean
 held constant.  Under the BSSD (single-difference)
 parameterisation the receiver-clock, phase-clock
@@ -73,7 +73,7 @@ cross-covariances are zeroed in place after propagation while the
 diagonal variance is preserved (the \texttt{freeze\_state} block in
 \texttt{src/core/filter/KalmanFilter.cpp}).  The iono level/rate coupling
 of \Cref{eq:kf-F-iono}, by contrast, is deliberately \emph{not} gated off
-under BSSD --- the slant-iono level remains observable under
+under BSSD: the slant-iono level remains observable under
 single-differencing (only the pivot column is zeroed), so every
 non-frozen-pivot satellite keeps its integrator; the frozen-pivot
 satellite alone is skipped, holding its rate at $(0,0)$ with its process
@@ -104,9 +104,18 @@ where $\spd{i}$ is the continuous variance rate
 ($\mathrm{m}^2/\mathrm{s}$) read from \texttt{filter.process\_noise.*}.
 Representative entries are zenith wet troposphere
 (\texttt{troposphere\_q}), the receiver code bias
-(\texttt{code\_bias\_q}), satellite phase bias (\texttt{sat\_bias\_q}),
+(\texttt{code\_bias\_q}), the satellite \emph{code} bias
+(\texttt{sat\_bias\_q}, applied to
+\texttt{StateManager::sat\_bias\_indices\_}), the satellite \emph{phase}
+bias (\texttt{sat\_phase\_bias\_q}, a separate density on the separate
+\texttt{sat\_phase\_bias\_indices\_} map),
 phase clock (\texttt{phase\_clock\_q}), and the float ambiguity
-(\texttt{ambiguity\_q}).  The ambiguity density defaults to a numerical
+(\texttt{ambiguity\_q}).  Both satellite-bias blocks, and the
+satellite-clock block beside them, suppress $\Qmat$ entirely for a
+frozen-pivot satellite, for the same reason as the freeze discussion above:
+the frozen state is held at (value, variance) $=(0,0)$ as the datum, and any
+process noise would walk it off that datum.  The ambiguity density defaults
+to a numerical
 safety floor ($10^{-12}$) rather than a physical value, and per-key
 overrides are supported for arc-specific reseeding.  The per-satellite
 slant ionosphere uses a random walk whose zenith density is mapped to
@@ -133,7 +142,7 @@ the Sage--Husa storm response drives $\dot I^{\sat}$ rather than the
 level.
 
 Coupled position/velocity, clock/clock-rate, inter-system offset/rate,
-and --- under \texttt{enable\_iono\_rate} --- slant-iono level/rate pairs
+and, under \texttt{enable\_iono\_rate}, slant-iono level/rate pairs
 use the continuous white-noise-acceleration (CWNA,
 integrated-random-walk) discretisation.  For a coupled pair $(\xi,
 \dot\xi)$ driven by acceleration PSD $q$,
@@ -157,13 +166,31 @@ per-ambiguity random-walk term, and an optional differential-ZWD entry
 $\Qmat_{ii} = \sigma^2\dt$ governed by
 \texttt{baseline.differential\_tropo\_process\_noise\_m\_per\_sqrt\_s}.
 
+\paragraph{Scope: the recursive estimator only.}
+These densities govern the \emph{recursive} estimator.  The network
+producer runs no \texttt{KalmanFilter} at all: \texttt{getTransitionMatrix}
+and \texttt{getProcessNoiseMatrix} are reached only from
+\texttt{KalmanFilter::predict} / \texttt{predictImu} / \texttt{predictAided}
+and from the smoother's \texttt{Application::capturePriorSnapshot}.  The
+producer instead solves per-epoch normal equations for corrections to each
+station's linearisation point, and imposes its cross-epoch stiffness with
+explicit information-form carry priors of effective variance
+$\mathrm{var}_{\mathrm{eff}} = \mathrm{var} + q\,\dt$ rather than through
+$\Qmat(\dt)$ (\dcref{sec:net}{the network-mode document}).  The
+satellite-side densities \texttt{sat\_clock\_q},
+\texttt{sat\_phase\_bias\_q} and \texttt{sat\_code\_bias\_q} are read there
+as exactly those carry rates, and are additionally authorable through the
+always-live network-scoped \texttt{network.process\_noise} class table,
+whose per-class fallbacks equal the legacy \texttt{filter.process\_noise.*}
+defaults so an unmodified config resolves identically either way.
+
 \paragraph{Aided time update.}
 When inertial aiding is active, \texttt{KalmanFilter::predictImu}
 performs a strapdown mechanisation of the nominal position, velocity,
 and attitude and splices a $15\times15$ INS error-state transition
-$\bm{\Phi}$ and noise $\Qmat_{\mathrm{ins}}$ --- with error order
+$\bm{\Phi}$ and noise $\Qmat_{\mathrm{ins}}$, with error order
 $[\delta\bm{p},\,\delta\bm{v},\,\delta\bm{\psi},\,\delta\bm{b}_a,\,
-\delta\bm{b}_g]$ --- into the GNSS-dimensioned $\Fmat$ and $\Qmat$ over
+\delta\bm{b}_g]$, into the GNSS-dimensioned $\Fmat$ and $\Qmat$ over
 the integrated interval, after which \Cref{eq:kf-predict} runs on the
 full state with explicit symmetrisation
 $\covM \leftarrow \tfrac12(\covM + \covM^{\Tr})$.  The generalised
@@ -188,9 +215,9 @@ Given the design matrix $\jacH$ from the linearisation of the
 document (position rows $-(\los^\sat_{\hat{\rx}})^{\Tr}$, the
 \dcref{eq:geom-linear}{linearised geometric range there}), the
 innovation $\innov$ (\texttt{measurement.innovations}), and the
-measurement-noise covariance $\Rmat$ --- a full matrix when supplied,
+measurement-noise covariance $\Rmat$ (a full matrix when supplied,
 otherwise the diagonal $\Rmat = \operatorname{diag}(\sigma^2_{\rx,\sat,\sigl})$
-of the \dcref{eq:noise-model}{stochastic noise model there} --- the
+of the \dcref{eq:noise-model}{stochastic noise model there}), the
 innovation covariance and gain are
 \begin{align}
 \Smat   &= \jacH\,\tilde{\covM}_{k|k-1}\,\jacH^{\Tr} + \Rmat,
@@ -251,7 +278,7 @@ epochs whose $\Rmat$ carries SD/DD cross-covariance), the full
 symmetrised $S_r = \Rmat - \jacH\,\covM_{k|k}\,\jacH^{\Tr}$ is instead
 formed and stored, so the redundancy and $w$-test QC of
 \Cref{sec:kf-gating} honour correlated observations via $S_r^{-1}$; the
-diagonal --- and hence \Cref{eq:kf-sres} --- is identical either way.  The
+diagonal, and hence \Cref{eq:kf-sres}, is identical either way.  The
 standardised
 residual that drives gating (\Cref{sec:kf-gating}) is
 \begin{equation}
@@ -261,8 +288,8 @@ residual that drives gating (\Cref{sec:kf-gating}) is
 \end{equation}
 The denominator floor at the \emph{working} $R_{ii}$ (the inflated
 noise actually used in $\Rmat$, not the formal noise) is a deliberate
-robustness compromise: in ambiguity-absorption cases --- double-differenced
-phase with an ambiguity gain near unity --- the rigorous denominator
+robustness compromise: in ambiguity-absorption cases (double-differenced
+phase with an ambiguity gain near unity) the rigorous denominator
 $S_{r,ii}$ collapses toward $R\,\Smat^{-1}R$, which would register
 near-zero residuals as many-$\sigma$ outliers.  The strictly correct
 standardisation uses $S_{r,ii}$ alone; the floor trades that rigour for
@@ -275,7 +302,7 @@ For long initial position offsets a single linearisation of the
 document} per epoch can be insufficient.  When
 \texttt{processing.relinearize\_geometry} is enabled (and the run is not
 tightly-coupled IMU), the engine performs a prior-anchored iterated
-update --- a Gauss--Newton / iterated EKF step --- after the primary
+update, a Gauss--Newton / iterated EKF step, after the primary
 update.
 
 \paragraph{Anchor.}
@@ -320,7 +347,7 @@ the following hold:
 \item \texttt{processing.relinearize\_geometry} is on and a prior was
       stashed at the primary update;
 \item the position change since the primary update exceeds a
-      data-dependent threshold --- \texttt{relinearize\_dpos\_threshold\_phase\_m}
+      data-dependent threshold, \texttt{relinearize\_dpos\_threshold\_phase\_m}
       (default $1\,\mathrm{m}$) when phase is present, or
       \texttt{relinearize\_dpos\_threshold\_code\_only\_m} (default
       $100\,\mathrm{m}$) for code-only epochs;
@@ -355,7 +382,7 @@ and the complete-reset trigger fraction is $0.5$
 (\texttt{getBadMeasPercent}); there are no \texttt{residual\_threshold\_}
 or \texttt{bad\_meas\_percent\_} config keys to search for.  The dispatch
 row and criterion can nonetheless be \emph{replaced} wholesale by the
-Baarda data-snooping gate below --- itself JSON-exposed.
+Baarda data-snooping gate below, itself JSON-exposed.
 
 \paragraph{Per-row rejection.}
 If $\max_i |\sres_i| > 6.0$, the worst row is dispatched by type: a
@@ -369,10 +396,10 @@ When \texttt{estimation.enable\_data\_snooping} is set, the fixed-$\sigma$
 gate triple $(\text{gate stat},\text{gate row},\text{gate crit}) =
 (\max_i|\sres_i|,\,\arg\max,\,6.0)$ is \emph{replaced} in
 \texttt{validatePostFitResiduals} by the Baarda $w$-test: over
-\emph{checkable} rows --- those whose redundancy
+\emph{checkable} rows, those whose redundancy
 $r_i = S_{r,ii}/R_{ii}$ meets a floor ($r_i \ge 0.1$; low-redundancy
 rows are skipped as uncheckable, since a blunder there is absorbed into
-the estimate rather than the residual) --- the worst $|w_i|$ is selected
+the estimate rather than the residual), the worst $|w_i|$ is selected
 and the gate fires on $|w_i| > $ \texttt{estimation.data\_snooping\_critical}
 (default $3.29$).  Both the criterion \emph{and} the dispatched row can
 thus differ from the $\sigma$ gate; the type-based dispatch of the
@@ -388,7 +415,7 @@ kernel is active (see \Cref{eq:kf-postfit}).
 \paragraph{Complete-reset backstop.}
 If the count of rejected rows exceeds
 $0.5 \times{}$ (original pre-peel observation count), the filter
-covariance is re-inflated (\texttt{resetFilterCovariance}) --- a hard
+covariance is re-inflated (\texttt{resetFilterCovariance}), a hard
 reset that, in the smoother, marks a segment boundary
 (\Cref{sec:kf-smoother}).
 
@@ -458,9 +485,9 @@ $\smooth{\covM}{N} = \covM_{N|N}$, the backward recursion is
 \label{eq:rts-cov}
 \end{empheq}
 The smoother gain $\gainS_k$ is realised as an $\mathrm{LDL}^{\Tr}$
-solve --- the predicted covariance is symmetrised, then
+solve: the predicted covariance is symmetrised, then
 $\gainS_k = \big(\tilde{\covM}_{k+1|k}^{-1}(\covM_{k|k}\Fmat^{\Tr})^{\Tr}\big)^{\Tr}$
-via \texttt{ldlt.solve(...).transpose()} --- never an explicit
+via \texttt{ldlt.solve(...).transpose()}, never an explicit
 inverse, and the smoothed covariance \Cref{eq:rts-cov} is symmetrised
 after the update.  If the factorisation fails, the step is abandoned
 and epoch $k$ keeps its forward posterior.
@@ -468,7 +495,7 @@ and epoch $k$ keeps its forward posterior.
 \paragraph{Variable-dimension reconciliation.}
 Because $\dim\stateV_k \neq \dim\stateV_{k+1}$ in general,
 \Cref{eq:rts-gain,eq:rts-state,eq:rts-cov} are restricted at each step
-to the \emph{common-key subspace} --- the states present at both $k$
+to the \emph{common-key subspace}, the states present at both $k$
 and $k{+}1$, found by intersecting the dynamic key$\to$index maps
 (\texttt{collectCommonIndices}, less any keys in the handover exclusion
 set of the segment-boundary paragraph below).  Let $\bm{\Pi}_k$ and
@@ -499,7 +526,7 @@ information flow at ambiguity resets, teardowns, and pivot handovers:
       re-inflation of \Cref{sec:kf-gating}, recorded as
       \texttt{is\_discontinuity}) is a hard segment boundary: it severs
       the dynamic link $\tilde{\stateV}_{k+1|k} = \Fmat\hat{\stateV}_{k|k}$,
-      so no $\gainS_k$ is meaningful and backward flow is terminated ---
+      so no $\gainS_k$ is meaningful and backward flow is terminated;
       epoch $k$ keeps its forward posterior.
 \item A \emph{single-satellite} ambiguity reset is handled softly: that
       satellite's ambiguities are excluded from the common subspace for
@@ -514,7 +541,7 @@ information flow at ambiguity resets, teardowns, and pivot handovers:
       signals a pre-predict long-gap teardown
       (\texttt{Application::handleGap} prunes ambiguity / iono / sat-bias
       states before \texttt{predict()}), across which epoch $k$'s indices
-      would address the wrong states in the $k{+}1$ a-priori --- backward
+      would address the wrong states in the $k{+}1$ a-priori, so backward
       flow stops and epoch $k$ keeps its forward posterior.
 \item A \emph{BSSD pivot handover} between $k$ and $k{+}1$ re-references
       one or more constellations in place; it is reconciled or segmented
@@ -534,7 +561,7 @@ estimate (leaving the reported $k{+}1$ result in its own frame).  A
 handover recorded as \emph{clean} by \texttt{PivotManager} (old/new
 pivots matching \texttt{clean\_handovers}) is inverted back to the old
 pivot $p_0$ signal-group by signal-group through the public static
-\texttt{Smoother::inverseReReferenceGroup} --- the exact inverse of the
+\texttt{Smoother::inverseReReferenceGroup}, the exact inverse of the
 forward re-reference.  For a group with old-pivot datum row $d$,
 \begin{equation}
 x'(i) = x(i) - x(d),\quad x'(d) = 0,
@@ -550,15 +577,15 @@ the old pivot still carries a live state on it \emph{and} the forward leg
 re-referenced the signal to the new pivot; orphaned groups (the new pivot
 lacked the signal), disturbed or forced handovers, and every handover
 constellation's ionosphere and satellite-bias states are instead
-\emph{segmented} --- added to the \texttt{exclude\_keys} set that
+\emph{segmented}, added to the \texttt{exclude\_keys} set that
 \texttt{collectCommonIndices} drops from the common subspace, so those
 states fall back to the forward posterior.
 
 \paragraph{Static-position degeneracy.}
 In static PPP the receiver position is a (near-)constant state, so the
 position-block smoother gain propagates essentially the same correction
-to every epoch and the smoothed position is degenerate --- constant
-across epochs --- \emph{by construction}.  This is expected, not a
+to every epoch and the smoothed position is degenerate, constant
+across epochs, \emph{by construction}.  This is expected, not a
 defect: the smoother's value accrues on the non-position states
 (troposphere, ionosphere, float ambiguities) and on kinematic runs
 where position carries genuine epoch-to-epoch dynamics.

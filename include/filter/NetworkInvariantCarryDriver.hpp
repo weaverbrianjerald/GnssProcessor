@@ -82,6 +82,7 @@
 #include <Eigen/Dense>
 
 #include <iosfwd>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -104,6 +105,66 @@ public:
         double innov_k{4.0};            ///< D5 per-chord standardized flag threshold |v_i|/√Cov(v)_ii; a flagged chord is re-tapped fresh. INERT unless @c innov_gate.
         bool   innov_calibrate{false};  ///< D5 v2: standardize by the LS-VCE-estimated EMPIRICAL innovation variance σ̂₀² (robust geo-mean of the standardized innovations), not the raw formal Cov(v) — makes @c innov_k a true Nσ gate (the formal Cov(v) is 10-30× optimistic). OFF = raw formal (v1). INERT unless @c innov_gate.
         double innov_calibrate_window{60.0};  ///< D5 v2: exponential-forgetting half-life (epochs) of the σ̂₀² accumulator. INERT unless @c innov_calibrate.
+        /**
+         * @brief D5 v3: require RAW-OBSERVABLE corroboration before a flagged chord is re-tapped.
+         *
+         * Measured 2026-07-30 (`runs/rawstep_smoke`): only **2.1 %** of D5 resets coincide with
+         * a raw MW/GF step, against **95 %** on the same run's Card-G arc resumptions (known
+         * real discontinuities) — so the gate is firing on a persistent model-vs-data
+         * disagreement, not on slips, and re-tapping continuous arcs indefinitely (97.4 % of
+         * inter-reset gaps are 1 epoch).  With this armed, a flagged chord is re-tapped ONLY
+         * unless the raw observables positively say its arc was continuous.
+         *
+         * FAIL-SAFE BY CONSTRUCTION — suppression requires POSITIVE evidence of continuity.
+         * The raw-step tag is tri-state and only the measured-and-flat state suppresses:
+         *   - stepped            ⇒ re-tap (a real discontinuity)
+         *   - measured and flat  ⇒ SUPPRESS (the arc did not step; the innovation is model error)
+         *   - no evidence at all ⇒ re-tap (arc start / gap / single-band / unresolved key)
+         * Absence of evidence is never evidence of absence, so standing invariant #1's slip
+         * response is narrowed, never removed: the coarse layer (MW/LLI/IF-TD) is untouched and
+         * D5 still fires on every corroborated chord.
+         *
+         * Fed per epoch via @ref setInnovFlatChords; INERT unless @c innov_gate, and inert
+         * (empty flat set ⇒ nothing suppressed) unless a slip-QC consumer computed the raw
+         * observables that epoch.  OFF = byte-identical to D5 v2.
+         */
+        bool   innov_corroborate{false};
+        /**
+         * @brief Optional magnitude backstop for @c innov_corroborate, in multiples of the gate
+         *        threshold — re-tap regardless of corroboration when |v_i|/√Cov(v)_ii exceeds
+         *        this × (@c innov_k · σ̂₀).  0 (default) = inert, pure corroboration.
+         *
+         * Deliberately defaulted OFF: corroboration does NOT improve with innovation size — it
+         * measured 2.1 % below 25σ but 0.0 % at 100-200σ and 1.2 % above 200σ — so a magnitude
+         * backstop re-admits exactly the population with the LEAST evidence of being real.
+         * Provided only so the knob can be swept, never as a recommended default.
+         */
+        double innov_corroborate_backstop_k{0.0};
+        /**
+         * @brief D5 v5: gate only chords whose prior actually carries information.
+         *
+         * The gate tests @f$|v_i| > k\hat\sigma_0\sqrt{Cov(v)_{ii}}@f$, where @f$Cov(v)@f$
+         * is the H0 covariance of the innovation about the CARRIED prior.  A chord with no
+         * informative prior — its prior is the diffuse @c fresh_prior_var — has no H0 to
+         * test, its "reset" is a no-op (a diffuse chord's posterior already IS the
+         * data-only tap-off), and the flag's only lasting effect is the funnel entry that
+         * re-borns it next epoch.  Measured 2026-08-02 (`runs/churn_base`, 63 sta, 3 h):
+         * **95.3 % of all D5 flags sit on diffuse-prior chords** at exactly
+         * @f$\sqrt{var}=1000@f$ m, median @f$|v|@f$ 19.2 km, 27 chords flagged at up to
+         * duty 0.99.  That loop is why the carry never accumulates.
+         *
+         * TWO conditions, because the first alone was measured insufficient:
+         *  - TOPOLOGICALLY born — the driver's @c chord_carried mask, the same one the σ̂₀
+         *    accumulator already uses to keep born chords out of calibration (v2);
+         *  - INFORMATIONALLY diffuse — @f$Cov(v)_{ii}\ge\tfrac12@f$ @c fresh_prior_var.
+         * @c chord_carried is TOPOLOGICAL (cycle ⊆ A_old, no slip) and says nothing about
+         * information: a chord carried from a predecessor that was itself diffuse inherits
+         * a diffuse projected prior and passes it.  Keying on it alone left 80.4 % of the
+         * surviving flags still at √Cov(v) = 1000 m on the v5 leg.
+         *
+         * OFF = byte-identical.  INERT unless @c innov_gate.
+         */
+        bool   innov_carried_only{false};
         // --- M5 card WL-3: lane-coordinate carry (docs/SPEC_lane_carry_card.md §3.1). ---
         // All three are INERT unless the caller feeds PAIR groups (@ref GroupInput::pair).
         double q_wl_scale{1.0};         ///< WL-3 §3.1: q along the WL lane = this × @c qz (lane basis, per pair chord).  1 = isotropic (== today's per-band q; the §6.1 equivalence shape).  INERT unless @c lane_joint.
@@ -114,6 +175,27 @@ public:
         // --- LF-1 INC-2: pinned-cycle increment skip (docs/SPEC_lane_fold_perf_card.md §3.3). ---
         bool   skip_pinned_increments{false}; ///< LF-1 INC-2: skip the per-epoch MW/bridge lane increments for a chord whose FFR fix is COMMITTED (in @c lane_fix_w_) and was re-decided within @c skip_pinned_within_n epochs — a σ≈0.06-0.2 cyc increment folded into a lane already pinned at σ=0.01 moves nothing.  Any funnel event (slip / D5 flag / re-tap / rebirth) erases the fix memory ⇒ increments resume the SAME epoch (invariant #1).  Reads COMMITTED state only (never the per-build staged decision), so the RAIM re-solve is deterministic.  Equivalence class (the increment is near-inert but not exactly null); INERT unless @c lane_joint.  Query: @ref laneIncrementSkippable.
         long long skip_pinned_within_n{3};    ///< LF-1 INC-2: the grace window (epochs).  A committed-decided chord keeps skipping increments for this many epochs after its LAST re-decision; if it goes undecided longer (a genuinely drifting lane the FFR gate stopped trusting), increments resume to re-converge it.  INERT unless @c skip_pinned_increments.
+        // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §5). ---
+        /**
+         * @brief PD-safe carry policy (@c network.carry_invariant_pd_safe) — the DRIVER half.
+         *
+         * The kernel half (@ref NetworkNormalEquations::setDdFoldPdSafe) makes the fold's
+         * arithmetic scale-following and repairs round-off dust.  This half owns the two
+         * EDGES standing invariant #7 demands when a block still cannot factor:
+         *  - INC-2a, the RE-COUPLING edge: @ref installPosterior REBIRTHS a degenerate
+         *    block — keep the means @f$\hat z@f$ as the seed, reset @f$P^z@f$ to the fresh
+         *    diffuse diagonal — so next epoch's diffuse prior takes the data-only tap-off.
+         *    One bounded epoch of information lost, exactly the semantics a chord birth
+         *    already has, instead of a SILENT PERMANENT decoupling.
+         *  - INC-2c, the restore guard: @ref restoreCarry screens each parsed block and
+         *    rebirths a non-PD one.  Every snapshot written before this card carries the
+         *    corrupt giant block; without the guard a warm resume re-imports the disease
+         *    into a fixed build.
+         *
+         * A rebirth is a PRIOR RESET, not a slip: the slip funnel and the D5 flag list are
+         * deliberately NOT touched.  OFF ⇒ byte-identical.
+         */
+        bool   pd_safe{false};
     };
 
     /// One present, resolvable ambiguity arc this epoch (the caller has already
@@ -160,6 +242,8 @@ public:
         long long slip_kills{0};          ///< Card 4 C3c: chords that would have been carried but were refloated FRESH because a cycle slip / RAIM culprit invalidated an arc of their fundamental cycle (≈ the slip rate the carry saw).
         long long innov_flags{0};         ///< Card 4 D5: carried chords whose post-solve standardized innovation exceeded @c innov_k (a fine slip the coarse layer missed).
         long long innov_retaps{0};        ///< Card 4 D5: flagged chords actually re-tapped fresh at install (== @c innov_flags in v1; a distinct counter for the v2 refold route).
+        long long innov_suppressed{0};    ///< D5 v3: chords that TRIPPED the gate but were NOT re-tapped because the raw observables positively said the arc was continuous (@c innov_corroborate).  Standing invariant #4: the ONLY way to see the corroboration gate is doing anything — 0 with the knob armed means the flat set never reached it (no slip-QC consumer computed the raw observables).
+        long long innov_born_skipped{0};  ///< D5 v5: chord-rows the gate did NOT evaluate because the chord was BORN this epoch (@c innov_carried_only).  Counted BEFORE the threshold test, so it is the whole born population, not just the part that would have flagged — the denominator for "how much of this gate was never testing a hypothesis at all".
         long long merges{0};              ///< components formed from ≥2 previous components.
         long long splits{0};              ///< previous components spread across ≥2 new components.
         long long tree_swaps{0};          ///< components whose carry was re-expressed in a genuinely different fundamental-cycle basis (a projection W that is not a signed permutation — the analogue of the phase-B unimodular pivot).
@@ -183,6 +267,48 @@ public:
         //     @ref max_component_kc).  Always-on like the census counters (never read by the
         //     solve ⇒ byte-identical); the run-end line reads it only when the timers are armed. ---
         long long comp_kc_hist[10]{};     ///< #emitted components with fold-dim d in log2 buckets: [0]=0, [1]=1, [2]=2..3, [3]=4..7, [4]=8..15, [5]=16..31, [6]=32..63, [7]=64..127, [8]=128..255, [9]=≥256.
+        // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) ---------------
+        /**
+         * @brief INC-0: chord ROWS the D5 gate could not test because @f$\mathrm{Cov}(v)_{ii}@f$
+         *        was not strictly positive — the @c if(!(var>0.0)) skip in both gate bodies.
+         *
+         * That skip is silent by construction and it is precisely where a degenerate block
+         * disappears from view: with @f$M=0@f$ the fold caches the RAW non-PD @f$P^z+B@f$ as
+         * @c Minv, so @f$\mathrm{Cov}(v)=M^{-1}-G^\top\Sigma G@f$ inherits its negative
+         * diagonals and every affected row is skipped without a trace.  Counted always-on
+         * (invariant #4); non-zero with @c innov_gate armed means part of the carry is
+         * un-gated, whatever the flag totals say.
+         */
+        long long d5_nonpos_var_rows{0};
+        /// INC-2a: blocks REBIRTHED at install because their fold stayed degenerate after
+        /// the PD-safe repair (means kept, @f$P^z@f$ reset to the fresh diffuse diagonal).
+        /// 0 unless @c Config::pd_safe.  This is invariant #7's re-coupling edge; the
+        /// decoupling edge is the fold's own degenerate counter + the seam's WARN.
+        long long ddfold_rebirths{0};
+        /// INC-2a: chord ROWS in those rebirthed blocks (the carried dimension re-seeded).
+        long long ddfold_rebirth_rows{0};
+        // --- D5 v2 σ̂₀ CLAMP VISIBILITY (see InflationState) -------------------------
+        /**
+         * @brief Installs at which the gate consulted σ̂₀ — the denominator for the four
+         *        state tallies below.
+         *
+         * Tallied ALWAYS (an instrument, like the INC-0 counters), so an @c innov_calibrate
+         * OFF run reports @c d5_calib_off_epochs == this and the reader can tell "v1 by
+         * config" from "v2 that never engaged".  Counted per @ref installPosterior, so a
+         * within-epoch RAIM re-solve counts twice — the same convention as @c chords_born.
+         */
+        long long d5_calib_epochs{0};
+        long long d5_calib_off_epochs{0};     ///< of those, @ref InflationState::Off (calibration not armed).
+        long long d5_calib_warmup_epochs{0};  ///< of those, @ref InflationState::WarmUp — armed, gate running v1.
+        long long d5_calib_floored_epochs{0}; ///< of those, @ref InflationState::Floored — armed AND warm, gate STILL running v1.  The silent one.
+        long long d5_calib_capped_epochs{0};  ///< of those, @ref InflationState::Capped — σ̂₀² pinned at the cap.
+        long long d5_calib_active_epochs{0};  ///< of those, @ref InflationState::Active — genuinely calibrated.
+        /// Smallest RAW (unclamped) σ̂₀² ever estimated past warm-up.  A value < 1 here with
+        /// a reported σ̂₀ of 1.00 is the floor clamp caught in the act — it is the number
+        /// that was only recoverable from the snapshot blob's `S,` line before.
+        double d5_calib_raw_min{std::numeric_limits<double>::infinity()};
+        /// Largest RAW (unclamped) σ̂₀² ever estimated past warm-up.
+        double d5_calib_raw_max{0.0};
     };
 
     /// INC-C0 per-op wall-clock accumulators (ms), armed by @ref setPerfTiming
@@ -221,7 +347,21 @@ public:
                                /*split_by_const=*/false, /*seed_floor_m2=*/1.0);
     }
 
-    /// Drop all carry (a toggle-flip cold start; the DDs re-tap-off next epoch).
+    /**
+     * @brief Drop all carry (a toggle-flip cold start; the DDs re-tap-off next epoch).
+     *
+     * The @ref Counters are a RUN instrument and deliberately SURVIVE this call — only
+     * @c z_dim is re-zeroed, because that one is a live dimension rather than a tally and
+     * the carry it measured is now gone.  This matters because reset() is reachable
+     * MID-RUN from the install seam's exception handler (@c NetworkInstallCarry, around
+     * the @c installPosterior try): zeroing the tallies there made the run-end line
+     * under-report every total behind it, and made the seam's per-epoch churn deltas
+     * (which difference these cumulative totals) go NEGATIVE.  Standing invariant #4 —
+     * an instrument that silently loses its history reads clean while lying.
+     *
+     * @ref restoreCarry is the deliberate exception: installing a FOREIGN carry starts
+     * the instrument fresh (RE-4), and it zeroes the counters itself after calling this.
+     */
     void reset();
 
     /**
@@ -347,6 +487,48 @@ public:
     long long resumeCarryDiagonalBlocks() const { return resume_carry_diag_blocks_; }
     /// RTB-7(e): true when ANY restored block came from a diagonal-only blob.
     bool   resumeCarryDiagonal() const { return resume_carry_diag_blocks_ > 0; }
+    /// PD-safe INC-2c: blocks REBIRTHED at @ref restoreCarry because the blob's @f$P^z@f$
+    /// failed the equilibrated PD screen — the means were kept and the covariance reset to
+    /// the fresh diffuse diagonal.  0 unless @c Config::pd_safe.  Every snapshot written
+    /// before this card carries the corrupt joint lane block, so a non-zero count on a
+    /// first resume is EXPECTED, not alarming; a non-zero count on a resume from a
+    /// pd_safe-armed run is a NEW bug.
+    long long resumeCarryRebirthBlocks() const { return resume_carry_rebirth_blocks_; }
+
+    /**
+     * @brief RTB-7(d) RE-1: WHY the σ̂₀² accumulator was (not) seeded from the resumed blob.
+     *
+     * The same defect class as @ref InflationState, one layer up.  @ref resumeSigma0Seeded is
+     * a bare bool, and the run-end line that published it ASSERTED a cause — "v1 blob /
+     * calibration off" — that no code had checked.  It printed unchanged on a COLD run with
+     * calibration ARMED, where BOTH clauses are false (`runs/pdfix_qz0_deg15/run.log`, whose
+     * own config line two screens earlier says `D5 v2 LS-VCE CALIBRATION ON`).
+     *
+     * Four distinct conditions suppress the seed and they call for four different actions:
+     * a cold start is nothing to act on, a legacy blob is a lineage fact, a calibration-off
+     * run is a config fact, and a rejected `S,` line is a WRITER-side defect.  Standing
+     * invariant #4: the instrument names the reason it MEASURED, never a plausible one.
+     */
+    enum class ResumeSeedState {
+        NotRestored,     ///< no carry blob was installed this run (cold start) — there was nothing to seed FROM.  @ref resumeCarryRestored is false.
+        CalibrationOff,  ///< @c Config::innov_calibrate is false ⇒ no σ̂₀² accumulator exists, so any `S,` line the blob carried was never consulted.  The gate is raw-formal BY CONFIG, not pending a warm-up count.
+        NoSeedLine,      ///< a blob WAS restored but carried no `S,` line — a v1/legacy blob, or a v2/v3 blob written by a calibration-off run.  The only case the pre-fix text described.
+        Rejected,        ///< the blob's `S,` line parsed but failed the @c seed_sigma0_sq>0 && @c seed_rows>0 guard in @ref restoreCarry — a writer-side defect, NOT a legacy blob.
+        Seeded,          ///< the accumulator was seeded; @ref resumeSigma0Value is the seeded σ̂₀.
+    };
+    /// RTB-7(d) RE-1: the seed outcome plus the numbers behind it (@ref resumeSigma0Status).
+    struct ResumeSeedStatus {
+        ResumeSeedState state{ResumeSeedState::NotRestored};
+        double sigma0{1.0};          ///< the σ̂₀ actually seeded — identical to @ref resumeSigma0Value (1.0 unless @c Seeded).
+        double blob_sigma0_sq{0.0};  ///< the σ̂₀² the restored blob's `S,` line carried (0 when it carried none).
+        double blob_rows{0.0};       ///< the n_eff that `S,` line carried (0 when it carried none).
+    };
+    /// RTB-7(d) RE-1: @ref resumeSigma0Seeded with its provenance.  Report THIS, never the
+    /// bare bool — @c false alone cannot say which of the four suppressing conditions held.
+    ResumeSeedStatus resumeSigma0Status() const;
+    /// Human-readable @ref ResumeSeedState tag for logs
+    /// (`cold` / `calib-off` / `no-S-line` / `rejected` / `seeded`).
+    static const char* resumeSeedStateName(ResumeSeedState s);
 
     /**
      * @brief Time update: inflate the carried @f$P^z@f$ by @f$q_z\,\Delta t@f$ on
@@ -421,10 +603,95 @@ public:
     /// @ref installPosterior.
     const std::vector<double>& lastInnovFlagSigmas() const { return last_innov_sigmas_; }
 
+    /**
+     * @brief D5 diagnostic (churn card, 2026-08-02): the raw ALGEBRA behind each flag in
+     *        @ref lastInnovFlags, index-aligned — so the standardized number can be taken
+     *        apart offline instead of being taken on faith.
+     *
+     * The churn decomposition measured per-chord `std_innov` sitting FLAT for hours (e.g.
+     * (WIND,G03) at 230.3σ drifting to 185σ over ~7 h, median 76σ, 98.9 % of inter-flag
+     * gaps one epoch) — a population that is neither slips (1.5 % raw-step coincidence)
+     * nor noise.  A standing 230σ says the formal @f$Cov(v)@f$ and the estimate's actual
+     * epoch-to-epoch wander disagree by orders, but `std_innov` alone cannot say WHICH
+     * factor is wrong.  These four do: @c z_post differenced across epochs for one chord
+     * IS the measured wander, and @c var_v is the formal claim about it.
+     *
+     * Fields, all in carried-DD state units (m = λ·N) except @c var_v (state units²):
+     *  - @c zhat   the carried prior mean the fold used, BEFORE this epoch's data;
+     *  - @c v      the post-fit innovation @f$z_{free}-G^\top x_s-\hat z@f$ (already
+     *              shrunk by the fold's border absorption — it UNDERSTATES a true jump);
+     *  - @c var_v  the formal @f$Cov(v)_{ii}=(M^{-1}-G^\top\Sigma G)_{ii}@f$;
+     *  - @c sigma0 the σ̂₀ in force AT THIS INSTALL (through the previous epoch, the
+     *              predict-then-update contract) — captured here rather than read back
+     *              from @ref innovInflationSigma0, which by then includes this epoch;
+     *  - @c z_post the value actually installed, @c zhat + @c v.
+     * Populated only for FLAGGED chords (a suppressed or below-threshold chord appends
+     * nothing), refreshed every @ref installPosterior.
+     */
+    struct InnovTerms { double zhat{0.0}, v{0.0}, var_v{0.0}, sigma0{1.0}, z_post{0.0}; };
+    const std::vector<InnovTerms>& lastInnovFlagTerms() const { return last_innov_terms_; }
+
+    /**
+     * @brief PD-safe INC-2a: one block REBIRTHED at the last @ref installPosterior — the
+     *        identity payload of the @c DD_FOLD_REBIRTH event the seam writes.
+     *
+     * Standing invariant #7: the fold's @f$M:=0@f$ branch DECOUPLES a block from the data,
+     * and this is the RE-COUPLING edge.  Both edges have to be visible or the failure mode
+     * is exactly the one this card was written to end — a silent permanent freeze.
+     */
+    struct FoldRebirth {
+        std::size_t block{0};        ///< emitted DD-prior block index (== the fold's slot index).
+        int         group{0};        ///< the (const,signal) group id.
+        long long   k{0};            ///< carried STATE dimension re-seeded (2K on a joint pair block).
+        double      min_pivot_rel{0.0}; ///< the fold's relative pivot for the block (≤ 0 ⇒ indefinite).
+        ArcKey      chord0{};        ///< the block's first chord — a stable-enough identity for the ledger.
+    };
+    /// PD-safe INC-2a: the blocks rebirthed at the last @ref installPosterior (empty unless
+    /// @c Config::pd_safe, and empty on a healthy epoch).  Refreshed every install.
+    const std::vector<FoldRebirth>& lastFoldRebirths() const { return last_fold_rebirths_; }
+
     /// D5 v2: the current empirical innovation-inflation σ̂₀ (= √σ̂₀², the factor the
     /// standardized innovation is divided by), or 1.0 when calibration is off / still in
     /// warm-up.  The run-end telemetry (how far the formal Cov(v) was off).
+    ///
+    /// @warning A returned 1.0 is AMBIGUOUS by construction — see @ref innovInflationStatus,
+    ///          which is what telemetry must report.  Never publish this value alone.
     double innovInflationSigma0() const;
+
+    /**
+     * @brief D5 v2: WHY @ref innovInflationSigma0 returned what it returned.
+     *
+     * The bare σ̂₀ conflates FOUR states that all report `1.00×`, only one of which means
+     * "the calibration ran and found the formal Cov(v) honest".  The other three mean the
+     * gate silently degraded to the RAW FORMAL (v1) test — and that is not hypothetical:
+     * the whole `runs/churn_base2` / `pdfix_off` lineage reported σ̂₀ = 1.00 with
+     * calibration ARMED, because a frozen carry block's innovations are tiny against its
+     * diffuse Cov(v) and drove the raw σ̂₀² to 0.0099, which @ref kInflationFactorCap's
+     * companion floor clamped back UP to 1.  Every D5-calibration conclusion drawn on that
+     * lineage came from a v1 gate and nobody could see it from the run-end line (SPEC
+     * `docs/SPEC_pd_safe_dd_fold.md` §10, finding 2).
+     *
+     * Standing invariant #4 in its purest form: an armed knob reporting its neutral value
+     * is INERT, not benign, and the instrument must be able to say which.
+     */
+    enum class InflationState {
+        Off,      ///< @c Config::innov_calibrate is false — the gate is v1 BY CONFIG.
+        WarmUp,   ///< armed, but n_eff < @ref kInflationWarmupRows (or no positive floor) ⇒ v1 in effect.
+        Floored,  ///< armed and warm, but the RAW σ̂₀² < 1 and the clamp bound it UP ⇒ v1 in effect.
+        Capped,   ///< armed and warm, RAW σ̂₀² > @ref kInflationFactorCap and the clamp bound it DOWN.
+        Active,   ///< armed, warm, UNCLAMPED — the reported σ̂₀ is the estimate.  The only calibrated state.
+    };
+    /// D5 v2: the σ̂₀ readout plus the state that produced it (@ref InflationState).
+    struct InflationStatus {
+        InflationState state{InflationState::Off};
+        double raw_sigma0_sq{0.0};  ///< the UNCLAMPED σ̂₀² the accumulator holds (0 when Off / no estimate).
+        double sigma0{1.0};         ///< the σ̂₀ ACTUALLY in force — identical to @ref innovInflationSigma0.
+        double n_eff{0.0};          ///< forgetting-weighted effective row count behind the estimate.
+    };
+    /// D5 v2: @ref innovInflationSigma0 with its provenance.  Report THIS, never the bare σ̂₀.
+    InflationStatus innovInflationStatus() const;
+    /// Human-readable @ref InflationState tag for logs (`off` / `warmup` / `floored` / `capped` / `active`).
+    static const char* inflationStateName(InflationState s);
 
     /// Total carried DD dimension right now (across all components).
     Eigen::Index totalZDim() const;
@@ -451,6 +718,23 @@ public:
      * @return true if @p chord was found + edited; false if it is not a carried chord of @p group.
      */
     bool injectCarriedChord(int group, const ArcKey& chord, double new_z, double new_var);
+
+    /**
+     * @brief D5 v3: this epoch's chords whose underlying arc the RAW observables measured as
+     *        CONTINUOUS (no MW/GF step) — the suppression set for @c Cfg::innov_corroborate.
+     *
+     * ONE-EPOCH state, consumed and cleared by @ref installPosterior exactly like the WL-2
+     * inject exemption, so a stale set can never suppress a later epoch's re-tap.  Membership
+     * must mean "measured and flat", NEVER "no evidence" — the caller owns that distinction
+     * (@c SlipQcEpoch::verdict[].measured && !@c SlipQcEpoch::stepped), because passing an
+     * unmeasured arc here would silently disable the slip response on it (standing invariant #1).
+     *
+     * Leaving this unset is safe and inert: an empty set suppresses nothing, so the gate
+     * degrades to D5 v2 rather than to "no gate".
+     */
+    void setInnovFlatChords(std::set<std::pair<int, ArcKey>> flat) {
+        innov_flat_ = std::move(flat);
+    }
 
     /// The carried DD mean+variance of @p chord in @p group (false if not carried) — the read
     /// half of the WL inject (compute the current lane value before deciding to inject).  Same
@@ -569,6 +853,17 @@ public:
     /// 3 = joint 2K lane-shape pair block.  Lane measurements apply only to shape 3.
     int blockPairBand(std::size_t b) const { return block_meta_.at(b).pair_band; }
 
+    /// The (const,signal) group id of DD-prior block @p b from the last @ref buildDdPriors.
+    int blockGroup(std::size_t b) const { return block_meta_.at(b).group; }
+    /// The FIRST chord of DD-prior block @p b — a stable-enough per-block identity for the
+    /// PD-safe fold's degenerate/recovery ledger (components merge and split, so no index
+    /// is stable across epochs, but a giant block keeps its leading chord).  A default
+    /// @ref ArcKey for a chordless block.
+    ArcKey blockFirstChord(std::size_t b) const {
+        const auto& c = block_meta_.at(b).chords;
+        return c.empty() ? ArcKey{} : c.front();
+    }
+
     // --- test seams (numeric leaf; the NetworkZStore::setEstimate precedent) -----
 
     /// Directly install one component's carry — the gate's seed for a known
@@ -644,7 +939,10 @@ private:
     std::vector<BlockMeta>    block_meta_;   ///< layout of the blocks returned by the last @ref buildDdPriors.
     std::vector<std::pair<int, ArcKey>> last_innov_flags_;  ///< D5: (group, chord) flagged at the last install.
     std::vector<double> last_innov_sigmas_;  ///< D5 diagnostic: |v|/√Cov(v) per flag, aligned with last_innov_flags_.
+    std::vector<InnovTerms> last_innov_terms_;  ///< D5 diagnostic: the (ẑ, v, Cov(v)_ii, σ̂₀, z_post) behind each flag, aligned with last_innov_flags_ — see @ref lastInnovFlagTerms.
+    std::vector<FoldRebirth> last_fold_rebirths_;  ///< PD-safe INC-2a: blocks rebirthed at the last install — see @ref lastFoldRebirths.
     std::set<std::pair<int, ArcKey>> gate_exempt_;  ///< WL-2 §3.3: (group, chord) injected this epoch — D5-exempt at the NEXT @ref installPosterior (consumed + cleared there).  WL-3: a pair chord's exemption spans BOTH band rows.
+    std::set<std::pair<int, ArcKey>> innov_flat_;   ///< D5 v3: (group, chord) whose arc the raw observables measured as CONTINUOUS this epoch — see @ref setInnovFlatChords.  Consumed + cleared in @ref installPosterior.
     std::map<std::pair<int, ArcKey>, long long> lane_fix_w_;      ///< WL-3 §3.3: the last COMMITTED FFR integer per (pair group, chord) — the fold-on-change memory.  Committed at @ref installPosterior; erased when the chord re-taps (slip / D5 flag / rebirth).
     std::map<std::pair<int, ArcKey>, long long> lane_fix_staged_; ///< WL-3: this build's @ref applyLaneFix decisions, staged so a within-epoch RAIM re-solve re-derives identical folds; merged into @ref lane_fix_w_ at install, cleared at each @ref buildDdPriors.
     std::map<std::pair<int, ArcKey>, long long> lane_fix_epoch_;  ///< LF-1 INC-2: the @c install_epoch_index_ at which each @c lane_fix_w_ key was LAST re-decided.  Committed/pruned/erased in lockstep with @c lane_fix_w_; drives the @ref laneIncrementSkippable grace window.  Empty unless @c Config::skip_pinned_increments.
@@ -655,9 +953,19 @@ private:
     long long resume_chords_{0};
     bool      resume_sigma0_seeded_{false};
     double    resume_sigma0_value_{1.0};
+    /// RE-1 provenance (@ref ResumeSeedState): the restored blob carried an `S,` line at all.
+    /// Distinguishes a v1/legacy blob from one whose seed the guard REJECTED — the bare
+    /// @c resume_sigma0_seeded_ false collapses those two onto the same word.
+    bool      resume_seed_line_{false};
+    double    resume_seed_sq_{0.0};    ///< RE-1: that line's σ̂₀² (0 when there was no line).
+    double    resume_seed_rows_{0.0};  ///< RE-1: that line's n_eff (0 when there was no line).
     double    resume_shock_sigma_m_{0.0};
     long long resume_carry_diag_blocks_{0};   ///< RTB-7(e): blocks restored from a PD (diagonal) row.
+    long long resume_carry_rebirth_blocks_{0}; ///< PD-safe INC-2c: blocks rebirthed at restore (non-PD blob Pᶻ).
     Counters counters_;
+    /// The carry-state half of @ref reset (containers + epoch index), WITHOUT the counter
+    /// policy.  @ref reset keeps the run tallies; @ref restoreCarry drops them (RE-4).
+    void resetCarryState_();
     bool      perf_timing_{false};   ///< INC-C0: per-op timers armed (survives reset()).
     PerfTimers perf_timers_;         ///< INC-C0: per-op wall-clock accumulators (whole-run).
 

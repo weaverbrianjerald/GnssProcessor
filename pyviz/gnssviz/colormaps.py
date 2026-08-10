@@ -7,9 +7,10 @@ verbatim from the MATLAB source so the Python figures are colour-identical to th
 MATLAB ones.  Backends wrap the array in whatever colormap object they need
 (matplotlib ``ListedColormap``, plotly colourscale, ...).
 
-Sequential : parula turbo viridis cividis magma inferno  (+ ``_r`` reversed)
+Sequential : viridis cividis magma inferno turbo (parula -> viridis)  (+ ``_r`` reversed)
 Diverging  : rdbu vik bwr
-Legacy aliases : freshness/elevation/sequential -> viridis; diverging -> vik.
+Legacy aliases : freshness/elevation/sequential -> viridis; diverging -> vik;
+                 jet -> turbo (same rainbow ordering, no luminance banding).
 """
 
 from __future__ import annotations
@@ -49,6 +50,25 @@ _INFERNO = np.array([
     [0.987622, 0.652180, 0.211624], [0.964394, 0.843848, 0.273391],
     [0.988362, 0.998364, 0.644924],
 ])
+#: Google's `turbo` (the modern, luminance-monotonic replacement for `jet`),
+#: sampled at 0:0.05:1 from the reference table.  A rainbow map is the wrong
+#: default for most data, but it is the right one for a *slant-delay* raster,
+#: where the reader is picking out fine structure inside a narrow band rather
+#: than ranking magnitudes -- turbo has far more perceptual resolution there
+#: than viridis (professor request, 2026-08-06).
+_TURBO = np.array([
+    [0.189950, 0.071760, 0.232170], [0.239150, 0.208330, 0.546860],
+    [0.269670, 0.348780, 0.796310], [0.276480, 0.481440, 0.950640],
+    [0.244270, 0.609370, 0.996970], [0.158440, 0.735510, 0.923050],
+    [0.097500, 0.837140, 0.803420], [0.127330, 0.917010, 0.676270],
+    [0.275970, 0.970920, 0.516530], [0.473750, 0.997550, 0.349630],
+    [0.643620, 0.989990, 0.233560], [0.766080, 0.946270, 0.203110],
+    [0.883310, 0.865530, 0.217190], [0.965070, 0.763520, 0.227540],
+    [0.996070, 0.642770, 0.191650], [0.983600, 0.492910, 0.128490],
+    [0.940840, 0.355660, 0.070310], [0.867600, 0.237300, 0.030820],
+    [0.764760, 0.143740, 0.010410], [0.630820, 0.068680, 0.004010],
+    [0.479600, 0.015830, 0.010550],
+])
 _RDBU = np.array([
     [5, 48, 97], [33, 102, 172], [67, 147, 195], [146, 197, 222],
     [209, 229, 240], [247, 247, 247], [253, 219, 199], [244, 165, 130],
@@ -63,7 +83,10 @@ _VIK = np.array([
 
 _ANCHORS = {
     "viridis": _VIRIDIS, "cividis": _CIVIDIS, "magma": _MAGMA,
-    "inferno": _INFERNO, "rdbu": _RDBU, "vik": _VIK,
+    "inferno": _INFERNO, "turbo": _TURBO, "rdbu": _RDBU, "vik": _VIK,
+    # `jet` is not carried separately: turbo is its drop-in replacement with the
+    # same rainbow ordering and none of the luminance banding.
+    "jet": _TURBO,
     # legacy aliases from the first-generation viewers
     "freshness": _VIRIDIS, "elevation": _VIRIDIS, "sequential": _VIRIDIS,
     "diverging": _VIK,
@@ -86,12 +109,14 @@ def _bwr(n: int) -> np.ndarray:
     return np.vstack([blue, red])
 
 
-# `parula` (MATLAB-proprietary) and `turbo` have no portable anchor table here,
-# so the *pure data layer* maps them to viridis -- deterministic and free of any
-# plotting-library import (the architectural boundary: nothing below the backend
-# touches matplotlib).  A backend that wants the genuine builtin can special-case
-# these names; viewers in this POC use viridis / categorical maps, not these.
-_VIRIDIS_FALLBACK = {"parula", "turbo"}
+# `parula` (MATLAB-proprietary) has no portable anchor table here, so the *pure
+# data layer* maps it to viridis -- deterministic and free of any plotting-library
+# import (the architectural boundary: nothing below the backend touches
+# matplotlib).  A backend that wants the genuine builtin can special-case the
+# name.  `turbo` USED to fall back here too; it now has a real anchor table
+# (:data:`_TURBO`, transcribed from the reference map), so both backends render
+# the genuine colours from the same array.
+_VIRIDIS_FALLBACK = {"parula"}
 
 
 def strip_colormap(name, n: int = 256) -> np.ndarray:

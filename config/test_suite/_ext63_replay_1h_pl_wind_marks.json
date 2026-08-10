@@ -1,0 +1,27 @@
+{
+ "_comment": [
+  "EDGE-1 PIECE 2 / Q4 POWER FIX: replay the leveled product WITH its R records at",
+  "WIND00NAM, the highest-elevation NON-ORIGIN observer of G11 at the R,G11 epoch",
+  "(TOW 262020, el 48°; origin was STHL00GBR).  See _maju_marks for the design note",
+  "and the in-network caveat.  Pair partner: _wind_nomarks."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_1h.json"
+ ],
+ "processing": { "max_duration_s": 3600.0, "elevation_mask_deg": 15.0 },
+ "logging": { "enable_rt_engine": true },
+ "estimation": { "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 } },
+ "network": {
+  "max_duration_s": 3600.0,
+  "closed_loop": {
+   "replay_products_path": "C:/GnssProcessor/runs/ext63_1h_evt_pl/products.txt",
+   "station": {
+    "name": "WIND00NAM",
+    "rinex_path": "C:/GnssProcessor/data/2024-129/obs/wind00nam/WIND00NAM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [ 5633708.7989, 1732018.1244, -2433985.4318 ]
+   }
+  },
+  "product_output_path": "C:/GnssProcessor/runs/replay_1h_pl_wind_marks/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/replay_1h_pl_wind_marks/state_snapshot.bin"
+ }
+}

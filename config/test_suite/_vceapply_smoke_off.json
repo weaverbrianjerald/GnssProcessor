@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "M2 v2 (docs/SPEC_carry_vce_apply.md) — WIRING SMOKE, arm OFF (the control).",
+    "",
+    "Substrate: _ft63_mdb_raimlive.json, chosen because it is the fast 63-station GPS",
+    "config on which the phase-leveling ambiguity carry is actually FOLDED",
+    "(phase_leveling true, carry_invariant false).  On a carry_invariant lineage Card 4's",
+    "DD carry supersedes the pl carry, so `pl` has no inject site and no monitor rows and",
+    "the apply is structurally inert — the loader now warns about exactly that.",
+    "",
+    "This arm is the same-build control for _vceapply_smoke_on.json.  1 h is enough to",
+    "catch a wiring fault (does the factor move, does the trace appear, do the products",
+    "change AT ALL), and is NOT the card's acceptance: section 7 wants Release 3 h/305 plus",
+    "a 12 h window, graded on the calibration ratio.",
+    "",
+    "phase_leveling_var_floor_m2 = 4e-5 (the FT63 lineage value) is set in BOTH arms, so it",
+    "is not the A/B variable.  It is here because it is the card's premise: without a floor",
+    "the hand fold variance is var_prev + q*dt, which a 20-epoch probe measured at 8.3e-4 m2",
+    "against a 9.0e-4 m2 robust carry innovation — a ratio of 1.08, i.e. an already-calibrated",
+    "model with nothing for the factor to do.  The 30-120x optimism M2 measured is a property",
+    "of the FLOOR, so the floor has to be in the arm for the mechanism to be exercised."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_mdb_raimlive.json"
+  ],
+  "processing": {
+    "max_duration_s": 3600.0
+  },
+  "network": {
+    "max_duration_s": 3600.0,
+    "phase_leveling_var_floor_m2": 4e-05,
+    "carry_vce": true,
+    "carry_vce_apply": false,
+    "product_output_path": "C:/GnssProcessor/runs/vceapply_smoke_off/products.txt"
+  }
+}

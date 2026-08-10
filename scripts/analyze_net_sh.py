@@ -73,13 +73,24 @@ def main():
     if sh_path.exists():
         with sh_path.open() as f:
             for row in csv.DictReader(f):
-                tow = float(row["tow"])
-                n, m = int(row["n"]), int(row["m"])
+                # Skip torn rows.  These traces are buffered, so the final line of a
+                # run that is still in flight -- or that was killed / WER-zombied, which
+                # the record says is a realistic end state for a multi-hour run -- is a
+                # partial write with missing trailing fields.  csv.DictReader fills those
+                # with None, and float(None) raises TypeError, NOT ValueError; before this
+                # guard one torn line aborted the whole analysis of an 8-hour run.
+                if row.get("std_tecu") is None or row.get("tow") is None:
+                    continue
+                try:
+                    tow = float(row["tow"])
+                    n, m = int(row["n"]), int(row["m"])
+                except (ValueError, TypeError):
+                    continue
                 key = (n, m, row["trig"])
                 try:
                     val = float(row["value_tecu"])
                     sd = float(row["std_tecu"])
-                except ValueError:
+                except (ValueError, TypeError):
                     val, sd = float("nan"), float("nan")
                 by_epoch[tow][key] = val
                 std_by_epoch[tow][key] = sd
