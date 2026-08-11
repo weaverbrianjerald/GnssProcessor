@@ -593,7 +593,9 @@
    "consume_network_clock": true,
    "consume_network_iono": true,
    "ar_mode": 1,
-   "ar_wl_only": true
+   "ar_wl_only": true,
+   "_consumer_posture_note": "SPEC_clock_temporal_anchor SS8.11.9: ar_wl_only is INERT under consumer_undifferenced (deriveClosedLoopConsumerConfig only copies it for a BSSD consumer); it is left here for the record of what this chain used to run.",
+   "consumer_undifferenced": true
   }
  }
 }

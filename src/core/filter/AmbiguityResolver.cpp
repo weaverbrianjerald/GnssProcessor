@@ -1975,6 +1975,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
             log->info("WL-only AR: no MW WL constraint set reaches the bootstrap "
                       "success rate {:.4f} (FFR gate) — staying FLOAT this epoch.",
                       config_.min_success_rate);
+            result.gate_reason = 5;   // the GUARDS rejected; MLAMBDA never ran
             return result;
         }
     }
@@ -2051,6 +2052,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
         if (constraints.empty()) {
             log->info("WL-only AR: every MW WL constraint failed the innovation screen "
                       "— staying FLOAT this epoch.");
+            result.gate_reason = 5;   // the GUARDS rejected; MLAMBDA never ran
             return result;
         }
     }
@@ -2521,6 +2523,7 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
             log->info("WL-NlWl: no MW WL constraint set reaches the bootstrap success "
                       "rate {:.4f} (FFR gate) — staying FLOAT this epoch.",
                       config_.min_success_rate);
+            result.gate_reason = 5;   // the GUARDS rejected; MLAMBDA never ran
             return result;
         }
     }
@@ -2565,6 +2568,7 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
         if (constraints.empty()) {
             log->info("WL-NlWl: every MW WL constraint failed the innovation screen — "
                       "staying FLOAT this epoch.");
+            result.gate_reason = 5;   // the GUARDS rejected; MLAMBDA never ran
             return result;
         }
     }

@@ -66,7 +66,12 @@ struct AmbiguityResolution {
     /// reached (the outcome — fixed / ratio-battery reject / MLAMBDA fail — is then read
     /// from @ref success + @ref ratio).  0=reached-MLAMBDA, 1=disabled(ar_mode=0),
     /// 2=min_epochs guard, 3=position-σ gate (see @ref gate_sigma_3d), 4=no candidates
-    /// (empty DD pairs / no WL integers this epoch).
+    /// (empty DD pairs / no WL integers this epoch), 5=the WL acceptance guards
+    /// rejected every MW constraint (@ref AmbiguityResolverConfig::wl_only_ffr /
+    /// @c wl_only_max_innov_cyc).  5 exists because without it a guard rejection
+    /// reads as `mlambda_fail` — MLAMBDA never ran on these paths, and a trace
+    /// that blames the search for a decision the GUARD made is the same class of
+    /// mis-attribution as the `ratio = +inf` sentinel.
     int gate_reason{ 0 };
     double gate_sigma_3d{ -1.0 };      ///< 3D position σ (m) recorded when the σ-gate (gate_reason=3) fired; −1 otherwise.
     /// Bootstrap success rate of the ACCEPTED fix — the FFR quantity, and the

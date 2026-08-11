@@ -684,6 +684,7 @@ void networkEmitStore(
                     case 2:  ar_gate = "min_epochs";    break;
                     case 3:  ar_gate = fmt::format("sigma_gate({:.3f}m)", ar.gate_sigma_3d); break;
                     case 4:  ar_gate = "no_candidates"; break;
+                    case 5:  ar_gate = "wl_guard";      break;
                     default: ar_gate = ar.success ? (ar.wl_only_fix ? "wl_only" : "fixed")
                                      : (ar.ratio > 0.0 ? "ratio_battery" : "mlambda_fail");
                              break;

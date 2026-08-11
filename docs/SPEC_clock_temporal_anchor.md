@@ -1381,11 +1381,9 @@ promotion** — G4 remains the invariant-#1 blocker.
 ### §8.11.6 Remaining gaps, named not hidden
 
 1. ~~**`applyMwWlConstraintsNlWl_` has BOTH holes**~~ — **CLOSED, §8.11.7.**
-2. **`wl_only on` for a network-bias consumer may be the wrong posture
-   entirely.**  `setArIgnoreMwWl`'s own comment says this harness should
-   SUPPRESS the MW feed so AR runs pure MLAMBDA on the consumed-bias float; the
-   golden63 chain does the opposite.  These guards make that posture SAFE; they
-   do not make it RIGHT, and the config question is open.
+2. ~~**`wl_only on` may be the wrong posture entirely**~~ — **CLOSED, §8.11.9.**
+   Measured: it was, and not only in the tail — the guarded WL-only posture is
+   ~1 m worse in the MEDIAN than not constraining at all.
 3. The consumer's `ambiguity_resolver` logger does not route to
    `logs/ambiguity_resolver.log` even with `enable_ambiguity_resolver: true`
    (the derived consumer config builds its own resolver).  The diagnosis above
@@ -1491,3 +1489,77 @@ exactly that lie.  Both quantities are now MEASURED unconditionally and only
 ACTED on when armed, and the max is labelled PRE-screen so it cannot be misread
 as the applied set's residual.  A few flops over a handful of arcs, and it is
 what makes the disarmed column above exist at all.
+
+### §8.11.9 The consumer POSTURE — measured, and the WL-only choice was a drag all along
+
+§8.11.6 gap 2 asked whether `wl_only on` is the right posture for a network-bias
+consumer at all.  Measured on the q = 1e-7 arm, three postures, producer knobs
+identical throughout (`products.txt` **byte-identical** in every arm — the
+consumer is held out and cannot reach the producer, so this is purely a change
+of grading instrument):
+
+| consumer posture | med | p95 | worst | > 20 m | fix epochs |
+|---|---|---|---|---|---|
+| BSSD + `ar_wl_only`, guards OFF | 4.17 | 7.72 | **34.91** | 4 | 1 (wrong) |
+| BSSD + `ar_wl_only`, guards ON | 4.84 | 7.65 | 7.75 | 0 | 0 |
+| **`consumer_undifferenced: true`** | **3.88** | **6.35** | **6.95** | **0** | 0 |
+
+**The undifferenced consumer is best on all three statistics — and it never
+fixes.**  All 350 settled epochs sit at `sigma_gate`; AR never fires.  So the
+gain is not better integer resolution, it is **not asserting MW widelanes at
+all**.  Read the middle row against the bottom: the GUARDED WL-only posture is
+still ~1 m worse in the median than simply not constraining.  **The WL-only
+posture was a net drag on the BODY of the distribution the whole time, not only
+a tail risk** — the guards stopped a 35 m blunder, and removing the posture
+removes a penalty that had never been attributed to anything.
+
+Why it was the wrong instrument on its own terms, independent of any blunder:
+the closed loop exists to answer *"can a held-out station recover integers from
+the network's emitted phase biases?"*.  Under `ar_wl_only` the consumer never
+runs a narrowlane search — it asserts MW widelanes from the **.BIA** product
+frame and stops.  What was being validated was substantially the MW detector,
+in a different frame from the product under test.  `consumer_undifferenced`
+runs direct per-band LAMBDA on the network-bias-corrected float, which IS the
+quantity the product is supposed to make integer, and suppresses the MW feed as
+a consequence of not needing it (`ar_wl_only_` is left at its default, so
+`setArIgnoreMwWl(true)`).
+
+**Adopted in the chain.**  `_agu63.json` now sets
+`network.closed_loop.consumer_undifferenced: true`.  Verified by inheritance:
+re-running the UNMODIFIED `_cta4_q1e7_ffr2` config on the new chain reproduces
+the explicit undifferenced arm's `closed_loop_trace.csv` **byte-identically**,
+with `products.txt` still byte-identical to every other arm.  `ar_wl_only` is
+left in the config with a note — it is inert under the undifferenced path
+(`deriveClosedLoopConsumerConfig` copies it only for a BSSD consumer) and it
+records what the chain used to run.
+
+**⚠ SHARED-CHAIN EDIT, stated plainly.**  Every config extending `_agu63`
+inherits this.  **No product lineage is invalidated** — products are
+byte-identical, proven on this arm — but **stored `closed_loop_trace.csv`
+numbers for other cards will not reproduce**, because the grading instrument
+changed.  A card re-reading its old consumer numbers must re-run or note the
+posture change.  `_cta4_q1e7_bssd_ref.json` keeps the old posture reachable for
+exactly that comparison.
+
+**Attribution defect found and fixed in passing.**  The guarded BSSD arm showed
+27 `mlambda_fail` rows on paths where **MLAMBDA never runs**.  A trace that
+blames the search for a decision the GUARD made is the same class of
+mis-attribution as the `ratio = +inf` sentinel this section began with.  There is
+now `gate_reason = 5` → `wl_guard` in both trace writers, set at all four
+guard-rejection returns.
+
+Measured on the re-run reference arm, the 27 split **19 `wl_guard` + 8
+`mlambda_fail`** — so the single label was hiding two different outcomes, and
+"the 27 were guard rejections" (asserted before the arm ran) was itself too
+strong.  The residual 8 are genuine: the WL path can return before the guards
+when no constraint is formed at all.
+
+**⚠ Process failure worth recording, because it nearly buried this.**  The first
+label check came back NEGATIVE (27 `mlambda_fail`, no `wl_guard`) and the code
+was correct.  The arm had run `gnss_processor_ffr4.exe`, copied BEFORE the edit
+(`8CA08AEB…`) while the fix was in `88107F4C…`.  **A renamed exe — the
+concurrent-build-lock workaround — is a SNAPSHOT: `cmake --build` updates
+`gnss_processor.exe` and leaves the copy untouched**, so the arm silently tested
+the old code with a clean run and no warning.  Re-copy after every rebuild and
+hash BOTH.  It surfaced only because the label was checked on data rather than
+trusted from the diff.

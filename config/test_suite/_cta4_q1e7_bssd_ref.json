@@ -1,0 +1,42 @@
+{
+ "_comment": [
+  "SPEC \u00a78.11.9 label check + the BSSD+wl_only REFERENCE arm, kept for the record.",
+  "consumer_undifferenced is forced FALSE here to re-enter the old posture on the",
+  "new chain, so the 27 guard rejections that previously mislabelled themselves as",
+  "'mlambda_fail' must now read 'wl_guard'.  NOT a posture anyone should run \u2014",
+  "\u00a78.11.9 measured it 1 m worse in the median than the undifferenced consumer."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 1e-07,
+  "product_output_path": "C:/GnssProcessor/runs/cta4_q1e7_bssd_ref/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_q1e7_bssd_ref/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  },
+  "closed_loop": {
+   "consumer_undifferenced": false
+  }
+ }
+}

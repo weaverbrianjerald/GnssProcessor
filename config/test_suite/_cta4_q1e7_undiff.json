@@ -1,0 +1,45 @@
+{
+ "_comment": [
+  "Card Q3 \u00a78.11.9 \u2014 the CONSUMER POSTURE A/B.  Identical to _cta4_q1e7_ffr2 in",
+  "every producer knob; the only change is the closed-loop consumer's AR posture:",
+  "consumer_undifferenced = true (direct per-band LAMBDA on the network-bias",
+  "float) instead of BSSD + ar_wl_only (assert MW widelanes, no NL search).",
+  "That is the posture setArIgnoreMwWl's own comment prescribes for network-bias",
+  "validation, and it suppresses the MW feed automatically \u2014 no .BIA-vs-consumed-",
+  "bias frame conflict for the guards to catch.  products.txt must stay",
+  "BYTE-IDENTICAL: the consumer is held out and cannot reach the producer."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 1e-07,
+  "product_output_path": "C:/GnssProcessor/runs/cta4_q1e7_undiff/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_q1e7_undiff/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  },
+  "closed_loop": {
+   "consumer_undifferenced": true
+  }
+ }
+}
