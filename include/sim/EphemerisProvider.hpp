@@ -373,6 +373,35 @@ public:
     double signalBiasMetres(const std::string& sat, const std::string& code,
                             const GnssTime& t) const;
 
+    /**
+     * @brief Carrier-phase wind-up (m) for one band, ACCUMULATED mode (M10 wind-up).
+     *
+     * Reuses the processor's own @c GnssCorrections::computePhaseWindUp on the
+     * geometry pipeline's instance, with the geometry's cached Sun for the
+     * yaw-steering attitude and the emission-frame @p sat_vel as fallback — the
+     * exact inputs @c PppModel routes through @c Antenna::getAntennaCorrection —
+     * and @c accumulate=true, so the injected angle is continuous (unwrapped)
+     * within each tracked arc and the phase ambiguities remain time-constant
+     * integers under a wind-up-aware estimator.  The per-satellite unwrap state
+     * lives on the geometry's @c GnssCorrections instance; nothing else calls
+     * @c computePhaseWindUp during synthesis, so the state is exclusively ours.
+     * The angle is band-common in cycles: call once per band and the same-epoch
+     * guard inside @c computePhaseWindUp reuses the first call's accumulation.
+     *
+     * @param sat          Satellite id (e.g. "G01"); unknown prefixes return 0.
+     * @param rx           Receiver ECEF truth position (m).
+     * @param sat_pos      Reception-frame satellite ECEF position (m).
+     * @param sat_vel      EMISSION-frame satellite ECEF velocity (m/s).
+     * @param wavelength_m Carrier wavelength for this band (m).
+     * @param t            Epoch.
+     * @return Wind-up in metres for this band (add to the phase observable; the
+     *         processor ADDS the same value to its modeled phase when
+     *         @c enable_phase_windup + @c accumulate_phase_windup are set).
+     */
+    double phaseWindupMetres(const std::string& sat, const Eigen::Vector3d& rx,
+                             const Eigen::Vector3d& sat_pos, const Eigen::Vector3d& sat_vel,
+                             double wavelength_m, const GnssTime& t) const;
+
 private:
     GnssConfig config_;
     LogManager log_;

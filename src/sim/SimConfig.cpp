@@ -125,6 +125,41 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.biases.isb_gps_gal_m   = jval(s, "biases.isb_gps_gal_m",   "", cfg.biases.isb_gps_gal_m);
     cfg.geometry.elevation_mask_deg = jval(s, "geometry.elevation_mask_deg", "", cfg.geometry.elevation_mask_deg);
 
+    // --- Per-observable RECEIVER biases (SPEC_synthetic_minimum_network.md §3). ---
+    // Shape: "biases.rx_code_bias": [ {"code":"C1C","value_m":0.42}, ... ].  Absent or
+    // empty leaves the lists empty, so the synthesis is byte-identical.  Validated here
+    // (the header stays a plain resolved record): an unparseable entry is a loud error,
+    // never a silently-dropped bias that would make the Table-8 identity read 0 == 0.
+    {
+        auto loadRxBias = [&](const char* key, std::vector<RxBias>& out) -> const char* {
+            const nlohmann::json* arr = resolvePath(s, key);
+            if (!arr) return nullptr;
+            if (!arr->is_array()) return "must be an array";
+            if (arr->size() > 64) return "has more than 64 entries (paste-accident guard)";
+            for (const auto& el : *arr) {
+                if (!el.is_object()) return "entries must be JSON objects";
+                if (!el.contains("code") || !el["code"].is_string())
+                    return "each entry needs a string 'code' (a RINEX-3 observation code)";
+                RxBias b;
+                b.code = el["code"].get<std::string>();
+                if (b.code.size() != 3)
+                    return "each 'code' must be a 3-character RINEX-3 observation code";
+                if (!el.contains("value_m") || !el["value_m"].is_number())
+                    return "each entry needs a numeric 'value_m'";
+                b.value_m = el["value_m"].get<double>();
+                if (!std::isfinite(b.value_m)) return "'value_m' must be finite";
+                for (const auto& prev : out)
+                    if (prev.code == b.code) return "lists a duplicate observation code";
+                out.push_back(b);
+            }
+            return nullptr;
+        };
+        if (const char* why = loadRxBias("biases.rx_code_bias", cfg.biases.rx_code_bias))
+            return fail(std::string("sim config 'biases.rx_code_bias' ") + why);
+        if (const char* why = loadRxBias("biases.rx_phase_bias", cfg.biases.rx_phase_bias))
+            return fail(std::string("sim config 'biases.rx_phase_bias' ") + why);
+    }
+
     // M7 full-correction stack (all default false -> byte-identical bare dataset).
     cfg.corrections.relativity       = jval(s, "corrections.relativity",       "", cfg.corrections.relativity);
     cfg.corrections.shapiro          = jval(s, "corrections.shapiro",          "", cfg.corrections.shapiro);
@@ -132,6 +167,7 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.corrections.pole_tide        = jval(s, "corrections.pole_tide",        "", cfg.corrections.pole_tide);
     cfg.corrections.sat_antenna      = jval(s, "corrections.sat_antenna",      "", cfg.corrections.sat_antenna);
     cfg.corrections.signal_bias      = jval(s, "corrections.signal_bias",      "", cfg.corrections.signal_bias);
+    cfg.corrections.phase_windup     = jval(s, "corrections.phase_windup",     "", cfg.corrections.phase_windup);
     cfg.corrections.ocean_tide       = jval(s, "corrections.ocean_tide",       "", cfg.corrections.ocean_tide);
     if (const nlohmann::json* nc = resolvePath(s, "corrections.eot20_nc_path")) {
         if (!nc->is_string())
@@ -181,6 +217,18 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.iono.drift_lon_deg_per_min  = jval(s, "iono.drift_lon_deg_per_min",  "", cfg.iono.drift_lon_deg_per_min);
     cfg.iono.center_lat_offset_deg  = jval(s, "iono.center_lat_offset_deg",  "", cfg.iono.center_lat_offset_deg);
     cfg.iono.center_lon_offset_deg  = jval(s, "iono.center_lon_offset_deg",  "", cfg.iono.center_lon_offset_deg);
+    // ABSOLUTE storm anchor.  NaN default = derive from this run's own trajectory
+    // origin (legacy).  A network MUST set these or every station sits at the blob
+    // centre — see SimConfig.hpp Iono::center_lat_deg.
+    cfg.iono.center_lat_deg = jval(s, "iono.center_lat_deg", "", cfg.iono.center_lat_deg);
+    cfg.iono.center_lon_deg = jval(s, "iono.center_lon_deg", "", cfg.iono.center_lon_deg);
+    if (std::isfinite(cfg.iono.center_lat_deg) !=
+        std::isfinite(cfg.iono.center_lon_deg))
+        return fail("sim config 'iono.center_lat_deg' and 'iono.center_lon_deg' must be "
+                    "set together (an absolute storm anchor needs both components)");
+    if (std::isfinite(cfg.iono.center_lat_deg) &&
+        (cfg.iono.center_lat_deg < -90.0 || cfg.iono.center_lat_deg > 90.0))
+        return fail("sim config 'iono.center_lat_deg' must lie in [-90, 90]");
     cfg.iono.tid_wavelength_km      = jval(s, "iono.tid_wavelength_km",      "", cfg.iono.tid_wavelength_km);
     cfg.iono.tid_period_s           = jval(s, "iono.tid_period_s",           "", cfg.iono.tid_period_s);
     cfg.iono.tid_period_start_s     = jval(s, "iono.tid_period_start_s",     "", cfg.iono.tid_period_start_s);
@@ -306,6 +354,13 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.trajectory.heave_period_s  = jval(s, "trajectory.heave_period_s",  "", cfg.trajectory.heave_period_s);
     cfg.trajectory.clock_bias0_s   = jval(s, "trajectory.clock_bias0_s",   "", cfg.trajectory.clock_bias0_s);
     cfg.trajectory.clock_drift_sps = jval(s, "trajectory.clock_drift_sps", "", cfg.trajectory.clock_drift_sps);
+    // Receiver clock random walk (m^2/s, the PPP-filter unit).  Reject a negative
+    // spectral density loudly — sqrt() of it would be NaN and would silently poison
+    // every observation in the file rather than failing the run.
+    cfg.trajectory.clock_rw_q_m2ps = jval(s, "trajectory.clock_rw_q_m2ps", "", cfg.trajectory.clock_rw_q_m2ps);
+    if (!(cfg.trajectory.clock_rw_q_m2ps >= 0.0))
+        return fail("sim config 'trajectory.clock_rw_q_m2ps' must be >= 0 (m^2/s)");
+    cfg.trajectory.clock_seed      = jseed("trajectory.clock_seed", cfg.trajectory.clock_seed);
     // Optional landfall mode (both dest_* finite => enabled; NaN default keeps the
     // analytic model byte-identical).  See TrajectoryGenerator.hpp.
     cfg.trajectory.dest_lat_deg    = jval(s, "trajectory.dest_lat_deg",    "", cfg.trajectory.dest_lat_deg);
@@ -518,6 +573,280 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
         }
     }
 
+    // --- Station identity of THIS invocation (SPEC_synthetic_minimum_network.md §1). ---
+    // Absent => empty name + zero salt => the legacy "SARV" single-station dataset,
+    // byte-for-byte.  The `synth-network` driver writes one child config per station
+    // with this block filled in.
+    {
+        if (const nlohmann::json* nm = resolvePath(s, "station.name")) {
+            if (!nm->is_string())
+                return fail("sim config 'station.name' must be a string");
+            cfg.station.name = nm->get<std::string>();
+            if (cfg.station.name.size() > 9)
+                return fail("sim config 'station.name' '" + cfg.station.name +
+                            "' exceeds 9 characters (RINEX marker field)");
+            for (char ch : cfg.station.name)
+                if (!std::isalnum(static_cast<unsigned char>(ch)))
+                    return fail("sim config 'station.name' '" + cfg.station.name +
+                                "' must be alphanumeric (it becomes a filename prefix)");
+        }
+        if (const nlohmann::json* sd = resolvePath(s, "station.seed_salt")) {
+            if (!sd->is_number() || sd->get<double>() < 0.0)
+                return fail("sim config 'station.seed_salt' must be a non-negative integer");
+            // Read the INTEGER exactly when the literal is one.  Going through a double
+            // (as the other seed fields do — they are all < 2^32, so it is lossless for
+            // them) would round a large salt and could collide two stations.
+            cfg.station.seed_salt = sd->is_number_unsigned()
+                                        ? sd->get<std::uint64_t>()
+                                        : static_cast<std::uint64_t>(sd->get<double>());
+        }
+    }
+
+    // --- Network peer roster for `synth-network` (optional). --------------------
+    // Shape: "network_stations": [ {"name":"SNA000SIM","lat_deg":..,"lon_deg":..,
+    //                               "h_m":..,"consumer":false}, ... ]
+    // Empty/absent = single-station synthesis; the other subcommands ignore it.
+    if (const nlohmann::json* arr = resolvePath(s, "network_stations")) {
+        if (!arr->is_array())
+            return fail("sim config 'network_stations' must be an array");
+        if (arr->size() > 32)
+            return fail("sim config 'network_stations' has " + std::to_string(arr->size()) +
+                        " entries (> 32; this fixture is a MINIMUM network by design — a "
+                        "large synthetic net belongs in a different card)");
+        int idx = 0, n_consumer = 0;
+        for (const auto& el : *arr) {
+            const std::string where = "network_stations[" + std::to_string(idx++) + "]";
+            if (!el.is_object()) return fail(where + " must be a JSON object");
+
+            NetworkStation st;
+            if (!el.contains("name") || !el["name"].is_string())
+                return fail(where + ".name is required (string, 9-char marker)");
+            st.name = el["name"].get<std::string>();
+            if (st.name.empty() || st.name.size() > 9)
+                return fail(where + ".name '" + st.name + "' must be 1-9 characters");
+            for (char ch : st.name)
+                if (!std::isalnum(static_cast<unsigned char>(ch)))
+                    return fail(where + ".name '" + st.name + "' must be alphanumeric");
+            for (const auto& prev : cfg.network_stations)
+                if (prev.name == st.name)
+                    return fail(where + ".name '" + st.name + "' is a duplicate — every station "
+                                "needs a distinct name (it derives the RNG salt, so a duplicate "
+                                "silently clones another station's whole noise realization)");
+
+            for (const char* k : { "lat_deg", "lon_deg" })
+                if (!el.contains(k) || !el[k].is_number())
+                    return fail(where + "." + k + " is required (number)");
+            st.lat_deg = el["lat_deg"].get<double>();
+            st.lon_deg = el["lon_deg"].get<double>();
+            st.h_m = el.contains("h_m") && el["h_m"].is_number() ? el["h_m"].get<double>() : 0.0;
+            if (st.lat_deg < -90.0 || st.lat_deg > 90.0)
+                return fail(where + ".lat_deg must lie in [-90, 90]");
+            if (!std::isfinite(st.lon_deg) || !std::isfinite(st.h_m))
+                return fail(where + ".lon_deg / .h_m must be finite");
+
+            if (el.contains("consumer")) {
+                if (!el["consumer"].is_boolean())
+                    return fail(where + ".consumer must be a boolean");
+                st.consumer = el["consumer"].get<bool>();
+                if (st.consumer) ++n_consumer;
+            }
+
+            // Per-station receiver biases (they must differ across the roster, or the
+            // fleet mean the Table-8 identity resolves is indistinguishable from its
+            // members).  Same shape and validation as the top-level biases.rx_*_bias.
+            auto loadStationRxBias = [&](const char* key,
+                                         std::vector<RxBias>& out) -> const char* {
+                if (!el.contains(key)) return nullptr;
+                const nlohmann::json& arr = el[key];
+                if (!arr.is_array()) return "must be an array";
+                for (const auto& b : arr) {
+                    if (!b.is_object()) return "entries must be JSON objects";
+                    if (!b.contains("code") || !b["code"].is_string())
+                        return "each entry needs a string 'code'";
+                    RxBias rb;
+                    rb.code = b["code"].get<std::string>();
+                    if (rb.code.size() != 3)
+                        return "each 'code' must be a 3-character RINEX-3 observation code";
+                    if (!b.contains("value_m") || !b["value_m"].is_number())
+                        return "each entry needs a numeric 'value_m'";
+                    rb.value_m = b["value_m"].get<double>();
+                    if (!std::isfinite(rb.value_m)) return "'value_m' must be finite";
+                    for (const auto& prev : out)
+                        if (prev.code == rb.code) return "lists a duplicate observation code";
+                    out.push_back(rb);
+                }
+                return nullptr;
+            };
+            if (const char* why = loadStationRxBias("rx_code_bias", st.rx_code_bias))
+                return fail(where + ".rx_code_bias " + why);
+            if (const char* why = loadStationRxBias("rx_phase_bias", st.rx_phase_bias))
+                return fail(where + ".rx_phase_bias " + why);
+
+            cfg.network_stations.push_back(std::move(st));
+        }
+        if (n_consumer > 1)
+            return fail("sim config 'network_stations' marks " + std::to_string(n_consumer) +
+                        " stations as 'consumer'; at most one may be held out");
+        // A 2-station "network" has no redundancy anywhere and a 1-station one is not a
+        // network at all.  Catch it here rather than in the producer's rank gate, where
+        // it surfaces as an under-specified datum and reads as a producer defect.
+        const int n_solve = static_cast<int>(cfg.network_stations.size()) - n_consumer;
+        if (!cfg.network_stations.empty() && n_solve < 3)
+            return fail("sim config 'network_stations' leaves only " + std::to_string(n_solve) +
+                        " station(s) in the solve (excluding the consumer); the minimum "
+                        "hand-auditable network is 3");
+    }
+
+    // --- Synthetic SATELLITE clock error (optional; all-zero default is legacy). ---
+    cfg.sat_clock.bias0_sigma_m = jval(s, "sat_clock.bias0_sigma_m", "", cfg.sat_clock.bias0_sigma_m);
+    cfg.sat_clock.rate_sigma_mps = jval(s, "sat_clock.rate_sigma_mps", "", cfg.sat_clock.rate_sigma_mps);
+    cfg.sat_clock.rw_q_m2ps = jval(s, "sat_clock.rw_q_m2ps", "", cfg.sat_clock.rw_q_m2ps);
+    for (const auto& [nm, v] : { std::pair<const char*, double>{ "sat_clock.bias0_sigma_m", cfg.sat_clock.bias0_sigma_m },
+                                 { "sat_clock.rate_sigma_mps", cfg.sat_clock.rate_sigma_mps },
+                                 { "sat_clock.rw_q_m2ps", cfg.sat_clock.rw_q_m2ps } })
+        if (!std::isfinite(v) || v < 0.0)
+            return fail(std::string("sim config '") + nm + "' must be finite and >= 0 "
+                        "(it is a 1-sigma / spectral density, not a signed value)");
+    if (const nlohmann::json* sd = resolvePath(s, "sat_clock.seed")) {
+        if (!sd->is_number() || sd->get<double>() < 0.0)
+            return fail("sim config 'sat_clock.seed' must be a non-negative integer");
+        cfg.sat_clock.seed = static_cast<std::uint64_t>(sd->get<double>());
+    }
+    if (const nlohmann::json* arr = resolvePath(s, "sat_clock.steps")) {
+        if (!arr->is_array())
+            return fail("sim config 'sat_clock.steps' must be an array");
+        if (arr->size() > 64)
+            return fail("sim config 'sat_clock.steps' has " + std::to_string(arr->size()) +
+                        " events (> 64; paste-accident guard)");
+        const int n_ep = cfg.trajectory.n_epochs;
+        int idx = 0;
+        for (const auto& el : *arr) {
+            const std::string where = "sat_clock.steps[" + std::to_string(idx++) + "]";
+            if (!el.is_object()) return fail(where + " must be a JSON object");
+
+            SimConfig::ScriptedSatClockStep ev;
+            if (!el.contains("sat") || !el["sat"].is_string())
+                return fail(where + ".sat is required (string, e.g. \"G05\")");
+            ev.sat = el["sat"].get<std::string>();
+            if (ev.sat.size() != 3 || (ev.sat[0] != 'G' && ev.sat[0] != 'E') ||
+                !std::isdigit(static_cast<unsigned char>(ev.sat[1])) ||
+                !std::isdigit(static_cast<unsigned char>(ev.sat[2])))
+                return fail(where + ".sat '" + ev.sat + "' must match ^[GE][0-9][0-9]$");
+
+            if (!el.contains("epoch") || !el["epoch"].is_number())
+                return fail(where + ".epoch is required (1-based epoch index)");
+            ev.epoch = static_cast<int>(std::llround(el["epoch"].get<double>()));
+            if (ev.epoch < 1 || ev.epoch > n_ep)
+                return fail(where + ".epoch " + std::to_string(ev.epoch) + " out of range [1, " +
+                            std::to_string(n_ep) + "]");
+
+            if (el.contains("step_m")) {
+                if (!el["step_m"].is_number()) return fail(where + ".step_m must be a number");
+                ev.step_m = el["step_m"].get<double>();
+            }
+            if (el.contains("ramp_mps")) {
+                if (!el["ramp_mps"].is_number()) return fail(where + ".ramp_mps must be a number");
+                ev.ramp_mps = el["ramp_mps"].get<double>();
+            }
+            if (!std::isfinite(ev.step_m) || !std::isfinite(ev.ramp_mps))
+                return fail(where + ".step_m / .ramp_mps must be finite");
+            if (ev.step_m == 0.0 && ev.ramp_mps == 0.0)
+                return fail(where + " has neither a step nor a ramp — an event that injects "
+                            "nothing would be graded as an undetected event");
+
+            cfg.sat_clock.steps.push_back(std::move(ev));
+        }
+    }
+
+    return true;
+}
+
+std::uint64_t stationSeedSalt(const std::string& name) {
+    // splitmix64 over the marker, matching the simulator's other self-contained hashes.
+    auto mix = [](std::uint64_t x) {
+        x += 0x9E3779B97F4A7C15ull;
+        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+        x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+        return x ^ (x >> 31);
+    };
+    std::uint64_t h = mix(0x57A710CAFEEDull ^ name.size());
+    for (unsigned char ch : name) h = mix(h ^ static_cast<std::uint64_t>(ch));
+    // Truncate to 53 bits: the salt is written into a JSON child config, and a JSON
+    // number is conventionally a double, whose mantissa is 53 bits.  A full 64-bit
+    // value does NOT survive that round trip — it comes back rounded, and two stations
+    // whose salts differ only in the low bits would silently collide and share one
+    // whole noise realization.  53 bits is ample for a minimum network and makes the
+    // value exact for any consumer, whichever way it reads the number.
+    h &= (1ull << 53) - 1ull;
+    // 0 is the "legacy, do not salt" sentinel; a station must never land on it.
+    return h == 0 ? 0x1F3779B97F4A7Cull : h;
+}
+
+bool writeStationConfig(const std::filesystem::path& base_config,
+                        const NetworkStation& st,
+                        double anchor_lat_deg, double anchor_lon_deg,
+                        const std::filesystem::path& out_path,
+                        std::string* err) {
+    auto fail = [&](const std::string& msg) {
+        if (err) *err = msg;
+        return false;
+    };
+
+    nlohmann::json doc = nlohmann::json::object();
+    if (!base_config.empty()) {
+        std::ifstream file(base_config);
+        if (!file.is_open())
+            return fail("cannot open base sim config: " + base_config.string());
+        try {
+            doc = nlohmann::json::parse(file, nullptr, true, /*ignore_comments=*/true);
+        } catch (const std::exception& e) {
+            return fail("JSON parse error in " + base_config.string() + ": " + e.what());
+        }
+    }
+    if (!doc.is_object()) doc = nlohmann::json::object();
+
+    // Write into the same object the loader reads from ("simulator" wrapper or root),
+    // otherwise the overrides would land beside the knobs instead of among them.
+    nlohmann::json& s = doc.contains("simulator") && doc["simulator"].is_object()
+                            ? doc["simulator"] : doc;
+
+    s["station"] = { { "name", st.name },
+                     { "seed_salt", stationSeedSalt(st.name) } };
+
+    if (!s.contains("trajectory") || !s["trajectory"].is_object())
+        s["trajectory"] = nlohmann::json::object();
+    s["trajectory"]["lat0_deg"] = st.lat_deg;
+    s["trajectory"]["lon0_deg"] = st.lon_deg;
+    s["trajectory"]["h0_m"] = st.h_m;
+
+    if (!s.contains("iono") || !s["iono"].is_object())
+        s["iono"] = nlohmann::json::object();
+    s["iono"]["center_lat_deg"] = anchor_lat_deg;
+    s["iono"]["center_lon_deg"] = anchor_lon_deg;
+
+    // Per-station receiver biases REPLACE the base lists wholesale when the roster
+    // entry declares any (config arrays replace, they do not merge — the same rule the
+    // processor's deepMergeJson follows, so the two dialects behave alike).
+    if (!st.rx_code_bias.empty() || !st.rx_phase_bias.empty()) {
+        if (!s.contains("biases") || !s["biases"].is_object())
+            s["biases"] = nlohmann::json::object();
+        auto emit = [](const std::vector<RxBias>& v) {
+            nlohmann::json a = nlohmann::json::array();
+            for (const auto& b : v) a.push_back({ { "code", b.code }, { "value_m", b.value_m } });
+            return a;
+        };
+        if (!st.rx_code_bias.empty())  s["biases"]["rx_code_bias"]  = emit(st.rx_code_bias);
+        if (!st.rx_phase_bias.empty()) s["biases"]["rx_phase_bias"] = emit(st.rx_phase_bias);
+    }
+
+    // The child must not recurse, and must not think it owns a roster.
+    s.erase("network_stations");
+    doc.erase("network_stations");
+
+    std::ofstream out(out_path);
+    if (!out) return fail("cannot write child sim config: " + out_path.string());
+    out << doc.dump(2) << "\n";
+    if (!out) return fail("write failed for child sim config: " + out_path.string());
     return true;
 }
 

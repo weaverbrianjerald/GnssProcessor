@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <vector>
 
 #include "common/Constants.hpp"
@@ -205,6 +206,7 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
             st.heading_deg = hd < 0.0 ? hd + 360.0 : hd;
             states_.push_back(st);
         }
+        applyClockRandomWalk(c);
         return;
     }
 
@@ -258,6 +260,37 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
         N += V * std::cos(H) * sub;
         tt += sub;
         if (k % step_per_epoch == 0) record(tt, E, N);
+    }
+    applyClockRandomWalk(c);
+}
+
+// ---------------------------------------------------------------------------
+//  Receiver clock random walk.
+//
+//  bias(t) = clock_bias0_s + clock_drift_sps*t   (set at record time, above)
+//            + w_k, with w_0 = 0 and w_k = w_{k-1} + N(0, sqrt(q*dt)) metres/c.
+//
+//  White frequency noise integrates to a random-walk phase, which is the standard
+//  quartz-oscillator model and exactly the process a PPP filter's clock state assumes
+//  — hence the m^2/s spectral density, the same unit as `process_noise.clock_bias_q`.
+//  The FIRST epoch is deliberately undisturbed so clock_bias0_s remains the literal
+//  truth at the start of the arc (the value the answer key and the header a priori
+//  quote), and q = 0 makes the whole function a no-op with NO draw from the stream —
+//  the byte-identity guarantee for every dataset generated before this knob existed.
+// ---------------------------------------------------------------------------
+void TrajectoryGenerator::applyClockRandomWalk(const TrajectoryConfig& c) {
+    if (!(c.clock_rw_q_m2ps > 0.0) || states_.empty()) return;
+
+    const double dt = std::max(c.interval_s, 0.0);
+    // sqrt(q*dt) is METRES of range; the truth clock is stored in seconds.
+    const double step_s = std::sqrt(c.clock_rw_q_m2ps * dt) / Constants::SPEED_OF_LIGHT;
+
+    std::mt19937_64 rng(c.clock_seed);
+    std::normal_distribution<double> gauss(0.0, 1.0);
+    double w_s = 0.0;
+    for (std::size_t i = 0; i < states_.size(); ++i) {
+        if (i > 0) w_s += step_s * gauss(rng);
+        states_[i].clock_bias_s += w_s;
     }
 }
 

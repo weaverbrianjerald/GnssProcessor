@@ -110,8 +110,12 @@ EphemerisProvider::EphemerisProvider(const std::filesystem::path& setup_obs,
     // half is gated on a non-empty rx_antenna_type: with none, force receiver PCO/PCV
     // off (they default true) so getAntennaCorrection returns exactly
     // (-sat_pco + sat_pcv); with one, enable them so the receiver half is injected too
-    // and the run config's enable_receiver_pco/pcv cancels it.  Phase wind-up stays OFF
-    // either way — it is ill-defined on a rotating hull, so both sides omit it.
+    // and the run config's enable_receiver_pco/pcv cancels it.  enable_phase_windup
+    // must stay OFF *here* in every case: since M10 (2026-08-11) wind-up is injected
+    // through the DEDICATED phaseWindupMetres() path (corrections.phase_windup knob,
+    // accumulated mode), so letting getAntennaCorrection add its own wrapped wind-up
+    // would double-inject the term.  The level, north-referenced receiver convention
+    // is shared by both paths; hull yaw stays unmodelled on both sides.
     if (!ProductCache::getInstance().getAntennas().empty()) {
         const bool rx_on = !rx_antenna_type_.empty();
         auto& mc = config_.getModelCorrections(); // non-const overload
@@ -379,6 +383,37 @@ double EphemerisProvider::signalBiasMetres(const std::string& sat, const std::st
     // observable cancels it back to truth.  getBiasCorrection returns 0 for any
     // (satellite, observable) the product does not cover, which cancels trivially.
     return geometry_->getCorrections().getBiasCorrection(sat, code, t);
+}
+
+double EphemerisProvider::phaseWindupMetres(const std::string& sat, const Eigen::Vector3d& rx,
+                                            const Eigen::Vector3d& sat_pos,
+                                            const Eigen::Vector3d& sat_vel,
+                                            double wavelength_m, const GnssTime& t) const {
+    if (!geometry_ || wavelength_m <= 0.0) return 0.0;
+    // Same prefix->System mapping as antennaMetres (RinexParser::systemFromSatPrefix):
+    // an unhandled prefix injects nothing rather than a misclassified attitude model.
+    System system;
+    switch (sat.empty() ? '?' : sat[0]) {
+        case 'G': system = System::GPS;     break;
+        case 'E': system = System::Galileo; break;
+        case 'R': system = System::GLONASS; break;
+        case 'C': system = System::BeiDou;  break;
+        case 'J': system = System::QZSS;    break;
+        case 'S': system = System::SBAS;    break;
+        default:  return 0.0;
+    }
+    // Geometry's cached Sun = the source PppModel passes (getCachedSunPosition), so the
+    // yaw-steering body frame — hence the wind-up angle — matches the processor exactly.
+    Eigen::Vector3d sun, moon;
+    geometry_->sunMoonPositions(t, sun, moon);
+    // accumulate=true: the injected physics must be CONTINUOUS.  A wrapped (fractional)
+    // injection would step the phase by exactly one cycle at every ±pi crossing, which
+    // an estimator can only absorb by stepping the float ambiguity — the opposite of
+    // the time-constant-integer contract this term exists to protect.  The run config
+    // mirrors it with estimation.accumulate_phase_windup.
+    return geometry_->getCorrections().computePhaseWindUp(sat, system, rx, sat_pos,
+                                                          wavelength_m, t, sun, sat_vel,
+                                                          /*accumulate=*/true);
 }
 
 } // namespace sim

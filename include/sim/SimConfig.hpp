@@ -55,8 +55,94 @@ struct ScriptedSlip {
     bool   flag_lli{ false };   ///< Set LLI=1 on each applied repetition.
 };
 
+/**
+ * @brief A per-observable receiver bias injected as truth (SPEC §3, §4.5).
+ *
+ * The simulator historically carried exactly ONE receiver-side bias — a scalar
+ * GPS->Galileo ISB added identically to Galileo code and phase — so every
+ * per-signal receiver code bias in the model was zero.  That is not a cosmetic
+ * omission for a NETWORK fixture: the S-basis contract's Table-8 identity
+ * (§B row 4) states that the estimable ionosphere differs from the true
+ * ionosphere by the FLEET-MEAN receiver GF code bias minus the satellite GF
+ * bias.  With every receiver bias zero, the satellite-mean form of that
+ * identity degenerates to 0 == 0 and the headline system-level unit test proves
+ * nothing.  Injecting one is therefore MANDATORY for the fixture, not optional.
+ *
+ * NOTE a non-zero receiver code bias makes the dataset unsolvable by a
+ * bias-blind single-receiver PPP, which is why the default is an empty list
+ * (byte-identical to every existing scenario).
+ */
+struct RxBias {
+    std::string code;        ///< RINEX-3 observation code the bias applies to, e.g. "C1C" / "L2W".
+    double value_m{ 0.0 };   ///< Bias added to that observable (m).  Code and phase are independent.
+};
+
+/**
+ * @brief One peer station in a synthetic NETWORK fixture (`synth-network`).
+ *
+ * The network driver does NOT synthesize stations in-process: it re-invokes the
+ * executable once per station as a CHILD PROCESS (the same escape hatch the
+ * `all` subcommand already uses for `spp-reference`).  That is forced, not
+ * preferred — see docs/SPEC_synthetic_minimum_network.md §1.  Two blockers make
+ * an in-process loop unsafe: a second @c EphemerisProvider re-registers the
+ * spdlog logger name and the catch handler re-throws out of the process, and a
+ * SHARED provider carries three station-dependent quantities with no per-station
+ * setter (the phase wind-up accumulator is keyed by satellite ID alone, ocean
+ * loading is frozen at one site, and the receiver antenna type is one string).
+ *
+ * Each station therefore lands in its OWN output directory, which is also why
+ * the eleven @c truth_*.csv writers need no station column: the directory IS
+ * the station dimension.
+ */
+struct NetworkStation {
+    std::string name;            ///< 9-char marker, e.g. "SNA000SIM"; also the RINEX filename prefix.
+    double lat_deg{ 0.0 };       ///< Station latitude (deg).
+    double lon_deg{ 0.0 };       ///< Station longitude (deg).
+    double h_m{ 0.0 };           ///< Station ellipsoidal height (m).
+    /// Held OUT of the network solve and used as the closed-loop consumer
+    /// (network.closed_loop.station).  At most one station may set this.
+    bool consumer{ false };
+    /// Per-station receiver biases, OVERRIDING the base config's lists for this
+    /// station.  These must DIFFER across the roster: the Table-8 identity the
+    /// fixture exists to test resolves the FLEET MEAN of the receiver GF code bias,
+    /// and a roster on which every station carries the same bias makes the fleet
+    /// mean indistinguishable from each member — the estimator could realize any
+    /// split between them and still grade as correct.  Declared per station rather
+    /// than derived from the salt so the truth is stated, not implicit.
+    std::vector<RxBias> rx_code_bias;
+    std::vector<RxBias> rx_phase_bias;
+};
+
 /** @brief All run-time knobs for one synthesized dataset. */
 struct SimConfig {
+    /**
+     * @brief Identity of the receiver THIS invocation synthesizes.
+     *
+     * EMPTY @c name (the default) reproduces the historical single-station
+     * behaviour byte-for-byte: marker "SARV", marker number "SARV00FJI", output
+     * file "SARV_R_<yyyydoy>0000_01D_30S_MO.rnx".  The `synth-network` driver
+     * writes one child config per station with this block filled in.
+     *
+     * @c seed_salt is XORed into EVERY RNG seed (noise, multipath/slip,
+     * troposphere, receiver clock) and into the integer-ambiguity hash.  It must
+     * be non-zero and distinct per station, and the driver derives it from the
+     * station name so it is reproducible.  Leaving it 0 across a network is the
+     * single most likely wrong-but-plausible outcome of the whole fixture: every
+     * station would share one noise, multipath, slip, ZWD and receiver-clock
+     * realization, between-station differences would cancel the noise exactly,
+     * the common receiver clock would be absorbed into the satellite-clock datum,
+     * and the network would look perfectly conditioned while carrying no
+     * information (SPEC §1.1 F1).
+     */
+    struct StationId {
+        std::string name{};             ///< Marker + filename prefix; EMPTY = legacy "SARV".
+        std::uint64_t seed_salt{ 0 };   ///< XORed into every RNG seed and into ambN; 0 = legacy.
+    } station;
+
+    /// Peer roster for `synth-network`.  Empty (the default) = single-station
+    /// synthesis; the other subcommands ignore it entirely.
+    std::vector<NetworkStation> network_stations;
+
     /// White measurement noise: zenith 1-sigma, scaled by 1/sin(elevation).
     struct Noise {
         double code_sigma_zen_m{ 0.30 };       ///< Code pseudorange sigma at zenith (m).
@@ -130,6 +216,17 @@ struct SimConfig {
     /// Inter-system / receiver biases injected as truth states.
     struct Biases {
         double isb_gps_gal_m{ 8.0 }; ///< GPS->Galileo inter-system bias on Galileo rows (m).
+        /// Per-observable RECEIVER code biases (m), added to the matching code
+        /// observable at THIS station.  Empty (the default) = none, byte-identical.
+        /// See @ref RxBias for why a network fixture cannot leave these at zero.
+        /// Truth is written to @c truth_rx_bias.csv whenever either list is non-empty.
+        std::vector<RxBias> rx_code_bias;
+        /// Per-observable RECEIVER phase biases (m).  Under the producer's S-basis the
+        /// receiver phase bias is PURE GAUGE (it rides inside the eq34 datum), so a
+        /// zero-injected RPB is legitimate truth — but that must be a stated fact in
+        /// @c truth_datum.json rather than an unexamined default, which is why the knob
+        /// exists even though the fixture normally leaves it empty.
+        std::vector<RxBias> rx_phase_bias;
     } biases;
 
     /// Full IERS/IGS correction stack (M7).  Each term, when enabled, is injected
@@ -217,6 +314,25 @@ struct SimConfig {
         /// signals, so its OSB IF combination is ≈0.  Truth per (satellite, observable)
         /// is written to @c truth_bias.csv.  Needs the .BIA fixture for the date.
         bool signal_bias{ false };
+        /// Carrier-phase wind-up (Wu et al. 1993), injected by reusing the processor's
+        /// own @c GnssCorrections::computePhaseWindUp in ACCUMULATED (unwrapped) mode:
+        /// the injected term is continuous within each tracked arc, so the phase
+        /// ambiguities stay time-constant integers for any estimator that models
+        /// wind-up.  Phase-only, per band (the angle is band-common in cycles; metres
+        /// scale with each wavelength — MW/WL cycles are untouched), satellite
+        /// yaw-steering attitude from the geometry's cached Sun with velocity fallback,
+        /// receiver frame = the LEVEL, NORTH-REFERENCED local N/E dipole (the same
+        /// convention as @c rx_antenna_type's PCV; a yawing hull is deliberately NOT
+        /// modelled on either side).  The run config cancels it with
+        /// @c model_corrections.enable_phase_windup plus
+        /// @c estimation.accumulate_phase_windup (the processor's fractional default
+        /// would differ from the data by integer cycles at every ±pi wrap).  An
+        /// external full-stack PPP (CSRS-PPP) corrects wind-up unconditionally, so a
+        /// dataset WITHOUT it makes such a service absorb a time-varying term into its
+        /// float ambiguities — injecting it is a correctness fix, same argument as the
+        /// satellite antenna and OSB terms.  Truth per (epoch, satellite) is written to
+        /// @c truth_windup.csv.
+        bool phase_windup{ false };
     } corrections;
 
     /// Visibility screen.
@@ -241,6 +357,23 @@ struct SimConfig {
         double drift_lon_deg_per_min{ 0.30 };    ///< Storm-centre longitude drift (deg/min).
         double center_lat_offset_deg{ 0.0 };     ///< Storm centre latitude offset from the trajectory origin (deg).
         double center_lon_offset_deg{ 0.20 };    ///< Storm centre longitude offset from the trajectory origin (deg).
+        /// ABSOLUTE storm-centre anchor (deg).  NaN (the default) keeps the historical
+        /// behaviour: the centre is derived from THIS run's trajectory origin as
+        /// @c lat0_deg + center_lat_offset_deg.  That is correct for a single receiver
+        /// and catastrophic for a network synthesized as N independent processes — every
+        /// station would re-derive the blob centre from its OWN origin and therefore sit
+        /// exactly at the centre, so a "travelling ionospheric disturbance" would arrive
+        /// simultaneously and identically everywhere and grade as a satellite-side
+        /// effect (the precise opposite of the modelled physics).  The network driver
+        /// sets these, so every station samples ONE field at its own pierce point.
+        ///
+        /// CAVEAT: only the SED blob and the legacy continuous TID are IPP-driven.
+        /// Explicit @c tid_pulses and @c turb_sats bypass the spatial weight entirely and
+        /// are scaled by obliquity alone, so those two overlays have no spatial coherence
+        /// even with an absolute anchor.  Use the SED blob for spatially-structured
+        /// network ionosphere.
+        double center_lat_deg{ std::numeric_limits<double>::quiet_NaN() };
+        double center_lon_deg{ std::numeric_limits<double>::quiet_NaN() };
         // Travelling-Ionospheric-Disturbance geometry.
         double tid_wavelength_km{ 300.0 };       ///< TID horizontal wavelength (km).
         double tid_period_s{ 1200.0 };           ///< TID period (s).
@@ -313,6 +446,66 @@ struct SimConfig {
         std::string gim_path{};
     } iono;
 
+    /**
+     * @brief One scripted SATELLITE-CLOCK step — a G-B event at a known epoch.
+     *
+     * A signed jump in one satellite's clock, held for the remainder of the arc
+     * (a step, not an impulse).  This is the population the Q3 temporal-anchor
+     * guard exists to catch, manufactured on demand with the magnitude known
+     * exactly, which is what a real lineage can never offer.
+     */
+    struct ScriptedSatClockStep {
+        std::string sat;         ///< "G05"; ^[GE]\d\d$.
+        int    epoch{ 0 };       ///< 1-based epoch index the step is applied FROM (inclusive).
+        double step_m{ 0.0 };    ///< Signed jump in metres of range.
+        double ramp_mps{ 0.0 };  ///< Optional additional ramp (m/s) accumulating after @c epoch.
+    };
+
+    /**
+     * @brief Synthetic SATELLITE clock error, added ON TOP of the precise CLK product.
+     *
+     * WHY THIS EXISTS.  The sim injects the precise CLK product as the satellite
+     * clock, and the network producer emits its clock as a CORRECTION to that same
+     * resolved product (the S line's @c apriori_id is the SP3+CLK basename pair).
+     * A-priori and truth are therefore the same object, so with no injected error the
+     * estimable clock truth is identically ZERO — a valid null test but not a
+     * measurement, and no clock EVENT can be exercised at all.  This channel supplies
+     * both.
+     *
+     * DETERMINISM CONTRACT.  Every value must be a pure function of (satellite, time),
+     * because a network is synthesized as N independent processes that must agree
+     * bit-for-bit on the satellite side.  The error is therefore PRE-GENERATED on the
+     * epoch grid from a per-satellite hash-seeded stream and linearly interpolated to
+     * the (station-dependent) emission time — never drawn lazily inside the satellite
+     * loop.  A lazy draw would also be sky-dependent, because @c forwardPseudorange is
+     * called BEFORE the elevation mask, so the draw count would change with visibility
+     * and destroy storm-on/off byte-identity.
+     *
+     * WHERE IT IS INJECTED.  Into the forward model's clock lookup ONLY, never into
+     * @c EphemerisProvider::clock() itself: that shared entry point also feeds the
+     * internal SPP and the Part-B answer key, so mutating it would make the 1 mm
+     * noise-free self-consistency gate pass no matter how wrong the arc is — the gate
+     * would stop being a safety net at exactly the moment it is most needed.
+     *
+     * All defaults are 0/empty, so an omitted section reproduces the existing datasets
+     * byte-for-byte.
+     */
+    struct SatClock {
+        /// Per-satellite constant offset, 1-sigma (m).  Drawn once per satellite.
+        double bias0_sigma_m{ 0.0 };
+        /// Per-satellite linear rate, 1-sigma (m/s).  Drawn once per satellite.
+        double rate_sigma_mps{ 0.0 };
+        /// Random-walk process-noise spectral density (m^2/s) — the SAME units the
+        /// producer's `filter.process_noise.sat_clock_q` uses, so injected truth and the
+        /// estimator's stochastic model are directly comparable.  The measured physical
+        /// value is q_phys ~ 3e-8 (about 0.9 mm per 30 s epoch); the lineage's armed
+        /// carry sits far above it, which is the whole subject of the Q3 card.
+        double rw_q_m2ps{ 0.0 };
+        std::uint64_t seed{ 20240315ULL ^ 0x5A7C10CBull }; ///< Dedicated stream (must be >= 0).
+        /// Deterministic hand-authored clock steps layered on top (G-B events).
+        std::vector<ScriptedSatClockStep> steps;
+    } sat_clock;
+
     /// Fixture DATE.  Selects which bundled single-day product set (SP3 / CLK / nav /
     /// GIM) the synth runs against, and therefore the GPS week and the day-start tow
     /// that Trajectory::start_tow_s is measured against.  Defaults to DOY 129 so every
@@ -358,7 +551,33 @@ struct SimConfig {
         double heave_amp_m{ 1.0 };          ///< Sea-state heave amplitude (m, kinematic).
         double heave_period_s{ 8.0 };       ///< Sea-state heave period (s, kinematic).
         double clock_bias0_s{ 1.0e-4 };     ///< Initial receiver clock bias (s).
-        double clock_drift_sps{ 0.0 };      ///< Receiver clock drift (s/s); 0 = constant bias.
+        /// Receiver clock DRIFT (s/s) — the oscillator's fractional frequency offset.
+        /// 0 (the default) = the historical CONSTANT bias.  A real receiver clock is
+        /// dominated by this linear ramp: a free-running TCXO at ~1e-9 s/s moves the
+        /// clock ~0.3 m of range per second, i.e. ~9 m between 30 s epochs, so a batch
+        /// model that shares ONE clock parameter across all epochs is a modelling error
+        /// (this is what makes the per-epoch clock indexing mandatory rather than
+        /// merely conventional).  Published per epoch in truth_clock.csv.
+        double clock_drift_sps{ 0.0 };
+        /// Receiver clock RANDOM WALK — process-noise spectral density in m^2/s, the
+        /// same units a PPP filter's `process_noise.clock_bias_q` uses, so the injected
+        /// truth and an estimator's stochastic model can be compared directly.  The
+        /// per-epoch increment is drawn N(0, sqrt(q * interval_s)) METRES of range and
+        /// accumulated (white frequency noise -> random-walk phase, the standard quartz
+        /// clock model).  0 (the default) = a perfectly deterministic clock, byte-
+        /// identical to the pre-existing datasets.
+        ///
+        /// WHY IT IS NOT ENOUGH TO DRIFT LINEARLY: a pure ramp is exactly representable
+        /// by TWO parameters (bias + drift), so a student could still avoid indexing the
+        /// clock per epoch.  A real oscillator wanders; q = 3e-3 m^2/s is ~0.3 m per 30 s
+        /// epoch (sigma_y(30 s) ~ 3e-11, an ordinary geodetic-receiver internal
+        /// oscillator), which is above the code noise floor of an epoch's clock estimate
+        /// and therefore NOT absorbable by any low-order polynomial.
+        double clock_rw_q_m2ps{ 0.0 };
+        /// Dedicated RNG seed for the clock random walk.  A private stream: it cannot
+        /// perturb the noise/multipath/slip/tropo draws, so storm-on/off control and the
+        /// published answer keys survive a re-seed of the clock alone (must be >= 0).
+        std::uint64_t clock_seed{ 20240315ULL ^ 0xC10CC0DEull };
         // Optional "landfall" mode (both dest_* finite => drift start->dest with a
         // terminal grounding; NaN default keeps the analytic model byte-identical).
         double dest_lat_deg{ std::numeric_limits<double>::quiet_NaN() };  ///< Grounding latitude (deg).
@@ -432,6 +651,45 @@ struct SimConfig {
  */
 bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
                    std::string* err = nullptr);
+
+/**
+ * @brief Derive a station's RNG salt from its name.
+ *
+ * A pure hash, so the same roster always produces the same per-station
+ * realization and a re-run is reproducible without recording the salts.  Never
+ * returns 0 — 0 is the sentinel meaning "legacy single-station, leave every seed
+ * untouched", and a station that silently landed on it would share the unsalted
+ * realization with any other station that did the same.
+ */
+std::uint64_t stationSeedSalt(const std::string& name);
+
+/**
+ * @brief Write a per-station CHILD config for the `synth-network` fan-out.
+ *
+ * Reads @p base_config verbatim (so every knob the user set is preserved
+ * exactly), then overrides only what makes this invocation a specific station:
+ * the station identity and salt, the trajectory origin, and the ABSOLUTE storm
+ * anchor.  It also strips @c network_stations so the child cannot recurse.
+ *
+ * The absolute anchor is the reason this helper exists rather than the driver
+ * hand-editing text: with the legacy relative anchor each child would re-derive
+ * the ionospheric blob centre from its OWN origin and therefore sit exactly at
+ * the centre, so a travelling disturbance would arrive simultaneously and
+ * identically at every station.
+ *
+ * @param base_config     Config the network run was launched with; may be empty
+ *                        (then the child starts from SimConfig defaults).
+ * @param st              The station to write a config for.
+ * @param anchor_lat_deg  Absolute storm-centre latitude (deg).
+ * @param anchor_lon_deg  Absolute storm-centre longitude (deg).
+ * @param out_path        Child config path to write.
+ * @param err             Optional: set to a human-readable reason on failure.
+ */
+bool writeStationConfig(const std::filesystem::path& base_config,
+                        const NetworkStation& st,
+                        double anchor_lat_deg, double anchor_lon_deg,
+                        const std::filesystem::path& out_path,
+                        std::string* err = nullptr);
 
 } // namespace sim
 } // namespace GnssProcessor

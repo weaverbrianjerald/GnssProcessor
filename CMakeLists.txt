@@ -295,6 +295,7 @@ target_link_libraries(gnss_atx_diag PRIVATE gnss_core)
 add_executable(gnss_simulator
     src/sim/main.cpp
     src/sim/SimConfig.cpp
+    src/sim/SatClockError.cpp
     src/sim/ScriptedSlips.cpp
     src/sim/RinexObsWriter.cpp
     src/sim/EphemerisProvider.cpp
@@ -408,9 +409,11 @@ target_compile_definitions(gnss_tests PRIVATE
 # Compiles the standalone sim sources it needs directly (they are not in gnss_core).
 add_executable(gnss_simulator_selftest
     tests/sim/test_sim_selfconsistency.cpp
+    tests/sim/test_sim_network_fixture.cpp
     src/sim/RinexObsWriter.cpp
     src/sim/IonoDisturbance.cpp
     src/sim/SimConfig.cpp
+    src/sim/SatClockError.cpp
     src/sim/ScriptedSlips.cpp
     src/sim/TrajectoryGenerator.cpp
     src/sim/OtlField.cpp

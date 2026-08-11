@@ -1,0 +1,168 @@
+{
+  "_comment": [
+    "SYNTHETIC MINIMUM NETWORK — producer arm, 3 solve stations + 1 held-out consumer.",
+    "docs/SPEC_synthetic_minimum_network.md.  G-A NULL arm: 240 epochs = 2 h.",
+    "Data from: gnss_simulator synth-network --sim-config config/sim/simnet3_bare.json",
+    "",
+    "INT posture (SPEC §2.2): the sim leaves corrections.signal_bias OFF, so",
+    "enable_code_phase_bias MUST be false here or the producer would remove an OSB the",
+    "data never carried.  The two flip together; the W6 arm flips both the other way.",
+    "",
+    "EVERY OTHER model_corrections flag is matched to the sim's injected stack.  The sim",
+    "injects by REUSING the processor's own models, so a matched pair cancels exactly and",
+    "a MISmatched one is a systematic that looks like an estimator defect.",
+    "",
+    "GPS-only via active_systems.  The synthetic RINEX carries Galileo too (the sim's",
+    "signal plan is fixed), so this is a producer-side restriction, not a data property —",
+    "which also means a GPS+Gal arm needs no new data.",
+    "",
+    "processing.signal_priorities is MANDATORY and not merely conventional: with the key",
+    "absent, selectObservationTypes returns an empty vector for the missing constellation",
+    "and EVERY station contributes ZERO observations, with no error (SPEC §2.3)."
+  ],
+
+  "app_mode": "post",
+  "data_source": "internal",
+
+  "processing": {
+    "mode": "ppp-rtk-network",
+    "active_systems": [ "GPS" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": false,
+    "eigen_threads": 4,
+    "max_duration_s": 7500.0,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": { "GPS": "WCSLXPYMIQ" }
+  },
+
+  "files": { "internal_data_root": "./data" },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": false,
+    "enable_shapiro_delay": false,
+    "enable_solid_earth_tide": false,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": false,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": false,
+    "enable_satellite_pcv": false,
+    "enable_receiver_pco": false,
+    "enable_receiver_pcv": false,
+    "enable_phase_windup": false,
+    "enable_higher_order_ionosphere": false,
+    "enable_code_phase_bias": false
+  },
+
+  "estimation": {
+    "accumulate_phase_windup": true,
+    "estimate_velocity": false,
+    "estimate_phase_clock": false,
+    "estimate_ifb": false,
+    "estimate_sat_biases": false,
+    "ambiguity_resolution": { "mode": 0 },
+    "adaptive_iono_process_noise": { "enable": false }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 100.0, "clock_bias_q": 1000.0, "phase_clock_q": 1e-09,
+      "troposphere_q": 1e-09, "ionosphere_q": 0.001, "code_bias_q": 0.0001,
+      "sat_bias_q": 1e-12, "sat_phase_bias_q": 1e-12, "sat_clock_q": 0.01,
+      "system_time_offset_q": 1e-12, "ambiguity_q": 1e-12
+    },
+    "initial_std": {
+      "position": 100.0, "clock": 1000.0, "troposphere": 0.5, "ionosphere": 5.0,
+      "ambiguity": 1000.0, "code_bias": 10.0, "sat_bias": 10.0,
+      "sat_phase_bias": 10.0, "sat_clock": 1000.0, "system_time_offset": 1000.0
+    },
+    "measurement_noise": { "code_std_m": 0.3, "phase_std_m": 0.003 },
+    "stochastic_model": "elevation"
+  },
+
+  "network": {
+    "clock_datum_station": "SNA000SIM",
+    "epoch_sync_tolerance_s": 0.01,
+    "min_stations": 3,
+    "trace_stations": true,
+    "product_output_path": "C:/GnssProcessor/runs/simnet3_bare/products.txt",
+
+    "//sigma": "FORMAL-SIGMA CHANNELS — the denominators of the whole G-A calibration.",
+    "//sigma2": "serialize_sbasis_contract publishes the S line, WITHOUT WHICH THE GRADER",
+    "//sigma3": "CANNOT READ THE REALIZED DATUM (pivot / cbpin / apriori_id) and would have to",
+    "//sigma4": "assume one — the exact invariant-#5 mistake this fixture exists to avoid.",
+    "//sigma5": "emit_ura gives U,sat,clock_ura_m = s0*sqrt(scov(clock,clock)), the MARGINAL",
+    "//sigma6": "datum-conditioned formal sigma, which is what pairs with truth transformed",
+    "//sigma7": "INTO the producer's basis (SPEC §4.1).  NOTE the datum pivot deliberately",
+    "//sigma8": "gets no U record ('bogus pin variance'), so it is absent from the vf",
+    "//sigma9": "population by construction, not by a grader bug.",
+    "serialize_sbasis_contract": true,
+    "emit_ura": true,
+    "emit_phase_bias_sigma": true,
+    "emit_combined_sigma": true,
+    "trace_zwd": true,
+
+    "//": "Observability: durability first (only health_trace flushes mid-run).",
+    "write_run_manifest": true,
+    "product_flush_per_epoch": true,
+    "health_interval_s": 60,
+    "trace_epoch_status": true,
+    "trace_events": true,
+    "trace_flag_rates": true,
+    "emit_epoch_status_record": true,
+    "trace_postfit_sigma0": true,
+    "trace_postfit_keyed": true,
+    "trace_prefit_census": true,
+    "trace_topology": true,
+    "trace_dd_fractional": true,
+
+    "//qc": "QC, fingerprint-SAFE subset of the standard armed set.  raim_* is armed but",
+    "//qc2": "is STRUCTURALLY INERT at 3 stations (raim_min_stations = 3 means unanimity);",
+    "//qc3": "SPEC §7 — do not read 'armed and never fired' here as evidence of anything.",
+    "raim": true,
+    "raim_attribution": true,
+    "clock_runaway_check": true,
+
+    "closed_loop": {
+      "enable": true,
+      "consumer_undifferenced": true,
+      "consume_network_products": true,
+      "consume_network_clock": true,
+      "ar_mode": 0,
+      "station": {
+        "name": "SNZ000SIM",
+        "rinex_path": "C:/GnssProcessor/runs/simnet3_bare/SNZ000SIM/SNZ000SIM_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -1056078.1173, -4763660.5442, 4095746.9601 ]
+      }
+    },
+
+    "stations": [
+      { "name": "SNA000SIM",
+        "rinex_path": "C:/GnssProcessor/runs/simnet3_bare/SNA000SIM/SNA000SIM_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -1266643.1360, -4727176.5388, 4079014.0324 ] },
+      { "name": "SNB000SIM",
+        "rinex_path": "C:/GnssProcessor/runs/simnet3_bare/SNB000SIM/SNB000SIM_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -804755.1309, -4563993.1433, 4368443.6132 ] },
+      { "name": "SNC000SIM",
+        "rinex_path": "C:/GnssProcessor/runs/simnet3_bare/SNC000SIM/SNC000SIM_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -929530.9115, -5015299.9973, 3817934.7939 ] }
+    ]
+  },
+
+  "data_download": { "enabled": false, "product_source": "COD", "product_type": "FIN", "year": 2024, "doy": 129 },
+
+  "logging": {
+    "enable_main_log": true,
+    "enable_state_trace": true,
+    "enable_residual_trace": true,
+    "levels": {
+      "measurement_model": "warn", "state_manager": "warn", "state_initializer": "warn",
+      "ppp_model": "warn", "kalman_filter": "warn"
+    }
+  }
+}

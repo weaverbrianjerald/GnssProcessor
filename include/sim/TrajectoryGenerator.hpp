@@ -50,8 +50,14 @@ struct TrajectoryConfig {
     double heading_period_s{ 1200.0 };///< Heading weave period.
     double heave_amp_m{ 1.0 };
     double heave_period_s{ 8.0 };
+    /// Receiver clock: bias(t) = clock_bias0_s + clock_drift_sps*t + w(t), where w is a
+    /// random walk of spectral density @c clock_rw_q_m2ps (m^2/s, converted to seconds
+    /// internally) accumulated over the epoch grid from @c clock_seed.  Drift 0 + q 0 =
+    /// the historical constant bias.  See SimConfig.hpp for the physical rationale.
     double clock_bias0_s{ 1.0e-4 };
     double clock_drift_sps{ 0.0 };
+    double clock_rw_q_m2ps{ 0.0 };
+    std::uint64_t clock_seed{ 20240315ULL ^ 0xC10CC0DEull };
 
     /// Seconds of EXACT station-keeping at the start of the arc before any motion
     /// begins (0 = disabled, the historical behaviour).  During the hold the
@@ -92,6 +98,11 @@ public:
     std::size_t size() const { return states_.size(); }
 
 private:
+    /// Adds the accumulated clock random walk to every state's @c clock_bias_s.
+    /// No-op (and no RNG draw) when @c clock_rw_q_m2ps is 0, so the deterministic
+    /// bias+drift clock stays byte-identical.
+    void applyClockRandomWalk(const TrajectoryConfig& cfg);
+
     std::vector<TruthState> states_;
 };
 

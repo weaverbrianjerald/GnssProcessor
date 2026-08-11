@@ -272,6 +272,125 @@ TEST(SimSelfConsistency, LandfallDisabledByDefault) {
     EXPECT_GT(std::hypot(s.back().east_m, s.back().north_m), 1.0);  // analytic model moved
 }
 
+// --- Receiver clock model -----------------------------------------------------
+// The truth receiver clock is bias0 + drift*t + random walk.  The exam depends on
+// it NOT being a constant: a batch adjustment that shares one clock parameter
+// across all epochs is then a modelling error, which is what forces the per-epoch
+// clock indexing Part A grades (see SimConfig.hpp).
+
+// Defaults (drift 0, q 0) must reproduce the historical CONSTANT bias exactly —
+// the byte-identity guard for every dataset generated before the knob existed.
+TEST(SimSelfConsistency, ClockDefaultsToConstantBias) {
+    sim::TrajectoryConfig c;
+    c.kinematic = true; c.n_epochs = 50;
+    sim::TrajectoryGenerator g(c);
+    ASSERT_EQ(g.states().size(), 50u);
+    for (const auto& s : g.states()) EXPECT_DOUBLE_EQ(s.clock_bias_s, c.clock_bias0_s);
+}
+
+// Drift alone => an EXACTLY linear clock: zero second difference, and a total
+// excursion of drift*T.  (A pure ramp is 2-parameter modellable, which is why the
+// hero scenario also turns on the random walk below.)
+TEST(SimSelfConsistency, ClockDriftIsExactlyLinear) {
+    sim::TrajectoryConfig c;
+    c.kinematic = true; c.n_epochs = 100; c.interval_s = 30.0;
+    c.clock_drift_sps = 1.0e-9;                 // 0.2998 m/s of range
+    sim::TrajectoryGenerator g(c);
+    const auto& s = g.states();
+    ASSERT_EQ(s.size(), 100u);
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const double want = c.clock_bias0_s + c.clock_drift_sps * (double(i) * c.interval_s);
+        EXPECT_NEAR(s[i].clock_bias_s, want, 1e-18) << "epoch " << i;
+    }
+    // Second difference is identically zero for a ramp (the discriminator the RW test uses).
+    for (std::size_t i = 2; i < s.size(); ++i) {
+        const double d2 = s[i].clock_bias_s - 2.0 * s[i - 1].clock_bias_s + s[i - 2].clock_bias_s;
+        EXPECT_NEAR(d2 * Constants::SPEED_OF_LIGHT, 0.0, 1e-9);
+    }
+    const double arc_m = (s.back().clock_bias_s - s.front().clock_bias_s) * Constants::SPEED_OF_LIGHT;
+    EXPECT_NEAR(arc_m, c.clock_drift_sps * 99.0 * 30.0 * Constants::SPEED_OF_LIGHT, 1e-6);
+}
+
+// The random walk: reproducible from its own seed, correctly scaled (per-epoch
+// increment sigma = sqrt(q*dt) METRES), anchored so epoch 0 is still exactly
+// bias0, and genuinely NOT a polynomial in time.
+TEST(SimSelfConsistency, ClockRandomWalkIsSeededScaledAndNonLinear) {
+    const double C = Constants::SPEED_OF_LIGHT;
+    auto make = [](std::uint64_t seed, double q) {
+        sim::TrajectoryConfig c;
+        c.kinematic = true; c.n_epochs = 2000; c.interval_s = 30.0;
+        c.clock_drift_sps = 1.0e-9;
+        c.clock_rw_q_m2ps = q;
+        c.clock_seed = seed;
+        return c;
+    };
+    const double q = 3.0e-3;                    // => sqrt(q*30) = 0.300 m per epoch
+    sim::TrajectoryGenerator a(make(12345ULL, q));
+    sim::TrajectoryGenerator b(make(12345ULL, q));
+    sim::TrajectoryGenerator d(make(999ULL, q));
+    const auto& sa = a.states();
+    const auto& sb = b.states();
+    const auto& sd = d.states();
+    ASSERT_EQ(sa.size(), 2000u);
+
+    // Same seed => bit-identical; a different seed => a different realisation.
+    for (std::size_t i = 0; i < sa.size(); ++i) EXPECT_DOUBLE_EQ(sa[i].clock_bias_s, sb[i].clock_bias_s);
+    EXPECT_GT(std::abs(sa.back().clock_bias_s - sd.back().clock_bias_s) * C, 0.01);
+
+    // Epoch 0 is undisturbed: bias0 is still the literal truth at the arc start.
+    EXPECT_DOUBLE_EQ(sa.front().clock_bias_s, make(12345ULL, q).clock_bias0_s);
+
+    // Increment sigma, with the deterministic ramp removed, matches sqrt(q*dt).
+    const double ramp_m = 1.0e-9 * 30.0 * C;
+    double sum2 = 0.0;
+    for (std::size_t i = 1; i < sa.size(); ++i) {
+        const double inc_m = (sa[i].clock_bias_s - sa[i - 1].clock_bias_s) * C - ramp_m;
+        sum2 += inc_m * inc_m;
+    }
+    const double rms = std::sqrt(sum2 / double(sa.size() - 1));
+    EXPECT_NEAR(rms, std::sqrt(q * 30.0), 0.03);        // 0.300 m +/- 10%
+
+    // Not representable by ANY low-order polynomial: the second difference, which a
+    // bias+drift model kills exactly, is metres here.
+    double max_d2_m = 0.0;
+    for (std::size_t i = 2; i < sa.size(); ++i)
+        max_d2_m = std::max(max_d2_m,
+                            std::abs(sa[i].clock_bias_s - 2.0 * sa[i - 1].clock_bias_s
+                                     + sa[i - 2].clock_bias_s) * C);
+    EXPECT_GT(max_d2_m, 0.5);
+}
+
+// q = 0 is a true no-op even with a seed set (no draw, no perturbation) — and the
+// random walk applies on the LANDFALL path too, not just the analytic one.
+TEST(SimSelfConsistency, ClockRandomWalkOffIsNoOpAndAppliesToLandfall) {
+    sim::TrajectoryConfig c;
+    c.kinematic = true; c.n_epochs = 40; c.interval_s = 30.0;
+    c.clock_drift_sps = 5.0e-10;
+    c.clock_seed = 777ULL;
+    c.clock_rw_q_m2ps = 0.0;                    // off
+    sim::TrajectoryGenerator off(c);
+    for (std::size_t i = 0; i < off.states().size(); ++i)
+        EXPECT_DOUBLE_EQ(off.states()[i].clock_bias_s,
+                         c.clock_bias0_s + c.clock_drift_sps * (double(i) * c.interval_s));
+
+    // Landfall mode is a separate code path in the generator; the clock must behave
+    // identically there (it returns early, so it needs its own call site).
+    sim::TrajectoryConfig L = c;
+    L.lat0_deg = -16.60; L.lon0_deg = -179.55;
+    L.dest_lat_deg = -16.169; L.dest_lon_deg = 179.723;
+    L.h0_m = 0.0; L.n_epochs = 241;
+    L.clock_rw_q_m2ps = 3.0e-3;
+    sim::TrajectoryGenerator land(L);
+    ASSERT_EQ(land.states().size(), 241u);
+    double max_dev_m = 0.0;
+    for (std::size_t i = 0; i < land.states().size(); ++i) {
+        const double ramp = L.clock_bias0_s + L.clock_drift_sps * (double(i) * L.interval_s);
+        max_dev_m = std::max(max_dev_m,
+                             std::abs(land.states()[i].clock_bias_s - ramp) * Constants::SPEED_OF_LIGHT);
+    }
+    EXPECT_GT(max_dev_m, 0.1) << "random walk was not applied on the landfall path";
+}
+
 namespace {
 // Write a minimal truth + state_trace fixture; @p pos_err is a constant ECEF
 // offset applied to the recovered state, @p std the formal sigma per axis.
@@ -689,6 +808,20 @@ TEST(SimConfigLoader, ParsesM7CorrectionsFlags) {
     EXPECT_FALSE(cfg2.corrections.solid_earth_tide);
     EXPECT_FALSE(cfg2.corrections.pole_tide);
     EXPECT_FALSE(cfg2.corrections.signal_bias);   // unset -> default false (byte-identity)
+}
+
+// M10 phase wind-up: opt-in knob, default OFF (byte-identity contract — an absent
+// key must reproduce the pre-M10 dataset exactly; the injected value is then the
+// literal 0.0 added to every phase row).
+TEST(SimConfigLoader, PhaseWindupIsOptInDefaultOff) {
+    std::string err;
+    sim::SimConfig cfg;
+    ASSERT_TRUE(tryLoadScript("{\"corrections\":{\"phase_windup\":true}}", &err, &cfg)) << err;
+    EXPECT_TRUE(cfg.corrections.phase_windup);
+
+    sim::SimConfig cfg2;
+    ASSERT_TRUE(tryLoadScript("{}", &err, &cfg2)) << err;
+    EXPECT_FALSE(cfg2.corrections.phase_windup);
 }
 
 // ---------------------------------------------------------------------------
