@@ -1380,9 +1380,7 @@ promotion** — G4 remains the invariant-#1 blocker.
 
 ### §8.11.6 Remaining gaps, named not hidden
 
-1. **`applyMwWlConstraintsNlWl_` has BOTH holes** (no FFR gate, no innovation
-   screen).  Unreachable in the `wl_only` posture, so this consumer is covered;
-   a `wl_only: false` user of the NL/WL path is not.  Marked in code.
+1. ~~**`applyMwWlConstraintsNlWl_` has BOTH holes**~~ — **CLOSED, §8.11.7.**
 2. **`wl_only on` for a network-bias consumer may be the wrong posture
    entirely.**  `setArIgnoreMwWl`'s own comment says this harness should
    SUPPRESS the MW feed so AR runs pure MLAMBDA on the consumed-bias float; the
@@ -1393,3 +1391,45 @@ promotion** — G4 remains the invariant-#1 blocker.
    (the derived consumer config builds its own resolver).  The diagnosis above
    had to be made from the trace and by elimination; that should be fixed before
    the next consumer-side investigation.
+
+### §8.11.7 The NlWl sibling — both guards applied
+
+`applyMwWlConstraintsNlWl_` is the per-band sibling: it also asserts MW integers
+with no LAMBDA search (same `+inf` sentinel) and it had the same two holes.  Both
+guards now stand behind it, in the same order and with the same semantics —
+**FFR first** (drop arcs whose failure rate cannot be bounded), **innovation
+second** (drop assertions the float contradicts).  The order is not cosmetic:
+the measured blunder passed the first with `p_succ = 1.0` and was caught only by
+the second, because the two answer different questions — RANDOM rounding failure
+vs SYSTEMATIC frame disagreement.
+
+**One trap this path has that `resolveWlOnly` does not.**  Its constraints are
+built per ARC from the MW map, keyed by the detector's own `stats_key`, and its
+`sig_hi` / `sig_lo` are re-ordered by FREQUENCY at construction:
+
+```cpp
+if (f_a > f_b) { c.sig_hi = sig_a; c.sig_lo = sig_b; }
+else           { c.sig_hi = sig_b; c.sig_lo = sig_a; }   // <-- swapped vs the key
+```
+
+So `sat + "_" + sig_hi + "_" + sig_lo` is NOT the stats key whenever
+`f_a < f_b`.  Reconstructing the key would miss the quality map on exactly those
+arcs, and a miss is scored 0 by the fail-safe — which would look like a working
+guard while silently refusing every affected fix, or (had the fail-safe gone the
+other way) silently bypassing the gate.  **The exact `stats_key` is therefore
+carried verbatim on `ArcConstraint` and propagated to the DD constraint**, never
+rebuilt.
+
+**Validation status, stated plainly: CODE-VERIFIED, NOT FIELD-EXERCISED.**  No
+config in the tree selects `estimation.state_ambiguity_basis: nl_wl`, so this
+path runs in none of this card's arms and the guards on it have no field
+evidence.  What IS demonstrated: the wl_only consumer arm re-run on the binary
+carrying these edits reproduces `runs/cta4_q1e7_ffr2` exactly (the consumer
+short-circuits to `resolveWlOnly` before ever reaching the sibling), so the edit
+is proven not to have reached the path this card exercises.  A first NlWl arm is
+owed before the guards there are treated as validated.
+
+**Pinned in the unit suite** (`tests/test_wl_only_ffr.cpp`, 12 cases): the
+default-ON contract for both guards and the FFR helper's fail-safe behaviour.
+The defaults are what a later edit is most likely to flip silently, and flipping
+them restores a 35 m blunder with nothing in the logs to say so.

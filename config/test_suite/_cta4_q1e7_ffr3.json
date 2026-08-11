@@ -1,0 +1,39 @@
+{
+ "_comment": [
+  "Card Q3 \u00a78.11.6 REGRESSION: re-run of the guarded q=1e-7 arm on the binary that",
+  "also carries the NlWl-sibling guards.  The consumer runs wl_only, which",
+  "short-circuits BEFORE applyMwWlConstraintsNlWl_, so this arm must reproduce",
+  "runs/cta4_q1e7_ffr2 exactly \u2014 products AND the consumer trace.  That is the",
+  "proof the NlWl edit did not reach the path this card actually exercises."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 1e-07,
+  "product_output_path": "C:/GnssProcessor/runs/cta4_q1e7_ffr3/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_q1e7_ffr3/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  }
+ }
+}

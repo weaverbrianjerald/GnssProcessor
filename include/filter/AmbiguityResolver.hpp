@@ -716,7 +716,8 @@ private:
         const Eigen::MatrixXd& P,
         const std::map<std::string, int>& wl_ambiguities,
         const std::map<std::string, double>& wl_fractions,
-        const std::vector<PppObservation>& observations);
+        const std::vector<PppObservation>& observations,
+        const std::map<std::string, WlArcQuality>& wl_quality);
 };
 
 } // namespace GnssProcessor

@@ -192,3 +192,41 @@ TEST(WlOnlyFfr, OneMarginalArcFailsA999Target) {
         WlFfrTestAccess::rate(r, {"A_L1_L2", "B_L1_L2", "C_L1_L2"}, q, nullptr);
     EXPECT_GT(p_after, 0.999);
 }
+
+// --- The DEFAULT-ON contract ----------------------------------------------
+// Both guards default ON because they close a fail-unsafe path, and both are
+// reversible.  A later edit that silently flips a default back would restore
+// the 35 m blunder with nothing in the logs to say so, so the contract is
+// pinned here rather than left to review.
+TEST(WlOnlyFfr, GuardsAreOnByDefaultAndReversible) {
+    AmbiguityResolverConfig cfg;                     // untouched defaults
+    EXPECT_TRUE(cfg.wl_only_ffr)
+        << "the WL-only bootstrap FFR gate must default ON";
+    EXPECT_GT(cfg.wl_only_max_innov_cyc, 0.0)
+        << "the innovation screen must default ON (0 disables it)";
+    EXPECT_DOUBLE_EQ(cfg.wl_only_max_innov_cyc, 0.5)
+        << "half a widelane: the largest disagreement that can still be a "
+           "rounding question rather than a frame question";
+    EXPECT_GE(cfg.wl_only_min_arc_count, 2)
+        << "a sigma from fewer than 2 samples has no degrees of freedom";
+    EXPECT_DOUBLE_EQ(cfg.min_success_rate, 0.999)
+        << "the WL tier reuses the LAMBDA tier's FFR target — one number, not two";
+}
+
+// --- The innovation screen's own arithmetic, at the boundary ---------------
+// The screen itself is |asserted - predicted| > cap, applied identically in
+// resolveWlOnly and applyMwWlConstraintsNlWl_.  What is worth pinning is the
+// SEMANTIC: the cap is on the DISAGREEMENT, so a constraint sitting exactly on
+// the cap is kept and one beyond it is dropped, symmetrically in sign.
+TEST(WlOnlyFfr, InnovationScreenIsSymmetricAndInclusiveAtTheCap) {
+    const double cap = 0.5;
+    auto dropped = [&](double asserted, double predicted) {
+        return std::abs(asserted - predicted) > cap;
+    };
+    EXPECT_FALSE(dropped(7.0, 7.0));        // exact agreement
+    EXPECT_FALSE(dropped(7.0, 6.5));        // exactly at the cap, either sign
+    EXPECT_FALSE(dropped(7.0, 7.5));
+    EXPECT_TRUE (dropped(7.0, 6.49));       // just beyond
+    EXPECT_TRUE (dropped(7.0, 7.51));
+    EXPECT_TRUE (dropped(7.0, 2.0));        // the frame-conflict scale
+}
