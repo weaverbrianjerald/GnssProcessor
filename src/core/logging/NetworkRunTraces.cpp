@@ -128,7 +128,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         cl_trace.open(cl_path);
         if (cl_trace)
             cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
-                        "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate\n";  // T2c: +ar_gate
+                        "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";  // T2c: +ar_gate; §8.11: +p_succ — the WL-only paths' ONLY confidence number (their `ratio` is the "+inf = no LAMBDA ran" sentinel, which reads as a perfect ratio and is how a 35 m wrong fix passed review)
         else
             log->warn("Network: failed to open closed-loop trace {}", cl_path.string());
     }

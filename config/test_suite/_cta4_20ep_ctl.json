@@ -1,0 +1,36 @@
+{
+ "_comment": [
+  "Q3 ladder leg G0: byte-identity re-run of the stored 20-ep CONTROL (runs/cta_20ep_ctl) on this build.  Paths only.",
+  "Card Q3 (docs/SPEC_clock_temporal_anchor.md) G1 smoke CONTROL \u2014 the internal",
+  "golden63 posture (same chain as _golden63_gps_12h_internal) cut to 600 s = 20",
+  "epochs, the anchor OFF, own lineage.  Pairs one-knob with",
+  "_golden63_20ep_cta_on.json.",
+  "",
+  "The ONE addition vs the base is the prior-residual census's `clk` family",
+  "(Card Q3 INC-0): trace-only, product byte-identical, and it is the instrument",
+  "the anchor's q and k are derived from.  Its \u03c3\u0302\u2080 on THIS arm is the measurement",
+  "that locates the binding knee \u2014 in the non-binding regime \u03c3\u0302\u2080 < 1 and falls as",
+  "q rises; once the carry binds it saturates at \u22481 and stops depending on q, so",
+  "\u03c3\u0302\u2080 = 1 marks the knee EXACTLY and does so from data, never from the",
+  "stochastic model.",
+  "",
+  "PIN: clock_temporal_anchor restated FALSE.  The card is default-OFF, but a",
+  "pairing control states its posture explicitly (the S1.5 config-chain lesson) \u2014",
+  "the anchor is FINGERPRINTED, so a chain that acquired it silently would",
+  "invalidate this arm's role as the byte-identity denominator.",
+  "FRESH lineage; run alone; never resume onto another arm."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 600.0
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "clock_temporal_anchor": false,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cta4_20ep_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_20ep_ctl/state_snapshot.bin"
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "_comment": [
+  "Card Q3 \u00a78 consumer REPLAY of runs/cta4_q3e5/products.txt \u2014 the second",
+  "consumer instrument.  Reads the emitted stream from disk, so it sees the",
+  "wire's own discontinuity marks rather than the in-process counters; a mark",
+  "that never reached the wire is invisible to the live consumer and visible",
+  "here.  enable_rt_engine makes the consumer's resets countable and is",
+  "solve-neutral.  Producer never runs."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "logging": {
+  "enable_rt_engine": true
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "closed_loop": {
+   "replay_products_path": "C:/GnssProcessor/runs/cta4_q3e5/products.txt"
+  },
+  "product_output_path": "C:/GnssProcessor/runs/cta4_q3e5_replay/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_q3e5_replay/state_snapshot.bin"
+ }
+}

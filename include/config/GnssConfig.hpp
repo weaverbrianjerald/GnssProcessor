@@ -3237,6 +3237,17 @@ namespace GnssProcessor {
         /// violation at the MECHANISM level (the paper's datum-invariance: an
         /// estimator should constrain estimable functions, not gauges).
         bool   networkClockAnchorGaugeFree() const { return network_clock_anchor_gauge_free_; }
+        /// @brief Card Q3 §2.1 — which denominator the anchor guard and the
+        ///        census's @c clk family standardize by (@c network.clock_anchor_gauge_free_stat).
+        ///
+        /// The BISECTION knob.  The gauge-free arm changed the FOLD and the
+        /// guard's DENOMINATOR in one step, so its trip collapse (65 → 3 over
+        /// 3 h) could not be apportioned; this selects the denominator
+        /// independently of the fold.  @c Auto is the shipped pairing and is
+        /// byte-identical to every arm run before the knob existed.
+        NetworkClockAnchorStat networkClockAnchorGaugeFreeStat() const {
+            return network_clock_anchor_gauge_free_stat_;
+        }
         /// @}
 
         /**
@@ -5110,6 +5121,15 @@ namespace GnssProcessor {
          * the constraint can be tight.
          */
         double getArWlOnlyPseudoVar() const { return ar_wl_only_pseudo_var_; }
+        /// @brief Apply the bootstrap FFR gate to the WL-only / MW-WL constraint paths.
+        /// Those paths assert MW integers without any LAMBDA search, so their `ratio` is
+        /// the `+inf` "no ratio test ran" sentinel and the ONLY confidence number
+        /// available is the bootstrap success rate.  Default ON.
+        bool   getArWlOnlyFfr() const { return ar_wl_only_ffr_; }
+        /// Minimum MW arc sample count admissible under @ref getArWlOnlyFfr.
+        int    getArWlOnlyMinArcCount() const { return ar_wl_only_min_arc_count_; }
+        /// Max innovation (cycles) a WL-only constraint may assert against the float.
+        double getArWlOnlyMaxInnovCyc() const { return ar_wl_only_max_innov_cyc_; }
 
         /**
          * @brief Maximum *worst-case* fractional residual (cycles) accepted
@@ -5700,6 +5720,7 @@ namespace GnssProcessor {
         int    network_clock_anchor_recouple_epochs_{4};   ///< Card Q3: consecutive in-band epochs a decoupled satellite must serve before the anchor re-engages — standing invariant #7's "the RE-COUPLING edge must re-validate or re-seed what it reconnects". The re-engaged fold also RE-SEEDS (its first variance is cp.var + q·Δt off the LOOSE posterior, not the steady-state tight value). INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_mark_{true};           ///< Card Q3: wire-mark the DECOUPLING edge (markSatDiscontinuity → R record + per-sat phase/code/clock counters, the chain Q4 proved end-to-end). A satellite whose clock changed BOTH temporal regime and value must not be integrated across. Unlike CLK-R stage 2 — whose marked population was ~98 % churn and cost the quiet-day consumer — this population is by construction NOT churn (the churn is what the anchor removes), but the rate discipline still applies and the knob exists so a 12 h A/B can bisect hold-vs-marks exactly as CLK-R's did. INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_gauge_free_{false};    ///< Card Q3 §2.1: fold the clock prior with the per-constellation clock GAUGE direction marginalized out (Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ; diagonally this is "anchor each clock to its carried value minus the information-weighted mean", i.e. anchor the DIFFERENCES). Applied to the JOINT dense block, so the clock↔code-bias off-diagonals the C1 carry retains are preserved — only the gauge is removed. A constellation with < 2 carried clocks contributes nothing (its lone key IS the gauge). SOLVE-AFFECTING; part of the anchor's fingerprint. INERT unless network_clock_temporal_anchor_.
+        NetworkClockAnchorStat network_clock_anchor_gauge_free_stat_{NetworkClockAnchorStat::Auto};  ///< Card Q3 §2.1 BISECTION knob: which denominator the guard (and the census's clk family) standardizes by, INDEPENDENTLY of which prior the fold applied. The gauge-free arm moved the fold AND the denominator together, so its 65 → 3 trip collapse could not be apportioned. `Auto` = follow the fold (byte-identical to every pre-knob arm); `Raw`/`Post`/`Proj` force one. SOLVE-AFFECTING through the trip population; appended to the fingerprint only when it is not `Auto`. INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_resolve_{true};        ///< Card Q3: adapt-and-EMIT. On a trip, withdraw the offending clock prior from the shared system and RE-SOLVE the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Placed BEFORE the within-epoch RAIM adaptation deliberately — a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's DATA. OFF degrades to detect+mark+decouple-next-epoch. INERT unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
@@ -5806,6 +5827,9 @@ namespace GnssProcessor {
         double ar_ratio_upper_bound_;   ///< Reject fixes whose ratio exceeds this (covariance pathology).
         bool   ar_wl_only_;           ///< WL-only AR: apply MW-resolved WL integers as Kalman pseudo-obs, skip LAMBDA NL search.
         bool   ar_ignore_mw_wl_{false}; ///< RTA-7: processing.ar_ignore_mw_wl — drop the MW WL feed into AR (pure MLAMBDA on the KF float); the previously key-less RealTimeEngine::setArIgnoreMwWl seam.
+        bool   ar_wl_only_ffr_{ true };      ///< Apply the bootstrap FFR gate to the WL-only / MW-WL constraint paths (they had none — only the wl_max_frac point test). Default ON; false reproduces the pre-fix fail-unsafe behaviour.
+        int    ar_wl_only_min_arc_count_{ 10 };
+        double ar_wl_only_max_innov_cyc_{ 0.5 };  ///< Max |asserted MW WL integer - predicted DD widelane| (cycles) for a WL-only constraint. The analogue of nl_max_per_pair_frac that this path lacked; catches a FRAME conflict, which no success-rate gate can. 0 disables. ///< Minimum MW arc sample count for an arc to carry a WL constraint under ar_wl_only_ffr_ (a 2-sample arc reports sigma~0 on one degree of freedom).
         double ar_wl_only_pseudo_var_; ///< Pseudo-obs variance (cycles²) for WL-only constraints.
         double ar_wl_max_frac_;        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
         double ar_min_success_rate_;  ///< Min bootstrap success rate (FFR-style) for AR fix acceptance.

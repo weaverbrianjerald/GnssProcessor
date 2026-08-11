@@ -393,7 +393,8 @@ AmbiguityResolution AmbiguityResolver::resolve(
     const StateManager& state_manager,
     const std::vector<PppObservation>& observations,
     const std::map<std::string, int>& wl_ambiguities,
-    const std::map<std::string, double>& wl_fractions) {
+    const std::map<std::string, double>& wl_fractions,
+    const std::map<std::string, WlArcQuality>& wl_quality) {
 
     auto log = log_manager_.getLogger("ambiguity_resolver");
     AmbiguityResolution result;
@@ -445,7 +446,8 @@ AmbiguityResolution AmbiguityResolver::resolve(
             }
         }
         return applyMwWlConstraintsNlWl_(state_manager, x, P,
-                                          wl_ambiguities, wl_fractions, observations);
+                                          wl_ambiguities, wl_fractions, observations,
+                                          wl_quality);
     }
 
     // Build DD pairs
@@ -521,7 +523,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
             return result;
         }
         auto wl_only_result = resolveWlOnly(pairs, x, P, wl_ambiguities,
-                                            wl_fractions, observations);
+                                            wl_fractions, observations, wl_quality);
         wl_only_result.num_candidates = result.num_candidates;
         return wl_only_result;
     }
@@ -745,6 +747,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
         result.success   = true;
         result.num_fixed = m;
         result.ratio     = pf.ratio;
+        result.p_succ    = pf.p_s;
         log->info("Partial AR succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} ambiguities fixed, "
                   "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
                   config_.hold_variance, m, nb, pf.ratio, pf.p_s, pf.max_frac);
@@ -810,6 +813,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
 
     result.success = true;
     result.num_fixed = nb;
+    result.p_succ  = p_s;
 
     log->info("AR succeeded (Kalman pseudo-obs, R={:.4f} m²): {} ambiguities fixed, "
               "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
@@ -1110,6 +1114,7 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
         result.success   = true;
         result.num_fixed = m;
         result.ratio     = pf.ratio;
+        result.p_succ    = pf.p_s;
         log->info("Partial AR (DD) succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} ambiguities fixed, "
                   "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
                   config_.hold_variance, m, nb, pf.ratio, pf.p_s, pf.max_frac);
@@ -1143,6 +1148,7 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
 
     result.success   = true;
     result.num_fixed = nb;
+    result.p_succ    = p_s;
 
     log->info("AR (DD) succeeded (Kalman pseudo-obs, R={:.4f} m²): {} ambiguities fixed, "
               "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
@@ -1615,6 +1621,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         result.success   = true;
         result.num_fixed = m;
         result.ratio     = pf.ratio;
+        result.p_succ    = pf.p_s;
         log->info("Partial AR (WL/NL) succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} NL pairs fixed, "
                   "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
                   config_.hold_variance, m, n_nl, pf.ratio, pf.p_s, pf.max_frac);
@@ -1710,6 +1717,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
 
     result.success = true;
     result.num_fixed = n_nl;
+    result.p_succ  = p_s;
 
     log->info("WL-constrained AR succeeded (Kalman pseudo-obs, R={:.4f} m²): "
               "{} NL pairs fixed, ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
@@ -1751,13 +1759,60 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
 // converged enough for safe integer rounding.
 // ===========================================================================
 
+double AmbiguityResolver::wlArcSuccessRate_(
+    const std::set<std::string>& arc_keys,
+    const std::map<std::string, WlArcQuality>& wl_quality,
+    std::string* worst_key) const {
+
+    if (worst_key) worst_key->clear();
+    if (arc_keys.empty()) return 0.0;
+
+    // 1/(2√2): the per-component bootstrap term is erf(1/(2√2·σ)) = P(|N(0,σ²)| < ½),
+    // the same constant and the same functional ils::computeBootstrapSuccessRate
+    // applies to the LAMBDA tier's conditional variances.  Sharing the formula is
+    // what makes the two tiers' p_succ one comparable number.
+    constexpr double kInv2Sqrt2 = 0.353553390593273762200422181052424519;
+
+    double p_total = 1.0;
+    double p_worst = 2.0;                       // above any admissible value
+    for (const std::string& key : arc_keys) {
+        double p_arc = 0.0;                     // FAIL-SAFE default: unknown ⇒ zero
+        const auto it = wl_quality.find(key);
+        if (it != wl_quality.end()) {
+            const WlArcQuality& q = it->second;
+            if (q.exact) {
+                p_arc = 1.0;                    // SD-vs-self pivot: exact by construction
+            } else if (q.count >= static_cast<std::size_t>(
+                                      std::max(0, config_.wl_only_min_arc_count))
+                       && std::isfinite(q.sigma_cycles) && q.sigma_cycles >= 0.0) {
+                // σ → 0 on a MATURE arc is a genuinely decided integer, so the
+                // term saturates at 1 rather than dividing by zero.  Maturity is
+                // what makes that safe; the immature branch above is why.
+                p_arc = (q.sigma_cycles > 0.0)
+                            ? std::erf(kInv2Sqrt2 / q.sigma_cycles)
+                            : 1.0;
+            }
+        }
+        if (p_arc < p_worst) { p_worst = p_arc; if (worst_key) *worst_key = key; }
+        p_total *= p_arc;
+        if (p_total <= 0.0) {
+            // Keep scanning: the caller needs the WEAKEST arc to eliminate, and
+            // an early return would hand back whichever zero-arc came first in
+            // key order rather than the true worst.
+            p_total = 0.0;
+        }
+    }
+    return p_total;
+}
+
 AmbiguityResolution AmbiguityResolver::resolveWlOnly(
     const std::vector<DdPair>& pairs,
     const Eigen::VectorXd& x,
     const Eigen::MatrixXd& P,
     const std::map<std::string, int>& wl_ambiguities,
     const std::map<std::string, double>& wl_fractions,
-    const std::vector<PppObservation>& observations) {
+    const std::vector<PppObservation>& observations,
+    const std::map<std::string, WlArcQuality>& wl_quality) {
 
     auto log = log_manager_.getLogger("ambiguity_resolver");
     AmbiguityResolution result;
@@ -1796,6 +1851,10 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
         double inv_lam_L1, inv_lam_L2;
         int wl_int;
         std::string sat_i, sat_ref, sig_hi, sig_lo;
+        // The two MW arcs this DD integer is built from (N_i - N_ref).  Carried
+        // so the FFR gate can take its product over DISTINCT ARCS: many DDs
+        // share the pivot arc, and a wrong pivot makes all of them wrong at once.
+        std::string arc_key_i, arc_key_ref;
     };
     std::vector<WlConstraint> constraints;
     for (const auto& [spkey, infos] : sat_pair_groups) {
@@ -1846,13 +1905,154 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
         constraints.push_back({
             hi.idx_i, hi.idx_ref, lo.idx_i, lo.idx_ref,
             1.0 / hi.wavelength, 1.0 / lo.wavelength,
-            dd_wl, sat_i, sat_ref, hi.signal, lo.signal
+            dd_wl, sat_i, sat_ref, hi.signal, lo.signal,
+            wl_key_i, wl_key_ref
         });
     }
 
     if (constraints.empty()) {
         log->debug("WL-only AR: no dual-frequency pairs with known DD WL integers");
         return result;
+    }
+
+    // ------------------------------------------------------------------
+    // FFR ACCEPTANCE GATE (AmbiguityResolverConfig::wl_only_ffr).
+    //
+    // Until this existed the WL-only path had NO success-rate gate: it applied
+    // every MW integer that cleared `wl_max_frac`, a POINT test on the running
+    // residual that cannot bound P(the integer is wrong), and reported `ratio`
+    // as the "+inf = no LAMBDA ran" sentinel.  Measured cost of that gap: an
+    // ungated 5-constraint fix put the held-out consumer 35 m off
+    // (docs/SPEC_clock_temporal_anchor.md §8.11).
+    //
+    // The gate is the SAME bootstrap functional the LAMBDA tier uses, taken over
+    // the DISTINCT ARCS backing the set, with the weakest arc eliminated until
+    // the survivors clear `min_success_rate`.  Backward elimination rather than
+    // all-or-nothing mirrors selectFixableSubset: a confidently-known subset is
+    // worth applying even when one arc is not ready.
+    // MEASURE unconditionally, ACT only when armed.  A diagnostic that reads 0
+    // because its guard is switched off is the same lie as `ratio = +inf`
+    // reading as a perfect ratio — and it is precisely the disarmed
+    // (legacy-reproduction) arm where you most want to see what the guard WOULD
+    // have seen.  Both quantities are a handful of flops over a handful of arcs.
+    double wl_p_succ = 0.0;
+    {
+        std::set<std::string> arcs0;
+        for (const auto& c : constraints) {
+            arcs0.insert(c.arc_key_i);
+            arcs0.insert(c.arc_key_ref);
+        }
+        wl_p_succ = wlArcSuccessRate_(arcs0, wl_quality, nullptr);
+    }
+    if (config_.wl_only_ffr) {
+        while (!constraints.empty()) {
+            std::set<std::string> arcs;
+            for (const auto& c : constraints) {
+                arcs.insert(c.arc_key_i);
+                arcs.insert(c.arc_key_ref);
+            }
+            std::string worst;
+            wl_p_succ = wlArcSuccessRate_(arcs, wl_quality, &worst);
+            if (wl_p_succ >= config_.min_success_rate) break;
+            if (worst.empty()) { constraints.clear(); break; }
+            const std::size_t before = constraints.size();
+            constraints.erase(
+                std::remove_if(constraints.begin(), constraints.end(),
+                               [&](const WlConstraint& c) {
+                                   return c.arc_key_i == worst || c.arc_key_ref == worst;
+                               }),
+                constraints.end());
+            log->debug("WL-only AR (FFR): P_s={:.6f} < {:.6f}; dropping arc '{}' "
+                       "({} -> {} constraint(s))",
+                       wl_p_succ, config_.min_success_rate, worst,
+                       before, constraints.size());
+            // Dropping the pivot arc removes every DD that referenced it, so the
+            // loop can empty the set in one step — that is the correct outcome
+            // (a set whose common reference is unreliable has no trustworthy
+            // member), not a degenerate case to guard against.
+        }
+        if (constraints.empty()) {
+            log->info("WL-only AR: no MW WL constraint set reaches the bootstrap "
+                      "success rate {:.4f} (FFR gate) — staying FLOAT this epoch.",
+                      config_.min_success_rate);
+            return result;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // INNOVATION SCREEN (AmbiguityResolverConfig::wl_only_max_innov_cyc) — the
+    // analogue of the LAMBDA tier's per-entry nl_max_per_pair_frac, which this
+    // path had no equivalent of.
+    //
+    // The FFR gate above bounds the RANDOM failure of rounding each arc, and on
+    // a mature arc it correctly reports certainty.  It cannot see a SYSTEMATIC
+    // disagreement between the asserted integer and the filter's own frame,
+    // because nothing in the arc's dispersion knows which frame the filter is
+    // in.  That is the measured failure: p_succ = 1.000000 on every arc while
+    // the asserted widelanes contradicted the float badly enough to move the
+    // position 33 m in one epoch (SPEC_clock_temporal_anchor §8.11).
+    //
+    // A constraint whose innovation exceeds half a widelane is no longer a
+    // rounding question; drop it rather than let a σ = 0.01 cycle pseudo-obs
+    // drag the state across the gap.
+    double wl_max_innov = 0.0;
+    {   // measured on every arm, armed or not (see the note above)
+        const int nx_p = static_cast<int>(x.size());
+        for (const auto& c : constraints) {
+            if (c.idx_L1_i < 0 || c.idx_L1_i >= nx_p || c.idx_L1_ref < 0 || c.idx_L1_ref >= nx_p
+             || c.idx_L2_i < 0 || c.idx_L2_i >= nx_p || c.idx_L2_ref < 0 || c.idx_L2_ref >= nx_p)
+                continue;
+            const double pred = (x(c.idx_L1_i) - x(c.idx_L1_ref)) * c.inv_lam_L1
+                              - (x(c.idx_L2_i) - x(c.idx_L2_ref)) * c.inv_lam_L2;
+            wl_max_innov = std::max(wl_max_innov,
+                                    std::abs(static_cast<double>(c.wl_int) - pred));
+        }
+    }
+    if (config_.wl_only_max_innov_cyc > 0.0) {
+        const int nx_pred = static_cast<int>(x.size());
+        const std::size_t before = constraints.size();
+        int n_over = 0;
+        double worst_over = 0.0;
+        std::string worst_id;
+        constraints.erase(
+            std::remove_if(constraints.begin(), constraints.end(),
+                           [&](const WlConstraint& c) {
+                               if (c.idx_L1_i   < 0 || c.idx_L1_i   >= nx_pred ||
+                                   c.idx_L1_ref < 0 || c.idx_L1_ref >= nx_pred ||
+                                   c.idx_L2_i   < 0 || c.idx_L2_i   >= nx_pred ||
+                                   c.idx_L2_ref < 0 || c.idx_L2_ref >= nx_pred)
+                                   return true;   // unusable indices: drop, never assert
+                               const double pred =
+                                   (x(c.idx_L1_i) - x(c.idx_L1_ref)) * c.inv_lam_L1
+                                 - (x(c.idx_L2_i) - x(c.idx_L2_ref)) * c.inv_lam_L2;
+                               const double innov =
+                                   std::abs(static_cast<double>(c.wl_int) - pred);
+                               if (innov > wl_max_innov) wl_max_innov = innov;
+                               if (innov > config_.wl_only_max_innov_cyc) {
+                                   ++n_over;
+                                   if (innov > worst_over) {
+                                       worst_over = innov;
+                                       worst_id = c.sat_i + "-" + c.sat_ref + " "
+                                                + c.sig_hi + "/" + c.sig_lo;
+                                   }
+                                   return true;
+                               }
+                               return false;
+                           }),
+            constraints.end());
+        if (n_over > 0) {
+            log->warn("WL-only AR: dropped {} of {} MW WL constraint(s) whose asserted "
+                      "integer disagrees with the float by more than {:.2f} cyc (worst "
+                      "{:.3f} cyc on {}).  An innovation this large is a FRAME conflict, "
+                      "not a rounding question — the MW wide-lane is in the .BIA frame "
+                      "and a network-bias consumer's ambiguities are not.",
+                      n_over, before, config_.wl_only_max_innov_cyc, worst_over, worst_id);
+        }
+        if (constraints.empty()) {
+            log->info("WL-only AR: every MW WL constraint failed the innovation screen "
+                      "— staying FLOAT this epoch.");
+            return result;
+        }
     }
 
     // Detect WL integer changes since the last invocation.  A change implies
@@ -1920,9 +2120,14 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
     KalmanFilter::josephPseudoUpdate(x, P_local, H, v, R,
                                      result.fixed_state, result.fixed_covariance);
 
-    result.success   = true;
-    result.num_fixed = nv;
-    result.ratio     = std::numeric_limits<double>::infinity();  // sentinel: no LAMBDA ratio test ran
+    result.success     = true;
+    result.num_fixed   = nv;
+    result.ratio       = std::numeric_limits<double>::infinity();  // sentinel: no LAMBDA ratio test ran
+    // The sentinel above says only "no ratio test ran"; p_succ is the number
+    // this fix must actually be graded on, and wl_only_fix lets a trace say
+    // WHICH machinery fixed rather than inferring it from an infinity.
+    result.p_succ      = wl_p_succ;
+    result.wl_only_fix = true;
 
     // Record the WL integers we just applied so the next call can detect changes.
     for (const auto& c : constraints) {
@@ -1930,8 +2135,10 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
         previous_dd_wl_[key] = c.wl_int;
     }
 
-    log->info("WL-only AR: applied {} DD WL constraints{} (no LAMBDA NL search)",
-              nv, n_reset > 0 ? fmt::format(", {} with reset", n_reset) : "");
+    log->info("WL-only AR: applied {} DD WL constraint(s){} (no LAMBDA NL search); "
+              "P_s={:.6f}, max|innov| seen (PRE-screen) {:.4f} cyc",
+              nv, n_reset > 0 ? fmt::format(", {} with reset", n_reset) : "",
+              wl_p_succ, wl_max_innov);
     if (log->should_log(spdlog::level::debug)) {
         for (const auto& c : constraints) {
             log->debug("  WL DD {}-{} {}/{}: WL_int={} cyc, residual={:+.4f} cyc",
@@ -1999,7 +2206,8 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
     const Eigen::MatrixXd& P,
     const std::map<std::string, int>& wl_ambiguities,
     const std::map<std::string, double>& wl_fractions,
-    const std::vector<PppObservation>& observations) {
+    const std::vector<PppObservation>& observations,
+    const std::map<std::string, WlArcQuality>& wl_quality) {
 
     auto log = log_manager_.getLogger("ambiguity_resolver");
     AmbiguityResolution result;
@@ -2060,6 +2268,12 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
         std::string sig_lo;
         int         mw_int;      ///< MW SD-WL integer (cycles, N_hi - N_lo form).
         double      elevation;
+        /// The MW detector's own stats key for this arc, carried VERBATIM.
+        /// Never reconstruct it from sat + sig_hi + sig_lo: sig_hi/sig_lo are
+        /// FREQUENCY-ordered and the key is written in its original order, so
+        /// the two disagree whenever f_a < f_b.  A reconstructed key that
+        /// misses turns "unknown arc" into a silent gate bypass.
+        std::string stats_key;
     };
     std::map<std::string, std::vector<ArcConstraint>> groups;  // "<cons>|<canon_a>_<canon_b>"
 
@@ -2129,6 +2343,7 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
         c.canon_b   = std::max(b_a, b_b);
         c.mw_int    = mw_int;
         c.elevation = eit->second;
+        c.stats_key = stats_key;
 
         // Skip arcs for which the satellite lacks the WL state(s) needed
         // to express the constraint as a state linear combination.
@@ -2170,6 +2385,11 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
         std::string  sig_hi;
         std::string  sig_lo;
         std::vector<int> non_pivot_wl_indices;  // for slip-snap inflation
+        // The two MW arcs this DD integer is built from (a.mw_int - pivot.mw_int).
+        // Carried so the FFR gate can take its product over DISTINCT ARCS: every
+        // DD in a group shares the pivot arc, so a wrong pivot makes all of them
+        // wrong at once and a per-DD product would count that failure once per DD.
+        std::string  arc_key_i, arc_key_ref;
     };
     std::vector<WlConstraint> constraints;
 
@@ -2218,6 +2438,7 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
             wc.dd_wl_int = a.mw_int - pivot.mw_int;
             wc.sat_i  = a.sat;       wc.sat_ref = pivot.sat;
             wc.sig_hi = a.sig_hi;    wc.sig_lo  = a.sig_lo;
+            wc.arc_key_i = a.stats_key;  wc.arc_key_ref = pivot.stats_key;
 
             // Coefficients per the derivation in the section header:
             //   sat_i:    +alpha(hi) on W_hi_i,    -alpha(lo) on W_lo_i
@@ -2249,6 +2470,103 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
     if (constraints.empty()) {
         log->debug("WL-NlWl: no usable DD WL constraints");
         return result;
+    }
+
+    // ------------------------------------------------------------------
+    // FFR ACCEPTANCE GATE + INNOVATION SCREEN — the same two guards
+    // resolveWlOnly carries, for the same reason (SPEC §8.11).  This path is
+    // the per-band sibling: it also asserts MW integers with no LAMBDA search,
+    // so its `ratio` is the "+inf = no ratio test ran" sentinel and neither a
+    // ratio nor a bootstrap gate stood behind it — only the per-arc
+    // `wl_max_frac` POINT test above, which cannot bound P(integer is wrong).
+    //
+    // Order matters: FFR first (drop arcs we cannot bound), innovation second
+    // (drop assertions the float contradicts).  They answer different
+    // questions — RANDOM rounding failure vs SYSTEMATIC frame disagreement —
+    // and the measured blunder passed the first with p_succ = 1.0 and was
+    // caught only by the second.
+    // Measured unconditionally, acted on only when armed — see resolveWlOnly.
+    double nlwl_p_succ = 0.0;
+    {
+        std::set<std::string> arcs0;
+        for (const auto& c : constraints) {
+            arcs0.insert(c.arc_key_i);
+            arcs0.insert(c.arc_key_ref);
+        }
+        nlwl_p_succ = wlArcSuccessRate_(arcs0, wl_quality, nullptr);
+    }
+    if (config_.wl_only_ffr) {
+        while (!constraints.empty()) {
+            std::set<std::string> arcs;
+            for (const auto& c : constraints) {
+                arcs.insert(c.arc_key_i);
+                arcs.insert(c.arc_key_ref);
+            }
+            std::string worst;
+            nlwl_p_succ = wlArcSuccessRate_(arcs, wl_quality, &worst);
+            if (nlwl_p_succ >= config_.min_success_rate) break;
+            if (worst.empty()) { constraints.clear(); break; }
+            const std::size_t before = constraints.size();
+            constraints.erase(
+                std::remove_if(constraints.begin(), constraints.end(),
+                               [&](const WlConstraint& c) {
+                                   return c.arc_key_i == worst || c.arc_key_ref == worst;
+                               }),
+                constraints.end());
+            log->debug("WL-NlWl (FFR): P_s={:.6f} < {:.6f}; dropping arc '{}' ({} -> {})",
+                       nlwl_p_succ, config_.min_success_rate, worst,
+                       before, constraints.size());
+        }
+        if (constraints.empty()) {
+            log->info("WL-NlWl: no MW WL constraint set reaches the bootstrap success "
+                      "rate {:.4f} (FFR gate) — staying FLOAT this epoch.",
+                      config_.min_success_rate);
+            return result;
+        }
+    }
+
+    double nlwl_max_innov = 0.0;
+    for (const auto& c : constraints)      // measured on every arm, armed or not
+        nlwl_max_innov = std::max(nlwl_max_innov,
+                                  std::abs(static_cast<double>(c.dd_wl_int) - c.predicted_dd));
+    if (config_.wl_only_max_innov_cyc > 0.0) {
+        const std::size_t before = constraints.size();
+        int n_over = 0;
+        double worst_over = 0.0;
+        std::string worst_id;
+        constraints.erase(
+            std::remove_if(constraints.begin(), constraints.end(),
+                           [&](const WlConstraint& c) {
+                               // predicted_dd was formed from x above with the
+                               // SAME coefficients the H row will use, so this
+                               // is exactly the innovation the update applies.
+                               const double innov =
+                                   std::abs(static_cast<double>(c.dd_wl_int) - c.predicted_dd);
+                               if (innov > nlwl_max_innov) nlwl_max_innov = innov;
+                               if (innov > config_.wl_only_max_innov_cyc) {
+                                   ++n_over;
+                                   if (innov > worst_over) {
+                                       worst_over = innov;
+                                       worst_id = c.sat_i + "-" + c.sat_ref + " "
+                                                + c.sig_hi + "/" + c.sig_lo;
+                                   }
+                                   return true;
+                               }
+                               return false;
+                           }),
+            constraints.end());
+        if (n_over > 0) {
+            log->warn("WL-NlWl: dropped {} of {} MW WL constraint(s) whose asserted integer "
+                      "disagrees with the float by more than {:.2f} cyc (worst {:.3f} cyc on "
+                      "{}).  An innovation this large is a FRAME conflict, not a rounding "
+                      "question.",
+                      n_over, before, config_.wl_only_max_innov_cyc, worst_over, worst_id);
+        }
+        if (constraints.empty()) {
+            log->info("WL-NlWl: every MW WL constraint failed the innovation screen — "
+                      "staying FLOAT this epoch.");
+            return result;
+        }
     }
 
     // Cross-frequency DD WL parity (consistency) check.
@@ -2409,9 +2727,14 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
     KalmanFilter::josephPseudoUpdate(x, P_local, H, v, R,
                                      result.fixed_state, result.fixed_covariance);
 
-    result.success   = true;
-    result.num_fixed = nv;
-    result.ratio     = std::numeric_limits<double>::infinity();
+    result.success     = true;
+    result.num_fixed   = nv;
+    result.ratio       = std::numeric_limits<double>::infinity();  // sentinel: no LAMBDA ratio test ran
+    result.wl_only_fix = true;
+    result.p_succ      = nlwl_p_succ;
+    // Both guards now stand behind this path, as they do behind resolveWlOnly
+    // (SPEC §8.11.6 gap 1, closed).  p_succ carries the realized bootstrap rate
+    // so the trace has a real confidence number instead of only the sentinel.
 
     for (const auto& c : constraints) {
         const std::string key =
@@ -2426,9 +2749,11 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
     for (const auto& c : constraints) {
         if (c.non_pivot_wl_indices.size() >= 2) ++n_ewl;
     }
-    log->info("WL-NlWl: applied {} DD WL constraints ({} EWL-style multi-state){}",
+    log->info("WL-NlWl: applied {} DD WL constraint(s) ({} EWL-style multi-state){}; "
+              "P_s={:.6f}, max|innov| seen (PRE-screen) {:.4f} cyc",
               nv, n_ewl,
-              n_reset > 0 ? fmt::format(", {} with reset", n_reset) : "");
+              n_reset > 0 ? fmt::format(", {} with reset", n_reset) : "",
+              nlwl_p_succ, nlwl_max_innov);
     return result;
 }
 

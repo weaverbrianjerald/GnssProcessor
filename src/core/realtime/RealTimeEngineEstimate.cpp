@@ -245,7 +245,17 @@ void RealTimeEngine::resolveAmbiguities(RtEpochContext& ctx) {
                                                : mw_slip_detector_->getResolvedWlAmbiguities();
         const auto wl_fracs = ar_ignore_mw_wl_ ? no_wl_fracs
                                                : mw_slip_detector_->getResolvedWlFractions();
-        auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs, wl_fracs);
+        // Convert the detector's lock quality into the resolver's vocabulary so
+        // the WL-only FFR gate can bound each arc's rounding failure rate.  The
+        // map is EMPTY when the MW feed is suppressed, and an empty map makes
+        // the gate reject every WL constraint — correct by construction: with no
+        // MW integers there is nothing for the WL-only path to assert anyway.
+        std::map<std::string, WlArcQuality> wl_quality;
+        if (!ar_ignore_mw_wl_) {
+            for (const auto& [k, q] : mw_slip_detector_->getResolvedWlQuality())
+                wl_quality[k] = WlArcQuality{ q.sigma_mean_cycles, q.count, q.exact };
+        }
+        auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs, wl_fracs, wl_quality);
         last_ar_ran_ = true;
         last_ar_result_ = ar_result;   // recorded even when not accepted (carries num_candidates)
         if (ar_result.success) {

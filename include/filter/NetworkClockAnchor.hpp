@@ -101,6 +101,7 @@
  * already documents as exact for a departed key.
  */
 
+#include <array>
 #include <memory>
 #include <set>
 #include <string>
@@ -120,6 +121,53 @@ class GnssConfig;
 struct GnssTime;
 struct NetworkRunContext;
 struct NetworkRunTraces;
+
+/// @brief Card Q3 §2.1 — the GAUGE-PROJECTED variance of each member of one
+///        constellation's carried-clock group.
+///
+/// The guard (and the census's `clk` family) standardize the COMMON-REMOVED
+/// residual, so both halves of `P⁻ − P⁺` must be the variance OF THAT CONTRAST:
+///
+///   Var(xₛ − mean_t x_t) = C_ss − 2·mean_t C_st + mean_{t,u} C_tu.
+///
+/// Applied to the POSTERIOR block this is the matched P⁺; applied to the PRIOR
+/// it is the matched P⁻, and it is correct for BOTH folds:
+///
+///  * gauge-free fold — the folded prior is `diag(var_eff) + ∞·11ᵀ` (zero
+///    information along the gauge), and the contrast is orthogonal to 1, so the
+///    infinite part drops out exactly and only `diag(var_eff)` survives;
+///  * raw fold — the prior IS `diag(var_eff)`, and the same functional gives the
+///    contrast's variance directly.
+///
+/// So the RAW marginal is the odd one out: it is the variance of the raw state,
+/// which is not the quantity the numerator measures.  Using it over-states P⁺
+/// (the raw marginal still carries the common-mode variance the median removed)
+/// and therefore UNDER-states S = P⁻ − P⁺ — the guard over-trips.
+///
+/// @param cov  covariance containing the group's columns
+/// @param cols the group's columns into @p cov, in member order
+/// @return one projected variance per member, or EMPTY when n < 2 (a lone clock
+///         IS its constellation's gauge — there is no estimable contrast to
+///         project onto, and the caller must leave the raw marginal standing)
+std::vector<double> clockAnchorGaugeProject(const Eigen::MatrixXd& cov,
+                                            const std::vector<Eigen::Index>& cols);
+
+/// @brief The same functional for a DIAGONAL covariance supplied directly —
+///        the prior side, where C = diag(@p var).  Reduces to
+///        `v_s − 2·v_s/n + (Σ v_t)/n²`.
+/// @return one projected variance per member, or EMPTY when n < 2.
+std::vector<double> clockAnchorGaugeProjectDiag(const std::vector<double>& var);
+
+/// Rungs of the guard's dimensionless |w| ladder (@ref NetworkServiceCounters::cta_w_ge).
+/// Spans the k values the card has actually used (6) and the tail beyond them, so
+/// one armed run reports what k WOULD have tripped at every candidate threshold.
+inline constexpr std::array<double, 8> kCtaWLadder{1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 20.0};
+
+/// Rungs of the guard's ABSOLUTE |ê| ladder in metres (@ref NetworkServiceCounters::cta_e_ge).
+/// The top rung is the shipped `clock_anchor_abs_m` default, so the backstop's own
+/// realized rate is read straight off the last column — the number that was missing
+/// when the 3 h arm found 0 of 63 nis trips would have been caught by it.
+inline constexpr std::array<double, 8> kCtaELadder{0.005, 0.01, 0.02, 0.05, 0.10, 0.30, 1.00, 2.00};
 
 /// Disposition of one satellite's clock carry for one epoch, as decided by
 /// @ref clockAnchorFoldVariance.

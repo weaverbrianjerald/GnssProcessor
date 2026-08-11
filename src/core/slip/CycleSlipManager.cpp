@@ -76,6 +76,12 @@ std::map<std::string, double> CycleSlipManager::getResolvedWlFractions() const {
     return mw_ ? mw_->getResolvedWlFractions() : std::map<std::string, double>{};
 }
 
+std::map<std::string, MwSlipDetector::WlLockQuality>
+CycleSlipManager::getResolvedWlQuality() const {
+    return mw_ ? mw_->getResolvedWlQuality()
+               : std::map<std::string, MwSlipDetector::WlLockQuality>{};
+}
+
 void CycleSlipManager::resetSatellite(const std::string& satellite) {
     // Reset the arc state in every detector so an externally-driven reset
     // (e.g. the KF outlier handler) clears all of them, not just MW.

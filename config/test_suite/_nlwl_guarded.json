@@ -1,0 +1,131 @@
+{
+ "_note": "SPEC \u00a78.11.7 FIELD EXERCISE (guarded).  ALGO00CAN static PPP, uncombined GPS L1/L2, state_ambiguity_basis = nl_wl so AR routes through applyMwWlConstraintsNlWl_ \u2014 the sibling path whose two guards had no field evidence.  Pairs ONE KNOB PAIR with _nlwl_unguarded (wl_only_ffr + wl_only_max_innov_cyc).  Truth is the ITRF2020 SSC monument, independent of the engine.",
+ "_why_uncombined": "processing.uncombined_enabled = true is LOAD-BEARING. Standard IF-PPP AR is unbuilt and FAIL-UNSAFE: IF-combo ambiguity keys are not rejected in buildDdPairs, and getWavelength('L1C_L5Q') substring-matches 'L1', so LAMBDA would fix a non-integer with the wrong wavelength. The uncombined per-band path uses resolveWlConstrained verbatim and is the built, guarded route.",
+ "_why_dual": "COD0MGXFIN OSB carries GPS PHASE biases on L1C/L1L/L1W/L1X/L2L/L2S/L2W/L2X for all 32 satellites, but NO GPS L5 phase bias. Triple-frequency AR is therefore not supported by this product; L1/L2 is the honest best case. Signal priority 'W' first lands on C1W/L1W + C2W/L2W, all four fully OSB-covered.",
+ "_why_bssd": "The satellite phase bias comes from the product; the RECEIVER phase bias does not and is not separable undifferenced. between_satellite_sd removes it, so the SD ambiguity is the quantity that should be integer.",
+ "_truth": "ITRF2020 IGS SSC @ 2024.3497: 918129.0619 -4346071.3363 4561977.9217 (sigma 0.7/0.8/0.8 mm). Grader is independent of the engine.",
+ "app_mode": "post",
+ "data_source": "internal",
+ "processing": {
+  "mode": "PPP",
+  "uncombined_enabled": true,
+  "active_systems": [
+   "GPS"
+  ],
+  "frequency_mode": "dual",
+  "channel_mode": "single",
+  "elevation_mask_deg": 10.0,
+  "exclude_eclipsing_satellites": true,
+  "leap_seconds_tai": 37.0,
+  "relinearize_geometry": true,
+  "eigen_threads": 10,
+  "satellite_interpolation_mode": "lagrange",
+  "satellite_clock_interpolation_mode": "linear",
+  "signal_priorities": {
+   "GPS": "WCSLXPYMIQ"
+  }
+ },
+ "files": {
+  "internal_data_root": "C:/GnssProcessor/data",
+  "observation_path": "C:/GnssProcessor/data/2024-129/obs/algo00can/ALGO00CAN_R_20241290000_01D_30S_MO.rnx"
+ },
+ "estimation": {
+  "estimate_velocity": false,
+  "estimate_sat_biases": false,
+  "estimate_ifb": false,
+  "between_satellite_sd": {
+   "enabled": true,
+   "pivot_min_elevation": 35.0
+  },
+  "ambiguity_resolution": {
+   "mode": 1,
+   "active_systems": [
+    "GPS"
+   ],
+   "wl_only": false,
+   "ratio_threshold": 3.0,
+   "ratio_upper_bound": 10000.0,
+   "min_success_rate": 0.999,
+   "nl_max_per_pair_frac": 0.15,
+   "wl_max_frac": 0.4,
+   "elevation_mask": 15.0,
+   "min_epochs": 10,
+   "max_position_sigma_m": 1.0,
+   "hold_variance": 0.001,
+   "enable_partial_ar": true,
+   "wl_only_ffr": true,
+   "wl_only_max_innov_cyc": 0.5,
+   "wl_only_min_arc_count": 10
+  },
+  "residual_history": {
+   "enabled": false
+  },
+  "state_ambiguity_basis": "nl_wl"
+ },
+ "filter": {
+  "process_noise": {
+   "position_q": 0.0,
+   "clock_bias_q": 1000.0,
+   "phase_clock_q": 1e-09,
+   "troposphere_q": 1e-09,
+   "ionosphere_q": 0.01,
+   "code_bias_q": 0.0001,
+   "sat_bias_q": 1e-12,
+   "system_time_offset_q": 1e-12,
+   "ambiguity_q": 1e-12
+  },
+  "initial_std": {
+   "position": 100.0,
+   "clock": 1000.0,
+   "troposphere": 0.5,
+   "ionosphere": 5.0,
+   "ambiguity": 1000.0,
+   "code_bias": 10.0,
+   "sat_bias": 10.0,
+   "system_time_offset": 1000.0
+  },
+  "measurement_noise": {
+   "code_std_m": 0.3,
+   "phase_std_m": 0.002
+  },
+  "stochastic_model": "elevation"
+ },
+ "model_corrections": {
+  "enable_troposphere": true,
+  "enable_relativistic_correction": true,
+  "enable_shapiro_delay": true,
+  "enable_solid_earth_tide": true,
+  "enable_ocean_tide_loading": true,
+  "enable_pole_tide": true,
+  "enable_atmospheric_loading": false,
+  "enable_satellite_pco": true,
+  "enable_satellite_pcv": true,
+  "enable_receiver_pco": true,
+  "enable_receiver_pcv": true,
+  "enable_phase_windup": true,
+  "enable_higher_order_ionosphere": false,
+  "enable_code_phase_bias": true
+ },
+ "data_download": {
+  "enabled": false,
+  "product_source": "COD",
+  "product_type": "FIN",
+  "year": 2024,
+  "doy": 129
+ },
+ "logging": {
+  "enable_main_log": true,
+  "enable_state_trace": true,
+  "enable_residual_trace": true,
+  "enable_bssd_pivot_manager": true,
+  "levels": {
+   "kalman_filter": "warn",
+   "measurement_model": "warn",
+   "state_manager": "warn",
+   "ppp_model": "warn",
+   "ambiguity_resolver": "info",
+   "bssd_pivot_manager": "warn"
+  },
+  "enable_ambiguity_resolver": true
+ }
+}

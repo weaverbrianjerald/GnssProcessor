@@ -138,6 +138,19 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
+    // Card Q3 §2.1 — resolve the guard/census DENOMINATOR here, once, for the same
+    // reason `cta_on` resolves its interlock here: a mapping re-derived at two call
+    // sites is a mapping that will eventually disagree between them, and the guard
+    // and the census MUST standardize identically or the census stops being a
+    // cross-check on the guard.  `auto` follows the fold, which is what every arm
+    // run before this knob existed did — so `auto` is byte-identical by construction.
+    {
+        const auto stat = config_.networkClockAnchorGaugeFreeStat();
+        k.cta_stat_proj_post  = (stat == NetworkClockAnchorStat::Post)
+                             || (stat == NetworkClockAnchorStat::Proj)
+                             || (stat == NetworkClockAnchorStat::Auto && k.cta_gauge_free);
+        k.cta_stat_proj_prior = (stat == NetworkClockAnchorStat::Proj);
+    }
     k.clk_model_q1 = config_.networkClockModelQ1();
     k.clk_model_q2 = config_.networkClockModelQ2();
     k.clk_model_k = config_.networkClockModelKSigma();
@@ -578,6 +591,16 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // must not cross the flip.  Conditional-append so a plain-anchor lineage's
         // fingerprint is unchanged by this card.
         if (ctx.knobs.cta_on && ctx.knobs.cta_gauge_free) add("cta:gf");
+        // §2.1 bisection: the denominator decides the TRIP population, and a trip
+        // withdraws a prior and re-solves the epoch — so two runs differing only here
+        // produce different carried state and must not resume across each other.
+        // Appended only when the resolved pair is NOT what `auto` would have chosen,
+        // so an existing lineage's fingerprint is unchanged by the knob's arrival.
+        if (ctx.knobs.cta_on
+            && (ctx.knobs.cta_stat_proj_post != ctx.knobs.cta_gauge_free
+                || ctx.knobs.cta_stat_proj_prior))
+            add(fmt::format("cta:gfstat:{}:{}", ctx.knobs.cta_stat_proj_post ? 1 : 0,
+                            ctx.knobs.cta_stat_proj_prior ? 1 : 0));
         // Card LV-1: the seed reframe changes the per-station LINEARIZATION POINT of
         // the per-LOS iono AND (through initializeCodeBiases, which subtracts the
         // seeded iono) of the receiver DCB.  The absolute solve is invariant to that

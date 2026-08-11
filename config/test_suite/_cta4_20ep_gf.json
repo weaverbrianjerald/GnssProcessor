@@ -1,0 +1,13 @@
+{
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_20ep_cta_on.json"
+ ],
+ "network": {
+  "clock_anchor_gauge_free": true,
+  "product_output_path": "C:/GnssProcessor/runs/cta4_20ep_gf/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_20ep_gf/state_snapshot.bin"
+ },
+ "_comment": [
+  "Q3 ladder leg G0c: byte-identity re-run of the stored 20-ep GAUGE-FREE arm (runs/cta_20ep_gf) -- proves 'auto' reproduces the shipped pairing.  Paths only."
+ ]
+}

@@ -1575,6 +1575,22 @@ namespace GnssProcessor {
                                                  "ar_wl_max_frac", 0.40);
         ar_min_success_rate_     = jval<double>(json, "estimation.ambiguity_resolution.min_success_rate",
                                                  "ar_min_success_rate", 0.999);
+        // The WL-only / MW-WL paths apply MW integers directly and had NO
+        // success-rate gate at all — only the wl_max_frac point test.  Default
+        // ON: this closes a fail-unsafe path (an ungated 5-constraint fix put a
+        // held-out consumer 35 m off, SPEC_clock_temporal_anchor §8.11).  Set
+        // false to reproduce the pre-fix behaviour exactly.
+        ar_wl_only_ffr_          = jval<bool>(json, "estimation.ambiguity_resolution.wl_only_ffr",
+                                              "ar_wl_only_ffr", true);
+        ar_wl_only_min_arc_count_ = jval<int>(json, "estimation.ambiguity_resolution.wl_only_min_arc_count",
+                                              "ar_wl_only_min_arc_count", 10);
+        ar_wl_only_max_innov_cyc_ = jval<double>(json, "estimation.ambiguity_resolution.wl_only_max_innov_cyc",
+                                                 "ar_wl_only_max_innov_cyc", 0.5);
+        if (!ar_wl_only_ffr_)
+            log->warn("AR: estimation.ambiguity_resolution.wl_only_ffr is OFF — MW wide-lane "
+                      "integers will be applied with no bootstrap success-rate gate, which is "
+                      "the pre-2026-08-11 fail-unsafe behaviour.  Intended only for reproducing "
+                      "a stored lineage.");
         ar_min_arc_info_         = jval<double>(json, "estimation.ambiguity_resolution.min_arc_info",
                                                  "ar_min_arc_info", 0.0);
         ar_nl_max_per_pair_frac_ = jval<double>(json, "estimation.ambiguity_resolution.nl_max_per_pair_frac",
