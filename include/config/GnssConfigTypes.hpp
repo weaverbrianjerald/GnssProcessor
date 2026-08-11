@@ -565,6 +565,33 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Card Q3 §2.1 — which DENOMINATOR the clock-anchor guard (and the
+     *        prior-residual census's @c clk family) standardizes by.
+     *
+     * The guard's statistic is `ê / √(P⁻ − P⁺)` on the COMMON-REMOVED residual
+     * ê = (x̂ₛ − μₛ) − median_c.  Both variances therefore have to be the
+     * variances OF THAT CONTRAST, not of the raw state — and the shipped pairing
+     * matched only the posterior half.  This enum makes the two halves
+     * independently selectable so the fold change and the denominator change can
+     * be bisected (the 3 h `cta3_on` → `cta3_gf` trip collapse 65 → 3 confounded
+     * exactly those two).
+     *
+     * For a group of n carried clocks of one constellation with covariance C,
+     * the contrast variance is
+     *   Var(xₛ − mean_t x_t) = C_ss − 2·mean_t C_st + mean_{t,u} C_tu,
+     * which is @ref GnssProcessor::clockAnchorGaugeProject.  Applied to the
+     * POSTERIOR block it is the matched P⁺; applied to the PRIOR (diagonal
+     * `var_eff`, plus the gauge-free fold's implicit ∞ along 1, to which the
+     * contrast is orthogonal) it is the matched P⁻.
+     */
+    enum class NetworkClockAnchorStat {
+        Auto,   ///< (default) follow the fold: @c Post under `clock_anchor_gauge_free`, @c Raw otherwise.  Reproduces every arm run before this knob existed, byte for byte.
+        Raw,    ///< Both halves are the RAW marginals (P⁻ = var_eff, P⁺ = cov(c,c)) — the pre-card statistic.  Mis-specified whenever the prior constrains the gauge, because the raw P⁺ still carries the common-mode variance the contrast removed.
+        Post,   ///< Posterior half projected, prior half raw — the pairing the gauge-free arm shipped with.  Kept selectable for exact reproduction, not because it is right.
+        Proj    ///< BOTH halves projected onto the contrast.  The consistent statistic, and the only one that is correct for BOTH folds.
+    };
+
+    /**
      * @brief The network producer's time-linked parameter classes — the key
      *        space of the @c network.process_noise table.
      *

@@ -52,6 +52,42 @@ std::string joinSats(const std::set<std::string>& s) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
+// §2.1 — the gauge projection, shared by the guard and the census.
+// ---------------------------------------------------------------------------
+
+std::vector<double> clockAnchorGaugeProject(const Eigen::MatrixXd& cov,
+                                            const std::vector<Eigen::Index>& cols) {
+    const std::size_t n = cols.size();
+    if (n < 2) return {};                      // a lone clock IS the gauge
+    std::vector<double> rowmean(n, 0.0);
+    double grand = 0.0;
+    for (std::size_t a = 0; a < n; ++a) {
+        double sum = 0.0;
+        for (std::size_t b = 0; b < n; ++b) sum += cov(cols[a], cols[b]);
+        rowmean[a] = sum / static_cast<double>(n);
+        grand += sum;
+    }
+    grand /= static_cast<double>(n) * static_cast<double>(n);
+    std::vector<double> out(n, 0.0);
+    for (std::size_t a = 0; a < n; ++a)
+        out[a] = cov(cols[a], cols[a]) - 2.0 * rowmean[a] + grand;
+    return out;
+}
+
+std::vector<double> clockAnchorGaugeProjectDiag(const std::vector<double>& var) {
+    const std::size_t n = var.size();
+    if (n < 2) return {};
+    const double dn = static_cast<double>(n);
+    double sum = 0.0;
+    for (double v : var) sum += v;
+    const double grand = sum / (dn * dn);
+    std::vector<double> out(n, 0.0);
+    for (std::size_t a = 0; a < n; ++a)
+        out[a] = var[a] - 2.0 * var[a] / dn + grand;   // rowmean_a = var[a]/n on a diagonal
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Fold side — the variance decision and the per-satellite bookkeeping.
 // ---------------------------------------------------------------------------
 
@@ -198,25 +234,24 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     const double abs_m   = ctx.knobs.cta_abs_m;
     const double s_floor = std::max(1e-12, ctx.knobs.cta_sigma_floor_m
                                          * ctx.knobs.cta_sigma_floor_m);
-    const bool gf = ctx.knobs.cta_gauge_free;
+    const bool gf         = ctx.knobs.cta_gauge_free;       // the FOLD (what a withdraw must un-fold)
+    const bool proj_post  = ctx.knobs.cta_stat_proj_post;   // the DENOMINATOR's posterior half
+    const bool proj_prior = ctx.knobs.cta_stat_proj_prior;  // …and its prior half
     int pass = 0;
     for (; pass < kCtaMaxPasses; ++pass) {
         const Eigen::MatrixXd& cov = est.sharedCovariance();
         struct Row { std::string sat; double e{}, S{}, post_var{}, var_eff{}; bool anchored{}; };
         std::vector<Row> rows;
         std::map<char, std::vector<double>> e_by_const;
-        // Card Q3 §2.1: under the gauge-free fold the prior carries NO information
-        // along the clock common direction, so the POSTERIOR along it is data-only
-        // and its marginal variance cov(c,c) over-states Var(ê) — the statistic
-        // must be matched to the prior that was actually folded, or the guard
-        // trips on a widening it has itself created.  The matched denominator uses
-        // the COMMON-REMOVED posterior variance
-        //   Var(x̂_s − mean_c x̂) = C_ss − 2·mean_t C_st + mean_{t,u} C_tu,
-        // built here once per pass over each constellation's folded clock columns.
-        // On the raw-state path nothing changes (cov(c,c) as before), so the
-        // already-validated arm's statistic is untouched.
-        std::map<std::string, double> post_gf;
-        if (gf) {
+        // Card Q3 §2.1: the statistic is on the COMMON-REMOVED residual, so BOTH
+        // halves of S = P⁻ − P⁺ have to be the variance of that CONTRAST rather
+        // than of the raw state (@ref clockAnchorGaugeProject documents why, and
+        // why the raw marginal is wrong for either fold).  Which halves get
+        // projected is `network.clock_anchor_gauge_free_stat`, resolved into the
+        // two predicates above — the BISECTION knob, because the gauge-free arm
+        // moved the fold and this denominator in one step.
+        std::map<std::string, double> post_gf, prior_gf;
+        if (proj_post || proj_prior) {
             std::map<char, std::vector<std::pair<std::string, Eigen::Index>>> by_c;
             for (const std::string& sat : registered_clock_sats) {
                 if (sat.empty()) continue;
@@ -229,20 +264,25 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             for (const auto& [c, v] : by_c) {
                 (void)c;
-                const std::size_t n = v.size();
-                if (n < 2) continue;   // no estimable subspace ⇒ leave the raw marginal
-                double grand = 0.0;
-                std::vector<double> rowmean(n, 0.0);
-                for (std::size_t a = 0; a < n; ++a) {
-                    double sum = 0.0;
-                    for (std::size_t b = 0; b < n; ++b) sum += cov(v[a].second, v[b].second);
-                    rowmean[a] = sum / static_cast<double>(n);
-                    grand += sum;
+                if (v.size() < 2) continue;   // no estimable subspace ⇒ leave the raw marginals
+                if (proj_post) {
+                    std::vector<Eigen::Index> cols;
+                    cols.reserve(v.size());
+                    for (const auto& m : v) cols.push_back(m.second);
+                    const std::vector<double> pv = clockAnchorGaugeProject(cov, cols);
+                    for (std::size_t a = 0; a < pv.size(); ++a) post_gf[v[a].first] = pv[a];
                 }
-                grand /= static_cast<double>(n) * static_cast<double>(n);
-                for (std::size_t a = 0; a < n; ++a)
-                    post_gf[v[a].first] =
-                        cov(v[a].second, v[a].second) - 2.0 * rowmean[a] + grand;
+                if (proj_prior) {
+                    // The prior side uses the variance the fold ACTUALLY used, read
+                    // back per satellite — never re-derived (re-deriving is how a
+                    // statistic ends up standardizing by a variance the mechanism
+                    // never applied; the census makes the same choice).
+                    std::vector<double> vv;
+                    vv.reserve(v.size());
+                    for (const auto& m : v) vv.push_back(anchor.sat[m.first].last_var_eff);
+                    const std::vector<double> pv = clockAnchorGaugeProjectDiag(vv);
+                    for (std::size_t a = 0; a < pv.size(); ++a) prior_gf[v[a].first] = pv[a];
+                }
             }
         }
         rows.reserve(registered_clock_sats.size());
@@ -260,10 +300,15 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             r.e        = z - it->second.last_value;
             r.var_eff  = it->second.last_var_eff;
             r.post_var = (col < cov.rows() && col < cov.cols()) ? cov(col, col) : 0.0;
-            if (gf) {
+            if (proj_post) {
                 const auto pit = post_gf.find(sat);
                 if (pit != post_gf.end() && std::isfinite(pit->second) && pit->second >= 0.0)
                     r.post_var = pit->second;
+            }
+            if (proj_prior) {
+                const auto qit = prior_gf.find(sat);
+                if (qit != prior_gf.end() && std::isfinite(qit->second) && qit->second > 0.0)
+                    r.var_eff = qit->second;
             }
             // Var(x̂ − μ) = P⁻ − P⁺ EXACTLY.  The floor is a LOWER BOUND on the
             // denominator (never an addition to it — that was the pre-B3 incest
@@ -301,6 +346,24 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             const bool bad_nis = aw > k;
             const bool bad_abs = abs_m > 0.0 && std::abs(eh) > abs_m;
+            // §3's k derivation needs the realized DISTRIBUTION, not just its max:
+            // the denominator √S shrinks as q tightens, so a fixed k means a
+            // different number of metres at every rung of the ladder.  Accumulated
+            // over ANCHORED rows on the FIRST pass only — a later pass re-tests the
+            // survivors against a moved median and would double-count them.  (The
+            // population is still truncated ACROSS epochs by the guard's own action;
+            // the un-truncated null needs a k-disarmed arm.  Counter doc says so.)
+            if (pass == 0 && r.anchored) {
+                const double sqrt_s = std::sqrt(r.S);
+                ++ctx.counters.cta_w_rows;
+                ctx.counters.cta_sum_sqrt_s += sqrt_s;
+                ctx.counters.cta_sum_abs_e  += std::abs(eh);
+                ctx.counters.cta_sum_w2     += w * w;
+                for (std::size_t b = 0; b < kCtaWLadder.size(); ++b)
+                    if (aw >= kCtaWLadder[b]) ++ctx.counters.cta_w_ge[b];
+                for (std::size_t b = 0; b < kCtaELadder.size(); ++b)
+                    if (std::abs(eh) >= kCtaELadder[b]) ++ctx.counters.cta_e_ge[b];
+            }
             if (r.anchored) {
                 if (!bad_nis && !bad_abs) continue;
                 if (bad_nis) ++ctx.counters.cta_trip_nis;

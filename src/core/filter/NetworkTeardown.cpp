@@ -27,6 +27,7 @@
 #include "filter/NetworkBlockBaarda.hpp"       // BlockFormal LOS-block census (networkBlockBaardaReport)
 #include "filter/NetworkCongruence.hpp"        // station congruence screen (networkCongruenceReport)
 #include "filter/NetworkMdb.hpp"               // Baarda MDB (networkMdbReport — the run-end body lives there)
+#include "filter/NetworkClockAnchor.hpp"       // Card Q3 §3: kCtaWLadder / kCtaELadder for the guard-ladder run-end line
 #include "filter/NetworkRedundancyCensus.hpp"  // redundancy census (kCensusMinPoolRows for the run-end line)
 #include "filter/NetworkPrefitCensus.hpp"      // prefit census (kNetPrefitMinTypeRows / kNetPrefitPinWeight for the run-end line)
 #include "app/NetworkSetupResult.hpp"   // INC-5: setup-phase handoff (setup) + navAvailabilityGpsSeconds
@@ -2569,10 +2570,64 @@ int networkTeardown(
                       "decoupled and marked WITHOUT the same-epoch value correction, so each one "
                       "shipped an anchor-warped epoch.  See the per-trip warnings for the cause "
                       "(prior-dominated column, or no captured prior to withdraw).", trips);
+        // §2.1 — which DENOMINATOR this run's guard and census standardized by.
+        // Two arms of the bisection differ ONLY here, so a run-end line that omits
+        // it makes the pair indistinguishable in the archived console.
+        log->info("Network (Card Q3 §2.1): guard/census denominator — P⁻ {} , P⁺ {} (fold: {}).",
+                  ctx.knobs.cta_stat_proj_prior ? "GAUGE-PROJECTED" : "raw per-satellite var_eff",
+                  ctx.knobs.cta_stat_proj_post  ? "GAUGE-PROJECTED" : "raw marginal cov(c,c)",
+                  ctx.knobs.cta_gauge_free ? "gauge-free" : "raw state");
+        // §3's k derivation, per rung.  The denominator √S shrinks as q tightens, so
+        // a FIXED k is a different number of METRES at every rung — the ladder below
+        // is what makes that visible without a second disarmed run per rung, and the
+        // metre ladder is what the ABSOLUTE backstop's rail is read off (the 3 h arm
+        // found 0 of 63 nis trips would have been caught by the shipped 2.0 m).
+        if (c.cta_w_rows > 0) {
+            const double n     = static_cast<double>(c.cta_w_rows);
+            const double msq   = c.cta_sum_sqrt_s / n;
+            const double s0    = std::sqrt(c.cta_sum_w2 / n);
+            std::string wl, el;
+            for (std::size_t b = 0; b < kCtaWLadder.size(); ++b)
+                wl += fmt::format("{}>={:g}:{} ({:.3g}%)", b ? "  " : "", kCtaWLadder[b],
+                                  c.cta_w_ge[b], 100.0 * static_cast<double>(c.cta_w_ge[b]) / n);
+            for (std::size_t b = 0; b < kCtaELadder.size(); ++b)
+                el += fmt::format("{}>={:g}m:{} ({:.3g}%)", b ? "  " : "", kCtaELadder[b],
+                                  c.cta_e_ge[b], 100.0 * static_cast<double>(c.cta_e_ge[b]) / n);
+            log->info("Network (Card Q3 §3 / guard ladder over {} ANCHORED row(s)): mean √S = "
+                      "{:.4f} m ⇒ the armed k = {:.2f} is a {:.3f} m bar at this rung; mean |ê| = "
+                      "{:.4f} m; guard σ̂₀ = √(Σw²/n) = {:.3f}.  |w| ladder: {}.  |ê| ladder: {}.",
+                      c.cta_w_rows, msq, ctx.knobs.cta_k, ctx.knobs.cta_k * msq,
+                      c.cta_sum_abs_e / n, s0, wl, el);
+            log->info("Network (Card Q3 §3): read k off the |w| ladder ABOVE, not off a trip "
+                      "count — but note this population is TRUNCATED across epochs (a tripped "
+                      "satellite goes LOOSE and stops contributing until it re-couples), so the "
+                      "upper bins UNDER-report.  The un-truncated null needs an arm with "
+                      "network.clock_anchor_k beyond the top rung and network.clock_anchor_abs_m "
+                      "= 0 — that is what §3 means by 'with the guard disarmed'.");
+        }
         if (ctx.knobs.cta_var_floor > 0.0 && c.cta_floor_hits == 0 && c.cta_folded_anchored > 0)
             log->info("Network (Card Q3): the variance floor never bound ({:.3e} m² vs the armed "
                       "q·Δt) — the consistency cap is armed but inactive at this q, which is the "
                       "expected reading while q·Δt stays above it.", ctx.knobs.cta_var_floor);
+        else if (ctx.knobs.cta_var_floor > 0.0 && c.cta_folded_anchored > 0)
+            // The floor BINDING at the bottom rungs is the design, not a warning
+            // condition (§7.4): below q·Δt ≈ (3 mm)² the anchor would otherwise
+            // claim precision no honest correlated-error floor supports, and
+            // deviation #1's consistency cap is what stops it.  Say how hard it
+            // bound, because "the floor governs" and "the floor is a rounding
+            // error" are different postures and only the fraction separates them.
+            log->info("Network (Card Q3 / deviation-#1 consistency floor): the floor BOUND on {} "
+                      "of {} anchored fold(s) ({:.1f} %) at {:.3e} m² (σ = {:.2f} mm) against the "
+                      "armed q·Δt = {:.3e} m² at 30 s.  A binding floor is the DESIGN at these "
+                      "rungs, not a fault: it is the cap that keeps an independence-assuming "
+                      "carry from accumulating information against a time-correlated error "
+                      "floor.  Grade it on the census's clk family and the wire, never on the "
+                      "fact that it bound.",
+                      c.cta_floor_hits, c.cta_folded_anchored,
+                      100.0 * static_cast<double>(c.cta_floor_hits)
+                            / static_cast<double>(c.cta_folded_anchored),
+                      ctx.knobs.cta_var_floor, 1000.0 * std::sqrt(ctx.knobs.cta_var_floor),
+                      std::max(0.0, ctx.knobs.cta_q) * 30.0);
     }
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "

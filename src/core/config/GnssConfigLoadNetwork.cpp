@@ -5241,6 +5241,29 @@ namespace GnssProcessor {
         network_clock_anchor_gauge_free_ =
             jval<bool>(json, "network.clock_anchor_gauge_free",
                        "network_clock_anchor_gauge_free", false);
+        // Card Q3 §2.1 BISECTION knob.  Parsed as a NAME rather than a bool pair
+        // because the four settings are not two independent flags: `auto` is a
+        // reproduction contract (it must keep tracking whatever the fold does), and
+        // `post` exists only to reproduce the shipped gauge-free arm exactly.  An
+        // unrecognised name is an ERROR, never a silent fall-back to the default —
+        // a mis-typed denominator would look like a clean run with the wrong
+        // statistic, which is the failure mode this whole knob exists to expose.
+        {
+            const std::string s = jval<std::string>(json, "network.clock_anchor_gauge_free_stat",
+                                                    "network_clock_anchor_gauge_free_stat",
+                                                    std::string{"auto"});
+            if (s.empty() || s == "auto")      network_clock_anchor_gauge_free_stat_ = NetworkClockAnchorStat::Auto;
+            else if (s == "raw")               network_clock_anchor_gauge_free_stat_ = NetworkClockAnchorStat::Raw;
+            else if (s == "post")              network_clock_anchor_gauge_free_stat_ = NetworkClockAnchorStat::Post;
+            else if (s == "proj")              network_clock_anchor_gauge_free_stat_ = NetworkClockAnchorStat::Proj;
+            else {
+                network_clock_anchor_gauge_free_stat_ = NetworkClockAnchorStat::Auto;
+                log->error("Network (Card Q3 §2.1): network.clock_anchor_gauge_free_stat = '{}' is not "
+                           "one of auto|raw|post|proj — falling back to 'auto'.  Fix the config: a "
+                           "mis-named denominator produces a clean-looking run standardized by the "
+                           "wrong variance.", s);
+            }
+        }
         if (network_clock_temporal_anchor_) {
             // Realized walk once the carry binds is √(q·Δt) EXACTLY (steady-state
             // scalar identity), so the armed q is reported as the walk it targets —
@@ -5274,6 +5297,29 @@ namespace GnssProcessor {
                             "the control's level — that is the mechanism working, not a regression"
                           : "it therefore competes with the S-basis datum for the per-constellation "
                             "common mode; arm network.clock_anchor_gauge_free to stop it");
+            // The guard's DENOMINATOR is a separate choice from the fold, and saying
+            // which one is armed is the whole point of the bisection: two arms that
+            // differ only here are otherwise indistinguishable in the log.
+            {
+                const bool proj_post = network_clock_anchor_gauge_free_stat_ != NetworkClockAnchorStat::Raw
+                                    && (network_clock_anchor_gauge_free_stat_ != NetworkClockAnchorStat::Auto
+                                        || network_clock_anchor_gauge_free_);
+                const bool proj_prior = network_clock_anchor_gauge_free_stat_ == NetworkClockAnchorStat::Proj;
+                const char* name =
+                    network_clock_anchor_gauge_free_stat_ == NetworkClockAnchorStat::Raw  ? "raw"
+                  : network_clock_anchor_gauge_free_stat_ == NetworkClockAnchorStat::Post ? "post"
+                  : network_clock_anchor_gauge_free_stat_ == NetworkClockAnchorStat::Proj ? "proj"
+                  : (network_clock_anchor_gauge_free_ ? "auto->post" : "auto->raw");
+                log->info("Network producer (Card Q3 §2.1): guard/census DENOMINATOR = '{}' — P⁻ from the "
+                          "{} prior variance, P⁺ from the {} posterior variance.  The statistic is on the "
+                          "COMMON-REMOVED residual, so both halves have to be the variances of that "
+                          "CONTRAST: 'proj' is the only setting that projects both, and it is the "
+                          "consistent one for EITHER fold.  This knob is SOLVE-AFFECTING through the trip "
+                          "population and is fingerprinted whenever it is not 'auto'.",
+                          name,
+                          proj_prior ? "GAUGE-PROJECTED" : "raw per-satellite",
+                          proj_post  ? "GAUGE-PROJECTED" : "raw marginal");
+            }
             // The interlocks that decide whether the mechanism can work at all.
             if (!(network_clock_anchor_q_ > 0.0))
                 log->error("Network (Card Q3): network.clock_anchor_q = {:.3e} is not positive — the "

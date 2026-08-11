@@ -1,0 +1,37 @@
+{
+ "_comment": [
+  "Card Q3 SS2.1 BISECTION cell (gf fold, RAW denominator).  Isolates the FOLD",
+  "change from the DENOMINATOR change: cta3_gf moved both at once, so its trip",
+  "collapse 65 -> 3 could not be apportioned.  One knob from cta3_gf."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_q": 3e-05,
+  "clock_anchor_var_floor_m2": 0.0004,
+  "clock_anchor_sigma_floor_m": 0.02,
+  "clock_anchor_gauge_free": true,
+  "clock_anchor_gauge_free_stat": "raw",
+  "product_output_path": "C:/GnssProcessor/runs/cta4_bis_gf_raw/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_bis_gf_raw/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  }
+ }
+}

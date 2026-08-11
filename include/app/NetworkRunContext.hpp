@@ -44,6 +44,7 @@
 
 #include <Eigen/Dense>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -165,6 +166,13 @@ namespace GnssProcessor {
         bool   cta_mark{};           ///< network.clock_anchor_mark — wire-mark the DECOUPLING edge (per-sat disc via the B1 retro-bump chain)
         bool   cta_gauge_free{};     ///< network.clock_anchor_gauge_free — Card Q3 §2.1: marginalize the per-constellation SATELLITE-CLOCK gauge direction out of the folded clock prior, so the anchor constrains only the estimable between-satellite differences and leaves the common mode to the datum.  Measured motive: the plain anchor suppressed CLK-R's drained Σ|μ| 49.4 → 27.8 m over 3 h, i.e. the carry was doing 44 % of the gauge's work.
         bool   cta_resolve{};        ///< network.clock_anchor_resolve — adapt-and-EMIT: withdraw the tripped prior and RE-SOLVE the epoch before emission
+        // network.clock_anchor_gauge_free_stat resolved ONCE (auto → follow the fold),
+        // so the guard and the census read predicates rather than re-deriving the
+        // mapping — the same discipline `cta_on`'s clock_model interlock follows above.
+        // These select the GUARD's denominator ONLY.  The WITHDRAW path must keep
+        // reading `cta_gauge_free`, because what it un-folds has to be what was folded.
+        bool   cta_stat_proj_post{};  ///< P⁺ = the GAUGE-PROJECTED posterior variance of the common-removed contrast, not the raw marginal cov(c,c)
+        bool   cta_stat_proj_prior{}; ///< P⁻ = the GAUGE-PROJECTED prior variance of that same contrast, not the raw per-satellite var_eff.  Set only by 'proj', the one consistent pairing.
         bool clk_model_on{};
         double clk_model_q1{};
         double clk_model_q2{};
@@ -1487,6 +1495,26 @@ namespace GnssProcessor {
         double    cta_max_w = 0.0;           ///< largest |w| seen (any disposition)
         double    cta_max_w_tow = 0.0;       ///< …its epoch
         std::string cta_max_w_sat;           ///< …its satellite
+        // --- The guard's own realized DISTRIBUTION (Card Q3 §3, the k derivation).
+        // `k` is read off a measured |t| ladder, and the ladder MOVES with q: the
+        // denominator √(P⁻ − P⁺) shrinks as the anchor tightens, so a FIXED k means a
+        // different number of METRES at every rung.  Without these the only way to
+        // re-derive k per rung is a second disarmed run per rung.  Accumulated over
+        // ANCHORED rows on the FIRST guard pass only (a later pass re-tests survivors
+        // against a moved median and would double-count them).
+        //
+        // ⚠ The population is truncated ACROSS epochs, not within one: a tripped
+        // satellite goes LOOSE and stops contributing until it re-couples, so the
+        // upper tail is suppressed by the guard's own action.  For the UN-truncated
+        // null run an arm with `clock_anchor_k` beyond the top rung and
+        // `clock_anchor_abs_m: 0` — that is what §3 means by "with the guard
+        // disarmed", and it is the only reading that calibrates k honestly.
+        long long cta_w_rows = 0;            ///< anchored rows contributing to the two ladders below (denominator)
+        std::array<long long, 8> cta_w_ge{}; ///< |w| ≥ @ref kCtaWLadder[i] — the dimensionless ladder k is read off
+        std::array<long long, 8> cta_e_ge{}; ///< |ê| ≥ @ref kCtaELadder[i] (m) — the ladder the ABSOLUTE backstop's rail is read off
+        double    cta_sum_sqrt_s = 0.0;      ///< Σ √S over those rows ⇒ mean √S = the METRES one unit of k buys at this rung
+        double    cta_sum_abs_e = 0.0;       ///< Σ |ê| over those rows (m)
+        double    cta_sum_w2 = 0.0;          ///< Σ w² ⇒ √(Σw²/n) is the guard's own σ̂₀, a same-statistic cross-check on the census's σ̂₀_clk
 
         // --- SD EWL Route-B integer decision (increment 2a) run tallies.  Standing
         // invariant #4: on an armed run `sdewl_dd_fixed == 0` means the decision never

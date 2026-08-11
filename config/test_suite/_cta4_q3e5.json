@@ -1,0 +1,41 @@
+{
+ "_comment": [
+  "Card Q3 q-ladder rung 0 -- the ladder's own reference at the DERIVED floors.",
+  "Floors derived from the SS7 structure function (SPEC SS8), not tuned:",
+  "var floor 1.0e-5 m^2 = (1.25 x the 2.52 mm change-domain measurement",
+  "floor)^2; sigma floor 1.8 mm = that floor / sqrt(2) (per-sample).",
+  "Guard denominator 'proj' -- both halves on the contrast the numerator",
+  "measures.  k held at 6.0 across the ladder so the rungs are ONE KNOB",
+  "apart; k is re-derived per rung from the run-end |w| ladder, not re-armed."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 3e-05,
+  "product_output_path": "C:/GnssProcessor/runs/cta4_q3e5/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_q3e5/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  }
+ }
+}

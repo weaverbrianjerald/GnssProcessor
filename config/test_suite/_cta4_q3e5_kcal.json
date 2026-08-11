@@ -1,0 +1,44 @@
+{
+ "_comment": [
+  "Card Q3 SS3 k-CALIBRATION arm -- the guard DISARMED so the |w| population is",
+  "the UN-TRUNCATED null.  k = 1e9 and abs = 0 means no satellite is ever",
+  "decoupled by the statistic, so no row is removed from the population by the",
+  "guard's own action; the run-end |w| ladder is then the distribution k is read",
+  "off, exactly as SS3 prescribes.  MEASURE-ONLY for k: its solve differs from the",
+  "armed rung (no refloats), so it is NOT the graded arm and must not be quoted",
+  "for dev/consumer/sigma0 verdicts.  Staleness (gap) trips still fire -- they are",
+  "not statistical and disarming them would hide a real defect.",
+  "",
+  "Derived from _cta4_q3e5.json -- one knob pair (k, abs) apart."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 1000000000.0,
+  "clock_anchor_abs_m": 0.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 3e-05,
+  "product_output_path": "C:/GnssProcessor/runs/cta4_q3e5_kcal/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_q3e5_kcal/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  }
+ }
+}

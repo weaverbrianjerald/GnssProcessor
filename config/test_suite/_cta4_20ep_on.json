@@ -1,0 +1,57 @@
+{
+ "_comment": [
+  "Q3 ladder leg G0b: byte-identity re-run of the stored 20-ep ARMED RAW arm (runs/cta_20ep_on).  Paths only.",
+  "Card Q3 (docs/SPEC_clock_temporal_anchor.md) G1 smoke ON arm \u2014 one knob",
+  "different from _golden63_20ep_cta_ctl.json (plus the anchor's own parameter",
+  "block, which is inert without it).",
+  "",
+  "WHAT THIS ARM IS FOR (\u00a74 G1): counters live, not cleanliness.  The gate is",
+  "  * cta_folded_anchored > 0 \u2014 zero means the mechanism is INERT and every",
+  "    downstream number is the legacy carry (standing invariant #4);",
+  "  * the anchor is EARNED, not granted: every satellite starts LOOSE and",
+  "    re-couples after clock_anchor_recouple_epochs, so the run-end line must",
+  "    show both a LOOSE population early and cta_recouples \u2248 #satellites;",
+  "  * no new withholds, no solve failures, trips \u2248 0 on a quiet 20-epoch window;",
+  "  * the ORDERING check that this card's placement exists for: post-fit \u03c3\u0302\u2080",
+  "    (code) and the within-epoch RAIM trip rate must NOT rise vs the control.",
+  "    A stiff clock prior fights the per-epoch clock-ensemble common mode, whose",
+  "    measured step is ~8.5 cm \u2014 well above this arm's \u221a(q\u00b7\u0394t) = 3.0 cm \u2014 and",
+  "    that conflict, if it is real, lands on the pivot satellite's rows and",
+  "    shows up HERE first.  See SPEC \u00a72.1's open note: the fix, if it fires, is",
+  "    to fold the anchor gauge-free (rank-1 downdate of the clock prior's",
+  "    information along the per-constellation common direction).",
+  "",
+  "q = 3e-5 m\u00b2/s targets a \u221a(q\u00b7\u0394t) = 3.0 cm walk at 30 s: decisively BELOW the",
+  "measured 9.23 cm (so the carry actually binds \u2014 the whole premise) and above",
+  "the ~2 cm physical floor, i.e. the middle rung of the pre-registered ladder.",
+  "The variance floor is (2 cm)\u00b2 = the physical per-epoch change: the carry must",
+  "never claim to know the clock better than it can physically move.  At this q",
+  "the floor is armed but inactive (q\u00b7\u0394t = 9e-4 \u226b 4e-4) \u2014 the expected reading.",
+  "k = 6 and abs = 2.0 m are the DEFAULTS, carried here deliberately unvalidated:",
+  "\u00a73 derives them from the measured |t| ladder of the clk census family, and",
+  "this arm is one of the runs that measures it.",
+  "FRESH lineage (the anchor is FINGERPRINTED); run alone."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 600.0
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_q": 3e-05,
+  "clock_anchor_var_floor_m2": 0.0004,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_sigma_floor_m": 0.02,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cta4_20ep_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_20ep_on/state_snapshot.bin"
+ }
+}

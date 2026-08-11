@@ -12,6 +12,7 @@
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
+#include "filter/NetworkClockAnchor.hpp"     // Card Q3 §2.1 gauge projection (shared with the guard)
 #include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
@@ -331,6 +332,59 @@ void networkStashStatus(
                 clk_med[c] = v[v.size() / 2];
             }
         }
+        // Card Q3 §2.1 — and the reason σ̂₀_clk was NOT comparable across the 3 h
+        // ladder's arms (0.28 / 0.75 / 4.48 for ctl / anchor / gauge-free).  The
+        // census standardizes ê by `fold_var − post_var`, but ê above has just had
+        // the per-constellation common mode removed, so both halves have to be the
+        // variances of THAT CONTRAST — while the raw marginals still carry the
+        // common-mode variance the median took out.  Under the gauge-free fold the
+        // mismatch is gross (the prior puts NO information on the gauge, so the raw
+        // posterior marginal is data-only along it and can exceed the raw prior
+        // outright, driving `disp` negative), which is exactly the 4.48.
+        //
+        // Fixed by projecting the same way the guard does, through the SAME helper,
+        // so the census stays a genuine cross-check on the guard instead of a second
+        // implementation that can drift.  The projection is applied to whichever
+        // halves `network.clock_anchor_gauge_free_stat` selects, so census and guard
+        // are the same statistic in every arm of the bisection, `auto` included.
+        std::map<std::string, double> clk_proj_post, clk_proj_prior;
+        if (prires_clk && ctx.knobs.cta_on
+            && (ctx.knobs.cta_stat_proj_post || ctx.knobs.cta_stat_proj_prior)) {
+            const Eigen::MatrixXd& cov = est.sharedCovariance();
+            struct ClkMember { std::string sat; Eigen::Index col; double fold_var; };
+            std::map<char, std::vector<ClkMember>> by_c;
+            for (const CarryPrior& cp : prev_carry) {
+                if (cp.kind != SharedParamKind::Clock || cp.sat.empty()) continue;
+                const auto it = prires_shared_prior.find(
+                    sharedCarryKey(cp.kind, cp.sat, cp.signal));
+                // Only FOLDED rows: an unfolded row is on the other dispersion
+                // branch and never reaches `fold_var − post_var` at all.  This is
+                // the same membership the guard used, so the two groups agree.
+                if (it == prires_shared_prior.end() || !it->second.folded) continue;
+                Eigen::Index col;
+                try { col = est.clockColumn(cp.sat); } catch (...) { continue; }
+                if (col >= 0 && col < cov.rows() && col < cov.cols())
+                    by_c[cp.sat[0]].push_back(ClkMember{cp.sat, col, it->second.fold_var});
+            }
+            for (const auto& [c, v] : by_c) {
+                (void)c;
+                if (v.size() < 2) continue;   // a lone clock IS the gauge
+                if (ctx.knobs.cta_stat_proj_post) {
+                    std::vector<Eigen::Index> cols;
+                    cols.reserve(v.size());
+                    for (const auto& m : v) cols.push_back(m.col);
+                    const std::vector<double> pv = clockAnchorGaugeProject(cov, cols);
+                    for (std::size_t a = 0; a < pv.size(); ++a) clk_proj_post[v[a].sat] = pv[a];
+                }
+                if (ctx.knobs.cta_stat_proj_prior) {
+                    std::vector<double> vv;
+                    vv.reserve(v.size());
+                    for (const auto& m : v) vv.push_back(m.fold_var);
+                    const std::vector<double> pv = clockAnchorGaugeProjectDiag(vv);
+                    for (std::size_t a = 0; a < pv.size(); ++a) clk_proj_prior[v[a].sat] = pv[a];
+                }
+            }
+        }
         for (const CarryPrior& cp : prev_carry) {
             const bool is_pb  = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
             const bool is_cb  = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
@@ -352,6 +406,23 @@ void networkStashStatus(
             }
             in.fold_var = p.fold_var;
             in.post_var = cp.var;
+            // Card Q3 §2.1: swap in the gauge-projected halves for a clock row whose
+            // ê is common-removed, so `disp = fold_var − post_var` is the dispersion
+            // of the statistic actually reported.  Guarded on finiteness and on the
+            // pair staying ordered — a projection that produced a non-positive or
+            // inverted pair means the group was degenerate this epoch, and reporting
+            // the raw (mis-matched but well-defined) pair beats reporting a negative
+            // dispersion the ladder would clamp into its top bin.
+            if (is_clk && !cp.sat.empty()) {
+                const auto fit = clk_proj_prior.find(cp.sat);
+                const auto pit = clk_proj_post.find(cp.sat);
+                const double fv = (fit != clk_proj_prior.end()) ? fit->second : in.fold_var;
+                const double pvv = (pit != clk_proj_post.end()) ? pit->second : in.post_var;
+                if (std::isfinite(fv) && std::isfinite(pvv) && fv > 0.0 && pvv >= 0.0 && fv > pvv) {
+                    in.fold_var = fv;
+                    in.post_var = pvv;
+                }
+            }
             in.gap_s    = std::max(0.0, dt);
             in.folded   = p.folded;
             in.label    = p.label;
