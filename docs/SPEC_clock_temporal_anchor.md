@@ -1420,10 +1420,10 @@ other way) silently bypassing the gate.  **The exact `stats_key` is therefore
 carried verbatim on `ArcConstraint` and propagated to the DD constraint**, never
 rebuilt.
 
-**Validation status, stated plainly: CODE-VERIFIED, NOT FIELD-EXERCISED.**  No
-config in the tree selects `estimation.state_ambiguity_basis: nl_wl`, so this
-path runs in none of this card's arms and the guards on it have no field
-evidence.  What IS demonstrated: the wl_only consumer arm re-run on the binary
+**Validation status: FIELD-EXERCISED as of §8.11.8** (this paragraph is kept for
+the record of what was true when the guards shipped).  At the time: no config in
+the tree selected `estimation.state_ambiguity_basis: nl_wl`, so the path ran in
+none of this card's arms and the guards on it had no field evidence.  What IS demonstrated: the wl_only consumer arm re-run on the binary
 carrying these edits reproduces `runs/cta4_q1e7_ffr2` exactly (the consumer
 short-circuits to `resolveWlOnly` before ever reaching the sibling), so the edit
 is proven not to have reached the path this card exercises.  A first NlWl arm is
@@ -1433,3 +1433,61 @@ owed before the guards there are treated as validated.
 default-ON contract for both guards and the FFR helper's fail-safe behaviour.
 The defaults are what a later edit is most likely to flip silently, and flipping
 them restores a 35 m blunder with nothing in the logs to say so.
+
+### §8.11.8 The NlWl guards, FIELD-EXERCISED — and the path was destroying the solution
+
+§8.11.7 shipped the sibling's guards as CODE-VERIFIED, NOT FIELD-EXERCISED,
+because no config in the tree selected `nl_wl`.  That gap is now closed with a
+purpose-built arm, and the result is larger than expected.
+
+**The vehicle.**  `_pppar_algo_static_gps_l1l2.json` — single-station static PPP
+on ALGO00CAN, uncombined GPS L1/L2, external COD MGX FIN products, graded
+against the ITRF2020 SSC monument by a grader independent of the engine.  Its
+`uncombined_enabled: true` is exactly NlWl's prerequisite.  Adding
+`estimation.state_ambiguity_basis: nl_wl` routes AR through
+`applyMwWlConstraintsNlWl_`; the guards are then ONE KNOB PAIR apart
+(`_nlwl_guarded` / `_nlwl_unguarded`).  ~45 s per arm.
+
+| 24 h static PPP, settled (hour ≥ 1) | median | p95 | worst | final |
+|---|---|---|---|---|
+| per-band control (basis unchanged) | **2.75 m** | 2.79 | 2.79 | 2.79 |
+| NlWl, guards DISARMED (pre-fix behaviour) | **1026.71 m** | 2574.50 | 5000.37 | 2482.89 |
+| NlWl, guards ARMED (shipped default) | **5.46 m** | 22.58 | 94.80 | 5.34 |
+
+**The unguarded NlWl path does not merely risk a blunder — it destroys the
+solution**, by three orders of magnitude, on ordinary data with no event in it.
+It had never been run.  The guards take it from 1026.71 m to 5.46 m.
+
+**Why the FFR gate contributes nothing here — now field-confirmed, not inferred.**
+With the diagnostics measured unconditionally (below), the DISARMED arm reports
+what the gate WOULD have seen:
+
+| | applied sets, `P_s` | `max\|innov\|` seen | innov drops / all-rejects |
+|---|---|---|---|
+| disarmed | med **1.000000**, min **0.999913** | med 0.158, **max 17.13 cyc** | 0 / 0 |
+| armed | med 1.000000, min 0.999969 | med 2.57, max 24.70 cyc | **372 / 142** |
+
+**The bootstrap gate would have passed every single constraint set** — its
+minimum over the whole 24 h is 0.999913, above the 0.999 bar.  Meanwhile
+assertions off by up to **17.13 widelanes** were being applied at
+`wl_only_pseudo_var` σ ≈ 0.01 cycle.  §8.11.2's structural claim — a success
+rate bounds RANDOM rounding failure and is blind to SYSTEMATIC frame
+disagreement — is now demonstrated twice on independent data (the closed-loop
+consumer at 35 m, and this at 1 km), not argued.
+
+**⚠ SAFE ≠ GOOD.**  The guarded NlWl arm is still 2× worse than the per-band
+control in the body (5.46 vs 2.75 m) and 34× worse in the tail (94.80 vs 2.79).
+That is consistent with what the path IS: it applies MW widelane constraints and
+stops — `resolve()`'s own comment says the full LAMBDA NL search with WL
+pre-constrained is future work.  **The guards make the NlWl posture safe to run;
+they do not make it a working AR posture, and it should not be used as one.**
+
+**Telemetry fix that this A/B forced.**  `P_s` and `max|innov|` were computed
+INSIDE their guard blocks, so a disarmed run reported `P_s=0.000000,
+max|innov|=0.0000` — zeros that read as "nothing to see" when the truth was
+"17 cycles of disagreement went through unchallenged".  That is the same class
+of lie as `ratio = +inf` reading as a perfect ratio, in code written to fix
+exactly that lie.  Both quantities are now MEASURED unconditionally and only
+ACTED on when armed, and the max is labelled PRE-screen so it cannot be misread
+as the applied set's residual.  A few flops over a handful of arcs, and it is
+what makes the disarmed column above exist at all.

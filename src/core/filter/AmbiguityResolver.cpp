@@ -1930,7 +1930,20 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
     // the survivors clear `min_success_rate`.  Backward elimination rather than
     // all-or-nothing mirrors selectFixableSubset: a confidently-known subset is
     // worth applying even when one arc is not ready.
+    // MEASURE unconditionally, ACT only when armed.  A diagnostic that reads 0
+    // because its guard is switched off is the same lie as `ratio = +inf`
+    // reading as a perfect ratio — and it is precisely the disarmed
+    // (legacy-reproduction) arm where you most want to see what the guard WOULD
+    // have seen.  Both quantities are a handful of flops over a handful of arcs.
     double wl_p_succ = 0.0;
+    {
+        std::set<std::string> arcs0;
+        for (const auto& c : constraints) {
+            arcs0.insert(c.arc_key_i);
+            arcs0.insert(c.arc_key_ref);
+        }
+        wl_p_succ = wlArcSuccessRate_(arcs0, wl_quality, nullptr);
+    }
     if (config_.wl_only_ffr) {
         while (!constraints.empty()) {
             std::set<std::string> arcs;
@@ -1983,6 +1996,18 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
     // rounding question; drop it rather than let a σ = 0.01 cycle pseudo-obs
     // drag the state across the gap.
     double wl_max_innov = 0.0;
+    {   // measured on every arm, armed or not (see the note above)
+        const int nx_p = static_cast<int>(x.size());
+        for (const auto& c : constraints) {
+            if (c.idx_L1_i < 0 || c.idx_L1_i >= nx_p || c.idx_L1_ref < 0 || c.idx_L1_ref >= nx_p
+             || c.idx_L2_i < 0 || c.idx_L2_i >= nx_p || c.idx_L2_ref < 0 || c.idx_L2_ref >= nx_p)
+                continue;
+            const double pred = (x(c.idx_L1_i) - x(c.idx_L1_ref)) * c.inv_lam_L1
+                              - (x(c.idx_L2_i) - x(c.idx_L2_ref)) * c.inv_lam_L2;
+            wl_max_innov = std::max(wl_max_innov,
+                                    std::abs(static_cast<double>(c.wl_int) - pred));
+        }
+    }
     if (config_.wl_only_max_innov_cyc > 0.0) {
         const int nx_pred = static_cast<int>(x.size());
         const std::size_t before = constraints.size();
@@ -2111,7 +2136,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
     }
 
     log->info("WL-only AR: applied {} DD WL constraint(s){} (no LAMBDA NL search); "
-              "P_s={:.6f}, max|innov|={:.4f} cyc",
+              "P_s={:.6f}, max|innov| seen (PRE-screen) {:.4f} cyc",
               nv, n_reset > 0 ? fmt::format(", {} with reset", n_reset) : "",
               wl_p_succ, wl_max_innov);
     if (log->should_log(spdlog::level::debug)) {
@@ -2460,7 +2485,16 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
     // questions — RANDOM rounding failure vs SYSTEMATIC frame disagreement —
     // and the measured blunder passed the first with p_succ = 1.0 and was
     // caught only by the second.
+    // Measured unconditionally, acted on only when armed — see resolveWlOnly.
     double nlwl_p_succ = 0.0;
+    {
+        std::set<std::string> arcs0;
+        for (const auto& c : constraints) {
+            arcs0.insert(c.arc_key_i);
+            arcs0.insert(c.arc_key_ref);
+        }
+        nlwl_p_succ = wlArcSuccessRate_(arcs0, wl_quality, nullptr);
+    }
     if (config_.wl_only_ffr) {
         while (!constraints.empty()) {
             std::set<std::string> arcs;
@@ -2492,6 +2526,9 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
     }
 
     double nlwl_max_innov = 0.0;
+    for (const auto& c : constraints)      // measured on every arm, armed or not
+        nlwl_max_innov = std::max(nlwl_max_innov,
+                                  std::abs(static_cast<double>(c.dd_wl_int) - c.predicted_dd));
     if (config_.wl_only_max_innov_cyc > 0.0) {
         const std::size_t before = constraints.size();
         int n_over = 0;
@@ -2713,7 +2750,7 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
         if (c.non_pivot_wl_indices.size() >= 2) ++n_ewl;
     }
     log->info("WL-NlWl: applied {} DD WL constraint(s) ({} EWL-style multi-state){}; "
-              "P_s={:.6f}, max|innov|={:.4f} cyc",
+              "P_s={:.6f}, max|innov| seen (PRE-screen) {:.4f} cyc",
               nv, n_ewl,
               n_reset > 0 ? fmt::format(", {} with reset", n_reset) : "",
               nlwl_p_succ, nlwl_max_innov);
