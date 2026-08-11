@@ -661,6 +661,42 @@ understates the true error by ~20× (clock) and ~2.5× (ZWD) in σ.
 - Ignition is excluded by grading the settled half, but 2 h is the MINIMUM
   (§2); the level channel's own budget is ~2 h.
 
+## §9.6 G-B — satellite-clock step, FIRST CLASS ONLY (measured 2026-08-11)
+
+Bench demonstration, not the full matrix.  Arms `config/sim/simnet5_gb{05,2,10}.json`
+— 5 solve stations, one step on **G14** (40–44° elevation, well observed, so the
+result is not confounded with the low-elevation noise that dominates G02/G13) at
+epoch 120 of 240.  Recovered magnitude = median C(G14) over epochs 125–150 minus
+median over 95–118 (C is already the estimable contrast; the pivot is pinned to 0).
+
+| injected | pre-step | post-step | **recovered** | error | latency |
+|---|---|---|---|---|---|
+| 0.5 m | −0.347 | −0.361 | **−0.014 m** | −0.514 | **not detected** |
+| 2.0 m | −0.347 | +1.030 | **+1.377 m** | −0.623 | 0 epochs |
+| 10.0 m | −0.347 | +8.415 | **+8.762 m** | −1.238 | 0 epochs |
+
+**Empirical recovery floor is between 0.5 m and 2.0 m** at this configuration — a
+0.5 m step is entirely absorbed (recovered 3 % of it), while 2 m and 10 m are
+tracked within one epoch.  Recovery is **biased LOW by 12–31 %**, the balance
+going into the other estimable channels.
+
+Latency 0 is expected rather than impressive: `sat_clock_q = 0.01` gives
+√(q·Δt) = 0.55 m of process noise per 30 s epoch, so the clock state is nearly
+free and simply re-estimates.  That is the same posture the Q3 card exists to
+change, and it means **this arm measures the absorption floor, not a guard.**
+
+⚠️ **Marking is NOT TESTED by these arms.**  Zero RAIM flags and zero R records
+were observed at every magnitude including 10 m — but `emit_clock_disc` and
+`clock_disc_jump_test` were **not armed**, so the marker channel was never
+populated.  Per standing invariant #4, that is an inert instrument, not a failing
+guard, and it must not be read as one.  Arming them is the first item of the real
+G-B matrix.
+
+**Still owed for G-B:** the marked re-run of this class; and the CB step/ramp,
+iono ramp, and station outage/return classes (cycle slips already exist via
+`ScriptedSlip` but are not yet wired into an event matrix).  Empirical MDBs per
+guard, and the event ↔ R ↔ counter ↔ consumer tie-out, follow from those.
+
 ---
 
 ## §10 Verification status

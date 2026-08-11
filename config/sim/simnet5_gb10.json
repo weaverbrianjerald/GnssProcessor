@@ -1,0 +1,89 @@
+{
+  "_comment": [
+    "SYNTHETIC MINIMUM NETWORK — 5 solve stations + 1 held-out consumer, GPS+Gal data",
+    "(the producer arm restricts to GPS via processing.active_systems).",
+    "docs/SPEC_synthetic_minimum_network.md.  G-A NULL arm: 240 epochs = 2 h.  The level channel needs ~2 h to settle;",
+    "",
+    "Geometry: a ~500 km triangle over the central US with the consumer inside it.",
+    "Chosen as the longest baselines that keep strong common visibility at a 10 deg",
+    "mask; MUST be certified (k = 1 bipartite component at every epoch) before any",
+    "graded arm — at 3 stations the hardcoded kMinStationsPerSat = 2 is one station",
+    "from binding, and a fragmented epoch makes the rank gate withhold and read as a",
+    "producer defect.",
+    "",
+    "Receiver code biases DIFFER per station on purpose.  The Table-8 identity this",
+    "fixture exists to test resolves the FLEET MEAN of the receiver GF code bias; a",
+    "roster where every station carries the same bias makes the fleet mean",
+    "indistinguishable from its members, and the estimator could realize any split",
+    "between them and still grade as correct.",
+    "",
+    "Quiet by construction (storm_scale 0) — this is the G-A null arm.  The GIM",
+    "background is still a real, spatially varying field sampled at each station's own",
+    "pierce point, which is what gives the network genuine between-station ionosphere.",
+    "",
+    "INT posture: corrections.signal_bias is OFF here, so the satellite phase bias is",
+    "zero and the P-record test is exact integers x lambda.  The producer arm MUST",
+    "match with model_corrections.enable_code_phase_bias = false.  The W6 arm flips",
+    "both together."
+  ],
+
+  "date": { "year": 2024, "doy": 129 },
+
+  "trajectory": {
+    "interval_s": 30.0,
+    "n_epochs": 240,
+    "start_tow_s": 302400.0,
+    "clock_bias0_s": 1.0e-4,
+    "clock_drift_sps": 1.0e-9,
+    "clock_rw_q_m2ps": 3.0e-3
+  },
+
+  "geometry": { "elevation_mask_deg": 10.0 },
+
+  "noise": { "code_sigma_zen_m": 0.30, "phase_sigma_zen_m": 0.003 },
+
+  "atmosphere": {
+    "zwd_m": 0.12,
+    "zwd_rw_sigma_m": 0.01,
+    "zwd_rw_tau_s": 3600.0
+  },
+
+  "iono": {
+    "storm_scale": 0.0,
+    "background_source": "gim",
+    "shell_height_km": 350.0
+  },
+
+  "cycle_slips": { "rate_base": 0.0 },
+
+  "_gb": "G-B event arm: ONE satellite clock step at a known epoch, magnitude 10.0 m.",
+  "sat_clock": { "steps": [ { "sat": "G14", "epoch": 120, "step_m": 10.0 } ] },
+
+
+  "corrections": {
+    "relativity": true,
+    "shapiro": true,
+    "solid_earth_tide": true,
+    "pole_tide": true,
+    "sat_antenna": true,
+    "rx_antenna_type": "TRM59800.00     NONE",
+    "phase_windup": true,
+    "signal_bias": false
+  },
+
+  "network_stations": [
+    { "name": "SNA000SIM", "lat_deg": 40.00, "lon_deg": -105.00, "h_m": 1600.0,
+      "rx_code_bias": [ { "code": "C1C", "value_m": 0.42 }, { "code": "C2W", "value_m": -0.18 } ] },
+    { "name": "SNB000SIM", "lat_deg": 43.50, "lon_deg": -100.00, "h_m": 700.0,
+      "rx_code_bias": [ { "code": "C1C", "value_m": -0.27 }, { "code": "C2W", "value_m": 0.55 } ] },
+    { "name": "SNC000SIM", "lat_deg": 37.00, "lon_deg": -100.50, "h_m": 900.0,
+      "rx_code_bias": [ { "code": "C1C", "value_m": 0.13 }, { "code": "C2W", "value_m": -0.61 } ] },
+    { "name": "SND000SIM", "lat_deg": 43.00, "lon_deg": -109.50, "h_m": 2100.0,
+      "rx_code_bias": [ { "code": "C1C", "value_m": 0.51 }, { "code": "C2W", "value_m": 0.07 } ] },
+    { "name": "SNE000SIM", "lat_deg": 36.50, "lon_deg": -109.00, "h_m": 1800.0,
+      "rx_code_bias": [ { "code": "C1C", "value_m": -0.45 }, { "code": "C2W", "value_m": 0.33 } ] },
+    { "name": "SNZ000SIM", "lat_deg": 40.20, "lon_deg": -102.50, "h_m": 1200.0,
+      "consumer": true,
+      "rx_code_bias": [ { "code": "C1C", "value_m": -0.34 }, { "code": "C2W", "value_m": 0.29 } ] }
+  ]
+}
