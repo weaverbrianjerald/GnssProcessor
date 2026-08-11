@@ -1,0 +1,41 @@
+{
+ "_comment": [
+  "Card Q3 \u00a78.11 A/B: the q=1e-7 rung re-run with the WL-only FFR gate armed",
+  "(estimation.ambiguity_resolution.wl_only_ffr, now the default).  Same producer",
+  "posture as _cta4_q1e7 in every respect \u2014 the ONLY difference is the consumer's",
+  "AR acceptance battery, which is downstream of the emitted product.  products.txt",
+  "must therefore come out BYTE-IDENTICAL to runs/cta4_q1e7: that is the proof the",
+  "blast radius is grading-only on the network path.  The 4 epochs > 20 m and the",
+  "single ratio=inf wrong fix must be gone."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 1e-07,
+  "product_output_path": "C:/GnssProcessor/runs/cta4_q1e7_ffr/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cta4_q1e7_ffr/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  }
+ }
+}

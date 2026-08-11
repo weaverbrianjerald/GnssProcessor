@@ -138,6 +138,11 @@ public:
     /// Get fractional residuals of currently-locked WL arcs (forwarded from MW detector).
     std::map<std::string, double> getResolvedWlFractions() const;
 
+    /// Per-arc MW wide-lane lock quality (σ of the arc mean + sample count),
+    /// the input the WL-only AR acceptance gate needs to bound each arc's
+    /// rounding failure rate.  Empty when no MW detector is active.
+    std::map<std::string, MwSlipDetector::WlLockQuality> getResolvedWlQuality() const;
+
     /// Reset satellite state in all detectors.
     void resetSatellite(const std::string& satellite);
 

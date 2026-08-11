@@ -32,9 +32,31 @@ namespace GnssProcessor {
 /**
  * @brief Result of an integer ambiguity resolution attempt.
  */
+/**
+ * @brief Quality of one MW-resolved wide-lane arc, as consumed by the WL-only
+ *        acceptance gate (@ref AmbiguityResolverConfig::wl_only_ffr).
+ *
+ * Mirrors @c MwSlipDetector::WlLockQuality without coupling this header to the
+ * detector — the caller converts.  @c count travels with σ because a 2-sample
+ * arc whose samples happen to agree reports σ ≈ 0, i.e. a success rate of ≈ 1
+ * on one degree of freedom.
+ */
+struct WlArcQuality {
+    double      sigma_cycles{ 0.0 };   ///< σ of the MW arc mean (cycles).
+    std::size_t count{ 0 };            ///< Welford sample count backing that σ.
+    bool        exact{ false };        ///< SD-vs-self pivot: 0 cycles by construction, no uncertainty.
+};
+
 struct AmbiguityResolution {
     bool success{ false };             ///< True if ambiguities were successfully fixed.
-    double ratio{ 0.0 };               ///< Ratio test value (s2/s1).  Higher = more confident.
+    /// Ratio test value (s2/s1).  Higher = more confident.
+    /// @warning `+inf` is a SENTINEL meaning "no LAMBDA ratio test ran" — it is
+    /// set by the WL-only / MW-WL-constraint paths, which fix by applying MW
+    /// integers directly.  It is NOT a spectacular ratio, and reading it as one
+    /// is how an ungated 35 m wrong fix passed review
+    /// (`docs/SPEC_clock_temporal_anchor.md` §8.11).  Grade those fixes on
+    /// @ref p_succ, and see @ref AmbiguityResolverConfig::wl_only_ffr.
+    double ratio{ 0.0 };
     int num_fixed{ 0 };                ///< Number of SD ambiguities fixed.
     int num_candidates{ 0 };           ///< Number of SD ambiguity candidates.
     Eigen::VectorXd fixed_state;       ///< Full state vector with fixed ambiguities applied.
@@ -47,6 +69,16 @@ struct AmbiguityResolution {
     /// (empty DD pairs / no WL integers this epoch).
     int gate_reason{ 0 };
     double gate_sigma_3d{ -1.0 };      ///< 3D position σ (m) recorded when the σ-gate (gate_reason=3) fired; −1 otherwise.
+    /// Bootstrap success rate of the ACCEPTED fix — the FFR quantity, and the
+    /// only confidence number the WL-only paths can report (their @ref ratio is
+    /// the `+inf` sentinel).  0 when no fix was accepted or the path did not
+    /// compute one.
+    double p_succ{ 0.0 };
+    /// True when the accepted fix came from a WL-only / MW-WL-constraint path
+    /// (MW integers applied directly, no LAMBDA search).  Lets a trace
+    /// distinguish "fixed by ILS" from "fixed by asserting MW integers", which
+    /// @ref ratio alone cannot.
+    bool wl_only_fix{ false };
 };
 
 /**
@@ -85,6 +117,60 @@ struct AmbiguityResolverConfig {
     double wl_only_pseudo_var{ 1e-4 }; ///< Pseudo-observation variance (cycles²) for WL-only constraints.  ~0.01 cycle σ.
     double wl_max_frac{ 0.40 };        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
     double min_success_rate{ 0.999 };  ///< Min bootstrap success rate (FFR-style; 0.999 = 0.1% target failure rate).
+    /**
+     * @brief Apply the bootstrap FFR gate to the WL-ONLY / MW-WL constraint
+     *        paths, which historically had no success-rate gate at all.
+     *
+     * `wl_max_frac` is a POINT test on each arc's running residual — it says
+     * the locked integer looks self-consistent this epoch.  It cannot bound
+     * P(the integer is wrong), and that is the quantity an acceptance decision
+     * has to control.  With this armed, @ref AmbiguityResolver::resolveWlOnly
+     * and @ref AmbiguityResolver::applyMwWlConstraintsNlWl_ run the SAME
+     * `erf(1/(2√2·σ))` bootstrap product the LAMBDA tier runs
+     * (@ref ils::computeBootstrapSuccessRate) against
+     * @ref min_success_rate, dropping the weakest arc until the set passes.
+     *
+     * The product is taken over DISTINCT ARCS, not over DD constraints: many
+     * DDs share the pivot arc, so a wrong pivot makes all of them wrong
+     * together, and multiplying per-DD terms would double-count the shared
+     * failure.
+     *
+     * Default ON.  This closes a fail-unsafe path — measured on
+     * `runs/cta4_q1e7`, an ungated 5-constraint WL-only fix put the held-out
+     * consumer 35 m off with `ratio` reporting the "no LAMBDA ran" sentinel
+     * `+inf` (`docs/SPEC_clock_temporal_anchor.md` §8.11).  Set false to
+     * reproduce the pre-fix behaviour exactly.
+     */
+    bool   wl_only_ffr{ true };
+    /// Minimum MW arc sample count for an arc to carry a WL constraint under
+    /// @ref wl_only_ffr.  An arc with 2 samples has a σ estimate with ~1 degree
+    /// of freedom; admitting it would let a meaningless variance buy a fix.
+    int    wl_only_min_arc_count{ 10 };
+    /**
+     * @brief Max |asserted WL integer − predicted DD widelane| (cycles) for a
+     *        WL-only constraint to be applied.  0 disables the check.
+     *
+     * The direct analogue of @ref nl_max_per_pair_frac, which the LAMBDA tier
+     * applies per entry and the WL-only path had no equivalent of: it asserted
+     * MW integers at `wl_only_pseudo_var` (σ ≈ 0.01 cycle) no matter how far the
+     * current float disagreed.
+     *
+     * **This is the gate the FFR gate cannot be.**  A bootstrap success rate
+     * bounds the RANDOM failure of rounding an arc — it is computed from the
+     * arc's own dispersion and is entirely correct in saying a mature arc's
+     * widelane is precisely known.  It is blind to a SYSTEMATIC disagreement
+     * between that integer and the filter's frame, because nothing about the
+     * arc's dispersion knows which frame the filter is in.  The MW widelane
+     * lives in the .BIA frame while a network-bias consumer's ambiguities live
+     * in the consumed phase-bias frame (the conflict `setArIgnoreMwWl` exists
+     * to avoid), and asserting across that gap is what put a held-out consumer
+     * 35 m off with `p_succ = 1.0` — a perfectly confident, perfectly wrong fix
+     * (`docs/SPEC_clock_temporal_anchor.md` §8.11).
+     *
+     * Default 0.5 cycle: half a widelane is the largest disagreement that can
+     * still be a rounding question rather than a frame question.
+     */
+    double wl_only_max_innov_cyc{ 0.5 };
     double nl_max_per_pair_frac{ 0.15 }; ///< Max |N_1_float − N_1_fixed| per NL pair / DD; rejects marginal fixes.
     bool   nl_iono_free_row{ false };
         ///< Search functional for the WL-constrained N_1 step (@ref
@@ -164,7 +250,8 @@ public:
     AmbiguityResolution resolve(const StateManager& state_manager,
                                 const std::vector<PppObservation>& observations,
                                 const std::map<std::string, int>& wl_ambiguities,
-                                const std::map<std::string, double>& wl_fractions = {});
+                                const std::map<std::string, double>& wl_fractions = {},
+                                const std::map<std::string, WlArcQuality>& wl_quality = {});
 
     /**
      * @brief Attempt to resolve integer ambiguities (no WL constraint).
@@ -247,6 +334,11 @@ private:
     friend struct MlambdaTestAccess;
     /// Test seam for @ref nlRowCoefficients (tests/test_nl_search_row.cpp).
     friend struct NlRowTestAccess;
+    /// Test seam for @ref wlArcSuccessRate_ (tests/test_wl_only_ffr.cpp) — the
+    /// WL-only acceptance gate's fail-safe behaviour is exactly the property a
+    /// field run cannot demonstrate (it can only show that nothing went wrong),
+    /// so it is pinned here.
+    friend struct WlFfrTestAccess;
 
     // -----------------------------------------------------------------------
     // WL-constrained N_1 search functional
@@ -557,7 +649,36 @@ private:
         const Eigen::MatrixXd& P,
         const std::map<std::string, int>& wl_ambiguities,
         const std::map<std::string, double>& wl_fractions,
-        const std::vector<PppObservation>& observations);
+        const std::vector<PppObservation>& observations,
+        const std::map<std::string, WlArcQuality>& wl_quality);
+
+    /**
+     * @brief Bootstrap FFR success rate of a set of MW WL constraints, taken
+     *        over the DISTINCT ARCS backing them.
+     *
+     * The failure event lives on the ARC, not on the DD: many DD constraints
+     * share the pivot arc, so a wrong pivot integer makes every one of them
+     * wrong together.  Multiplying a per-DD term would count that shared
+     * failure once per DD and understate the joint success — the product must
+     * run over distinct arcs.  Each arc contributes the same per-component
+     * term the LAMBDA tier uses, `erf(1/(2√2·σ))`
+     * (@ref ils::computeBootstrapSuccessRate), so the two tiers report one
+     * comparable quantity.
+     *
+     * FAIL-SAFE: an arc with no quality entry, an immature arc
+     * (`count < wl_only_min_arc_count`), or a non-finite σ contributes 0 —
+     * "we cannot bound this arc's failure rate" must never read as "it is
+     * fine".  A pivot marked @c exact contributes 1.
+     *
+     * @param arc_keys  distinct MW arc keys backing the constraint set
+     * @param wl_quality per-arc quality from the caller
+     * @param worst_key  OUT (optional): the arc with the LOWEST contribution —
+     *                   the one backward elimination should drop next
+     * @return Π over arcs of the per-arc rounding success rate, in [0,1]
+     */
+    double wlArcSuccessRate_(const std::set<std::string>& arc_keys,
+                             const std::map<std::string, WlArcQuality>& wl_quality,
+                             std::string* worst_key) const;
 
     /**
      * @brief Apply MW-resolved WL integers in the @c StateAmbiguityBasis::NlWl

@@ -3252,6 +3252,49 @@ namespace GnssProcessor {
         return fractions;
     }
 
+    std::map<std::string, MwSlipDetector::WlLockQuality>
+    MwSlipDetector::getResolvedWlQuality() const {
+        std::map<std::string, WlLockQuality> quality;
+        // Population and key space identical to getResolvedWlAmbiguities /
+        // getResolvedWlFractions — an arc whose INTEGER is withheld must not
+        // report a σ either, or a consumer could weight a lock it cannot use.
+        for (const auto& [key, stats] : mw_stats_) {
+            if (!stats.wl_locked) continue;
+            if (!stats.bia_corrected) continue;
+            if (!(stats.lambda_wl > 0.0)) continue;
+            if (stats.count < 2) continue;
+            if (stats.td_confirm_pending) continue;
+
+            // σ of the MEAN, in cycles — the same expression
+            // getResolvedWlFractions forms before folding it into the
+            // worst-case-frac scalar.  count ≥ 2 is guaranteed above, so the
+            // (count − 1) divisor is safe.
+            double sigma_mean_cyc = 0.0;
+            if (stats.M2 > 0.0) {
+                const double var_per_sample =
+                    stats.M2 / static_cast<double>(stats.count - 1);
+                const double sigma_mean_m =
+                    std::sqrt(var_per_sample / static_cast<double>(stats.count));
+                sigma_mean_cyc = sigma_mean_m / stats.lambda_wl;
+            }
+            quality[key] = WlLockQuality{ sigma_mean_cyc, stats.count, /*exact=*/false };
+        }
+
+        // BSSD MW pivots: SD vs self is identically 0 cycles with no
+        // uncertainty, so success is 1 regardless of maturity.  try_emplace so
+        // a pivot that ALSO has a real locked arc above keeps its measured
+        // quality — mirrors the fractions accessor's treatment of the same keys.
+        for (const auto& [group_key, pivot_sat] : sd_pivot_sat_) {
+            const auto first_us = group_key.find('_');
+            if (first_us == std::string::npos) continue;
+            const std::string sig_pair = group_key.substr(first_us + 1);
+            const std::string pivot_stats_key = pivot_sat + "_" + sig_pair;
+            quality.try_emplace(pivot_stats_key,
+                                WlLockQuality{ 0.0, 0, /*exact=*/true });
+        }
+        return quality;
+    }
+
     // =================================================================
     // Active arc keys accessor
     // =================================================================

@@ -262,7 +262,7 @@ int Application::runConsumerReplay() {
         return 1;
     }
     cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
-                "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate\n";
+                "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";
 
     // Truth in the frame the consumer estimates: the configured coordinate is a
     // published (monument-referenced) position, the state is the ARP.  Reduce via the
@@ -416,7 +416,7 @@ int Application::runConsumerReplay() {
             case 2:  ar_gate = "min_epochs";    break;
             case 3:  ar_gate = fmt::format("sigma_gate({:.3f}m)", ar.gate_sigma_3d); break;
             case 4:  ar_gate = "no_candidates"; break;
-            default: ar_gate = ar.success ? "fixed"
+            default: ar_gate = ar.success ? (ar.wl_only_fix ? "wl_only" : "fixed")
                              : (ar.ratio > 0.0 ? "ratio_battery" : "mlambda_fail");
                      break;
         }
@@ -429,7 +429,8 @@ int Application::runConsumerReplay() {
                  << fmt::format("{:.4f}", enu.x()) << ','
                  << fmt::format("{:.4f}", enu.y()) << ','
                  << fmt::format("{:.4f}", enu.z()) << ','
-                 << ar_gate << '\n';
+                 << ar_gate << ','
+                 << fmt::format("{:.6f}", ar_ran ? ar.p_succ : 0.0) << '\n';
 
         if (n_processed == 1 || n_processed % 120 == 0)
             log->info("Consumer replay: ep {} (tow {:.1f}) — {} sats, 3D err {:.3f} m "

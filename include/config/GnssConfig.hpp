@@ -5121,6 +5121,15 @@ namespace GnssProcessor {
          * the constraint can be tight.
          */
         double getArWlOnlyPseudoVar() const { return ar_wl_only_pseudo_var_; }
+        /// @brief Apply the bootstrap FFR gate to the WL-only / MW-WL constraint paths.
+        /// Those paths assert MW integers without any LAMBDA search, so their `ratio` is
+        /// the `+inf` "no ratio test ran" sentinel and the ONLY confidence number
+        /// available is the bootstrap success rate.  Default ON.
+        bool   getArWlOnlyFfr() const { return ar_wl_only_ffr_; }
+        /// Minimum MW arc sample count admissible under @ref getArWlOnlyFfr.
+        int    getArWlOnlyMinArcCount() const { return ar_wl_only_min_arc_count_; }
+        /// Max innovation (cycles) a WL-only constraint may assert against the float.
+        double getArWlOnlyMaxInnovCyc() const { return ar_wl_only_max_innov_cyc_; }
 
         /**
          * @brief Maximum *worst-case* fractional residual (cycles) accepted
@@ -5818,6 +5827,9 @@ namespace GnssProcessor {
         double ar_ratio_upper_bound_;   ///< Reject fixes whose ratio exceeds this (covariance pathology).
         bool   ar_wl_only_;           ///< WL-only AR: apply MW-resolved WL integers as Kalman pseudo-obs, skip LAMBDA NL search.
         bool   ar_ignore_mw_wl_{false}; ///< RTA-7: processing.ar_ignore_mw_wl — drop the MW WL feed into AR (pure MLAMBDA on the KF float); the previously key-less RealTimeEngine::setArIgnoreMwWl seam.
+        bool   ar_wl_only_ffr_{ true };      ///< Apply the bootstrap FFR gate to the WL-only / MW-WL constraint paths (they had none — only the wl_max_frac point test). Default ON; false reproduces the pre-fix fail-unsafe behaviour.
+        int    ar_wl_only_min_arc_count_{ 10 };
+        double ar_wl_only_max_innov_cyc_{ 0.5 };  ///< Max |asserted MW WL integer - predicted DD widelane| (cycles) for a WL-only constraint. The analogue of nl_max_per_pair_frac that this path lacked; catches a FRAME conflict, which no success-rate gate can. 0 disables. ///< Minimum MW arc sample count for an arc to carry a WL constraint under ar_wl_only_ffr_ (a 2-sample arc reports sigma~0 on one degree of freedom).
         double ar_wl_only_pseudo_var_; ///< Pseudo-obs variance (cycles²) for WL-only constraints.
         double ar_wl_max_frac_;        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
         double ar_min_success_rate_;  ///< Min bootstrap success rate (FFR-style) for AR fix acceptance.

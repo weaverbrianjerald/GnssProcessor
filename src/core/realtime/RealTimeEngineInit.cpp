@@ -296,6 +296,9 @@ void RealTimeEngine::initAmbiguityResolver() {
         ar_config.wl_only_pseudo_var    = config_.getArWlOnlyPseudoVar();
         ar_config.wl_max_frac           = config_.getArWlMaxFrac();
         ar_config.min_success_rate      = config_.getArMinSuccessRate();
+        ar_config.wl_only_ffr            = config_.getArWlOnlyFfr();
+        ar_config.wl_only_min_arc_count  = config_.getArWlOnlyMinArcCount();
+        ar_config.wl_only_max_innov_cyc = config_.getArWlOnlyMaxInnovCyc();
         ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
         ar_config.nl_iono_free_row      = config_.getArNlIonoFreeRow();
         ar_config.ar_active_systems     = config_.getArActiveSystems();

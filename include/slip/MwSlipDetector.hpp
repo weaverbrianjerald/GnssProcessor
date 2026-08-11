@@ -218,6 +218,46 @@ namespace GnssProcessor {
         std::map<std::string, double> getResolvedWlFractions() const;
 
         /**
+         * @brief Per-arc standard error of the locked WL arc MEAN, in cycles.
+         *
+         * Same population and the same key space as @ref getResolvedWlAmbiguities
+         * and @ref getResolvedWlFractions, and the same
+         * `σ_mean = √(M2/(n−1)/n) / λ_WL` the fractions accessor already forms
+         * internally — this exposes it on its own instead of folding it into the
+         * single worst-case-frac scalar.
+         *
+         * **Why it has to be separable.**  `wl_max_frac` is a POINT test on the
+         * running residual: it says the locked integer looks consistent right
+         * now.  It cannot bound the PROBABILITY that the integer is wrong, and
+         * that probability is the quantity an acceptance decision has to
+         * control.  Given σ_mean, the rounding success rate of one arc is
+         * `erf(1/(2√2·σ))` — the identical per-component term
+         * @ref ils::computeBootstrapSuccessRate uses on the LAMBDA tier — so
+         * exposing σ lets the WL-only AR path run the SAME fixed-failure-rate
+         * gate as the LAMBDA path instead of having none
+         * (`docs/SPEC_clock_temporal_anchor.md` §8.11).
+         *
+         * A BSSD MW pivot is 0 cycles against itself by construction and is
+         * reported with @c exact=true (success 1 regardless of maturity),
+         * matching the 0.0 the fractions accessor reports for the same keys.
+         *
+         * @c count travels with σ because it is load-bearing, not decoration:
+         * a 2-sample arc whose two samples happen to agree yields σ ≈ 0 and so
+         * a success rate of ≈ 1 on one degree of freedom.  A caller applying an
+         * FFR gate MUST also require maturity, or a meaningless variance buys a
+         * fix.  Maturity is deliberately not gated here — the threshold is a
+         * consumer policy, not a detector constant.
+         *
+         * @return Map of stats_key -> lock quality.
+         */
+        struct WlLockQuality {
+            double      sigma_mean_cycles{ 0.0 };  ///< σ of the arc mean (cycles).
+            std::size_t count{ 0 };                ///< Welford sample count backing that σ.
+            bool        exact{ false };            ///< SD-vs-self pivot: 0 cycles by construction, no uncertainty.
+        };
+        std::map<std::string, WlLockQuality> getResolvedWlQuality() const;
+
+        /**
          * @brief Get all mature, non-slipped MW arc keys.
          *
          * Returns every stats key that has an active MW arc with enough

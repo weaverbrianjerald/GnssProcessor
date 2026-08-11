@@ -1626,6 +1626,9 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         ar_config.wl_only_pseudo_var    = config_.getArWlOnlyPseudoVar();
         ar_config.wl_max_frac           = config_.getArWlMaxFrac();
         ar_config.min_success_rate      = config_.getArMinSuccessRate();
+        ar_config.wl_only_ffr           = config_.getArWlOnlyFfr();
+        ar_config.wl_only_min_arc_count = config_.getArWlOnlyMinArcCount();
+        ar_config.wl_only_max_innov_cyc = config_.getArWlOnlyMaxInnovCyc();
         ar_config.min_arc_info          = config_.getArMinArcInfo();
         ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
         ar_config.nl_iono_free_row      = config_.getArNlIonoFreeRow();
@@ -2051,7 +2054,14 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
                 }
             }
 
-            auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs, wl_fracs);
+            // WL-only FFR gate input (see AmbiguityResolverConfig::wl_only_ffr).
+            // Built from the unfiltered detector map on purpose: entries whose
+            // integer the ATX gate above dropped simply never get looked up,
+            // because no constraint is formed for them.
+            std::map<std::string, WlArcQuality> wl_quality;
+            for (const auto& [k, q] : cycle_slip_manager_->getResolvedWlQuality())
+                wl_quality[k] = WlArcQuality{ q.sigma_mean_cycles, q.count, q.exact };
+            auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs, wl_fracs, wl_quality);
             if (ar_result.success) {
                 // Apply fixed state to the filter
                 state_manager_->setStateVector(ar_result.fixed_state);

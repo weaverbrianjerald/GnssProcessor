@@ -1268,3 +1268,128 @@ settled hours does not resolve ~1.5 m differences in a 3D median; the consumer
 gate here has the power to catch a 35 m cliff and to confirm a direction, not to
 rank neighbouring rungs.  The wire census (11 280 rows, 32 satellites) is the
 statistic with resolving power, and it IS monotone.
+
+## §8.11 The consumer AR blunder — DIAGNOSED and FIXED, and the first two diagnoses were wrong
+
+Binary `gnss_processor_ffr2.exe` md5 `1760ABD54E83D1D68BFF6EB8804F0A10`; arms
+`runs/cta4_q1e7_{ffr,ffr2}`; suite **1345 pass / 1 skip** (+10 new).
+
+### §8.11.1 What `ratio = inf` actually is — §8.8's reading was WRONG
+
+§8.8 called it "a degenerate ratio test, not a confident fix".  It is neither.
+`AmbiguityResolver.cpp` sets
+
+```cpp
+result.ratio = std::numeric_limits<double>::infinity();  // sentinel: no LAMBDA ratio test ran
+```
+
+on the **WL-only** path, which the closed-loop consumer runs (`AR mode 1,
+wl_only on`).  That path asserts MW-derived DD widelane integers directly as
+Kalman pseudo-observations at `wl_only_pseudo_var = 1e-4 cyc²` (σ ≈ 0.01 cycle).
+There is no LAMBDA search, so **there was never a ratio test to be degenerate**.
+
+An `+inf` in a confidence column reads as a spectacular ratio.  That is how the
+blunder passed review — including mine, twice.  The column is now honest:
+`p_succ` is emitted alongside, and `ar_gate` reports `wl_only` rather than
+`fixed`.
+
+### §8.11.2 The FFR gate — necessary, correct, and it does NOT catch this
+
+The path's only acceptance gate was `wl_max_frac`, a POINT test on each arc's
+running residual.  The LAMBDA tier's bootstrap FFR gate
+(`min_success_rate = 0.999`) never ran here — the standing decision that "fixed
+failure rate is the acceptance gate at BOTH tiers" was simply not implemented on
+this path.  Built:
+
+- `MwSlipDetector::getResolvedWlQuality()` — per-arc σ of the WL arc mean **and
+  its sample count** (a 2-sample arc whose samples agree reports σ ≈ 0, i.e.
+  success ≈ 1 on one degree of freedom);
+- the product taken over **DISTINCT ARCS**, not DD constraints — many DDs share
+  the pivot arc, so a wrong pivot makes all of them wrong together and a per-DD
+  product would count the shared failure once per DD;
+- the identical `erf(1/(2√2·σ))` term the LAMBDA tier uses (pinned by a unit
+  test against `ils::computeBootstrapSuccessRate`) so both tiers report ONE
+  comparable number;
+- **fail-safe**: a missing entry, an immature arc or a non-finite σ contributes
+  **0**, never 1 — "cannot bound this" must not read as "fine";
+- backward elimination of the weakest arc, mirroring `selectFixableSubset`.
+
+**Armed, it changed nothing: `p_succ = 1.000000` and the 35 m excursion stood.**
+
+That is not a defect in the gate — it is the gate being *right* about the wrong
+question, and it is the finding of this section:
+
+> **A bootstrap success rate bounds the RANDOM failure of rounding an arc.  It
+> is computed from that arc's own dispersion, and nothing in an arc's dispersion
+> knows which FRAME the filter is in.  It is therefore structurally blind to a
+> SYSTEMATIC mis-framing.**  Every contributing arc was mature with σ → 0, so
+> `p_succ = 1.0` was the correct answer: those widelanes are precisely
+> determined.  They were also in the wrong frame.
+
+### §8.11.3 The mechanism, by elimination
+
+| candidate | ruled out by |
+|---|---|
+| degenerate ratio test | the sentinel above |
+| low-confidence integers | `p_succ = 1.000000`, all arcs mature |
+| ambiguity covariance inflation (`kAmbResetVar`) | `previous_dd_wl_` is necessarily EMPTY at the first epoch the σ-gate admits, so no reset can fire |
+| `holdAmbiguities` | returns early unless `ar_mode == 3`; the consumer is mode 1 |
+
+What remains fits every observation: the MW widelane lives in the **.BIA frame**
+while a network-bias consumer's ambiguities live in the **consumed phase-bias
+frame** — the exact conflict `setArIgnoreMwWl` exists to avoid.  Asserting
+across that gap at σ = 0.01 cycle dragged the position 33 m in one epoch; the
+next epoch's observations no longer fit, were rejected, and the covariance grew
+on process noise alone (σ 0.050 → 3.138 m).  **The covariance INCREASING across
+a "fix" is the tell** — an information-adding update cannot do that, so the
+growth is a consequence, not the cause.
+
+### §8.11.4 The gate that does catch it — the innovation screen
+
+`wl_only_max_innov_cyc` (default **0.5 cycle**): the direct analogue of the
+LAMBDA tier's per-entry `nl_max_per_pair_frac`, which this path had no
+equivalent of.  A constraint whose asserted integer disagrees with the predicted
+DD widelane by more than half a widelane is **no longer a rounding question**,
+and is dropped rather than allowed to drag the state across a frame gap.
+
+| q = 1e-7, settled | med | p95 | **worst** | > 20 m | fixes |
+|---|---|---|---|---|---|
+| no guards (`cta4_q1e7`) | 4.17 | 7.72 | **34.91** | 4 | 1 (`ratio=inf`) |
+| + FFR only (`_ffr`) | 4.17 | 7.72 | **34.91** | 4 | 1 (`p_succ=1.0`) |
+| **+ FFR + innovation (`_ffr2`)** | 4.84 | **7.65** | **7.75** | **0** | **0** |
+
+`products.txt` is **byte-identical** across all three — the blast radius is
+grading-only on the network path, which is what makes these three arms a clean
+one-knob A/B of the CONSUMER alone.  The replay instrument is unchanged
+(5.52 / 7.30 / 7.50, 0 fixes): its σ never reached the arming threshold, so the
+guards are correctly inert where there is nothing to guard.
+
+### §8.11.5 ⇒ §8.8's boundary is DISSOLVED
+
+With the consumer defect fixed, rung 3 is **better than rung 2 on every consumer
+statistic** (4.84 / 7.65 / 7.75 vs 6.12 / 9.78 / 10.72), so the "boundary at
+rung 3" verdict in §8.8 no longer stands — it was a consumer defect the ladder
+exposed, exactly as §8.8 attributed it, and removing the defect removes the
+boundary.
+
+**What does NOT change**: the producer-side cost is unaffected (products are
+byte-identical), so σ̂₀_code still rises 4.126 → 4.212 and cb's variance factor
+12.66 → 13.04 from rung 2 to rung 3.  The descent still buys wire quality with
+code-bias tension; only the consumer's objection is gone.  **Still not a
+promotion** — G4 remains the invariant-#1 blocker.
+
+### §8.11.6 Remaining gaps, named not hidden
+
+1. **`applyMwWlConstraintsNlWl_` has BOTH holes** (no FFR gate, no innovation
+   screen).  Unreachable in the `wl_only` posture, so this consumer is covered;
+   a `wl_only: false` user of the NL/WL path is not.  Marked in code.
+2. **`wl_only on` for a network-bias consumer may be the wrong posture
+   entirely.**  `setArIgnoreMwWl`'s own comment says this harness should
+   SUPPRESS the MW feed so AR runs pure MLAMBDA on the consumed-bias float; the
+   golden63 chain does the opposite.  These guards make that posture SAFE; they
+   do not make it RIGHT, and the config question is open.
+3. The consumer's `ambiguity_resolver` logger does not route to
+   `logs/ambiguity_resolver.log` even with `enable_ambiguity_resolver: true`
+   (the derived consumer config builds its own resolver).  The diagnosis above
+   had to be made from the trace and by elimination; that should be fixed before
+   the next consumer-side investigation.
