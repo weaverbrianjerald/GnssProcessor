@@ -357,6 +357,7 @@ add_executable(gnss_tests
     tests/test_pb_emit_filter.cpp
     tests/test_clock_emit_rebase.cpp
     tests/test_clock_anchor.cpp
+    tests/test_network_solprep_disc.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp

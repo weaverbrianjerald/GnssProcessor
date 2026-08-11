@@ -71,7 +71,10 @@ struct NetworkSolPrepResult {
     std::set<char>           epoch_withheld_consts; ///< RT0-5 / RTA-10 withheld constellations (H heartbeat).
     bool                     global_bump = false;   ///< A global (non-scoped) datum bump this emit.
     std::set<char>           serialized_consts;     ///< The per-constellation datum-bump set (product write).
-    std::set<std::string>    retro_emit_sats;       ///< B1 retro-bumps that LANDED this emit (R record / heartbeat).
+    std::set<std::string>    retro_emit_sats;       ///< Per-sat disc bumps that LANDED this emit — B1 retro plus the
+                                                    ///< folded queue marks (eph-cutover / CB-excursion / clock-anchor /
+                                                    ///< basis-relatch / IF-pin reselect / CB-reseed), serialized as the
+                                                    ///< R record (replay) + heartbeat.
 };
 
 /**

@@ -668,7 +668,9 @@ NetworkSolPrepResult networkSolPrep(
     // consumer must reset that sat's network-corrected ambiguity).  Independent of
     // ura_retro_bump — this is a genuine datum step, not a QC retro-bump — but reuses
     // the same present/pending split: a flagged sat ABSENT from this emission waits for
-    // its next actual emit, so the bump lands with the sat present (replay-faithful).
+    // its next actual emit, so the bump lands with the sat present, and the landed mark
+    // is folded into retro_emit_sats (the Q3 trap-1 rule, see the CLK_ANCHOR block
+    // below) so the R record carries it to a NetworkProductIO replay (replay-faithful).
     if (!eph_cutover_disc_pending.empty()) {
         std::set<std::string> present, mark, still_pending;
         for (const auto& s : sol.sats) present.insert(s.sat);
@@ -676,7 +678,18 @@ NetworkSolPrepResult networkSolPrep(
             (present.count(sat) ? mark : still_pending).insert(sat);
         eph_cutover_disc_pending = std::move(still_pending);
         if (!mark.empty()) {
-            emitter.markSatDiscontinuity(mark);
+            // One event, one step: a sat the B1 retro drain above already marked
+            // this epoch must not have its counters bumped twice — but EVERY
+            // landed mark is serialized, because markSatDiscontinuity alone bumps
+            // only the in-process counters and without
+            // network.serialize_disc_counters the R record is the ONLY carrier a
+            // NetworkProductIO replay can read (a mark visible live but invisible
+            // on replay makes the two graders disagree about the same wire).
+            std::set<std::string> fresh;
+            for (const auto& s : mark)
+                if (!retro_emit_sats.count(s)) fresh.insert(s);
+            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            retro_emit_sats.insert(mark.begin(), mark.end());
             if (events_trace.is_open())
                 for (const auto& s : mark)
                     emitEvent("RELEVEL", "eph_cutover_disc_landed", s, "", std::nullopt,
@@ -690,7 +703,8 @@ NetworkSolPrepResult networkSolPrep(
     // counter-following consumer integrates straight across the step, which is
     // exactly the DOY-129 failure (the +49 m fault bumped NOTHING).  Same
     // present/pending split as the two blocks around it, so the bump lands with the
-    // satellite present and a replay reproduces the counters.  The set is empty
+    // satellite present, and the landed mark folds into retro_emit_sats (Q3 trap-1)
+    // so a replay reproduces the counters from the R record.  The set is empty
     // unless network.cb_excursion_reinit ⇒ byte-identical when OFF.
     if (!ctx.carry.cb_excursion_pending_bump.empty()) {
         std::set<std::string> present, mark, still_pending;
@@ -699,7 +713,14 @@ NetworkSolPrepResult networkSolPrep(
             (present.count(sat) ? mark : still_pending).insert(sat);
         ctx.carry.cb_excursion_pending_bump = std::move(still_pending);
         if (!mark.empty()) {
-            emitter.markSatDiscontinuity(mark);
+            // Dedupe against the blocks above (one event, one step), serialize
+            // every landed mark — the counter-only path is replay-invisible (see
+            // the eph-cutover block for the full rationale).
+            std::set<std::string> fresh;
+            for (const auto& s : mark)
+                if (!retro_emit_sats.count(s)) fresh.insert(s);
+            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            retro_emit_sats.insert(mark.begin(), mark.end());
             ctx.carry.cb_exc_bumps += static_cast<long long>(mark.size());
             if (events_trace.is_open())
                 for (const auto& s : mark)
@@ -723,8 +744,9 @@ NetworkSolPrepResult networkSolPrep(
             (present.count(sat) ? mark : still_pending).insert(sat);
         ctx.carry.clk_anchor_disc_pending = std::move(still_pending);
         if (!mark.empty()) {
-            // A satellite the B1 retro drain above already marked this epoch must
-            // not have its counter bumped twice (one event, one step).
+            // A satellite a block above (the B1 retro drain, an eph-cutover or a
+            // CB-excursion landing) already marked this epoch must not have its
+            // counter bumped twice (one event, one step).
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
@@ -749,9 +771,11 @@ NetworkSolPrepResult networkSolPrep(
     // T3c: land clock_signal_basis_hold RE-LATCH disc bumps this emit (same present/pending
     // split — a re-latched sat absent from this emission waits for its next actual emit).
     // markSatDiscontinuity bumps the per-sat phase/code/clock counters; the re-latch re-splits
-    // δtˢ↔dˢ so all three step.  Populated only under clock_signal_basis_hold && emit_clock_disc
-    // ⇒ the set is empty (this block a no-op) otherwise = byte-identical.  (Hold-OFF re-selection
-    // is landed just below, at the emit-only this_epoch_if_pin_sel comparison.)
+    // δtˢ↔dˢ so all three step — and the landed mark folds into retro_emit_sats (Q3 trap-1)
+    // so the R record carries it to a replay.  Populated only under clock_signal_basis_hold
+    // && emit_clock_disc ⇒ the set is empty (this block a no-op) otherwise = byte-identical.
+    // (Hold-OFF re-selection is landed just below, at the emit-only this_epoch_if_pin_sel
+    // comparison.)
     if (!basis_relatch_disc_pending.empty()) {
         std::set<std::string> present, mark, still_pending;
         for (const auto& s : sol.sats) present.insert(s.sat);
@@ -759,7 +783,14 @@ NetworkSolPrepResult networkSolPrep(
             (present.count(sat) ? mark : still_pending).insert(sat);
         basis_relatch_disc_pending = std::move(still_pending);
         if (!mark.empty()) {
-            emitter.markSatDiscontinuity(mark);
+            // Dedupe against the blocks above (one event, one step), serialize
+            // every landed mark — the counter-only path is replay-invisible (see
+            // the eph-cutover block for the full rationale).
+            std::set<std::string> fresh;
+            for (const auto& s : mark)
+                if (!retro_emit_sats.count(s)) fresh.insert(s);
+            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            retro_emit_sats.insert(mark.begin(), mark.end());
             if (events_trace.is_open())
                 for (const auto& s : mark)
                     emitEvent("CLK_BASIS", "relatch_disc_landed", s, "", std::nullopt,
@@ -796,7 +827,20 @@ NetworkSolPrepResult networkSolPrep(
             }
             last_if_pin_sel[sat] = sel;   // advance the emit baseline (emitted sats only)
         }
-        if (!mark.empty()) emitter.markSatDiscontinuity(mark);
+        if (!mark.empty()) {
+            // Dedupe against the blocks above (one event, one step), serialize
+            // every landed mark (Q3 trap-1) — this mark is LOAD-BEARING on the
+            // clock channel: the clock disc counter has only datum-change
+            // components (no magnitude jump test, RTA-11), so without the R
+            // record a replay consumer integrates straight across the emitted
+            // δtˢ↔dˢ re-split.  Replay never re-runs this pair comparison — the
+            // R record IS the reconstruction, so live and replay counters agree.
+            std::set<std::string> fresh;
+            for (const auto& s : mark)
+                if (!retro_emit_sats.count(s)) fresh.insert(s);
+            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            retro_emit_sats.insert(mark.begin(), mark.end());
+        }
     }
     // Card 2 (network.code_datum_time_linked): land the time-linked datum RE-SEED
     // disc bumps — a no-veteran sum-to-zero channel or an IF-pin split forced to the
@@ -808,9 +852,10 @@ NetworkSolPrepResult networkSolPrep(
     // bump without an emitted step), while a re-seed the driver DID realize is
     // retained and deferred exactly like the eph-cutover / basis-relatch bumps: a
     // re-seeded sat ABSENT from THIS emission (pruned by quarantine / per-const
-    // withhold) waits for its next actual emit so the bump lands with the sat present
-    // (emit-only, replay-faithful).  Both sets are only ever populated under
-    // code_datum_time_linked ⇒ no-op (byte-identical) otherwise.
+    // withhold) waits for its next actual emit so the bump lands with the sat present,
+    // and the landed mark folds into retro_emit_sats (Q3 trap-1) so the R record
+    // carries it to a replay (emit-only, replay-faithful).  Both sets are only ever
+    // populated under code_datum_time_linked ⇒ no-op (byte-identical) otherwise.
     for (const auto& sat : this_epoch_cb_reseed) cb_reseed_disc_pending.insert(sat);
     if (!cb_reseed_disc_pending.empty()) {
         std::set<std::string> present, mark, still_pending;
@@ -819,7 +864,14 @@ NetworkSolPrepResult networkSolPrep(
             (present.count(sat) ? mark : still_pending).insert(sat);
         cb_reseed_disc_pending = std::move(still_pending);
         if (!mark.empty()) {
-            emitter.markSatDiscontinuity(mark);
+            // Dedupe against the blocks above (one event, one step), serialize
+            // every landed mark — the counter-only path is replay-invisible (see
+            // the eph-cutover block for the full rationale).
+            std::set<std::string> fresh;
+            for (const auto& s : mark)
+                if (!retro_emit_sats.count(s)) fresh.insert(s);
+            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            retro_emit_sats.insert(mark.begin(), mark.end());
             if (events_trace.is_open())
                 for (const auto& s : mark)
                     emitEvent("CB_DATUM", "reseed_disc_landed", s, "", std::nullopt,
