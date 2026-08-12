@@ -107,6 +107,11 @@ const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
         st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (empty ⇒ no scaling)
     }
     this_epoch_anchor.clear();
+    // Chain-pin audit (HANDOFF_wsh_chain_slant T1): this epoch's per-group
+    // declared gauge dimension + shared-side bridge pins, replaced wholesale
+    // exactly like the tree maps.  Read after PASS B's serial consume.
+    ctx.carry.eq34_epoch_declared.clear();
+    ctx.carry.eq34_epoch_bridged.clear();
     shared_phase_keys.clear();
     for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
     if (!eq34_ppp_utils) eq34_ppp_utils = std::make_unique<PppUtils>(log_manager_);
@@ -348,6 +353,8 @@ const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
             ++eq34_n_pins;
             eq34_gauge_dim += static_cast<int>(rx_list.size()
                             + comp_sat[root].size());   // n_c + m_c
+            ctx.carry.eq34_epoch_declared[dr_key] +=
+                static_cast<int>(rx_list.size() + comp_sat[root].size());
 
             // STICKY spanning tree (two-queue BFS from r1).  The
             // incumbent queue drains to exhaustion before any NEW graph
@@ -492,6 +499,9 @@ const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
                     attach(sV(s));
                     bridged_roots.push_back(sV(s));
                     ++eq34_n_pins;
+                    // Audit: a bridge pin is realized on the SHARED side, so the
+                    // station-side fold expectation is declared − bridged.
+                    ++ctx.carry.eq34_epoch_bridged[dr_key];
                 }
             }
             // INC-1: a NEW tree edge may only be grown onto an arc whose ambiguity

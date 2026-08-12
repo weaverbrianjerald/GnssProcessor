@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "T1 CHAIN-PIN AUDIT rung (docs/HANDOFF_wsh_chain_slant.md §5) — eq34 re-run",
+    "with the two confounds cleared and the pin pipeline COUNTED.",
+    "",
+    "Rungs 2/6 armed the Eq-34 chain datum and still emitted 0/19, which reads as",
+    "'the datum is not the lever'.  But that reading rested on the ABSENCE of a",
+    "complaint, and the pin pipeline has three silent loss stages: the election",
+    "declares Σ(n_c+m_c) pins per (constellation,signal); foldAmb/foldRpb",
+    "early-return without a trace when the elected ambiguity/RPB has no state or",
+    "no live phase row; and a station whose local block the PD guard rejects is",
+    "dropped WITH every folded pin it carried.  Standing invariant #4: an armed",
+    "datum that places fewer pins than it thinks reads exactly like a working one.",
+    "",
+    "This rung arms the new eq34 pin-audit counters (always-on under eq34) plus",
+    "network.station_pd_pin_aware — the loader RECOMMENDS it with eq34 (hub",
+    "stations carry many 1e10 ambiguity pins and skew the plain median-|pivot| PD",
+    "floor) and rungs 2/6 lacked it.  Decision point from the handoff: if the",
+    "L2W group lands short of (n_c+m_c), the chain is incomplete and fixing it is",
+    "the correct cure for the n-invariant L2W near-null — no tolerance knob.  If",
+    "it lands complete and the gate still withholds, the near-null is elsewhere",
+    "and the per-config rank_gate_tol stays.",
+    "",
+    "DEFAULT rank-gate tolerance ON PURPOSE — the withhold is the phenomenon",
+    "under audit, and the audit counters accumulate before the gate runs."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50.json"
+  ],
+  "processing": {
+    "max_duration_s": 570.0
+  },
+  "network": {
+    "phase_datum_eq34": true,
+    "phase_datum_min_stations": 1,
+    "station_pd_pin_aware": true,
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_pinaudit/products.txt"
+  }
+}

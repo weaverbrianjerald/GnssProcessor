@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "T2 rung (b) — eq34 + cb_kaula_prior: the FIELD'S ACTUAL PAIR, untested in",
+    "the sim until now (docs/HANDOFF_wsh_chain_slant.md §5 T2, sharpened by the",
+    "T1 pin audit).",
+    "",
+    "The T1 audit rewrote the ladder's mechanism: the eq34 chain lands its FULL",
+    "declared gauge dimension (n_c+m_c = 82 pins/epoch per signal, zero silent",
+    "losses) and LIFTS the L2W phase-bias common mode 9.78e-06 -> 1.67e-04, above",
+    "the default cutoff — the rank gate PASSES.  Rungs 2/6 were never rank-gate",
+    "withholds at all: they were SH-GATE withholds (rung 2: a00 -15965 TECU at its",
+    "first epoch), the same cold-discharge failure class as rung 3's",
+    "sbasis_complete.  Constraining the lifted family at the cold code-seeded",
+    "level discharges the tension into the ionosphere.",
+    "",
+    "The field cold-starts this same eq34 posture at 305 stations and its field",
+    "does NOT collapse.  The candidate protection is cb_kaula_prior sigma 3 m —",
+    "armed in the field, absent from every sim rung — bounding the CB states the",
+    "discharge otherwise flows through.  If THIS rung emits with a00 in band at",
+    "DEFAULT tolerance, the field's emission is reproduced knob-for-knob and the",
+    "'why does the field emit' question (SPEC §12.3) closes.",
+    "station_pd_pin_aware rides along (loader recommendation with eq34)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50.json"
+  ],
+  "processing": {
+    "max_duration_s": 570.0
+  },
+  "network": {
+    "phase_datum_eq34": true,
+    "phase_datum_min_stations": 1,
+    "station_pd_pin_aware": true,
+    "cb_kaula_prior": true,
+    "cb_kaula_sigma_m": 3.0,
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_eq34kaula/products.txt"
+  }
+}

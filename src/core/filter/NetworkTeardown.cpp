@@ -1671,6 +1671,60 @@ int networkTeardown(
                   "integer), {} pin/gauge-mismatch epoch(s) over the run.",
                   eq34_reref_total, eq34_erase_total, eq34_shift_total,
                   eq34_gap_repin_total, eq34_mismatch_epochs);
+    // Chain-pin AUDIT (docs/HANDOFF_wsh_chain_slant.md T1): declared → folded →
+    // landed per (constellation,signal).  The election's per-epoch cross-check
+    // only proves the election RECORDED Σ (n_c + m_c) pins; foldAmb/foldRpb
+    // early-return silently (no state / no live phase row) and a station drop
+    // takes its folded pins with it — so "landed" is the number that actually
+    // constrained the gauge.  A short group means the chain datum ran
+    // under-constrained and the W5 near-null it was meant to remove is still
+    // open (the W6+SH n-invariant L2W phase-bias common mode is the motivating
+    // case).  Standing invariant #4: report the number, not the absence of a
+    // complaint.
+    if (config_.networkPhaseDatumEq34()) {
+        const auto& pa = ctx.counters.eq34_pin_audit;
+        if (pa.epochs == 0) {
+            log->warn("Network (eq34 pin audit): ARMED but ZERO epochs audited — "
+                      "every epoch aborted before the serial consume finished, or "
+                      "the election never ran.  Nothing about the chain datum is "
+                      "certified by this run.");
+        }
+        bool any_short = false;
+        for (const auto& [grp, decl] : pa.declared) {
+            auto at = [&](const std::map<std::string, long long>& m) -> long long {
+                const auto it = m.find(grp); return it == m.end() ? 0 : it->second;
+            };
+            const int  n_short = [&]{ const auto it = pa.short_epochs.find(grp);
+                                      return it == pa.short_epochs.end() ? 0 : it->second; }();
+            const int  worst   = [&]{ const auto it = pa.worst_short.find(grp);
+                                      return it == pa.worst_short.end() ? 0 : it->second; }();
+            const long long bridged = at(pa.bridged);
+            const long long landed  = at(pa.landed);
+            if (n_short > 0) {
+                any_short = true;
+                log->warn("Network (eq34 pin audit) {}: SHORT in {} of {} epoch(s) "
+                          "(worst −{} pins) — declared {} (−{} bridged), folded {}, "
+                          "landed {}; fold refusals: {} no-state, {} no-row; {} "
+                          "folded pin(s) lost to dropped stations.  The chain datum "
+                          "ran UNDER-CONSTRAINED in those epochs.",
+                          grp, n_short, pa.epochs, worst, decl, bridged,
+                          at(pa.folded), landed, at(pa.miss_state), at(pa.miss_row),
+                          at(pa.dropped_station));
+            } else {
+                log->info("Network (eq34 pin audit) {}: COMPLETE all {} epoch(s) — "
+                          "declared {} (−{} bridged), folded {}, landed {} "
+                          "(fold refusals: {} no-state, {} no-row; {} lost to "
+                          "dropped stations).",
+                          grp, pa.epochs, decl, bridged, at(pa.folded), landed,
+                          at(pa.miss_state), at(pa.miss_row),
+                          at(pa.dropped_station));
+            }
+        }
+        if (pa.epochs > 0 && !any_short)
+            log->info("Network (eq34 pin audit): every (constellation,signal) "
+                      "group landed its full declared gauge dimension every "
+                      "audited epoch — the chain pins are NOT the open near-null.");
+    }
     if (config_.networkPhaseDatumEq34SlipAwareElection()) {
         const long long ds = ctx.counters.eq34_slip_deseeded;
         const long long ra = ctx.counters.eq34_slip_readmitted;

@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "T2 rung (a) — cb_kaula_prior ALONE (docs/HANDOFF_wsh_chain_slant.md §5 T2).",
+    "The field arms network.cb_kaula_prior (sigma 3 m); every sim rung so far ran",
+    "without it.  The BeiDou card measured the Kaula prior LIFTING near-null",
+    "directions by construction, so this is the most likely single explanation",
+    "for the field emitting at 303 stations with the DEFAULT rank-gate tolerance.",
+    "Question for this rung: does the (code-bias) Kaula prior lift the L2W",
+    "satellite PHASE-bias common mode (9.78e-06 without it) above the default",
+    "cutoff?  It is a code-side prior, so a pass here would mean the lift is",
+    "indirect (through the CB|iono coupling); a rank-gate withhold here means the",
+    "phase-side near-null needs a phase-side answer and the field's emission",
+    "rests on eq34 (see the _eq34kaula rung).",
+    "DEFAULT tolerance on purpose; 20 epochs decides a rank question at epoch 1."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50.json"
+  ],
+  "processing": {
+    "max_duration_s": 570.0
+  },
+  "network": {
+    "cb_kaula_prior": true,
+    "cb_kaula_sigma_m": 3.0,
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_kaula/products.txt"
+  }
+}

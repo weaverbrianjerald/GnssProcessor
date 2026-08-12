@@ -507,6 +507,19 @@ namespace GnssProcessor {
         long long eq34_shift_total = 0;   // carry values S-transformed (v2-shift) over the run
         long long eq34_gap_repin_total = 0;   // I2: tree edges resumed from a carry-alive gap (re-pinned to their pre-gap integer instead of re-leveling from 0)
         int eq34_mismatch_epochs = 0;
+        // Card 3 chain-pin AUDIT (docs/HANDOFF_wsh_chain_slant.md T1): THIS epoch's
+        // declared chain-gauge dimension per (constellation,signal) group — key
+        // "<cons>|<signal>" (the election's dr_key), value Σ over the group's
+        // components of (n_c + m_c).  eq34_epoch_bridged counts the hygiene INC-2
+        // bridge pins per group, which are realized on the SHARED side (a bridge
+        // row, not a foldAmb pin), so the station-side fold expectation is
+        // declared − bridged.  Both replaced wholesale at each eq34 election;
+        // empty on every non-eq34 run.  Compared after PASS B's serial consume
+        // against the pins that actually LANDED (folded by foldAmb/foldRpb AND on
+        // a station est.addStation accepted) — the two silent loss paths standing
+        // invariant #4 warns about.
+        std::map<std::string, int> eq34_epoch_declared;
+        std::map<std::string, int> eq34_epoch_bridged;
         // Card 3 (I2 extend-only): tree edges retained across the current gap because
         // their local_carry is still alive — {receiver index, "sat_signal"}.  Rebuilt at
         // each election's sticky-map update; read at the next election's recordEdge to
@@ -1573,6 +1586,31 @@ namespace GnssProcessor {
         long long eq34_slip_deseeded   = 0;
         long long eq34_slip_demoted    = 0;
         long long eq34_slip_readmitted = 0;
+        // Card 3 chain-pin AUDIT run tallies (docs/HANDOFF_wsh_chain_slant.md T1),
+        // keyed "<cons>|<signal>" (the election's dr_key).  The pipeline a pin can
+        // silently leak from has three stages — DECLARED (the election's per-group
+        // Σ (n_c + m_c) gauge dimension), FOLDED (foldAmb/foldRpb actually built the
+        // 1e10 row; the lambdas early-return on a missing state index or a missing
+        // live phase row), and LANDED (the folded row sits on a station
+        // est.addStation ACCEPTED — a rejected/dropped station takes every folded
+        // pin down with it, the loss mode network.station_pd_pin_aware exists to
+        // prevent).  A group whose landed < declared − bridged in ANY epoch ran
+        // with an under-constrained datum that reads exactly like a working one
+        // (standing invariant #4); the W6+SH n-invariant L2W near-null is the
+        // motivating suspect.  Accumulated SERIALLY after PASS B's consume; logged
+        // once by NetworkTeardown.  All zero unless network.phase_datum_eq34.
+        struct Eq34PinAudit {
+            std::map<std::string, long long> declared;         ///< Σ per-epoch gauge dim (n_c+m_c)
+            std::map<std::string, long long> bridged;          ///< Σ hygiene INC-2 bridge pins (shared-side)
+            std::map<std::string, long long> folded;           ///< pins foldAmb/foldRpb built (all producing stations)
+            std::map<std::string, long long> landed;           ///< folded pins on ACCEPTED stations
+            std::map<std::string, long long> miss_state;       ///< fold refused: state index absent
+            std::map<std::string, long long> miss_row;         ///< fold refused: no live phase row (h2local miss)
+            std::map<std::string, long long> dropped_station;  ///< folded pins lost with dropped/rejected stations
+            std::map<std::string, int>       short_epochs;     ///< epochs with landed < declared − bridged
+            std::map<std::string, int>       worst_short;      ///< max per-epoch shortfall
+            int epochs = 0;                                    ///< audited (consumed, non-aborted) epochs
+        } eq34_pin_audit;
         // eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md) run tallies —
         // every field documented on the struct.  Bumped only when
         // ctx.knobs.anchor_hygiene_on, and reported by the run-end block in

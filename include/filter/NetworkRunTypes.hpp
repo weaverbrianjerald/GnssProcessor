@@ -474,6 +474,18 @@ struct StationAssembly {
     /// station order, so the file is deterministic for any thread count.  Empty
     /// unless the trace is armed (log-only — it changes no solve).
     std::vector<std::string>  sd_ewl_trace;
+    /// Card 3 chain-pin AUDIT (docs/HANDOFF_wsh_chain_slant.md T1): per
+    /// (constellation,signal) fold tallies for THIS station-epoch's elected datum
+    /// pins — key `"<cons>|<signal>"` (the election's @c dr_key), value
+    /// {folded, miss_state, miss_row} counting @c foldAmb / @c foldRpb outcomes.
+    /// Those lambdas early-return SILENTLY when the elected ambiguity/RPB has no
+    /// state index or no live phase row this epoch, so an armed chain datum that
+    /// places fewer pins than the election declared reads exactly like a working
+    /// one (standing invariant #4) — these tallies are the missing number.
+    /// Written in the parallel produce phase (one writer per slot), summed
+    /// SERIALLY after the consume, so run totals are thread-count independent.
+    /// Empty unless @c network.phase_datum_eq34.
+    std::map<std::string, std::array<int, 3>> pin_audit;
 };
 
 /// Card 1b (network.carry_coupling_joint_whiten): JOINTLY whiten the KEPT coupling

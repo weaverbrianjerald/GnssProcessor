@@ -2246,11 +2246,18 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 std::vector<int> pin_col;       // A_r column of each pin
                 std::vector<double> pin_y;       // innovation = target - current absolute value
                 std::vector<double> pin_w;       // row information weight: 1e10 hard pins, 1/σ² RPB priors
-                auto foldAmb = [&](const std::string& amb_key, double target) {
+                // Chain-pin audit (HANDOFF_wsh_chain_slant T1): each fold lambda
+                // reports its outcome so the eq34 call sites below can tally the
+                // silent early-returns per (constellation,signal) — the number
+                // standing invariant #4 requires.  0 = folded, 1 = state index
+                // absent, 2 = no live phase row (h2local miss).  The legacy path
+                // ignores the return value (unchanged behavior).
+                enum : int { kPinFolded = 0, kPinMissState = 1, kPinMissRow = 2 };
+                auto foldAmb = [&](const std::string& amb_key, double target) -> int {
                     const int amb_idx = st.sm->getAmbiguityIndex(amb_key);
-                    if (amb_idx < 0) return;   // no usable phase row for it this epoch
+                    if (amb_idx < 0) return kPinMissState;   // no usable phase row for it this epoch
                     const auto hit = h2local.find(amb_idx);
-                    if (hit == h2local.end()) return;  // column dropped (all-zero H)
+                    if (hit == h2local.end()) return kPinMissRow;  // column dropped (all-zero H)
                     pin_col.push_back(hit->second);
                     // Preserve the exact legacy expression (−piv_x) when pinning
                     // to 0 — "0.0 − x" flips the sign of a zero x, which would
@@ -2272,23 +2279,49 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             w /= (sc->second * sc->second);
                     }
                     pin_w.push_back(w);
+                    return kPinFolded;
                 };
                 // eq34: r1's RPB pin — δ_{r1,σ}=0 on the RPB column in this
                 // station's OWN block (the receiver half of the chain gauge).
-                auto foldRpb = [&](const std::string& rpb_key) {
+                auto foldRpb = [&](const std::string& rpb_key) -> int {
                     const int rpb_idx = st.sm->getReceiverPhaseBiasIndex(rpb_key);
-                    if (rpb_idx < 0) return;
+                    if (rpb_idx < 0) return kPinMissState;
                     const auto hit = h2local.find(rpb_idx);
-                    if (hit == h2local.end()) return;  // no phase row on σ this epoch
+                    if (hit == h2local.end()) return kPinMissRow;  // no phase row on σ this epoch
                     pin_col.push_back(hit->second);
                     pin_y.push_back(-piv_x(rpb_idx));
                     pin_w.push_back(1e10);   // hard pin (exact gauge)
+                    return kPinFolded;
                 };
                 if (phase_datum_prioritized) {
-                    for (const auto& [amb_key, target] : st.pinned_amb_targets)
-                        foldAmb(amb_key, target);
-                    for (const auto& rpb_key : st.pinned_rpb_keys)
-                        foldRpb(rpb_key);
+                    // Audit group key = the election's dr_key, "<cons>|<signal>".
+                    // The RPB key carries the system NAME ("GPS_RPB_L2W"), so map
+                    // it back to the constellation char the election grouped by.
+                    auto consOfSystem = [](const std::string& sys) -> char {
+                        if (sys == "GPS")     return 'G';
+                        if (sys == "Galileo") return 'E';
+                        if (sys == "BeiDou")  return 'C';
+                        if (sys == "QZSS")    return 'J';
+                        if (sys == "GLONASS") return 'R';
+                        return '?';
+                    };
+                    for (const auto& [amb_key, target] : st.pinned_amb_targets) {
+                        const int out = foldAmb(amb_key, target);
+                        if (phase_datum_eq34)
+                            if (const auto p = StateKeys::parseAmbiguityKey(amb_key))
+                                ++R.pin_audit[std::string(1, p->satellite.front())
+                                              + "|" + p->signal]
+                                             [static_cast<std::size_t>(out)];
+                    }
+                    for (const auto& rpb_key : st.pinned_rpb_keys) {
+                        const int out = foldRpb(rpb_key);
+                        if (phase_datum_eq34)
+                            if (const auto p =
+                                    StateKeys::parseReceiverPhaseBiasKey(rpb_key))
+                                ++R.pin_audit[std::string(1, consOfSystem(p->system))
+                                              + "|" + p->signal]
+                                             [static_cast<std::size_t>(out)];
+                    }
                 } else {
                     for (const auto& pk : shared_phase_keys) {
                         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
@@ -2910,6 +2943,43 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             } catch (const std::exception& ex) {
                 log->warn("Network[phase-leveling]: station '{}' carry inject rejected "
                           "({}); proceeding without its carry this epoch", st.name, ex.what());
+            }
+        }
+    }
+
+    // Chain-pin audit (HANDOFF_wsh_chain_slant T1): compare the pins that LANDED
+    // — folded by foldAmb/foldRpb AND sitting on a station est.addStation
+    // accepted — against the election's declared per-group gauge dimension
+    // Σ (n_c + m_c), minus the hygiene bridge pins realized on the shared side.
+    // SERIAL, after the consume, so acceptance is known (est_index_of ≥ 0);
+    // an aborted epoch (pivot failure) never reaches a solve and is not audited.
+    // Log-only run tallies — no solve input is touched.
+    if (phase_datum_eq34 && epoch_ok) {
+        auto& pa = ctx.counters.eq34_pin_audit;
+        ++pa.epochs;
+        std::map<std::string, long long> folded_ep, landed_ep;
+        for (size_t i = 0; i < stations.size(); ++i) {
+            for (const auto& [grp, t] : asm_res[i].pin_audit) {
+                folded_ep[grp]     += t[0];
+                pa.miss_state[grp] += t[1];
+                pa.miss_row[grp]   += t[2];
+                if (est_index_of[i] >= 0) landed_ep[grp] += t[0];
+            }
+        }
+        for (const auto& [grp, decl] : ctx.carry.eq34_epoch_declared) {
+            const auto bit = ctx.carry.eq34_epoch_bridged.find(grp);
+            const long long bridged =
+                bit == ctx.carry.eq34_epoch_bridged.end() ? 0 : bit->second;
+            pa.declared[grp] += decl;
+            pa.bridged[grp]  += bridged;
+            pa.folded[grp]   += folded_ep[grp];
+            pa.landed[grp]   += landed_ep[grp];
+            pa.dropped_station[grp] += folded_ep[grp] - landed_ep[grp];
+            const long long short_n = (decl - bridged) - landed_ep[grp];
+            if (short_n > 0) {
+                ++pa.short_epochs[grp];
+                if (static_cast<int>(short_n) > pa.worst_short[grp])
+                    pa.worst_short[grp] = static_cast<int>(short_n);
             }
         }
     }

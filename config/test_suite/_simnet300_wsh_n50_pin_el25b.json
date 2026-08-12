@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "T3 — the 25-deg CONTROL re-run, SAME BUILD as the 15-deg arm.",
+    "The stored graded arm (runs/simnet300_wsh_n50_pin) was produced by",
+    "gnss_processor_wsh.exe (sha256 521512b6…); the 15-deg arm runs the",
+    "2026-08-12 tree (pin-audit counters + concurrent sessions' uncommitted",
+    "edits).  Invariant #6: an A/B pairs on ONE build — verification integers",
+    "are build-sensitive at the ppm level.  This config is _simnet300_wsh_n50_pin",
+    "with only the product path moved; the cutoff stays the base's 25 deg."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50_pin.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_pin_el25b/products.txt"
+  }
+}
