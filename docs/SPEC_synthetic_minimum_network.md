@@ -741,6 +741,25 @@ Matched posture throughout, so this is station count alone:
 | ZWD **vf** | 87.5 | 6.5 | **1.63** |
 | consumer 3D rms | 3.645 m | 3.098 m | — |
 
+> ⚠️ **AMENDED 2026-08-11 by adversarial review — the clock row's SHAPE is not
+> readable.**  The n = 50 clock vf is **78 % of its variance in ONE common
+> direction**.  Decomposing the settled C residual into fleet-common (vs pivot) ⊕
+> per-satellite: n=3 5.517 = 0.974 ⊕ 5.428, n=5 2.183 = 1.342 ⊕ 1.714, n=50
+> 1.486 = **1.315 ⊕ 0.685** m rms.  So the **per-satellite error DOES converge**
+> with n (5.43 → 0.69); what does not is a pivot-relative common level that wanders
+> ~1.3 m rms at every n (ties to the CB-Q "wire drifts in unpinned directions"
+> finding).  Median row vf at n=50 is **15.5**, not the mean 455 — the mean is a
+> three-satellite tail (G31/G28/G03 drifting −0.2 → −2.4 m *together*).  Effective
+> sample size for the common direction is ≈ 1, so **"455 vs 392 = a plateau" is
+> realization noise and must not be read as a shape.**  vf is still GROWING at 2 h
+> at every n.  The honest statement is the decomposition, not the scalar.
+>
+> ⚠️ **And the ZWD "vf 1.63 = calibrated" row needs its asterisk**: truth is a
+> 0.12 m near-constant (±0.055 m fleet spread) while `std_m` ≈ 0.79 m, so the
+> channel is honestly UNINFORMATIVE — about 30× worse than just predicting the
+> constant.  The 87.5 → 6.5 → 1.63 trend is numerator-driven (the error shrinking),
+> not a σ that became trustworthy.
+
 **The two channels behave completely differently, and that is the finding.**
 
 - **ZWD converges to CALIBRATED**: vf 87.5 → 6.5 → **1.63**.  Its n = 3
@@ -905,10 +924,13 @@ the same fixture data.
 const int i_lo = phase_datum_prioritized ? 0 : 1;   // ApplicationNetworkAssembly.cpp:1281
 ```
 
-`phase_datum_eq34` defaults **false**, so `phase_datum_prioritized` is false and
-`i_lo = 1`.  Every slip-detection loop in `NetworkSlipQc.cpp` (lines 69, 169, 385
-— MW **and** LLI) runs `for (int i = i_lo; ...)`, so **`stations[0]` is skipped
-entirely.**
+The knob is **`network.phase_datum_prioritized`**, default **false**
+(`GnssConfigLoadNetwork.cpp:4240`) — a knob in its own right, NOT
+`phase_datum_eq34` (an earlier draft of this section misattributed it; the
+`i_lo` proof is unaffected, the named remedy was wrong).  With it false,
+`i_lo = 1`, and every slip-detection loop in `NetworkSlipQc.cpp` (lines 69, 169,
+385 — MW **and** LLI) runs `for (int i = i_lo; ...)`, so **`stations[0]` is
+skipped entirely.**
 
 *Controlled proof.*  Identical fixture data; the ONLY change is roster order,
 moving `S03000SIM` (whose LLI-flagged slip was detected at index 2) to index 0:
@@ -950,6 +972,92 @@ raw MW every epoch, *independently of whether any detector is enabled*) and read
 what the producer's own MW does at S02/G06/epoch 90.  That distinguishes "the
 detector never saw the jump" from "it saw it and rejected it" in one arm.
 
+### 9.7.5 RESOLVED — the detector SAW the jump and formed no candidate
+
+`network.trace_slip_raw` armed (`network_slip_raw.csv` publishes per-(station,sat)
+raw MW / GF / phase-minus-code / LLI every epoch, computed from `raw_observed`
+**independently of whether any detector is enabled**).  At the injected epochs,
+against each arc's own robust epoch-to-epoch scatter (1.4826·MAD):
+
+| station / sat | MW jump | cycles | **vs arc scatter** | LLI | detected |
+|---|---|---|---|---|---|
+| **S02 / G06** (idx 1) | +5.760 m | **+6.68** | **13.3×** | 0/0 | **MISSED** |
+| S03 / G19 (idx 2) | +38.821 m | +45.04 | 51.9× | **1**/0 | caught — by **LLI only** |
+| S01 / G26 (idx 0) | +10.421 m | +12.09 | 7.7× | 0/0 | MISSED (`i_lo` blind spot) |
+
+**This closes the open question of §9.7.4.**  The jump is present in the
+producer's own trace, at the exact epoch, at 13× the arc's own scatter, with a
+clean LLI — and the detector emitted no candidate.  The failure is in candidate
+FORMATION, not in the observable.  Combined with the two falsified hypotheses
+(frac gate, BIA), the remaining surface is the BSSD/integer-lock path itself.
+
+### 9.7.6 The MW NULL SPACE — measured, and RAIM does not currently cover it
+
+The MW widelane is N₁ − N₂, so a slip with **ΔN₁ = ΔN₂ changes it by exactly
+zero** — structurally invisible to any MW-only detector, at any threshold.  A
+paired arm (`config/sim/simnet50_mwblind.json`) puts a (+2,+2) and a (+2,0) slip
+on the **same satellite, same epoch, same magnitude**, so the only difference is
+whether the pair lies in MW's null space.  Verified in the emitted RINEX:
+
+| slip | ΔWL measured | ΔWL predicted | ΔGF measured | ΔGF predicted |
+|---|---|---|---|---|
+| (+2,+2) | **−0.019 cyc** | **0 exactly** | −0.142 m | n(λ₁−λ₂) = −0.108 m |
+| (+2, 0) | +2.199 cyc | +2 | +0.397 m | nλ₁ = +0.381 m |
+
+The pair IS observable — ΔGF = −10.8 cm and the iono-free phase moves
+n·c/(f₁+f₂) = **+21.4 cm** — just not by MW.  That is the argument for a
+geometry-based backstop rather than a better MW gate.
+
+**But the backstop does not currently fire.**  QC response to the pair, against
+the quiet baseline:
+
+| tier | quiet flag | mw-blind arm flag | Δ |
+|---|---|---|---|
+| IF-phase slip (T1) | 0 (0 opp) | 0 (0 opp) | 0 |
+| within-ep trigger (T2) | 7 | 7 | 0 |
+| post-fit RAIM cell (T3) | 747 | 743 | −4 (noise) |
+| **RAIM consensus (T3)** | 0 | **0** | **0** |
+| attribution SAT (T4) | 0 | 0 | 0 |
+| clock-model NIS / clock-monitor | 0 (0 opp) | 0 (0 opp) | 0 |
+
+**A 2-cycle slip pair — 38 cm on L1, 21.4 cm in the iono-free phase — passes
+through all seven tiers untouched.**  Neither the MW-blind (+2,+2) nor the
+MW-visible (+2,0) control produced a slip event; the visible one raised only a
+`T4_attrib / attrib_arc`.  RAIM consensus, which DID respond to the 10 m clock
+step (§9.7.3, 0 → 29), does not respond at this magnitude.
+
+So "MW has a null space, therefore we need RAIM" is correct as a **requirement**
+and is not yet a description of the built system: the geometry-based tier that
+should cover MW's blind subspace does not cover it at 2 cycles.
+
+### 9.7.7 The remedy is real but NOT free — do not make it standard yet
+
+`network.phase_datum_prioritized: true` sets `i_lo = 0`.  One-knob arm off the
+fault fixture:
+
+| | default (`i_lo`=1) | **armed** (`i_lo`=0) |
+|---|---|---|
+| station-0 T0 events | **0** | **5** |
+| run `mw_wl_slip` total | 44 | 49 |
+| S01/G26 slip | MISSED | **still MISSED** |
+| **epochs emitted** | **232 / 240** | **143 / 240** |
+| withheld by A4 σ̂₀ ceiling | 8 | **97** |
+
+Two conclusions, and they point opposite ways:
+
+1. **It confirms the `i_lo` mechanism a second, independent way** — station 0
+   goes from 0 to 5 T0 events purely by flipping this knob.
+2. **It costs 97 of 240 epochs** (40 % of the product) to the A4 σ̂₀ ceiling,
+   against 8 at default.  And it does NOT recover the S01 slip anyway, because
+   the §9.7.5 candidate-formation failure applies at station 0 too — `i_lo` was
+   necessary, not sufficient.
+
+⇒ **Arming it as a standing default is NOT justified by this evidence.**  It
+belongs in the SCOPED ledger as a validated-but-not-promoted knob with its cost
+recorded, per the house rule that loader defaults stay off and each new config
+arms its set explicitly.  The blind spot is real and must be documented wherever
+the datum station's slip exposure matters; the fix for it is not this knob alone.
+
 #### What this does and does not license
 
 - The `i_lo` finding is **proven** by a controlled single-variable A/B and is
@@ -965,6 +1073,20 @@ detector never saw the jump" from "it saw it and rejected it" in one arm.
 ---
 
 ## §9.6 G-B — satellite-clock step, FIRST CLASS ONLY (measured 2026-08-11)
+
+> ⚠️ **RETRACTED 2026-08-11 by adversarial review — do NOT quote the table below.**
+> The "recovery floor between 0.5 and 2.0 m" is a **WINDOW ARTIFACT**.  Pre-step,
+> the G-B arms are bit-identical to the null arm (max |ΔC| = 0.000000 over 118
+> epochs), and the **null arm itself drifts −0.464 m between the pre- and
+> post-windows** — so differencing pre-vs-post inside one arm charges that drift
+> to the injected step.  Graded DIFFERENTIALLY against the null arm's own
+> post-window (the seeds make this exact), recovery is **92.8 / 92.8 / 92.4 %** at
+> 0.5 / 2 / 10 m: a uniform ~7.5 % linear absorption, **no floor, and 0.5 m is NOT
+> "undetected"**.  G-B must be graded differentially against the null arm.
+> Related debt: §3.1's promised "re-worded 1 mm gate" was never built — the SPP is
+> fed unperturbed rows instead, so nothing asserts the injection reached the
+> observables.  (§9.7.5 now does that job for the slip classes, via
+> `trace_slip_raw`.)
 
 Bench demonstration, not the full matrix.  Arms `config/sim/simnet5_gb{05,2,10}.json`
 — 5 solve stations, one step on **G14** (40–44° elevation, well observed, so the
