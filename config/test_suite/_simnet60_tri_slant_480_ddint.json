@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "FLOAT baseline at 480 epochs — the 1 h DD-integer arm restored to the full",
+    "4 h window, so the settled trio A/B (…_trio_480) compares like-for-like:",
+    "same build (gnss_processor_sr.exe), same window, same trace, one knob set",
+    "(eq34+carry_invariant+ewl+seed_round) differing."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_tri_slant_1h_ddint.json"
+  ],
+  "processing": {
+    "max_duration_s": 14370.0
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/simnet60_tri_slant_480_ddint/products.txt"
+  }
+}

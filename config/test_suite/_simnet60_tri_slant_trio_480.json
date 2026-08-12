@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "THE SETTLED EWL-TRIO ARM — 480 epochs = 4 h of the trio smoke's posture",
+    "(posture C + eq34 + carry_invariant + mw_wl.ewl_enable + seed_round).",
+    "Graded on the settled half against the float twin (…_480_ddint), same build,",
+    "same window: does arming the lane machinery on a 94–98%-correct-integer EWL",
+    "substrate move the WL/NL rungs, the B/C channels, or the consumer?"
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_tri_slant_trio.json"
+  ],
+  "processing": {
+    "max_duration_s": 14370.0
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/simnet60_tri_slant_trio_480/products.txt"
+  }
+}
