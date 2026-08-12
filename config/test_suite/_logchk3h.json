@@ -1,0 +1,49 @@
+{
+ "_comment": [
+  "SPEC \u00a78.11.10 decisive logger test: the 3 h BSSD+wl_only arm (the one posture",
+  "where the resolver PROVABLY reaches its logging sites \u2014 19 wl_guard + 8",
+  "mlambda_fail measured) with the ambiguity_resolver logger BOTH enabled AND set",
+  "to info.  The earlier 20-epoch attempt was invalid: AR spent all 20 epochs in",
+  "min_epochs/sigma_gate and never reached the resolver, so its 0-byte file said",
+  "nothing about the logger."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 10800.0
+ },
+ "network": {
+  "max_duration_s": 10800.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 1e-07,
+  "product_output_path": "C:/GnssProcessor/runs/logchk3h/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/logchk3h/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  },
+  "closed_loop": {
+   "consumer_undifferenced": false
+  }
+ },
+ "logging": {
+  "enable_ambiguity_resolver": true,
+  "levels": {
+   "ambiguity_resolver": "info"
+  }
+ }
+}

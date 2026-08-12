@@ -47,6 +47,7 @@
 #include <fstream>
 #include <vector>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <cstdlib>
@@ -119,6 +120,49 @@ bool Application::initLoggingAndConfig() {
         // to loggers not in the disabled set.
         if (!lc.per_logger_levels.empty()) {
             log_manager_.setLoggerLevels(lc.per_logger_levels);
+
+            // ENABLED-BUT-SILENCED census.  `enable_<logger>` and
+            // `levels.<logger>` are independent, and on an inherited config
+            // chain they routinely come from DIFFERENT files: a child that
+            // flips `enable_ambiguity_resolver: true` inherits a
+            // `levels.ambiguity_resolver: "warn"` from a base it never reads,
+            // and the run produces a 0-BYTE log file with no diagnostic.  The
+            // author's stated intent ("give me this logger") is silently
+            // defeated by a level they did not set.
+            //
+            // Measured cost of the silence: an ungated-AR investigation
+            // (docs/SPEC_clock_temporal_anchor.md §8.11) burned a 7-minute
+            // producer arm on exactly this, concluded from the empty file that
+            // the logger was BROKEN, and wrote that wrong conclusion into a
+            // SPEC.  One line at startup makes it self-diagnosing.
+            const auto level_name = [](LogLevel l) -> const char* {
+                switch (l) {
+                    case LogLevel::Trace: return "trace";
+                    case LogLevel::Debug: return "debug";
+                    case LogLevel::Info:  return "info";
+                    case LogLevel::Warn:  return "warn";
+                    case LogLevel::Error: return "error";
+                    default:              return "critical/off";
+                }
+            };
+            std::vector<std::string> silenced;
+            for (const auto& [name, level] : lc.per_logger_levels) {
+                if (disabled.count(name)) continue;   // already reported as disabled
+                if (level > LogLevel::Info)           // enum is ordered Trace<Debug<Info<Warn<...
+                    silenced.push_back(name + "=" + level_name(level));
+            }
+            if (!silenced.empty()) {
+                std::string joined;
+                for (const auto& s : silenced) { if (!joined.empty()) joined += ", "; joined += s; }
+                log_manager_.getLogger("gnss_config")->info(
+                    "Logging: {} logger(s) are ENABLED but level-SILENCED above info — {}.  Their "
+                    ".log files will be EMPTY even though the logger is on, because "
+                    "`logging.levels.<name>` and `enable_<name>` are independent and on an "
+                    "inherited chain usually come from different files.  To actually see one, set "
+                    "BOTH `logging.enable_<name>: true` AND `logging.levels.<name>: \"info\"` (or "
+                    "\"debug\") in the child config.",
+                    silenced.size(), joined);
+            }
         }
     }
 

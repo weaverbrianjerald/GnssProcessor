@@ -1,0 +1,48 @@
+{
+ "_comment": [
+  "SPEC \u00a78.11.6 gap 3 CHECK: 20-epoch BSSD+wl_only arm with the ambiguity_resolver",
+  "logger BOTH enabled AND set to info.  The chain (_ft63_24h_conv) pins that",
+  "logger to 'warn', so enabling it alone suppresses every info line \u2014 which is",
+  "why the earlier diag run produced a 0-byte file and I wrongly called the logger",
+  "broken.  If this arm's ambiguity_resolver.log is non-empty, the logger is fine."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 600.0
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 1e-07,
+  "product_output_path": "C:/GnssProcessor/runs/logchk/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/logchk/state_snapshot.bin",
+  "fast_clock": {
+   "enable": true,
+   "shadow": true,
+   "trace": true,
+   "trace_sat_stride": 1
+  },
+  "closed_loop": {
+   "consumer_undifferenced": false
+  }
+ },
+ "logging": {
+  "enable_ambiguity_resolver": true,
+  "levels": {
+   "ambiguity_resolver": "info"
+  }
+ }
+}

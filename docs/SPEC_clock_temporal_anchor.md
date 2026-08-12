@@ -1384,11 +1384,8 @@ promotion** — G4 remains the invariant-#1 blocker.
 2. ~~**`wl_only on` may be the wrong posture entirely**~~ — **CLOSED, §8.11.9.**
    Measured: it was, and not only in the tail — the guarded WL-only posture is
    ~1 m worse in the MEDIAN than not constraining at all.
-3. The consumer's `ambiguity_resolver` logger does not route to
-   `logs/ambiguity_resolver.log` even with `enable_ambiguity_resolver: true`
-   (the derived consumer config builds its own resolver).  The diagnosis above
-   had to be made from the trace and by elimination; that should be fixed before
-   the next consumer-side investigation.
+3. ~~The consumer's `ambiguity_resolver` logger does not route to disk~~ —
+   **FALSE, and the claim was mine.  See §8.11.10.**
 
 ### §8.11.7 The NlWl sibling — both guards applied
 
@@ -1563,3 +1560,64 @@ concurrent-build-lock workaround — is a SNAPSHOT: `cmake --build` updates
 the old code with a clean run and no warning.  Re-copy after every rebuild and
 hash BOTH.  It surfaced only because the label was checked on data rather than
 trusted from the diff.
+
+### §8.11.10 The "broken consumer logger" — claim WITHDRAWN, cause NOT established
+
+§8.11.6 gap 3 asserted that the consumer's `ambiguity_resolver` logger does not
+reach disk even with `enable_ambiguity_resolver: true`.  **That assertion is
+withdrawn — it was never established.**  So is the replacement explanation I
+then wrote (an inherited `warn` level).  What is actually known:
+
+**Established:**
+- the PPP arm `runs/nlwl_guarded` writes **181 KB** of resolver log; network
+  arms write **0**;
+- the network path DOES write per-logger files — same run, `gnss_config.log`
+  44 KB and `main_log.log` 575 KB — so the file-sink machinery is not at fault;
+- `_ft63_24h_conv` four links up the chain pins
+  `levels.ambiguity_resolver: "warn"`, and five other loggers with it;
+- `logging.levels` IS parsed into `LoggingConfig::per_logger_levels`
+  (`GnssConfigLoad.cpp:3118`), and the block applying it has no enclosing guard.
+
+**NOT established, and asserted prematurely twice:**
+- that the logger is broken (the original claim);
+- that the inherited `warn` explains the empty file (the correction).  Against
+  it: the 3 h diagnostic arm DID fix once, so it should have emitted one
+  "applied N constraints" line and emitted none.
+
+**A third sufficient cause exists and invalidated the first test.**  A 20-epoch
+check (`runs/logchk`) came back empty — but its consumer AR spent all 20 epochs
+in `min_epochs` (10) and `sigma_gate` (10) and **never reached `resolveWlOnly`**,
+so there was nothing to log.  "Empty log file" has at least THREE sufficient
+causes here — logger disabled, level pinned, code path never reached — and the
+first two were asserted before the third was eliminated.
+
+**The ergonomic fix is landed but UNVERIFIED.**
+`Application::loadConfiguration` now emits a one-line ENABLED-BUT-SILENCED
+census naming every logger whose level sits above `info`.  It is log-only (no
+solve path, suite green at 1354/1 skip) but **it did not fire in the one run
+attempted**, and that is itself unexplained — the string is in the binary and
+the emitting block has no guard, so either `per_logger_levels` was empty for
+that config (which would mean `logging.levels` does NOT deep-merge across the
+inheritance chain, contradicting the effective-config reading above) or
+something else.  Do not treat the census as working.
+
+**OWED — the decisive test**, which needs a free machine (a concurrent session
+held the producer through two attempts, and the shared `logs/` harvest makes
+overlapping runs mutually corrupting):
+
+> Run a **3 h BSSD + `ar_wl_only`** arm — the one posture where the resolver
+> PROVABLY reaches its logging sites (19 `wl_guard` + 8 `mlambda_fail` measured
+> in `runs/cta4_q1e7_bssd_ref`) — with **both** `logging.enable_ambiguity_resolver:
+> true` **and** `logging.levels.ambiguity_resolver: "info"`.  Config is written:
+> `_logchk3h.json`.  If the log fills, the level was the cause and the census is
+> the right fix.  If it stays empty, there IS a defect and the original claim was
+> right for the wrong reason.
+
+**This section's real finding is methodological.**  Five diagnoses here were
+wrong on first reading and corrected only by measurement: `ratio = +inf` as a
+degenerate ratio (it is a sentinel), the FFR gate as the fix (it passes at
+`p_succ = 1.0`), covariance inflation as the cause (it is a consequence), the
+consumer logger as broken, and then the level as its cause.  A stale renamed exe
+additionally made a correct fix read as not-applied.  **On this card the
+plausible reading of a symptom was wrong essentially every time**, and three of
+those readings reached a SPEC before they were caught.
