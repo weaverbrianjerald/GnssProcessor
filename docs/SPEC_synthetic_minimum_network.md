@@ -1667,6 +1667,29 @@ how they will bite:
    validated §9.7.10); Release renamed exe; one CWD per arm; pre-register
    predictions per arm.
 
+### 9.10.1 The elevation-cutoff FIELD A/B — direction CONFIRMED, magnitude small (2026-08-12)
+
+`_cbq_12h_elcut25.json` (= the retained control + GIM
+`ionosphere_weighting.elevation_cutoff_deg` 15 → 25, the 305-validated value
+the FT63 lineage forked below), 12 h, cold, same settled 875-epoch segment,
+availability parity (1440/1440 emitted, 0 withholds both):
+
+| | control 15° | **25°** | Δ |
+|---|---|---|---|
+| wire common raw std | 1.735 m | 1.527 m | −12 % |
+| wire common detrended std | 1.298 m | **1.191 m** | −8 % (~16 % of variance) |
+| linear trend | −0.548 m/h | −0.454 m/h | −17 % |
+| station-attribution table | flat (max 0.053) | flat (max 0.090) | no station driver either arm |
+
+The pre-registered direction holds — the §9.10 low-elevation iono incoherence
+DOES feed the clock common — but it is a MINOR contributor here: ~84 % of the
+wander variance survives.  The FT63 lineage at 15° was never in the 305-run's
+divergence regime (that record was 10° vs 25° with an actual a00 collapse);
+raising to 25° is a cheap, availability-free trim worth adopting on the
+lineage, not the cure.  **The dominant wander source remains inside the
+clock ↔ CB ↔ iono exchanges — the §11 W6+SH synthetic arm is unchanged as the
+decisive experiment.**
+
 ## §10 Verification status
 
 Nothing in this SPEC has been run yet.  Code anchors verified 2026-08-11
