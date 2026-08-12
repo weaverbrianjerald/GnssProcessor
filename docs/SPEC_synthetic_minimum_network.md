@@ -27,6 +27,7 @@ retract earlier ones**.  Read the status table before quoting anything.
 | **§9.7.8 / §9.7.9** | live, but §9.7.8's "100 % detection / 0 % action" framing is **CORRECTED by §9.7.10** (the `refloated` column records only the CONSENSUS action; the arc-path actions live in `network_events.csv`) |
 | **§9.7.10 fixes + corrections** | live — the current conclusions; blind-spot fix and T4a counter LANDED and sim-validated |
 | **§9.8 datum-wander arm** | live — the common level FOLLOWS the datum station; `clock_datum_sum_to_zero` first validation PASS; ⚠ puts an asterisk on §9.7.1's vf plateau (pivot-election artifact mixed in) |
+| **§9.8.1 mask arms / §9.9 field probe** | live — 25° mask confirms the pivot mechanism but is REJECTED as a remedy (~5 m consumer bias); the FIELD wander (1.735 m) is NOT receiver-code-driven (MBAR rank 48/61) — the hunt returns to the LEVEL/inter-channel directions |
 
 ### The error class, stated generally
 
@@ -1424,6 +1425,80 @@ EVERYTHING including the consumer, 2.2× on per-sat content); (b) arm
 set-change re-reference class, auto-marked).  Both are datum toggles — INSIDE
 the warm-resume fingerprint, fresh convergence only.  Caveats: one fixture,
 1 h settled window, GPS-only INT posture (no CB states), float consumer.
+
+### 9.8.1 The 25° mask arms — the mechanism CONFIRMED, the remedy REJECTED
+
+Two more arms (`_simnet50_ga_cd{E,F}.json`): the SAME two pivots with
+`processing.elevation_mask_deg` 10 → 25 (producer-side mask on the same data).
+
+| arm | pivot | mask | contrast rms | wander std | consumer 3D rms |
+|---|---|---|---|---|---|
+| cdA | polar | 10° | 0.966 m | 0.193 m | 1.417 m |
+| **cdE** | polar | **25°** | **0.403 m** | 0.067 m | **4.839 m** |
+| cdB | equatorial | 10° | 0.443 m | 0.024 m | 0.315 m |
+| **cdF** | equatorial | **25°** | 0.447 m | 0.078 m | **4.968 m** |
+
+- **Mechanism confirmed**: masking the POLAR pivot's low-elevation data
+  recovers the datum-free contrast to the equatorial level (0.966 → 0.403 ≈
+  0.443), while the same mask on the equatorial pivot moves it not at all
+  (0.443 → 0.447).  The pivot penalty is specifically THE PIVOT'S low-elevation
+  data gauging the network — not low-elevation data in general.
+- **Remedy rejected**: the global mask costs a ~+4.8–5.0 m SYSTEMATIC consumer
+  position error in BOTH arms (p50 ≈ 5.1 m — a bias, not noise: the
+  tropo/height separation lives in the low-elevation geometry the mask
+  removed), and the wander worsens on the good pivot (0.024 → 0.078, less
+  averaging).  A 25° mask amputates the observability to hide the artifact.
+- The surgical version — scope the GAUGE, not the data: elect a good pivot
+  (validated, free), or a future pivot-PIN elevation floor (pin only the
+  pivot's high-elevation ambiguities; every observation stays in the solve).
+  The sub-network/common-pivot intuition reduces to exactly this: the gauge
+  should ride on high-quality observations; partitioning the SOLVE would add
+  tie-seam datum churn (invariant #7's edge class) for no observability gain
+  over per-satellite anchor election (`phase_datum_prioritized` / eq34), which
+  already exists.
+- Pivot cycle slips are NOT a factor in any cd arm: the quiet fixture injects
+  zero slips (`rate_base` 0, no scripted slips) — the 2.2×/8× effects are
+  slip-free by construction.  (Field-side pivot-slip exposure is §9.7.10's
+  separate, now-closable channel.)
+
+## §9.9 The FIELD probe — the wire wander is NOT receiver-code-driven (2026-08-11)
+
+`scripts/field_wire_datum_probe.py` on the retained CB-Q 12 h control run
+(`runs/cbq_12h_ctl`: 61 stations, datum MBAR00UGA, the FT63 lineage, W6+SH
+posture).  Method: wire common level w(t) = per-epoch median of the emitted C
+records (increments per-satellite → median; pairs across the run's single
+`datum_changed` epoch dropped); per-station iono-null multipath proxy from
+`network_slip_raw.csv` (`l1c1 + 2/(γ−1)·gf` — increments track −Δmp_code;
+LLI rows excluded); corr(dw, dmp_i) per station over the settled 10 h.
+TOW keys quantized to the second (the E rows carry float dust:
+302370.00000190735 vs the trace's %.3f — exact-key joins silently die).
+
+**Result: the §9.8 receiver-side driver is ABSENT on the field.**
+
+- Field wire wander: **1.735 m** demeaned std over the longest settled
+  segment (875 epochs) — the CB-Q "metres per pass" scale, quantified.
+- corr(dw, dmp): **MBAR ranks 48 of 61** (r = +0.011); controls median
+  |r| = 0.018, max 0.053.  No station's code observables track the wire —
+  the whole table is at the noise floor.
+- Tropo at MBAR is excludable by magnitude (1.7 m of clock common would need
+  ~0.6–1 m of ZWD error), though the mp proxy is structurally blind to it
+  (tropo cancels in L1−P1).
+
+**Interpretation.**  The sim's geometry-driven datum-receiver term exists but
+is SMALL on the field (MBAR is equatorial; the sim bound for a good datum is
+~0.02–0.03 m — two orders below the 1.735 m observed).  The field wander is
+dominated by the SHARED/product common directions — the CB-Q "unpinned
+inter-channel drift" (clock ↔ CB ↔ iono exchanges, plus any a-priori product
+common drift, which enters w(t) directly as −(apriori common) and which no
+station observable can track).  This probe eliminates the receiver-local
+hypothesis the §9.8 mechanism raised, and returns the hunt to the LEVEL
+information channel (`SPEC_level_information_budget`, the CB-Q card).
+
+**Caveat**: the increment probe covers the FAST channel (30 s).  A driver
+acting only at hours-scale with negligible 30 s increments would evade it;
+the level-domain candidates (a-priori clock common drift, CB/iono common
+exchanges) need a level-domain instrument — the CB-Q structure-function
+line of attack, not this one.
 
 ---
 
