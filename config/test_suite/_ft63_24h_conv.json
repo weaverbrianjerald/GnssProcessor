@@ -39,7 +39,7 @@
    "common_mode_sigma_m": 50.0,
    "std_scale": 1.0,
    "floor_m": 0.05,
-   "elevation_cutoff_deg": 15.0
+   "elevation_cutoff_deg": 25.0
   },
   "adaptive_iono_process_noise": {
    "enable": false
