@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "SETTLED TRIO, INC-1 FREEZE build (SPEC_eq34_seed_round §8.5) — identical",
+    "posture to _trio_480; the fix is CODE-side (freeze-after-first-realization).",
+    "PRE-REGISTERED: seed_round_target_steps 0; frozen ≈ 271×479; per-band settled",
+    "med|e| back to the float class (~8-9 cyc, not ~1720); EWL settled ≥ float's",
+    "74.7% − a few points; 480/480 emitted."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_tri_slant_trio_480.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/simnet60_tri_slant_trio_480f/products.txt"
+  }
+}

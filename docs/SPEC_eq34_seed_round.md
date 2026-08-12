@@ -279,6 +279,44 @@ treatment (the eq34-hygiene block is the template).
   knob — its cold-engage hazard is recorded in §12.8.4 and stays a separate
   card if ever needed.
 
+## §8.5 INC-1 — FREEZE AFTER FIRST REALIZATION (2026-08-12, from the §13.7 divergence)
+
+The settled trio arm (SPEC_synthetic_minimum_network §13.7) exposed the v0 rule's
+ratchet: under `carry_invariant` no leveling carry ever exists, so every pin
+re-rounded from the CURRENT float every epoch (130 290 re-rounds, 271/epoch).
+The data pulls the float, the target follows in λ steps, each step re-references
+the (sat,σ) (591 counted), and the invariant DD carry refolds across the
+stepping frame — per-band DD error ran away to ~1 720 cyc settled while the
+WL-2 lane sat exonerated (0 rows folded).  Invariant #1/#7's shape, and the v0
+rule violated its own design premise: a datum target is a FRAME choice, and a
+frame must be REALIZED ONCE, not re-derived from drifting data.
+
+**The fix.**  Before rounding from the state, the seed branch first probes
+`eq34_prev_target` for this (station, amb): a hit is reused VERBATIM (target =
+prev ⇒ pinmove = 0 ⇒ no step, no reref, `known` true).  Fresh rounding happens
+only on a true first realization (no prev entry — cold start, a new arc, or a
+pin re-hosted to a station with no history, where the conservative
+`known = false` path already governs).  Applies in BOTH carry postures — the
+plain posture's measured "2 target steps" becomes 0 by construction.  An edge
+that leaves the tree drops its entry (the map is rebuilt from the tree each
+election) and re-realizes on return — the documented, bounded exception.
+Counter `seed_round_frozen` joins the teardown line; `seed_round_target_steps`
+should now read 0 on any static-receiver run.
+
+**MEASURED (same day, `_simnet60_tri_slant_trio_480f`, sr.exe 3D1036D9): the
+freeze is mechanically verified — 129 546 frozen reuses, 744 fresh roundings
+(epoch-1 set + re-hosted edges) — and it is NOT the cure.**  Settled per-band
+med|e| 1 720 → 1 132 cyc (~35 % less), EWL 5.0 → 6.2 % at true integer: better,
+still runaway-class.  The re-round ratchet was a CONTRIBUTOR, not the root.
+Surviving suspects, for the mechanism card this now requires: (a) the ~1/epoch
+tree-topology re-hosts, each realizing a fresh frame value at a new station
+(456 counted) whose unknown step re-references the (sat,σ) and refolds the
+invariant carry; (b) the carry_invariant chord carry × free-slant-iono feedback
+itself, which no dual+SH arm ever exercised.  The trio posture stays
+DO-NOT-ARM for settled work; the FLOAT posture remains the graded track.
+INC-1 stays in (it is correct frame discipline and strictly reduces reref
+pressure); the plain-posture V2 rung re-validation under INC-1 is owed.
+
 ## §9 Build manifest (when built — no new files, no CMake change)
 
 | file | change |

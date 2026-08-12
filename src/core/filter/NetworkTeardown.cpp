@@ -1742,10 +1742,12 @@ int networkTeardown(
         } else {
             log->info("Network (eq34 seed-round): {} pin target(s) seed-rounded "
                       "({} at the election from a live state, {} fold-deferred "
-                      "for states born in PASS B), max |pin innovation| "
+                      "for states born in PASS B, {} FROZEN reuses of a "
+                      "previously realized target — INC-1), max |pin innovation| "
                       "{:.4f} m, {} same-station target step(s) (each routed "
                       "through the reref hygiene, never the v2-shift walk).",
                       sr_total, c.seed_round_pins, c.seed_round_deferred,
+                      c.seed_round_frozen,
                       c.seed_round_max_abs_y_m, c.seed_round_target_steps);
             if (c.seed_round_max_abs_y_m > 0.13)
                 log->warn("Network (eq34 seed-round): max |pin innovation| "

@@ -1622,6 +1622,7 @@ namespace GnssProcessor {
         // static receivers).  All zero unless network.phase_datum_eq34_seed_round.
         long long seed_round_pins         = 0;
         long long seed_round_deferred     = 0;
+        long long seed_round_frozen       = 0;   ///< INC-1: targets reused verbatim from eq34_prev_target (frame realized once)
         long long seed_round_target_steps = 0;
         double    seed_round_max_abs_y_m  = 0.0;
         // eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md) run tallies —

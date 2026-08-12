@@ -433,6 +433,18 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                 bool seed_deferred = false, seed_rounded = false;
                 if (eq34_seed_round && !std::isfinite(carry_val)
                     && system != System::Unknown) {
+                    // INC-1 FREEZE-AFTER-FIRST-REALIZATION (SPEC §8.5): a frame is
+                    // realized ONCE.  Reuse this (station, amb)'s previously
+                    // realized target verbatim — pinmove 0, no step, no reref —
+                    // and re-round only on a true first realization.  The v0
+                    // every-epoch re-round ratcheted the invariant carry ~1720 cyc
+                    // settled (§13.7); this branch is what severs it.
+                    auto ptf = eq34_prev_target.find({static_cast<int>(ri), amb});
+                    if (ptf != eq34_prev_target.end()) {
+                        target = ptf->second;
+                        seed_rounded = true;
+                        ++ctx.counters.seed_round_frozen;
+                    } else {
                     const double lam =
                         eq34_ppp_utils->getWavelength(system, grp_sig, sat);
                     if (std::isfinite(lam) && lam > 0.0) {
@@ -453,6 +465,7 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                             seed_deferred = true;
                         }
                     }
+                    }   // INC-1 freeze else-arm
                 }
                 double pinmove = 0.0;
                 bool known = true;
