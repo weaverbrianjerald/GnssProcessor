@@ -888,6 +888,80 @@ Per-fault, from `network_events.csv` within ±10 epochs of each injection:
    reshuffles which cells exceed.  That is what a tier dominated by false alarms
    looks like, and it is consistent with finding 2 of §9.7.2.
 
+### 9.7.4 CHASING THE mw_detect MISS — one defect PROVEN, one still open
+
+The §9.7.3 miss was chased to ground.  Three hypotheses, each a one-knob A/B on
+the same fixture data.
+
+| # | hypothesis | test | result |
+|---|---|---|---|
+| 1 | the rounding-cleanliness gate is too tight (`turbo_edit_frac_max` = 0.15, default) | 0.15 → **0.49** | **FALSIFIED** — 44 → 66 events, but still only at epochs **2 and 4**; nothing at 60/90/160 |
+| 2 | no BIA ⇒ no BSSD integer WL lock ⇒ `slip_wl_known` never true (`has_bia ? "BSSD-pass2" : "direct-no-BIA"`, MwSlipDetector.cpp:2696) | `enable_code_phase_bias` false → **true** | **FALSIFIED** — bit-for-bit the same 44 events at epoch 2, same misses |
+| 3 | **station index 0 is structurally excluded from slip detection** | roster reordered | **PROVEN** — below |
+
+#### The proven defect: the datum station gets NO slip detection at all
+
+```cpp
+const int i_lo = phase_datum_prioritized ? 0 : 1;   // ApplicationNetworkAssembly.cpp:1281
+```
+
+`phase_datum_eq34` defaults **false**, so `phase_datum_prioritized` is false and
+`i_lo = 1`.  Every slip-detection loop in `NetworkSlipQc.cpp` (lines 69, 169, 385
+— MW **and** LLI) runs `for (int i = i_lo; ...)`, so **`stations[0]` is skipped
+entirely.**
+
+*Controlled proof.*  Identical fixture data; the ONLY change is roster order,
+moving `S03000SIM` (whose LLI-flagged slip was detected at index 2) to index 0:
+
+| roster position of S03000SIM | its G19 LLI slip | total `lli_slip` events in the run |
+|---|---|---|
+| index 2 | **detected** (`T0_mw_detect / lli_slip`) | 1 |
+| **index 0** | **MISSED** | **0** |
+
+The in-code rationale is sound as far as it goes — "Pivot (stations[0]) is never
+touched (its ambiguities are gauge-pinned)", and refloating a pinned ambiguity is
+meaningless.  **But the consequence is not benign.**  The datum station is
+precisely the receiver whose ambiguity rides inside every emitted phase bias
+(contract §B.2: "the network datum receiver's ambiguity rides inside it, which is
+what makes the user's between-satellite DD ambiguities integer").  An undetected
+slip there does not stay local — it re-references the P record for that satellite
+across the whole network, and **nothing in the run records that it happened**:
+not the flag-rate summary, not the event log, not a counter.
+
+This is standing invariant #1 in its exact form — a stiff time-linked quantity
+(the gauge-pinned datum ambiguity) with no wired slip response — and it is the
+one station where the invariant matters most.
+
+#### Still open: MW produces no mid-arc candidates at ANY station
+
+`i_lo` explains S01 (index 0) completely.  It does **not** explain S02
+(index 1, −7 cyc unflagged, 44° elevation), which sat inside the loop and was
+still missed by MW; only `T4_attrib / attrib_arc` fired.  Across both fault arms
+every one of the 44 `mw_wl_slip` events is at **epoch 2**, and the frac_max arm
+adds epoch 4 — i.e. the MW path emits candidates only during ignition and then
+nothing for 238 epochs.  Hypotheses 1 and 2 are eliminated; the remaining
+candidates are the arc-maturity / Welford noise-floor state and the BSSD MW
+pivot's own resolution (`slip_wl_known` is documented false "if no pivot could be
+made — MW pivot slipped with an unresolved integer").
+
+**Recommended next step, and why it is not this card's:** arm
+`network.trace_slip_raw` (`network_slip_raw.csv` publishes the per-(station,sat)
+raw MW every epoch, *independently of whether any detector is enabled*) and read
+what the producer's own MW does at S02/G06/epoch 90.  That distinguishes "the
+detector never saw the jump" from "it saw it and rejected it" in one arm.
+
+#### What this does and does not license
+
+- The `i_lo` finding is **proven** by a controlled single-variable A/B and is
+  actionable: either extend detection to station 0 in the legacy datum posture, or
+  document that the datum station is a slip-detection blind spot and make the
+  eq34 posture mandatory where slips matter.
+- The MW mid-arc silence is **measured but unexplained**.  It is one fixture, one
+  data rate (30 s), one elevation range.  It is a lead, not a verdict on the
+  detector.
+- Caveat carried from §9.7.3: the sim's slips are injected on ONE band, which is
+  the classic widelane target; a two-band slip is a different test.
+
 ---
 
 ## §9.6 G-B — satellite-clock step, FIRST CLASS ONLY (measured 2026-08-11)
