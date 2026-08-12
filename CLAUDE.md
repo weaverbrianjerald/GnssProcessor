@@ -326,12 +326,19 @@ needs the estimated ionosphere, synthesize `network_vtec_sh.csv` —
 `scripts/sh_vtec.py` (ported basis + `--selftest`).
 
 **5. Candidates that still need their first validation run** (do not arm blind):
-`network.clock_datum_sum_to_zero` (or `_broadcast_anchored`) — both are
-`declared_dimension = 0` with "no pivot, no handover seam", and the clock is the
-worst re-realizer measured (**13 product-wide jumps** post-convergence over 12 h
-vs 2 for code bias and 0 for phase bias); and `network.emit_clock_disc: true` —
-without it the per-satellite clock disc counter is never populated, so all 13 of
-those jumps are **silent to the consumer**.
+`network.clock_datum_broadcast_anchored` — `declared_dimension = 0` with "no
+pivot, no handover seam", and the clock is the worst re-realizer measured
+(**13 product-wide jumps** post-convergence over 12 h vs 2 for code bias and 0
+for phase bias); and `network.emit_clock_disc: true` — without it the
+per-satellite clock disc counter is never populated, so all 13 of those jumps
+are **silent to the consumer**.  `network.clock_datum_sum_to_zero` got its
+first validation 2026-08-11 on the synthetic 50-sta fixture
+(SPEC_synthetic_minimum_network §9.8): PASS — wire mean pinned exactly, wander
+0.193 → 0.036 m at a fixed polar datum, availability unchanged, set-change
+re-referencing auto-marked.  Sim-only; the field arm is still owed, and the
+same matrix showed the bigger consumer lever is PIVOT ELECTION (the datum-free
+contrast moves 2.2× with the pivot's geometry — `clock_datum_station` is a
+product-quality decision, not a label).
 
 **6. NEVER grade the ionosphere LEVEL against a single GIM number, and never on a
 1 h window** (2026-08-05, `docs/SPEC_level_information_budget.md` §14).  Two

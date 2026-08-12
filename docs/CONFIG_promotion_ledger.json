@@ -502,6 +502,18 @@
    "family": "COLD-START, DATUM and CLOCK knobs"
   },
   {
+   "knob": "network.clock_datum_sum_to_zero",
+   "default_at": "src/core/config/GnssConfigLoadNetwork.cpp:4224 (false)",
+   "verdict": "RECOMMEND_SCOPED",
+   "scope": "Absolute-clock consumers (timing, inter-provider) and internal vf/URA channels: the wire common level carries the datum receiver's clock error 1:1 under the legacy pivot-satellite emit. A PPP consumer estimates its own clock and does NOT benefit (measured). Sim-validated only (2026-08-11); field arm owed.",
+   "evidence": "SPEC_synthetic_minimum_network.md 9.8: first validation PASS. Wire mean-over-sats == 0.0000 exactly every epoch; settled wander 0.193 -> 0.036 m at a fixed polar datum (8x worse polar than equatorial to begin with: 0.193 vs 0.024); availability unchanged (232/240, 8 A4 withholds, identical to control); rank gate declared 1 -> 0 self-consistently. Companion: the datum-free CONTRAST moves 2.2x with pivot geometry (0.966 -> 0.443 m) so pivot ELECTION is the consumer-facing lever; combined equatorial+sum-to-zero arm best everywhere (C rms 0.286, wander 0.014, consumer 3D 0.208 m).",
+   "interlock": "Datum toggle INSIDE the warm-resume fingerprint (fresh convergence only). Loader auto-arms clock_disc_on_set_change (set-change re-references the sum-to-zero gauge, now marked). HARD ERROR with brdc_rts broadcast-anchored combo. Makes sticky_pivot / pivot_vanish_return_signal / clock_datum_satellite INERT (no pivot satellite, no handover seam).",
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "True",
+   "posture_why": "first validation PASS: wire common level pinned exactly; wander 0.193 -> 0.036 m; availability unchanged; pivot ELECTION remains the consumer-facing lever",
+   "fingerprinted": true
+  },
+  {
    "knob": "network.code_bias_disc_jump_test",
    "default_at": "src/core/config/GnssConfigLoadNetwork.cpp:1963",
    "verdict": "RECOMMEND_SCOPED",
