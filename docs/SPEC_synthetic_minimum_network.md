@@ -7,6 +7,58 @@ guard population this fixture manufactures on demand) and
 `docs/SPEC_cb_admission_card.md` / the CB-carry card in flight (whose guard
 G-C rebases on).
 
+---
+
+## §0 READ THIS FIRST — document status, and the error class it exposed
+
+This SPEC was written incrementally while the arms ran, so **later sections
+retract earlier ones**.  Read the status table before quoting anything.
+
+| section | status |
+|---|---|
+| §1–§8 (design, method, traps) | **live** |
+| §9.5 G-A calibration table | live, but see the §9.7.1 amendment on how to read a vf |
+| **§9.6 G-B recovery floor** | **RETRACTED** — window artifact; banner in place |
+| §9.7.1 clock-vf "plateau" | **AMENDED** — the scalar is not a readable shape; use the decomposition |
+| §9.7.2 QC tier table | live (the "44 false alarms" framing is corrected in §9.7.4) |
+| **§9.7.3 / §9.7.6 "MISSED"** | **CORRECTED by §9.7.8** — graded against the wrong instrument |
+| §9.7.4 / §9.7.5 MW chase | live |
+| §9.7.7 `phase_datum_prioritized` cost | live |
+| **§9.7.8 / §9.7.9** | live — the current conclusions |
+
+### The error class, stated generally
+
+Three of this card's headline readings failed the same way, and it is **not** a
+GNSS error — it is a measurement-hygiene error that any part of this codebase's
+analysis history could share:
+
+> **A conclusion was drawn from an instrument that does not record the thing
+> being looked for, and its silence was read as a negative result.**
+
+The three instances:
+
+1. **`network_events.csv` does not record RAIM refloats.**  "No event row" was
+   read as "not detected".  RAIM had in fact detected at 58σ and acted.  The
+   decision chain lives in `network_raim.csv`, behind `trace_slip_events`.
+2. **A tier reporting `0 flag` with `0 opp` is INERT, not clean.**  Zero
+   opportunities and zero findings are indistinguishable in every log line.
+3. **A guard whose MARKER is unarmed emits nothing.**  §9.6 read zero
+   `CLK_STEP` marks as "the event was not marked", when `emit_clock_disc` was
+   simply off.
+
+**The generalizable check:** before reading any absence as evidence, establish
+that the instrument (a) was armed, (b) had opportunities, and (c) records the
+specific outcome in question — not merely a neighbouring one.  Standing
+invariant #4 states (b); (a) and (c) are the same mistake wearing different
+clothes.
+
+Anyone auditing prior campaign conclusions should treat "the counter stayed at
+zero" and "the event log is empty" as **unverified** until the recording path is
+confirmed, particularly where a tier ACTS without emitting (RAIM refloat is not
+the only such path).
+
+---
+
 **Why this exists.**  Every grade the network producer has ever received is
 INTERNAL: self-consistency, datum invariance, cross-instrument agreement,
 census counts.  All of them are satisfiable by a confidently wrong estimator.
