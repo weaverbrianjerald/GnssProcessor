@@ -1058,6 +1058,93 @@ recorded, per the house rule that loader defaults stay off and each new config
 arms its set explicitly.  The blind spot is real and must be documented wherever
 the datum station's slip exposure matters; the fix for it is not this knob alone.
 
+### 9.7.8 ⚠️ CORRECTION — RAIM was NOT blind.  The consensus rule vetoed it.
+
+**§9.7.3 and §9.7.6 graded against the wrong instrument.**  `network_events.csv`
+does not record RAIM refloats, so "MISSED" there meant "no event row", not "not
+detected".  `network_raim.csv` (`network.trace_slip_events`) carries the actual
+decision chain, and it says the opposite:
+
+| slip | `s_max_norm` | `raim_k` | `spiked` | `n_sta_spiked` | `min_sta` | `refloated` |
+|---|---|---|---|---|---|---|
+| S02/G06, −7 cyc | **58.2** | 6 | **1** | **3** | 3 | **1 — acted** |
+| S03/G11, +2 cyc | **9.4** | 6 | **1** | **1** | 3 | **0 — vetoed** |
+
+RAIM **detected both, comfortably.**  The failure is in the ACTION rule:
+
+```cpp
+if (kv.second >= raim_min_sta) flagged.push_back(kv.first);   // NetworkRaim.cpp:266
+```
+
+The count is keyed by **satellite**, counting how many *stations* spiked on it.
+The tier is built to attribute **satellite** faults.  **A cycle slip is a receiver
+event, so exactly one station can ever spike** — `n_sta_spiked = 1 < min_sta = 3`,
+at any magnitude.  On the MW-blind arm the run totals are **743 spiked, 0
+refloated**: a 100 % detection rate and a 0 % action rate.
+
+The −7 cyc slip got through only because it reached `n_sta_spiked` = 3 = exactly
+the minimum — the slip perturbed the SHARED satellite parameters enough to push
+two other stations' G06 residuals over k.  That is contamination masquerading as
+consensus, not the tier working as intended.
+
+**`raim_min_stations` is not a knob to lower** — it exists to stop the tier
+attributing every station's noise to a satellite.  The fix is a separate
+station-local attribution path (same statistic, different consensus logic).
+Note `raim_attribution` (T4) reports **7135 opportunities and 0 flags in every
+arm**, which is suspicious in the same direction and is the next thing to check.
+
+### 9.7.9 HOW MUCH DO SLIPS CONTAMINATE?  Measured — and they are ORTHOGONAL to the level problem
+
+One knob off the quiet 50-station arm: `cycle_slips.rate_base` 0 → 0.0002 (the
+sim default), identical fixture, identical per-station seeds.  **465 slips across
+all 51 stations, |Δ| 13 … 52 (median) … 123 cycles.**
+
+At realistic magnitudes the QC stack DOES act — RAIM 2707 spiked / **2751
+refloated** (vs 0 at 2 cycles), consensus flags 0 → 191, `mw_wl_slip` 44 → 121,
+`lli_slip` 0 → 132.  Large slips hit many stations at once, so the consensus rule
+is satisfied.  **The 2-cycle case is below the effective ACTION threshold, not
+below the detection threshold.**
+
+Truth grade, settled half:
+
+| channel | 0 slips | **465 slips** | ratio |
+|---|---|---|---|
+| C rms | 1.102 m | **4.630 m** | **4.2×** |
+| C median \|·\| | 0.804 m | 0.996 m | 1.24× |
+| C max \|·\| | 3.569 m | **19.452 m** | 5.4× |
+| ZWD rms | 0.659 m | 2.158 m | 3.3× |
+| consumer 3D rms | 1.417 m | 1.719 m | 1.2× |
+
+Median barely moves while rms goes 4.2× and max 5.4× ⇒ slips act through a heavy
+**TAIL**, not a uniform shift: most epochs fine, some badly poisoned.  Also
+`CLK_STEP mark` **0 → 17** — station-local slips being marked on the wire as
+SATELLITE CLOCK discontinuities — and `T2_within_epoch / emitted_contaminated`
+**0 → 11**.
+
+#### The decomposition — and the negative result that matters
+
+Splitting the settled C residual into fleet-common (vs pivot) ⊕ per-satellite:
+
+| arm | C rms | = common | ⊕ per-sat |
+|---|---|---|---|
+| 0 slips | 1.102 | **0.920** | 0.608 |
+| 465 slips | 4.630 | **0.466** | **4.606** |
+
+**Slips inflate the PER-SATELLITE error 7.6× (0.61 → 4.61 m) and leave the COMMON
+direction untouched — it does not grow, it shrinks slightly.**
+
+So the two problems are ORTHOGONAL:
+
+- **Slip contamination is real and first-order** on the per-satellite channel, and
+  it is a genuine, fixable defect (the §9.7.8 action rule).
+- **The pivot-relative common-mode level wander (~0.9–1.3 m rms at every station
+  count) is NOT slip contamination.**  It is identical with 0 and with 465 slips.
+  That is the channel the field campaign has been chasing (the CB-Q "wire drifts
+  in unpinned directions" finding), and this arm rules slips out as its cause.
+
+Fixing the slip response would clean up the per-satellite tail and the 17 spurious
+clock marks.  It would not move the level.
+
 #### What this does and does not license
 
 - The `i_lo` finding is **proven** by a controlled single-variable A/B and is
