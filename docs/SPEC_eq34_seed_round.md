@@ -1,10 +1,21 @@
 # SPEC — eq34 SEED-ROUND: first-sighting pin-to-round (Card 3 ignition fix)
 
-*Drafted 2026-08-12, the day the defect was measured (SPEC_synthetic_minimum_network
-§12.8, HANDOFF_wsh_chain_slant T1/T2).  Status: **SPEC only — not built.**  The
-knob named here does not exist yet; every code anchor cited is the 2026-08-12
-tree at commit `e76b3c1` (the chain-pin-audit commit) and must be re-verified at
-build time.*
+*Drafted 2026-08-12 (SPEC_synthetic_minimum_network §12.8, HANDOFF_wsh_chain_slant
+T1/T2).  Status: **BUILT + VALIDATED same day** (`gnss_processor_sr.exe`
+6B1EF5D6…).  V1 OFF byte-identity: PASS (pinaudit rung, estimability + vtec
+traces hash-identical to the pre-card build).  V2 `_simnet300_wsh_n50_seedround`:
+**P1 spectrum identical to 10 digits; P2 a₀₀ 33.1 TECU at epoch 1 vs −18 780
+without the card — the SH collapse is GONE, 15/19 emitted (the 4 skips are
+rank-gate dips of the marginal 1.4×-above-cutoff L2W direction — the graded
+posture keeps the rung-4 tolerance); P3 pin audit COMPLETE (1558/1558/1558 both
+signals); P4 max |y| 0.1193 m ≤ λ_L2W/2, 2 target steps.**  The EWL TRIO
+(`_simnet60_tri_slant_trio`: posture C + eq34 + carry_invariant + mw_wl.ewl —
+the §13.6-blocked arm): **19/19 emitted, three complete chains (1748 = 19×92
+per signal), max |y| 0.1256 ≤ λ_L5Q/2, 0 steps, and the truth-graded DD
+integer structure is CLEAN (EWL 94.1 % at its true integer in a 20-epoch
+ignition window; no km-scale injection anywhere)** — the §12.8 artifact is
+closed and the unguarded slant posture reads healthy on truth.  Owed: the §9
+unit-test file (tests/test_eq34_seed_round.cpp); V3 settled graded arm.*
 
 ---
 

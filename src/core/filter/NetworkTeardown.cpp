@@ -1725,6 +1725,37 @@ int networkTeardown(
                       "group landed its full declared gauge dimension every "
                       "audited epoch — the chain pins are NOT the open near-null.");
     }
+    // SEED-ROUND run tallies (docs/SPEC_eq34_seed_round.md §5).  The health
+    // assertion is |pin innovation| ≤ λ/2 ALWAYS — by construction of
+    // std::round at both computation sites, so a violation is a logic error
+    // (stale λ map entry, mismatched state), never a data property.
+    if (config_.networkPhaseDatumEq34SeedRound()) {
+        const auto& c = ctx.counters;
+        const long long sr_total = c.seed_round_pins + c.seed_round_deferred;
+        if (sr_total == 0) {
+            log->warn("Network (eq34 seed-round): ARMED but ZERO pins were "
+                      "seed-rounded — every elected pin took the carry-round or "
+                      "legacy-0 path.  Standing invariant #4: that is INERT, not "
+                      "validated.  Expected on a warm resume whose carries all "
+                      "survived; on a COLD start it means the knob never engaged "
+                      "— check the election wiring.");
+        } else {
+            log->info("Network (eq34 seed-round): {} pin target(s) seed-rounded "
+                      "({} at the election from a live state, {} fold-deferred "
+                      "for states born in PASS B), max |pin innovation| "
+                      "{:.4f} m, {} same-station target step(s) (each routed "
+                      "through the reref hygiene, never the v2-shift walk).",
+                      sr_total, c.seed_round_pins, c.seed_round_deferred,
+                      c.seed_round_max_abs_y_m, c.seed_round_target_steps);
+            if (c.seed_round_max_abs_y_m > 0.13)
+                log->warn("Network (eq34 seed-round): max |pin innovation| "
+                          "{:.4f} m EXCEEDS λ/2 of every GNSS phase band "
+                          "(≤ 0.1274 m) — that is a LOGIC ERROR in the seed-round "
+                          "target computation, not a data property.  Do not "
+                          "trust this run's datum realization.",
+                          c.seed_round_max_abs_y_m);
+        }
+    }
     if (config_.networkPhaseDatumEq34SlipAwareElection()) {
         const long long ds = ctx.counters.eq34_slip_deseeded;
         const long long ra = ctx.counters.eq34_slip_readmitted;

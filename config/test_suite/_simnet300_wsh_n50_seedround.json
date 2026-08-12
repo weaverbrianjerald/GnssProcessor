@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "SEED-ROUND V2 ignition rung (docs/SPEC_eq34_seed_round.md §7) — the pinaudit",
+    "rung + network.phase_datum_eq34_seed_round, DEFAULT rank-gate tolerance.",
+    "",
+    "PRE-REGISTERED (§7 V2, restated):",
+    "  P1  estimability spectrum IDENTICAL to the audit rung (λmax ≈ 1.19e5,",
+    "      n_below 1 = declared_dim, L2W direction ≈ 1.67e-04) — targets cannot",
+    "      move eigenvalues; a moved spectrum means a second variable is loose.",
+    "  P2  SH gate NEVER engages; a00 in band from epoch 1, settling toward the",
+    "      rung-4 ≈ 31.5 TECU; ≥ 18/19 emitted (A4 skips allowed).  The audit rung",
+    "      without seed-round read a00 −18780 at epoch 1 and withheld 19/19.",
+    "  P3  pin audit still COMPLETE (1558 = 19×82 declared/folded/landed per",
+    "      signal) — seed-round changes TARGETS, never count or placement.",
+    "  P4  seed-round max |pin innovation| ≤ 0.123 m (λ_L2W/2) and ~0 target",
+    "      steps; ~164 seed pins per epoch (82 × 2 signals), all fold-DEFERRED at",
+    "      epoch 1 (no states exist at the first election), election-side after.",
+    "  V4  the leveling carry WARMS (emitted epochs ⇒ stash ⇒ carry_warm) — the",
+    "      degrade-during-withhold deadlock broken at the root."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50_pinaudit.json"
+  ],
+  "network": {
+    "phase_datum_eq34_seed_round": true,
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_seedround/products.txt"
+  }
+}

@@ -1572,6 +1572,9 @@ namespace GnssProcessor {
          *
          * @see networkExternalSatCodeBias, networkBuildRxCodeBiasGauges
          */
+        /// @brief CB-GF-DATUM: per-satellite geometry-free code-bias pin (slant posture).
+        /// @return true when the GF gauge rows are folded (see @ref network_code_bias_gf_datum_).
+        bool networkCodeBiasGfDatum() const { return network_code_bias_gf_datum_; }
         bool networkRxCodeBiasDatum() const { return network_rx_code_bias_datum_; }
 
         /**
@@ -2986,6 +2989,20 @@ namespace GnssProcessor {
          * @see networkPhaseDatumEq34
          */
         bool networkPhaseDatumEq34PinRound() const { return network_phase_datum_eq34_pin_round_; }
+
+        /**
+         * @brief Card 3 SEED-ROUND (docs/SPEC_eq34_seed_round.md): wherever an eq34
+         *        pin target would otherwise be the cold absolute 0 — a first-sighting
+         *        edge, an incumbent whose phase-leveling carry is dead, or every epoch
+         *        under @c carry_invariant (where pin-to-round is disabled by design) —
+         *        target λ·round(x/λ) of the value the ambiguity state actually holds.
+         *        Bounds the injected pin tension at λ/2 per pin instead of the full
+         *        phase−code lump (RINEX guarantees no alignment; the synthetic fixture
+         *        draws N ∈ [1e5,1e6) cycles and pays km-scale GF discharge without
+         *        this — SPEC_synthetic_minimum_network §12.8).  Default OFF; refused
+         *        without @c network.phase_datum_eq34.
+         */
+        bool networkPhaseDatumEq34SeedRound() const { return network_phase_datum_eq34_seed_round_; }
 
         /**
          * @brief Card 3: loose zero-mean prior σ (metres) applied per epoch to every
@@ -5598,6 +5615,19 @@ namespace GnssProcessor {
         bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite CODE bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb/iono-weighting on, .BIA off).
         bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6 UNLESS EXT-CB is armed; replaces external GIM as the iono constraint).
         bool network_external_sat_code_bias_{false};      ///< EXT-CB: take satellite code+phase biases from the external .BIA instead of estimating them (suppresses the estimate_iono_sh -> W6 force; forces enable_code_phase_bias + estimate_ifb on).  Default OFF => byte-identical.
+        /// CB-GF-DATUM (Odijk 2016 rd 3b, Table 7): a per-satellite GEOMETRY-FREE pin
+        /// on the IF-pinned code-bias pair, `(d_2 − d_1)/(μ2 − μ1) = 0`.  Required by —
+        /// and legal ONLY in — the SLANT posture (@ref estimateNetworkSatCodeBias with
+        /// NO ionosphere constraint), where the satellite hardware biases are otherwise
+        /// rank-deficient against the free per-LOS slant ionosphere.  Under a
+        /// single-layer constraint (SH or GIM) the geometry-free bias IS estimable
+        /// (their Eq. 29-32 — it is the DCB), so pinning it there would destroy the very
+        /// parameter that posture exists to emit; the loader refuses that combination.
+        /// Together with the IF pin it drives the first two frequencies' code biases to
+        /// exactly zero, which is Odijk's "not estimable below three frequencies"
+        /// (§5.1) realized as a datum — what remains estimable is the modernized DCB
+        /// d^s_1 − d^s_j for j ≥ 3.  Default OFF => byte-identical.
+        bool network_code_bias_gf_datum_{false};
         bool network_rx_code_bias_datum_{false};          ///< RXCB-DATUM: one sum-to-zero-over-receivers gauge per constellation on the receiver DCB set (the IGS convention; replaces the satellite-side zero-mean that EXT-CB gives away).  Default OFF => byte-identical.
         double network_rx_code_bias_datum_sigma_m_{10.0};  ///< RXCB-DATUM loose physical-bound sigma (m); realized common-mode info = 1/sigma^2, station-count independent.
         bool network_cb_admission_{false};                ///< CB-ADM: run-latched W6 code-bias admission census + station-local quarantine (replaces the per-epoch >=2-station gate; BeiDou-sparsity remedy).  Default OFF => legacy path byte-identical.
@@ -5705,6 +5735,7 @@ namespace GnssProcessor {
         bool   network_phase_datum_eq34_{false};           ///< Card 3: realize the phase-bias gauge by the Eq-34 / de Jonge SINGLE-RECEIVER-CHAIN datum — per-(receiver,system,signal) RPB split state + one RPB pin + a spanning-tree of ambiguity pins per (const,signal) component, so the emitted between-satellite reference stays integer-consistent across ALL satellites while staying full-rank at global scale. Reuses the prioritized SPOF-cure machinery but replaces the anchor election with a chain election; SUPERSEDES phase_datum_prioritized, MUTUALLY EXCLUSIVE with phase_datum_ensemble (load-time throw). OFF = anchor-pin datum (byte-identical: no RPB state allocated, chain election never runs).
         std::string network_phase_datum_eq34_receiver_{};  ///< Card 3: preferred datum receiver (component 0) for the eq34 chain datum; empty = coverage auto-pick. Sticky incumbent still wins while present. INERT unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_pin_round_{true};  ///< Card 3: on an eq34 re-attach/re-pin of an already-lit (sat,signal) edge, target the ROUNDED carried float (λ·round(x̂_prev/λ)) so the frame step is ≈0 cycles; false = always pin to 0 (A/B lever). INERT unless network_phase_datum_eq34_.
+        bool   network_phase_datum_eq34_seed_round_{false}; ///< Card 3 SEED-ROUND (docs/SPEC_eq34_seed_round.md): round otherwise-zero pin targets to λ·round(x_state/λ) — first sighting, dead-carry incumbents, and every carry_invariant epoch.  |pin innovation| ≤ λ/2 by construction.  Default OFF; refused without network_phase_datum_eq34_.
         double network_phase_datum_eq34_rpb_prior_sigma_m_{1.0}; ///< Card 3: loose per-epoch zero-mean prior σ (m) on every RPB column — the station-local information floor for the near-null RPB↔ambiguity split (Jul-10 field A/B instrument); 0 disables. INERT unless network_phase_datum_eq34_.
         double network_phase_datum_eq34_rpb_q_m2s_{3E-06};       ///< Card 3: q (m²/s) of the LOCAL δ_{r,σ} time-linking carry (D6 v2, local form) — suppresses the per-epoch RPB re-estimation bounce that poisons the individual-float phase-leveling carries; 0 = v1 fresh re-estimation. INERT unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_carry_shift_{false};     ///< Card 3 EXPERIMENTAL: S-transform carried values on pin displacement instead of erase/skip (exact in the chain algebra; field Jul-11: injects error through the weakly-held δ split — DD step 86 vs 11-15 cyc/ep erase-based — root open). OFF = erase-based hygiene. INERT unless network_phase_datum_eq34_.

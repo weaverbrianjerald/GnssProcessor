@@ -206,6 +206,7 @@ namespace GnssProcessor {
         bool eq34_longevity{};
         bool eq34_extend_only{};
         bool eq34_slip_aware{};   ///< network.phase_datum_eq34_slip_aware_election — keep slipped arcs out of the spanning tree so a slip costs one chord, not every cycle through a tree edge.
+        bool eq34_seed_round{};   ///< network.phase_datum_eq34_seed_round (docs/SPEC_eq34_seed_round.md) — round otherwise-zero pin targets to λ·round(x_state/λ); |innovation| ≤ λ/2 by construction.  NOT gated on !carry_invariant (the Card-4 zero-target rationale is re-pin continuity; ignition is this knob's whole point).
         bool phase_datum_prioritized{};
         double phase_hold_sigma{};
         bool phase_hold_on{};
@@ -1611,6 +1612,18 @@ namespace GnssProcessor {
             std::map<std::string, int>       worst_short;      ///< max per-epoch shortfall
             int epochs = 0;                                    ///< audited (consumed, non-aborted) epochs
         } eq34_pin_audit;
+        // Card 3 SEED-ROUND run tallies (docs/SPEC_eq34_seed_round.md §5).  The
+        // card's health assertion is |pin innovation| ≤ λ/2 ALWAYS — max_abs_y
+        // above λ_max/2 is a logic error, full stop.  `pins` counts election-side
+        // targets (the state existed at election time); `deferred` counts
+        // fold-computed targets (state allocated in PASS B — cold start and
+        // genuinely-new arcs); `target_steps` counts same-station target changes
+        // between epochs (the reref pressure this knob generates; ≈ 0 expected on
+        // static receivers).  All zero unless network.phase_datum_eq34_seed_round.
+        long long seed_round_pins         = 0;
+        long long seed_round_deferred     = 0;
+        long long seed_round_target_steps = 0;
+        double    seed_round_max_abs_y_m  = 0.0;
         // eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md) run tallies —
         // every field documented on the struct.  Bumped only when
         // ctx.knobs.anchor_hygiene_on, and reported by the run-end block in

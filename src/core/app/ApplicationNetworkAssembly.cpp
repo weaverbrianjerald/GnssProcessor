@@ -2258,6 +2258,21 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     if (amb_idx < 0) return kPinMissState;   // no usable phase row for it this epoch
                     const auto hit = h2local.find(amb_idx);
                     if (hit == h2local.end()) return kPinMissRow;  // column dropped (all-zero H)
+                    // SEED-ROUND fold-deferred target (docs/SPEC_eq34_seed_round.md
+                    // §3.3): the election could not read a state that did not exist
+                    // yet; by now the pre-pass has seeded it, so round HERE and
+                    // report the realized target back for next epoch's pinmove
+                    // baseline (§3.4).  |y| ≤ λ/2 by construction of std::round.
+                    // Map EMPTY unless the knob is armed — zero cost otherwise.
+                    if (!st.pinned_amb_seed_lambda.empty()) {
+                        const auto sl = st.pinned_amb_seed_lambda.find(amb_key);
+                        if (sl != st.pinned_amb_seed_lambda.end()) {
+                            const double lam = sl->second;
+                            target = lam * std::round(piv_x(amb_idx) / lam);
+                            R.pin_seed_targets.emplace_back(
+                                amb_key, target, target - piv_x(amb_idx));
+                        }
+                    }
                     pin_col.push_back(hit->second);
                     // Preserve the exact legacy expression (−piv_x) when pinning
                     // to 0 — "0.0 − x" flips the sign of a zero x, which would
@@ -2964,6 +2979,20 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 pa.miss_state[grp] += t[1];
                 pa.miss_row[grp]   += t[2];
                 if (est_index_of[i] >= 0) landed_ep[grp] += t[0];
+            }
+            // SEED-ROUND §3.4: feed each ACCEPTED station's fold-realized targets
+            // into next epoch's pinmove baseline — without this the election reads
+            // the provisional 0 and computes a phantom km-scale step every epoch,
+            // permanently re-referencing the (sat,σ).  A dropped station's pin did
+            // not land; its arc re-elects from scratch next epoch.
+            if (est_index_of[i] >= 0) {
+                for (const auto& [amb, tgt, y] : asm_res[i].pin_seed_targets) {
+                    ctx.carry.eq34_prev_target[{static_cast<int>(i), amb}] = tgt;
+                    ++ctx.counters.seed_round_deferred;
+                    const double ay = std::abs(y);
+                    if (ay > ctx.counters.seed_round_max_abs_y_m)
+                        ctx.counters.seed_round_max_abs_y_m = ay;
+                }
             }
         }
         for (const auto& [grp, decl] : ctx.carry.eq34_epoch_declared) {

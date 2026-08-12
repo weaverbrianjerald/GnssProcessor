@@ -62,6 +62,7 @@ const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
 const bool eq34_longevity = ctx.knobs.eq34_longevity;
 const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
 const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
+const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
 
     // Card 3/4 slip-aware election: did THIS arc slip this epoch?  The funnel is
     // complete here by the ordering contract (every PASS-A drain, signal integrity
@@ -105,6 +106,7 @@ const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
         st.pinned_amb_targets.clear();
         st.pinned_rpb_keys.clear();
         st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (empty ⇒ no scaling)
+        st.pinned_amb_seed_lambda.clear();   // SEED-ROUND fold-deferred (empty ⇒ inert)
     }
     this_epoch_anchor.clear();
     // Chain-pin audit (HANDOFF_wsh_chain_slant T1): this epoch's per-group
@@ -416,6 +418,42 @@ const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
                         }
                     }
                 }
+                // SEED-ROUND (docs/SPEC_eq34_seed_round.md): the carry-round above
+                // did not engage (first sighting; incumbent whose carry is dead;
+                // or every epoch under carry_invariant, where eq34_round is off by
+                // Card-4 design) — so the target would be the cold absolute 0,
+                // which prices the datum frame at the seeded phase−code lump
+                // (km-scale on the synthetic fixture's N draws; SPEC §12.8).
+                // Round to the value the state actually holds instead: |pin
+                // innovation| ≤ λ/2 by construction.  When the state does not
+                // exist yet (cold start / new arc — PASS B's pre-pass allocates
+                // it), defer the rounding to the fold via pinned_amb_seed_lambda;
+                // the realized target flows back into eq34_prev_target through
+                // the serial consume.  `known` is cleared below for deferred pins.
+                bool seed_deferred = false, seed_rounded = false;
+                if (eq34_seed_round && !std::isfinite(carry_val)
+                    && system != System::Unknown) {
+                    const double lam =
+                        eq34_ppp_utils->getWavelength(system, grp_sig, sat);
+                    if (std::isfinite(lam) && lam > 0.0) {
+                        const int sidx = stations[ri].sm->getAmbiguityIndex(amb);
+                        if (sidx >= 0) {
+                            const double x =
+                                stations[ri].sm->getStateVector()(sidx);
+                            if (std::isfinite(x)) {
+                                target = lam * std::round(x / lam);
+                                seed_rounded = true;
+                                ++ctx.counters.seed_round_pins;
+                                const double y = std::abs(target - x);
+                                if (y > ctx.counters.seed_round_max_abs_y_m)
+                                    ctx.counters.seed_round_max_abs_y_m = y;
+                            }
+                        } else {
+                            stations[ri].pinned_amb_seed_lambda[amb] = lam;
+                            seed_deferred = true;
+                        }
+                    }
+                }
                 double pinmove = 0.0;
                 bool known = true;
                 bool edge_changed = false;
@@ -452,6 +490,19 @@ const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
                         {static_cast<int>(ri), amb});
                     pinmove = target
                         - (pt != eq34_prev_target.end() ? pt->second : 0.0);
+                }
+                // SEED-ROUND bookkeeping: a DEFERRED pin's target is decided at
+                // the fold, so no frame step is computable here (the serial
+                // consume feeds the realized target back for next epoch's
+                // baseline).  An election-side seed target that MOVED vs last
+                // epoch (float crossed a half-integer; or a dropped station lost
+                // last epoch's deferred feedback) is a frame RE-REALIZATION, not
+                // a transformable shift — route it through the validated reref
+                // hygiene, never the v2-shift walk.
+                if (seed_deferred) known = false;
+                else if (seed_rounded && pinmove != 0.0) {
+                    known = false;
+                    ++ctx.counters.seed_round_target_steps;
                 }
                 new_prev_target[{static_cast<int>(ri), amb}] = target;
                 stations[ri].pinned_amb_targets[amb] = target;

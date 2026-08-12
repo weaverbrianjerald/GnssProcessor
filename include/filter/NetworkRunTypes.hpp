@@ -171,6 +171,14 @@ struct NetStation {
     // ABSENT key ⇒ scale 1 ⇒ the exact legacy 1e10 weight, so an OFF run never reads
     // this map and the fold is byte-identical.  Cleared + rebuilt with the pins.
     std::map<std::string, double> pinned_amb_sigma_scale;
+    // Card 3 SEED-ROUND (docs/SPEC_eq34_seed_round.md §3.2, fold-deferred path):
+    // wavelength per elected pin whose ambiguity STATE did not exist at election
+    // time (cold start; a genuinely new arc — PASS B's pre-pass allocates it), so
+    // the election could not read a value to round.  The fold computes
+    // target = λ·round(piv_x/λ) from this map and reports the realized target
+    // back through StationAssembly::pin_seed_targets.  EMPTY unless
+    // network.phase_datum_eq34_seed_round; cleared + rebuilt with the pins.
+    std::map<std::string, double> pinned_amb_seed_lambda;
 
     // --- flicker/gap signal integrity INC-2 (docs/SPEC_flicker_gap_integrity.md) ---
     // Per-SATELLITE σ MULTIPLIER for this station's PHASE rows while that line of
@@ -486,6 +494,15 @@ struct StationAssembly {
     /// SERIALLY after the consume, so run totals are thread-count independent.
     /// Empty unless @c network.phase_datum_eq34.
     std::map<std::string, std::array<int, 3>> pin_audit;
+    /// Card 3 SEED-ROUND fold-deferred realized targets (docs/SPEC_eq34_seed_round.md
+    /// §3.4): (ambiguity key, realized target m, pin innovation y m) for every pin
+    /// whose target the FOLD computed (state absent at election time).  Drained
+    /// SERIALLY after the consume into @c ctx.carry.eq34_prev_target for ACCEPTED
+    /// stations — without this feedback the next election reads a provisional 0,
+    /// computes a phantom km-scale pinmove every epoch, and permanently re-references
+    /// the (sat,σ).  |y| ≤ λ/2 by construction of std::round; the consume asserts it
+    /// into the run counter.  Empty unless @c network.phase_datum_eq34_seed_round.
+    std::vector<std::tuple<std::string, double, double>> pin_seed_targets;
 };
 
 /// Card 1b (network.carry_coupling_joint_whiten): JOINTLY whiten the KEPT coupling

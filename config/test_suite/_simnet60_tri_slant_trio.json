@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "THE EWL TRIO, UNBLOCKED (HANDOFF_slant_triple_next §3.3 optimistic arm +",
+    "docs/SPEC_eq34_seed_round.md) — posture C + eq34 chain datum + carry_invariant",
+    "+ mw_wl.ewl_enable, with SEED-ROUND making the cold start survivable on this",
+    "fixture: without it the zero-target pins fight the sim's N ∈ [1e5,1e6) draws",
+    "and the km-scale GF discharge lands SILENTLY in the emitted iono+CB pair —",
+    "the slant posture has no SH gate to catch it (SPEC §12.8 / §13.6 warning).",
+    "",
+    "20-epoch SMOKE: wiring/health questions only (does it emit, does the datum",
+    "realize sanely, do the lanes engage, does the DD trace still read near-",
+    "integer EWL).  Lane-cascade GRADING belongs to a settled arm.",
+    "",
+    "station_pd_pin_aware rides along (loader recommendation with eq34);",
+    "carry_invariant_pd_safe per the validated rung-6 pairing;",
+    "trace_dd_fractional so scripts/simnet_amb_integer.py can compare the trio's",
+    "DD integer structure against the float-only §13.6 baseline."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_m_c_tri_slant.json"
+  ],
+  "processing": {
+    "max_duration_s": 570.0
+  },
+  "network": {
+    "phase_datum_eq34": true,
+    "phase_datum_min_stations": 1,
+    "station_pd_pin_aware": true,
+    "phase_datum_eq34_seed_round": true,
+    "carry_invariant": true,
+    "carry_invariant_pd_safe": true,
+    "mw_wl": {
+      "ewl_enable": true
+    },
+    "trace_dd_fractional": true,
+    "trace_dd_fractional_epoch_stride": 1,
+    "trace_dd_fractional_max_pairs": 2000,
+    "product_output_path": "C:/GnssProcessor/runs/simnet60_tri_slant_trio/products.txt"
+  }
+}
