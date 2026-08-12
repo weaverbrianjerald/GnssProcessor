@@ -1,0 +1,10 @@
+{
+  "extends": ["C:/GnssProcessor/config/test_suite/_cbq_12h_ctl.json"],
+  "estimation": {
+    "ionosphere_weighting": { "elevation_cutoff_deg": 25.0 }
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/cbq_elcut25/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/cbq_elcut25/state_snapshot.bin"
+  }
+}

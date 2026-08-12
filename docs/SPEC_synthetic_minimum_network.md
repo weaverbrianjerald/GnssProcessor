@@ -1616,6 +1616,57 @@ guard, and the event ↔ R ↔ counter ↔ consumer tie-out, follow from those.
 
 ---
 
+## §11 NEXT — the W6+SH synthetic arm (design brief for the next session)
+
+The §9.9/§9.9.1 elimination campaign cornered the field wire wander (1.3 m
+detrended) as ESTIMATOR-INTERNAL: the clock ↔ CB ↔ iono common exchanges.
+Those states exist only in the coupled W6+SH posture — **which the synthetic
+fixture has never run** (every §9 arm is INT posture; sim-internal wander
+there is 0.024 m).  This arm runs the field's wander-bearing posture on
+synthetic truth so the wander decomposes exactly.  Build notes, in order of
+how they will bite:
+
+1. **The observability floor is the first wall, and it is STATION SUPPORT.**
+   The ledger's `estimate_sat_code_bias` interlock records: at 50 stations,
+   "dual-frequency or single-channel sets ⇒ the null-space rank gate WITHHOLDS
+   EVERY EPOCH"; `project_dual_freq_osb_rank_deficiency` proved it is NOT a
+   frequency wall (dual+OSB solves at 305).  The simnet fixture is exactly
+   dual-frequency (L1C/L2W) at 50.  §9.7.2 finding 5 ("estimate_iono_sh ⇒ all
+   240 epochs withheld") was measured on a PARTIAL slice, but the floor
+   likely holds for the full slice too at n = 50.  **Recommended: scale the
+   synthetic roster to ~300** (`scripts/simnet_make_roster.py` takes n; sim
+   generation is cheap; producer ≈ 27 s/ep lane-off at 305 ⇒ ~1.8 h per
+   240-ep arm) — this also matches the lineage that measured the 77×
+   elevation-cutoff effect.  Alternatives: add a third sim band (check the
+   RINEX writer), or first re-run the 7-config observability smoke ON the
+   fixture to find the minimum n.
+2. **Arm the FULL slice, never a partial one**: `estimate_sat_code_bias: true`
+   force-arms the coherent set (GIM constraint, iono weighting, IFB) exactly
+   like the field; `estimate_iono_sh` rides on top.  W6 bias posture per
+   §2.2: `corrections.signal_bias: true` (the injected OSB **is** the B-record
+   truth), `enable_code_phase_bias` is forced off by the loader.
+3. **The GIM constraint vs synthetic truth is a DESIGN DECISION, not a
+   detail.**  `ionosphere_weighting` is load-bearing for W6 rank, but it
+   anchors the estimated field toward the REAL DOY-129 GIM while the injected
+   iono truth is synthetic — a knowable, gradeable mismatch (both sides are
+   in hand; grade it, do not tune it away), or synthesize an IONEX from the
+   sim's own truth field (heavier, cleaner).  Either way, first PROVE the
+   constraint is armed and fed on the sim data root (§0 discipline: the GIM
+   file must exist under `data/2024-129`, else the constraint silently
+   degrades and the arm measures nothing).
+4. **Grading = per-family common-mode decomposition against truth**, the
+   thing the field can only infer: extend `scripts/simnet_common_mode.py` to
+   clock w(t) (C records), CB common (B records vs injected OSB), and iono
+   a00 (`scripts/sh_vtec.py` over `network_vtec_sh.csv` vs the injected
+   field), plus the cross-correlations among the three — the exchange
+   signature itself.  Then replicate the elevation-cutoff 15↔25 A/B WITH
+   truth (ties to the in-flight field A/B in `runs/cbq_elcut25`).
+5. **Standing rules that bite here**: fresh convergence only (datum toggles
+   are fingerprinted); ≥ 2 h settled for any level claim; arm
+   `cycle_slip.if_phase_td` and `cycle_slip.datum_station_detect` (both
+   validated §9.7.10); Release renamed exe; one CWD per arm; pre-register
+   predictions per arm.
+
 ## §10 Verification status
 
 Nothing in this SPEC has been run yet.  Code anchors verified 2026-08-11
