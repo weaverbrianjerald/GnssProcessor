@@ -28,6 +28,7 @@ retract earlier ones**.  Read the status table before quoting anything.
 | **§9.7.10 fixes + corrections** | live — the current conclusions; blind-spot fix and T4a counter LANDED and sim-validated |
 | **§9.8 datum-wander arm** | live — the common level FOLLOWS the datum station; `clock_datum_sum_to_zero` first validation PASS; ⚠ puts an asterisk on §9.7.1's vf plateau (pivot-election artifact mixed in) |
 | **§9.8.1 mask arms / §9.9 field probe** | live — 25° mask confirms the pivot mechanism but is REJECTED as a remedy (~5 m consumer bias); the FIELD wander (1.735 m) is NOT receiver-code-driven (MBAR rank 48/61) — the hunt returns to the LEVEL/inter-channel directions |
+| **§9.9.1 / §9.10 product + iono probes** | live — a-priori frame EXONERATED (detrended slope −0.014; product resid common 9 cm); wander is ESTIMATOR-INTERNAL.  Iono input field coherent (0.98 @ 300–700 km both-high) but BROKEN at low–high ~1000 km (0.38, rel-rms 1.13) — candidate contamination channel, causal arm owed |
 
 ### The error class, stated generally
 
@@ -1499,6 +1500,67 @@ acting only at hours-scale with negligible 30 s increments would evade it;
 the level-domain candidates (a-priori clock common drift, CB/iono common
 exchanges) need a level-domain instrument — the CB-Q structure-function
 line of attack, not this one.
+
+### 9.9.1 The a-priori CLK common-drift probe — the PRODUCT FRAME EXONERATED
+
+`scripts/field_apriori_clk_probe.py`: A(t) = c·median_s dt_apriori_s(t) from
+the cached COD 30 s CLK, against w(t) on the joint 874 settled datum-stable
+epochs (7.3 h).  The C records are corrections about this product, so a
+product fleet-common drift enters w(t) at slope −1 and no station observable
+can track it — the exact §9.9 signature.
+
+- A(t) is a nearly pure LINEAR timescale drift: −4.089 m/h, residual std
+  **0.094 m** after detrending (range 29.8 m raw).
+- The wire does NOT inherit it: w's own trend is −0.548 m/h (slope-−1
+  inheritance would read +4.089), detrended corr(w,A) = −0.19 at slope
+  **−0.014**, increment corr +0.04.  The detrended product common (9 cm)
+  could at most explain ~7 % of the wire's 1.298 m detrended wander even at
+  slope −1; measured slope says it explains ~none.
+- Linear timescale offsets are frame-conventional (a datum-invariant consumer
+  never sees them).
+
+**With §9.9 this corners the field wander: slips (§9.7.9), every station's
+receiver-code errors (§9.9), datum-station geometry (§9.8, bounded 2–3 cm at
+an equatorial datum), tropo (magnitude), and the a-priori frame (here) are
+all eliminated by measurement.  The 1.3 m detrended wander is
+ESTIMATOR-INTERNAL — the clock ↔ CB ↔ iono common-direction exchanges, i.e.
+the LEVEL information channel.**
+
+## §9.10 Cross-station IONO-FIELD agreement — coherent where mapped, BROKEN at low–high (2026-08-11)
+
+`scripts/field_iono_pair_agreement.py`, raw observables only (an INPUT
+property, not a fit property): per station-pair-satellite, 300 s GF increments
+mapped to vertical by thin-shell obliquity (h = 450 km), LLI-clean, settled
+10 h; 65 pairs in [300, 2000] km, 1406 (pair, sat) series.
+
+| baseline | elev class | series | med corr | med rel-rms |
+|---|---|---|---|---|
+| 300–700 km | both-high | 349 | **0.981** | **0.173** |
+| 300–700 km | mid | 426 | 0.947 | 0.260 |
+| 1200–2000 km | both-high | 284 | 0.957 | 0.397 |
+| 1200–2000 km | mid | 344 | 0.918 | 0.451 |
+| 1200–2000 km | **low–high** | 3 | **0.381** | **1.130** |
+
+(rel-rms: 0 = identical fields, √2 ≈ 1.41 = uncorrelated.)
+
+- **The co-estimated field's INPUT is genuinely coherent** at the scales the
+  SH model claims: two stations' vertical iono rates agree to ~17 % at
+  300–700 km and ~40 % at 1200–2000 km when both view high — this coherence
+  is what lets the network separate iono from clock at all.
+- **The "same field" assumption BREAKS in the low–high configuration** (one
+  station low-elevation, one high, ~1000+ km apart — the classic thin-shell
+  + horizontal-gradient failure regime): agreement collapses to
+  near-uncorrelated.  Low-elevation GF content disagrees with the field the
+  rest of the network sees MORE than the signal itself — whatever weight the
+  estimator gives it is absorbed by the per-LOS/SH iono states and, through
+  the coupled solve, by the clock/CB commons.
+- **Not yet shown**: that this channel DRIVES w(t) — today's result
+  characterizes the input; attribution needs a causal arm (e.g.
+  `ionosphere_weighting.elevation_cutoff_deg` / iono-side elevation policy
+  A/B graded on the wire common — NOT a global observation mask, which
+  §9.8.1 already rejected).  Note the low–high series count is 3 (long
+  joint low-elevation arcs are rare); widen the window or pool days before
+  quoting the 0.381 as a precise number.
 
 ---
 
