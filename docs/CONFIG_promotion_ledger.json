@@ -568,6 +568,18 @@
    "fingerprinted": false
   },
   {
+   "knob": "network.cycle_slip.datum_station_detect",
+   "default_at": "src/core/config/GnssConfigLoadNetwork.cpp (loadNetworkSlipDetectors_, false)",
+   "verdict": "RECOMMEND_SCOPED",
+   "scope": "LEGACY single-pivot phase datum with phase_leveling + mw_detect. Loader hard-disables without mw_detect; runtime-inert under any no-pivot datum (prioritized/ensemble/eq34 run slip loops from i_lo=0 already). Validated on the 50-sta synthetic fault fixture only (2026-08-11); no field arm yet.",
+   "evidence": "SPEC_synthetic_minimum_network.md 9.7.10. Closes the 9.7.4 proven blind spot (the datum station has NO slip detection under the legacy datum; an undetected slip there re-references every emitted phase bias of that satellite with no record). Single-knob A/B on the pivotswap fault fixture, settled half: C rms 1.657 -> 0.485 m (3.4x), C max 18.14 -> 1.44 m, ZWD rms 1.18 -> 0.69 m, spurious CLK_STEP marks 12 -> 1, emitted_contaminated 27 -> 0, A4 withholds UNCHANGED 14/14 (zero availability cost vs 97/240 withheld for phase_datum_prioritized, 9.7.7). OFF path bit-identical (products + all decision traces) vs the retained mwblind2 run.",
+   "interlock": "Requires mw_detect (parsed AFTER the invariant-#1 auto-arm, so phase_leveling alone satisfies it). Known cost: pivot MW ignition candidates cause one spurious re-reference at ~epoch 2 (marked honestly as an R record); LLI is the demonstrated live catcher (9.7.5 mid-arc MW silence applies at the pivot too). Pivot remains outside post-fit RAIM cells and has no IF-TD detector (named follow-ups). Warm resume drops a pending re-reference queue (same transient class as refsat_mark_sats).",
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "on(\"network.cycle_slip.mw_detect\") and on(\"network.phase_leveling\") and not on(\"network.phase_datum_prioritized\") and not on(\"network.phase_datum_ensemble\") and not on(\"network.phase_datum_eq34\")",
+   "posture_why": "closes the pivot slip blind spot at ZERO withhold cost: sim fault arm C rms 1.66 -> 0.48 m, CLK_STEP marks 12 -> 1",
+   "fingerprinted": false
+  },
+  {
    "knob": "network.cycle_slip.if_phase_td_ref_gate",
    "default_at": "src/core/config/GnssConfigLoadNetwork.cpp:1315",
    "verdict": "RECOMMEND_SCOPED",

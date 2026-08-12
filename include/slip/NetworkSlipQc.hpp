@@ -203,6 +203,32 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * @param se                 Current synced epoch (event rows / log lines).
  * @param traces             Trace unit (T0_mw_detect event rows).
  * @param log                Run logger.
+ *
+ * ### Datum-station slip detect (network.cycle_slip.datum_station_detect)
+ *
+ * The three trailing parameters arm the §9.7.10 datum-station path and are
+ * passed together or not at all (all nullptr / null-equivalent ⇒ OFF ⇒
+ * byte-identical; the caller passes them only under the LEGACY pivot datum
+ * with the toggle armed).  With them armed the loop starts at station 0, and
+ * a station-0 MW candidate or qualified LLI assertion takes the datum
+ * re-reference path instead of refloat_signal: the satellite is queued in
+ * @p datum_pb_reref_sats (consumed at this epoch's stash — hard PB carry
+ * skip) and @p datum_amb_reref_sats (consumed at the FIRST drain after that
+ * skip — the block at the top of this function, which pending-reseeds the
+ * sat's ambiguities at EVERY non-pivot station, erases their local carry,
+ * feeds the Card-4 C3c funnel, inserts the sat into @p datum_mark_sats for
+ * a per-sat disc mark at the next emit, and emits the datum_reref event).
+ *
+ * @param datum_pb_reref_sats  Per-sat PhaseBias skip-stash queue
+ *                             (ctx.carry.datum_reref_pb_sats) — nullptr ⇒ OFF.
+ * @param datum_amb_reref_sats Per-sat deferred all-station ambiguity reseed
+ *                             queue (ctx.carry.datum_reref_amb_sats).
+ * @param datum_mark_sats      Per-sat disc-mark queue at next emit
+ *                             (ctx.carry.refsat_mark_sats — the Edge-1 piece-2
+ *                             mark-and-serialize path).
+ * @param datum_local_carry    Phase-leveling carry map for the belt-and-
+ *                             suspenders erase on re-reference (the
+ *                             ctx.carry.local_carry instance).
  */
 void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_,
                                std::vector<NetStation>& stations,
@@ -215,7 +241,12 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::vector<RawSlipHistory>& raw_hist,
                                SlipQcCounters& qc_cnt,
                                const SyncedEpoch& se, NetworkRunTraces& traces,
-                               const std::shared_ptr<spdlog::logger>& log);
+                               const std::shared_ptr<spdlog::logger>& log,
+                               std::set<std::string>* datum_pb_reref_sats = nullptr,
+                               std::set<std::string>* datum_amb_reref_sats = nullptr,
+                               std::set<std::string>* datum_mark_sats = nullptr,
+                               std::map<std::tuple<int, std::string, std::string>,
+                                        LocalCarry>* datum_local_carry = nullptr);
 
 /**
  * @brief IF-phase triple-difference slip driver: pool the PASS-A deferred

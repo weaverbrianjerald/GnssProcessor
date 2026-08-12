@@ -1417,6 +1417,31 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                          qc.params, qc.hist, qc.epoch, qc.counters);
     }
 
+    // §9.7.10 datum-station slip DETECTION (network.cycle_slip.datum_station_detect):
+    // under the legacy pivot datum the parallel scan above starts at i_lo == 1, so
+    // the datum station's MW detector — built by setup under the same toggle — is
+    // rolled HERE, serially (one station; determinism trivially preserved).  Only
+    // detector-mode candidates are collected (never T0 repairs: the pivot's
+    // ambiguities are gauge-pinned, so an integer repair of them is meaningless);
+    // the MW drain below routes station-0 candidates, and station-0 LLI
+    // assertions, to the network re-reference path instead of a local refloat.
+    const bool datum_detect_on = !phase_datum_prioritized
+                                 && config_.networkCycleSlipDatumStationDetect()
+                                 && config_.networkCycleSlipMwDetect();
+    if (datum_detect_on && present.front() && stations.front().mw_slip) {
+        try {
+            const auto mwr =
+                stations.front().mw_slip->detectLargeMwResets(modeled.front());
+            const double frac_max = config_.networkCycleSlipTurboEditFracMax();
+            for (const auto& r : mwr) {
+                if (r.slip_wl_known && r.slip_wl_cycles != 0
+                    && r.slip_frac <= frac_max
+                    && !r.sig1.empty() && !r.sig2.empty())
+                    sta_mw_refloat[0].emplace_back(r.satellite, r.sig1, r.sig2);
+            }
+        } catch (...) { /* best-effort: no datum-station MW detection this epoch */ }
+    }
+
     // Serial slip-QC drains (INC-6): bodies relocated VERBATIM to
     // slip/NetworkSlipQc.cpp — phase-leveling T0 repair drain, MW-detect /
     // LLI refloat, IF-phase TD driver, in the original order.
@@ -1426,7 +1451,11 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
                               n_sta_total, carry_invariant, carry_warm,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
-                              qc.counters, se, traces, log);
+                              qc.counters, se, traces, log,
+                              datum_detect_on ? &ctx.carry.datum_reref_pb_sats : nullptr,
+                              datum_detect_on ? &ctx.carry.datum_reref_amb_sats : nullptr,
+                              datum_detect_on ? &ctx.carry.refsat_mark_sats : nullptr,
+                              datum_detect_on ? &local_carry : nullptr);
 
     // Edge-1 piece 2: pass the mark sink ONLY when armed, so the OFF path passes
     // nullptr and the driver's insert is not even reached (byte-identical).

@@ -172,6 +172,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.eq34_extend_only = k.phase_datum_eq34 && config_.networkPhaseDatumEq34ExtendOnly();
     k.eq34_slip_aware = k.phase_datum_eq34 && config_.networkPhaseDatumEq34SlipAwareElection();
     k.phase_datum_prioritized = config_.networkPhaseDatumPrioritized() || k.phase_datum_ensemble || k.phase_datum_eq34;
+    // §9.7.10: resolved once for the run — the datum-station slip path exists only
+    // under the LEGACY pivot datum (every no-pivot datum runs the slip loops from
+    // i_lo = 0 already, so station 0 has ordinary coverage there).
+    k.datum_station_detect = config_.networkCycleSlipDatumStationDetect()
+                             && !k.phase_datum_prioritized;
     k.phase_hold_sigma = k.phase_datum_ensemble ? config_.networkPhaseDatumHoldSigmaM() : 0.0;
     k.phase_hold_on = k.phase_hold_sigma > 0.0;
     k.phase_hold_var = k.phase_hold_sigma * k.phase_hold_sigma;
@@ -2961,6 +2966,15 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     for (const auto& pk : shared_phase_keys) {
         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
         if (!parts) continue;
+        // §9.7.10 datum-station slip re-reference (network.cycle_slip.datum_station_detect):
+        // a slip at the gauge-pinned datum receiver moved the level every phase bias
+        // of this satellite references.  HARD-skip the stash for one kept epoch —
+        // BEFORE the pb_level_prev harvest (a bridge must not re-open on the stale
+        // level) and before both stash branches (plain and phase_hold) — so the next
+        // solve re-seeds the bias at the new pivot level, in lockstep with the
+        // network-wide ambiguity reseed the slip drain defers until this skip has
+        // been consumed.  The set is empty unless the toggle is armed ⇒ byte-identical.
+        if (ctx.carry.datum_reref_pb_sats.count(parts->satellite)) continue;
         if (harvest_pb_levels) {
             // Guarded: this runs BEFORE the carry_invariant skip below, so it is the
             // one site that queries a phase-bias column for EVERY shared key on a
@@ -3010,6 +3024,13 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                   col, flagged);
         }
     }
+    // §9.7.10: the datum re-reference skip-stash queue is consumed exactly once
+    // per KEPT epoch (a withheld epoch never reaches this stash, so the queue —
+    // and the deferred ambiguity reseed keyed on its consumption — survives the
+    // withhold intact).  Cleared wholesale: a queued satellite with no phase-bias
+    // key this epoch had nothing stashed to skip, and prev_carry is rebuilt from
+    // scratch above, so there is no stale carry left to guard against.
+    if (!ctx.carry.datum_reref_pb_sats.empty()) ctx.carry.datum_reref_pb_sats.clear();
     // Card 2: refresh the time-linked previous-value map from THIS kept epoch's
     // solved code biases.  Cleared + rebuilt (a departed satellite drops out → its
     // return re-seeds IT alone) in lock-step with the D2 carry — same disposition

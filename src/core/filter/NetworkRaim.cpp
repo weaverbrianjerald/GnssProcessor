@@ -93,6 +93,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     auto& fr_raim_cell = ctx.counters.fr_raim_cell;
     auto& fr_raim_sat = ctx.counters.fr_raim_sat;
     auto& fr_attrib = ctx.counters.fr_attrib;
+    auto& fr_attrib_arc = ctx.counters.fr_attrib_arc;
 
     auto& raim_trace           = traces.raim_trace;
     auto& raim_attrib_trace    = traces.raim_attrib_trace;
@@ -332,6 +333,19 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 (void)sat;
                 ++fr_attrib.opp;
                 if (sigma0 > trig_a && sigma0 > 0.0 && eff / sigma0 > raim_k) ++fr_attrib.flag;
+            }
+            // §9.7.10: the ARC sub-path's criterion rate.  The SAT line above is
+            // σ̂0-trigger-conjoined and therefore structurally silent on a clean
+            // epoch — while the ARC sub-path (the one that actually refloats
+            // isolated slips) fires at ANY σ̂0.  Without this line the summary
+            // reads "T4: N opp, 0 flag" on runs where T4 refloated arcs — the
+            // §0 error class (an instrument that does not record the acting
+            // sub-path).  Criterion only (pre persistence/maturity gates),
+            // mirroring how the SAT line mirrors the bad_sats criterion.
+            for (std::size_t k = 0; k < mp.interaction.size(); ++k) {
+                ++fr_attrib_arc.opp;
+                if (sigma0 > 0.0 && mp.interaction[k] / sigma0 > raim_k)
+                    ++fr_attrib_arc.flag;
             }
         }
 

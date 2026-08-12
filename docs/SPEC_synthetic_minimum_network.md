@@ -24,7 +24,8 @@ retract earlier ones**.  Read the status table before quoting anything.
 | **§9.7.3 / §9.7.6 "MISSED"** | **CORRECTED by §9.7.8** — graded against the wrong instrument |
 | §9.7.4 / §9.7.5 MW chase | live |
 | §9.7.7 `phase_datum_prioritized` cost | live |
-| **§9.7.8 / §9.7.9** | live — the current conclusions |
+| **§9.7.8 / §9.7.9** | live, but §9.7.8's "100 % detection / 0 % action" framing is **CORRECTED by §9.7.10** (the `refloated` column records only the CONSENSUS action; the arc-path actions live in `network_events.csv`) |
+| **§9.7.10 fixes + corrections** | live — the current conclusions; blind-spot fix and T4a counter LANDED and sim-validated |
 
 ### The error class, stated generally
 
@@ -45,6 +46,13 @@ The three instances:
 3. **A guard whose MARKER is unarmed emits nothing.**  §9.6 read zero
    `CLK_STEP` marks as "the event was not marked", when `emit_clock_disc` was
    simply off.
+4. **A column that records ONE action path was read as THE action record**
+   (found by the §9.7.10 follow-up).  §9.7.8's "743 spiked, 0 refloated = 0 %
+   action rate" read `network_raim.csv`'s `refloated` column — which records
+   only the CONSENSUS refloat — while the T4 arc path's 14 refloats (including
+   the real injected slip, at its exact epoch) were in `network_events.csv`
+   all along.  Same class from the other side: an instrument that does not
+   record the acting sub-path makes the sub-path read as dead.
 
 **The generalizable check:** before reading any absence as evidence, establish
 that the instrument (a) was armed, (b) had opportunities, and (c) records the
@@ -1196,6 +1204,129 @@ So the two problems are ORTHOGONAL:
 
 Fixing the slip response would clean up the per-satellite tail and the 17 spurious
 clock marks.  It would not move the level.
+
+### 9.7.10 The §9.7.8 trail CLOSED — corrections, fixes LANDED, and their measurements (2026-08-11)
+
+Follow-up session, working from the retained `runs/simnet50_mwblind2/run/logs`
+decision traces (the §9.7.8 note "T4 reports 7135 opportunities and 0 flags …
+is the next thing to check" is what this section checks).  Three corrections to
+the record, then two landed fixes with their validation.
+
+#### Corrections to §9.7.3 / §9.7.6 / §9.7.8
+
+1. **T4's 7135 opp / 0 flag is an INSTRUMENT gap, not a dead tier.**  The
+   flag-rate counter (`fr_attrib`, NetworkRaim.cpp) counts only the whole-SAT
+   criterion, which is deliberately conjoined with `σ̂0 > raim_sigma0_trigger`
+   (the 305-24 h lock-in guard: at a robust-clean epoch a high column effect is
+   a median-polish artifact, and wholesale refloats destabilize).  A
+   single-satellite fault cannot move a network-wide robust MEDIAN (one sat is
+   ~1/31 of the row pool), so the SAT flag is **structurally unreachable at a
+   clean epoch — for exactly the fault class the tier is named after.**  It CAN
+   fire in globally-contaminated postures: the `phase_datum_prioritized` arm
+   (16 flags amid 37 within-epoch triggers) proves the counter wiring itself.
+   Meanwhile the tier's ARC sub-path (isolated-arc interaction, gated at any
+   σ̂0) **acted 14 times on the mwblind2 arm — including the real (+2,0) slip
+   at S03/G11 at its exact injection epoch** (interaction 12.88 = 7.2×σ̂0,
+   `attrib_arc` event, refloat applied), and none of those actions appeared in
+   any flag-rate line.
+2. **§9.7.8's "100 % detection / 0 % action" over-claimed both halves.**  The
+   `refloated` column of `network_raim.csv` records the CONSENSUS action only
+   (§0 error class, instance 4); and most of the 743 "detections" are the
+   σ-miscalibration false-alarm population of §9.7.2 — on a clean arm, NOT
+   acting on them is correct.  Measured true-event record on this arm: 2
+   injected slips → 1 with any post-fit signature → 1 acted (same epoch, arc
+   path).  The consensus rule's receiver-event veto stands as designed; the
+   station-local action path it calls for **already exists and works** — it is
+   the T4 arc path.
+3. **The MW-blind (+2,+2) pair produced NO post-fit signature at all** — no
+   cell spike at any epoch (its GF signature is absorbed by the free per-LOS
+   iono, the remainder redistributed below the cell threshold).  No action
+   rule, existing or proposed, could have caught it post-fit.  §9.7.6's "the
+   geometry-based backstop does not fire" was an UNARMED-TIER reading: T1
+   (`network.cycle_slip.if_phase_td`) was off in every §9.7 arm (0
+   opportunities in every flag-rate table).  Armed (`_simnet50_mwblind_ifp`,
+   one knob): **both G11 slips caught at the exact injection epoch** —
+   S02 ΔΔφ_IF 0.205 m > thr 0.135 (the MW-null pair; prediction 2·λ_IF(1,1) =
+   0.214 m) and S03 0.989 m > thr 0.257 — with **2 flags in 109 137 samples =
+   zero false alarms.**  The MW null space is covered by the tier that already
+   existed; the standing 30/60 s doctrine (relaxed MW + LLI/IF-TD) simply was
+   not applied to the sim posture.  (The loader's posture auditor already
+   nags: "POSTURE BUNDLE 'zero-q phase memory + slip response': PARTIAL 1/2 —
+   MISSING: network.cycle_slip.if_phase_td".)
+
+#### Fix 1 — T4a flag-rate line (landed)
+
+`fr_attrib_arc` counts the ARC sub-path's criterion (`interaction/σ̂0 >
+raim_k`, pre persistence/maturity — mirroring how the SAT line mirrors
+`bad_sats`), emitted as `T4a,attribution ARC (T4)` in the summary and CSV.  On
+the mwblind2 rerun: **103 347 opp / 14 flag — matching the 14 `attrib_arc`
+actions in the retained events one-for-one.**  The summary now separates "SAT
+criterion structurally quiet" from "ARC sub-path live and acting".
+
+#### Fix 2 — `network.cycle_slip.datum_station_detect` (landed, default OFF)
+
+The §9.7.4 blind spot, closed with the mechanism-specific response instead of
+the §9.7.7 knob.  Wiring: setup builds the pivot's MW detector under the
+toggle; a serial PASS-A block rolls it (`ApplicationNetworkAssembly`); the MW
+drain routes station-0 MW candidates and (Card-L-qualified) LLI assertions to
+a two-edge network re-reference (invariant #7): **queue edge** at detection —
+`datum_slip` event + the sat queued for a HARD skip-stash of its shared
+PhaseBias carry at this epoch's stash (before the pin-bridge harvest, both
+stash branches); **apply edge** at the first drain AFTER that skip-stash
+consumed (per-sat guard, so a withheld epoch cannot decouple the edges) —
+`datum_reref` event, pending-reseed of the sat's ambiguities at EVERY
+non-pivot station (present or absent — an absent station's mark waits for its
+own re-coupling edge), local-carry erase, Card-4 C3c feed, per-sat disc mark
+via the Edge-1 mark-and-serialize queue (whose SolPrep drain condition gains
+the third producer — its first arm queued marks into a run with `ura_retro`
+and `mark_refsat` both off and the mark silently never landed, the exact leak
+the drain comment predicts), and run-end counters (`datum_slip_detections` /
+`datum_slip_rerefs`, invariant #4 line in the teardown).  Loader: requires
+`mw_detect` (parsed after the invariant-#1 auto-arm so leveling counts);
+inert under any no-pivot datum.  Unit suite: `DatumStationSlipDetectConfig`
+(4 cases, incl. the auto-arm ordering).
+
+**Validation, OFF (byte-identity).**  The mwblind2 arm rerun with the new
+build, toggles off: `products.txt` and every decision trace
+(`network_raim.csv`, `network_events.csv`, `network_raim_attrib.csv`,
+`network_slip_raw.csv`, `network_epoch_status.csv`) **bit-identical to the
+retained run**; `network_flag_rates.csv` differs by exactly the added T4a row.
+
+**Validation, ON (`_simnet50_pivotswap_datum` vs `_simnet50_pivotswap_b`, one
+knob, identical qcfault fixture data, settled half).**  The index-0 G19 LLI
+slip — MISSED in §9.7.4 — is now caught end-to-end: `datum_slip` at the LLI
+epoch, `datum_reref` one epoch later (28 ambiguities network-wide), `R,G19`
+disc mark on the wire, counters 2/2.
+
+| | OFF (blind spot) | **ON (datum detect)** | |
+|---|---|---|---|
+| C residual rms | 1.657 m | **0.485 m** | 3.4× |
+| C residual max | **18.14 m** | **1.44 m** | 12.6× — the §9.7.9 heavy tail |
+| C contrast rms (datum-free) | 2.245 m | 0.468 m | cross-check agrees |
+| ZWD rms | 1.181 m | 0.685 m | 1.7× |
+| `CLK_STEP` marks | **12** | **1** (the injected G14 step) | the unhandled pivot slip was being marked as ELEVEN spurious per-sat CLOCK discontinuities — poison for every consumer |
+| `emitted_contaminated` | 27 | 0 | |
+| A4 σ̂0 withholds | 14 | **14** | **zero availability cost** — vs 97/240 for `phase_datum_prioritized` (§9.7.7) |
+| consumer 3D rms | 1.362 m | 1.227 m | AR-confounded, modest |
+
+**Known costs / open edges (triaged):**
+- One ignition false positive: the pivot's MW detector emitted a G12 candidate
+  at epoch 2 (the §9.7.4 ignition-candidate class) → one spurious
+  re-reference during ignition, marked honestly (`R,G12`).  Field-inert here
+  (ignition is pre-convergence); a maturity gate on the datum path is a cheap
+  follow-up once §9.7.5's mid-arc candidate-formation defect — which bounds
+  MW's usefulness at the pivot exactly as everywhere else — is chased.  LLI is
+  the demonstrated live catcher for the pivot.
+- The pivot remains OUTSIDE post-fit RAIM cells and has NO IF-TD detector
+  (setup gate) — its coverage is MW + LLI + this response.  A pivot slip in
+  MW's null space with no LLI stays uncovered; extending IF-TD to the pivot
+  is the named follow-up.
+- Warm resume drops pending re-reference queues (same transient class as
+  `refsat_mark_sats`; the slip then surfaces to post-fit RAIM at non-pivot
+  stations instead).
+- §9.7.9 orthogonality stands: this cleans the per-satellite tail and the
+  wire hygiene.  **It does not move the pivot-relative common-mode LEVEL** —
+  the datum-wander channel remains the separate (CB-Q) campaign.
 
 #### What this does and does not license
 

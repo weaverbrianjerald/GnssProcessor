@@ -1486,6 +1486,7 @@ void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
     const auto& fr_raim_cell      = counters.fr_raim_cell;
     const auto& fr_raim_sat       = counters.fr_raim_sat;
     const auto& fr_attrib         = counters.fr_attrib;
+    const auto& fr_attrib_arc     = counters.fr_attrib_arc;
     const auto& fr_clk_model      = counters.fr_clk_model;
     const auto& fr_clk_mon        = counters.fr_clk_mon;
     const auto& n_emitted         = counters.n_emitted;
@@ -1531,6 +1532,7 @@ void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
         emit("T3",  "post-fit RAIM cell (T3)", fr_raim_cell,  config_.networkRaimKSigma(),             true);
         emit("T3c", "RAIM consensus (T3)",     fr_raim_sat,   config_.networkRaimKSigma(),             true);
         emit("T4",  "attribution SAT (T4)",    fr_attrib,     config_.networkRaimKSigma(),             true);
+        emit("T4a", "attribution ARC (T4)",    fr_attrib_arc, config_.networkRaimKSigma(),             true);
         emit("T5",  "clock-model NIS (T5)",    fr_clk_model,  config_.networkClockModelKSigma(),       true);
         emit("T6",  "clock-monitor (T6)",      fr_clk_mon,    0.0,                                     false);
         log->info("=============================================================================");

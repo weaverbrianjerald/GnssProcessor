@@ -2443,6 +2443,33 @@ namespace GnssProcessor {
         bool networkCycleSlipMwDetect() const { return network_cycle_slip_mw_detect_; }
 
         /**
+         * @brief Whether MW/LLI slip detection also covers the DATUM station, with a
+         *        network re-reference response (@c network.cycle_slip.datum_station_detect).
+         *
+         * Under the legacy single-pivot phase datum, @c stations[0] is skipped by
+         * every slip-detection loop (its ambiguities are gauge-pinned, so a local
+         * refloat is meaningless) — the §9.7.4 proven blind spot: an undetected
+         * slip there re-references the emitted phase bias of that satellite for
+         * the WHOLE network, and nothing records that it happened.  This toggle
+         * closes it with the mechanism-specific response instead of a local
+         * refloat: a confident MW wide-lane jump or a qualified LLI assertion at
+         * the datum station (1) emits a @c datum_slip event and counts, (2)
+         * HARD-skips the stash of that satellite's shared phase-bias carry so the
+         * next kept epoch re-seeds the bias at the new pivot level, (3) reseeds
+         * every other station's ambiguities for that satellite in the SAME epoch
+         * the bias re-seeds (deferred one drain, aligned across withholds), and
+         * (4) queues a per-satellite discontinuity mark for the next emit
+         * (invariant #7: both edges evented, plus run-end counters).  Requires
+         * @ref networkCycleSlipMwDetect (the detection vehicle; the loader
+         * disables it otherwise) and is inert under
+         * @ref networkPhaseDatumPrioritized (station 0 is an ordinary station
+         * there).  Default false keeps the solve byte-identical.
+         */
+        bool networkCycleSlipDatumStationDetect() const {
+            return network_cycle_slip_datum_station_detect_;
+        }
+
+        /**
          * @brief Whether the network IF-phase triple-difference cycle-slip DETECTOR is on
          *        (@c network.cycle_slip.if_phase_td).
          *
@@ -5619,6 +5646,7 @@ namespace GnssProcessor {
         double network_cycle_slip_turbo_edit_frac_max_{0.15}; ///< Max rounding residual for a network T0 repair to be trusted (float-MW gate; default 0.15).
         int    network_cycle_slip_turbo_edit_dn_max_{50};      ///< Max |dN| (cycles) for a trusted network T0 repair; larger ⇒ DROP/re-float (float-MW magnitude guard).
         bool   network_cycle_slip_mw_detect_{false};           ///< Use the MW detector as a pure DETECTOR (not the TurboEdit repair): a confident wide-lane integer jump OR a receiver LLI loss-of-lock REFLOATS the carried ambiguity (marks pending-reseed), never applying an integer.  Iono-safe at the 30 s product rate where MW+GF integer REPAIR is not.  Complements the IF-phase TD detector; OFF = byte-identical.
+        bool   network_cycle_slip_datum_station_detect_{false};///< Extend MW/LLI slip detection to the gauge-pinned DATUM station (legacy pivot datum), responding with a network re-reference (hard PB carry skip-stash + all-station ambiguity reseed + disc mark) instead of a local refloat.  Requires mw_detect; inert under phase_datum_prioritized; OFF = byte-identical.
         bool   network_cycle_slip_if_phase_td_{false};         ///< IF-phase between-sat/between-epoch triple-difference slip DETECTION (refloats both bands of a flagged IF pair via pending-reseed when the carry is active); OFF = byte-identical.
         double network_cycle_slip_if_phase_td_k_mad_{8.0};      ///< k for the network IF-phase MAD gate: flag if |ΔΔφ_IF−med| > max(k·1.4826·MAD, floor). Loose (8–12); post-estimation phase validation is the sharp second pass.
         double network_cycle_slip_if_phase_td_floor_frac_{1.0}; ///< Floor as a fraction of the (1,1) IF jump c/(f1+f2)≈10.7 cm; 1.0 = the (1,1) jump itself (default; binds on a clean network), ~0.7 to catch a bare (1,1) reliably.

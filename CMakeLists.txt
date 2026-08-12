@@ -362,6 +362,7 @@ add_executable(gnss_tests
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
+    tests/test_datum_station_slip_config.cpp
     tests/test_level_information_budget.cpp
     tests/test_rx_cb_harvest_demean.cpp
     tests/test_h_heartbeat_rider.cpp

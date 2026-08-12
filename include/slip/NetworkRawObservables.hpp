@@ -238,6 +238,13 @@ struct SlipQcCounters {
     long long lli_detections{0};    ///< (station, satellite) LLI detections that ACTED (post-Card-L).
     long long lli_refloats{0};      ///< …of those, warm epochs that actually refloated.
 
+    // --- Datum-station slip detect (network.cycle_slip.datum_station_detect) ---
+    // Deliberately SEPARATE from the Card-E populations above: those count
+    // non-pivot detections whose action is a local refloat; these count the
+    // gauge-pinned datum station, whose action is a network re-reference.
+    long long datum_slip_detections{0}; ///< (datum station, satellite) MW/LLI slip detections (queue edge).
+    long long datum_slip_rerefs{0};     ///< …network re-references APPLIED (pb reseed + all-station amb reseed + disc mark).
+
     // --- Card L: LLI qualification ---
     long long lli_asserted{0};      ///< Raw (station, satellite) LLI assertions seen.
     long long lli_suppressed{0};    ///< Suppressed: uncorroborated at a non-credible station.

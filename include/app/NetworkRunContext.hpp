@@ -114,6 +114,7 @@ namespace GnssProcessor {
         double ura_alpha{};
         bool ura_retro{};
         bool mark_refsat_reset_disc{};   ///< Edge-1 piece 2 (network.mark_refsat_reset_disc).
+        bool datum_station_detect{};     ///< §9.7.10 datum-station slip detect, RESOLVED for the run: armed AND legacy pivot datum (false under any no-pivot datum).  Third producer into the refsat/retro mark queue — joins the SolPrep drain condition.
         double ura_refloat_inflate{};
         bool raim_on{};
         double raim_k{};
@@ -901,6 +902,23 @@ namespace GnssProcessor {
         // enriched 5.0x with PB value steps = 0, so the onset-relevant subset
         // re-references with no value step and is invisible to the jump test.
         std::set<std::string>        refsat_mark_sats;
+        // Datum-station slip re-reference queues (network.cycle_slip.datum_station_detect,
+        // default OFF ⇒ never written ⇒ byte-identical).  A detected slip at the
+        // gauge-pinned datum receiver queues the satellite in BOTH sets:
+        //   * pb set — consumed (and cleared) at this epoch's stash: HARD skip-stash of
+        //     the sat's shared PhaseBias carry, so the next KEPT epoch re-seeds the
+        //     emitted bias at the new pivot level (reset-over-repair; the pivot's pin
+        //     re-anchors it in one solve).
+        //   * amb set — consumed at the FIRST DRAIN AFTER that skip-stash (per-sat
+        //     guard: a sat still pending in the pb set is deferred, so a withheld
+        //     epoch cannot decouple the two edges): network-wide ambiguity reseed,
+        //     every station's integer re-references in the SAME solve the bias jumps.
+        // Invariant #7: both edges are evented (datum_slip at detection, datum_reref
+        // at application) with run-end counters.  NOT snapshot-serialized — same
+        // transient class as refsat_mark_sats above; a warm resume across a pending
+        // re-reference drops it (the slip then surfaces to post-fit RAIM instead).
+        std::set<std::string>        datum_reref_pb_sats;
+        std::set<std::string>        datum_reref_amb_sats;
         // RTB-7(b/c): startup quality-ramp state.  The DEGRADED URA floor
         // (nc.warmup_ura_floor_m) applies until ramp_lifted; the lift rule is
         // networkWarmupRampLifted (emitted-epoch horizon AND σ̂0-EWMA update count,
@@ -1661,6 +1679,7 @@ namespace GnssProcessor {
         FlagRate fr_raim_cell;  // T3 per (sat,station) standardized residual   k=raim_k
         FlagRate fr_raim_sat;   // T3 consensus per spiked sat (>=min_sta)       k=raim_k
         FlagRate fr_attrib;     // T4 per median-polish SAT column: eff/σ̂0>k & σ̂0>trigger (B8/P1-4)
+        FlagRate fr_attrib_arc; // T4 per median-polish ARC interaction: inter/σ̂0>k (the acting sub-path's criterion, pre persistence/maturity gates — §9.7.10: without this line the tier reads 0-flag while it refloats arcs)
         FlagRate fr_clk_model;  // T5 per sat clock-model NIS (own, !ext)        k=clock_model_k
         FlagRate fr_clk_mon;    // T6 per sat clock-monitor abs/jump (own, !ext) absolute bounds
         double max_dur_anchor_s = 0.0;

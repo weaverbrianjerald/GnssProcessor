@@ -97,6 +97,7 @@ NetworkSolPrepResult networkSolPrep(
     const bool   ura_on        = ctx.knobs.ura_on;                  // B1: emit per-sat URA quality channel
     const bool   ura_retro     = ctx.knobs.ura_retro;             // B1: retro-bump flagged SATELLITE(s) on next emit
     const bool   mark_refsat   = ctx.knobs.mark_refsat_reset_disc; // Edge-1 piece 2: mark ref-path slips as per-sat disc
+    const bool   datum_detect  = ctx.knobs.datum_station_detect;   // §9.7.10: datum-station slip re-reference marks ride the same queue
     const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate; // B1: URA multiplier post-refloat
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
     const double raim_withhold = ctx.knobs.raim_withhold; // A4: >0 withholds (not emits) an epoch whose post-adaptation σ̂0 exceeds this ceiling; 0 = off
@@ -633,8 +634,12 @@ NetworkSolPrepResult networkSolPrep(
     // B1 retro-bump is NOT — otherwise queued sats would accumulate in ura_retro_sats
     // forever and no mark would ever land (a silent leak that would read as "the
     // feature does nothing").  mark_refsat is false by default, so the OFF-path
-    // condition reduces to the original `ura_retro` exactly.
-    if ((ura_retro || mark_refsat) && !ura_retro_sats.empty()) {
+    // condition reduces to the original `ura_retro` exactly.  §9.7.10: the
+    // datum-station slip re-reference is a THIRD producer into this queue and joins
+    // the condition for the identical reason — its first validation arm queued the
+    // mark into a run with ura_retro and mark_refsat both off, and the mark
+    // silently never landed (the exact leak this comment predicts).
+    if ((ura_retro || mark_refsat || datum_detect) && !ura_retro_sats.empty()) {
         // RT0-5 seam (P0-1: the R record must describe bumps that LANDED in the
         // emitted product): a flagged sat ABSENT from this epoch's emission —
         // its constellation quarantined above, or the sat itself vanished —

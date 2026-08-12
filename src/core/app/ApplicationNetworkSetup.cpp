@@ -667,8 +667,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // work in the 3card lineage where phase_leveling is OFF.  Relax the gate to
         // build the detector on EVERY station when network.mw_wl.enable, independent of
         // phase_leveling / turbo_edit / mw_detect.  OFF (mw_wl disabled) is unchanged.
+        // §9.7.10: datum_station_detect extends the pivot exemption — the datum
+        // station needs the SAME MW detector rolled so its slips can be detected
+        // at all (the response is a network re-reference, not a local refloat).
         const bool build_slip_for_pl =
-            (config_.networkPhaseDatumPrioritized() || !is_pivot)
+            (config_.networkPhaseDatumPrioritized() || !is_pivot
+             || config_.networkCycleSlipDatumStationDetect())
             && config_.networkPhaseLeveling()
             && (config_.networkCycleSlipTurboEdit() || config_.networkCycleSlipMwDetect());
         // Adaptive iono q (network.adaptive_iono_q): per-station GF-TD2 variability

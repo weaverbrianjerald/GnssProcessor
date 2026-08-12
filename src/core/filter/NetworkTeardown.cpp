@@ -1548,6 +1548,19 @@ int networkTeardown(
                   qcc.mw_detections, qcc.mw_refloats,
                   qcc.lli_detections, qcc.lli_refloats);
     }
+    // §9.7.10 datum-station slip detect: run-end ON-path telemetry (invariant #4 —
+    // an armed run with injected datum-station slips reporting 0/0 is a MISWIRE,
+    // not a quiet day).  Counted separately from Card E: those are non-pivot
+    // detections answered by a local refloat; these are the gauge-pinned datum
+    // station, answered by a network re-reference.
+    if (config_.networkCycleSlipDatumStationDetect()) {
+        const auto& qcc = slip_qc.counters;
+        log->info("Network (datum-station slip detect): {} MW/LLI detection(s) at the "
+                  "datum station, {} network re-reference(s) APPLIED (phase-bias carry "
+                  "re-seed + all-station ambiguity reseed + per-sat disc mark).  A "
+                  "detection whose re-reference never applies is a stuck queue — check "
+                  "withhold runs.", qcc.datum_slip_detections, qcc.datum_slip_rerefs);
+    }
     if (nc.slip_qc.lli_corroborate) {
         const auto& qcc = slip_qc.counters;
         log->info("Network (slip-QC card L / LLI corroboration): {} LLI assertion(s) seen — "

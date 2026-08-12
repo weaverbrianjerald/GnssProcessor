@@ -108,7 +108,12 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::vector<RawSlipHistory>& raw_hist,
                                SlipQcCounters& qc_cnt,
                                const SyncedEpoch& se, NetworkRunTraces& traces,
-                               const std::shared_ptr<spdlog::logger>& log) {
+                               const std::shared_ptr<spdlog::logger>& log,
+                               std::set<std::string>* datum_pb_reref_sats,
+                               std::set<std::string>* datum_amb_reref_sats,
+                               std::set<std::string>* datum_mark_sats,
+                               std::map<std::tuple<int, std::string, std::string>,
+                                        LocalCarry>* datum_local_carry) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_mw_refloat = pa.sta_mw_refloat;
     // Thin event forwarder — textual copy of the run-TU lambda, so the moved
@@ -164,15 +169,89 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
         // decisive — a gate that fires on missing data would be worse than the
         // chatter it is meant to fix.
         const bool lli_qual = qc.lli_corroborate && raw.computed;
+
+        // §9.7.10 datum-station slip detect (network.cycle_slip.datum_station_detect):
+        // armed iff the caller passed the queues (legacy pivot datum only).  A slip
+        // detected at station 0 cannot be answered with refloat_signal — its
+        // ambiguities are gauge-pinned, and the level every emitted phase bias of
+        // that satellite references just moved.  The response is a NETWORK
+        // re-reference, split across the two edges invariant #7 names:
+        //   queue edge (here, at detection): sat → pb queue (this epoch's stash
+        //   HARD-skips its PhaseBias carry) + amb queue + datum_slip event/count;
+        //   apply edge (the block below, at the FIRST drain after that skip-stash
+        //   consumed): all-station ambiguity reseed + local-carry erase + disc
+        //   mark + datum_reref event/count — so the integers re-reference in the
+        //   SAME solve the bias re-seeds.
+        const bool datum_active = datum_pb_reref_sats && datum_amb_reref_sats
+                                  && datum_mark_sats;
+        auto datum_slip_detect = [&](const std::string& sat, const std::string& detail) {
+            const bool fresh = datum_amb_reref_sats->insert(sat).second;
+            datum_pb_reref_sats->insert(sat);
+            if (!fresh) return;   // already queued and not yet applied — dedupe
+            ++qc_cnt.datum_slip_detections;
+            emitEvent("T0_mw_detect", "datum_slip", sat, stations[0].name,
+                      std::nullopt, std::nullopt, "queue_reref", detail);
+            log->warn("Network[datum-slip]: TOW {:.1f} slip detected at the DATUM station "
+                      "{} on {} ({}) — queueing network re-reference (phase-bias carry "
+                      "skip-stash this epoch; all-station ambiguity reseed in the re-seed "
+                      "solve; per-sat disc mark at emit).",
+                      se.time.tow, stations[0].name, sat, detail);
+        };
+        // Apply edge.  A sat still pending in the pb queue (its detection epoch was
+        // WITHHELD, so the stash never consumed the skip) stays deferred — the two
+        // edges cannot decouple across withholds.  Station 0 itself is never
+        // reseeded: the pin at the new phase level IS the new reference.  Absent
+        // stations are reseeded too — a pending-reseed mark persists until that
+        // station's PASS B next runs, which is exactly its re-coupling edge.
+        if (datum_active && !datum_amb_reref_sats->empty()) {
+            for (auto it = datum_amb_reref_sats->begin();
+                 it != datum_amb_reref_sats->end();) {
+                const std::string sat = *it;
+                if (datum_pb_reref_sats->count(sat)) { ++it; continue; }
+                int n_marked = 0;
+                for (int i = 1; i < n_sta_total; ++i) {
+                    StateManager& sm = *stations[i].sm;
+                    for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
+                        const auto parts = StateKeys::parseAmbiguityKey(amb_key);
+                        if (!parts || parts->satellite != sat) continue;
+                        if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
+                        sm.markAmbiguityPendingReseed(amb_key);
+                        if (datum_local_carry)
+                            datum_local_carry->erase(
+                                std::make_tuple(i, parts->satellite, parts->signal));
+                        ++n_marked;
+                    }
+                }
+                datum_mark_sats->insert(sat);
+                ++qc_cnt.datum_slip_rerefs;
+                emitEvent("T0_mw_detect", "datum_reref", sat, stations[0].name,
+                          std::nullopt, std::nullopt, "refloat",
+                          fmt::format("datum re-reference: {} amb reseed(s) network-wide; "
+                                      "pb re-seeds this solve; disc mark queued", n_marked));
+                log->info("Network[datum-slip]: TOW {:.1f} applied network re-reference for "
+                          "{} — {} ambiguity(ies) reseeded across {} station(s); the shared "
+                          "phase bias re-seeds this solve and the next emit carries a "
+                          "disc mark.", se.time.tow, sat, n_marked, n_sta_total - 1);
+                it = datum_amb_reref_sats->erase(it);
+            }
+        }
+
         int n_mw = 0, n_lli = 0, n_lli_supp = 0;
         std::string mw_detail;
-        for (int i = i_lo; i < n_sta_total; ++i) {
+        for (int i = (datum_active ? 0 : i_lo); i < n_sta_total; ++i) {
             if (!present[i]) continue;
             // (a) confident wide-lane integer slips detected in PASS A.  A satellite
             // can slip on several signal-pairs at once (multi-freq); refloat every
             // band but count / log / emit ONCE per (station, satellite).
             std::set<std::string> mw_done;
             for (const auto& [sat, sig1, sig2] : sta_mw_refloat[i]) {
+                if (datum_active && i == 0) {
+                    // Datum station: a confident WL integer jump takes the network
+                    // re-reference path — never refloat_signal (pinned ambiguities).
+                    if (mw_done.insert(sat).second)
+                        datum_slip_detect(sat, "MW;" + sig1 + ";" + sig2);
+                    continue;
+                }
                 const auto a = refloat_signal(i, sat, sig1);
                 const auto b = refloat_signal(i, sat, sig2);
                 const bool matched   = a.matched   || b.matched;
@@ -266,6 +345,17 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         continue;
                     }
                     if (h) ++h->lli_acted;
+                }
+
+                if (datum_active && i == 0) {
+                    // Datum station: a qualified LLI assertion (the Card-L
+                    // suppression above applies identically — a chattering pivot
+                    // receiver must not re-reference the network repeatedly)
+                    // takes the network re-reference path.
+                    datum_slip_detect(obs.satellite,
+                                      corr_mw ? "LLI;mw_step"
+                                              : (corr_gf ? "LLI;gf_step" : "LLI"));
+                    continue;
                 }
 
                 bool matched = false, refloated = false;

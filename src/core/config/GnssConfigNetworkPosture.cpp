@@ -501,6 +501,13 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.phase_datum_prioritized",
               "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m "
               "step, JPLM masked)" },
+            { !network_phase_datum_prioritized_ && !network_phase_datum_eq34_
+                  && network_phase_leveling_ && network_cycle_slip_mw_detect_,
+              network_cycle_slip_datum_station_detect_,
+              Tier::SCOPED, true , "network.cycle_slip.datum_station_detect",
+              "closes the pivot slip blind spot (SPEC_synthetic_minimum_network 9.7.10) at ZERO "
+              "withhold cost (vs 97/240 for phase_datum_prioritized): sim fault arm C rms 1.66 -> "
+              "0.48 m, spurious CLK_STEP marks 12 -> 1" },
             { gps_gal_only,
               network_sbasis_complete_,
               Tier::SCOPED, false, "network.sbasis_complete",

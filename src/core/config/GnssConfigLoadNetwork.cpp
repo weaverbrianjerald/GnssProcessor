@@ -3151,6 +3151,30 @@ namespace GnssProcessor {
                       "complementary geometric-jump coverage where coordinates are trusted.");
             network_cycle_slip_mw_detect_ = true;
         }
+
+        // Datum-station slip detection + network re-reference
+        // (docs/SPEC_synthetic_minimum_network.md §9.7.10).  Under the legacy
+        // single-pivot datum every slip loop starts at i_lo = 1, so the datum
+        // station — the one receiver whose ambiguity rides inside every emitted
+        // phase bias — has NO slip exposure at all (§9.7.4, proven by roster
+        // reorder).  This arms MW/LLI detection at stations[0] with the
+        // mechanism-specific response: not a local refloat (the pivot's
+        // ambiguities are gauge-pinned) but a per-satellite network
+        // re-reference — hard skip-stash of the sat's PhaseBias carry, an
+        // all-station ambiguity reseed aligned to the epoch the bias re-seeds,
+        // and a per-sat disc mark at the next emit.  Parsed AFTER the
+        // invariant-#1 auto-arm above so a leveling-auto-armed mw_detect
+        // satisfies the requirement.  Default OFF = byte-identical.
+        network_cycle_slip_datum_station_detect_ =
+            jval<bool>(json, "network.cycle_slip.datum_station_detect",
+                       "network_cycle_slip_datum_station_detect", false);
+        if (network_cycle_slip_datum_station_detect_ && !network_cycle_slip_mw_detect_) {
+            log->warn("Network: network.cycle_slip.datum_station_detect needs the MW/LLI "
+                      "detection drain (network.cycle_slip.mw_detect) as its vehicle and it "
+                      "is not armed — disabling datum_station_detect.  Arm mw_detect (or "
+                      "network.phase_leveling, which auto-arms it) first.");
+            network_cycle_slip_datum_station_detect_ = false;
+        }
     }
 
     // =================================================================
@@ -4282,6 +4306,18 @@ namespace GnssProcessor {
         network_phase_datum_eq34_slip_aware_election_ =
             jval<bool>(json, "network.phase_datum_eq34_slip_aware_election",
                        "network_phase_datum_eq34_slip_aware_election", false);
+        // Datum-station slip detection is a LEGACY-pivot-datum mechanism: every
+        // no-pivot datum (prioritized / ensemble / eq34) runs the slip loops from
+        // i_lo = 0 already, so station 0 has ordinary coverage there and the
+        // dedicated path never engages (runtime-guarded).  Parsed in
+        // loadNetworkSlipDetectors_, which runs BEFORE this helper.
+        if (network_cycle_slip_datum_station_detect_
+            && (network_phase_datum_prioritized_ || network_phase_datum_ensemble_
+                || network_phase_datum_eq34_)) {
+            log->info("Network: network.cycle_slip.datum_station_detect is INERT under a "
+                      "no-pivot phase datum (prioritized/ensemble/eq34) — station 0 is an "
+                      "ordinary station there and every slip loop already covers it.");
+        }
         if (network_phase_datum_eq34_slip_aware_election_) {
             if (!network_phase_datum_eq34_) {
                 log->warn("Network: network.phase_datum_eq34_slip_aware_election is set but "
