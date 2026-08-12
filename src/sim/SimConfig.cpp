@@ -609,10 +609,17 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     if (const nlohmann::json* arr = resolvePath(s, "network_stations")) {
         if (!arr->is_array())
             return fail("sim config 'network_stations' must be an array");
-        if (arr->size() > 32)
+        // Paste-accident guard only.  The cap was 32 while the fixture was strictly a
+        // MINIMUM network (3 / 5 stations); the 50-station global variant exists to
+        // reach the QC tiers that are structurally inert at that scale
+        // (raim_min_stations needs a real consensus, cb_admission_min_stations = 4,
+        // rx_cb_carry_demean_min_stations = 8), so the cap now spans the field's own
+        // 63- and 305-station lineages.  Each station is a separate child PROCESS, so
+        // the practical limit is wall-clock, not memory.
+        if (arr->size() > 400)
             return fail("sim config 'network_stations' has " + std::to_string(arr->size()) +
-                        " entries (> 32; this fixture is a MINIMUM network by design — a "
-                        "large synthetic net belongs in a different card)");
+                        " entries (> 400; that is beyond the largest field lineage and is "
+                        "almost certainly a paste accident)");
         int idx = 0, n_consumer = 0;
         for (const auto& el : *arr) {
             const std::string where = "network_stations[" + std::to_string(idx++) + "]";
@@ -837,6 +844,30 @@ bool writeStationConfig(const std::filesystem::path& base_config,
         };
         if (!st.rx_code_bias.empty())  s["biases"]["rx_code_bias"]  = emit(st.rx_code_bias);
         if (!st.rx_phase_bias.empty()) s["biases"]["rx_phase_bias"] = emit(st.rx_phase_bias);
+    }
+
+    // PER-STATION scripted cycle slips.  A slip is a RECEIVER event, and on a
+    // globally-distributed roster no satellite is visible at every station at a given
+    // epoch — so a slip written once at the top level cannot fire everywhere, and the
+    // synthesis correctly FAILS the stations where its satellite is below the horizon
+    // (measured: 47 of 51).  A roster entry may therefore carry its own
+    // "scripted_slips" array, which is passed through verbatim into the child's
+    // cycle_slips.scripted and validated there by the existing top-level parser — the
+    // parent deliberately does not re-implement that validation.
+    //
+    // Present per-station slips REPLACE the base list for that station (config arrays
+    // replace, they do not merge), so a roster entry opts a station out of the global
+    // list simply by declaring its own.
+    for (const nlohmann::json* rosters : { &s, &doc }) {
+        if (!rosters->contains("network_stations") || !(*rosters)["network_stations"].is_array())
+            continue;
+        for (const auto& el : (*rosters)["network_stations"]) {
+            if (!el.is_object() || !el.contains("name") || el["name"] != st.name) continue;
+            if (!el.contains("scripted_slips")) continue;
+            if (!s.contains("cycle_slips") || !s["cycle_slips"].is_object())
+                s["cycle_slips"] = nlohmann::json::object();
+            s["cycle_slips"]["scripted"] = el["scripted_slips"];
+        }
     }
 
     // The child must not recurse, and must not think it owns a roster.

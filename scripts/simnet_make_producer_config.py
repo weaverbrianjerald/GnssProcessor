@@ -50,7 +50,11 @@ def main():
         cfg["network"]["clock_datum_station"] = solve[0]["name"]
 
     # Product path and any run-dir-derived path follow the fixture directory.
-    fx = fixture_dir.replace("\\", "/")
+    # ABSOLUTIZE: the producer resolves a relative product_output_path against its
+    # own hardcoded "logs" dir, so a relative fixture path silently becomes
+    # logs/<path> and the product lands somewhere nobody looks — the run still
+    # completes and only the round-trip self-check notices, in a warning.
+    fx = os.path.abspath(fixture_dir).replace("\\", "/")
     cfg["network"]["product_output_path"] = f"{fx}/products.txt"
 
     # Cover the whole arc with margin; a short max_duration_s truncates silently.

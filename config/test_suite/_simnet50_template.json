@@ -1,0 +1,176 @@
+{
+  "_comment": [
+    "TEMPLATE for the 50-station globally-distributed synthetic arm.  The station",
+    "block is filled in by scripts/simnet_make_producer_config.py from the fixture",
+    "manifest — never hand-edit it, or the HELD coordinates can drift from the",
+    "fixture and nothing downstream can notice (a held coordinate is not estimated).",
+    "",
+    "This arm carries the STANDARD ARMED SET (CLAUDE.md).  That is the point of the",
+    "50-station variant: at 3 and 5 stations most QC tiers are STRUCTURALLY INERT",
+    "(raim_min_stations = 3 needs unanimity at n=3; cb_admission_min_stations = 4;",
+    "rx_cb_carry_demean_min_stations = 8), so 'armed and never fired' there means",
+    "nothing.  At 50 the tiers have real opportunity counts and can be graded.",
+    "",
+    "Fingerprinted toggles (phase_leveling, emit_ura, code_bias_disc_jump_test,",
+    "mw_detect) are legal here because this is a FRESH convergence — there is no",
+    "stored snapshot to invalidate.",
+    "",
+    "sh_health_gate REQUIRES estimate_iono_sh: without it the loader disables the",
+    "gate with a warning, and an inert gate reads exactly like a clean one.",
+    "",
+    "emit_clock_disc + clock_disc_jump_test are armed here specifically to close the",
+    "G-B gap: the first event sweep saw zero marks at a 10 m clock step, but the",
+    "marker channel was never populated, so that zero said nothing (invariant #4)."
+  ],
+
+  "app_mode": "post",
+  "data_source": "internal",
+
+  "processing": {
+    "mode": "ppp-rtk-network",
+    "active_systems": [ "GPS" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": false,
+    "eigen_threads": 10,
+    "max_duration_s": 7500.0,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": { "GPS": "WCSLXPYMIQ" }
+  },
+
+  "files": { "internal_data_root": "./data" },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_higher_order_ionosphere": false,
+    "enable_code_phase_bias": false
+  },
+
+  "estimation": {
+    "accumulate_phase_windup": true,
+    "estimate_velocity": false,
+    "estimate_phase_clock": false,
+    "estimate_ifb": false,
+    "estimate_sat_biases": false,
+    "ambiguity_resolution": { "mode": 0 },
+    "adaptive_iono_process_noise": { "enable": false }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 100.0, "clock_bias_q": 1000.0, "phase_clock_q": 1e-09,
+      "troposphere_q": 1e-09, "ionosphere_q": 0.001, "code_bias_q": 0.0001,
+      "sat_bias_q": 1e-12, "sat_phase_bias_q": 1e-12, "sat_clock_q": 0.01,
+      "system_time_offset_q": 1e-12, "ambiguity_q": 1e-12
+    },
+    "initial_std": {
+      "position": 100.0, "clock": 1000.0, "troposphere": 0.5, "ionosphere": 5.0,
+      "ambiguity": 1000.0, "code_bias": 10.0, "sat_bias": 10.0,
+      "sat_phase_bias": 10.0, "sat_clock": 1000.0, "system_time_offset": 1000.0
+    },
+    "measurement_noise": { "code_std_m": 0.3, "phase_std_m": 0.003 },
+    "stochastic_model": "elevation"
+  },
+
+  "network": {
+    "clock_datum_station": "S01000SIM",
+    "epoch_sync_tolerance_s": 0.01,
+    "min_stations": 10,
+
+    "//qc": "=== QC, fingerprint-SAFE ===",
+    "raim": true,
+    "raim_attribution": true,
+    "raim_within_epoch": true,
+    "raim_withhold_sigma0": 6.0,
+    "clock_runaway_check": true,
+
+    "//sh": "sh_health_gate + estimate_iono_sh are DELIBERATELY OFF.  Measured",
+    "//sh2": "2026-08-11: arming estimate_iono_sh co-estimates the SH-VTEC field",
+    "//sh3": "JOINTLY WITH THE SATELLITE CODE BIASES — it pulls in the whole coupled",
+    "//sh4": "W6 slice (the loader's own auditor reports 'SH-VTEC / W6 slice:",
+    "//sh5": "PARTIAL 2/3'), the realized datum then no longer matches",
+    "//sh6": "declared_dimension, and the rank gate withheld ALL 240 epochs — a",
+    "//sh7": "producer that emitted nothing at all.  That slice is its own card with",
+    "//sh8": "its own datum rows; it is not a knob to add to a QC-grading arm.",
+    "//sh9": "Consequence: sh_health_gate cannot be graded by this fixture yet.",
+
+    "//qc2": "=== Fingerprinted — legal only on a FRESH convergence, which this is ===",
+    "phase_leveling": true,
+    "emit_ura": true,
+    "code_bias_disc_jump_test": true,
+    "cycle_slip": { "mw_detect": true },
+
+    "//qc3": "=== Cold-start hygiene ===",
+    "cold_clock_seed": true,
+
+    "//mark": "=== Event MARKING (the G-B gap: an unarmed marker reads as no event) ===",
+    "emit_clock_disc": true,
+    "clock_disc_jump_test": true,
+
+    "//sigma": "=== Formal-sigma channels: the vf denominators ===",
+    "serialize_sbasis_contract": true,
+    "emit_phase_bias_sigma": true,
+    "emit_combined_sigma": true,
+    "trace_zwd": true,
+
+    "//obs": "=== Observability (durability first: only health_trace flushes) ===",
+    "write_run_manifest": true,
+    "product_flush_per_epoch": true,
+    "health_interval_s": 300,
+    "trace_stations": true,
+    "trace_epoch_status": true,
+    "trace_events": true,
+    "trace_flag_rates": true,
+    "emit_epoch_status_record": true,
+    "trace_postfit_sigma0": true,
+    "trace_postfit_keyed": true,
+    "trace_prefit_census": true,
+    "trace_topology": true,
+    "rhs_attrib_on_trip": true,
+
+    "//par": "parallel_carry and parallel_reduce are MUTUALLY EXCLUSIVE — the loader",
+    "//par2": "silently forces parallel_carry OFF if both are set.  parallel_stations",
+    "//par3": "needs > 10 stations to take effect, which 50 satisfies.",
+    "parallel_stations": true,
+    "parallel_carry": true,
+    "parallel_reduce": false,
+
+    "//lane": "Lane layer OFF — measured a net loss at BOTH 63 and 305 stations once",
+    "//lane2": "the window is settled, and it supports integer fixing that is not",
+    "//lane3": "happening (AGU-26 campaign amendment 1).",
+    "lane_carry": { "enable": false },
+
+    "closed_loop": {
+      "enable": true,
+      "consumer_undifferenced": true,
+      "consume_network_products": true,
+      "consume_network_clock": true,
+      "ar_mode": 0
+    }
+  },
+
+  "data_download": { "enabled": false, "product_source": "COD", "product_type": "FIN", "year": 2024, "doy": 129 },
+
+  "logging": {
+    "enable_main_log": true,
+    "levels": {
+      "measurement_model": "warn", "state_manager": "warn", "state_initializer": "warn",
+      "ppp_model": "warn", "kalman_filter": "warn", "network": "info"
+    }
+  }
+}

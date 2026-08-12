@@ -135,6 +135,35 @@ before any arm runs.  A fragmented epoch makes `observed` = k while `declared`
 stays 1 and the gate throws "under-specified" (`NetworkSbasis.cpp:400-411`),
 withholding the epoch — which reads as a producer defect.
 
+### 2.4 The 50-station globally-distributed variant
+
+Added 2026-08-11.  The 3/5-station fixtures cannot grade the QC stack at all —
+all seven tiers report **zero opportunities** at n = 3 (§7, measured).  The
+50-station variant exists to give them real opportunity counts, and to extend the
+vf-vs-station-count trend far enough that it can be read.
+
+| property | value | why |
+|---|---|---|
+| n | **50 solve + 1 held-out consumer** | above `rx_cb_carry_demean_min_stations` = 8, the highest tier threshold in the standard set |
+| distribution | Fibonacci (golden-angle) lattice, \|lat\| ≤ 72° | near-uniform on the sphere; a lat/lon grid clusters at the poles |
+| generator | `scripts/simnet_make_roster.py` | 50 hand-written coordinate triples is exactly where a silent error lives, and a HELD coordinate is never estimated so nothing downstream can catch one |
+| posture | the **full standard armed set** (CLAUDE.md) | including `phase_leveling`, `raim_within_epoch`, `estimate_iono_sh` + `sh_health_gate`, `cold_clock_seed`, `mw_detect`, `code_bias_disc_jump_test`, and `emit_clock_disc` + `clock_disc_jump_test` |
+
+Two deliberate deviations from a real IGS roster, stated rather than left as
+unexamined properties:
+
+- **Latitude is capped at ~72°.**  GPS is inclined 55°, so a polar station sees
+  every satellite at low elevation and contributes mostly noise.  Left
+  uncapped, the station-count trend would confound "more stations" with "worse
+  stations".
+- **Coverage is even, not land-biased.**  Real networks cluster (Europe, North
+  America) and that clustering is itself a conditioning property.  Even coverage
+  is the cleaner instrument for grading QC tiers; a clustered variant is a
+  separate arm, not a correction to this one.
+
+`sh_health_gate` **requires `estimate_iono_sh`** — without it the loader disables
+the gate with a warning, and a disabled gate reads exactly like a clean one.
+
 ### 2.2 The two bias postures are separate arms, one knob apart
 
 They are mutually exclusive in the loader and they grade different channels.
@@ -497,6 +526,25 @@ the first tier where QC response is gradeable at all; the rx-CB de-mean tier
 needs ≥ 8 and is out of reach of both.**  Reasoning that quotes the raw
 defaults (e.g. "cb admission needs 4") mispredicts what actually happens.
 
+**MEASURED 2026-08-11, not inferred.**  The run-end flag-rate summary on the
+n = 3 G-A arm reports, for all seven tiers:
+
+| tier | opp | flag | implied α |
+|---|---|---|---|
+| IF-phase slip (T1) | **0** | 0 | 1.24e-15 |
+| within-ep trigger (T2) | **0** | 0 | 2.70e-03 |
+| post-fit RAIM cell (T3) | **0** | 0 | 1.97e-09 |
+| RAIM consensus (T3) | **0** | 0 | 1.97e-09 |
+| attribution SAT (T4) | **0** | 0 | 1.97e-09 |
+| clock-model NIS (T5) | **0** | 0 | 1.97e-09 |
+| clock-monitor (T6) | **0** | 0 | — |
+
+**Zero OPPORTUNITIES, not zero flags.**  That is the invariant-#4 distinction and
+it is the whole reason for the 50-station variant (§2.4): a tier that never got
+to look at anything reads in every log exactly like a tier that looked and found
+nothing.  `scripts/simnet_grade.py` now reports `opp` alongside `flag` and labels
+a 0-opportunity tier INERT rather than clean.
+
 Also outside scope: ignition (any arm < 2 h grades the transient, not the
 level); `network.apriori_source: "brdc_rts"` (hard-refuses when the cache holds
 SP3/CLK, which the sim cannot synthesize without —
@@ -660,6 +708,187 @@ understates the true error by ~20× (clock) and ~2.5× (ZWD) in σ.
   the "exactly integer × λ" prediction of §4.3 is untested rather than falsified.
 - Ignition is excluded by grading the settled half, but 2 h is the MINIMUM
   (§2); the level channel's own budget is ~2 h.
+
+## §9.7 The 50-STATION GLOBAL arm — the vf trend and the QC tiers (2026-08-11)
+
+Fixture `config/sim/simnet50_ga.json` (roster from `scripts/simnet_make_roster.py`,
+50 solve + 1 consumer, Fibonacci lattice, \|lat\| ≤ 72°), 240 epochs = 2 h,
+GPS-only, quiet.
+
+**Geometry certified before any arm ran** (§2.1): bipartite components **k = 1 at
+every epoch**, 50/50 stations present, all **32** GPS satellites visible each
+epoch, **minimum 12 stations per satellite** against a hardcoded
+`kMinStationsPerSat` = 2, and **zero** satellite-epochs dropped.  A global roster
+is where fragmentation would be expected, and it does not occur at this size.
+
+Two arms, because one cannot answer both questions:
+
+- **matched** (`_simnet50_matched.json`) — the SAME minimal posture as the n = 3
+  and n = 5 arms, so the vf trend is one knob (station count).
+- **armed** (`_simnet50_ga.json`) — the full standard armed set, so the QC tiers
+  have opportunities.  Its posture is NOT comparable to the n = 3/5 arms.
+
+### 9.7.1 The vf trend — and the two channels diverge
+
+Matched posture throughout, so this is station count alone:
+
+| channel | n = 3 | n = 5 | **n = 50** |
+|---|---|---|---|
+| C residual rms | 5.517 m | 2.183 m | **1.486 m** |
+| C **vf** | 768.2 | 392.3 | **455.2** |
+| ZWD residual mean | +4.307 m | +0.029 m | **+0.007 m** |
+| ZWD residual rms | 4.558 m | 1.056 m | **0.896 m** |
+| ZWD **vf** | 87.5 | 6.5 | **1.63** |
+| consumer 3D rms | 3.645 m | 3.098 m | — |
+
+**The two channels behave completely differently, and that is the finding.**
+
+- **ZWD converges to CALIBRATED**: vf 87.5 → 6.5 → **1.63**.  Its n = 3
+  mis-calibration was a determinability artifact and it disappears with scale.
+- **The satellite clock does NOT**: vf 768 → 392 → **455**, a plateau, not a
+  descent.  Accuracy improves (5.52 → 1.49 m rms) but the formal σ shrinks just as
+  fast, so it stays **~21× too optimistic in σ** at every scale tested.
+
+This is directly relevant to the field's cb vf ≈ 10 question, without answering
+it: a channel whose σ is structurally optimistic *independent of network size* is
+an estimator property, not a small-network artifact.  The clock channel is such a
+channel.  Whether the code-bias channel is one too still requires the W6 arm.
+
+### 9.7.2 The QC tiers — 0/7 live at n = 3, 4/7 at n = 50
+
+Armed arm, quiet data (no injected faults), 232/240 epochs emitted, **0 withheld
+by the rank gate**, 8 by the A4 σ̂₀ ceiling.  78.5 ms/epoch, 50 stations,
+PARALLEL/20 threads.
+
+| tier | opp | flag | observed rate | implied α | verdict |
+|---|---|---|---|---|---|
+| IF-phase slip (T1) | **0** | 0 | — | 1.24e-15 | INERT — needs `cycle_slip.if_phase_td` |
+| within-ep trigger (T2) | 226 | 7 | 3.10e-02 | 2.70e-03 | **live, 11× its implied α** |
+| post-fit RAIM cell (T3) | 103 347 | 747 | 7.23e-03 | 1.97e-09 | **live, 3.7 MILLION× its implied α** |
+| RAIM consensus (T3) | 724 | 0 | 0 | 1.97e-09 | live, silent (correct on a quiet arm) |
+| attribution SAT (T4) | 7 135 | 0 | 0 | 1.97e-09 | live, silent (correct) |
+| clock-model NIS (T5) | **0** | 0 | — | 1.97e-09 | INERT — needs `network.clock_model` |
+| clock-monitor (T6) | **0** | 0 | — | — | INERT — and GPS-only degenerates its magnitude test |
+
+Events on the same quiet arm: `T0_mw_detect / mw_wl_slip` **44**,
+`T2_within_epoch / we_refloat_arc` 13 + `we_refloat_sat` 9, `T4_attrib /
+attrib_arc` 13, `SIGMA0 / withhold` 8, plus 326 topology `row_kinds`.
+
+**Findings:**
+
+1. **Station count is what makes the QC stack live.**  0 of 7 tiers had a single
+   opportunity at n = 3; 4 of 7 do at n = 50.  T2/T3/T4 need cross-station
+   populations that a minimum network cannot supply.
+2. **The post-fit RAIM cell tier fires 3.7 × 10⁶ times its own implied Gaussian
+   α on clean synthetic data.**  This is the SAME finding as the clock vf, measured
+   a second way: vf ≈ 455 means σ is ~21× too small, and a residual 21× larger
+   than its σ crosses a k = 6 threshold constantly.  The two instruments agree,
+   which is what makes it a result rather than an artifact of either.
+3. **44 false MW slip detections** on an arm with `rate_base = 0` — no slip was
+   injected anywhere.  A false-alarm rate of ~1.5e-4 per station-satellite-epoch.
+4. **Three tiers remain inert even at 50 stations**, and each for a *named*
+   reason rather than for want of data: T1 needs `cycle_slip.if_phase_td`, T5/T6
+   need `network.clock_model`.  Arming those is the next arm, not a re-run.
+5. **`estimate_iono_sh` cannot simply be added.**  It co-estimates the SH-VTEC
+   field JOINTLY WITH THE SATELLITE CODE BIASES — the whole coupled W6 slice — and
+   the realized datum then no longer matches `declared_dimension`: the rank gate
+   withheld **all 240 epochs** and the producer emitted nothing.  Therefore
+   **`sh_health_gate` is not gradeable by this fixture** until the W6 slice is
+   armed as a whole.
+
+⚠️ **The armed arm is NOT posture-comparable to the matched one**, for two
+independent reasons.
+
+*Posture.*  Its ZWD vf is **3466** against the matched arm's **1.63** — while its
+ZWD rms is *better* (0.659 vs 0.896 m).  The armed set makes the ZWD estimate more
+accurate and its σ roughly three orders of magnitude too small.  `phase_leveling`
+is the prime suspect but the arms differ by many knobs; **a bisect is owed before
+that is stated as a fact.**
+
+*The URA σ-scale is not 1 in the armed arm.*  The published URA is
+`s0 · sqrt(scov)` with `s0 = max(1.0, σ̂₀_EWMA)` (`NetworkSolPrep.cpp:430,443`).
+That EWMA is structurally unavailable unless `emit_ura` + `raim` +
+`phase_leveling` are ALL armed (the RTB-6 sentinel), so:
+
+| arm | RTB-6 sentinel | σ̂₀ EWMA | **s0** | published URA |
+|---|---|---|---|---|
+| n = 3 / 5 / 50 **matched** | present | unavailable | **1.000** | the pure marginal formal σ |
+| n = 50 **armed** | absent | **1.674** | **1.674** | formal σ inflated 1.674× |
+
+⇒ **the whole matched trend (768 → 392 → 455) is on the pure formal σ and is
+directly comparable.**  The armed arm's clock vf of 7866 is *deflated* by
+s0² = 2.80 relative to the same measure — on the pure formal σ it would be
+≈ 2.2 × 10⁴.  The reported figure is therefore CONSERVATIVE, and the direction of
+every conclusion is unaffected, but the two must never be pooled.  Any future arm
+that flips `phase_leveling` moves this scale silently.
+
+---
+
+### 9.7.3 QC DETECTION — quiet vs fault, one knob apart
+
+`config/sim/simnet50_qcfault.json`, identical roster and identical producer
+posture to the armed quiet arm; the only difference is the injected faults.
+
+Faults, each verified present in the emitted RINEX before grading:
+
+| fault | where | magnitude IN THE DATA |
+|---|---|---|
+| cycle slip, unflagged | S01 / G26 / L1C, ep 60, 19° elev | **+12.26 widelane cycles** (MW computed from the RINEX) |
+| cycle slip, unflagged | S02 / G06 / L2W, ep 90, 44° elev | **+6.70 widelane cycles** |
+| cycle slip, **LLI-flagged** | S03 / G19 / L1C, ep 160, 22° elev | +45 cyc, LLI = 1 |
+| satellite clock step | G14, ep 120, all stations | +10 m |
+
+Per-tier response (flag counts, quiet → fault):
+
+| tier | quiet | fault | Δ |
+|---|---|---|---|
+| IF-phase slip (T1) | 0 opp | 0 opp | inert |
+| within-ep trigger (T2) | 7 | 7 | 0 |
+| post-fit RAIM cell (T3) | 747 | 603 | −144 |
+| **RAIM consensus (T3)** | 0 | **29** | **+29 — responded** |
+| attribution SAT (T4) | 0 | 0 | 0 |
+| clock-model NIS (T5) / clock-monitor (T6) | 0 opp | 0 opp | inert |
+
+Per-fault, from `network_events.csv` within ±10 epochs of each injection:
+
+| fault | detected? | by what |
+|---|---|---|
+| G14 clock step +10 m | **YES, and MARKED** | `CLK_STEP mark` + `T4_attrib attrib_arc` |
+| S03 slip, LLI-flagged | **YES** | `T0_mw_detect lli_slip` |
+| S02 slip, −7 cyc unflagged | partial | `T4_attrib attrib_arc` only — no slip event |
+| S01 slip, +12 cyc unflagged | **MISSED** | nothing |
+
+**Findings:**
+
+1. **The clock-step marking gap from §9.6 is CLOSED.**  With `emit_clock_disc` +
+   `clock_disc_jump_test` armed, the 10 m step produces a `CLK_STEP mark`.  §9.6's
+   zero marks were an unarmed marker, exactly as that section said — confirmed
+   rather than assumed.
+2. **RAIM consensus is the tier that works.**  0 → 29 flags, and it is the only
+   tier whose flag count responds to the faults at all.  It needs the cross-station
+   population that n = 3/5 cannot supply, which is the case for the 50-station
+   variant in one line.
+3. ⚠️ **`mw_detect` missed both unflagged slips — and they were not subtle.**
+   The MW widelane jumps are **+12.26** and **+6.70 cycles**, computed directly
+   from the emitted RINEX; MW noise is sub-cycle, so these are the easiest targets
+   a widelane detector has.  The detector was demonstrably LIVE (44 `mw_wl_slip`
+   events elsewhere on the same data).  The one slip it did catch was caught by the
+   receiver's own **LLI flag** (`lli_slip`), not by the MW statistic.  So on this
+   arm: **44 false alarms, 0 of 2 true detections, and the only true catch came
+   from a flag the receiver supplied.**
+   *This is one arm and one configuration — it is a finding to chase, not a verdict
+   on the detector.*  The obvious next bisects: the elevation-scaled threshold at
+   19°, and whether the network-path MW detector needs an arc maturity the fault
+   epochs did not reach.
+4. **T4 attribution never flags.**  7135 opportunities, 0 flags in both arms,
+   including for a 10 m satellite clock step seen by all 50 stations — the exact
+   fault class it exists to attribute.  It emits `attrib_arc` events but no flags.
+5. **The post-fit RAIM cell tier's flag count goes DOWN with faults added**
+   (747 → 603).  With a false-alarm population that large, adding a real fault just
+   reshuffles which cells exceed.  That is what a tier dominated by false alarms
+   looks like, and it is consistent with finding 2 of §9.7.2.
+
+---
 
 ## §9.6 G-B — satellite-clock step, FIRST CLASS ONLY (measured 2026-08-11)
 

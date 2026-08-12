@@ -58,6 +58,7 @@ import csv
 import json
 import math
 import os
+import re
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -365,6 +366,85 @@ def grade_consumer(run_dir, settle_frac):
     return {"err3d": stats(e3), "up": stats(up), "n_epochs": n, "ar_success": ar}
 
 
+FLAG_RE = re.compile(
+    r"(?P<tier>[A-Za-z][A-Za-z0-9 /_+-]*\((?:T\d)\))\s*:\s*"
+    r"(?P<opp>\d+)\s*opp,\s*(?P<flag>\d+)\s*flag,\s*rate\s*(?P<rate>[-\deE.+]+)"
+    r"(?:.*?implied Gaussian a\s*(?P<alpha>[-\deE.+]+))?")
+
+EMIT_RE = re.compile(
+    r"Network producer complete:\s*(?P<emitted>\d+) epochs emitted,\s*(?P<skipped>\d+) skipped"
+    r"\s*\((?P<gate>\d+) of those withheld by the observability gate,\s*"
+    r"(?P<a4>\d+) by the A4")
+
+
+def grade_qc_tiers(run_dir):
+    """Grade the QC stack from the run-end flag-rate summary + the event log.
+
+    THE DISTINCTION THAT MATTERS is opportunity count vs flag count (standing
+    invariant #4).  A tier reporting "0 opp" is INERT — its wiring never even got
+    a chance to look at anything — and reads in every log exactly like a tier that
+    looked and found nothing.  At 3 and 5 stations EVERY tier here is 0 opp, which
+    is why the 50-station variant exists.
+
+    For a LIVE tier on a QUIET arm the grade is its false-alarm rate against the
+    threshold's OWN implied Gaussian alpha, which the producer prints beside it:
+      observed >> implied  the threshold is mis-calibrated for this data, or the
+                           residuals are heavier-tailed than Gaussian
+      observed << implied  conservative; the tier will also be slow on real faults
+    """
+    console = os.path.join(run_dir, "console.txt")
+    if not os.path.exists(console):
+        return None
+    text = open(console, encoding="utf-8", errors="replace").read()
+
+    tiers = []
+    for m in FLAG_RE.finditer(text):
+        opp, flag = int(m.group("opp")), int(m.group("flag"))
+        alpha = float(m.group("alpha")) if m.group("alpha") else None
+        tiers.append({"tier": m.group("tier").strip(), "opp": opp, "flag": flag,
+                      "rate": float(m.group("rate")), "alpha": alpha,
+                      "live": opp > 0})
+
+    emit = None
+    m = EMIT_RE.search(text)
+    if m:
+        emit = {k: int(v) for k, v in m.groupdict().items()}
+
+    # network_events.csv: what actually fired, by tier and event name.
+    events = {}
+    ev_path = os.path.join(run_dir, "logs", "network_events.csv")
+    rows = load_csv(ev_path)
+    for r in (rows or []):
+        key = (r.get("tier", "?"), r.get("event", r.get("event_type", "?")))
+        events[key] = events.get(key, 0) + 1
+
+    return {"tiers": tiers, "emit": emit, "events": events,
+            "have_events_file": rows is not None}
+
+
+def detect_ura_scale(run_dir):
+    """Detect the scale factor the published URA carries, so vf is interpretable.
+
+    URA = s0 * sqrt(scov(clock,clock)) with s0 = max(1.0, sigma0_EWMA)
+    (NetworkSolPrep.cpp:430,443).  That EWMA is STRUCTURALLY UNAVAILABLE unless
+    emit_ura + raim + phase_leveling are all armed -- the RTB-6 sentinel -- in which
+    case s0 is exactly 1.0 and the URA is the pure marginal formal sigma.
+
+    Flipping phase_leveling therefore moves the vf DENOMINATOR silently, by s0^2.
+    Two arms that differ in it cannot have their vf pooled or compared, and nothing
+    in the product says so.  Report it explicitly.
+    """
+    console = os.path.join(run_dir, "console.txt")
+    if not os.path.exists(console):
+        return None
+    text = open(console, encoding="utf-8", errors="replace").read()
+    sentinel = "RTB-6" in text
+    vals = [float(m) for m in re.findall(r"\(σ̂0 ([0-9.]+)\)", text)]
+    s0 = max([1.0] + vals) if vals else (1.0 if sentinel else None)
+    return {"sentinel": sentinel, "sigma0_seen": vals, "s0": s0,
+            "pure_formal": bool(sentinel) or (s0 == 1.0 if s0 else False)}
+
+
 def grade_iono_table8(truth):
     """The Table-8 identity's PRECONDITION check (SPEC section 4.5).
 
@@ -485,6 +565,19 @@ def main():
         print("  vf        (no URA emitted — arm network.emit_ura)")
     if clk["n_no_sigma"]:
         print(f"  {clk['n_no_sigma']} clock rows had no URA (blank = not emitted, never 0)")
+    us = detect_ura_scale(run_dir)
+    if us and us["s0"] is not None:
+        if us["pure_formal"]:
+            print("  σ denominator: URA = pure marginal formal σ (s0 = 1.000) — "
+                  "comparable across arms")
+        else:
+            print(f"  ⚠ σ denominator: URA carries s0 = {us['s0']:.3f}, so it is the formal σ "
+                  f"INFLATED {us['s0']:.3f}x.")
+            print(f"    This vf is DEFLATED by s0^2 = {us['s0']**2:.2f} vs the pure-formal-σ "
+                  f"measure (≈ {clk['vf']*us['s0']**2:.4g} if vf were computed on it)."
+                  if clk["vf"] else "")
+            print("    phase_leveling makes the σ̂0 EWMA available and moves this scale "
+                  "SILENTLY — never pool vf across arms that differ in it.")
 
     ph = grade_phase(epochs, args.settle_frac)
     print("\n-- P record (phase bias), between-satellite SD, fractional cycles " + "-" * 11)
@@ -503,6 +596,47 @@ def main():
             print(f"  vf        {zwd['vf']:.3f}  over {zwd['n_vf']} rows")
         if zwd["missing_truth"]:
             print(f"  {zwd['missing_truth']} rows had no truth match (joined on tow)")
+
+    qc = grade_qc_tiers(run_dir)
+    print("\n-- QC tiers " + "-" * 64)
+    if qc is None:
+        print("  no console.txt in the run dir — cannot read the flag-rate summary")
+    else:
+        if qc["emit"]:
+            e = qc["emit"]
+            print(f"  epochs: {e['emitted']} emitted, {e['skipped']} skipped "
+                  f"({e['gate']} observability-gate withheld, {e['a4']} A4 σ̂0 ceiling)")
+        if not qc["tiers"]:
+            print("  no flag-rate summary — arm network.trace_flag_rates")
+        else:
+            print(f"  {'tier':<26}{'opp':>10}{'flag':>7}{'obs rate':>12}"
+                  f"{'implied α':>12}  verdict")
+            n_inert = 0
+            for t in qc["tiers"]:
+                if not t["live"]:
+                    n_inert += 1
+                    v = "INERT — 0 opportunities, says NOTHING"
+                elif t["alpha"] is None:
+                    v = "live (absolute bound, no α)"
+                elif t["flag"] == 0:
+                    v = "live, silent (quiet arm: expected)"
+                elif t["rate"] > 10 * t["alpha"]:
+                    v = f"live, fires {t['rate']/t['alpha']:.0f}x its own implied α"
+                else:
+                    v = "live, within its implied α"
+                a = f"{t['alpha']:.2e}" if t["alpha"] is not None else "-"
+                print(f"  {t['tier']:<26}{t['opp']:>10}{t['flag']:>7}"
+                      f"{t['rate']:>12.3e}{a:>12}  {v}")
+            print(f"  => {len(qc['tiers']) - n_inert} of {len(qc['tiers'])} tiers LIVE, "
+                  f"{n_inert} inert")
+        if qc["events"]:
+            print("  events fired:")
+            for (tier, ev), n in sorted(qc["events"].items(), key=lambda kv: -kv[1])[:12]:
+                print(f"    {tier:<22} {ev:<28} {n}")
+        elif qc["have_events_file"]:
+            print("  network_events.csv present and EMPTY (no events fired)")
+        else:
+            print("  no network_events.csv — arm network.trace_events")
 
     con = grade_consumer(run_dir, args.settle_frac)
     print("\n-- Consumer position (datum-free, absolute, AR-confounded) " + "-" * 18)
