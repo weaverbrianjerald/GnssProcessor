@@ -16,6 +16,7 @@
 #include "math/TimeUtils.hpp"
 
 #include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>   // navLog()'s never-null fallback
 
 #include <algorithm>
 #include <cctype>
@@ -34,10 +35,39 @@ namespace {
 // at columns 4, 23, 42, 61; the epoch line's three clock terms at 23, 42, 61.
 constexpr std::size_t kFieldW = 19;
 
-spdlog::logger* navLog() {
-    static std::shared_ptr<spdlog::logger> lg =
-        spdlog::get("gnss_processor") ? spdlog::get("gnss_processor") : spdlog::default_logger();
-    return lg.get();
+/// Diagnostic logger for the parser's two warn paths.  Resolved on EVERY call
+/// and guaranteed non-null.
+///
+/// The previous version cached
+/// `spdlog::get("gnss_processor") ? ... : spdlog::default_logger()` in a
+/// function-local `static` and returned `.get()`.  Two defects:
+///
+///  * **`spdlog::default_logger()` is not guaranteed non-null.**  The registry's
+///    default logger is cleared by `spdlog::drop_all()`, which LogManager calls
+///    on both re-initialize (LogManager.cpp:115) and shutdown (:201).  The null
+///    was cached and then dereferenced, faulting with an access violation on the
+///    two warn paths below instead of emitting the diagnostic.  Those are the
+///    ONLY RinexNavParser paths that log, which is why the fault presented as
+///    exactly two failing cases (`RejectsPreRinex3`,
+///    `MissingEndOfHeaderReturnsEmpty`) while the other eight passed.
+///  * **Caching on FIRST call froze the choice**, so the parser could never pick
+///    up "gnss_processor" once LogManager registered it later.
+///
+/// Returns a `shared_ptr`, not a raw pointer, so the logger cannot be dropped
+/// from under the caller's `->warn(...)`.  This mirrors the "degrade, never
+/// throw" contract `LogManager::getLogger()` documents for pre-initialization
+/// call sites — RinexNavParser is a static utility class, so there is no
+/// LogManager to inject (the same shape as `tailLog()` in NetworkProductIO.cpp).
+std::shared_ptr<spdlog::logger> navLog() {
+    if (auto named = spdlog::get("gnss_processor")) return named;
+    if (auto def = spdlog::default_logger()) return def;
+    // Registry has no default (post-drop_all).  Unregistered console fallback:
+    // a diagnostic is never silently lost, and never faults.  Deliberately NOT
+    // registered so repeated calls cannot collide in the global registry.
+    static const std::shared_ptr<spdlog::logger> fallback =
+        std::make_shared<spdlog::logger>(
+            "rinex_nav", std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+    return fallback;
 }
 
 std::string trim(const std::string& s) {

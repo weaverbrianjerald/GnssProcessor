@@ -43,6 +43,8 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       fast_clock_trace_path(log_dir_ / "network_fast_clock.csv"),
       events_trace_path(log_dir_ / "network_events.csv"),
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
+      sat_bias_states_trace_path(log_dir_ / "network_sat_bias_states.csv"),
+      rx_states_trace_path(log_dir_ / "network_rx_states.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
       carry_vce_apply_trace_path(log_dir_ / "network_carry_vce_apply.csv"),
@@ -622,6 +624,33 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             zwd_trace << "week,tow,station,zwd_m,std_m,carried\n";
         else
             log->warn("Network: failed to open ZWD trace {}", zwd_trace_path.string());
+    }
+    if (nc.trace_sat_bias_states) {
+        sat_bias_states_trace.open(sat_bias_states_trace_path);
+        if (sat_bias_states_trace)
+            // One row per emitted (satellite, code signal) each emitted epoch.
+            // code_bias_m is the WIRE value (the same number the B record carries, after
+            // the S-transform), sigma_m its σ̂0-scaled formal σ from the gauge-nulled
+            // shared covariance, s0 the σ̂0 EWMA that scaled it (so a grader can undo the
+            // scaling), and pinned marks a column that is a datum pin this epoch — such a
+            // column's variance is a gauge artefact, so it is reported with an EMPTY
+            // sigma_m rather than a misleadingly tiny one (blank = "not emitted", never 0).
+            sat_bias_states_trace << "week,tow,sat,signal,code_bias_m,sigma_m,s0,pinned\n";
+        else
+            log->warn("Network: failed to open satellite bias-state trace {}",
+                      sat_bias_states_trace_path.string());
+    }
+    if (nc.trace_rx_states) {
+        rx_states_trace.open(rx_states_trace_path);
+        if (rx_states_trace)
+            // One row per (station, receiver state) each emitted epoch.  kind is CLK or
+            // CB; key is the RINEX code for a CB row and empty for the clock.  value_m =
+            // a-priori state + reconstructed correction (the same x_lin + x_r convention
+            // network_zwd.csv uses); std_m = datum-conditioned formal σ.
+            rx_states_trace << "week,tow,station,kind,key,value_m,std_m\n";
+        else
+            log->warn("Network: failed to open receiver-state trace {}",
+                      rx_states_trace_path.string());
     }
     if (nc.trace_station_residuals) {
         station_res_trace.open(station_res_trace_path);
@@ -1238,6 +1267,8 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"trace_epoch_status\":" << (nc.trace_epoch_status ? "true" : "false") << ','
                << "\"trace_events\":" << (nc.trace_events ? "true" : "false") << ','
                << "\"trace_zwd\":" << (nc.trace_zwd ? "true" : "false") << ','
+               << "\"trace_sat_bias_states\":" << (nc.trace_sat_bias_states ? "true" : "false") << ','
+               << "\"trace_rx_states\":" << (nc.trace_rx_states ? "true" : "false") << ','
                << "\"trace_clock_full\":" << (nc.trace_clock_full ? "true" : "false") << ','
                << "\"trace_station_residuals\":" << (nc.trace_station_residuals ? "true" : "false") << ','
                // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader

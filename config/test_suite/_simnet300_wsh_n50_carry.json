@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Ladder rung 5 \u2014 the CARRY hypothesis, and the one the n=300 result forces.",
+    "The extra near-null is n-INVARIANT: ev 9.78e-06 at 50 stations and 8.97e-06 at",
+    "300, against lambda_max 1.03e+05 and 9.13e+04.  Six times the stations added NO",
+    "information to it, which is the signature of a true GAUGE rather than a weak",
+    "direction -- consistent with the mechanism: with FLOAT ambiguities a",
+    "satellite-common L2W phase bias is exactly absorbable by the L2W ambiguities, and",
+    "more stations bring more ambiguities as well as more data.",
+    "",
+    "So the field's 303-station arm cannot be emitting because of its station count.",
+    "It differs from this posture by a large armed set, and the member that bears",
+    "directly on this degeneracy is the CARRY: network.carry_invariant time-links the",
+    "DD chord basis across epochs, so the ambiguities are no longer free to absorb the",
+    "bias.  If that is the lever, this rung emits at DEFAULT tolerance and the finding",
+    "is that the W6+SH slice is observable through its CARRY, not through its data.",
+    "",
+    "carry_invariant_pd_safe rides along because the PD-safe fold is field-validated",
+    "and the un-guarded fold is not (PD gate 0% vs 87.7%).",
+    "",
+    "carry_invariant is REFUSED by the loader without phase_datum_eq34 (the DD cycle basis is defined only on the eq34 chain datum: RPB split + spanning tree supply the invariant DDs), so this rung is the PAIR.  Rung 2 tested eq34 ALONE and did not emit, which is what makes the pair the clean test of the carry rather than of the datum."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50.json"
+  ],
+  "processing": {
+    "max_duration_s": 570.0
+  },
+  "network": {
+    "carry_invariant": true,
+    "carry_invariant_pd_safe": true,
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_carry/products.txt",
+    "phase_datum_eq34": true,
+    "phase_datum_min_stations": 1
+  }
+}

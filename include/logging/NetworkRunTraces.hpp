@@ -401,6 +401,19 @@ namespace GnssProcessor {
         /// formal σ + carried flag, per present station each emitted epoch (V7 instrument).
         std::ofstream zwd_trace;
         const std::filesystem::path zwd_trace_path;
+        /// L14: per-(satellite, code signal) bias state (network.trace_sat_bias_states) —
+        /// the emitted satellite code bias with its σ̂0-scaled formal σ from the
+        /// gauge-nulled shared posterior covariance.  The B product record carries NO σ
+        /// in any configuration, so this is the only channel from which the code-bias
+        /// variance factor can be formed (SPEC_synthetic_minimum_network §4.8).
+        std::ofstream sat_bias_states_trace;
+        const std::filesystem::path sat_bias_states_trace_path;
+        /// L14b: per-station receiver states (network.trace_rx_states) — the receiver clock
+        /// and every receiver code-bias (DCB/IFB) state with its datum-conditioned formal σ,
+        /// on the zwd_trace pattern.  The receiver half of §4.8: the W6 slice force-arms
+        /// estimate_ifb, yet those columns are otherwise never exported as estimates.
+        std::ofstream rx_states_trace;
+        const std::filesystem::path rx_states_trace_path;
         /// L13: per-station residual field (network.trace_station_residuals) — EVERY post-fit RAIM
         /// cell (non-pivot station x sat) with s_raw / s_norm / σ̂0.  Heavy opt-in deep trace.
         std::ofstream station_res_trace;

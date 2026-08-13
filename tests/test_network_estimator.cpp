@@ -1019,9 +1019,14 @@ struct ShiftWalk {
 // is believed to sit at when a re-pin lands at a NEW station — in the estimator
 // this is local_carry (phase-leveling); here we pass it in so a test can feed
 // either the faithful float (state_A.z) or a drifted one.
+// `seed_state` (null = INC-2 off) is the SEED-ROUND frame-continuous re-host
+// (docs/SPEC_eq34_seed_round.md §8.5 INC-2): where a re-pin lands at a new station
+// with NO carry, the station's own ambiguity STATE supplies the pre-pin value, so
+// the step is computable and the edge stays shiftable even with shift_on false.
 ShiftWalk shiftWalk(const ChainTree& treeA, const ChainTree& treeB,
                     const std::map<std::pair<int, int>, double>& carry,
-                    bool shift_on) {
+                    bool shift_on,
+                    const std::map<std::pair<int, int>, double>* seed_state = nullptr) {
     // Incumbent maps from tree A (mirror anchor_incumbent / eq34_rx_parent /
     // eq34_sat_root / eq34_prev_target).
     std::map<int, int>    A_sat_parent;                 // sat -> its parent station
@@ -1054,9 +1059,17 @@ ShiftWalk shiftWalk(const ChainTree& treeA, const ChainTree& treeB,
             auto it = A_rx_parent.find(e.r);
             edge_changed = (it != A_rx_parent.end() && it->second != e.s);
         }
+        bool shiftable = false;                         // INC-2: framed re-host
         if (edge_changed) {
             auto cv = carry.find({e.r, e.s});           // carry at the NEW station
             if (cv != carry.end()) pinmove = e.target - cv->second;
+            else if (seed_state) {                      // INC-2: the state itself
+                auto sx = seed_state->find({e.r, e.s});
+                if (sx != seed_state->end()) {
+                    pinmove = e.target - sx->second;
+                    shiftable = true;
+                } else known = false;                   // no state ⇒ cold re-host
+            }
             else known = false;                         // re-pin with no carry
         } else {
             auto pt = A_target.find({e.r, e.s});        // same station: exact target diff
@@ -1068,7 +1081,7 @@ ShiftWalk shiftWalk(const ChainTree& treeA, const ChainTree& treeB,
         const auto& pv_map = e.sat_is_child ? sw.dd : sw.db;
         const bool  pk = pk_map.count(parent_idx) ? pk_map.at(parent_idx) : false;
         const double pv = pv_map.count(parent_idx) ? pv_map.at(parent_idx) : 0.0;
-        const bool  k = known && pk && (shift_on || pinmove == 0.0);
+        const bool  k = known && pk && (shift_on || pinmove == 0.0 || shiftable);
         const double s = k ? (-pv - pinmove) : 0.0;
         if (e.sat_is_child) { sw.db[e.s] = s; sw.db_known[e.s] = k; }
         else                { sw.dd[e.r] = s; sw.dd_known[e.r] = k; }
@@ -1264,6 +1277,63 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkRootHandoverIsUnknown) {
     EXPECT_TRUE(some_fractional)
         << "root handover must move the frame by a non-integer common fractional "
            "(the reason the walk is right to erase rather than shift).";
+}
+
+// I1e — SEED-ROUND INC-2, the FRAME-CONTINUOUS RE-HOST (docs/SPEC_eq34_seed_round.md
+// §8.5).  The carry_invariant posture has NO phase-leveling carry at all, so every
+// re-host of a tree pin hits the "re-pin with no carry" arm: unknown step ⇒ the
+// (sat,σ) is re-referenced and its carried phase-bias prior is marginalized for the
+// epoch.  INC-2 supplies the missing pre-pin value from the new host's OWN ambiguity
+// state, which makes the step exactly computable — and the walk then reproduces the
+// re-solved frame with the global carry-shift knob still OFF.
+//
+// Non-vacuous by construction: the re-host is pinned one cycle off the float it sits
+// at, so pinmove = +1 and the (pinmove == 0) door in the walk is shut.  Read this
+// box together with I1c: the ε that made carry_shift inject error in the field is the
+// CARRY's drift off the estimator, and INC-2's input is the estimator's own state, so
+// that term is structurally absent — the residual risk INC-2's A/B measures is a
+// different one (whether the real solve puts the pin displacement into b_s alone, as
+// the chain algebra assumes, or spreads it across the weakly-held δ split).
+TEST(NetworkEstimatorTest, Eq34ShiftWalkSeedRoundRehostFramesWithShiftOff) {
+    const Eq34Truth t = makeEq34Truth();
+    const ChainTree A = eq34TreeA();
+    const Eq34FullState sA = propagateChain(t, A);
+
+    // Reattach s3 from station 1 to station 2 (as I1b), but pin it a cycle off the
+    // value the state holds there — a genuine frame step, not a clean handover.
+    const double target23 = std::round(sA.z.at({2, 3})) + 1.0;
+    const ChainTree B{0, {
+        {true, 0, 0, 0.0}, {true, 0, 1, 0.0}, {true, 0, 2, 0.0},
+        {false, 3, 0, 0.0}, {false, 1, 2, 0.0}, {true, 3, 4, 0.0},
+        {false, 2, 4, 0.0},
+        {true, 2, 3, target23},                       // R2 -> S3 (re-hosted)
+    }};
+    const Eq34FullState sB = propagateChain(t, B);
+    const std::map<std::pair<int, int>, double> no_carry;   // carry_invariant: none
+
+    // Production TODAY (INC-2 off): no carry at the new station ⇒ unknown ⇒ the
+    // sat is re-referenced (PB prior marginalized) even though nothing about the
+    // step is actually unknowable.
+    const ShiftWalk off = shiftWalk(A, B, no_carry, /*shift_on=*/false);
+    EXPECT_FALSE(off.db_known.count(3) && off.db_known.at(3))
+        << "without INC-2 a carry-less re-host must stay on the erase/reref path";
+    EXPECT_GT(off.n_unknown, 0);
+
+    // INC-2: the state at the new host IS the pre-pin value, so the step is exact.
+    const ShiftWalk inc2 = shiftWalk(A, B, no_carry, /*shift_on=*/false, &sA.z);
+    ASSERT_TRUE(inc2.db_known.at(3)) << "INC-2 must frame the re-hosted sat";
+    EXPECT_NEAR(inc2.db.at(3), -1.0, 1e-9)
+        << "Δb_3 = −Δδ_2 − pinmove; δ_2 does not move and the pin steps +1 cycle";
+    const int checked = expectShiftReproduces(t, sA, sB, inc2, 1e-9);
+    EXPECT_GE(checked, 10) << "reproduction check must be non-vacuous";
+
+    // A re-host INC-2 cannot frame (the state does not exist yet — the fold-deferred
+    // cold arm) keeps the legacy refusal: the exemption is per-edge, never blanket.
+    std::map<std::pair<int, int>, double> partial = sA.z;
+    partial.erase({2, 3});
+    const ShiftWalk cold = shiftWalk(A, B, no_carry, /*shift_on=*/false, &partial);
+    EXPECT_FALSE(cold.db_known.count(3) && cold.db_known.at(3))
+        << "no state at the new host ⇒ cold re-host ⇒ unknown, exactly as before";
 }
 
 // ===========================================================================
@@ -3943,6 +4013,7 @@ struct CbDatumRowsHarness {
     bool cb_time_linked{false};
     bool clock_signal_basis_hold{false};
     bool emit_clock_disc{false};
+    bool gf_datum{false};          // slant-posture GF pin rows (default OFF = legacy)
     // Card-2 carry (const in)
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
     std::map<std::string, Pair>                          code_bias_ifpin_pair;
@@ -3966,7 +4037,7 @@ struct CbDatumRowsHarness {
         this_epoch_cb_reseed.clear();
         return NetworkSbasis::buildCodeBiasDatumRows(
             est, registered_code_keys, gpsCodeFreq, cb_time_linked,
-            clock_signal_basis_hold, emit_clock_disc, code_bias_prev,
+            clock_signal_basis_hold, emit_clock_disc, gf_datum, code_bias_prev,
             code_bias_ifpin_pair, code_bias_sat_seen, code_bias_datum_resumed,
             held_clock_ref, this_epoch_if_pin_sel, this_epoch_cb_ifpin,
             this_epoch_cb_reseed, basis_relatch_disc_pending,

@@ -1,0 +1,43 @@
+{
+ "_comment": [
+  "Card CB-Q (docs/SPEC_cb_carry_physical_q.md) leg B \u2014 the SETTLED sat code-bias",
+  "process-noise ladder.  ONE KNOB differs: filter.process_noise.sat_code_bias_q.",
+  "12 h so that a >=4 h ignition cut still leaves 8 h of settled window: the CB",
+  "carry's measured step response is tau ~ 3.8 h, so leg A's 20-epoch arms are",
+  "ENTIRELY ignition and their cb variance factor reads 1.92 against the settled",
+  "13.0 \u2014 'never verdict in ignition' applies to this carry more than to most.",
+  "",
+  "WHY A LADDER AT ALL, given leg A showed q barely moves the census: the graded",
+  "question is not the census, it is the WIRE.  scripts/cb_structure_function.py",
+  "measures the emitted OSBs DRIFTING (log-log slope 0.99 over 30 s..19200 s,",
+  "0.64 cm/30 s between satellites, ~1-2 m of wander about their own trend over",
+  "8 h) in directions that include C1W-C1C, a hardware constant.  A looser carry",
+  "tracks that drift FASTER.  This ladder measures whether it does.",
+  "",
+  "GRADE ON (pre-registered): cb_structure_function SF(30 s) and the log-log",
+  "slope on the settled window; the IF-pin null control (must stay ~0 in every",
+  "arm); the cb / rxcb / clk variance factors; post-fit sigma0_code; the closed-",
+  "loop consumer median/p95/worst.  Products are NOT expected byte-identical.",
+  "",
+  "FRESH lineage; own paths; run alone (scripts/q3_ladder_run.ps1 serializes).",
+  "",
+  "rung 3 \u2014 an order above the knee; q DOMINATES the fold variance."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 43200.0
+ },
+ "filter": {
+  "process_noise": {
+   "sat_code_bias_q": 0.0001
+  }
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cbq_12h_q1e4/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cbq_12h_q1e4/state_snapshot.bin"
+ }
+}

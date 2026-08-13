@@ -364,7 +364,9 @@ def test_spp_reference_crowded_panels_are_opt_in(exam_fixture):
     assert "Paired A/B ablations" in off.summary          # table kept
     assert "leg 1 − leg 2 c·dt median" in off.summary     # median kept
     clock = next(f for f in off.figures if f.name == "Receiver clock")
-    assert len(clock.axes) == 1 and "about its own median" in clock.axes[0].title
+    # The panel de-trends per leg (the simulated truth clock drifts, so a median-only
+    # baseline leaves a km-scale ramp that swamps the ~20 m of real structure).
+    assert len(clock.axes) == 1 and "linear trend removed" in clock.axes[0].title
 
     on = B(ctx, show_ablations=True, show_clock_difference=True)
     assert any(f.name == "A/B ablations" for f in on.figures)

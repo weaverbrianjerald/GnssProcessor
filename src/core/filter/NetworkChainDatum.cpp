@@ -63,6 +63,7 @@ const bool eq34_longevity = ctx.knobs.eq34_longevity;
 const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
 const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
 const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
+const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
 
     // Card 3/4 slip-aware election: did THIS arc slip this epoch?  The funnel is
     // complete here by the ordering contract (every PASS-A drain, signal integrity
@@ -377,12 +378,16 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
             // receiver (parent-edge → new_rx_parent).
             std::set<std::string> visited;
             std::deque<std::string> inc_q, new_q;
-            // (child, parent, pinmove, known): pinmove = this pin's
-            // exact displacement of its pinned float vs last epoch's
-            // frame; known = false where the step is NOT computable
+            // (child, parent, pinmove, known, frame_shiftable): pinmove =
+            // this pin's exact displacement of its pinned float vs last
+            // epoch's frame; known = false where the step is NOT computable
             // (re-pin without a carry; root handover — a common
-            // FRACTIONAL step no integer transform can express).
-            std::vector<std::tuple<std::string, std::string, double, bool>> order;
+            // FRACTIONAL step no integer transform can express);
+            // frame_shiftable = INC-2, this step came from the new host's
+            // own state and may be S-transformed even with the global
+            // carry-shift knob off (always false unless INC-2 is armed).
+            std::vector<std::tuple<std::string, std::string, double, bool, bool>>
+                order;
             auto recordEdge = [&](size_t ri, const std::string& sat,
                                   bool sat_is_child) {
                 const std::string amb = sat + "_" + grp_sig;
@@ -431,6 +436,17 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                 // the realized target flows back into eq34_prev_target through
                 // the serial consume.  `known` is cleared below for deferred pins.
                 bool seed_deferred = false, seed_rounded = false;
+                // INC-2 (SPEC §8.5): the new host's PRE-PIN float.  Finite only when
+                // the state exists AND INC-2 is armed; it is this pin's exact frame
+                // step baseline on a re-host (the pin displaces the float from here
+                // to `target`, so Δb_s = −(target − seed_x) exactly).
+                double seed_x = std::numeric_limits<double>::quiet_NaN();
+                bool   frame_shiftable = false;
+                auto ambStateValue = [&]() -> double {
+                    const int sidx = stations[ri].sm->getAmbiguityIndex(amb);
+                    if (sidx < 0) return std::numeric_limits<double>::quiet_NaN();
+                    return stations[ri].sm->getStateVector()(sidx);
+                };
                 if (eq34_seed_round && !std::isfinite(carry_val)
                     && system != System::Unknown) {
                     // INC-1 FREEZE-AFTER-FIRST-REALIZATION (SPEC §8.5): a frame is
@@ -444,6 +460,12 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                         target = ptf->second;
                         seed_rounded = true;
                         ++ctx.counters.seed_round_frozen;
+                        // INC-2: a FROZEN target can still land on a re-hosted edge
+                        // (the entry survived through the I2 retention or the fold
+                        // feedback), and that step is just as computable — read the
+                        // pre-pin float here too.  Armed-only, so the OFF path keeps
+                        // the freeze branch's single map lookup.
+                        if (eq34_seed_rehost) seed_x = ambStateValue();
                     } else {
                     const double lam =
                         eq34_ppp_utils->getWavelength(system, grp_sig, sat);
@@ -453,6 +475,7 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                             const double x =
                                 stations[ri].sm->getStateVector()(sidx);
                             if (std::isfinite(x)) {
+                                if (eq34_seed_rehost) seed_x = x;   // INC-2 baseline
                                 target = lam * std::round(x / lam);
                                 seed_rounded = true;
                                 ++ctx.counters.seed_round_pins;
@@ -494,7 +517,28 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                     // carry_val; the pin drives it to target — an exact,
                     // known displacement iff the carry exists.
                     if (std::isfinite(carry_val)) pinmove = target - carry_val;
-                    else known = false;
+                    // INC-2 (SPEC §8.5): no carry — but under seed-round the
+                    // station's OWN ambiguity state is the pre-pin value, and it
+                    // is exact (the estimator's own number, not a leveling carry
+                    // that drifted: the I1c mechanism behind carry_shift's Jul-11
+                    // field harm is structurally absent here).  So the frame step
+                    // IS computable, and this edge stays shiftable even with the
+                    // global carry-shift knob off — which is what keeps the
+                    // (sat,σ) out of eq34_reref and its carried PB prior folded
+                    // (S-transformed) instead of marginalized for the epoch.
+                    else if (eq34_seed_rehost && std::isfinite(seed_x)) {
+                        pinmove = target - seed_x;
+                        frame_shiftable = true;
+                        ++ctx.counters.seed_round_rehost_framed;
+                        const double st_abs = std::abs(pinmove);
+                        if (st_abs > ctx.counters.seed_round_rehost_max_step_m)
+                            ctx.counters.seed_round_rehost_max_step_m = st_abs;
+                    } else {
+                        known = false;
+                        // Counted only when armed: an INC-2 run's OFF twin must
+                        // keep its run-end block byte-identical.
+                        if (eq34_seed_rehost) ++ctx.counters.seed_round_rehost_cold;
+                    }
                 } else {
                     // Same station: its float was hard-pinned at last
                     // epoch's target, so the displacement is exactly the
@@ -512,8 +556,11 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                 // last epoch's deferred feedback) is a frame RE-REALIZATION, not
                 // a transformable shift — route it through the validated reref
                 // hygiene, never the v2-shift walk.
+                // INC-2 exempts the framed re-host: its step is not a same-station
+                // target change but an exactly-computed frame move, so it takes the
+                // shift walk (and its own counter) rather than the reref hygiene.
                 if (seed_deferred) known = false;
-                else if (seed_rounded && pinmove != 0.0) {
+                else if (seed_rounded && pinmove != 0.0 && !frame_shiftable) {
                     known = false;
                     ++ctx.counters.seed_round_target_steps;
                 }
@@ -539,7 +586,7 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                 }
                 order.emplace_back(sat_is_child ? sV(sat) : rV(ri),
                                    sat_is_child ? rV(ri) : sV(sat),
-                                   pinmove, known);
+                                   pinmove, known, frame_shiftable);
             };
             auto attach = [&](const std::string& v) {
                 visited.insert(v);
@@ -711,13 +758,18 @@ const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
                 vshift[v] = 0.0;
                 vknown[v] = true;
             }
-            for (const auto& [v, p, pinmove, known] : order) {
+            for (const auto& [v, p, pinmove, known, shiftable] : order) {
                 // Shift OFF (default): any nonzero pin displacement is
                 // treated as unknown ⇒ the erase/skip hygiene handles it
                 // (the validated B4/B7-class behavior).  Shift ON: exact
-                // transforms flow to the apply block below.
+                // transforms flow to the apply block below.  INC-2 opens a
+                // THIRD door for one edge class only — a seed-round re-host
+                // whose step came from the new host's own state — and it
+                // composes with the walk unchanged: the nonzero vshift it
+                // seeds propagates through the (pinmove == 0) frozen edges
+                // below it exactly as a shift-ON run's would.
                 const bool   k = known && vknown[p]
-                              && (eq34_shift_on || pinmove == 0.0);
+                              && (eq34_shift_on || pinmove == 0.0 || shiftable);
                 const double s = k ? (-vshift[p] - pinmove) : 0.0;
                 vshift[v] = s;
                 vknown[v] = k;

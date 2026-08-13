@@ -85,6 +85,8 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.multipath.code_amp_gps_l2_m  = jval(s, "multipath.code_amp_gps_l2_m",  "", cfg.multipath.code_amp_gps_l2_m);
     cfg.multipath.code_amp_gal_e1_m  = jval(s, "multipath.code_amp_gal_e1_m",  "", cfg.multipath.code_amp_gal_e1_m);
     cfg.multipath.code_amp_gal_e5a_m = jval(s, "multipath.code_amp_gal_e5a_m", "", cfg.multipath.code_amp_gal_e5a_m);
+    cfg.multipath.code_amp_gps_l5_m  = jval(s, "multipath.code_amp_gps_l5_m",  "", cfg.multipath.code_amp_gps_l5_m);
+    cfg.multipath.code_amp_gal_e5b_m = jval(s, "multipath.code_amp_gal_e5b_m", "", cfg.multipath.code_amp_gal_e5b_m);
     cfg.multipath.phase_amp_zen_m    = jval(s, "multipath.phase_amp_zen_m",    "", cfg.multipath.phase_amp_zen_m);
     cfg.multipath.tau_s              = jval(s, "multipath.tau_s",              "", cfg.multipath.tau_s);
     cfg.multipath.elev_factor_cap_deg= jval(s, "multipath.elev_factor_cap_deg","", cfg.multipath.elev_factor_cap_deg);
@@ -177,6 +179,42 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     if (cfg.corrections.ocean_tide && cfg.corrections.eot20_nc_path.empty())
         return fail("sim config 'corrections.ocean_tide' is set but 'corrections.eot20_nc_path' is empty "
                     "(the EOT20 global load grid supplies the station coefficients)");
+
+    // Third-band opt-in (Odijk 2016 §5.1: the slant-ionosphere posture has no estimable
+    // code bias below three frequencies).  Default false on both => the band plan, and
+    // therefore every RNG draw, is byte-identical to the two-band fixture.
+    cfg.signals.gps_l5      = jval(s, "signals.gps_l5",      "", cfg.signals.gps_l5);
+    cfg.signals.galileo_e5b = jval(s, "signals.galileo_e5b", "", cfg.signals.galileo_e5b);
+    if (const nlohmann::json* so = resolvePath(s, "signals.synth_osb_amp_m")) {
+        if (!so->is_object())
+            return fail("sim config 'signals.synth_osb_amp_m' must be an object mapping "
+                        "RINEX code -> zenith amplitude in metres, e.g. "
+                        "{\"C5Q\": 0.60, \"L5Q\": 0.02}");
+        for (auto it = so->begin(); it != so->end(); ++it) {
+            if (!it.value().is_number())
+                return fail("sim config 'signals.synth_osb_amp_m." + it.key() +
+                            "' must be a number (metres)");
+            const std::string code = it.key();
+            // A 3-character RINEX observation code; anything else is a typo that would
+            // otherwise sit in the map matching nothing and inject silently zero.
+            if (code.size() != 3 || (code[0] != 'C' && code[0] != 'L'))
+                return fail("sim config 'signals.synth_osb_amp_m' key '" + code +
+                            "' is not a 3-character RINEX code/phase observable "
+                            "(e.g. C5Q or L5Q)");
+            cfg.signals.synth_osb_amp_m[code] = it.value().get<double>();
+        }
+    }
+    if (!cfg.signals.synth_osb_amp_m.empty() && !cfg.corrections.signal_bias) {
+        // The synthetic OSB rides the same injection site as the product OSB, which is
+        // gated on corrections.signal_bias.  Armed-but-inert would look exactly like a
+        // fixture whose third band genuinely has no bias.
+        return fail("sim config 'signals.synth_osb_amp_m' is set but "
+                    "'corrections.signal_bias' is false — the synthetic OSB is injected "
+                    "at the same site as the product OSB and would be silently inert. "
+                    "Set corrections.signal_bias = true (the W6 bias posture) or drop "
+                    "the synthetic amplitudes.");
+    }
+
     cfg.corrections.ocean_tide_along_track =
         jval(s, "corrections.ocean_tide_along_track", "", cfg.corrections.ocean_tide_along_track);
     cfg.corrections.otl_anchor_spacing_km =
@@ -460,10 +498,17 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
                    std::isdigit(static_cast<unsigned char>(id[1])) &&
                    std::isdigit(static_cast<unsigned char>(id[2]));
         };
-        // PHASE codes only (scripting a code observable is meaningless here).
-        auto validPhase = [](char sys, const std::string& code) -> bool {
-            if (sys == 'G') return code == "L1C" || code == "L2W";
-            if (sys == 'E') return code == "L1C" || code == "L5Q";
+        // PHASE codes only (scripting a code observable is meaningless here).  The
+        // third band is accepted ONLY when its own switch is armed: a scripted slip on
+        // a band the fixture does not emit would never fire, and a silently-inert event
+        // is indistinguishable from a detector that missed it.
+        auto validPhase = [&cfg](char sys, const std::string& code) -> bool {
+            if (sys == 'G')
+                return code == "L1C" || code == "L2W" ||
+                       (cfg.signals.gps_l5 && code == "L5Q");
+            if (sys == 'E')
+                return code == "L1C" || code == "L5Q" ||
+                       (cfg.signals.galileo_e5b && code == "L7Q");
             return false;
         };
         // Tolerant int read: accept 20 OR 20.0 (nlohmann get<int> throws on a float
@@ -501,7 +546,10 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
             ev.signal = el["signal"].get<std::string>();
             if (!validPhase(ev.sat[0], ev.signal))
                 return fail(where + ".signal '" + ev.signal + "' is not a phase code for system " +
-                            std::string(1, ev.sat[0]) + " (GPS: L1C|L2W, Galileo: L1C|L5Q)");
+                            std::string(1, ev.sat[0]) +
+                            " (GPS: L1C|L2W" + (cfg.signals.gps_l5 ? "|L5Q" : "") +
+                            ", Galileo: L1C|L5Q" + (cfg.signals.galileo_e5b ? "|L7Q" : "") +
+                            "; a third-band code needs its signals.* switch armed)");
 
             // Trigger: exactly one of epoch (form A) / elev_deg (form B).
             const bool has_epoch = el.contains("epoch");

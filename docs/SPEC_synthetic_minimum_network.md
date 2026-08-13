@@ -1618,6 +1618,26 @@ guard, and the event ↔ R ↔ counter ↔ consumer tie-out, follow from those.
 
 ## §11 NEXT — the W6+SH synthetic arm (design brief for the next session)
 
+> ⚠️ **SUPERSEDED IN PART, 2026-08-12 — the arm is BUILT and its first ladder is
+> measured; see §12.**  Two of the five build notes below did not survive contact
+> with the data and must not be re-used as written:
+> - **Item 1's framing is wrong about WHICH wall comes first.**  The wall at 50
+>   stations is not a code-bias/ionosphere separability floor.  It is ONE uncounted
+>   near-null direction, and the estimability dump names it: the **L2W (secondary
+>   band) satellite phase-bias COMMON MODE**, ev 9.78e-06 against a 6.9e-12 clock
+>   gauge (§12.2).  The elevation-cutoff suspicion in item 1 is also settled —
+>   arming the 25° cutoff completes the posture bundle 3/3 and the arm still
+>   withholds every epoch, so the documented 50-station withhold is NOT a
+>   cutoff artefact.
+> - **Item 3 is MOOT, not a design decision.**  Under `estimate_iono_sh` the
+>   external GIM is **never loaded** — the two iono constraints are mutually
+>   exclusive by construction (`ApplicationNetworkSetup.cpp:386-440`), so there is
+>   no real-GIM-vs-synthetic-truth mismatch to design around.  What IS load-bearing
+>   from that block is the elevation CUTOFF, which gates which lines of sight get an
+>   SH tie row.
+>
+> Items 2, 4 and 5 stand and are implemented as written.
+
 The §9.9/§9.9.1 elimination campaign cornered the field wire wander (1.3 m
 detrended) as ESTIMATOR-INTERNAL: the clock ↔ CB ↔ iono common exchanges.
 Those states exist only in the coupled W6+SH posture — **which the synthetic
@@ -1689,6 +1709,780 @@ raising to 25° is a cheap, availability-free trim worth adopting on the
 lineage, not the cure.  **The dominant wander source remains inside the
 clock ↔ CB ↔ iono exchanges — the §11 W6+SH synthetic arm is unchanged as the
 decisive experiment.**
+
+## §12 The W6+SH ARM — built, and its minimum-n ladder measured (2026-08-12)
+
+Everything in this section was run; each claim names the arm that produced it.
+Release only, `gnss_processor_wsh0.exe` (sha256 `6bf857bb…`) for the ladder rungs
+and `gnss_processor_wsh.exe` (sha256 `521512b6…`, the same tree plus the §12.4
+traces) for the trace A/B, one CWD per arm.
+
+### 12.1 What was built
+
+| piece | file | what it is |
+|---|---|---|
+| producer template | `config/test_suite/_simnet_wsh_template.json` | the W6+SH posture: `estimate_iono_sh` (which FORCES the whole coupled slice), 25° iono cutoff, SH degree 15, `sh_health_gate`, `if_phase_td` + `datum_station_detect`, `trace_estimability`, the two new σ traces, equatorial clock datum |
+| 300-station fixture | `config/sim/simnet300_wsh.json` → `runs/simnet300_wsh/` | 300 solve + 1 consumer, 480 epochs = 4 h @ 30 s, **`corrections.signal_bias: true`** (the injected OSB IS the B-record truth), quiet, pinned storm anchor |
+| roster generator fix | `scripts/simnet_make_roster.py` | 9-char markers past n = 99 (`S00101SIM`, scheme `wide3`); the old scheme emits a TEN-character name at n = 100, which is not a RINEX long name at all.  Legacy rosters regenerate byte-identically |
+| per-arm products / prefix | `scripts/simnet_make_producer_config.py` | `--products`, `--epochs`; plus a LOUD warning when the clock datum falls back to `stations[0]` (on a Fibonacci roster that is the most POLAR station, and §9.8 measured ~8× more common-level wander from a polar datum) |
+| B + receiver channels | `scripts/simnet_grade.py` | §4.4's two-stage S-transform applied to TRUTH (IF lump over the S line's own `cbpin` pair, then zero-mean per channel over the epoch's registered set), vf from the new σ trace; receiver DCB graded as a CONTRAST with the level reported as the absorbed Table-8 gauge |
+| exchange decomposition | `scripts/simnet_exchange.py` | §11 item 4: the clock / receiver-DCB / a₀₀ common-mode series, their correlation matrix (series AND first differences), and the measured-vs-predicted exchange coefficient |
+
+### 12.2 The ladder — four rungs at n = 50, 20 epochs each (~90 s per rung)
+
+The 50-station G-A fixture is a valid EMISSION probe for the W6+SH slice even
+though it was synthesized in the INT posture: rank structure does not depend on the
+injected bias VALUES.  That made the whole ladder cost about six minutes.
+
+| rung | one knob | epochs emitted | what it establishes |
+|---|---|---|---|
+| 1 `_simnet50_wsh_probe` | — (25° cutoff, deg 4) | **0 / 19** | posture bundle **3/3 armed**, so the §9.7.2 finding-5 withhold is **not** the elevation-cutoff artefact |
+| 2 `_simnet50_wsh_eq34` | `phase_datum_eq34` | **0 / 19** | ~~the field's Eq-34 phase datum does **not** lift it — the datum is not the lever~~ **SUPERSEDED §12.8.2**: the datum DOES lift it (rank gate passes); all 19 withholds were the SH gate — a₀₀ −15 965 TECU at its first epoch |
+| 3 `_simnet50_wsh_sbc` | `sbasis_complete` | 1 / 19 | gate PASSES and the **ionosphere is destroyed** — see below |
+| 4 `_simnet50_wsh_dgtol` | `rank_gate_tol: 1e-12` | **19 / 19** | emits, and the solve is healthy |
+| 5 `_simnet300_wsh_smoke` | **300 stations** (deg 15) | **0 / 20** | **station support is NOT the wall** — see the n-invariance below |
+| 6 `_simnet300_wsh_n50_carry` | `phase_datum_eq34` + `carry_invariant` | **0 / 19** | the carry cannot lift it COLD, and it cannot warm through a withhold — the withholding gate is the SH gate, not the rank gate (§12.8.2) |
+
+**The direction, named.**  Rung 1's dump (`network_estimability.csv`,
+`reduced_N_ss` 143×143, `declared_dim` 1, λmax 1.0283e+05, cutoff 1.0283e-04) shows
+exactly two directions below the cutoff:
+
+| ev | composition | reading |
+|---|---|---|
+| 6.94e-12 | `CLK\|G08…` uniform 0.1768 = 1/√32 | the declared clock gauge ✓ |
+| **9.78e-06** | `PB\|*\|L2W` uniform ≈ 0.258 | **the L2W satellite phase-bias common mode** — stable to four digits across every epoch |
+| 2.48e-02 | `PB\|G13\|L2W` + `PB\|G13\|L1C` | the weakest REAL layer |
+| 2.30e-01 | `SH\|1\|0\|C`, `SH\|0\|0\|C`, … | the SH block, healthy |
+
+With float ambiguities a satellite-common L2W phase bias is absorbable by the L2W
+ambiguities, so this is a **gauge the declared dimension (= #constellations = 1)
+does not count**, sitting 5.9 decades above the numerical gauge and 3.4 below the
+weakest real layer.  The standing record already predicted this direction in words
+— *"'dual'/'single' leaves the secondary-band (L2W/L5Q) phase-bias common mode
+under-determined at low station count"* — and this is it, isolated and quantified.
+
+**★ It is n-INVARIANT, and that is the finding that reframes the whole brief.**
+The 300-station arm (rung 5) reproduces the identical spectrum:
+
+| | n = 50 | n = 300 | ratio |
+|---|---|---|---|
+| λmax | 1.0283e+05 | 9.1255e+04 | 0.89 |
+| clock gauge | 6.94e-12 | −3.44e-10 | (numerical zero) |
+| **the extra direction** | **9.78e-06** | **8.97e-06** | **0.92** |
+| weakest real layer | 2.48e-02 | 1.69e-02 | 0.68 |
+
+**Six times the stations added no information to that direction.**  Every real
+layer scales with the data; this one does not — which is what distinguishes a
+structural gauge from a weakly-determined parameter, and it confirms the mechanism
+directly: more stations bring more *ambiguities* as well as more data, so the
+absorbability is untouched.  The last clause of the record's own wording — *"at low
+station count"* — is therefore wrong: it is not about station count at all.
+
+Rung 6 closes the remaining cheap hypothesis.  `carry_invariant` (the DD-chord time
+link, which is the one mechanism that could stop the ambiguities from absorbing the
+bias) is **refused by the loader without `phase_datum_eq34`** — the cycle basis is
+defined only on the eq34 chain datum — so the pair is the correct test, and the
+pair still emits nothing on a cold start.  It also cannot bootstrap: the carry needs
+emitted epochs to warm, and the gate withholds them.  That is the
+degrade-during-withhold deadlock shape this project has already met once.
+
+**Rung 3 is the most important rung, and it is a WARNING.**  `sbasis_complete`
+constrains the extra direction along its own eigenvector *at the carried level*; at
+epoch 2 that carried level is cold, and the tension went straight into the field:
+**a₀₀ = −6292 TECU, rms_all 3541 TECU**, whereupon the SH health gate withheld 18 of
+19 epochs.  The rank gate was satisfied and the answer was garbage — the fixture's
+whole reason for existing, reproduced on a knob.  The datum-station slip at TOW
+302430 is not the cause: rung 4 sees the same slip (G09 at S26000SIM, 28
+ambiguities reseeded across 49 stations) and stays clean.  **Do not arm
+`sbasis_complete` on a cold start in this posture.**
+
+**Rung 4 is healthy, not merely emitting**: a₀₀ 31.55 → 31.59 TECU across the arc
+(σ 1.9 → 0.50), in band, per-degree rms stable; post-fit σ̂₀ **0.962 code** / 0.024
+phase (the phase pool is structurally ~0 with free ambiguities — that zero is
+expected and documented); consumer converging.  Its tolerance was placed from this
+config's OWN dump exactly as the BeiDou card's rule requires — cutoff 1.03e-07 is
+4.8 decades above the gauge depth and 2.0 below the weakest real layer — **never
+globally**, since `assertNullSpaceRank` throws in both directions.
+
+### 12.3 What the ladder does and does not settle
+
+- It settles that **50 stations are enough to run the W6+SH slice** on this fixture,
+  which makes the graded arm ~6× cheaper than §11's recommendation assumed — and
+  that scaling to 300 buys nothing for this problem, so §11 item 1's recommendation
+  should not be followed.
+- It does **not** settle *why the field emits at 303 with the default tolerance*,
+  but it narrows the candidates sharply, because station count, the phase datum and
+  the carry are now all eliminated on a cold start.  What remains, in order of
+  suspicion: (a) the field lineage runs `state_snapshot_carry` — it RESUMES with a
+  warm carry rather than cold-starting, so the deadlock rung 6 hits may simply never
+  be entered; (b) `cb_kaula_prior` (σ 3 m), a loose prior that the BeiDou card
+  measured LIFTING near-null directions, is armed in the field and absent here;
+  (c) real IGS observables carry channel diversity the two-signal sim does not.
+  Each is a one-knob rung on this fixture and costs ~90 s.
+- **A rung that emits is not a rung that is right.**  Rung 4 estimates a direction
+  that may be a genuine gauge; if so its emitted L2W phase-bias common mode will
+  wander with an honest large σ.  That is a graded question for the settled arm
+  (the P channel + `emit_phase_bias_sigma`), not something the emission count says.
+
+### 12.4 The §4.8 export gap is CLOSED (both halves)
+
+`network.trace_sat_bias_states` → `network_sat_bias_states.csv`
+(`week,tow,sat,signal,code_bias_m,sigma_m,s0,pinned`) and `network.trace_rx_states`
+→ `network_rx_states.csv` (`week,tow,station,kind,key,value_m,std_m`).  Both
+trace-only, default-OFF, **no product grammar change** — the B record still carries
+no σ, so no consumer fingerprint keyed on the header legend moves.
+
+The satellite trace reuses the URA/combined-σ covariance treatment verbatim (gauge
+nulling, datum-pin skip, positive-variance guard, σ̂₀ scaling) so a vf from it is
+comparable with a vf from the U record; a datum-pinned column is written with an
+EMPTY σ and `pinned=1` rather than its gauge-artefact variance.  The receiver trace
+follows the `network_zwd.csv` pattern (`reconstructStation` +
+`conditionalLocalVarianceDiag`).
+
+**Invariant #6, same-build A/B**: `_simnet50_wsh_tron` vs `_simnet50_wsh_troff`,
+one knob pair, 19 epochs — `products.txt` **byte-identical**
+(sha256 `7aaa21eb…` both), no files created when OFF.
+
+First measurements (rung-4 posture, 19 epochs — **ignition, not verdicts**): 64
+satellite rows/epoch with σ 0.52 m → 4.5 mm across the arc; the receiver DCB is one
+`GPS_DCB` state per station (not per code, so the comparable truth is the injected
+GF difference) with a conditional σ of **~32 m** against a ±0.5 m injected spread —
+i.e. the receiver DCB is almost pure gauge, which is precisely what Table-8 says.
+
+### 12.5 Pre-registered predictions for the settled arm
+
+Written before the graded run, per §6:
+
+1. **P1 — the exchange.** `simnet_exchange.py` predicts **−7.93 TECU per metre** of
+   fleet-mean receiver-DCB error (absorbing a positive receiver GF bias requires a
+   negative ionosphere; γ = 1.6469, 0.1624 m/TECU, obliquity 1.2).  If the wander is
+   the clock↔CB↔iono exchange the §9.9 campaign cornered, the settled
+   `rxdcb_common` and `a00_err` series correlate strongly NEGATIVE with a slope
+   within 2× of that.  A wrong sign or a null correlation says the wander enters
+   somewhere else and names the next arm.
+2. **P2 — the CB variance factor.** The field's cb vf ≈ 10 is either the estimator
+   or the data.  On truth, with the σ channel now existing, the settled B-record vf
+   answers it.  Prediction: **vf > 2** (optimistic σ), because every other channel
+   on this fixture is optimistic (C vf 455, ZWD 1.63 at n = 50 settled).
+3. **P3 — the level.** a₀₀ ran ~3.7 TECU BELOW the network-sampled truth mean in
+   rung 4's ignition window, the same direction as the field's standing DEFECT 2.
+   Prediction: the settled offset stays negative and shrinks — and it must be graded
+   time-matched against the truth field's own moving mean, never a single number.
+
+### 12.7 THE GRADED ARM — 466/480 epochs, and all three predictions resolved
+
+`_simnet300_wsh_n50_pin` — 50 stations (stride-6 of the 300-station W6 fixture),
+480 epochs = 4 h, `rank_gate_tol` 1e-12 placed from this arm's own dump, graded on
+the settled half (233 epochs).  **466 emitted, 14 skipped — all 14 by the A4 σ̂₀
+ceiling, ZERO by the observability gate.**  The SH field never left its band (the
+health gate is therefore untested here, and the run-end line says so).
+
+| channel | settled statistic |
+|---|---|
+| **B (satellite code bias)** | residual rms **1.144 m** (C1C 0.841, C2W 1.382), mean −0.004 m |
+| B datum realization | emitted per-channel mean **−3.6e-03 m** — the sum-to-zero datum is real |
+| **B variance factor** | **489 286** over 14 614 rows |
+| C (satellite clock) | residual rms 1.025 m, datum-free contrast 0.889 m, vf 5 684 (s0 = 2.075) |
+| P (phase bias) | SD frac L1C 0.266 cyc, L2W 0.318 cyc |
+| rx DCB contrast | rms 1.540 m (level −0.240 m = the absorbed Table-8 gauge) |
+| rx clock contrast | rms 1.928 m |
+| ZWD | residual rms 0.541 m, vf 2 301 |
+
+**P2 — ANSWERED, and not subtly.**  The emitted satellite code bias carries **1.14 m
+rms of true error** while its formal σ (median ~4.5 mm settled) claims millimetres:
+a variance factor of **~4.9e+05**, i.e. the σ is optimistic by ~700× *in σ*.  So the
+field's "cb vf ≈ 10" is nowhere near the estimator's actual calibration on truth —
+whatever the field census measures, it is not the code-bias channel's true error
+budget.  The formal-σ-collapses-while-true-error-grows pattern of §9.5 finding 2
+holds on the code-bias channel too, and harder.
+
+**P1 — the exchange is CONFIRMED, and my pre-registered SIGN was wrong.**
+Settled correlations (226 joint epochs):
+
+| pair | series | first difference |
+|---|---|---|
+| clk_common ↔ rxdcb_common | **−0.939** | −0.009 |
+| clk_common ↔ a00_err | **−0.848** | +0.149 |
+| rxdcb_common ↔ a00_err | **+0.853** | −0.467 |
+| cb_rms ↔ a00_err | **−0.832** | +0.010 |
+
+**The exchange lives entirely in the slow drift.**  Every level correlation is 0.83
+to 0.94; every first-difference correlation is ≈ 0.  The four channels do not share
+epoch-to-epoch noise — they share a wandering common direction, which is exactly the
+shape the field campaign inferred and could not watch.
+
+Coefficient: measured **+5.67 TECU per metre** of fleet-mean rx-DCB error
+(corr +0.853) against a **derived +7.93** — 0.72× the ideal-absorption value, i.e.
+most but not all of the receiver-DCB common error is being traded against the field
+(the ionosphere is also held by its own data and its Kaula prior).
+
+⚠️ The **sign** in §12.5's P1 was wrong, and the correction matters more than the
+number: it must be *derived from the model's own coefficients*, not argued.  The
+receiver DCB enters the two reference-band code rows with `mu1/dmu` and `mu2/dmu`
+(`StateInitializer::resolveReceiverBias`, mu1 = 1, mu2 = γ = 1.6469,
+dmu = −0.6469), so on P1 − P2 its signature is exactly **+1 · x_DCB** against the
+ionosphere's **(1 − γ) = −0.6469**, giving Δι = **+1.546** m of L1 per metre of DCB
+error — POSITIVE.  This is the **second** bias sign convention to bite in one
+session (the first: the absorbed IF lump in the C channel, measured at slope −1.08 /
+corr −0.78, opposite to §4.2's written `+`).  **Rule for this fixture: never assert
+a bias sign from a verbal argument — read the coefficient off the model, or measure
+the slope and say which you did.**
+
+**P3 — directionally confirmed.**  a₀₀ runs **−1.42 TECU** below the network-sampled
+truth mean on the settled window (σ 0.77), against −3.68 TECU in the 19-epoch
+ignition window: negative, and shrinking with settling, exactly as predicted.  It is
+graded against the truth field's own per-epoch coverage-weighted mean, never a
+single number — the trap §6 of the level card names.
+
+### 12.6 What is still owed
+
+- ~~The 300-station arm at DEFAULT tolerance~~ — run: 0/20, see rung 5.
+- ~~A ≥ 2 h settled graded run of rung 4's posture~~ — run: §12.7.
+- ~~The 15↔25 elevation-cutoff A/B WITH truth (§11 item 4)~~ — **run and graded,
+  §12.9**: the truth grade INVERTS the field verdict on this coherent fixture
+  (15° wins every clock-adjacent channel 1.3–4×; the cut FEEDS the exchange,
+  0.50× → 0.97× of ideal absorption).  The field's 25° adoption stands on field
+  evidence; its separability cost is now measured.
+- ~~**Why the FIELD emits at 303 with the default tolerance**~~ — **ANSWERED,
+  §12.8.3**: the eq34 chain lifts the near-null (audited complete); the sim's
+  non-reproduction is its phase−code alignment convention, not rank.
+  `cb_kaula_prior` falsified both alone and paired with eq34.
+- The `sbasis_complete` failure deserves its own note in the SBC card: a
+  cold-start engage can inject a carried level that no rank instrument sees.
+- The exchange decomposition should be re-run on a **datum-station A/B** (§9.8's
+  strongest lever): if the clock↔rx-DCB −0.94 is really the datum station's own
+  error propagating, moving the datum should move the whole signature.
+
+## §12.8 The CHAIN-PIN AUDIT — rungs 2/6 re-attributed, and the field's emission
+## explained (2026-08-12, HANDOFF_wsh_chain_slant T1/T2)
+
+The handoff's T1 asked: per (constellation, signal), do the eq34 chain pins the
+election declares actually reach the solve?  Three silent loss stages existed —
+`foldAmb`/`foldRpb` early-return without a trace (no state index / no live phase
+row), and a station whose local block `est.addStation` rejects is dropped WITH
+every folded pin it carried.  Standing invariant #4: an armed datum that places
+fewer pins than it thinks reads exactly like a working one.
+
+**Instrument (built, always-on under eq34, log-only).**  The election records
+per-group declared gauge dimension Σ(n_c + m_c) (`NetworkChainDatum.cpp`, the
+`dr_key` map); the produce phase tallies each fold outcome per station
+(`StationAssembly::pin_audit`, summed serially — thread-count independent); the
+post-consume comparison accumulates declared / folded / landed / miss-reason /
+station-loss counters (`NetworkRunContext::Eq34PinAudit`); `NetworkTeardown`
+prints one line per group.  Solve inputs untouched; products unaffected.
+
+### 12.8.1 The audit answer: the chain is COMPLETE — and the decision point flips
+
+`_simnet300_wsh_n50_pinaudit` (rung-2 posture + `station_pd_pin_aware`, default
+tolerance, 19 audited epochs):
+
+```
+G|L1C: COMPLETE all 19 epochs — declared 1558 (−0 bridged), folded 1558, landed 1558
+G|L2W: COMPLETE all 19 epochs — declared 1558 (−0 bridged), folded 1558, landed 1558
+```
+
+1558 = 19 × 82 = 19 × (50 stations + 32 satellites): every component's exact
+gauge dimension, zero fold refusals, zero pins lost to dropped stations, both
+signal groups, every epoch.  **The chain datum is not under-placed** — the
+handoff's "if complete, the near-null is elsewhere and the tolerance stays"
+branch is the one taken, with one large correction below.
+
+### 12.8.2 Rungs 2/6 were NEVER rank-gate withholds — §12.2's attribution corrected
+
+The audit rung's estimability dump shows the rank gate **PASSING** under eq34:
+`n_below = 1 = declared_dim` at the default cutoff.  The L2W common mode is
+**lifted 9.78e-06 → 1.67e-04** (~17×, from below the 1.19e-04 cutoff to above
+it) — the de Jonge / Odijk chain prescription works exactly as §2 of the
+handoff reads it.  The 0/19 emission is the **SH health gate**: a₀₀ −18 780
+TECU at the first epoch, −32 633 at the second.
+
+Re-reading rung 2's own record confirms the same signature was there all along:
+every epoch `sh_gate_withheld` (a₀₀ −15 965 TECU at its first epoch), and its
+run-end line says **"0 of those withheld by the observability gate"**.  So:
+
+- §12.2 rung 2 "the field's Eq-34 phase datum does not lift it — the datum is
+  not the lever" is **WRONG in mechanism**: the datum lifts the near-null; what
+  fails cold is the *level* the constrained family is realized at.
+- Rung 6's "the carry cannot lift it COLD" inherits the same correction: the
+  deadlock is real, but the withholding gate it cannot warm through is the SH
+  gate, not the rank gate.
+- Rung 3 (`sbasis_complete`, a₀₀ −6292) and rungs 2/6 are the **same failure
+  class**: constrain the under-determined family at a cold garbage level and
+  the tension discharges into the ionosphere.
+
+### 12.8.3 The discharge is a SIM-ONLY phase-alignment artifact — and it answers
+### "why does the field emit at 303"
+
+The sim draws integer ambiguities **N ∈ [100 000, 1 000 000) cycles,
+independently per (satellite, band, station)** (`src/sim/main.cpp` `ambN`,
+deliberately unguessable for the MW/NL exercise).  Phase−code lumps are
+therefore 19–250 km, and the eq34 cold pins drive tree-edge ambiguities to
+**absolute zero on both bands independently** — each doubly-pinned edge imposes
+a random geometry-free pseudo-iono of order (λ₁N₁ − λ₂N₂)/(μ₁−μ₂) ≈ tens of
+km.  The per-LOS iono states are the softest GF sink, the SH ties drag the
+field, a₀₀ lands at −19 000 TECU (≈ −3.1 km of L1 delay — the observed scale),
+and the SH gate withholds.  **Real receivers keep phase aligned to code within
+metres**, so the same pins cost the field metres of absorbable phase-bias warp:
+the field cold-starts this exact posture healthy.
+
+§12.3's three candidates, resolved:
+
+| candidate | verdict |
+|---|---|
+| (b) `cb_kaula_prior` σ 3 m, alone | **FALSIFIED** — `_simnet300_wsh_n50_kaula`: 0/19, rank-gate withheld.  A code-side prior does not lift the phase-side type-5 direction |
+| (b) with eq34 (the field's actual pair) | **FALSIFIED as the protection** — `_simnet300_wsh_n50_eq34kaula`: 0/19 `sh_gate_withheld`, a₀₀ −19k/−33k unchanged; pin audit again 1558/1558/1558 both groups |
+| (a) warm resume | **MOOT** — the field's 12 h arms emit **cold** (§9.10.1: 1440/1440), so warm resume cannot be the explanation; and arming a fingerprinted datum toggle against a foreign snapshot is illegal anyway |
+| (c) channel diversity | **NOT NEEDED** for the emission question (it IS the §13 third-band story, separately measured) |
+
+**The answer: the field emits at 303 because its eq34 chain lifts the L2W
+near-null above the default cutoff — the audited, complete chain doing exactly
+what Odijk's global-network caveat prescribes.  The sim could not reproduce it
+for a reason that has nothing to do with rank: the zero-target cold pins fight
+the sim's km-scale integer draws.**  Consistent with §13.3.1, where the third
+band removes the near-null structurally and the sim emits at default tolerance
+with no datum armed at all.
+
+### 12.8.4 Consequences
+
+- **The graded sim posture stays rung 4** (per-config `rank_gate_tol`, direction
+  FREE).  On this fixture the free-gauge posture is the healthy one; the eq34
+  posture is field-correct but sim-hostile at f = 2.
+- **Identified structural fix (not built): first-sighting pin-to-round.**
+  `eq34_round` pins re-sighted arcs to λ·round(carry/λ) but first sightings to
+  0, and cold there is no carry — while the carry cannot warm because the SH
+  gate withholds (the degrade-during-withhold shape again).  Extending the
+  round target to the CURRENT float at first sighting would make eq34
+  cold-startable on any receiver with large phase−code lumps, and is field-inert
+  for aligned receivers (round of a metre-scale lump ≈ the same small integer).
+  Default-OFF, byte-identity A/B, per invariant #6 — **SPEC'd as its own card,
+  `docs/SPEC_eq34_seed_round.md`** (knob `network.phase_datum_eq34_seed_round`;
+  covers the incumbent-without-carry RE-ZERO trap and the carry_invariant hole,
+  not just the first sighting).
+- The `sbasis_complete` SBC-card note owed in §12.6 now covers three knobs, not
+  one: any mechanism that hard-constrains this family cold (sbasis_complete,
+  eq34 zero-target pins, and by extension any future datum "completion") must
+  either seed its targets from the current state or be barred from cold starts
+  in this posture.
+
+## §12.9 The elevation-cutoff A/B WITH TRUTH — the field verdict INVERTS on a
+## coherent field (2026-08-12, HANDOFF_wsh_chain_slant T3)
+
+`_simnet300_wsh_n50_pin_el15` (15°) vs `_simnet300_wsh_n50_pin_el25b` (25°),
+480 epochs each, settled half graded, **same build** (`gnss_processor_wsh3.exe`,
+sha256 `cbaefe0a…`).  The 25° control re-run reproduces the stored §12.7 arm to
+four digits on every channel (C 1.0251/0.8891 vf 5683.6; B 1.1442 vf 489 286;
+ZWD 0.5413 vf 2301; P 0.2662/0.3178) — which simultaneously certifies the A/B
+as single-knob AND that the §12.8 audit instrumentation plus the day's
+concurrent tree edits are producer-inert on this posture (invariant #6
+discharged by measurement, not inspection).
+
+| settled channel | **15°** | 25° | 25/15 |
+|---|---|---|---|
+| emitted | 468 (12 A4) | 466 (14 A4) | parity (P-A/B-1 ✓) |
+| C residual rms | **0.4908 m** | 1.0251 m | **2.09×** |
+| C datum-free contrast rms | **0.5198 m** | 0.8891 m | 1.71× |
+| C vf | 1 267 | 5 684 | 4.5× |
+| B residual rms / vf | 1.1311 m / 503 478 | 1.1442 m / 489 286 | ≈ flat (P-A/B-3 ✓) |
+| P frac L1C / L2W | 0.268 / 0.272 cyc | 0.266 / 0.318 cyc | L2W +17 % at 25° |
+| rx clock contrast rms | **1.5023 m** | 1.9277 m | 1.28× |
+| rx DCB contrast rms | 1.5052 m | 1.5403 m | ≈ flat |
+| ZWD rms / vf | 0.4750 m / 1 653 | 0.5413 m / 2 301 | 1.14× |
+| consumer 3D rms | 0.7463 m | 0.8372 m | 1.12× |
+| **clk_common wander std** | **0.0598 m** | 0.2478 m | **4.1×** |
+| a₀₀ error (mean ± std, TECU) | −0.12 ± 0.52 | −1.57 ± 1.03 | 3× |
+| exchange coefficient (of +7.93 ideal) | +3.96 (**0.50×**) | +7.69 (**0.97×**) | — |
+| clk↔rxdcb / rxdcb↔a₀₀ corr | −0.848 / +0.667 | −0.939 / +0.859 | tighter at 25° |
+
+**P-A/B-2 is FALSIFIED in the pre-registered direction — the truth grade
+INVERTS the field verdict.**  On this fixture the 15° arm is better on every
+clock-adjacent channel, and the exchange numbers say why mechanically: the
+low-elevation rays carry the OBLIQUITY DIVERSITY that separates clock ↔
+receiver-DCB ↔ ionosphere.  Cut them and the family collapses onto the
+ideal-absorption manifold — the measured exchange coefficient rises from 0.50×
+to 0.97× of the derived ideal, the level correlations tighten toward ±0.9, the
+common-mode wander quadruples, and the absorbed error surfaces as 2× clock
+truth error.  **The cutoff does not suppress the exchange; it FEEDS it.**
+
+**Reconciliation with the field A/B (§9.10.1: 25° trims wander 12 %).**  No
+contradiction — the two arms measure the two sides of one trade.  The synthetic
+field is COHERENT BY CONSTRUCTION (the injected iono maps through the same
+single-layer geometry the estimator assumes), so its low-elevation rows carry
+information and zero pathology: the cut is pure separability loss, price
+measured here.  The field's low-elevation rows additionally carry the REAL §9.10
+low–high incoherence, and removing that contamination nets −12 % wander
+*despite* paying the same separability tax.  This also explains why the field
+trim was so small ("~84 % of the variance survives"): the cut is partially
+self-defeating, weakening the very containment that bounds the exchange.  The
+FT63 adoption of 25° stands on the field evidence — but its cost now has a
+number, and any future "raise the cutoff further" proposal must count BOTH
+sides (30° would likely lose in the field too).
+
+**Script-version note.**  §12.7's exchange coefficient "+5.67 (0.72×)" is
+superseded ON THE SAME PRODUCTS by the current `simnet_exchange.py`: +7.69
+(0.97×), correlations essentially unchanged (−0.939/−0.841/+0.859/−0.847).
+The A/B above is internally consistent (one script version for both arms);
+quote 0.97×, not 0.72×, as the 25° settled exchange ratio.
+
+## §13 The THIRD BAND, and the slant-ionosphere posture (2026-08-12)
+
+Odijk et al. 2016 (J Geod 90:15-44) §5.1, p. 29, on the model with free SLANT
+ionospheric delays:
+
+> "the receiver and satellite code biases are **not estimable anymore for the first
+> two frequencies**… code biases are only estimable for a (modernized) triple- or
+> higher-frequency constellation… the geometry-free receiver/satellite code biases
+> become lumped to the ionospheric slant delay."
+
+Under the **vertical** single-layer model instead (their §3.2), only the
+iono-free biases are constrained (Table 2, rd 2a/3a), so the geometry-free part
+survives as one estimable parameter shared by frequencies 1 and 2 — the DCB
+(Eq. 29–32, `d̃^s_2(1) = (μ2/μ1)·d̃^s_1(1)`).  **That is the posture we run**, with
+the single-layer tie imposed *softly* (SH rows + `representation_sigma_tecu`), which
+is why the dual-frequency code bias is estimable here at all — and why its
+information is a model assumption rather than the data.  §12.7's **cb vf ≈ 4.9e+05**
+is the price of that, measured.
+
+### 13.1 What was built (sim side, done)
+
+`SimConfig::Signals` — `signals.gps_l5`, `signals.galileo_e5b`,
+`signals.synth_osb_amp_m`.  Both bands **opt-in**: noise/multipath/slip draws are
+taken per band inside the satellite loop, so appending one shifts the whole stream —
+default-off keeps every existing fixture byte-identical, and arming it is a new
+lineage by construction.  Verified: a two-band regeneration is byte-identical on
+the RINEX and on `truth_atmo.csv`; `truth_bias.csv` gains three provenance columns
+(`product_m,synth_m,source`) with the first four columns unchanged row-for-row.
+
+**The synthetic OSB is not optional for this experiment.**  The shipped
+`COD0MGXFIN` OSB product carries **no GPS band-5 rows at all** — its GPS inventory
+is L1C/L1W/L1L/L1X, L2W/L2S/L2L/L2X, C1C/C1W/C1L/C1X, C2W/C2S/C2L/C2X (verified by
+inventory).  A third band synthesized from the product alone would carry an
+identically-zero code bias, and no grader could separate "estimated it correctly"
+from "the channel is zero".  `synth_osb_amp_m` injects a deterministic per-PRN delta
+(no RNG) recorded in the truth file with its provenance.
+
+Fixture: `config/sim/simnet60_tri.json` → `runs/simnet60_tri` (60 solve + 1
+consumer, 480 epochs, GPS triple, `synth_osb_amp_m` C5Q 0.60 m / L5Q 0.02 m).  The
+roster now also injects a **C5Q receiver bias** (inert on two-band fixtures, since
+the sim only applies a bias to a code it emits).
+
+### 13.2 The slant posture is NOT reachable in the producer today — two changes
+
+| piece | state |
+|---|---|
+| loader path | **blocked**: `estimate_sat_code_bias` with neither SH nor GIM hard-errors (`ApplicationNetworkSetup.cpp:414-437`); `estimate_iono_sh` force-arms the SH field (`GnssConfigLoadNetwork.cpp:2060-2066`) |
+| satellite GF datum | **missing**: `buildCodeBiasDatumRows` (`NetworkSbasis.cpp:415`) builds (1) a per-satellite **IF** pin and (2) per-(constellation, signal) sum-to-zero.  There is no **GF** pin |
+| receiver GF datum | **already exists**: the receiver DCB is one `GPS_DCB` state per station whose GF signature is exactly `+1·x_DCB` (`StateInitializer::resolveReceiverBias`, μ1/dμ and μ2/dμ), so `network.rx_code_bias_datum` (sum-to-zero over those states) IS Odijk's receiver-side constraint |
+
+Rank accounting to satisfy (Odijk §5.1 + Table 7).  Dropping the iono constraint
+opens two additional deficiency types:
+
+- **2b** — receiver hardware biases ↔ slant iono, size **n − 1**; removed by
+  constraining the geometry-free RECEIVER code biases (`d_r,GF(1)`; CC-R needs
+  n − 1, CC-S needs n).
+- **3b** — satellite hardware biases ↔ slant iono, size **m**; removed by
+  constraining the geometry-free SATELLITE code biases (`d^s_GF(1)`; CC-R needs m,
+  CC-S needs m − 1).
+
+So the work is: a loader path allowing the combination **gated on f ≥ 3** (below
+that Odijk says there is nothing to estimate, and the current hard error is
+*correct*), plus GF datum rows on the satellite side with the same shape as the
+existing IF pin — `μ_GF = (−1, 1, 0, …)/(μ2 − μ1)` (their Eq. 30) instead of
+`μ_IF`.  Both must be default-OFF with a byte-identity A/B.
+
+**State the product consequence rather than discovering it later.**  Under Table 8
+the emitted quantities change meaning: `ι̃^s_r = ι^s_r + d_r,GF − d^s_GF`, i.e. the
+geometry-free biases move INTO the ionosphere, and the B record then carries only
+modernized-DCB content (`d^s_1 − d^s_j`, j ≥ 3).  A consumer must apply the network's
+ionosphere and its code biases **as a pair**; applying one without the other
+double-counts the GF lump.  That is a product-contract change, not a tuning knob.
+
+### 13.3 What can be measured before that work
+
+The triple-frequency fixture is useful immediately, with no producer change, for the
+question Fable's chain-datum task is chasing: **does the `PB|*|L2W` gauge survive
+when a third band exists?**  Run the existing W6+SH posture (§12) on
+`runs/simnet60_tri` and read `network_estimability.csv`.  Three outcomes, all
+informative:
+
+1. the near-null disappears ⇒ it was a two-band artefact of the phase datum, and the
+   chain audit has its answer;
+2. it persists on L2W only ⇒ it is per-band and the datum pins one band and not the
+   other — the sharpest possible statement of the pinning defect;
+3. it appears on L5Q too (two near-nulls) ⇒ it is "one per non-reference band", which
+   is exactly Odijk's type-5 (size f·m) arithmetic and says the pin count scales with
+   f, not that a band is special.
+
+### 13.3.1 MEASURED — the third band closes the observability wall (outcome 1)
+
+`_simnet60_tri_wsh` (60 stations, W6+SH, SH degree 4, **default** `rank_gate_tol`,
+20 epochs): **20/20 epochs emitted, 0 withheld.**  The two-band posture could not
+emit a single epoch without a hand-placed `rank_gate_tol: 1e-12` (§12.2); the
+three-band posture runs on the shipped default.
+
+The spectrum says why — `n_below` = **1** = `declared_dim`:
+
+| | dual (n = 50 and n = 300) | **triple (n = 60)** |
+|---|---|---|
+| directions below cutoff | **2** | **1** |
+| clock gauge | 6.9e-12 / −3.4e-10 | −1.3e-10 |
+| `PB\|*\|L2W` common mode | **9.78e-06 / 8.97e-06** | **gone** |
+| weakest real direction | 2.48e-02 | 1.13e-02 (`PB\|G30\|L5Q+L2W+L1C`, per-satellite) |
+
+The satellite-common secondary-band phase-bias gauge **does not exist at three
+frequencies**.  The arithmetic is the ordinary one: each extra band adds 2·n·m
+observations against n·m new ambiguities plus ~2m + 2n new biases, so at network
+scale a third band is net-informative, and the surplus lands on exactly the
+bias/ambiguity family (Odijk types 4/5) that the two-band datum could not pin.
+
+Health: post-fit σ̂₀ **1.064 code**, a₀₀ 35.7 → 41.6 TECU in band, SH gate never
+engaged.  B records now carry **C5Q** (640 rows each for C1C/C2W/C5Q over 20
+epochs), and the third-band bias grades against its injected synthetic truth:
+
+| channel | ignition residual (20 ep) |
+|---|---|
+| C1C | 0.274 m rms |
+| C2W | 0.451 m rms |
+| **C5Q** | **0.450 m rms** (injected amplitude 0.60 m) |
+| datum check | emitted per-channel mean **+1.1e-05 m** |
+| vf | 1 998 |
+
+⚠️ **That vf is NOT comparable to §12.7's 4.9e+05.**  Different station count,
+different SH degree, and — decisively — 20 ignition epochs versus 233 settled ones.
+The direction is encouraging and the matched comparison is owed: same n, same
+degree, ≥ 2 h settled, dual vs triple, one knob.
+
+### 13.3.2 BUILT AND MEASURED — the slant posture runs, and its code bias is CALIBRATED
+
+Built 2026-08-12 (`gnss_processor_slant.exe`, sha256 `33052874…`):
+
+- **`network.code_bias_gf_datum`** — the per-satellite geometry-free pin,
+  `(d_2 − d_1)/(μ2 − μ1) = 0` on the IF-pinned pair (`NetworkSbasis.cpp`, folded at
+  `kCodeBiasGaugeWeight` beside the IF pin).  Counters `n_gf_pin_sats` and
+  `n_gf_only_pair` (satellites with no third band, whose code bias is then fully
+  datum-fixed) ride the existing `Network[W6-cb]` line.
+- **The loader gate**: the W6 chain now force-enables `ionosphere_weighting` only
+  when the GF datum is OFF, so `estimate_sat_code_bias` + no SH + no GIM is
+  reachable; `ApplicationNetworkSetup` gained the matching branch that loads no GIM
+  and says so.  Interlocks, all hard errors: GF datum without `estimate_sat_code_bias`
+  (nothing to gauge); GF datum with `estimate_iono_sh` **or** `ionosphere_weighting`
+  (rd 3b only exists when the ionosphere is unconstrained, and under a single-layer
+  constraint the GF bias IS the estimable DCB — pinning it deletes the product);
+  GF datum with `frequency_mode: dual` (IF + GF fix both pinned channels, so every
+  emitted B record would be the datum itself).
+
+**Arm `_simnet60_tri_slant`** (60 stations, triple, free slant iono, no SH/GIM,
+default rank-gate tolerance, 20 epochs): **20/20 emitted, 0 withheld**,
+`declared_dim` 1 = `n_below` 1, post-fit σ̂₀ **1.073 code**.  Gauge rows folded:
+32 IF + 32 GF + 3 sum-to-zero, `n_gf_only_pair` = 0.
+
+The structural prediction holds to the millimetre — the pinned pair is datum-fixed
+and the third band carries everything:
+
+| channel | emitted rms | residual vs transformed truth |
+|---|---|---|
+| C1C | 0.0022 m | **0.0022 m** |
+| C2W | 0.0032 m | **0.0032 m** |
+| **C5Q** | 3.889 m | **0.0760 m** |
+| **variance factor** | | **1.886** ⚠️ IGNITION ONLY — see §13.5 |
+
+⚠️ **SUPERSEDED BY §13.5 — the settled matched matrix says 8 756, not 1.9.**  The
+paragraph below was written from a 20-epoch probe and read the ignition transient as
+calibration.  What survives: the STRUCTURAL result (pinned pair datum-fixed, all
+content on the third band, gate clean at default tolerance).  What does not: the
+"calibrated" verdict.
+
+**That was read as the §13.4 prediction confirmed by five and a half orders of magnitude.**
+The same producer's code-bias channel graded **vf ≈ 4.9e+05** in the dual-frequency
+single-layer posture (§12.7) and **vf ≈ 1.9** here.  The field's catastrophic
+code-bias calibration is therefore a property of the *two-frequency single-layer
+posture*, not an estimator defect: at f = 2 the bias is determined by the SH tie (a
+model assumption), at f = 3 under Odijk's slant datum it is determined by data.
+
+⚠️ **Caveats, stated because the numbers are dramatic.**  20 ignition epochs against
+the dual arm's 233 settled ones; 60 stations vs 50; entirely different iono
+posture.  The gap is far too large for ignition to explain, but the matched settled
+comparison is still owed before this is quoted as a ratio.
+
+⚠️ **The grader needs `--gf-datum` (auto-detected from the console).**  Under the
+slant datum the truth projection removes a SECOND direction:
+
+    t̃_j = t_j − (μ_IF·t) − μ_j·(μ_GF·t)
+
+derived from the paper's own orthogonality properties (μ_IF·e = 1, μ_IF·μ = 0,
+Eq. 26; μ_GF·e = 0, μ_GF·μ = 1, Eq. 31), which is why it forces t̃ = 0 on both pinned
+channels rather than being told to.  Grading this arm with the single-layer
+transform reports **2.3 m / 3.7 m phantom residuals** on two channels that are
+datum-fixed to zero — which is exactly what happened on the first attempt, because
+the loader had no "armed" log line for the auto-detect to find.  That silent-arming
+gap is fixed (invariant #4), and it is a reminder that a datum change is also a
+GRADER change.
+
+### 13.5 THE MATCHED MATRIX — settled, and it corrects §13.3.2
+
+One fixture (`runs/simnet60_tri`), same 60 stations, same seeds, 480 epochs = 4 h,
+graded on the settled half.  `rank_gate_tol` and `rx_code_bias_datum` matched across
+all three arms so each adjacent pair is ONE knob.  Dual+slant is structurally
+illegal, so frequency and posture separate in two steps, not one.
+
+| | **A** dual + SH | **B** triple + SH | **C** triple + slant + GF |
+|---|---|---|---|
+| epochs emitted | 456/480 | 476/480 | 474/480 |
+| σ̂₀ scale s0 | 1.160 | 1.909 | 1.997 |
+| **cb residual rms** | 1.131 m | 0.962 m | **0.568 m** |
+| — pinned pair | C1C 0.832 / C2W 1.366 | C1C 0.821 / C2W 1.342 | **C1C 0.014 / C2W 0.023** |
+| — third band | — | C5Q 0.548 | C5Q 0.983 |
+| cb vf (published) | 400 776 | 156 743 | 8 756 |
+| **cb vf (s0-corrected)** | **541 000** | **570 600** | **34 900** |
+| clock residual / contrast | 0.592 / 0.773 m | 1.211 / 1.721 m | 1.119 / 1.590 m |
+| clock vf (s0-corrected) | 5 010 | 55 970 | 47 000 |
+| ZWD residual / vf | 0.549 m / 2 843 | 0.873 m / 11 828 | 0.872 m / 11 661 |
+| **consumer 3D rms** | 1.126 m | **0.290 m** | 0.514 m |
+
+**⚠️ CORRECTION to §13.3.2: "vf 1.886 → CALIBRATED" was an IGNITION ARTIFACT.**
+The same posture graded settled gives **8 756** published / **34 900** s0-corrected.
+The 20-epoch probe measured a converging formal σ against a not-yet-grown true
+error — which is precisely the §9.5 finding-2 signature this fixture exists to
+expose ("the formal σ collapses while the true error grows"), reproduced on a new
+channel by the very arm that was supposed to demonstrate the cure.  The caveat
+attached to that number was the right one and it fired.
+
+**P1 — the discriminator answers POSTURE, not frequency.**  On the s0-corrected
+scale (vf is deflated by s0², and s0 differs 1.16 → 2.00 across arms, so the raw
+numbers are NOT poolable — the grader says so and it matters here):
+A 541 000 ≈ B 570 600 ≫ C 34 900.  **The third frequency alone buys nothing for
+code-bias calibration; the slant datum buys ~16×.**  And 34 900 is still σ
+optimistic by ~190× *in σ* — the slant posture improves the channel by more than an
+order of magnitude and does **not** make it calibrated.
+
+**P2 — CONFIRMED, and it retires a standing objection.**  The recorded 2026-08-04
+result (slant 2.2× WORSE, consumer 4.955 → 10.696 m) was dual-frequency and 30
+epochs.  It does **not** reproduce here: the third frequency improves the consumer
+**3.9×** (1.126 → 0.290 m), and the slant posture gives 1.8× of that back while
+still landing **2.2× better than the field's own dual+SH posture**.  Slant does not
+cost position once the code biases have a third band to live in.
+
+**P3 — and the surprise.**  The clock and ZWD channels go the OTHER way: A → B
+degrades the clock contrast 0.773 → 1.721 m (2.2×) and ZWD 0.549 → 0.873 m, and the
+posture does not recover either.  So the third band helps the code bias and the
+consumer while hurting the clock and troposphere.  Hypotheses, untested: the extra
+band adds 32 satellite phase biases and n·m ambiguities against float ambiguities
+with no AR; and the synthetic L5 carries the same code σ as L1/L2, so it may be
+adding nuisance parameters faster than geometry-side information.  The next arm is a
+noise-realism sweep on the third band, not another posture.
+
+### 13.4 Pre-registered, for when the posture runs
+
+- **The code-bias vf should come DOWN by orders of magnitude.**  At f = 2 the
+  channel's information is the soft single-layer tie (hence vf ≈ 4.9e+05); at f = 3
+  under slant the modernized DCB is determined by *data*.  If it does not, the
+  problem was never the ionosphere model.
+- **The exchange coefficient should collapse.**  §12.7 measured +5.67 TECU per metre
+  of fleet-mean rx-DCB error (0.72× ideal absorption).  With the GF explicitly
+  pinned and lumped into the iono, that trade is closed by construction — the
+  remaining clock↔iono correlation is then whatever is left after removing it, which
+  is the actual quantity the field campaign wants.
+- **The ionosphere should get BETTER and the position should get WORSE.**  Recorded
+  measurement (2026-08-04, 63 sta, 30 ep, ignition-only): dropping SH+W6 for pure
+  slant ran 2.42× faster but the consumer went 4.955 → 10.696 m.  A ≥ 2 h
+  triple-frequency arm is the first honest test of whether that regression survives
+  when the third band gives the code biases somewhere to live.
+
+### 13.6 THE AMBIGUITY-INTEGER GRADE — the first absolute integer test, and the
+### lane ladder measured (2026-08-12, HANDOFF_slant_triple_next §3)
+
+`_simnet60_tri_slant_1h_ddint` — posture C + `trace_dd_fractional` (stride 1,
+max_pairs 2000; note the real knob is `trace_dd_fractional_epoch_stride`), 120
+epochs = 1 h, `gnss_processor_matrix.exe` (DA2F9AC0), 116 emitted (0
+observability, 4 A4).  Grader: `scripts/simnet_amb_integer.py` (new; `--selftest`
+covers the slip-accumulation join and the lane matching).  The graded quantity is
+**e = dd_cyc − DD_true in FULL cycles** against the fixture's known integers —
+truth differenced in Python ints (N is km-scale by construction), the trace's own
+`frac_cyc` used as a per-row join check (229 961 rows, **0 dropped**).
+
+Integer-structure questions are decided per-row and are 1-h-LEGAL (handoff §2);
+the per-band absolute magnitudes below shrink with settling (last-quarter columns)
+and must not be quoted as settled levels.
+
+| channel | n | med(e) | med\|e\| | p90\|e\| | ≤0.10 cyc | ≤0.25 cyc | **round(e)=0** |
+|---|---|---|---|---|---|---|---|
+| L1C (per-band) | 76 485 | +0.055 | 4.956 | 20.39 | 1.9 % | 4.4 % | **8.3 %** |
+| L2W (per-band) | 76 911 | +0.072 | 5.034 | 20.35 | 1.5 % | 3.3 % | **8.3 %** |
+| L5Q (per-band) | 76 565 | +0.092 | 5.076 | 20.40 | 1.6 % | 3.6 % | **8.1 %** |
+| **WL(1,2)** | 64 642 | +0.027 | **0.386** | 1.22 | 15.6 % | 34.9 % | **60.2 %** |
+| **EWL(2,5)** | 64 690 | −0.001 | **0.081** | 0.27 | 57.7 % | 88.2 % | **98.2 %** |
+
+**The pre-registered "honest expected shape" is confirmed exactly: EWL
+near-integer, WL plausible, NL not — and now with absolute numbers.**
+
+1. **The EWL is at its own TRUE integer 98.2 % of the time** (med|e| 0.081 cyc).
+   Not "near an integer" — near the *right* integer, verified against truth.  The
+   lane cascade's first rung exists on this fixture.
+2. **The field's fractional instrument was hiding the error scale.**  The raw
+   per-band DDs are not "0.25 cyc off" — they are **~5 cycles off with a
+   ±20-cycle p90 tail**, and only ~8 % sit at their true integer.  med|frac| 0.25
+   uniform was the "off by 47.3" class, not the "off by 0.3" class.  This is the
+   distinction §3.2 of the handoff names, measured for the first time.
+3. **The WL:EWL ratio is pure DD-iono arithmetic**: measured med|e| ratio 4.8×
+   vs 5.1× predicted from the iono coefficients (WL 1.49 vs EWL 0.29 cyc per
+   metre of L1 DD-iono).  The two lanes share one driver and it is the
+   ionosphere, quantitatively.
+4. **The per-band bands carry an EXTRA error component that is equal-in-cycles
+   across bands** — per-band:WL measured 12.8× vs 3.5× iono-predicted, and all
+   three bands sit at the same ~5.0 cyc med|e| — i.e. it cancels EXACTLY in
+   every between-band difference.  Leading candidate (open, not asserted):
+   residual carrier **phase-windup** content — identical in cycles on every
+   band, non-cancelling in global-baseline DDs, and capable of full-turn integer
+   wraps, which would also explain the low per-band round(e)=0 share.  The
+   discriminator would regress e against the modeled windup DD; owed.
+
+Sweep items (handoff §4, 1-h-legal parts): datum inventory 67 = 32 IF + 3 STZ +
+32 GF with `n_gf_only_pair` 0; `declared_dim = n_below = 1`; `cbpin=` on the S
+line; the pinned pair datum-fixed to millimetres on truth (**C1C 0.0023 m, C2W
+0.0032 m rms** — the "holds to the millimetre" claim, now attributed: it is the
+DATUM channels that are exact; C5Q, the information-carrying modernized-DCB
+channel, is 0.086 m at 1 h and still converging).  Consumer at 1 h: 3D rms
+2.64 m, **almost entirely +UP (mean +2.59 m)** — the classic slant-iono
+ignition signature (per-LOS iono converging from prior pushes UP); §13.5's
+settled 0.514 m says it decays; report-only here.  The exchange was NOT run at
+1 h (its coefficient is barred by the 1-h rule; its home is the settled arm,
+where §13.4's collapse prediction lives).
+
+**What this changes upstream:** the standing "MW/WL as conditioning — do NOT
+arm; net-harmful" verdict was measured at dual frequency, where GPS has no EWL
+band.  §13.6 does not overturn it — it bounds it: at f = 3 the EWL DDs are
+already 98 % correct-integer as FLOATS, so an EWL-first fixing cascade has a
+real substrate on this fixture.  Whether ARMING the lane machinery helps the
+solve remains a separate, unanswered question (and the eq34+carry trio the
+handoff §3.3 names is BLOCKED on this sim until seed-round exists — the
+zero-target cold pins would inject the §12.8 km-scale artifact into a posture
+with no SH gate to catch it; `docs/SPEC_eq34_seed_round.md`).
+
+### 13.7 THE SETTLED TRIO ARM — unblocked, and it DIVERGES (2026-08-12)
+
+Same-build (sr.exe 6B1EF5D6) 480-epoch A/B, settled half: `_simnet60_tri_slant_480_ddint`
+(float, 474/480) vs `_simnet60_tri_slant_trio_480` (eq34+carry_invariant+ewl+seed_round,
+**480/480 — the seed-round card holds; no withhold, max |y| in bound**).
+
+| settled half | float | trio |
+|---|---|---|
+| per-band med\|e\| | 8.0–9.4 cyc | **~1 720 cyc (p90 ~7 350)** |
+| EWL at true integer | **74.7 %** (0.256 cyc) | 5.0 % |
+| WL at true integer | 26.2 % | 0.7 % |
+
+**The trio arm has a SLOW RUNAWAY the 20-epoch smoke could not see** (smoke EWL
+94 %; settling degrades monotonically — full-window trio EWL 32 % → settled 5 %).
+Attribution so far: the **WL-2 lane is exonerated** — its run line reads "0 rows
+decided, rows NOT folded into the solve" (statistic-only over 226 421 cycles).
+The runaway therefore lives in eq34 + carry_invariant + the every-epoch seed
+re-round: 130 290 re-rounds (271/epoch — under carry_invariant no carry ever
+exists, so every pin re-rounds every epoch), 591 (sat,σ) re-references, 0
+carries shifted/erased — the invariant DD carry refolding across a stepping pin
+frame, invariant #1/#7's ratchet shape.  **Do NOT arm the trio posture for
+settled work** pending a mechanism card; the FLOAT posture stays the graded
+track.  Two float-side notes: the lanes DEGRADE with settling (1 h EWL 96 % →
+settled 74.7 % — the §13.6 1 h numbers were the optimistic window), and the
+field's frac-only instrument would read this runaway as a NORMAL uniform
+fractional distribution — only the truth grade can see it.
 
 ## §10 Verification status
 

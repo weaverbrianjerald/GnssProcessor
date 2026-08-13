@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "THE GRADED W6+SH ARM \u2014 50 stations (stride-6 subset of the 300-station W6 fixture),",
+    "480 epochs = 4 h @ 30 s, DOY 2024-129, quiet.  This is the first synthetic arm ever",
+    "run in the field's wander-bearing posture with the injected satellite OSB as the",
+    "B-record truth.",
+    "",
+    "ONE knob differs from _simnet300_wsh_n50: network.rank_gate_tol.  Placement follows",
+    "the BeiDou card's per-config rule, read off THIS arm's own network_estimability.csv",
+    "(runs/simnet300_wsh_n50_smoke, epoch 1):",
+    "    lambda_max            9.5627e+04    -> default cutoff 9.56e-05",
+    "    clock gauge depth     7.71e-12",
+    "    extra near-null       1.1898e-05    (PB|*|L2W common mode, n-INVARIANT)",
+    "    weakest real layer    2.8119e-02",
+    "  tol 1e-12 puts the cutoff at 9.56e-08: 4.1 decades ABOVE the gauge depth (so the",
+    "  clock gauge still counts as a gauge and the exact-equality assertion still holds in",
+    "  the over-specified direction) and 2.1 decades BELOW the extra direction (so it",
+    "  counts as real).  Never set this globally \u2014 assertNullSpaceRank throws in BOTH",
+    "  directions, so a value below a healthy config's gauge depth withholds that config.",
+    "",
+    "WHY NOT the alternatives, all measured (SPEC \u00a712.2):",
+    "  * more stations       -- the direction is n-INVARIANT (9.78e-06 at n=50, 8.97e-06",
+    "                           at n=300); 6x the stations added no information to it.",
+    "  * phase_datum_eq34    -- alone: still zero epochs.",
+    "  * eq34 + carry_invariant -- still zero epochs COLD, and it cannot warm through a",
+    "                           withhold (the carry needs emitted epochs to exist).",
+    "  * sbasis_complete     -- the gate passes and the IONOSPHERE IS DESTROYED (a00",
+    "                           -6292 TECU at epoch 2, SH health gate withholds 18/19).",
+    "",
+    "GRADE ON (pre-registered, SPEC \u00a712.5): the B-record variance factor from",
+    "network_sat_bias_states.csv (prediction vf > 2); the exchange coefficient from",
+    "scripts/simnet_exchange.py (prediction -7.93 TECU per metre of fleet-mean rx-DCB",
+    "error, strongly anti-correlated); and the a00 level offset against the truth field's",
+    "OWN moving mean (prediction: negative and shrinking).  Settled window only -- the",
+    "level channel needs ~2 h, which is why the fixture is 4 h long."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50.json"
+  ],
+  "network": {
+    "rank_gate_tol": 1e-12,
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_graded/products.txt"
+  }
+}

@@ -3005,6 +3005,36 @@ namespace GnssProcessor {
         bool networkPhaseDatumEq34SeedRound() const { return network_phase_datum_eq34_seed_round_; }
 
         /**
+         * @brief Card 3 SEED-ROUND INC-2 — FRAME-CONTINUOUS RE-HOST
+         *        (docs/SPEC_eq34_seed_round.md §8.5): when a spanning-tree pin moves to
+         *        a NEW host station and no phase-leveling carry exists there, compute
+         *        the frame step from the host's OWN ambiguity state (the exact pre-pin
+         *        float) and S-transform the carried quantities into the new frame,
+         *        instead of declaring the step unknown and re-referencing the (sat,σ).
+         *
+         * INC-1 froze the target of a pin that STAYS put; a re-host still realized a
+         * fresh frame at the new station, and an unknown step marginalizes that
+         * satellite's carried phase-bias prior for the epoch (Card 3 D4 hygiene) —
+         * ~1/epoch on the 60-station trio arm, the surviving suspect (a) of the §8.5
+         * divergence.  The step IS computable under seed-round: the pin displaces the
+         * new host's float from @c x to @c target, so Δb_s = −(target − x) exactly,
+         * which is what the existing v2-shift walk applies.
+         *
+         * Distinct from @ref networkPhaseDatumEq34CarryShift, whose field harm (Jul-11)
+         * came from stepping the frame by a DRIFTED phase-leveling carry: here the
+         * pre-pin value is the estimator's own state, so that drift term is structurally
+         * absent.  Still default OFF and A/B-graded — the residual risk (the solve
+         * spreads the pin displacement across the weakly-held δ split rather than into
+         * b_s alone) is exactly the open root that card left, and the truth-graded
+         * synthetic arm is the first place it can be decided.
+         *
+         * Default OFF; refused without @c network.phase_datum_eq34_seed_round.
+         *
+         * @see networkPhaseDatumEq34SeedRound, networkPhaseDatumEq34CarryShift
+         */
+        bool networkPhaseDatumEq34SeedRoundRehostFrame() const { return network_phase_datum_eq34_seed_round_rehost_frame_; }
+
+        /**
          * @brief Card 3: loose zero-mean prior σ (metres) applied per epoch to every
          *        receiver phase-bias (RPB) column, in its station's own block
          *        (@c network.phase_datum_eq34_rpb_prior_sigma_m).
@@ -5736,6 +5766,7 @@ namespace GnssProcessor {
         std::string network_phase_datum_eq34_receiver_{};  ///< Card 3: preferred datum receiver (component 0) for the eq34 chain datum; empty = coverage auto-pick. Sticky incumbent still wins while present. INERT unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_pin_round_{true};  ///< Card 3: on an eq34 re-attach/re-pin of an already-lit (sat,signal) edge, target the ROUNDED carried float (λ·round(x̂_prev/λ)) so the frame step is ≈0 cycles; false = always pin to 0 (A/B lever). INERT unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_seed_round_{false}; ///< Card 3 SEED-ROUND (docs/SPEC_eq34_seed_round.md): round otherwise-zero pin targets to λ·round(x_state/λ) — first sighting, dead-carry incumbents, and every carry_invariant epoch.  |pin innovation| ≤ λ/2 by construction.  Default OFF; refused without network_phase_datum_eq34_.
+        bool   network_phase_datum_eq34_seed_round_rehost_frame_{false}; ///< Card 3 SEED-ROUND INC-2 (docs/SPEC_eq34_seed_round.md §8.5): a tree pin that moves to a NEW host takes its frame step from that host's own ambiguity state (exact pre-pin float) and S-transforms the carries, instead of an unknown step that re-references the (sat,σ) and marginalizes its carried PB prior. Default OFF; refused without network_phase_datum_eq34_seed_round_.
         double network_phase_datum_eq34_rpb_prior_sigma_m_{1.0}; ///< Card 3: loose per-epoch zero-mean prior σ (m) on every RPB column — the station-local information floor for the near-null RPB↔ambiguity split (Jul-10 field A/B instrument); 0 disables. INERT unless network_phase_datum_eq34_.
         double network_phase_datum_eq34_rpb_q_m2s_{3E-06};       ///< Card 3: q (m²/s) of the LOCAL δ_{r,σ} time-linking carry (D6 v2, local form) — suppresses the per-epoch RPB re-estimation bounce that poisons the individual-float phase-leveling carries; 0 = v1 fresh re-estimation. INERT unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_carry_shift_{false};     ///< Card 3 EXPERIMENTAL: S-transform carried values on pin displacement instead of erase/skip (exact in the chain algebra; field Jul-11: injects error through the weakly-held δ split — DD step 86 vs 11-15 cyc/ep erase-based — root open). OFF = erase-based hygiene. INERT unless network_phase_datum_eq34_.

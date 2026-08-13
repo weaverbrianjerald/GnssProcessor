@@ -1,0 +1,104 @@
+{
+ "_comment": [
+  "POSTURE C ON THE FIELD — triple + free slant iono + GF code-bias datum,",
+  "305-station (303 in-network) DOY-129, 10 epochs.  THE FIRST FIELD ARM of the",
+  "posture validated on the synthetic fixture (SPEC_synthetic_minimum_network",
+  "\u00a713.3.2/\u00a713.5; sim arm _simnet60_tri_slant).  Structural smoke ONLY:",
+  "10 epochs is deep inside ignition for every level/calibration channel, so",
+  "vf / iono level / exchange / consumer verdicts are all BARRED (1 h rule,",
+  "HANDOFF_slant_triple_next \u00a72).  Legal reads: wiring, datum inventory,",
+  "rank gate, canonical lock, counters, per-band admission.",
+  "",
+  "DELTAS vs the inherited field record (_agu305_gps -> _ft63_24h_conv), each",
+  "deliberate:",
+  " - estimate_iono_sh false + ionosphere_weighting.enable false: the slant",
+  "   posture.  Both are hard-error interlocks against code_bias_gf_datum",
+  "   (GnssConfigLoadNetwork.cpp:2226-2248) — under any single-layer constraint",
+  "   the GF bias IS the estimable DCB and pinning it deletes the product.",
+  " - code_bias_gf_datum true (Odijk rd 3b, satellite side) + rx_code_bias_datum",
+  "   true (rd 2b, receiver side; estimate_ifb is forced by the W6 slice so it",
+  "   is not inert; sigma stays the 10 m default).",
+  " - frequency_mode triple (explicit, not 'all') + ARRAY signal whitelist:",
+  "   C1C/L1C + C2W/L2W + C5Q/L5Q with C5X/L5X as band-5 fallback.  NOTE the",
+  "   inherited string form 'WCSLXPYMIQ' puts C1W AHEAD of C1C, so the canonical",
+  "   band-1 code CHANGES to C1C in this arm (cbq305 precedent, PppModel.cpp:462",
+  "   whitelist semantics).  The IF/GF pinned pair is then (C1C,C2W), matching",
+  "   the sim arm and the cbq305 lineage.",
+  " - closed_loop stripped to the sim posture-C consumer contract: products +",
+  "   clock only, consume_network_iono OFF (there is no SH product to consume",
+  "   under slant, and Table 8 moves the GF lump into the iono — the undiff",
+  "   consumer's own iono states absorb it), ar_mode 0 (float).  The consumer",
+  "   is NOT the subject of this smoke.",
+  " - eq34 + carry_invariant KEPT as inherited (field standard).  Zero-target",
+  "   pins are healthy on real receivers (\u00a712.8: phase-code lump at metres,",
+  "   not the sim's km-scale draws).  seed_round stays OFF — the \u00a713.7 settled",
+  "   trio ratchet (eq34+carry+every-epoch re-round) is a seed_round composition",
+  "   and is NOT armed here.",
+  "",
+  "EXPECTED STRUCTURAL SIGNATURES (read these, in order — invariant #4):",
+  " 1. 'Network producer (CB-GF-DATUM): ... ARMED' at load (also what",
+  "    simnet_grade.py --gf-datum auto-detects, if a graded arm ever follows).",
+  " 2. 'Canonical signals locked for GPS' = C1C/C2W/C5Q family, nothing else.",
+  " 3. Datum inventory: per-sat IF + per-sat GF + s2z rows; n_gf_only_pair",
+  "    should be ~the dozen non-L5 GPS satellites (IIR/IIR-M) — their code",
+  "    biases are fully datum-fixed with nothing estimable, EXPECTED not a bug.",
+  " 4. Rank gate at DEFAULT tolerance: declared_dim = n_below (the sim slant",
+  "    arm emitted 20/20 at default tol; whether the field does is THE question",
+  "    this smoke asks).  If it withholds, read the estimability dump knob",
+  "    before touching rank_gate_tol.",
+  " 5. Emitted 10/10 (or the named withhold reason per epoch), adm_screen",
+  "    census, carry-chain counters live at run-end.",
+  " 6. B records: pinned pair ~datum-exact, C5Q carrying the content (sim",
+  "    signature: C1C/C2W mm-scale, C5Q metre-scale residual, converging).",
+  "",
+  "FRESH LINEAGE ONLY — the posture, frequency_mode and signal set all change",
+  "the state vector and the fingerprint.  Never resume this from any prior",
+  "snapshot; nothing may resume from THIS 10-ep snapshot either.",
+  "",
+  "10 epochs at 30 s: max_duration_s 271 covers t = 0..270 inclusive."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_agu305_gps.json"
+ ],
+ "processing": {
+  "max_duration_s": 271.0,
+  "frequency_mode": "triple",
+  "signal_priorities": {
+   "GPS": [
+    "C1C",
+    "L1C",
+    "D1C",
+    "S1C",
+    "C2W",
+    "L2W",
+    "D2W",
+    "S2W",
+    "C5Q",
+    "L5Q",
+    "D5Q",
+    "S5Q",
+    "C5X",
+    "L5X",
+    "D5X",
+    "S5X"
+   ]
+  }
+ },
+ "estimation": {
+  "ionosphere_weighting": {
+   "enable": false
+  }
+ },
+ "network": {
+  "max_duration_s": 271.0,
+  "estimate_iono_sh": false,
+  "code_bias_gf_datum": true,
+  "rx_code_bias_datum": true,
+  "product_output_path": "C:/GnssProcessor/runs/pc305_tri_slant_10ep/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/pc305_tri_slant_10ep/state_snapshot.bin",
+  "closed_loop": {
+   "consume_network_iono": false,
+   "ar_mode": 0
+  }
+ }
+}

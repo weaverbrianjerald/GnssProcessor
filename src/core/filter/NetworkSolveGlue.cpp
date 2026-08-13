@@ -251,6 +251,7 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     const auto cbd = NetworkSbasis::buildCodeBiasDatumRows(
         est, registered_code_keys, freqOf,
         cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
+        config_.networkCodeBiasGfDatum(),
         code_bias_prev_, code_bias_ifpin_pair_,
         code_bias_sat_seen_, code_bias_datum_resumed_,
         held_clock_ref, this_epoch_if_pin_sel,
@@ -299,9 +300,15 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     }
     if (spectrum_diag_budget > 0)   // first-N (spectrum block decrements below)
         log->warn("Network[W6-cb]: nshared={}, n_cb={}, folded {} code-bias gauge "
-                  "rows (IF pin for {} sats + sum-to-zero for {} (const,signal) levels)",
+                  "rows (IF pin for {} sats + sum-to-zero for {} (const,signal) levels"
+                  "{})",
                   est.numShared(), n_cb, cbd.H.rows(), cbd.n_if_pin_sats,
-                  cbd.n_s2z_channels);
+                  cbd.n_s2z_channels,
+                  cbd.n_gf_pin_sats > 0
+                      ? fmt::format(" + GEOMETRY-FREE pin for {} sats, of which {} carry "
+                                    "no third band and are now fully datum-fixed",
+                                    cbd.n_gf_pin_sats, cbd.n_gf_only_pair)
+                      : std::string());
 }
 
 // --- Datum + null-space gate + solve --------------------------------

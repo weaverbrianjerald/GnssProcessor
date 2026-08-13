@@ -963,6 +963,48 @@ NetworkSolPrepResult networkSolPrep(
             pending_contract.decl.eq34_datum_receiver = eq34_datum_rx.begin()->second;
             eq34_emitted_pdr = pending_contract.decl.eq34_datum_receiver;
         }
+        // §1.5 FILL: stamp the realized code-bias IF PIN PAIR per constellation.
+        // The S-line `cbpin=` field, its parser and its contract comparison have all
+        // existed since B6 — but nothing ever POPULATED the map, so every product ever
+        // written declared no pin.  That is not cosmetic: the emitted OSB stream is
+        // internally consistent only within selectIfPinPair's realized pair, a consumer
+        // mixing frames pays the §1.5 mixed-pair penalty, and the truth-graded fixture
+        // cannot apply the §4.4 S-transform at all without it (the grader is written to
+        // REFUSE rather than assume (C1C,C2W), which is how the gap surfaced).
+        //
+        // Declared ONLY when this epoch's emitted satellites of a constellation agree
+        // unanimously on their pair.  A per-satellite split is real (signal sets differ
+        // per satellite) and a per-constellation field cannot describe it, so the honest
+        // action is to declare nothing and say so once, rather than publish a pair that
+        // is true of only part of the stream.  Empty map ⇒ the S line is written
+        // byte-for-byte as before, so a producer that cannot declare a pin is unchanged.
+        {
+            std::map<char, std::set<std::pair<std::string, std::string>>> by_const;
+            std::set<std::string> emitted_sats;
+            for (const auto& s : sol.sats) emitted_sats.insert(s.sat);
+            for (const auto& [sat, sel] : this_epoch_if_pin_sel)
+                if (!sat.empty() && emitted_sats.count(sat))
+                    by_const[sat[0]].insert(sel);
+            for (const auto& [cst, pairs] : by_const) {
+                if (pairs.size() != 1) {
+                    log->info("Network (S-contract §1.5): constellation {} has {} distinct "
+                              "IF-pin pairs across this epoch's emitted satellites, so no "
+                              "cbpin= is declared (a per-constellation field cannot describe "
+                              "a per-satellite split).", cst, pairs.size());
+                    continue;
+                }
+                const auto& p = *pairs.begin();
+                pending_contract.cb_pin_pair[std::string(1, cst)] = p.first + "-" + p.second;
+            }
+            if (!pending_contract.cb_pin_pair.empty()) {
+                std::string decl;
+                for (const auto& [c, p] : pending_contract.cb_pin_pair)
+                    decl += (decl.empty() ? "" : " ") + c + ":" + p;
+                log->info("Network (S-contract §1.5): declaring the realized code-bias IF pin "
+                          "pair(s) {} — the frame the emitted OSB stream is internally "
+                          "consistent in.", decl);
+            }
+        }
         // RTA-3: the generation id (minted above at this same first emit) travels
         // in the contract as an optional gid= field — 0 (unset) writes nothing.
         pending_contract.generation_id = sol.generation_id;
@@ -1044,6 +1086,56 @@ NetworkSolPrepResult networkSolPrep(
                     : colOrNeg([&]{ return est.phaseBiasColumn(s.sat, ref.phase); });
                 const auto cc = computeCombinedCorrectionSigma(cbcov, c, p, b, s0);
                 if (cc.sigcc > 0.0) { s.sigcc_m = cc.sigcc; s.rho = cc.rho; }
+            }
+        }
+    }
+
+    // --- L14: satellite bias-state trace (network.trace_sat_bias_states) --------
+    // The ONE export gap of the truth-graded synthetic fixture
+    // (docs/SPEC_synthetic_minimum_network.md §4.8): the B product record's legend is
+    // literally `# B,sat,signal,code_bias_m[,code_disc]` — there is NO sigma field in
+    // ANY configuration — so the code-bias VARIANCE FACTOR (the field "cb vf ≈ 10"
+    // question) cannot be formed from the product at all.  Adding a `sigma=` token to
+    // the B record would move the product GRAMMAR and any consumer fingerprint keyed
+    // on the header legend, so this is a trace instead.
+    //
+    // The covariance treatment is deliberately IDENTICAL to the URA (B1b) and
+    // combined-σ (M4) channels above — same gauge nulling, same datum-pin skip, same
+    // positive-variance guard, same σ̂0 EWMA scaling — so a vf computed from this file
+    // is comparable with a vf computed from the U record instead of being a second,
+    // subtly different convention.  s0 is written per row so a grader can undo it.
+    //
+    // A datum-PINNED column is reported with an EMPTY sigma_m and pinned=1: its
+    // 1/pin_scale variance is a gauge artefact, and writing that tiny number would
+    // manufacture an enormous variance factor out of the datum's own arbitrariness.
+    // Blank means "not emitted", never 0 — the same convention network_zwd.csv and the
+    // U record use, and the reason the grader can tell the two apart.
+    if (traces.sat_bias_states_trace.is_open()) {
+        Eigen::MatrixXd bcov = est.sharedCovariance();   // copy; treat gauges as exact
+        est.zeroPhaseGaugeColumns(bcov);
+        std::set<Eigen::Index> pinned_cols;
+        for (const auto& pin : plan.shared_datum) pinned_cols.insert(pin.column);
+        const double s0 = std::max(1.0, ura_sigma0_ewma);
+        for (const auto& s : sol.sats) {
+            for (const auto& [signal, bias_m] : s.code_bias_m) {
+                Eigen::Index col = -1;
+                try { col = est.codeBiasColumn(s.sat, signal); } catch (...) { col = -1; }
+                const bool in_range =
+                    col >= 0 && col < bcov.rows() && col < bcov.cols();
+                const bool is_pinned = in_range && pinned_cols.count(col) > 0;
+                const double var = in_range ? bcov(col, col) : -1.0;
+                const bool have_sigma =
+                    in_range && !is_pinned && var > 0.0 && std::isfinite(var);
+                traces.sat_bias_states_trace
+                    << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
+                    << s.sat << ',' << signal << ','
+                    << fmt::format("{:.6f}", bias_m) << ',';
+                if (have_sigma)
+                    traces.sat_bias_states_trace
+                        << fmt::format("{:.6e}", s0 * std::sqrt(var));
+                traces.sat_bias_states_trace
+                    << ',' << fmt::format("{:.4f}", s0) << ','
+                    << (is_pinned ? 1 : 0) << '\n';
             }
         }
     }

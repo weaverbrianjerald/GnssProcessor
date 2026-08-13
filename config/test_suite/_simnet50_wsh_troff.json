@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "Invariant #6 same-build byte-identity A/B for the two new bias-state traces",
+    "(network.trace_sat_bias_states / network.trace_rx_states).  ONE knob pair",
+    "differs between tron and troff; products.txt must be byte-identical, which is",
+    "what certifies the traces are read-only on the solve path.  Both arms are the",
+    "n=50 rank_gate_tol rung (the only 50-station posture that emits), 19 epochs."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet50_wsh_dgtol.json"
+  ],
+  "network": {
+    "trace_sat_bias_states": false,
+    "trace_rx_states": false,
+    "product_output_path": "C:/GnssProcessor/runs/simnet50_wsh_troff/products.txt"
+  }
+}

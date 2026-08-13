@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -156,13 +157,50 @@ struct SimConfig {
     struct Multipath {
         double code_amp_gps_l1_m{ 0.020 };  ///< Zenith code MP amplitude, GPS L1 (m).
         double code_amp_gps_l2_m{ 0.030 };  ///< Zenith code MP amplitude, GPS L2 (m).
+        double code_amp_gps_l5_m{ 0.015 };  ///< Zenith code MP amplitude, GPS L5 (m) — inert unless @ref Signals::gps_l5.
         double code_amp_gal_e1_m{ 0.015 };  ///< Zenith code MP amplitude, Galileo E1 (m).
         double code_amp_gal_e5a_m{ 0.015 }; ///< Zenith code MP amplitude, Galileo E5a (m).
+        double code_amp_gal_e5b_m{ 0.015 }; ///< Zenith code MP amplitude, Galileo E5b (m) — inert unless @ref Signals::galileo_e5b.
         double phase_amp_zen_m{ 0.002 };    ///< Zenith phase MP amplitude, all bands (m).
         double tau_s{ 300.0 };              ///< Gauss-Markov correlation time (s).
         double elev_factor_cap_deg{ 20.0 }; ///< 1/sin(el) amplification is clamped below this.
         std::uint64_t seed{ 20240315ULL ^ 0xA17EC0DEull }; ///< RNG seed for the multipath+slip stream (must be >= 0).
     } multipath;
+
+    /// Which SIGNALS each constellation transmits.  Two bands per system is the
+    /// historical fixture (GPS C1C/L1C + C2W/L2W, Galileo C1C/L1C + C5Q/L5Q); a THIRD
+    /// band is opt-in.
+    ///
+    /// WHY IT IS OPT-IN RATHER THAN DEFAULT-ON.  Noise, multipath and slip draws are
+    /// taken per band INSIDE the satellite loop, so appending a band shifts every
+    /// subsequent draw in the stream.  Default-off keeps every existing fixture
+    /// byte-identical on regeneration; turning it on is a new lineage by construction,
+    /// not a perturbation of an old one.
+    ///
+    /// WHY A THIRD BAND MATTERS (Odijk et al. 2016, J Geod 90:15-44, §5.1).  With the
+    /// ionosphere parameterized as free SLANT delays, the geometry-free code biases are
+    /// absorbed by the ionosphere and the satellite code biases are NOT estimable on the
+    /// first two frequencies at all — "code biases are only estimable for a (modernized)
+    /// triple- or higher-frequency constellation" (p. 29).  Their Eq. (33) gives the
+    /// estimable quantity: the modernized DCB d^s_1 - d^s_j for j >= 3.  A two-band
+    /// fixture therefore cannot exercise the slant posture's code-bias channel at all;
+    /// this switch is what makes that experiment possible.
+    struct Signals {
+        bool gps_l5{ false };      ///< Add GPS C5Q/L5Q (L5, 1176.45 MHz) as a third GPS band.
+        bool galileo_e5b{ false }; ///< Add Galileo C7Q/L7Q (E5b, 1207.14 MHz) as a third Galileo band.
+        /// Zenith amplitude (m) of a SYNTHETIC satellite OSB, per RINEX code, added on
+        /// top of whatever the product `.BIA` supplies.  Needed because the shipped
+        /// COD0MGXFIN OSB product carries **no GPS band-5 rows at all** (verified: its
+        /// GPS inventory is L1C/L1W/L1L/L1X, L2W/L2S/L2L/L2X, C1C/C1W/C1L/C1X,
+        /// C2W/C2S/C2L/C2X) — so a third band synthesized from the product alone would
+        /// carry an IDENTICALLY ZERO code bias, and a grader could not tell "estimated
+        /// the bias correctly" from "everything in this channel is zero".
+        ///
+        /// The per-satellite value is a DETERMINISTIC function of the PRN (no RNG, so
+        /// the four simulator streams are untouched and byte-identity is preserved):
+        /// value = amp * sin(2*pi*((prn*7) mod 23)/23).  Empty (default) = none.
+        std::map<std::string, double> synth_osb_amp_m;
+    } signals;
 
     /// Cycle slips: integer phase jumps, rate ~rate_base/sin^2(el) below max_elev.
     struct CycleSlips {

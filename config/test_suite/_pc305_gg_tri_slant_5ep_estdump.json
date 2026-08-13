@@ -1,0 +1,39 @@
+{
+ "_comment": [
+  "POSTURE C GPS+GALILEO — 5-ep ESTIMABILITY DUMP.  The 20 min arm",
+  "(_pc305_gg_tri_slant_20m) withheld EVERY epoch: NetworkSbasis null-space",
+  "gate observed 4-7 (near-)zero eigenvalues (flapping epoch-to-epoch around",
+  "the default relative cutoff ~2.87e-04 = 1e-9 x largest ev 2.87e+05) against",
+  "a declared S-basis dimension of 2, and drop-and-heal could not attribute",
+  "them to any droppable entity — the pre-registered Galileo channel-family",
+  "risk, reproduced on slant+GF.  GPS-only posture C emits 10/10 clean on the",
+  "SAME build and data, so the new directions come with the E activation.",
+  "",
+  "This arm exists ONLY to NAME those directions: trace_estimability dumps the",
+  "spectrum with eigenvector composition (the instrument that identified the",
+  "PB|*|L2W common mode on the W6+SH wall).  5 epochs is enough — the gate",
+  "sees the null space at epoch 1.",
+  "",
+  "Leading hypothesis to test against the dump: per-family satellite-common",
+  "phase-bias modes of the Galileo X-family channels (L1X/L5X/L7X) and/or Q/X",
+  "family splits — the pinned pair lives in ONE family, so a station subset",
+  "tracking only the other family never observes the pinned channels.",
+  "",
+  "DO NOT arm sbasis_complete here (rung-3 class: cold garbage level).",
+  "DO NOT place a rank_gate_tol until the dump proves the directions are true",
+  "gauges rather than weak-but-real content (the rung-4 rule: placed from the",
+  "config's OWN dump, never globally)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_pc305_gg_tri_slant_20m.json"
+ ],
+ "processing": {
+  "max_duration_s": 121.0
+ },
+ "network": {
+  "max_duration_s": 121.0,
+  "trace_estimability": true,
+  "product_output_path": "C:/GnssProcessor/runs/pc305_gg_tri_slant_5ep_estdump/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/pc305_gg_tri_slant_5ep_estdump/state_snapshot.bin"
+ }
+}

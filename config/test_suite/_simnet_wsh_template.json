@@ -1,0 +1,267 @@
+{
+  "_comment": [
+    "TEMPLATE for the synthetic W6+SH arm (docs/SPEC_synthetic_minimum_network.md §11).",
+    "The station block is filled in by scripts/simnet_make_producer_config.py from the",
+    "fixture manifest — never hand-edit it, or the HELD coordinates can drift from the",
+    "fixture and nothing downstream can notice (a held coordinate is not estimated).",
+    "",
+    "WHAT THIS ARM IS FOR.  Every §9 arm to date runs the INT posture, where the",
+    "satellite code bias is REMOVED from the observables by the same .BIA the sim",
+    "injected: no B records exist, so the code-bias channel is untestable, and the",
+    "clock <-> code-bias <-> ionosphere states whose common exchanges the §9.9",
+    "campaign cornered as the source of the field's 1.3 m wire wander DO NOT EXIST",
+    "in that posture (sim-internal wander there is 0.024 m).  This arm runs the",
+    "field's wander-bearing posture on synthetic truth so the wander decomposes",
+    "against a known answer.",
+    "",
+    "THE ARMING IS ONE KNOB, AND IT IS DELIBERATELY THE COUPLED ONE.",
+    "network.estimate_iono_sh = true forces the WHOLE coherent slice at",
+    "GnssConfigLoadNetwork.cpp:2060-2107 — estimate_sat_code_bias, estimate_sat_biases,",
+    "promote_sat_code_bias, estimate_ifb (receiver DCB), ionosphere_weighting.enable,",
+    "and enable_code_phase_bias = OFF.  §11 item 2: arm the FULL slice, never a",
+    "partial one.  Do NOT also set network.estimate_sat_code_bias by hand — it is",
+    "implied, and writing both invites one of them being edited alone later.",
+    "",
+    "NO GIM IS LOADED ON THIS PATH, and that retires §11 item 3's concern.  The",
+    "external GIM and the co-estimated SH field are mutually exclusive iono",
+    "constraints (ApplicationNetworkSetup.cpp:386-440: under estimateNetworkIonoSh",
+    "the SH model is built and the IONEX is explicitly NOT read).  So there is no",
+    "real-DOY-129-GIM-vs-synthetic-truth mismatch to design around: the constraint",
+    "is the estimated field itself, plus a climatology Kaula prior.  What IS",
+    "load-bearing from the ionosphere_weighting block is the ELEVATION CUTOFF, which",
+    "gates which lines of sight get an SH tie row at all.",
+    "",
+    "elevation_cutoff_deg = 25 here.  It defaults to TEN",
+    "(GnssConfigLoad.cpp:1414-1416), and a default-cutoff run is exactly the",
+    "'SH-VTEC / W6 slice: PARTIAL 2/3' posture whose 50-station attempt withheld all",
+    "240 epochs.  The 25 deg cutoff is the one validated SH lever (a00 296 -> -305",
+    "TECU at 10 deg vs 30.9 -> 29.4 TECU at 25 deg, 305 sta).  The FIELD lineage",
+    "currently runs 15 by user directive, so the 15-vs-25 A/B is a sibling arm",
+    "(§11 item 4) — one key, own product path.",
+    "",
+    "SH DEGREE 15 matches the in-flight 305-station field arm and is the sanctioned",
+    "pairing at >= 150 stations WITH the 25 deg cutoff (GnssConfigNetworkPosture.cpp:364).",
+    "At 50 stations that pairing is NOT sanctioned — the validated low-n lineage is",
+    "degree 4 — so a small-n rung of the minimum-n ladder must override the degree",
+    "and say so.",
+    "",
+    "CLOCK DATUM STATION is chosen NEAR THE EQUATOR on purpose.  §9.8 measured that",
+    "the common level FOLLOWS the datum station and that a polar datum wanders ~8x",
+    "an equatorial one; the 50-station G-A template's S01000SIM sits at lat -68.75.",
+    "Grading a wander channel from a polar datum would amplify the very quantity",
+    "this arm exists to decompose.  The field's own datum (MBAR00UGA) is equatorial.",
+    "If the generator has to fall back (datum name not in the roster) it picks",
+    "stations[0], which for a Fibonacci roster is the MOST polar station — check the",
+    "resolved value, do not assume it.",
+    "",
+    "FREQUENCY / CHANNEL MODE.  'all'/'all' is kept from the 50-station template",
+    "rather than the field's 'dual'/'single'.  On this fixture they are the SAME",
+    "SET: the sim writes exactly C1C/L1C/C2W/L2W for GPS (src/sim/main.cpp:1963),",
+    "one channel per band, so 'all' admits precisely what 'dual'+'single' would",
+    "select.  Stated because it looks like a posture difference and is not.",
+    "",
+    "Fingerprinted toggles (phase_leveling, emit_ura, code_bias_disc_jump_test,",
+    "mw_detect) are legal here because this is a FRESH convergence — there is no",
+    "stored snapshot to invalidate.  cycle_slip.if_phase_td closes the standing",
+    "invariant #1 bundle that the 50-station arm ran PARTIAL 1/2, and",
+    "cycle_slip.datum_station_detect closes the datum-station slip blind spot",
+    "(§9.7.10: C rms 3.4x better, CLK_STEP marks 12 -> 1, at zero withhold cost).",
+    "",
+    "trace_estimability is ON because the expected failure mode of this arm is a",
+    "rank-gate withhold, and 'withheld every epoch' with no spectrum dump is an",
+    "unfalsifiable result (§0 error class: an instrument that does not record the",
+    "thing looked for).  network_estimability.csv is the dump that names the",
+    "near-null directions by family.",
+    "",
+    "trace_sat_bias_states + trace_rx_states are the §4.8 export gap: there is NO",
+    "formal sigma on the B record in any configuration, so the code-bias variance",
+    "factor — the field cb-vf ~ 10 question this whole arm exists to answer — is",
+    "structurally unobtainable from the product.  Both are trace-only, default-OFF,",
+    "no product grammar change."
+  ],
+
+  "app_mode": "post",
+  "data_source": "internal",
+
+  "processing": {
+    "mode": "ppp-rtk-network",
+    "active_systems": [ "GPS" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": false,
+    "eigen_threads": 10,
+    "max_duration_s": 14700.0,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": { "GPS": "WCSLXPYMIQ" }
+  },
+
+  "files": { "internal_data_root": "./data" },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_higher_order_ionosphere": false,
+    "enable_code_phase_bias": false
+  },
+
+  "estimation": {
+    "accumulate_phase_windup": true,
+    "estimate_velocity": false,
+    "estimate_phase_clock": false,
+    "ambiguity_resolution": { "mode": 0 },
+    "adaptive_iono_process_noise": { "enable": false },
+
+    "//iono": "The cutoff, NOT the enable, is the load-bearing field here — the",
+    "//iono2": "enable is forced on by the W6 slice anyway.  Values other than the",
+    "//iono3": "cutoff are the shipped defaults, restated so an arm cannot inherit a",
+    "//iono4": "changed default silently.",
+    "ionosphere_weighting": {
+      "enable": true,
+      "common_mode_sigma_m": 50.0,
+      "std_scale": 1.0,
+      "floor_m": 0.05,
+      "elevation_cutoff_deg": 25.0
+    },
+
+    "//sh": "Field-matched SH posture (_cbq305_2f_12h_d10): degree 15, single shell,",
+    "//sh2": "sun-fixed, representation-error demean + d5-keep.  trace: true is what",
+    "//sh3": "opens network_vtec_sh.csv (coefficients + sigma) and the per-epoch",
+    "//sh4": "network_vtec_sh_health.csv (a00 + a00 sigma + per-degree rms) — the a00",
+    "//sh5": "channel of the §11 item 4 decomposition.  network_ionosphere.csv is NOT",
+    "//sh6": "a substitute: it writes x_r alone and is frame-broken (CLAUDE.md).",
+    "global_vtec_sh": {
+      "max_degree": 15,
+      "layer_height_km": 450.0,
+      "earth_radius_km": 6371.0,
+      "kaula_scale_tecu": 10.0,
+      "q_per_degree": 0.01,
+      "mean_vtec_prior_tecu": 15.0,
+      "mean_vtec_prior_sigma_tecu": 30.0,
+      "representation_sigma_tecu": 5.0,
+      "rep_error_tau_s": 900.0,
+      "rep_error_demean": true,
+      "rep_error_d5_keep": true,
+      "layer2_max_degree": 0,
+      "sun_fixed": true,
+      "trace": true
+    }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 100.0, "clock_bias_q": 1000.0, "phase_clock_q": 1e-09,
+      "troposphere_q": 1e-09, "ionosphere_q": 0.001, "code_bias_q": 0.0001,
+      "sat_bias_q": 1e-12, "sat_code_bias_q": 1e-10, "sat_phase_bias_q": 1e-12,
+      "sat_clock_q": 0.01, "system_time_offset_q": 1e-12, "ambiguity_q": 1e-12
+    },
+    "initial_std": {
+      "position": 100.0, "clock": 1000.0, "troposphere": 0.5, "ionosphere": 5.0,
+      "ambiguity": 1000.0, "code_bias": 10.0, "sat_bias": 10.0,
+      "sat_phase_bias": 10.0, "sat_clock": 1000.0, "system_time_offset": 1000.0
+    },
+    "measurement_noise": { "code_std_m": 0.3, "phase_std_m": 0.003 },
+    "stochastic_model": "elevation"
+  },
+
+  "network": {
+    "//datum": "Equatorial by choice (§9.8) — see the header.  Overridden by the",
+    "//datum2": "generator ONLY if this name is absent from the fixture roster.",
+    "clock_datum_station": "S15001SIM",
+    "epoch_sync_tolerance_s": 0.01,
+    "min_stations": 10,
+
+    "//w6": "=== The W6 + SH-VTEC slice: ONE knob, coupled set forced by the loader ===",
+    "estimate_iono_sh": true,
+    "sh_health_gate": true,
+
+    "//qc": "=== QC, fingerprint-SAFE ===",
+    "raim": true,
+    "raim_attribution": true,
+    "raim_within_epoch": true,
+    "raim_withhold_sigma0": 6.0,
+    "clock_runaway_check": true,
+
+    "//qc2": "=== Fingerprinted — legal only on a FRESH convergence, which this is ===",
+    "phase_leveling": true,
+    "emit_ura": true,
+    "code_bias_disc_jump_test": true,
+    "cycle_slip": {
+      "mw_detect": true,
+      "if_phase_td": true,
+      "datum_station_detect": true
+    },
+
+    "//qc3": "=== Cold-start hygiene ===",
+    "cold_clock_seed": true,
+
+    "//mark": "=== Event MARKING (an unarmed marker reads as no event) ===",
+    "emit_clock_disc": true,
+    "clock_disc_jump_test": true,
+
+    "//sigma": "=== Formal-sigma channels: the vf denominators ===",
+    "serialize_sbasis_contract": true,
+    "emit_phase_bias_sigma": true,
+    "emit_combined_sigma": true,
+    "trace_zwd": true,
+    "trace_sat_bias_states": true,
+    "trace_rx_states": true,
+
+    "//obs": "=== Observability (durability first: only health_trace flushes) ===",
+    "write_run_manifest": true,
+    "product_flush_per_epoch": true,
+    "health_interval_s": 300,
+    "trace_stations": true,
+    "trace_epoch_status": true,
+    "trace_events": true,
+    "trace_flag_rates": true,
+    "emit_epoch_status_record": true,
+    "trace_postfit_sigma0": true,
+    "trace_postfit_keyed": true,
+    "trace_prefit_census": true,
+    "trace_topology": true,
+    "rhs_attrib_on_trip": true,
+    "trace_estimability": true,
+
+    "//par": "parallel_carry and parallel_reduce are MUTUALLY EXCLUSIVE — the loader",
+    "//par2": "silently forces parallel_carry OFF if both are set.",
+    "parallel_stations": true,
+    "parallel_carry": true,
+    "parallel_reduce": false,
+
+    "//lane": "Lane layer OFF — measured a net loss at BOTH 63 and 305 stations once",
+    "//lane2": "the window is settled (AGU-26 campaign amendment 1).",
+    "lane_carry": { "enable": false },
+
+    "closed_loop": {
+      "enable": true,
+      "consumer_undifferenced": true,
+      "consume_network_products": true,
+      "consume_network_clock": true,
+      "ar_mode": 0
+    }
+  },
+
+  "data_download": { "enabled": false, "product_source": "COD", "product_type": "FIN", "year": 2024, "doy": 129 },
+
+  "logging": {
+    "enable_main_log": true,
+    "levels": {
+      "measurement_model": "warn", "state_manager": "warn", "state_initializer": "warn",
+      "ppp_model": "warn", "kalman_filter": "warn", "network": "info"
+    }
+  }
+}

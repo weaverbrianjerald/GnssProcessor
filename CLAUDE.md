@@ -4,16 +4,70 @@ C++17 GNSS post-processor and real-time engine. Supports PPP and PPP-RTK (uncomb
 
 ## Build
 
-MSVC (Visual Studio 2022 Enterprise) + CMake + Ninja. The user's default shell does NOT source `vcvars64.bat`, so naive `cmake --build` fails with "Cannot open include file: 'memory'". Use this pattern via the PowerShell tool:
+**Visual Studio 2026 Enterprise (v18) + CMake + Ninja. VS 2022 is RETIRED —
+standing user directive, 2026-08-12. Do not invoke the 2022 toolchain even
+though it is still installed on disk.**
+
+Use the wrapper — it encodes every trap below:
 
 ```powershell
-$vcvars = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-cmd /c "`"$vcvars`" >nul && cmake --build C:\GnssProcessor\build\x64-Debug 2>&1"
+C:\GnssProcessor\scripts\vs2026_build.ps1 -Config x64-Debug -Target gnss_core   # fast compile check
+C:\GnssProcessor\scripts\vs2026_build.ps1 -Config x64-Debug                     # full Debug + tests
+C:\GnssProcessor\scripts\vs2026_build.ps1 -Config x64-Release                   # every data run
+C:\GnssProcessor\scripts\vs2026_build.ps1 -Config x64-Debug -Reconfigure        # after a toolchain change
 ```
 
-Targets: `gnss_core` (static lib), `gnss_processor` (exe), `gnss_tests` (exe), `gnss_processor_module` (pybind11 `.pyd`). Add `--target gnss_core` for library-only checks during iteration.
+Migration facts, all verified 2026-08-12 (fresh configure + 538/538 build +
+full unit suite under the new toolchain):
 
-Build tree: `build/x64-Debug` and `build/x64-Release`.
+- **vcvars64.bat moved.** `...\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\`
+  — `18` is the install *major-version* dir, not a year. The user's default
+  shell still does NOT source it, so a naive `cmake --build` fails with
+  "Cannot open include file: 'memory'".
+- **Toolchain: MSVC 19.51.36256 / toolset 14.51.36231.** The existing
+  `C:\vcpkg` tree is v143-built and links against it cleanly (Eigen, spdlog,
+  gtest 1.17, netCDF, CURL, ZLIB, pybind11 2.13.6) — no vcpkg rebuild needed.
+- **⚠ Two CMakes on this box.** `cmake` on PATH is the standalone **3.18.3**
+  (`C:\Program Files\CMake`) and vcvars does NOT override it; VS 2026 bundles
+  **4.3.1** at `...\18\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\`.
+  The wrapper pins the bundled 4.3.1 by absolute path so a CLI configure and
+  an IDE configure agree. CMake 4 hard-errors on `cmake_minimum_required` < 3.5;
+  the lowest in our dependency closure is exactly 3.5 (and only in a doc file
+  plus a vcpkg-internal port script, neither consumed by `find_package`), so
+  the project configures clean.
+- **⚠ Never `set "PATH=...;%PATH%"` inside the `cmd /c "vcvars && ..."` chain.**
+  `cmd` expands `%PATH%` when it parses the whole `a && b` line — *before*
+  vcvars runs — so the assignment writes back the pre-vcvars PATH and silently
+  destroys the compiler entries, giving "No CMAKE_CXX_COMPILER could be found"
+  on a machine where the compiler is fine. Ninja needs no pinning: vcvars
+  already puts VS 2026's own ninja (1.13.2) on PATH.
+- **⚠ The migration surfaced one real code defect — the cached-static logger
+  accessor.** `RinexNavParser.cpp`'s `navLog()` held
+  `static shared_ptr lg = spdlog::get(...) ? ... : spdlog::default_logger();`
+  and returned `lg.get()`. Under VS 2026 that faulted (0xC0000005) on the only
+  two parser paths that log, so the suite showed exactly two failures
+  (`RinexNavParser.RejectsPreRinex3`, `MissingEndOfHeaderReturnsEmpty`).
+  Causality was confirmed both ways (revert reproduces, fix clears), and a
+  standalone probe in the identical Debug/`SPDLOG_SHARED_LIB` flavour showed
+  `spdlog::default_logger()` itself returns a **valid** logger — so this is NOT
+  a vcpkg ABI problem; explicit loggers and fmt formatting cross the v143 DLL
+  boundary fine. **The pattern to avoid is caching a raw pointer out of a
+  by-value `shared_ptr` (worse, out of a ternary of two DLL-returned
+  temporaries) in a function-local `static`.** Resolve per call and return the
+  `shared_ptr`; `spdlog::default_logger()` is nullable in principle because
+  `spdlog::drop_all()` clears it, and `LogManager` calls that on both
+  re-initialize and shutdown. `tailLog()` in `NetworkProductIO.cpp` had the
+  same nullable shape with three unguarded `->` uses and was hardened too.
+  Whether VS 2022 also faulted on the *current* source is unverified — the
+  archived pre-migration exe is a different source revision, and current
+  source was not rebuilt with 2022 per the retirement directive.
+- `vswhere.exe not recognized` from the cmd subshell remains benign noise.
+
+Targets: `gnss_core` (static lib), `gnss_processor` (exe), `gnss_tests` (exe),
+`gnss_processor_module` (pybind11 `.pyd`), plus `gnss_simulator_selftest`.
+
+Build tree: `build/x64-Debug` and `build/x64-Release` — both are **git-ignored
+and disposable**; regenerating from scratch is one wrapper call (~180 s Debug).
 
 **NEVER run `gnss_processor` on data from the Debug tree** (standing user
 directive). Debug's unoptimized Eigen is 50–100× slower — a Release run of
@@ -73,12 +127,22 @@ src/core/             Implementation files mirror the include/ subdir layout
                       products/, slip/, etc.).  src/core/config/ also holds
                       gnss_config.json — the primary user-edited config file.
 
-tests/                GoogleTest unit suite (1128 cases / 174 suites across 72
+tests/                GoogleTest unit suite (1360 cases / 196 suites across 89
                       files) linked into `gnss_tests.exe`.  tests/sim/ is a
                       SEPARATE target, `gnss_simulator_selftest` (35 cases).
                       Note: docs/test_suite.md documents the real-data
                       truth-graded harness, NOT this unit suite.
 logs/                 Runtime CSV traces + spdlog files (under build tree)
+runs/                 Campaign run outputs.  ⚠️ ARCHIVED OFF C: on 2026-08-12
+                      to D:\GnssProcessor_archive\2026-08-12\runs\ (619 dirs,
+                      40.6 GB) along with the pre-VS2026 build/ trees, to
+                      reclaim disk.  Both are git-ignored.  Reports that cite
+                      a `runs/<name>` or `build/x64-Release/run_<name>` path
+                      (e.g. NIGHTRUN_REPORT_2026-07-15.md,
+                      CLOCK_HADAMARD_CALIB_2026-07-14.md) resolve under the
+                      archive, NOT in the working tree.  Per user: those
+                      results predate the recent network work and are not
+                      trusted — regenerate rather than re-grade them.
 
 scripts/              One-off Python utilities.  Most notably
                       bootstrap_internal_data.py, which populates
@@ -498,8 +562,8 @@ JSON to retain the compressed copy (for byte-exact archival).
 
 ## Known state
 
-- **Test suite.** `gnss_tests.exe` runs 1128 GoogleTest cases across 174 suites in 72 files (~69 s, full Debug run; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (35 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
-  - Suite hygiene: every suite name is owned by exactly one file (174 suites, zero cross-file overlap — re-verified 2026-08-03) — keep it that way, and prefer a new file over widening an existing one. At 39.7k test LOC against 150.5k production LOC the suite is *thin* (0.26 ratio, ~1 case per 138 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
+- **Test suite.** `gnss_tests.exe` runs 1360 GoogleTest cases across 196 suites in 89 files (~93 s, full Debug run under VS 2026; re-counted 2026-08-12 — the previous 1128/174/72 figures were stale; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (35 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
+  - Suite hygiene: every suite name should be owned by exactly one file — keep it that way, and prefer a new file over widening an existing one (the zero-cross-file-overlap property was verified at 174 suites on 2026-08-03; it has NOT been re-verified since the suite grew to 196). At 51.5k test LOC against 189.2k production LOC the suite is *thin* (0.27 ratio, ~1 case per 139 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
 - **Pre-existing C4828 warnings** (illegal characters at codepage 65001) are from older mixed-encoding files and unrelated to new work. Ignore unless the user asks to clean them up.
 - **`vswhere.exe not recognized`** messages from cmd subshells are benign noise when using the vcvars64 pattern above — the build proceeds.
 - **Real-time mode** uses a separate path (`Application::runRealTime` → `RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `Application::run` and should guard against `AppMode::RealTime`.

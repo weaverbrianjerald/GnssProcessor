@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "20-epoch smoke of the n=50 W6 stride arm at the DEFAULT rank-gate tolerance.",
+    "Its only job is to produce THIS config's own network_estimability.csv, because the",
+    "rank_gate_tol placement rule is per-config: >= 2 decades above that config's gauge",
+    "depth and >= 2 below its weakest real layer.  The 1e-12 that worked on the 50-station",
+    "INT fixture was placed from a DIFFERENT spectrum (different stations, no injected OSB)",
+    "and must not be carried over on faith."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50.json"
+  ],
+  "processing": {
+    "max_duration_s": 570.0
+  },
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_smoke/products.txt"
+  }
+}

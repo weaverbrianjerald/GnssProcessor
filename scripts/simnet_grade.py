@@ -71,6 +71,11 @@ GPS_L2 = 1227.60e6
 IF_A1 = GPS_L1 ** 2 / (GPS_L1 ** 2 - GPS_L2 ** 2)
 IF_A2 = -GPS_L2 ** 2 / (GPS_L1 ** 2 - GPS_L2 ** 2)
 WAVELENGTH = {"L1C": C_LIGHT / GPS_L1, "L2W": C_LIGHT / GPS_L2}
+GPS_L5 = 1176.45e6
+# RINEX code -> carrier frequency, for the W6 IF-pin transform of §4.4.  Keyed on the
+# CODE observable (the B record's own key namespace), not the phase sibling.
+CODE_FREQ = {"C1C": GPS_L1, "C1W": GPS_L1, "C2W": GPS_L2, "C2L": GPS_L2,
+             "C2S": GPS_L2, "C5Q": GPS_L5, "C5X": GPS_L5}
 
 
 # --------------------------------------------------------------------------- #
@@ -174,6 +179,7 @@ def load_truth(fixture_dir):
             "slips": load_csv(os.path.join(d, "truth_slips.csv")),
             "rx_bias": load_csv(os.path.join(d, "truth_rx_bias.csv")),
             "satclock": load_csv(os.path.join(d, "truth_satclock.csv")),
+            "bias": load_csv(os.path.join(d, "truth_bias.csv")),
         }
         truth["stations"][st["name"]] = rec
     return truth
@@ -228,7 +234,51 @@ def fmt(s, unit=""):
 # Channel graders
 # --------------------------------------------------------------------------- #
 
-def grade_clock(epochs, s_line, sc_truth, settle_frac):
+def if_lump_by_sat(osb_truth, pin):
+    """Per-satellite iono-free lump of the INJECTED OSB over the pinned pair (m).
+
+    §4.2's `d_IF^s` term.  On the W6 arm the producer does NOT apply the .BIA, so this
+    lump is absorbed by the estimated satellite CLOCK and the C-record truth is
+    therefore NOT identically zero even with no injected clock error:
+
+        truth_C(s) = [Δdt^s − Δdt_piv] − [d_IF^s − d_IF_piv]
+
+    ⚠ THE SIGN IS MEASURED, NOT ASSUMED, AND IT IS THE OPPOSITE OF SPEC §4.2's
+    WRITTEN `+`.  Regressing each satellite's settled mean C residual on its
+    pivot-relative lump over the graded arm gives slope **−1.08, corr −0.78** (19
+    satellites, 233 settled epochs), and removing −lump drops the per-satellite mean
+    rms 1.070 → 0.906 m while removing +lump inflates it to 1.786 m.  The convention
+    chain that produces it: a Bias-SINEX OSB is a quantity to SUBTRACT from the
+    observation, the sim ADDS it to the observable, and the estimated clock enters the
+    modeled range with the opposite sign — so the lump lands in the clock negated.
+    The magnitude ≈ 1 confirms the mechanism; the 0.9 m that remains after removal is
+    genuine per-satellite clock error, not convention.
+
+    Ignoring it would charge the estimator with a ±1 m per-satellite constant that is
+    the datum working exactly as designed — the invariant-#5 mistake, on the channel
+    the fixture grades most sharply.  Empty on the INT arm (no injected OSB), where
+    the second bracket is identically zero and the null test is recovered.
+    """
+    if not osb_truth or not pin or len(pin) != 2:
+        return {}
+    j1, j2 = pin
+    f1, f2 = CODE_FREQ.get(j1), CODE_FREQ.get(j2)
+    if not f1 or not f2 or f1 == f2:
+        return {}
+    a1 = f1 ** 2 / (f1 ** 2 - f2 ** 2)
+    a2 = -f2 ** 2 / (f1 ** 2 - f2 ** 2)
+    out = {}
+    for (sat, sig), v in osb_truth.items():
+        if sig == j1:
+            out.setdefault(sat, {})["1"] = v
+        elif sig == j2:
+            out.setdefault(sat, {})["2"] = v
+    # Negated per the measured convention documented above.
+    return {s: -(a1 * d["1"] + a2 * d["2"]) for s, d in out.items()
+            if "1" in d and "2" in d}
+
+
+def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
     """C record: transform truth into the producer's basis, then compare.
 
     Wire meaning (contract section B.1):
@@ -242,6 +292,7 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac):
     valid null test, and the one this fixture runs at G-A.
     """
     pivots = (s_line or {}).get("pivots", {})
+    lump = if_lump or {}
     n_ep = len(epochs)
     start = int(n_ep * settle_frac)
     res, res_vf, contrast_res = [], [], []
@@ -250,14 +301,15 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac):
     for ep in epochs[start:]:
         tow = round(ep["tow"], 3)
         piv = pivots.get("G")
-        # Truth for the pivot at this epoch (0 when no clock error is injected).
-        piv_truth = sc_truth.get((tow, piv), 0.0) if piv else 0.0
+        # Truth for the pivot at this epoch (0 when no clock error is injected), plus
+        # the pivot's own absorbed IF code-bias lump on the W6 arm (0 on INT).
+        piv_truth = (sc_truth.get((tow, piv), 0.0) + lump.get(piv, 0.0)) if piv else 0.0
 
         for sat, c0 in ep["clocks"].items():
             if piv and sat == piv:
                 n_pivot_skipped += 1
                 continue                      # pinned to 0; nothing to grade
-            t = sc_truth.get((tow, sat), 0.0) - piv_truth   # S[truth]
+            t = sc_truth.get((tow, sat), 0.0) + lump.get(sat, 0.0) - piv_truth  # S[truth]
             e = c0 - t
             res.append(e)
             sig = ep["ura"].get(sat)
@@ -272,8 +324,8 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac):
         sats = sorted(ep["clocks"])
         for i in range(len(sats) - 1):
             a, b = sats[i], sats[i + 1]
-            ta = sc_truth.get((tow, a), 0.0)
-            tb = sc_truth.get((tow, b), 0.0)
+            ta = sc_truth.get((tow, a), 0.0) + lump.get(a, 0.0)
+            tb = sc_truth.get((tow, b), 0.0) + lump.get(b, 0.0)
             contrast_res.append((ep["clocks"][a] - ep["clocks"][b]) - (ta - tb))
 
     vf = sum(res_vf) / len(res_vf) if res_vf else None
@@ -445,6 +497,226 @@ def detect_ura_scale(run_dir):
             "pure_formal": bool(sentinel) or (s0 == 1.0 if s0 else False)}
 
 
+def osb_truth_by_key(truth):
+    """Injected satellite OSB in metres, keyed (sat, RINEX code).
+
+    Satellite-side and time-constant (it comes straight out of the shipped
+    COD0MGXFIN Bias-SINEX), so it is read from one station and the others are
+    ASSERTED to agree — the same determinism contract satclock_truth_by_tow uses.
+    Non-empty only when the sim ran `corrections.signal_bias: true`, i.e. the W6
+    arm; under the INT posture the producer removes the same .BIA the sim injected,
+    so there are no B records to grade and this file is absent or all-zero.
+    """
+    series, disagreements = {}, 0
+    for _, st in truth["stations"].items():
+        for r in (st["bias"] or []):
+            key = (r["satellite"], r["signal"])
+            v = float(r["osb_m"])
+            if key in series and abs(series[key] - v) > 1e-9:
+                disagreements += 1
+            series[key] = v
+    return series, disagreements
+
+
+def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=False):
+    """B record: apply the producer's OWN two-stage S-transform to TRUTH (SPEC §4.4).
+
+    The wire value is not the injected OSB — it is that OSB seen through the W6
+    code-bias datum, which is two operations:
+
+      1. IF LUMPING.  The satellite's iono-free combination over the PINNED pair is
+         absorbed by the satellite clock (Odijk: the first two frequencies' code
+         biases are not separately estimable), so a1*b(s,j1) + a2*b(s,j2) is
+         subtracted from every channel of that satellite.  The pair is
+         selectIfPinPair's LEXICAL choice, read off the S line's cbpin= token —
+         NOT assumed, and not necessarily the consumer's pair
+         (project_day129_pivot_cb_ratchet).
+      2. ZERO-MEAN PER CHANNEL over that epoch's registered satellite set.
+
+    Both stages are applied to the truth using THIS EPOCH's emitted satellite set,
+    so a satellite rising or setting cannot masquerade as a bias error.
+
+    Reported alongside the residual: the ESTIMATE's own per-channel mean, which the
+    sum-to-zero datum should hold at 0.  It is a datum-realization check, not a
+    grade — if it drifts, the residual statistics below are being measured against a
+    datum the producer is not actually realizing.
+
+    vf uses network_sat_bias_states.csv (network.trace_sat_bias_states), because the
+    B record itself carries NO sigma in any configuration (§4.8).  Rows whose sigma
+    is blank (a datum-pinned column, whose variance is a gauge artefact) are counted
+    and excluded rather than silently treated as zero.
+    """
+    if not osb_truth:
+        return {"armed": False}
+    pair = (s_line or {}).get("cbpin", {}).get("G")
+    if not pair or len(pair) != 2 or not all(pair):
+        return {"armed": True, "no_pin": True}
+    j1, j2 = pair
+    f1, f2 = CODE_FREQ.get(j1), CODE_FREQ.get(j2)
+    if not f1 or not f2 or f1 == f2:
+        return {"armed": True, "bad_pin": (j1, j2)}
+    a1 = f1 ** 2 / (f1 ** 2 - f2 ** 2)
+    a2 = -f2 ** 2 / (f1 ** 2 - f2 ** 2)
+
+    # sigma lookup: (tow, sat, signal) -> sigma_m ("" = pinned / no honest variance)
+    sig = {}
+    for r in (sig_rows or []):
+        sig[(round(float(r["tow"]), 3), r["sat"], r["signal"])] = r["sigma_m"].strip()
+
+    n_ep = len(epochs)
+    res, res_vf, per_sig = [], [], {}
+    est_channel_mean, n_no_truth, n_no_sigma, n_pinned = [], 0, 0, 0
+    for ep in epochs[int(n_ep * settle_frac):]:
+        tow = round(ep["tow"], 3)
+        if not ep["code_bias"]:
+            continue
+        # Stage 1 — per-satellite datum projection of the TRUTH.
+        #
+        # Derived, not transcribed.  The unobservable directions in a satellite's code
+        # biases are exactly two: the CLOCK direction e = (1,1,…,1) and the IONO
+        # direction μ = (μ_1,…,μ_f) with μ_j = (f_1/f_j)².  The datum rows are the
+        # iono-free row μ_IF and — in the slant posture — the geometry-free row μ_GF,
+        # whose orthogonality properties are μ_IF·e = 1, μ_IF·μ = 0 (Odijk Eq. 26) and
+        # μ_GF·e = 0, μ_GF·μ = 1 (Eq. 31).  So R·N = I and the projection is simply
+        #
+        #     t̃_j = t_j − (μ_IF·t) − μ_j·(μ_GF·t)
+        #
+        # with the second term present only when the GF row is folded.  Dropping it
+        # recovers the single-layer posture's "subtract the IF lump" exactly, so one
+        # expression serves both.  Self-check: under the slant datum this forces
+        # t̃ = 0 on BOTH pinned channels, which is Odijk §5.1's "not estimable for the
+        # first two frequencies" — asserted below rather than assumed.
+        sats = sorted({s for (s, _) in ep["code_bias"]})
+        lump, gflump, usable = {}, {}, set()
+        mu2_minus_mu1 = (f1 * f1) / (f2 * f2) - 1.0
+        for s in sats:
+            b1, b2 = osb_truth.get((s, j1)), osb_truth.get((s, j2))
+            if b1 is None or b2 is None:
+                continue                      # cannot transform: pinned pair not injected
+            lump[s] = a1 * b1 + a2 * b2
+            gflump[s] = ((b2 - b1) / mu2_minus_mu1) if gf_datum else 0.0
+            usable.add(s)
+        # Stage 2 — zero-mean per channel over THIS epoch's registered set.
+        by_sig = {}
+        for (s, j), v in ep["code_bias"].items():
+            if s not in usable or (s, j) not in osb_truth:
+                n_no_truth += 1
+                continue
+            # mu_j for THIS channel (mu_1 = 1 by definition of the reference band).
+            fj = CODE_FREQ.get(j)
+            mu_j = (f1 * f1) / (fj * fj) if fj else 1.0
+            t = osb_truth[(s, j)] - lump[s] - mu_j * gflump[s]
+            by_sig.setdefault(j, []).append((s, v, t))
+        for j, items in by_sig.items():
+            if not items:
+                continue
+            t_mean = sum(t for _, _, t in items) / len(items)
+            e_mean = sum(v for _, v, _ in items) / len(items)
+            est_channel_mean.append(e_mean)
+            for s, v, t in items:
+                e = v - (t - t_mean)
+                res.append(e)
+                per_sig.setdefault(j, []).append(e)
+                sv = sig.get((tow, s, j))
+                if sv is None:
+                    n_no_sigma += 1
+                elif sv == "":
+                    n_pinned += 1
+                else:
+                    sd = float(sv)
+                    if sd > 0:
+                        res_vf.append((e / sd) ** 2)
+    return {"armed": True, "pin": (j1, j2), "a1": a1, "a2": a2,
+            "residual": stats(res), "per_signal": {j: stats(v) for j, v in per_sig.items()},
+            "vf": (sum(res_vf) / len(res_vf)) if res_vf else None, "n_vf": len(res_vf),
+            "est_channel_mean": stats(est_channel_mean), "n_no_truth": n_no_truth,
+            "n_no_sigma": n_no_sigma, "n_pinned": n_pinned}
+
+
+def grade_rx_states(run_dir, truth, settle_frac):
+    """network_rx_states.csv: the receiver DCB, graded as a CONTRAST (SPEC §4.5).
+
+    The estimator carries ONE receiver differential code bias per (station,
+    constellation) — key "GPS_DCB" — while the fixture injects a bias per RINEX
+    code, so the comparable truth is the injected GF difference d(C1C) - d(C2W).
+
+    Its LEVEL is not gradeable and must not be reported as an error: the Table-8
+    identity says the fleet-mean receiver GF bias is absorbed into the ionosphere
+    (contract §B.4), so the absolute per-station DCB is datum-bearing.  What IS
+    estimable is the BETWEEN-STATION contrast, so that is what carries a verdict
+    here; the fleet-mean offset is reported separately as the absorbed gauge, which
+    is the quantity the iono channel should show with the opposite sign.
+    """
+    rows = load_csv(os.path.join(run_dir, "logs", "network_rx_states.csv"))
+    if not rows:
+        return None
+    tt = {}
+    for name, st in truth["stations"].items():
+        code = {r["code"]: float(r["value_m"])
+                for r in (st["rx_bias"] or []) if r["kind"] == "code"}
+        if "C1C" in code and "C2W" in code:
+            tt[name] = code["C1C"] - code["C2W"]
+    # Receiver CLOCK: truth is truth_clock.csv's clock_bias_m per (station, tow).  Like
+    # the DCB, only the BETWEEN-STATION contrast is estimable — the network clock datum
+    # fixes the common part — so the same contrast/level split applies.
+    tclk = {}
+    for name, st in truth["stations"].items():
+        for r in (load_csv(os.path.join(
+                [s for s in truth["manifest"]["stations"]
+                 if s["name"] == name][0]["truth_dir"], "truth_clock.csv")) or []):
+            try:
+                tclk[(name, round(float(r["tow_s"]), 3))] = float(r["clock_bias_m"])
+            except (KeyError, ValueError):
+                continue
+    cb = [r for r in rows if r["kind"] == "CB"]
+    clk = [r for r in rows if r["kind"] == "CLK"]
+    clk_contrast = []
+    if tclk and clk:
+        ctows = sorted({round(float(r["tow"]), 3) for r in clk})
+        ccut = ctows[int(len(ctows) * settle_frac)] if ctows else 0.0
+        per_tow = {}
+        for r in clk:
+            t = round(float(r["tow"]), 3)
+            if t < ccut or (r["station"], t) not in tclk:
+                continue
+            per_tow.setdefault(t, []).append(
+                (r["station"], float(r["value_m"]) - tclk[(r["station"], t)]))
+        for t, items in per_tow.items():
+            if len(items) < 2:
+                continue
+            items.sort()
+            base = items[0][1]
+            clk_contrast.extend(v - base for _, v in items[1:])
+    if not cb:
+        return {"n_cb": 0, "n_clk": len(clk), "clk_contrast": stats(clk_contrast)}
+    tows = sorted({round(float(r["tow"]), 3) for r in cb})
+    cut = tows[int(len(tows) * settle_frac)] if tows else 0.0
+    by_tow = {}
+    for r in cb:
+        t = round(float(r["tow"]), 3)
+        if t < cut or r["station"] not in tt:
+            continue
+        by_tow.setdefault(t, []).append((r["station"], float(r["value_m"])))
+    contrast, level, sd_used = [], [], []
+    for t, items in by_tow.items():
+        if len(items) < 2:
+            continue
+        items.sort()
+        # Contrast against the first station in the epoch's set: removes the fleet
+        # gauge without needing to know how the producer realized it.
+        r0, v0 = items[0]
+        for name, v in items[1:]:
+            contrast.append((v - v0) - (tt[name] - tt[r0]))
+        level.append(sum(v - tt[n] for n, v in items) / len(items))
+    for r in cb:
+        s = r.get("std_m", "").strip()
+        if s:
+            sd_used.append(float(s))
+    return {"n_cb": len(cb), "n_clk": len(clk), "contrast": stats(contrast),
+            "level": stats(level), "sigma": stats(sd_used),
+            "clk_contrast": stats(clk_contrast), "n_stations_truth": len(tt)}
+
+
 def grade_iono_table8(truth):
     """The Table-8 identity's PRECONDITION check (SPEC section 4.5).
 
@@ -495,6 +767,12 @@ def main():
                          "(default 0.5; the level channel needs ~2 h and a short "
                          "arc will otherwise grade the transient)")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--gf-datum", dest="gf_datum", action="store_true",
+                    help="the run folded the per-satellite GEOMETRY-FREE code-bias pin "
+                         "(network.code_bias_gf_datum, the Odijk slant posture).  "
+                         "Auto-detected from the run console when not given; the truth "
+                         "transform is WRONG for that posture without it, because the "
+                         "datum removes a second direction from every channel.")
     args = ap.parse_args()
 
     fx = args.fixture_dir
@@ -551,9 +829,22 @@ def main():
         for n, v in sorted(t8["per_station"].items()):
             print(f"    {n}: GF {v['gf']:+.4f} m   IF {v['if']:+.4f} m")
 
-    clk = grade_clock(epochs, s_line, sc_truth, args.settle_frac)
+    osb_truth, osb_disagree = osb_truth_by_key(truth)
+    if_lump = if_lump_by_sat(osb_truth, (s_line or {}).get("cbpin", {}).get("G"))
+    clk = grade_clock(epochs, s_line, sc_truth, args.settle_frac, if_lump)
     print("\n-- C record (satellite clock), truth in the producer's basis " + "-" * 16)
     print(f"  pivot {clk['pivot']} excluded ({clk['n_pivot_skipped']} rows, pinned to 0 by the datum)")
+    if if_lump:
+        vals = sorted(if_lump.values())
+        print(f"  W6 arm: truth includes the ABSORBED IF code-bias lump on {len(if_lump)} "
+              f"sats ({vals[0]:+.3f} .. {vals[-1]:+.3f} m, sign MEASURED as −d_IF:")
+        print( "          slope −1.08 / corr −0.78 on this arm) — the producer does not apply")
+        print( "          the .BIA, so that lump IS in the emitted clock by construction")
+    elif osb_truth:
+        print("  ⚠ injected OSB present but no cbpin on the S line: the absorbed IF lump")
+        print("    CANNOT be removed from the truth, so this residual carries a per-satellite")
+        print("    constant of order 1 m that is the datum, not an error.  Arm")
+        print("    network.serialize_sbasis_contract before reading the numbers below.")
     print(f"  residual  {fmt(clk['residual'], ' m')}")
     print(f"  contrast  {fmt(clk['contrast'], ' m')}   <- datum-free cross-check")
     if clk["vf"] is not None:
@@ -585,6 +876,75 @@ def main():
         print("  (no population)")
     for sig, s in sorted(ph.items()):
         print(f"  {sig}: {fmt(s, ' cyc')}")
+
+    sig_rows = load_csv(os.path.join(run_dir, "logs", "network_sat_bias_states.csv"))
+    gf_datum = args.gf_datum
+    if not gf_datum:
+        con = os.path.join(run_dir, "console.txt")
+        if os.path.exists(con):
+            gf_datum = "CB-GF-DATUM" in open(con, encoding="utf-8", errors="replace").read()
+    cb = grade_code_bias(epochs, s_line, osb_truth, sig_rows, args.settle_frac, gf_datum)
+    print("\n-- B record (satellite code bias), truth through the W6 S-transform " + "-" * 8)
+    if not cb.get("armed"):
+        print("  NOT ARMED: no injected satellite OSB (truth_bias.csv empty/absent).")
+        print("  This is the INT posture — the producer removes the same .BIA the sim")
+        print("  injected, so no B records exist and the code-bias channel is untestable.")
+        print("  Re-synthesize with corrections.signal_bias = true for the W6 arm (§2.2).")
+    elif cb.get("no_pin"):
+        print("  injected OSB present but the S line carries NO cbpin= token, so the")
+        print("  realized IF-pin pair is unknown and the transform cannot be applied.")
+        print("  Arm network.serialize_sbasis_contract; do NOT assume (C1C,C2W).")
+    elif cb.get("bad_pin"):
+        print(f"  cbpin names {cb['bad_pin']}, whose frequencies are unknown to this "
+              f"grader — extend CODE_FREQ.")
+    else:
+        if osb_disagree:
+            print(f"  *** {osb_disagree} (sat,signal) OSB truth DISAGREEMENTS across stations")
+        print(f"  IF pin  {cb['pin'][0]}/{cb['pin'][1]}  (a1 {cb['a1']:+.4f}, a2 {cb['a2']:+.4f}) "
+              f"— read off the S line, not assumed")
+        if gf_datum:
+            print( "  GF pin  ARMED (slant posture) — truth is projected along BOTH the")
+            print( "          clock and iono directions, so the pinned pair's estimable")
+            print( "          content is identically zero and only j >= 3 carries content")
+        print(f"  residual  {fmt(cb['residual'], ' m')}")
+        for j, s in sorted(cb["per_signal"].items()):
+            print(f"    {j}: {fmt(s, ' m')}")
+        em = cb["est_channel_mean"]
+        if em:
+            print(f"  datum check: emitted per-channel mean {em['mean']:+.2e} m "
+                  f"(rms {em['rms']:.2e}) — the sum-to-zero datum should hold this at 0")
+        if cb["vf"] is not None:
+            verdict = ("CALIBRATED" if 0.5 <= cb["vf"] <= 2.0 else
+                       "OPTIMISTIC (sigma too small)" if cb["vf"] > 2.0 else
+                       "CONSERVATIVE (sigma too large)")
+            print(f"  vf        {cb['vf']:.3f}  over {cb['n_vf']} rows   => {verdict}")
+            print( "            (from network_sat_bias_states.csv — the B record has no σ)")
+        else:
+            print("  vf        (no σ channel — arm network.trace_sat_bias_states)")
+        if cb["n_pinned"]:
+            print(f"  {cb['n_pinned']} rows sat on a datum-PINNED column (σ withheld as a "
+                  f"gauge artefact, excluded from vf)")
+        if cb["n_no_truth"]:
+            print(f"  {cb['n_no_truth']} emitted (sat,signal) had no injected truth "
+                  f"(or an untransformable pin) and were skipped")
+
+    rx = grade_rx_states(run_dir, truth, args.settle_frac)
+    print("\n-- Receiver states (DCB contrast; level is the absorbed gauge) " + "-" * 14)
+    if rx is None:
+        print("  no network_rx_states.csv — arm network.trace_rx_states")
+    elif not rx.get("n_cb"):
+        print(f"  {rx['n_clk']} clock rows but ZERO receiver code-bias rows — "
+              f"estimate_ifb is off, so the receiver GF lump rides inside the slant iono")
+    else:
+        print(f"  {rx['n_cb']} DCB rows / {rx['n_clk']} clock rows, "
+              f"{rx['n_stations_truth']} stations with injected truth")
+        print(f"  contrast  {fmt(rx['contrast'], ' m')}   <- the estimable part, GRADED")
+        print(f"  level     {fmt(rx['level'], ' m')}   <- absorbed into the ionosphere "
+              f"(Table-8), NOT an error")
+        print(f"  formal σ  {fmt(rx['sigma'], ' m')}")
+    if rx and rx.get("clk_contrast") and rx["clk_contrast"]["n"]:
+        print(f"  rx clock  {fmt(rx['clk_contrast'], ' m')}   <- between-station "
+              f"contrast vs truth_clock.csv (the common part is the network clock datum)")
 
     zwd = grade_zwd(run_dir, truth, args.settle_frac)
     print("\n-- ZWD (absolute; the cleanest available vf) " + "-" * 32)
@@ -650,8 +1010,8 @@ def main():
     print("\n" + "=" * 78)
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
-            json.dump({"clock": clk, "phase": ph, "zwd": zwd, "consumer": con,
-                       "table8": t8, "s_line": s_line,
+            json.dump({"clock": clk, "phase": ph, "code_bias": cb, "rx_states": rx,
+                       "zwd": zwd, "consumer": con, "table8": t8, "s_line": s_line,
                        "n_epochs": len(epochs)}, fh, indent=2, default=str)
         print(f"wrote {args.json}")
     return 0

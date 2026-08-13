@@ -8,6 +8,7 @@
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>   // tailLog()'s never-null fallback
 
 #include <algorithm>
 #include <cstring>
@@ -926,9 +927,24 @@ NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContra
 
 namespace {
 /// Logger used by the tail (matches replay()'s fallback chain).
+///
+/// Guaranteed non-null: all three call sites below dereference the result
+/// directly (`tailLog()->warn(...)`), and `spdlog::default_logger()` CAN be
+/// null — the registry's default is cleared by `spdlog::drop_all()`, which
+/// LogManager calls on both re-initialize (LogManager.cpp:115) and shutdown
+/// (:201).  Same defect class as the cached-static `navLog()` in
+/// RinexNavParser.cpp, which faulted with an access violation on exactly its
+/// two logging paths.
 std::shared_ptr<spdlog::logger> tailLog() {
-    auto lg = spdlog::get("app");
-    return lg ? lg : spdlog::default_logger();
+    if (auto lg = spdlog::get("app")) return lg;
+    if (auto def = spdlog::default_logger()) return def;
+    // Registry has no default (post-drop_all).  Unregistered console fallback,
+    // so a tail diagnostic is never silently lost and never faults.
+    static const std::shared_ptr<spdlog::logger> fallback =
+        std::make_shared<spdlog::logger>(
+            "network_product_tail",
+            std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+    return fallback;
 }
 } // namespace
 

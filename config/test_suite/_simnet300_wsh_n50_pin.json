@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "The graded W6+SH arm RE-RUN with the \u00a71.5 cbpin= fill built (NetworkSolPrep).",
+    "The first graded run (runs/simnet300_wsh_n50_graded) emitted 466/480 epochs and was",
+    "then UNGRADEABLE on its headline channel: the S line declared no IF-pin pair, so the",
+    "\u00a74.4 two-stage S-transform could not be applied to the truth and the grader refused",
+    "(correctly) to assume (C1C,C2W).  Same posture, same fixture, one build apart."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet300_wsh_n50_graded.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/simnet300_wsh_n50_pin/products.txt"
+  }
+}

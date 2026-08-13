@@ -4419,6 +4419,22 @@ namespace GnssProcessor {
                       "re-target without the chain).");
             network_phase_datum_eq34_seed_round_ = false;
         }
+        // SEED-ROUND INC-2 (docs/SPEC_eq34_seed_round.md §8.5): frame-continuous
+        // re-host.  Strictly a refinement of the seed-round target rule — it needs
+        // the seed branch's state read to exist at all — so it is refused without
+        // it rather than silently arming a branch that can never be reached.
+        network_phase_datum_eq34_seed_round_rehost_frame_ =
+            jval<bool>(json, "network.phase_datum_eq34_seed_round_rehost_frame",
+                       "network_phase_datum_eq34_seed_round_rehost_frame", false);
+        if (network_phase_datum_eq34_seed_round_rehost_frame_
+            && !network_phase_datum_eq34_seed_round_) {
+            log->warn("Network: network.phase_datum_eq34_seed_round_rehost_frame "
+                      "requires network.phase_datum_eq34_seed_round — forced OFF "
+                      "(INC-2 computes the re-host frame step from the SEED-ROUND "
+                      "state read; without the seed branch there is no pre-pin "
+                      "value to step from and the re-host stays unknown).");
+            network_phase_datum_eq34_seed_round_rehost_frame_ = false;
+        }
         network_phase_datum_eq34_rpb_prior_sigma_m_ =
             jval<double>(json, "network.phase_datum_eq34_rpb_prior_sigma_m",
                          "network_phase_datum_eq34_rpb_prior_sigma_m", 1.0);
@@ -6417,6 +6433,18 @@ namespace GnssProcessor {
                       network_phase_datum_eq34_pin_round_ ? "true" : "false",
                       network_phase_datum_eq34_seed_round_ ? "true" : "false",
                       network_phase_datum_eq34_rpb_prior_sigma_m_);
+            // INC-2 gets its own line rather than a widened summary string: an OFF
+            // run's log (and the run-summary hash the V1 byte-identity rung reads)
+            // must be untouched by this card.
+            if (network_phase_datum_eq34_seed_round_rehost_frame_)
+                log->info("Network producer: eq34 SEED-ROUND INC-2 (frame-continuous "
+                          "re-host) ON — a tree pin that moves to a NEW host takes its "
+                          "frame step from that host's own ambiguity state and "
+                          "S-transforms the carried values, instead of an unknown step "
+                          "that re-references the (sat,signal) and marginalizes its "
+                          "carried phase-bias prior for the epoch.  A/B lever "
+                          "(docs/SPEC_eq34_seed_round.md §8.5); the run-end seed-round "
+                          "block reports framed vs cold re-hosts.");
             if (network_phase_datum_prioritized_)
                 log->info("Network producer: network.phase_datum_eq34 SUPERSEDES "
                           "network.phase_datum_prioritized (the ensemble precedent) — the anchor "

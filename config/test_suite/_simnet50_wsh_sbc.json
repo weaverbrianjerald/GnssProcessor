@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "W6+SH probe rung 3 \u2014 SBC S-basis completion.",
+    "Same rung-1 finding (one extra near-null, a uniform PB|*|L2W common mode).",
+    "network.sbasis_complete is the knob built for precisely this signature: it",
+    "derives the REALIZED S-basis dimension pre-gate and constrains the",
+    "observed-beyond-declared directions along their own eigenvectors at the",
+    "carried level, instead of withholding the epoch.  Its documented origin is the",
+    "FT63 GPS+Gal observed-4-vs-declared-2 case; this is observed-2-vs-declared-1,",
+    "the same class one dimension down.  If the direction really is a gauge, this",
+    "is the CORRECT remedy \u2014 pin it \u2014 rather than reclassifying it as informative."
+  ],
+  "network": {
+    "sbasis_complete": true,
+    "sbasis_complete_max": 6,
+    "product_output_path": "C:/GnssProcessor/runs/simnet50_wsh_sbc/products.txt"
+  },
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet50_wsh_probe.json"
+  ]
+}

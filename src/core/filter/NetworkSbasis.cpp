@@ -417,6 +417,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
     const std::function<double(const std::string&, const std::string&)>& freqOf,
     bool cb_time_linked, bool clock_signal_basis_hold, bool emit_clock_disc,
+    bool gf_datum,
     const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
     const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
     const std::set<std::string>& code_bias_sat_seen_,
@@ -604,6 +605,52 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         if (row_ok && row.cwiseAbs().sum() > 0.0) {
             rows.push_back(std::move(row));
             zs.push_back(zval);
+        }
+        // (1b) Per-satellite GEOMETRY-FREE pin — Odijk 2016 rank deficiency 3b
+        // (Table 7), armed ONLY in the slant posture (the loader refuses it
+        // alongside an ionosphere constraint).  Their Eq. (30):
+        //
+        //     mu_GF = [-1, 1, 0, ..., 0]^T / (mu_2 - mu_1),   mu_j = (f_1/f_j)^2
+        //
+        // so the pinned combination is (d_2 - d_1)/(mu_2 - mu_1) = 0 on the SAME pair
+        // the IF pin uses.  Deliberately the same pair: IF and GF then span the pinned
+        // pair's whole 2-D subspace, which drives d_1 = d_2 = 0 exactly — Odijk's
+        // "code biases are not estimable for the first two frequencies" (§5.1)
+        // realized as a datum rather than asserted.  What survives is the modernized
+        // DCB d^s_1 - d^s_j for j >= 3, which is the entire point of the third band.
+        //
+        // TARGET 0 IS THE S-BASIS CHOICE, NOT A GUESS.  d^s_GF is a datum quantity: its
+        // value is arbitrary and the estimable parameters absorb it (their Table 8 —
+        // the geometry-free biases move INTO the slant ionosphere, iota~ = iota +
+        // d_r,GF - d^s_GF).  That is why a zero target is safe HERE and is not the same
+        // move as a zero-target ambiguity pin, which fights an injected integer truth
+        // and discharges km-scale tension into the field (§12.8.1).  The quantity
+        // pinned here is metre-scale and genuinely gauge.
+        if (gf_datum && f1 > 0.0 && f2 > 0.0) {
+            const double mu2_minus_mu1 = (f1 * f1) / (f2 * f2) - 1.0;
+            if (std::abs(mu2_minus_mu1) > 1e-12) {
+                Eigen::VectorXd grow = Eigen::VectorXd::Zero(nshared);
+                bool gf_ok = false;
+                try {
+                    grow(est.codeBiasColumn(sat, sig1)) = -1.0 / mu2_minus_mu1;
+                    grow(est.codeBiasColumn(sat, sig2)) =  1.0 / mu2_minus_mu1;
+                    gf_ok = true;
+                } catch (...) { grow.setZero(); gf_ok = false; }
+                if (gf_ok && grow.cwiseAbs().sum() > 0.0) {
+                    rows.push_back(std::move(grow));
+                    zs.push_back(0.0);
+                    ++out.n_gf_pin_sats;
+                    // A satellite with no signal outside the pinned pair has NOTHING
+                    // estimable left on the code side once IF and GF are both pinned.
+                    // That is correct under Odijk, and it is also invisible downstream
+                    // (an all-datum satellite emits values indistinguishable from a
+                    // well-determined zero), so it is counted rather than left implicit.
+                    bool has_third = false;
+                    for (const std::string& s : sigs)
+                        if (s != sig1 && s != sig2) { has_third = true; break; }
+                    if (!has_third) ++out.n_gf_only_pair;
+                }
+            }
         }
     }
     // (2) Build the sum-to-zero rows now (after the IF pins, preserving row

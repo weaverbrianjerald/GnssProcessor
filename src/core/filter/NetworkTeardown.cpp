@@ -1757,6 +1757,29 @@ int networkTeardown(
                           "trust this run's datum realization.",
                           c.seed_round_max_abs_y_m);
         }
+        // INC-2 (§8.5) — the re-host ledger.  Reported only when armed, so an OFF
+        // twin's run-end block stays byte-identical to the pre-card build.
+        if (config_.networkPhaseDatumEq34SeedRoundRehostFrame()) {
+            const long long rh = c.seed_round_rehost_framed
+                               + c.seed_round_rehost_cold;
+            if (rh == 0)
+                log->warn("Network (eq34 seed-round INC-2): ARMED but NO tree pin "
+                          "ever re-hosted without a carry — the frame-continuous "
+                          "re-host path never ran.  Standing invariant #4: INERT, "
+                          "not validated.");
+            else
+                log->info("Network (eq34 seed-round INC-2): {} carry-less re-host(s) "
+                          "— {} FRAMED (step taken from the new host's own state, "
+                          "carries S-transformed, the (sat,signal) kept out of "
+                          "eq34_reref) and {} COLD (no allocated state ⇒ legacy "
+                          "unknown step + reref).  Max |frame step| {:.4f} m: that "
+                          "is bounded by λ/2 only while the new host's float sits on "
+                          "the realized frame, so read a large value as evidence the "
+                          "solution had drifted off it, NOT as a health violation.",
+                          rh, c.seed_round_rehost_framed,
+                          c.seed_round_rehost_cold,
+                          c.seed_round_rehost_max_step_m);
+        }
     }
     if (config_.networkPhaseDatumEq34SlipAwareElection()) {
         const long long ds = ctx.counters.eq34_slip_deseeded;

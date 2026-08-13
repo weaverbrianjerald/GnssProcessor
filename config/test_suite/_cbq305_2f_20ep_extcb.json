@@ -1,0 +1,17 @@
+{
+ "_comment": [
+  "Card CB-Q leg C fallback \u2014 the CONFORMANT two-frequency producer:",
+  "estimate_sat_code_bias FALSE, satellite code biases APPLIED from .BIA.",
+  "Odijk: below three frequencies there is no estimable satellite OSB, so",
+  "switching it off is conformance, not a compromise.  Run this only if",
+  "_cbq305_2f_20ep withholds every epoch."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_cbq305_2f_20ep.json"
+ ],
+ "network": {
+  "estimate_sat_code_bias": false,
+  "product_output_path": "C:/GnssProcessor/runs/cbq305_2f_20ep_extcb/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cbq305_2f_20ep_extcb/state_snapshot.bin"
+ }
+}

@@ -207,6 +207,7 @@ namespace GnssProcessor {
         bool eq34_extend_only{};
         bool eq34_slip_aware{};   ///< network.phase_datum_eq34_slip_aware_election — keep slipped arcs out of the spanning tree so a slip costs one chord, not every cycle through a tree edge.
         bool eq34_seed_round{};   ///< network.phase_datum_eq34_seed_round (docs/SPEC_eq34_seed_round.md) — round otherwise-zero pin targets to λ·round(x_state/λ); |innovation| ≤ λ/2 by construction.  NOT gated on !carry_invariant (the Card-4 zero-target rationale is re-pin continuity; ignition is this knob's whole point).
+        bool eq34_seed_round_rehost{};   ///< network.phase_datum_eq34_seed_round_rehost_frame (SPEC §8.5 INC-2) — a pin that re-hosts takes its frame step from the NEW host's own ambiguity state (exact pre-pin float) and stays shiftable, instead of an unknown step that re-references the (sat,σ).  INERT unless eq34_seed_round.
         bool phase_datum_prioritized{};
         double phase_hold_sigma{};
         bool phase_hold_on{};
@@ -1625,6 +1626,18 @@ namespace GnssProcessor {
         long long seed_round_frozen       = 0;   ///< INC-1: targets reused verbatim from eq34_prev_target (frame realized once)
         long long seed_round_target_steps = 0;
         double    seed_round_max_abs_y_m  = 0.0;
+        // INC-2 (§8.5) re-host tallies.  `framed` = re-hosts whose frame step was
+        // computed from the new host's own state and therefore stayed SHIFTABLE (the
+        // carried PB prior is S-transformed, not marginalized); `cold` = re-hosts
+        // INC-2 could not frame (no allocated state — the fold-deferred path), which
+        // keep the legacy unknown-step reref.  `max_step_m` is the largest |frame
+        // step| any framed re-host applied: it is bounded by λ/2 ONLY when the new
+        // host's float is frame-consistent, so a large value is the signal that the
+        // solution at the new host had drifted off the realized frame — read it as a
+        // diagnostic of the very runaway this card probes, never as a health bound.
+        long long seed_round_rehost_framed  = 0;
+        long long seed_round_rehost_cold    = 0;
+        double    seed_round_rehost_max_step_m = 0.0;
         // eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md) run tallies —
         // every field documented on the struct.  Bumped only when
         // ctx.knobs.anchor_hygiene_on, and reported by the run-end block in

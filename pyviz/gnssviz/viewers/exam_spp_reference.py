@@ -407,13 +407,43 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
                                          label=f"median {cdt_med:+.2f} m"))
             axe1.traces += storm
             axes_e.append(axe1)
-        # Each leg about its own median: the receiver clock's real behaviour is
-        # common to both, so this panel should show two overlapping curves.
-        axe2 = Axes(title="Each leg's c·dt about its own median (the shared clock model)",
-                    xlabel="GPS Time", ylabel="c·dt − median (m)", legend=Legend(loc="best"))
+        # Each leg about its own DE-TRENDED baseline.  Removing the median alone was
+        # enough while the simulated receiver clock was a constant bias; since the
+        # truth clock drifts (see the exam ANSWER_KEY receiver-clock note) it ramps
+        # ~13 km over a 12 h arc, which is ~600x the ~22 m of real leg-to-leg
+        # structure — the panel autoscales to the ramp and both legs collapse onto
+        # one straight line with the physics at sub-pixel scale.  Fit and subtract a
+        # straight line per leg (the oscillator's bias + frequency offset, which is
+        # nuisance here) and what is left is exactly what the panel is about.
+        def _detrend(y):
+            good = np.isfinite(y)
+            if good.sum() < 3:
+                return y - np.nanmedian(y)
+            x = np.arange(y.size, dtype=float)
+            a, b = np.polyfit(x[good], y[good], 1)
+            r = y - (a * x + b)
+            return r - np.nanmedian(r)
+
+        d1, d2_ = _detrend(c1), _detrend(c2)
+        # Report the removed rate so the ramp is disclosed, not silently hidden.
+        dt_s = 1.0
+        if t is not None and len(t) > 1:
+            try:
+                dt_s = max(float((t[-1] - t[0]) / np.timedelta64(1, "s")) / (len(t) - 1), 1e-9)
+            except Exception:
+                dt_s = 1.0
+        rate = np.nan
+        good = np.isfinite(c1)
+        if good.sum() >= 3:
+            rate = float(np.polyfit(np.arange(c1.size, dtype=float)[good],
+                                    c1[good], 1)[0]) / dt_s
+        axe2 = Axes(title="Each leg's c·dt, linear trend removed (the shared clock model)"
+                          + ("" if not np.isfinite(rate)
+                             else f" — removed drift {rate:+.4f} m/s"),
+                    xlabel="GPS Time", ylabel="c·dt − (fit) (m)", legend=Legend(loc="best"))
         axe2.traces = [
-            Line(x=t, y=c1 - np.nanmedian(c1), color=_C_L1, width=1.0, label="leg 1"),
-            Line(x=t, y=c2 - np.nanmedian(c2), color=_C_IF, width=1.0, label="leg 2"),
+            Line(x=t, y=d1, color=_C_L1, width=1.0, label="leg 1"),
+            Line(x=t, y=d2_, color=_C_IF, width=1.0, label="leg 2"),
         ] + storm
         axes_e.append(axe2)
         figures.append(Figure(name="Receiver clock", axes=axes_e, width=13,

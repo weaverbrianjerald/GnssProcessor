@@ -66,6 +66,7 @@ double wavelengthFor(char sys, const std::string& code) {
     } else if (sys == 'E') {
         if (band == '1') return Constants::GAL_E1_WAVELENGTH;
         if (band == '5') return Constants::GAL_E5A_WAVELENGTH;
+        if (band == '7') return Constants::GAL_E5B_WAVELENGTH;
     }
     return Constants::GPS_L1_WAVELENGTH;
 }
@@ -1633,7 +1634,12 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     };
     // Multipath amplitudes are milder than DESIGN §5.7 (semicodeless L2 worst);
     // per-band zenith amplitudes come from SimConfig (smartphone cases bump these).
-    const std::vector<SysPlan> plans = {
+    // The THIRD band of each system is appended (never inserted) when armed, so the
+    // first two bands keep their draw order within a satellite and an OFF run is
+    // byte-identical.  Odijk 2016 §5.1: below three frequencies the slant-ionosphere
+    // posture has no estimable satellite code bias at all, so this is what makes the
+    // slant experiment possible — see SimConfig::Signals.
+    std::vector<SysPlan> plans = {
         { 'G', 32,
           { { "C1C", "L1C", Constants::GPS_L1_WAVELENGTH, scfg.multipath.code_amp_gps_l1_m },
             { "C2W", "L2W", Constants::GPS_L2_WAVELENGTH, scfg.multipath.code_amp_gps_l2_m } },
@@ -1642,6 +1648,32 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
           { { "C1C", "L1C", Constants::GAL_E1_WAVELENGTH, scfg.multipath.code_amp_gal_e1_m },
             { "C5Q", "L5Q", Constants::GAL_E5A_WAVELENGTH, scfg.multipath.code_amp_gal_e5a_m } },
           isb_true_m },
+    };
+    if (scfg.signals.gps_l5)
+        plans[0].bands.push_back({ "C5Q", "L5Q", Constants::GPS_L5_WAVELENGTH,
+                                   scfg.multipath.code_amp_gps_l5_m });
+    if (scfg.signals.galileo_e5b)
+        plans[1].bands.push_back({ "C7Q", "L7Q", Constants::GAL_E5B_WAVELENGTH,
+                                   scfg.multipath.code_amp_gal_e5b_m });
+    if (scfg.signals.gps_l5 || scfg.signals.galileo_e5b)
+        std::cout << "[" << tag << "] THIRD BAND armed: GPS "
+                  << plans[0].bands.size() << " band(s), Galileo " << plans[1].bands.size()
+                  << " band(s).  NOTE this fixture emits the third band on EVERY satellite of "
+                     "the constellation, unlike the real GPS constellation where L5 is carried "
+                     "by a subset — deliberate, so an estimability result cannot be confounded "
+                     "with third-band sparsity.\n";
+
+    // SYNTHETIC satellite OSB (SimConfig::Signals::synth_osb_amp_m), added on top of
+    // whatever the product .BIA supplies.  Deterministic in the PRN — no RNG, so the
+    // four simulator streams are untouched.  It exists because the shipped COD0MGXFIN
+    // OSB product has NO GPS band-5 rows at all, which would leave a third-band code
+    // bias identically zero and make the channel ungradeable.
+    auto synthOsb = [&scfg](const std::string& sat, const std::string& code) -> double {
+        if (scfg.signals.synth_osb_amp_m.empty()) return 0.0;
+        const auto it = scfg.signals.synth_osb_amp_m.find(code);
+        if (it == scfg.signals.synth_osb_amp_m.end()) return 0.0;
+        const int prn = (sat.size() == 3) ? std::atoi(sat.substr(1).c_str()) : 0;
+        return it->second * std::sin(2.0 * Constants::PI * ((prn * 7) % 23) / 23.0);
     };
 
     // ---- Synthetic SATELLITE-clock error (SPEC_synthetic_minimum_network.md §3.1) ----
@@ -1959,10 +1991,16 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         hdr.marker_number = scfg.station.name;
         hdr.marker_type = kinematic ? "KINEMATIC" : "GEODETIC";
     }
-    hdr.obs_types = {
-        { 'G', { "C1C", "L1C", "C2W", "L2W" } },
-        { 'E', { "C1C", "L1C", "C5Q", "L5Q" } },
-    };
+    // Derived FROM THE BAND PLAN rather than restated: a hand-written literal here is
+    // exactly how a third band ends up synthesized into rows that the RINEX header never
+    // declares (the writer emits per declared type, so the band would silently vanish).
+    hdr.obs_types.clear();
+    for (const auto& plan : plans) {
+        std::vector<std::string> codes;
+        codes.reserve(plan.bands.size() * 2);
+        for (const auto& b : plan.bands) { codes.push_back(b.code); codes.push_back(b.phase); }
+        hdr.obs_types.emplace_back(plan.sys, std::move(codes));
+    }
     // RINEX header realism / leak knobs (SPEC R2).  Each override is applied ONLY when the
     // config supplies it, so an absent/default rinex section keeps every writer default
     // and the file is byte-identical (R2.1).
@@ -2112,7 +2150,12 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     std::ofstream bias_csv;
     if (write_bias_truth) {
         bias_csv.open(outdir / "truth_bias.csv");
-        bias_csv << "satellite,signal,osb_ns,osb_m\n" << std::fixed << std::setprecision(6);
+        // osb_m is the TOTAL injected bias (what the estimator must reproduce);
+        // product_m / synth_m / source split it for provenance.  Column NAMES are the
+        // join key downstream (scripts/simnet_grade.py reads by DictReader), so
+        // appending columns is safe and the two leading columns are unchanged.
+        bias_csv << "satellite,signal,osb_ns,osb_m,product_m,synth_m,source\n"
+                 << std::fixed << std::setprecision(6);
     }
     std::set<std::string> bias_seen;
     std::map<std::string, double> osb_by_key; // "G01|C1C" -> OSB (m)
@@ -2491,20 +2534,32 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                     // byte-identical: x + 0.0 == x).  Recorded once per (sat, signal).
                     double bias_code = 0.0, bias_phase = 0.0;
                     if (want_signal_bias) {
-                        bias_code  = eph.signalBiasMetres(sat, band.code,  t);
-                        bias_phase = eph.signalBiasMetres(sat, band.phase, t);
-                        auto record = [&](const std::string& sig, double osb_m) {
+                        // product OSB + the deterministic synthetic delta (0 unless the
+                        // code appears in signals.synth_osb_amp_m).  truth_bias.csv
+                        // records the TOTAL — that is what the estimator must reproduce —
+                        // with the split kept alongside so a grader can tell a product
+                        // bias from an injected one without re-deriving either.
+                        const double prod_code  = eph.signalBiasMetres(sat, band.code,  t);
+                        const double prod_phase = eph.signalBiasMetres(sat, band.phase, t);
+                        const double syn_code   = synthOsb(sat, band.code);
+                        const double syn_phase  = synthOsb(sat, band.phase);
+                        bias_code  = prod_code  + syn_code;
+                        bias_phase = prod_phase + syn_phase;
+                        auto record = [&](const std::string& sig, double osb_m,
+                                          double prod_m, double syn_m) {
                             const std::string key = sat + "|" + sig;
                             if (bias_seen.insert(key).second) {
                                 osb_by_key[key] = osb_m;
                                 max_abs_osb_m = std::max(max_abs_osb_m, std::abs(osb_m));
                                 bias_csv << sat << "," << sig << ","
                                          << osb_m / (Constants::SPEED_OF_LIGHT * 1e-9) << ","
-                                         << osb_m << "\n";
+                                         << osb_m << "," << prod_m << "," << syn_m << ","
+                                         << (syn_m != 0.0 ? (prod_m != 0.0 ? "product+synth" : "synth")
+                                                          : "product") << "\n";
                             }
                         };
-                        record(band.code,  bias_code);
-                        record(band.phase, bias_phase);
+                        record(band.code,  bias_code,  prod_code,  syn_code);
+                        record(band.phase, bias_phase, prod_phase, syn_phase);
                     }
                     // Carrier-phase wind-up (M10): PHASE-ONLY, per band (the metres
                     // scale with each wavelength; the underlying accumulated angle is

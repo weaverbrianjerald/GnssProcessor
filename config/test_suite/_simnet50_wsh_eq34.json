@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "W6+SH probe rung 2 \u2014 the PHASE DATUM hypothesis.",
+    "Probe rung 1 (_simnet50_wsh_probe) withheld 19/19 with the posture bundle 3/3",
+    "ARMED, so the documented 50-station withhold is NOT the elevation-cutoff",
+    "artifact.  Its estimability dump names the culprit exactly: ONE extra near-null",
+    "beyond the declared clock gauge, ev 9.78e-06 (gauge 6.9e-12, next real layer",
+    "2.48e-02), composed as a UNIFORM PB|*|L2W direction \u2014 the secondary-band",
+    "satellite phase-bias COMMON MODE, stable to four digits across epochs.",
+    "With float ambiguities that direction is absorbable by the L2W ambiguities, so",
+    "it is a GAUGE the declared dimension (= #constellations = 1) does not count.",
+    "",
+    "The in-flight field arm (_cbq305_2f_12h_d10) does NOT run the legacy phase",
+    "datum that rung 1 ran: it runs network.phase_datum_eq34 (+ min_stations 1).",
+    "That is the Odijk-Eq-34 single-receiver-chain phase datum, i.e. a different",
+    "and more complete pinning of exactly the phase-bias family this near-null",
+    "lives in.  If the wall is the DATUM rather than station support, this rung",
+    "emits at 50 stations and the whole ladder collapses to a cheap fixture."
+  ],
+  "network": {
+    "phase_datum_eq34": true,
+    "phase_datum_min_stations": 1,
+    "product_output_path": "C:/GnssProcessor/runs/simnet50_wsh_eq34/products.txt"
+  },
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet50_wsh_probe.json"
+  ]
+}

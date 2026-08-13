@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -55,6 +56,7 @@ void networkIonoDiag(
     auto& iono_trace           = traces.iono_trace;
     auto& anchor_info_trace    = traces.anchor_info_trace;
     auto& zwd_trace            = traces.zwd_trace;
+    auto& rx_states_trace      = traces.rx_states_trace;
     auto& clk_prior_info = ws.clk_prior_info;
 
 
@@ -127,6 +129,75 @@ void networkIonoDiag(
                       << stations[i].name << ',' << fmt::format("{:.6f}", zwd_m) << ','
                       << fmt::format("{:.6e}", std::sqrt(var)) << ','
                       << (asm_res[i].pl_zwd_injected ? 1 : 0) << '\n';
+        }
+    }
+
+    // --- L14b: per-station RECEIVER state trace (network.trace_rx_states) ------
+    // The receiver half of the §4.8 export gap.  Under the W6 slice the loader FORCES
+    // estimate_ifb on (GnssConfigLoadNetwork.cpp:2087) — an explicit receiver DCB state
+    // per (station, RINEX code), without which the receiver GF code lump rides inside
+    // the slant ionosphere and fights the SH field.  Those columns are nonetheless
+    // exported NOWHERE as estimates: they appear only as prior-residual census LABELS
+    // carrying standardized residuals.  So the Table-8 receiver term
+    // (contract §B.4: ι̃ = ι + d̄_r,GF − d_GF^s) cannot be graded against an injected
+    // receiver-bias truth, which is exactly what the synthetic fixture provides.
+    //
+    // Same construction as the ZWD block above (which is the pattern to copy, per the
+    // SPEC): reconstructStation for the value, conditionalLocalVarianceDiag for the
+    // datum-conditioned σ, and the column located via getClockIndex / getCodeBiasStates
+    // + h2local rather than any carry-gated flag — a carry-gated lookup would emit no
+    // rows on a cold run and read as "the states do not exist".
+    //
+    // One conditionalLocalVarianceDiag call per station covering ALL of that station's
+    // receiver columns, not one call per column: the cost is in the conditioning, and
+    // the diagonal it returns is per requested column anyway.
+    if (rx_states_trace.is_open()) {
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (est_index_of[i] < 0) continue;               // not in this epoch's solve
+            const auto& h2l = asm_res[i].h2local;
+            // Collect (kind, key, state_index, local_column) for the clock + every rx CB.
+            struct RxCol { const char* kind; std::string key; int sidx; Eigen::Index col; };
+            std::vector<RxCol> want;
+            const size_t clk_sz = stations[i].sm->getClockIndex();
+            if (clk_sz != std::numeric_limits<size_t>::max()) {
+                const auto hit = h2l.find(static_cast<int>(clk_sz));
+                if (hit != h2l.end() && hit->second >= 0)
+                    want.push_back({ "CLK", std::string(), static_cast<int>(clk_sz),
+                                     static_cast<Eigen::Index>(hit->second) });
+            }
+            for (const auto& [key, idx] : stations[i].sm->getCodeBiasStates()) {
+                const auto hit = h2l.find(static_cast<int>(idx));
+                if (hit == h2l.end() || hit->second < 0) continue;
+                want.push_back({ "CB", key, static_cast<int>(idx),
+                                 static_cast<Eigen::Index>(hit->second) });
+            }
+            if (want.empty()) continue;
+            std::vector<Eigen::Index> cols;
+            cols.reserve(want.size());
+            for (const auto& w : want) cols.push_back(w.col);
+            Eigen::VectorXd x_r, vard;
+            try {
+                x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s);
+                vard = est.conditionalLocalVarianceDiag(
+                    static_cast<std::size_t>(est_index_of[i]), cols, plan.shared_datum);
+            } catch (...) { continue; }
+            for (size_t k = 0; k < want.size(); ++k) {
+                const auto& w = want[k];
+                if (w.col >= x_r.size()) continue;
+                const double x_lin = stations[i].sm->getStateVector()(w.sidx);
+                const double value  = x_lin + x_r(w.col);
+                const double var    = (static_cast<Eigen::Index>(k) < vard.size())
+                                          ? vard(static_cast<Eigen::Index>(k)) : -1.0;
+                if (!std::isfinite(value)) continue;
+                rx_states_trace << se.time.week << ','
+                                << fmt::format("{:.3f}", se.time.tow) << ','
+                                << stations[i].name << ',' << w.kind << ',' << w.key << ','
+                                << fmt::format("{:.6f}", value) << ',';
+                // Blank σ = "no honest conditional variance this epoch", never 0.
+                if (var > 0.0 && std::isfinite(var))
+                    rx_states_trace << fmt::format("{:.6e}", std::sqrt(var));
+                rx_states_trace << '\n';
+            }
         }
     }
 

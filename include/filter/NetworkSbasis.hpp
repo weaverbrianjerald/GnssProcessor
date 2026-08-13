@@ -255,6 +255,8 @@ public:
         Eigen::VectorXd z;      ///< Length-k RHS (all 0 legacy; prev-epoch targets under Card-2).
         int n_if_pin_sats{0};   ///< Satellites attempted for the IF pin (census order size).
         int n_s2z_channels{0};  ///< (constellation,signal) sum-to-zero channels.
+        int n_gf_pin_sats{0};   ///< Satellites that received a GEOMETRY-FREE pin row (slant posture; 0 when off).
+        int n_gf_only_pair{0};  ///< GF-pinned satellites carrying NO third band, i.e. whose code bias is now fully datum-fixed and has no estimable content left (Odijk §5.1) — a count, because "emitted nothing" and "estimated zero" look identical downstream.
     };
 
     /**
@@ -322,6 +324,7 @@ public:
         const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
         const std::function<double(const std::string&, const std::string&)>& freqOf,
         bool cb_time_linked, bool clock_signal_basis_hold, bool emit_clock_disc,
+        bool gf_datum,
         const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
         const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
         const std::set<std::string>& code_bias_sat_seen_,

@@ -1,0 +1,42 @@
+{
+ "_comment": [
+  "Card CB-Q leg C \u2014 RATE PROBE at 305 sta / 2 signals.  1 h of data; the ONE knob",
+  "vs its twin is network.epoch_decimation_n.  Purpose: find out whether the",
+  "measured 300 s DECISIVE NO-GO (project_dev300s_tier: over 300 s the DD carry",
+  "prediction is invalid \u2014 0.9 cyc predicted vs 15 cyc actual \u2014 refloats 33 %/ep,",
+  "arc life ~15 min, and at deg-15 the SH field ran away to 2620 TECU over hr",
+  "4.1-4.7) still binds on THIS much smaller state vector, where the multi-channel",
+  "code-bias columns are gone by construction.  It was measured on the full",
+  "multi-signal posture; it is inheritance, not measurement, until re-run here.",
+  "",
+  "READ (in order): D5 refloat rate per epoch and its \u03c3\u0302\u2080 (carry prediction VALID",
+  "iff \u03c3\u0302\u2080 \u2248 1 \u2014 60 s measured 184/ep at \u03c3\u0302\u2080 = 1.00, 300 s measured 2161/ep); the",
+  "a\u2080\u2080 physical-band WARN (the field-divergence probe, [2, 150] TECU); solved-epoch",
+  "count; s/epoch.  A tier that trips either of the first two is emission/datum",
+  "mechanics ONLY and cannot grade the code-bias channel, which sits downstream of",
+  "both the iono constraint and the carry.",
+  "",
+  "GAP-GUARD LANDMINES CHECKED: phase_leveling_max_gap_s (900) and",
+  "clock_model_max_gap_s are INERT on this chain (phase_leveling and clock_model",
+  "are both off).  emit_pb_filter_gate k = 4 is the value measured to transfer",
+  "300 s <-> 30 s, and it is already inherited.  Per-second q's self-scale.",
+  "\u26a0 Epoch-denominated windows (carry_invariant_innov_calibrate_window 15,",
+  "emit_pb_filter_window_epochs 15, iono_constraint_deweight_window_epochs 15) are",
+  "left ALONE deliberately: the rate-transferable-windows card is unbuilt, and",
+  "hand-rescaling them here would make the probe more than one knob different.",
+  "",
+  "300 s tier \u2014 the one the speed argument wants and the one on record as NO-GO."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_cbq305_2f_20ep.json"
+ ],
+ "processing": {
+  "max_duration_s": 3600.0
+ },
+ "network": {
+  "max_duration_s": 3600.0,
+  "epoch_decimation_n": 10,
+  "product_output_path": "C:/GnssProcessor/runs/cbq305_2f_1h_d10/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cbq305_2f_1h_d10/state_snapshot.bin"
+ }
+}

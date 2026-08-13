@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "W6+SH OBSERVABILITY PROBE at 50 stations, 20 epochs (docs/SPEC_synthetic_minimum_network §11 item 1).",
+    "",
+    "THE QUESTION.  The record says the W6+SH slice withholds every epoch at 50",
+    "stations (§9.7.2 finding 5, 240/240 withheld) and solves at 303 in the field",
+    "(_cbq305_2f_12h_d10).  But that 50-station attempt ran the loader's DEFAULT",
+    "ionosphere_weighting.elevation_cutoff_deg = 10 — its own posture line reported",
+    "'SH-VTEC / W6 slice: PARTIAL 2/3', and the missing member was the >= 25 deg",
+    "cutoff.  Since the 25 deg cutoff is the single validated SH lever (at 10 deg the",
+    "305-station field diverged a00 296 -> -305 TECU with a FLAT per-degree spectrum;",
+    "at 25 deg it holds 30.9 -> 29.4), the documented withhold has two candidate",
+    "causes and they differ by a factor of 6 in the cost of every future arm:",
+    "",
+    "  H1  station support — the slice needs O(100+) stations to separate the",
+    "      satellite DCB from the field, so 50 can never work and the fixture must",
+    "      be scaled to ~300 (§11's recommendation).",
+    "  H2  the cutoff — 50 stations were always enough and the arm was measuring a",
+    "      degenerate low-elevation-code field, in which case the ladder floor is",
+    "      <= 50 and the graded arm is ~6x cheaper.",
+    "",
+    "This probe is the discriminator.  20 epochs is enough: the failure mode is a",
+    "rank-gate withhold at epoch 1, not a convergence outcome — 'emitted 20/20' vs",
+    "'withheld 20/20' is decided in the first epoch and cannot be read as a level",
+    "claim (nothing here is graded).",
+    "",
+    "DEGREE 4, not the template's 15.  Degree 15 at 50 stations is not a sanctioned",
+    "pairing (that rule needs >= 150 stations); the validated low-n lineage is",
+    "degree 4, and the earlier degree sweeps all degenerated at low n.  Degree 4 is",
+    "also the MOST FAVOURABLE case — 25 coefficients instead of 256 — so a withhold",
+    "here is a lower bound on the ladder floor for any higher degree.",
+    "",
+    "CLOCK DATUM moved to S26000SIM (lat +1.09) — the generator fell back to",
+    "S01000SIM at lat -68.75, the roster's most polar station, and §9.8 measured ~8x",
+    "more common-level wander from a polar datum.  Irrelevant to a rank probe, set",
+    "here so the posture matches the arm this probe is scouting for.",
+    "",
+    "Own product path + own CWD: it shares the G-A fixture's observations and must",
+    "not touch the G-A arm's products.txt."
+  ],
+  "extends": [ "C:/GnssProcessor/config/test_suite/_simnet50_wsh.json" ],
+
+  "processing": {
+    "max_duration_s": 570.0
+  },
+
+  "estimation": {
+    "global_vtec_sh": { "max_degree": 4 }
+  },
+
+  "network": {
+    "clock_datum_station": "S26000SIM",
+    "product_output_path": "C:/GnssProcessor/runs/simnet50_wsh_probe/products.txt"
+  }
+}

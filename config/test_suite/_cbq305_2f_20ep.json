@@ -1,0 +1,71 @@
+{
+ "_comment": [
+  "Card CB-Q leg C \u2014 the STRICT TWO-SIGNAL 305-station arm (user-directed 2026-08-11).",
+  "GPS-only, dual frequency, ONE channel per band network-wide: C1C + C2W and nothing",
+  "else.  Delta vs _golden305_gps is processing.signal_priorities (the STRING form",
+  "'WCSLXPYMIQ' expands to every attribute on every band and puts C1W AHEAD of C1C;",
+  "the ARRAY form below is a whitelist, because decideConstellationCanonicals only",
+  "considers priority-list entries as canonical candidates \u2014 PppModel.cpp:462) plus",
+  "frequency_mode all -> dual, which is now honest: bands 1 and 2 are all there is.",
+  "",
+  "WHY, for this card: SPEC_cb_carry_physical_q measures the emitted OSBs DRIFTING",
+  "(log-log slope 0.99, metres per pass) and locates the drift in the UNPINNED",
+  "inter-channel directions \u2014 C1W-C1C 2.90 m / 5.3 h though it is a hardware",
+  "constant, C2X-C2W, C5Q/C5X worst of all \u2014 while the PINNED IF(C1C,C2W) reads",
+  "0.003 cm and the iono-confounded GF direction is the QUIETEST.  With exactly two",
+  "signals per satellite the per-sat IF pin consumes one of the two columns and the",
+  "sum-to-zero datum takes the level, so every drifting inter-channel direction is",
+  "removed BY CONSTRUCTION.  This arm asks what the code-bias channel does when only",
+  "the estimable direction is left.",
+  "",
+  "STATION COVERAGE: all 304 rosters (303 in-network + WTZZ) were header-scanned for",
+  "C1C/L1C/C2W/L2W and ALL FOUR are present in every one, so the 'strict coverage'",
+  "filter drops nothing and the roster is unchanged.  The multi-channel columns exist",
+  "because stations track those signals IN ADDITION, not because coverage is ragged.",
+  "(Header presence is not data presence; the producer's own signalAdmitted network",
+  "coverage gate and the run-end counters are the check that matters.)",
+  "",
+  "PRE-REGISTERED RISK \u2014 this may produce ZERO SOLUTION EPOCHS.  Odijk et al. 2016:",
+  "with two frequencies the satellite code biases are not estimable (IF -> clock, GF",
+  "-> ionosphere), and _golden63_gps_1h_dual reproduced exactly that (121/121",
+  "withheld, exit 1).  The 305-sta dual probe SOLVED with n_cb = 102 \u2014 but that arm",
+  "still had >2 signals across the network, which is precisely what this one removes.",
+  "The SH iono constraint is what can break the GF confounding; whether it does at",
+  "deg-15 with 303 stations is the question.  RECOGNITION: 'Network (D0) TOW' lines",
+  "= 0, PD fold ran on ZERO epochs, 'the shared datum is under-specified'.  If it",
+  "withholds, the conformant two-frequency arm is estimate_sat_code_bias: false.",
+  "",
+  "READ FIRST, before any timing: the 'Canonical signals locked for GPS' line (must",
+  "be C1C/C2W only), n_cb + gauge-row count, stations admitted, and the emitted B",
+  "record signal set.  Standing invariant #4.",
+  "",
+  "FRESH LINEAGE ONLY: frequency_mode and the signal set change the state vector.",
+  "",
+  "20 epochs at 30 s.  Wiring + rank + first counters."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden305_gps.json"
+ ],
+ "processing": {
+  "max_duration_s": 600.0,
+  "frequency_mode": "dual",
+  "signal_priorities": {
+   "GPS": [
+    "C1C",
+    "L1C",
+    "D1C",
+    "S1C",
+    "C2W",
+    "L2W",
+    "D2W",
+    "S2W"
+   ]
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cbq305_2f_20ep/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cbq305_2f_20ep/state_snapshot.bin"
+ }
+}

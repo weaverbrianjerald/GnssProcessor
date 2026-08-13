@@ -1591,6 +1591,27 @@ namespace GnssProcessor {
         bool trace_station_residuals{ false }; ///< L13: emit @c network_station_residuals.csv — EVERY post-fit RAIM cell (per non-pivot station with carried ambiguities, per sat) with its measurement-standardized residual @c s_raw (already B2-normalized), the σ̂0-normalized @c s_norm, and the epoch σ̂0.  Answers "which station is poisoning the network".  VERY heavy (≈ stations x sats x RAIM-epochs — e.g. 50x40x3600 ≈ 7M rows); requires @ref raim (+ @ref phase_leveling) at runtime.  Off by default — byte-identical when OFF.
         bool trace_ssr_consumer{ false }; ///< L10: CONSUMER-side trace — the RealTimeEngine SSR consumer writes @c ssr_consumer_trace.csv (correction age, clk-applied, c0, URA, the recomputed R-inflation add-variance, phase-bias age/freshness, and disc counters) per modeled sat per processed epoch.  The V4 consumer-side evidence that the producer's URA/disc actually reach the user solution.  Off by default — byte-identical when OFF.
         bool trace_zwd{ false };          ///< L7: emit @c network_zwd.csv — per present station each emitted epoch, the estimated ZWD (a-priori state + reconstructed correction) and its datum-conditioned formal σ, plus a carried flag (a ZWD carry prior was actually injected).  The V7 instrument for border-station formal-σ sharpening under @ref carry_zwd — no data source for it exists otherwise.  O(stations x epochs); off by default — byte-identical when OFF.
+        /// L14: emit @c network_sat_bias_states.csv — per emitted (satellite, code signal)
+        /// each epoch, the emitted satellite code bias and its σ̂0-scaled formal σ from the
+        /// shared posterior covariance.  Closes the ONE export gap of the truth-graded
+        /// fixture (docs/SPEC_synthetic_minimum_network.md §4.8): the B product record has
+        /// NO σ field in any configuration, so the code-bias VARIANCE FACTOR — the field
+        /// "cb vf ≈ 10" question — is otherwise structurally unobtainable.  Deliberately a
+        /// trace rather than a `sigma=` token on the B record: a wire token would move the
+        /// product grammar (and any consumer fingerprint keyed on the header legend).
+        /// Same gauge-nulled / datum-pin-skipped / positive-variance-guarded covariance
+        /// treatment as the URA and combined-σ channels, so the numbers are comparable.
+        /// O(sats x signals x epochs); off by default — byte-identical when OFF.
+        bool trace_sat_bias_states{ false };
+        /// L14b: emit @c network_rx_states.csv — per present station each emitted epoch, the
+        /// RECEIVER clock and every receiver code-bias (DCB/IFB) state with its
+        /// datum-conditioned formal σ, on the @c network_zwd.csv pattern (reconstructStation
+        /// + conditionalLocalVarianceDiag).  The receiver half of §4.8: under the W6 slice
+        /// @ref estimate_ifb is forced on, yet those columns appear nowhere as estimates
+        /// with σ — only as census LABELS carrying standardized prior residuals — so the
+        /// Table-8 receiver term cannot be graded against an injected truth without this.
+        /// O(stations x (1 + codes) x epochs); off by default — byte-identical when OFF.
+        bool trace_rx_states{ false };
         bool trace_events{ false };       ///< L2: emit @c network_events.csv — one structured LONG-format row per discrete QC ACTION (tiers T1 IF-slip … T6 clock-monitor, plus GATE / SIGMA0 / PIVOT / RETRO), replacing spdlog regex-scraping of which sat/station/arc was acted on and when.  Note pivot handover + retro-bump arming are otherwise SILENT.  Rows are written even on subsequently-withheld epochs (that IS the disposition story).  O(QC events); off by default — byte-identical when OFF (no new file).
         bool serialize_sbasis_contract{ false }; ///< B6: stamp the S-basis contract (declaration + a-priori orbit/clock product identity + phase-bias discontinuity threshold) into the product-file header (v2 "S" line) so a consumer can cross-check compatibility.  OFF (default) => the product file stays byte-identical to the v1 format.
 

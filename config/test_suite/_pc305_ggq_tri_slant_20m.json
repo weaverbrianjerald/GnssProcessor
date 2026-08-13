@@ -1,0 +1,64 @@
+{
+ "_comment": [
+  "POSTURE C ON THE FIELD, ARM 2b — GPS + GALILEO (Q-FAMILY ONLY), 20 min.",
+  "Supersedes _pc305_gg_tri_slant_20m, which withheld ALL epochs.  Root cause",
+  "MEASURED (5-ep estimability dump, runs/pc305_gg_tri_slant_5ep_estdump,",
+  "logs/network_estimability.csv): n_below 22 = 2 declared clock gauges",
+  "(CLK|G* 1/sqrt(33), CLK|E* 1/sqrt(23)) + ~20 UNDECLARED per-satellite",
+  "X-family directions — CB|E|C5X = PB|E|L5X and CB|E|C7X = PB|E|L7X moving",
+  "together with band weights 1 : 1.793 : 1.703 = the mu (iono) coefficients.",
+  "That is Odijk rd 3b PER CHANNEL FAMILY: the roster partitions cleanly",
+  "(187 stations pure Q, 113 pure X, ZERO bridging), so the (C1C,C5Q) IF+GF",
+  "pins never touch an X-station observation and the X-family per-sat bias",
+  "lump is absorbed by the X stations' free slant iono.  drop-and-heal",
+  "correctly failed (152 cols tried, 0 healed — a ~20-dim null space has no",
+  "droppable column).",
+  "",
+  "THIS ARM: Galileo Q family only (C1C/C5Q/C7Q).  The X states vanish and",
+  "the undeclared null space with them.  Coverage cost, measured on the",
+  "roster: E rows come from 187 stations; the 113 X-family stations still",
+  "contribute GPS fully.  GPS keeps its C5Q+C5X whitelist — GPS X channels",
+  "are bridged (every GPS station tracks the pinned C1C/C2W), measured clean",
+  "in the 10-ep arm.",
+  "",
+  "THE CORRECT FIX (owed, SPEC card): per-family satellite IF+GF datum in",
+  "buildCodeBiasDatumRows when the observing station set of a constellation",
+  "partitions by channel family — pins on (C1X,C5X) beside (C1C,C5Q), third",
+  "band per family carries the family's modernized DCB.  Until that card",
+  "lands, X-family Galileo is NOT runnable in posture C.",
+  "",
+  "EXPECTED: declared_dim 2 = n_below 2 at default tolerance; E datum",
+  "inventory = per-sat IF+GF pins with 0 'no third band' (full fleet is",
+  "triple); eq34 chains COMPLETE for E L1C/L5Q/L7Q; E B-records pinned-pair",
+  "~datum-exact with C7Q carrying metre-scale content; watch E36-class",
+  "few-station sats for marginal rank dips (weakest real measured 5.4e-02,",
+  "2.5 decades above cutoff — should hold).",
+  "",
+  "Still ignition (40 ep): structural + same-window ratios only."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_pc305_gg_tri_slant_20m.json"
+ ],
+ "processing": {
+  "signal_priorities": {
+   "Galileo": [
+    "C1C",
+    "L1C",
+    "D1C",
+    "S1C",
+    "C5Q",
+    "L5Q",
+    "D5Q",
+    "S5Q",
+    "C7Q",
+    "L7Q",
+    "D7Q",
+    "S7Q"
+   ]
+  }
+ },
+ "network": {
+  "product_output_path": "C:/GnssProcessor/runs/pc305_ggq_tri_slant_20m/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/pc305_ggq_tri_slant_20m/state_snapshot.bin"
+ }
+}

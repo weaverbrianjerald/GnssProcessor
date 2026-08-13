@@ -1,0 +1,40 @@
+{
+ "_comment": [
+  "Card CB-Q (docs/SPEC_cb_carry_physical_q.md) leg A \u2014 the sat code-bias carry's",
+  "process-noise ladder.  ONE KNOB differs across the five arms:",
+  "filter.process_noise.sat_code_bias_q.  Everything else is inherited from",
+  "_golden63_gps_1h_laneoff (cb_kaula_prior 3 m, estimate_sat_code_bias, lane OFF,",
+  "the Jul-28 armed set), cut to 600 s = 20 epochs.",
+  "",
+  "PRE-REGISTERED PREDICTIONS (the point of the leg is to be wrong in public):",
+  "  P1  ctl vs hw: max |delta code_bias| over every emitted B record <= 1 mm.",
+  "      q*dt is 3e-9 vs 1.2e-6 m^2 against a MEASURED typical cb fold variance of",
+  "      2.2e-4 m^2, so both are inert and 'set q to hardware physics' is a no-op.",
+  "  P2  the first rung whose max |delta| exceeds 1 cm lies between 1e-6 and 7.3e-6.",
+  "  P3  the cb variance factor (constraint-aware global sigma0, run-end) changes by",
+  "      LESS THAN 2x even at 1e-4 \u2014 because the row's redundancy r = 1 - w*v is",
+  "      0.0186, i.e. R ~ 53*P, so inflating P cannot move (R+sigma_t^2)/(P+R).",
+  "      If P3 fails, the inertness arithmetic in the SPEC is wrong.",
+  "",
+  "FRESH lineage; own paths; run alone (scripts/q3_ladder_run.ps1 serializes).",
+  "",
+  "rung 0 CONTROL \u2014 the shipped value, restated explicitly (the pairing-control rule)."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 600.0
+ },
+ "filter": {
+  "process_noise": {
+   "sat_code_bias_q": 1e-10
+  }
+ },
+ "network": {
+  "max_duration_s": 600.0,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb,clk",
+  "product_output_path": "C:/GnssProcessor/runs/cbq_20ep_ctl/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cbq_20ep_ctl/state_snapshot.bin"
+ }
+}

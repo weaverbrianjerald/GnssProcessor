@@ -1,0 +1,45 @@
+{
+ "_comment": [
+  "Card CB-Q leg C \u2014 the 12 h 305-station / 2-signal / 300 s arm.",
+  "",
+  "WHY 300 s IS DEFENSIBLE HERE, against the standing NO-GO: the 1 h probe",
+  "(runs/cbq305_2f_1h_d10) measured the carry prediction VALID on THIS posture \u2014",
+  "D5 v2 \u03c3\u0302\u2080 = 1.17x (raw \u03c3\u0302\u2080\u00b2 = 1.364) against the 6.54x that condemned the tier on",
+  "the full multi-signal posture, and 2.44 %/epoch refloats (94.8/ep on 3886",
+  "carried DDs) against the 33 %/ep that gave arc life ~15 min.  Two signals per",
+  "satellite is a far smaller DD population and it changes the answer.",
+  "",
+  "\u26a0 AND WHY THAT PROBE CANNOT CLEAR IT: both known 300 s failure modes are LATE.",
+  "The D5 storm was measured to be STEADY-STATE, not warm-up (project_dev300s_tier",
+  "records an 11-epoch smoke reading 463 flags/ep as the ambiguous case that a long",
+  "run had to discriminate), and the deg-15 SH field runaway to 2620 TECU happened",
+  "over hours 4.1-4.7.  A 13-epoch probe is inside neither.  This arm exists to",
+  "cross hour 4 with the counters armed.  If the a\u2080\u2080 physical-band WARN fires or",
+  "D5 \u03c3\u0302\u2080 climbs, the tier is refused for this card and 60 s (epoch_decimation_n 2,",
+  "the validated tier) is the fallback \u2014 that is the pre-registered stop rule.",
+  "",
+  "WHAT IT MEASURES FOR THE CARD: the emitted OSB structure function has log-log",
+  "slope ~1.0, i.e. the signal lives at LONG lags \u2014 which is precisely what a",
+  "decimated tier can measure (the tier rule allows emission/datum mechanics and",
+  "forbids convergence/arc physics).  Lags from 300 s up are directly comparable to",
+  "the 30 s arms; nothing below 300 s is available and nothing below it is claimed.",
+  "",
+  "\u26a0 NO 30 s DENOMINATOR AT THIS SCALE: a 12 h 305-sta 30 s arm is ~9.3 h of wall.",
+  "Cross-tier per-epoch metrics are NOT compared (project_dev300s_tier's standing",
+  "rule); the SF at shared lags is, and it is the only cross-tier claim made.",
+  "",
+  "One knob vs _cbq305_2f_1h_d10: duration.  FRESH lineage; own paths."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_cbq305_2f_20ep.json"
+ ],
+ "processing": {
+  "max_duration_s": 43200.0
+ },
+ "network": {
+  "max_duration_s": 43200.0,
+  "epoch_decimation_n": 10,
+  "product_output_path": "C:/GnssProcessor/runs/cbq305_2f_12h_d10/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/cbq305_2f_12h_d10/state_snapshot.bin"
+ }
+}
