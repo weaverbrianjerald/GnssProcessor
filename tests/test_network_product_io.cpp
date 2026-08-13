@@ -956,6 +956,7 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
     c.orbit_ref                  = "CoM";
     c.age_scale_k                = 1e-6;
     c.cb_pin_pair["G"]           = "C1C-C2L";
+    c.gf_pin_pair["G"]           = "C1C-C2L";
     c.present                    = true;
 
     // An epoch arming every optional record / field channel.
@@ -1175,6 +1176,112 @@ TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
 
     std::filesystem::remove(path);
     std::filesystem::remove(bare);
+}
+
+// Odijk rd 3b (network.code_bias_gf_datum): the GEOMETRY-FREE datum pair.  Its
+// presence on the S line is what tells a consumer that the emitted code biases are
+// the SLANT-posture estimable function — pinned pair identically the datum, content
+// only from j >= 3, each satellite's geometry-free bias absorbed by the ionosphere
+// (Table 8) — rather than the single-layer one, on a byte-identical record layout.
+// It round-trips (v2 header + RTA-5 re-broadcast), checkContract flags a consumer
+// that expects the GF datum against a single-layer file (the severe direction: the
+// two disagree about what the B records ARE, not merely which frame they are in),
+// an undeclared consumer never mismatches, and a single-layer producer writes the S
+// line byte-for-byte with no token.  The parser also accepts the '+'-joined
+// per-family value form (docs/SPEC_family_gf_datum.md) verbatim, so a future
+// multi-family product survives a round-trip through today's reader.
+TEST(NetworkProductIoTest, GfPinPairTravelsInContractAndChecks) {
+    const std::string path = tempFile("gnss_netprod_gfpin.txt");
+    std::filesystem::remove(path);
+
+    SbasisContract c;
+    c.decl.reference_receiver_id = "CIT100USA";
+    c.disc_threshold_m           = 0.05;
+    c.cb_pin_pair["G"]           = "C1C-C2W";
+    c.cb_pin_pair["E"]           = "C1C-C5Q";
+    c.gf_pin_pair["G"]           = "C1C-C2W";   // same pair as the IF pin, by construction
+    c.gf_pin_pair["E"]           = "C1C-C5Q";
+    c.present                    = true;
+
+    {
+        NetworkProductWriter w(path, c);
+        ASSERT_TRUE(w.good());
+        w.write(makeEpoch(kT0, /*pb01=*/-0.7));
+        w.writeContract(c);                    // RTA-5 re-broadcast, same grammar
+        w.write(makeEpoch(GnssTime{kT0.week, kT0.tow + 30.0}, /*pb01=*/-0.7));
+    }
+
+    bool           ok = false;
+    SbasisContract parsed;
+    const auto recs = NetworkProductReader::read(path, &parsed, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 2u);
+    ASSERT_TRUE(parsed.present);
+    ASSERT_EQ(parsed.gf_pin_pair.size(), 2u);
+    EXPECT_EQ(parsed.gf_pin_pair.at("G"), "C1C-C2W");
+    EXPECT_EQ(parsed.gf_pin_pair.at("E"), "C1C-C5Q");
+    // cbpin= and gfpin= coexist: the gfpin branch must dispatch before the bare-':'
+    // realized-pivot fallback, exactly as cbpin= does (both values contain a ':').
+    EXPECT_EQ(parsed.cb_pin_pair.at("G"), "C1C-C2W");
+    EXPECT_TRUE(parsed.decl.clock_pivot_sat.empty());
+    // The re-broadcast stamped the second epoch's contract_refresh too.
+    ASSERT_TRUE(recs[1].contract_refresh.present);
+    EXPECT_EQ(recs[1].contract_refresh.gf_pin_pair.at("E"), "C1C-C5Q");
+
+    // Consumer declaring the matching GF datum for GPS only: compatible.
+    SbasisContract expect_ok = c;
+    expect_ok.gf_pin_pair.clear();
+    expect_ok.gf_pin_pair["G"] = "C1C-C2W";
+    std::vector<std::string> mism;
+    EXPECT_TRUE(NetworkProductReader::checkContract(parsed, expect_ok, &mism));
+    EXPECT_TRUE(mism.empty());
+
+    // Consumer that declares nothing never mismatches on the GF pair — silence on
+    // the wire reads as "single-layer", the safe default.
+    SbasisContract expect_none = c;
+    expect_none.gf_pin_pair.clear();
+    mism.clear();
+    EXPECT_TRUE(NetworkProductReader::checkContract(parsed, expect_none, &mism));
+
+    // Single-layer producer: no gfpin= token, and a consumer expecting the GF datum
+    // is flagged against it — the case that must never pass silently, because the
+    // consumer would apply the two-direction S-transform to one-direction biases.
+    const std::string bare = tempFile("gnss_netprod_gfpin_bare.txt");
+    std::filesystem::remove(bare);
+    SbasisContract c0 = c;
+    c0.gf_pin_pair.clear();
+    { NetworkProductWriter w(bare, c0); ASSERT_TRUE(w.good()); w.write(makeEpoch(kT0, 0.1)); }
+    EXPECT_EQ(dataBytes(bare).find("gfpin="), std::string::npos);
+    EXPECT_NE(dataBytes(bare).find("cbpin=G:C1C-C2W"), std::string::npos);  // cbpin unaffected
+    EXPECT_NE(dataBytes(path).find("gfpin=G:C1C-C2W"), std::string::npos);
+
+    bool           ok0 = false;
+    SbasisContract parsed0;
+    NetworkProductReader::read(bare, &parsed0, &ok0);
+    ASSERT_TRUE(ok0);
+    EXPECT_TRUE(parsed0.gf_pin_pair.empty());
+    mism.clear();
+    EXPECT_FALSE(NetworkProductReader::checkContract(parsed0, expect_ok, &mism));
+    ASSERT_EQ(mism.size(), 1u);
+    EXPECT_NE(mism[0].find("gf_pin_pair[G]"), std::string::npos);
+    EXPECT_NE(mism[0].find("single-layer"), std::string::npos);
+
+    // Forward compatibility: the per-family value form parses verbatim.
+    const std::string fam = tempFile("gnss_netprod_gfpin_family.txt");
+    std::filesystem::remove(fam);
+    SbasisContract cf = c;
+    cf.gf_pin_pair.clear();
+    cf.gf_pin_pair["E"] = "C1C-C5Q+C1X-C5X";
+    { NetworkProductWriter w(fam, cf); ASSERT_TRUE(w.good()); w.write(makeEpoch(kT0, 0.1)); }
+    bool           okf = false;
+    SbasisContract parsedf;
+    NetworkProductReader::read(fam, &parsedf, &okf);
+    ASSERT_TRUE(okf);
+    EXPECT_EQ(parsedf.gf_pin_pair.at("E"), "C1C-C5Q+C1X-C5X");
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(bare);
+    std::filesystem::remove(fam);
 }
 
 // L14: csvSanitize must make an arbitrary string safe for one CSV field — every
@@ -1464,6 +1571,75 @@ TEST(NetworkProductIoTest, ContractRoundTripEnsembleAmbDatum) {
     mism.clear();
     EXPECT_FALSE(NetworkProductReader::checkContract(parsed, pivot, &mism));
     EXPECT_FALSE(mism.empty());
+
+    std::filesystem::remove(path);
+}
+
+// The AmbDatum enumerators are serialized as BARE POSITIONAL INTEGERS in S-line
+// field 4, so their numeric values are wire format, not an implementation detail:
+// reordering the enum silently re-interprets every product ever written (a stored
+// eq34 file would read back as the ensemble datum, and vice versa).  Nothing else
+// pins them — `ContractRoundTripEnsembleAmbDatum` pins 1 and the eq34 consumer suite
+// pins 2, but neither states that the SET is frozen.  Compile-time, so it costs
+// nothing and cannot be skipped.
+//
+// Wire-value contract: 0 = PivotReceiverZeroAmbiguity (legacy single-pivot),
+// 1 = SumToZeroPerReceiver (Fix A ensemble), 2 = SingleReceiverChain (Card 3 eq34).
+// APPEND new realizations; never insert or reorder.
+static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::PivotReceiverZeroAmbiguity) == 0,
+              "AmbDatum wire value 0 is frozen — it is S-line field 4 on every stored product");
+static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::SumToZeroPerReceiver) == 1,
+              "AmbDatum wire value 1 is frozen — it is S-line field 4 on every stored product");
+static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::SingleReceiverChain) == 2,
+              "AmbDatum wire value 2 is frozen — it is S-line field 4 on every stored product");
+
+// The eq34 declaration must survive the wire as value 2.  Companion to
+// ContractRoundTripEnsembleAmbDatum above: that one covers the ensemble datum, this
+// one covers Card 3's, whose PRODUCER-side population was missing entirely until
+// 2026-08-13 (the per-solve decl flipped but the SERIALIZED contract had no eq34
+// branch, so every eq34 product on record declared the legacy pivot datum it was not
+// using — see docs/SPEC_sbasis_realization_contract.md §D).
+TEST(NetworkProductIoTest, ContractRoundTripEq34AmbDatum) {
+    const std::string path = tempFile("gnss_netprod_contract_eq34amb.txt");
+    std::filesystem::remove(path);
+
+    SbasisContract c;
+    c.decl.reference_receiver_id = "CIT100USA";
+    c.decl.amb_datum             = SbasisDeclaration::AmbDatum::SingleReceiverChain;
+    c.decl.eq34_datum_receiver   = "POHN00FSM";   // pdr=, stamped only under eq34
+    c.apriori_product_id         = "BRDC00IGS_RTS";
+    c.present                    = true;
+
+    {
+        NetworkProductWriter w(path, c);
+        ASSERT_TRUE(w.good());
+        w.write(makeEpoch(kT0, /*pb01=*/-0.7));
+    }
+
+    bool           ok = false;
+    SbasisContract parsed;
+    NetworkProductReader::read(path, &parsed, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(parsed.present);
+    EXPECT_EQ(parsed.decl.amb_datum, SbasisDeclaration::AmbDatum::SingleReceiverChain);
+    EXPECT_EQ(static_cast<int>(parsed.decl.amb_datum), 2);
+    EXPECT_EQ(parsed.decl.eq34_datum_receiver, "POHN00FSM");
+
+    // The self-contradiction the defect produced must be impossible: a product that
+    // carries pdr= (eq34 datum receiver) while declaring the legacy pivot datum.
+    // pdr= is the field a consumer was told to read INSTEAD of amb_datum while the
+    // producer was broken; the two must now agree.
+    const std::string content = readAllBytes(path);
+    const std::size_t s_pos   = content.find("\nS,");
+    ASSERT_NE(s_pos, std::string::npos);
+    const std::string s_line =
+        content.substr(s_pos + 1, content.find('\n', s_pos + 1) - s_pos - 1);
+    std::vector<std::string> f;
+    std::stringstream ss(s_line);
+    for (std::string tok; std::getline(ss, tok, ',');) f.push_back(tok);
+    ASSERT_GE(f.size(), 5u);
+    EXPECT_EQ(f[4], "2");
+    EXPECT_NE(s_line.find("pdr=POHN00FSM"), std::string::npos);
 
     std::filesystem::remove(path);
 }

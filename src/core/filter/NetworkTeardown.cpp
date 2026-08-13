@@ -574,6 +574,69 @@ int networkTeardown(
                       h.reattach_blocked_cold);
     }
 
+    // --- RAIM POOL RE-HOST run-end telemetry -----------------------------------
+    // (docs/SPEC_raim_pool_rehost.md).  Standing invariant #4, stated sharply because a
+    // silently-inert tier is the exact defect this card fixes: post-fit RAIM read ARMED
+    // in the loader summary on every Card-4 lineage while screening literally nothing.
+    // The denominators come FIRST so that four previously-identical-looking outcomes are
+    // distinguishable — seam never ran / census empty / nothing flagged / actuator off.
+    if (ctx.knobs.raim_ci_on) {
+        const auto& rc = ctx.counters.raim_ci;
+        const double s0_mean = (rc.sigma0_n > 0)
+                                   ? rc.sigma0_sum / static_cast<double>(rc.sigma0_n)
+                                   : 0.0;
+        log->info("Network (RAIM pool re-host): {} seam pass(es), {} station-epoch(s) with a "
+                  "live census, {} ambiguity cell(s) screened.",
+                  rc.epochs, rc.pool_stations, rc.pool_cells);
+        if (rc.epochs > 0 && rc.pool_cells == 0)
+            log->warn("Network (RAIM pool re-host): DEAD WIRING — the seam ran {} time(s) and "
+                      "the qc_amb census was EMPTY every time, so the screen still saw "
+                      "nothing.  This is the defect the card exists to fix presenting itself "
+                      "again: the census walk found no station with an unpinned ambiguity "
+                      "column present in A_r, so check the gauge-pin partition and the "
+                      "station/signal admission before trusting any RAIM verdict here.",
+                      rc.epochs);
+        if (rc.sigma0_n > 0)
+            log->info("Network (RAIM pool re-host): σ̂0 over {} live-pool epoch(s) — mean "
+                      "{:.3f}, max {:.3f}.  FIRST measurement of this statistic on the "
+                      "invariant-carry lineage: with the pool empty σ̂0 never left its 1.0 "
+                      "initializer, so any previously-quoted RAIM threshold on this lineage "
+                      "was calibrated against a constant.",
+                      rc.sigma0_n, s0_mean, rc.sigma0_max);
+        log->info("Network (RAIM pool re-host): {} satellite-epoch(s) consensus-flagged, {} "
+                  "isolated arc-epoch(s) attribution-flagged.",
+                  rc.sats_flagged, rc.arcs_flagged);
+        if (rc.pool_cells > 0 && rc.sats_flagged == 0 && rc.arcs_flagged == 0)
+            log->info("Network (RAIM pool re-host): ZERO OPPORTUNITY — the screen ran on a "
+                      "live census and nothing exceeded the gate.  That is a clean window, "
+                      "NOT evidence the screen works: its POWER under Card 4 is unproven "
+                      "(the local ambiguity column is free each epoch and the time-link "
+                      "lives in the DD chord's prior, so a slipped arc's tension may be "
+                      "absorbed locally and never reach this residual).  Grade against a "
+                      "known-slip population before crediting it.");
+        if (ctx.knobs.raim_ci_refloat)
+            log->info("Network (RAIM pool re-host): {} arc(s) queued into the deferred funnel "
+                      "and {} delivered at the following epoch's head.  NOTE the seam's two "
+                      "legacy actions are BOOKKEEPING here, not actuators: the local_carry "
+                      "erase drops an entry no Card-4 consumer reads, and the pending-reseed "
+                      "mark leaves the reduced shared RHS algebraically unchanged.  The "
+                      "funnel drain is the only thing that re-taps a chord.",
+                      rc.refloats_queued, rc.refloats_drained);
+        else if (rc.sats_flagged > 0 || rc.arcs_flagged > 0)
+            log->warn("Network (RAIM pool re-host): the screen flagged {} sat-epoch(s) / {} "
+                      "arc-epoch(s) but network.raim_carry_invariant_refloat is OFF — those "
+                      "flags reached NO carry consumer.  Measure-only is the intended first "
+                      "stage; this line exists so the run is never mistaken for a protected "
+                      "one.",
+                      rc.sats_flagged, rc.arcs_flagged);
+        if (rc.refloats_queued != rc.refloats_drained)
+            log->warn("Network (RAIM pool re-host): {} queued vs {} drained — a mismatch means "
+                      "the run ended with a queue still pending (expected: at most the final "
+                      "epoch's flags) or that a drain was skipped, which would break the "
+                      "one-epoch lifetime bound.",
+                      rc.refloats_queued, rc.refloats_drained);
+    }
+
     // --- iono-deweight RELEASE hygiene run-end telemetry -----------------------
     // (docs/SPEC_deweight_release_hygiene.md).  Standing invariant #4, with a twist
     // this card has to state out loud: at the event it was SPEC'd against, the

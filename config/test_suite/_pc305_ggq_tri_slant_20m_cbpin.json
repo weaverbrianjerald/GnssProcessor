@@ -1,0 +1,46 @@
+{
+ "_comment": [
+  "VERIFICATION ARM (2026-08-13) — does the field posture-C product now DECLARE",
+  "its realized code-bias datum on the S line?  Identical to",
+  "_pc305_ggq_tri_slant_20m in every estimation knob; only the output paths",
+  "differ, so the existing 40/40 run stays on disk as the BEFORE evidence.",
+  "",
+  "What it proves.  Before this card the S line of that run read",
+  "  S,MBAR00UGA,1,nominal,0,0,1,0,0.05,0,COD...,E:E02,G:G01,atx=,oref=,pdr=,discfrac=",
+  "with NO cbpin= and NO gfpin=.  The cbpin fill existed but read",
+  "this_epoch_if_pin_sel, gated `!clock_signal_basis_hold && emit_clock_disc`;",
+  "network.emit_clock_disc defaults false and appears NOWHERE in this arm's",
+  "eight-config extends closure, so the declaration was structurally inert on",
+  "every FIELD posture while the sim arms (which arm the knob) declared fine.",
+  "simnet_grade.py REFUSES the SS4.4 S-transform without a declared pair, which",
+  "is what blocked truth-grading of field products.",
+  "",
+  "PASS = the S line gains `cbpin=E:C1C-C5Q,cbpin=G:C1C-C2W` and",
+  "`gfpin=E:C1C-C5Q,gfpin=G:C1C-C2W` (order is std::map key order), the epoch",
+  "count still reads 40/40, and no estimation number moves — the change is",
+  "declaration-only (a scratch map read at the emit site; the solve never sees",
+  "it).  A cbpin= without a gfpin= would mean the GF tally is wrong; a gfpin=",
+  "without a cbpin= would mean the two declarations disagree about the pair.",
+  "",
+  "Field runs are Release-only (standing directive).  Run through a renamed exe",
+  "copy so a concurrent rebuild cannot lock the binary mid-run."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_pc305_ggq_tri_slant_20m.json"
+ ],
+ "network": {
+  "mw_wl": {
+   "//uwl": [
+    "NOT a posture choice — a repair.  As of 2026-08-13 the parent config (under",
+    "a concurrent session's edit) disarms ewl_enable while an ancestor still sets",
+    "uwl_enable: true, and the loader hard-errors on that pair ('uwl_enable",
+    "requires ewl_enable'), so the parent does not currently LOAD.  Disarming the",
+    "orphaned top tier restores exactly the posture the parent's own comment says",
+    "it wants.  Delete this block once the parent is consistent again."
+   ],
+   "uwl_enable": false
+  },
+  "product_output_path": "C:/GnssProcessor/runs/pc305_ggq_cbpin_verify/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/pc305_ggq_cbpin_verify/state_snapshot.bin"
+ }
+}

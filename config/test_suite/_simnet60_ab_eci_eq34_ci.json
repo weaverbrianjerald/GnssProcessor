@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "BISECTION ARM ECI — float + eq34 + carry_invariant.  480 epochs, 60 sta.",
+    "Rung 3 of the ladder documented in _simnet60_ab_e_eq34.json.",
+    "",
+    "Delta against arm E is exactly carry_invariant (+ its validated pd_safe",
+    "pairing).  Delta against _simnet60_tri_slant_trio_480_noewl is exactly",
+    "phase_datum_eq34_seed_round, so E→ECI→ECIS isolates carry_invariant and",
+    "seed_round in turn.",
+    "",
+    "PRIOR: project_slant_triple_handoff records the seed-round re-round as a",
+    "~35% contributor and NOT the root, measured via the INC-1 FREEZE build",
+    "(runaway survived 1720 → 1132 cyc).  If that holds, ECI should still be",
+    "diverged and the ECI→ECIS step should be the smaller of the two.  If",
+    "instead ECI comes back near the float class, carry_invariant is exonerated",
+    "and seed_round is the driver — which would contradict the freeze result",
+    "and is worth knowing either way.",
+    "",
+    "⚠️ RAIM liveness flips at THIS rung: carry_invariant empties R.pl_amb, the",
+    "pool both RAIM tiers pool over, so RAIM goes from live (F, E) to",
+    "structurally inert (here and below).  The E→ECI step is therefore NOT",
+    "single-variable — it moves carry_invariant and RAIM liveness together.",
+    "On the truth-quiet fixture RAIM's only measured action was 4 A4 epoch",
+    "skips, so the expected confound is small, but it is not zero and the",
+    "epoch-emitted count should be compared before reading the integer grade."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_ab_e_eq34.json"
+  ],
+  "network": {
+    "carry_invariant": true,
+    "carry_invariant_pd_safe": true,
+    "product_output_path": "C:/GnssProcessor/runs/simnet60_ab_eci_eq34_ci/products.txt"
+  }
+}

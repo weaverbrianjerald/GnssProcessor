@@ -2123,6 +2123,13 @@ namespace GnssProcessor {
         // it the classical single-layer one.
         network_code_bias_gf_datum_ = jval<bool>(
             json, "network.code_bias_gf_datum", "code_bias_gf_datum", false);
+        // FAMILY-GF (docs/SPEC_family_gf_datum.md): the same rd-3b pin, extended to each
+        // PARTITIONED secondary receiver channel family.  Parsed beside its parent; its
+        // interlock is deliberately BELOW the CB-GF-DATUM validation block so it inherits
+        // every one of that block's hard errors by construction.
+        network_code_bias_gf_datum_per_family_ = jval<bool>(
+            json, "network.code_bias_gf_datum_per_family",
+            "code_bias_gf_datum_per_family", false);
 
         if (estimate_network_sat_code_bias_) {
             estimate_sat_biases_   = true;   // promote the satellite code bias to a state
@@ -2283,6 +2290,34 @@ namespace GnssProcessor {
                           "satellite tracked on only two bands has its code bias fully "
                           "fixed by the datum with nothing estimable left; the run-end "
                           "count of such satellites is reported (n_gf_only_pair).");
+        }
+
+        // --- FAMILY-GF: the rd-3b pin, per partitioned secondary channel family ---
+        // Placed AFTER the CB-GF-DATUM block closes so it inherits that block's four hard
+        // errors for free (sat code bias required; iono_sh / iono_weighting / dual all
+        // refused above, each with `return false`).  The only interlock left to state is
+        // the parent-knob one: there is no primary GF frame to be secondary TO.
+        if (network_code_bias_gf_datum_per_family_) {
+            if (!network_code_bias_gf_datum_) {
+                log->error("Network: network.code_bias_gf_datum_per_family is armed without "
+                           "network.code_bias_gf_datum.  The per-family rows are SECONDARY to "
+                           "the primary geometry-free pin — they gauge the families the "
+                           "primary pin cannot reach — so without it there is no primary GF "
+                           "frame to be secondary to.  Arm network.code_bias_gf_datum, or "
+                           "drop this knob.");
+                return false;
+            }
+            log->info("Network producer (FAMILY-GF): per-(satellite, secondary-family) "
+                      "GEOMETRY-FREE code-bias pin ARMED.  Odijk rd 3b re-derives PER "
+                      "RECEIVER CHANNEL FAMILY when the station population partitions (the "
+                      "Galileo C/Q-vs-X tracking split): the primary pin never reaches the "
+                      "secondary family's columns.  One GF row per (sat, partitioned family) "
+                      "and deliberately NO IF row — the satellite clock is shared and already "
+                      "realized by the primary IF pin, so the secondary family's IF "
+                      "combination is the ESTIMABLE inter-family ISC.  The run-latched family "
+                      "census reports the partition verdict and the folded row count; with no "
+                      "partitioned family this knob folds NOTHING and the run is "
+                      "byte-identical.");
         }
 
         // --- RXCB-DATUM: sum-to-zero over the RECEIVER code-bias set -------------
@@ -3359,6 +3394,15 @@ namespace GnssProcessor {
                        "network_exclude_unmodeled_antenna_stations", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
+        // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest of the
+        // RAIM family; the INERT guards live further down, because they read
+        // network_carry_invariant_, which is not populated until the eq34 section.
+        network_raim_carry_invariant_ =
+            jval<bool>(json, "network.raim_carry_invariant",
+                       "network_raim_carry_invariant", false);
+        network_raim_carry_invariant_refloat_ =
+            jval<bool>(json, "network.raim_carry_invariant_refloat",
+                       "network_raim_carry_invariant_refloat", false);
         network_raim_within_epoch_ =
             jval<bool>(json, "network.raim_within_epoch", "network_raim_within_epoch", false);
         network_raim_sigma0_trigger_ =
@@ -5965,6 +6009,27 @@ namespace GnssProcessor {
                 "network.code_datum_time_linked and network.clock_signal_basis_hold are "
                 "mutually exclusive (both re-target the per-satellite IF-pin row; the time-"
                 "linked datum subsumes the hold for the pin value).  Enable at most one.");
+        // FAMILY-GF §2.1: time-linking makes the GF pin and the sum-to-zero rows
+        // INCONSISTENT, not merely redundant.  The GF rows over a channel pair sum
+        // EXACTLY to (s2z(sig2) - s2z(sig1))/(mu2-mu1) — a rank-1 dependency that is
+        // harmless while every RHS is 0, which is the untimed case.  Time-linking moves
+        // the s2z targets to Sigma b_prev, generally different per channel, so the same
+        // dependency now demands Sigma d_2 - Sigma d_1 = 0 AND Sigma d_j = rhs_j with
+        // rhs_2 != rhs_1.  Nothing throws, because these fold as heavily weighted
+        // pseudo-observations rather than exact constraints — it least-squares, quietly
+        // injecting tension of order (rhs_2 - rhs_1)/(mu2 - mu1).  Latent today (no
+        // shipped config combines them) and PRE-EXISTING for the primary pin, so this
+        // warns rather than refuses; it is named here so the next arm does not pay for
+        // it blind.
+        if (network_code_datum_time_linked_ && network_code_bias_gf_datum_)
+            log->warn("Network: network.code_datum_time_linked is armed together with "
+                      "network.code_bias_gf_datum.  The geometry-free rows are rank-1 "
+                      "dependent with the per-(constellation,signal) sum-to-zero rows, and "
+                      "time-linking gives those rows NONZERO and per-channel-DIFFERENT "
+                      "targets — so the dependency becomes inconsistent and least-squares "
+                      "silently against the gauge weight instead of failing.  See "
+                      "docs/SPEC_family_gf_datum.md §2.1.  Prefer the untimed code datum in "
+                      "the slant posture.");
         if (network_code_datum_time_linked_) {
             // The datum it re-times (IF pin + per-(const,signal) sum-to-zero) only exists
             // in W6; without estimate_sat_code_bias there is nothing to time-link.
@@ -7356,8 +7421,41 @@ namespace GnssProcessor {
                           "product effect (every non-pivot ambiguity is re-estimated free each "
                           "epoch in the absolute solve).");
         }
+        // POOL RE-HOST INERT guards (docs/SPEC_raim_pool_rehost.md).  Post-parse, because
+        // network_carry_invariant_ is only populated by the eq34 section above.  Follows
+        // the eq34-hygiene / M2-v2 precedent: an arm that cannot move a byte is DISABLED
+        // here rather than discovered after a field run (standing invariant #4).
+        if (network_raim_carry_invariant_ && !network_carry_invariant_) {
+            log->warn("Network (RAIM pool re-host): network.raim_carry_invariant is on but "
+                      "network.carry_invariant is OFF — the re-host exists to give post-fit "
+                      "RAIM a pool on the Card-4 lineage, and off that lineage `pl_amb` is "
+                      "already the right pool.  DISABLED (no behaviour change).");
+            network_raim_carry_invariant_ = false;
+        }
+        if (network_raim_carry_invariant_ && !network_raim_) {
+            log->warn("Network (RAIM pool re-host): network.raim_carry_invariant is on but "
+                      "network.raim is OFF — there is no screen to re-host.  DISABLED.");
+            network_raim_carry_invariant_ = false;
+        }
+        if (network_raim_carry_invariant_refloat_ && !network_raim_carry_invariant_) {
+            log->warn("Network (RAIM pool re-host): network.raim_carry_invariant_refloat is on "
+                      "but network.raim_carry_invariant is OFF — the actuator has no screen to "
+                      "act on (the seam's legacy actions cannot move the Card-4 solve: the "
+                      "local_carry erase is a no-op on an empty map and the pending-reseed mark "
+                      "leaves the reduced RHS algebraically unchanged).  DISABLED.");
+            network_raim_carry_invariant_refloat_ = false;
+        }
+        if (network_raim_carry_invariant_ && network_raim_withhold_sigma0_ > 0.0)
+            log->warn("Network (RAIM pool re-host): the re-host makes σ̂0 REAL on this lineage "
+                      "for the first time (with the pool empty it never left its 1.0 "
+                      "initializer), and network.raim_withhold_sigma0 = {:.1f} is armed — so "
+                      "this run can begin WITHHOLDING epochs, and the emitted URA moves with "
+                      "the σ̂0 EWMA.  Neither is behind the refloat knob: a measure-only arm is "
+                      "NOT emission-neutral.  Grade it as emission-affecting, or disarm the "
+                      "withhold for the first validation leg.",
+                      network_raim_withhold_sigma0_);
         if (network_raim_) {
-            if (network_phase_leveling_)
+            if (network_phase_leveling_ && !network_raim_carry_invariant_)
                 log->info("Network producer (RAIM, Increment 3 / T2): post-fit cross-station "
                           "residual consensus ENABLED — a carried ambiguity whose slip the "
                           "pre-processors missed is caught when the network's OTHER stations "
@@ -7366,6 +7464,26 @@ namespace GnssProcessor {
                           "flagged at >= {} stations is refloated network-wide (pending-reseed). "
                           "The redundancy-based safety net that makes zero-process-noise carry sound.",
                           network_raim_k_sigma_, network_raim_min_stations_);
+            else if (network_raim_carry_invariant_)
+                log->info("Network producer (RAIM POOL RE-HOST): post-fit RAIM re-hosted onto the "
+                          "carry-neutral `qc_amb` census — it now RUNS on the Card-4 "
+                          "invariant-carry lineage (phase_leveling={}), where it was previously "
+                          "inert twice over (seam not called; `pl_amb` pool never filled).  "
+                          "Refloat actuator is {} — {}.",
+                          network_phase_leveling_,
+                          network_raim_carry_invariant_refloat_ ? "ARMED" : "OFF (measure-only)",
+                          network_raim_carry_invariant_refloat_
+                              ? "flags queue into raim_refloat_pending and drain into the C3c "
+                                "funnel at the next epoch's head"
+                              : "flags are counted and traced but reach no carry consumer");
+            else if (network_carry_invariant_)
+                log->warn("Network: network.raim is on with network.carry_invariant but WITHOUT "
+                          "network.phase_leveling — post-fit RAIM is INERT twice over: the seam's "
+                          "call site requires carry_warm (which needs phase_leveling), and its "
+                          "residual pool `pl_amb` is never filled under carry_invariant (Card 4's "
+                          "DD carry supersedes the phase-leveling ambiguity carry).  It will "
+                          "report ARMED and screen NOTHING.  Arm network.raim_carry_invariant to "
+                          "re-host the pool onto this lineage, or enable network.phase_leveling.");
             else
                 log->warn("Network: network.raim is on but network.phase_leveling is off — the "
                           "post-fit RAIM protects the carried ambiguities, so it is INERT without "

@@ -49,6 +49,99 @@ std::pair<std::string, std::string> NetworkSbasis::selectIfPinPair(
     return { first, std::string{} };
 }
 
+NetworkSbasis::ChannelFamily NetworkSbasis::channelFamilyOf(
+    const std::string& constellation, const std::string& signal) {
+    // Raw RINEX-3 code observable, "C<band><attribute>"; the attribute is signal[2]
+    // and is NEVER canonicalized on the way in (MeasurementModel keys the sat-bias
+    // state on the raw 3-char code), so reading it here is reading the receiver's
+    // own declaration.
+    if (signal.size() < 3) return ChannelFamily::Primary;
+    const char attr = signal[2];
+    // §7 ALLOW-LIST, enforced here rather than at the call site: only constellations
+    // whose family split has been reasoned about can report a secondary family at
+    // all.  An unrecognised constellation returns Primary for every signal, so its
+    // census can never find a partition and the row emitter can never fire on it.
+    // This is the guard against the original draft's open-ended "rows emit wherever
+    // partition is detected" — combined with a naive attribute key that would have
+    // started emitting rows on GPS postures that work today.
+    if (constellation != "E" && constellation != "G" && constellation != "C")
+        return ChannelFamily::Primary;
+    // 'X' is the COMBINED I+Q correlator output — a physically distinct hardware
+    // path with its own bias.  Everything else (Galileo A/B/C/I/Q/Z, GPS
+    // C/W/P/Y/S/L/I/Q/M, BeiDou I/Q/D/P/A/Z) is a discrete component sharing the
+    // receiver's component chain, and belongs to one family.  NB this is why the
+    // family key cannot be the attribute character itself: the Galileo primary
+    // family is C1C/C5Q/C7Q — attributes 'C','Q','Q'.
+    return attr == 'X' ? ChannelFamily::Secondary : ChannelFamily::Primary;
+}
+
+NetworkSbasis::FamilyCensus NetworkSbasis::runFamilyCensus(
+    const std::map<std::string, std::set<std::string>>& station_signals) {
+    FamilyCensus out;
+    // Per constellation: how many stations hold ONLY primary channels, ONLY
+    // secondary channels, or BOTH (a bridge).  A bridging station is the entire
+    // question — with one, the inter-family geometry-free difference is observable
+    // through that receiver and the primary pin DOES reach the secondary columns,
+    // so no extra row is warranted (and one would over-pin).
+    struct Tally { int primary_only{0}; int secondary_only{0}; int bridges{0}; };
+    std::map<std::string, Tally> per_const;
+    for (const auto& [station, keys] : station_signals) {
+        (void)station;
+        std::map<std::string, std::pair<bool, bool>> seen;  // const -> (has primary, has secondary)
+        for (const auto& key : keys) {
+            // Key shape is "SAT|SIGNAL" (StateKeySchema); split rather than parse —
+            // the constellation is the satellite's first character.
+            const auto bar = key.find('|');
+            if (bar == std::string::npos || bar == 0 || bar + 1 >= key.size()) continue;
+            const std::string sat = key.substr(0, bar);
+            const std::string sig = key.substr(bar + 1);
+            if (sig.empty() || sig[0] != 'C') continue;      // code channels only
+            const std::string cst = constellationOf(sat);
+            auto& s = seen[cst];
+            if (channelFamilyOf(cst, sig) == ChannelFamily::Secondary) s.second = true;
+            else                                                       s.first  = true;
+        }
+        for (const auto& [cst, s] : seen) {
+            auto& t = per_const[cst];
+            if (s.first && s.second) ++t.bridges;
+            else if (s.second)       ++t.secondary_only;
+            else if (s.first)        ++t.primary_only;
+        }
+    }
+    for (const auto& [cst, t] : per_const) {
+        out.n_stations_primary   += t.primary_only;
+        out.n_stations_secondary += t.secondary_only;
+        out.n_bridges            += t.bridges;
+        if (t.secondary_only == 0 && t.bridges == 0) {
+            // No secondary family observed at all — the single-family case every
+            // validated posture to date has run.  Say so anyway (invariant #4).
+            out.lines.push_back(fmt::format(
+                "constellation {} — no secondary (X) channel family observed on {} "
+                "station(s): SINGLE-FAMILY, no extra rows.", cst, t.primary_only));
+            continue;
+        }
+        if (t.bridges > 0) {
+            // A bridge exists: the primary pin reaches the secondary columns through
+            // that receiver, so the direction is NOT null and an extra row would be
+            // an over-pin on a determinable quantity.  Refuse to partition and say
+            // exactly why — this is the branch a future mixed-family roster lands in.
+            out.lines.push_back(fmt::format(
+                "constellation {} family X — {} station(s), {} BRIDGE(s) to the "
+                "primary family: NOT partitioned, no extra rows (a bridging receiver "
+                "makes the inter-family geometry-free difference observable, so the "
+                "primary pin already reaches these columns).",
+                cst, t.secondary_only, t.bridges));
+            continue;
+        }
+        out.partitioned.insert(cst);
+        out.lines.push_back(fmt::format(
+            "constellation {} family X — {} station(s), 0 bridge(s): PARTITIONED.",
+            cst, t.secondary_only));
+    }
+    out.latched = true;
+    return out;
+}
+
 NetworkSbasis::CodeS2zTimeLink NetworkSbasis::codeS2zTimeLink(
     const std::vector<std::string>& present_sats,
     const std::map<std::string, double>& prev_vals) {
@@ -418,12 +511,16 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     const std::function<double(const std::string&, const std::string&)>& freqOf,
     bool cb_time_linked, bool clock_signal_basis_hold, bool emit_clock_disc,
     bool gf_datum,
+    const std::set<std::string>& gf_family_constellations,
     const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
     const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
     const std::set<std::string>& code_bias_sat_seen_,
     bool code_bias_datum_resumed_,
     std::map<std::string, std::pair<std::string, std::string>>& held_clock_ref,
     std::map<std::string, std::pair<std::string, std::string>>& this_epoch_if_pin_sel,
+    std::map<std::string, std::pair<std::string, std::string>>& this_epoch_if_pin_real,
+    std::set<std::string>& this_epoch_gf_pin_real,
+    std::map<std::string, std::pair<std::string, std::string>>& this_epoch_family_gf_pin_real,
     std::map<std::string, std::pair<std::string, std::string>>& this_epoch_cb_ifpin,
     std::set<std::string>& this_epoch_cb_reseed,
     std::set<std::string>& basis_relatch_disc_pending,
@@ -556,6 +653,15 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         // hold (that path owns its own re-latch signalling above).
         if (!clock_signal_basis_hold && emit_clock_disc && f1 > 0.0 && f2 > 0.0)
             this_epoch_if_pin_sel[sat] = { sig1, sig2 };
+        // S-contract §1.5 DECLARATION record — SEPARATE from the disc scratch above and
+        // deliberately unguarded by either knob.  sig1/sig2 are POST-hold here, so this
+        // is the pair the datum actually realizes on both the held and the re-selected
+        // path.  The scratch above cannot serve: it is gated on the QC-channel
+        // emit_clock_disc (default false, and absent from the entire ft63→pc305 field
+        // chain), which is why every field posture-C product declared no cbpin= at all
+        // while the sim arms declared fine.  Read only by the NetworkSolPrep fill ⇒ the
+        // solve and every emitted numeric value are untouched; only the S line changes.
+        // Written BELOW, after the row is known to have folded — see the record site.
         Eigen::VectorXd row = Eigen::VectorXd::Zero(nshared);
         bool row_ok = false;
         double zval = 0.0;   // Card 2: legacy zero target unless time-linked
@@ -605,6 +711,17 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         if (row_ok && row.cwiseAbs().sum() > 0.0) {
             rows.push_back(std::move(row));
             zs.push_back(zval);
+            // S-contract §1.5 DECLARATION record — placed HERE, after the push, so it
+            // records only a pair whose IF row actually FOLDED.  Guarded on a real dual-
+            // frequency pin (f1,f2 > 0), which also excludes the degenerate single-
+            // frequency all-ones branch above: that one sets row_ok but realizes no IF
+            // pair, so it must not claim one.  Recording it earlier (guarded on f1,f2
+            // alone) let a satellite whose codeBiasColumn lookup threw still enter the
+            // emit-site unanimity tally as a satellite WITHOUT a GF row, which reads as a
+            // partial split and suppresses an otherwise legitimate gfpin= declaration —
+            // the GF record below is correctly inside its own success branch, and this is
+            // the matching guard.
+            if (f1 > 0.0 && f2 > 0.0) this_epoch_if_pin_real[sat] = { sig1, sig2 };
         }
         // (1b) Per-satellite GEOMETRY-FREE pin — Odijk 2016 rank deficiency 3b
         // (Table 7), armed ONLY in the slant posture (the loader refuses it
@@ -640,6 +757,15 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     rows.push_back(std::move(grow));
                     zs.push_back(0.0);
                     ++out.n_gf_pin_sats;
+                    // S-contract §1.5: this satellite's code-bias datum is the IF+GF
+                    // PAIR, not the IF pin alone — a different estimable function on
+                    // the same wire (the pinned pair's B records are identically the
+                    // datum; only j >= 3 carries content, and the geometry-free lump
+                    // moved into the slant ionosphere).  Record it so the S line can
+                    // DECLARE it: a consumer or grader that reads the B records under
+                    // the single-layer assumption applies the wrong S-transform, and
+                    // nothing else on the wire distinguishes the two postures.
+                    this_epoch_gf_pin_real.insert(sat);
                     // A satellite with no signal outside the pinned pair has NOTHING
                     // estimable left on the code side once IF and GF are both pinned.
                     // That is correct under Odijk, and it is also invisible downstream
@@ -649,6 +775,86 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     for (const std::string& s : sigs)
                         if (s != sig1 && s != sig2) { has_third = true; break; }
                     if (!has_third) ++out.n_gf_only_pair;
+                }
+            }
+        }
+        // (1c) FAMILY-GF — one EXTRA geometry-free row per PARTITIONED secondary
+        // channel family (docs/SPEC_family_gf_datum.md §2).  Odijk rd 3b re-derives
+        // PER RECEIVER CHANNEL FAMILY: the pin above is built on the satellite's two
+        // lowest-ordered signals, which on a Galileo Q+X roster is always the Q pair
+        // (C1C, C5Q) — and with the station population partitioned by family, NO
+        // observation of an X station ever touches a pinned channel.  The X subsystem
+        // therefore keeps its own null direction per satellite,
+        //     Delta d_jx = mu_j * delta   (code AND phase together),
+        // compensated by iota -> iota - delta on every X-station line of sight, which
+        // is exactly what the 2026-08-12 estimability dump measured (band weights
+        // 1 : 1.7933 : 1.7032 = mu on E1/E5a/E5b) and exactly why the null-space gate
+        // withheld every epoch of `_pc305_gg_tri_slant_20m`.
+        //
+        // GEOMETRY-FREE ONLY, NEVER AN IF ROW.  The satellite clock is SHARED with the
+        // primary family and is already realized by the primary IF pin plus the
+        // per-constellation clock datum, so the secondary family's IF combination has a
+        // fixed reference and is ESTIMABLE — it is the per-satellite inter-family ISC, a
+        // real product quantity.  Pinning it would over-pin a data-determined quantity
+        // and inject tension that has to discharge somewhere.  The IF row is in any case
+        // structurally blind to this direction: with a1 = f1^2/(f1^2-f2^2) and
+        // a2 = -f2^2/(f1^2-f2^2), a1*mu_1 + a2*mu_2 = a1 + a2*(f1^2/f2^2) = 0 identically.
+        //
+        // Target 0 for the same reason the primary GF row uses it, and the distinction
+        // matters: `network.sbasis_complete` closes THIS SAME null space generically, by
+        // constraining the numerically discovered direction at the CARRIED level — and on
+        // this exact posture that passes the rank gate and destroys the ionosphere on a
+        // cold start (a00 = -6292 TECU, SPEC_synthetic_minimum_network §12 rung 3).  A
+        // gauge quantity pinned at 0 is a datum choice the estimable parameters absorb
+        // (Odijk Table 8, per family); the same direction pinned at a cold carried value
+        // is a hard constraint at a wrong value.  Gate closure is therefore NOT acceptance
+        // for this row — the ionosphere level is (SPEC §6.0).
+        if (gf_datum && !gf_family_constellations.empty() &&
+            gf_family_constellations.count(NetworkSbasis::constellationOf(sat))) {
+            // The family's own signal subset, and its own pin pair chosen by the SAME
+            // selector and the SAME frequency source as the primary pin — determinism
+            // contract preserved by construction rather than by a parallel implementation.
+            std::vector<std::string> fam_sigs;
+            for (const std::string& s : sigs)
+                if (NetworkSbasis::channelFamilyOf(NetworkSbasis::constellationOf(sat), s) ==
+                    ChannelFamily::Secondary)
+                    fam_sigs.push_back(s);
+            const auto fam_pin = NetworkSbasis::selectIfPinPair(
+                fam_sigs, [&](const std::string& s) { return freqOf(sat, s); });
+            const std::string& fs1 = fam_pin.first;
+            const std::string& fs2 = fam_pin.second;
+            const double ff1 = fs1.empty() ? 0.0 : freqOf(sat, fs1);
+            const double ff2 = fs2.empty() ? 0.0 : freqOf(sat, fs2);
+            if (ff1 > 0.0 && ff2 > 0.0) {
+                const double fam_mu2_minus_mu1 = (ff1 * ff1) / (ff2 * ff2) - 1.0;
+                if (std::abs(fam_mu2_minus_mu1) > 1e-12) {
+                    Eigen::VectorXd frow = Eigen::VectorXd::Zero(nshared);
+                    bool frow_ok = false;
+                    try {
+                        frow(est.codeBiasColumn(sat, fs1)) = -1.0 / fam_mu2_minus_mu1;
+                        frow(est.codeBiasColumn(sat, fs2)) =  1.0 / fam_mu2_minus_mu1;
+                        frow_ok = true;
+                    } catch (...) { frow.setZero(); frow_ok = false; }
+                    if (frow_ok && frow.cwiseAbs().sum() > 0.0) {
+                        rows.push_back(std::move(frow));
+                        zs.push_back(0.0);
+                        ++out.n_family_gf_rows;
+                        // S-contract §1.5: record the SECONDARY family's realized pair so
+                        // the S line can declare the '+'-joined per-family gfpin=.  Without
+                        // it the emit-site fill sees only the primary pair and declares a
+                        // confident single-family token on a two-family product — which the
+                        // grader then accepts, applying the primary family's transform to
+                        // the secondary family's channels.
+                        this_epoch_family_gf_pin_real[sat] = { fs1, fs2 };
+                        // Same accounting as n_gf_only_pair, but scanned over the FAMILY's
+                        // signals — `sigs` spans BOTH families here, so a satellite whose X
+                        // family is a bare pair would otherwise always look like it had a
+                        // third band (its Q channels) and never be counted.
+                        bool fam_has_third = false;
+                        for (const std::string& s : fam_sigs)
+                            if (s != fs1 && s != fs2) { fam_has_third = true; break; }
+                        if (!fam_has_third) ++out.n_family_gf_only_pair;
+                    }
                 }
             }
         }

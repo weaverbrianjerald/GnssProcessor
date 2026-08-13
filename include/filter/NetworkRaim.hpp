@@ -60,6 +60,39 @@ struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cp
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
 /**
+ * @brief Run-end telemetry for the RAIM POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).
+ *
+ * Standing invariant #4: run-end counters are the ON-path telemetry, and this card
+ * exists precisely because a tier read ARMED in the log for months while contributing
+ * nothing.  The DENOMINATORS are therefore the point — they make four states
+ * distinguishable that all previously looked like "RAIM found nothing":
+ *
+ *  - @c epochs == 0                      → the seam never ran (call-site gate).
+ *  - @c epochs > 0, @c pool_cells == 0   → it ran and the census was EMPTY (dead wiring —
+ *                                          the exact defect this card fixes).
+ *  - @c pool_cells > 0, @c sats_flagged == 0
+ *                                        → it screened real residuals and nothing was bad
+ *                                          (zero opportunity, not zero capability).
+ *  - @c sats_flagged > 0, @c refloats_queued == 0
+ *                                        → it flagged but the actuator is disarmed.
+ *
+ * Every member stays at zero unless @c ctx.knobs.raim_ci_on, so an OFF run allocates
+ * nothing and reports nothing.  Modelled on @c NetworkIonoDwReleaseTallies.
+ */
+struct NetworkRaimCiTallies {
+    long long epochs = 0;            ///< Seam passes with the re-hosted pool armed.
+    long long pool_stations = 0;     ///< Station-epochs whose qc_amb census was non-empty.
+    long long pool_cells = 0;        ///< Total carried-ambiguity cells screened (the census size).
+    long long sats_flagged = 0;      ///< Consensus-flagged satellite-epochs.
+    long long arcs_flagged = 0;      ///< Attribution-flagged isolated (station,sat) arc-epochs.
+    long long refloats_queued = 0;   ///< Arcs queued into raim_refloat_pending (actuator armed only).
+    long long refloats_drained = 0;  ///< Queued arcs actually delivered into the C3c funnel next epoch.
+    double    sigma0_max = 0.0;      ///< Largest σ̂0 seen — the number that was never measurable before.
+    double    sigma0_sum = 0.0;      ///< Σ σ̂0 over epochs with a live pool (mean = sigma0_sum / sigma0_n).
+    long long sigma0_n = 0;          ///< Epochs contributing to sigma0_sum.
+};
+
+/**
  * @brief Run the post-fit network RAIM pass for this epoch (Pass 1 residual scan +
  *        Pass 2 consensus + median-polish attribution + the resulting refloats).
  *

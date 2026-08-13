@@ -84,7 +84,28 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const bool   trace_flag_rates = ctx.knobs.trace_flag_rates;
     const bool   phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
 
+    // --- RAIM POOL RE-HOST (docs/SPEC_raim_pool_rehost.md) ---------------------------
+    // Every walk below used to key on R.pl_amb, which is the PHASE-LEVELING CARRY's
+    // record list.  On a Card-4 lineage that list is empty by construction (its fill
+    // site sits under `do_amb_carry = (…) && !carry_invariant`), so this entire seam —
+    // the σ̂0 pool, the consensus test, the median-polish attribution, the MDB rider,
+    // the constraint-aware global σ̂0 data side and the L13 station-residual trace — ran
+    // over nothing.  `raim_ci_on` fills the carry-neutral R.qc_amb census instead; the
+    // selector below is the single point of substitution for all of them.
+    const bool raim_ci_on      = ctx.knobs.raim_ci_on;
+    const bool raim_ci_refloat = ctx.knobs.raim_ci_refloat;
+    // Prefer the census when it exists; fall through to the legacy pool otherwise, so a
+    // phase-leveling run is byte-identical (qc_amb is never allocated when OFF).
+    auto ambPool = [&](const StationAssembly& R) -> const std::vector<PlAmb>& {
+        return R.qc_amb.empty() ? R.pl_amb : R.qc_amb;
+    };
+
     auto& local_carry = ctx.carry.local_carry;
+    auto& raim_refloat_pending = ctx.carry.raim_refloat_pending;
+    auto& raim_ci_tallies = ctx.counters.raim_ci;
+    // Denominator #1 (standing invariant #4): "the seam never ran" must be
+    // distinguishable from "it ran and screened nothing".
+    if (raim_ci_on) ++raim_ci_tallies.epochs;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& arc_spike_streak = ctx.carry.arc_spike_streak;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
@@ -133,7 +154,12 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         if (est_index_of[i] < 0
             || (!phase_datum_prioritized && stations[i].is_pivot)) continue;
         const StationAssembly& R = asm_res[i];
-        if (R.pl_amb.empty() || R.A_s.cols() != x_s.size()) continue;
+        const std::vector<PlAmb>& pool = ambPool(R);   // pool re-host: qc_amb or pl_amb
+        if (pool.empty() || R.A_s.cols() != x_s.size()) continue;
+        if (raim_ci_on) {
+            ++raim_ci_tallies.pool_stations;
+            raim_ci_tallies.pool_cells += static_cast<long long>(pool.size());
+        }
         Eigen::VectorXd x_r;
         try {
             x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s);
@@ -177,7 +203,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // Largest measurement-standardized post-fit phase residual PER SATELLITE at this
         // station (a carried ambiguity's phase rows carry +1 on its A_r column; uncombined).
         std::map<std::string, double> sat_rmax;
-        for (const auto& pa : R.pl_amb) {
+        for (const auto& pa : pool) {
             if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
             double r_max = 0.0;
             for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
@@ -235,6 +261,14 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         std::nth_element(r_pool.begin(), r_pool.begin() + r_pool.size() / 2, r_pool.end());
         sigma0 = std::max(raim_s0_floor, 1.4826 * r_pool[r_pool.size() / 2]);
     }
+    // Pool re-host telemetry: σ̂0 on this lineage has NEVER been measured — with the pool
+    // empty, r_pool was empty too and sigma0 never left the 1.0 initializer above.  Record
+    // it only over epochs with a live pool, so the mean is not diluted by that sentinel.
+    if (raim_ci_on && !r_pool.empty()) {
+        raim_ci_tallies.sigma0_max = std::max(raim_ci_tallies.sigma0_max, sigma0);
+        raim_ci_tallies.sigma0_sum += sigma0;
+        ++raim_ci_tallies.sigma0_n;
+    }
     // B1: fold the network-wide σ̂0 into the URA EWMA (scales next epoch's emitted
     // URA — the post-emit ordering means the scale lands one epoch later).
     // RTB-7(b): the update COUNT feeds the quality-ramp lift rule (the
@@ -266,6 +300,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     for (const auto& kv : sat_flag_stations)
         if (kv.second >= raim_min_sta) flagged.push_back(kv.first);
     const std::set<std::string> fset(flagged.begin(), flagged.end());
+    if (raim_ci_on) raim_ci_tallies.sats_flagged += static_cast<long long>(flagged.size());
     if (trace_flag_rates) {   // B8/T3 consensus: rate of consensus among sats that spiked ≥1 station
         fr_raim_sat.opp  += static_cast<long>(sat_flag_stations.size());
         fr_raim_sat.flag += static_cast<long>(flagged.size());
@@ -498,10 +533,24 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         if (attrib_act && (!bad_sats.empty() || !bad_stations.empty() || !bad_arcs.empty())) {
             auto refloat_sat_at = [&](int i, const std::string& sat) -> int {
                 int n = 0;
-                for (const auto& pa : asm_res[i].pl_amb)
+                for (const auto& pa : ambPool(asm_res[i]))
                     if (pa.sat == sat) {
                         local_carry.erase(std::make_tuple(i, pa.sat, pa.signal));
+                        // BOOKKEEPING, not the actuator on the Card-4 path: the producer
+                        // forms every innovation against the linearization point and never
+                        // writes the solution back, so moving x_lin leaves the reduced
+                        // shared RHS b_red = u_s − N_sr N_rr⁻¹ u_r algebraically unchanged
+                        // (SPEC_deweight_release_hygiene §7.2).  Kept because it IS the
+                        // actuator on the phase-leveling lineage.
                         stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+                        // THE actuator under carry_invariant: queue for the next epoch's
+                        // C3c funnel, which membership-excludes the arc from A_old so its
+                        // chord is re-tapped from a diffuse prior.  Deferred because the
+                        // funnel was consumed at SB_DDBUILD, long before SB_RAIM.
+                        if (raim_ci_refloat) {
+                            raim_refloat_pending.insert({i, pa.amb_key});
+                            ++raim_ci_tallies.refloats_queued;
+                        }
                         ++n;
                     }
                 return n;
@@ -516,6 +565,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             //  disabled to avoid the regional mis-attribution mass-refloat.)
             for (const auto& [sta, sat] : bad_arcs) n_ref += refloat_sat_at(sta, sat);
             attrib_acted = true;
+            if (raim_ci_on) raim_ci_tallies.arcs_flagged += static_cast<long long>(bad_arcs.size());
 
             std::string detail;
             for (const auto& s : bad_sats)
@@ -567,7 +617,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0
                 || (!phase_datum_prioritized && stations[i].is_pivot)) continue;
-            for (const auto& pa : asm_res[i].pl_amb)
+            for (const auto& pa : ambPool(asm_res[i]))
                 if (fset.count(pa.sat)) {
                     // Drop the contaminated carry OUTRIGHT.  The harvest above
                     // just re-stashed this ambiguity's (contaminated) value into
@@ -577,7 +627,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     // not depend on the deferred pending-reseed skip path.  The mark
                     // is also set (belt-and-suspenders / cleared by the next stash).
                     local_carry.erase(std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
+                    // Bookkeeping on the Card-4 path (see refloat_sat_at above); the real
+                    // actuator there is the deferred funnel queue.
                     stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+                    if (raim_ci_refloat) {
+                        raim_refloat_pending.insert({static_cast<int>(i), pa.amb_key});
+                        ++raim_ci_tallies.refloats_queued;
+                    }
                     ++n_refloat;
                 }
         }

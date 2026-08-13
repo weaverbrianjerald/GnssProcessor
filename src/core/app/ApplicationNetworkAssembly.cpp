@@ -1904,6 +1904,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const auto&  sh_field_lag1  = ctx.carry.sh_field_lag1;       // LV-1: lag-1 solved SH coefficients — READ-ONLY here
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     const bool carry_invariant         = ctx.knobs.carry_invariant;
+    // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md): build the carry-neutral
+    // checkable-column census `qc_amb` alongside (not instead of) the carry's pl_amb.
+    // Already ANDed with raim_on + the RESOLVED carry_invariant when the knobs were
+    // snapshotted, so this is a single bool here.  OFF ⇒ qc_amb is never allocated.
+    const bool raim_ci_on              = ctx.knobs.raim_ci_on;
     // Station congruence screen, INC-0 (docs/SPEC_station_congruence.md).  The ONLY
     // thing the assembly owes that card: retain each data row's position partial,
     // which networkSplitStation_ is about to drop on the floor because the network
@@ -2519,6 +2524,40 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // original condition, so rx_cb_on=false is byte-identical.
             const bool legacy_local_inject =
                 carry_warm && (phase_datum_prioritized || !st.is_pivot || zwd_on);
+            // --- RAIM POOL RE-HOST (docs/SPEC_raim_pool_rehost.md) ----------------
+            // The CHECKABLE-COLUMN census.  Deliberately its own block, ABOVE and
+            // OUTSIDE `legacy_local_inject` (carry_warm ⇒ needs phase_leveling) and
+            // outside `do_amb_carry` (needs !carry_invariant) — those two gates are
+            // exactly what leaves every post-fit QC tier with an empty pool on a
+            // Card-4 lineage.  The enumeration itself is carry-agnostic: it asks
+            // which ambiguity columns are PRESENT (in A_r via h2local) and UNPINNED
+            // (not a gauge anchor), which is an observability question with no
+            // dependence on who owns the time-link.
+            //
+            // It is a separate block rather than a relaxation of the two existing
+            // gates so that `pl_amb` keeps its exact current contents and every
+            // reader of it stays byte-identical (standing invariant #6).  The one
+            // cost is a second `getStateVector()` when both are live; that is a
+            // per-station vector copy already paid once below, and it is not paid at
+            // all on the OFF path.
+            if (raim_ci_on) {
+                const Eigen::VectorXd x_lin_qc = st.sm->getStateVector();
+                for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
+                    const auto parts = StateKeys::parseAmbiguityKey(key);
+                    if (!parts) continue;
+                    if (networkIsGaugePinned_(stations, phase_datum_prioritized,
+                                              i, parts->satellite, parts->signal))
+                        continue;  // anchored (gauge-pinned) — its 1e10 pin defines the
+                                   // gauge, so its post-fit residual is not a fault test
+                    const int amb_idx = static_cast<int>(sidx);
+                    if (amb_idx < 0 || amb_idx >= x_lin_qc.size()) continue;
+                    const auto hit = h2local.find(amb_idx);
+                    if (hit == h2local.end()) continue;  // column not in A_r this epoch
+                    R.qc_amb.push_back(PlAmb{static_cast<Eigen::Index>(hit->second),
+                                             parts->satellite, parts->signal,
+                                             x_lin_qc(amb_idx), key});
+                }
+            }
             if (legacy_local_inject || rx_cb_on) {
                 const Eigen::VectorXd x_lin = st.sm->getStateVector();
                 std::vector<std::tuple<Eigen::Index, double, double>> inj;  // (col, Λ, η) — legacy diagonal path

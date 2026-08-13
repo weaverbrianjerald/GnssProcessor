@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "ECIS + INC-2 RE-HOST FRAME — first-ever exercise of",
+    "network.phase_datum_eq34_seed_round_rehost_frame.",
+    "",
+    "Single-knob against _simnet60_tri_slant_trio_480_noewl (= ECIS), which",
+    "measured consumer float 585.0 m 3D against ECI's 0.037 m.  The 2026-08-13",
+    "bisection localized that break to phase_datum_eq34_seed_round alone",
+    "(resolved ECI-vs-ECIS diff = that one behavioural key).",
+    "",
+    "WHY THIS ARM: rehost_frame is the only sub-knob seed_round has, it defaults",
+    "false (GnssConfigLoadNetwork.cpp:4427-4428), and a repo-wide scan finds it",
+    "armed in ZERO configs — so the INC-2 re-host frame recorded as 'built' has",
+    "never run.  If the 585 m break is the seed-round realization being re-hosted",
+    "onto a stale frame, this is the knob that addresses it.",
+    "",
+    "PRE-REGISTERED:",
+    "  H1 rehost fixes it  -> consumer returns toward ECI's 0.037 m class and the",
+    "     settled per-band med|e| stays at or below ECIS's 3779 cyc.",
+    "  H2 rehost is inert  -> consumer stays ~585 m; the break is elsewhere in",
+    "     seed_round and the next step is code-side, not config.",
+    "  H3 rehost trades    -> consumer improves, DD degrades (or vice versa).",
+    "     Both channels must be read: AR is invoked 0/0 on every arm in this",
+    "     matrix, so consumer position grades the PRODUCT and never depends on",
+    "     the integers.  They are independent channels, not a contradiction.",
+    "",
+    "Grade against ECIS only.  Trace population must match (ECIS: 480/480",
+    "epochs, 171816 rows, 139 station pairs) — if it does not, the med|e|",
+    "comparison is across different populations and only the consumer transfers.",
+    "",
+    "Loader: rehost_frame requires seed_round (GnssConfigLoadNetwork.cpp:4431-",
+    "4436 forces it OFF otherwise), which this chain arms."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_tri_slant_trio_480_noewl.json"
+  ],
+  "network": {
+    "phase_datum_eq34_seed_round_rehost_frame": true,
+    "product_output_path": "C:/GnssProcessor/runs/simnet60_ab_ecis_rehost/products.txt"
+  }
+}

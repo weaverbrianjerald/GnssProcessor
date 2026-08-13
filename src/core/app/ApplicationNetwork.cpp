@@ -1490,6 +1490,32 @@ int Application::runNetwork() {
                 static_cast<long long>(ctx.carry.dw_release_pending.size());
             ctx.carry.dw_release_pending.clear();
         }
+        // RAIM POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): drain the PREVIOUS epoch's
+        // post-fit RAIM flags.  Same deferral as the two drains above and for the same
+        // reason — RAIM detects post-solve at SB_RAIM, by which point THIS funnel's
+        // load-bearing consumer (buildCarryDdPriors, SB_DDBUILD) has already run.
+        //
+        // Drained into `carry_slipped_ambs` and deliberately NOT into `carry_slipped_raw`:
+        // the raw subset means a RAW-OBSERVABLE step, which the Iono-2 v3k d5_keep erase
+        // classifier and the WL-3 MW-row slip-skip both read.  A post-fit residual
+        // consensus is estimation-side evidence — the same class as the D5 innovation
+        // gate, which also drains into the funnel only.  Draining RAIM into raw would
+        // silently change the Iono-2 deviation-erase policy.
+        //
+        // The pending-reseed mark is NOT re-issued here (unlike the dw-release drain,
+        // whose slant rewrite must be visible to the ambiguity re-seed): the seam already
+        // set it at detection time, and on this lineage it is bookkeeping either way.
+        //
+        // UNCONDITIONAL clear — the one-epoch lifetime bound (standing invariant #1) is
+        // what keeps a stale (station index, key) pair from outliving its arc across a
+        // datum change or a station drop.
+        if (!ctx.carry.raim_refloat_pending.empty()) {
+            for (const auto& sk : ctx.carry.raim_refloat_pending)
+                carry_slipped_ambs.insert(sk);
+            ctx.counters.raim_ci.refloats_drained +=
+                static_cast<long long>(ctx.carry.raim_refloat_pending.size());
+            ctx.carry.raim_refloat_pending.clear();
+        }
 
         // --- PASS A: per-station geometry + shared-state layout -------------
         std::vector<std::vector<PppObservation>> modeled(stations.size());
@@ -2066,7 +2092,12 @@ int Application::runNetwork() {
                         registered_clock_sats, registered_code_keys, shared_phase_keys);
         subEnd(SB_LEVELING);   // D0b: close block 5 (leveling + T1d SH-convergence)
         subBegin(SB_RAIM);     // D0b block 2: post-fit network RAIM + median-polish attribution
-        if (raim_on && carry_warm) {
+        // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): `carry_warm` requires
+        // network.phase_leveling, so this gate alone made post-fit RAIM unreachable on
+        // every Card-4 lineage that leaves leveling off — the seam reported ARMED at load
+        // and never executed.  ctx.knobs.raim_ci_on is the re-hosted arming condition
+        // (already ANDed with raim_on and the resolved carry_invariant).
+        if (raim_on && (carry_warm || ctx.knobs.raim_ci_on)) {
             networkPostFitRaim(ctx, config_, log, traces, se,
                                stations, asm_res, est_index_of, present, x_s, est,
                                plan.shared_datum, clock_refloat_sats, retro_flag_sats,

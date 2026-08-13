@@ -28,6 +28,7 @@
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
 #include "filter/NetworkIonoDwRelease.hpp"   // NetworkIonoDwReleaseTallies (iono-deweight release hygiene)
+#include "filter/NetworkRaim.hpp"            // NetworkRaimCiTallies (RAIM pool re-host)
 #include "filter/NetworkPrefitCensus.hpp"    // NetworkPrefitCensusTallies (prefit census / fuse / topology / recorder)
 #include "filter/NetworkCarryVceApply.hpp"   // NetworkCarryVceApply (M2 v2 carry variance-factor state)
 #include "filter/NetworkMdb.hpp"             // NetworkMdbEpoch + NetworkMdbTallies (Baarda MDB reliability)
@@ -125,6 +126,16 @@ namespace GnssProcessor {
         int raim_maturity_epochs{};
         double raim_withhold{};
         bool raim_redun{};
+        /// POOL RE-HOST, RESOLVED for the run (docs/SPEC_raim_pool_rehost.md): the
+        /// post-fit RAIM screen runs on the Card-4 invariant-carry lineage against the
+        /// carry-neutral `qc_amb` census.  Already ANDed with `raim_on` and
+        /// `carry_invariant`, so the driver, the assembly and the seam all read ONE bool
+        /// and cannot disagree about whether the census exists.
+        bool raim_ci_on{};
+        /// The ACTUATOR half: a re-hosted flag is queued into `raim_refloat_pending` and
+        /// drained into the C3c funnel at the next epoch's head.  ANDed with
+        /// `raim_ci_on`; false = the screen measures and counts but queues nothing.
+        bool raim_ci_refloat{};
         bool clk_mon_on{};
         double clk_mon_abs{};
         double clk_mon_jump{};
@@ -443,6 +454,50 @@ namespace GnssProcessor {
         // first emit, so it cannot — and must not — fabricate a disc it cannot verify.
         std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_sel;
         std::map<std::string, std::pair<std::string, std::string>> last_if_pin_sel;
+        // S-contract §1.5 DECLARATION scratch — the realized code-bias datum pair per
+        // satellite, recorded UNCONDITIONALLY (the only guard is a real dual-frequency
+        // pin, f1,f2 > 0) and read ONLY by the cbpin=/gfpin= fill in NetworkSolPrep.
+        // Deliberately NOT this_epoch_if_pin_sel: that map is the hold-OFF disc-compare
+        // scratch, gated `!clock_signal_basis_hold && emit_clock_disc`, and widening it
+        // would change which satellites get a discontinuity bump — a WIRE change.  The
+        // fill originally read it anyway, which silently made a product-contract
+        // DECLARATION depend on a QC-channel knob: emit_clock_disc defaults false and
+        // is absent from the whole ft63→pc305 field chain, so every field posture-C
+        // product ever written declared no pin at all while the sim arms (which arm the
+        // knob) declared fine.  Recording here covers BOTH selection paths — the
+        // hold-OFF per-epoch re-selection and the clock_signal_basis_hold held/latched
+        // pair — so the declaration tracks the datum the run actually realized.
+        // Cleared each epoch; declaration-only, so the solve and every emitted numeric
+        // value are untouched.
+        std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_real;
+        // S-contract §1.5: the satellites that ALSO received a GEOMETRY-FREE datum row
+        // this epoch (network.code_bias_gf_datum, Odijk rd 3b).  The GF row is folded on
+        // the SAME (sig1,sig2) as the IF pin, so the pair itself lives in
+        // this_epoch_if_pin_real; this set records WHICH satellites got the second row,
+        // which is what the gfpin= declaration needs (a satellite with no valid dual-
+        // frequency pin gets neither row).  Empty whenever the GF datum is off ⇒ no
+        // gfpin= token ⇒ byte-identical S line.  Cleared each epoch.
+        std::set<std::string> this_epoch_gf_pin_real;
+        // FAMILY-GF (docs/SPEC_family_gf_datum.md §3.2): the RUN-LATCHED family census.
+        // Odijk rd 3b re-derives PER RECEIVER CHANNEL FAMILY when the station population
+        // partitions (the Galileo C/Q-vs-X tracking split), because the primary pin is
+        // built on the satellite's lowest-ordered signals and therefore never touches an
+        // X-only station's columns.  Whether that partition exists is a property of the
+        // receiver POPULATION, not of an epoch, so the verdict is computed once — on the
+        // first epoch with a usable station set — and held for the run: re-deciding it
+        // per epoch would make the datum topology follow coverage churn, which is the
+        // anti-flap failure the CB-ADM census was built to end.  Mid-run bridge
+        // appearance/loss is deliberately NOT re-detected in v1 (§7); the null-space gate
+        // is the backstop and the latched census line makes any such withhold
+        // self-attributing.  Empty `partitioned` => zero extra rows => byte-identical,
+        // which is the state of every single-family posture validated to date.
+        NetworkSbasis::FamilyCensus family_census;
+        // FAMILY-GF: the SECONDARY family's realized GF pair per satellite this epoch, the
+        // per-family counterpart of this_epoch_if_pin_real.  Feeds the '+'-joined
+        // gfpin=<const>:<primary pair>+<secondary pair> declaration, which the wire parser
+        // and checkContract already accept verbatim.  Cleared each epoch; empty unless the
+        // per-family rows actually folded.
+        std::map<std::string, std::pair<std::string, std::string>> this_epoch_family_gf_pin_real;
         // Prioritized phase-bias anchor (network.phase_datum_prioritized) — all three
         // keyed by the "sat_signal" ambiguity form, all empty/unread on the legacy path:
         //  - anchor_incumbent: the STICKY incumbent anchor STATION NAME per (sat,signal),
@@ -1174,6 +1229,40 @@ namespace GnssProcessor {
         // the response is deferred, exactly as the Card-4 D5 innovation gate defers its
         // own post-solve detections through carry_innov_pending.
         std::set<std::pair<int, std::string>> dw_release_pending;
+
+        // --- RAIM POOL RE-HOST (docs/SPEC_raim_pool_rehost.md) ---------------------
+        // (station index, ambiguity key) flagged by the re-hosted post-fit RAIM screen at
+        // SB_RAIM, queued for the NEXT epoch's slip funnel.  THIRD instance of the
+        // deferral pattern documented for `dw_release_pending` directly above, and it is
+        // deferred for the same structural reason: the funnel `carry_slipped_ambs` is a
+        // per-epoch driver local whose load-bearing consumer (buildCarryDdPriors, at
+        // SB_DDBUILD) has already run by the time RAIM detects post-solve at SB_RAIM.
+        //
+        // WHY A QUEUE AND NOT THE SEAM'S EXISTING ACTIONS.  Neither of the two mutations
+        // networkPostFitRaim already performs can move the Card-4 solve:
+        //   - `local_carry.erase` drops a phase-leveling carry entry whose only solve-side
+        //     consumer is the PASS-B inject, itself under `!carry_invariant` — and on this
+        //     lineage the map it erases from is empty anyway.
+        //   - `markAmbiguityPendingReseed` DOES reach a live, ungated reader (the PASS-B
+        //     state seed), but rewriting x_lin is BOOKKEEPING for the network: the kernel
+        //     solves corrections about the linearization point with no write-back, so
+        //     b_red = u_s − N_sr N_rr⁻¹ u_r is algebraically unchanged.  That identity is
+        //     proved for the sibling mechanism in SPEC_deweight_release_hygiene §7.2.
+        // The funnel is the only path that actuates: it membership-excludes the arc from
+        // A_old so its chord is re-tapped from a diffuse prior.
+        //
+        // Drained into `carry_slipped_ambs` and deliberately NOT into `carry_slipped_raw`:
+        // raw means a RAW-OBSERVABLE step, which the Iono-2 v3k d5_keep erase classifier
+        // and the WL-3 MW-row slip-skip both read.  A post-fit residual consensus is
+        // estimation-side evidence — exactly like the D5 innovation gate, which also
+        // drains into the funnel only.
+        //
+        // Lifetime is bounded to EXACTLY one epoch by an unconditional drain-and-clear at
+        // the driver head (standing invariant #1); the drain must stay unconditional even
+        // on a datum-change or station-drop epoch, or a stale (station index, key) pair
+        // could outlive its arc.  Not serialized — the dw-release precedent — so a warm
+        // resume simply starts with an empty queue.
+        std::set<std::pair<int, std::string>> raim_refloat_pending;
         /// INC-3 / INC-3b: "STATION|SAT" LOS whose SH<->slant tie row is currently
         /// WITHHELD — because its standardized deviation failed k, or because it has
         /// not yet earned admission.  Rebuilt from scratch for every station the
@@ -1655,6 +1744,10 @@ namespace GnssProcessor {
         // ctx.knobs.dw_hygiene_on, and reported by the run-end block in
         // filter/NetworkTeardown.cpp.
         NetworkIonoDwReleaseTallies dwr;
+        /// RAIM pool re-host run-end telemetry (docs/SPEC_raim_pool_rehost.md).  All-zero
+        /// unless ctx.knobs.raim_ci_on; the denominators separate "seam never ran" from
+        /// "census empty" from "nothing flagged" (standing invariant #4).
+        NetworkRaimCiTallies raim_ci;
         // Product-referenced measurement admission
         // (docs/SPEC_measurement_admission.md) run tallies — every field documented
         // on the struct.  Bumped only when ctx.knobs.adm_on, and reported by the

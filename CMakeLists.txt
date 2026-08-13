@@ -323,6 +323,7 @@ add_executable(gnss_tests
     tests/test_network_normal_equations.cpp
     tests/test_pd_safe_fold.cpp
     tests/test_carry_aware_covariance.cpp
+    tests/test_family_gf_datum.cpp
     tests/test_network_estimator.cpp
     tests/test_network_carry_vce.cpp
     tests/test_carry_vce_apply.cpp
@@ -362,6 +363,7 @@ add_executable(gnss_tests
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
+    tests/test_raim_carry_invariant_pool.cpp
     tests/test_datum_station_slip_config.cpp
     tests/test_level_information_budget.cpp
     tests/test_rx_cb_harvest_demean.cpp

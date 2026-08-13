@@ -70,12 +70,41 @@ GPS_L2 = 1227.60e6
 # Iono-free code combination over the L1/L2 pair: a1 + a2 == 1 exactly.
 IF_A1 = GPS_L1 ** 2 / (GPS_L1 ** 2 - GPS_L2 ** 2)
 IF_A2 = -GPS_L2 ** 2 / (GPS_L1 ** 2 - GPS_L2 ** 2)
-WAVELENGTH = {"L1C": C_LIGHT / GPS_L1, "L2W": C_LIGHT / GPS_L2}
 GPS_L5 = 1176.45e6
-# RINEX code -> carrier frequency, for the W6 IF-pin transform of §4.4.  Keyed on the
-# CODE observable (the B record's own key namespace), not the phase sibling.
-CODE_FREQ = {"C1C": GPS_L1, "C1W": GPS_L1, "C2W": GPS_L2, "C2L": GPS_L2,
-             "C2S": GPS_L2, "C5Q": GPS_L5, "C5X": GPS_L5}
+
+# (constellation, RINEX band digit) -> carrier frequency, for the §4.4 S-transform.
+# PER CONSTELLATION on purpose.  The old table was a flat signal->frequency map built
+# from GPS alone; it happened to give the right numbers for Galileo C1C/C5Q only
+# because E1 == L1 == 1575.42 MHz and E5a == L5 == 1176.45 MHz, and it had no entry
+# at all for E5b (C7Q/C7X).  A missing entry did not refuse — it fell back to mu = 1.0
+# and silently mis-projected truth on the third band, which under the geometry-free
+# datum is the ONLY band carrying estimable content.  Band digit rather than full
+# signal name keeps a new attribute (C1C vs C1X vs C1W) free.  Mirrors the table
+# already proven in scripts/cb_structure_function.py.
+FREQ_BY_BAND = {
+    "G": {"1": GPS_L1, "2": GPS_L2, "5": GPS_L5},
+    "E": {"1": 1575.42e6, "5": 1176.45e6, "6": 1278.75e6, "7": 1207.14e6, "8": 1191.795e6},
+    "C": {"1": 1575.42e6, "2": 1561.098e6, "5": 1176.45e6, "6": 1268.52e6, "7": 1207.14e6},
+    "J": {"1": GPS_L1, "2": GPS_L2, "5": GPS_L5},
+}
+
+
+def freq(const, signal):
+    """Carrier frequency (Hz) of a RINEX observable for a constellation, or None.
+
+    None is a REFUSAL, never a default: a caller that cannot resolve a frequency must
+    count and exclude the row rather than substitute one, because every downstream
+    quantity (a1/a2, mu_j) is a ratio of frequencies and a wrong one is invisible.
+    """
+    if not signal or len(signal) < 2:
+        return None
+    return FREQ_BY_BAND.get(const, {}).get(signal[1])
+
+
+def wavelength(const, signal):
+    """Carrier wavelength (m) of a phase observable, or None (same refusal rule)."""
+    f = freq(const, signal)
+    return (C_LIGHT / f) if f else None
 
 
 # --------------------------------------------------------------------------- #
@@ -133,15 +162,26 @@ def parse_products(path):
 def parse_s_line(p):
     """Decode the S-basis contract line.  Fields 11+ are shape-dispatched."""
     out = {"ref_rx": p[1], "apriori_id": p[10] if len(p) > 10 else "",
-           "pivots": {}, "cbpin": {}, "extra": {}}
+           "pivots": {}, "cbpin": {}, "gfpin": {}, "extra": {}}
     for f in p[11:]:
         if "=" in f:
             k, _, v = f.partition("=")
-            if k == "cbpin":
-                # cbpin=<const>:<s1>-<s2>
+            if k in ("cbpin", "gfpin"):
+                # cbpin=<const>:<s1>-<s2>   — the IF-pinned pair (the frame the OSB
+                #                             stream is internally consistent in)
+                # gfpin=<const>:<s1>-<s2>   — Odijk rd 3b: the SAME pair also carries a
+                #                             geometry-free datum row, so both pinned
+                #                             channels' B records ARE the datum and the
+                #                             GF lump sits in the ionosphere (Table 8).
+                # A '+'-joined value is the per-family form (SPEC_family_gf_datum); this
+                # grader does not implement the per-family transform, so it records the
+                # raw value and refuses rather than grading the first family silently.
                 cst, _, pair = v.partition(":")
-                a, _, b = pair.partition("-")
-                out["cbpin"][cst] = (a, b)
+                if "+" in pair:
+                    out[k][cst] = ("MULTIFAMILY", pair)
+                else:
+                    a, _, b = pair.partition("-")
+                    out[k][cst] = (a, b)
             else:
                 out["extra"][k] = v
         elif ":" in f:
@@ -259,23 +299,41 @@ def if_lump_by_sat(osb_truth, pin):
     the fixture grades most sharply.  Empty on the INT arm (no injected OSB), where
     the second bracket is identically zero and the null test is recovered.
     """
-    if not osb_truth or not pin or len(pin) != 2:
+    if not osb_truth or not pin:
         return {}
-    j1, j2 = pin
-    f1, f2 = CODE_FREQ.get(j1), CODE_FREQ.get(j2)
-    if not f1 or not f2 or f1 == f2:
-        return {}
-    a1 = f1 ** 2 / (f1 ** 2 - f2 ** 2)
-    a2 = -f2 ** 2 / (f1 ** 2 - f2 ** 2)
+    # `pin` is the whole cbpin MAP (constellation -> (s1,s2)).  It used to be a single
+    # pair, taken from cbpin["G"]: on a GPS+Galileo product that applied the GPS pin
+    # to Galileo satellites, whose pinned pair is a different band entirely.
     out = {}
     for (sat, sig), v in osb_truth.items():
+        if not sat:
+            continue
+        cst = sat[0]
+        pair = pin.get(cst)
+        # The MULTIFAMILY sentinel IS a 2-tuple, so a bare `len(pair) != 2` test lets it
+        # through and unpacks ("MULTIFAMILY", "<raw>") as if they were signal names — no
+        # OSB key ever matches, so the lump silently comes out EMPTY rather than refusing.
+        # Fail closed: an unresolved per-family pin must never look like "no truth here".
+        if not pair or len(pair) != 2 or pair[0] == "MULTIFAMILY":
+            continue
+        j1, j2 = pair
         if sig == j1:
             out.setdefault(sat, {})["1"] = v
         elif sig == j2:
             out.setdefault(sat, {})["2"] = v
-    # Negated per the measured convention documented above.
-    return {s: -(a1 * d["1"] + a2 * d["2"]) for s, d in out.items()
-            if "1" in d and "2" in d}
+    lumps = {}
+    for s, d in out.items():
+        if "1" not in d or "2" not in d:
+            continue
+        j1, j2 = pin[s[0]]
+        f1, f2 = freq(s[0], j1), freq(s[0], j2)
+        if not f1 or not f2 or f1 == f2:
+            continue
+        a1 = f1 ** 2 / (f1 ** 2 - f2 ** 2)
+        a2 = -f2 ** 2 / (f1 ** 2 - f2 ** 2)
+        # Negated per the measured convention documented above.
+        lumps[s] = -(a1 * d["1"] + a2 * d["2"])
+    return lumps
 
 
 def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
@@ -300,15 +358,23 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
 
     for ep in epochs[start:]:
         tow = round(ep["tow"], 3)
-        piv = pivots.get("G")
-        # Truth for the pivot at this epoch (0 when no clock error is injected), plus
-        # the pivot's own absorbed IF code-bias lump on the W6 arm (0 on INT).
-        piv_truth = (sc_truth.get((tow, piv), 0.0) + lump.get(piv, 0.0)) if piv else 0.0
+        # The clock gauge is PER CONSTELLATION (one pinned pivot each), so the pivot
+        # and its truth must be resolved per satellite.  Reading pivots["G"] alone
+        # left every Galileo clock carrying its own unremoved pivot datum, and on a
+        # Galileo-only product removed nothing at all.
+        piv_truth_of = {}
+        for cst, pv in pivots.items():
+            piv_truth_of[cst] = sc_truth.get((tow, pv), 0.0) + lump.get(pv, 0.0)
 
         for sat, c0 in ep["clocks"].items():
+            if not sat:
+                continue
+            cst = sat[0]
+            piv = pivots.get(cst)
             if piv and sat == piv:
                 n_pivot_skipped += 1
                 continue                      # pinned to 0; nothing to grade
+            piv_truth = piv_truth_of.get(cst, 0.0)
             t = sc_truth.get((tow, sat), 0.0) + lump.get(sat, 0.0) - piv_truth  # S[truth]
             e = c0 - t
             res.append(e)
@@ -321,17 +387,25 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
         # Datum-free cross-check: every between-satellite contrast must reproduce
         # the same residual without using the pivot at all.  Disagreement here is
         # the signature of a MISREAD datum, which is the failure this catches.
-        sats = sorted(ep["clocks"])
-        for i in range(len(sats) - 1):
-            a, b = sats[i], sats[i + 1]
-            ta = sc_truth.get((tow, a), 0.0) + lump.get(a, 0.0)
-            tb = sc_truth.get((tow, b), 0.0) + lump.get(b, 0.0)
-            contrast_res.append((ep["clocks"][a] - ep["clocks"][b]) - (ta - tb))
+        # Contrasts are formed WITHIN a constellation only.  A G-vs-E clock difference
+        # is not datum-invariant — each constellation carries its own pivot, so the
+        # contrast retains the inter-system bias and would read as a residual.
+        by_cst = {}
+        for s in ep["clocks"]:
+            if s:
+                by_cst.setdefault(s[0], []).append(s)
+        for cst, group in by_cst.items():
+            group.sort()
+            for i in range(len(group) - 1):
+                a, b = group[i], group[i + 1]
+                ta = sc_truth.get((tow, a), 0.0) + lump.get(a, 0.0)
+                tb = sc_truth.get((tow, b), 0.0) + lump.get(b, 0.0)
+                contrast_res.append((ep["clocks"][a] - ep["clocks"][b]) - (ta - tb))
 
     vf = sum(res_vf) / len(res_vf) if res_vf else None
     return {"residual": stats(res), "contrast": stats(contrast_res), "vf": vf,
             "n_vf": len(res_vf), "n_no_sigma": n_no_sigma,
-            "pivot": pivots.get("G"), "n_pivot_skipped": n_pivot_skipped}
+            "pivot": dict(pivots), "n_pivot_skipped": n_pivot_skipped}
 
 
 def grade_phase(epochs, settle_frac):
@@ -347,9 +421,16 @@ def grade_phase(epochs, settle_frac):
     for ep in epochs[int(n_ep * settle_frac):]:
         by_sig = {}
         for (sat, sig), v in ep["phase"].items():
-            by_sig.setdefault(sig, []).append((sat, v))
-        for sig, items in by_sig.items():
-            lam = WAVELENGTH.get(sig)
+            if not sat:
+                continue
+            # Key on (constellation, signal): the between-satellite SD is only
+            # integer x lambda WITHIN a constellation, and lambda itself is
+            # constellation-dependent (L5 and E5a coincide, L2 and E5b do not).
+            # Pooling them was harmless while only GPS emitted; on a GPS+Galileo
+            # posture-C product it would difference across two datums.
+            by_sig.setdefault((sat[0], sig), []).append((sat, v))
+        for (cst, sig), items in by_sig.items():
+            lam = wavelength(cst, sig)
             if not lam or len(items) < 2:
                 continue
             items.sort()
@@ -357,7 +438,7 @@ def grade_phase(epochs, settle_frac):
             for _, v in items[1:]:
                 cyc = (v - ref) / lam
                 f = cyc - round(cyc)
-                fracs.setdefault(sig, []).append(f)
+                fracs.setdefault(f"{cst}:{sig}", []).append(f)
     return {sig: stats(v) for sig, v in fracs.items()}
 
 
@@ -518,7 +599,8 @@ def osb_truth_by_key(truth):
     return series, disagreements
 
 
-def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=False):
+def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=False,
+                    gf_forced=False):
     """B record: apply the producer's OWN two-stage S-transform to TRUTH (SPEC §4.4).
 
     The wire value is not the injected OSB — it is that OSB seen through the W6
@@ -548,15 +630,97 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
     """
     if not osb_truth:
         return {"armed": False}
-    pair = (s_line or {}).get("cbpin", {}).get("G")
-    if not pair or len(pair) != 2 or not all(pair):
-        return {"armed": True, "no_pin": True}
-    j1, j2 = pair
-    f1, f2 = CODE_FREQ.get(j1), CODE_FREQ.get(j2)
-    if not f1 or not f2 or f1 == f2:
-        return {"armed": True, "bad_pin": (j1, j2)}
-    a1 = f1 ** 2 / (f1 ** 2 - f2 ** 2)
-    a2 = -f2 ** 2 / (f1 ** 2 - f2 ** 2)
+
+    # Which constellations actually emit B records?  The datum is realized PER
+    # CONSTELLATION (its own IF pin, its own sum-to-zero channels, its own GF datum),
+    # so every quantity below is resolved per constellation.  Reading cbpin["G"] alone
+    # refused a Galileo-only product outright and, worse, applied the GPS pair and the
+    # GPS frequencies to Galileo satellites on a mixed product.
+    consts = sorted({s[0] for (s, _) in osb_truth if s})
+    emitted = sorted({s[0] for ep in epochs for (s, _) in ep["code_bias"] if s})
+    consts = [c for c in consts if c in emitted] or emitted
+
+    cbpin = (s_line or {}).get("cbpin", {})
+    gfpin = (s_line or {}).get("gfpin", {})
+
+    # Which receiver channel FAMILIES does each constellation actually emit?  Mirrors the
+    # producer's NetworkSbasis::channelFamilyOf: 'X' is the combined I+Q correlator output
+    # and a physically distinct bias; every discrete component is one family.  Deliberately
+    # NOT keyed on the raw attribute character — the Galileo primary family is C1C/C5Q/C7Q,
+    # attributes C, Q, Q.
+    def _family(sig):
+        return "X" if (len(sig) > 2 and sig[2] == "X") else "P"
+
+    emitted_fams = {}
+    for ep in epochs:
+        for (s, j) in ep["code_bias"]:
+            if s and j:
+                emitted_fams.setdefault(s[0], set()).add(_family(j))
+
+    datum, refused = {}, {}
+    for c in consts:
+        pair = cbpin.get(c)
+        if not pair or len(pair) != 2 or not all(pair):
+            refused[c] = "no_pin"
+            continue
+        j1, j2 = pair
+        if j1 == "MULTIFAMILY":
+            refused[c] = "multifamily"
+            continue
+        f1, f2 = freq(c, j1), freq(c, j2)
+        if not f1 or not f2 or f1 == f2:
+            refused[c] = f"bad_pin:{j1},{j2}"
+            continue
+        gf = gfpin.get(c)
+        # Per-family GF datum (SPEC_family_gf_datum §5).  `gfpin=<c>:<p1>-<p2>+<s1>-<s2>`
+        # declares the PRIMARY family's pair and each partitioned SECONDARY family's pair.
+        # Removal is asymmetric and that asymmetry IS the card: the primary family loses
+        # its IF direction (the clock absorbed it) AND its GF direction; a secondary family
+        # loses ONLY its GF direction, because its IF combination is the estimable
+        # inter-family ISC and is graded, not projected away.
+        fam_gf = {}
+        if gf and gf[0] == "MULTIFAMILY":
+            ok = True
+            for blk in gf[1].split("+"):
+                a, _, b = blk.partition("-")
+                fa, fb = freq(c, a), freq(c, b)
+                if not a or not b or not fa or not fb or fa == fb:
+                    ok = False
+                    break
+                fam_gf[_family(a)] = {
+                    "pair": (a, b), "f1": fa,
+                    "mu2_minus_mu1": (fa * fa) / (fb * fb) - 1.0,
+                }
+            if not ok or _family(j1) not in fam_gf:
+                refused[c] = f"bad_multifamily_gfpin:{gf[1]}"
+                continue
+        # THE SCREEN §D.4 DESCRIBES, and the one that would have caught the 2026-08-12
+        # `_pc305_gg_tri_slant_20m` posture.  selectIfPinPair resolves EVERY satellite of a
+        # Q+X roster to the primary pair, deterministically and unanimously, so a producer
+        # with no family awareness emits a confident single-family `gfpin=E:C1C-C5Q` on a
+        # two-family product — and grading the X channels through the Q family's transform
+        # is exactly the silent mis-framing the token exists to prevent.  Refuse instead:
+        # more than one emitted family REQUIRES a per-family declaration.
+        if len(emitted_fams.get(c, set())) > 1 and not fam_gf:
+            refused[c] = ("multifamily_emitted_no_token:"
+                          f"{','.join(sorted(emitted_fams[c]))}")
+            continue
+        datum[c] = {
+            "pin": (j1, j2), "f1": f1, "f2": f2,
+            "a1": f1 ** 2 / (f1 ** 2 - f2 ** 2),
+            "a2": -f2 ** 2 / (f1 ** 2 - f2 ** 2),
+            "mu2_minus_mu1": (f1 * f1) / (f2 * f2) - 1.0,
+            "fam_gf": fam_gf,          # {} = single-family product (the legacy path)
+            "primary_fam": _family(j1),
+            # Per-constellation GF datum, in strict precedence order:
+            #   explicit --gf-datum (gf_forced) > gfpin= on the S line > fallback.
+            # The fallback (gf_datum with no wire token) covers products written before
+            # the token existed, where the only evidence is a console scrape.
+            "gf": True if gf_forced else (bool(gf) if gfpin else bool(gf_datum)),
+        }
+    if not datum:
+        return {"armed": True, "no_pin": True, "refused": refused,
+                "consts": consts, "declared": sorted(cbpin)}
 
     # sigma lookup: (tow, sat, signal) -> sigma_m ("" = pinned / no honest variance)
     sig = {}
@@ -566,6 +730,14 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
     n_ep = len(epochs)
     res, res_vf, per_sig = [], [], {}
     est_channel_mean, n_no_truth, n_no_sigma, n_pinned = [], 0, 0, 0
+    n_no_freq = 0
+    # §5.3: the self-check the transform's own comment promises ("asserted below rather
+    # than assumed") and never performed.  Under the GF datum a pinned channel's projected
+    # truth must be identically 0 — Odijk §5.1's "not estimable for the first two
+    # frequencies", realized as a datum.  It is the one identity that catches a WRONG
+    # FAMILY PAIRING silently: mis-assign a family and the pinned channels stop vanishing.
+    n_pin_residual = 0
+    max_pin_residual = 0.0
     for ep in epochs[int(n_ep * settle_frac):]:
         tow = round(ep["tow"], 3)
         if not ep["code_bias"]:
@@ -588,26 +760,104 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
         # first two frequencies" — asserted below rather than assumed.
         sats = sorted({s for (s, _) in ep["code_bias"]})
         lump, gflump, usable = {}, {}, set()
-        mu2_minus_mu1 = (f1 * f1) / (f2 * f2) - 1.0
+        gf_fam_lump = {}                  # sat -> {family: GF lump in that family's frame}
+        pin_check = {}                    # (sat, secondary family) -> {signal: (t, fam_gf)}
         for s in sats:
+            d = datum.get(s[0] if s else "")
+            if not d:
+                continue                      # constellation refused above
+            j1, j2 = d["pin"]
             b1, b2 = osb_truth.get((s, j1)), osb_truth.get((s, j2))
             if b1 is None or b2 is None:
                 continue                      # cannot transform: pinned pair not injected
-            lump[s] = a1 * b1 + a2 * b2
-            gflump[s] = ((b2 - b1) / mu2_minus_mu1) if gf_datum else 0.0
+            lump[s] = d["a1"] * b1 + d["a2"] * b2
+            gflump[s] = ((b2 - b1) / d["mu2_minus_mu1"]) if d["gf"] else 0.0
+            # Per-family GF lumps: each family's own pinned pair, in its OWN mu convention
+            # (mu is pair-relative, exactly as the producer computes it).  A family whose
+            # pinned pair is not present in truth contributes nothing and its channels fall
+            # back to the primary lump below, where the missing-truth counter catches them.
+            if d["fam_gf"]:
+                fl = {}
+                for fam, fg in d["fam_gf"].items():
+                    p1, p2 = fg["pair"]
+                    v1, v2 = osb_truth.get((s, p1)), osb_truth.get((s, p2))
+                    if v1 is None or v2 is None:
+                        continue
+                    fl[fam] = (v2 - v1) / fg["mu2_minus_mu1"]
+                gf_fam_lump[s] = fl
             usable.add(s)
-        # Stage 2 — zero-mean per channel over THIS epoch's registered set.
+        # Stage 2 — zero-mean per (CONSTELLATION, channel) over THIS epoch's registered
+        # set.  That is the producer's own datum key: NetworkSbasis builds the
+        # sum-to-zero rows on constellationOf(sat)+"|"+signal.  Keying on the signal
+        # alone pooled G and E wherever they share a code name (C1C, C5Q on posture C)
+        # into a mean the producer never formed.
         by_sig = {}
         for (s, j), v in ep["code_bias"].items():
             if s not in usable or (s, j) not in osb_truth:
                 n_no_truth += 1
                 continue
+            d = datum[s[0]]
             # mu_j for THIS channel (mu_1 = 1 by definition of the reference band).
-            fj = CODE_FREQ.get(j)
-            mu_j = (f1 * f1) / (fj * fj) if fj else 1.0
-            t = osb_truth[(s, j)] - lump[s] - mu_j * gflump[s]
-            by_sig.setdefault(j, []).append((s, v, t))
-        for j, items in by_sig.items():
+            # An unresolvable frequency is EXCLUDED and counted — never defaulted.  The
+            # old `mu_j = 1.0` fallback silently mis-projected truth on exactly the
+            # bands it could not name (E5b C7Q/C7X), which under the GF datum are the
+            # only bands carrying estimable content.
+            fj = freq(s[0], j)
+            if not fj:
+                n_no_freq += 1
+                continue
+            fam = _family(j)
+            fg = d["fam_gf"].get(fam) if d["fam_gf"] else None
+            if fg is not None and fam != d["primary_fam"]:
+                # SECONDARY family: remove ONLY this family's geometry-free direction, in
+                # its own mu convention.  The IF direction is deliberately KEPT — it is the
+                # per-satellite inter-family ISC, a real estimated quantity graded against
+                # injected truth.  Subtracting the primary family's IF lump here would
+                # project away exactly the content this card makes estimable.
+                fl = gf_fam_lump.get(s, {}).get(fam)
+                if fl is None:
+                    n_no_truth += 1
+                    continue
+                mu_j = (fg["f1"] * fg["f1"]) / (fj * fj)
+                t = osb_truth[(s, j)] - mu_j * fl
+            else:
+                # PRIMARY family (or a single-family product): the clock absorbed the IF
+                # direction and the ionosphere absorbed the GF one, so both come out.
+                mu_j = (d["f1"] * d["f1"]) / (fj * fj)
+                gl = gflump[s]
+                if fg is not None:
+                    gl = gf_fam_lump.get(s, {}).get(fam, gflump[s])
+                t = osb_truth[(s, j)] - lump[s] - mu_j * gl
+            # Pinned-channel identity — and it is DIFFERENT per family, which is exactly
+            # the thing worth asserting.  The PRIMARY family has both its IF and its GF
+            # direction removed, so each pinned channel projects to identically 0 (Odijk
+            # §5.1).  A SECONDARY family has only its GF direction removed, so its pinned
+            # channels do NOT vanish — they still carry the inter-family ISC.  What must
+            # vanish there is the GF COMBINATION of the pair.  Checking |t| = 0 on a
+            # secondary channel would be asserting the over-pin this card exists to avoid.
+            if d["gf"]:
+                if fg is None or fam == d["primary_fam"]:
+                    if j in d["pin"] and abs(t) > 1e-9:
+                        n_pin_residual += 1
+                        max_pin_residual = max(max_pin_residual, abs(t))
+                elif j in fg["pair"]:
+                    pin_check.setdefault((s, fam), {})[j] = (t, fg)
+            by_sig.setdefault((s[0], j), []).append((s, v, t))
+        # Secondary-family identity, evaluated once both pinned channels are projected:
+        # GF(t) over the family's own pair must be 0, while the pair's IF combination is
+        # left alone (it is the graded ISC).
+        for (s_, fam_), got in pin_check.items():
+            if len(got) != 2:
+                continue
+            fg = next(iter(got.values()))[1]
+            p1, p2 = fg["pair"]
+            if p1 not in got or p2 not in got:
+                continue
+            gf_t = (got[p2][0] - got[p1][0]) / fg["mu2_minus_mu1"]
+            if abs(gf_t) > 1e-9:
+                n_pin_residual += 1
+                max_pin_residual = max(max_pin_residual, abs(gf_t))
+        for (cst, j), items in by_sig.items():
             if not items:
                 continue
             t_mean = sum(t for _, _, t in items) / len(items)
@@ -616,7 +866,7 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
             for s, v, t in items:
                 e = v - (t - t_mean)
                 res.append(e)
-                per_sig.setdefault(j, []).append(e)
+                per_sig.setdefault(f"{cst}:{j}", []).append(e)
                 sv = sig.get((tow, s, j))
                 if sv is None:
                     n_no_sigma += 1
@@ -626,11 +876,12 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
                     sd = float(sv)
                     if sd > 0:
                         res_vf.append((e / sd) ** 2)
-    return {"armed": True, "pin": (j1, j2), "a1": a1, "a2": a2,
+    return {"armed": True, "datum": datum, "refused": refused, "consts": consts,
             "residual": stats(res), "per_signal": {j: stats(v) for j, v in per_sig.items()},
             "vf": (sum(res_vf) / len(res_vf)) if res_vf else None, "n_vf": len(res_vf),
             "est_channel_mean": stats(est_channel_mean), "n_no_truth": n_no_truth,
-            "n_no_sigma": n_no_sigma, "n_pinned": n_pinned}
+            "n_no_sigma": n_no_sigma, "n_pinned": n_pinned, "n_no_freq": n_no_freq,
+            "n_pin_residual": n_pin_residual, "max_pin_residual": max_pin_residual}
 
 
 def grade_rx_states(run_dir, truth, settle_frac):
@@ -799,8 +1050,9 @@ def main():
           f"@ {man['interval_s']} s")
     print(f"  settle       : discarding first {args.settle_frac:.0%} as ignition")
     if s_line:
-        print(f"  realized datum: pivot {s_line['pivots']}  ref_rx {s_line['ref_rx']}"
-              f"  cbpin {s_line['cbpin'] or '(none — no CB channel)'}")
+        print(f"  realized datum: pivot {s_line['pivots']}  ref_rx {s_line['ref_rx']}")
+        print(f"                  cbpin {s_line['cbpin'] or '(none declared)'}"
+              f"  gfpin {s_line['gfpin'] or '(none — single-layer code-bias datum)'}")
         print(f"  apriori_id   : {s_line['apriori_id']}")
         print( "                 (NOT trusted as a date key — the product day-edge guard")
         print( "                  loads the neighbouring day and this names only one file)")
@@ -830,7 +1082,7 @@ def main():
             print(f"    {n}: GF {v['gf']:+.4f} m   IF {v['if']:+.4f} m")
 
     osb_truth, osb_disagree = osb_truth_by_key(truth)
-    if_lump = if_lump_by_sat(osb_truth, (s_line or {}).get("cbpin", {}).get("G"))
+    if_lump = if_lump_by_sat(osb_truth, (s_line or {}).get("cbpin", {}))
     clk = grade_clock(epochs, s_line, sc_truth, args.settle_frac, if_lump)
     print("\n-- C record (satellite clock), truth in the producer's basis " + "-" * 16)
     print(f"  pivot {clk['pivot']} excluded ({clk['n_pivot_skipped']} rows, pinned to 0 by the datum)")
@@ -878,12 +1130,24 @@ def main():
         print(f"  {sig}: {fmt(s, ' cyc')}")
 
     sig_rows = load_csv(os.path.join(run_dir, "logs", "network_sat_bias_states.csv"))
+    # GF-datum detection, in precedence order: explicit flag > gfpin= on the S line >
+    # console scrape > OFF.  The wire token is the only source that travels WITH an
+    # archived product; console.txt is written by the run-arm PowerShell wrappers, not
+    # by the producer, so it is absent for any product graded away from its run dir.
+    gf_src = None
     gf_datum = args.gf_datum
-    if not gf_datum:
+    if gf_datum:
+        gf_src = "--gf-datum flag"
+    elif (s_line or {}).get("gfpin"):
+        gf_datum, gf_src = True, "gfpin= on the S line"
+    else:
         con = os.path.join(run_dir, "console.txt")
         if os.path.exists(con):
             gf_datum = "CB-GF-DATUM" in open(con, encoding="utf-8", errors="replace").read()
-    cb = grade_code_bias(epochs, s_line, osb_truth, sig_rows, args.settle_frac, gf_datum)
+            if gf_datum:
+                gf_src = "console.txt scrape (no gfpin= on the wire)"
+    cb = grade_code_bias(epochs, s_line, osb_truth, sig_rows, args.settle_frac, gf_datum,
+                         gf_forced=bool(args.gf_datum))
     print("\n-- B record (satellite code bias), truth through the W6 S-transform " + "-" * 8)
     if not cb.get("armed"):
         print("  NOT ARMED: no injected satellite OSB (truth_bias.csv empty/absent).")
@@ -891,21 +1155,46 @@ def main():
         print("  injected, so no B records exist and the code-bias channel is untestable.")
         print("  Re-synthesize with corrections.signal_bias = true for the W6 arm (§2.2).")
     elif cb.get("no_pin"):
-        print("  injected OSB present but the S line carries NO cbpin= token, so the")
-        print("  realized IF-pin pair is unknown and the transform cannot be applied.")
-        print("  Arm network.serialize_sbasis_contract; do NOT assume (C1C,C2W).")
-    elif cb.get("bad_pin"):
-        print(f"  cbpin names {cb['bad_pin']}, whose frequencies are unknown to this "
-              f"grader — extend CODE_FREQ.")
+        print(f"  injected OSB present for constellation(s) {','.join(cb.get('consts') or [])} "
+              f"but no usable cbpin= on the S line, so the realized IF-pin pair is unknown")
+        print("  and the transform cannot be applied.  Refused per constellation: "
+              + str(cb.get("refused")))
+        print(f"  The S line declares cbpin for: {cb.get('declared') or '(nothing)'}")
+        print("  do NOT assume (C1C,C2W).  If the S line exists but carries no cbpin= at")
+        print("  all, network.serialize_sbasis_contract is NOT the missing knob — check")
+        print("  that the producer build has the unconditional §1.5 declaration record")
+        print("  (before 2026-08-13 the fill was gated on network.emit_clock_disc, which")
+        print("  defaults false and is absent from the whole ft63 -> pc305 field chain,")
+        print("  so every field posture-C product declared no pin).")
     else:
         if osb_disagree:
             print(f"  *** {osb_disagree} (sat,signal) OSB truth DISAGREEMENTS across stations")
-        print(f"  IF pin  {cb['pin'][0]}/{cb['pin'][1]}  (a1 {cb['a1']:+.4f}, a2 {cb['a2']:+.4f}) "
-              f"— read off the S line, not assumed")
+        for c, d in sorted(cb["datum"].items()):
+            print(f"  [{c}] IF pin  {d['pin'][0]}/{d['pin'][1]}  "
+                  f"(a1 {d['a1']:+.4f}, a2 {d['a2']:+.4f}) — read off the S line, not assumed"
+                  + ("   + GF datum" if d["gf"] else ""))
+        if cb.get("refused"):
+            print(f"  *** constellation(s) NOT graded (no usable datum on the wire): "
+                  f"{cb['refused']}")
         if gf_datum:
-            print( "  GF pin  ARMED (slant posture) — truth is projected along BOTH the")
-            print( "          clock and iono directions, so the pinned pair's estimable")
-            print( "          content is identically zero and only j >= 3 carries content")
+            print(f"  GF pin  ARMED (slant posture; source: {gf_src}) — truth is projected")
+            print( "          along BOTH the clock and iono directions, so the pinned pair's")
+            print( "          estimable content is identically zero and only j >= 3 carries")
+            print( "          content.  The geometry-free lump sits in the ionosphere")
+            print( "          (Odijk Table 8), which this product does NOT emit.")
+        if cb.get("n_pin_residual"):
+            print(f"  *** {cb['n_pin_residual']} PINNED-channel row(s) did NOT project to "
+                  f"zero (max |t| = {cb['max_pin_residual']:.3e} m).  Under the GF datum a")
+            print("      pinned channel IS the datum, so its projected truth must vanish "
+                  "identically.  A")
+            print("      nonzero residual means the transform paired a channel with the "
+                  "WRONG family or the")
+            print("      wrong pin — the grade below is measured against a frame the "
+                  "producer did not realize.")
+        if cb.get("n_no_freq"):
+            print(f"  *** {cb['n_no_freq']} row(s) EXCLUDED: no carrier frequency known for the")
+            print( "      (constellation, band) — extend FREQ_BY_BAND.  These are excluded, not")
+            print( "      defaulted: a wrong mu_j is invisible in the residual.")
         print(f"  residual  {fmt(cb['residual'], ' m')}")
         for j, s in sorted(cb["per_signal"].items()):
             print(f"    {j}: {fmt(s, ' m')}")

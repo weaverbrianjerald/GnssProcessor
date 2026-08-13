@@ -74,6 +74,8 @@ NetworkSolPrepResult networkSolPrep(
     auto& c1_zoh_active = ctx.carry.c1_zoh_active;
     auto& last_pivot = ctx.carry.last_pivot;
     auto& this_epoch_if_pin_sel = ctx.carry.this_epoch_if_pin_sel;
+    auto& this_epoch_if_pin_real = ctx.carry.this_epoch_if_pin_real;
+    auto& this_epoch_gf_pin_real = ctx.carry.this_epoch_gf_pin_real;
     auto& last_if_pin_sel = ctx.carry.last_if_pin_sel;
     auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
     auto& emitted_anchor = ctx.carry.emitted_anchor;
@@ -951,19 +953,17 @@ NetworkSolPrepResult networkSolPrep(
                        "TOW {:.1f} (disc handled by the emitter bias-jump test).",
                        n_handover, se.time.tow);
     }
-    // B6 (P1-1): open the deferred contract writer at the FIRST emit, stamping the
-    // realized per-constellation clock pivots (this epoch's plan) into the v2 header.
-    if (contract_pending) {
-        contract_pending = false;
-        for (const auto& [cst, sat] : plan.clock_pivot)
-            pending_contract.decl.clock_pivot_sat[cst] = sat;   // realized auto-picked pivots
-        // Card 3 (SingleReceiverChain): stamp the realized datum receiver r1 as
-        // the diagnostic pdr= token (component-0 representative).
-        if (phase_datum_eq34 && !eq34_datum_rx.empty()) {
-            pending_contract.decl.eq34_datum_receiver = eq34_datum_rx.begin()->second;
-            eq34_emitted_pdr = pending_contract.decl.eq34_datum_receiver;
-        }
-        // §1.5 FILL: stamp the realized code-bias IF PIN PAIR per constellation.
+    // §1.5 DECLARATION: refresh the realized code-bias datum (cbpin=, and gfpin= in the
+    // slant posture) on EVERY emit, not once at the first — the same discipline the
+    // realized clock pivots follow (NetworkEmitStore refreshes clock_pivot_sat / pdr=
+    // in place before each RTA-5 re-broadcast).  Stamping it once would let the
+    // declaration go stale on the wire after a channel-set shift moved the pin, which
+    // is precisely the silent mis-framing the token exists to prevent.  Built into a
+    // fresh local map and assigned wholesale, so a constellation that stops being
+    // unanimous DROPS its declaration at the next broadcast rather than keeping the
+    // last good one: silence is honest, a stale pair is not.
+    {
+        // §1.5 FILL: declare the realized code-bias IF PIN PAIR per constellation.
         // The S-line `cbpin=` field, its parser and its contract comparison have all
         // existed since B6 — but nothing ever POPULATED the map, so every product ever
         // written declared no pin.  That is not cosmetic: the emitted OSB stream is
@@ -978,32 +978,125 @@ NetworkSolPrepResult networkSolPrep(
         // action is to declare nothing and say so once, rather than publish a pair that
         // is true of only part of the stream.  Empty map ⇒ the S line is written
         // byte-for-byte as before, so a producer that cannot declare a pin is unchanged.
-        {
-            std::map<char, std::set<std::pair<std::string, std::string>>> by_const;
-            std::set<std::string> emitted_sats;
-            for (const auto& s : sol.sats) emitted_sats.insert(s.sat);
-            for (const auto& [sat, sel] : this_epoch_if_pin_sel)
-                if (!sat.empty() && emitted_sats.count(sat))
-                    by_const[sat[0]].insert(sel);
-            for (const auto& [cst, pairs] : by_const) {
-                if (pairs.size() != 1) {
-                    log->info("Network (S-contract §1.5): constellation {} has {} distinct "
-                              "IF-pin pairs across this epoch's emitted satellites, so no "
-                              "cbpin= is declared (a per-constellation field cannot describe "
-                              "a per-satellite split).", cst, pairs.size());
+        //
+        // SOURCE FIX (2026-08-13): this reads this_epoch_if_pin_REAL, the unconditional
+        // declaration record, NOT this_epoch_if_pin_sel.  The original fill read the
+        // latter, which is the hold-OFF disc-compare scratch gated on
+        // `!clock_signal_basis_hold && emit_clock_disc` — so the DECLARATION inherited a
+        // QC-channel gate.  emit_clock_disc defaults false and appears nowhere in the
+        // ft63 → pc305 field chain, while every sim posture-C config arms it: exactly the
+        // observed split of cbpin present on sim products and absent on every field one,
+        // which is what blocked truth-grading of field products.  Reading the real map
+        // also covers the clock_signal_basis_hold path, whose branch records no selection
+        // at all, so ungating the disc scratch alone would still have declared nothing
+        // there.  Declaration-only: the solve and every emitted value are untouched.
+        std::map<char, std::set<std::pair<std::string, std::string>>> by_const;
+        std::map<char, std::pair<int, int>> gf_by_const;   // const → (gf-pinned, total)
+        std::set<std::string> emitted_sats;
+        for (const auto& s : sol.sats) emitted_sats.insert(s.sat);
+        for (const auto& [sat, sel] : this_epoch_if_pin_real)
+            if (!sat.empty() && emitted_sats.count(sat)) {
+                by_const[sat[0]].insert(sel);
+                auto& tally = gf_by_const[sat[0]];
+                if (this_epoch_gf_pin_real.count(sat)) ++tally.first;
+                ++tally.second;
+            }
+        std::map<std::string, std::string> cb_decl, gf_decl;
+        std::string split_note;
+        for (const auto& [cst, pairs] : by_const) {
+            if (pairs.size() != 1) {
+                split_note += fmt::format("{}{}:{} IF-pin pairs", split_note.empty() ? "" : " ",
+                                          cst, pairs.size());
+                continue;
+            }
+            const auto& p = *pairs.begin();
+            cb_decl[std::string(1, cst)] = p.first + "-" + p.second;
+            // Odijk rd 3b: declare the GEOMETRY-FREE datum on the same pair, under the
+            // same unanimity discipline — every emitted satellite of this constellation
+            // that carries an IF pin must ALSO have taken a GF row.  A partial split is a
+            // real state (a satellite can lose a frequency), and a per-constellation field
+            // cannot describe it, so declare nothing: silence reads as "single-layer",
+            // which is the safe direction for a consumer to be wrong in.
+            const auto& tally = gf_by_const[cst];
+            if (tally.first == 0) continue;                    // GF datum off: no token
+            if (tally.first != tally.second) {
+                split_note += fmt::format("{}{}:{}/{} GF rows", split_note.empty() ? "" : " ",
+                                          cst, tally.first, tally.second);
+                continue;
+            }
+            // FAMILY-GF (docs/SPEC_family_gf_datum.md §D.4): a per-constellation pair is
+            // an HONEST description only of a SINGLE-family product.  When the receiver
+            // population partitions by channel family, selectIfPinPair still resolves
+            // every satellite to the primary family's pair — deterministically and
+            // unanimously — so the unanimity test above passes and this line would emit a
+            // confident `gfpin=E:C1C-C5Q` on a product whose X channels are in a
+            // DIFFERENT geometry-free frame.  A consumer or grader reading that token
+            // applies the primary family's S-transform to the secondary family's B
+            // records, and nothing else on the wire contradicts it.  That is the exact
+            // silent mis-framing this token exists to prevent, so:
+            //  - per-family rows folded  ⇒ declare the '+'-joined per-family value, which
+            //    the wire parser and checkContract already accept verbatim;
+            //  - partitioned but NOT pinned (knob off) ⇒ declare NOTHING and say why.
+            //    Silence reads as "single-layer", which is the safe direction for a
+            //    consumer to be wrong in; a wrong pair is not.
+            const std::string cst_key(1, cst);
+            const bool partitioned = ctx.carry.family_census.partitioned.count(cst_key) > 0;
+            std::set<std::pair<std::string, std::string>> fam_pairs;
+            for (const auto& [sat, sel] : ctx.carry.this_epoch_family_gf_pin_real)
+                if (!sat.empty() && sat[0] == cst && emitted_sats.count(sat))
+                    fam_pairs.insert(sel);
+            if (!fam_pairs.empty()) {
+                if (fam_pairs.size() != 1) {
+                    split_note += fmt::format("{}{}:{} secondary-family GF pairs",
+                                              split_note.empty() ? "" : " ", cst,
+                                              fam_pairs.size());
                     continue;
                 }
-                const auto& p = *pairs.begin();
-                pending_contract.cb_pin_pair[std::string(1, cst)] = p.first + "-" + p.second;
+                const auto& fp = *fam_pairs.begin();
+                gf_decl[cst_key] = p.first + "-" + p.second + "+" + fp.first + "-" + fp.second;
+                continue;
             }
-            if (!pending_contract.cb_pin_pair.empty()) {
-                std::string decl;
-                for (const auto& [c, p] : pending_contract.cb_pin_pair)
-                    decl += (decl.empty() ? "" : " ") + c + ":" + p;
-                log->info("Network (S-contract §1.5): declaring the realized code-bias IF pin "
-                          "pair(s) {} — the frame the emitted OSB stream is internally "
-                          "consistent in.", decl);
+            if (partitioned) {
+                split_note += fmt::format(
+                    "{}{}: partitioned secondary channel family with NO family GF pin — a "
+                    "single-family pair would mis-frame it",
+                    split_note.empty() ? "" : " ", cst);
+                continue;
             }
+            gf_decl[cst_key] = p.first + "-" + p.second;
+        }
+        // Log only on CHANGE — this runs every emit, and a per-epoch restatement of a
+        // stable datum is noise.  A change IS an event worth a line: it means the pinned
+        // pair moved, which re-references the emitted clock↔code split.
+        if (cb_decl != pending_contract.cb_pin_pair || gf_decl != pending_contract.gf_pin_pair) {
+            std::string cd, gd;
+            for (const auto& [c, p] : cb_decl) cd += (cd.empty() ? "" : " ") + c + ":" + p;
+            for (const auto& [c, p] : gf_decl) gd += (gd.empty() ? "" : " ") + c + ":" + p;
+            log->info("Network (S-contract §1.5): declaring code-bias datum cbpin=[{}] "
+                      "gfpin=[{}]{}{}.  cbpin is the frame the emitted OSB stream is "
+                      "internally consistent in; gfpin (Odijk rd 3b) means those two "
+                      "channels' B records ARE the datum, only j >= 3 carries content, and "
+                      "each satellite's geometry-free bias has moved into the slant "
+                      "ionosphere (Table 8) — which this product does not emit, so the "
+                      "consumer must estimate it and apply the two AS A PAIR.",
+                      cd.empty() ? "-" : cd, gd.empty() ? "-" : gd,
+                      split_note.empty() ? "" : "; NOT declared (per-satellite split): ",
+                      split_note);
+        }
+        pending_contract.cb_pin_pair = std::move(cb_decl);
+        pending_contract.gf_pin_pair = std::move(gf_decl);
+    }
+    // B6 (P1-1): open the deferred contract writer at the FIRST emit, stamping the
+    // realized per-constellation clock pivots (this epoch's plan) into the v2 header.
+    if (contract_pending) {
+        contract_pending = false;
+        for (const auto& [cst, sat] : plan.clock_pivot)
+            pending_contract.decl.clock_pivot_sat[cst] = sat;   // realized auto-picked pivots
+        // Card 3 (SingleReceiverChain): stamp the realized datum receiver r1 as
+        // the diagnostic pdr= token (component-0 representative).
+        if (phase_datum_eq34 && !eq34_datum_rx.empty()) {
+            pending_contract.decl.eq34_datum_receiver = eq34_datum_rx.begin()->second;
+            eq34_emitted_pdr = pending_contract.decl.eq34_datum_receiver;
         }
         // RTA-3: the generation id (minted above at this same first emit) travels
         // in the contract as an optional gid= field — 0 (unset) writes nothing.

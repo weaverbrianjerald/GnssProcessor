@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "BISECTION ARM E — float + eq34 ONLY.  480 epochs, 60 sta.",
+    "",
+    "Built by ADDING one knob group to the float 480 arm rather than by",
+    "subtracting from the trio, so the delta against the reference is explicit.",
+    "",
+    "THE LADDER this completes (each step adds exactly one thing; the whole",
+    "point is to localize WHERE the settled runaway is born):",
+    "  F    float                              _simnet60_tri_slant_480_ddint",
+    "  E    + eq34                             THIS ARM",
+    "  ECI  + carry_invariant                  _simnet60_ab_eci_eq34_ci",
+    "  ECIS + seed_round        (= trio−ewl)   _simnet60_tri_slant_trio_480_noewl",
+    "  TRIO + ewl_enable                       _simnet60_tri_slant_trio_480",
+    "",
+    "MEASURED SO FAR: TRIO settled per-band med|e| 2280 cyc; ECIS 3700 cyc.",
+    "So the last rung (ewl) is not the driver — falsified 2026-08-13.  This arm",
+    "and ECI ask whether eq34 alone, or carry_invariant on top of it, is where",
+    "the runaway appears.",
+    "",
+    "NOTE ON A CONFOUND that shifts partway down this ladder: carry_invariant",
+    "empties R.pl_amb (ApplicationNetworkAssembly.cpp:2546-2560), which is the",
+    "residual pool BOTH RAIM tiers pool over, so RAIM is LIVE on F and E and",
+    "structurally INERT on ECI/ECIS/TRIO (verified: T3 shows 0 opportunities on",
+    "the latter).  Adjacent-rung comparisons are clean except across the E→ECI",
+    "step, which changes both carry_invariant AND RAIM liveness.  Do not read",
+    "that one step as single-variable.",
+    "",
+    "Loader: seed_round requires eq34 (GnssConfigLoadNetwork.cpp:4416) and",
+    "carry_invariant requires eq34 (:5761) — hence eq34 is rung 1 and there is",
+    "no legal carry_invariant-without-eq34 arm."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_tri_slant_480_ddint.json"
+  ],
+  "network": {
+    "phase_datum_eq34": true,
+    "phase_datum_min_stations": 1,
+    "station_pd_pin_aware": true,
+    "product_output_path": "C:/GnssProcessor/runs/simnet60_ab_e_eq34/products.txt"
+  }
+}

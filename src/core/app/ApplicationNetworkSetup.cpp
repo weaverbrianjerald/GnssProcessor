@@ -1005,9 +1005,27 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // a pivot receiver; the runtime per-solve decl already flips (see ~AmbDatum below),
             // but the startup contract omitted it and mis-declared the default pivot frame.
             // Mirrors the isb_datum self-description that follows.  OFF ⇒ default ⇒ byte-identical.
+            //
+            // The eq34 arm of the SAME defect, fixed 2026-08-13.  T3b repaired the ensemble
+            // branch and left Card 3's: the per-solve decl in NetworkSolveGlue.cpp flips to
+            // SingleReceiverChain under phase_datum_eq34, but THAT object only feeds
+            // buildSharedDatum — the SERIALIZED declaration is this one, and it had no eq34
+            // branch at all.  So every eq34 product on record declares amb_datum = 0
+            // (PivotReceiverZeroAmbiguity), the legacy single-pivot datum it is NOT using,
+            // while carrying pdr= (stamped only under eq34) two fields later — a wire that
+            // contradicts itself.  A consumer trusting field 5 builds its between-satellite
+            // reference on the wrong frame, which is precisely the "amb_datum differs"
+            // refusal the enumerator was added to make possible.
+            //
+            // The precedence MUST mirror NetworkSolveGlue.cpp exactly (ensemble wins, then
+            // eq34) or the declaration and the realized datum disagree in the both-armed
+            // case.  It is an `else if` there; it is an `else if` here.
             if (config_.networkPhaseDatumEnsemble())
                 pending_contract.decl.amb_datum =
                     SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
+            else if (config_.networkPhaseDatumEq34())
+                pending_contract.decl.amb_datum =
+                    SbasisDeclaration::AmbDatum::SingleReceiverChain;
             if (config_.networkClockDatumBroadcastAnchored()) {
                 // Broadcast-anchored clock datum (brdc_rts): declare the per-satellite
                 // broadcast-anchor basis and leave clock_pivot_sat empty (no pivot; a

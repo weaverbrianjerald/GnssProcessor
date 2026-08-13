@@ -61,6 +61,12 @@
  *     [,cbpin=<const>:<s1>-<s2>...]         #   §1.5 code-bias IF pin pair per
  *                                           #   constellation (the pair the OSB
  *                                           #   stream is internally consistent in)
+ *     [,gfpin=<const>:<s1>-<s2>...]         #   Odijk rd 3b: the GEOMETRY-FREE datum
+ *                                           #   pair, present ONLY in the slant
+ *                                           #   posture (network.code_bias_gf_datum).
+ *                                           #   Its presence means the pinned pair's
+ *                                           #   B records ARE the datum (0) and the
+ *                                           #   GF lump lives in the ionosphere
  *                                           #   repeated S lines mid-file are RTA-5
  *                                           #   contract re-broadcasts (positional)
  *   H,<week>,<tow>,<status>,<sigma0>,       # RTA-10 epoch-status heartbeat
@@ -208,6 +214,36 @@ struct SbasisContract {
     /// @c checkContract compares it only for constellations the consumer
     /// declares (the @c clock_pivot_sat semantics).
     std::map<std::string, std::string> cb_pin_pair;
+    /// Odijk rd 3b (@c network.code_bias_gf_datum): the per-constellation
+    /// GEOMETRY-FREE datum pair — present ONLY when the producer folded a GF row
+    /// per satellite in addition to the IF pin (the "slant posture": free per-LOS
+    /// ionosphere, no SH field, no GIM).  Value is @c "<s1>-<s2>", and today it is
+    /// always the SAME pair as @ref cb_pin_pair (the GF row is built on the IF
+    /// pin's post-hold @c sig1/@c sig2); it is carried explicitly rather than
+    /// implied so the token is self-contained and so the per-channel-FAMILY form
+    /// (@c "C1C-C5Q+C1X-C5X", see @c docs/SPEC_family_gf_datum.md) is a value
+    /// extension rather than a new token.  The parser accepts that '+'-joined
+    /// form already; this producer only ever writes ONE pair per constellation.
+    ///
+    /// WHY IT MUST BE ON THE WIRE.  Under the GF datum, IF+GF together span the
+    /// pinned pair's whole 2-D subspace, so those two channels' B records are
+    /// identically the DATUM (0) rather than estimates, only j >= 3 carries
+    /// content, and each satellite's geometry-free bias has moved into the slant
+    /// ionosphere (Odijk Table 8).  That is a DIFFERENT estimable function from
+    /// the single-layer posture on a byte-identical record layout — a consumer or
+    /// truth-grader applying the single-layer S-transform to a GF product is
+    /// silently wrong, and no other field on the S line distinguishes the two
+    /// (@c cb_datum is a single-valued enum, so it says nothing).  Note the
+    /// ionosphere half of that pair is NOT serialized anywhere: the consumer is
+    /// expected to estimate its own, which this token tells it to do.
+    ///
+    /// Serialized as repeated trailing @c gfpin=<const>:<s1>-<s2> S-line fields
+    /// ONLY when non-empty (byte-identical otherwise).  An interpretation hint,
+    /// not a replay-emitter parameter — @c makeReplayEmitter ignores it (the
+    /// datum does not change how emitted values reconstruct into the store) and
+    /// @c checkContract compares it only for constellations the consumer declares
+    /// (the @c clock_pivot_sat / @ref cb_pin_pair semantics).
+    std::map<std::string, std::string> gf_pin_pair;
     bool              present{false};         ///< True when parsed from (or written to) a v2 header.
 };
 

@@ -56,6 +56,7 @@
 
 #include <Eigen/Dense>
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -257,7 +258,68 @@ public:
         int n_s2z_channels{0};  ///< (constellation,signal) sum-to-zero channels.
         int n_gf_pin_sats{0};   ///< Satellites that received a GEOMETRY-FREE pin row (slant posture; 0 when off).
         int n_gf_only_pair{0};  ///< GF-pinned satellites carrying NO third band, i.e. whose code bias is now fully datum-fixed and has no estimable content left (Odijk §5.1) — a count, because "emitted nothing" and "estimated zero" look identical downstream.
+        int n_family_gf_rows{0};   ///< FAMILY-GF: (satellite, partitioned secondary family) pairs that received an extra geometry-free row.
+        int n_family_gf_only_pair{0}; ///< FAMILY-GF: of those, the ones whose family carries NO third band, so the ISC is the family's entire estimable content (the 11 XX− stations' world).  Scanned over the FAMILY's signal subset, never over the satellite's whole signal list — a Q-pinned satellite with X channels registered would otherwise always look like it had a third band.
     };
+
+    /// FAMILY-GF (docs/SPEC_family_gf_datum.md §3.1): a receiver channel FAMILY tag.
+    /// NOT the raw RINEX attribute character — the Galileo primary family is
+    /// C1C/C5Q/C7Q, whose attributes are 'C','Q','Q', so keying on the character
+    /// splits one family in two (and on GPS would call C2W and C2L different
+    /// families on a posture that works today).  The organizing physical fact is
+    /// that an 'X' channel is the COMBINED I+Q correlator output and carries its
+    /// own hardware bias, while the discrete components share a chain.
+    enum class ChannelFamily : std::uint8_t {
+        Primary,    ///< Discrete-component tracking (Galileo A/B/C/I/Q/Z, GPS C/W/P/Y/S/L/I/Q/M, BDS I/Q/D/P/A/Z).
+        Secondary,  ///< Combined I+Q tracking ('X').
+    };
+
+    /**
+     * @brief FAMILY-GF: map a (constellation, code signal) to its channel family.
+     *
+     * @param constellation RINEX constellation key ("E", "G", "C", …).
+     * @param signal        raw 3-char RINEX code observable ("C1C", "C5X", …).
+     * @return @c Secondary iff the signal is a combined-tracking ('X') channel of a
+     *         constellation this card recognises; @c Primary otherwise.  An
+     *         unrecognised constellation always returns @c Primary, so a
+     *         constellation nobody has validated can never partition and can never
+     *         start emitting rows (§7's allow-list, enforced here rather than at the
+     *         call site).
+     */
+    static ChannelFamily channelFamilyOf(const std::string& constellation,
+                                         const std::string& signal);
+
+    /// FAMILY-GF: per-constellation verdict of the run-latched family census (§3.2).
+    struct FamilyCensus {
+        /// Constellations whose SECONDARY family is PARTITIONED — i.e. carries real
+        /// observations and shares no station with the primary family, so the primary
+        /// family's pin provably cannot reach it.  Only these get extra rows.
+        std::set<std::string> partitioned;
+        int n_stations_primary{0};    ///< Stations carrying only primary-family channels (summed over constellations).
+        int n_stations_secondary{0};  ///< Stations carrying only secondary-family channels.
+        int n_bridges{0};             ///< Stations carrying BOTH — the population whose existence makes the inter-family GF difference observable and the partition false.
+        /// Human-readable per-constellation census lines, for the always-on log
+        /// (invariant #4: an armed-but-inert configuration must read as such).
+        std::vector<std::string> lines;
+        bool latched{false};          ///< Set once the census has run; the verdict is fixed for the run (§7).
+    };
+
+    /**
+     * @brief FAMILY-GF: run the family census over a live per-station channel-support map.
+     *
+     * @param station_signals per station, the set of "SAT|SIGNAL" code keys it holds
+     *        (i.e. @c StateManager::getSatBiasStates() keys), for PRESENT stations only.
+     * @return the census verdict; @c partitioned lists the constellations where a
+     *         secondary family exists and @c bridges == 0 for it.
+     *
+     * Deliberately an independent scan rather than a rider on the CB-ADM admission
+     * census: that census discards station identity (it keeps an int support count),
+     * and it does not run at all on this lineage (@c network.cb_admission appears in
+     * two configs repo-wide, neither in the pc305 chain), so piggybacking would mean
+     * arming a different registration path — a posture change, not a free ride.
+     */
+    static FamilyCensus runFamilyCensus(
+        const std::map<std::string, std::set<std::string>>& station_signals);
 
     /**
      * @brief Build the W6 satellite code-bias (OSB) datum gauge rows — relocated
@@ -292,6 +354,12 @@ public:
      * @p emitEvent, plus a pending per-sat disc when @p emit_clock_disc).  Hold
      * OFF + @p emit_clock_disc: record this epoch's selection in
      * @p this_epoch_if_pin_sel for the emit-site compare (emit-only discipline).
+     * Independently of BOTH knobs, every realized pair is also recorded in
+     * @p this_epoch_if_pin_real (and, under @p gf_datum, the satellite in
+     * @p this_epoch_gf_pin_real) purely so the S contract can DECLARE the datum it
+     * realized — the disc channel and the declaration channel are deliberately
+     * separate, because gating a declaration on a QC knob is what made every field
+     * posture-C product ship with no @c cbpin= token.
      *
      * The caller owns the FOLD (addSharedConstraintRows at
      * @ref kCodeBiasGaugeWeight), the RAIM-replay cap_* capture, and the first-N
@@ -313,7 +381,30 @@ public:
      * @param code_bias_datum_resumed_  Warm-resume flag (treat re-seeds as bumps).
      * @param held_clock_ref            Basis-hold latch (read/write).
      * @param this_epoch_if_pin_sel     [out] hold-OFF disc scratch (cleared by caller).
+     * @param this_epoch_if_pin_real    [out] S-contract §1.5 DECLARATION scratch: the
+     *                                  realized pair per satellite, written on BOTH the
+     *                                  hold and hold-OFF paths and guarded ONLY by a
+     *                                  valid dual-frequency pin — never by
+     *                                  @p emit_clock_disc, so a product-contract
+     *                                  declaration never depends on a QC channel
+     *                                  (cleared by caller).
+     * @param this_epoch_gf_pin_real    [out] S-contract §1.5: satellites that also got a
+     *                                  GEOMETRY-FREE row this epoch (@p gf_datum); empty
+     *                                  when the GF datum is off (cleared by caller).
      * @param this_epoch_cb_ifpin       [out] Card-2 pair scratch (cleared by caller).
+     * @param gf_family_constellations  FAMILY-GF: constellations whose SECONDARY channel
+     *                                  family is PARTITIONED (the run-latched
+     *                                  @ref runFamilyCensus verdict), for which one EXTRA
+     *                                  geometry-free row per (satellite, secondary family)
+     *                                  is folded — and deliberately NO extra IF row (the
+     *                                  clock already spent that direction, so the family's
+     *                                  IF combination is the ESTIMABLE inter-family ISC).
+     *                                  EMPTY when the knob is off or nothing partitions, in
+     *                                  which case not one byte of the fold changes.  The
+     *                                  verdict alone is passed — never precomputed pairs —
+     *                                  so the family pair is selected by @ref selectIfPinPair
+     *                                  on the family-filtered signal set, through the SAME
+     *                                  code path and the SAME frequency source as the IF pin.
      * @param this_epoch_cb_reseed      [out] Card-2 re-seed scratch (cleared by caller).
      * @param basis_relatch_disc_pending  [in/out] pending per-sat disc bumps.
      * @param emitEvent                 L2 event-row callback (tier, event, sat,
@@ -325,12 +416,16 @@ public:
         const std::function<double(const std::string&, const std::string&)>& freqOf,
         bool cb_time_linked, bool clock_signal_basis_hold, bool emit_clock_disc,
         bool gf_datum,
+        const std::set<std::string>& gf_family_constellations,
         const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
         const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
         const std::set<std::string>& code_bias_sat_seen_,
         bool code_bias_datum_resumed_,
         std::map<std::string, std::pair<std::string, std::string>>& held_clock_ref,
         std::map<std::string, std::pair<std::string, std::string>>& this_epoch_if_pin_sel,
+        std::map<std::string, std::pair<std::string, std::string>>& this_epoch_if_pin_real,
+        std::set<std::string>& this_epoch_gf_pin_real,
+        std::map<std::string, std::pair<std::string, std::string>>& this_epoch_family_gf_pin_real,
         std::map<std::string, std::pair<std::string, std::string>>& this_epoch_cb_ifpin,
         std::set<std::string>& this_epoch_cb_reseed,
         std::set<std::string>& basis_relatch_disc_pending,

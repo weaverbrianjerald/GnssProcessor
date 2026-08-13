@@ -323,6 +323,16 @@ struct LineAssembler {
                             const auto colon = v.find(':');
                             if (colon != std::string::npos)
                                 c.cb_pin_pair[v.substr(0, colon)] = v.substr(colon + 1);
+                        } else if (f[k].rfind("gfpin=", 0) == 0) {
+                            // Odijk rd 3b: geometry-free datum pair, "<const>:<s1>-<s2>"
+                            // (or the '+'-joined per-family form).  Same pre-':' dispatch
+                            // requirement as cbpin= — the value contains a ':'.  Stored
+                            // verbatim so a future multi-family value survives a
+                            // round-trip through a reader that predates it.
+                            const std::string v = f[k].substr(6);
+                            const auto colon = v.find(':');
+                            if (colon != std::string::npos)
+                                c.gf_pin_pair[v.substr(0, colon)] = v.substr(colon + 1);
                         } else {
                             const auto colon = f[k].find(':');
                             if (colon != std::string::npos)
@@ -475,6 +485,16 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // for constellations the consumer declares (clock_pivot_sat semantics).
     for (const auto& [cst, pair] : contract.cb_pin_pair)
         out_ << ",cbpin=" << cst << ':' << pair;
+    // Odijk rd 3b (network.code_bias_gf_datum): the GEOMETRY-FREE datum pair.  Its
+    // PRESENCE is the payload — it says the emitted code biases are the slant-posture
+    // estimable function (pinned pair ≡ datum, content only from j >= 3, each
+    // satellite's GF bias absorbed by the ionosphere per Table 8) rather than the
+    // single-layer one, on an otherwise byte-identical record layout.  ONLY when
+    // non-empty, so a single-layer producer writes the S line byte-for-byte.  An
+    // interpretation hint, not a replay-emitter parameter — makeReplayEmitter ignores
+    // it; checkContract compares it only for constellations the consumer declares.
+    for (const auto& [cst, pair] : contract.gf_pin_pair)
+        out_ << ",gfpin=" << cst << ':' << pair;
     out_ << '\n';
 }
 
@@ -560,7 +580,8 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "# S,ref_rx,bias_sign,windup_id,amb_datum,isb_datum,emit_cb,cb_datum,disc_thresh_m,"
             "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
-            "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]   (B6 S-basis contract)\n";
+            "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
+            "[,gfpin=<const>:<s1>-<s2>...]   (B6 S-basis contract)\n";
 }
 
 void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_changed,
@@ -860,6 +881,21 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
             note(fmt::format("cb_pin_pair[{}]: file declares none vs expected '{}'", cst, pair));
         else if (fit->second != pair)
             note(fmt::format("cb_pin_pair[{}]: file '{}' vs expected '{}'",
+                             cst, fit->second, pair));
+    }
+    // Odijk rd 3b: the geometry-free datum pair — same per-constellation,
+    // declared-expectations-only semantics.  A mismatch here is more severe than the
+    // cbpin one: "file declares none" means the consumer expects the slant-posture
+    // estimable function (pinned pair ≡ datum, GF lump in the ionosphere) but the file
+    // is single-layer, so the two disagree about what the B records ARE, not merely
+    // about which frame they are consistent in.
+    for (const auto& [cst, pair] : expected.gf_pin_pair) {
+        const auto fit = file.gf_pin_pair.find(cst);
+        if (fit == file.gf_pin_pair.end())
+            note(fmt::format("gf_pin_pair[{}]: file declares none (single-layer code-bias "
+                             "datum) vs expected '{}' (geometry-free datum)", cst, pair));
+        else if (fit->second != pair)
+            note(fmt::format("gf_pin_pair[{}]: file '{}' vs expected '{}'",
                              cst, fit->second, pair));
     }
     // The two replay-emitter construction parameters: a divergence here means a

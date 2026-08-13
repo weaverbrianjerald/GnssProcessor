@@ -97,6 +97,9 @@ NetworkSolveGlueResult networkSolveGlue(
     auto& last_pivot = ctx.carry.last_pivot;
     auto& held_clock_ref = ctx.carry.held_clock_ref;
     auto& this_epoch_if_pin_sel = ctx.carry.this_epoch_if_pin_sel;
+    auto& this_epoch_if_pin_real = ctx.carry.this_epoch_if_pin_real;
+    auto& this_epoch_gf_pin_real = ctx.carry.this_epoch_gf_pin_real;
+    auto& family_census = ctx.carry.family_census;
     auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
@@ -235,6 +238,11 @@ NetworkSolveGlueResult networkSolveGlue(
 // selection can never reach the emit-site comparison.  A no-op on the empty
 // map in the default (emit_clock_disc OFF) config.
 this_epoch_if_pin_sel.clear();
+// S-contract §1.5 declaration scratch — same unconditional per-epoch clear, for the
+// same reason (a stale prior-epoch pair must never reach the emit-site fill).
+this_epoch_if_pin_real.clear();
+this_epoch_gf_pin_real.clear();
+ctx.carry.this_epoch_family_gf_pin_real.clear();
 this_epoch_cb_ifpin.clear();   // Card 2: this epoch's IF-pin pairs (persisted at harvest)
 this_epoch_cb_reseed.clear();  // Card 2: this epoch's re-seeds (merged into the pending disc set at the emit site — withheld epochs never reach it)
 if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
@@ -248,13 +256,60 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         return 0.0;
     };
 
+    // --- FAMILY-GF: run-latched family census (docs/SPEC_family_gf_datum.md §3.2) ---
+    // Runs whenever the GF datum is armed, knob ON or OFF, because an armed-but-inert
+    // configuration must READ as such (standing invariant #4) — and because the OFF +
+    // PARTITIONED line is exactly the diagnosis that was missing when
+    // `_pc305_gg_tri_slant_20m` withheld every epoch on 2026-08-12 with nothing in the
+    // log naming the receiver-family split as the cause.
+    //
+    // An INDEPENDENT scan, deliberately not a rider on the CB-ADM admission census: that
+    // census reduces its per-(station, pair) map to an int support count and discards
+    // station identity, so it cannot answer "does any station bridge the two families?",
+    // and it does not run on this lineage at all (network.cb_admission is set in two
+    // configs repo-wide, neither in the pc305 chain) — piggybacking would mean arming a
+    // structurally different registration path to get a diagnostic.
+    //
+    // LATCHED on the first epoch with a usable station set: the partition is a property
+    // of the receiver hardware population, not of an epoch.
+    if (config_.networkCodeBiasGfDatum() && !family_census.latched) {
+        std::map<std::string, std::set<std::string>> station_signals;
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (!present[i] || !stations[i].sm) continue;
+            auto& sigs_of = station_signals[stations[i].name];
+            for (const auto& kv : stations[i].sm->getSatBiasStates())
+                sigs_of.insert(kv.first);
+        }
+        if (!station_signals.empty()) {
+            family_census = NetworkSbasis::runFamilyCensus(station_signals);
+            for (const auto& line : family_census.lines)
+                log->info("Network (FAMILY-GF census): {}{}", line,
+                          (family_census.partitioned.empty() ||
+                           config_.networkCodeBiasGfDatumPerFamily())
+                              ? ""
+                              : "  network.code_bias_gf_datum_per_family is OFF; expect "
+                                "n_sats-1 undeclared near-null directions per partitioned "
+                                "constellation and null-space gate withholds.");
+        }
+    }
+    // Empty unless the knob is ON *and* the census found a partition ⇒ the row builder
+    // folds nothing extra and the run is byte-identical in every other posture.
+    static const std::set<std::string> kNoFamilies;
+    const std::set<std::string>& gf_family_constellations =
+        (config_.networkCodeBiasGfDatum() && config_.networkCodeBiasGfDatumPerFamily())
+            ? family_census.partitioned
+            : kNoFamilies;
+
     const auto cbd = NetworkSbasis::buildCodeBiasDatumRows(
         est, registered_code_keys, freqOf,
         cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
         config_.networkCodeBiasGfDatum(),
+        gf_family_constellations,
         code_bias_prev_, code_bias_ifpin_pair_,
         code_bias_sat_seen_, code_bias_datum_resumed_,
         held_clock_ref, this_epoch_if_pin_sel,
+        this_epoch_if_pin_real, this_epoch_gf_pin_real,
+        ctx.carry.this_epoch_family_gf_pin_real,
         this_epoch_cb_ifpin, this_epoch_cb_reseed,
         basis_relatch_disc_pending, emitEvent);
     if (cbd.H.rows() > 0) {
@@ -301,13 +356,24 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     if (spectrum_diag_budget > 0)   // first-N (spectrum block decrements below)
         log->warn("Network[W6-cb]: nshared={}, n_cb={}, folded {} code-bias gauge "
                   "rows (IF pin for {} sats + sum-to-zero for {} (const,signal) levels"
-                  "{})",
+                  "{}{})",
                   est.numShared(), n_cb, cbd.H.rows(), cbd.n_if_pin_sats,
                   cbd.n_s2z_channels,
                   cbd.n_gf_pin_sats > 0
                       ? fmt::format(" + GEOMETRY-FREE pin for {} sats, of which {} carry "
                                     "no third band and are now fully datum-fixed",
                                     cbd.n_gf_pin_sats, cbd.n_gf_only_pair)
+                      : std::string(),
+                  // FAMILY-GF: the ON-path telemetry for the extra rows.  Printed only
+                  // when rows actually folded, because "0 folded" is exactly what an
+                  // inert knob looks like and the census line above already reports the
+                  // verdict that explains a zero (invariant #4: check the counter, not
+                  // the absence of a crash).
+                  cbd.n_family_gf_rows > 0
+                      ? fmt::format(" + FAMILY-GF pin for {} (sat,secondary-family) pairs, "
+                                    "of which {} have a two-band family whose entire "
+                                    "estimable content is the inter-family ISC",
+                                    cbd.n_family_gf_rows, cbd.n_family_gf_only_pair)
                       : std::string());
 }
 

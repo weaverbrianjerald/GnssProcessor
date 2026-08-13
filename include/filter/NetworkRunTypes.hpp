@@ -405,7 +405,22 @@ struct StationAssembly {
     long long                 cpl_terms_present{0};
     long long                 cpl_terms_departed{0};
     long long                 cpl_terms_shrunk{0};
-    std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.
+    std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  CARRY-ELIGIBLE SUBSET: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must NOT key on it — see `qc_amb`.
+    /// POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): the CARRY-VEHICLE-NEUTRAL census of
+    /// ambiguity columns that are present, unpinned and therefore CHECKABLE this epoch —
+    /// the same (col, sat, signal, x_lin, key) tuple as @c pl_amb, built by the same walk,
+    /// but WITHOUT the two carry gates that empty @c pl_amb on a Card-4 lineage
+    /// (`legacy_local_inject`'s carry_warm, and `do_amb_carry`'s `!carry_invariant`).
+    ///
+    /// The distinction is the whole point of the card: "which columns get a carried prior
+    /// injected" is a CARRY question, while "which columns are screenable by a post-fit
+    /// residual test" is an OBSERVABILITY question.  Hosting the second on the first made
+    /// every post-fit RAIM tier structurally inert under @c network.carry_invariant.
+    ///
+    /// Empty unless @c ctx.knobs.raim_ci_on, so every existing @c pl_amb reader (the
+    /// leveling harvest, the carry-VCE row feed, the sticky tree, the within-epoch tier)
+    /// is untouched and an OFF run is byte-identical.
+    std::vector<PlAmb>        qc_amb;
     /// Fix A (network.phase_datum_ensemble): every present ambiguity with a phase
     /// row this epoch whose (sat,signal) has a shared phase-bias column — (sat,
     /// signal, A_r column) — aggregated across stations into the per-(sat,signal)

@@ -1575,6 +1575,11 @@ namespace GnssProcessor {
         /// @brief CB-GF-DATUM: per-satellite geometry-free code-bias pin (slant posture).
         /// @return true when the GF gauge rows are folded (see @ref network_code_bias_gf_datum_).
         bool networkCodeBiasGfDatum() const { return network_code_bias_gf_datum_; }
+        /// @brief FAMILY-GF: extend the GF pin to each partitioned secondary channel family.
+        /// @return true when per-(satellite, secondary-family) GF rows are folded
+        ///         (see @ref network_code_bias_gf_datum_per_family_ and
+        ///         docs/SPEC_family_gf_datum.md).
+        bool networkCodeBiasGfDatumPerFamily() const { return network_code_bias_gf_datum_per_family_; }
         bool networkRxCodeBiasDatum() const { return network_rx_code_bias_datum_; }
 
         /**
@@ -3844,6 +3849,82 @@ namespace GnssProcessor {
         bool networkRaimAttribution() const { return network_raim_attribution_; }
 
         /**
+         * @brief POOL RE-HOST: run the post-fit RAIM screen on the Card-4 invariant-carry
+         *        lineage (@c network.raim_carry_invariant).  MEASURE-ONLY.
+         *
+         * Post-fit RAIM has always been structurally inert under @ref networkCarryInvariant,
+         * for two independent reasons, and neither is a threshold that could be tuned:
+         *
+         *  1. The seam is never CALLED.  Its call site is `if (raim_on && carry_warm)`, and
+         *     `carry_warm` requires @ref networkPhaseLeveling — so on a Card-4 lineage that
+         *     leaves leveling off, `networkPostFitRaim` does not execute at all.
+         *  2. Even when leveling IS on, the seam's residual pool is EMPTY.  Every RAIM walk
+         *     keys on `StationAssembly::pl_amb`, whose sole fill site is nested inside
+         *     `do_amb_carry = (…) && !carry_invariant` — Card 4's DD carry supersedes the
+         *     phase-leveling ambiguity carry as a solve input, so the record list that
+         *     happens to host RAIM's QC substrate is never built.
+         *
+         * The defect is one of HOSTING, not of statistics: the enumeration RAIM needs
+         * (which ambiguity columns are present, unpinned and checkable this epoch) is
+         * entirely carry-agnostic, but it lives on the phase-leveling carry's bookkeeping
+         * vector.  This flag re-hosts it onto @c StationAssembly::qc_amb, a carry-vehicle-
+         * neutral census built in PASS B, and points the RAIM walks at it.
+         *
+         * @warning This knob is MEASURE-ONLY by design but is **not** emission-neutral.
+         *          With the pool empty, `sigma0` never leaves its 1.0 initializer; filling
+         *          it makes σ̂₀ real, and σ̂₀ feeds both the A4 withhold
+         *          (@ref networkRaimWithholdSigma0) and the URA EWMA (@ref networkEmitUra).
+         *          Grade the first ON run as emission-affecting.
+         *
+         * @note The screen's POWER on this lineage is unproven.  Under phase-leveling a
+         *       carried ambiguity is pinned by a stiff prior, so a missed slip has nowhere
+         *       to hide and spikes the post-fit residual — that is RAIM's stated mechanism.
+         *       Under Card 4 the local ambiguity column is free each epoch and the time-link
+         *       lives in the DD chord's prior, so the tension may be absorbed locally and
+         *       never reach the column's residual.  Re-hosting makes RAIM RUNNABLE, not
+         *       necessarily POWERFUL; that is why the refloat is a separate knob.
+         *
+         * Requires @ref networkCarryInvariant and @ref networkRaim (loader forces off
+         * otherwise).  OFF = byte-identical: @c qc_amb is never allocated and the pool
+         * selector falls through to @c pl_amb.
+         *
+         * @see networkRaimCarryInvariantRefloat, docs/SPEC_raim_pool_rehost.md
+         */
+        bool networkRaimCarryInvariant() const { return network_raim_carry_invariant_; }
+
+        /**
+         * @brief THE ACTUATOR: let a re-hosted RAIM flag actually refloat the arc on the
+         *        Card-4 carry (@c network.raim_carry_invariant_refloat).
+         *
+         * Neither of the RAIM seam's two existing actions can move the Card-4 solve:
+         *
+         *  - `local_carry.erase` drops a phase-leveling carry entry whose only solve-side
+         *    consumer sits under the same `!carry_invariant` gate — a no-op on an empty map.
+         *  - `markAmbiguityPendingReseed` reaches a live reader, but rewriting @c x_lin is
+         *    BOOKKEEPING for the network: the kernel solves corrections about the
+         *    linearization point with no write-back, so the reduced RHS
+         *    @f$ b_{red} = u_s - N_{sr} N_{rr}^{-1} u_r @f$ is algebraically unchanged
+         *    (proved for the sibling mechanism in SPEC_deweight_release_hygiene §7.2).
+         *
+         * The only actuator that reaches the invariant carry is the C3c slip funnel
+         * (@c carry_slipped_ambs), which membership-excludes the arc from @c A_old so its
+         * chord is re-tapped from a diffuse prior.  RAIM detects POST-solve (SB_RAIM),
+         * by which point the funnel was already consumed at SB_DDBUILD — so the response
+         * is DEFERRED one epoch through @c NetworkCarryState::raim_refloat_pending, exactly
+         * as the Card-4 D5 innovation gate and the iono-deweight release edge defer theirs.
+         *
+         * Drains into the funnel proper, NOT into its raw-observable subset: a post-fit
+         * residual consensus is estimation-side evidence, and draining it into
+         * @c carry_slipped_raw would silently change the Iono-2 v3k deviation-erase policy.
+         *
+         * Requires @ref networkRaimCarryInvariant.  OFF = the screen measures and counts
+         * but queues nothing (byte-identical solve).
+         *
+         * @see networkRaimCarryInvariant, docs/SPEC_raim_pool_rehost.md
+         */
+        bool networkRaimCarryInvariantRefloat() const { return network_raim_carry_invariant_refloat_; }
+
+        /**
          * @brief Whether a "so bad" epoch triggers within-epoch adaptation
          *        (@c network.raim_within_epoch).
          *
@@ -5658,7 +5739,18 @@ namespace GnssProcessor {
         /// (§5.1) realized as a datum — what remains estimable is the modernized DCB
         /// d^s_1 − d^s_j for j ≥ 3.  Default OFF => byte-identical.
         bool network_code_bias_gf_datum_{false};
-        bool network_rx_code_bias_datum_{false};          ///< RXCB-DATUM: one sum-to-zero-over-receivers gauge per constellation on the receiver DCB set (the IGS convention; replaces the satellite-side zero-mean that EXT-CB gives away).  Default OFF => byte-identical.
+        /// FAMILY-GF (docs/SPEC_family_gf_datum.md): extend the GF pin above to ONE extra
+        /// geometry-free row per (satellite, PARTITIONED secondary channel family).  Odijk
+        /// rd 3b re-derives PER RECEIVER CHANNEL FAMILY when the station population splits
+        /// (Galileo C/Q-vs-X): the primary family's pin never reaches the secondary family's
+        /// columns, leaving one mu-patterned null direction per satellite that the secondary
+        /// stations' free slant iono absorbs.  Deliberately GF-ONLY — the satellite clock is
+        /// shared and already realized by the primary IF pin, so the secondary family's IF
+        /// combination is the ESTIMABLE inter-family ISC and pinning it would over-pin a
+        /// data-determined quantity.  Requires network_code_bias_gf_datum_.  Default OFF =>
+        /// byte-identical (with no partitioned family the census emits no rows at all).
+        bool network_code_bias_gf_datum_per_family_{false};
+        bool network_rx_code_bias_datum_{false};        ///< RXCB-DATUM: one sum-to-zero-over-receivers gauge per constellation on the receiver DCB set (the IGS convention; replaces the satellite-side zero-mean that EXT-CB gives away).  Default OFF => byte-identical.
         double network_rx_code_bias_datum_sigma_m_{10.0};  ///< RXCB-DATUM loose physical-bound sigma (m); realized common-mode info = 1/sigma^2, station-count independent.
         bool network_cb_admission_{false};                ///< CB-ADM: run-latched W6 code-bias admission census + station-local quarantine (replaces the per-epoch >=2-station gate; BeiDou-sparsity remedy).  Default OFF => legacy path byte-identical.
         int  network_cb_admission_min_stations_{4};       ///< CB-ADM min supporting-station count for an admitted code pair; effective_min = max(2, min(this, n_census_stations)).
@@ -5725,6 +5817,8 @@ namespace GnssProcessor {
         bool   network_phase_bias_exclude_unmatched_antenna_{false}; ///< Exclude a station whose receiver antenna has NO ATX model match (zero receiver PCO/PCV → uncalibrated carrier phase) from every satellite phase-bias state — its arc is absorbed by the local float ambiguity (like phase_bias_min_station_fraction, but per-station and all-signals) while it still feeds the satellite clock/code-bias/iono/position. The clock-datum pivot is never excluded (warned instead). OFF = every station contributes (byte-identical). Network mode only.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< HARD exclusion (policy backstop): DROP from the network entirely any station whose receiver antenna still has NO ATX match AFTER the always-on radome→NONE fallback (a genuinely unknown antenna TYPE → fully unmodelled receiver PCO/PCV = a systematic in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. OFF = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; OFF = consensus behaviour.
+        bool   network_raim_carry_invariant_{false};         ///< POOL RE-HOST (measure-only): run the post-fit RAIM screen on the Card-4 invariant-carry lineage by building the carry-neutral `qc_amb` census and widening the seam's call-site gate. Post-fit RAIM is otherwise structurally inert under carry_invariant — the seam is not called (carry_warm needs phase_leveling) and its pool `pl_amb` is never filled (its fill site is under `!carry_invariant`). ⚠ NOT emission-neutral: filling the pool makes σ̂0 real, which feeds the A4 withhold and the URA EWMA. Requires network_carry_invariant_ + network_raim_. OFF = byte-identical.
+        bool   network_raim_carry_invariant_refloat_{false}; ///< THE ACTUATOR for the above: queue a re-hosted RAIM flag into `raim_refloat_pending`, drained at the NEXT epoch's head into the C3c slip funnel `carry_slipped_ambs` (NOT the raw subset). Deferred because RAIM detects post-solve at SB_RAIM while the funnel is consumed at SB_DDBUILD — the same deferral the D5 innovation gate and the dw-release edge already use. The seam's two legacy actions (local_carry.erase, pending-reseed mark) cannot move the Card-4 solve. Requires network_raim_carry_invariant_. OFF = measure + count only.
         bool   network_raim_within_epoch_{false}; ///< Arm within-epoch adaptation (detect→drop-culprit→re-solve) when σ̂0 exceeds the trigger; OFF = emit the first solve as today.
         double network_raim_sigma0_trigger_{3.0}; ///< σ̂0 above which an epoch is "so bad" that within-epoch adaptation fires.
         double network_raim_withhold_sigma0_{0.0}; ///< A4: within-epoch escape-hatch ceiling — if σ̂0 STILL exceeds this after the 5-pass adaptation, WITHHOLD the epoch (reuse the observability-gate disposition) instead of emitting with a warning; 0 = off (emit anyway, current behaviour). Used only when @ref networkRaimWithinEpoch. Typically ~2× @ref networkRaimSigma0Trigger.

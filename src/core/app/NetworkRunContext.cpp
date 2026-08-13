@@ -164,6 +164,20 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_invariant = k.phase_datum_eq34 && config_.networkCarryInvariant();
     k.carry_invariant_pd_safe = k.carry_invariant && config_.networkCarryInvariantPdSafe();
     k.carry_aware_covariance = k.carry_invariant && config_.networkCarryAwareCovariance();
+    // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).  Resolved HERE, beside the other
+    // carry_invariant-derived knobs rather than up with the raim_* family, so that ONE
+    // bool answers "is the re-hosted census live" for all three consumers — the driver's
+    // call-site gate, the assembly's census fill and the seam's pool selector.  They must
+    // not be able to disagree about whether qc_amb exists.
+    //
+    // The k.carry_invariant conjunct also drags in phase_datum_eq34 (see just above).
+    // That is defensive redundancy, not a live discriminator: carry_invariant WITHOUT
+    // eq34 is a hard load error (GnssConfigLoadNetwork.cpp:6129-6135 returns false), so
+    // no config that could exercise the difference ever reaches here.  Kept because it
+    // matches how carry_invariant_pd_safe / carry_aware_covariance resolve, and because
+    // if that requirement is ever relaxed this line is already correct.
+    k.raim_ci_on = k.raim_on && k.carry_invariant && config_.networkRaimCarryInvariant();
+    k.raim_ci_refloat = k.raim_ci_on && config_.networkRaimCarryInvariantRefloat();
     k.eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     k.eq34_rpb_prior_w = (k.phase_datum_eq34 && k.eq34_rpb_prior_sigma > 0.0) ? 1.0 / (k.eq34_rpb_prior_sigma * k.eq34_rpb_prior_sigma) : 0.0;
     k.eq34_rpb_q = (k.phase_datum_eq34 && !k.carry_invariant) ? config_.networkPhaseDatumEq34RpbQ() : 0.0;

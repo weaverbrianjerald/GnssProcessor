@@ -4,10 +4,11 @@
 `docs/HANDOFF_night305_day129.md` §7 → this.  Written 2026-07-27 alongside the
 P-header schema fix.  Self-contained.
 
-**Status: format layer LANDED + tested; producer FILL specified here, not
-built** (the fill sites — `NetworkSolPrep.cpp`, `NetworkRunContext.hpp` — were
-under a concurrent session's edit lock when this was written; the remaining
-work is ~15 lines against a frozen grammar).
+**Status: LANDED and in the wire.**  Format layer 2026-07-27; producer fill
+2026-08-12; **fill SOURCE corrected and `gfpin=` added 2026-08-13** (see §6 —
+the 2026-08-12 fill was structurally inert on every FIELD posture, which is how
+the gap resurfaced).  Two deliberate divergences from what §3–§4 below specify
+are recorded in §6; read that section before treating §3 as the built design.
 
 ---
 
@@ -117,3 +118,83 @@ which are not fingerprinted.  Warm resumes are unaffected.
 - D3: re-pointing `selectIfPinPair` at the consumer-convention pair
   (fingerprint-breaking datum re-reference; deferred by decision in the
   investigation report §7).
+
+## 6. What actually landed, and where it diverges from §3–§4 (2026-08-13)
+
+### 6.1 The fill was built on the wrong source, and was inert on every FIELD run
+
+§3 step 1 called for a NEW carry map `this_epoch_if_pin_real`, explicitly
+"unconditional (unlike `this_epoch_if_pin_sel`, which is gated on
+`!hold && emit_clock_disc`)".  The fill that landed 2026-08-12 read
+`this_epoch_if_pin_sel` instead, and therefore inherited that gate.
+
+`network.emit_clock_disc` defaults **false** (`GnssConfigLoadNetwork.cpp:4324`)
+and appears **nowhere** in the eight-config `extends` closure of the posture-C
+field arms (`_pc305_ggq_tri_slant_20m` → … → `_ft63_24h_conv`), while every sim
+posture-C config arms it.  Result: sim products declared `cbpin=` correctly and
+**every field product declared nothing** — and the failure was silent, because
+the "no cbpin= is declared" info line lives INSIDE the per-constellation loop,
+which an empty source map never enters.  The producer's own logs are the record:
+`runs/simnet300_tri_slant/console.log` carries the declaring line; the field
+console logs carry neither that line nor the split-diagnosis line.
+
+This blocked truth-grading of field products: `simnet_grade.py` refuses to apply
+the §4.4 S-transform without a declared pair rather than assume one.
+
+The defect class is worth naming, because it is not specific to this field:
+**a product-contract DECLARATION accidentally gated on a QC-channel knob.**
+
+Fixed by doing what §3 said: a dedicated `this_epoch_if_pin_real`
+(`NetworkRunContext.hpp`), written in `buildCodeBiasDatumRows` under the sole
+guard `f1 > 0 && f2 > 0`, on BOTH the held and the re-selected path — the hold
+branch previously recorded no selection at all, so merely ungating the disc
+scratch would still have declared nothing under `clock_signal_basis_hold`.
+`this_epoch_if_pin_sel` keeps its gate and its meaning (it drives per-satellite
+discontinuity bumps; widening it would change wire bytes).  Guarded by
+`NetworkSbasisTest.BuildCodeBiasDatumRowsDeclarationRecordIsUngated`.
+
+### 6.2 UNANIMITY, not the modal rule of §3 step 2
+
+§3 step 2 and §4 specify "modal pair over the emitted satellites" with a
+lexically-smallest tie-break.  The implementation declares **only on unanimity**
+and otherwise declares nothing, logging why.
+
+This divergence is deliberate and should be read as superseding §3/§4: a modal
+declaration publishes a pair that is FALSE for the minority satellites, and a
+consumer has no way to learn which ones — which is the mixed-frame damage the
+token exists to prevent (§1's 63.4 → 113.7 m regime).  Silence is recoverable;
+a confidently wrong declaration is not.  Measured on the field roster the point
+is currently moot — all 32 GPS satellites resolve to (C1C,C2W) and all 21
+Galileo to (C1C,C5Q), i.e. perfectly unanimous — but it matters on any
+heterogeneous constellation, which is exactly the Galileo Q/X family case
+(`docs/SPEC_family_gf_datum.md`).
+
+### 6.3 Declared at EVERY emit, not stamped once
+
+§3 step 3 assumed the RTA-5 re-broadcast would pick up a mid-run change.  It
+does not: `NetworkEmitStore.cpp:404–410` refreshes only `clock_pivot_sat` and
+`eq34_datum_receiver`.  A once-stamped declaration would go stale on the wire
+after a channel-set shift moved the pin — the same silent mis-framing the token
+exists to prevent.  The declaration is now rebuilt each emit and assigned
+wholesale (so a constellation that stops qualifying DROPS its token at the next
+broadcast), logged only on change.
+
+### 6.4 `gfpin=` — the companion token for the slant posture
+
+Added the same day, same grammar, same unanimity rule:
+`gfpin=<const>:<s1>-<s2>`, written only when `network.code_bias_gf_datum` folded
+a geometry-free row for every dual-frequency emitted satellite of that
+constellation.  Rationale and semantics (including precisely what its ABSENCE
+does and does not prove) are in `docs/SPEC_sbasis_realization_contract.md` §A
+row 2b/3b, §B row 4 and §D; the per-family value form is
+`docs/SPEC_family_gf_datum.md` §D.3, which today's parser round-trips and
+today's producer never writes.
+
+### 6.5 Still open
+
+- `_pc305_tri_slant_10ep.json` does not set `network.serialize_sbasis_contract`
+  anywhere in its chain, so that smoke arm writes a v1 header with no S line at
+  all and remains ungradeable regardless of this fix.  The 20 m / 1 h / 4 h arms
+  inherit `true` from `_pc305_gg_tri_slant_20m.json:96` and are unaffected.
+- The consumer-side expectation knob and the auto-derived consumer pair (§5)
+  are still not built.
