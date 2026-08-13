@@ -1,0 +1,36 @@
+{
+ "_comment": [
+  "POSTURE C ON THE FIELD, ARM 4 — GPS + GALILEO (Q-FAMILY), 4 HOURS (480 ep).",
+  "Single variable vs the PASSED 1 h arm (_pc305_ggq_tri_slant_1h, 120/120):",
+  "DURATION ONLY.  THE FIRST LEVEL-LEGAL WINDOW on this posture: settled half",
+  "(ep 241-480) may grade level channels (consumer verdicts, settled lane",
+  "stats, carry trends) — the ~2 h convergence budget is finally cleared.",
+  "",
+  "READ LIST (from the 1 h findings):",
+  " 1. rx-CB innovation-gate fraction — steady 28% through 1 h; does the",
+  "    settled half decay it, or is the 10-sigma gate structurally fighting",
+  "    the posture-C rx-DCB definition?  (recal card pending either way)",
+  " 2. eq34 audit shorts — expect COMPLETE unless another admission drop",
+  "    lands mid-epoch (BSHM-class); any short gets attributed to its epoch.",
+  " 3. census phase p99 — known-diverging column, ignore (card owed).",
+  " 4. E36 clock deviation (16.4 m at 1 h, worst holder) — watch for growth",
+  "    vs rotation; clock_runaway_check is the tripwire.",
+  " 5. Settled lane statistics (UWL was 98.5% FFR at 1 h) — frac-only",
+  "    caveat stands; the truth-graded twin is the SIM 300-sta arm.",
+  " 6. Consumer settled-half median/stability (float, ~4 m through 1 h).",
+  "",
+  "480 epochs at 30 s: max_duration_s 14371 covers t = 0..14370.",
+  "FRESH LINEAGE — cold start, own snapshot path."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_pc305_ggq_tri_slant_20m.json"
+ ],
+ "processing": {
+  "max_duration_s": 14371.0
+ },
+ "network": {
+  "max_duration_s": 14371.0,
+  "product_output_path": "C:/GnssProcessor/runs/pc305_ggq_tri_slant_4h/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/pc305_ggq_tri_slant_4h/state_snapshot.bin"
+ }
+}

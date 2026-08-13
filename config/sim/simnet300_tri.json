@@ -1,0 +1,6101 @@
+{
+  "_comment": [
+    "SYNTHETIC TRIPLE-FREQUENCY ARM \u2014 60 solve + 1 held-out consumer, 480 epochs = 4 h,",
+    "DOY 2024-129, quiet.  GPS gains a THIRD band (C5Q/L5Q) via signals.gps_l5.",
+    "",
+    "WHY.  Odijk et al. 2016 \u00a75.1: with the ionosphere parameterized as free SLANT",
+    "delays the geometry-free code biases are absorbed by the ionosphere and the",
+    "satellite code biases are NOT estimable on the first two frequencies \u2014 'code",
+    "biases are only estimable for a (modernized) triple- or higher-frequency",
+    "constellation' (p. 29), the estimable quantity being the modernized DCB",
+    "d^s_1 - d^s_j for j >= 3 (Eq. 33).  A two-band fixture cannot exercise that",
+    "posture at all.  This fixture is the input for it.",
+    "",
+    "SYNTHETIC L5 OSB IS MANDATORY HERE, not decoration: the shipped COD0MGXFIN OSB",
+    "product carries NO GPS band-5 rows whatsoever (its GPS inventory is L1C/L1W/L1L/",
+    "L1X, L2W/L2S/L2L/L2X, C1C/C1W/C1L/C1X, C2W/C2S/C2L/C2X \u2014 verified), so without an",
+    "injected delta the third band's code bias would be identically zero and a grader",
+    "could not distinguish 'estimated it correctly' from 'the whole channel is zero'.",
+    "Amplitudes: 0.60 m code / 0.02 m phase, deterministic in the PRN (no RNG).",
+    "",
+    "n = 60 rather than 300: today's ladder measured the observability wall to be an",
+    "n-INVARIANT gauge (SPEC \u00a712.2), so station count is not the lever and a small",
+    "roster keeps the arm cheap.  60 leaves room for stride subsets down to 20/30.",
+    "",
+    "The third band is emitted on EVERY GPS satellite, unlike the real constellation",
+    "where L5 is a Block IIF/III subset \u2014 deliberate, so an estimability verdict",
+    "cannot be confounded with third-band sparsity.  A sparse-L5 variant is a separate",
+    "arm, not a correction to this one."
+  ],
+  "date": {
+    "year": 2024,
+    "doy": 129
+  },
+  "trajectory": {
+    "interval_s": 30.0,
+    "n_epochs": 480,
+    "start_tow_s": 302400.0,
+    "clock_bias0_s": 0.0001,
+    "clock_drift_sps": 1e-09,
+    "clock_rw_q_m2ps": 0.003
+  },
+  "geometry": {
+    "elevation_mask_deg": 10.0
+  },
+  "noise": {
+    "code_sigma_zen_m": 0.3,
+    "phase_sigma_zen_m": 0.003
+  },
+  "atmosphere": {
+    "zwd_m": 0.12,
+    "zwd_rw_sigma_m": 0.01,
+    "zwd_rw_tau_s": 3600.0
+  },
+  "iono": {
+    "storm_scale": 0.0,
+    "background_source": "gim",
+    "shell_height_km": 350.0,
+    "center_lat_deg": 0.0947,
+    "center_lon_deg": 0.3552
+  },
+  "cycle_slips": {
+    "rate_base": 0.0
+  },
+  "corrections": {
+    "relativity": true,
+    "shapiro": true,
+    "solid_earth_tide": true,
+    "pole_tide": true,
+    "sat_antenna": true,
+    "rx_antenna_type": "TRM59800.00     NONE",
+    "phase_windup": true,
+    "signal_bias": true
+  },
+  "network_stations": [
+    {
+      "name": "S00101SIM",
+      "lat_deg": -71.4212,
+      "lon_deg": 0.0,
+      "h_m": 50.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S00201SIM",
+      "lat_deg": -70.3128,
+      "lon_deg": 137.5078,
+      "h_m": 778.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S00301SIM",
+      "lat_deg": -69.2614,
+      "lon_deg": -84.9845,
+      "h_m": 1507.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S00401SIM",
+      "lat_deg": -68.2586,
+      "lon_deg": 52.5233,
+      "h_m": 266.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S00501SIM",
+      "lat_deg": -67.298,
+      "lon_deg": -169.9689,
+      "h_m": 995.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S00601SIM",
+      "lat_deg": -66.3745,
+      "lon_deg": -32.4612,
+      "h_m": 1724.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S00701SIM",
+      "lat_deg": -65.4838,
+      "lon_deg": 105.0466,
+      "h_m": 483.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S00801SIM",
+      "lat_deg": -64.6225,
+      "lon_deg": -117.4457,
+      "h_m": 1212.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S00901SIM",
+      "lat_deg": -63.7877,
+      "lon_deg": 20.0621,
+      "h_m": 1940.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S01001SIM",
+      "lat_deg": -62.9768,
+      "lon_deg": 157.5699,
+      "h_m": 700.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S01101SIM",
+      "lat_deg": -62.1879,
+      "lon_deg": -64.9224,
+      "h_m": 1428.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S01201SIM",
+      "lat_deg": -61.4191,
+      "lon_deg": 72.5854,
+      "h_m": 187.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S01301SIM",
+      "lat_deg": -60.6687,
+      "lon_deg": -149.9068,
+      "h_m": 916.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S01401SIM",
+      "lat_deg": -59.9354,
+      "lon_deg": -12.3991,
+      "h_m": 1645.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S01501SIM",
+      "lat_deg": -59.218,
+      "lon_deg": 125.1087,
+      "h_m": 404.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S01601SIM",
+      "lat_deg": -58.5154,
+      "lon_deg": -97.3835,
+      "h_m": 1133.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S01701SIM",
+      "lat_deg": -57.8266,
+      "lon_deg": 40.1242,
+      "h_m": 1862.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S01801SIM",
+      "lat_deg": -57.1507,
+      "lon_deg": 177.632,
+      "h_m": 621.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S01901SIM",
+      "lat_deg": -56.4869,
+      "lon_deg": -44.8602,
+      "h_m": 1350.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S02001SIM",
+      "lat_deg": -55.8345,
+      "lon_deg": 92.6475,
+      "h_m": 109.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S02101SIM",
+      "lat_deg": -55.1929,
+      "lon_deg": -129.8447,
+      "h_m": 837.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S02201SIM",
+      "lat_deg": -54.5615,
+      "lon_deg": 7.663,
+      "h_m": 1566.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S02301SIM",
+      "lat_deg": -53.9397,
+      "lon_deg": 145.1708,
+      "h_m": 325.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S02401SIM",
+      "lat_deg": -53.327,
+      "lon_deg": -77.3214,
+      "h_m": 1054.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S02501SIM",
+      "lat_deg": -52.7231,
+      "lon_deg": 60.1863,
+      "h_m": 1783.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S02601SIM",
+      "lat_deg": -52.1273,
+      "lon_deg": -162.3059,
+      "h_m": 542.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S02701SIM",
+      "lat_deg": -51.5394,
+      "lon_deg": -24.7981,
+      "h_m": 1271.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S02801SIM",
+      "lat_deg": -50.9591,
+      "lon_deg": 112.7096,
+      "h_m": 2000.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S02901SIM",
+      "lat_deg": -50.3858,
+      "lon_deg": -109.7826,
+      "h_m": 759.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S03001SIM",
+      "lat_deg": -49.8195,
+      "lon_deg": 27.7252,
+      "h_m": 1487.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S03101SIM",
+      "lat_deg": -49.2597,
+      "lon_deg": 165.2329,
+      "h_m": 247.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S03201SIM",
+      "lat_deg": -48.7061,
+      "lon_deg": -57.2593,
+      "h_m": 975.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S03301SIM",
+      "lat_deg": -48.1586,
+      "lon_deg": 80.2484,
+      "h_m": 1704.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S03401SIM",
+      "lat_deg": -47.6169,
+      "lon_deg": -142.2438,
+      "h_m": 463.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S03501SIM",
+      "lat_deg": -47.0807,
+      "lon_deg": -4.736,
+      "h_m": 1192.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S03601SIM",
+      "lat_deg": -46.5499,
+      "lon_deg": 132.7717,
+      "h_m": 1921.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S03701SIM",
+      "lat_deg": -46.0242,
+      "lon_deg": -89.7205,
+      "h_m": 680.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S03801SIM",
+      "lat_deg": -45.5034,
+      "lon_deg": 47.7873,
+      "h_m": 1409.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S03901SIM",
+      "lat_deg": -44.9875,
+      "lon_deg": -174.705,
+      "h_m": 168.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S04001SIM",
+      "lat_deg": -44.4761,
+      "lon_deg": -37.1972,
+      "h_m": 897.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S04101SIM",
+      "lat_deg": -43.9692,
+      "lon_deg": 100.3106,
+      "h_m": 1625.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S04201SIM",
+      "lat_deg": -43.4665,
+      "lon_deg": -122.1817,
+      "h_m": 384.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S04301SIM",
+      "lat_deg": -42.9681,
+      "lon_deg": 15.3261,
+      "h_m": 1113.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S04401SIM",
+      "lat_deg": -42.4736,
+      "lon_deg": 152.8339,
+      "h_m": 1842.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S04501SIM",
+      "lat_deg": -41.983,
+      "lon_deg": -69.6584,
+      "h_m": 601.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S04601SIM",
+      "lat_deg": -41.4961,
+      "lon_deg": 67.8494,
+      "h_m": 1330.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S04701SIM",
+      "lat_deg": -41.0129,
+      "lon_deg": -154.6429,
+      "h_m": 89.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S04801SIM",
+      "lat_deg": -40.5332,
+      "lon_deg": -17.1351,
+      "h_m": 818.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S04901SIM",
+      "lat_deg": -40.0569,
+      "lon_deg": 120.3727,
+      "h_m": 1547.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S05001SIM",
+      "lat_deg": -39.5839,
+      "lon_deg": -102.1196,
+      "h_m": 306.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S05101SIM",
+      "lat_deg": -39.1142,
+      "lon_deg": 35.3882,
+      "h_m": 1034.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S05201SIM",
+      "lat_deg": -38.6475,
+      "lon_deg": 172.896,
+      "h_m": 1763.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S05301SIM",
+      "lat_deg": -38.1838,
+      "lon_deg": -49.5963,
+      "h_m": 522.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S05401SIM",
+      "lat_deg": -37.7231,
+      "lon_deg": 87.9115,
+      "h_m": 1251.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S05501SIM",
+      "lat_deg": -37.2653,
+      "lon_deg": -134.5807,
+      "h_m": 1980.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S05601SIM",
+      "lat_deg": -36.8102,
+      "lon_deg": 2.927,
+      "h_m": 739.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S05701SIM",
+      "lat_deg": -36.3578,
+      "lon_deg": 140.4348,
+      "h_m": 1468.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S05801SIM",
+      "lat_deg": -35.908,
+      "lon_deg": -82.0574,
+      "h_m": 227.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S05901SIM",
+      "lat_deg": -35.4607,
+      "lon_deg": 55.4503,
+      "h_m": 956.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S06001SIM",
+      "lat_deg": -35.0159,
+      "lon_deg": -167.0419,
+      "h_m": 1684.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S06101SIM",
+      "lat_deg": -34.5736,
+      "lon_deg": -29.5342,
+      "h_m": 443.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S06201SIM",
+      "lat_deg": -34.1335,
+      "lon_deg": 107.9736,
+      "h_m": 1172.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S06301SIM",
+      "lat_deg": -33.6958,
+      "lon_deg": -114.5186,
+      "h_m": 1901.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S06401SIM",
+      "lat_deg": -33.2602,
+      "lon_deg": 22.9891,
+      "h_m": 660.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S06501SIM",
+      "lat_deg": -32.8269,
+      "lon_deg": 160.4969,
+      "h_m": 1389.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S06601SIM",
+      "lat_deg": -32.3956,
+      "lon_deg": -61.9953,
+      "h_m": 148.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S06701SIM",
+      "lat_deg": -31.9664,
+      "lon_deg": 75.5124,
+      "h_m": 877.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S06801SIM",
+      "lat_deg": -31.5392,
+      "lon_deg": -146.9798,
+      "h_m": 1606.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S06901SIM",
+      "lat_deg": -31.1139,
+      "lon_deg": -9.472,
+      "h_m": 365.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S07001SIM",
+      "lat_deg": -30.6905,
+      "lon_deg": 128.0357,
+      "h_m": 1093.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S07101SIM",
+      "lat_deg": -30.269,
+      "lon_deg": -94.4565,
+      "h_m": 1822.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S07201SIM",
+      "lat_deg": -29.8492,
+      "lon_deg": 43.0512,
+      "h_m": 581.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S07301SIM",
+      "lat_deg": -29.4313,
+      "lon_deg": -179.441,
+      "h_m": 1310.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S07401SIM",
+      "lat_deg": -29.015,
+      "lon_deg": -41.9332,
+      "h_m": 69.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S07501SIM",
+      "lat_deg": -28.6004,
+      "lon_deg": 95.5745,
+      "h_m": 798.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S07601SIM",
+      "lat_deg": -28.1875,
+      "lon_deg": -126.9177,
+      "h_m": 1527.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S07701SIM",
+      "lat_deg": -27.7761,
+      "lon_deg": 10.5901,
+      "h_m": 286.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S07801SIM",
+      "lat_deg": -27.3663,
+      "lon_deg": 148.0978,
+      "h_m": 1015.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S07901SIM",
+      "lat_deg": -26.958,
+      "lon_deg": -74.3944,
+      "h_m": 1743.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S08001SIM",
+      "lat_deg": -26.5511,
+      "lon_deg": 63.1134,
+      "h_m": 503.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S08101SIM",
+      "lat_deg": -26.1458,
+      "lon_deg": -159.3789,
+      "h_m": 1231.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S08201SIM",
+      "lat_deg": -25.7418,
+      "lon_deg": -21.8711,
+      "h_m": 1960.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S08301SIM",
+      "lat_deg": -25.3391,
+      "lon_deg": 115.6367,
+      "h_m": 719.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S08401SIM",
+      "lat_deg": -24.9379,
+      "lon_deg": -106.8556,
+      "h_m": 1448.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S08501SIM",
+      "lat_deg": -24.5379,
+      "lon_deg": 30.6522,
+      "h_m": 207.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S08601SIM",
+      "lat_deg": -24.1392,
+      "lon_deg": 168.1599,
+      "h_m": 936.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S08701SIM",
+      "lat_deg": -23.7417,
+      "lon_deg": -54.3323,
+      "h_m": 1665.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S08801SIM",
+      "lat_deg": -23.3454,
+      "lon_deg": 83.1755,
+      "h_m": 424.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S08901SIM",
+      "lat_deg": -22.9503,
+      "lon_deg": -139.3168,
+      "h_m": 1153.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S09001SIM",
+      "lat_deg": -22.5564,
+      "lon_deg": -1.809,
+      "h_m": 1881.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S09101SIM",
+      "lat_deg": -22.1636,
+      "lon_deg": 135.6988,
+      "h_m": 640.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S09201SIM",
+      "lat_deg": -21.7719,
+      "lon_deg": -86.7935,
+      "h_m": 1369.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S09301SIM",
+      "lat_deg": -21.3812,
+      "lon_deg": 50.7143,
+      "h_m": 128.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S09401SIM",
+      "lat_deg": -20.9916,
+      "lon_deg": -171.7779,
+      "h_m": 857.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S09501SIM",
+      "lat_deg": -20.603,
+      "lon_deg": -34.2702,
+      "h_m": 1586.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S09601SIM",
+      "lat_deg": -20.2154,
+      "lon_deg": 103.2376,
+      "h_m": 345.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S09701SIM",
+      "lat_deg": -19.8288,
+      "lon_deg": -119.2547,
+      "h_m": 1074.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S09801SIM",
+      "lat_deg": -19.4431,
+      "lon_deg": 18.2531,
+      "h_m": 1803.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S09901SIM",
+      "lat_deg": -19.0583,
+      "lon_deg": 155.7609,
+      "h_m": 562.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S10001SIM",
+      "lat_deg": -18.6744,
+      "lon_deg": -66.7314,
+      "h_m": 1290.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S10101SIM",
+      "lat_deg": -18.2913,
+      "lon_deg": 70.7764,
+      "h_m": 50.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S10201SIM",
+      "lat_deg": -17.9091,
+      "lon_deg": -151.7158,
+      "h_m": 778.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S10301SIM",
+      "lat_deg": -17.5278,
+      "lon_deg": -14.2081,
+      "h_m": 1507.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S10401SIM",
+      "lat_deg": -17.1472,
+      "lon_deg": 123.2997,
+      "h_m": 266.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S10501SIM",
+      "lat_deg": -16.7674,
+      "lon_deg": -99.1925,
+      "h_m": 995.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S10601SIM",
+      "lat_deg": -16.3884,
+      "lon_deg": 38.3152,
+      "h_m": 1724.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S10701SIM",
+      "lat_deg": -16.0101,
+      "lon_deg": 175.823,
+      "h_m": 483.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S10801SIM",
+      "lat_deg": -15.6325,
+      "lon_deg": -46.6692,
+      "h_m": 1212.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S10901SIM",
+      "lat_deg": -15.2556,
+      "lon_deg": 90.8385,
+      "h_m": 1940.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S11001SIM",
+      "lat_deg": -14.8794,
+      "lon_deg": -131.6537,
+      "h_m": 700.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S11101SIM",
+      "lat_deg": -14.5038,
+      "lon_deg": 5.854,
+      "h_m": 1428.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S11201SIM",
+      "lat_deg": -14.1289,
+      "lon_deg": 143.3618,
+      "h_m": 187.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S11301SIM",
+      "lat_deg": -13.7546,
+      "lon_deg": -79.1304,
+      "h_m": 916.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S11401SIM",
+      "lat_deg": -13.3809,
+      "lon_deg": 58.3773,
+      "h_m": 1645.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S11501SIM",
+      "lat_deg": -13.0078,
+      "lon_deg": -164.1149,
+      "h_m": 404.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S11601SIM",
+      "lat_deg": -12.6352,
+      "lon_deg": -26.6071,
+      "h_m": 1133.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S11701SIM",
+      "lat_deg": -12.2632,
+      "lon_deg": 110.9006,
+      "h_m": 1862.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S11801SIM",
+      "lat_deg": -11.8917,
+      "lon_deg": -111.5916,
+      "h_m": 621.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S11901SIM",
+      "lat_deg": -11.5207,
+      "lon_deg": 25.9162,
+      "h_m": 1350.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S12001SIM",
+      "lat_deg": -11.1502,
+      "lon_deg": 163.4239,
+      "h_m": 109.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S12101SIM",
+      "lat_deg": -10.7802,
+      "lon_deg": -59.0683,
+      "h_m": 837.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S12201SIM",
+      "lat_deg": -10.4106,
+      "lon_deg": 78.4395,
+      "h_m": 1566.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S12301SIM",
+      "lat_deg": -10.0414,
+      "lon_deg": -144.0528,
+      "h_m": 325.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S12401SIM",
+      "lat_deg": -9.6727,
+      "lon_deg": -6.545,
+      "h_m": 1054.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S12501SIM",
+      "lat_deg": -9.3044,
+      "lon_deg": 130.9627,
+      "h_m": 1783.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S12601SIM",
+      "lat_deg": -8.9365,
+      "lon_deg": -91.5295,
+      "h_m": 542.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S12701SIM",
+      "lat_deg": -8.5689,
+      "lon_deg": 45.9783,
+      "h_m": 1271.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S12801SIM",
+      "lat_deg": -8.2017,
+      "lon_deg": -176.514,
+      "h_m": 2000.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S12901SIM",
+      "lat_deg": -7.8348,
+      "lon_deg": -39.0062,
+      "h_m": 759.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S13001SIM",
+      "lat_deg": -7.4683,
+      "lon_deg": 98.5016,
+      "h_m": 1487.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S13101SIM",
+      "lat_deg": -7.1021,
+      "lon_deg": -123.9907,
+      "h_m": 247.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S13201SIM",
+      "lat_deg": -6.7361,
+      "lon_deg": 13.5171,
+      "h_m": 975.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S13301SIM",
+      "lat_deg": -6.3705,
+      "lon_deg": 151.0249,
+      "h_m": 1704.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S13401SIM",
+      "lat_deg": -6.0051,
+      "lon_deg": -71.4674,
+      "h_m": 463.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S13501SIM",
+      "lat_deg": -5.6399,
+      "lon_deg": 66.0404,
+      "h_m": 1192.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S13601SIM",
+      "lat_deg": -5.275,
+      "lon_deg": -156.4519,
+      "h_m": 1921.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S13701SIM",
+      "lat_deg": -4.9102,
+      "lon_deg": -18.9441,
+      "h_m": 680.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S13801SIM",
+      "lat_deg": -4.5457,
+      "lon_deg": 118.5637,
+      "h_m": 1409.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S13901SIM",
+      "lat_deg": -4.1814,
+      "lon_deg": -103.9286,
+      "h_m": 168.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S14001SIM",
+      "lat_deg": -3.8172,
+      "lon_deg": 33.5792,
+      "h_m": 897.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S14101SIM",
+      "lat_deg": -3.4532,
+      "lon_deg": 171.087,
+      "h_m": 1625.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S14201SIM",
+      "lat_deg": -3.0893,
+      "lon_deg": -51.4053,
+      "h_m": 384.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S14301SIM",
+      "lat_deg": -2.7256,
+      "lon_deg": 86.1025,
+      "h_m": 1113.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S14401SIM",
+      "lat_deg": -2.362,
+      "lon_deg": -136.3897,
+      "h_m": 1842.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S14501SIM",
+      "lat_deg": -1.9984,
+      "lon_deg": 1.118,
+      "h_m": 601.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S14601SIM",
+      "lat_deg": -1.635,
+      "lon_deg": 138.6258,
+      "h_m": 1330.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S14701SIM",
+      "lat_deg": -1.2716,
+      "lon_deg": -83.8664,
+      "h_m": 89.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S14801SIM",
+      "lat_deg": -0.9082,
+      "lon_deg": 53.6413,
+      "h_m": 818.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S14901SIM",
+      "lat_deg": -0.5449,
+      "lon_deg": -168.8509,
+      "h_m": 1547.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S15001SIM",
+      "lat_deg": -0.1816,
+      "lon_deg": -31.3432,
+      "h_m": 306.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S15101SIM",
+      "lat_deg": 0.1816,
+      "lon_deg": 106.1646,
+      "h_m": 1034.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S15201SIM",
+      "lat_deg": 0.5449,
+      "lon_deg": -116.3276,
+      "h_m": 1763.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S15301SIM",
+      "lat_deg": 0.9082,
+      "lon_deg": 21.1801,
+      "h_m": 522.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S15401SIM",
+      "lat_deg": 1.2716,
+      "lon_deg": 158.6879,
+      "h_m": 1251.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S15501SIM",
+      "lat_deg": 1.635,
+      "lon_deg": -63.8043,
+      "h_m": 1980.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S15601SIM",
+      "lat_deg": 1.9984,
+      "lon_deg": 73.7034,
+      "h_m": 739.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S15701SIM",
+      "lat_deg": 2.362,
+      "lon_deg": -148.7888,
+      "h_m": 1468.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S15801SIM",
+      "lat_deg": 2.7256,
+      "lon_deg": -11.281,
+      "h_m": 227.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S15901SIM",
+      "lat_deg": 3.0893,
+      "lon_deg": 126.2267,
+      "h_m": 956.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S16001SIM",
+      "lat_deg": 3.4532,
+      "lon_deg": -96.2655,
+      "h_m": 1684.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S16101SIM",
+      "lat_deg": 3.8172,
+      "lon_deg": 41.2422,
+      "h_m": 443.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S16201SIM",
+      "lat_deg": 4.1814,
+      "lon_deg": 178.75,
+      "h_m": 1172.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S16301SIM",
+      "lat_deg": 4.5457,
+      "lon_deg": -43.7422,
+      "h_m": 1901.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S16401SIM",
+      "lat_deg": 4.9102,
+      "lon_deg": 93.7655,
+      "h_m": 660.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S16501SIM",
+      "lat_deg": 5.275,
+      "lon_deg": -128.7267,
+      "h_m": 1389.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S16601SIM",
+      "lat_deg": 5.6399,
+      "lon_deg": 8.7811,
+      "h_m": 148.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S16701SIM",
+      "lat_deg": 6.0051,
+      "lon_deg": 146.2888,
+      "h_m": 877.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S16801SIM",
+      "lat_deg": 6.3705,
+      "lon_deg": -76.2034,
+      "h_m": 1606.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S16901SIM",
+      "lat_deg": 6.7361,
+      "lon_deg": 61.3044,
+      "h_m": 365.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S17001SIM",
+      "lat_deg": 7.1021,
+      "lon_deg": -161.1879,
+      "h_m": 1093.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S17101SIM",
+      "lat_deg": 7.4683,
+      "lon_deg": -23.6801,
+      "h_m": 1822.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S17201SIM",
+      "lat_deg": 7.8348,
+      "lon_deg": 113.8277,
+      "h_m": 581.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S17301SIM",
+      "lat_deg": 8.2017,
+      "lon_deg": -108.6646,
+      "h_m": 1310.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S17401SIM",
+      "lat_deg": 8.5689,
+      "lon_deg": 28.8432,
+      "h_m": 69.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S17501SIM",
+      "lat_deg": 8.9365,
+      "lon_deg": 166.3509,
+      "h_m": 798.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S17601SIM",
+      "lat_deg": 9.3044,
+      "lon_deg": -56.1413,
+      "h_m": 1527.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S17701SIM",
+      "lat_deg": 9.6727,
+      "lon_deg": 81.3665,
+      "h_m": 286.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S17801SIM",
+      "lat_deg": 10.0414,
+      "lon_deg": -141.1258,
+      "h_m": 1015.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S17901SIM",
+      "lat_deg": 10.4106,
+      "lon_deg": -3.618,
+      "h_m": 1743.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S18001SIM",
+      "lat_deg": 10.7802,
+      "lon_deg": 133.8898,
+      "h_m": 503.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S18101SIM",
+      "lat_deg": 11.1502,
+      "lon_deg": -88.6025,
+      "h_m": 1231.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S18201SIM",
+      "lat_deg": 11.5207,
+      "lon_deg": 48.9053,
+      "h_m": 1960.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S18301SIM",
+      "lat_deg": 11.8917,
+      "lon_deg": -173.5869,
+      "h_m": 719.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S18401SIM",
+      "lat_deg": 12.2632,
+      "lon_deg": -36.0792,
+      "h_m": 1448.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S18501SIM",
+      "lat_deg": 12.6352,
+      "lon_deg": 101.4286,
+      "h_m": 207.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S18601SIM",
+      "lat_deg": 13.0078,
+      "lon_deg": -121.0637,
+      "h_m": 936.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S18701SIM",
+      "lat_deg": 13.3809,
+      "lon_deg": 16.4441,
+      "h_m": 1665.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S18801SIM",
+      "lat_deg": 13.7546,
+      "lon_deg": 153.9519,
+      "h_m": 424.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S18901SIM",
+      "lat_deg": 14.1289,
+      "lon_deg": -68.5404,
+      "h_m": 1153.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S19001SIM",
+      "lat_deg": 14.5038,
+      "lon_deg": 68.9674,
+      "h_m": 1881.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S19101SIM",
+      "lat_deg": 14.8794,
+      "lon_deg": -153.5248,
+      "h_m": 640.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S19201SIM",
+      "lat_deg": 15.2556,
+      "lon_deg": -16.0171,
+      "h_m": 1369.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S19301SIM",
+      "lat_deg": 15.6325,
+      "lon_deg": 121.4907,
+      "h_m": 128.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S19401SIM",
+      "lat_deg": 16.0101,
+      "lon_deg": -101.0015,
+      "h_m": 857.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S19501SIM",
+      "lat_deg": 16.3884,
+      "lon_deg": 36.5062,
+      "h_m": 1586.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S19601SIM",
+      "lat_deg": 16.7674,
+      "lon_deg": 174.014,
+      "h_m": 345.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S19701SIM",
+      "lat_deg": 17.1472,
+      "lon_deg": -48.4782,
+      "h_m": 1074.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S19801SIM",
+      "lat_deg": 17.5278,
+      "lon_deg": 89.0295,
+      "h_m": 1803.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S19901SIM",
+      "lat_deg": 17.9091,
+      "lon_deg": -133.4627,
+      "h_m": 562.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S20001SIM",
+      "lat_deg": 18.2913,
+      "lon_deg": 4.045,
+      "h_m": 1290.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S20101SIM",
+      "lat_deg": 18.6744,
+      "lon_deg": 141.5528,
+      "h_m": 50.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S20201SIM",
+      "lat_deg": 19.0583,
+      "lon_deg": -80.9394,
+      "h_m": 778.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S20301SIM",
+      "lat_deg": 19.4431,
+      "lon_deg": 56.5683,
+      "h_m": 1507.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S20401SIM",
+      "lat_deg": 19.8288,
+      "lon_deg": -165.9239,
+      "h_m": 266.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S20501SIM",
+      "lat_deg": 20.2154,
+      "lon_deg": -28.4161,
+      "h_m": 995.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S20601SIM",
+      "lat_deg": 20.603,
+      "lon_deg": 109.0916,
+      "h_m": 1724.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S20701SIM",
+      "lat_deg": 20.9916,
+      "lon_deg": -113.4006,
+      "h_m": 483.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S20801SIM",
+      "lat_deg": 21.3812,
+      "lon_deg": 24.1072,
+      "h_m": 1212.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S20901SIM",
+      "lat_deg": 21.7719,
+      "lon_deg": 161.6149,
+      "h_m": 1940.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S21001SIM",
+      "lat_deg": 22.1636,
+      "lon_deg": -60.8773,
+      "h_m": 700.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S21101SIM",
+      "lat_deg": 22.5564,
+      "lon_deg": 76.6305,
+      "h_m": 1428.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S21201SIM",
+      "lat_deg": 22.9503,
+      "lon_deg": -145.8618,
+      "h_m": 187.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S21301SIM",
+      "lat_deg": 23.3454,
+      "lon_deg": -8.354,
+      "h_m": 916.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S21401SIM",
+      "lat_deg": 23.7417,
+      "lon_deg": 129.1537,
+      "h_m": 1645.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S21501SIM",
+      "lat_deg": 24.1392,
+      "lon_deg": -93.3385,
+      "h_m": 404.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S21601SIM",
+      "lat_deg": 24.5379,
+      "lon_deg": 44.1693,
+      "h_m": 1133.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S21701SIM",
+      "lat_deg": 24.9379,
+      "lon_deg": -178.323,
+      "h_m": 1862.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S21801SIM",
+      "lat_deg": 25.3391,
+      "lon_deg": -40.8152,
+      "h_m": 621.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S21901SIM",
+      "lat_deg": 25.7418,
+      "lon_deg": 96.6926,
+      "h_m": 1350.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S22001SIM",
+      "lat_deg": 26.1458,
+      "lon_deg": -125.7997,
+      "h_m": 109.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S22101SIM",
+      "lat_deg": 26.5511,
+      "lon_deg": 11.7081,
+      "h_m": 837.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S22201SIM",
+      "lat_deg": 26.958,
+      "lon_deg": 149.2159,
+      "h_m": 1566.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S22301SIM",
+      "lat_deg": 27.3663,
+      "lon_deg": -73.2764,
+      "h_m": 325.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S22401SIM",
+      "lat_deg": 27.7761,
+      "lon_deg": 64.2314,
+      "h_m": 1054.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S22501SIM",
+      "lat_deg": 28.1875,
+      "lon_deg": -158.2609,
+      "h_m": 1783.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S22601SIM",
+      "lat_deg": 28.6004,
+      "lon_deg": -20.7531,
+      "h_m": 542.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S22701SIM",
+      "lat_deg": 29.015,
+      "lon_deg": 116.7547,
+      "h_m": 1271.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S22801SIM",
+      "lat_deg": 29.4313,
+      "lon_deg": -105.7376,
+      "h_m": 2000.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S22901SIM",
+      "lat_deg": 29.8492,
+      "lon_deg": 31.7702,
+      "h_m": 759.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S23001SIM",
+      "lat_deg": 30.269,
+      "lon_deg": 169.278,
+      "h_m": 1487.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S23101SIM",
+      "lat_deg": 30.6905,
+      "lon_deg": -53.2143,
+      "h_m": 247.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S23201SIM",
+      "lat_deg": 31.1139,
+      "lon_deg": 84.2935,
+      "h_m": 975.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S23301SIM",
+      "lat_deg": 31.5392,
+      "lon_deg": -138.1987,
+      "h_m": 1704.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S23401SIM",
+      "lat_deg": 31.9664,
+      "lon_deg": -0.691,
+      "h_m": 463.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S23501SIM",
+      "lat_deg": 32.3956,
+      "lon_deg": 136.8168,
+      "h_m": 1192.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S23601SIM",
+      "lat_deg": 32.8269,
+      "lon_deg": -85.6754,
+      "h_m": 1921.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S23701SIM",
+      "lat_deg": 33.2602,
+      "lon_deg": 51.8323,
+      "h_m": 680.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S23801SIM",
+      "lat_deg": 33.6958,
+      "lon_deg": -170.6599,
+      "h_m": 1409.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S23901SIM",
+      "lat_deg": 34.1335,
+      "lon_deg": -33.1522,
+      "h_m": 168.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S24001SIM",
+      "lat_deg": 34.5736,
+      "lon_deg": 104.3556,
+      "h_m": 897.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S24101SIM",
+      "lat_deg": 35.0159,
+      "lon_deg": -118.1366,
+      "h_m": 1625.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S24201SIM",
+      "lat_deg": 35.4607,
+      "lon_deg": 19.3711,
+      "h_m": 384.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S24301SIM",
+      "lat_deg": 35.908,
+      "lon_deg": 156.8789,
+      "h_m": 1113.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S24401SIM",
+      "lat_deg": 36.3578,
+      "lon_deg": -65.6133,
+      "h_m": 1842.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S24501SIM",
+      "lat_deg": 36.8102,
+      "lon_deg": 71.8944,
+      "h_m": 601.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S24601SIM",
+      "lat_deg": 37.2653,
+      "lon_deg": -150.5978,
+      "h_m": 1330.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S24701SIM",
+      "lat_deg": 37.7231,
+      "lon_deg": -13.09,
+      "h_m": 89.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S24801SIM",
+      "lat_deg": 38.1838,
+      "lon_deg": 124.4177,
+      "h_m": 818.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S24901SIM",
+      "lat_deg": 38.6475,
+      "lon_deg": -98.0745,
+      "h_m": 1547.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S25001SIM",
+      "lat_deg": 39.1142,
+      "lon_deg": 39.4332,
+      "h_m": 306.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S25101SIM",
+      "lat_deg": 39.5839,
+      "lon_deg": 176.941,
+      "h_m": 1034.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S25201SIM",
+      "lat_deg": 40.0569,
+      "lon_deg": -45.5512,
+      "h_m": 1763.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S25301SIM",
+      "lat_deg": 40.5332,
+      "lon_deg": 91.9565,
+      "h_m": 522.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S25401SIM",
+      "lat_deg": 41.0129,
+      "lon_deg": -130.5357,
+      "h_m": 1251.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S25501SIM",
+      "lat_deg": 41.4961,
+      "lon_deg": 6.9721,
+      "h_m": 1980.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S25601SIM",
+      "lat_deg": 41.983,
+      "lon_deg": 144.4798,
+      "h_m": 739.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S25701SIM",
+      "lat_deg": 42.4736,
+      "lon_deg": -78.0124,
+      "h_m": 1468.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S25801SIM",
+      "lat_deg": 42.9681,
+      "lon_deg": 59.4954,
+      "h_m": 227.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S25901SIM",
+      "lat_deg": 43.4665,
+      "lon_deg": -162.9969,
+      "h_m": 956.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S26001SIM",
+      "lat_deg": 43.9692,
+      "lon_deg": -25.4891,
+      "h_m": 1684.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S26101SIM",
+      "lat_deg": 44.4761,
+      "lon_deg": 112.0187,
+      "h_m": 443.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S26201SIM",
+      "lat_deg": 44.9875,
+      "lon_deg": -110.4736,
+      "h_m": 1172.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S26301SIM",
+      "lat_deg": 45.5034,
+      "lon_deg": 27.0342,
+      "h_m": 1901.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S26401SIM",
+      "lat_deg": 46.0242,
+      "lon_deg": 164.5419,
+      "h_m": 660.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S26501SIM",
+      "lat_deg": 46.5499,
+      "lon_deg": -57.9503,
+      "h_m": 1389.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S26601SIM",
+      "lat_deg": 47.0807,
+      "lon_deg": 79.5575,
+      "h_m": 148.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S26701SIM",
+      "lat_deg": 47.6169,
+      "lon_deg": -142.9348,
+      "h_m": 877.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S26801SIM",
+      "lat_deg": 48.1586,
+      "lon_deg": -5.427,
+      "h_m": 1606.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S26901SIM",
+      "lat_deg": 48.7061,
+      "lon_deg": 132.0808,
+      "h_m": 365.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S27001SIM",
+      "lat_deg": 49.2597,
+      "lon_deg": -90.4115,
+      "h_m": 1093.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S27101SIM",
+      "lat_deg": 49.8195,
+      "lon_deg": 47.0963,
+      "h_m": 1822.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S27201SIM",
+      "lat_deg": 50.3858,
+      "lon_deg": -175.3959,
+      "h_m": 581.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "S27301SIM",
+      "lat_deg": 50.9591,
+      "lon_deg": -37.8882,
+      "h_m": 1310.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2051
+        }
+      ]
+    },
+    {
+      "name": "S27401SIM",
+      "lat_deg": 51.5394,
+      "lon_deg": 99.6196,
+      "h_m": 69.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0526
+        }
+      ]
+    },
+    {
+      "name": "S27501SIM",
+      "lat_deg": 52.1273,
+      "lon_deg": -122.8727,
+      "h_m": 798.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2971
+        }
+      ]
+    },
+    {
+      "name": "S27601SIM",
+      "lat_deg": 52.7231,
+      "lon_deg": 14.6351,
+      "h_m": 1527.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4669
+        }
+      ]
+    },
+    {
+      "name": "S27701SIM",
+      "lat_deg": 53.327,
+      "lon_deg": 152.1429,
+      "h_m": 286.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5193
+        }
+      ]
+    },
+    {
+      "name": "S27801SIM",
+      "lat_deg": 53.9397,
+      "lon_deg": -70.3494,
+      "h_m": 1015.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4413
+        }
+      ]
+    },
+    {
+      "name": "S27901SIM",
+      "lat_deg": 54.5615,
+      "lon_deg": 67.1584,
+      "h_m": 1743.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2524
+        }
+      ]
+    },
+    {
+      "name": "S28001SIM",
+      "lat_deg": 55.1929,
+      "lon_deg": -155.3338,
+      "h_m": 503.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S28101SIM",
+      "lat_deg": 55.8345,
+      "lon_deg": -17.8261,
+      "h_m": 1231.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S28201SIM",
+      "lat_deg": 56.4869,
+      "lon_deg": 119.6817,
+      "h_m": 1960.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S28301SIM",
+      "lat_deg": 57.1507,
+      "lon_deg": -102.8105,
+      "h_m": 719.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S28401SIM",
+      "lat_deg": 57.8266,
+      "lon_deg": 34.6972,
+      "h_m": 1448.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S28501SIM",
+      "lat_deg": 58.5154,
+      "lon_deg": 172.205,
+      "h_m": 207.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S28601SIM",
+      "lat_deg": 59.218,
+      "lon_deg": -50.2872,
+      "h_m": 936.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S28701SIM",
+      "lat_deg": 59.9354,
+      "lon_deg": 87.2205,
+      "h_m": 1665.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S28801SIM",
+      "lat_deg": 60.6687,
+      "lon_deg": -135.2717,
+      "h_m": 424.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S28901SIM",
+      "lat_deg": 61.4191,
+      "lon_deg": 2.236,
+      "h_m": 1153.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S29001SIM",
+      "lat_deg": 62.1879,
+      "lon_deg": 139.7438,
+      "h_m": 1881.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S29101SIM",
+      "lat_deg": 62.9768,
+      "lon_deg": -82.7484,
+      "h_m": 640.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S29201SIM",
+      "lat_deg": 63.7877,
+      "lon_deg": 54.7593,
+      "h_m": 1369.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S29301SIM",
+      "lat_deg": 64.6225,
+      "lon_deg": -167.7329,
+      "h_m": 128.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S29401SIM",
+      "lat_deg": 65.4838,
+      "lon_deg": -30.2251,
+      "h_m": 857.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S29501SIM",
+      "lat_deg": 66.3745,
+      "lon_deg": 107.2826,
+      "h_m": 1586.4,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S29601SIM",
+      "lat_deg": 67.298,
+      "lon_deg": -115.2096,
+      "h_m": 345.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S29701SIM",
+      "lat_deg": 68.2586,
+      "lon_deg": 22.2982,
+      "h_m": 1074.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S29801SIM",
+      "lat_deg": 69.2614,
+      "lon_deg": 159.8059,
+      "h_m": 1803.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S29901SIM",
+      "lat_deg": 70.3128,
+      "lon_deg": -62.6863,
+      "h_m": 562.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S30001SIM",
+      "lat_deg": 71.4212,
+      "lon_deg": 74.8215,
+      "h_m": 1290.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "SZZ000SIM",
+      "lat_deg": 28.5,
+      "lon_deg": -16.5,
+      "h_m": 600.0,
+      "consumer": true,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.37
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.41
+        }
+      ]
+    }
+  ],
+  "_roster": "GENERATED by scripts/simnet_make_roster.py --n 300 --consumer (Fibonacci lattice, |lat| <= 72.0 deg, name-scheme wide3). Do not hand-edit \u2014 regenerate.",
+  "signals": {
+    "gps_l5": true,
+    "synth_osb_amp_m": {
+      "C5Q": 0.6,
+      "L5Q": 0.02
+    }
+  }
+}

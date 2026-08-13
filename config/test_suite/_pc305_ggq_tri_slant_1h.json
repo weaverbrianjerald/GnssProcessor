@@ -1,0 +1,44 @@
+{
+ "_comment": [
+  "POSTURE C ON THE FIELD, ARM 3 — GPS + GALILEO (Q-FAMILY), 1 HOUR (120 ep).",
+  "Single variable vs the PASSED 20-min arm (_pc305_ggq_tri_slant_20m,",
+  "40/40 at default tolerance, exe 02076F44): DURATION ONLY.",
+  "",
+  "STILL IGNITION for level channels: 1 h is inside the ~2 h level-convergence",
+  "budget (handoff 1-h rule; LEVEL/vf/exchange/consumer-accuracy verdicts",
+  "BARRED — they belong to the >=2 h arm).  LEGAL here: everything structural,",
+  "per-row integer/lane statistics, same-window ratios, counter trends.",
+  "",
+  "READ LIST (carried from the 20-min PASS):",
+  " 1. Rank gate over 120 ep — E36-class few-station satellites are the",
+  "    marginal-dip candidates; any withhold epoch gets attributed, not tuned",
+  "    away.",
+  " 2. prefit-census PHASE tier trend (p99 was still monotone at ep 40,",
+  "    ~1856 sigma; event domain excludes phase so it is operationally inert —",
+  "    question is whether it saturates once formal sigmas settle).",
+  " 3. rx-CB innovation-gate withhold fraction (28% of folds at 20 min —",
+  "    receiver-reset response; should DECAY as receiver DCB carries warm).",
+  " 4. UWL/EWL lane statistics over settling (Galileo UWL was 96.4% FFR at",
+  "    20 min; the sim lesson says lane stats DEGRADE with settling — first",
+  "    field read of that shape).",
+  " 5. eq34 chain audits stay COMPLETE; admission screen events (BSHM-class);",
+  "    clock worst_dev trend (G24/G29 ~12-14 m at ignition).",
+  " 6. S line still carries NO cbpin= on this posture (known gap, fill card",
+  "    owed) — do not re-discover it.",
+  "",
+  "120 epochs at 30 s: max_duration_s 3571 covers t = 0..3570.",
+  "FRESH LINEAGE — cold start, own snapshot path; never resume onto this from",
+  "any other arm's snapshot."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_pc305_ggq_tri_slant_20m.json"
+ ],
+ "processing": {
+  "max_duration_s": 3571.0
+ },
+ "network": {
+  "max_duration_s": 3571.0,
+  "product_output_path": "C:/GnssProcessor/runs/pc305_ggq_tri_slant_1h/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/pc305_ggq_tri_slant_1h/state_snapshot.bin"
+ }
+}
