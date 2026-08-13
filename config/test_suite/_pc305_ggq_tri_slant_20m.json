@@ -85,12 +85,14 @@
   "140 cyc, full-window EWL round(e)=0 32.4% → 25.7%.  The carry exclusion is",
   "REAL in code but is NOT the divergence driver.",
   "",
-  "This override is therefore UNJUSTIFIED BY EVIDENCE and is a REVERT",
-  "CANDIDATE.  It is retained only because it was explicitly requested; the",
-  "sim contrast is between two already-diverged states and the field arm is a",
-  "DIFFERENT posture (no seed_round; lanes read 99.2% FFR on the frac-only",
-  "instrument), so this is not proof the disarm harms the field either — the",
-  "REASON for it is simply gone.  Delete the mw_wl block below to revert."
+  "RESOLUTION: the override was DELETED the same day — this file inherits",
+  "the FT63 mw_wl posture unchanged (ewl + uwl stay armed) and only this",
+  "record remains.  Caveat on REASON 2: the sim contrast is between two",
+  "already-diverged states and the field arm is a DIFFERENT posture (no",
+  "seed_round; lanes read 99.2% FFR on the frac-only instrument), so it is",
+  "not proof the disarm harms the field either — the REASON for it is",
+  "simply gone.  Any retry must disarm uwl_enable AND ewl_enable together",
+  "(REASON 3 hard error) and pays with the UWL lane statistic doing so."
  ],
  "extends": [
   "C:/GnssProcessor/config/test_suite/_pc305_gg_tri_slant_20m.json"
