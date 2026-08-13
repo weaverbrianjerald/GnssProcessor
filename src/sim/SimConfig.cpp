@@ -215,6 +215,44 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
                     "the synthetic amplitudes.");
     }
 
+    // ---- Integer-ambiguity REGIME -------------------------------------------------
+    // Default "legacy" (N in [1e5,1e6)) so every existing fixture regenerates
+    // byte-identically.  "field" (N in [-W,+W]) is the regime any experiment against a
+    // ZERO-TARGET datum must use — see include/sim/AmbiguityDraw.hpp for the measured
+    // IGS spread this is calibrated against and why the four-decade gap is not cosmetic.
+    if (const nlohmann::json* ar = resolvePath(s, "ambiguity.regime")) {
+        if (!ar->is_string())
+            return fail("sim config 'ambiguity.regime' must be a string: "
+                        "\"legacy\" (N in [1e5,1e6), the default) or \"field\" "
+                        "(N in [-half_width_cycles, +half_width_cycles])");
+        const std::string regime = ar->get<std::string>();
+        if (regime == "legacy")      cfg.ambiguity.regime = AmbiguityRegime::Legacy;
+        else if (regime == "field")  cfg.ambiguity.regime = AmbiguityRegime::Field;
+        else
+            return fail("sim config 'ambiguity.regime' is '" + regime +
+                        "'; expected \"legacy\" or \"field\"");
+    }
+    if (const nlohmann::json* aw = resolvePath(s, "ambiguity.half_width_cycles")) {
+        if (!aw->is_number())
+            return fail("sim config 'ambiguity.half_width_cycles' must be a number (cycles)");
+        // Armed-but-inert is the failure mode this codebase pays for repeatedly: under
+        // the legacy regime this knob does nothing, and a fixture regenerated with it
+        // set would look field-realistic in its config and be 1e5 cycles wide on disk.
+        if (cfg.ambiguity.regime != AmbiguityRegime::Field)
+            return fail("sim config 'ambiguity.half_width_cycles' is set but "
+                        "'ambiguity.regime' is not \"field\" — under the legacy regime the "
+                        "half-width is inert and the fixture would still draw N in "
+                        "[1e5,1e6).  Set ambiguity.regime = \"field\" or drop the half-width.");
+        const long long w = std::llround(aw->get<double>());
+        // Upper bound matches the ScriptedSlip |delta_cycles| guard: a half-width above
+        // it would make an injected slip smaller than the draw's own quantization noise
+        // in the reader's head, and both are "cycles" in the same truth files.
+        if (w < 1 || w > 100000)
+            return fail("sim config 'ambiguity.half_width_cycles' " + std::to_string(w) +
+                        " out of range [1, 100000]");
+        cfg.ambiguity.half_width_cycles = static_cast<int>(w);
+    }
+
     cfg.corrections.ocean_tide_along_track =
         jval(s, "corrections.ocean_tide_along_track", "", cfg.corrections.ocean_tide_along_track);
     cfg.corrections.otl_anchor_spacing_km =

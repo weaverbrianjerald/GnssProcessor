@@ -413,6 +413,7 @@ target_compile_definitions(gnss_tests PRIVATE
 add_executable(gnss_simulator_selftest
     tests/sim/test_sim_selfconsistency.cpp
     tests/sim/test_sim_network_fixture.cpp
+    tests/sim/test_sim_ambiguity_regime.cpp
     src/sim/RinexObsWriter.cpp
     src/sim/IonoDisturbance.cpp
     src/sim/SimConfig.cpp

@@ -6,21 +6,21 @@
 python scripts/gen_docs_index.py
 ```
 
-95 documents, 37,189 lines.
+98 documents, 39,047 lines.
 
 **Columns.** `status` is read from each doc's own header markers (these docs declare their own state). `in` counts inbound citations from other docs, the agent memory store, code/scripts, and CLAUDE.md — it is the *load-bearing* number: a doc cited by many source files must not be renamed, merged or moved without updating its referrers, because code cites these by name and section (e.g. `// gotcha in SPEC_day129_frame_guards §6.`). A finished doc with `in` = 0 is an archive candidate for `docs/attic/`.
 
 | Group | Docs | Lines |
 |---|---:|---:|
 | [Real-time / RTF](#real-time--rtf) | 7 | 1,521 |
-| [Synthetic network / simulator](#synthetic-network--simulator) | 2 | 2,771 |
+| [Synthetic network / simulator](#synthetic-network--simulator) | 3 | 3,213 |
 | [Ingest / RINEX](#ingest--rinex) | 2 | 336 |
 | [Ionosphere / level](#ionosphere--level) | 9 | 4,677 |
 | [Lanes / ambiguity / integer](#lanes--ambiguity--integer) | 13 | 4,041 |
-| [Datum / S-system / clock](#datum--s-system--clock) | 21 | 9,112 |
-| [Carry / covariance / VCE](#carry--covariance--vce) | 12 | 3,840 |
+| [Datum / S-system / clock](#datum--s-system--clock) | 22 | 10,064 |
+| [Carry / covariance / VCE](#carry--covariance--vce) | 13 | 4,223 |
 | [QC / RAIM / admission / slip](#qc--raim--admission--slip) | 14 | 5,761 |
-| [Product / consumer / emit](#product--consumer--emit) | 2 | 175 |
+| [Product / consumer / emit](#product--consumer--emit) | 2 | 256 |
 | [Architecture / decomposition / perf](#architecture--decomposition--perf) | 5 | 1,525 |
 | [Field-run reports](#field-run-reports) | 1 | 276 |
 | [Config / process / reference](#config--process--reference) | 7 | 3,154 |
@@ -41,8 +41,9 @@ python scripts/gen_docs_index.py
 
 | doc | status | in | lines | last commit |
 |---|---|---:|---:|---|
-| [SPEC_synthetic_minimum_network](SPEC_synthetic_minimum_network.md) | MIXED | 47 | 2497 | 2026-08-12 |
-| [HANDOFF_wsh_chain_slant](HANDOFF_wsh_chain_slant.md) | MIXED | 13 | 274 | uncommitted |
+| [SPEC_synthetic_minimum_network](SPEC_synthetic_minimum_network.md) | MIXED | 52 | 2497 | 2026-08-12 |
+| [HANDOFF_wsh_chain_slant](HANDOFF_wsh_chain_slant.md) | MIXED | 13 | 274 | 2026-08-12 |
+| [SPEC_sim_injection_bench](SPEC_sim_injection_bench.md) | MIXED | 0 | 442 | uncommitted |
 
 ## Ingest / RINEX
 
@@ -56,9 +57,9 @@ python scripts/gen_docs_index.py
 | doc | status | in | lines | last commit |
 |---|---|---:|---:|---|
 | [SPEC_level_information_budget](SPEC_level_information_budget.md) | CLOSED | 43 | 2311 | 2026-08-07 |
-| [SPEC_deweight_release_hygiene](SPEC_deweight_release_hygiene.md) | — | 20 | 347 | 2026-08-03 |
+| [SPEC_deweight_release_hygiene](SPEC_deweight_release_hygiene.md) | — | 25 | 347 | 2026-08-03 |
 | [SPEC_iono2_mechB_v3](SPEC_iono2_mechB_v3.md) | OPEN | 10 | 146 | 2026-07-31 |
-| [HANDOFF_slant_triple_next](HANDOFF_slant_triple_next.md) | MIXED | 8 | 246 | uncommitted |
+| [HANDOFF_slant_triple_next](HANDOFF_slant_triple_next.md) | MIXED | 9 | 246 | 2026-08-12 |
 | [network_ambiguity_resolution_design](network_ambiguity_resolution_design.md) | MIXED | 8 | 368 | 2026-06-29 |
 | [HANDOFF_ext_cb_iono_level](HANDOFF_ext_cb_iono_level.md) | MIXED | 7 | 512 | 2026-08-05 |
 | [HANDOFF_iono2_card](HANDOFF_iono2_card.md) | — | 6 | 207 | 2026-07-22 |
@@ -90,12 +91,13 @@ python scripts/gen_docs_index.py
 | [SPEC_clock_temporal_anchor](SPEC_clock_temporal_anchor.md) | OPEN | 38 | 1623 | 2026-08-11 |
 | [SPEC_day129_frame_guards](SPEC_day129_frame_guards.md) | CLOSED | 33 | 169 | 2026-07-28 |
 | [SPEC_clock_emit_rebase](SPEC_clock_emit_rebase.md) | — | 25 | 251 | 2026-08-10 |
+| [SPEC_family_gf_datum](SPEC_family_gf_datum.md) | MIXED | 17 | 801 | 2026-08-13 |
 | [HANDOFF_edge_response_queue](HANDOFF_edge_response_queue.md) | MIXED | 15 | 644 | 2026-08-09 |
 | [SPEC_datum_graph_census](SPEC_datum_graph_census.md) | MIXED | 14 | 256 | 2026-08-05 |
 | [SPEC_fast_clock_split_cadence](SPEC_fast_clock_split_cadence.md) | — | 11 | 401 | 2026-07-28 |
 | [SPEC_beidou_w6_datum](SPEC_beidou_w6_datum.md) | MIXED | 10 | 318 | 2026-07-22 |
+| [SPEC_sbasis_realization_contract](SPEC_sbasis_realization_contract.md) | MIXED | 10 | 261 | 2026-08-13 |
 | [SPEC_cb_admission_card](SPEC_cb_admission_card.md) | CLOSED | 8 | 384 | 2026-07-22 |
-| [SPEC_sbasis_realization_contract](SPEC_sbasis_realization_contract.md) | CLOSED | 7 | 110 | 2026-08-10 |
 | [REPORT_night305_day129_investigation](REPORT_night305_day129_investigation.md) | OPEN | 6 | 245 | 2026-07-28 |
 | [REPORT_fc1_split_cadence](REPORT_fc1_split_cadence.md) | — | 5 | 239 | 2026-07-31 |
 | [HANDOFF_cb_admission_card](HANDOFF_cb_admission_card.md) | CLOSED | 4 | 476 | 2026-07-22 |
@@ -113,11 +115,12 @@ python scripts/gen_docs_index.py
 
 | doc | status | in | lines | last commit |
 |---|---|---:|---:|---|
-| [SPEC_pd_safe_dd_fold](SPEC_pd_safe_dd_fold.md) | CLOSED | 34 | 607 | 2026-08-03 |
+| [SPEC_pd_safe_dd_fold](SPEC_pd_safe_dd_fold.md) | CLOSED | 35 | 607 | 2026-08-03 |
 | [SPEC_prior_residual_census](SPEC_prior_residual_census.md) | CLOSED | 22 | 647 | 2026-08-05 |
 | [SPEC_carry_vce_apply](SPEC_carry_vce_apply.md) | CLOSED | 18 | 313 | 2026-08-05 |
 | [SPEC_carry_aware_covariance](SPEC_carry_aware_covariance.md) | CLOSED | 17 | 470 | 2026-08-03 |
-| [SPEC_cb_carry_physical_q](SPEC_cb_carry_physical_q.md) | CLOSED | 14 | 411 | uncommitted |
+| [SPEC_cb_carry_physical_q](SPEC_cb_carry_physical_q.md) | CLOSED | 14 | 411 | 2026-08-12 |
+| [SPEC_raim_pool_rehost](SPEC_raim_pool_rehost.md) | MIXED | 14 | 383 | 2026-08-13 |
 | [SPEC_rx_cb_carry](SPEC_rx_cb_carry.md) | CLOSED | 11 | 94 | 2026-07-31 |
 | [HANDOFF_card4_invariant_carry](HANDOFF_card4_invariant_carry.md) | MIXED | 6 | 234 | 2026-07-11 |
 | [HANDOFF_carry_driver_perf](HANDOFF_carry_driver_perf.md) | OPEN | 6 | 125 | 2026-07-16 |
@@ -140,7 +143,7 @@ python scripts/gen_docs_index.py
 | [SPEC_slip_qc_hardening](SPEC_slip_qc_hardening.md) | — | 16 | 333 | 2026-07-22 |
 | [SPEC_flicker_gap_integrity](SPEC_flicker_gap_integrity.md) | OPEN | 13 | 433 | 2026-08-03 |
 | [SPEC_slip_qc_followups](SPEC_slip_qc_followups.md) | MIXED | 8 | 238 | 2026-07-22 |
-| [SPEC_d5_churn_limit_cycle](SPEC_d5_churn_limit_cycle.md) | MIXED | 5 | 491 | 2026-08-03 |
+| [SPEC_d5_churn_limit_cycle](SPEC_d5_churn_limit_cycle.md) | MIXED | 6 | 491 | 2026-08-03 |
 | [slip_qc_d5a_report_2026-07-22](slip_qc_d5a_report_2026-07-22.md) | CLOSED | 5 | 434 | 2026-07-22 |
 | [slip_qc_hardening_report_2026-07-21](slip_qc_hardening_report_2026-07-21.md) | CLOSED | 4 | 330 | 2026-07-22 |
 | [turbo_edit_lli_bridge_design](turbo_edit_lli_bridge_design.md) | — | 4 | 58 | 2026-06-15 |
@@ -149,7 +152,7 @@ python scripts/gen_docs_index.py
 
 | doc | status | in | lines | last commit |
 |---|---|---:|---:|---|
-| [SPEC_product_cbpin_contract](SPEC_product_cbpin_contract.md) | CLOSED | 6 | 119 | 2026-07-28 |
+| [SPEC_product_cbpin_contract](SPEC_product_cbpin_contract.md) | CLOSED | 7 | 200 | 2026-08-13 |
 | [HANDOFF_card4_phaseD](HANDOFF_card4_phaseD.md) | — | 4 | 56 | 2026-07-12 |
 
 ## Architecture / decomposition / perf

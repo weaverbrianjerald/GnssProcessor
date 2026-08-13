@@ -54,6 +54,7 @@ Usage:
                  logs/ holds network_zwd.csv and closed_loop_trace.csv
 """
 import argparse
+import collections
 import csv
 import json
 import math
@@ -112,7 +113,7 @@ def wavelength(const, signal):
 # --------------------------------------------------------------------------- #
 
 def parse_products(path):
-    """Return (s_line dict, epochs list).
+    """Return (s_line dict, epochs list, census Counter).
 
     Each epoch: {tow, week, clocks {sat: c0_m}, ura {sat: sigma_m},
                  phase {(sat,signal): bias_m}, pb_sigma {(sat,signal): sigma_m},
@@ -123,8 +124,20 @@ def parse_products(path):
     and which of them exist depends on the producing toggles.  A positional parse
     calibrated on one arm reads the disc counter as a value on another, so every
     positional read below stops at the first field containing '='.
+
+    THE CENSUS IS NOT OPTIONAL BOOKKEEPING.  Records are bucketed into per-epoch
+    dicts below, so a product carrying header/epoch/S lines and NOTHING ELSE
+    parses cleanly, yields the expected epoch count, and reaches every channel
+    grader as a set of empty dicts that each skip silently.  The consumer channel
+    then reports a flattering absolute position because the consumer applied
+    nothing at all.  That is not hypothetical: on 2026-08-13 two arms of the eq34
+    bisection ladder emitted zero B/C/P records, their consumer read 0.037 m, and
+    a conclusion ("seed_round breaks the consumer 0.037 -> 585 m") was published
+    and then retracted off exactly that number.  Counting raw record types is the
+    cheapest possible defence, so it happens in the ONLY reader.
     """
     s_line, epochs, cur = None, [], None
+    census = collections.Counter()
     with open(path, encoding="utf-8", errors="replace") as fh:
         for raw in fh:
             line = raw.rstrip("\n")
@@ -132,6 +145,16 @@ def parse_products(path):
                 continue
             p = line.split(",")
             rec = p[0]
+            # Count the RAW record letter before any dispatch, so types this parser
+            # does not model stay visible instead of vanishing.  (They exist: the
+            # producer emits H heartbeat records that no branch below consumes and
+            # that the docstring's promised `heartbeat` key never captured.)
+            census[rec] += 1
+            # Orphan = a record this parser WOULD have bucketed, arriving before the
+            # first E and therefore actually dropped.  An unmodelled type ahead of
+            # the first epoch is not an error, so it is deliberately not counted here.
+            if cur is None and rec in ("C", "U", "B", "R", "P"):
+                census["_orphan"] += 1
             if rec == "S":
                 s_line = parse_s_line(p)
             elif rec == "E":
@@ -156,7 +179,34 @@ def parse_products(path):
                 for f in p[4:]:
                     if f.startswith("sigma="):
                         cur["pb_sigma"][key] = float(f[6:])
-    return s_line, epochs
+    return s_line, epochs, census
+
+
+def consumer_verdict_void_reason(census):
+    """Why the consumer number must NOT be read, or None if it may be.
+
+    B (satellite code bias), C (satellite clock) and P (satellite phase bias) are
+    the three record classes a consumer actually APPLIES.  With all three at zero
+    the consumer solved with an empty correction set, so its position error is a
+    verdict on the consumer's own stand-alone processing — not on the producer,
+    and not comparable with any arm that did emit.  A LOW number in that state is
+    the dangerous one: it reads as success.
+
+    Returns a short machine-readable reason string, or None.
+    """
+    if census["C"] == 0 and census["B"] == 0 and census["P"] == 0:
+        return "no_bcp"
+    return None
+
+
+def consumer_verdict_caveats(census):
+    """Record classes that are absent but not ALL absent — a partial correction set.
+
+    Not a refusal: a clock-only product is a legitimate posture.  But it changes
+    what the consumer number MEANS, and comparing it against an arm with a fuller
+    record set is an unlabelled apples-to-oranges A/B, so it is named.
+    """
+    return [r for r in ("C", "B", "P") if census[r] == 0]
 
 
 def parse_s_line(p):
@@ -1035,8 +1085,9 @@ def main():
         return 2
 
     truth = load_truth(fx)
-    s_line, epochs = parse_products(prod)
+    s_line, epochs, census = parse_products(prod)
     sc_truth, sc_disagree = satclock_truth_by_tow(truth)
+    void_reason = consumer_verdict_void_reason(census)
 
     print("=" * 78)
     print("SYNTHETIC MINIMUM NETWORK — truth grade")
@@ -1060,6 +1111,35 @@ def main():
         print("  realized datum: *** NO S LINE *** — arm network.serialize_sbasis_contract.")
         print("                  Without it the datum must be ASSUMED, which is exactly")
         print("                  the invariant-#5 mistake this grader exists to avoid.")
+
+    # The census runs FIRST, ahead of every channel, because it decides whether the
+    # channels below are grading a product or an empty file.  Every per-channel skip
+    # downstream is silent by design (an epoch with no B records just `continue`s), so
+    # without this block a zero-record product is indistinguishable from a clean one.
+    print("\n-- Product record census (read BEFORE any number below) " + "-" * 20)
+    print(f"  S {census['S']:>7}   E {census['E']:>7}   C {census['C']:>7}   "
+          f"U {census['U']:>7}")
+    print(f"  B {census['B']:>7}   P {census['P']:>7}   R {census['R']:>7}")
+    unmodelled = sorted(k for k in census
+                        if k not in ("S", "E", "C", "U", "B", "R", "P", "_orphan"))
+    if unmodelled:
+        print(f"  not modelled by this parser: "
+              f"{', '.join(f'{k} {census[k]}' for k in unmodelled)}")
+    if census["_orphan"]:
+        print(f"  *** {census['_orphan']} C/U/B/R/P record(s) appear BEFORE the first E record")
+        print( "      and were DROPPED.  Every count above is a lower bound and every")
+        print( "      channel population below is short by an unknown amount.")
+    if void_reason == "no_bcp":
+        print( "  ZERO B/C/P — the product carries no satellite code bias, no clock and no")
+        print( "  phase bias.  It is header/epoch/S records only.  Nothing downstream of the")
+        print( "  producer can APPLY anything, so the consumer verdict is VOID (refused below)")
+        print( "  and every channel grade is a statement about an empty population.")
+    else:
+        missing = consumer_verdict_caveats(census)
+        if missing:
+            print(f"  ⚠ absent record class(es): {', '.join(missing)} — the correction set is")
+            print( "    PARTIAL, so the consumer number is not comparable with an arm that")
+            print( "    emitted them.  Label any A/B that spans this difference.")
 
     print(f"\n  injected sat-clock error : "
           f"{'ARMED (' + str(len(sc_truth)) + ' rows)' if sc_truth else 'none — C-channel truth is identically 0 (null test)'}")
@@ -1289,9 +1369,31 @@ def main():
 
     con = grade_consumer(run_dir, args.settle_frac)
     print("\n-- Consumer position (datum-free, absolute, AR-confounded) " + "-" * 18)
-    if con is None:
+    if void_reason == "no_bcp":
+        # REFUSED, not caveated.  The numbers are withheld on purpose: a reader who
+        # can see them will quote them, and the failure mode is that they look GOOD.
+        # 2026-08-13: an arm in this exact state read 0.037 m and a published verdict
+        # was built on it before the record census was run.
+        print("  *** REFUSED — the product emitted ZERO B/C/P records.")
+        print("      The consumer applied no clock, no code bias and no phase bias, so")
+        print("      closed_loop_trace.csv measures its own stand-alone processing, not")
+        print("      this producer.  A LOW number here is the dangerous one: it reads as")
+        print("      success and is achieved by applying nothing.")
+        print("      Numbers withheld deliberately.  Fix the producer until B/C/P are")
+        print("      non-zero, then re-grade; do not compare this arm against any other.")
+        if con is not None:
+            con = dict(con)
+            con["refused"] = void_reason
+            for k in ("err3d", "up"):
+                con.pop(k, None)
+    elif con is None:
         print("  no closed_loop_trace.csv")
     else:
+        missing = consumer_verdict_caveats(census)
+        if missing:
+            print(f"  ⚠ PARTIAL correction set (no {', '.join(missing)} records) — "
+                  f"comparable only")
+            print( "    against an arm with the same absent classes.")
         print(f"  3D error  {fmt(con['err3d'], ' m')}")
         print(f"  up        {fmt(con['up'], ' m')}")
         print(f"  epochs {con['n_epochs']}, AR accepted {con['ar_success']}")
@@ -1301,9 +1403,18 @@ def main():
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump({"clock": clk, "phase": ph, "code_bias": cb, "rx_states": rx,
                        "zwd": zwd, "consumer": con, "table8": t8, "s_line": s_line,
-                       "n_epochs": len(epochs)}, fh, indent=2, default=str)
+                       "n_epochs": len(epochs),
+                       # Machine-readable so a batch harness can filter voided arms out
+                       # of a comparison table instead of averaging them into it.
+                       "product_census": dict(census),
+                       "consumer_void_reason": void_reason,
+                       "consumer_absent_classes": consumer_verdict_caveats(census)},
+                      fh, indent=2, default=str)
         print(f"wrote {args.json}")
-    return 0
+    # A voided consumer verdict is an INPUT defect, not a grading opinion, so it moves
+    # the exit code — this is the second condition in the file to do so, after a missing
+    # products.txt.  A batch harness that ignores stdout still cannot bank the number.
+    return 3 if void_reason else 0
 
 
 if __name__ == "__main__":

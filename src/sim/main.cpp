@@ -43,6 +43,7 @@
 #include "products/ProductTypes.hpp"
 #include "products/RinexNavParser.hpp"
 #include "rinex/RinexParser.hpp"
+#include "sim/AmbiguityDraw.hpp"
 #include "sim/EphemerisProvider.hpp"
 #include "sim/IonoDisturbance.hpp"
 #include "sim/RinexObsWriter.hpp"
@@ -2098,45 +2099,27 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     // Integer carrier ambiguities are arc-constant per (sat, band) and recorded
     // once, the first epoch each (sat, signal) is seen.
     std::ofstream amb_csv(outdir / "truth_ambiguities.csv");
-    // setprecision(12), NOT 6.  The IF ambiguity is g*lam1*N1 + h*lam2*N2 with N ~ 1e6,
-    // so a wavelength rounded to 6 decimals (0.190294 vs 0.190293673) reconstructs B_IF
-    // 0.85 m wrong.  That was harmless while N was guessable from the PRN; now that the
-    // integers are randomised this file is the ONLY source for them, so it has to be
-    // usable.  Consumers should still prefer lambda = c/f.
+    // setprecision(12), NOT 6.  The IF ambiguity is g*lam1*N1 + h*lam2*N2 with N ~ 1e6
+    // under the LEGACY regime, so a wavelength rounded to 6 decimals (0.190294 vs
+    // 0.190293673) reconstructs B_IF 0.85 m wrong.  That was harmless while N was
+    // guessable from the PRN; now that the integers are randomised this file is the ONLY
+    // source for them, so it has to be usable.  The FIELD regime's N ~ 1e2 shrinks that
+    // sensitivity ~4 decades, but the precision stays put: the file is read by graders
+    // that must work on BOTH regimes, and 12 decimals costs nothing.
+    // Consumers should still prefer lambda = c/f.
     amb_csv << "satellite,signal,N_int,wavelength_m\n" << std::fixed << std::setprecision(12);
     std::set<std::string> amb_seen;
-    auto ambN = [seed_salt](const std::string& sat, int prn, int band_idx) -> int {
-        // Deterministic pseudo-random per (satellite, band), from a SELF-CONTAINED
-        // splitmix64 hash so no shared RNG stream is consumed (noise / multipath /
-        // slip streams and therefore byte-identity of everything else are untouched).
-        //
-        // WHY NOT THE OLD FORMULA.  It was `(E?700000:100000) + prn*1000 + band_idx*137`,
-        // which made the WIDE-LANE N1-N2 the constant -137 on EVERY satellite and made
-        // N1 readable straight off the PRN.  A student who ran Melbourne-Wubbena on one
-        // satellite could then apply -137 to all of them, so the per-satellite work that
-        // makes wide-lane resolution a real exercise was absent.  Independent draws per
-        // band give a different, unguessable N1-N2 per satellite.  Whether the integers
-        // remain resolvable via the MW wide-lane -> narrow-lane cascade depends on
-        // corrections.signal_bias: the shipped COD MGX OSB carries ~377 L-signal rows
-        // (~0.19 m, about one L1 cycle), so with signal_bias ON a real satellite phase
-        // bias IS injected.  (An earlier version of this comment asserted the opposite
-        // unconditionally.)
-        //
-        // THE STATION TERM IS LOAD-BEARING.  Without seed_salt in the hash every station
-        // in a network receives numerically IDENTICAL integers, so every between-station
-        // single- and double-differenced ambiguity is EXACTLY ZERO: ambiguity resolution
-        // reports a 100 % fix rate on perfect integers while measuring nothing, and none
-        // of the run's own gates (worst_clean, worst_isb_clean, worst_if_resid) can see
-        // it.  Salt 0 (single station) reproduces the historical integers exactly.
-        unsigned long long h = 0x9E3779B97F4A7C15ull
-            ^ (static_cast<unsigned long long>(static_cast<unsigned char>(sat[0])) << 56)
-            ^ (static_cast<unsigned long long>(prn) << 32)
-            ^ (static_cast<unsigned long long>(band_idx) * 0xD1B54A32D192ED03ull)
-            ^ (seed_salt * 0xA24BAED4963EE407ull);
-        h ^= h >> 30; h *= 0xBF58476D1CE4E5B9ull;
-        h ^= h >> 27; h *= 0x94D049BB133111EBull;
-        h ^= h >> 31;
-        return static_cast<int>(100000ull + h % 900000ull);  // same magnitude as before
+    // The draw itself lives in include/sim/AmbiguityDraw.hpp — it is a fixture property
+    // that decides what an estimator experiment can conclude (legacy N in [1e5,1e6) is
+    // ~4 decades above the measured IGS spread and defeats a zero-target cold start),
+    // so it is a unit-testable free function rather than a lambda buried in a 3.5k-line
+    // synthesis.  That header also documents the two structural properties the draw must
+    // preserve in either regime: the load-bearing station salt (without it every
+    // between-station DD is EXACTLY ZERO and AR reports 100 % on nothing) and per-band
+    // independence (the pre-2026 formula made the wide-lane a constant -137 network-wide).
+    const sim::AmbiguityDrawConfig amb_cfg = scfg.ambiguity;
+    auto ambN = [amb_cfg, seed_salt](const std::string& sat, int prn, int band_idx) -> int {
+        return sim::drawAmbiguity(amb_cfg, sat, prn, band_idx, seed_salt);
     };
 
     // Observable-specific signal biases (OSB), injected only when corrections.signal_bias
@@ -2797,6 +2780,18 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
             js << "  },\n";
         }
         js << "  \"signals\": {\"GPS\": [\"C1C\",\"L1C\",\"C2W\",\"L2W\"], \"Galileo\": [\"C1C\",\"L1C\",\"C5Q\",\"L5Q\"]},\n";
+        // The ambiguity REGIME is a fixture property that changes what an estimator
+        // experiment can CONCLUDE (a zero-target cold start begins inside its capture
+        // region under "field" and ~4 decades outside it under "legacy"), so the fixture
+        // on disk has to DECLARE it — otherwise a grader must infer it from
+        // truth_ambiguities.csv, and an accidental mixed-regime A/B reads as an estimator
+        // result rather than as two different datasets.  Emitted only when NOT legacy, so
+        // every pre-existing fixture regenerates byte-identically (same rule as
+        // truth_slips.csv's `source` column, which appears only when scripted slips exist).
+        if (scfg.ambiguity.regime != sim::AmbiguityRegime::Legacy) {
+            js << "  \"ambiguity\": {\"regime\": \"field\", \"half_width_cycles\": "
+               << scfg.ambiguity.half_width_cycles << "},\n";
+        }
         js << "  \"truth\": {\n";
         js << "    \"gps_galileo_isb_m\": " << std::setprecision(4) << isb_true_m << ",\n";
         js << "    \"zwd_m\": " << (epoch_counter ? zwd_sum / epoch_counter : zwd_true_m) << ",\n";

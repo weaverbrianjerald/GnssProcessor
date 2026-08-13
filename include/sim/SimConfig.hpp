@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 
+#include "sim/AmbiguityDraw.hpp"
+
 namespace GnssProcessor {
 namespace sim {
 
@@ -217,6 +219,25 @@ struct SimConfig {
         /// byte-for-byte.  See @c ScriptedSlip and SPEC_scripted_slips.md.
         std::vector<ScriptedSlip> scripted;
     } slips;
+
+    /// Which magnitude REGIME the arc-constant integer ambiguities are drawn from.
+    ///
+    /// This is a FIXTURE PROPERTY that decides what an estimator experiment can
+    /// conclude, not a cosmetic scale.  The historical draw is @f$N\in[10^5,10^6)@f$,
+    /// which is ~4 decades above what a geodetic receiver actually produces
+    /// (measured on eight bundled IGS stations, DOY-129: median wide-lane
+    /// @f$|N_1-N_2|@f$ = 28.5 cyc, median double-difference 29.7 cyc, both
+    /// Melbourne-Wubbena so they are iono-free).  A cold start that linearizes
+    /// about zero therefore begins far OUTSIDE its capture region on the sim and
+    /// inside it on the field, which is why the 60-station bisection ladder saw
+    /// float beat every eq34 arm 34-852x while the matched field arms passed.
+    ///
+    /// Default @c Legacy keeps every existing fixture byte-identical on
+    /// regeneration; @c Field is the regime any experiment touching a
+    /// zero-target datum (eq34, carry_invariant, seed-round) must use.
+    /// See @ref AmbiguityDraw.hpp for the full derivation and the two structural
+    /// properties the draw must preserve in either regime.
+    AmbiguityDrawConfig ambiguity;
 
     /// Truth atmosphere injected on every ray (ZHD cancels via reuse; ZWD is the state
     /// the processor estimates, so it does NOT cancel — it is recovered).
