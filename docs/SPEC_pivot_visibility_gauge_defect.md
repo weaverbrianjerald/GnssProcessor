@@ -159,6 +159,31 @@ claims to — but on this fixture the cure costs more than the disease.
 
 ---
 
+## 4.2 FIELD EVIDENCE — the defect is live on the current lineage, and SILENT
+
+`scripts/datum_gauge_audit.py --run` needs only `network_events.csv`, so it runs
+on archived field output. Applied to the DOY-129 305-station arms:
+
+| run | PB removals | pivot-only (avoidable) | satellite-left (legit) |
+|---|---|---|---|
+| `runs/pc305_ggq_tri_slant_4h` | 7 | **2** (G01 @262500, @262590) | 5 |
+| `runs/pc305_ggq_tri_slant_1h` | 3 | **2** | 1 |
+| `runs/simnet300_tri_slant` | 8 | **8** | 0 |
+
+The field count is low because `_pc305_ggq_tri_slant_4h.json` elects
+**MBAR00UGA** — an equatorial station that loses almost nothing — which is the
+remedy of §5.1 arrived at by luck rather than by criterion. The 300-station sim
+arm, whose datum was chosen by the `--datum-station` default, carries **8 of 8**
+avoidable.
+
+**Both field events are UNMARKED.** That lineage resolves
+`network.emit_clock_disc` and `network.clock_disc_jump_test` to *unset*, so no
+`CLK_STEP` record exists for either — the clock re-realization is of unknown
+magnitude and **completely silent to the consumer**. This is the concrete
+instance of the standing warning that without `emit_clock_disc` the per-satellite
+clock-disc counter is never populated and product-wide jumps go unreported. The
+audit tool flags exactly this case rather than reporting "no step".
+
 ## 5. What to do
 
 1. **Elect the datum station on satellite-visibility continuity.**
