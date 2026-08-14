@@ -1,5 +1,11 @@
 # SPEC — the single-pivot phase-bias gauge defect
 
+**Status, 2026-08-14.** §5.05's THIRD root is now NAMED and A/B-confirmed — the
+phase-bias datum re-realizes on the design matrix only, the carry is never
+transformed into the new frame, and the satellite clock absorbs the step. See
+**§5.07**, which also strikes §5.06's "not a gauge problem at all" conclusion and
+annotates §5.05's second falsified hypothesis as a no-exposure test.
+
 **Status, 2026-08-13.** Root cause PROVEN with truth on the synthetic fixture,
 causally confirmed by a three-arm prediction test at 24 stations and reproduced
 6/6 at 60 stations. This is the sim reproduction of a defect the codebase already
@@ -309,13 +315,21 @@ Three hypotheses tested and falsified:
 | hypothesis | test | result |
 |---|---|---|
 | they are anchor handovers | compensate all 30 (§5.0) | **no effect** on C-contrast or step count |
-| they are column-set changes | correlate CLK_STEP with `col_removed` on the same sat | **0 / 15** |
+| they are column-set changes | correlate CLK_STEP with `col_removed` on the same sat | **0 / 15** ⚠ *no exposure — see below* |
 | the CLOCK datum station's visibility does it, as the PB datum's did | correlate first CLK_STEP per sat with that station's satellite losses | **1 / 6** |
 
 G15 alone carries 9 of the 16 steps as a decaying tail (+19.2, +4.2, +3.7, +3.3,
 +2.8, +1.9, +1.6, +1.7, +1.6 m over consecutive epochs) — a slow re-settle, not a
 single re-realization. Whatever drives it is not any gauge-move mechanism this
 card examined.
+
+⚠ **Hypothesis 2 was a test with no exposure (noted 2026-08-14).** It was measured
+*inside the prioritized arm*, which by this very section's count contains **exactly
+one** column removal (G20). Zero correlation against a population of one is not a
+falsification. The test with exposure is the **cross-posture** one in §5.07: pdp-OFF's
+two PB column deaths ARE pdp-ON's two pivot-outgoing handovers, same epochs, same
+satellites — and the post-warmup one carries a 12.055 m clock step. Hypotheses 1 and 3
+stand as measured.
 
 ## 5.06 The PIN BRIDGE already does what a two-pass retarget would — measured
 
@@ -355,14 +369,203 @@ re-realizations: 7 → 8 episodes, Σ\|dev\| 160.5 → 165.3 m, T3 slightly wors
 
 **That is now the FOURTH mechanism to leave the clock episodes untouched**
 (datum election on the prioritized path, handover-continuous, the pin bridge, and
-the coverage gate). Four independent interventions on the phase-bias gauge, all
-null on the clock channel, is strong evidence that **the clock churn is not a
-phase-bias gauge problem at all** and that §5.05's third root lies elsewhere.
+the coverage gate).
+
+> ⚠ **STRUCK 2026-08-14.** This section previously concluded from those four nulls
+> that *"the clock churn is not a phase-bias gauge problem at all."* **That
+> inference was wrong.** It IS a gauge problem; all four probes were on the
+> *design-matrix* side of an edge whose defect is on the *carry* side. See §5.07,
+> which names the root and closes §5.05's third root.
 
 A two-pass epoch would differ from the bridge in one respect only: its target
 would be the CURRENT epoch's solved value rather than the previous epoch's level,
 and it would be a hard pin rather than a soft row. Given four null results on the
 clock channel, its expected value there is low; it is not scheduled.
+
+## 5.07 THE THIRD ROOT, NAMED — the datum re-realizes on the design matrix only
+
+**Status: named 2026-08-14, and confirmed by a decisive single-knob A/B
+(`runs/inj_weab_{on,off}`, same exe snapshot `7a908e23…`).**
+
+> **A satellite's phase-bias datum is realized by a hard pin (w ≈ 1e10) on one
+> station-arc. When that arc dies at the elevation mask the datum re-realizes —
+> as a cold re-pin at `target = 0.0` (`NetworkPhaseDatum.cpp:339`) under
+> `phase_datum_prioritized`, or as an outright column drop under the pivot-hosted
+> posture — and the re-realization is applied to the DESIGN MATRIX ONLY. The
+> carried state is never transformed into the new frame. Because
+> `sat_phase_bias_q = 1e-12` freezes bˢ_σ while `sat_clock_q = 0.01` leaves δtˢ
+> loose — a 1e10:1 ratio — the entire frame step lands on the satellite CLOCK.**
+
+The clock is not malfunctioning. It is the **designated absorber** of a gauge
+change nobody transformed.
+
+### 5.07.1 The cross-posture identity
+
+`runs/inj_null` (pdp OFF) contains exactly two phase-bias column deaths in the
+whole run. `runs/inj_null_pdp` (pdp ON) contains ten anchor handovers, of which
+exactly two have the pivot `S12000SIM` as the *outgoing* anchor. **They are the
+same two epochs and the same two satellites:**
+
+| tow | `inj_null` (pdp OFF) | `inj_null_pdp` (pdp ON) |
+|---|---|---|
+| 302490 | `col_removed PB:G12:{L1C,L2W,L5Q}` | `anchor_handover G12 S12000SIM→S04000SIM` |
+| 303510 | `col_removed PB:G15:{L1C,L2W,L5Q}` | `anchor_handover G15 S12000SIM→S23000SIM` |
+
+The **event** is the host arc dying at the mask — all ten baseline handovers are
+preceded at t−1 by the outgoing anchor's last sighting of that satellite at
+10.01–10.20°, never re-acquired. The posture only chooses the *delivery form*.
+Both put a metric step on the clock (−12.055 m OFF, +19.482 m ON at 303510), and
+pdp multiplies exposure from **2 host-deaths to 10** — which is the whole
+Σ|dev| 12.06 → 160.46 difference.
+
+**The absorber is the clock, not the bias.** G21, TOW 303390 → 303420
+(`network_solution.csv`): CLK −1.9944 → **−24.4221** (Δ −22.428 m); phase biases
+move ≤ **0.54 m** on all three signals; code bias moves **1.1 mm**. Against
+`q_clock·dt = 0.30 m²` (σ ≈ 0.55 m) that is a **41 σ** clock innovation.
+
+### 5.07.2 The decisive A/B — the QC tier is the impulse channel, not the source
+
+`network.raim_within_epoch` OFF vs ON, same build, same obs root, handover
+schedule verified **byte-identical (10/10, same epoch / sat / from→to)** because
+the election runs at `ApplicationNetwork.cpp:1682`, strictly upstream of the solve
+glue at `:2002`.
+
+| channel | pdp OFF (`inj_null`) | tier ON | tier OFF |
+|---|---|---|---|
+| `we_refloat_sat` | 0 | 8 | **0** |
+| anchor handovers | 0 | 10 | 10 |
+| CLK_STEP marks | 1 | 15 | **32** |
+| Σ\|dev\| | 12.055 m | 160.457 m | **178.366 m** |
+| terminal `clock_std_m` | 2.1478 | 15.2826 | **14.6259** |
+| `worst_dev_m` | 10.8274 | 60.0605 | **56.4554** |
+
+**Deleting the entire within-epoch tier does not remove the re-realization.**
+The competing root (the whole-sat refloat is the source) predicted `clock_std_m`
+would collapse toward the pdp-OFF 2.15 m; it measured **14.63**, a 4.3 % change.
+Same destination, different delivery — G21 at 303420:
+
+| tow | tier ON | tier OFF |
+|---|---|---|
+| 303390 | −1.9944 | −1.9944 |
+| **303420** | **−24.4221** (−22.43 in one epoch) | **−5.5308** (−3.54) |
+| 303450 | −23.4492 | **−23.4955** |
+| 303480 | −22.4683 | −22.5462 |
+
+G23 behaves identically (−18.79 in one step vs −5.99 then −18.08). The refloat is
+the **impulse channel**: mean |dev| per mark **10.697 → 5.574 m**, the same motion
+redistributed into 32 smaller steps instead of 15 large ones. Corroboration at
+scale: `runs/simnet300_tri_slant` has 40 `we_refloat_sat`, 0 handovers, **0
+CLK_STEP**; `runs/simnet60_tri_slant_480_ddint` 38 / 0 / 0.
+
+⚠ **Two honest misses in this A/B, recorded rather than dropped:**
+
+1. **The mark-count prediction was WRONG.** The named root predicted CLK_STEP
+   would *fall* as steps became ramps; it **rose, 15 → 32**. The ramp is still
+   steep enough to keep clearing the 1.5 m/epoch bar. The mechanism direction
+   (impulse → distributed) is confirmed by the per-epoch decomposition; only the
+   instrument prediction failed — which independently reinforces §5.07.4's point
+   that the per-epoch step test is the wrong detector.
+2. **The G28 control is INCONCLUSIVE, not passed.** It diverges up to 1.30 m.
+   G28's handover is at 304650, long after the arms first diverge at 303420, so
+   it was never isolated. What it does show: G28 ramps ~12 m in **both** arms with
+   no refloat in either — independent support from a satellite the tier never
+   touched.
+
+### 5.07.3 Why the four gauge interventions were null — and why the shift is one epoch
+
+All four act on the **design-matrix** side (WHO hosts, WHAT target, WHEN). **None
+touches the carry side.** The previous epoch's bˢ_σ — a value in the *retired*
+frame — is folded into the new frame at `q_pb = 1e-12`
+(`NetworkRunContext.cpp:1709-1711`) because `PHASE_ANCHOR` reaches neither
+carry-skip guard: `datum_changed` reads the **clock-pivot map only**
+(`NetworkSolveGlue.cpp:461-462`), and `eq34_reref` is populated **only** in
+`NetworkChainDatum.cpp:778`.
+
+The one-epoch shift of §5.0.1 is then structural, not mysterious.
+`NetworkPhaseDatum.cpp:339` sets `double target = 0.0`, overridden only
+`if (is_handover && handover)`. At T+1 `is_handover` is false, so **the target
+reverts to 0.0** — the full cold re-pin, one epoch late. The σ̂₀ trip moves with it
+because it is downstream: the handover schedule is byte-identical across the arms
+while the refloat *and* the step both move. A downstream effect moves; a cause
+does not.
+
+### 5.07.4 Collateral defects found while proving this
+
+1. **The A4 backstop is defeated by construction.** `sigma0_adapt` publishes the
+   *post*-adapt σ̂₀ (`NetworkSolveGlue.cpp:1667`). σ̂₀_first reached **13.27**
+   against a **6.0** withhold ceiling, and `n_sigma0_withheld = 0` on every arm —
+   the adaptation launders the epoch past its own gate.
+2. **The σ̂₀ pool is blind where the tension lands.** `NetworkSolveGlue.cpp:1206`
+   skips the pivot from the pool whenever pdp is off — i.e. excludes the one
+   station carrying the datum. A permanent 12.055 m re-realization moves σ̂₀ by
+   0.055 and T2 stays silent.
+3. **`raim_within_epoch: false` is silently overridden.**
+   `GnssConfigLoadNetwork.cpp:3473` force-enables the tier whenever
+   `raim_withhold_sigma0 > 0`. This is why all 11 `inj_*` arms carry the tier
+   armed — nobody chose it. Disabling it requires zeroing the ceiling too;
+   legitimate here only because the ceiling provably never fires
+   (`n_sigma0_withheld = 0`, `n_gate_withheld = 0`, 120/120 emitted).
+4. **The step test misses cumulative drift.** G28 ramps −0.70 → −11.98 m,
+   permanent, with **zero marks** — every increment sits under the 1.5 m/epoch
+   bar. Conversely G21's −22.5 m step **recovers 86 %** by run end, so it is not a
+   re-realization at all. The "7 episodes" census is contaminated at both ends and
+   needs a cumulative/level companion, not a smaller per-epoch bar.
+5. **Dead telemetry (invariant #4).** `es.n_refloat_sats` reads
+   `clock_refloat_sats.size()` (`NetworkStashStatus.cpp:512`) ⇒ **0 on all 120
+   rows** while `n_adapt` is nonzero on 7. `PBGAUGE` two-edge rows are emitted
+   **only** under `phase_datum_handover_continuous`
+   (`ApplicationNetwork.cpp:1685-1688`), so the cold re-pin is an unlogged
+   both-edge event in the default posture.
+
+### 5.07.5 The remedy, ranked
+
+**PRIMARY is BOUND THE EDGE; fixing the trigger's null is required but strictly
+second** — the mask crossing happens regardless of any statistic, the pdp-OFF twin
+carries the defect with 1 trip and 1 mark, and the largest untouched item (G28's
+−11.28 m) has neither a trip nor a mark.
+
+- **R0 — telemetry first** (zero solve risk, gates everything below): emit
+  `PBGAUGE` unconditionally; run-end counters for the three within-epoch
+  responses; **trace σ̂₀_first on every live epoch** (it exists only inside the
+  `detail` span at `:1640`, so *there is no null sample on disk to fit*); fix
+  `es.n_refloat_sats`; capture the primary-solve clock at `:1495` and emit
+  `(final − first)`.
+- **R1 — the carry re-reference (primary).** Populate a `phase_anchor_reref`
+  `{sat, signal}` set in `networkElectPhaseAnchors` alongside `handovers_out`
+  (`NetworkPhaseDatum.cpp:377-379`) and consume it at
+  `NetworkRunContext.cpp:1706-1707` **exactly as `eq34_reref` is** — the template
+  is already built and already commented for this failure at `:1701-1705`. Erase
+  `local_carry` for **all** stations of that (sat,signal). Default-OFF,
+  byte-identical when off.
+- **R2 — make the continuous target sticky past the handover epoch**, or
+  `phase_datum_handover_continuous` remains a one-epoch deferral by construction.
+- **R3 — declare what still moves**: a cumulative companion to the step test.
+- **R4 — fix the null** (second, not optional): derive the actual null of
+  `max(floor, 1.4826·median(·))` over correlated standardized residuals; give the
+  statistic a prior-side term (`SPEC_sigma0_constraint_aware.md`); extend
+  `networkClockAnchorGuard`'s pattern (`NetworkSolveGlue.cpp:1074-1077`) to a
+  phase-datum pre-adaptation guard.
+- **R5 — do NOT do first: `clock_monitor_couple_raim`.** Double-gated
+  (`NetworkRunContext.cpp:96`), and **85.5 % of Σ|dev| is emitted before the stash
+  it acts through** — its reach is 2.7 %.
+
+### 5.07.6 What is NOT established
+
+- **Marginalize vs transform.** R1 follows the `eq34_reref` template, which
+  *deletes* the prior for one epoch. The theoretically correct action is an
+  **S-transform** of the (sat,signal) carry family. That transform > delete is
+  INFERRED, unmeasured.
+- **Transient vs permanent re-realizations are unexplained.** G21's step recovers
+  86 % (identical shape in `inj_bridge`); G15's does not.
+- **Field reachability UNTESTED.** The T2 tier is `carry_warm`-gated and no field
+  run on disk carries a `T2_within_epoch` event — but **the root is not gated on
+  `phase_leveling`** (the pdp-OFF twin exhibits it with 0 T2 events), and
+  `_day129_guards_conv.json` arms both. No field events CSV was inspected.
+- **n = 1.** 24 stations, 120 epochs, one hour, GPS-only, a single roster salt.
+- **A second bare edge inside the same handover is unmeasured**: the outgoing
+  anchor becomes carry-eligible again with a `local_carry` entry harvested
+  *before* it anchored; the incoming anchor's carry is silently dropped. Same
+  predicate (`networkIsGaugePinned_`) both sides, no event on either.
 
 ### 5.1 The real fix, not yet built
 
@@ -411,8 +614,27 @@ python scripts/datum_gauge_audit.py --run runs/inj_null_l13 runs/inj_ds_S06000SI
 # the datum-free grade that ranks the arms honestly
 python scripts/simnet_grade.py runs/simnet24_inject_null --run <run> --products <products.txt>
 #   read the C-record CONTRAST line, not clock_std_m
+
+# --- §5.07: the decisive within-epoch A/B (2 x ~35 s, Release only) ---
+# ⚠ Run BOTH arms on ONE exe snapshot — the arms on disk predate a rebuild, and
+#   invariant #6 forbids cross-build comparison.
+cp build/x64-Release/gnss_processor.exe build/x64-Release/gnss_processor_weab.exe
+sha256sum build/x64-Release/gnss_processor{,_weab}.exe   # must match
+build/x64-Release/gnss_processor_weab.exe config/test_suite/_simnet24_inj_weab_on.json
+build/x64-Release/gnss_processor_weab.exe config/test_suite/_simnet24_inj_weab_off.json
+#   logs land in ./logs (CWD = repo root); copy to runs/inj_weab_<arm>/logs between runs.
+# ⚠ raim_within_epoch:false ALONE IS A NO-OP — GnssConfigLoadNetwork.cpp:3473
+#   force-enables the tier whenever raim_withhold_sigma0 > 0.  The OFF config zeroes
+#   the ceiling too; that is legal ONLY because the ON twin measures
+#   n_sigma0_withheld = 0 / n_gate_withheld = 0 / 120 emitted (ceiling never fires).
+
+# grade it: handover schedule must be identical, then read the clock channel
+for d in inj_weab_on inj_weab_off; do
+  awk -F, '$4=="anchor_handover"{print $2,$5,$10}' runs/$d/logs/network_events.csv | sort -u
+done   # -> must be 10/10 identical, else the A/B has a second variable loose
 ```
 
 Configs: `_simnet24_inj_null_l13.json` (datum S12, `trace_station_residuals` on),
 `_simnet24_inj_ds_S06000SIM.json`, `_simnet24_inj_ds_S13000SIM.json`,
-`_simnet24_inj_null_pdp.json` (`phase_datum_prioritized` ON).
+`_simnet24_inj_null_pdp.json` (`phase_datum_prioritized` ON),
+`_simnet24_inj_weab_{on,off}.json` (§5.07's within-epoch A/B).

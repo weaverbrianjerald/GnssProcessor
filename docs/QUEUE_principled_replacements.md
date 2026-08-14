@@ -36,7 +36,13 @@ allowed.
 Item numbers below are STABLE — they are referenced by section and by other docs,
 so the re-ranking is expressed here rather than by renumbering:
 
-> **0 → 2 → 4 → 1(b) → 5 → 7 → 6**, with **1(a) demoted** and **3 held**.
+> ~~**0 → 2 → 4 → 1(b) → 5 → 7 → 6**, with **1(a) demoted** and **3 held**.~~
+>
+> **SUPERSEDED 2026-08-14 — the third root is NAMED.** New order:
+> **R0(telemetry) → 1(d) → regenerate the null arm → 4 → 2 → 1(b) → 5 → 7 → 6**,
+> with **3 dissolved into 1(d)**, **0 downgraded**, and **1(a) still demoted**.
+> Root + evidence: `SPEC_pivot_visibility_gauge_defect.md` §5.07.
+> A/B: `runs/inj_weab_{on,off}`, configs `config/test_suite/_simnet24_inj_weab_{on,off}.json`.
 
 Rationale, applying this doc's own "measured payoff × readiness" rule to the
 arms that have since been measured (`SPEC_pivot_visibility_gauge_defect.md`
@@ -51,6 +57,27 @@ arms that have since been measured (`SPEC_pivot_visibility_gauge_defect.md`
   are now null on the clock channel (see "Blocked on root cause"). Do not build
   more gauge work against it until the third root is named. 1(b) survives because
   it acts on a *different* edge (the clock datum handover, not the PB gauge).
+
+**AMENDMENT 2026-08-14 — the root is named, and the ranking above changes.**
+
+- **3 is UNBLOCKED and then DISSOLVED.** The root is not clock work — it is
+  phase-bias-datum **carry** work, which belongs to item 1. New sub-card **1(d)**
+  below. Item 3 retains only the two survivors its own held note identified:
+  always-armed marking, and 1(b).
+- **4 is now BLOCKED BY 1(d)**, reversing the implied order. Item 4's plan says
+  *"the truth-clean fixtures ARE the null-calibration instrument."* **That premise
+  is falsified for the pdp-ON arm**: it is measurement-clean but carries 10 genuine
+  state discontinuities (the handovers), so fitting a quantile there calibrates it
+  *to the discontinuities*. Compounding it, σ̂₀_first is **not traced on non-trip
+  epochs** — there is no null sample on disk to fit at all today (R0 fixes this).
+  Item 4's **T3** evidence is a different tier and stands untouched.
+- **0 is DOWNGRADED.** The pin bridge is a measured net LOSS on this channel:
+  Σ|dev| 160.457 → **165.271**, episodes 7 → 8, and the silent 302490 handover
+  becomes a **+33.617 m** episode 20 epochs later. Its 1.9× code-bias win stands.
+- **2 slips behind 4** — it is still correct and still plumbing, but electing a
+  better datum reduces *exposure* to an edge that 1(d) *fixes*.
+- **⚠ `clock_monitor_couple_raim` is NOT the fix** despite naming the right
+  coupling: 85.5 % of Σ|dev| is emitted before the stash it acts through.
 
 ---
 
@@ -76,6 +103,15 @@ contrast 18.655 → 17.214 (7.7 %).  It does NOT reduce the clock re-realization
 **Remaining work:** a field arm, and a decision on the σ and `bridge_max_ep`
 defaults (0.05 m / 20 ep were never tuned for this use).  Config:
 `config/test_suite/_simnet24_inj_bridge.json`.
+
+⚠ **DOWNGRADED 2026-08-14 — net LOSS on the clock channel, with a mechanism.**
+Σ|dev| 160.457 → **165.271**, episodes 7 → 8.  The specific harm: the *silent*
+302490 G12 handover becomes a **+33.617 m** episode at 303090 — exactly 20 epochs
+later, i.e. one `bridge_max_ep` lifetime.  The bridge **postpones** an
+un-transformed re-pin rather than transforming the carry, so it converts silent
+handovers into loud ones (§5.07).  The 1.9× code-bias win is real and stands; this
+knob is a B-channel remedy, not a clock remedy, and it should be sequenced AFTER
+1(d) so the two are not confounded.
 
 ---
 
@@ -119,6 +155,24 @@ sub-cards:
 - **(c) eq34 chain-datum handover continuity** — named "a separate card" by the
   loader guard in `GnssConfigLoadNetwork.cpp`; unwritten.  This is the FIELD
   posture's instance (the GG-Q lineage's 2 avoidable unmarked G01 events).
+- **(d) ⭐ THE PHASE_ANCHOR CARRY RE-REFERENCE — NEW 2026-08-14, now the head of
+  the whole queue.**  This is the named root of the clock churn
+  (`SPEC_pivot_visibility_gauge_defect.md` §5.07): at a `PHASE_ANCHOR` handover the
+  datum is re-realized on the **design matrix only** and the carried bˢ_σ is folded
+  forward *in the retired frame* at `q_pb = 1e-12`, because neither carry-skip
+  guard fires — `datum_changed` reads the clock-pivot map only
+  (`NetworkSolveGlue.cpp:461-462`) and `eq34_reref` is populated only in
+  `NetworkChainDatum.cpp:778`.  With `sat_clock_q = 0.01` against
+  `sat_phase_bias_q = 1e-12` (1e10:1), the clock absorbs the entire frame step —
+  measured 41 σ on G21.
+  **Build:** populate a `phase_anchor_reref` `{sat, signal}` set in
+  `networkElectPhaseAnchors` beside `handovers_out` (`NetworkPhaseDatum.cpp:377-379`)
+  and consume it at `NetworkRunContext.cpp:1706-1707` exactly as `eq34_reref` is —
+  the template is already built and already commented for this failure at
+  `:1701-1705`.  Erase `local_carry` for ALL stations of that (sat,signal).
+  Default-OFF, byte-identical when off.  **Gated on R0 telemetry** (§5.07.5).
+  ⚠ The `eq34_reref` template *deletes* the prior; the theoretically correct action
+  is an **S-transform** of the carry family.  Transform > delete is INFERRED.
 
 **Sim validation:** (a) fault fixture `_simnet24_inj_fault` with a slip injected
 at the pin-holder / next-ranked candidate on a known handover epoch; grade
@@ -161,7 +215,16 @@ pivot's geometry, §9.8), sum-to-zero for wire-frame wander only (sim PASS
 (`emit_clock_disc` + `clock_disc_jump_test`) so whatever remains is at least
 declared to the consumer.
 
-⚠ **HELD 2026-08-14 — do not build this as more gauge work.**  FOUR independent
+✅ **UNHELD then DISSOLVED 2026-08-14 — the root is named and it is not clock
+work.**  It is phase-bias-datum CARRY work: see **item 1(d)** and
+`SPEC_pivot_visibility_gauge_defect.md` §5.07.  What remains under item 3 is only
+**always-armed marking** (declaration, not estimation) and **1(b)**.  ⚠ Marking
+needs a **cumulative/level** companion, not just the per-epoch step test: G28
+re-realized −11.28 m permanently with **zero** CLK_STEP marks because every
+increment sat under the 1.5 m/epoch bar, while G21's marked −22.5 m step
+**recovered 86 %** and was never a re-realization at all.
+
+⚠ **The superseded HELD note, retained for provenance.**  FOUR independent
 phase-bias-gauge interventions are now measured null on the clock channel (datum
 election on the prioritized path, handover-continuous, the pin bridge, the
 coverage gate); see the blocked section.  Of the list above, only **always-armed
@@ -188,9 +251,21 @@ replace it with per-row w-tests under FDR control.  The constraint-aware σ̂₀
 card (`docs/SPEC_sigma0_constraint_aware.md`) is the in-house proof this
 derivation pays.
 
-**Sim validation:** the truth-clean fixtures ARE the null-calibration
+**Sim validation:** ~~the truth-clean fixtures ARE the null-calibration
 instrument: fit the corrected quantile on the 24-sta null arm, verify implied
-α ≈ nominal on an independent null, then check the field flag rate.
+α ≈ nominal on an independent null, then check the field flag rate.~~
+
+⚠ **PREMISE FALSIFIED 2026-08-14 for the pdp-ON arm, and this item is now BLOCKED
+BY 1(d).**  `runs/inj_null_pdp` is truth-clean in the *measurement* sense (all 25
+`truth_slips.csv` are header-only) but carries **10 genuine state discontinuities**
+— the anchor handovers — each a real change in residual scale.  Fitting a quantile
+there calibrates it *to the discontinuities*.  The fitting fixture must be either
+the post-1(d) arm or one with the anchor election frozen.
+**Second blocker, independent:** σ̂₀_first is emitted only inside the `detail` span
+of a trip event (`NetworkSolveGlue.cpp:1640`), never on quiet epochs — so **there
+is no null sample on disk to fit at all**.  R0 telemetry (§5.07.5) is a hard
+prerequisite.  The **T3** evidence above is a different tier and stands untouched;
+only T2's use of this fixture as a null instrument is invalidated.
 
 ⚠ **The verification arm must be SAME-REGIME, different-seed — NOT the 60-sta
 fixture.**  `runs/simnet60_tri` is LEGACY-N (N ∈ [1e5,1e6)) and a different
@@ -254,7 +329,23 @@ bench — a bench extension, owed before this card can be graded.
 
 ## Blocked on root cause — do not build the "correct" fix yet
 
-- **⚠ NEW 2026-08-14 — the clock re-realization churn itself (item 3).**  FOUR
+- ~~**⚠ NEW 2026-08-14 — the clock re-realization churn itself (item 3).**~~
+  **✅ RESOLVED same day — root NAMED and A/B-confirmed.  Moved to item 1(d).**
+  The four nulls and three falsifications below are all *correct as measured* and
+  all *on the wrong side of the edge*: every one probes the design-matrix side of
+  the gauge, while the defect is on the CARRY side.  The live lead recorded below —
+  "threshold crossings of a slowly-evolving quantity … shifted by exactly one
+  epoch" — was the right instinct and resolved structurally, not statistically:
+  `NetworkPhaseDatum.cpp:339` sets `target = 0.0` and overrides it only
+  `if (is_handover && handover)`, so at T+1 the target reverts and the continuous
+  pin is a **one-epoch deferral by construction**.  The decisive test deleted the
+  entire within-epoch QC tier and the re-realization SURVIVED (terminal
+  `clock_std_m` 15.28 → 14.63, against 2.15 on the pdp-OFF twin) — so the tier is
+  the *impulse channel*, not the source.  Full evidence:
+  `SPEC_pivot_visibility_gauge_defect.md` §5.07.  Original text retained below for
+  provenance.
+
+- **⚠ ORIGINAL (superseded) — the clock re-realization churn itself (item 3).**  FOUR
   independent interventions on the phase-bias gauge left it untouched on the
   24-sta arm: datum election on the prioritized path,
   `phase_datum_handover_continuous`, the pin bridge, and the
