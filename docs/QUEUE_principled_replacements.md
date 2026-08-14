@@ -394,11 +394,38 @@ source entirely.
 **Bonus:** the removal lowered all three per-signal levels ~8–10 % uniformly and the
 statistic did not follow — a second, independent confirmation of the invariance theorem
 from a different mechanism than the B2 arm.
-**Now first:** the L1C-specific 2.5–2.7× at identical elevation/weight/nominal σ.  Likely
-reframing — not "L1C is loud" but "L2W/L5Q are *suppressed*" by the iono state and code
-biases soaking them up, i.e. a per-signal **redundancy** story.  ⚠ **Not measurable from
-disk today**: the RAIM cell is a max *over* signals so the trace has no signal column,
-and per-row r_i is never streamed.  Instrumenting per-signal r_i is the prerequisite.
+❌ **AND THE REDUNDANCY FAMILY IS FALSIFIED TOO (SPEC §7.2) — the prerequisite was
+built.**  New `network.trace_raim_redundancy` (default OFF) emits one row per post-fit
+RAIM **phase row** with `w, r_i, resid, z_meas, z_baarda, below_floor` — one level finer
+than the cell.  It makes `row_r` be COMPUTED but never USED, so unlike
+`raim_redundancy_normalize` **the census is solve-neutral**: with it armed all six graded
+CSVs are **bit-identical** to `runs/pareref_on/logs_v2` (+17 % runtime, 65 364 rows).
+Arm `runs/t3ri`, config `_simnet24_inj_t3ri.json`.
+
+**r_i is uniform.**  Per signal: L1C 0.5469 / L2W 0.5767 / L5Q 0.4630 = **1.25× spread**,
+against a `z_meas` spread of **2.59×** — and dividing by √r_i makes the signal spread
+*worse* (2.59× → 2.72×).  Per station: r_i spreads **1.23×** against `z_meas` **3.01×**,
+corr(log z_meas, log r_i) = **−0.284**.  Whole settled population: median r_i **0.5114**,
+q01 0.0015, q99 0.6687.  So "L2W/L5Q are suppressed by absorption" is wrong — absorption
+would mean LOW r_i on exactly those signals, and it does not appear.  **The heterogeneity
+is genuine misfit varying by station and signal, on an estimator whose information
+distribution is uniform.**
+
+⚠⚠ **A sharper defect fell out (SPEC §7.3): E[w·v²] ≠ r_i.**  If `v` were a correct
+post-fit residual, `1.4826·med|z_baarda|` would be 1.0.  Measured: **z_meas 1.3683
+(the shipped, theoretically WRONG standardization) vs z_baarda 1.9291 (the
+theoretically CORRECT one)** — the correct one lands **2.5× further from nominal**.  The
+redundancy numbers do not describe the actual residual covariance.  Candidates:
+`rowRedundancy` evaluates on the **gauge-nulled free covariance**
+(`NetworkEstimator.cpp:451-453`), which is not the system that produced `v` if the datum
+constraints bind; or stochastic-model error swamps r_i.  Same class as
+`docs/SPEC_sigma0_constraint_aware.md`.  **This is now the sharpest open lead**, and it
+explains §5 cleanly — B2 measured null *and* pushed σ̂₀ 1.246 → 1.819 because it divides
+by something that is not the residual's variance.
+
+Incidental: **the ignition ramp IS r_i** (0.0000 → ~0.52, then flat), so `s_raw`'s
+0.836 → 1.816 rise is redundancy converging, not the residual growing.  The floor drops
+only 0.49 % of settled rows, identically across signals (49/10026 each).
 
 ⚠ **The "excess kurtosis 4391" figure does not reproduce** — settled `s_raw` on the
 null arm has excess kurtosis **10.38**.  Do not carry 4391 forward without

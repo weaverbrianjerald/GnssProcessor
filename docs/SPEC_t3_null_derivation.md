@@ -375,6 +375,78 @@ it is not measurable from any trace on disk today: the RAIM cell is a max *over*
 signals, so `network_station_residuals.csv` has no signal column, and per-row r_i is
 never streamed.  **Instrumenting per-signal r_i is the prerequisite for the next step.**
 
+### 7.2 The prerequisite BUILT, and lead 2/3 FALSIFIED — r_i is uniform
+
+§7.1 closed by naming per-signal r_i as the prerequisite: the RAIM cell is a max
+*over* signals, so no trace on disk could separate L1C from L2W/L5Q, and per-row r_i
+was never streamed.  Both are now instrumented.
+
+**`network.trace_raim_redundancy`** (default OFF) emits one row per post-fit RAIM
+**phase row** — `week,tow,station,sat,signal,row,w,r_i,resid_m,z_meas,z_baarda,below_floor`
+— i.e. one level finer than the cell.  The design point that makes it usable: it causes
+`row_r` to be **computed** but never **used**, so unlike `raim_redundancy_normalize`
+(which drops rows at the floor and is solve-affecting) **the census is solve-neutral**.
+Proven, not asserted: with the census armed, `network_solution.csv`,
+`network_dd_fractional.csv`, `network_station_residuals.csv`, `network_epoch_status.csv`,
+`network_events.csv` and `network_flag_rates.csv` are all **bit-identical** to
+`runs/pareref_on/logs_v2`; with it off, no file is produced and the same six are
+bit-identical.  Cost 17.4 s → 20.3 s (+17 %), 65 364 rows.  Arm `runs/t3ri`, config
+`_simnet24_inj_t3ri.json`.  `z_baarda = z_meas/√r_i` is emitted *without* arming the
+normalization, so both standardizations are comparable **on one solve**.
+
+**Result — the redundancy family is falsified.**  Settled rows above the floor
+(29 931):
+
+| signal | median r_i | median z_meas | median z_baarda |
+|---|---|---|---|
+| L1C | 0.5469 | **1.6833** | 2.3654 |
+| L2W | 0.5767 | 0.6509 | 0.8706 |
+| L5Q | 0.4630 | 0.8445 | 1.2705 |
+| **spread** | **1.25×** | **2.59×** | **2.72×** |
+
+**r_i is essentially uniform across signals (1.25×) while the residual it is supposed
+to explain spans 2.59×** — and dividing by √r_i makes the signal spread slightly
+*worse* (2.59× → 2.72×).  The same holds on the station axis: per-station r_i spreads
+**1.23×** against a z_meas spread of **3.01×**, with corr(log z_meas, log r_i) =
+**−0.284** — far too weak to be the mechanism.  Over the whole settled population r_i
+is remarkably flat: median **0.5114**, q01 0.0015, q99 0.6687.
+
+So lead 2's reframing ("L2W/L5Q are *suppressed* because the iono state and code biases
+soak them up") is **wrong**: absorption would show up as low r_i on exactly those
+signals, and it does not.  Lead 3 (redundancy/convergence) is the same claim and falls
+with it.  The heterogeneity is **genuine misfit that varies by station and signal, on an
+estimator whose information distribution is uniform**.
+
+### 7.3 A sharper defect surfaced by the census: E[w·v²] ≠ r_i
+
+If `v` were a correct post-fit residual under the assumed stochastic model, then
+$E[w_i v_i^2] = r_i$ and $z_{	ext{baarda}} = |v|\sqrt{w}/\sqrt{r_i}$ would be exactly
+standard normal — so $1.4826\cdot\operatorname{med}|z_{	ext{baarda}}|$ should read
+**1.0**.  Measured, settled, above floor:
+
+| standardization | 1.4826 · median | distance from nominal |
+|---|---|---|
+| `z_meas` = \|v\|√w — **the shipped one, theoretically wrong** | **1.3683** | 0.37 |
+| `z_baarda` = z_meas/√r_i — **the theoretically correct one** | **1.9291** | 0.93 |
+
+**The correct standardization lands 2.5× FURTHER from nominal than the wrong one.**
+That is not a tuning detail — it says $E[w v^2] 
+eq r_i$ on this solve, i.e. the
+redundancy numbers do not describe the actual residual covariance.  Two candidates, both
+concrete: `rowRedundancy` evaluates on the **gauge-nulled free covariance**
+(`NetworkEstimator.cpp:451-453`), which is not the system that produced `v` if the datum
+constraints bind; or the stochastic-model error is large enough to swamp r_i entirely.
+This is the same class the in-house `docs/SPEC_sigma0_constraint_aware.md` was written
+for, and it is now the sharpest open lead in the card — it also explains §5 cleanly:
+B2 measured null on the flag rate *and* pushed σ̂₀ 1.246 → 1.819 precisely because it is
+dividing by a quantity that is not the residual's variance.
+
+Incidental, and worth keeping: **the ignition ramp IS r_i.**  Median r_i runs
+0.0000 → 0.0004 over the first three assessed epochs and reaches ~0.52 by mid-run, then
+sits flat — the 0.836 → 1.816 rise in `s_raw` (§4) is redundancy converging, not the
+residual growing.  And the floor drops only 0.49 % of settled rows, **identically across
+signals** (49/10026 each), so it is not a per-signal filter.
+
 ## 8. Validation shape
 
 1. **Fit** on `runs/pareref_on` — done, §4.1.

@@ -418,6 +418,14 @@ namespace GnssProcessor {
         /// cell (non-pivot station x sat) with s_raw / s_norm / σ̂0.  Heavy opt-in deep trace.
         std::ofstream station_res_trace;
         const std::filesystem::path station_res_trace_path;
+        /// SPEC_t3_null_derivation §7.1: per-ROW Baarda redundancy census
+        /// (network.trace_raim_redundancy) — one row per post-fit RAIM phase row, keyed
+        /// (station x sat x SIGNAL x row), with w, r_i, the raw residual and both
+        /// standardizations.  Exists because the RAIM cell is a max OVER signals, so
+        /// `station_res_trace` structurally cannot separate L1C from L2W/L5Q.  Solve-
+        /// neutral: it makes r_i be computed, never used.  Heavy opt-in deep trace.
+        std::ofstream raim_redun_trace;
+        const std::filesystem::path raim_redun_trace_path;
         /// M2 (LS-VCE): per-hour measured carry-variance components — one row per
         /// (family, constellation) whenever the content hour rolls over.  floor_m2 is
         /// the honest constant-cofactor σ̂ to compare against the hand var_floor;

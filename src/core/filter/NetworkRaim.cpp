@@ -64,6 +64,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const bool   raim_maturity_gate   = ctx.knobs.raim_maturity_gate;   // T2d: gate isolated-arc refloats on maturity
     const int    raim_maturity_epochs = ctx.knobs.raim_maturity_epochs;  // T2d: maturity horizon
     const bool   raim_redun    = ctx.knobs.raim_redun; // B2: Baarda per-row r_i normalization of the RAIM residual
+    const bool   raim_redun_trace = ctx.knobs.raim_redun_trace; // §7.1: COMPUTE r_i for the census without USING it
     // docs/SPEC_network_mdb_reliability.md INC-0: the MDB rider on B2's r_i.  NOT
     // part of the relocated body — a measure-only addition that reads the (w, r_i)
     // pairs the Pass-1 row walk already visits.  Both conjuncts matter: mdb_on is
@@ -120,6 +121,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     auto& raim_attrib_trace    = traces.raim_attrib_trace;
     auto& events_trace         = traces.events_trace;
     auto& station_res_trace    = traces.station_res_trace;
+    auto& raim_redun_out       = traces.raim_redun_trace;   // §7.1 per-row r_i census
 
     auto emitEvent = [&](const char* tier, const char* event,
                          const std::string& sat, const std::string& station,
@@ -167,12 +169,19 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         if (x_r.size() != R.A_r.cols()) continue;
         const Eigen::VectorXd resid = R.y - R.A_s * x_s - R.A_r * x_r;  // post-fit O − C
         Eigen::VectorXd row_r;   // B2: per-row Baarda redundancy (empty when off)
-        if (raim_redun) {
+        // SPEC_t3_null_derivation §7.1: the CENSUS also needs r_i, and needs it WITHOUT
+        // the standardization consuming it — arming raim_redundancy_normalize is
+        // solve-affecting (it drops rows at the floor), so a diagnostic that required it
+        // could not be run on a validated posture.  Computing row_r is a pure read of the
+        // already-factored normal equations, so the disjunct below is solve-NEUTRAL: the
+        // value is used only where `raim_redun` itself is tested.
+        if (raim_redun || raim_redun_trace) {
             try {
                 row_r = est.rowRedundancy(static_cast<std::size_t>(est_index_of[i]),
                                           R.A_s, R.A_r, R.w, shared_datum);
             } catch (...) { row_r.resize(0); }
         }
+        const bool redun_trace_here = raim_redun_out.is_open();
         // --- MDB rider (docs/SPEC_network_mdb_reliability.md INC-0) ------------
         // Every row this loop is about to visit already has (w, r_i) in hand, so
         // its minimal detectable bias costs one division.  The visited mask exists
@@ -233,6 +242,28 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                       /*r_is_approx=*/!s0g_redun_here);
                 }
                 double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
+                // §7.1 census.  Emitted HERE — above the uncheckable `continue` below —
+                // for the same reason the MDB and σ̂₀-global feeds are: the rows the
+                // normalization DROPS are precisely the ones worth seeing, and a census
+                // that only recorded survivors would report a population that cannot
+                // have a floor problem by construction.  One row per (sta, sat, SIGNAL,
+                // row); the signal is what the cell's max destroys.
+                if (redun_trace_here) {
+                    const bool has_r = row < row_r.size();
+                    const double ri  = has_r ? row_r(row) : 0.0;
+                    raim_redun_out
+                        << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
+                        << stations[i].name << ',' << pa.sat << ',' << pa.signal << ','
+                        << row << ',' << fmt::format("{:.6e}", w) << ',';
+                    if (has_r) raim_redun_out << fmt::format("{:.6e}", ri);
+                    raim_redun_out
+                        << ',' << fmt::format("{:.6e}", resid(row))
+                        << ',' << fmt::format("{:.6e}", r) << ',';
+                    if (has_r && ri > 0.0)
+                        raim_redun_out << fmt::format("{:.6e}", r / std::sqrt(ri));
+                    raim_redun_out
+                        << ',' << ((has_r && ri <= kBaardaRedundancyFloor) ? 1 : 0) << '\n';
+                }
                 if (raim_redun && row < row_r.size()) {   // B2: standardize v/(σ·√r_i)
                     constexpr double kRedFloor = kBaardaRedundancyFloor;
                     const double ri = row_r(row);

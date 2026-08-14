@@ -1978,6 +1978,8 @@ namespace GnssProcessor {
         }
         network_config_.trace_station_residuals =
             jval<bool>(json, "network.trace_station_residuals", "trace_station_residuals", false);
+        network_config_.trace_raim_redundancy =
+            jval<bool>(json, "network.trace_raim_redundancy", "trace_raim_redundancy", false);
         network_config_.write_run_manifest =
             jval<bool>(json, "network.write_run_manifest", "write_run_manifest", false);
         if (network_config_.write_run_manifest)
@@ -7630,6 +7632,19 @@ namespace GnssProcessor {
             log->warn("Network: network.trace_station_residuals is on but network.raim is off — "
                       "the per-station residual field is emitted from the post-fit RAIM cell loop, "
                       "so it will be EMPTY.  Enable network.raim AND network.phase_leveling.");
+        // SPEC_t3_null_derivation §7.1: same runtime prerequisite, same failure mode.
+        if (network_config_.trace_raim_redundancy && !network_raim_)
+            log->warn("Network: network.trace_raim_redundancy is on but network.raim is off — "
+                      "the per-row redundancy census is emitted from the post-fit RAIM row loop, "
+                      "so it will be EMPTY.  Enable network.raim AND network.phase_leveling.");
+        // It is NOT an error to arm the census together with raim_redundancy_normalize —
+        // the census then simply reports the r_i the standardization is already using.
+        // Say so, because the two knobs differ in solve-effect and that is easy to mix up.
+        if (network_config_.trace_raim_redundancy && network_raim_redundancy_normalize_)
+            log->info("Network: network.trace_raim_redundancy alongside "
+                      "network.raim_redundancy_normalize — the census reports the SAME r_i the "
+                      "standardization consumes.  Note the census alone is solve-neutral; the "
+                      "normalization is not (it drops rows at the r_i floor).");
 
         return true;
     }

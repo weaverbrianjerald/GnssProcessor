@@ -126,6 +126,14 @@ namespace GnssProcessor {
         int raim_maturity_epochs{};
         double raim_withhold{};
         bool raim_redun{};
+        /// SPEC_t3_null_derivation §7.1: emit the per-ROW Baarda redundancy census
+        /// (`network.trace_raim_redundancy`).  DIAGNOSTIC ONLY and deliberately
+        /// independent of @ref raim_redun — it makes `row_r` be COMPUTED without
+        /// letting it be USED, so the census is solve-neutral where arming
+        /// `raim_redundancy_normalize` is not.  The open question it exists to answer
+        /// is whether r_i is signal-dependent: the RAIM cell is a max OVER signals, so
+        /// no trace on disk can currently separate L1C from L2W/L5Q.
+        bool raim_redun_trace{};
         /// POOL RE-HOST, RESOLVED for the run (docs/SPEC_raim_pool_rehost.md): the
         /// post-fit RAIM screen runs on the Card-4 invariant-carry lineage against the
         /// carry-neutral `qc_amb` census.  Already ANDed with `raim_on` and

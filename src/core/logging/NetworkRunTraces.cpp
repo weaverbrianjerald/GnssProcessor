@@ -46,6 +46,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       sat_bias_states_trace_path(log_dir_ / "network_sat_bias_states.csv"),
       rx_states_trace_path(log_dir_ / "network_rx_states.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
+      raim_redun_trace_path(log_dir_ / "network_raim_redundancy.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
       carry_vce_apply_trace_path(log_dir_ / "network_carry_vce_apply.csv"),
       prior_residual_trace_path(log_dir_ / "network_prior_residual.csv"),
@@ -687,6 +688,29 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open station-residual trace {}",
                       station_res_trace_path.string());
     }
+    if (nc.trace_raim_redundancy) {
+        raim_redun_trace.open(raim_redun_trace_path);
+        if (raim_redun_trace)
+            // SPEC_t3_null_derivation §7.1.  One row per post-fit RAIM PHASE ROW —
+            // one level FINER than the cell, keyed (station, sat, signal, row).  The
+            // cell is a max OVER signals, so station_res_trace structurally cannot
+            // answer "is r_i signal-dependent"; this can.
+            //   r_i      Baarda redundancy on the gauge-nulled free covariance.  EMPTY
+            //            when rowRedundancy threw for this station — recorded rather
+            //            than silently dropped, so a station that never yields r_i is
+            //            visible instead of just absent.
+            //   z_meas   |v|·√w — what the SHIPPED statistic pools.
+            //   z_baarda z_meas/√r_i — what it WOULD pool under
+            //            raim_redundancy_normalize, emitted here WITHOUT arming it, so
+            //            both standardizations are comparable on ONE solve.
+            //   below_floor  1 if the normalization would DROP this row (r_i ≤ the
+            //            Baarda redundancy floor) — the population it silently removes.
+            raim_redun_trace << "week,tow,station,sat,signal,row,w,r_i,resid_m,"
+                                "z_meas,z_baarda,below_floor\n";
+        else
+            log->warn("Network: failed to open RAIM redundancy census {}",
+                      raim_redun_trace_path.string());
+    }
 
     // INC-4: capture the L1/L15 config echoes once (pure getter reads).
     es_sigma0_trigger_   = config_.networkRaimSigma0Trigger();
@@ -1308,6 +1332,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"trace_rx_states\":" << (nc.trace_rx_states ? "true" : "false") << ','
                << "\"trace_clock_full\":" << (nc.trace_clock_full ? "true" : "false") << ','
                << "\"trace_station_residuals\":" << (nc.trace_station_residuals ? "true" : "false") << ','
+               << "\"trace_raim_redundancy\":" << (nc.trace_raim_redundancy ? "true" : "false") << ','
                // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
                // needs to tell a screened leg from its control without re-reading the
                // config — and, because `adm_screen` is solve-affecting, to know that
@@ -1646,6 +1671,7 @@ void NetworkRunTraces::closeAll() {
     if (events_trace.is_open()) events_trace.close();
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
+    if (raim_redun_trace.is_open()) raim_redun_trace.close();
     if (carry_vce_trace.is_open()) carry_vce_trace.close();
     if (carry_vce_apply_trace.is_open()) carry_vce_apply_trace.close();
     if (block_baarda_trace.is_open()) block_baarda_trace.close();
