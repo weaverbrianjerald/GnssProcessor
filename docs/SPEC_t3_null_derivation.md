@@ -14,8 +14,16 @@ A/B that rescales every row by **×1.45** and moves the statistic's median by
 statistic *does* see is the pool's internal heterogeneity, and on a fixture where
 every station draws the **same** error model that heterogeneity is a **4.7×
 multiplicative station effect** and a **2.75× signal effect**.  Removing the station axis alone, fitted
-out-of-sample, cuts the false-alarm rate **4.46 % → 0.97 %**.  The correct
-replacement is a **stratified studentization**, not a new threshold.
+out-of-sample, cuts the false-alarm rate **4.46 % → 0.97 %** at **zero cost in
+detection power** (§13: 20/24 injected slips, byte-identical per-rung, 3.9× fewer
+flags).  The correct replacement is a **stratified studentization**, not a new
+threshold.
+
+⚠ **Field check (§12): the structure reproduces and is stronger — station spread 10.5×,
+transferability +0.873 — but the remedy's leverage falls to 1.5×, because the field runs
+with σ̂₀ clamped at the 1.0 floor on 88–96 % of epochs.  In that regime the denominator
+is a constant and the statistic is an unnormalized max, so there is nothing for a
+stratified pool to fix.  Unclamping comes first on the field.**
 
 ---
 
@@ -285,8 +293,11 @@ opportunity definition that matches its conditional construction (§1) or drop i
 `implied_alpha` column, which currently compares a conditional rate against an
 unconditional α.
 
-**R5 — do NOT do.**  Do not arm `raim_redundancy_normalize` for this purpose: measured
-null on the flag rate, +38 % runtime (§5).  It may still be right for MDB, which needs
+**R5 — do NOT do.**  Do not arm `raim_redundancy_normalize` for this purpose **on this
+posture**: measured null on the flag rate, +38 % runtime (§5).  ⚠ **Sim-scoped** — §12.2
+shows the field runs with σ̂₀ clamped at the floor on 88–96 % of epochs, where B2's ×1.45
+lift would *unpin* the pool rather than cancel.  A field B2 arm is owed before this line
+is read as general.  It may still be right for MDB, which needs
 `r_i` for a different reason and hard-errors without it
 (`GnssConfigLoadNetwork.cpp:3540-3551`).  Do not recalibrate `k`: under the exact null
 `k=6` is already an α = 5.9e-9 per-cell test (§3), and on the settled window a
@@ -341,12 +352,13 @@ Leads, in order of how cheaply they can be falsified:
    `saltSeed` at all.  Establish which streams a given lever moves before calling an
    arm "different-seed, same-regime".  **OWED.**
 3. **Field flag rate** — check the fitted structure survives on a field lineage.
-   **OWED.**
+   ✅ **DONE 2026-08-14 — §12.  The structure reproduces and is STRONGER; the
+   remedy's leverage does NOT.**
 4. **Detection power** — the fault fixture (`_simnet24_inj_fault`) must show the MDB is
    preserved.  Stratification should not cost power against single-arc slips (a slip
    moves one cell, and the station factor is a robust median over ~8 cells), but it
    *does* cost power against a whole-station fault — which is precisely what R2's
-   declared station statistic must recover.  **OWED, and it is the gate.**
+   declared station statistic must recover.  ✅ **PASSED 2026-08-14 — §13.**
 
 ## 9. What is NOT established
 
@@ -449,3 +461,118 @@ reference-satellite common-mode path refloats and emits with **no counter and no
 flag-rate tier**.  This is exactly the §9.7.10 error class that the T4a line was added
 to fix — one tier over, unfixed.  Standing invariant #4: an instrument that does not
 record its acting sub-path reads as "nothing happened".
+
+---
+
+## 12. Field check — the structure reproduces, the remedy's leverage does not
+
+Run on `net_matrix_2024-129/net50_1h` (DOY-129 **real data**, 49 stations, GPS+Galileo,
+115 epochs, 76 099 cells) from the 2026-08-12 archive.
+
+⚠ **Provenance and scope.**  These are archived pre-VS2026 runs that CLAUDE.md flags as
+not trusted for accuracy — *regenerate rather than re-grade*.  Nothing here is an
+accuracy verdict.  What is read is the **structure of the residual population**, a
+property of the trace itself.  ⚠ And the field has **no truth**, so its 27.3 % flag
+rate is **not** a false-alarm rate: an unknown share is real slips.  That asymmetry is
+exactly why the derivation fits on the sim.
+
+**The structural claim generalizes, and gets stronger:**
+
+| | sim (`pareref_on`, 24 sta) | field (`net50_1h`, 49 sta) |
+|---|---|---|
+| station scale spread | 4.7× | **10.5×** |
+| corr(log station scale, half 1 vs 2) | +0.847 (23 sta) | **+0.873 (49 sta)** |
+| per-satellite scale spread | — | 6.0× |
+
+**But the remedy's leverage collapses:**
+
+| scoring | sim | field |
+|---|---|---|
+| as shipped, held-out half | 4.4625 % | **27.58 %** |
+| ÷ OOS scale(station × epoch) | **0.9736 %** (4.6×) | **18.48 %** (only **1.5×**) |
+| implied c, k=3 → k=10, after stratification | 1.97 → 2.39 | **3.07 → 6.02** (still steep) |
+
+### 12.1 Why — the σ̂₀ floor binds on the field, and that voids §2's premise
+
+| run | σ̂₀ median | epochs **pinned at the 1.0 floor** |
+|---|---|---|
+| sim `pareref_on` (24 sta) | 1.247 | 38/114 = 33 % |
+| field `net50_1h` (49 sta) | **1.0000** | **110/115 = 95.7 %** |
+| field `h3_guard` (305 sta) | **1.0000** | **312/354 = 88.1 %** |
+
+**On the field the denominator is a constant almost all the time.**  §2's invariance
+theorem holds only while the floor is *not* binding; when it binds, $S_c$ degenerates
+to the bare $\max_{i\in c}|z_i|$ compared against a fixed 6σ bar — no normalization at
+all.  Stratifying the pool cannot buy much when the statistic is discarding the pool's
+scale by clamp.  **The field runs almost entirely in the regime the sim barely visits.**
+
+Why the field pool sits below the floor is not mysterious and closes a loop: for a
+post-fit residual $E[w_i v_i^2] = r_i < 1$, so $\operatorname{med}|v|\sqrt{w}$ is
+systematically *below* nominal and $1.4826\cdot\operatorname{med}$ lands under 1.
+**The missing $\sqrt{r_i}$ is precisely what pushes the pool under the clamp.**
+
+### 12.2 ⚠ This BOUNDS the §5 falsification — reopen B2 for the field
+
+§5 measured `raim_redundancy_normalize` as a null **on the sim, where the floor rarely
+binds**.  On the field it would lift the pool by ≈ ×1.45 and **unpin σ̂₀ on most
+epochs** — which is not a rescaling that cancels, it is a change of *regime*.  The sim
+result therefore **does not transfer**, and B5's "do not arm it" must be read as
+sim-scoped.  A field B2 arm is now an owed measurement, not a closed question.
+
+### 12.3 Falsified in passing
+
+The **constellation axis is a null**: GPS median `s_raw` 1.917 vs Galileo 1.831, a
+**1.05×** ratio, with flag rates 27.23 % vs 27.48 %.  A GPS/Galileo mixture is *not* a
+third heterogeneity axis.
+
+The field tail is genuinely extreme and is not a calibration artifact: q99 = 60.7,
+q999 = 879.5, **max 38 934.8**, with 312 cells (0.66 %) above 100 and **40 above 1000**.
+The sim null arm's max is 26.1.  Those are events, not miscalibration.
+
+## 13. The gate — detection power under stratification (PASSED)
+
+Fault arm `runs/t3fault`, config `_simnet24_inj_t3fault.json`: the
+`_simnet24_inj_fault` fixture (24 injected slips, ±{1,2,3,5,10,50} cycles, 2 per rung,
+GPS, per-band) run in the **validated null posture** (`phase_datum_prioritized` +
+`phase_anchor_carry_reref` + the cell trace), same exe snapshot.  **The station scale is
+fitted on the NULL arm and applied to the fault arm** — fitting it on the arm under test
+would let the fault population set its own denominator.
+
+Run-level: T3 4.186e-02 vs the null's 3.663e-02 — **the 24 injected slips add 0.52
+percentage points on top of a 3.66 % false-alarm floor.**  That ratio is the case for
+this card in one number.
+
+At each statistic's own k = 6:
+
+| statistic | detected | per-rung (1/2/3/5/10/50 cy) | cells flagged |
+|---|---|---|---|
+| as shipped | **20/24** | 4/4 · 3/4 · 4/4 · 4/4 · 3/4 · 2/4 | **912** |
+| ÷ station scale (fitted on the null) | **20/24** | **identical** | **235** |
+| ÷ station × epoch | **20/24** | **identical** | 315 |
+
+**Detection is byte-identical — every rung, every event — while false alarms fall
+3.9×.**  Matched-budget (detections achievable without exceeding a total-flag budget):
+at 200 flags, shipped reaches 17/24 where station-stratified reaches **20/24**; at 300,
+19 vs 20.  Below ~100 flags all three collapse together and the comparison stops being
+informative.
+
+### 13.1 Cross-tier accounting of the four T3 misses
+
+Three of the four are **not misses of the system** — an earlier tier caught them, and
+T3's residual is ≈ 0 precisely *because* the arc was already refloated:
+
+| event | Δcyc | elev | T3 `s_norm` | caught by |
+|---|---|---|---|---|
+| S02 G11 L5Q @304890 | −50 | 60.7° | 0.01 | T0 MW, T2 within-epoch |
+| S15 G23 L2W @304740 | +10 | 10.3° | 0.07 | T1 IF-slip |
+| S03 G03 L5Q @304080 | +2 | 62.1° | 0.00 | T0 MW |
+| **S05 G20 L2W @305400** | **+50** | **50.1°** | **0.00** | **NOTHING — no tier fired** |
+
+**One event is invisible to every tier**: a +50-cycle L2W slip at 50° elevation, the
+largest rung and clean geometry.  That is a genuine detection gap, unrelated to this
+card, and it deserves its own look.
+
+Note also the shape of the table: **T3 catches the whole small end** (±1, ±3, ±5 all
+4/4) while the ±10 and ±50 rungs are grabbed upstream by MW/IF-slip.  T3 is the
+small-slip tier — which is exactly why its false-alarm burden is worth paying down, and
+why a remedy that preserved detection only for large slips would have been useless.

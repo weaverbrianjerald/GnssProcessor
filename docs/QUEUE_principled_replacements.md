@@ -333,6 +333,42 @@ station spread unchanged, flags 798 → 772 at **Jaccard 0.622** — it reshuffl
 cells flag without changing HOW MANY, and costs **+38 % runtime**.  Do not arm it for
 this purpose.
 
+✅ **GATE PASSED + FIELD CHECKED 2026-08-14 (SPEC §12–13).**
+
+- **The MDB gate passes with room.**  Fault arm `runs/t3fault` (the 24-event
+  ±{1,2,3,5,10,50}-cycle ladder in the validated null posture), station scale fitted on
+  the NULL arm and applied to it: **20/24 detected at k=6 with a byte-identical
+  per-rung profile** across shipped / station / station×epoch, while cells flagged fall
+  **912 → 235 (3.9×)**.  Matched-budget: at 200 flags shipped reaches 17/24, stratified
+  **20/24**.  Run-level, the 24 injected slips add only **0.52 points** (3.663e-02 →
+  4.186e-02) on top of the false-alarm floor — the case for the card in one number.
+  Cross-tier: 3 of the 4 T3 misses were caught upstream (T0 MW / T1 IF / T2), and **one
+  event is invisible to every tier** — S05000SIM G20 L2W **+50 cy at 50.1° elevation**,
+  a genuine detection gap unrelated to this card.  T3 carries the whole SMALL end
+  (±1/±3/±5 all 4/4) while ±10/±50 are grabbed upstream.
+- **The field check reproduces the STRUCTURE and refutes the LEVERAGE.**  On
+  `net_matrix_2024-129/net50_1h` (DOY-129 real data, 49 sta, GPS+Galileo) the station
+  spread is **10.5×** (vs the sim's 4.7×) and *more* transferable (**+0.873** over 49
+  stations) — but out-of-sample stratification cuts only **27.58 % → 18.48 % (1.5×)**
+  against the sim's 4.6×, and the implied-c curve stays steep (3.07 → 6.02).
+  **Mechanism identified: σ̂₀ is clamped at the 1.0 floor on 95.7 % of `net50_1h` epochs
+  and 88.1 % of `h3_guard`'s (305 sta), against 33 % on the sim.**  In that regime the
+  denominator is a constant and the statistic is an unnormalized max against a fixed 6σ
+  bar — there is nothing for a stratified pool to fix.  **Unclamping comes first on the
+  field**, and the reason the field pool sits under the floor closes the loop: for a
+  post-fit residual E[w·v²] = r_i < 1, so the missing √r_i is exactly what pushes the
+  median under 1.
+- ⚠ **This BOUNDS the B2 falsification above** — it was measured on the sim, where the
+  floor rarely binds.  On the field B2's ×1.45 lift would *unpin* σ̂₀ rather than cancel,
+  so the sim result does **not** transfer.  A field B2 arm is owed; "do not arm it" is
+  sim-scoped.
+- ⚠ **Field runs have no truth** — 27.3 % is not a false-alarm rate, and the tail
+  (q999 879, **max 38 935**, 40 cells > 1000) contains real events.  These are also
+  archived pre-VS2026 runs; only the residual-population STRUCTURE was read, never an
+  accuracy verdict.
+- **Falsified in passing:** the constellation axis is a null (GPS vs Galileo scale
+  **1.05×**, flag rates 27.23 % vs 27.48 %).
+
 **Replacement, specified (not built):** a slow per-station factor × the existing fast
 network-wide scale — the split is forced by the noise budget (a per-station-per-epoch
 scale has 24.3 % SD; pooled over the window, 5.7 %) — with the station factor promoted
