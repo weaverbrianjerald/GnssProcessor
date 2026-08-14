@@ -317,6 +317,53 @@ G15 alone carries 9 of the 16 steps as a decaying tail (+19.2, +4.2, +3.7, +3.3,
 single re-realization. Whatever drives it is not any gauge-move mechanism this
 card examined.
 
+## 5.06 The PIN BRIDGE already does what a two-pass retarget would — measured
+
+A true two-pass epoch (solve → retarget the pin → re-solve) is structurally
+expensive: `NetworkEstimator::addStation` throws once `solved_` is set
+(`NetworkEstimator.cpp:192-194`), so changing a pin target requires `beginEpoch()`
+plus a **full PASS-B re-assembly** — ~2× the per-epoch cost on every handover
+epoch, not an RHS back-substitution.
+
+It is also largely unnecessary. `NetworkAnchorHygiene.cpp:231`:
+
+```cpp
+const bool want_bridge = bridge_on && !reopen_barred && prior_fresh
+                         && (min_arc_ep <= 0 || !eligible_exists);
+```
+
+reached only when `handover_pending`, and `min_arc_ep <= 0` is the DEFAULT — so
+with `network.phase_datum_time_linked` armed, **every handover is bridged**: the
+key keeps its shared phase bias at `pb_level_prev` through a soft row
+(σ = 0.05 m) with **no station pin at all**. The gauge moves to the SHARED side,
+station-independently — which is the outcome a retarget targets, in one pass, and
+it is reachable from the prioritized anchor election today (not eq34-only).
+
+Measured on the same 24-station arm — `phase_datum_time_linked` is the single
+knob; **27 bridges opened, 453 row-folds, and `0 reattaches performed`** (the
+gauge never moved to another station at all):
+
+| arm | marks | episodes | Σ\|dev\| | peak | T3 | **C-contrast** | **B rms** | consumer |
+|---|---|---|---|---|---|---|---|---|
+| pdp baseline | 15 | 7 | 160.5 | 118.0 | 6.69 % | 18.655 | 1.573 | 1.058 |
+| + handover_continuous | 16 | 7 | 157.1 | 378.4 | 6.60 % | 18.604 | 1.480 | 0.644 |
+| **+ pin BRIDGE** | 15 | **8** | 165.3 | 131.8 | 7.55 % | **17.214** | **0.813** | 0.845 |
+
+**The bridge is a real win on the code-bias channel — B rms 1.573 → 0.813 m,
+1.9×** — and 7.7 % on the datum-free clock contrast. It does NOT reduce the clock
+re-realizations: 7 → 8 episodes, Σ\|dev\| 160.5 → 165.3 m, T3 slightly worse.
+
+**That is now the FOURTH mechanism to leave the clock episodes untouched**
+(datum election on the prioritized path, handover-continuous, the pin bridge, and
+the coverage gate). Four independent interventions on the phase-bias gauge, all
+null on the clock channel, is strong evidence that **the clock churn is not a
+phase-bias gauge problem at all** and that §5.05's third root lies elsewhere.
+
+A two-pass epoch would differ from the bridge in one respect only: its target
+would be the CURRENT epoch's solved value rather than the previous epoch's level,
+and it would be a hard pin rather than a soft row. Given four null results on the
+clock channel, its expected value there is low; it is not scheduled.
+
 ### 5.1 The real fix, not yet built
 
 Both remedies above are avoidance. The defect itself is that a phase-bias column
