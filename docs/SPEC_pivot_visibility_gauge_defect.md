@@ -246,6 +246,53 @@ the consumer channel does not separate arms at this arc length.
 remedy.** It is the invariant-#7-compliant way to move a gauge, and it will be
 needed by whatever does close this; but on the evidence it is not itself the fix.
 
+### 5.0.1 Re-graded on EPISODES — and the fix defers by exactly one epoch
+
+`CLK_STEP` mark count is a poor discriminator: 9 of the 16 marks are one
+satellite (G15) crossing the 1.5 m threshold on nine consecutive epochs. The
+marking is nonetheless *correct* — `NetworkClockEmitRebase.cpp:84-100` computes
+`dev` against the **previous epoch's emitted value** and advances
+`prev_[sat].last_held_m` unconditionally every epoch, so each mark is a genuinely
+NEW common-removed step, not one event re-marked against a stale baseline. (That
+hypothesis was checked explicitly and falsified.)
+
+Re-grading on **episodes** — contiguous mark-runs per satellite:
+
+| | marks | **episodes** | Σ\|dev\| | max \|dev\| |
+|---|---|---|---|---|
+| OFF | 15 | **7** | 160.5 m | 36.51 |
+| ON | 16 | **7** | 157.1 m | 36.52 |
+
+Seven episodes either way, cumulative re-realization down 2 %. The fix is confirmed
+null on this channel — but the episode listing shows something the aggregate hid:
+
+| sat | OFF onset | ON onset | Σ\|dev\| OFF → ON |
+|---|---|---|---|
+| G21 | 303420 | **303450** | 22.5 → 20.0 |
+| G23 | 303420 | **303450** | 18.8 → 19.1 |
+| G15 | 303510 | **303540** | 41.3 → 40.1 (9 epochs both) |
+| G25 | 303660 | **303690** | 18.8 → 18.8 |
+| G07 | 304290 | **304320** | 21.1 → 21.1 |
+| G12 | 305880 | **305910** | 36.5 → 36.5 |
+
+**Every episode fires exactly one epoch (30 s) later with the fix armed, at
+near-identical magnitude.** The continuous pin holds the frame for exactly one
+epoch and the re-realization then happens anyway — which is precisely the
+signature of a ledger that is ONE EPOCH STALE: the value pinned at epoch *t* is
+the successor's estimate in the frame of *t−1*, and by *t* that frame has moved.
+
+That is a sharper result than "no effect": the mechanism demonstrably acts on the
+right quantity and is defeated by its own deferral. Closing it needs a
+same-epoch estimate of the successor's ambiguity, which does not exist before the
+solve — so either a two-pass epoch (solve, retarget, re-solve) or a predicted
+value with its own uncertainty, both of which are larger cards than this one.
+
+The 2 % cumulative improvement and the uniform one-epoch shift are also consistent
+with a simpler reading: these seven episodes are threshold crossings of a quantity
+the handover does not control, and arming the knob perturbs the solve just enough
+to move each crossing by one epoch. §5.05's three falsified hypotheses stand
+either way — the same seven satellites step by the same amounts in both arms.
+
 ## 5.05 What the A/B ruled OUT — the two defects are different
 
 Testing the fix produced a sharper diagnosis than the fix itself.
