@@ -124,6 +124,15 @@ struct NetworkAnchorTallies {
     long long bridge_drop_leftset = 0;   ///< dropped: the key left this epoch's shared set.
     long long bridge_drop_healed = 0;    ///< closed: an eligible host appeared, so a normal pin resumes.
     long long fresh_pin_ramps = 0;       ///< INC-3 datum rows folded with a ramped σ.
+    // --- TWO-EDGE CONTINUOUS HANDOVER (network.phase_datum_handover_continuous) ---
+    // Both edges are counted separately and deliberately: a handover that could
+    // not be made continuous is a REAL re-realization the consumer must be told
+    // about, and burying it in the same counter as a clean one would reproduce
+    // the silent gauge change this mechanism exists to remove (invariant #7).
+    long long handover_continuous = 0;   ///< Pin handed over at the successor's own outgoing-frame value — no frame step.
+    long long handover_cold = 0;         ///< No ledger entry for the successor (fresh arc / first epoch): pinned at 0, frame DOES step.
+    double    handover_max_abs_m = 0.0;  ///< Largest |target| applied — the size of the step that was AVOIDED.
+    long long handover_refused_var = 0;  ///< Ledger value REFUSED as too ill-determined to serve as a datum (subset of handover_cold) — invariant #7's re-coupling re-validation.
     double bridge_margin_decades = 0.0;  ///< K2-style margin of the bridge information over the rank-gate cutoff.
     bool   bridge_margin_logged = false; ///< one-shot latch for that check.
 };

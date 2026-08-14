@@ -14,6 +14,7 @@
 #include "common/PppObservation.hpp"    // INC-8b: modeled[] elevation source
 
 #include <algorithm>
+#include <cmath>                        // std::isfinite / std::abs — handover ledger
 #include <map>
 #include <utility>
 
@@ -238,7 +239,10 @@ void networkElectPhaseAnchors(
         NetworkAnchorTallies& tally,
         std::map<std::string, std::string>& anchor_incumbent,
         std::map<std::string, std::string>& this_epoch_anchor,
-        std::set<std::string>& shared_phase_keys) {
+        std::set<std::string>& shared_phase_keys,
+        const AnchorHandoverLedger* handover,
+        std::vector<AnchorHandoverEvent>* handovers_out,
+        double max_var) {
     const auto& usable_keys = cnd.usable_keys;
     const auto& cand_set    = cnd.cand_set;
     const auto& union_keys  = cnd.union_keys;
@@ -316,10 +320,65 @@ void networkElectPhaseAnchors(
             }
         }
         if (anchor == static_cast<size_t>(-1)) continue;   // no tracker (unreachable)
-        stations[anchor].pinned_amb_targets[amb] = 0.0;   // prioritized: pin to 0
+        // TWO-EDGE CONTINUOUS HANDOVER (docs/SPEC_pivot_visibility_gauge_defect.md).
+        //
+        // The gauge is "this anchor's ambiguity for `amb` = target".  Re-pinning a
+        // NEW anchor at 0 realizes a DIFFERENT frame: the whole (sat,signal) family
+        // steps by the inter-station ambiguity difference and the satellite clock
+        // absorbs it.  That is a gauge change with no S-transform — the defect this
+        // block exists to close.
+        //
+        // So on a HANDOVER (and only then — a key whose anchor did not move keeps
+        // its 0.0 pin, which is what keeps a settled network byte-identical) the
+        // target becomes the incoming anchor's OWN absolute ambiguity estimate in
+        // the OUTGOING frame, taken from the previous epoch's ledger.  Pinning it
+        // there reproduces the frame the outgoing anchor realized, so nothing steps.
+        const auto  inc = anchor_incumbent.find(amb);
+        const bool  is_handover = inc != anchor_incumbent.end()
+                                  && inc->second != stations[anchor].name;
+        double target = 0.0;
+        bool   continuous = false;
+        if (is_handover && handover) {
+            const auto hit = handover->value_abs.find(
+                    {static_cast<int>(anchor), amb});
+            // RE-VALIDATE BEFORE RE-COUPLING (invariant #7).  The pin is a hard
+            // ~1e10-weight constraint: stamping in an ILL-DETERMINED estimate is
+            // strictly worse than re-zeroing, because it injects that estimate's
+            // own error as a datum.  Measured before this gate existed: a +17.08 m
+            // target taken from an unvalidated arc produced a 378-sigma residual
+            // spike on the following epoch, worse than the step it replaced.  So a
+            // value is usable only when its conditional variance is finite,
+            // positive and below the caller's ceiling; everything else falls
+            // through to the honest COLD path.
+            const bool usable =
+                    hit != handover->value_abs.end()
+                    && std::isfinite(hit->second.value)
+                    && hit->second.var > 0.0
+                    && std::isfinite(hit->second.var)
+                    && hit->second.var <= max_var;
+            if (usable) {
+                target     = hit->second.value;
+                continuous = true;
+                ++tally.handover_continuous;
+                tally.handover_max_abs_m =
+                        std::max(tally.handover_max_abs_m, std::abs(target));
+            } else {
+                // Either no estimate for this successor (a genuinely fresh arc, or
+                // the run's first epoch) or one too poorly determined to be trusted
+                // as a datum.  Pin at 0 and COUNT it — the frame does step here, and
+                // an unavoidable re-realization the consumer is TOLD about is a
+                // different object from a silent one.
+                ++tally.handover_cold;
+                if (hit != handover->value_abs.end() && hit->second.var > max_var)
+                    ++tally.handover_refused_var;
+            }
+        }
+        stations[anchor].pinned_amb_targets[amb] = target;
+        if (is_handover && handovers_out)
+            handovers_out->push_back(AnchorHandoverEvent{
+                    amb, inc->second, stations[anchor].name, target, continuous});
         {
-            const auto inc = anchor_incumbent.find(amb);
-            if (inc != anchor_incumbent.end() && inc->second != stations[anchor].name)
+            if (is_handover)
                 ++tally.reattaches;
             const double sc = hyg.pinSigmaScale(anchor, amb);
             if (sc > 1.0) {

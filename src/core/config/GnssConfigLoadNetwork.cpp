@@ -5594,6 +5594,24 @@ namespace GnssProcessor {
         network_phase_datum_sticky_ =
             jval<bool>(json, "network.phase_datum_sticky",
                        "network_phase_datum_sticky", true);
+        // TWO-EDGE CONTINUOUS HANDOVER (docs/SPEC_pivot_visibility_gauge_defect.md).
+        // Stickiness minimizes the NUMBER of handovers; this makes the ones that
+        // still happen frame-preserving.  The two are complementary, not
+        // alternatives — sticky alone still re-realizes on every handover it cannot
+        // avoid, which is what turned the prioritized election into 15 clock steps.
+        network_phase_datum_handover_continuous_ =
+            jval<bool>(json, "network.phase_datum_handover_continuous",
+                       "network_phase_datum_handover_continuous", false);
+        network_phase_datum_handover_max_var_m2_ =
+            jval<double>(json, "network.phase_datum_handover_max_var_m2",
+                         "network_phase_datum_handover_max_var_m2", 1.0);
+        if (!(network_phase_datum_handover_max_var_m2_ > 0.0)) {
+            log->error("Network: network.phase_datum_handover_max_var_m2 must be > 0 "
+                       "(got {}); it is the re-validation ceiling that stops an "
+                       "ill-determined estimate being stamped in as a datum.",
+                       network_phase_datum_handover_max_var_m2_);
+            return false;
+        }
         // Coverage-threshold gating of the anchored union: a shared phase-bias
         // column enters the union only when >= this many present stations track it
         // with a usable ambiguity.  1 (default) = every tracked key, the original
@@ -6670,6 +6688,46 @@ namespace GnssProcessor {
                       "(the legacy pivot datum has no union to gate).",
                       network_phase_datum_min_stations_);
         }
+
+        // TWO-EDGE CONTINUOUS HANDOVER — INERT guards, then the arming line.
+        // Follows the eq34-hygiene / pool-re-host precedent: an arm that cannot move
+        // a byte is DISABLED here with the reason, rather than discovered after a
+        // field run (standing invariant #4).
+        if (network_phase_datum_handover_continuous_ && !network_phase_datum_prioritized_) {
+            log->warn("Network (phase-datum handover): "
+                      "network.phase_datum_handover_continuous is on but "
+                      "network.phase_datum_prioritized is OFF — the legacy datum elects no "
+                      "anchor at all (its shared set IS the clock-pivot station's own "
+                      "phase-bias states), so there is no handover to make continuous.  On "
+                      "that posture a pivot that loses a satellite DELETES the column "
+                      "network-wide instead of handing it over, which is the more severe "
+                      "form of the same defect.  DISABLED (no behaviour change).");
+            network_phase_datum_handover_continuous_ = false;
+        }
+        if (network_phase_datum_handover_continuous_ && network_phase_datum_ensemble_) {
+            log->warn("Network (phase-datum handover): "
+                      "network.phase_datum_handover_continuous is on with the ENSEMBLE datum, "
+                      "which elects no anchor and holds no pin (the gauge is the kernel "
+                      "sum-to-zero fold), so there is nothing to hand over.  DISABLED.");
+            network_phase_datum_handover_continuous_ = false;
+        }
+        if (network_phase_datum_handover_continuous_ && network_phase_datum_eq34_) {
+            log->warn("Network (phase-datum handover): "
+                      "network.phase_datum_handover_continuous is on with the eq34 CHAIN datum, "
+                      "which owns its own pin-target policy (pin-round / seed-round) and would "
+                      "fight this one for the same target.  DISABLED — the chain datum's "
+                      "handover continuity is a separate card.");
+            network_phase_datum_handover_continuous_ = false;
+        }
+        if (network_phase_datum_handover_continuous_)
+            log->info("Network producer (PB-GAUGE HANDOVER, two-edge): an anchor handover now "
+                      "pins the INCOMING anchor at its own absolute ambiguity estimate in the "
+                      "OUTGOING frame instead of at 0, so the gauge change is an S-transform "
+                      "and the emitted (sat,signal) family does not step.  Both edges are "
+                      "counted and traced (PBGAUGE rows); a successor with no ledger entry "
+                      "(fresh arc / first epoch) still pins at 0 and is counted as a COLD "
+                      "handover — an unavoidable re-realization the consumer is TOLD about.  "
+                      "Ledger is harvested post-solve and consumed one epoch later.");
         // PB emission-continuity filter INERT unless the invariant carry is armed
         // (its re-based emission frame is the filter's input); the carry-ON case is
         // reported inside the carry_invariant block above.

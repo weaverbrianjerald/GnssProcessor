@@ -1669,10 +1669,35 @@ int Application::runNetwork() {
                                        present, cnd, hyg, carry_slipped_ambs,
                                        shared_phase_keys);
             } else {
+                // TWO-EDGE CONTINUOUS HANDOVER
+                // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).  BOTH the ledger
+                // and the event sink are passed only when armed, so OFF is
+                // byte-identical on the solve AND on network_events.csv (standing
+                // invariant #6).  The handover COUNT on an unarmed arm is already
+                // visible without these rows — `tally.reattaches` counts every gauge
+                // change either way — so making the trace unconditional would have
+                // bought nothing and cost the byte-identity.
+                std::vector<AnchorHandoverEvent> handovers;
+                const bool hv_on = ctx.knobs.pd_handover_continuous;
                 networkElectPhaseAnchors(sticky, stations, present, cnd, hyg,
                                          ctx.counters.hyg,
                                          anchor_incumbent, this_epoch_anchor,
-                                         shared_phase_keys);
+                                         shared_phase_keys,
+                                         hv_on ? &ctx.carry.handover : nullptr,
+                                         hv_on ? &handovers : nullptr,
+                                         ctx.knobs.pd_handover_max_var);
+                // BOTH EDGES in one row (invariant #7): who released the gauge, who
+                // took it, and whether the frame was preserved.  A handover logged
+                // only on its incoming half is exactly the silent re-referencing the
+                // FT63 topology ledger was built to recover.
+                for (const auto& h : handovers)
+                    traces.emitEvent(se.time, "PBGAUGE",
+                                     h.continuous ? "handover_continuous"
+                                                  : "handover_cold",
+                                     h.amb, h.to, h.target_m, std::nullopt,
+                                     h.continuous ? "s_transform" : "re_realize",
+                                     "from=" + (h.from.empty() ? std::string("(none)")
+                                                               : h.from));
             }  // end anchor election (!ensemble && !eq34)
         }
 

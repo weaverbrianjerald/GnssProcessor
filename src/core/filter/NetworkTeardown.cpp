@@ -517,6 +517,43 @@ int networkTeardown(
                       "not 'no effect').");
     }
 
+    // --- TWO-EDGE CONTINUOUS HANDOVER run-end telemetry -------------------------
+    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).  Standing invariant #4: the
+    // DENOMINATOR is `reattaches` — how many gauge changes the run made at all — and
+    // it is reported whether or not the fix is armed, because a run that made zero
+    // handovers proves nothing about the mechanism.  The two edges are then split:
+    // `handover_continuous` are the frame-preserving ones, `handover_cold` the
+    // unavoidable re-realizations, and a cold one is NOT a failure — it is the
+    // honest report of a step the consumer must be told about.
+    if (ctx.knobs.pd_handover_continuous) {
+        const auto& h = ctx.counters.hyg;
+        const long long total = h.handover_continuous + h.handover_cold;
+        log->info("Network (PB-GAUGE HANDOVER, two-edge): {} anchor handover(s) over the "
+                  "run — {} made CONTINUOUS (pinned at the successor's own value in the "
+                  "outgoing frame; largest |target| {:.4f} m, which is the size of the "
+                  "frame step that was AVOIDED) and {} COLD (no ledger entry for the "
+                  "successor — a fresh arc or the first epoch — pinned at 0, so the "
+                  "frame DID step there).",
+                  h.reattaches, h.handover_continuous, h.handover_max_abs_m,
+                  h.handover_cold);
+        if (h.reattaches > 0 && total == 0)
+            log->warn("Network (PB-GAUGE HANDOVER): DEAD WIRING — {} handover(s) were "
+                      "elected but NONE reached the retarget block.  The knob reports "
+                      "ARMED and every pin still went in at 0, so every one of those "
+                      "gauge changes re-realized the frame.",
+                      h.reattaches);
+        else if (total > 0 && h.handover_continuous == 0)
+            log->warn("Network (PB-GAUGE HANDOVER): {} handover(s) and NOT ONE was "
+                      "continuous — every successor was missing from the ledger.  That "
+                      "is the harvest not running (the census `qc_amb` is empty, or the "
+                      "solve reconstruction failed), not a property of the data.",
+                      total);
+        else if (h.reattaches == 0)
+            log->info("Network (PB-GAUGE HANDOVER): ZERO handovers this run — the anchor "
+                      "set never moved, so this arm exercises the mechanism NOT AT ALL.  "
+                      "That is a quiet window, not evidence the fix works.");
+    }
+
     // --- eq34 reattach hygiene run-end telemetry -------------------------------
     // (docs/SPEC_eq34_reattach_hygiene.md).  Standing invariant #4: an armed run whose
     // gate never RAN is a different failure from one that ran and found nothing to

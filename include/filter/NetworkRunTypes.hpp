@@ -357,6 +357,66 @@ struct PlAmb {
     std::string  amb_key; ///< Full ambiguity key (clears a one-shot IF-phase refloat mark post-stash).
 };
 
+/// ---------------------------------------------------------------------------
+/// TWO-EDGE ANCHOR HANDOVER (docs/SPEC_pivot_visibility_gauge_defect.md §5.1)
+/// ---------------------------------------------------------------------------
+/// The phase-bias gauge is one constraint per (sat,signal): "station r*'s
+/// ambiguity for this key = 0".  When r* changes — the clock pivot stopped
+/// seeing the satellite, or the anchor election moved — re-pinning the SUCCESSOR
+/// at 0 realizes a DIFFERENT frame, and the whole family steps by the
+/// inter-station ambiguity difference.  The satellite clock absorbs it.
+///
+/// Measured on a truth-clean 24-station fixture: a legacy pivot losing G15
+/// stepped the emitted clock -12.06 m and never recovered; the prioritized
+/// election converts that into 15 smaller steps instead of one large one.  Both
+/// are ONE-EDGE events — the gauge is changed with no S-transform.
+///
+/// The fix is to hand the pin over AT THE INCOMING ANCHOR'S OWN VALUE IN THE
+/// OUTGOING FRAME, so the realization is continuous by construction.  That value
+/// is @ref AnchorHandoverLedger, harvested post-solve one epoch earlier.
+///
+/// ⚠ WHY A LEDGER AND NOT `getStateVector()(amb_idx)`.  That is `x_lin` — a
+/// LINEARIZATION FRAME, not an estimate.  The network solve is never written
+/// back into the per-station StateManager (`setStateVector` runs once, at
+/// setup), and an `x_lin` shift on a local column is a proven exact solve
+/// no-op, so pinning to it would carry no information about where the arc
+/// actually sits.  The absolute estimate is `x_lin + back-substituted Δx`, which
+/// only exists after the solve — hence the one-epoch deferral, the same shape as
+/// `carry_innov_pending` / `dw_release_pending` / `raim_refloat_pending`.
+struct AnchorHandoverLedger {
+    /// (station index, ambiguity key "sat_signal") -> that station's ABSOLUTE
+    /// ambiguity estimate from the PREVIOUS epoch's solve, in that epoch's
+    /// realized frame.  Rebuilt wholesale each epoch: a one-epoch lifetime is
+    /// the bound on what a decoupled gauge may carry (invariant #7).
+    /// value = the absolute estimate; var = its conditional variance (m²).  The
+    /// VARIANCE is not decoration: the pin is a ~1e10-weight hard constraint, so
+    /// stamping an ill-determined estimate in is worse than re-zeroing — measured,
+    /// a +17.08 m target taken from an unvalidated arc produced a 378-sigma residual
+    /// spike one epoch later.  Invariant #7's re-coupling edge must RE-VALIDATE
+    /// what it reconnects; this is what makes that check possible.
+    struct Entry {
+        double value{0.0};
+        double var{-1.0};   ///< < 0 = unavailable, treated as unusable.
+    };
+    std::map<std::pair<int, std::string>, Entry> value_abs;
+    /// True once a harvest has run, so the election can tell "armed but the
+    /// first epoch has no history yet" from "not armed".
+    bool primed{false};
+};
+
+/// One anchor handover, reported out of the election for the caller's
+/// @c trace_events rows.  Purely observational — emitting it never changes which
+/// station is elected or what target is pinned.  Both EDGES are in one record on
+/// purpose: a handover with only its incoming half logged is exactly the silent
+/// re-referencing invariant #7 exists to forbid.
+struct AnchorHandoverEvent {
+    std::string amb;            ///< "sat_signal" (the ambiguity key).
+    std::string from;           ///< Outgoing anchor station; empty = first pin (no prior frame).
+    std::string to;             ///< Incoming anchor station.
+    double      target_m{0.0};  ///< Pin target applied to the incoming anchor (m).
+    bool        continuous{false}; ///< true = frame preserved; false = COLD re-realization.
+};
+
 /// One present station ZWD column this epoch (B9): its A_r column and the ZWD
 /// linearization point, for the post-solve harvest/stash (mirrors @ref PlAmb).
 struct PlZwd {

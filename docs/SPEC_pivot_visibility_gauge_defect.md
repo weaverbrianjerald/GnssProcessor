@@ -200,6 +200,76 @@ audit tool flags exactly this case rather than reporting "no step".
 3. **Do NOT reach for `phase_datum_prioritized` as the fix** without re-measuring
    the datum-free contrast on the target lineage.
 
+## 5.0 THE TWO-EDGE HANDOVER — BUILT, and it does NOT close the defect
+
+`network.phase_datum_handover_continuous` (default OFF), landed with
+`network.phase_datum_handover_max_var_m2` (default 1.0 m²).
+
+**What it does.** On an anchor handover the election pins the INCOMING anchor at
+its own absolute ambiguity estimate **in the outgoing frame** — taken from a
+one-epoch ledger harvested post-solve off the carry-neutral `qc_amb` census —
+instead of re-zeroing it. The realization is then unchanged by construction.
+Both edges are counted (`handover_continuous` / `handover_cold` /
+`handover_refused_var`) and emitted as `PBGAUGE` trace rows carrying the outgoing
+anchor, the incoming anchor and the target applied. The re-coupling edge
+re-validates before it reconnects: a ledger value whose conditional variance
+exceeds the ceiling is refused to the honest COLD path, because the pin is a hard
+~1e10-weight constraint and stamping in an ill-determined estimate injects that
+estimate's error *as a datum*.
+
+**⚠ Why `x_lin` cannot be used.** `getStateVector()(amb_idx)` at election time is
+a LINEARIZATION FRAME, not an estimate — the network solve is never written back
+into the per-station StateManager, and an `x_lin` shift on a local column is a
+proven exact solve no-op. The absolute estimate is `x_lin + back-substituted Δx`,
+which exists only after the solve; hence the one-epoch deferral, the same shape as
+`carry_innov_pending` / `dw_release_pending` / `raim_refloat_pending`.
+
+**Verification.** 14 unit cases. OFF path byte-identical on a same-build golden
+comparison: `network_{events,solution,dd_fractional,epoch_status}.csv` bit-identical
+and all four graded channels equal to 4 decimals. Mechanically it works — 27 of 30
+handovers made continuous on the 24-station arm, largest avoided step **17.07 m**.
+
+**And it does not deliver.** Single-knob A/B, same build, 24-station fixture:
+
+| | peak | p99 | CLK_STEP | T3 | **C-contrast rms** | B rms | consumer |
+|---|---|---|---|---|---|---|---|
+| OFF | 118.0 | 37.7 | 15 | 6.69 % | 18.655 m | 1.573 | 1.058 |
+| ON | 378.4 | 35.9 | 16 | 6.60 % | **18.604 m** | 1.480 | 0.644 |
+
+The datum-free clock contrast moves 0.3 %. Clock steps go 15 → 16. One key (G21,
+the largest target at +17.07 m) shows a *higher* peak in the ON arm, and the
+variance ceiling at 1.0 m² did not refuse it — so that regression is measured but
+unexplained. The consumer and B improvements are not claimed: §4.1 already showed
+the consumer channel does not separate arms at this arc length.
+
+**The mechanism is landed default-OFF as a correct primitive, NOT as a validated
+remedy.** It is the invariant-#7-compliant way to move a gauge, and it will be
+needed by whatever does close this; but on the evidence it is not itself the fix.
+
+## 5.05 What the A/B ruled OUT — the two defects are different
+
+Testing the fix produced a sharper diagnosis than the fix itself.
+
+**Under the prioritized union the legacy defect is already gone.** The whole
+120-epoch prioritized run contains exactly **one** phase-bias column removal (G20,
+`PB+CLK+CB` — a satellite genuinely leaving the network), against six pivot-only
+removals on the legacy arm. So the proven −12.06 m defect of §1–§3 is closed by
+electing the union, not by anything in §5.0.
+
+**The prioritized arm's own 15–16 clock steps are a THIRD, still-open root.**
+Three hypotheses tested and falsified:
+
+| hypothesis | test | result |
+|---|---|---|
+| they are anchor handovers | compensate all 30 (§5.0) | **no effect** on C-contrast or step count |
+| they are column-set changes | correlate CLK_STEP with `col_removed` on the same sat | **0 / 15** |
+| the CLOCK datum station's visibility does it, as the PB datum's did | correlate first CLK_STEP per sat with that station's satellite losses | **1 / 6** |
+
+G15 alone carries 9 of the 16 steps as a decaying tail (+19.2, +4.2, +3.7, +3.3,
++2.8, +1.9, +1.6, +1.7, +1.6 m over consecutive epochs) — a slow re-settle, not a
+single re-realization. Whatever drives it is not any gauge-move mechanism this
+card examined.
+
 ### 5.1 The real fix, not yet built
 
 Both remedies above are avoidance. The defect itself is that a phase-bias column

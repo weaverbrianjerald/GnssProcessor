@@ -217,6 +217,17 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.fresh_pin_scale    = ramp_on ? nc.eq34_fresh_pin_sigma_scale : 1.0;
         k.fresh_pin_ramp_ep  = ramp_on ? nc.eq34_fresh_pin_ramp_ep : 0;
         k.anchor_hygiene_on  = k.eq34_min_arc_ep > 0 || k.pin_bridge_on || ramp_on;
+        // TWO-EDGE CONTINUOUS HANDOVER (docs/SPEC_pivot_visibility_gauge_defect.md).
+        // Resolved here, inside `anchored`, because it is meaningful only where an
+        // anchor PIN exists to hand over.  `!phase_datum_eq34` narrows it further:
+        // the chain datum owns its own pin-target policy (pin-round / seed-round)
+        // and the two would fight for the same target.  The loader already disarms
+        // all three cases; this is the same belt-and-braces the block above uses so
+        // a hand-built NetworkConfig in a test cannot arm it on the wrong election.
+        k.pd_handover_continuous = anchored && !k.phase_datum_eq34
+                                   && config_.networkPhaseDatumHandoverContinuous();
+        k.pd_handover_max_var = k.pd_handover_continuous
+                                ? config_.networkPhaseDatumHandoverMaxVarM2() : 0.0;
     }
     // SBC S-basis completion (network.sbasis_complete).  Resolved here so the
     // pb_level_prev harvest (which the completion's continuity targets re-use —
@@ -2082,6 +2093,67 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const bool   prires_zwd  = ctx.knobs.prires_zwd;
     const bool   prires_rxcb = ctx.knobs.prires_rxcb;
     const double zwd_q       = ctx.knobs.zwd_q;
+
+    // --- TWO-EDGE CONTINUOUS HANDOVER: ledger harvest -------------------------
+    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1)
+    //
+    // Record, for every anchor-CANDIDATE column, the station's ABSOLUTE ambiguity
+    // estimate in THIS epoch's realized frame, so that if the anchor for that key
+    // moves next epoch the election can pin the successor HERE instead of at 0 —
+    // making the gauge change an S-transform rather than a re-realization.
+    //
+    // ⚠ WHY NOT `st.sm->getStateVector()(amb_idx)` AT ELECTION TIME.  That is
+    // `x_lin`, a linearization FRAME.  The network solve is never written back into
+    // the per-station StateManager (`setStateVector` runs once, at setup), and an
+    // `x_lin` shift on a local column is a proven exact solve no-op — so pinning to
+    // it would carry no information about where the arc actually sits.  The estimate
+    // is `x_lin + back-substituted Δx`, which exists only HERE, after the solve.
+    // Hence the one-epoch deferral: harvested now, consumed by the next epoch's
+    // election.  Same shape as carry_innov_pending / dw_release_pending /
+    // raim_refloat_pending.
+    //
+    // The population is `R.qc_amb`, the carry-neutral census — columns PRESENT in
+    // A_r and UNPINNED.  That is exactly right: a station holding the pin is not a
+    // handover TARGET, and its pinned column carries no independent information.
+    // Deliberately NOT gated on carry_warm: the whole point is to work on the
+    // lineages where the phase-leveling carry does not exist.
+    if (ctx.knobs.pd_handover_continuous) {
+        ctx.carry.handover.value_abs.clear();
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (est_index_of[i] < 0) continue;
+            const StationAssembly& R = asm_res[i];
+            if (R.qc_amb.empty()) continue;
+            const std::size_t est_idx_hv = static_cast<std::size_t>(est_index_of[i]);
+            Eigen::VectorXd xr, vhv;
+            std::vector<Eigen::Index> cols_hv;
+            cols_hv.reserve(R.qc_amb.size());
+            for (const auto& pa : R.qc_amb) cols_hv.push_back(pa.col);
+            try {
+                xr  = est.reconstructStation(est_idx_hv, x_s);
+                // The pin is a hard ~1e10-weight constraint, so the re-coupling edge
+                // must be able to RE-VALIDATE the value before stamping it in
+                // (invariant #7).  Same conditional-diagonal harvest the phase-
+                // leveling carry uses for its own priors — cheap per-column, not a
+                // full per-station inverse.
+                vhv = est.conditionalLocalVarianceDiag(est_idx_hv, cols_hv,
+                                                       plan.shared_datum);
+            } catch (...) { continue; }
+            for (std::size_t a = 0; a < R.qc_amb.size(); ++a) {
+                const PlAmb& pa = R.qc_amb[a];
+                if (pa.col < 0 || pa.col >= xr.size()) continue;
+                const double value_abs = pa.x_lin + xr(pa.col);
+                if (!std::isfinite(value_abs)) continue;
+                const double var = (a < static_cast<std::size_t>(vhv.size()))
+                                       ? vhv(static_cast<Eigen::Index>(a)) : -1.0;
+                // Key on "sat_signal" — byte-identical to the election's `amb`
+                // (kAmbiguityDelimiter is '_'), so the lookup needs no translation.
+                ctx.carry.handover.value_abs[{static_cast<int>(i),
+                                              pa.sat + "_" + pa.signal}] =
+                        AnchorHandoverLedger::Entry{value_abs, var};
+            }
+        }
+        ctx.carry.handover.primed = true;
+    }
 
     // --- Phase-leveling carry: harvest posterior + stash (Increment 1) ----
     // For each present non-pivot station, recover its ambiguities' ABSOLUTE

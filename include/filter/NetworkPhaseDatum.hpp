@@ -202,6 +202,29 @@ void networkElectEnsembleDatum(
  *                          degrades the election to a fresh one every epoch,
  *                          which is invisible except as handover churn.
  * @param this_epoch_anchor [out] read at the emit site for handover signalling.
+ * @param handover          TWO-EDGE CONTINUOUS HANDOVER
+ *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).
+ *                          @c nullptr (the default) is the pre-card election
+ *                          EXACTLY: every pin target is 0.0.  When supplied, a
+ *                          handover pins the INCOMING anchor at its own absolute
+ *                          ambiguity estimate from the ledger — i.e. at its value
+ *                          in the OUTGOING frame — so the gauge change is an
+ *                          S-transform and the emitted (sat,signal) family does
+ *                          not step.  A successor with no ledger entry (fresh arc
+ *                          / first epoch) still pins at 0 and is counted as a COLD
+ *                          handover: an unavoidable re-realization the consumer is
+ *                          TOLD about is a different object from a silent one.
+ *                          Only a HANDOVER is retargeted — a key whose anchor did
+ *                          not move keeps its 0.0 pin, so a settled network is
+ *                          byte-identical even with the ledger supplied.
+ * @param handovers_out     [out, optional] APPENDED per-handover attribution
+ *                          (@ref AnchorHandoverEvent) for the caller's
+ *                          @c trace_events rows — BOTH edges in one record.
+ *                          Purely observational: it never changes which station is
+ *                          elected or what target is pinned.  Populated whenever
+ *                          it is non-null, including on the @c handover ==
+ *                          @c nullptr path, so the churn a legacy arm suffers can
+ *                          be MEASURED before the fix is armed.
  */
 void networkElectPhaseAnchors(
         bool sticky,
@@ -212,6 +235,9 @@ void networkElectPhaseAnchors(
         NetworkAnchorTallies& tally,
         std::map<std::string, std::string>& anchor_incumbent,
         std::map<std::string, std::string>& this_epoch_anchor,
-        std::set<std::string>& shared_phase_keys);
+        std::set<std::string>& shared_phase_keys,
+        const AnchorHandoverLedger* handover = nullptr,
+        std::vector<AnchorHandoverEvent>* handovers_out = nullptr,
+        double max_var = 0.0);
 
 } // namespace GnssProcessor

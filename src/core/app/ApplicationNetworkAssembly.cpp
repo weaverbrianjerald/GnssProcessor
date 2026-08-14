@@ -1909,6 +1909,15 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // Already ANDed with raim_on + the RESOLVED carry_invariant when the knobs were
     // snapshotted, so this is a single bool here.  OFF ⇒ qc_amb is never allocated.
     const bool raim_ci_on              = ctx.knobs.raim_ci_on;
+    // TWO-EDGE CONTINUOUS HANDOVER (docs/SPEC_pivot_visibility_gauge_defect.md): a
+    // SECOND consumer of the carry-neutral `qc_amb` census.  The handover ledger
+    // needs each candidate anchor's absolute ambiguity estimate, and the census is
+    // already exactly the right population — columns PRESENT in A_r and UNPINNED,
+    // i.e. every station that could receive a pin but does not hold one now.
+    // Widening the existing census rather than adding a third parallel one keeps a
+    // single answer to "which columns are enumerable" (the same discipline that
+    // made `pl_amb` a subset of `qc_amb` instead of a sibling).
+    const bool pd_handover_continuous  = ctx.knobs.pd_handover_continuous;
     // Station congruence screen, INC-0 (docs/SPEC_station_congruence.md).  The ONLY
     // thing the assembly owes that card: retain each data row's position partial,
     // which networkSplitStation_ is about to drop on the floor because the network
@@ -2540,7 +2549,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // cost is a second `getStateVector()` when both are live; that is a
             // per-station vector copy already paid once below, and it is not paid at
             // all on the OFF path.
-            if (raim_ci_on) {
+            if (raim_ci_on || pd_handover_continuous) {
                 const Eigen::VectorXd x_lin_qc = st.sm->getStateVector();
                 for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
                     const auto parts = StateKeys::parseAmbiguityKey(key);

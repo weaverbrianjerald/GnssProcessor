@@ -3358,6 +3358,82 @@ namespace GnssProcessor {
         bool networkPhaseDatumSticky() const { return network_phase_datum_sticky_; }
 
         /**
+         * @brief Make a phase-bias anchor handover CONTINUOUS — an S-transform
+         *        rather than a re-realization
+         *        (@c network.phase_datum_handover_continuous).
+         *
+         * The phase-bias gauge is one constraint per (satellite,signal): "station
+         * r*'s ambiguity for this key = 0".  Every mechanism that moves r* today
+         * re-pins the SUCCESSOR at 0, which realizes a DIFFERENT frame; the whole
+         * (satellite,signal) family steps by the inter-station ambiguity
+         * difference and the satellite CLOCK absorbs it.  That is a gauge change
+         * applied with no S-transform — standing invariant #7 with an unbounded
+         * decoupling edge and an implicit re-coupling edge.
+         *
+         * Measured on a truth-clean 24-station fixture
+         * (docs/SPEC_pivot_visibility_gauge_defect.md): a legacy pivot losing G15
+         * stepped the emitted clock by -12.06 m and never recovered, while
+         * @ref networkPhaseDatumPrioritized converts that one large step into
+         * fifteen smaller ones.  Neither posture fixes the gauge; both are
+         * one-edge.
+         *
+         * When armed, the election hands the pin to the incoming anchor at THAT
+         * STATION'S OWN ABSOLUTE AMBIGUITY ESTIMATE IN THE OUTGOING FRAME instead
+         * of at 0, so the realized frame is unchanged by construction and nothing
+         * steps.  Both edges are counted (@c handover_continuous /
+         * @c handover_cold) and emitted as @c PBGAUGE trace rows carrying the
+         * outgoing anchor, the incoming anchor and the target applied.
+         *
+         * @warning The value used is @b not @c getStateVector()(amb_idx) — that is
+         *          @c x_lin, a linearization FRAME, and shifting it on a local
+         *          column is a proven exact solve no-op, so it carries no
+         *          information about where the arc sits.  The estimate is
+         *          @c x_lin + back-substituted Δx, which exists only after the
+         *          solve, so the ledger is harvested post-solve and consumed one
+         *          epoch later — the same deferral shape as the C3c funnel.
+         *
+         * @warning A successor with no ledger entry (a genuinely fresh arc, or the
+         *          run's first epoch) is pinned at 0 and its frame DOES step.
+         *          That case is counted as @c handover_cold and traced rather than
+         *          hidden: an unavoidable re-realization the consumer is told
+         *          about is a different object from a silent one.
+         *
+         * Requires @ref networkPhaseDatumPrioritized and neither the ensemble
+         * datum (which elects no anchor at all) nor the eq34 chain datum (which
+         * owns its own pin-target policy); the loader forces it off otherwise.
+         * OFF = byte-identical: no ledger is allocated, no census is widened, and
+         * the election writes the same 0.0 target it writes today.
+         *
+         * @see networkPhaseDatumSticky, networkPhaseDatumPrioritized,
+         *      docs/SPEC_pivot_visibility_gauge_defect.md
+         */
+        bool networkPhaseDatumHandoverContinuous() const {
+            return network_phase_datum_handover_continuous_;
+        }
+
+        /**
+         * @brief Conditional-variance CEILING (m²) on a handover ledger value
+         *        before it may be pinned
+         *        (@c network.phase_datum_handover_max_var_m2).
+         *
+         * Invariant #7's re-coupling edge must RE-VALIDATE what it reconnects.  The
+         * pin is a hard ~1e10-weight constraint, so stamping in an ill-determined
+         * estimate injects that estimate's own error AS A DATUM — measured, an
+         * unvalidated +17.08 m target produced a 378-sigma residual spike on the
+         * following epoch, worse than the step it replaced.  A ledger value whose
+         * conditional variance exceeds this ceiling falls through to the honest COLD
+         * path (pin at 0, counted, traced) instead.
+         *
+         * INERT unless @ref networkPhaseDatumHandoverContinuous.  Default 1.0 m²
+         * (σ = 1 m): still an order of magnitude better than the metre-to-tens-of-
+         * metres step a re-zeroing handover produces, while refusing a code-seeded
+         * fresh arc outright.
+         */
+        double networkPhaseDatumHandoverMaxVarM2() const {
+            return network_phase_datum_handover_max_var_m2_;
+        }
+
+        /**
          * @brief Coverage threshold on the prioritized anchored union: minimum
          *        number of present stations that must track a (satellite,signal)
          *        with a usable ambiguity for its shared phase-bias column to be
@@ -5908,6 +5984,8 @@ namespace GnssProcessor {
         bool   network_clock_anchor_resolve_{true};        ///< Card Q3: adapt-and-EMIT. On a trip, withdraw the offending clock prior from the shared system and RE-SOLVE the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Placed BEFORE the within-epoch RAIM adaptation deliberately — a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's DATA. OFF degrades to detect+mark+decouple-next-epoch. INERT unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
+        double network_phase_datum_handover_max_var_m2_{1.0}; ///< Conditional-variance ceiling (m^2) a handover ledger value must beat to be pinned; above it the handover falls through to the COLD path. INERT unless network_phase_datum_handover_continuous_.
+        bool   network_phase_datum_handover_continuous_{false}; ///< Hand an anchor handover over at the successor's own outgoing-frame ambiguity value instead of re-pinning at 0, so the gauge change is an S-transform and the emitted family does not step. Both edges counted + traced. INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (no ledger allocated).
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
         bool   network_cb_kaula_prior_{false};             ///< Card KP (network.cb_kaula_prior): fold a LOOSE physical-bound prior (value 0, info 1/sigma^2) onto every ADMITTED satellite code-bias column, lifting a CODE-dominated near-null direction the phase drop-and-heal structurally cannot reach (it anchors PB columns only). Real prior information — satellite OSBs are bounded at tens of ns — not a fudge. Folded through the diagonal SharedPrior channel, NOT into the tight kCodeBiasGaugeWeight datum rows, so declared_dimension is unchanged by construction. OFF = byte-identical; INERT unless estimate_sat_code_bias.
         double network_cb_kaula_sigma_m_{10.0};            ///< Card KP: sigma (m) of the admitted-OSB prior; 10 m ~ 33 ns, the loose end of the physical bound. K2 anti-fragility rule: 1/sigma^2 must sit >= 2 decades ABOVE the armed rank-gate cutoff (the CB-ADM card rejected a loose prior that sat AT the cutoff); the producer computes and logs that margin once and warns below 2 decades. INERT unless network_cb_kaula_prior_.

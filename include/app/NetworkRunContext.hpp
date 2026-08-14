@@ -229,6 +229,18 @@ namespace GnssProcessor {
         // this run allocate the arc-age map at all" predicate every site reads, so an
         // OFF run never touches the new state.
         bool   anchor_hygiene_on{};   ///< Any increment armed on an anchored (non-ensemble) phase datum — the master gate for the arc-age map and the hygiene seam.
+        /// TWO-EDGE CONTINUOUS HANDOVER, RESOLVED for the run
+        /// (docs/SPEC_pivot_visibility_gauge_defect.md): an anchor handover pins the
+        /// INCOMING anchor at its own absolute ambiguity estimate in the OUTGOING
+        /// frame instead of at 0, making the gauge change an S-transform.  Already
+        /// ANDed with `anchored && !phase_datum_eq34`, so the census fill, the
+        /// post-solve harvest and the election all read ONE bool and cannot disagree
+        /// about whether the ledger exists.
+        bool   pd_handover_continuous{};
+        /// Conditional-variance ceiling (m²) a handover ledger value must beat
+        /// before it may be pinned — invariant #7's re-coupling re-validation.
+        /// 0.0 when the mechanism is off.
+        double pd_handover_max_var{};
         int    eq34_min_arc_ep{};     ///< INC-1 eligibility threshold in consecutive-present epochs (0 = no gate).
         double prior_realization_max_gap_s{};  ///< INC-1 warm conditioning: the block applies only while the key's last EMITTED realization is younger than this (s); <= 0 disables the conditioning.
         bool   pin_bridge_on{};       ///< INC-2 time-linked phase datum armed.
@@ -510,6 +522,16 @@ namespace GnssProcessor {
         //    first sighting, not a fault — matches the last_pivot never-erase policy).
         std::map<std::string, std::string> anchor_incumbent;
         std::map<std::string, std::string> this_epoch_anchor;
+        /// TWO-EDGE CONTINUOUS HANDOVER ledger (docs/SPEC_pivot_visibility_gauge_defect.md):
+        /// each anchor-candidate station's ABSOLUTE ambiguity estimate from the
+        /// PREVIOUS epoch's solve, so a handover can re-pin the successor in the
+        /// outgoing frame rather than re-zeroing it.  Rebuilt wholesale by the
+        /// post-solve harvest each epoch — a one-epoch lifetime is the BOUND on what
+        /// a decoupled gauge may carry (invariant #7).  Empty unless
+        /// `knobs.pd_handover_continuous`, and deliberately NOT serialized into a
+        /// warm-resume snapshot: a resume starts cold and its first handover is
+        /// counted as such rather than pinned against a stale frame.
+        AnchorHandoverLedger handover;
         std::map<std::string, std::string> emitted_anchor;
         // eq34 reattach hygiene, WARM CONDITIONING (spec addendum): the continuous-GPS
         // second at which each key's datum was last REALIZED AND EMITTED — the age of
