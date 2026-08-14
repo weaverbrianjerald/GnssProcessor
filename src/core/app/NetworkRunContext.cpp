@@ -228,6 +228,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                    && config_.networkPhaseDatumHandoverContinuous();
         k.pd_handover_max_var = k.pd_handover_continuous
                                 ? config_.networkPhaseDatumHandoverMaxVarM2() : 0.0;
+        // QUEUE item 1(d): the PHASE_ANCHOR carry re-reference — same placement
+        // and the same belt-and-braces as the handover knob directly above (it
+        // is meaningful only where an anchor pin exists to hand over, and the
+        // eq34 chain owns its own eq34_reref carry hygiene).
+        k.pa_carry_reref = anchored && !k.phase_datum_eq34
+                           && config_.networkPhaseAnchorCarryReref();
     }
     // SBC S-basis completion (network.sbasis_complete).  Resolved here so the
     // pb_level_prev harvest (which the completion's continuity targets re-use —
@@ -828,6 +834,17 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // re-references no carried quantity, which is the whole of the RAIM-class
         // test.  It also means an INC-4 OFF/ON pair on ONE snapshot stays A/B-legal,
         // which is precisely how the increment's own field gate is run.
+        //
+        // QUEUE item 1(d) — network.phase_anchor_carry_reref: the SAME exemption,
+        // the SIXTH instance of this precedent.  It is a forward-only CARRY-HYGIENE
+        // policy: arming it changes which carried PB priors fold (and which
+        // phase-leveling carries survive) on the epochs FOLLOWING a handover, from
+        // here on.  It re-references no carried quantity retroactively and changes
+        // what no serialized state MEANS — a carried bˢ_σ is the same quantity in
+        // the same frame whether or not next epoch's fold will marginalize it.
+        // Its own state (phase_anchor_reref) is per-epoch, cleared at each
+        // election, never serialized.  Keeping it out of the fingerprint is what
+        // makes the 1(d) OFF/ON validation pair on one seed legal at all.
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
 }
@@ -1620,6 +1637,10 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     auto& eq34_reref = ctx.carry.eq34_reref;
+    // QUEUE item 1(d): the anchored election's re-reference set — consumed below
+    // exactly as eq34_reref is (the two are mutually exclusive by election mode,
+    // and both are always empty when their mechanism is off).
+    const auto& pa_reref = ctx.carry.phase_anchor_reref;
     const bool   scoped_handover = ctx.knobs.scoped_handover;
     const bool   fullcov_on = ctx.knobs.fullcov_on;
     const bool   phase_hold_on = ctx.knobs.phase_hold_on;
@@ -1705,6 +1726,13 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // scoped skip; always empty when eq34 is off.
             if (cp.kind == SharedParamKind::PhaseBias
                 && eq34_reref.count({cp.sat, cp.signal})) continue;
+            // QUEUE item 1(d): the SAME marginalization for the anchored
+            // election's handovers (SPEC_pivot_visibility_gauge_defect §5.07.5
+            // R1) — the exact skip this comment block was already describing,
+            // extended to the election whose un-transformed carry the satellite
+            // clock was measured absorbing.  Always empty when the knob is off.
+            if (cp.kind == SharedParamKind::PhaseBias
+                && pa_reref.count({cp.sat, cp.signal})) continue;
             if (clk_model_on && cp.kind == SharedParamKind::Clock) continue;  // clock is on clock_osc
             const double q = (cp.kind == SharedParamKind::Clock)    ? q_clock
                            : (cp.kind == SharedParamKind::CodeBias) ? q_cb
@@ -1789,6 +1817,10 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // this epoch (retired frame) — see the diagonal branch above.
             if (cp.kind == SharedParamKind::PhaseBias
                 && eq34_reref.count({cp.sat, cp.signal})) continue;
+            // QUEUE item 1(d): anchored-election handovers, same treatment
+            // (see the diagonal branch above).
+            if (cp.kind == SharedParamKind::PhaseBias
+                && pa_reref.count({cp.sat, cp.signal})) continue;
             if (clk_model_on && cp.kind == SharedParamKind::Clock) continue;  // clock is on clock_osc
             const double q = (cp.kind == SharedParamKind::Clock)    ? q_clock
                            : (cp.kind == SharedParamKind::CodeBias) ? q_cb

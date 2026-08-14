@@ -3434,6 +3434,45 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief QUEUE item 1(d): marginalize a handed-over (sat,signal) family's
+         *        carried state for ONE epoch (@c network.phase_anchor_carry_reref).
+         *
+         * The named third root of the prioritized arm's clock churn
+         * (docs/SPEC_pivot_visibility_gauge_defect.md §5.07): at a PHASE_ANCHOR
+         * handover the datum re-realizes on the DESIGN MATRIX ONLY — the incoming
+         * anchor is re-pinned (at 0, or at the ledger target) while the previous
+         * epoch's carried bˢ_σ, a value in the RETIRED frame, is folded forward at
+         * @c sat_phase_bias_q = 1e-12.  Against @c sat_clock_q = 0.01 (1e10:1) the
+         * satellite CLOCK absorbs the entire frame step — measured 41 σ on G21.
+         * Neither existing carry-skip guard fires there: @c datum_changed reads
+         * the clock-pivot map only, and @c eq34_reref is populated only by the
+         * eq34 chain election.
+         *
+         * ON: the anchor election populates a per-epoch @c phase_anchor_reref
+         * (sat,signal) set alongside its handover events; the D2/C1 shared-carry
+         * consume MARGINALIZES those PB keys for that one epoch (exactly the
+         * @c eq34_reref treatment — the retired-frame prior is simply not folded,
+         * so the family is free to realize the new frame without the clock paying
+         * for it), and the family's phase-leveling local ambiguity carries are
+         * erased at EVERY station (they are frame-dependent; refloat next epoch).
+         *
+         * The @c eq34_reref template DELETES the prior for one epoch; the
+         * theoretically correct action is an S-transform of the carry family
+         * (transform > delete is INFERRED, unmeasured — SPEC §5.07.6).
+         *
+         * INERT unless @ref networkPhaseDatumPrioritized, and disabled under the
+         * ensemble datum (no anchors) and the eq34 chain (owns its own
+         * re-reference).  OFF = byte-identical: the set is never populated and
+         * every consumer tests an empty set.
+         *
+         * @see networkPhaseDatumHandoverContinuous, networkPhaseDatumPrioritized,
+         *      docs/QUEUE_principled_replacements.md item 1(d)
+         */
+        bool networkPhaseAnchorCarryReref() const {
+            return network_phase_anchor_carry_reref_;
+        }
+
+        /**
          * @brief Coverage threshold on the prioritized anchored union: minimum
          *        number of present stations that must track a (satellite,signal)
          *        with a usable ambiguity for its shared phase-bias column to be
@@ -5986,6 +6025,7 @@ namespace GnssProcessor {
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         double network_phase_datum_handover_max_var_m2_{1.0}; ///< Conditional-variance ceiling (m^2) a handover ledger value must beat to be pinned; above it the handover falls through to the COLD path. INERT unless network_phase_datum_handover_continuous_.
         bool   network_phase_datum_handover_continuous_{false}; ///< Hand an anchor handover over at the successor's own outgoing-frame ambiguity value instead of re-pinning at 0, so the gauge change is an S-transform and the emitted family does not step. Both edges counted + traced. INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (no ledger allocated).
+        bool   network_phase_anchor_carry_reref_{false};   ///< QUEUE item 1(d) (SPEC_pivot_visibility_gauge_defect §5.07.5 R1): at a PHASE_ANCHOR handover, marginalize the (sat,signal) family's shared PB carry for ONE epoch (the eq34_reref treatment) and erase its phase-leveling local carries at every station — the retired-frame prior is not folded against the re-realized design matrix, so the frame step lands on the FREE phase bias instead of being absorbed by the satellite clock (measured 41 sigma on G21). INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (the set is never populated).
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
         bool   network_cb_kaula_prior_{false};             ///< Card KP (network.cb_kaula_prior): fold a LOOSE physical-bound prior (value 0, info 1/sigma^2) onto every ADMITTED satellite code-bias column, lifting a CODE-dominated near-null direction the phase drop-and-heal structurally cannot reach (it anchors PB columns only). Real prior information — satellite OSBs are bounded at tens of ns — not a fudge. Folded through the diagonal SharedPrior channel, NOT into the tight kCodeBiasGaugeWeight datum rows, so declared_dimension is unchanged by construction. OFF = byte-identical; INERT unless estimate_sat_code_bias.
         double network_cb_kaula_sigma_m_{10.0};            ///< Card KP: sigma (m) of the admitted-OSB prior; 10 m ~ 33 ns, the loose end of the physical bound. K2 anti-fragility rule: 1/sigma^2 must sit >= 2 decades ABOVE the armed rank-gate cutoff (the CB-ADM card rejected a loose prior that sat AT the cutoff); the producer computes and logs that margin once and warns below 2 decades. INERT unless network_cb_kaula_prior_.

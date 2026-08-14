@@ -474,6 +474,27 @@ int networkTeardown(
                       "otherwise the window was quiet or the triggers sit above its misfit "
                       "scale (invariant #4).");
     }
+    // --- R0: within-epoch tier response census (SPEC_pivot_visibility_gauge_defect
+    // §5.07.5).  Before this, only the WITHHOLD had a first-class run counter; the
+    // refloats and exclusions existed solely as per-epoch T2 event rows.  The clock
+    // move is the §5.07.2 impulse-channel meter — how far the tier's re-solves
+    // moved a satellite clock off the PRIMARY solve — with its identity
+    // (invariant #7: counters AND identities).  0 responses on an armed run is a
+    // QUIET run, not dead wiring — n_adapt trips are logged per epoch, and the
+    // carry_warm gate note on the WE-CI line above applies here identically.
+    if (config_.networkRaimWithinEpoch()) {
+        const auto& sc = ctx.counters;
+        log->info("Network (T2 within-epoch responses): {} whole-sat refloat(s), {} "
+                  "isolated-arc refloat(s), {} station exclusion(s) settled over the "
+                  "run; {} epoch(s) withheld at the A4 ceiling.  Largest primary→final "
+                  "clock move {:.3f} m ({} @ TOW {:.1f}) — the impulse the tier itself "
+                  "injected into the emitted clock channel.",
+                  sc.we_refloat_sat_total, sc.we_refloat_arc_total,
+                  sc.we_exclude_sta_total, sc.n_sigma0_withheld,
+                  sc.we_clk_move_max_m,
+                  sc.we_clk_move_max_sat.empty() ? "none" : sc.we_clk_move_max_sat,
+                  sc.we_clk_move_max_tow);
+    }
     if (config_.networkCbKaulaPrior())
         log->info("Network (Card KP): admitted-OSB physical-bound prior folded on {} epoch(s), "
                   "{} column-epoch(s) total at sigma {:g} m.  [Invariant #4: an ARMED run "
@@ -533,9 +554,12 @@ int networkTeardown(
                   "outgoing frame; largest |target| {:.4f} m, which is the size of the "
                   "frame step that was AVOIDED) and {} COLD (no ledger entry for the "
                   "successor — a fresh arc or the first epoch — pinned at 0, so the "
-                  "frame DID step there).",
+                  "frame DID step there); {} of the cold were REFUSED ledger values "
+                  "(conditional variance above the {} m² ceiling — the invariant-#7 "
+                  "re-validation, not a miss).",
                   h.reattaches, h.handover_continuous, h.handover_max_abs_m,
-                  h.handover_cold);
+                  h.handover_cold, h.handover_refused_var,
+                  ctx.knobs.pd_handover_max_var);
         if (h.reattaches > 0 && total == 0)
             log->warn("Network (PB-GAUGE HANDOVER): DEAD WIRING — {} handover(s) were "
                       "elected but NONE reached the retarget block.  The knob reports "
@@ -552,6 +576,34 @@ int networkTeardown(
             log->info("Network (PB-GAUGE HANDOVER): ZERO handovers this run — the anchor "
                       "set never moved, so this arm exercises the mechanism NOT AT ALL.  "
                       "That is a quiet window, not evidence the fix works.");
+    }
+
+    // --- QUEUE item 1(d): PHASE_ANCHOR carry re-reference run-end telemetry -----
+    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  Same invariant-#4
+    // discipline as the handover block above: `reattaches` is the denominator, and
+    // an armed run whose election handed over but whose set never populated is
+    // DEAD WIRING, called out explicitly.
+    if (ctx.knobs.pa_carry_reref) {
+        const auto& h = ctx.counters.hyg;
+        log->info("Network (PHASE_ANCHOR carry reref, 1(d)): {} marked "
+                  "(sat,signal) family-epoch(s) — handovers plus incumbent-less "
+                  "pins (first sightings / bridge exits; no-ops without a "
+                  "surviving carry) — marginalized for one epoch over the run "
+                  "({} anchor handover(s) elected); {} phase-leveling local "
+                  "carry(ies) erased.",
+                  ctx.carry.pa_reref_total, h.reattaches,
+                  ctx.carry.pa_reref_erase_total);
+        if (h.reattaches > 0 && ctx.carry.pa_reref_total == 0)
+            log->warn("Network (PHASE_ANCHOR carry reref): DEAD WIRING — {} "
+                      "handover(s) were elected but the re-reference set never "
+                      "populated, so every carried PB prior still folded in its "
+                      "retired frame (the exact §5.07 defect this knob exists to "
+                      "close).",
+                      h.reattaches);
+        else if (h.reattaches == 0)
+            log->info("Network (PHASE_ANCHOR carry reref): ZERO handovers this run — "
+                      "the mechanism was never exercised.  A quiet window, not "
+                      "evidence.");
     }
 
     // --- eq34 reattach hygiene run-end telemetry -------------------------------

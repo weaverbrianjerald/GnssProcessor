@@ -19,6 +19,14 @@
  * so the gauge change is an S-transform and nothing steps.  Every case below
  * names the silent failure it guards, because each produces a run that completes
  * cleanly and reports plausible counters while the frame walks.
+ *
+ * QUEUE item 1(d) (network.phase_anchor_carry_reref) is tested here too: the
+ * CARRY side of the same edge.  §5.07 named the third root — the datum
+ * re-realizes on the design matrix only while the carried bˢ_σ is folded forward
+ * in the RETIRED frame at q_pb = 1e-12, and the satellite clock (q = 0.01,
+ * 1e10:1) absorbs the step.  The election now marks each handover's (sat,signal)
+ * for a one-epoch carry marginalization + local-carry erase, exactly as
+ * eq34_reref does for the chain datum.
  */
 
 #include <gtest/gtest.h>
@@ -38,6 +46,8 @@
 #include <map>
 #include <set>
 #include <string>
+#include <tuple>     // 1(d): the LocalCarry map key (station, sat, signal)
+#include <utility>
 #include <vector>
 
 using namespace GnssProcessor;
@@ -96,12 +106,13 @@ struct Elected {
 };
 
 void elect(Census& c, Elected& e, const AnchorHandoverLedger* ledger,
-           bool sticky = true, double max_var = kMaxVar) {
+           bool sticky = true, double max_var = kMaxVar,
+           std::set<std::pair<std::string, std::string>>* reref = nullptr) {
     AnchorHygiene hyg;   // default-constructed = inactive
     e.events.clear();
     networkElectPhaseAnchors(sticky, c.stations, c.present, c.cnd, hyg, e.tally,
                              e.incumbent, e.this_epoch, e.shared, ledger,
-                             &e.events, max_var);
+                             &e.events, max_var, reref);
 }
 
 double pinOf(const Census& c, const std::string& station, const std::string& amb) {
@@ -343,6 +354,116 @@ TEST(PhaseDatumHandover, MissingVarianceIsRefused) {
 }
 
 // ---------------------------------------------------------------------------
+// QUEUE item 1(d): the PHASE_ANCHOR carry re-reference
+// (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1)
+// ---------------------------------------------------------------------------
+
+/// The re-reference set marks every pin NOT continuously inherited from an
+/// incumbent: a handover, and an incumbent-less pin (first sighting, or a
+/// bridge-exit re-pin whose incumbent record evaporated during the bridge era —
+/// the review-confirmed invariant-#7 "return read as a first sighting" hole).
+/// A SETTLED anchor is never marked — marking it would marginalize a healthy
+/// prior every epoch, the strictly-worse failure NoHandoverMeansNoRetarget
+/// guards on the pin side.  In production the set is cleared by the CARRY STASH
+/// (so a withheld epoch's marks persist); the test models that clear explicitly.
+TEST(PhaseDatumHandover, CarryRerefMarksHandoversAndIncumbentlessPins) {
+    std::set<std::pair<std::string, std::string>> reref;
+    auto c = makeCensus({{"STA_A", {"G01"}, 10}});
+    Elected e;
+    elect(c, e, nullptr, true, kMaxVar, &reref);
+    EXPECT_TRUE(reref.count({"G01", "L1C"}))
+        << "an incumbent-less pin realizes a fresh frame — marked (no-op fold "
+           "when no carry survived; the stale-frame guard when one did)";
+    reref.clear();   // the stash's clear, after a successful commit
+    elect(c, e, nullptr, true, kMaxVar, &reref);
+    EXPECT_TRUE(reref.empty()) << "a settled anchor's carry is valid";
+
+    auto c2 = makeCensus({{"STA_B", {"G01"}, 5}});
+    Elected e2;
+    e2.incumbent = e.this_epoch;
+    elect(c2, e2, nullptr, true, kMaxVar, &reref);
+    ASSERT_EQ(reref.size(), 1u) << "the handover must mark the family";
+    EXPECT_TRUE(reref.count({"G01", "L1C"}))
+        << "keyed (sat, signal) — parsed from the registered PB key";
+}
+
+/// The bridge-exit shape specifically: the incumbent record is GONE (a bridged
+/// key skips the election before any incumbent bookkeeping, so one bridged
+/// epoch evaporates it) while the family's carry is still alive.  The eventual
+/// re-pin must be marked even though `is_handover` is false — otherwise the
+/// full-ambiguity frame step folds against the bridge-frame carry at
+/// q_pb = 1e-12 and the clock absorbs it, unmarked and uncounted.
+TEST(PhaseDatumHandover, CarryRerefMarksBridgeExitRepin) {
+    std::set<std::pair<std::string, std::string>> reref;
+    auto c = makeCensus({{"STA_B", {"G01"}, 5}});
+    Elected e;
+    // No incumbent entry for G01_L1C at all — the post-bridge state.
+    elect(c, e, nullptr, true, kMaxVar, &reref);
+    EXPECT_EQ(e.this_epoch["G01_L1C"], "STA_B");
+    EXPECT_EQ(e.tally.reattaches, 0) << "not a handover — no incumbent to hand from";
+    EXPECT_TRUE(reref.count({"G01", "L1C"}))
+        << "the incumbent-less re-pin must be marked regardless";
+}
+
+/// The ELECTION marks continuous handovers too — but note the PAIRING is
+/// loader-disarmed (CarryRerefDisarmsTheContinuousPairing below): under the
+/// ledger pin the frame step lands at T+1 (the §5.07.3 revert) while this mark
+/// covers T, so production never arms both.  The election-level mark stays so a
+/// future R2-style sticky target can re-enable the pairing without touching the
+/// election again; this case pins that the mark is there.
+TEST(PhaseDatumHandover, CarryRerefMarksContinuousHandoversToo) {
+    std::set<std::pair<std::string, std::string>> reref;
+    auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
+    Elected e;
+    AnchorHandoverLedger led;
+    led.primed = true;
+    elect(c, e, &led);
+    auto c2 = makeCensus({{"STA_B", {"G01"}, 5}});
+    Elected e2;
+    e2.incumbent = e.this_epoch;
+    AnchorHandoverLedger led2;
+    led2.primed = true;
+    led2.value_abs[{0, "G01_L1C"}] = {-12.0554, kGoodVar};
+    elect(c2, e2, &led2, true, kMaxVar, &reref);
+    ASSERT_EQ(e2.tally.handover_continuous, 1) << "precondition: continuous handover";
+    EXPECT_TRUE(reref.count({"G01", "L1C"}))
+        << "continuous defers the step by one epoch; the carry is stale either way";
+}
+
+/// The null-pointer path is the OFF contract: nothing is populated, nothing
+/// downstream can fire — the byte-identity leg of standing invariant #6.
+/// (Every pre-1(d) case above drives the election through the default nullptr
+/// and pins/tallies are asserted unchanged there; this case only pins the
+/// pointer discipline itself.)
+TEST(PhaseDatumHandover, CarryRerefNullOutIsUntouched) {
+    auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
+    Elected e;
+    elect(c, e, nullptr);
+    auto c2 = makeCensus({{"STA_B", {"G01"}, 5}});
+    Elected e2;
+    e2.incumbent = e.this_epoch;
+    elect(c2, e2, nullptr);   // handover happens, no reref sink supplied
+    EXPECT_EQ(e2.tally.reattaches, 1);
+    EXPECT_EQ(pinOf(c2, "STA_B", "G01_L1C"), 0.0);
+}
+
+/// The erase drops the family at EVERY station — the frame stepped network-wide,
+/// so a station-scoped erase would leave stale floats fighting the new frame at
+/// every station it skipped.  An unrelated family must survive untouched.
+TEST(PhaseDatumHandover, CarryRerefEraseDropsEveryStationOfTheFamily) {
+    std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
+    lc[{0, "G01", "L1C"}] = LocalCarry{-3.2, 1e-4, 100.0, {}};
+    lc[{1, "G01", "L1C"}] = LocalCarry{ 7.1, 2e-4, 100.0, {}};
+    lc[{0, "G02", "L1C"}] = LocalCarry{ 0.5, 1e-4, 100.0, {}};
+    const std::set<std::pair<std::string, std::string>> reref{{"G01", "L1C"}};
+    EXPECT_EQ(networkApplyPhaseAnchorCarryReref(reref, lc), 2);
+    EXPECT_EQ(lc.size(), 1u);
+    EXPECT_TRUE(lc.count({0, "G02", "L1C"})) << "an unrelated family must survive";
+    EXPECT_EQ(networkApplyPhaseAnchorCarryReref({}, lc), 0)
+        << "an empty set is the no-op fast path";
+}
+
+// ---------------------------------------------------------------------------
 // The loader
 // ---------------------------------------------------------------------------
 
@@ -416,4 +537,79 @@ TEST(PhaseDatumHandoverLoader, DisabledUnderTheEnsembleDatum) {
                         "    \"phase_datum_ensemble\": true,\n"
                         "    \"phase_datum_handover_continuous\": true,\n", cfg));
     EXPECT_FALSE(cfg.networkPhaseDatumHandoverContinuous());
+}
+
+/// QUEUE item 1(d): default OFF — the byte-identity contract (invariant #6).
+TEST(PhaseDatumHandoverLoader, CarryRerefDefaultsOff) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadNet("reref_default",
+                        "    \"phase_datum_prioritized\": true,\n", cfg));
+    EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
+}
+
+TEST(PhaseDatumHandoverLoader, CarryRerefArmsUnderThePrioritizedElection) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadNet("reref_armed",
+                        "    \"phase_datum_prioritized\": true,\n"
+                        "    \"phase_anchor_carry_reref\": true,\n", cfg));
+    EXPECT_TRUE(cfg.networkPhaseAnchorCarryReref());
+}
+
+/// ARMED-BUT-INERT rejection, same ladder as the handover knob: the legacy datum
+/// elects no anchor, so no PHASE_ANCHOR handover exists to re-reference.
+TEST(PhaseDatumHandoverLoader, CarryRerefDisabledWithoutThePrioritizedElection) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadNet("reref_legacy",
+                        "    \"phase_anchor_carry_reref\": true,\n", cfg));
+    EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
+}
+
+/// The eq34 chain owns its own eq34_reref carry hygiene — arming both would
+/// double-treat the same edge, so the loader disarms this one.
+TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheChainDatum) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadNet("reref_eq34",
+                        "    \"phase_datum_prioritized\": true,\n"
+                        "    \"phase_datum_eq34\": true,\n"
+                        "    \"phase_anchor_carry_reref\": true,\n", cfg));
+    EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
+}
+
+/// An eq34-ONLY config (prioritized not set) must still disarm, and via the
+/// eq34 guard, which sits FIRST in this ladder for exactly this posture — the
+/// prioritized-first order would emit the factually wrong "legacy datum elects
+/// no anchor" diagnostic (review finding: eq34 elects a CHAIN datum).
+TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderEq34Alone) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadNet("reref_eq34only",
+                        "    \"phase_datum_eq34\": true,\n"
+                        "    \"phase_anchor_carry_reref\": true,\n", cfg));
+    EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
+}
+
+/// The ensemble datum elects no anchor — same disarm as the handover knob's.
+TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheEnsembleDatum) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadNet("reref_ensemble",
+                        "    \"phase_datum_ensemble\": true,\n"
+                        "    \"phase_anchor_carry_reref\": true,\n", cfg));
+    EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
+}
+
+/// THE INCOHERENT PAIRING (review finding, confirmed): with the continuous
+/// handover armed the frame step lands at T+1 (the ledger pin reverts —
+/// §5.07.3) while the carry mark covers T, so the pair would marginalize the
+/// valid fold and miss the stale one.  The loader resolves the conflict in the
+/// reref's favour — it alone closed the churn (§5.08.3) — by disarming the
+/// handover knob, loudly.  Every handover then takes the honest COLD path,
+/// where mark-at-T is provably correct.
+TEST(PhaseDatumHandoverLoader, CarryRerefDisarmsTheContinuousPairing) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadNet("reref_pairing",
+                        "    \"phase_datum_prioritized\": true,\n"
+                        "    \"phase_datum_handover_continuous\": true,\n"
+                        "    \"phase_anchor_carry_reref\": true,\n", cfg));
+    EXPECT_TRUE(cfg.networkPhaseAnchorCarryReref()) << "the reref survives";
+    EXPECT_FALSE(cfg.networkPhaseDatumHandoverContinuous())
+        << "the continuous handover must be disarmed under the pairing";
 }

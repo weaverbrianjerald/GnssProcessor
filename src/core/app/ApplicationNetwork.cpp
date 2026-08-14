@@ -1670,22 +1670,35 @@ int Application::runNetwork() {
                                        shared_phase_keys);
             } else {
                 // TWO-EDGE CONTINUOUS HANDOVER
-                // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).  BOTH the ledger
-                // and the event sink are passed only when armed, so OFF is
-                // byte-identical on the solve AND on network_events.csv (standing
-                // invariant #6).  The handover COUNT on an unarmed arm is already
-                // visible without these rows — `tally.reattaches` counts every gauge
-                // change either way — so making the trace unconditional would have
-                // bought nothing and cost the byte-identity.
+                // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).  The LEDGER is
+                // passed only when armed (it decides the pin target — solve-side),
+                // but the event sink is UNCONDITIONAL as of R0 (§5.07.5): the cold
+                // re-pin was an unlogged both-edge event in the default posture,
+                // and §5.07.4 defect 5 names exactly that silence.  The rows are
+                // trace-class (network_events.csv under trace_events); the solve is
+                // untouched, and `tally.reattaches` still counts either way.
                 std::vector<AnchorHandoverEvent> handovers;
                 const bool hv_on = ctx.knobs.pd_handover_continuous;
+                // QUEUE item 1(d): the re-referenced (sat,signal) set — populated
+                // here when armed, consumed by the D2/C1 carry fold (marginalize)
+                // and the erase directly below, and CLEARED BY THE CARRY STASH,
+                // not by this election (review finding, 2026-08-14): a withheld
+                // epoch skips the stash, so its prev_carry still holds the
+                // retired-frame values while the incumbent swap has already
+                // persisted — clearing here would let that stale carry fold
+                // unmarked one epoch later.  Stash-side clearing makes the mark
+                // survive exactly until a solve actually commits the new frame.
+                auto& pa_reref = ctx.carry.phase_anchor_reref;
+                const std::size_t pa_before = pa_reref.size();
                 networkElectPhaseAnchors(sticky, stations, present, cnd, hyg,
                                          ctx.counters.hyg,
                                          anchor_incumbent, this_epoch_anchor,
                                          shared_phase_keys,
                                          hv_on ? &ctx.carry.handover : nullptr,
-                                         hv_on ? &handovers : nullptr,
-                                         ctx.knobs.pd_handover_max_var);
+                                         &handovers,
+                                         ctx.knobs.pd_handover_max_var,
+                                         ctx.knobs.pa_carry_reref ? &pa_reref
+                                                                  : nullptr);
                 // BOTH EDGES in one row (invariant #7): who released the gauge, who
                 // took it, and whether the frame was preserved.  A handover logged
                 // only on its incoming half is exactly the silent re-referencing the
@@ -1698,6 +1711,26 @@ int Application::runNetwork() {
                                      h.continuous ? "s_transform" : "re_realize",
                                      "from=" + (h.from.empty() ? std::string("(none)")
                                                                : h.from));
+                // 1(d) local-carry hygiene: erase the marked families'
+                // phase-leveling carries at EVERY station, before PASS B consumes
+                // the carry (the eq34 D4 placement).  Counted for the run-end
+                // summary; the counter takes only THIS election's new marks (a
+                // set persisting across a withheld epoch must not double-count).
+                // Empty set (knob off, or a quiet election) is a no-op, and the
+                // re-erase over a persisting set is a no-op too.
+                if (!pa_reref.empty()) {
+                    ctx.carry.pa_reref_total +=
+                            static_cast<long long>(pa_reref.size() - pa_before);
+                    const int n_erased = networkApplyPhaseAnchorCarryReref(
+                            pa_reref, ctx.carry.local_carry);
+                    ctx.carry.pa_reref_erase_total += n_erased;
+                    log->debug("Network[1(d)]: {} marked (sat,signal) family(ies) "
+                               "marginalized ({} new this election); {} phase-"
+                               "leveling local carry(ies) erased — refloat next "
+                               "epoch.",
+                               pa_reref.size(), pa_reref.size() - pa_before,
+                               n_erased);
+                }
             }  // end anchor election (!ensemble && !eq34)
         }
 

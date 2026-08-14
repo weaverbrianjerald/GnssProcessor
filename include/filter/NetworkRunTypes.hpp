@@ -1395,6 +1395,20 @@ struct EpochStatusRow {
     std::optional<double>    s0g_sigma0;         ///< σ̂₀_global = sqrt((Σw·v² + Σw·ê²)/(Σr_data + Σr_prior)); blank when Σr ≤ 0 (never 0)
     std::optional<double>    s0g_tension;        ///< Σw·ê² / Σw·v² — the fraction of the epoch's weighted misfit living in the CARRY.  THE HEADLINE.
     std::optional<int>       s0g_flags;          ///< in-band degradation bitmask (@c NetworkPriorResidual::GlobalFlag): 1 APPROX(r≡1), 2 NO_DATA, 4 NO_PRIOR, 8 DEGENERATE, 16 RNEG_DROP
+    // --- R0 within-epoch tier observability (SPEC_pivot_visibility_gauge_defect
+    // §5.07.5).  Present in the schema only when network.raim_within_epoch is
+    // armed (the adm/prires precedent: the OFF contract stays STRUCTURAL
+    // byte-identity), blank on an epoch the tier did not assess.  sigma0_first is
+    // the pre-adaptation σ̂₀ — the null sample QUEUE item 4 needs on disk, which
+    // previously existed only inside a trip event's detail span.  n_we_refloat_sats
+    // is the tier's OWN whole-sat refloat count (n_refloat_sats above counts the
+    // clock-COUPLE set, empty unless clock_monitor_couple_raim).  we_clk_move_* is
+    // the §5.07.2 impulse-channel meter: how far the within-epoch re-solves moved
+    // a satellite clock off the PRIMARY solve (0.0 = tier assessed, no re-solve).
+    std::optional<double> sigma0_first;
+    std::optional<int>    n_we_refloat_sats;
+    std::optional<double> we_clk_move_max_m;
+    std::string           we_clk_move_max_sat;   // empty = blank
 };
 
 /// Decomposition INC-7 (plan §Control flow): disposition of a relocated

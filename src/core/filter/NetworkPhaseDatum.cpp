@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>                        // std::isfinite / std::abs — handover ledger
 #include <map>
+#include <tuple>                        // 1(d) local-carry key (station, sat, signal)
 #include <utility>
 
 namespace GnssProcessor {
@@ -242,7 +243,8 @@ void networkElectPhaseAnchors(
         std::set<std::string>& shared_phase_keys,
         const AnchorHandoverLedger* handover,
         std::vector<AnchorHandoverEvent>* handovers_out,
-        double max_var) {
+        double max_var,
+        std::set<std::pair<std::string, std::string>>* reref_out) {
     const auto& usable_keys = cnd.usable_keys;
     const auto& cand_set    = cnd.cand_set;
     const auto& union_keys  = cnd.union_keys;
@@ -377,6 +379,25 @@ void networkElectPhaseAnchors(
         if (is_handover && handovers_out)
             handovers_out->push_back(AnchorHandoverEvent{
                     amb, inc->second, stations[anchor].name, target, continuous});
+        // QUEUE item 1(d) (SPEC_pivot_visibility_gauge_defect §5.07.5 R1): mark
+        // every pin realized in a frame NOT continuously inherited from an
+        // incumbent — a HANDOVER (the datum re-realizes on a new host), and an
+        // INCUMBENT-LESS pin (inc == end()).  The second class is load-bearing
+        // (review finding, 2026-08-14): a BRIDGED key skips the election before
+        // any incumbent bookkeeping, so its record evaporates after one bridged
+        // epoch and the eventual bridge-EXIT re-pin — a full frame step against
+        // a still-stashed carry — would otherwise read as a first sighting and
+        // go unmarked (standing invariant #7's "return read as a first sighting"
+        // failure, verbatim).  Genuine first sightings are marked too, and
+        // harmlessly: a family with no surviving carry makes every downstream
+        // consumer a no-op, while one WITH a surviving carry (long-gap return
+        // inside the prune horizon) is exactly the stale-frame case the mark
+        // exists for.  The key is parsed from the registered pbkey, never split
+        // from the amb string.
+        if (reref_out && (is_handover || inc == anchor_incumbent.end())) {
+            const auto p = StateKeys::parseSatPhaseBiasKey(pbkey);
+            if (p) reref_out->insert({p->satellite, p->signal});
+        }
         {
             if (is_handover)
                 ++tally.reattaches;
@@ -391,6 +412,26 @@ void networkElectPhaseAnchors(
         shared_phase_keys.insert(pbkey);
     }
     anchor_incumbent.swap(new_incumbent);
+}
+
+int networkApplyPhaseAnchorCarryReref(
+        const std::set<std::pair<std::string, std::string>>& reref,
+        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry) {
+    if (reref.empty() || local_carry.empty()) return 0;
+    // Verbatim the eq34 D4 erase (NetworkChainDatum.cpp): drop the family's
+    // per-station ambiguity carries at EVERY station — the frame stepped, so the
+    // carried floats are stale; refloat next epoch.
+    int n_erased = 0;
+    for (auto it = local_carry.begin(); it != local_carry.end();) {
+        const auto& key = it->first;   // (station idx, sat, signal)
+        if (reref.count({std::get<1>(key), std::get<2>(key)})) {
+            it = local_carry.erase(it);
+            ++n_erased;
+        } else {
+            ++it;
+        }
+    }
+    return n_erased;
 }
 
 } // namespace GnssProcessor

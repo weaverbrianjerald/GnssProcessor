@@ -77,6 +77,12 @@ void networkStashStatus(
     auto& epoch_status_trace   = traces.epoch_status_trace;
     auto& prev_carry = ctx.carry.prev_carry;
     auto& eq34_reref = ctx.carry.eq34_reref;
+    // QUEUE item 1(d): the anchored election's re-reference set.  Every predicate
+    // below that mirrors the injector's eq34_reref skip must mirror this one too,
+    // clause for clause — the census's `folded` bit decides the dispersion branch
+    // (see the PRIOR-RESIDUAL CENSUS note), and the VCE monitor must not read a
+    // deliberately-unfolded frame row as an ordinary carry innovation.
+    const auto& pa_reref = ctx.carry.phase_anchor_reref;
     const double pb_var_floor  = ctx.knobs.pb_var_floor;  // B4: D2 phase-bias carry floor; 0 = off
     const double cb_var_floor  = ctx.knobs.cb_var_floor;  // B4: D2 code-bias carry floor;  0 = off
     const bool   carry_vce     = ctx.knobs.carry_vce;
@@ -106,6 +112,7 @@ void networkStashStatus(
             if (cp.kind == SharedParamKind::PhaseBias) {
                 if (!vce_wants_pb || phase_hold_on) continue;                 // hold path ≠ a q-carry
                 if (eq34_reref.count({cp.sat, cp.signal})) continue;         // Card 3 D4: marginalized
+                if (pa_reref.count({cp.sat, cp.signal})) continue;           // 1(d): marginalized
             } else if (cp.kind == SharedParamKind::CodeBias) {
                 if (!vce_wants_cb) continue;
             } else {
@@ -219,6 +226,9 @@ void networkStashStatus(
             } else if (is_pb && eq34_reref.count({cp.sat, cp.signal})) {
                 p.label = PriorResidualLabel::Frame;
                 p.mech  = "eq34_reref";
+            } else if (is_pb && pa_reref.count({cp.sat, cp.signal})) {
+                p.label = PriorResidualLabel::Frame;   // 1(d): anchored-election handover
+                p.mech  = "phase_anchor_reref";
             } else if (!(var_eff > 0.0)) {
                 p.mech  = "var_nonpos";          // injector's `continue`; nothing fired
             } else {
@@ -509,10 +519,28 @@ void networkStashStatus(
         es.n_adapt         = n_adapt;
         es.n_present       = n_present;
         es.n_clock_sats    = n_clock;
+        // NOTE (R0): n_refloat_sats counts the clock-COUPLE set — post-fit RAIM /
+        // clock-QC culprits plus, only under clock_monitor_couple_raim, the
+        // within-epoch drops.  The within-epoch tier's OWN refloats are the
+        // appended n_we_refloat_sats column below (SPEC_pivot_visibility_gauge_
+        // defect §5.07.4 defect 5: this column read 0 on every row of an arm with
+        // 8 we_refloat_sat events, because the couple opt-in was off).
         es.n_refloat_sats  = static_cast<int>(clock_refloat_sats.size());
         es.n_retro_applied = static_cast<int>(retro_emit_sats.size());   // bumps APPLIED this emit
         es.n_arc_refloat   = n_arc_refloat_epoch;   // T2d: isolated-arc RAIM refloats this epoch
         es.datum_changed   = datum_changed ? 1 : 0;
+        // R0: the within-epoch tier's per-epoch observability, parked in ctx.carry
+        // by the solve glue.  Sentinel < 0 = the tier did not assess this epoch ⇒
+        // columns stay BLANK ("unavailable is not 0").
+        if (ctx.carry.ep_sigma0_first >= 0.0) {
+            es.sigma0_first = ctx.carry.ep_sigma0_first;
+            if (ctx.carry.ep_we_refloat_sats >= 0)
+                es.n_we_refloat_sats = ctx.carry.ep_we_refloat_sats;
+            if (ctx.carry.ep_we_clk_move_max >= 0.0) {
+                es.we_clk_move_max_m   = ctx.carry.ep_we_clk_move_max;
+                es.we_clk_move_max_sat = ctx.carry.ep_we_clk_move_sat;
+            }
+        }
         // P1-1 (SPEC_day129_frame_guards): this epoch's carry churn, differenced
         // from the run-cumulative driver counters in NetworkInstallCarry.  The
         // §3.2 trigger hypothesis is a D5 avalanche — testable only per epoch.
@@ -661,6 +689,15 @@ void networkStashStatus(
             }
         }
     }
+
+    // QUEUE item 1(d) lifecycle (review finding, 2026-08-14): the re-reference
+    // set is cleared HERE — the epoch tail only a solve that actually COMMITTED
+    // its carry reaches — and not at the election.  A withheld epoch (rank gate
+    // / A4 σ̂₀) skips this function entirely, so its marks persist into the next
+    // epoch's fold, which still faces the retired-frame prev_carry; an SH-gate
+    // epoch runs the stash (emission-only withhold) and correctly clears.  Empty
+    // set when the knob is off ⇒ byte-identical no-op.
+    ctx.carry.phase_anchor_reref.clear();
 
     prev_week = se.time.week; prev_tow = se.time.tow;
 }

@@ -5612,6 +5612,16 @@ namespace GnssProcessor {
                        network_phase_datum_handover_max_var_m2_);
             return false;
         }
+        // QUEUE item 1(d) — the PHASE_ANCHOR carry re-reference
+        // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  The handover
+        // knob above acts on the DESIGN-MATRIX side of the edge (what target the
+        // incoming pin gets); this one acts on the CARRY side (the retired-frame
+        // prior is marginalized for one epoch instead of being folded against the
+        // re-realized datum at q_pb = 1e-12).  §5.07 measured the un-transformed
+        // carry, not the pin target, as the root the satellite clock absorbs.
+        network_phase_anchor_carry_reref_ =
+            jval<bool>(json, "network.phase_anchor_carry_reref",
+                       "network_phase_anchor_carry_reref", false);
         // Coverage-threshold gating of the anchored union: a shared phase-bias
         // column enters the union only when >= this many present stations track it
         // with a usable ambiguity.  1 (default) = every tracked key, the original
@@ -6728,6 +6738,68 @@ namespace GnssProcessor {
                       "(fresh arc / first epoch) still pins at 0 and is counted as a COLD "
                       "handover — an unavoidable re-realization the consumer is TOLD about.  "
                       "Ledger is harvested post-solve and consumed one epoch later.");
+        // QUEUE item 1(d) — same INERT-guard ladder as the handover knob above,
+        // for the same reasons: no anchors ⇒ no anchor handovers ⇒ nothing to
+        // re-reference.  The eq34 guard is FIRST, deliberately unlike the ladder
+        // above: an eq34-only config never sets phase_datum_prioritized, so a
+        // prioritized-first ladder would disarm with the factually wrong "legacy
+        // datum elects no anchor" diagnostic (eq34 elects a CHAIN datum) and the
+        // accurate message would be unreachable.
+        if (network_phase_anchor_carry_reref_ && network_phase_datum_eq34_) {
+            log->warn("Network (phase-anchor carry reref): "
+                      "network.phase_anchor_carry_reref is on with the eq34 CHAIN datum, "
+                      "which already owns the eq34_reref carry hygiene this knob mirrors.  "
+                      "DISABLED — arming both would double-treat the same edge.");
+            network_phase_anchor_carry_reref_ = false;
+        }
+        if (network_phase_anchor_carry_reref_ && network_phase_datum_ensemble_) {
+            log->warn("Network (phase-anchor carry reref): "
+                      "network.phase_anchor_carry_reref is on with the ENSEMBLE datum, "
+                      "which elects no anchor and holds no pin, so no handover exists to "
+                      "trigger the re-reference.  DISABLED.");
+            network_phase_anchor_carry_reref_ = false;
+        }
+        if (network_phase_anchor_carry_reref_ && !network_phase_datum_prioritized_) {
+            log->warn("Network (phase-anchor carry reref): "
+                      "network.phase_anchor_carry_reref is on but "
+                      "network.phase_datum_prioritized is OFF — the legacy datum elects no "
+                      "anchor, so there is no PHASE_ANCHOR handover whose carry could be "
+                      "re-referenced (that posture DELETES the column network-wide instead).  "
+                      "DISABLED (no behaviour change).");
+            network_phase_anchor_carry_reref_ = false;
+        }
+        // The continuous-handover PAIRING is INCOHERENT with the reref and is
+        // disarmed on the handover side (review finding, 2026-08-14): under the
+        // ledger pin the frame step lands at T+1 — the documented one-epoch
+        // revert (SPEC §5.07.3) — while the reref mark covers T only, so the
+        // pairing would marginalize the one fold that was IN-frame and miss the
+        // stale one, with run-end telemetry claiming the family was treated.
+        // 1(d) alone measured strictly better than the continuous handover ever
+        // did on its own target channel (§5.08.3 vs §5.0.1), so the reref wins
+        // the conflict.  Compose them only after an R2-style sticky target or a
+        // T+1-pending mark exists AND is validated.
+        if (network_phase_anchor_carry_reref_
+            && network_phase_datum_handover_continuous_) {
+            log->warn("Network (phase-anchor carry reref): "
+                      "network.phase_datum_handover_continuous is DISABLED under "
+                      "network.phase_anchor_carry_reref — the ledger pin defers the frame "
+                      "step to T+1 (SPEC_pivot_visibility_gauge_defect §5.07.3) while the "
+                      "carry mark covers T, so the pair would marginalize the valid fold "
+                      "and miss the stale one.  The reref alone closed the churn "
+                      "(§5.08.3); every handover now takes the honest COLD path, where "
+                      "the mark timing is correct.");
+            network_phase_datum_handover_continuous_ = false;
+        }
+        if (network_phase_anchor_carry_reref_)
+            log->info("Network producer (PHASE_ANCHOR carry re-reference, QUEUE 1(d)): at an "
+                      "anchor handover the (sat,signal) family's shared phase-bias carry is "
+                      "MARGINALIZED for that one epoch and its phase-leveling local carries "
+                      "are erased at every station — the retired-frame prior is not folded "
+                      "against the re-realized datum, so the frame step lands on the free "
+                      "phase bias instead of being absorbed by the satellite clock "
+                      "(SPEC_pivot_visibility_gauge_defect §5.07: 41-sigma clock innovations, "
+                      "q_pb:q_clock = 1e10:1).  Families and erased carries are counted at "
+                      "run end.");
         // PB emission-continuity filter INERT unless the invariant carry is armed
         // (its re-based emission frame is the filter's input); the carry-ON case is
         // reported inside the carry_invariant block above.

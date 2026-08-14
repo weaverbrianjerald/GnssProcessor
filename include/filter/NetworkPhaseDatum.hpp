@@ -225,6 +225,20 @@ void networkElectEnsembleDatum(
  *                          it is non-null, including on the @c handover ==
  *                          @c nullptr path, so the churn a legacy arm suffers can
  *                          be MEASURED before the fix is armed.
+ * @param reref_out         [out, optional] QUEUE item 1(d)
+ *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1):
+ *                          INSERTED (sat, signal) of every handover this epoch —
+ *                          the families whose datum re-realized and whose carried
+ *                          state therefore belongs to the RETIRED frame.  The
+ *                          caller routes it to ctx.carry.phase_anchor_reref, where
+ *                          the D2/C1 shared-carry consume marginalizes those PB
+ *                          keys for one epoch (exactly as @c eq34_reref) and
+ *                          @ref networkApplyPhaseAnchorCarryReref erases the
+ *                          family's phase-leveling local carries.  @c nullptr
+ *                          (the default, and the knob-OFF path) is byte-identical:
+ *                          nothing is populated and nothing downstream fires.
+ *                          Unlike @p handovers_out this is NOT purely
+ *                          observational — its consumers change which priors fold.
  */
 void networkElectPhaseAnchors(
         bool sticky,
@@ -238,6 +252,29 @@ void networkElectPhaseAnchors(
         std::set<std::string>& shared_phase_keys,
         const AnchorHandoverLedger* handover = nullptr,
         std::vector<AnchorHandoverEvent>* handovers_out = nullptr,
-        double max_var = 0.0);
+        double max_var = 0.0,
+        std::set<std::pair<std::string, std::string>>* reref_out = nullptr);
+
+/**
+ * @brief QUEUE item 1(d): erase the phase-leveling local ambiguity carries of
+ *        every re-referenced (sat, signal) family, at EVERY station.
+ *
+ * The local ambiguities are frame-DEPENDENT quantities (z ≈ range − bˢ_σ − …),
+ * so when the family's phase-bias datum re-realizes at a handover the carried
+ * floats are stale in exactly the way the shared PB carry is; they refloat next
+ * epoch.  Verbatim the eq34 D4 carry-hygiene erase
+ * (@c NetworkChainDatum.cpp), applied to the anchored election's re-reference
+ * set.  Runs at the election site, BEFORE PASS B consumes the carry.
+ *
+ * @param reref        This epoch's re-referenced (sat, signal) families
+ *                     (ctx.carry.phase_anchor_reref).  Empty ⇒ immediate 0.
+ * @param local_carry  ctx.carry.local_carry — the phase-leveling per-station
+ *                     ambiguity carry, keyed (station idx, sat, signal).  Inert
+ *                     (empty map) unless network.phase_leveling.
+ * @return Number of local carry entries erased.
+ */
+int networkApplyPhaseAnchorCarryReref(
+        const std::set<std::pair<std::string, std::string>>& reref,
+        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry);
 
 } // namespace GnssProcessor

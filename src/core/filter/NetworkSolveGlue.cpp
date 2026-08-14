@@ -1099,6 +1099,14 @@ std::map<char, std::vector<double>> we_sigma0_pool_c;
 // matching T3–T6, which only accrue on emitted epochs.  Without this, T2 counted withheld
 // (contaminated) epochs while the post-fit tiers did not, giving incomparable alphas.
 bool we_t2_opp = false, we_t2_flag = false;
+// R0 (SPEC_pivot_visibility_gauge_defect §5.07.5): reset the tier's per-epoch
+// observability EVERY epoch that reaches the solve, so an epoch the tier does
+// not assess leaves the epoch-status columns blank instead of repeating the
+// last assessed epoch's numbers ("unavailable is not 0").
+ctx.carry.ep_sigma0_first    = -1.0;
+ctx.carry.ep_we_refloat_sats = -1;
+ctx.carry.ep_we_clk_move_max = -1.0;
+ctx.carry.ep_we_clk_move_sat.clear();
 if (within_epoch_armed && carry_warm) {
     const double trig      = config_.networkRaimSigma0Trigger();
     const bool   surgical  = config_.networkRaimSurgicalStation();
@@ -1493,6 +1501,20 @@ if (within_epoch_armed && carry_warm) {
     std::map<std::pair<int, std::string>, double> arc_eff;
     assess(x_s, sigma0, sat_eff, sta_eff, arc_eff);
     const double sigma0_first = sigma0;
+    // R0: park the pre-adaptation σ̂₀ for the epoch-status row — this is the null
+    // sample QUEUE item 4 needs on disk (it previously existed only inside a trip
+    // event's detail span, so quiet epochs left nothing to fit).
+    ctx.carry.ep_sigma0_first = sigma0_first;
+    // R0 (§5.07.2 impulse-channel meter): the PRIMARY solve's satellite clocks,
+    // captured before any within-epoch re-solve can move them.  The shared layout
+    // is frozen for the epoch, so clockColumn stays valid across re-solves.
+    std::map<std::string, double> we_clk_first;
+    for (const std::string& s : registered_clock_sats) {
+        try {
+            const Eigen::Index c = est.clockColumn(s);   // throws if absent
+            if (c >= 0 && c < x_s.size()) we_clk_first[s] = x_s(c);
+        } catch (...) { /* no clock column — not in this epoch's layout */ }
+    }
     if (trace_flag_rates) { we_t2_opp = true; we_t2_flag = (sigma0_first > trig); }  // B8/T2 (R12: committed at emit, below)
     if (we_ci) {   // invariant-#4 telemetry: first-assess trips + run maxima
         auto& sc = ctx.counters;
@@ -1628,6 +1650,48 @@ if (within_epoch_armed && carry_warm) {
         ++n_adapt;
         assess(x_s, sigma0, sat_eff, sta_eff, arc_eff);
     }
+    // R0: the settled clock displacement of this epoch's re-solves — (final −
+    // primary) per satellite, the §5.07.2 impulse-channel meter.  Identically 0
+    // when no re-solve ran (x_s is untouched), so only adapted epochs pay the
+    // comparison loop.
+    double      we_clk_move_max = 0.0;   // signed; compared by |·|
+    std::string we_clk_move_sat;
+    if (n_adapt > 0) {
+        for (const auto& [s, v0] : we_clk_first) {
+            double v1 = 0.0;
+            try {
+                const Eigen::Index c = est.clockColumn(s);
+                if (!(c >= 0 && c < x_s.size())) continue;
+                v1 = x_s(c);
+            } catch (...) { continue; }
+            const double dv = v1 - v0;
+            if (std::abs(dv) > std::abs(we_clk_move_max)) {
+                we_clk_move_max = dv;
+                we_clk_move_sat = s;
+            }
+            // One trace row per satellite the tier measurably moved (> 1 mm) —
+            // the per-identity channel; the epoch max goes to the status row.
+            if (events_trace.is_open() && std::abs(dv) > 1e-3)
+                emitEvent("T2_within_epoch", "we_clock_move", s, "", dv,
+                          std::nullopt, "measure",
+                          fmt::format("{:.4f}->{:.4f}", v0, v1));
+        }
+        // R0 run-end counters for the three response classes (previously only the
+        // withhold had one) + the run-max clock move with its identity.
+        auto& sc = ctx.counters;
+        sc.we_refloat_sat_total += static_cast<long long>(drop_sats.size());
+        {
+            std::size_t na = 0;
+            for (const auto& kv : drop_arcs) na += kv.second.size();
+            sc.we_refloat_arc_total += static_cast<long long>(na);
+        }
+        sc.we_exclude_sta_total += static_cast<long long>(drop_stations.size());
+        if (std::abs(we_clk_move_max) > std::abs(sc.we_clk_move_max_m)) {
+            sc.we_clk_move_max_m   = we_clk_move_max;
+            sc.we_clk_move_max_tow = se.time.tow;
+            sc.we_clk_move_max_sat = we_clk_move_sat;
+        }
+    }
     if (n_adapt > 0) {
         log->info("Network[RAIM within-epoch]: TOW {:.1f} re-conditioned in {} re-solve(s) — "
                   "refloated {} sat / {} arc, {} sta excluded [{}]; σ̂0 {:.2f} → {:.2f} (trigger {:.2f}).",
@@ -1663,6 +1727,15 @@ if (within_epoch_armed && carry_warm) {
     // correction — feed the retro-bump regardless of the (numeric) couple opt-in.
     if (retro_feed)
         for (const auto& s : drop_sats) retro_flag_sats.insert(s);
+
+    // R0: park the tier's per-epoch observability for the epoch-status row.  The
+    // refloat count is the tier's OWN settled whole-sat set (es.n_refloat_sats
+    // reads the clock-COUPLE set, which is empty unless clock_monitor_couple_raim
+    // — §5.07.4 defect 5); the clock move is 0.0 on an assessed-but-quiet epoch,
+    // which is a real measurement, not an absence.
+    ctx.carry.ep_we_refloat_sats = static_cast<int>(drop_sats.size());
+    ctx.carry.ep_we_clk_move_max = std::abs(we_clk_move_max);
+    ctx.carry.ep_we_clk_move_sat = we_clk_move_sat;
 
     sigma0_adapt = sigma0;   // A4: publish the final within-epoch σ̂0 for the withhold gate
 }
@@ -1779,6 +1852,17 @@ if (a4_over_ceiling && !perconst_active) {
     { EpochStatusRow es; es.sigma0 = sigma0_adapt; es.n_adapt = n_adapt;
       es.n_present = n_present; es.n_clock_sats = n_clock;
       es.datum_changed = datum_changed ? 1 : 0;
+      // R0: a withheld epoch is precisely where the tier's first-assess σ̂₀ and
+      // the impulse meter matter most — carry them onto the disposition row.
+      if (ctx.carry.ep_sigma0_first >= 0.0) {
+          es.sigma0_first = ctx.carry.ep_sigma0_first;
+          if (ctx.carry.ep_we_refloat_sats >= 0)
+              es.n_we_refloat_sats = ctx.carry.ep_we_refloat_sats;
+          if (ctx.carry.ep_we_clk_move_max >= 0.0) {
+              es.we_clk_move_max_m   = ctx.carry.ep_we_clk_move_max;
+              es.we_clk_move_max_sat = ctx.carry.ep_we_clk_move_sat;
+          }
+      }
       emitEpochStatus("sigma0_withheld", es); }
     // RTA-10: product-level heartbeat for the WITHHELD epoch (H line, no E line)
     // — a live tail can tell "σ̂0 withheld" from "producer died".  Only once the

@@ -601,6 +601,15 @@ namespace GnssProcessor {
         /// byte-for-byte the schema it had before this rider existed.
         bool es_s0g_columns_ = false;
 
+        /// L1 / R0 (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5): are the
+        /// four within-epoch-tier observability columns (sigma0_first,
+        /// n_we_refloat_sats, we_clk_move_max_m, we_clk_move_max_sat) part of this
+        /// run's epoch-status schema?  Present iff network.raim_within_epoch is
+        /// armed — the adm/prires precedent (a tier-OFF run keeps structural
+        /// byte-identity), and the columns are meaningless without the tier
+        /// anyway (σ̂₀_first is that tier's own first-assess statistic).
+        bool es_we_columns_ = false;
+
         /**
          * @brief Open every armed trace stream and write its header row (verbatim
          *        relocation of the runNetwork() startup trace-open scope).

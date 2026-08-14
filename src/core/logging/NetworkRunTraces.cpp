@@ -258,6 +258,11 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     // schema flag, so a census-only run keeps exactly the columns it had before
     // this rider existed and the census's §9.1 A/B stays a valid comparison.
     es_s0g_columns_ = nc.prior_residual_census && nc.prior_residual_global_sigma0;
+    // R0 within-epoch tier observability (SPEC_pivot_visibility_gauge_defect
+    // §5.07.5) — present iff the tier is armed (the adm/prires precedent).  NOTE
+    // the loader force-enables the tier whenever raim_withhold_sigma0 > 0, so
+    // this flag reflects the RESOLVED arming, not what the user typed.
+    es_we_columns_ = config_.networkRaimWithinEpoch();
     if (nc.trace_epoch_status) {
         epoch_status_trace.open(epoch_status_trace_path);
         if (epoch_status_trace)
@@ -342,7 +347,24 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                // degradation bitmask: a degraded number SAYS SO
                                // in its own row, never silently.
                                << (es_s0g_columns_
-                                       ? ",sigma0_global,prior_tension_ratio,s0g_flags\n"
+                                       ? ",sigma0_global,prior_tension_ratio,s0g_flags"
+                                       : "")
+                               // R0 (SPEC_pivot_visibility_gauge_defect §5.07.5):
+                               // the within-epoch tier's own observability, present
+                               // iff the tier is armed.  sigma0_first is the
+                               // pre-adaptation σ̂₀ — the null sample QUEUE item 4
+                               // needs (previously it existed only inside a trip
+                               // event's detail span); n_we_refloat_sats is the
+                               // tier's OWN whole-sat refloat count (n_refloat_sats
+                               // is the clock-COUPLE set, empty unless
+                               // clock_monitor_couple_raim); we_clk_move_* is the
+                               // §5.07.2 impulse-channel meter — how far the
+                               // within-epoch re-solves moved a satellite clock off
+                               // the PRIMARY solve.  Blank on epochs the tier did
+                               // not assess.
+                               << (es_we_columns_
+                                       ? ",sigma0_first,n_we_refloat_sats,"
+                                         "we_clk_move_max_m,we_clk_move_max_sat\n"
                                        : "\n");
         else
             log->warn("Network: failed to open epoch-status trace {}",
@@ -878,6 +900,21 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
             if (r.s0g_tension) o << fmt::format("{:.6e}", *r.s0g_tension);
             o << ',';
             if (r.s0g_flags)   o << *r.s0g_flags;
+        }
+        // R0 within-epoch tier observability: four columns, present in the schema
+        // only when the tier is armed (see the header write in openAll).  Blank on
+        // an epoch the tier did not assess — "unavailable is not 0", and here the
+        // distinction is load-bearing: a genuine σ̂₀_first row IS the null sample
+        // QUEUE item 4 fits, so a fabricated 0 would poison the fit.
+        if (es_we_columns_) {
+            o << ',';
+            if (r.sigma0_first)      o << fmt::format("{:.4f}", *r.sigma0_first);
+            o << ',';
+            if (r.n_we_refloat_sats) o << *r.n_we_refloat_sats;
+            o << ',';
+            if (r.we_clk_move_max_m) o << fmt::format("{:.4f}", *r.we_clk_move_max_m);
+            o << ',';
+            o << r.we_clk_move_max_sat;
         }
         o << '\n';
 }

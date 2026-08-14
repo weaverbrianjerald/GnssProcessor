@@ -1,5 +1,12 @@
 # SPEC — the single-pivot phase-bias gauge defect
 
+**Status, 2026-08-14 (later the same day).** §5.07's root fix is BUILT and
+VALIDATED — R0 telemetry landed (solve-neutral, golden gate PASS) and QUEUE item
+1(d) (`network.phase_anchor_carry_reref`, default OFF) closes the clock churn on
+the 24-station fixture: **Σ|dev| 160.46 → 1.53 m (105×), episodes 7 → 1 (the
+ignition mark), datum-free C contrast 18.66 → 0.50 m (37×), matching the
+clean-election bound**. See **§5.08**.
+
 **Status, 2026-08-14.** §5.05's THIRD root is now NAMED and A/B-confirmed — the
 phase-bias datum re-realizes on the design matrix only, the carry is never
 transformed into the new frame, and the satellite clock absorbs the step. See
@@ -529,17 +536,23 @@ carries the defect with 1 trip and 1 mark, and the largest untouched item (G28's
   responses; **trace σ̂₀_first on every live epoch** (it exists only inside the
   `detail` span at `:1640`, so *there is no null sample on disk to fit*); fix
   `es.n_refloat_sats`; capture the primary-solve clock at `:1495` and emit
-  `(final − first)`.
+  `(final − first)`.  ✅ **LANDED 2026-08-14, all five items — §5.08.1.**
 - **R1 — the carry re-reference (primary).** Populate a `phase_anchor_reref`
   `{sat, signal}` set in `networkElectPhaseAnchors` alongside `handovers_out`
   (`NetworkPhaseDatum.cpp:377-379`) and consume it at
   `NetworkRunContext.cpp:1706-1707` **exactly as `eq34_reref` is** — the template
   is already built and already commented for this failure at `:1701-1705`. Erase
   `local_carry` for **all** stations of that (sat,signal). Default-OFF,
-  byte-identical when off.
+  byte-identical when off.  ✅ **LANDED AND VALIDATED 2026-08-14 as
+  `network.phase_anchor_carry_reref` — §5.08.2/§5.08.3 (Σ|dev| 105×, C contrast
+  37×, at the clean-election bound).**
 - **R2 — make the continuous target sticky past the handover epoch**, or
   `phase_datum_handover_continuous` remains a one-epoch deferral by construction.
+  *(2026-08-14: moot under 1(d)-alone — with the carry marginalized, the cold
+  T and T+1 pins realize the SAME frame, so nothing steps at the revert.  R2
+  matters only for the continuous+1(d) pairing, which is unmeasured.)*
 - **R3 — declare what still moves**: a cumulative companion to the step test.
+  Still open.
 - **R4 — fix the null** (second, not optional): derive the actual null of
   `max(floor, 1.4826·median(·))` over correlated standardized residuals; give the
   statistic a prior-side term (`SPEC_sigma0_constraint_aware.md`); extend
@@ -566,6 +579,165 @@ carries the defect with 1 trip and 1 mark, and the largest untouched item (G28's
   anchor becomes carry-eligible again with a `local_carry` entry harvested
   *before* it anchored; the incoming anchor's carry is silently dropped. Same
   predicate (`networkIsGaugePinned_`) both sides, no event on either.
+
+## 5.08 R0 + 1(d) LANDED AND VALIDATED — the carry re-reference closes the churn
+
+**Status: built, golden-gated and A/B-validated 2026-08-14, same session as
+§5.07.**  Exe pair: pre-change `7a908e23…` (the §5.07 snapshot) vs the post-change
+build; arms `runs/pareref_{off,on}` from
+`config/test_suite/_simnet24_inj_pareref_{off,on}.json` (the `_simnet24_inj_null_pdp`
+posture, one knob differing).  Unit suite 1408/1408 (1 known fixture-gated skip).
+
+### 5.08.1 R0 — all five items, plus two collaterals
+
+1. **PBGAUGE rows are UNCONDITIONAL** (the event sink is always passed; the
+   ledger stays armed-only).  The cold re-pin is no longer an unlogged both-edge
+   event — §5.07.4 defect 5 closed.
+2. **Run-end counters for the three within-epoch responses**
+   (`we_refloat_sat/arc/exclude_sta_total`) + a `T2 within-epoch responses`
+   teardown line.  Previously only the withhold had a first-class counter.
+3. **σ̂₀_first is traced on every assessed epoch** — 4 columns appended to
+   `network_epoch_status.csv` (schema-gated on `raim_within_epoch`, the
+   adm/prires precedent): `sigma0_first, n_we_refloat_sats, we_clk_move_max_m,
+   we_clk_move_max_sat`.  The null sample item 4 needs now exists on disk.
+4. **`n_we_refloat_sats`** carries the tier's OWN whole-sat refloat count
+   (§5.07.4 defect 5's `es.n_refloat_sats` is left as the clock-COUPLE set for
+   schema compatibility, with the distinction documented at the write site).
+5. **The §5.07.2 impulse-channel meter**: the primary solve's clocks are
+   captured after the first assess and `(final − first)` is emitted per moved
+   satellite (`we_clock_move` T2 rows) with epoch/run maxima.  On the OFF arm it
+   reads **28.487 m (G12 @ 305880)** — the tier's own measure of the impulse it
+   injects, confirming §5.07.2's decomposition with no arm needed.
+   Collaterals: `handover_refused_var` was written-never-read (now on the
+   teardown handover line); the 1(d) counters get their own dead-wiring warn.
+
+**Solve neutrality is PROVEN, not asserted**: same config, pre- vs post-change
+exe — `network_solution.csv` and `network_dd_fractional.csv` **bit-identical**
+(sha256), `network_events.csv` identical after stripping the 235 new R0 rows,
+`network_epoch_status.csv` identical after stripping the 4 appended columns.
+
+### 5.08.2 1(d) — `network.phase_anchor_carry_reref` (default OFF)
+
+Exactly §5.07.5 R1: `networkElectPhaseAnchors` populates a per-epoch
+`phase_anchor_reref` (sat,signal) set alongside `handovers_out` (parsed from the
+registered PB key, both cold and continuous handovers — the continuous pin
+reverts at T+1 by construction, §5.07.3, so the carry is stale either way); the
+D2/C1 fold marginalizes those PB keys for one epoch on BOTH branches, exactly as
+`eq34_reref`; the family's phase-leveling local carries are erased at every
+station (`networkApplyPhaseAnchorCarryReref`); the VCE monitor and the
+prior-residual census mirror the skip (`mech = "phase_anchor_reref"` Frame
+label).  Loader INERT-guards mirror the handover knob's ladder; NOT in the
+warm-resume fingerprint (sixth forward-only exemption).  Counted at run end;
+armed-and-silent warns (invariant #4).
+
+### 5.08.3 The single-knob A/B — every instrument, one direction
+
+Handover schedule **identical 30/30** across the arms (control); gauge audit
+identical (1 legitimate satellite-left removal, 0 avoidable — control).  The
+1(d) wiring: 30/30 handovers marginalized, 171 local carries erased.
+
+| channel | OFF (= §5.0 baseline) | ON 1(d) | factor |
+|---|---|---|---|
+| CLK_STEP marks / episodes | 15 / 7 | **1 / 1** | — |
+| Σ\|dev\| | 160.457 m | **1.529 m** | **105×** |
+| datum-free C contrast rms | 18.6553 m | **0.5035 m** | **37×** |
+| terminal `clock_std_m` | 15.283 | **0.812** | 18.8× |
+| B sat-code-bias truth rms | 1.5725 m | **0.0752 m** | 21× |
+| B variance factor | 5526 | **34.7** | 159× |
+| rx DCB contrast rms | 4.4141 m | **1.2083 m** | 3.7× |
+| T3 cell rate | 6.69 % | **3.66 %** | −45 % |
+| T3 consensus rate | 20.1 % | **0.56 %** | 36× |
+| within-epoch sat refloats | 8 | **0** | — |
+| we clock impulse (max) | 28.487 m | **0** | — |
+| σ̂₀_first (terminal) | 2.16 | 1.39 | — |
+| consumer 3D final / settled median | 1.649 / 1.450 m | 0.491 / 0.541 m | (§4.1 caveat) |
+
+The one surviving mark is **G12 @ 302430 (1.53 m) — the second epoch of the
+run, an ignition transient present in both arms**, not a handover.  Every
+§5.0.1 episode is gone.  The ON arm's C contrast (0.5035) lands AT the §4
+clean-election bound (0.518, datum S06 which loses nothing) — consistent with
+the §5.07 claim that the entire churn was the un-transformed carry, and achieved
+WITHOUT electing a special datum.  The tier had nothing left to refloat (8 → 0)
+and the A4 ceiling never armed a withhold in either arm.
+
+### 5.08.4 What this changes upstream
+
+- **§5.05's third root is CLOSED on this fixture.**  The four null
+  interventions stand as measured — they were all design-matrix-side; the first
+  carry-side intervention removes the channel entirely.
+- **QUEUE item 4's two blockers are both cleared**: σ̂₀_first now exists on
+  every assessed epoch, and `runs/pareref_on` is a VERIFIED null-calibration
+  fixture — at the nine assessed handover epochs σ̂₀_first reads 1.37 / 9.35 /
+  3.80 / 5.88 / 6.99 / 2.30 / 3.29 / 13.27 on the OFF arm (the carry tension,
+  twice past the 6.0 A4 ceiling that `sigma0_adapt` laundered — §5.07.4 defect 1
+  visible in its own instrument) versus **1.00–1.32 on the ON arm**, i.e.
+  indistinguishable from background.  The design-side re-pin still happens at
+  those epochs; it is now statistically silent.
+- **Item 0 (pin bridge) and item 2 (datum election)** now address exposure to an
+  edge whose carry side is fixed — re-rank accordingly (QUEUE amended).
+
+### 5.08.5 What is still NOT established
+
+- **n = 1** — same fixture, arc, constellation and roster salt as everything
+  above.  No independent-seed replication; no ≥2 h arm; GPS-only.
+- **Marginalize (delete) is now MEASURED sufficient here; transform > delete
+  remains unmeasured** — the S-transform would additionally preserve one epoch
+  of carry information per handed-over family (30 family-epochs here).  With the
+  channel at 1.5 m residual Σ|dev| the headroom is small; build the transform
+  only if a bigger fixture shows the one-epoch refloat cost.
+- **Field reachability untested** — unchanged from §5.07.6.  Note the flagship
+  field lineages run eq34, whose chain election owns `eq34_reref` already; 1(d)
+  covers the prioritized-anchor posture.
+- ~~The continuous-handover + 1(d) pairing is legal but unmeasured.~~
+  **RESOLVED by review (§5.08.6): the pairing is loader-DISARMED** — under the
+  ledger pin the frame step lands at T+1 (the §5.07.3 revert) while the mark
+  covers T, so the pair would marginalize the valid fold and miss the stale one.
+  The reref wins the conflict (it alone closed the churn; the continuous
+  handover measured null on the same channel), so `phase_datum_handover_continuous`
+  is disarmed with a warn whenever both are set.  Compose them only after an
+  R2-style sticky target or a T+1-pending mark exists AND is validated.
+
+### 5.08.6 Adversarial review of the diff — two confirmed holes, both closed
+
+A 4-dimension / 2-skeptics-per-finding review of the landed diff (7 findings, 4
+survived refutation) confirmed two real edges of the NEW mechanism — both on
+postures the validation arms did not exercise — and two minors.  All are fixed
+in the same landing:
+
+1. **The continuous pairing mistimed the mark** (major, confirmed twice
+   independently) — see the strike-through above.  Fixed with a fourth
+   INERT-guard; the validated arms are untouched (they ran cold handovers,
+   where mark-at-T is provably correct).
+2. **A bridge-exit re-pin was never marked** (major).  The bridged-key skip in
+   the election `continue`s before any incumbent bookkeeping, so one bridged
+   epoch evaporates the incumbent record and the eventual bridge-exit re-pin —
+   a full frame step against a still-stashed carry — read as a *first sighting*
+   (standing invariant #7's named failure, verbatim).  Fixed by marking every
+   **incumbent-less pin**: a family with no surviving carry makes every consumer
+   a no-op, while one WITH a surviving carry (bridge exit, or a long-gap return
+   inside the prune horizon) is exactly the stale-frame case.  First pins at
+   run start mark harmlessly (prev_carry is empty).
+3. **A withheld epoch evaporated the mark while the incumbent swap persisted**
+   (minor).  The set was cleared at the next election, but a withheld epoch
+   skips the stash — its prev_carry still holds retired-frame values that would
+   then fold unmarked.  Fixed by moving the clear to the carry-stash tail: the
+   mark now survives exactly until a solve commits the new frame (SH-gate
+   epochs stash and clear correctly; A4/rank-gate epochs persist the mark).
+4. **The eq34-only posture disarmed with a factually wrong diagnostic** (minor)
+   — the guard ladder now tests eq34 first.
+
+Refuted classes, for the record: the signed-counter vs absolute-column
+`we_clk_move` split (documented contract, not a collision), and the
+guard-ladder-escape scenario (independently blocked by the `NetworkKnobs`
+belt-and-braces resolution).
+
+**Post-fix re-verification (same session):** suite 1412/1412; the OFF arm is
+byte-identical through the review fixes on all four graded CSVs (the golden
+chain holds transitively), and the ON arm's `network_solution.csv` is
+**bit-identical** to the pre-fix ON arm — every incumbent-less mark on this
+fixture was the predicted no-op (126 marks = 30 handovers + 96 first sightings
+with no surviving carry), so every number in §5.08.3 stands unchanged for the
+shipped semantics.
 
 ### 5.1 The real fix, not yet built
 
@@ -634,7 +806,20 @@ for d in inj_weab_on inj_weab_off; do
 done   # -> must be 10/10 identical, else the A/B has a second variable loose
 ```
 
+```bash
+# --- §5.08: the 1(d) validation pair (2 x ~35 s, Release only, ONE exe snapshot) ---
+build/x64-Release/gnss_processor.exe config/test_suite/_simnet24_inj_pareref_off.json
+build/x64-Release/gnss_processor.exe config/test_suite/_simnet24_inj_pareref_on.json
+#   (copy ./logs to runs/pareref_<arm>/logs between runs, as above)
+python scripts/clk_step_episodes.py runs/pareref_off/logs runs/pareref_on/logs
+#   -> OFF: 15 marks / 7 episodes / 160.457 m;  ON: 1 / 1 / 1.529 m (the ignition mark)
+python scripts/simnet_grade.py runs/simnet24_inject_null --run runs/pareref_on \
+    --products runs/pareref_on/products.txt      # C contrast 0.5035 m
+# control: the anchor_handover schedules must be identical 30/30 across the arms
+```
+
 Configs: `_simnet24_inj_null_l13.json` (datum S12, `trace_station_residuals` on),
 `_simnet24_inj_ds_S06000SIM.json`, `_simnet24_inj_ds_S13000SIM.json`,
 `_simnet24_inj_null_pdp.json` (`phase_datum_prioritized` ON),
-`_simnet24_inj_weab_{on,off}.json` (§5.07's within-epoch A/B).
+`_simnet24_inj_weab_{on,off}.json` (§5.07's within-epoch A/B),
+`_simnet24_inj_pareref_{off,on}.json` (§5.08's 1(d) A/B).

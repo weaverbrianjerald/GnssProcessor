@@ -241,6 +241,16 @@ namespace GnssProcessor {
         /// before it may be pinned — invariant #7's re-coupling re-validation.
         /// 0.0 when the mechanism is off.
         double pd_handover_max_var{};
+        /// QUEUE item 1(d): PHASE_ANCHOR carry re-reference, RESOLVED for the run
+        /// (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  On an anchor
+        /// handover the (sat,signal) family's shared PB carry is MARGINALIZED for
+        /// one epoch and its phase-leveling local carries erased at every station
+        /// — the eq34_reref treatment for the anchored election, closing the
+        /// carry-side edge whose tension the satellite clock absorbed.  Already
+        /// ANDed with `anchored && !phase_datum_eq34` (the eq34 chain owns its own
+        /// re-reference; the ensemble has no anchors), same belt-and-braces as
+        /// pd_handover_continuous above.
+        bool   pa_carry_reref{};
         int    eq34_min_arc_ep{};     ///< INC-1 eligibility threshold in consecutive-present epochs (0 = no gate).
         double prior_realization_max_gap_s{};  ///< INC-1 warm conditioning: the block applies only while the key's last EMITTED realization is younger than this (s); <= 0 disables the conditioning.
         bool   pin_bridge_on{};       ///< INC-2 time-linked phase datum armed.
@@ -620,6 +630,21 @@ namespace GnssProcessor {
         // retired frame, and folding them yanks the new frame by up to the full
         // re-level (the 03:46 silent-re-level mechanism).  Always empty when eq34 off.
         std::set<std::pair<std::string, std::string>> eq34_reref;
+        // QUEUE item 1(d) — the PHASE_ANCHOR carry re-reference
+        // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  Per-epoch
+        // (sat, signal) set of the anchor election's HANDOVERS: cleared + rebuilt
+        // at each anchor election, read (1) by the local-carry erase right after
+        // the election and (2) by the D2/C1 shared-carry consume, which
+        // marginalizes the re-referenced PB keys for that epoch — exactly the
+        // eq34_reref treatment, applied to the anchored (non-eq34) election whose
+        // handovers previously re-realized the datum on the DESIGN MATRIX ONLY
+        // while the carry was folded forward in the retired frame at q_pb = 1e-12
+        // (the satellite clock, at q = 0.01, absorbed the whole frame step — 41 σ
+        // measured on G21).  Always empty unless ctx.knobs.pa_carry_reref.
+        std::set<std::pair<std::string, std::string>> phase_anchor_reref;
+        // 1(d) run-scope observability (the eq34_reref_total precedent): families
+        // marginalized and phase-leveling local carries erased over the run.
+        long long pa_reref_total = 0, pa_reref_erase_total = 0;
 
         // --- eq34 REATTACH HYGIENE (docs/SPEC_eq34_reattach_hygiene.md) --------
         // Every member below stays EMPTY unless ctx.knobs.anchor_hygiene_on, so an
@@ -1101,6 +1126,19 @@ namespace GnssProcessor {
                   carry_prev_innov_flags = 0, carry_prev_innov_retaps = 0;
         long long ep_chord_births = 0, ep_slip_refloats = 0,
                   ep_d5_flags = 0, ep_d5_retaps = 0;
+        // R0 (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5): the within-epoch
+        // RAIM tier's per-epoch observability, parked here between the solve glue
+        // (writer) and the epoch-status emit (reader).  σ̂₀_first previously existed
+        // ONLY inside a trip event's detail span, so there was no null sample on
+        // disk to fit a corrected quantile against (QUEUE item 4's hard blocker);
+        // and the within-epoch sat refloats were invisible in the epoch-status row
+        // because es.n_refloat_sats counts the clock-COUPLE set, which is empty
+        // unless clock_monitor_couple_raim.  Sentinels: < 0 = the tier did not
+        // assess this epoch (columns stay BLANK — "unavailable is not 0").
+        double      ep_sigma0_first    = -1.0; ///< first-assess σ̂₀ (pre-adaptation)
+        int         ep_we_refloat_sats = -1;   ///< whole-sat refloats settled this epoch
+        double      ep_we_clk_move_max = -1.0; ///< max |final − primary| clock move (m)
+        std::string ep_we_clk_move_sat;        ///< identity of that max (invariant #7)
 
         // --- PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md) INC-0 cross-epoch state.
         //
@@ -1931,6 +1969,21 @@ namespace GnssProcessor {
         std::size_t we_ci_sat_dw     = 0;   ///< network-wide satellite code-row de-weights chosen from the code pool
         double we_ci_s0_code_max = 0.0;     ///< max code-pool σ̂0 observed (trigger-calibration telemetry)
         double we_ci_s0_iono_max = 0.0;     ///< max iono-pool σ̂0 observed (trigger-calibration telemetry)
+
+        // R0 (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5): run-end counters
+        // for the within-epoch tier's three response classes.  Before this, only
+        // the WITHHOLD had a first-class run counter (n_sigma0_withheld); the
+        // refloats and exclusions existed solely as per-epoch T2 event rows, so a
+        // run summary could not say how often the tier actually acted.  The clock
+        // move is the §5.07.2 impulse-channel meter: how far the within-epoch
+        // re-solves moved a satellite clock from the PRIMARY solve's value —
+        // counters AND identity, per invariant #7.
+        long long we_refloat_sat_total = 0; ///< whole-sat within-epoch refloats settled over the run
+        long long we_refloat_arc_total = 0; ///< isolated-arc within-epoch refloats settled over the run
+        long long we_exclude_sta_total = 0; ///< epoch-scoped station exclusions settled over the run
+        double      we_clk_move_max_m   = 0.0; ///< largest |final − primary| clock move (m)
+        double      we_clk_move_max_tow = 0.0; ///< TOW of that move
+        std::string we_clk_move_max_sat;       ///< satellite of that move
 
         // FC-1 (network.fast_clock) split-cadence fast-clock telemetry — standing
         // invariant #4 in its sharpest form for this card: the fast tier runs on

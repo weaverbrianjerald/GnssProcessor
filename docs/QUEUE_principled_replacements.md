@@ -43,6 +43,18 @@ so the re-ranking is expressed here rather than by renumbering:
 > with **3 dissolved into 1(d)**, **0 downgraded**, and **1(a) still demoted**.
 > Root + evidence: `SPEC_pivot_visibility_gauge_defect.md` §5.07.
 > A/B: `runs/inj_weab_{on,off}`, configs `config/test_suite/_simnet24_inj_weab_{on,off}.json`.
+>
+> ✅ **EXECUTED 2026-08-14 (later the same day) — R0 and 1(d) are LANDED, and
+> 1(d) is VALIDATED** (`SPEC_pivot_visibility_gauge_defect.md` §5.08): golden gate
+> PASS (solve bit-identical, OFF byte-identical), then the single-knob A/B on the
+> pdp arm closed the clock churn — Σ|dev| 160.46 → **1.53 m** (105×), episodes
+> 7 → **1** (the ignition mark), datum-free C contrast 18.66 → **0.50 m** (37×,
+> AT the clean-election bound), B truth rms 1.57 → 0.075 m, T3 6.69 → 3.66 %,
+> within-epoch refloats 8 → 0.  Arms `runs/pareref_{off,on}`, configs
+> `_simnet24_inj_pareref_{off,on}.json`, grader `scripts/clk_step_episodes.py`.
+> **The "regenerate the null arm" step is satisfied by `runs/pareref_on`**
+> (candidate null instrument — verify σ̂₀_first is quiet at its ten handover
+> epochs before fitting).  Remaining order: **4 → 2 → 1(b) → 5 → 7 → 6**.
 
 Rationale, applying this doc's own "measured payoff × readiness" rule to the
 arms that have since been measured (`SPEC_pivot_visibility_gauge_defect.md`
@@ -113,6 +125,12 @@ handovers into loud ones (§5.07).  The 1.9× code-bias win is real and stands; 
 knob is a B-channel remedy, not a clock remedy, and it should be sequenced AFTER
 1(d) so the two are not confounded.
 
+⚠ **LIKELY SUPERSEDED 2026-08-14 (later) — 1(d) alone took the B channel further
+than the bridge did.**  §5.08.3: B truth rms 1.5725 → **0.0752 m** and rx DCB
+contrast 4.41 → 1.21 m on the same posture, without the bridge's clock-channel
+loss.  If this knob is ever wanted, re-measure it ON TOP of 1(d); do not arm it
+on the old evidence.
+
 ---
 
 ## 1 — Complete the S-transform re-reference family
@@ -155,8 +173,9 @@ sub-cards:
 - **(c) eq34 chain-datum handover continuity** — named "a separate card" by the
   loader guard in `GnssConfigLoadNetwork.cpp`; unwritten.  This is the FIELD
   posture's instance (the GG-Q lineage's 2 avoidable unmarked G01 events).
-- **(d) ⭐ THE PHASE_ANCHOR CARRY RE-REFERENCE — NEW 2026-08-14, now the head of
-  the whole queue.**  This is the named root of the clock churn
+- **(d) ⭐ THE PHASE_ANCHOR CARRY RE-REFERENCE — ✅ LANDED AND VALIDATED
+  2026-08-14 as `network.phase_anchor_carry_reref` (default OFF).**  This was the
+  named root of the clock churn
   (`SPEC_pivot_visibility_gauge_defect.md` §5.07): at a `PHASE_ANCHOR` handover the
   datum is re-realized on the **design matrix only** and the carried bˢ_σ is folded
   forward *in the retired frame* at `q_pb = 1e-12`, because neither carry-skip
@@ -165,14 +184,19 @@ sub-cards:
   `NetworkChainDatum.cpp:778`.  With `sat_clock_q = 0.01` against
   `sat_phase_bias_q = 1e-12` (1e10:1), the clock absorbs the entire frame step —
   measured 41 σ on G21.
-  **Build:** populate a `phase_anchor_reref` `{sat, signal}` set in
-  `networkElectPhaseAnchors` beside `handovers_out` (`NetworkPhaseDatum.cpp:377-379`)
-  and consume it at `NetworkRunContext.cpp:1706-1707` exactly as `eq34_reref` is —
-  the template is already built and already commented for this failure at
-  `:1701-1705`.  Erase `local_carry` for ALL stations of that (sat,signal).
-  Default-OFF, byte-identical when off.  **Gated on R0 telemetry** (§5.07.5).
-  ⚠ The `eq34_reref` template *deletes* the prior; the theoretically correct action
-  is an **S-transform** of the carry family.  Transform > delete is INFERRED.
+  **Built exactly as specified** (election populates the set beside
+  `handovers_out`; D2/C1 fold marginalizes on both branches exactly as
+  `eq34_reref`; local carries erased at every station; VCE monitor + prires
+  census mirror the skip; loader INERT ladder; fingerprint-exempt).  **Measured**
+  (§5.08.3, single-knob, schedule-identical 30/30): Σ|dev| 160.46 → 1.53 m,
+  episodes 7 → 1 (ignition), C contrast 18.66 → 0.50 m — at the clean-election
+  bound — with every other instrument improving in the same direction.
+  ⚠ Marginalize (delete) is now MEASURED sufficient on this fixture; the
+  S-transform (which would keep one epoch of carry information per handed-over
+  family) remains unbuilt and its extra value unmeasured — build it only if a
+  larger fixture shows the one-epoch refloat cost.  ⚠ n = 1; field arm owed
+  (note the flagship field lineages run eq34, which owns `eq34_reref` already —
+  1(d) covers the prioritized-anchor posture).
 
 **Sim validation:** (a) fault fixture `_simnet24_inj_fault` with a slip injected
 at the pin-holder / next-ranked candidate on a known handover epoch; grade
@@ -266,6 +290,15 @@ of a trip event (`NetworkSolveGlue.cpp:1640`), never on quiet epochs — so **th
 is no null sample on disk to fit at all**.  R0 telemetry (§5.07.5) is a hard
 prerequisite.  The **T3** evidence above is a different tier and stands untouched;
 only T2's use of this fixture as a null instrument is invalidated.
+
+✅ **BOTH BLOCKERS CLEARED 2026-08-14 — this item is now the head of the queue.**
+R0 landed: σ̂₀_first is a per-epoch `network_epoch_status.csv` column on every
+assessed epoch (armed-gated schema).  1(d) landed + validated: `runs/pareref_on`
+is the regenerated null arm — measurement-clean AND carry-marginalized at all 30
+handovers, terminal σ̂₀_first 1.39 vs the OFF arm's 2.16.  Before fitting, verify
+σ̂₀_first is quiet at the ten handover epochs (the design-side re-pin still
+happens; only the carry tension is gone).  The same-regime different-seed
+verification-arm rule below still applies.
 
 ⚠ **The verification arm must be SAME-REGIME, different-seed — NOT the 60-sta
 fixture.**  `runs/simnet60_tri` is LEGACY-N (N ∈ [1e5,1e6)) and a different
