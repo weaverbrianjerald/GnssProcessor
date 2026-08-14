@@ -320,16 +320,8 @@ duty as a nuisance absorber — which is exactly why R2 (declare it) is not opti
 
 Leads, in order of how cheaply they can be falsified:
 
-1. **The sim's multipath is time-correlated and the producer's stochastic model is
-   white.**  Gauss-Markov, τ = 300 s = **10 epochs**, elevation-amplified — an error
-   the filter cannot absorb and whose *effect* on a given station depends on that
-   station's arc and geometry history even though its *parameters* are global.  This
-   is the first suspect precisely because it is the one error source in the fixture
-   that is real, unmodelled, and per-station-realized.  ⚠ It predicts an elevation
-   dependence that §4 did **not** find (corr = −0.20 against median elevation) — but
-   the amplification is capped at 20° and median elevation is a crude proxy, so the
-   test to run is per-row, not per-station.  An arm with `multipath.phase_amp_zen_m: 0`
-   settles it in one run.
+1. ~~**The sim's multipath is time-correlated and the producer's stochastic model is
+   white.**~~  ❌ **FALSIFIED 2026-08-14 by direct experiment — §7.1.**
 2. **The per-signal split** (L1C 2.7× L2W at identical elevation, identical weight and
    identical nominal σ) is frequency-specific and *not* ionospheric — iono would make
    L2/L5 worse, not better.  Receiver PCV, phase wind-up, or which signal carries the
@@ -337,6 +329,51 @@ Leads, in order of how cheaply they can be falsified:
 3. **The ignition ramp** (0.84 → 1.82) points at ambiguity convergence changing the
    residual scale, i.e. at exactly the constraint-aware redundancy that
    `docs/SPEC_sigma0_constraint_aware.md` derives.
+
+### 7.1 Lead 1 FALSIFIED — it is not the multipath
+
+The sim's Gauss-Markov phase multipath was the best-motivated suspect: 2 mm zenith on
+top of 3 mm white noise, τ = 300 s = 10 epochs, elevation-amplified, drawn per station
+from its own `seed_salt` — exactly the shape of a persistent per-station scale.
+
+**Tested by zeroing it.**  `config/sim/simnet24_inject_mp0.json` is
+`config/sim/simnet24_inject.json` with `multipath.phase_amp_zen_m: 0.0` and nothing
+else changed; fixture `runs/simnet24_mp0`; producer config
+`_simnet24_inj_t3mp0.json`, byte-identical to `_simnet24_inj_pareref_on.json` except
+for the fixture paths; arm `runs/t3mp0`, same exe snapshot.
+
+⚠ **The control that makes this a single knob:** regenerating the *unmodified* fixture
+into a fresh directory reproduces `runs/simnet24_inject_null` **byte-identically** (5/5
+station RINEX checked by sha256), so the generator is deterministic and the only thing
+that moved between the two fixtures is the multipath realization.
+
+| channel | multipath ON | multipath OFF |
+|---|---|---|
+| T3 cell rate (all epochs) | 3.663e-02 | **3.906e-02** *(up)* |
+| T3 rate, settled window | 4.381 % | **5.294 %** *(up)* |
+| **station scale spread** | **4.7×** | **4.8×** |
+| **per-signal spread** | **2.70×** (L1C 2.70 / L2W 1.00 / L5Q 1.32) | **2.77×** (L1C 2.50 / L2W 0.90 / L5Q 1.20) |
+| station-stratified flag rate | 0.672 % | 0.622 % |
+
+**Every structural feature survives removing the error source entirely**, and the flag
+rate moves the wrong way.  The multipath contributes essentially nothing to the
+heterogeneity.
+
+**Bonus — a second, independent confirmation of §2.**  Removing the multipath lowered
+all three per-signal levels by a near-uniform ~8–10 % (L1C 2.70→2.50, L2W 1.00→0.90,
+L5Q 1.32→1.20) — a *common* rescaling of the pool.  The statistic did not follow it.
+That is the invariance theorem demonstrated by a completely different mechanism from
+§5's B2 arm, and the two agree.
+
+**What this leaves.**  Lead 2 (the L1C-specific 2.5–2.7×, at identical elevation,
+identical weight, identical nominal σ, and now with multipath gone) is promoted to
+first.  Note the likely reframing: it may not be "L1C is loud" but "L2W and L5Q are
+*suppressed*" — if the estimator has more freedom to absorb L2/L5 (the per-LOS iono
+state and the code biases soak them up), their residuals are crushed while L1C's are
+not.  That is a per-signal redundancy story, i.e. lead 3 wearing a different hat, and
+it is not measurable from any trace on disk today: the RAIM cell is a max *over*
+signals, so `network_station_residuals.csv` has no signal column, and per-row r_i is
+never streamed.  **Instrumenting per-signal r_i is the prerequisite for the next step.**
 
 ## 8. Validation shape
 
@@ -506,10 +543,24 @@ to the bare $\max_{i\in c}|z_i|$ compared against a fixed 6σ bar — no normali
 all.  Stratifying the pool cannot buy much when the statistic is discarding the pool's
 scale by clamp.  **The field runs almost entirely in the regime the sim barely visits.**
 
-Why the field pool sits below the floor is not mysterious and closes a loop: for a
-post-fit residual $E[w_i v_i^2] = r_i < 1$, so $\operatorname{med}|v|\sqrt{w}$ is
-systematically *below* nominal and $1.4826\cdot\operatorname{med}$ lands under 1.
-**The missing $\sqrt{r_i}$ is precisely what pushes the pool under the clamp.**
+**Why the field pool sits below the floor is an OPEN question, and the obvious answer
+is contradicted by the configs.**  The tempting explanation is redundancy shrinkage —
+$E[w_i v_i^2] = r_i < 1$ for a post-fit residual, so $1.4826\cdot\operatorname{med}|v|\sqrt{w}$
+lands under 1 and the missing $\sqrt{r_i}$ is what pushes it under the clamp.  That is
+consistent, universal, and would close the loop neatly.  But it cannot be the whole
+story here: **the field posture assumes `phase_std_m = 0.002 m`, SMALLER than the sim's
+0.003** (both `stochastic_model: elevation`), which pushes $|v|\sqrt{w}$ *up*, not down.
+Inverting the two σ̂₀ values gives the elevation-scaled post-fit phase misfit directly:
+
+$$\operatorname{med}(|v|/f) \;pprox\; 1.35\ 	ext{mm (field)} \quad	ext{vs}\quad 2.52\ 	ext{mm (sim)}$$
+
+**The sim's post-fit phase residuals are ~1.9× LARGER than real DOY-129 data's**, on the
+same estimator.  So the field is not "noisier and clamped"; the *sim* is the loud one,
+and the clamp is what a well-behaved pool looks like under this floor.  Whether that is
+redundancy shrinkage, a genuinely quieter field posture, or the sim being unrealistically
+noisy (§7 lead 1) is unresolved — and it is now the sharpest question in the card,
+because the answer decides whether "unclamp the field" or "quiet the sim" is the right
+next move.
 
 ### 12.2 ⚠ This BOUNDS the §5 falsification — reopen B2 for the field
 

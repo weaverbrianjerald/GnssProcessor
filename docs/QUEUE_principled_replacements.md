@@ -381,10 +381,24 @@ validations: `docs/SPEC_t3_null_derivation.md`.
 ⚠ **Named but NOT closed:** why the post-fit standardized residual varies 4.7× by
 station when every station draws the same error model, uncorrelated with any
 observational covariate.  That is a stochastic-model card, and until it exists the
-per-station factor is doing double duty as a nuisance absorber.  Top lead: the sim's
-multipath is **Gauss-Markov (τ = 300 s = 10 epochs, elevation-amplified)** while the
-producer's stochastic model is **white** — one arm with `multipath.phase_amp_zen_m: 0`
-settles it.
+per-station factor is doing double duty as a nuisance absorber.
+
+❌ **Top lead FALSIFIED 2026-08-14 — it is NOT the multipath** (SPEC §7.1).  The sim's
+Gauss-Markov phase multipath (2 mm zenith, τ = 300 s, per-station seed) was zeroed
+outright: `config/sim/simnet24_inject_mp0.json` → `runs/simnet24_mp0` → `runs/t3mp0`,
+with the control that regenerating the *unmodified* fixture reproduces
+`runs/simnet24_inject_null` **byte-identically** (5/5 RINEX by sha256).  Result: station
+spread **4.7× → 4.8×**, per-signal spread **2.70× → 2.77×**, and the flag rate went
+**UP** (3.663e-02 → 3.906e-02).  Every structural feature survives removing the error
+source entirely.
+**Bonus:** the removal lowered all three per-signal levels ~8–10 % uniformly and the
+statistic did not follow — a second, independent confirmation of the invariance theorem
+from a different mechanism than the B2 arm.
+**Now first:** the L1C-specific 2.5–2.7× at identical elevation/weight/nominal σ.  Likely
+reframing — not "L1C is loud" but "L2W/L5Q are *suppressed*" by the iono state and code
+biases soaking them up, i.e. a per-signal **redundancy** story.  ⚠ **Not measurable from
+disk today**: the RAIM cell is a max *over* signals so the trace has no signal column,
+and per-row r_i is never streamed.  Instrumenting per-signal r_i is the prerequisite.
 
 ⚠ **The "excess kurtosis 4391" figure does not reproduce** — settled `s_raw` on the
 null arm has excess kurtosis **10.38**.  Do not carry 4391 forward without
