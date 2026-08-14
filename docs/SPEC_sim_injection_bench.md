@@ -348,6 +348,39 @@ threshold is anywhere near its own data.
 **T0_mw_detect fired 36 times on a fixture with zero slips in it.** That is a
 false-alarm population nothing else in the harness was counting.
 
+### ★ The null arm's anomaly was a real producer defect — chased and closed
+
+The T3 tail contained one coherent excursion: G15 at tow 303510–303570, `s_raw`
+up to 2214 simultaneously across six stations, on a fixture with **zero injected
+faults**. Chasing it produced `docs/SPEC_pivot_visibility_gauge_defect.md`.
+
+Root cause, proven: with `phase_datum_prioritized` OFF the network's shared
+phase-bias set is `stations.front()`'s — and `stations.front()` is the clock datum
+station. When the **pivot alone** loses a satellite, that satellite's phase-bias
+columns are removed **network-wide** and the clock absorbs the released direction.
+The sim truth is clean through the whole event (windup smooth, satellite
+continuously visible), so it is entirely producer-side.
+
+Causally confirmed by a two-sided prediction test over `clock_datum_station`
+(3/3 at 24 stations including a clean negative control, then **6/6** at 60
+stations), with a truth-free discriminator: **PB-only removal = avoidable defect;
+PB+CLK+CB = satellite genuinely left the network.**
+
+Consequences for this bench:
+
+- **Electing a datum station that never loses a satellite cuts the T3 false-alarm
+  rate 7.47 % → 4.49 %** and the datum-free clock contrast 3.073 → 0.518 m. So
+  ~40 % of the null arm's T3 flags were downstream of an avoidable gauge event,
+  and the remaining 4.5 % is the threshold/population mismatch of §5.5.
+- The bench's own null arm was mis-elected. `simnet_make_producer_config.py`
+  warns only about the *polar* fallback; visibility continuity is a second,
+  independent criterion it does not check. `scripts/datum_gauge_audit.py` now
+  does, and its `--run` mode works on field runs.
+- This is the first sim reproduction, with truth, of a defect previously seen
+  only in the field as "G29 −44 m step, JPLM masked" — which is precisely the
+  "does the response mechanism work" question this bench exists to answer, arrived
+  at from the null arm rather than from an injection.
+
 ### An error the bench caught in itself
 
 The first run planned 10 of 24 events on Galileo. The producer config solves **GPS
