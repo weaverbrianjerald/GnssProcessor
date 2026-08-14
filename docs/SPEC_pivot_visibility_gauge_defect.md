@@ -769,6 +769,28 @@ monotonically (1.83 → 3.18 → 4.49 → 6.14 → 313) with excess kurtosis 439
 residue is shape, not scale — a threshold/population mismatch that datum election
 cannot touch.
 
+✅ **The floor is now DERIVED — `docs/SPEC_t3_null_derivation.md` (2026-08-14),
+fitting on this spec's own §5.08 null instrument `runs/pareref_on`.**  Three
+amendments to the paragraph above:
+
+- **"Threshold/population mismatch" was the right words for the wrong object.**
+  The statistic is a ratio of two functionals of the SAME pool and is therefore
+  **invariant to any common rescaling of z** — so the mismatch cannot be in the
+  threshold at all.  Under the exact per-cell null (max over n_c = 3 rows) the
+  shipped k = 6 is an α = 5.92e-9 test, i.e. **already stricter than 1e-6**, and
+  the `max(1,·)` floor on σ̂₀ makes it conservative on top of that.  The
+  max-over-rows correction the item-4 plan called for is **3.00×** against an
+  observed **1.86e7×**.
+- **The population half is exactly right, and now measured.**  On a fixture with
+  ONE global noise model the settled pool carries a **4.7× station** and **2.75×
+  signal** scale spread (epoch: 1.3×).  Out-of-sample station stratification takes
+  the flag rate **4.46 % → 0.97 %**.
+- ⚠ **Excess kurtosis 4391 does not reproduce** on the post-1(d) arm — settled
+  `s_raw` reads **10.38**.  Cite the derivation card, not this figure.
+
+The 1(d) fix is upstream of a real share of this channel: the T3 cell rate moved
+7.468e-02 (`runs/inj_null`) → 6.692e-02 (prioritized) → **3.663e-02** (1(d)).
+
 ---
 
 ## 7. Reproduction

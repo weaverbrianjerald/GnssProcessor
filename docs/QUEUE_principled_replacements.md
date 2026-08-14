@@ -55,6 +55,21 @@ so the re-ranking is expressed here rather than by renumbering:
 > **The "regenerate the null arm" step is satisfied by `runs/pareref_on`**
 > (candidate null instrument — verify σ̂₀_first is quiet at its ten handover
 > epochs before fitting).  Remaining order: **4 → 2 → 1(b) → 5 → 7 → 6**.
+>
+> ✅ **ITEM 4 DERIVED 2026-08-14 (same day) — `docs/SPEC_t3_null_derivation.md`.**
+> The pre-fit gate passed first: σ̂₀_first at the assessed handover epochs reads
+> **1.000–1.323** against a run median of 1.247 (OFF arm 1.37–13.27 against 1.83),
+> and σ̂₀_first ≡ σ̂₀ at every one — `runs/pareref_on` is a clean null instrument.
+> The derivation then **inverted the card's own premise**: the T3 statistic is
+> invariant to any common rescaling of the residual pool, so the extreme-value
+> correction it named is a 3.00× rounding error against a 1.86e7× excess, and the
+> defect is the pool's HETEROGENEITY (a 4.7× station effect and a 2.75× signal
+> effect, where every station draws the SAME error model).  Out-of-sample stratification
+> takes the flag rate **4.46 % → 0.97 %**.  The redundancy standardization —
+> the most-cited candidate fix — was **A/B-falsified** (`runs/t3b2_{off,on}`,
+> statistic ×1.025, +38 % runtime).  Replacement specified, **not built**; four
+> validations owed (§8 of the SPEC), of which the **fault-fixture MDB check is the
+> gate**.  Next: **implement 4 → 2 → 1(b) → 5 → 7 → 6**.
 
 Rationale, applying this doc's own "measured payoff × readiness" rule to the
 arms that have since been measured (`SPEC_pivot_visibility_gauge_defect.md`
@@ -269,15 +284,114 @@ the implied-scale-vs-quantile curve rises monotonically (1.83 → 313) ⇒ the
 residue is SHAPE, not scale, and a 4.5 % floor survives datum election (pivot
 spec §6).  Sibling in class: the rx-CB admission gate's flat 26.7–28 % trip rate.
 
-**Principled replacement:** derive the null of the statistic actually computed —
+**Principled replacement:** ~~derive the null of the statistic actually computed —
 extreme-value / order-statistics of correlated standardized residuals — or
-replace it with per-row w-tests under FDR control.  The constraint-aware σ̂₀
+replace it with per-row w-tests under FDR control.~~  The constraint-aware σ̂₀
 card (`docs/SPEC_sigma0_constraint_aware.md`) is the in-house proof this
 derivation pays.
+
+✅ **DERIVED AND MEASURED 2026-08-14 — `docs/SPEC_t3_null_derivation.md`.  The
+extreme-value framing above is the WRONG replacement, and the card says why.**
+
+**The statistic is scale-blind.**  `S_c = max_{i∈c}|z_i| / max(1, 1.4826·med_{j∈P}|z_j|)`
+is invariant under `z → λz`: numerator and denominator are both homogeneous of
+degree 1 in the same pool.  So no global variance-model fix and no recalibrated
+constant can move its false-alarm rate — only the pool's INTERNAL heterogeneity can.
+Three consequences, all measured on `runs/pareref_on`:
+
+- **The EV correction is a rounding error.**  The exact per-cell null
+  `1−(2Φ(k)−1)^n_c` at k=6, n_c=3 is 5.92e-9 — **3.00×** the quoted per-row α,
+  against an observed excess of **1.86e7×**.  Denominator noise moves the α=1e-6
+  threshold only 5.10 → 5.06 (N=1400), and the `max(1,·)` floor makes the shipped
+  test *conservative* under a nominal null.  **k=6 is already stricter than a 1e-6
+  per-cell test** — a threshold that is too strict cannot cause a 1e7× excess.
+- **The pool is a MIXTURE, on a fixture with ONE global error model.**
+  `config/sim/simnet24_inject.json` has no per-station noise term and no `multipath`
+  block (so the generator defaults apply network-wide), and the emitted `_child_*.json`
+  differ only in `station.seed_salt` — every station draws an INDEPENDENT REALIZATION
+  of the SAME model, which buys a few percent of spread in a robust scale.  Yet the
+  settled standardized residual carries a **4.7× multiplicative station effect** and a
+  **2.75× signal effect** (L1C 2.74 vs L2W 1.00 — so *not* elevation weighting,
+  which is shared across signals at a cell, and *not* ionosphere, which would make
+  L2/L5 worse).  The epoch axis — the only one σ̂₀ estimates — spreads just 1.3×.
+  Flags concentrate in 11 of 24 stations (S20 alone carries 33.7 %), 4.13×
+  overdispersed vs Binomial, and **no observational covariate explains it**
+  (|corr| ≤ 0.24 against elevation and truth iono).
+- **Stratifying is what works, out-of-sample.**  Station scale fitted on the first
+  half of the settled window and applied to the held-out half: **4.4625 % → 0.9736 %**
+  at k=6, implied-c curve flattening 2.25→3.93 to 1.97→2.39, and the station factor
+  is transferable (corr(log scale, half 1 vs 2) = **+0.847** over 23 stations).
+
+⚠ **FALSIFIED in the same session — the redundancy standardization.**  The statistic
+standardizes a POST-FIT residual by the MEASUREMENT σ (`network.raim_redundancy_normalize`
+defaults **false**, `GnssConfigLoadNetwork.cpp:3461`; `z ~ N(0,r_i)`, not `N(0,1)`).
+That is true and it is **not the cause**.  Single-knob A/B `runs/t3b2_{off,on}` (OFF
+arm bit-identical to `runs/pareref_on/logs_v2` on all four graded CSVs — also the
+exe-provenance control): numerator **×1.4527**, denominator **×1.4179**, statistic
+**×1.0248**; settled flag rate 4.381 % → **4.460 %** (slightly worse), kurtosis and
+station spread unchanged, flags 798 → 772 at **Jaccard 0.622** — it reshuffles WHICH
+cells flag without changing HOW MANY, and costs **+38 % runtime**.  Do not arm it for
+this purpose.
+
+**Replacement, specified (not built):** a slow per-station factor × the existing fast
+network-wide scale — the split is forced by the noise budget (a per-station-per-epoch
+scale has 24.3 % SD; pooled over the window, 5.7 %) — with the station factor promoted
+to a **declared statistic** rather than silently absorbed (invariant #7: absorbing
+model error into a denominator masks it), α set by FDR over the (cell × epoch) family
+instead of a fixed k, and the 1.67 % structurally-untestable cells (`s_raw` exactly 0)
+dropped from the opportunity count.  Full derivation, build plan and the four owed
+validations: `docs/SPEC_t3_null_derivation.md`.
+
+⚠ **Named but NOT closed:** why the post-fit standardized residual varies 4.7× by
+station when every station draws the same error model, uncorrelated with any
+observational covariate.  That is a stochastic-model card, and until it exists the
+per-station factor is doing double duty as a nuisance absorber.  Top lead: the sim's
+multipath is **Gauss-Markov (τ = 300 s = 10 epochs, elevation-amplified)** while the
+producer's stochastic model is **white** — one arm with `multipath.phase_amp_zen_m: 0`
+settles it.
+
+⚠ **The "excess kurtosis 4391" figure does not reproduce** — settled `s_raw` on the
+null arm has excess kurtosis **10.38**.  Do not carry 4391 forward without
+re-deriving it.
+
+**The class, ranked** (SPEC §11).  **T3c (2.85e6×), T4a (4.89e5×, and it acts at ANY
+σ̂₀) and T4 are free riders** on this fix — same σ̂₀, same `raim_k`, same file.
+⚠ **The rx-CB sibling named above does NOT generalize**: its numerator is a frame
+offset (`value_abs − x_lin`), not a residual, so it has no null to derive.  The
+inventory's reading is that its replacement is already built (LV-4's frame-invariant
+`rxCbStepGate`) and the card is "arm LV-4 and grade it" — blocked by
+`SPEC_level_information_budget.md` §19.3 (+64 % postfit phase rms, ~15 TECU level move)
+and by the absence of any truth-clean fixture arming `carry_rx_code_bias`.  That chain
+is a POINTER, not a verified finding.
+
+⚠⚠ **Two collateral defects found while inventorying, both verified on the null arm,
+both needing their own card:**
+
+1. **The prefit census's PHASE statistic is degenerate by 4–5 decades on truth-clean
+   data** — `pc_phase_max_s` median **1.024e5 σ**, `pc_phase_n1k` median **112
+   rows/epoch**, against a sane code class (75 σ, `n1k` = 0).  `trace_prefit_census`
+   is in the STANDARD ARMED SET, so this column is published network-wide.  It is
+   inert only because `prefit_event_classes` defaults to `code,sh,other`
+   (`GnssConfigLoadNetwork.cpp:1410-1412`) — **adding `phase` to that mask, or arming
+   `prefit_fuse_classes` with phase, yields ~112 fuse events per epoch on clean data.**
+2. **T1's flag rate excludes an acting sub-path** — reported `26482 opp / 0 flags /
+   rate 0` while `network_events.csv` carries **13 `T1_if_slip/refsat_reset` events**.
+   `fr_if_slip` counts only the per-pair loop (`NetworkSlipQc.cpp:530`); the
+   reference-satellite common-mode path refloats with no counter and no tier.
+   Standing invariant #4, one tier over from the T4a line added to fix exactly this.
 
 **Sim validation:** ~~the truth-clean fixtures ARE the null-calibration
 instrument: fit the corrected quantile on the 24-sta null arm, verify implied
 α ≈ nominal on an independent null, then check the field flag rate.~~
+
+⚠ **A third reason the original plan was wrong, independent of the two blockers
+below: the fixture cannot calibrate a 6σ-class quantile empirically at all.**
+9975 settled cells resolve no rate below ≈ 1e-4; a 5.9e-9 threshold would need
+~1e8 cells, i.e. ~1e4 of these runs.  The instrument is for measuring the pool's
+STRUCTURE (which needs only thousands of cells) and for the fit → out-of-sample
+verify protocol — not for reading a tail quantile off the data.  This is why the
+replacement had to be derived rather than fitted.  Harness:
+`scripts/t3_null_fit.py` (`--selftest` / `--run` / `--fit … --verify …`).
 
 ⚠ **PREMISE FALSIFIED 2026-08-14 for the pdp-ON arm, and this item is now BLOCKED
 BY 1(d).**  `runs/inj_null_pdp` is truth-clean in the *measurement* sense (all 25
