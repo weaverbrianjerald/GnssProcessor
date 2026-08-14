@@ -411,7 +411,37 @@ would mean LOW r_i on exactly those signals, and it does not appear.  **The hete
 is genuine misfit varying by station and signal, on an estimator whose information
 distribution is uniform.**
 
-⚠⚠ **A sharper defect fell out (SPEC §7.3): E[w·v²] ≠ r_i.**  If `v` were a correct
+✅ **`rowRedundancy` AUDITED — it is the RIGHT covariance (SPEC §7.4).**  Exonerated on
+four links: the arrowhead block-inverse identity is EXACT (re-derived by hand); the datum
+is a true Dirichlet elimination (contribution to RHS, row+col zeroed, diagonal set —
+`NetworkEstimator.cpp:280-292`), so `shared_cov_` is genuinely the datum-CONDITIONAL
+covariance and the zeroing only strips the `1/pin_scale` artifact; the priors are in the
+same system (`addStationPrior` throws if `solved_`; DD priors folded pre-solve); and
+`reconstructStation` uses the identical `N_rr`/`N_sr`.  The Bayesian expansion also shows
+`Cov(v) = W⁻¹ − AΣAᵀ` survives a prior — **provided P is the true dispersion of θ about
+θ₀**.  That proviso is the whole story.
+
+⚠⚠ **So the defect is the MODEL, and the census measures it as a VARIANCE FACTOR.**
+With `E[w v²] = r_i`, the estimator `σ̂² = Σw·v²/Σr_i` must read 1.0.  Measured on 29 333
+settled rows: **global 11.80**; by signal **L1C 27.37 / L2W 2.05 / L5Q 5.87** (13.4×
+spread); by station **2.14 … 61.80** (**28.9× spread**) — all while mean r_i is flat at
+0.45–0.55 (**1.24×**).  **r_i correctly describes how much freedom the estimator HAS; it
+cannot describe how wrong its model IS, and only the latter varies.**  L2W at 2.05 is
+nearly model-consistent while L1C is 27×, so the mis-specification is CONCENTRATED on
+L1C rather than spread over the pool.
+
+✅ **AND THIS UPGRADES THE REPLACEMENT (SPEC §7.5).**  R1's per-stratum scale was a
+median of cell maxima — a heuristic chosen because nothing better was measurable.  The
+right form is the variance component with the redundancy in the denominator,
+**σ̂²_stratum = Σ w·v² / Σ r_i** — exactly what `docs/SPEC_sigma0_constraint_aware.md`
+derives globally, now computable PER STATION and PER SIGNAL because r_i is streamed.
+Unbiased under the model rather than calibrated to a reference quantile, no `n_c`
+assumption, and it degrades gracefully where a median of maxima conflates "quiet" with
+"unchecked".  ⚠ Outlier-sensitive — aggregate 11.80 vs robust median 1.78 says a robust
+numerator is not cosmetic.
+
+~~⚠⚠ **A sharper defect fell out (SPEC §7.3): E[w·v²] ≠ r_i.**~~ *(superseded by §7.4 — the
+measurement stands, the attribution moves from the covariance to the model.)*  If `v` were a correct
 post-fit residual, `1.4826·med|z_baarda|` would be 1.0.  Measured: **z_meas 1.3683
 (the shipped, theoretically WRONG standardization) vs z_baarda 1.9291 (the
 theoretically CORRECT one)** — the correct one lands **2.5× further from nominal**.  The

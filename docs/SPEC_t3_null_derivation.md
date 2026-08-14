@@ -250,6 +250,10 @@ $$\hat\sigma(s,t) \;=\; \hat\sigma_{\text{sta}}(s)\cdot\hat\sigma_{\text{net}}(t
   (EWMA of the station's robust residual level, normalized to network median 1), with
   a floor/ceiling and a minimum sample.
 
+⚠ **SUPERSEDED IN FORM by §7.5** — the per-stratum factor should be the variance
+component Σw·v²/Σr_i, not a median of cell maxima.  The slow/fast split and the noise
+budget below still stand; only the estimator inside the slow factor changes.
+
 The split is not a style choice; it is arithmetic.  Relative SD of a robust scale
 from *m* rows, $1.4826\sqrt{1/(4mf(q)^2)}$ with $f(q)=2\varphi(0.6745)=0.63556$:
 
@@ -446,6 +450,80 @@ Incidental, and worth keeping: **the ignition ramp IS r_i.**  Median r_i runs
 sits flat — the 0.836 → 1.816 rise in `s_raw` (§4) is redundancy converging, not the
 residual growing.  And the floor drops only 0.49 % of settled rows, **identically across
 signals** (49/10026 each), so it is not a per-signal filter.
+
+### 7.4 `rowRedundancy` IS the right covariance — the model is what is wrong
+
+§7.3 named two candidates for `E[w·v²] ≠ r_i`: a wrong covariance in `rowRedundancy`,
+or stochastic-model error.  **The covariance is exonerated on four independent links.**
+
+1. **The algebra is exact.**  `NetworkNormalEquations::rowRedundancy` computes
+   $\mathrm{lev} = (a_s - M^	op a_r)^	op \Sigma_{ss} (a_s - M^	op a_r) + a_r^	op N_{rr}^{-1} a_r$
+   with $M = N_{rr}^{-1}N_{sr}^	op$.  Re-deriving the arrowhead block inverse
+   ($\Sigma_{sr} = -\Sigma_{ss}M^	op$, $\Sigma_{rr} = N_{rr}^{-1} + M\Sigma_{ss}M^	op$)
+   gives $a^	op\Sigma a$ **identically** that expression.  No approximation.
+2. **The datum is handled correctly.**  `NetworkEstimator::solve` realizes each pin as a
+   true **Dirichlet elimination** — move the known contribution to the RHS, zero the
+   row *and* column, set the diagonal (`NetworkEstimator.cpp:280-292`) — so
+   `shared_cov_` is genuinely the covariance *conditional on* the datum, and the
+   row/col zeroing at `:444-449` only strips the artificial `1/pin_scale`.  Independently,
+   redundancy numbers are datum-invariant for estimable rows, and every row here is a
+   row of A.
+3. **The priors are in the same system.**  `addStationPrior` throws if `solved_`, forcing
+   injection *before* the Schur reduction; the DD priors are folded into the reduced
+   shared normals (`NetworkEstimator.cpp:243-251`) before `solveSharedConstrained` fills
+   `shared_cov_`.  So Σ includes the prior information.
+4. **The residual comes from that system.**  `reconstructStation` solves
+   $x_r = N_{rr}^{-1}(u_r - N_{sr}^	op x_s)$ with the **same** `Nrr_ldlt` and `N_sr`
+   the leverage uses.
+
+And the identity is not naive-LS-only: for a Bayesian solve with prior
+$	heta\sim N(	heta_0,P)$, expanding $v = y - A\hat	heta$ shows the prior
+contributions cancel exactly and $\operatorname{Cov}(v) = W^{-1} - A\Sigma A^	op$
+**still holds — provided P is the true dispersion of θ about θ₀.**  That proviso is the
+whole story.
+
+**What the census measures is therefore a VARIANCE FACTOR, and it is enormous and
+structured.**  With $E[w v^2] = r_i$, the classical variance-component estimator
+$\hat\sigma^2 = \sum w v^2 / \sum r_i$ must read 1.0.  Settled rows with r_i > 0.01
+(29 333):
+
+| stratum | σ̂² = Σz²/Σr | σ̂ | robust med(z²/r) | mean r_i |
+|---|---|---|---|---|
+| **global** | **11.80** | 3.44 | 1.78 | 0.51 |
+| L1C | **27.37** | 5.23 | 5.85 | 0.5151 |
+| L2W | **2.05** | 1.43 | 0.80 | 0.5548 |
+| L5Q | 5.87 | 2.42 | 1.70 | 0.4464 |
+| S06000SIM (worst) | **61.80** | 7.86 | — | 0.4496 |
+| S16000SIM (best) | **2.14** | 1.46 | — | 0.5373 |
+
+**The variance factor spreads 13.4× across signals and 28.9× across stations while mean
+r_i is flat at 0.45–0.55 (1.24×).**  That is the cleanest statement of the whole card:
+**r_i correctly describes how much freedom the estimator HAS; it cannot describe how
+wrong the estimator's model IS, and only the latter varies.**  Note L2W sits at 2.05 —
+nearly consistent with the assumed model — while L1C is 27×, so whatever is
+mis-specified is concentrated on L1C rather than spread over the pool.
+
+(The gap between the aggregate 11.80 and the robust 1.78 is itself the heavy tail: the
+*typical* row is ~1.8× over-dispersed, the *aggregate second moment* 11.8×.  Report both;
+a variance factor wants the aggregate, a robust scale wants the median.)
+
+### 7.5 This upgrades R1 from a heuristic to the correct estimator
+
+§6's R1 specified a slow per-station factor fitted as a **median of cell maxima** — a
+heuristic, chosen because nothing better was measurable.  The census removes that
+constraint.  The right per-stratum scale is the **variance component with the redundancy
+in the denominator**:
+
+$$\hat\sigma^2_{	ext{stratum}} \;=\; rac{\sum_{i\in	ext{stratum}} w_i v_i^2}{\sum_{i\in	ext{stratum}} r_i}$$
+
+which is exactly what `docs/SPEC_sigma0_constraint_aware.md` derives globally, now
+computable **per station and per signal** because r_i is streamed.  This is strictly
+better than the heuristic on three counts: it is unbiased under the model rather than
+calibrated to a reference quantile; it needs no `n_c` assumption (the median-of-maxima
+reference constant disappears); and it degrades gracefully as the stratum's redundancy
+changes, where a median of maxima silently conflates "quiet" with "unchecked".
+⚠ It is also outlier-sensitive, so a production form needs a robust variant (trimmed or
+Huberized numerator) — and the 11.80-vs-1.78 gap above says that choice is not cosmetic.
 
 ## 8. Validation shape
 
