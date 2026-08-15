@@ -1,6 +1,8 @@
 # Clock two-state q1/q2 — intrinsic-vs-network Hadamard decomposition (2026-07-14)
 
-Phase A.5 of `docs/HANDOFF_clock_model_revival.md`. Produced by `scripts/clock_hadamard_calib.py` (analysis-only, no C++). Statistic: overlapping Hadamard (3rd-difference, drift-insensitive) primary. Per-constellation common mode removed from every series.
+Phase A.5 of the `network.clock_model` revival card, whose surviving write-up is `docs/SPEC_c1_clock_rate_validation.md` §10 (the handoff it originally cited was absorbed there 2026-08-15 and now lives at `docs/attic/HANDOFF_clock_model_revival.md`). Produced by `scripts/clock_hadamard_calib.py` (analysis-only, no C++). Statistic: overlapping Hadamard (3rd-difference, drift-insensitive) primary. Per-constellation common mode removed from every series.
+
+> ⚠ **THIS FILE IS GENERATED.** `scripts/clock_hadamard_calib.py:966` re-creates `docs/CLOCK_HADAMARD_CALIB_<today>.md` on every run, and `:675` writes the "Phase A.5 of …" line above from a template. **Never hand-write card prose here — the next regeneration destroys it**, and the repointed reference above will revert until the SCRIPT template is fixed. ⚠ The `[network]` rows are no longer locally regenerable: their inputs (`build/x64-Release/run_{gpsonly_em25_12h,n305_attrib_6h,n305_attrib_3h}`) were archived off C: on 2026-08-12 to `D:\GnssProcessor_archive\2026-08-12\`.
 
 - τ grid (s): 30, 60, 120, 300, 600, 1800; value-step guard max(8.0·MAD, 0.2 m); min triples/τ 12
 - model: **Var(Δ³x) = 20·σ_ε² + 6·q1·τ + q2·τ³** — a pure two-state clock (the premise) is RWFM ⇒ VarH ∝ τ³ ⇒ log-log slope **p = 3**. **p ≈ 1** ⇒ white-FM / measurement dominated ⇒ a drift state buys nothing.

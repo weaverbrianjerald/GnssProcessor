@@ -6,7 +6,7 @@
   "\u00a713.3.2/\u00a713.5; sim arm _simnet60_tri_slant).  Structural smoke ONLY:",
   "10 epochs is deep inside ignition for every level/calibration channel, so",
   "vf / iono level / exchange / consumer verdicts are all BARRED (1 h rule,",
-  "HANDOFF_slant_triple_next \u00a72).  Legal reads: wiring, datum inventory,",
+  "SPEC_synthetic_minimum_network \u00a713.8.1).  Legal reads: wiring, datum inventory,",
   "rank gate, canonical lock, counters, per-band admission.",
   "",
   "DELTAS vs the inherited field record (_agu305_gps -> _ft63_24h_conv), each",

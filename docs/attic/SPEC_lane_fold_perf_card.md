@@ -39,7 +39,8 @@ not re-propose it.  `network.parallel_carry` (Eigen-threaded GEMMs,
    is over for that population.
 4. **K never shrinks.**  Jul-14 profiling recorded K ≈ 7,834 carried DD
    chords with **0 ever marginalized** (suspected killChord lifecycle gap,
-   flagged as INC-C0/C1 in HANDOFF_carry_driver_perf.md and never resolved).
+   flagged as INC-C0/C1 in docs/attic/HANDOFF_carry_driver_perf.md; INC-C1 has
+   SINCE been closed as case (a) — see docs/SPEC_carry_factored_pz_C2.md §6).
    Set satellites' chords ride the dense matrix forever.
 5. **Components are independent by construction.**  The pair-block system is
    block-diagonal over carry components (44 components at 150 sta under

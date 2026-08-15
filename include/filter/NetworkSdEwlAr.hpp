@@ -3,8 +3,8 @@
  * @file NetworkSdEwlAr.hpp
  * @brief Network producer epoch block: the SD extra-wide-lane INTEGER DECISION —
  *        Route B (between-station DD of the SD EWL) with the A2 DD-to-SD datum
- *        propagation (docs/SPEC_sd_ewl_integer_hold.md increment 2a, as AMENDED by
- *        docs/SPEC_lane_spectrometer.md §6).
+ *        propagation (docs/SPEC_sd_ewl_prereduce.md §8.2 (increment 2a), as AMENDED by
+ *        docs/SPEC_sd_ewl_prereduce.md §10).
  *
  * ## What it decides, and why Route B
  *

@@ -1,7 +1,7 @@
 /**
  * @file NetworkBlockBaarda.cpp
  * @brief BlockFormal — the (station, satellite) LOS block sweep and its emission
- *        (docs/SPEC_block_baarda.md INC-1..3).  See NetworkBlockBaarda.hpp for
+ *        (docs/SPEC_redundancy_census.md BB-INC-1..3).  See NetworkBlockBaarda.hpp for
  *        the design argument and the two corrections to SPEC §3's recipe.
  *
  * Measure-only.  Nothing here writes a weight, a state or a decision; the whole

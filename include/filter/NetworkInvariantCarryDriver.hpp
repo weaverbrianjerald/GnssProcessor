@@ -5,7 +5,7 @@
  *        DD cycle-basis carry (`NetworkZStore`) through the network producer solve.
  *
  * This is the factored, unit-drivable heart of the "invariant-function carry"
- * (design handoff `docs/HANDOFF_card4_invariant_carry.md`).  Phase B built the
+ * (design handoff `docs/SPEC_card4_invariant_carry.md`).  Phase B built the
  * z-store data structure + the fundamental-cycle algebra + the lifecycle
  * transforms (`NetworkZStore.hpp`, gates 1–3); phase C built the producer-side
  * fold (`NetworkNormalEquations::foldReducedDdPriors` + `ddPriorPosteriorMean` /
@@ -170,9 +170,9 @@ public:
         double q_wl_scale{1.0};         ///< WL-3 §3.1: q along the WL lane = this × @c qz (lane basis, per pair chord).  1 = isotropic (== today's per-band q; the §6.1 equivalence shape).  INERT unless @c lane_joint.
         double sigma_wl_fresh_cyc{0.0}; ///< WL-3 §3.1: fresh pair-chord lane prior σ along the WL direction (WL cycles — converted to lane-coordinate state units via the group's (λ₁,λ₂)).  0 = isotropic diffuse @c fresh_prior_var (the §6.1 equivalence shape).  INERT unless @c lane_joint.
         bool   lane_joint{false};       ///< WL-3 master shape switch for pair groups: true = the LANE shape (ONE joint 2K-row DdPriorBlock per component, cross-band posterior coupling retained, lane prior/q armed, a D5 exemption spans both band rows).  false = the §6.1 EQUIVALENCE shape (per pair component TWO K-row per-band blocks whose fold is information-identical to today's two per-band groups; cross-band coupling zeroed at install) — the structural safety net for the regroup.
-        // --- LF-1 INC-1: blocked/sparse lane fold (docs/SPEC_lane_fold_perf_card.md §3.2). ---
+        // --- LF-1 INC-1: blocked/sparse lane fold (docs/SPEC_lane_carry_card.md Appendix LF-1 §3.2). ---
         bool   fold_blocked{false};     ///< LF-1 INC-1: when true, the per-epoch lane fold is applied in the OPTIMIZED shape — @ref applyLaneFix uses the O(K) sparse lane-coordinate SET (the dense rank-2 touches only rows/cols {k,K+k}) instead of the dense O(K²) form, and the per-row @f$0.5(P+P^\top)@f$ re-symmetrization is HOISTED out of every primitive to ONE @ref finalizeLaneBatch pass per block per epoch.  This changes the OPERATION ORDER (Woodbury/reassociation), so it is the @c parallel_carry EQUIVALENCE class, NOT bit-identical to the sequential fold (@c fold_blocked=false) — its ON runs carry the pcarry usage rule until the §5.3 physically-null gate passes.  INERT unless @c lane_joint (lane rows only exist on the joint shape).
-        // --- LF-1 INC-2: pinned-cycle increment skip (docs/SPEC_lane_fold_perf_card.md §3.3). ---
+        // --- LF-1 INC-2: pinned-cycle increment skip (docs/SPEC_lane_carry_card.md Appendix LF-1 §3.3). ---
         bool   skip_pinned_increments{false}; ///< LF-1 INC-2: skip the per-epoch MW/bridge lane increments for a chord whose FFR fix is COMMITTED (in @c lane_fix_w_) and was re-decided within @c skip_pinned_within_n epochs — a σ≈0.06-0.2 cyc increment folded into a lane already pinned at σ=0.01 moves nothing.  Any funnel event (slip / D5 flag / re-tap / rebirth) erases the fix memory ⇒ increments resume the SAME epoch (invariant #1).  Reads COMMITTED state only (never the per-build staged decision), so the RAIM re-solve is deterministic.  Equivalence class (the increment is near-inert but not exactly null); INERT unless @c lane_joint.  Query: @ref laneIncrementSkippable.
         long long skip_pinned_within_n{3};    ///< LF-1 INC-2: the grace window (epochs).  A committed-decided chord keeps skipping increments for this many epochs after its LAST re-decision; if it goes undecided longer (a genuinely drifting lane the FFR gate stopped trusting), increments resume to re-converge it.  INERT unless @c skip_pinned_increments.
         // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §5). ---
@@ -252,7 +252,7 @@ public:
         long long max_component_kc{0};    ///< INC-C0: the largest single-component carried DD dimension K_c ever emitted (the dense-Pᶻ cost driver — the K in the O(K³) fold/read-back).
         long long max_z_dim{0};           ///< INC-C0: peak total carried DD dimension over the run (growth-bound: monotone-unbounded growth ⇒ the kill path is not firing — §0 case (b)).
         long long chords_marg_perchord{0};///< INC-C0: old chords dropped from a SURVIVING component (its projection-W column is all-zero — no new fundamental cycle references it).  This is the PER-CHORD marginalization @ref chords_marginalized (whole-block only) misses; the two together are the true kill rate.  Near-zero while @ref max_z_dim grows ⇒ dead arcs are being retained (§0 case (b)); large ⇒ the kill path is exact and simply has churn to kill (§0 case (a)).
-        long long max_cycle_len{0};       ///< INC-C0 (D-c viability): the longest fundamental cycle (tree-path length + 1) folded this run.  The DD information matrix J = Pᶻ⁻¹ is sparse iff cycles are short (adjacent chords share few tree edges) ⇒ the exact info-form carry (SPEC_carry_factored_pz_C2 D-c) is BOUNDED; long cycles ⇒ dense J ⇒ D-c gives no bound (the choice the perf card cannot make without this number).
+        long long max_cycle_len{0};       ///< INC-C0 (D-c viability, G-SIDE SCREEN ONLY): the longest fundamental cycle (tree-path length + 1) folded this run.  Short cycles (adjacent chords share few tree edges) keep the cycle matrix G sparse, which is NECESSARY BUT NOT SUFFICIENT for the exact info-form carry (SPEC_carry_factored_pz_C2 D-c) to be BOUNDED — the border term is Gᵀ Σ_ss G, so the BINDING probe is Σ_ss sparsity/rank, which this counter never measures.  ⚠ The original "J = Pᶻ⁻¹ is sparse iff cycles are short" claim is CORRECTED in §6.1 of that doc (the probe came back short/sparse at both tiers, yet the D-c door stays only AJAR because global co-visibility makes a dense Σ_ss the likely case); long cycles still imply dense J, so a DENSE-G reading is decisive against D-c while a SPARSE-G reading is not decisive for it.
         long long sum_cycle_len{0};       ///< INC-C0: Σ fundamental-cycle lengths over all folded chords this run (mean = sum / (chords_carried + chords_born)).
         // --- WL-3 lane-coordinate carry (per-band-DD counting keeps the §6.1 gate strict:
         //     a pair chord tallies 2 in the chords_* / cycle-length counters, exactly what
@@ -795,7 +795,7 @@ public:
                      std::size_t b, std::size_t k, long long w, double y_cyc, double sigma_cyc);
 
     /**
-     * @brief LF-1 INC-1 (SPEC_lane_fold_perf_card.md §3.2): re-symmetrize every joint pair
+     * @brief LF-1 INC-1 (SPEC_lane_carry_card.md Appendix LF-1 §3.2): re-symmetrize every joint pair
      *        block ONCE, after all of this epoch's lane rows have been applied.
      *
      * A no-op unless @ref Config::fold_blocked.  Under @c fold_blocked the per-row
@@ -814,7 +814,7 @@ public:
     void finalizeLaneBatch(std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) const;
 
     /**
-     * @brief LF-1 INC-2 (SPEC_lane_fold_perf_card.md §3.3): may the caller SKIP this epoch's
+     * @brief LF-1 INC-2 (SPEC_lane_carry_card.md Appendix LF-1 §3.3): may the caller SKIP this epoch's
      *        MW/bridge lane increment for chord @p k of emitted block @p b?
      *
      * True iff @ref Config::skip_pinned_increments AND @p b is a joint pair block AND the chord's

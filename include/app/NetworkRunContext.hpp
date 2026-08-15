@@ -8,7 +8,7 @@
  *
  * Relocated VERBATIM from the ApplicationNetwork.cpp declaration stretches
  * (decomposition INC-4, 2026-07-16; see
- * docs/network_decomposition_addendum_2026-07-16.md).  The run loop binds
+ * docs/network_decomposition_plan.md).  The run loop binds
  * `auto& X = ctx.carry.X;` / `const T X = ctx.knobs.X;` aliases under the
  * former local names, so every downstream use-site is textually unchanged.
  *
@@ -94,6 +94,21 @@ namespace GnssProcessor {
         bool carry_cpl_joint{};
         bool carry_cpl_tu{};
         bool carry_cpl_shmarg{};
+        /// network.carry_coupling_gauge_project — Card 1f: hold each (constellation,kind)
+        /// coefficient sum of a TRUNCATED coupling row at its harvest value, so a departed
+        /// column stops turning the row into a high-weight observation of the current datum
+        /// gauge pinned at the old realization.  Measured motive: 7 departures in one epoch
+        /// drove the smallest null eigenvalue 1e-11 → 9.43e-3 (five decades over the gate
+        /// cutoff) for 4 spurious OVER-specified withholds, self-healing only at
+        /// pl_max_gap_s by blanket carry expiry.
+        bool carry_cpl_gauge{};
+        /// network.carry_coupling_reinit_sources — Card 1g: honour the reinit history with
+        /// the κ time update OFF, and feed it from every REALIZATION-STEP source (phase-anchor
+        /// re-reference, eq34 chain re-reference, datum-slip PB re-realization) rather than
+        /// the clock-QC sources alone.  A re-realized column carries an unknown frame step in
+        /// its stashed ŝ_prev; folding it as a full-weight present term injects that step as
+        /// row bias at conditional-variance (mm) confidence.
+        bool carry_cpl_reinit{};
         bool zwd_on{};
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
         bool rx_cb_datum{};   ///< RXCB-DATUM: zero-mean-over-receivers DCB datum (network.rx_code_bias_datum).
@@ -184,6 +199,19 @@ namespace GnssProcessor {
         double cta_sigma_floor_m{};  ///< network.clock_anchor_sigma_floor_m — √S floor so a weak-data epoch gives w ≈ 0 instead of 0/0
         int    cta_recouple_ep{};    ///< network.clock_anchor_recouple_epochs — consecutive in-band epochs a LOOSE satellite must serve before the anchor re-engages (invariant #7 re-validation)
         bool   cta_mark{};           ///< network.clock_anchor_mark — wire-mark the DECOUPLING edge (per-sat disc via the B1 retro-bump chain)
+        /// Card C-GF: the ONE resolved gauge-free predicate every fold / withdraw / replay
+        /// site reads — @c (cta_on && cta_gauge_free) || (shared_carry_full_cov &&
+        /// shared_carry_gauge_free).  Never re-derive this at a call site.  Fold and
+        /// withdraw must agree exactly: a fold that downdated against a withdraw that did
+        /// not leaves the negative-semidefinite residue −ΛU(UᵀΛU)⁻¹UᵀΛ in the shared
+        /// normals, which is no longer PSD along the gauge — the constrained solve then
+        /// either throws on its pivot guard (persistent epoch skip, since the stash never
+        /// refreshes) or factorizes into a saddle and returns a silently wrong x_s.
+        bool   carry_gauge_free{};
+        /// Card C-GF: require SUPPORT CLOSURE on each datum direction before downdating
+        /// it.  True only on the new carry-side arming — the legacy Q3 path keeps its
+        /// carried-clocks-with-a-two-member-floor rule so it stays byte-identical.
+        bool   carry_gauge_free_closure{};
         bool   cta_gauge_free{};     ///< network.clock_anchor_gauge_free — Card Q3 §2.1: marginalize the per-constellation SATELLITE-CLOCK gauge direction out of the folded clock prior, so the anchor constrains only the estimable between-satellite differences and leaves the common mode to the datum.  Measured motive: the plain anchor suppressed CLK-R's drained Σ|μ| 49.4 → 27.8 m over 3 h, i.e. the carry was doing 44 % of the gauge's work.
         bool   cta_resolve{};        ///< network.clock_anchor_resolve — adapt-and-EMIT: withdraw the tripped prior and RE-SOLVE the epoch before emission
         // network.clock_anchor_gauge_free_stat resolved ONCE (auto → follow the fold),
@@ -305,7 +333,7 @@ namespace GnssProcessor {
         // MEASURE-ONLY, so there is no estimation precondition to resolve against
         // — only the two arming knobs.
         bool   redun_census_on{};     ///< Master: the stride OR the escalation trigger is armed.
-        // --- Baarda reliability numbers / MDB (docs/SPEC_network_mdb_reliability.md) ---
+        // --- Baarda reliability numbers / MDB (docs/SPEC_redundancy_census.md) ---
         // `mdb_on` is the single "does this run compute an MDB at all" predicate
         // that BOTH feed sites and the flush read, so an OFF run pays one bool
         // test per site and nothing else.  The two source flags are resolved here
@@ -334,10 +362,10 @@ namespace GnssProcessor {
         bool   prires_corrob{};       ///< INC-3 raw-observable corroboration join armed.
         double prires_report_sigma{}; ///< Per-row TRACE threshold in σ̂₀ units (nothing acts on it).
         int    prires_event_holdoff{};///< Per-cell PRIORRES event rate limit, in census epochs.
-        // --- constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md)
+        // --- constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14)
         bool   prires_s0g{};          ///< The global variance-component rider is armed (implies @ref prires_on).
         bool   prires_s0g_redun{};    ///< A per-row Baarda r_i actually exists for the data side (`raim` AND `raim_redundancy_normalize`).  FALSE ⇒ the r ≡ 1 fallback, flagged per epoch.
-        // --- BlockFormal LOS block census (docs/SPEC_block_baarda.md) ---------
+        // --- BlockFormal LOS block census (docs/SPEC_redundancy_census.md) ---------
         // `bb_on` is the single "does this run sweep blocks at all" predicate,
         // read at ONE site (inside the redundancy census's swept branch) and by
         // the emission seam.  It is the AND of the master arm and a LIVE HOST:
@@ -350,7 +378,7 @@ namespace GnssProcessor {
         bool   bb_corrob{};           ///< INC-2 raw-observable corroboration join armed (implies @ref bb_on).
         double bb_report_sigma{};     ///< TRACE/event threshold on t_B.  A VARIANCE RATIO (E = 1 under H0), NOT σ units — see NetworkBlockBaarda.hpp.
         long long bb_event_holdoff{}; ///< Per-(station, satellite) BLOCKBAARDA event rate limit, in census epochs.
-        // --- Station congruence screen (docs/SPEC_station_congruence.md) -------
+        // --- Station congruence screen (docs/SPEC_redundancy_census.md) -------
         // `cg_on` is the single "does this run screen coordinates at all"
         // predicate.  It is read at THREE sites — the assembly's INC-0 geometry
         // retention, the redundancy census's swept branch, and the emission seam —
@@ -441,7 +469,13 @@ namespace GnssProcessor {
         // replay reproduces the marks from the serialized R records.
         std::set<std::string> clk_anchor_disc_pending;
         std::set<std::string> prev_clock_refloat_sats;      // Card 1d: clock-monitor flags at the last stash (hard-refloat mode skip-stashes the sat, so prev_carry cannot carry the flag)
-        std::map<std::pair<SharedParamKind, std::string>, double> tu_reinit_hist;  // Card 1d: (kind, sat) → content time of the last reinit FOLD (multi-epoch-gap coverage)
+        // Card 1d/1g: (kind, sat, signal) → content time of the last reinit FOLD
+        // (multi-epoch-gap coverage).  An EMPTY signal is the SAT-WIDE WILDCARD — the
+        // clock-QC feeds (inflate_q stash marks, clock refloats) mark a whole satellite
+        // kind-by-kind, while the Card-1g realization-step feeds mark one (sat,signal)
+        // family, because that is the granularity at which a phase-bias datum is
+        // re-referenced.  buildCplRow probes the exact key and then the wildcard.
+        std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
         SharedCarryCov prev_carry_cov;                      // C1: dense covariance side-car of prev_carry (empty when OFF)
         std::map<std::string, std::string> prev_pivot;      // constellation -> pivot sat (handover detect)
         std::set<std::string> c1_zoh_active;                 // L2/T5: sats currently emitting c1=0 (ZOH) — edge-trigger for the R6 event
@@ -604,7 +638,7 @@ namespace GnssProcessor {
         long long eq34_shift_total = 0;   // carry values S-transformed (v2-shift) over the run
         long long eq34_gap_repin_total = 0;   // I2: tree edges resumed from a carry-alive gap (re-pinned to their pre-gap integer instead of re-leveling from 0)
         int eq34_mismatch_epochs = 0;
-        // Card 3 chain-pin AUDIT (docs/HANDOFF_wsh_chain_slant.md T1): THIS epoch's
+        // Card 3 chain-pin AUDIT (docs/SPEC_synthetic_minimum_network.md §14 T1 (measured record §12.8)): THIS epoch's
         // declared chain-gauge dimension per (constellation,signal) group — key
         // "<cons>|<signal>" (the election's dr_key), value Σ over the group's
         // components of (n_c + m_c).  eq34_epoch_bridged counts the hygiene INC-2
@@ -704,6 +738,13 @@ namespace GnssProcessor {
         // so a direction-shaped identity would flicker on the rotation while the
         // participating-satellite set stays stable.
         std::set<std::string> sbc_active_sats;
+        // Invariant #7: declared datum directions currently BREACHED (R >= 1, i.e. some
+        // pre-gate fold is pinning a direction the datum owns).  Persistent across epochs
+        // purely so the breach/clear EDGES can be emitted — a direction that re-frees
+        // itself must produce a clear edge rather than reading as a first sighting the
+        // next time it breaches (the FT63 topology-ledger lesson, invariant #7's
+        // re-coupling half).  Identity is the direction label ("CLK|G").
+        std::set<std::string> ddi_breached;
         // Keys currently HELD OUT of the anchored set because no candidate host has
         // converged (INC-1 with the bridge disarmed or unavailable).  PERSISTENT, and
         // load-bearing: a held-out key is absent from this_epoch_anchor, so it also
@@ -1445,7 +1486,7 @@ namespace GnssProcessor {
         bool      redun_cov_warned    = false; ///< one-shot: armed with no solved covariance to read.
         bool      redun_closure_warned = false;///< one-shot: trace(H) exceeded the free-parameter bound.
 
-        // --- Baarda MDB (docs/SPEC_network_mdb_reliability.md) ----------------
+        // --- Baarda MDB (docs/SPEC_redundancy_census.md) ----------------
         // [snapshot: EXEMPT] — observer state of a MEASURE-ONLY, forward-only
         // instrument, same class as the two censuses above.  Snapshotting an
         // event-holdoff clock would make a diagnostic fingerprint-relevant, which
@@ -1502,7 +1543,7 @@ namespace GnssProcessor {
         double    ep_prires_max_t    = 0.0; ///< the worst |t| this epoch, over every family and label.
         bool      prires_trunc_warned = false; ///< one-shot: the per-epoch identity buffer overflowed (ladders unaffected; the event stream became a sample).
         int       prires_last_flush_hour = -1; ///< content-hour bucket of the last ladder flush (durability: only health_trace flushes on its own).
-        /// Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) —
+        /// Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14) —
         /// the three epoch-status scalars, stamped by the same emission seam and
         /// gated by the same @ref prires_ep_tow stamp, so an epoch the rider did
         /// not drain leaves them BLANK rather than repeating stale numbers.
@@ -1512,7 +1553,7 @@ namespace GnssProcessor {
         double    ep_s0g_tension = 0.0; ///< Σw·ê² / Σw·v² — THE HEADLINE column.
         int       ep_s0g_flags   = 0;   ///< @c NetworkPriorResidual::GlobalFlag bitmask: in-band degradation, never silent.
 
-        // --- BLOCKFORMAL LOS block census (docs/SPEC_block_baarda.md) ---------
+        // --- BLOCKFORMAL LOS block census (docs/SPEC_redundancy_census.md) ---------
         // [snapshot: EXEMPT] — observer state of a MEASURE-ONLY, forward-only
         // instrument, the same class as the three censuses above.  Restoring the
         // σ̂₀ accumulator or the event-holdoff clock would make a diagnostic
@@ -1539,7 +1580,7 @@ namespace GnssProcessor {
         // "live counter over dead wiring" failure the blocks above exist to
         // prevent, so those scalars are not carried at all.
 
-        // --- STATION CONGRUENCE screen (docs/SPEC_station_congruence.md) -------
+        // --- STATION CONGRUENCE screen (docs/SPEC_redundancy_census.md) -------
         // [snapshot: EXEMPT] — same class and same reasoning as the block census
         // above: observer state of a MEASURE-ONLY, forward-only instrument.  A
         // resumed leg restarts the σ̂₀ calibration empty and reports RAW FORMAL for
@@ -1682,6 +1723,10 @@ namespace GnssProcessor {
         long long cta_marks = 0;             ///< per-sat wire discontinuities QUEUED at a decoupling edge
         long long cta_gf_keys = 0;           ///< (sat,epoch) clock priors whose information was gauge-downdated.  0 on an ARMED gauge-free run means the downdate never reached a group of >= 2 carried clocks — the step is inert and the anchor is still constraining the gauge.
         long long cta_gf_inert = 0;          ///< epochs where the gauge-free step was armed but downdated NOTHING (every constellation contributed < 2 carried clocks, or UᵀΛU was singular)
+        // Card C-GF's partial-support skip tally is NOT here: it lives run-scoped on the
+        // estimator (NetworkEstimator::gaugeFreePartialSkipped) and is read once at
+        // teardown, because the withdraw and within-epoch-replay folds run after any
+        // per-epoch read point the driver could offer.
         double    cta_max_w = 0.0;           ///< largest |w| seen (any disposition)
         double    cta_max_w_tow = 0.0;       ///< …its epoch
         std::string cta_max_w_sat;           ///< …its satellite
@@ -1745,7 +1790,7 @@ namespace GnssProcessor {
         long long eq34_slip_deseeded   = 0;
         long long eq34_slip_demoted    = 0;
         long long eq34_slip_readmitted = 0;
-        // Card 3 chain-pin AUDIT run tallies (docs/HANDOFF_wsh_chain_slant.md T1),
+        // Card 3 chain-pin AUDIT run tallies (docs/SPEC_synthetic_minimum_network.md §14 T1 (measured record §12.8)),
         // keyed "<cons>|<signal>" (the election's dr_key).  The pipeline a pin can
         // silently leak from has three stages — DECLARED (the election's per-group
         // Σ (n_c + m_c) gauge dimension), FOLDED (foldAmb/foldRpb actually built the
@@ -1893,6 +1938,17 @@ namespace GnssProcessor {
         // byte-identical-A/B trap.  Logged once at run end when the card is armed.
         size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
         long long n_cpl_terms_present = 0, n_cpl_terms_departed = 0, n_cpl_terms_shrunk = 0;
+        // Card 1f (network.carry_coupling_gauge_project) — the ON-path telemetry for the
+        // departed-column gauge defect.  `held` counts (constellation,kind) families whose
+        // coefficient sum was restored to its HARVEST value against a truncated column;
+        // `orphan` counts families whose truncated mass had no present recipient, i.e. the
+        // rows this card could NOT make gauge-invariant.  Standing invariant #4: armed with
+        // both at 0 means no row was ever truncated — the card is inert, not clean.
+        long long n_cpl_gauge_held = 0, n_cpl_gauge_orphan = 0;
+        /// Card 1g's own denominator — terms diverted to the departed route by the WIDENED
+        /// (kind,sat,signal) probe specifically.  Armed with this at 0 means the
+        /// realization-step feeds never matched a live coupling term: INERT, not clean.
+        long long n_cpl_reinit_diverted = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on
@@ -1953,6 +2009,27 @@ namespace GnssProcessor {
         std::size_t n_gate_withheld_over  = 0;   ///< withheld with observed < declared (tolerance below the gauge depth)
         int nullspace_obs_min = -1;              ///< min observed near-null count over the run (-1 = never evaluated)
         int nullspace_obs_max = -1;              ///< max observed near-null count over the run (-1 = never evaluated)
+
+        // STANDING INVARIANT #7 — DATUM-DIRECTION INFORMATION RATIO  R = (vᵀNv/vᵀv)/cutoff,
+        // one sample per (epoch × declared datum direction), on the SAME reduced normals and
+        // the SAME cutoff the rank gate judges by.  The gate collapses that spectrum to an
+        // integer, so a declared gauge that ACQUIRES information moves the observed count by
+        // one and reads exactly like a mis-calibrated tolerance.  Measured: a Card-1 coupling
+        // row with a truncated family sum drove one clock gauge 1e-11 → 9.43e-3 in a single
+        // epoch — five decades over the cutoff — and the only symptom was four OVER-specified
+        // withholds.  R ≪ 1 = still gauge; R ≥ 1 = something folded PRE-gate is pinning a
+        // direction the datum owns.  Computed UNCONDITIONALLY (one k×k quadratic form per
+        // constellation against the gate's own O(n³) eigensolve): a knob-gated version would
+        // have been dark on exactly the runs that needed it.
+        std::size_t ddi_epochs        = 0;   ///< epochs the ratio was evaluated (denominator)
+        std::size_t ddi_dirs          = 0;   ///< (epoch × direction) samples
+        std::size_t ddi_breach_epochs = 0;   ///< epochs with >= 1 direction at R >= 1
+        std::size_t ddi_breach_edges  = 0;   ///< invariant #7 edges emitted (breach + clear)
+        std::size_t ddi_over_breach   = 0;   ///< OVER-specified withholds COINCIDENT with a breach — the discriminator the run-end advice branches on
+        double      ddi_ratio_max     = -1.0;///< largest R over the run (-1 = never evaluated)
+        double      ddi_ratio_max_tow = 0.0; ///< ...its epoch
+        std::string ddi_ratio_max_dir;       ///< ...its identity ("CLK|G")
+        double      ddi_ratio_min     = -1.0;///< smallest R — the healthy floor a free datum sits at
 
         // SBC (network.sbasis_complete) run-end telemetry — standing invariant #4:
         // an armed completion whose counters never move on a GPS+Gal run means the
@@ -2053,13 +2130,13 @@ namespace GnssProcessor {
         std::string redun_max_cold_id;          ///< its (station/sat/class @tow) identity.
         double    redun_wall_ms = 0.0;          ///< run-total wall inside the census seam (the cost claim).
 
-        /// Baarda reliability / MDB tallies (docs/SPEC_network_mdb_reliability.md).
+        /// Baarda reliability / MDB tallies (docs/SPEC_redundancy_census.md).
         /// Every field documented on the struct; reported by @c networkMdbReport,
         /// which lives next to the aggregation that produced the numbers so the
         /// counters and the sentences interpreting them cannot drift apart.
         NetworkMdbTallies mdb;
 
-        /// BlockFormal LOS block census tallies (docs/SPEC_block_baarda.md).
+        /// BlockFormal LOS block census tallies (docs/SPEC_redundancy_census.md).
         /// Named `bb`, NOT `block`: `ctx.counters.bb` is the run-total POD and
         /// `ctx.carry.bb` is the accumulator that produced it — two different
         /// objects with one short name each, deliberately spelled the same so a
@@ -2068,7 +2145,7 @@ namespace GnssProcessor {
         /// one counts BLOCKS, and their denominators are not interchangeable.
         NetworkBlockBaardaTallies bb;
 
-        /// Station congruence screen tallies (docs/SPEC_station_congruence.md).
+        /// Station congruence screen tallies (docs/SPEC_redundancy_census.md).
         /// Named `cg` on the same convention as `bb`: `ctx.counters.cg` is the
         /// run-total POD and `ctx.carry.cg` is the accumulator that produced it.
         /// It counts STATION-EPOCHS, where `bb` counts BLOCKS and the redundancy
@@ -2095,7 +2172,7 @@ namespace GnssProcessor {
         std::string prires_max_id;              ///< its (family/label/station/sat/signal @tow) identity.
         double    prires_wall_ms = 0.0;         ///< run-total wall inside the emission seam (the §5 cost claim; the per-row addRow cost rides the carry harvests and is not separable).
 
-        // --- CONSTRAINT-AWARE GLOBAL σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) -
+        // --- CONSTRAINT-AWARE GLOBAL σ̂₀ (docs/SPEC_prior_residual_census.md §14) -
         // Standing invariant #4 for the rider.  The four SUMS live in the
         // accumulator (they are the statistic); these are the seam-level
         // counters that say whether the wiring executed and in which DEGRADED

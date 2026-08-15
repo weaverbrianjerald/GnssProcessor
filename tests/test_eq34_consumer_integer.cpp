@@ -4,7 +4,9 @@
  *        driven through the REAL consumer-side chain proves end-to-end that an
  *        integer-consistent satellite phase-bias frame lets a held-out PPP-RTK
  *        user recover integer double-difference ambiguities and that MLAMBDA
- *        actually executes (docs/HANDOFF_eq34_datum_card3.md, "Falsifier" #1).
+ *        actually executes (docs/HANDOFF_eq34_datum_card3.md, "Falsifier" #1 —
+ *        that doc was pruned 2026-07-28 in commit a8f044f and is recoverable at
+ *        39b263a; it was NOT attic'd, so the path does not resolve in-tree).
  *
  * THE CLAIM UNDER TEST (S-system theory reference §6 / Odijk Eq. 34): a user
  * receiving emitted satellite phase biases  δ̃_s = b_s + ref_s  can fix integer

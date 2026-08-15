@@ -2,7 +2,7 @@
 /**
  * @file NetworkBlockBaarda.hpp
  * @brief BlockFormal — the (station, satellite) LOS block outlier census
- *        (docs/SPEC_block_baarda.md), INC-1..3: the accumulator.
+ *        (docs/SPEC_redundancy_census.md), BB-INC-1..3: the accumulator.
  *
  * Measure-only, default-OFF, OFF byte-identical, fingerprint-SAFE.  Nothing here
  * touches a weight, a state or a decision, and SPEC §9 row 1 pre-declares that

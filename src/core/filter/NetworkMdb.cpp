@@ -2,7 +2,7 @@
  * @file NetworkMdb.cpp
  * @brief Baarda reliability numbers (MDB) on the network path — see
  *        NetworkMdb.hpp for the design argument
- *        (docs/SPEC_network_mdb_reliability.md).
+ *        (docs/SPEC_redundancy_census.md).
  *
  * Measure-only.  Nothing in this translation unit writes a weight, a state or a
  * decision; it reads @f$(\sigma_i, r_i)@f$ pairs the host loops already hold,

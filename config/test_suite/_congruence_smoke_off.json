@@ -1,6 +1,6 @@
 {
  "_comment": [
-  "Station congruence screen (docs/SPEC_station_congruence.md) — OFF control of",
+  "Station congruence screen (docs/SPEC_redundancy_census.md) — OFF control of",
   "the first wiring smoke.  Identical to _congruence_smoke_on.json except that",
   "network.congruence_screen is false, so the pair is a SINGLE-KNOB delta and",
   "the products / traces they emit are directly comparable.",

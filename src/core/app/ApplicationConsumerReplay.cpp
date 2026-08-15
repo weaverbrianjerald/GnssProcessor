@@ -401,7 +401,7 @@ int Application::runConsumerReplay() {
         // four orders of magnitude above the residue, and finer than any real
         // epoch schedule — then dividing as integers removes the boundary case
         // entirely.  (Same class as the `start_offset_hours` = 13.0 residue
-        // gotcha in SPEC_day129_frame_guards §6.)
+        // gotcha in SPEC_day129_frame_guards Appendix (start_offset_hours half-epoch residue).)
         if (hour0_s < 0.0) hour0_s = now_s;
         const long long elapsed_ms = std::llround((now_s - hour0_s) * 1.0e3);
         const int hour = static_cast<int>(elapsed_ms / 3600000LL);

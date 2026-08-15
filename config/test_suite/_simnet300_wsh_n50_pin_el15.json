@@ -1,7 +1,7 @@
 {
   "_comment": [
-    "T3 — the elevation-cutoff A/B WITH TRUTH, 15-deg arm (docs/HANDOFF_wsh_chain_slant.md",
-    "§5 T3; SPEC §11 item 4, the last still-owed item of the original brief).",
+    "T3 — the elevation-cutoff A/B WITH TRUTH, 15-deg arm (docs/SPEC_synthetic_minimum_network.md",
+    "§14 T3 (measured record §12.9); SPEC §11 item 4, the last still-owed item of the original brief).",
     "The 25-deg arm IS the graded arm (_simnet300_wsh_n50_pin, 466/480 emitted) — this",
     "config is its twin with ONE knob: ionosphere_weighting.elevation_cutoff_deg 25 -> 15.",
     "The full block is restated because extends deep-merges objects and the base restates",

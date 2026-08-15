@@ -4,8 +4,9 @@
  * @brief Card 4 (M1) phase D — emit-layer frame re-basing of the network's
  *        per-(satellite,signal) phase biases onto the previous EMISSION frame.
  *
- * Under the invariant DD carry (`network.carry_invariant`, docs/HANDOFF_card4_
- * invariant_carry.md §D4) the per-epoch eq34 datum is re-realized *freely* — the
+ * Under the invariant DD carry (`network.carry_invariant`,
+ * docs/SPEC_card4_invariant_carry.md §D4 = its §6) the per-epoch eq34 datum is
+ * re-realized *freely* — the
  * spanning tree / datum receiver r1 are re-elected every epoch and NO cross-epoch
  * meaning attaches to the realized frame (continuity lives entirely in the carried
  * double differences, which are S-system invariants).  That is correct for the

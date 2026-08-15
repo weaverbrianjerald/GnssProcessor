@@ -2,7 +2,7 @@
  * @file NetworkRunTraces.cpp
  * @brief Trace-stream ownership + startup open logic for the network run loop
  *        (decomposition INC-3 — verbatim relocation from ApplicationNetwork.cpp;
- *        see docs/network_decomposition_addendum_2026-07-16.md).
+ *        see docs/network_decomposition_plan.md).
  */
 
 #include "logging/NetworkRunTraces.hpp"
@@ -262,7 +262,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     // Prior-residual census schema flag (docs/SPEC_prior_residual_census.md) —
     // same one-decision-point discipline, same STRUCTURAL byte-identity reason.
     es_prires_columns_ = nc.prior_residual_census;
-    // Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) — its OWN
+    // Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14) — its OWN
     // schema flag, so a census-only run keeps exactly the columns it had before
     // this rider existed and the census's §9.1 A/B stays a valid comparison.
     es_s0g_columns_ = nc.prior_residual_census && nc.prior_residual_global_sigma0;
@@ -344,7 +344,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                        ? ",prires_rows,prires_rows_resp,prires_rows_frame,"
                                          "prires_n_reported,prires_max_t"
                                        : "")
-                               // docs/SPEC_sigma0_constraint_aware.md: the
+                               // docs/SPEC_prior_residual_census.md §14: the
                                // constraint-aware global variance component.
                                // sigma0_global is the LASER 5-74 scale (prior
                                // residuals in the numerator, constraints in the
@@ -561,7 +561,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       prior_residual_trace_path.string());
     }
     if (nc.block_baarda) {
-        // docs/SPEC_block_baarda.md INC-1 — the per-(family x label) exceedance
+        // docs/SPEC_redundancy_census.md BB-INC-1 — the per-(family x label) exceedance
         // ladder over t_B, the card's headline product.  Same durability caveat
         // as the prior-residual ladder: only health_trace flushes mid-run, so a
         // long armed run should also carry network.health_interval_s if these
@@ -574,7 +574,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       block_baarda_trace_path.string());
     }
     if (nc.congruence_screen) {
-        // docs/SPEC_station_congruence.md INC-1 — one row per SWEPT STATION per
+        // docs/SPEC_redundancy_census.md CG-INC-1 — one row per SWEPT STATION per
         // epoch.  This file IS the card's headline product: SPEC §7.2's perturbed
         // arm is graded on a per-station run-median of `d_e` and §7.3's MDB table
         // is built from `mdb_*`, neither of which survives aggregation into a
@@ -589,7 +589,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       congruence_trace_path.string());
     }
     if (nc.mdb) {
-        // docs/SPEC_network_mdb_reliability.md INC-1 — the per-(constellation x
+        // docs/SPEC_redundancy_census.md MDB-INC-1 — the per-(constellation x
         // class) MDB distribution, the card's headline product.  Same durability
         // caveat as the ladder above: only health_trace flushes mid-run, so a long
         // armed run should carry network.health_interval_s if these rows have to
@@ -1371,7 +1371,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.adm_revet_census ? "true" : "false",
                                      nc.adm_revet_hold ? "true" : "false")
                        : std::string())
-               // docs/SPEC_network_mdb_reliability.md: the arm provenance a §6 grader
+               // docs/SPEC_redundancy_census.md: the arm provenance a §11.6 grader
                // needs to tell a reliability leg from its control without re-reading
                // the config.  Emitted ONLY when armed, so an unarmed run's manifest
                // bytes are unchanged (the adm_screen precedent; the decomposition

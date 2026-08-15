@@ -1,6 +1,6 @@
 {
  "_comment": [
-  "Station congruence screen (docs/SPEC_station_congruence.md) — ON arm of the",
+  "Station congruence screen (docs/SPEC_redundancy_census.md) — ON arm of the",
   "first WIRING smoke.  Inherits _ft63_redund_on.json verbatim (63 stations,",
   "GPS, 300 s, redundancy census at stride 1 with escalation, block-Baarda",
   "unarmed) and adds ONE delta: network.congruence_screen.",

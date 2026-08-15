@@ -1,6 +1,6 @@
 {
  "_comment": [
-  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_sigma0_constraint_aware.md) -- the",
+  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_prior_residual_census.md §14) -- the",
   "DEGRADED-PATH arm.  Extends _ft63_s0g_raimlive.json and turns OFF exactly one",
   "thing: network.raim_redundancy_normalize.",
   "",

@@ -624,7 +624,7 @@ void networkStashStatus(
             es.prires_rows_frame = ctx.carry.ep_prires_frame;
             es.prires_n_reported = ctx.carry.ep_prires_reported;
             es.prires_max_t      = ctx.carry.ep_prires_max_t;
-            // Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md):
+            // Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14):
             // same TOW stamp, same "unavailable is not 0" convention.  The FLAGS
             // are written whenever the rider ran — including as 0 — because a
             // clean epoch and an un-run one must be distinguishable from this

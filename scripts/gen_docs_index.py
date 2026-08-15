@@ -57,19 +57,19 @@ GROUPS = [
     ("Ingest / RINEX",                   r"rinex|ingest|zero_sentinel"),
     ("Ionosphere / level",               r"iono|level|vtec|slant|triple"),
     ("Lanes / ambiguity / integer",      r"lane|uwl|ewl|_wl|wl_|eq34|ambiguity|integer|mw_wl"),
-    ("Datum / S-system / clock",         r"datum|sbasis|ssystem|clock|day129|stransform|beidou|w6"),
+    ("Datum / S-system / clock",         r"datum|sbasis|ssystem|clock|day129|stransform|beidou|w6|pivot_visibility"),
     ("Carry / covariance / VCE",         r"carry|covarian|vce|pd_safe|factored_pz|warm_resume"),
-    ("QC / RAIM / admission / slip",     r"slip|raim|admission|census|baarda|congruence|mdb|redundan|churn|flicker|guard|sigma0|deweight|reliab|turbo_edit|lli"),
+    ("QC / RAIM / admission / slip",     r"slip|raim|admission|census|baarda|congruence|mdb|redundan|churn|flicker|guard|sigma0|deweight|reliab|turbo_edit|lli|t3_null"),
     ("Product / consumer / emit",        r"product|consumer|emit|cbpin|legend|contract"),
     ("Architecture / decomposition / perf", r"decomposition|seam|perf|inc8b|aiding|arch|election|rate_transferable|decimat"),
     ("Field-run reports",                r"nightrun|night305|investigation|^REPORT_"),
-    ("Config / process / reference",     r"CONFIG|promotion|latex|test_suite|glonass|nav|transformation|session|runqueue|overnight"),
+    ("Config / process / reference",     r"CONFIG|promotion|latex|test_suite|glonass|nav|transformation|session|queue|overnight"),
 ]
 
 # Distinctive-stem test: these prefixes are unambiguous, or the stem is long and
 # multi-underscore.  Everything else is matched by full filename only.
 DISTINCT_PREFIX = ("SPEC_", "HANDOFF_", "REPORT_", "CONTRACT_", "SESSION_",
-                   "RUNQUEUE_", "NIGHTRUN_", "CLOCK_", "CONFIG_")
+                   "RUNQUEUE_", "QUEUE_", "NIGHTRUN_", "CLOCK_", "CONFIG_")
 
 
 def is_distinctive(stem: str) -> bool:

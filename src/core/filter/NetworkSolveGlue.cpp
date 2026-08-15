@@ -18,6 +18,7 @@
 #include "filter/NetworkChainDatum.hpp"
 #include "filter/NetworkClockAnchor.hpp"   // Card Q3 guarded temporal clock anchor
 #include "filter/NetworkDatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
+#include "filter/NetworkFrameDiag.hpp"   // invariant #7: networkDatumInfoRatio
 #include "filter/NetworkPhaseDatum.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/NetworkPrefitCensus.hpp"   // H-rider: networkPrefitSigma0 (census-fed H σ̂₀)
@@ -773,10 +774,11 @@ if (ctx.knobs.sbasis_complete_on) {
 
 int gate_observed       = -1;   // the LAST evaluation this epoch (post-heal if a re-gate ran)
 int gate_first_observed = -1;   // this epoch's FIRST evaluation — the DG6 min/max sample
+double gate_ev_max      = -1.0; // invariant #7: λmax of the FIRST evaluation (the gate's own cutoff)
 ++ctx.counters.n_gate_evaluated;
 try {
     sb.assertNullSpaceRank(est.reducedSharedNormals(), plan.declared_dimension,
-                           est.rankGateTol(), &gate_observed);
+                           est.rankGateTol(), &gate_observed, &gate_ev_max);
     gate_first_observed = gate_observed;
 } catch (const std::exception& ex) {
     // assertNullSpaceRank writes observed_out BEFORE the equality test, so
@@ -876,6 +878,18 @@ if (gate_first_observed >= 0) {
     if (lo < 0 || gate_first_observed < lo) lo = gate_first_observed;
     if (hi < 0 || gate_first_observed > hi) hi = gate_first_observed;
 }
+// STANDING INVARIANT #7 (docs/SPEC_card1_coupling_carry.md §13): measure how much
+// information each DECLARED datum direction carries, on the SAME normals and cutoff the
+// gate just judged.  The gate's integer count cannot distinguish "the tolerance is
+// mis-placed" from "a carry FILLED a gauge direction", and those need opposite fixes —
+// this ratio is the discriminator, and it is the reason that class can never again go
+// silent.  Measure-only, unconditional, ~one k×k quadratic form per constellation.
+// Deliberately AFTER the withhold accounting above so the coincidence counter
+// (OVER-specified withhold on a breached epoch) can be formed here in one place.
+networkDatumInfoRatio(ctx, traces, se, est, plan.declared_dimension,
+                      registered_clock_sats, gate_ev_max,
+                      /*gate_over_withheld=*/!gate_ok && gate_observed >= 0
+                          && gate_observed < plan.declared_dimension);
 // Datum graph census: the FALLBACK spectral hand-off, for runs without SBC.
 // The gate's own first evaluation is then the only realized near-null count
 // there is — a COUNT with no direction identities, which the census labels
@@ -1485,7 +1499,21 @@ if (within_epoch_armed && carry_warm) {
         if (cap_sbc_H.rows() > 0)
             est.addSharedConstraintRows(cap_sbc_H, cap_sbc_z,
                                         NetworkSbasis::kSbasisCompleteWeight);
-        if (!cap_priors.empty()) est.addSharedPrior(cap_priors);
+        // Card C-GF: the replay must fold the SAME prior the primary solve folded.  It
+        // previously called the plain accumulator unconditionally, so with the gauge-free
+        // downdate armed the replayed system carried information along the datum gauge
+        // that the primary solve had removed — and the within-epoch RAIM trip decision
+        // was then taken against a DIFFERENT system than the one being tested.  Latent
+        // while the downdate was reachable only through the Q3 anchor (outside the
+        // standard armed set); live the moment it arms with the carry, since the
+        // within-epoch tier IS in the standard armed set.
+        if (!cap_priors.empty()) {
+            if (ctx.knobs.carry_gauge_free)
+                est.addSharedPriorClockGaugeFree(cap_priors,
+                                                 ctx.knobs.carry_gauge_free_closure);
+            else
+                est.addSharedPrior(cap_priors);
+        }
         // C1: replay the dense D2 fold on the fresh arrowhead.  The layout is
         // frozen for the epoch, so the key→column mapping and the LDLT are
         // bit-reproducible — the re-solve sees the identical shared system.
@@ -1493,7 +1521,9 @@ if (within_epoch_armed && carry_warm) {
         // routed through cap_priors above), so this cannot throw where the
         // primary did not.
         if (!cap_dense_keys.empty())
-            est.addSharedPriorDense(cap_dense_keys, cap_dense_cov);
+            est.addSharedPriorDense(cap_dense_keys, cap_dense_cov, nullptr,
+                                    ctx.knobs.carry_gauge_free,
+                                    ctx.knobs.carry_gauge_free_closure);   // Card C-GF: same fold as the primary solve
         // Fix A: rebuild the ensemble phase-bias gauges on the fresh arrowhead
         // (beginEpoch reopened the layout but est_index_of was rebuilt above and
         // refloated stations may have dropped, so the stored gauges' station

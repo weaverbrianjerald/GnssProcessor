@@ -1,7 +1,7 @@
 /**
  * @file test_block_baarda.cpp
  * @brief BLOCKFORMAL — the (station, satellite) LOS block outlier census
- *        (docs/SPEC_block_baarda.md), INC-0: the residual-cofactor kernel.
+ *        (docs/SPEC_redundancy_census.md), BB-INC-0: the residual-cofactor kernel.
  *
  * LASER Guide v2.7 slide 5-98 states the gap this card exists to close: there is
  * "not necessarily a one-to-one correspondence between large residuals and

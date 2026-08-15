@@ -493,7 +493,8 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
                                        Eigen::MatrixXd& Lambda,
                                        Eigen::VectorXd& eta,
                                        bool clock_gauge_free,
-                                       std::size_t* gauge_free_keys) const {
+                                       std::size_t* gauge_free_keys,
+                                       bool require_closure) const {
     if (gauge_free_keys) *gauge_free_keys = 0;
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
     in_idx.clear();
@@ -598,6 +599,34 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
             if (p.kind == SharedParamKind::Clock && !p.sat.empty())
                 grp[p.sat[0]].push_back(a);
         }
+        // Card C-GF: SUPPORT CLOSURE.  U = v|_C is the datum direction v restricted to
+        // the carried set C, and because Λ is exactly zero outside C, annihilating U does
+        // annihilate v's folded information — the restriction is correct FOR THAT
+        // OBJECTIVE.  But Uᵀx_C is not the functional vᵀx when supp(v) ⊄ C: the
+        // difference is a contrast between the carried and uncarried members of the
+        // group, which is ESTIMABLE, not gauge.  Downdating a partially-carried
+        // direction therefore deletes real information (concretely: a constellation with
+        // ten registered clocks and six carried loses the carried-6-vs-risen-4 mean
+        // contrast).  The legacy ">= 2 members" floor is a DIFFERENT test — it asks
+        // whether anything estimable survives INSIDE the group, not whether the
+        // direction's support is closed.  Opt-in so the Q3 path stays byte-identical.
+        std::size_t n_partial = 0;
+        if (require_closure) {
+            std::map<char, std::size_t> registered;
+            for (const ColumnDesc& d : columns_)
+                if (d.kind == SharedParamKind::Clock && !d.sat.empty())
+                    ++registered[d.sat[0]];
+            for (auto it = grp.begin(); it != grp.end();) {
+                const auto rit = registered.find(it->first);
+                if (rit == registered.end() || it->second.size() != rit->second) {
+                    ++n_partial;
+                    it = grp.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        gf_partial_skipped_ += n_partial;
         std::vector<Eigen::Index> used;
         for (const auto& [c, rows] : grp) {
             (void)c;
@@ -652,7 +681,8 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
 std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>& keys,
                                                   const Eigen::MatrixXd& cov,
                                                   Eigen::VectorXd* lambda_diag,
-                                                  bool clock_gauge_free) {
+                                                  bool clock_gauge_free,
+                                                  bool require_closure) {
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
     if (cov.rows() != nk || cov.cols() != nk) {
         throw std::invalid_argument(
@@ -670,7 +700,8 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
     std::vector<Eigen::Index> in_idx, col;
     Eigen::MatrixXd Lambda;
     Eigen::VectorXd eta;
-    if (!denseFoldTerms_(keys, cov, kNoSkip, col, in_idx, Lambda, eta, clock_gauge_free))
+    if (!denseFoldTerms_(keys, cov, kNoSkip, col, in_idx, Lambda, eta, clock_gauge_free,
+                         nullptr, require_closure))
         return 0;
     const Eigen::Index k = static_cast<Eigen::Index>(in_idx.size());
 
@@ -690,7 +721,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
 }
 
 std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
-    const std::vector<SharedPrior>& priors) {
+    const std::vector<SharedPrior>& priors, bool require_closure) {
     if (priors.empty()) return 0;
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
@@ -722,9 +753,35 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
     // η = Λ_gf v = λ ⊙ (v − v̄_λ): each clock is anchored to its carried value
     // MINUS the information-weighted mean of the carried values, i.e. the
     // DIFFERENCES are anchored and the gauge is left to the datum.
+    // Card C-GF: same support-closure rule as the dense path — a direction restricted to
+    // a subset of its support is not the datum's functional, and downdating it deletes an
+    // estimable contrast rather than gauge.  Opt-in; default false is byte-identical.
+    std::map<char, std::size_t> registered;
+    if (require_closure)
+        for (const ColumnDesc& d : columns_)
+            if (d.kind == SharedParamKind::Clock && !d.sat.empty())
+                ++registered[d.sat[0]];
+
     std::size_t downdated = 0;
     for (const auto& [c, rows] : grp) {
-        (void)c;
+        if (require_closure) {
+            const auto rit = registered.find(c);
+            if (rit == registered.end() || rows.size() != rit->second) {
+                // DECLINE THE DOWNDATE, DO NOT DROP THE CARRY.  On this path the loop
+                // body is what ACCUMULATES the priors, so a bare `continue` would fold
+                // NO prior for the whole group — silently discarding the carried clock
+                // information instead of merely leaving its gauge direction alone.  The
+                // dense path has no such hazard (Λ already holds those rows; closure only
+                // removes a column of U), and this branch has to mirror that: fold the
+                // group PLAINLY, exactly as addSharedPrior would.
+                ++gf_partial_skipped_;
+                for (const ClkRow& r : rows) {
+                    delta_info(r.col, r.col) += r.info;
+                    delta_rhs(r.col)         += r.info * r.value;
+                }
+                continue;
+            }
+        }
         if (rows.size() < 2) continue;   // a lone carried clock IS the gauge
         double tot = 0.0, wsum = 0.0;
         for (const ClkRow& r : rows) { tot += r.info; wsum += r.info * r.value; }
@@ -747,7 +804,7 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
 
 std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
     const std::vector<SharedPrior>& priors, const std::set<std::string>& drop_sats,
-    bool restore) {
+    bool restore, bool require_closure) {
     if (priors.empty() || drop_sats.empty()) return 0;
     const Eigen::Index n = numShared();
     Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
@@ -785,12 +842,44 @@ std::size_t NetworkEstimator::refoldSharedPriorClockGaugeFreeDropping(
             }
         }
     };
+    // Card C-GF: the withdraw must un-fold WHAT THE FOLD ACTUALLY DID.  Under closure a
+    // group whose support is not fully carried is folded PLAINLY (see
+    // addSharedPriorClockGaugeFree's decline branch — it folds the diagonal rather than
+    // dropping the carry), so rebuilding and subtracting the GAUGE-FREE block for such a
+    // group removes something that was never added.  The closure decision must therefore
+    // be recomputed here from the same inputs, or this parameter is decorative.
+    std::map<char, std::size_t> registered;
+    if (require_closure)
+        for (const ColumnDesc& d : columns_)
+            if (d.kind == SharedParamKind::Clock && !d.sat.empty())
+                ++registered[d.sat[0]];
+
     std::size_t dropped = 0;
     for (const auto& [c, rows] : grp) {
-        (void)c;
         std::size_t nd = 0;
         for (const ClkRow& r : rows) if (r.drop) ++nd;
         if (nd == 0) continue;
+        bool closed = true;
+        if (require_closure) {
+            const auto rit = registered.find(c);
+            closed = (rit != registered.end() && rows.size() == rit->second);
+        }
+        if (!closed) {
+            // Folded plainly ⇒ withdraw plainly, per dropped key only.  The survivors'
+            // priors are independent diagonals here, so removing one does NOT move any
+            // other key's target — the whole reason the gauge-free path needs a rebuild
+            // does not apply.  This also repairs a capture desync: the caller erases
+            // every returned key from `cap_priors` as "withdrawn", so a group that
+            // reported keys while folding a zero delta would leave the prior installed
+            // while the within-epoch RAIM replay believed it gone.
+            for (const ClkRow& r : rows)
+                if (r.drop) {
+                    delta_info(r.col, r.col) += -sgn * r.info;
+                    delta_rhs(r.col)         += -sgn * r.info * r.value;
+                }
+            dropped += nd;
+            continue;
+        }
         accumulate(rows, /*keep_dropped=*/true,  -sgn);   // remove the block as folded
         accumulate(rows, /*keep_dropped=*/false, +sgn);   // re-fold it without the refloated keys
         dropped += nd;
@@ -825,7 +914,8 @@ void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& prior
 
 std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
     const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
-    const std::set<std::string>& drop_sats, bool restore, bool clock_gauge_free) {
+    const std::set<std::string>& drop_sats, bool restore, bool clock_gauge_free,
+    bool require_closure) {
     const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
     if (cov.rows() != nk || cov.cols() != nk) {
         throw std::invalid_argument(
@@ -841,11 +931,15 @@ std::size_t NetworkEstimator::refoldSharedPriorDenseDroppingClocks(
     // Both blocks are built BEFORE anything is folded, so a throw from either
     // leaves the shared system untouched (the caller's restore path is then a
     // plain "keep the pre-withdraw solution").
+    // Card C-GF: `require_closure` must be forwarded to BOTH rebuilds.  It selects
+    // WHICH directions U spans, so passing it to one and not the other (or to neither
+    // when the fold used it) withdraws a different subspace than was applied — the
+    // negative-semidefinite-residue failure this card exists to make unrepresentable.
     const bool had_old = denseFoldTerms_(keys, cov, kNoSkip, old_col, old_in, L_old, e_old,
-                                         clock_gauge_free);
+                                         clock_gauge_free, nullptr, require_closure);
     if (!had_old) return 0;
     const bool has_new = denseFoldTerms_(keys, cov, drop_sats, new_col, new_in, L_new, e_new,
-                                         clock_gauge_free);
+                                         clock_gauge_free, nullptr, require_closure);
     const std::size_t dropped = old_in.size() - (has_new ? new_in.size() : 0u);
     if (dropped == 0) return 0;
 

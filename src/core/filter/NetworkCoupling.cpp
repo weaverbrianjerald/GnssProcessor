@@ -71,13 +71,35 @@ double CouplingRowBuilder::couplingQ(const CoupledShared& cs) const {
     return 0.0;
 }
 
-void CouplingRowBuilder::tuGaugeRestore(std::vector<TuEnt>& ents) {
+void CouplingRowBuilder::tuGaugeRestore(
+        std::vector<TuEnt>& ents,
+        const std::map<std::pair<char, int>, double>* trunc_sum) const {
     std::map<std::pair<char, int>, std::pair<double, int>> deficit;
     for (const TuEnt& e : ents)
         if (e.cc && e.kind != SharedParamKind::VtecSh) {
             auto& d = deficit[{e.cc, static_cast<int>(e.kind)}];
             d.first += e.m_un - e.m_shr;
             ++d.second;
+        }
+    // Card 1f: a TRUNCATED column's coefficient was deleted outright, so the family
+    // is short by exactly that coefficient — the same kind of deficit the κ shrink
+    // opens, and correctable the same way.  Seeding the deficit map from the
+    // truncated sums (rather than only from the present entries' shrink) is the
+    // whole fix: it restores Σ_family M to its HARVEST value instead of to the
+    // surviving-present value.  A family with truncated mass but NO present
+    // recipient has nowhere to put it — the row cannot be made gauge-invariant
+    // this epoch, so it is counted and left alone (invariant #4: the miss is
+    // TELEMETRY, not a silent partial fix).
+    if (trunc_sum)
+        for (const auto& [fam, s] : *trunc_sum) {
+            if (s == 0.0) continue;
+            const auto it = deficit.find(fam);
+            if (it == deficit.end() || it->second.second == 0) {
+                ++R.cpl_gauge_orphan;
+                continue;
+            }
+            it->second.first += s;
+            ++R.cpl_gauge_held;
         }
     for (TuEnt& e : ents)
         if (e.cc && e.kind != SharedParamKind::VtecSh) {
@@ -89,9 +111,27 @@ void CouplingRowBuilder::tuGaugeRestore(std::vector<TuEnt>& ents) {
 }
 
 bool CouplingRowBuilder::tuReinitSince(const CoupledShared& cs, double since_s) const {
-    if (!carry_cpl_tu) return false;
-    const auto it = tu_reinit_hist.find({cs.kind, cs.sat});
-    return it != tu_reinit_hist.end() && it->second > since_s;
+    // Card 1g: the κ time update is no longer the sole gate.  A column that was
+    // RE-REALIZED since this row's harvest carries an unknown frame step in its
+    // stashed ŝ_prev, so folding it as a full-weight PRESENT term injects that step
+    // as row bias — independently of whether the border time update is armed.
+    if (!carry_cpl_tu && !carry_cpl_reinit) return false;
+    const auto hit = [&](const std::string& sig) {
+        const auto it = tu_reinit_hist.find({cs.kind, cs.sat, sig});
+        return it != tu_reinit_hist.end() && it->second > since_s;
+    };
+    // Card 1g ON-path telemetry (standing invariant #4).  The run's departed-term total
+    // moves for many reasons, so it cannot answer "did the realization-step widening do
+    // anything?".  This counts the terms THIS rule diverted, and only those: the exact
+    // (kind,sat,signal) probe firing where the legacy sat-wide probe would not have.
+    if (carry_cpl_reinit && !cs.signal.empty() && hit(cs.signal) && !hit(std::string{}))
+        ++R.cpl_reinit_diverted;
+    // The clock-QC feeds mark a whole satellite (empty signal = sat-wide wildcard);
+    // the realization-step feeds mark one (sat,signal) family.  Probing the exact
+    // key FIRST and the wildcard second reproduces the legacy sat-wide matching
+    // exactly when only the legacy feeds are populated.
+    if (!carry_cpl_reinit) return hit(std::string{});
+    return hit(cs.signal) || (!cs.signal.empty() && hit(std::string{}));
 }
 
 void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
@@ -106,6 +146,12 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
         raw.var_eff   = var_eff;
         double rhs = lc.value_abs - x_lin_val;   // (r̂_prev − r_lin)
         std::vector<TuEnt> ents;                 // Card 1d: buffered present terms
+        // Card 1f: with the gauge projection armed the buffer owns ALL present-term
+        // emission, so the restore can run with the κ time update OFF.  Iteration
+        // order is unchanged and departed terms never touch `rhs`, so the OFF path
+        // is bit-identical.
+        const bool buffer_all = carry_cpl_tu || carry_cpl_gauge;
+        std::map<std::pair<char, int>, double> trunc;  // Card 1f: (cc,kind) → Σ truncated coeff
         for (const CoupledShared& cs : lc.coupling) {
             Eigen::Index c = resolveSharedCol(cs);
             // Card 1d: a (kind, sat) column reinit-folded since this row's
@@ -136,6 +182,9 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                 }
                 raw.departed.emplace_back(widx, cs.coeff);
                 ++R.cpl_terms_departed;
+                if (carry_cpl_gauge && !cs.sat.empty()
+                    && cs.kind != SharedParamKind::VtecSh)
+                    trunc[{cs.sat[0], static_cast<int>(cs.kind)}] += cs.coeff;
                 continue;
             }
             ++R.cpl_terms_present;
@@ -156,11 +205,17 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                                      cs.kind});
                 continue;
             }
+            if (buffer_all) {   // Card 1f: unshrunk, but routed through the buffer
+                ents.push_back(TuEnt{c, cs.coeff, cs.coeff, cs.s_prev,
+                                     cs.sat.empty() ? '\0' : cs.sat[0],
+                                     cs.kind});
+                continue;
+            }
             raw.shared.emplace_back(c, cs.coeff);
             rhs += cs.coeff * cs.s_prev;          // + M_rj·ŝ_prev,j
         }
-        if (carry_cpl_tu) {
-            tuGaugeRestore(ents);   // shrink only gauge-orthogonally
+        if (buffer_all) {
+            tuGaugeRestore(ents, carry_cpl_gauge ? &trunc : nullptr);
             for (const TuEnt& e : ents) {
                 raw.shared.emplace_back(e.c, e.m_shr);
                 rhs += e.m_shr * e.s_prev;
@@ -178,11 +233,21 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
     double dep_var = 0.0;                    // Σ_departed M_rj²·P_prev,jj
     double tu_var  = 0.0;                    // Card 1d: Σ_present M_rj²·κ_j·q_j·Δt
     std::vector<TuEnt> ents;                 // Card 1d: buffered present terms
+    const bool buffer_all = carry_cpl_tu || carry_cpl_gauge;   // Card 1f (see the joint path)
+    std::map<std::pair<char, int>, double> trunc;              // Card 1f: (cc,kind) → Σ truncated coeff
+    // Card 1f: BOTH truncation branches below feed this — a column dropped because it
+    // left the layout and a column forced onto the departed route by a reinit/frame
+    // step are the same perturbation of the coefficient vector.
+    const auto note_trunc = [&](const CoupledShared& cs) {
+        if (carry_cpl_gauge && !cs.sat.empty() && cs.kind != SharedParamKind::VtecSh)
+            trunc[{cs.sat[0], static_cast<int>(cs.kind)}] += cs.coeff;
+    };
     for (const CoupledShared& cs : lc.coupling) {
         const Eigen::Index c = resolveSharedCol(cs);
         if (c < 0) {                          // DEPARTED → marginalize into σ²
             dep_var += cs.coeff * cs.coeff * cs.p_prev;
             ++R.cpl_terms_departed;
+            note_trunc(cs);
             continue;
         }
         // Card 1d: a (kind, sat) column reinit-folded since this row's
@@ -193,6 +258,7 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
             || (carry_cpl_shmarg && cs.kind == SharedParamKind::VtecSh)) {
             dep_var += cs.coeff * cs.coeff * cs.p_prev;
             ++R.cpl_terms_departed;
+            note_trunc(cs);
             continue;
         }
         ++R.cpl_terms_present;
@@ -214,11 +280,17 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                                  cs.kind});
             continue;
         }
+        if (buffer_all) {   // Card 1f: unshrunk, but routed through the buffer
+            ents.push_back(TuEnt{c, cs.coeff, cs.coeff, cs.s_prev,
+                                 cs.sat.empty() ? '\0' : cs.sat[0],
+                                 cs.kind});
+            continue;
+        }
         row.shared.emplace_back(c, cs.coeff);
         rhs += cs.coeff * cs.s_prev;          // + M_rj·ŝ_prev,j
     }
-    if (carry_cpl_tu) {
-        tuGaugeRestore(ents);   // shrink only gauge-orthogonally
+    if (buffer_all) {
+        tuGaugeRestore(ents, carry_cpl_gauge ? &trunc : nullptr);
         for (const TuEnt& e : ents) {
             row.shared.emplace_back(e.c, e.m_shr);
             rhs += e.m_shr * e.s_prev;
@@ -324,6 +396,9 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                             long long& n_cpl_terms_present,
                             long long& n_cpl_terms_departed,
                             long long& n_cpl_terms_shrunk,
+                            long long& n_cpl_gauge_held,
+                            long long& n_cpl_gauge_orphan,
+                            long long& n_cpl_reinit_diverted,
                             int& n_cpl_row_dump) {
     // Card 1/1d observability: fold the per-station coupling-term counts into the
     // run totals (SERIAL — the parallel produce above only writes its own slot).
@@ -332,6 +407,9 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
             n_cpl_terms_present  += Rc.cpl_terms_present;
             n_cpl_terms_departed += Rc.cpl_terms_departed;
             n_cpl_terms_shrunk   += Rc.cpl_terms_shrunk;
+            n_cpl_gauge_held     += Rc.cpl_gauge_held;
+            n_cpl_gauge_orphan   += Rc.cpl_gauge_orphan;
+            n_cpl_reinit_diverted += Rc.cpl_reinit_diverted;
         }
     // Card 1d debug dump: the first few ASSEMBLED coupling rows of the run
     // (weight, RHS, A_s sparsity/magnitude) — the ground truth of what addStation

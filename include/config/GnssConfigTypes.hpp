@@ -311,8 +311,8 @@ namespace GnssProcessor {
         int    max_rows_per_station{ 0 };     ///< 0 = unlimited; else keep the lowest-variance rows first (drops counted).
         bool   trace{ false };                ///< Log-only per-row CSV (logs/network_sd_ewl.csv).  Does NOT change the solve.
 
-        // --- Increment 2a+2b: FIX the EWL integer (docs/SPEC_sd_ewl_integer_hold.md,
-        // as amended by docs/SPEC_lane_spectrometer.md §6).  Increment 2c (the zero-q
+        // --- Increment 2a+2b: FIX the EWL integer (docs/SPEC_sd_ewl_prereduce.md §8,
+        // as amended by docs/SPEC_sd_ewl_prereduce.md §10).  Increment 2c (the zero-q
         // HOLD) is deliberately NOT built: the decision is re-derived every epoch, so
         // there is no stiff cross-epoch carry to retrofit a slip response onto.
         /// Master for the integer path.  ON: @ref networkSdEwlAr decides this epoch's
@@ -358,7 +358,7 @@ namespace GnssProcessor {
         double sigma_wl_fresh_cyc{ 0.0 };     ///< Fresh-chord lane prior σ (cycles).  DEFAULT 0 = diffuse birth: the SPEC §3.1 mean-zero code-seed prior is FALSIFIED (seed-time clock diversity mis-centers the correction-frame lane origin by O(10²) cycles — D5 691-vs-125 measured Jul-16); the honest code-seed info enters via the FIRST MW lane increment instead.  >0 = study shape (loud warn).
         bool   lane_meas{ true };             ///< Per-epoch MW(1,2) lane increments folded into the carried block (SPEC §3.2).
         bool   bridge_meas{ true };           ///< Per-epoch iono-de-biased bridge increments on EWL-fixed cycles (phase-precision lane source).
-        // --- LF-1 perf card (docs/SPEC_lane_fold_perf_card.md) — PERF knobs, NOT lane-shape knobs.
+        // --- LF-1 perf card (docs/SPEC_lane_carry_card.md Appendix LF-1) — PERF knobs, NOT lane-shape knobs.
         //     Must stay OUT of the equivalence_shape discriminator (they don't change what folds). ---
         bool   fold_blocked{ false };         ///< LF-1 INC-1: optimized blocked/sparse lane fold — O(K) sparse applyLaneFix + the per-row re-symmetrize hoisted to one pass/block/epoch.  Changes the OPERATION ORDER ⇒ the parallel_carry EQUIVALENCE class, NOT bit-identical (§3.2).  OFF ⇒ the sequential per-row fold (byte-identical).
         bool   skip_pinned_increments{ false };///< LF-1 INC-2 (§3.3): skip the per-epoch MW/bridge lane increments for a committed-decided chord (σ=0.01 pinned lane; a σ≈0.06-0.2 increment is information-free).  Any slip/D5/re-tap resumes increments the same epoch.  Equivalence class (near-inert, not exactly null).  OFF ⇒ byte-identical.
@@ -557,7 +557,7 @@ namespace GnssProcessor {
      * orbit its geometry uses) is referenced to; the estimable satellite-clock
      * state then absorbs the error of that a-priori.  Frozen conventions:
      * @c docs/rt_service_conventions.md §1 (RTF-1) and the card decomposition in
-     * @c docs/rtf12_brdc_rts_plan.md.
+     * @c docs/rt_service_conventions.md §6 (D1–D10) / §7 (Cards 1–8).
      */
     enum class NetworkAprioriSource {
         Sp3,      ///< (default) Resolved precise SP3(+CLK) files; the emitted clock C0 is a delta against the SP3/CLK product identity (today's behaviour — byte-identical).
@@ -906,7 +906,7 @@ namespace GnssProcessor {
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default OFF => float product).
         MwWlConfig       mw_wl;               ///< M5 card WL-1: MW-seeded wide-lane pseudo-obs layer (default OFF => byte-identical).
-        LaneCarryConfig  lane_carry;          ///< M5 card WL-3: lane-coordinate carry (default OFF => byte-identical; config CONTRACT only — mechanism is a follow-up increment, docs/SPEC_lane_carry_card.md).
+        LaneCarryConfig  lane_carry;          ///< M5 card WL-3: lane-coordinate carry (default OFF => byte-identical; mechanism COMPLETE as of Jul-16 increments 2-4 — @c applyLaneMeasurement / @c applyLaneFix / @c carriedPairValue / @c injectCarriedChordPair all live in @c NetworkInvariantCarryDriver, docs/SPEC_lane_carry_card.md).
         SdEwlConfig      sd_ewl;              ///< SD PRE-REDUCE EWL constraint (default OFF => byte-identical; docs/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening Cards R/L/G (network.cycle_slip.*; all default OFF => byte-identical; docs/SPEC_slip_qc_hardening.md).
         SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier + degraded-phase demotion + re-vet (network.signal_integrity.*; default OFF => byte-identical; docs/SPEC_flicker_gap_integrity.md).
@@ -1011,7 +1011,7 @@ namespace GnssProcessor {
         // @ref NetworkInvariantCarryDriver::installPosterior's posterior-covariance readback
         // — SINGLE-THREADED (Eigen is pinned to one thread for the epoch).  With K≈8k carried
         // DD chords on a 305-station network that dense algebra is ~80% of the epoch
-        // (measured; see docs/HANDOFF_perlos_parallel_sweeps.md).  When armed:
+        // (measured; see docs/SPEC_dev_tier_perf_cards.md).  When armed:
         // buildDdPriors + installPosterior thread their big dense GEMMs via an Eigen un-pin,
         // while foldReducedDdPriors (whose cost is the per-station reduction with small
         // inner-dim matmuls + a serial LDLT — which Eigen cannot thread) OpenMP-fans that
@@ -1027,9 +1027,10 @@ namespace GnssProcessor {
         // physics verdict from an ON run until an ON-vs-OFF dd-frac equivalence grade has
         // passed for that config; every graded conclusion comes from an OFF (byte-identical)
         // run.  And this is a WALL-CLOCK MITIGATION, not the structural fix — the fold is
-        // still O(K³) in the DD-chord count; the factored-Pᶻ restructure
-        // (docs/HANDOFF_carry_driver_perf.md, INC-C2) is the O(K·n_s²+n_s³) cut, and its C0
-        // census (K growth / killChord reconciliation) is still open.
+        // still O(K³) in the DD-chord count.  The factored-Pᶻ restructure that INC-C2 asked
+        // for (docs/SPEC_carry_factored_pz_C2.md §7.4) was PROVEN IMPOSSIBLE for a dense
+        // Σ_ss (§2 there), and INC-C0's census closed as case (a) (§6) — so there is no
+        // pending O(K·n_s²+n_s³) cut behind this knob.
         //
         // Not combinable with @ref parallel_reduce on the same solve — the config loader forces
         // parallel_carry OFF (with a warning) when both are armed, since est.solve() is itself
@@ -1160,7 +1161,7 @@ namespace GnssProcessor {
         double redundancy_pivot_eps{ 1e-8 };    ///< INC-2 unobservable-local floor, RELATIVE to the station's median @f$N_{rr}@f$ LDLT pivot (the absolute scale is set by the measurement weights and varies by decades between an ambiguity column and a ZWD column).  A column below it carries essentially NO information this epoch.
         double redundancy_escalate_sigma{ 0.0 };///< Free-tier escalation trigger (0 = OFF).  When > 0 the O(rows) centred prefit census runs on EVERY station every epoch, and any station whose largest centred deviation exceeds this gets a TARGETED single-station redundancy sweep at the next epoch (~2-5 ms).  The free tier asks "is something big?"; redundancy answers "is it checkable?".  Works with @ref redundancy_census_stride = 0.
         int    redundancy_event_holdoff_ep{ 20 };///< Per-(station, satellite, class) event rate limit in sweep passes: a parked cell logs its identity persistently, not 120x/hour.
-        // --- Baarda reliability numbers / MDB (docs/SPEC_network_mdb_reliability.md;
+        // --- Baarda reliability numbers / MDB (docs/SPEC_redundancy_census.md;
         //     filter/NetworkMdb) ----------------------------------------------
         // MEASURE-ONLY, default-OFF and NOT fingerprinted, same class as the two
         // blocks above.  A PORT of KalmanFilter::computeResidualQc_'s quartet, not
@@ -1210,7 +1211,7 @@ namespace GnssProcessor {
         int    prior_residual_event_holdoff_ep{ 20 };///< Per-(family, station, satellite, signal) PRIORRES event rate limit in census epochs — rate-limited like the PREFIT events, so a persistently stale prior logs its identity persistently rather than 120x/hour.  The LADDER is never rate-limited; only the individual identities are.
         bool   prior_residual_corroborate{ false };///< INC-3: join every row to the raw-observable verdict the slip-QC pass already computes and emit the per-family contingency table.  Auto-arms @c network.cycle_slip.gap_instrument (instrumentation-only, verified byte-identical) with a WARN — deliberately NOT @c mw_lli_corroborate, which is a DECISION card and would perturb what is being measured.  Requires @ref prior_residual_census (hard error otherwise).
         // --- BlockFormal: (station, satellite) LOS block outlier census
-        //     (docs/SPEC_block_baarda.md) — a RIDER on the redundancy census's
+        //     (docs/SPEC_redundancy_census.md) — a RIDER on the redundancy census's
         //     swept stations ---------------------------------------------------
         // The MIDDLE tier.  A per-row w-test sits below the unit a physical fault
         // actually occupies and station-level median polish sits above it, so ONE
@@ -1227,7 +1228,7 @@ namespace GnssProcessor {
         int    block_baarda_event_holdoff_ep{ 20 };///< Per-(station, satellite) BLOCKBAARDA event rate limit in census epochs, so a persistently loud LOS logs its identity persistently rather than 120x/hour.  The LADDER is never rate-limited; only the individual identities are.
         bool   block_baarda_corroborate{ false };///< INC-2: join every reported block to the raw-observable verdict the slip-QC pass already computes, and emit the per-family contingency table whose b-cell (loud AND raw-flat) is the number SPEC 8.3 grades.  Auto-arms @c network.cycle_slip.gap_instrument with a WARN, exactly as @ref prior_residual_corroborate does.  Requires @ref block_baarda (hard error otherwise).
         // --- Station congruence screen: coordinate-fault detection in POSITION
-        //     space (docs/SPEC_station_congruence.md) — a second RIDER on the
+        //     space (docs/SPEC_redundancy_census.md) — a second RIDER on the
         //     redundancy census's swept stations -------------------------------
         // The tier ABOVE the block census, and the one fault class no armed tier
         // can see.  Station coordinates are HELD; a wrong held coordinate (survey
@@ -1247,7 +1248,7 @@ namespace GnssProcessor {
         double congruence_report_sigma{ 4.0 };   ///< Trace/event threshold on @f$t_i@f$.  REPORTING ONLY — nothing in the solve reads it back.  NOTE the unit: @f$T_i@f$ carries the @f$1/q@f$, so it is a VARIANCE RATIO with @f$E=1@f$ under @f$H_0@f$ for every observable dimension; 4.0 means "four times the coordinate tension the model allows", NOT four sigma.  The per-station ladder and the MDB table, not this knob, are the deliverable.
         int    congruence_event_holdoff_ep{ 20 };///< Per-station CONGRUENCE event rate limit in census epochs, so a persistently offset station logs its identity persistently rather than 120x/hour.  The per-station TRACE row is never rate-limited; only the individual events are.
         // --- Constraint-aware global variance component
-        //     (docs/SPEC_sigma0_constraint_aware.md) — a RIDER on the census
+        //     (docs/SPEC_prior_residual_census.md §14) — a RIDER on the census
         //     accumulator above ------------------------------------------------
         // The network's within-epoch sigma0 is a ROBUST MEDIAN of standardized
         // DATA-row residuals.  That is the right statistic for RAIM attribution
@@ -1451,7 +1452,7 @@ namespace GnssProcessor {
          */
         bool trace_postfit_sigma0{ false };
         /**
-         * @brief SPEC_day129_frame_guards §4.3 (RHS localization): KEYED robust
+         * @brief SPEC_day129_frame_guards P1-4 (RHS localization): KEYED robust
          *        post-fit residual aggregates (@c network.trace_postfit_keyed).
          *
          * The Phase-1 verdict located the collapse trigger on the RIGHT-hand
@@ -2617,8 +2618,8 @@ namespace GnssProcessor {
         double layer2_mean_vtec_prior_tecu = 3.0;       ///< Layer-2 a₀₀ climatology mean (TECU).
         double layer2_mean_vtec_prior_sigma_tecu = 5.0; ///< Layer-2 a₀₀ prior σ (TECU) — TIGHT on purpose (split constraint).
         int    row_decimation_epochs = 0;      ///< T1b temporal treatment of the (quasi-static) SH pseudo-obs constraint (0/1 = off = current behavior).  The sun-fixed field is quasi-static, so re-applying the SH↔slant rows as an INDEPENDENT white obs every epoch is a σ-incest channel (collapses the formal σ without new information).  Mechanism: the rows are still applied EVERY epoch (so the satellite-code-bias observability they provide is preserved and no epoch is withheld — pure row-skipping instead makes the observability gate withhold every skipped epoch) but their noise is inflated by N (σ ×√N), so each epoch's white row carries only 1/N of the information, matching the information rate of "one full look per N epochs".
-        double rep_error_tau_s = 0.0;          ///< T5/Iono-2 (v2 EXACT harvest, 2026-07-17): correlated per-(station,sat) SH representativeness-error deviation.  0 = OFF = byte-identical.  When > 0, the SH↔slant pin row `ι − SH·c = 0 + ε(white)` becomes `ι − SH·c = d̂ₖ|ₖ₋₁ + ε(floor² + Pₖ|ₖ₋₁)` where d is a per-LOS Gauss–Markov deviation (τ = this value, steady-state σ = representation_sigma_tecu, carried in VERTICAL TECU so the level and variance are elevation-stationary).  v2 replaces the falsified-circular v1 scalar filter with the EXACT joint-posterior harvest: d̂ = d_pred + [P/(P+f²)]·(û − d_pred) with û/V̂ the solved posterior mean/variance of the pin functional (one NetworkEstimator::stationRegression per LOS + the datum-frame shared covariance), and P⁺ = P·(U+f²)/(U+P+f²) with the data-only information U recovered from V̂ — see docs/HANDOFF_iono2_card.md.  This is the per-LOS iono TEMPORAL ACCUMULATION channel the per-epoch producer lacks (the NL-AR representation lever; the single-layer surface leaves ~70 % of LOS residuals > 3σ at ANY degree, T4/Jul-17 A/B).  Slip-integrated from day one: the C3c PASS-A funnel (carry_slipped_ambs, per-signal → per-sat projection) ERASES the entry (reset-not-repair, cold re-tap at σ_ss).  Supersedes row_decimation_epochs when set.
-        bool rep_error_d5_keep = false;        ///< Iono-2 v3k (2026-07-31): erase-policy split for the deviation carry's slip response.  Default false = v2/v3 behavior (EVERY C3c-funnel entry erases the (station,sat) deviation).  When true, only RAW-detector-confirmed slips (MW/LLI/IF-TD firing THIS epoch — the carry_slipped_raw provenance set captured at PASS-A insertion) erase; D5-ONLY re-taps (the prior-epoch innovation drain — measured 97 % coincide with NO raw observable step, i.e. iono-representation tension, docs/slip_qc_hardening_report + SPEC_iono2_mechB_v3) KEEP the accumulated level and re-tap the variance to steady state (shDevD5Retap: var → var_ss, mean held).  Motivation: with every D5 re-tap erasing, mean deviation lifetime measured ≈ 0.7·τ — the accumulation channel never matures.  Safety: the weak re-tapped prior lets a genuinely missed fine slip be re-estimated away within a few harvests, and the v3 de-mean drains any common mode of kept levels (arm WITH rep_error_demean).  Inert without rep_error_tau_s.
+        double rep_error_tau_s = 0.0;          ///< T5/Iono-2 (v2 EXACT harvest, 2026-07-17): correlated per-(station,sat) SH representativeness-error deviation.  0 = OFF = byte-identical.  When > 0, the SH↔slant pin row `ι − SH·c = 0 + ε(white)` becomes `ι − SH·c = d̂ₖ|ₖ₋₁ + ε(floor² + Pₖ|ₖ₋₁)` where d is a per-LOS Gauss–Markov deviation (τ = this value, steady-state σ = representation_sigma_tecu, carried in VERTICAL TECU so the level and variance are elevation-stationary).  v2 replaces the falsified-circular v1 scalar filter with the EXACT joint-posterior harvest: d̂ = d_pred + [P/(P+f²)]·(û − d_pred) with û/V̂ the solved posterior mean/variance of the pin functional (one NetworkEstimator::stationRegression per LOS + the datum-frame shared covariance), and P⁺ = P·(U+f²)/(U+P+f²) with the data-only information U recovered from V̂ — see docs/SPEC_iono2_mechB_v3.md §6-§10.  This is the per-LOS iono TEMPORAL ACCUMULATION channel the per-epoch producer lacks (the NL-AR representation lever; the single-layer surface leaves ~70 % of LOS residuals > 3σ at ANY degree, T4/Jul-17 A/B).  Slip-integrated from day one: the C3c PASS-A funnel (carry_slipped_ambs, per-signal → per-sat projection) ERASES the entry (reset-not-repair, cold re-tap at σ_ss).  Supersedes row_decimation_epochs when set.
+        bool rep_error_d5_keep = false;        ///< Iono-2 v3k (2026-07-31): erase-policy split for the deviation carry's slip response.  Default false = v2/v3 behavior (EVERY C3c-funnel entry erases the (station,sat) deviation).  When true, only RAW-detector-confirmed slips (MW/LLI/IF-TD firing THIS epoch — the carry_slipped_raw provenance set captured at PASS-A insertion) erase; D5-ONLY re-taps (the prior-epoch innovation drain — measured 97 % coincide with NO raw observable step, i.e. iono-representation tension, docs/SPEC_slip_qc_hardening.md §8.2 F3 + SPEC_iono2_mechB_v3) KEEP the accumulated level and re-tap the variance to steady state (shDevD5Retap: var → var_ss, mean held).  Motivation: with every D5 re-tap erasing, mean deviation lifetime measured ≈ 0.7·τ — the accumulation channel never matures.  Safety: the weak re-tapped prior lets a genuinely missed fine slip be re-estimated away within a few harvests, and the v3 de-mean drains any common mode of kept levels (arm WITH rep_error_demean).  Inert without rep_error_tau_s.
         bool rep_error_demean = false;         ///< Iono-2 v3 (2026-07-31): once per epoch, remove the information-weighted GLOBAL mean and per-STATION means from the carried deviation priors (serial PASS-B pre-pass, after slip-erase + GM aging).  A common vertical-TECU deviation has the row signature M(el)·tecu_to_m — IDENTICAL to the a00 column — so the pair is exactly quasi-null and the harvest→age→re-assert alternation ratchets it (measured: a00 25 → 104 TECU in 3 h with mech B alone, 207–255 with the dual layer amplifying ~2.2×; runs/iono2attr_*, docs/SPEC_iono2_mechB_v3.md).  The de-mean enforces the deviation state's contract (per-LOS structure NOT representable by SH + receiver lumps): the common component stays with a00/the receiver DCB where the data puts it each epoch, and the carry never re-asserts it as independent prior information.  Variances unchanged (conservative).  Inert unless rep_error_tau_s > 0.  Default false (standing invariant #6).
     };
 

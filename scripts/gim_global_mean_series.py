@@ -25,7 +25,7 @@ Caveats worth keeping in mind when quoting the output
     residual as a level COMPARISON, not as truth.
   * a00 is a GLOBAL mean while the network sees one hemisphere-ish footprint; the
     unsupported region is Kaula-extrapolated.  A residual can therefore be real
-    without any station being wrong (see docs/HANDOFF_ext_cb_iono_level.md).
+    without any station being wrong (see docs/SPEC_level_information_budget.md §29).
 """
 import argparse
 import csv

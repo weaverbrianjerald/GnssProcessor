@@ -1,7 +1,7 @@
 {
   "_comment": [
     "T2 rung (b) — eq34 + cb_kaula_prior: the FIELD'S ACTUAL PAIR, untested in",
-    "the sim until now (docs/HANDOFF_wsh_chain_slant.md §5 T2, sharpened by the",
+    "the sim until now (docs/SPEC_synthetic_minimum_network.md §14 T2 (measured record §12.8.3), sharpened by the",
     "T1 pin audit).",
     "",
     "The T1 audit rewrote the ladder's mechanism: the eq34 chain lands its FULL",

@@ -783,11 +783,20 @@ public:
      *                     @c nullptr (the default) is the pre-DG behaviour; the
      *                     gate's semantics are otherwise untouched — exact
      *                     equality, both-direction throw, relative cutoff.
+     * @param ev_max_out   [out, optional] The largest eigenvalue, written beside
+     *                     @p observed_out (so also on the THROWING path).  It is
+     *                     the ONLY missing ingredient of the gate's own cutoff
+     *                     @f$\text{tol}\cdot\max(\lambda_{max},1)@f$, and the gate
+     *                     already computes and discards it — handing it back lets
+     *                     the invariant-#7 datum-direction information ratio be
+     *                     measured against the SAME bar the gate judges by,
+     *                     without a second eigensolve.
      * @throws std::runtime_error with observed-vs-declared counts on mismatch.
      */
     void assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
                              int declared_dim, double tol = 1e-6,
-                             int* observed_out = nullptr) const;
+                             int* observed_out = nullptr,
+                             double* ev_max_out = nullptr) const;
 };
 
 } // namespace GnssProcessor

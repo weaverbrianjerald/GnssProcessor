@@ -1,34 +1,29 @@
 # Datum transformation reference — ITRF2020 / ITRF2014 / NAD83(2011)
 
 **Status:** reference. Captured 2026-08-07 from primary sources (IGN/IERS, NGS).
-**Scope note:** GnssProcessor itself is **pure ITRF end-to-end** — the SIF
+**Scope:** GnssProcessor is **pure ITRF end-to-end** — the SIF
 (`data/static/sif/*.json`, ITRF2020 @ 2020.0) and the IGS SSC
 (`data/static/sinex/ITRF2020-IGS-TRF.SSC`) are the only frame realizations the
-engine touches, and there is no NAD83 anywhere in the codebase. This document
-exists for *external* work that has to cross into a national datum — control
-network re-adjustment, OPUS/RTN comparisons, NSRS-modernization demonstrations.
-Nothing here is consumed by the C++ engine.
+engine touches; there is no NAD83 anywhere in the codebase. This document serves
+*external* work that crosses into a national datum — control-network
+re-adjustment, OPUS/RTN comparisons, NSRS-modernization demos. **Nothing here is
+consumed by the C++ engine.**
 
 ---
 
 ## 1. The transformation, and the two sign conventions
 
-Both conventions below describe the *same physical transformation*. They differ
-only in the sign of the rotation parameters. **Getting this backwards does not
-leave the rotation unapplied — it applies it twice, in the wrong direction.**
-Verified numerically: the penalty is exactly `2|θ|·L` (§6).
+Both conventions describe the *same* physical transformation and differ only in
+the sign of the rotation parameters. **Getting it backwards does not leave the
+rotation unapplied — it applies it twice, in the wrong direction**; the penalty
+is exactly `2|θ|·L` (§6, §7).
 
 ### 1a. Coordinate-frame / CCW-axes convention — used by NGS
 
-Soler, Weston & Han, eq. (1). NGS states the convention verbatim as:
-
-> "Differential anticlockwise (counterclockwise) rotations (expressed in
-> radians) at epoch t₀, respectively, around the x_ITRF, y_ITRF, z_ITRF axes to
-> establish parallelism with the x_NAD83, y_NAD83, z_NAD83 axes."
-
-and on the NGS Helmert page simply:
-
-> "Counterclockwise rotation of axes are positive"
+Soler, Weston & Han eq. (1). NGS states it as differential anticlockwise
+rotations (radians) at epoch t₀ about the x/y/z_ITRF axes establishing
+parallelism with the NAD83 axes; the NGS Helmert page states the rule as
+"Counterclockwise rotation of axes are positive".
 
 ```
                                   ┌                    ┐
@@ -46,22 +41,15 @@ From the ITRF2020 transformation file header, verbatim:
 > XS :    : X :   : Tx :   :  D   -Rz   Ry : : X :
 > YS :  = : Y : + : Ty : + :  Rz   D   -Rx : : Y :
 > ZS :    : Z :   : Tz :   : -Ry   Rx   D  : : Z :
->
-> Where X,Y,Z are the coordinates in ITRF2020 and XS,YS,ZS are the
-> coordinates in the other frames.
 > ```
+> X,Y,Z are ITRF2020; XS,YS,ZS the other frame.
 
 ### 1c. The relationship
 
-Matching the two matrices element-by-element:
-
-```
-R_IERS  =  −ε_NGS      (componentwise)          D_IERS ≡ s_NGS
-```
-
-**Verified numerically** (`max |M_ccw(ε) − M_pv(−ε)| = 0.000e+00` exactly).
-Applying the NGS parameters in the IERS matrix without flipping the sign gives a
-matrix that differs by `2.597e-07` = `2|εx|` in radians.
+Element-by-element: `R_IERS = −ε_NGS` (componentwise), `D_IERS ≡ s_NGS`.
+**Verified numerically**: `max |M_ccw(ε) − M_pv(−ε)| = 0.000e+00` exactly;
+applying the NGS parameters in the IERS matrix without the sign flip gives a
+matrix differing by `2.597e-07` rad = `2|εx|`.
 
 Time evolution, both conventions (Soler eq. 1 continued):
 
@@ -84,10 +72,9 @@ Reference epoch **2015.0**.
 | value | −1.4 | −0.9 | 1.4 | −0.42 | 0.00 | 0.00 | 0.00 |
 | rate /yr | 0.0 | −0.1 | 0.2 | 0.00 | 0.00 | 0.00 | 0.00 |
 
-Rotations are identically zero — ITRF2020 and ITRF2014 are aligned in
-orientation. **For baseline vectors this transformation is therefore scale-only**
-(−0.42 ppb ⇒ 0.0042 mm on a 10 km baseline). It is negligible for vector work and
-matters only for absolute positions.
+Rotations are identically zero — the two frames are aligned in orientation, so
+**for baseline vectors this is scale-only** (−0.42 ppb ⇒ 0.0042 mm on 10 km):
+negligible for vector work, material only for absolute positions.
 
 ---
 
@@ -109,8 +96,8 @@ Reference epoch **2010.0**.
 
 At t₀: **|ε| = 28.9297 mas = 1.402553e-07 rad ⇒ 0.1403 mm/km** for vectors.
 
-**Cross-validation of the rotation rates.** `ε̇ = (+0.06667, −0.75744, −0.05133)`
-mas/yr matches Soler et al.'s independently published 1997.0 ITRF00→NAD83 set
+**Rotation-rate cross-validation.** `ε̇ = (+0.06667, −0.75744, −0.05133)` mas/yr
+matches Soler et al.'s independently published 1997.0 ITRF00→NAD83 set
 `(0.067, −0.757, −0.051)` to every printed digit. These rates *are* the North
 America Euler pole and must be identical across realizations — a strong check
 that both extractions are correct.
@@ -119,9 +106,8 @@ that both extractions are correct.
 
 ## 4. ITRF00 → NAD83, epoch 1997.0 — historical, for provenance
 
-Soler, Weston & Han (2004), read directly from the paper. Same CCW-axes
-convention. Retained because it documents where the modern set descends from and
-because the rate agreement in §3 is checked against it.
+Soler, Weston & Han (2004), read directly from the paper; same CCW-axes
+convention. Retained because the §3 rate agreement is checked against it.
 
 ```
 t₀ = 1997.0
@@ -137,16 +123,12 @@ s  = 0.62e-9
 
 ## 5. Epoch handling — the parameters are epoch-*matched*, not epoch-*bridging*
 
-The Helmert maps **ITRF at epoch t → NAD83 at the same epoch t**. It does not
-move a coordinate between epochs. NGS states this explicitly:
-
-> "using the Helmert parameters by themselves generally will not yield correct
-> results if the input and output epochs are not the same, and these parameters
-> alone are not guaranteed to correctly transform to NAD83 at epoch 2010.00 if
-> the input ITRF2014 coordinates are at any epoch other than 2010.00."
-
-Crossing epochs requires a velocity model (HTDP's crustal motion model, or
-station-specific velocities from the SIF / CORS).
+The Helmert maps **ITRF at epoch t → NAD83 at the same epoch t**; it does not
+move a coordinate between epochs. NGS states this explicitly: the parameters
+"generally will not yield correct results if the input and output epochs are not
+the same", and alone are not guaranteed to reach NAD83 @ 2010.00 from ITRF2014
+coordinates at any other epoch. Crossing epochs requires a velocity model (HTDP's
+crustal motion model, or station velocities from the SIF / CORS).
 
 The time-dependent rotation is what makes NAD83 co-rotate with the North America
 plate, so ε(t) grows substantially over a decade and a half:
@@ -158,17 +140,14 @@ plate, so ε(t) grows substantially over a decade and a half:
 
 **To compare against published NAD83(2011) @ 2010.00, evaluate the parameters at
 t = 2010.0 and supply ITRF coordinates propagated to 2010.0.** Evaluating at
-2026.0 yields NAD83 at 2026.0, which is a different (plate-rotated) coordinate.
+2026.0 yields NAD83 at 2026.0 — a different, plate-rotated coordinate.
 
 ---
 
 ## 6. Baseline vectors — translations cancel, rotation and scale do not
 
-Soler et al. derive this explicitly as their eq. (3):
-
-> "Notice that because the vector components defined by equation (2) involve the
-> subtraction of two sets of coordinates, the shifts and shift rates in equation
-> (1) will cancel."
+Soler et al. eq. (3): because vector components subtract two coordinate sets, the
+shifts and shift rates of eq. (1) cancel.
 
 ```
 ⎧Δx⎫          ┌ 1+s    εz   −εy ┐ ⎧Δx⎫
@@ -176,55 +155,37 @@ Soler et al. derive this explicitly as their eq. (3):
 ⎩Δz⎭_NAD83    └  εy   −εx   1+s ┘ ⎩Δz⎭_ITRF
 ```
 
-Consequences:
-
-- **Translations are irrelevant to vector work.** Bursa-Wolf vs.
-  Molodensky-Badekas is therefore moot for vectors — both give the same `(1+s)R`.
-- **Length changes only by scale** (rotation is length-preserving), so the
+- **Translations are irrelevant to vector work** ⇒ Bursa-Wolf vs.
+  Molodensky-Badekas is moot for vectors; both give the same `(1+s)R`.
+- **Length changes only by scale** (rotation is length-preserving) — the
   −0.42 ppb + 0.37 ppb terms are sub-0.01 mm at 10 km.
-- **Orientation changes by `|θ| ≈ 28.93 mas`**, i.e. `0.1403 mm/km` as an upper
-  bound. Realized magnitude is `|θ × Δx| = |θ||Δx| sin∠`, so it depends on
-  baseline azimuth relative to the rotation axis — measured 63–98 % of the bound
-  on real Oregon baselines (§7).
+- **Orientation changes by `|θ| ≈ 28.93 mas` = `0.1403 mm/km`, an upper bound.**
+  Realized magnitude is `|θ × Δx| = |θ||Δx| sin∠`, so it depends on baseline
+  azimuth — measured 63–98 % of the bound on real Oregon baselines (§7).
 
 ### 6a. OPUS applies eq. (3) — it *does* rotate the vector
 
-This is the operationally decisive fact. Soler et al., on the OPUS procedure:
+Operationally decisive. Soler et al. state eq. (3) with the NAD83 CORS
+coordinates "is used internally by NGS software OPUS" to obtain the final NAD83
+coordinates: OPUS transforms the ITRF vector into NAD83 via eq. (3), **then** adds
+it to the NAD83 CORS coordinate via eq. (4). It is *not* the "ITRF vector + NAD83
+origin" hybrid.
 
-> "Equation (3), with the NAD 83 coordinates of the CORS stations, is used
-> internally by NGS software OPUS … to obtain the final NAD 83 coordinates of the
-> unknown point P."
-
-OPUS transforms the ITRF vector into NAD83 via eq. (3), **then** adds it to the
-NAD83 CORS coordinate via eq. (4). It is *not* the "ITRF vector + NAD83 origin"
-hybrid.
-
-Also relevant to determining what frame a given set of stored vectors is in:
-
-> "NGS typically stores processed vectors in its data base in some ITRF frame."
-
-> "…the input G-file which contains all vector components of each session
-> referred to a topocentric frame parallel to ITRFxx, located at the origin of
-> the vector."
-
-So an **ADJUST G-file carries ITRF-parallel vectors**, while **OPUS output
-coordinates are built from rotated vectors**. Whether a particular vector set has
-been rotated is therefore *software-dependent and must be read from the file's
-frame declaration* (GVX carries a per-vector reference-frame attribute) rather
-than assumed.
+For deciding what frame stored vectors are in: NGS "typically stores processed
+vectors in its data base in some ITRF frame", and the ADJUST input G-file carries
+vector components in a topocentric frame parallel to ITRFxx. So an **ADJUST
+G-file carries ITRF-parallel vectors** while **OPUS output coordinates are built
+from rotated vectors** — whether a given vector set has been rotated is
+*software-dependent and must be read from the file's frame declaration* (GVX
+carries a per-vector reference-frame attribute), never assumed.
 
 ### 6b. Why OPUS propagates from control instead of Helmert-ing coordinates
 
-> "OPUS could have used program HTDP to convert ITRF00 coordinates into NAD 83
-> coordinates, however this approach would have assumed that the adopted 14
-> transformation parameters between ITRF00 and NAD 83 fit equally well in all
-> areas of the country. This may not be the case due to the effect of small
-> localized distortions."
-
-Soler et al. quantify that localized distortion against the FBN adjustment as
-**up to 2 cm horizontal and 4 cm vertical**. This is the standing argument for
-propagating from nearby control via observed vectors rather than applying a
-global similarity transform — and the magnitude to expect when the two disagree.
+Soler et al.: HTDP conversion would assume the 14 parameters "fit equally well in
+all areas of the country", which localized distortions violate. They quantify
+that distortion against the FBN adjustment as **up to 2 cm horizontal and 4 cm
+vertical** — the standing argument for propagating from nearby control via
+observed vectors, and the magnitude to expect when the two disagree.
 
 ---
 
@@ -246,10 +207,9 @@ ITRF2020→ITRF2014→NAD83(2011). ITRF2020 coordinates from
 | (Cape Mears OR) | NAD83(2011) | −2503335.6872 | −3714408.5660 | 4525454.7379 |
 | | shift | +0.8164 | −1.1892 | −0.0540 |
 
-Absolute shift ≈ **1.44–1.45 m**, dominated by the translation.
-
-**Vector term** — the same three sites as baselines, showing that the metre-level
-translation vanishes and only the millimetre-level rotation survives:
+Absolute shift ≈ **1.44–1.45 m**, dominated by the translation. The same three
+sites as baselines — metre-level translation vanishes, millimetre-level rotation
+survives:
 
 | baseline | L (km) | (M−I)·Δx (mm) | mm/km | bound \|θ\|L (mm) | realized/bound | wrong-sign penalty |
 |---|---|---|---|---|---|---|
@@ -257,49 +217,41 @@ translation vanishes and only the millimetre-level rotation survives:
 | CORV–CHZZ | 113.322 | 15.622 | 0.1379 | 15.894 | 0.983 | 31.243 mm |
 | NEWP–CHZZ | 100.402 | 10.395 | 0.1035 | 14.082 | 0.738 | 20.791 mm |
 
-The "wrong-sign penalty" column is the cost of applying NGS parameters in the
-IERS matrix without negating: exactly **2×** the rotation term, in the wrong
-direction. On CORV–CHZZ that is 31 mm of self-inflicted error on a transformation
-whose correct magnitude is 16 mm.
+"Wrong-sign penalty" = applying NGS parameters in the IERS matrix without
+negating: exactly **2×** the rotation term, in the wrong direction. On CORV–CHZZ
+that is 31 mm of self-inflicted error on a 16 mm transformation.
 
 ---
 
 ## 8. Sources
 
-- IGN / IERS, ITRF2020 transformation parameters —
-  `https://itrf.ign.fr/docs/solutions/itrf2020/Transfo-ITRF2020_TRFs.txt`
-  (equation and convention quoted verbatim in §1b)
-- NGS, Multi-Year CORS Solution 2 (MYCS2) —
-  `https://geodesy.noaa.gov/CORS/news/mycs2/mycs2.shtml` (§3)
-- EPSG:8970, *ITRF2014 to NAD83(2011) (1)* — `https://epsg.io/8970`
-  (independent corroboration of §3)
+- IGN / IERS ITRF2020 parameters —
+  `https://itrf.ign.fr/docs/solutions/itrf2020/Transfo-ITRF2020_TRFs.txt` (§1b).
+- NGS MYCS2 — `https://geodesy.noaa.gov/CORS/news/mycs2/mycs2.shtml` (§3).
+- EPSG:8970, *ITRF2014 to NAD83(2011) (1)* — `https://epsg.io/8970` (§3 check).
 - NGS, *Helmert Transformation Parameters Used at NGS* —
-  `https://www.ngs.noaa.gov/CORS/news/historical_helmert.shtml`
-  (convention statement; historical sets)
-- Soler, T., N.D. Weston, H. Han, *Computing NAD 83 Coordinates Using
-  ITRF-Derived Vector Components*, NGS/NOAA —
-  `https://geodesy.noaa.gov/CORS/Articles/FIGSoler.pdf`
-  (eqs. 1–4, the OPUS procedure, §4, §6)
-- Soler, T. (2001), *Densifying 3D networks by accurate transformation of
-  GPS-determined vector components*, GPS Solutions 4(3): 27–33 — the rigorous
-  vector + covariance transformation at differing epochs (not reproduced here)
+  `https://www.ngs.noaa.gov/CORS/news/historical_helmert.shtml` (convention;
+  historical sets).
+- Soler, Weston & Han, *Computing NAD 83 Coordinates Using ITRF-Derived Vector
+  Components*, NGS/NOAA — `https://geodesy.noaa.gov/CORS/Articles/FIGSoler.pdf`
+  (eqs. 1–4, the OPUS procedure, §4, §6).
+- Soler (2001), *Densifying 3D networks…*, GPS Solutions 4(3): 27–33 — the
+  rigorous vector + covariance transformation at differing epochs (not reproduced).
 
-**Not used:** HTDP source (`htdp.f`) was not retrieved; the ITRF2014→NAD83(2011)
-set in §3 comes from MYCS2 + EPSG and is the same set HTDP implements. If a
-future need requires frames beyond those tabulated here, the HTDP source is the
-authority.
+**Not used:** HTDP source (`htdp.f`) was not retrieved; §3's set comes from
+MYCS2 + EPSG and is the same set HTDP implements. For frames beyond those
+tabulated, the HTDP source is the authority.
 
 ## 9. Verification
 
-Numbers in §1c, §5, §6, §7 were produced by a standalone verification script that
-implements both conventions independently and checks them against each other.
-Checks performed:
+Numbers in §1c, §5, §6, §7 came from a standalone script implementing both
+conventions independently and cross-checking them:
 
-1. `M_ccw_axes(ε) == M_pos_vector(−ε)` → max difference **0.000e+00**
-2. Same-sign (deliberately wrong) → differs by **2|εx|**, confirming the
-   failure mode is a doubling, not an omission
-3. Rotation-rate agreement between the MYCS2 set and Soler's 1997.0 set
-4. `(M−I)·Δx` against the analytic bound `|θ|·L` on three real baselines
+1. `M_ccw_axes(ε) == M_pos_vector(−ε)` → max difference **0.000e+00**;
+2. same-sign (deliberately wrong) → differs by **2|εx|**, confirming the failure
+   mode is a doubling, not an omission;
+3. rotation-rate agreement between MYCS2 and Soler's 1997.0 set;
+4. `(M−I)·Δx` against the analytic bound `|θ|·L` on three real baselines.
 
-The script is not currently in the repo. Promote it to `tools/` if these
-transformations become a recurring need.
+The script is not in the repo. Promote it to `tools/` if these transformations
+become a recurring need.

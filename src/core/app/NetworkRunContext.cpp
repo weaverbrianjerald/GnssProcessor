@@ -59,6 +59,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_joint = config_.networkCarryCouplingJointWhiten();
     k.carry_cpl_tu = config_.networkCarryCouplingTimeUpdate();
     k.carry_cpl_shmarg = config_.networkCarryCouplingShMarginalize();
+    k.carry_cpl_gauge  = config_.networkCarryCouplingGaugeProject();
+    k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
     k.zwd_on = config_.networkCarryZwd();
     k.zwd_q = config_.networkZwdCarryQ();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
@@ -139,6 +141,29 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
+    // Card C-GF: ONE resolved predicate that every fold, withdraw and replay site reads.
+    //
+    // The gauge-free downdate belongs to the CARRY FOLD, not to the Q3 clock anchor —
+    // it removes the datum's own direction from the carried information, which is a
+    // property of carrying information across a re-realizable datum, not of anchoring a
+    // clock temporally.  It was reachable only through `clock_anchor_gauge_free`, so a
+    // config running the dense carry without the Q3 anchor could not have it at all.
+    //
+    // It MUST be a single resolved field rather than a predicate re-derived per site.
+    // Fold and withdraw have to agree exactly: the withdraw subtracts what the fold
+    // added, so a fold that downdated and a withdraw that did not leaves a residue
+    // −ΛU(UᵀΛU)⁻¹UᵀΛ, which is NEGATIVE SEMIDEFINITE — the reduced normals stop being
+    // PSD along the gauge and the constrained solve either throws on its pivot guard
+    // (persistent epoch skip) or factorizes into a saddle and returns a silently wrong
+    // x_s.  Resolving once here makes that disagreement unrepresentable.
+    k.carry_gauge_free   = (k.cta_on && k.cta_gauge_free)
+                        || (config_.networkSharedCarryFullCov()
+                            && config_.networkSharedCarryGaugeFree());
+    // Closure is part of the GENERALIZATION, not of the re-arming: the Q3 path keeps its
+    // original rule so its arms stay byte-identical and an A/B against them isolates the
+    // closure test as the single new variable.
+    k.carry_gauge_free_closure = config_.networkSharedCarryFullCov()
+                              && config_.networkSharedCarryGaugeFree();
     // Card Q3 §2.1 — resolve the guard/census DENOMINATOR here, once, for the same
     // reason `cta_on` resolves its interlock here: a mapping re-derived at two call
     // sites is a mapping that will eventually disagree between them, and the guard
@@ -149,7 +174,14 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         const auto stat = config_.networkClockAnchorGaugeFreeStat();
         k.cta_stat_proj_post  = (stat == NetworkClockAnchorStat::Post)
                              || (stat == NetworkClockAnchorStat::Proj)
-                             || (stat == NetworkClockAnchorStat::Auto && k.cta_gauge_free);
+                             // Card C-GF: `auto` means "follow the FOLD", and the fold is now
+                             // `carry_gauge_free`.  OR-ed with the original term rather than
+                             // replacing it, so a config with cta_gauge_free set but cta_on
+                             // false keeps its existing denominator bit-for-bit (the census
+                             // reads these same predicates) while the carry-side arming is
+                             // still tracked.
+                             || (stat == NetworkClockAnchorStat::Auto
+                                 && (k.cta_gauge_free || k.carry_gauge_free));
         k.cta_stat_proj_prior = (stat == NetworkClockAnchorStat::Proj);
     }
     k.clk_model_q1 = config_.networkClockModelQ1();
@@ -295,7 +327,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // predicate.  The loader has already clamped the thresholds.
     k.redun_census_on = nc.redundancy_census_stride > 0
                      || nc.redundancy_escalate_sigma > 0.0;
-    // Baarda reliability numbers / MDB (docs/SPEC_network_mdb_reliability.md).
+    // Baarda reliability numbers / MDB (docs/SPEC_redundancy_census.md).
     // Nothing to resolve against the estimation configuration either — MDB reads
     // (sigma_i, r_i) pairs the host loops already hold and writes counters — but the
     // two SOURCE flags are resolved here rather than re-derived at the feed sites,
@@ -342,7 +374,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.prires_report_sigma = (nc.prior_residual_report_sigma > 0.0)
                                 ? nc.prior_residual_report_sigma : 4.0;
         k.prires_event_holdoff = std::max(0, nc.prior_residual_event_holdoff_ep);
-        // Constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md).
+        // Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14).
         // Same belt-and-braces AND with the master.  `prires_s0g_redun` mirrors
         // `mdb_from_raim` EXACTLY and for the same reason: raim_redundancy_
         // normalize alone computes no r_i, because networkPostFitRaim is not
@@ -353,7 +385,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.prires_s0g_redun = config_.networkRaim()
                           && config_.networkRaimRedundancyNormalize();
     }
-    // BlockFormal LOS block census (docs/SPEC_block_baarda.md).  The master is
+    // BlockFormal LOS block census (docs/SPEC_redundancy_census.md).  The master is
     // AND-ed with a LIVE HOST here rather than trusted from the loader's hard
     // error — belt-and-braces, so a hand-built NetworkConfig (tests) cannot arm a
     // sweep behind a redundancy census that never runs.  The host predicate is the
@@ -367,7 +399,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.bb_event_holdoff =
             static_cast<long long>(std::max(0, nc.block_baarda_event_holdoff_ep));
     }
-    // Station congruence screen (docs/SPEC_station_congruence.md).  Same host
+    // Station congruence screen (docs/SPEC_redundancy_census.md).  Same host
     // predicate, same belt-and-braces AND, and for the same reason the block
     // census has one: a hand-built NetworkConfig (tests) must not be able to arm
     // a sweep behind a redundancy census that never runs.  `cg_on` is ALSO what
@@ -633,7 +665,19 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // carry whose clock information lives on a different SUBSPACE, so a resume
         // must not cross the flip.  Conditional-append so a plain-anchor lineage's
         // fingerprint is unchanged by this card.
-        if (ctx.knobs.cta_on && ctx.knobs.cta_gauge_free) add("cta:gf");
+        // Card C-GF: the token now follows the RESOLVED predicate, so arming the
+        // downdate through the carry knob invalidates a snapshot exactly as arming it
+        // through the Q3 knob always did — the carried block's information lives on a
+        // different subspace either way, and a resume that crossed the flip would fold
+        // incompatible carries.  Byte-identical for every existing config: with
+        // shared_carry_gauge_free off, carry_gauge_free == cta_on && cta_gauge_free.
+        // Closure is part of the token, not a separate one: it changes WHICH directions
+        // are marginalized out of the carried block, so a resume that crossed a closure
+        // flip would fold a carry living on a different subspace — the same
+        // incompatibility the bare gauge-free flip causes.  "cta:gf" alone is preserved
+        // for the legacy arming so existing snapshots still match.
+        if (ctx.knobs.carry_gauge_free)
+            add(ctx.knobs.carry_gauge_free_closure ? "cta:gf+cl" : "cta:gf");
         // §2.1 bisection: the denominator decides the TRIP population, and a trip
         // withdraws a prior and re-solves the epoch — so two runs differing only here
         // produce different carried state and must not resume across each other.
@@ -746,6 +790,14 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // MEANS; conditional-append keeps existing fingerprints byte-identical.
         if (carry_cpl_shmarg)
             add(fmt::format("cplshmarg={}", carry_cpl_shmarg));
+        // Card 1f/1g: both change WHICH information an injected coupling row carries —
+        // 1f alters the coefficient vector of every truncated row, 1g moves whole columns
+        // onto the departed route.  Same footing as carry_cpl_tu above; conditional-append
+        // keeps every existing fingerprint byte-identical.
+        if (ctx.knobs.carry_cpl_gauge)
+            add(fmt::format("carrycplgauge={}", ctx.knobs.carry_cpl_gauge));
+        if (ctx.knobs.carry_cpl_reinit)
+            add(fmt::format("carrycplreinit={}", ctx.knobs.carry_cpl_reinit));
         // Card 1b: JOINT-whitening reshapes the injected coupling rows (departed cols →
         // shared M_w marginalization vs a per-row scalar σ²) — a solve-determining
         // treatment on the SAME footing as carry_cpl_cond/_tu/_shmarg above, all of
@@ -1782,8 +1834,9 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         // and leaves the gauge to the S-basis datum.  Non-clock entries fold
         // identically either way, and the OFF path is the same single call it
         // always was.
-        if (cta_on && ctx.knobs.cta_gauge_free) {
-            const std::size_t gf = est.addSharedPriorClockGaugeFree(priors);
+        if (ctx.knobs.carry_gauge_free) {
+            const std::size_t gf = est.addSharedPriorClockGaugeFree(
+                priors, ctx.knobs.carry_gauge_free_closure);
             ctx.counters.cta_gf_keys += static_cast<long long>(gf);
             if (gf == 0) ++ctx.counters.cta_gf_inert;
         } else {
@@ -1889,12 +1942,13 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 est.attribTag("dense_c1");
                 est.addSharedPriorDense(dkeys, cov_eff,
                                         anchor_info_trace.is_open() ? &lam : nullptr,
-                                        cta_on && ctx.knobs.cta_gauge_free);
+                                        ctx.knobs.carry_gauge_free,
+                                        ctx.knobs.carry_gauge_free_closure);
                 if (anchor_info_trace.is_open())
                     for (std::size_t a = 0; a < kd; ++a)
                         if (dkeys[a].kind == SharedParamKind::Clock)
                             clk_prior_info[dkeys[a].sat] = lam(static_cast<Eigen::Index>(a));  // B7: folded Λ(c,c)
-                if (cta_on && ctx.knobs.cta_gauge_free) {
+                if (ctx.knobs.carry_gauge_free) {
                     std::size_t nclk = 0;
                     for (std::size_t a = 0; a < kd; ++a)
                         if (dkeys[a].kind == SharedParamKind::Clock) ++nclk;
@@ -1930,14 +1984,18 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         // contributes only ONE leftover clock is entirely gauge, so nothing is
         // folded for it.  That is conservative by construction: the fallback can
         // under-anchor, never re-introduce gauge information.
-        if (cta_on && ctx.knobs.cta_gauge_free)
+        if (ctx.knobs.carry_gauge_free)
             ctx.counters.cta_gf_keys +=
-                static_cast<long long>(est.addSharedPriorClockGaugeFree(leftovers));
+                static_cast<long long>(est.addSharedPriorClockGaugeFree(
+                    leftovers, ctx.knobs.carry_gauge_free_closure));
         else
             est.addSharedPrior(leftovers);  // no-op when empty; skips absent keys
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), leftovers.begin(), leftovers.end());
     }
+    // Card C-GF: the partial-support skip tally is RUN-scoped on the estimator and is
+    // read once at teardown — reading it here would miss the withdraw and
+    // within-epoch-replay folds, which run after this point in the epoch.
 
     // (Fix A hold: the held phase-bias datum is injected PRE-gate above, next to
     // the SH-VTEC prior — it is a datum, so the gate must see it.)
@@ -3088,7 +3146,11 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // Card 1d: carry this stash epoch's clock-monitor flags across to the next
     // inject (hard-refloat mode skip-stashes the flagged sat entirely, so the
     // flag cannot ride on prev_carry.inflate_q).  Gated to keep OFF runs pristine.
-    if (carry_cpl_tu) prev_clock_refloat_sats = clock_refloat_sats;
+    // Card 1g honours the same history with κ off, so the mirror must follow the wider
+    // predicate — otherwise arming 1g alone would leave the clock-QC half of the feed
+    // permanently empty and the widening would silently cover only the reref sources.
+    if (carry_cpl_tu || ctx.knobs.carry_cpl_reinit)
+        prev_clock_refloat_sats = clock_refloat_sats;
     // The satellite clock is stashed to prev_carry ONLY in scalar-carry mode.  Under
     // network.clock_model the clock is carried by clock_osc (updated above), so it is not
     // stashed here — the two-state model is its sole cross-epoch memory.

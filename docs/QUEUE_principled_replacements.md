@@ -1,720 +1,607 @@
 # QUEUE — principled replacements for symptom-level patches (cross-family index)
 
-2026-08-14.  Written from the review session for the pivot-gauge handover card
-(`docs/SPEC_pivot_visibility_gauge_defect.md` §5.1; implementation committed
-`ca19d0d`).  ⚠ **The validation arms have LANDED** (`353f99f`, `58f650c`) and the
-handover alone does NOT close the defect: the prioritized union already suppresses
-the legacy deletion (1 col_removed vs 6), and the prioritized arm's residual churn
-is a THIRD root with three hypotheses falsified.  Item 1's sub-cards have been
-re-scoped against those findings, a new item 0 added, and the build order amended
-— see below.  Detail: `SPEC_pivot_visibility_gauge_defect.md` §5.0–§5.06, memory
+2026-08-14. Which standing "bandaid" patches — symptom filters, hand tunings, avoidance rituals,
+binary backstops — have a known theoretically correct replacement, and in what order to build them.
+Written from the pivot-gauge handover review (`docs/SPEC_pivot_visibility_gauge_defect.md` §5.1,
+implementation `ca19d0d`). ⚠ **The validation arms LANDED** (`353f99f`, `58f650c`) and the handover
+alone does NOT close the defect: the prioritized union already suppresses the legacy deletion (1
+col_removed vs 6) and the prioritized arm's residual churn is a THIRD root with three hypotheses
+falsified — detail in `SPEC_pivot_visibility_gauge_defect.md` §5.0–§5.08, memory
 `project_pivot_visibility_gauge_defect`.
-The question it answers: **which standing "bandaid" patches — symptom filters,
-hand tunings, avoidance rituals, binary backstops — have a known theoretically
-correct replacement, and in what order should we build them.**
 
 **Relationship to the existing queues (do not reconcile by guessing):**
 
-- `docs/HANDOFF_edge_response_queue.md` (2026-08-05) ranks the BARE frame/coupling
-  EDGES by measured damage (5 edges).  This doc ranks ACROSS families (edges +
-  test statistics + numerics), post-dates the pivot-gauge card, and re-scores
-  readiness accordingly.  Where they overlap, the edge queue carries the
-  measurement detail; this doc carries only the ranking.  ⚠ Its
-  session-constraints block encodes a phase-specific run budget (the 2026-08-05
-  "ultra-fast turnaround" directive) — do not inherit it blindly.
-- `docs/SPEC_level_information_budget.md` §27 ranks LEVEL next-actions and
-  `docs/CONTRACT_level_authority.md` (LV-3) declares the level frame.  Both stand.
+- `docs/HANDOFF_edge_response_queue.md` (2026-08-05) ranks the BARE frame/coupling EDGES by
+  measured damage (5 edges). This doc ranks ACROSS families (edges + test statistics + numerics),
+  post-dates the pivot-gauge card, and re-scores readiness. Where they overlap, the edge queue
+  carries the measurement detail; this doc carries only the ranking. ⚠ Its session-constraints
+  block encodes a phase-specific run budget (the 2026-08-05 "ultra-fast turnaround" directive) —
+  do not inherit it blindly.
+- `docs/SPEC_level_information_budget.md` §27 ranks LEVEL next-actions and §30 (LV-3) declares the
+  level frame. Both stand.
 - The open valve inventory (valves with a bare edge) is
   `docs/SPEC_prefit_census_observability.md` §13 (= edge 5 of the edge queue).
 
-Ranking = measured payoff × readiness, scored 2026-08-14.  Every item names its
-sim-bench validation shape — the synthetic network (truth-graded, injectable) is
-the venue for all of these; several are gradable there in ways the field never
-allowed.
+Ranking = measured payoff × readiness, scored 2026-08-14. Every item names its sim-bench validation
+shape — the synthetic network (truth-graded, injectable) is the venue for all of these.
 
-**BUILD ORDER (amended 2026-08-14 after the item-1 validation arms landed).**
-Item numbers below are STABLE — they are referenced by section and by other docs,
-so the re-ranking is expressed here rather than by renumbering:
+**BUILD ORDER — CURRENT (2026-08-14, fourth ranking).** Item numbers are STABLE — cited by section
+from other docs and from `include/config/GnssConfig.hpp:3469` and `scripts/t3_null_fit.py`, so a
+re-ranking is expressed HERE rather than by renumbering.
 
-> ~~**0 → 2 → 4 → 1(b) → 5 → 7 → 6**, with **1(a) demoted** and **3 held**.~~
->
-> **SUPERSEDED 2026-08-14 — the third root is NAMED.** New order:
-> **R0(telemetry) → 1(d) → regenerate the null arm → 4 → 2 → 1(b) → 5 → 7 → 6**,
-> with **3 dissolved into 1(d)**, **0 downgraded**, and **1(a) still demoted**.
-> Root + evidence: `SPEC_pivot_visibility_gauge_defect.md` §5.07.
-> A/B: `runs/inj_weab_{on,off}`, configs `config/test_suite/_simnet24_inj_weab_{on,off}.json`.
->
-> ✅ **EXECUTED 2026-08-14 (later the same day) — R0 and 1(d) are LANDED, and
-> 1(d) is VALIDATED** (`SPEC_pivot_visibility_gauge_defect.md` §5.08): golden gate
-> PASS (solve bit-identical, OFF byte-identical), then the single-knob A/B on the
-> pdp arm closed the clock churn — Σ|dev| 160.46 → **1.53 m** (105×), episodes
-> 7 → **1** (the ignition mark), datum-free C contrast 18.66 → **0.50 m** (37×,
-> AT the clean-election bound), B truth rms 1.57 → 0.075 m, T3 6.69 → 3.66 %,
-> within-epoch refloats 8 → 0.  Arms `runs/pareref_{off,on}`, configs
-> `_simnet24_inj_pareref_{off,on}.json`, grader `scripts/clk_step_episodes.py`.
-> **The "regenerate the null arm" step is satisfied by `runs/pareref_on`**
-> (candidate null instrument — verify σ̂₀_first is quiet at its ten handover
-> epochs before fitting).  Remaining order: **4 → 2 → 1(b) → 5 → 7 → 6**.
->
-> ✅ **ITEM 4 DERIVED 2026-08-14 (same day) — `docs/SPEC_t3_null_derivation.md`.**
-> The pre-fit gate passed first: σ̂₀_first at the assessed handover epochs reads
-> **1.000–1.323** against a run median of 1.247 (OFF arm 1.37–13.27 against 1.83),
-> and σ̂₀_first ≡ σ̂₀ at every one — `runs/pareref_on` is a clean null instrument.
-> The derivation then **inverted the card's own premise**: the T3 statistic is
-> invariant to any common rescaling of the residual pool, so the extreme-value
-> correction it named is a 3.00× rounding error against a 1.86e7× excess, and the
-> defect is the pool's HETEROGENEITY (a 4.7× station effect and a 2.75× signal
-> effect, where every station draws the SAME error model).  Out-of-sample stratification
-> takes the flag rate **4.46 % → 0.97 %**.  The redundancy standardization —
-> the most-cited candidate fix — was **A/B-falsified** (`runs/t3b2_{off,on}`,
-> statistic ×1.025, +38 % runtime).  Replacement specified, **not built**; four
-> validations owed (§8 of the SPEC), of which the **fault-fixture MDB check is the
-> gate**.  Next: **implement 4 → 2 → 1(b) → 5 → 7 → 6**.
+> ### **8(a) → 8(b) → 4(R2/R4) → 2 → 1(b) → 5 → 7 → 6**
+> with **4(R1) HELD**, **3 dissolved into 1(d)**, **0 downgraded**, **1(a) demoted**, and
+> **R0 + 1(d) already EXECUTED, LANDED and VALIDATED** (2026-08-14).
 
-> ✅✅ **RE-RANKED 2026-08-14 (third amendment) — THE IONO ROOT.**  Item 4's
-> investigation ended by measuring that the T3 false-alarm floor, the per-station
-> residual heterogeneity, the L1C excess AND the integer-resolution failure are **ONE
-> defect**: per-LOS ionosphere estimation error, datum-free interaction **rms 0.764 m**
-> (0.106–2.551 m by station).  It drives T3 at corr **+0.9258** station-wise and explains
-> **68–83 %** of the DD integer error at corr **0.93–0.96** with zero fitted parameters
-> (`SPEC_t3_null_derivation.md` §7.8–§7.9).  That outranks everything currently queued.
->
-> **New order: 8(a) → 8(b) → 4(R2/R4) → 2 → 1(b) → 5 → 7 → 6, with 4(R1) HELD.**
->
-> - **8 is NEW and ranks first** — see its section below.  **8(a) is one knob on an
->   existing arm** and decides the scope of everything else, so by this doc's own
->   payoff × readiness rule nothing comes close.
-> - **4(R1) — the stratified variance component — is HELD, not scheduled.**  It is now
->   known to be symptom treatment: a per-station variance component would absorb a
->   measured 0.11–2.55 m per-station ionosphere error into the noise model.  Building it
->   before 8 would *bury the root*.  **4(R2) (declare the station factor as its own
->   statistic) and 4(R4) (population hygiene — drop the 1.67 % structurally untestable
->   cells, fix T3c's conditional α) survive and stay cheap**; 4(R3) (FDR) is correct but
->   second-order.
-> - **5 (the level) slips behind 8 and re-scopes.**  Same ionospheric field, *smaller*
->   term: the §7.8 decomposition puts the overall level μ at **0.328 m** against an
->   interaction of **0.764 m rms**.  The level card is not wrong; it is aimed at the
->   minority component.
-> - **The D5 / "re-deciding the representation" hold is substantially lifted.**  It was
->   held as "a science program, not a patch swap" because the representation error had
->   never been quantified.  It now is, with a truth-graded instrument.
-> - **2, 1(b), 7, 6 are unchanged in kind** and simply move down.
+Why this order — the measurement that earned each call lives in the item's own section:
 
-Rationale, applying this doc's own "measured payoff × readiness" rule to the
-arms that have since been measured (`SPEC_pivot_visibility_gauge_defect.md`
-§5.0–§5.06):
+- **8 is NEW and ranks FIRST.** Item 4's investigation ended by measuring that the T3 false-alarm
+  floor, the per-station residual heterogeneity, the L1C excess AND the integer-resolution failure
+  are **ONE defect: per-LOS ionosphere estimation error** (`SPEC_t3_null_derivation.md` §7.8-§7.9).
+  **8(a) is one knob on an existing arm** and decides the scope of everything else.
+- **4(R1) — the stratified per-station variance component — is HELD, not scheduled**: it would
+  absorb a measured 0.11-2.55 m per-station ionosphere error into the noise model, i.e. *bury the
+  root*. **4(R2) (declare the station factor as its own statistic) and 4(R4) (population hygiene)
+  survive and stay cheap**; 4(R3) (FDR) is correct but second-order.
+- **5 (the level) slips behind 8 and re-scopes** — same ionospheric field, smaller term (overall
+  level μ 0.328 m vs the 0.764 m rms datum-free interaction).
+- **2 outranks 1 but slips behind 4/8**: datum election is measured 5.9× on the datum-free C
+  contrast with a 40 % T3 cut and its remaining work is plumbing — but electing a better datum
+  reduces *exposure* to an edge that 1(d) *fixes*.
+- **1(a) is DEMOTED** — measured **null** on the channel it targets. **3 is DISSOLVED into 1(d)**:
+  the root was never clock work, it is phase-bias-datum CARRY work
+  (`SPEC_pivot_visibility_gauge_defect.md` §5.07); item 3 retains only always-armed marking and
+  1(b). **0 is DOWNGRADED** — a measured net LOSS on the clock channel (its 1.9× code-bias win
+  stands; see §0).
+- **The D5 / "re-deciding the representation" hold is substantially lifted** — it was held as "a
+  science program, not a patch swap" only because the representation error had never been
+  quantified. It now is, with a truth-graded instrument.
+- ⚠ **`clock_monitor_couple_raim` is NOT the fix** despite naming the right coupling: **85.5 % of
+  Σ|dev| is emitted before the stash it acts through.**
+- **2, 1(b), 7, 6 are unchanged in kind** and simply move down.
 
-- **0 is new and ranks first**: one knob, already built, measured 1.9× on the
-  code-bias channel. Zero build cost.
-- **2 outranks 1**: datum election is measured 5.9× on the datum-free C contrast
-  with a 40 % T3 cut, and its remaining work is plumbing. Item 1(a) is measured
-  **null** on the channel it targets.
-- **3 is HELD, not scheduled**: four independent phase-bias-gauge interventions
-  are now null on the clock channel (see "Blocked on root cause"). Do not build
-  more gauge work against it until the third root is named. 1(b) survives because
-  it acts on a *different* edge (the clock datum handover, not the PB gauge).
-
-**AMENDMENT 2026-08-14 — the root is named, and the ranking above changes.**
-
-- **3 is UNBLOCKED and then DISSOLVED.** The root is not clock work — it is
-  phase-bias-datum **carry** work, which belongs to item 1. New sub-card **1(d)**
-  below. Item 3 retains only the two survivors its own held note identified:
-  always-armed marking, and 1(b).
-- **4 is now BLOCKED BY 1(d)**, reversing the implied order. Item 4's plan says
-  *"the truth-clean fixtures ARE the null-calibration instrument."* **That premise
-  is falsified for the pdp-ON arm**: it is measurement-clean but carries 10 genuine
-  state discontinuities (the handovers), so fitting a quantile there calibrates it
-  *to the discontinuities*. Compounding it, σ̂₀_first is **not traced on non-trip
-  epochs** — there is no null sample on disk to fit at all today (R0 fixes this).
-  Item 4's **T3** evidence is a different tier and stands untouched.
-- **0 is DOWNGRADED.** The pin bridge is a measured net LOSS on this channel:
-  Σ|dev| 160.457 → **165.271**, episodes 7 → 8, and the silent 302490 handover
-  becomes a **+33.617 m** episode 20 epochs later. Its 1.9× code-bias win stands.
-- **2 slips behind 4** — it is still correct and still plumbing, but electing a
-  better datum reduces *exposure* to an edge that 1(d) *fixes*.
-- **⚠ `clock_monitor_couple_raim` is NOT the fix** despite naming the right
-  coupling: 85.5 % of Σ|dev| is emitted before the stash it acts through.
+*Provenance (superseded orders, kept so a stale citation can be placed):* (1) `0 → 2 → 4 → 1(b) →
+5 → 7 → 6`; (2) after the third root was named, `R0(telemetry) → 1(d) → regenerate the null arm →
+4 → 2 → 1(b) → 5 → 7 → 6` (A/B `runs/inj_weab_{on,off}`, configs `_simnet24_inj_weab_{on,off}.json`);
+(3) after R0 and 1(d) landed and item 4 was derived, `4 → 2 → 1(b) → 5 → 7 → 6`. The "regenerate the
+null arm" step is satisfied by **`runs/pareref_on`**, and the pre-fit gate passed on it: σ̂₀_first at
+the assessed handover epochs reads **1.000–1.323** against a run median of 1.247
+(OFF arm 1.37–13.27 against 1.83), σ̂₀_first ≡ σ̂₀ at every one ⇒ a clean null instrument.
 
 ---
 
 ## 0 — Arm the pin bridge (one knob, already built, already measured)
 
-**Bandaid:** none — this is a validated mechanism sitting unarmed.  It is listed
-first because by this doc's own ranking rule nothing else comes close on
-payoff × readiness.
+**Bandaid:** none — a validated mechanism sitting unarmed.
 
-`network.phase_datum_time_linked`.  `NetworkAnchorHygiene.cpp:231`'s `want_bridge`
-is reached only when `handover_pending`, and its `min_arc_ep <= 0` disjunct is the
-DEFAULT — so arming the knob bridges **every** handover: the key holds its shared
-phase bias at `pb_level_prev` through a soft row (σ = 0.05 m) with **no station
-pin at all**.  The gauge moves to the SHARED side, station-independently.  It is
-reachable from the prioritized anchor election today, not eq34-only.
+`network.phase_datum_time_linked`. `NetworkAnchorHygiene.cpp:231`'s `want_bridge` is reached only
+when `handover_pending`, and its `min_arc_ep <= 0` disjunct is the DEFAULT — so arming the knob
+bridges **every** handover: the key holds its shared phase bias at `pb_level_prev` through a soft
+row (σ = 0.05 m) with **no station pin at all**. The gauge moves to the SHARED side,
+station-independently, reachable from the prioritized anchor election today (not eq34-only).
 
-**Measured** (24-sta arm, single knob vs `_simnet24_inj_null_pdp.json`):
-27 bridges opened, 453 row-folds, **0 reattaches performed** — the gauge never
-moved to another station.  **B rms 1.573 → 0.813 m (1.9×)**, datum-free C
-contrast 18.655 → 17.214 (7.7 %).  It does NOT reduce the clock re-realizations
-(7 → 8 episodes, Σ|dev| 160.5 → 165.3 m) — see item 3 and the blocked section.
+**Measured** (24-sta arm, single knob vs `_simnet24_inj_null_pdp.json`): 27 bridges opened, 453
+row-folds, **0 reattaches performed** — the gauge never moved to another station. **B rms 1.573 →
+0.813 m (1.9×)**, datum-free C contrast 18.655 → 17.214 (7.7 %). It does NOT reduce the clock
+re-realizations (7 → 8 episodes, Σ|dev| 160.5 → 165.3 m). **Remaining work:** a field arm, and a
+decision on the σ and `bridge_max_ep` defaults (0.05 m / 20 ep were never tuned for this use).
+Config `config/test_suite/_simnet24_inj_bridge.json`.
 
-**Remaining work:** a field arm, and a decision on the σ and `bridge_max_ep`
-defaults (0.05 m / 20 ep were never tuned for this use).  Config:
-`config/test_suite/_simnet24_inj_bridge.json`.
+⚠ **DOWNGRADED 2026-08-14 — net LOSS on the clock channel, with a mechanism.** Σ|dev| 160.457 →
+**165.271**, episodes 7 → 8. The specific harm: the *silent* 302490 G12 handover becomes a
+**+33.617 m** episode at 303090 — exactly 20 epochs later, one `bridge_max_ep` lifetime. The bridge
+**postpones** an un-transformed re-pin rather than transforming the carry, converting silent
+handovers into loud ones (§5.07). The 1.9× code-bias win stands; this is a B-channel remedy, not a
+clock remedy, and it should be sequenced AFTER 1(d) so the two are not confounded.
 
-⚠ **DOWNGRADED 2026-08-14 — net LOSS on the clock channel, with a mechanism.**
-Σ|dev| 160.457 → **165.271**, episodes 7 → 8.  The specific harm: the *silent*
-302490 G12 handover becomes a **+33.617 m** episode at 303090 — exactly 20 epochs
-later, i.e. one `bridge_max_ep` lifetime.  The bridge **postpones** an
-un-transformed re-pin rather than transforming the carry, so it converts silent
-handovers into loud ones (§5.07).  The 1.9× code-bias win is real and stands; this
-knob is a B-channel remedy, not a clock remedy, and it should be sequenced AFTER
-1(d) so the two are not confounded.
-
-⚠ **LIKELY SUPERSEDED 2026-08-14 (later) — 1(d) alone took the B channel further
-than the bridge did.**  §5.08.3: B truth rms 1.5725 → **0.0752 m** and rx DCB
-contrast 4.41 → 1.21 m on the same posture, without the bridge's clock-channel
-loss.  If this knob is ever wanted, re-measure it ON TOP of 1(d); do not arm it
-on the old evidence.
+⚠ **LIKELY SUPERSEDED 2026-08-14 (later) — 1(d) alone took the B channel further than the bridge
+did.** §5.08.3: B truth rms 1.5725 → **0.0752 m** and rx DCB contrast 4.41 → 1.21 m on the same
+posture, without the bridge's clock-channel loss. If this knob is ever wanted, re-measure it ON TOP
+of 1(d); do not arm it on the old evidence.
 
 ---
 
 ## 1 — Complete the S-transform re-reference family
 
-**Bandaids today:** the PB emission-continuity filter — v1's `emit_pb_filter_jump_k:
-8.0` is a retired hand tuning, v2 measured null-to-negative (`runs/agu63_pbv2`) —
-filters the WIRE while **91 % of emitted PB discontinuities are ref-path slip
-re-referencing** (AGU-26 amendment 2) that no emission filter can reach; and the
-one-epoch fold-skip "free fall" at clock-pivot handover (`handover_affects`
-mirrored across **4 files / 14 occurrences** — `NetworkRunContext.cpp` 5,
-`NetworkClockQc.cpp` 5, `NetworkStashStatus.cpp` 3, `NetworkSolveGlue.cpp` 1;
-re-counted 2026-08-14, the earlier "five sites" was stale and the number scopes
-1(b) — see `docs/SPEC_handover_stransform.md` §1).
+**Bandaids today:** the PB emission-continuity filter — v1's `emit_pb_filter_jump_k: 8.0` is a
+retired hand tuning, v2 measured null-to-negative (`runs/agu63_pbv2`) — filters the WIRE while
+**91 % of emitted PB discontinuities are ref-path slip re-referencing** (AGU-26 amendment 2) that no
+emission filter can reach; and the one-epoch fold-skip "free fall" at clock-pivot handover
+(`handover_affects` mirrored across **4 files / 14 occurrences** — `NetworkRunContext.cpp` 5,
+`NetworkClockQc.cpp` 5, `NetworkStashStatus.cpp` 3, `NetworkSolveGlue.cpp` 1; re-counted 2026-08-14,
+the earlier "five sites" was stale and the number scopes 1(b) — see
+`docs/SPEC_pivot_visibility_gauge_defect.md` §8.2).
 
-**Principled replacement:** an S-transform at every re-reference edge, in three
-sub-cards:
+**Principled replacement:** an S-transform at every re-reference edge, in four sub-cards.
 
-- **(a) Slip-triggered continuous handover in the prioritized PB election.**
-  ⚠ **DEMOTED and RE-SCOPED 2026-08-14.**  When the pin-holder's arc slips, elect
-  an unslipped peer and hand over at the ledger target — the mechanism half of the
-  review's slip-hole finding (the election currently receives NO slip input;
-  `carry_slipped_ambs` at `ApplicationNetwork.cpp:1441` already has the ledger's
-  exact `pair<int,string>` key type, and the eq34 election already takes it).
-  Machinery (ledger, counters, PBGAUGE trace) landed `ca19d0d`.
+- **(a) Slip-triggered continuous handover in the prioritized PB election.** ⚠ **DEMOTED and
+  RE-SCOPED 2026-08-14.** When the pin-holder's arc slips, elect an unslipped peer and hand over at
+  the ledger target — the mechanism half of the review's slip-hole finding (the election currently
+  receives NO slip input; `carry_slipped_ambs` at `ApplicationNetwork.cpp:1441` already has the
+  ledger's exact `pair<int,string>` key type, and the eq34 election already takes it). Machinery
+  (ledger, counters, PBGAUGE trace) landed `ca19d0d`. **The premise changed:** with item 0 armed the
+  pin bridge INTERCEPTS every handover before the ledger is consulted (27 bridges, **0 reattaches
+  performed**), so the two mechanisms compete for the same edge and the bridge measures better. The
+  handover itself measured null on its target channel: C contrast 18.655 → 18.604, episodes 7 → 7,
+  every episode merely DEFERRED by exactly one epoch — the signature of a one-epoch-stale ledger
+  (§5.0.1). The remaining question is the much smaller **"does a slip-triggered handover add
+  anything over bridging?"**, which the fault fixture can answer directly (a slip on the pin-holder
+  is exactly where `prior_fresh` may fail and the bridge declines to open). Answer that before
+  writing any election code.
+- **(b) `docs/SPEC_pivot_visibility_gauge_defect.md §8`** — SPEC'd 2026-08-04, unbuilt: re-express
+  carried priors at the clock-datum handover instead of the free-fall skip; exact and cheap per
+  LASER (S := I − Eᵀ(KEᵀ)⁻¹K on mean AND dispersion).
+- **(c) eq34 chain-datum handover continuity** — named "a separate card" by the loader guard in
+  `GnssConfigLoadNetwork.cpp`; unwritten. The FIELD posture's instance (the GG-Q lineage's 2
+  avoidable unmarked G01 events).
+- **(d) ⭐ THE PHASE_ANCHOR CARRY RE-REFERENCE — ✅ LANDED AND VALIDATED 2026-08-14 as
+  `network.phase_anchor_carry_reref` (default OFF).** The named root of the clock churn
+  (`SPEC_pivot_visibility_gauge_defect.md` §5.07): at a `PHASE_ANCHOR` handover the datum is
+  re-realized on the **design matrix only** and the carried bˢ_σ is folded forward *in the retired
+  frame* at `q_pb = 1e-12`, because neither carry-skip guard fires — `datum_changed` reads the
+  clock-pivot map only (`NetworkSolveGlue.cpp:461-462`) and `eq34_reref` is populated only in
+  `NetworkChainDatum.cpp:778`. With `sat_clock_q = 0.01` against `sat_phase_bias_q = 1e-12`
+  (1e10:1), the clock absorbs the entire frame step — measured 41 σ on G21. **Built exactly as
+  specified** (election populates the set beside `handovers_out`; D2/C1 fold marginalizes on both
+  branches exactly as `eq34_reref`; local carries erased at every station; VCE monitor + prires
+  census mirror the skip; loader INERT ladder; fingerprint-exempt). **Measured** (§5.08.3,
+  single-knob, schedule-identical 30/30): Σ|dev| 160.46 → 1.53 m, episodes 7 → 1 (ignition), C
+  contrast 18.66 → 0.50 m — at the clean-election bound — with every other instrument improving in
+  the same direction. ⚠ Marginalize (delete) is now MEASURED sufficient on this fixture; the
+  S-transform (which would keep one epoch of carry information per handed-over family) remains
+  unbuilt and its extra value unmeasured — build it only if a larger fixture shows the one-epoch
+  refloat cost. ⚠ n = 1; field arm owed (the flagship field lineages run eq34, which owns
+  `eq34_reref` already — 1(d) covers the prioritized-anchor posture).
 
-  **The premise changed.**  With item 0 armed the pin bridge INTERCEPTS every
-  handover before the ledger is ever consulted (measured: 27 bridges, **0
-  reattaches performed**), so the two mechanisms compete for the same edge and the
-  bridge already measures better.  The handover itself measured null on its target
-  channel: C contrast 18.655 → 18.604, episodes 7 → 7, and every episode merely
-  DEFERRED by exactly one epoch — the signature of a one-epoch-stale ledger
-  (§5.0.1).  The remaining question is therefore not "build it" but the much
-  smaller **"does a slip-triggered handover add anything over bridging?"** — which
-  the fault fixture can answer directly, since a slip on the pin-holder is exactly
-  the case where `prior_fresh` may fail and the bridge declines to open.  Answer
-  that before writing any election code.
-- **(b) `docs/SPEC_handover_stransform.md`** — SPEC'd 2026-08-04, unbuilt:
-  re-express carried priors at the clock-datum handover instead of the free-fall
-  skip; exact and cheap per LASER (S := I − Eᵀ(KEᵀ)⁻¹K on mean AND dispersion).
-- **(c) eq34 chain-datum handover continuity** — named "a separate card" by the
-  loader guard in `GnssConfigLoadNetwork.cpp`; unwritten.  This is the FIELD
-  posture's instance (the GG-Q lineage's 2 avoidable unmarked G01 events).
-- **(d) ⭐ THE PHASE_ANCHOR CARRY RE-REFERENCE — ✅ LANDED AND VALIDATED
-  2026-08-14 as `network.phase_anchor_carry_reref` (default OFF).**  This was the
-  named root of the clock churn
-  (`SPEC_pivot_visibility_gauge_defect.md` §5.07): at a `PHASE_ANCHOR` handover the
-  datum is re-realized on the **design matrix only** and the carried bˢ_σ is folded
-  forward *in the retired frame* at `q_pb = 1e-12`, because neither carry-skip
-  guard fires — `datum_changed` reads the clock-pivot map only
-  (`NetworkSolveGlue.cpp:461-462`) and `eq34_reref` is populated only in
-  `NetworkChainDatum.cpp:778`.  With `sat_clock_q = 0.01` against
-  `sat_phase_bias_q = 1e-12` (1e10:1), the clock absorbs the entire frame step —
-  measured 41 σ on G21.
-  **Built exactly as specified** (election populates the set beside
-  `handovers_out`; D2/C1 fold marginalizes on both branches exactly as
-  `eq34_reref`; local carries erased at every station; VCE monitor + prires
-  census mirror the skip; loader INERT ladder; fingerprint-exempt).  **Measured**
-  (§5.08.3, single-knob, schedule-identical 30/30): Σ|dev| 160.46 → 1.53 m,
-  episodes 7 → 1 (ignition), C contrast 18.66 → 0.50 m — at the clean-election
-  bound — with every other instrument improving in the same direction.
-  ⚠ Marginalize (delete) is now MEASURED sufficient on this fixture; the
-  S-transform (which would keep one epoch of carry information per handed-over
-  family) remains unbuilt and its extra value unmeasured — build it only if a
-  larger fixture shows the one-epoch refloat cost.  ⚠ n = 1; field arm owed
-  (note the flagship field lineages run eq34, which owns `eq34_reref` already —
-  1(d) covers the prioritized-anchor posture).
+**Sim validation:** (a) fault fixture `_simnet24_inj_fault` with a slip injected at the pin-holder /
+next-ranked candidate on a known handover epoch; grade PBGAUGE continuous/cold counters, the emitted
+PB disc census, and the datum-free C contrast. (b)/(c) per their specs, eq34 on the sim tri-slant
+posture.
 
-**Sim validation:** (a) fault fixture `_simnet24_inj_fault` with a slip injected
-at the pin-holder / next-ranked candidate on a known handover epoch; grade
-PBGAUGE continuous/cold counters, the emitted PB disc census, and the datum-free
-C contrast.  (b)/(c) per their specs, eq34 on the sim tri-slant posture.
+- **(e)/(f)/(g) ✅ THE TRUNCATED-ROW GAUGE DEFECT — BUILT 2026-08-15, default OFF, n = 0.**
+  The carry↔datum handover campaign's fix program A/B/C
+  (memory `project_carry_datum_handover_theory`), landed as three knobs.  Full derivation:
+  `docs/SPEC_card1_coupling_carry.md` §13.
+  - **A → `network.carry_coupling_gauge_project` (Card 1f).**  A DEPARTED coupling column is
+    marginalized by *deleting* its coefficient, leaving `Σ_family M = −M_dep`, so the row becomes a
+    high-weight observation of the CURRENT gauge pinned at the OLD realization (measured: null ev
+    **1e-11 → 9.43e-3** in one epoch ⇒ 4 spurious OVER-specified withholds).  The fix seeds
+    `tuGaugeRestore`'s deficit with the truncated coefficients, holding each (constellation,kind) sum
+    at its **HARVEST** value.  ⚠ **The plan's "annihilate the sum" is WRONG and was not built** — the
+    harvest target is `−g_r(c)`, and §1 measures a Galileo ambiguity row at `Σ_E = −1` exactly, so
+    annihilation would itself inject a gauge observation.  ⚠ **No measured `V` stash was built
+    either**, and deliberately: the rank gate is `EigenvaluesOnly` so no eigenvector solve of the
+    border runs on a default config, a stash would be one epoch stale, and on a truncation epoch the
+    previous epoch's near-null set is precisely the one MISSING the filled direction.  Restoring to
+    the harvest sum needs no basis at all and is frame-agnostic.
+  - **B → `network.carry_coupling_reinit_sources` (Card 1g).**  `tuReinitSince` was gated on the κ
+    knob AND fed only by clock-QC sources — **no realization-step source reached it**.  Key widened to
+    `(kind,sat,signal)` with an empty signal as the sat-wide wildcard; fed from `phase_anchor_reref`,
+    `eq34_reref`, `datum_reref_pb_sats`; honoured with κ off.  Designed to be armed WITH 1f (the
+    loader warns otherwise): marginalizing a re-realized column opens the same deficit a departure
+    opens.
+  - **C → `network.shared_carry_gauge_free` (Card C-GF).**  The gauge-free downdate was reachable
+    only through the unrelated Q3 `clock_anchor_gauge_free`; it is now armed as a property of the
+    CARRY, through **one resolved predicate** (`ctx.knobs.carry_gauge_free`) that every fold, withdraw
+    and replay site reads — a fold/withdraw mismatch leaves a **negative-semidefinite** residue and
+    the solve returns a silently wrong `x_s`.  Added a **support-closure** test (a direction is
+    downdated only when its whole support is carried; otherwise the downdate deletes an *estimable*
+    carried-vs-uncarried contrast).  ⚠ **Fixed a pre-existing latent defect in the same change:** the
+    within-epoch RAIM replay re-folded with NO gauge-free flag, so the replayed system differed from
+    the primary solve — latent while the downdate was Q3-only, live the moment it arms with the carry.
+  - **Invariant-#7 counter (unconditional, no knob):** per-epoch datum-direction information ratio
+    `R = (vᵀNv/vᵀv)/cutoff` on the gate's own normals and cutoff, with breach/clear edges.  `R ≪ 1` =
+    the datum still owns its gauge; `R ≥ 1` = a pre-gate fold is pinning it.  Cheap because `vᵀNv`
+    needs no eigenvector.
+  - **Gate-advice correction:** the run-end "RE-CALIBRATE, do not chase the datum" is **provably
+    unactionable** for a carry-filled null — gauge depth 1e-11, filled direction 9.43e-3, weakest-real
+    PB layer 1.25e-2 ⇒ the admissible band is EMPTY.  The advice now branches on `ddi_over_breach` and
+    says "attribute the fold" for the breached case, keeping "re-calibrate" only for the genuine one.
+  - ✅ **POSITIVE CONTROL PASSED 2026-08-15 for 1f+1g** (`SPEC_card1_coupling_carry.md` §13.7;
+    configs `_s24cpl_{off,on}.json`, runs `runs/s24cpl_{off,on}`).  The OFF arm **reproduces the
+    defect on demand**: 4 OVER-specified withholds at TOW **305220/305250/305280/305310** — the
+    named epoch, spanning exactly the predicted 120 s = `pl_max_gap_s` self-heal.  ON:
+    withholds **4 → 0**, epochs **116 → 120/120**, invariant-#7 ratio **7.123e+06 → 2.086e-03**
+    (9.5 decades), observed near-null == declared on **every** epoch, and **4 of 4** withholds
+    coincided with a breach so the new advice named the right knob instead of "re-calibrate".
+    Matched-epoch truth grade: code-bias rms FLAT (+0.9 %), sum-to-zero datum check **1.6×
+    tighter**, phase channel unresolved in both arms (uniform-random rms — no signal).
+    ⚠ **n = 1, 24 sta, GPS, sim, 1 h, one lineage.**  Registered **RECOMMEND_SCOPED** in the
+    promotion ledger + loader POSTURE rows (parity verified); code defaults deliberately
+    unchanged — both knobs are fingerprinted, so a default flip is a snapshot migration.
+    **Still owed: a field arm and a ≥150-station arm** (the `mw_wl.bridge_sample_debias`
+    precedent — validated at 50, net-harmful at 305).
+  - **Owed for C-GF:** it was **not varied** in the control above, so it has no effect
+    measurement of its own and stays **UNVALIDATED**.
+
+- **(h) FILED, NOT FIXED — eq34 D4 shifts `value_abs` but not `coupling[].s_prev`.**
+  `docs/SPEC_card1_coupling_carry.md` §14.  `CoupledShared::s_prev` and `CarryPrior::value` are the
+  same number for the same identity; D4 shifts the second and leaves the first, injecting exactly the
+  frame step as row bias.  ⚠ **Latent-and-LIVE, not latent-and-harmless**: the D4 ERASE does not cover
+  it — at the population site `if (!k) eq34_reref.insert(...) else if (s != 0.0) shift_sat[...] = s`
+  are mutually exclusive, so the shifted keys are exactly those whose carries SURVIVE the erase.  Fix
+  is one loop with an in-tree precedent (`NetworkRelevel.cpp`'s Card-6 eph cutover, same principle).
+  `config/archive/_dcmp_50sta_10ep_eq34x.json` already arms the full firing set.
 
 ## 2 — Datum-station election by criterion, not luck
 
-**Bandaid:** the field posture dodges the pivot-gauge defect only because
-MBAR00UGA was hand-picked (equatorial, loses almost nothing) — §4.2 of the pivot
-spec calls it "the §5.1 remedy arrived at by luck"; the 300-sta sim arm's default
-datum carries 8/8 avoidable events; `simnet_make_producer_config.py` warns about
-the POLAR fallback only.
+**Bandaid:** the field posture dodges the pivot-gauge defect only because MBAR00UGA was hand-picked
+(equatorial, loses almost nothing) — §4.2 of the pivot spec calls it "the §5.1 remedy arrived at by
+luck"; the 300-sta sim arm's default datum carries 8/8 avoidable events;
+`simnet_make_producer_config.py` warns about the POLAR fallback only.
 
 **Principled replacement:** election ranked on satellite-visibility continuity
-(`scripts/datum_gauge_audit.py --fixture` already ranks rosters), equatorial
-preference among ties (§9.8: 8× wander from a polar pivot), formalized in the
-config generator + a field-config preflight; `--run` as a harness gate (exit 1
-on any avoidable removal).
+(`scripts/datum_gauge_audit.py --fixture` already ranks rosters), equatorial preference among ties
+(§9.8: 8× wander from a polar pivot), formalized in the config generator + a field-config preflight;
+`--run` as a harness gate (exit 1 on any avoidable removal).
 
-**Sim validation:** already done — the three-arm prediction test measured 5.9×
-C-contrast and a 40 % T3 cut for clean election.  Remaining work is plumbing.
+**Sim validation:** already done — the three-arm prediction test measured 5.9× C-contrast and a 40 %
+T3 cut for clean election. Remaining work is plumbing.
 
 ## 3 — Clock: from per-event patches to a re-realization-free posture (= edge 2)
 
-**Bandaids:** CLK-R emission re-base (correct triage — census 613→1 — but applied
-at the emission boundary while the estimator underneath still re-realizes; the
-clock is the worst re-realizer, 13 product-wide jumps/12 h vs 2 CB / 0 PB) and
-unarmed markers on field lineages (`emit_clock_disc` unset ⇒ all 13 silent).
+**Bandaids:** CLK-R emission re-base (correct triage — census 613→1 — but applied at the emission
+boundary while the estimator underneath still re-realizes; the clock is the worst re-realizer, 13
+product-wide jumps/12 h vs 2 CB / 0 PB) and unarmed markers on field lineages (`emit_clock_disc`
+unset ⇒ all 13 silent).
 
-**Principled replacement — with the falsification honored:** datum-choice-at-emit
-is NOT the consumer fix.  Ensemble PB datum, clock sum-to-zero, and
-broadcast-anchored were all A/B'd dead as consumer-visible improvements —
-common-mode is consumer-absorbable (`docs/SPEC_handover_stransform.md` "what this
-card is NOT"; `project_network_falsified_approaches`).  The principled path is
-producer-internal: the carry S-transform at the clock handover (item 1b), pivot
-ELECTION as a product-quality decision (datum-free contrast moves 2.2× with the
-pivot's geometry, §9.8), sum-to-zero for wire-frame wander only (sim PASS
-0.193 → 0.036 m; field arm still owed), and always-armed marking
-(`emit_clock_disc` + `clock_disc_jump_test`) so whatever remains is at least
-declared to the consumer.
+**Principled replacement — with the falsification honored:** datum-choice-at-emit is NOT the
+consumer fix. Ensemble PB datum, clock sum-to-zero, and broadcast-anchored were all A/B'd dead as
+consumer-visible improvements — common-mode is consumer-absorbable
+(`docs/SPEC_pivot_visibility_gauge_defect.md §8` "what this card is NOT";
+`project_network_falsified_approaches`). The principled path is producer-internal: the carry
+S-transform at the clock handover (item 1b), pivot ELECTION as a product-quality decision
+(datum-free contrast moves 2.2× with the pivot's geometry, §9.8), sum-to-zero for wire-frame wander
+only (sim PASS 0.193 → 0.036 m; field arm still owed), and always-armed marking (`emit_clock_disc` +
+`clock_disc_jump_test`) so whatever remains is at least declared to the consumer.
 
-✅ **UNHELD then DISSOLVED 2026-08-14 — the root is named and it is not clock
-work.**  It is phase-bias-datum CARRY work: see **item 1(d)** and
-`SPEC_pivot_visibility_gauge_defect.md` §5.07.  What remains under item 3 is only
-**always-armed marking** (declaration, not estimation) and **1(b)**.  ⚠ Marking
-needs a **cumulative/level** companion, not just the per-epoch step test: G28
-re-realized −11.28 m permanently with **zero** CLK_STEP marks because every
-increment sat under the 1.5 m/epoch bar, while G21's marked −22.5 m step
-**recovered 86 %** and was never a re-realization at all.
+✅ **UNHELD then DISSOLVED 2026-08-14 — the root is named and it is not clock work.** It is
+phase-bias-datum CARRY work: see **item 1(d)** and `SPEC_pivot_visibility_gauge_defect.md` §5.07.
+What remains under item 3 is only **always-armed marking** (declaration, not estimation) and
+**1(b)**. ⚠ Marking needs a **cumulative/level** companion, not just the per-epoch step test: G28
+re-realized −11.28 m permanently with **zero** CLK_STEP marks because every increment sat under the
+1.5 m/epoch bar, while G21's marked −22.5 m step **recovered 86 %** and was never a re-realization
+at all.
 
-⚠ **The superseded HELD note, retained for provenance.**  FOUR independent
-phase-bias-gauge interventions are now measured null on the clock channel (datum
-election on the prioritized path, handover-continuous, the pin bridge, the
-coverage gate); see the blocked section.  Of the list above, only **always-armed
-marking** and **1(b)** survive that evidence unqualified — marking because it is
-declaration rather than estimation, and 1(b) because it acts on the CLOCK datum
-handover, a different edge from the PB gauge those four all touched.  Pivot
-election and sum-to-zero stay listed but inherit the caveat.
+⚠ **The superseded HELD note, retained for provenance.** FOUR independent phase-bias-gauge
+interventions are measured null on the clock channel (datum election on the prioritized path,
+handover-continuous, the pin bridge, the coverage gate); see the blocked section. Of the list above,
+only **always-armed marking** and **1(b)** survive that evidence unqualified — marking because it is
+declaration rather than estimation, 1(b) because it acts on the CLOCK datum handover, a different
+edge from the PB gauge those four all touched. Pivot election and sum-to-zero stay listed but
+inherit the caveat.
 
-**Sim validation:** the §9.8 synthetic 50-sta matrix is the precedent; edge 2 of
-the edge queue holds the candidate list.
+**Sim validation:** the §9.8 synthetic 50-sta matrix is the precedent; edge 2 of the edge queue holds
+the candidate list.
 
 ## 4 — T3-class test statistics: correct nulls, not recalibrated constants
 
-⚠ **DOWNGRADED 2026-08-14 (third amendment): R1 is HELD behind item 8.**  The
-investigation below found the root — per-LOS ionosphere error — and a stratified
-per-station variance component would ABSORB it (0.11–2.55 m per station) into the noise
-model.  Build **R2 (declare) and R4 (population hygiene)**, which are correct regardless;
-hold **R1** until 8(a) reports.
+⚠ **DOWNGRADED 2026-08-14 (third amendment): R1 is HELD behind item 8.** The investigation below
+found the root — per-LOS ionosphere error — and a stratified per-station variance component would
+ABSORB it (0.11–2.55 m per station) into the noise model. Build **R2 (declare) and R4 (population
+hygiene)**, correct regardless; hold **R1** until 8(a) reports.
 
-**Bandaid:** a Gaussian 6σ quantile under a statistic that is a max-over-rows
-normalized by a median-over-rows.  Measured implied α: 3.78e7× nominal on the
-quiet 24-sta fixture, 2.7e7× on the quiet 300-sta fixture; excess kurtosis 4391;
-the implied-scale-vs-quantile curve rises monotonically (1.83 → 313) ⇒ the
-residue is SHAPE, not scale, and a 4.5 % floor survives datum election (pivot
-spec §6).  Sibling in class: the rx-CB admission gate's flat 26.7–28 % trip rate.
+**Bandaid:** a Gaussian 6σ quantile under a statistic that is a max-over-rows normalized by a
+median-over-rows. Measured implied α: 3.78e7× nominal on the quiet 24-sta fixture, 2.7e7× on the
+quiet 300-sta fixture; the implied-scale-vs-quantile curve rises monotonically (1.83 → 313) ⇒ the
+residue is SHAPE, not scale; a 4.5 % floor survives datum election (pivot spec §6). Sibling in class:
+the rx-CB admission gate's flat 26.7–28 % trip rate — but ⚠ that sibling does **NOT generalize**:
+its numerator is a frame offset (`value_abs − x_lin`), not a residual, so it has no null to derive;
+its replacement is already built (LV-4's frame-invariant `rxCbStepGate`) and blocked by
+`SPEC_level_information_budget.md` §19.3 (+64 % postfit phase rms, ~15 TECU level move) and by the
+absence of any truth-clean fixture arming `carry_rx_code_bias`. That chain is a POINTER, not a
+verified finding.
 
-**Principled replacement:** ~~derive the null of the statistic actually computed —
-extreme-value / order-statistics of correlated standardized residuals — or
-replace it with per-row w-tests under FDR control.~~  The constraint-aware σ̂₀
-card (`docs/SPEC_sigma0_constraint_aware.md`) is the in-house proof this
-derivation pays.
+~~**Principled replacement:** derive the null of the statistic actually computed — extreme-value /
+order-statistics of correlated standardized residuals, or per-row w-tests under FDR.~~
 
-✅ **DERIVED AND MEASURED 2026-08-14 — `docs/SPEC_t3_null_derivation.md`.  The
-extreme-value framing above is the WRONG replacement, and the card says why.**
+✅ **DERIVED AND MEASURED 2026-08-14 — `docs/SPEC_t3_null_derivation.md` carries the full
+derivation. The extreme-value framing above is the WRONG replacement.** All numbers below are on the
+24-sta field-N sim null arm `runs/pareref_on` (1 h, GPS-only, slant-only posture) unless a row says
+otherwise.
 
-**The statistic is scale-blind.**  `S_c = max_{i∈c}|z_i| / max(1, 1.4826·med_{j∈P}|z_j|)`
-is invariant under `z → λz`: numerator and denominator are both homogeneous of
-degree 1 in the same pool.  So no global variance-model fix and no recalibrated
-constant can move its false-alarm rate — only the pool's INTERNAL heterogeneity can.
-Three consequences, all measured on `runs/pareref_on`:
+**§3 — the statistic is SCALE-BLIND.** `S_c = max_{i∈c}|z_i| / max(1, 1.4826·med_{j∈P}|z_j|)` is
+invariant under `z → λz` (numerator and denominator both homogeneous of degree 1 in the same pool),
+so no global variance-model fix and no recalibrated constant can move its false-alarm rate — only
+the pool's INTERNAL heterogeneity can.
 
-- **The EV correction is a rounding error.**  The exact per-cell null
-  `1−(2Φ(k)−1)^n_c` at k=6, n_c=3 is 5.92e-9 — **3.00×** the quoted per-row α,
-  against an observed excess of **1.86e7×**.  Denominator noise moves the α=1e-6
-  threshold only 5.10 → 5.06 (N=1400), and the `max(1,·)` floor makes the shipped
-  test *conservative* under a nominal null.  **k=6 is already stricter than a 1e-6
-  per-cell test** — a threshold that is too strict cannot cause a 1e7× excess.
-- **The pool is a MIXTURE, on a fixture with ONE global error model.**
-  `config/sim/simnet24_inject.json` has no per-station noise term and no `multipath`
-  block (so the generator defaults apply network-wide), and the emitted `_child_*.json`
-  differ only in `station.seed_salt` — every station draws an INDEPENDENT REALIZATION
-  of the SAME model, which buys a few percent of spread in a robust scale.  Yet the
-  settled standardized residual carries a **4.7× multiplicative station effect** and a
-  **2.75× signal effect** (L1C 2.74 vs L2W 1.00 — so *not* elevation weighting,
-  which is shared across signals at a cell, and *not* ionosphere, which would make
-  L2/L5 worse).  The epoch axis — the only one σ̂₀ estimates — spreads just 1.3×.
-  Flags concentrate in 11 of 24 stations (S20 alone carries 33.7 %), 4.13×
-  overdispersed vs Binomial, and **no observational covariate explains it**
-  (|corr| ≤ 0.24 against elevation and truth iono).
-- **Stratifying is what works, out-of-sample.**  Station scale fitted on the first
-  half of the settled window and applied to the held-out half: **4.4625 % → 0.9736 %**
-  at k=6, implied-c curve flattening 2.25→3.93 to 1.97→2.39, and the station factor
-  is transferable (corr(log scale, half 1 vs 2) = **+0.847** over 23 stations).
+| quantity | value | reading |
+|---|---|---|
+| exact per-cell null `1−(2Φ(k)−1)^n_c`, k=6, n_c=3 | **5.92e-9** = **3.00×** the quoted per-row α | the EV correction is a rounding error … |
+| observed excess over nominal | **1.86e7×** | … against this |
+| denominator noise on the α=1e-6 threshold (N=1400) | 5.10 → **5.06** | negligible; the `max(1,·)` floor makes the shipped test *conservative* under a nominal null ⇒ **k=6 is already stricter than a 1e-6 per-cell test**, and a too-strict threshold cannot cause a 1e7× excess |
 
-⚠ **FALSIFIED in the same session — the redundancy standardization.**  The statistic
-standardizes a POST-FIT residual by the MEASUREMENT σ (`network.raim_redundancy_normalize`
-defaults **false**, `GnssConfigLoadNetwork.cpp:3461`; `z ~ N(0,r_i)`, not `N(0,1)`).
-That is true and it is **not the cause**.  Single-knob A/B `runs/t3b2_{off,on}` (OFF
-arm bit-identical to `runs/pareref_on/logs_v2` on all four graded CSVs — also the
-exe-provenance control): numerator **×1.4527**, denominator **×1.4179**, statistic
-**×1.0248**; settled flag rate 4.381 % → **4.460 %** (slightly worse), kurtosis and
-station spread unchanged, flags 798 → 772 at **Jaccard 0.622** — it reshuffles WHICH
-cells flag without changing HOW MANY, and costs **+38 % runtime**.  Do not arm it for
-this purpose.
+**§4 — the pool is a MIXTURE on a fixture with ONE global error model.**
+`config/sim/simnet24_inject.json` has no per-station noise term and no `multipath` block, and the
+emitted `_child_*.json` differ only in `station.seed_salt` — every station draws an INDEPENDENT
+REALIZATION of the SAME model, worth a few percent of spread in a robust scale. Measured instead:
 
-✅ **GATE PASSED + FIELD CHECKED 2026-08-14 (SPEC §12–13).**
+| axis | multiplicative spread | note |
+|---|---|---|
+| station | **4.7×** | flags concentrate in 11 of 24 stations, **S20 alone 33.7 %**, **4.13× overdispersed vs Binomial** |
+| signal | **2.75×** (L1C **2.74** vs L2W **1.00**) | *not* elevation weighting (shared across signals at a cell) and *not* ionosphere in the naive sense (that would make L2/L5 worse) |
+| epoch — the only axis σ̂₀ estimates | 1.3× | |
 
-- **The MDB gate passes with room.**  Fault arm `runs/t3fault` (the 24-event
-  ±{1,2,3,5,10,50}-cycle ladder in the validated null posture), station scale fitted on
-  the NULL arm and applied to it: **20/24 detected at k=6 with a byte-identical
-  per-rung profile** across shipped / station / station×epoch, while cells flagged fall
-  **912 → 235 (3.9×)**.  Matched-budget: at 200 flags shipped reaches 17/24, stratified
-  **20/24**.  Run-level, the 24 injected slips add only **0.52 points** (3.663e-02 →
-  4.186e-02) on top of the false-alarm floor — the case for the card in one number.
-  Cross-tier: 3 of the 4 T3 misses were caught upstream (T0 MW / T1 IF / T2), and **one
-  event is invisible to every tier** — S05000SIM G20 L2W **+50 cy at 50.1° elevation**,
-  a genuine detection gap unrelated to this card.  T3 carries the whole SMALL end
-  (±1/±3/±5 all 4/4) while ±10/±50 are grabbed upstream.
-- **The field check reproduces the STRUCTURE and refutes the LEVERAGE.**  On
-  `net_matrix_2024-129/net50_1h` (DOY-129 real data, 49 sta, GPS+Galileo) the station
-  spread is **10.5×** (vs the sim's 4.7×) and *more* transferable (**+0.873** over 49
-  stations) — but out-of-sample stratification cuts only **27.58 % → 18.48 % (1.5×)**
-  against the sim's 4.6×, and the implied-c curve stays steep (3.07 → 6.02).
-  ⚠⚠ **And at 305 stations it stops working entirely.**  On `pdp305_pinaware/h3_guard`
-  (303 sta present, 354 ep, 1.02 M cells) out-of-sample station stratification is
-  **WORSE than shipped** (9.57 % → 10.31 %); station × epoch recovers only to 8.42 %, a
-  **1.14×** net win.  Leverage across the three arms: **4.6× (sim 24) → 1.5× (field 49)
-  → 1.14× (field 303)**.  Mechanism: the station factor's half-to-half transferability
-  FALLS with window length — +0.847 (1 h sim), +0.873 (1 h field), **+0.782 (3 h field)**
-  — and not for sample-size reasons (~1300 cells/station/half at 305 vs ~200 at 24).
-  **The per-station scale is not stationary over 3 h on real data**, so a factor fitted
-  once is stale by the second half and worse than none.  ⚠ This qualifies R1's premise:
-  the slow factor must TRACK (EWMA, real time constant — currently unmeasured), not be
-  fitted once.  The slow/fast split itself survives; "slow = constant over the run" does
-  not.  ⚠ `scripts/t3_null_fit.py` **timed out (50 min)** on 1 M cells — a tool defect,
-  since field scale is exactly where it matters.
+No observational covariate explains the station axis (|corr| ≤ 0.24 against elevation and truth iono).
 
-  **Mechanism identified: σ̂₀ is clamped at the 1.0 floor on 95.7 % of `net50_1h` epochs
-  and 88.1 % of `h3_guard`'s (305 sta), against 33 % on the sim.**  In that regime the
-  denominator is a constant and the statistic is an unnormalized max against a fixed 6σ
-  bar — there is nothing for a stratified pool to fix.  **Unclamping comes first on the
-  field**, and the reason the field pool sits under the floor closes the loop: for a
-  post-fit residual E[w·v²] = r_i < 1, so the missing √r_i is exactly what pushes the
-  median under 1.
-- ⚠ **This BOUNDS the B2 falsification above** — it was measured on the sim, where the
-  floor rarely binds.  On the field B2's ×1.45 lift would *unpin* σ̂₀ rather than cancel,
-  so the sim result does **not** transfer.  A field B2 arm is owed; "do not arm it" is
-  sim-scoped.
-- ⚠ **Field runs have no truth** — 27.3 % is not a false-alarm rate, and the tail
-  (q999 879, **max 38 935**, 40 cells > 1000) contains real events.  These are also
-  archived pre-VS2026 runs; only the residual-population STRUCTURE was read, never an
-  accuracy verdict.
-- **Falsified in passing:** the constellation axis is a null (GPS vs Galileo scale
-  **1.05×**, flag rates 27.23 % vs 27.48 %).
+**§5 — stratifying works OUT-OF-SAMPLE.** Station scale fitted on the first half of the settled
+window and applied to the held-out half: flag rate **4.4625 % → 0.9736 %** at k=6, implied-c curve
+flattening **2.25→3.93 to 1.97→2.39**, and the factor is transferable (corr(log scale, half 1 vs 2)
+= **+0.847** over 23 stations).
 
-**Replacement, specified (not built):** a slow per-station factor × the existing fast
-network-wide scale — the split is forced by the noise budget (a per-station-per-epoch
-scale has 24.3 % SD; pooled over the window, 5.7 %) — with the station factor promoted
-to a **declared statistic** rather than silently absorbed (invariant #7: absorbing
-model error into a denominator masks it), α set by FDR over the (cell × epoch) family
-instead of a fixed k, and the 1.67 % structurally-untestable cells (`s_raw` exactly 0)
-dropped from the opportunity count.  Full derivation, build plan and the four owed
-validations: `docs/SPEC_t3_null_derivation.md`.
+❌ **FALSIFIED — the redundancy standardization** (`network.raim_redundancy_normalize`, default false
+at `GnssConfigLoadNetwork.cpp:3461`). The statistic standardizes a POST-FIT residual by the
+MEASUREMENT σ (`z ~ N(0,r_i)`, not `N(0,1)`) — true, and **not the cause**. Single-knob A/B
+`runs/t3b2_{off,on}` (OFF arm bit-identical to `runs/pareref_on/logs_v2` on all four graded CSVs —
+also the exe-provenance control): numerator **×1.4527**, denominator **×1.4179**, statistic
+**×1.0248** — a 1.025 multiplier against a 1.86e7× excess; settled flag rate 4.381 % → **4.460 %** (slightly worse); kurtosis and station spread
+unchanged; flags **798 → 772 at Jaccard 0.622** — it reshuffles WHICH cells flag without changing
+HOW MANY, at **+38 % runtime**. ⚠ **Sim-scoped**: on the field its ×1.45 lift would *unpin* a clamped
+σ̂₀ rather than cancel, so "do not arm it" does not transfer — a field B2 arm is owed.
 
-✅ **THE L1C EXCESS IS EXPLAINED — the residual lives in the IONO DIRECTION (SPEC §7.6).**
-Decomposing the phase residual 3-vector onto (1,1,1) / (1,γ₂,γ₅) / perp:
-**common 5.02 % · IONO 89.76 % · perp 5.22 %**.  Once the common mode is removed the
-iono direction is **(−0.804, +0.280, +0.525) — L1-dominant**, because L1 has the
-SMALLEST iono coefficient (1 vs 1.65/1.79) and sits furthest from the mean.  L1C is not
-noisy; **it is where unabsorbed iono-direction error lands**.  The per-station
-heterogeneity is the same effect: loudest 4 stations **93.2 %** iono share at 36.3 mm
-rms, quietest 4 **65.6 %** at 8.2 mm.
-**Structural corollary:** every signal-independent error (clock, tropo, orbit, position,
-tides) is identical in METRES across signals and can only appear in the common
-direction — 5 %.  So the culprit is necessarily frequency-dependent, and wind-up (∝λ)
-and the ionosphere itself (∝1/f²) both have the **wrong sign**.
-⚠ `network.estimate_iono_sh` is **OFF** on this arm — it runs FREE per-LOS slant iono,
-so an SH-truncation explanation is excluded.
+✅ **GATE PASSED — the fault-fixture MDB check (§12).** Fault arm `runs/t3fault` (the 24-event
+±{1,2,3,5,10,50}-cycle ladder in the validated null posture), station scale fitted on the NULL arm:
+**20/24 detected at k=6 with a byte-identical per-rung profile** across shipped / station /
+station×epoch, while flagged cells fall **912 → 235 (3.9×)**. Matched-budget at 200 flags: shipped
+**17/24**, stratified **20/24**. Run-level, the 24 injected slips add only **0.52 points**
+(**3.663e-02 → 4.186e-02**) on top of the false-alarm floor — the case for the card in one number.
+T3 carries the whole SMALL end (±1/±3/±5 all 4/4) while ±10/±50 are grabbed upstream; 3 of the 4 T3
+misses were caught upstream (**T0** MW / T1 IF / T2), and **one event is invisible to EVERY tier** —
+S05000SIM G20 L2W **+50 cy at 50.1° elevation** — a genuine detection gap unrelated to this card.
 
-✅✅ **MECHANISM FOUND — per-LOS IONOSPHERE ESTIMATION ERROR, truth-graded (SPEC §7.8).**
-`network.trace_ionosphere` was frame-broken exactly as CLAUDE.md warns (it emitted the
-correction `x_r` alone against a state SEEDED at allocation — median 0.95 m vs the true
-8.88 m, i.e. ~11 % of the quantity).  Fixed on the ZWD block's pattern: `iono_m`
-unchanged, `x_lin_m` + **`iono_total_m`** appended.  Trace-class — with it armed the four
-graded CSVs are **bit-identical** to `runs/pareref_on/logs_v2`.  Arm `runs/t3iono`,
-config `_simnet24_inj_t3iono.json`.
-Graded against `truth_atmo.csv` `I_L1_m` over 13 054 settled triples.  The state is
-LUMPED, so per invariant #5 only the datum-free **interaction** r (after removing the
-receiver term a(sta) and satellite term b(sat)) is gradable: **rms 0.764 m**.
-**corr(log station variance factor, log iono interaction rms) = +0.9258**, per-station
-error **0.106 ... 2.551 m**.  The **lumped** term correlates **-0.103** — so it is NOT the
-receiver code-bias partition and not anything the datum can move.
-**Causal chain:** iono state error 0.817 m rms -> ~96 % absorbed by the collinear per-arc
-ambiguity -> unabsorbed ~4 % lands in the phase residual in the iono direction (0.033 m
-rms) -> L1-dominant per §7.6 -> the 29x per-station variance-factor spread.
-⚠ It tracks the error's **LEVEL** (+0.532), **not** its rate of change (+0.046) — the
-natural "ambiguity soaks up the constant, only the variation shows" guess is falsified.
-⚠ **R2 is now non-negotiable**: a per-station variance component would bury a measured
-0.11-2.55 m per-station ionosphere error inside the noise model.
-✅✅ **AND IT IS THE INTEGER-RESOLUTION ROOT — MEASURED (SPEC §7.9).**  From the phase
-observation equation, an iono error d forces `e_j = (gamma_j/lambda_j)·d` cycles into the
-ambiguity; in DD form the station and satellite lumps cancel exactly, so the driver is
-the DD of the §7.8 interaction.  Per-band sensitivities **L1C 5.255 / L2W 6.744 /
-L5Q 7.037 cyc/m** reproduce the ladder `simnet_amb_integer.py` already documents, and the
-lanes fall out as differences: **WL −1.489, EWL −0.293** (⚠ the documented 1.49/0.29 are
-MAGNITUDES; the sign is negative).
-Regressing the actual DD integer error (`dd_cyc` − DD_true from `truth_ambiguities`,
-7326 quadruples) on the DD iono error: **corr +0.9266 / +0.9543 / +0.9585** and
-**67.9 % / 81.0 % / 82.8 % of the variance explained with ZERO free parameters**.
-The ladder explains which rung survives: sensitivity relative to L1C 1.000 / 0.283 /
-0.056 against measured rms DD error 1.000 / 0.085 / 0.018, and `round(e)=0` of
-5.1 % / 51.0 % / **95.9 %**.  **EWL is the only near-integer rung and it is the one with
-18× less iono sensitivity** — the pre-registered handoff shape, now measured not inferred.
-⚠ Two honest gaps: the FITTED per-band slope is ~1.85× the predicted one (9.7 vs 5.26 on
-L1C) and is unexplained (not a datum artifact — the DD annihilates both lumps); and the
-measured lane ladder is ~3× steeper than the sensitivity ladder, so the lanes cancel more
-than iono alone.
+⚠⚠ **FIELD (§13): the STRUCTURE reproduces, the LEVERAGE does not.**
 
-❌ **TEN candidates falsified (SPEC §7.7) — do NOT re-run.**  phase multipath (arm) ·
-code multipath (arm) · redundancy r_i (census) · elevation +0.24 · arc age (flat) ·
-iono MAGNITUDE **+0.089** · iono RATE OF CHANGE **+0.102** · receiver code biases
-**+0.264** (S05 has the LARGEST GF bias and is nearly the QUIETEST) · phase-bias
-anchor/datum (universal at 22/23 stations) · constellation (1.05×).
-⚠ Method note: candidate 8 was proposed from two cherry-picked extremes and collapsed
-under correlation over all 23 stations.  Propose from the correlation, not the ends.
+| arm | station spread | half-to-half transferability | OOS station stratification | implied-c curve |
+|---|---|---|---|---|
+| sim 24 sta, 1 h (`pareref_on`) | 4.7× | +0.847 | 4.46 % → 0.97 % (**4.6×**) | 2.25→3.93 ⇒ 1.97→2.39 |
+| field 49 sta, 1 h GPS+Gal (`net_matrix_2024-129/net50_1h`, DOY-129) | **10.5×** | **+0.873** | 27.58 % → 18.48 % (**1.5×**) | stays steep, 3.07 → 6.02 |
+| field 303 sta, 354 ep, 1.02 M cells (`pdp305_pinaware/h3_guard`, 3 h) | — | **+0.782** | 9.57 % → **10.31 %** (WORSE than shipped); station × epoch 8.42 % (**1.14×**) | — |
 
-**What survives:** ~90 % iono-direction residual (two independent fixtures) and a 29×
-per-station variance factor that is stable in time and correlates with nothing tested.
-Next probe: grade the **estimated states against truth** (`truth_atmo`, `truth_bias`)
-instead of inferring from residuals — needs a per-LOS iono state trace this posture does
-not emit.
+Two mechanisms, both measured. (1) The per-station factor is **not stationary over 3 h** (+0.782), so
+a once-fitted factor is stale by the second half — and not for sample-size reasons (~1300
+cells/station/half at 305 vs ~200 at 24). (2) **σ̂₀ is clamped at the 1.0 floor on 95.7 % of
+`net50_1h` epochs and 88.1 % of `h3_guard`'s, against 33 % on the sim**; in that regime the
+denominator is constant and the statistic is an unnormalized max against a fixed 6σ bar, so a
+stratified pool has nothing to fix. Why the field pool sits under the floor closes the loop: for a
+post-fit residual E[w·v²] = r_i < 1, so the missing √r_i is exactly what pushes the median under 1.
+⇒ **UNCLAMP FIRST on the field**, and R1's slow factor must TRACK (EWMA, time constant unmeasured),
+not be fitted once; the slow/fast split survives, "slow = constant over the run" does not.
+⚠ **Field runs have no truth** — **27.3 %** is not a false-alarm rate, and the tail (q999 **879**,
+max **38 935**, 40 cells > 1000) contains real events; these are archived pre-VS2026 runs read for
+residual STRUCTURE only, never for an accuracy verdict. Falsified in passing: the constellation axis
+is a null (GPS vs Galileo scale **1.05×**, flag rates **27.23 %** vs **27.48 %**).
+⚠ `scripts/t3_null_fit.py` **timed out (50 min) on 1 M cells** — a tool defect, since field scale is
+exactly where it matters.
 
-⚠ **This makes R2 (declare, do not absorb) load-bearing:** a per-station variance
-component would bury an unidentified 29× iono-direction defect inside the noise model.
+✅ **THE L1C EXCESS IS EXPLAINED — the residual lives in the IONO DIRECTION (§7.6).** Decomposing the
+phase residual 3-vector onto (1,1,1) / (1,γ₂,γ₅) / perp: **common 5.02 % · IONO 89.76 % · perp
+5.22 %**. With the common mode removed the iono direction is **(−0.804, +0.280, +0.525) —
+L1-dominant**, because L1 has the SMALLEST iono coefficient (1 vs **1.65**/**1.79**) and sits
+furthest from the mean. L1C is not noisy; **it is where unabsorbed iono-direction error lands.** The
+per-station heterogeneity is the same effect: loudest 4 stations **93.2 %** iono share at **36.3 mm**
+rms, quietest 4 **65.6 %** at **8.2 mm**. *Structural corollary:* every signal-independent error
+(clock, tropo, orbit, position, tides) is identical in METRES across signals and can only appear in
+the common direction — 5 %. So the culprit is necessarily frequency-dependent, and wind-up (∝λ) and
+the ionosphere itself (∝1/f²) both have the **wrong sign**. ⚠ `network.estimate_iono_sh` is **OFF**
+on this arm (free per-LOS slant iono), so an SH-truncation explanation is excluded.
 
-⚠ **Superseded framing —** why the post-fit standardized residual varies 4.7× by
-station when every station draws the same error model, uncorrelated with any
-observational covariate.  That is a stochastic-model card, and until it exists the
-per-station factor is doing double duty as a nuisance absorber.
+✅✅ **MECHANISM — per-LOS IONOSPHERE ESTIMATION ERROR, truth-graded (§7.8).**
+`network.trace_ionosphere` was frame-broken exactly as CLAUDE.md warns (it emitted the correction
+`x_r` alone against a state SEEDED at allocation — median **0.95 m** vs the true **8.88 m**, ~11 % of
+the quantity). Fixed on the ZWD block's pattern: `iono_m` unchanged, `x_lin_m` + **`iono_total_m`**
+appended; trace-class, so with it armed the four graded CSVs are bit-identical to
+`runs/pareref_on/logs_v2`. Arm `runs/t3iono`, config `_simnet24_inj_t3iono.json`, graded against
+`truth_atmo.csv` `I_L1_m` over **13 054** settled triples. The state is LUMPED, so per invariant #5
+only the datum-free **interaction** r (after removing receiver a(sta) and satellite b(sat)) is
+gradable: **rms 0.764 m**, per-station **0.106 … 2.551 m**.
+**corr(log station variance factor, log iono interaction rms) = +0.9258**; the **lumped** term
+correlates **-0.103** — so it is NOT the receiver code-bias partition and not anything the datum can
+move. **Causal chain:** iono state error **0.817 m** rms → ~96 % absorbed by the collinear per-arc
+ambiguity → unabsorbed ~4 % lands in the phase residual in the iono direction (**0.033 m** rms) →
+L1-dominant per §7.6 → the 29× per-station variance-factor spread. ⚠ It tracks the error's **LEVEL**
+(+0.532), **not** its rate of change (+0.046) — the natural "the ambiguity soaks up the constant,
+only the variation shows" guess is falsified. ⚠ **R2 is therefore non-negotiable**: a per-station
+variance component would bury a measured 0.11-2.55 m per-station ionosphere error inside the noise
+model.
 
-❌ **Top lead FALSIFIED 2026-08-14 — it is NOT the multipath** (SPEC §7.1).  The sim's
-Gauss-Markov phase multipath (2 mm zenith, τ = 300 s, per-station seed) was zeroed
-outright: `config/sim/simnet24_inject_mp0.json` → `runs/simnet24_mp0` → `runs/t3mp0`,
-with the control that regenerating the *unmodified* fixture reproduces
-`runs/simnet24_inject_null` **byte-identically** (5/5 RINEX by sha256).  Result: station
-spread **4.7× → 4.8×**, per-signal spread **2.70× → 2.77×**, and the flag rate went
-**UP** (3.663e-02 → 3.906e-02).  Every structural feature survives removing the error
-source entirely.
-**Bonus:** the removal lowered all three per-signal levels ~8–10 % uniformly and the
-statistic did not follow — a second, independent confirmation of the invariance theorem
-from a different mechanism than the B2 arm.
-❌ **AND THE REDUNDANCY FAMILY IS FALSIFIED TOO (SPEC §7.2) — the prerequisite was
-built.**  New `network.trace_raim_redundancy` (default OFF) emits one row per post-fit
-RAIM **phase row** with `w, r_i, resid, z_meas, z_baarda, below_floor` — one level finer
-than the cell.  It makes `row_r` be COMPUTED but never USED, so unlike
-`raim_redundancy_normalize` **the census is solve-neutral**: with it armed all six graded
-CSVs are **bit-identical** to `runs/pareref_on/logs_v2` (+17 % runtime, 65 364 rows).
-Arm `runs/t3ri`, config `_simnet24_inj_t3ri.json`.
+✅✅ **AND IT IS THE INTEGER-RESOLUTION ROOT — MEASURED (§7.9).** From the phase observation equation
+an iono error d forces `e_j = (gamma_j/lambda_j)·d` cycles into the ambiguity; in DD form the station
+and satellite lumps cancel exactly, so the driver is the DD of the §7.8 interaction.
 
-**r_i is uniform.**  Per signal: L1C 0.5469 / L2W 0.5767 / L5Q 0.4630 = **1.25× spread**,
-against a `z_meas` spread of **2.59×** — and dividing by √r_i makes the signal spread
-*worse* (2.59× → 2.72×).  Per station: r_i spreads **1.23×** against `z_meas` **3.01×**,
-corr(log z_meas, log r_i) = **−0.284**.  Whole settled population: median r_i **0.5114**,
-q01 0.0015, q99 0.6687.  So "L2W/L5Q are suppressed by absorption" is wrong — absorption
-would mean LOW r_i on exactly those signals, and it does not appear.  **The heterogeneity
-is genuine misfit varying by station and signal, on an estimator whose information
-distribution is uniform.**
+| band / lane | sensitivity (cyc/m) | rel. to L1C | measured rms DD error (rel.) | corr with DD iono error | var. explained, 0 free params | `round(e)=0` |
+|---|---|---|---|---|---|---|
+| L1C | **5.255** | 1.000 | 1.000 | **+0.9266** | **67.9 %** | 5.1 % |
+| L2W | **6.744** | 0.283 | 0.085 | **+0.9543** | **81.0 %** | 51.0 % |
+| L5Q | **7.037** | 0.056 | 0.018 | **+0.9585** | **82.8 %** | **95.9 %** |
+| WL | **−1.489** | — | — | — | — | — |
+| EWL | **−0.293** | — | — | — | — | — |
 
-✅ **`rowRedundancy` AUDITED — it is the RIGHT covariance (SPEC §7.4).**  Exonerated on
-four links: the arrowhead block-inverse identity is EXACT (re-derived by hand); the datum
-is a true Dirichlet elimination (contribution to RHS, row+col zeroed, diagonal set —
-`NetworkEstimator.cpp:280-292`), so `shared_cov_` is genuinely the datum-CONDITIONAL
-covariance and the zeroing only strips the `1/pin_scale` artifact; the priors are in the
-same system (`addStationPrior` throws if `solved_`; DD priors folded pre-solve); and
-`reconstructStation` uses the identical `N_rr`/`N_sr`.  The Bayesian expansion also shows
-`Cov(v) = W⁻¹ − AΣAᵀ` survives a prior — **provided P is the true dispersion of θ about
-θ₀**.  That proviso is the whole story.
+(7326 quadruples of `dd_cyc` − DD_true from `truth_ambiguities`. ⚠ the documented 1.49/0.29 lane
+figures are MAGNITUDES; the sign is negative.) **EWL is the only near-integer rung and it is the one
+with 18× less iono sensitivity** — the pre-registered handoff shape, now measured not inferred.
+⚠ Two honest gaps: the FITTED per-band slope is ~**1.85×** the predicted one (**9.7 vs 5.26** on L1C)
+and is unexplained (not a datum artifact — the DD annihilates both lumps); and the measured lane
+ladder is ~3× steeper than the sensitivity ladder, so the lanes cancel more than iono alone.
 
-⚠⚠ **So the defect is the MODEL, and the census measures it as a VARIANCE FACTOR.**
-With `E[w v²] = r_i`, the estimator `σ̂² = Σw·v²/Σr_i` must read 1.0.  Measured on 29 333
-settled rows: **global 11.80**; by signal **L1C 27.37 / L2W 2.05 / L5Q 5.87** (13.4×
-spread); by station **2.14 … 61.80** (**28.9× spread**) — all while mean r_i is flat at
-0.45–0.55 (**1.24×**).  **r_i correctly describes how much freedom the estimator HAS; it
-cannot describe how wrong its model IS, and only the latter varies.**  L2W at 2.05 is
-nearly model-consistent while L1C is 27×, so the mis-specification is CONCENTRATED on
-L1C rather than spread over the pool.
+❌ **TEN further candidates falsified (§7.7) — do NOT re-run**: phase multipath (arm) · code
+multipath (arm) · redundancy r_i (census) · elevation **+0.24** · arc age (flat) · iono MAGNITUDE
+**+0.089** · iono RATE OF CHANGE **+0.102** · receiver code biases **+0.264** (S05 has the LARGEST GF
+bias and is nearly the QUIETEST) · phase-bias anchor/datum (universal at 22/23 stations) ·
+constellation (1.05×). ⚠ Method note: candidate 8 was proposed from two cherry-picked extremes and
+collapsed under correlation over all 23 stations — **propose from the correlation, not the ends.**
 
-✅ **AND THIS UPGRADES THE REPLACEMENT (SPEC §7.5).**  R1's per-stratum scale was a
-median of cell maxima — a heuristic chosen because nothing better was measurable.  The
-right form is the variance component with the redundancy in the denominator,
-**σ̂²_stratum = Σ w·v² / Σ r_i** — exactly what `docs/SPEC_sigma0_constraint_aware.md`
-derives globally, now computable PER STATION and PER SIGNAL because r_i is streamed.
-Unbiased under the model rather than calibrated to a reference quantile, no `n_c`
-assumption, and it degrades gracefully where a median of maxima conflates "quiet" with
-"unchecked".  ⚠ Outlier-sensitive — aggregate 11.80 vs robust median 1.78 says a robust
-numerator is not cosmetic.
+❌ **The top lead was the multipath, and it is FALSIFIED (§7.1).** The sim's Gauss-Markov phase
+multipath (2 mm zenith, τ = 300 s, per-station seed) was zeroed outright
+(`config/sim/simnet24_inject_mp0.json` → `runs/simnet24_mp0` → `runs/t3mp0`), with the control that
+regenerating the *unmodified* fixture reproduces `runs/simnet24_inject_null` **byte-identically**
+(5/5 RINEX by sha256). Station spread **4.7× → 4.8×**, per-signal spread **2.70× → 2.77×**, flag rate
+went **UP (3.663e-02 → 3.906e-02)** — every structural feature survives removing the error source
+entirely. Bonus: the removal lowered all three per-signal levels ~8–10 % uniformly and the statistic
+did not follow — a second, independent confirmation of the invariance theorem.
 
-~~⚠⚠ **A sharper defect fell out (SPEC §7.3): E[w·v²] ≠ r_i.**~~ *(superseded by §7.4 — the
-measurement stands, the attribution moves from the covariance to the model.)*  If `v` were a correct
-post-fit residual, `1.4826·med|z_baarda|` would be 1.0.  Measured: **z_meas 1.3683
-(the shipped, theoretically WRONG standardization) vs z_baarda 1.9291 (the
-theoretically CORRECT one)** — the correct one lands **2.5× further from nominal**.  The
-redundancy numbers do not describe the actual residual covariance.  Candidates:
-`rowRedundancy` evaluates on the **gauge-nulled free covariance**
-(`NetworkEstimator.cpp:451-453`), which is not the system that produced `v` if the datum
-constraints bind; or stochastic-model error swamps r_i.  Same class as
-`docs/SPEC_sigma0_constraint_aware.md`.  **This is now the sharpest open lead**, and it
-explains §5 cleanly — B2 measured null *and* pushed σ̂₀ 1.246 → 1.819 because it divides
-by something that is not the residual's variance.
+❌ **The redundancy family is falsified too (§7.2), and the prerequisite got built.** New
+**`network.trace_raim_redundancy`** (default OFF) emits one row per post-fit RAIM **phase row** with
+`w, r_i, resid, z_meas, z_baarda, below_floor` — one level finer than the cell. It makes `row_r`
+COMPUTED but never USED, so unlike `raim_redundancy_normalize` **the census is solve-neutral**: with
+it armed all six graded CSVs are bit-identical to `runs/pareref_on/logs_v2` (+17 % runtime, **65 364
+rows**). Arm `runs/t3ri`, config `_simnet24_inj_t3ri.json`. **r_i is uniform**: per signal L1C
+**0.5469** / L2W **0.5767** / L5Q **0.4630** = **1.25× spread** against a `z_meas` spread of
+**2.59×** — and dividing by √r_i makes the signal spread *worse* (2.59× → **2.72×**). Per station r_i
+spreads **1.23×** against `z_meas` **3.01×**, corr(log z_meas, log r_i) = **−0.284**. Whole settled
+population: median r_i **0.5114**, q01 **0.0015**, q99 **0.6687**. So "L2W/L5Q are suppressed by
+absorption" is wrong — absorption would mean LOW r_i on exactly those signals. **The heterogeneity is
+genuine misfit varying by station and signal, on an estimator whose information distribution is
+uniform.**
 
-Incidental: **the ignition ramp IS r_i** (0.0000 → ~0.52, then flat), so `s_raw`'s
-0.836 → 1.816 rise is redundancy converging, not the residual growing.  The floor drops
-only 0.49 % of settled rows, identically across signals (49/10026 each).
+✅ **`rowRedundancy` AUDITED and EXONERATED on four links (§7.4)** — it IS the right covariance: the
+arrowhead block-inverse identity is EXACT (re-derived by hand); the datum is a true Dirichlet
+elimination (contribution to RHS, row+col zeroed, diagonal set — `NetworkEstimator.cpp:280-292`), so
+`shared_cov_` is genuinely the datum-CONDITIONAL covariance and the zeroing only strips the
+`1/pin_scale` artifact; the priors are in the same system (`addStationPrior` throws if `solved_`; DD
+priors folded pre-solve); and `reconstructStation` uses the identical `N_rr`/`N_sr`. The Bayesian
+expansion also shows `Cov(v) = W⁻¹ − AΣAᵀ` survives a prior — **provided P is the true dispersion of
+θ about θ₀**. That proviso is the whole story.
 
-⚠ **The "excess kurtosis 4391" figure does not reproduce** — settled `s_raw` on the
-null arm has excess kurtosis **10.38**.  Do not carry 4391 forward without
-re-deriving it.
+⚠⚠ **So the defect is the MODEL, measured as a VARIANCE FACTOR.** With `E[w v²] = r_i`, the estimator
+`σ̂² = Σw·v²/Σr_i` must read 1.0. On **29 333** settled rows: **global 11.80**; by signal **L1C 27.37
+/ L2W 2.05 / L5Q 5.87** (13.4× spread); by station **2.14 … 61.80** (**28.9× spread**) — all while
+mean r_i stays flat at **0.45–0.55 (1.24×)**. **r_i correctly describes how much freedom the
+estimator HAS; it cannot describe how wrong its model IS, and only the latter varies.** L2W at 2.05
+is nearly model-consistent while L1C is 27×, so the mis-specification is CONCENTRATED on L1C rather
+than spread over the pool. ⚠ Outlier-sensitive — aggregate **11.80** vs robust median **1.78** says a
+robust numerator is not cosmetic.
 
-**The class, ranked** (SPEC §11).  **T3c (2.85e6×), T4a (4.89e5×, and it acts at ANY
-σ̂₀) and T4 are free riders** on this fix — same σ̂₀, same `raim_k`, same file.
-⚠ **The rx-CB sibling named above does NOT generalize**: its numerator is a frame
-offset (`value_abs − x_lin`), not a residual, so it has no null to derive.  The
-inventory's reading is that its replacement is already built (LV-4's frame-invariant
-`rxCbStepGate`) and the card is "arm LV-4 and grade it" — blocked by
-`SPEC_level_information_budget.md` §19.3 (+64 % postfit phase rms, ~15 TECU level move)
-and by the absence of any truth-clean fixture arming `carry_rx_code_bias`.  That chain
-is a POINTER, not a verified finding.
+~~⚠⚠ **A sharper defect fell out (§7.3): E[w·v²] ≠ r_i.**~~ *(superseded by §7.4 — the measurement
+stands, the attribution moves from the covariance to the model.)* If `v` were a correct post-fit
+residual, `1.4826·med|z_baarda|` would be 1.0. Measured: **z_meas 1.3683** (the shipped,
+theoretically WRONG standardization) vs **z_baarda 1.9291** (the theoretically CORRECT one) — the
+correct one lands **2.5× further from nominal**. Candidate then considered: `rowRedundancy` evaluates
+on the gauge-nulled free covariance (`NetworkEstimator.cpp:451-453`), which is not the system that
+produced `v` if the datum constraints bind. It explains §5 cleanly — B2 measured null *and* pushed
+σ̂₀ **1.246 → 1.819** because it divides by something that is not the residual's variance. Incidental:
+**the ignition ramp IS r_i** (0.0000 → ~0.52, then flat), so `s_raw`'s **0.836 → 1.816** rise is
+redundancy converging, not the residual growing; the floor drops only **0.49 %** of settled rows,
+identically across signals (**49/10026** each).
 
-⚠⚠ **Two collateral defects found while inventorying, both verified on the null arm,
-both needing their own card:**
+⚠ **"Excess kurtosis 4391" does NOT reproduce** — settled `s_raw` on the null arm has excess kurtosis
+**10.38**. Do not carry 4391 forward without re-deriving it.
 
-1. **The prefit census's PHASE statistic is degenerate by 4–5 decades on truth-clean
-   data** — `pc_phase_max_s` median **1.024e5 σ**, `pc_phase_n1k` median **112
-   rows/epoch**, against a sane code class (75 σ, `n1k` = 0).  `trace_prefit_census`
-   is in the STANDARD ARMED SET, so this column is published network-wide.  It is
-   inert only because `prefit_event_classes` defaults to `code,sh,other`
-   (`GnssConfigLoadNetwork.cpp:1410-1412`) — **adding `phase` to that mask, or arming
+**Replacement, specified (NOT built):** a slow per-station factor × the existing fast network-wide
+scale — the split is forced by the noise budget (a per-station-per-epoch scale has **24.3 % SD**;
+pooled over the window, **5.7 %**) — with the station factor promoted to a **declared statistic**
+rather than silently absorbed (invariant #7: absorbing model error into a denominator masks it), α
+set by **FDR** over the (cell × epoch) family instead of a fixed k, and the **1.67 %**
+structurally-untestable cells (`s_raw` exactly 0) dropped from the opportunity count. The right
+per-stratum form is the variance component **σ̂²_stratum = Σ w·v² / Σ r_i** (§7.5) — what
+`docs/SPEC_prior_residual_census.md §14` derives globally, now computable per station and per signal
+because r_i is streamed; unbiased under the model rather than calibrated to a reference quantile, no
+`n_c` assumption, and it degrades gracefully where a median of maxima conflates "quiet" with
+"unchecked". Full build plan and the four owed validations: `docs/SPEC_t3_null_derivation.md` §8.
+
+**What survives:** ~90 % iono-direction residual (two independent fixtures) and a 29× per-station
+variance factor stable in time. Next probe: grade the **estimated states against truth**
+(`truth_atmo`, `truth_bias`) instead of inferring from residuals.
+
+**The class, ranked** (§11): **T3c (2.85e6×), T4a (4.89e5×, and it acts at ANY σ̂₀) and T4 are free
+riders** on this fix — same σ̂₀, same `raim_k`, same file.
+
+⚠⚠ **Two collateral defects found while inventorying, both verified on the null arm, both needing
+their own card** (§14):
+
+1. **The prefit census's PHASE statistic is degenerate by 4–5 decades on truth-clean data** —
+   `pc_phase_max_s` median **1.024e5 σ** and `pc_phase_n1k` median **112 rows/epoch**, against a sane
+   code class (**75 σ**, `n1k` = 0). `trace_prefit_census` is in the STANDARD ARMED SET, so this
+   column is published network-wide; it is inert only because `prefit_event_classes` defaults to
+   `code,sh,other` (`GnssConfigLoadNetwork.cpp:1410-1412`) — **adding `phase` to that mask, or arming
    `prefit_fuse_classes` with phase, yields ~112 fuse events per epoch on clean data.**
-2. **T1's flag rate excludes an acting sub-path** — reported `26482 opp / 0 flags /
-   rate 0` while `network_events.csv` carries **13 `T1_if_slip/refsat_reset` events**.
-   `fr_if_slip` counts only the per-pair loop (`NetworkSlipQc.cpp:530`); the
-   reference-satellite common-mode path refloats with no counter and no tier.
-   Standing invariant #4, one tier over from the T4a line added to fix exactly this.
+2. **T1's flag rate excludes an acting sub-path** — reported `26482 opp / 0 flags / rate 0` while
+   `network_events.csv` carries **13 `T1_if_slip/refsat_reset` events**. `fr_if_slip` counts only the
+   per-pair loop (`NetworkSlipQc.cpp:530`); the reference-satellite common-mode path refloats with no
+   counter and no tier — standing invariant #4, one tier over from the T4a line added to fix exactly
+   this.
 
-**Sim validation:** ~~the truth-clean fixtures ARE the null-calibration
-instrument: fit the corrected quantile on the 24-sta null arm, verify implied
-α ≈ nominal on an independent null, then check the field flag rate.~~
+**Sim validation — two standing rules for anyone fitting this null:**
 
-⚠ **A third reason the original plan was wrong, independent of the two blockers
-below: the fixture cannot calibrate a 6σ-class quantile empirically at all.**
-9975 settled cells resolve no rate below ≈ 1e-4; a 5.9e-9 threshold would need
-~1e8 cells, i.e. ~1e4 of these runs.  The instrument is for measuring the pool's
-STRUCTURE (which needs only thousands of cells) and for the fit → out-of-sample
-verify protocol — not for reading a tail quantile off the data.  This is why the
-replacement had to be derived rather than fitted.  Harness:
-`scripts/t3_null_fit.py` (`--selftest` / `--run` / `--fit … --verify …`).
+- ⚠ **The fixture cannot calibrate a 6σ-class quantile empirically at all.** 9975 settled cells
+  resolve no rate below ≈ 1e-4; a 5.9e-9 threshold would need ~1e8 cells, i.e. ~1e4 of these runs.
+  The instrument is for measuring the pool's STRUCTURE and for the fit → out-of-sample verify
+  protocol — never for reading a tail quantile off the data. This is why the replacement had to be
+  DERIVED rather than fitted. Harness: `scripts/t3_null_fit.py` (`--selftest` / `--run` / `--fit …
+  --verify …`).
+- ⚠ **The verification arm must be SAME-REGIME, different-seed — NOT the 60-sta fixture.**
+  `runs/simnet60_tri` is LEGACY-N (N ∈ [1e5,1e6)) and a different posture while the 24-sta null is
+  field-N; the regime alone moves the DD channel by 24 points (`project_sim_field_n_regime`). Fitting
+  on one and verifying on the other conflates REGIME with STATISTIC. Generate the verification
+  fixture from the same `config/sim/simnet24_inject.json` with a different roster salt — the roster
+  is deterministic in N, so only the noise/integer realization moves.
 
-⚠ **PREMISE FALSIFIED 2026-08-14 for the pdp-ON arm, and this item is now BLOCKED
-BY 1(d).**  `runs/inj_null_pdp` is truth-clean in the *measurement* sense (all 25
-`truth_slips.csv` are header-only) but carries **10 genuine state discontinuities**
-— the anchor handovers — each a real change in residual scale.  Fitting a quantile
-there calibrates it *to the discontinuities*.  The fitting fixture must be either
-the post-1(d) arm or one with the anchor election frozen.
-**Second blocker, independent:** σ̂₀_first is emitted only inside the `detail` span
-of a trip event (`NetworkSolveGlue.cpp:1640`), never on quiet epochs — so **there
-is no null sample on disk to fit at all**.  R0 telemetry (§5.07.5) is a hard
-prerequisite.  The **T3** evidence above is a different tier and stands untouched;
-only T2's use of this fixture as a null instrument is invalidated.
+*(Both blockers that once held this item are CLEARED: R0 landed — σ̂₀_first is a per-epoch
+`network_epoch_status.csv` column on every assessed epoch, where before it was emitted only inside a
+trip event's `detail` span at `NetworkSolveGlue.cpp:1640`, so there was no null sample on disk at
+all; and 1(d) landed, making `runs/pareref_on` the regenerated null arm — measurement-clean AND
+carry-marginalized at all 30 handovers, terminal σ̂₀_first **1.39** vs the OFF arm's **2.16**. The
+earlier premise "the truth-clean fixtures ARE the null-calibration instrument" was falsified for
+`runs/inj_null_pdp`, which is measurement-clean in the strict sense — all 25 `truth_slips.csv` are
+header-only — but carries **10 genuine state discontinuities**, the anchor handovers, so fitting a
+quantile there calibrates it to the discontinuities.)*
 
-✅ **BOTH BLOCKERS CLEARED 2026-08-14 — this item is now the head of the queue.**
-R0 landed: σ̂₀_first is a per-epoch `network_epoch_status.csv` column on every
-assessed epoch (armed-gated schema).  1(d) landed + validated: `runs/pareref_on`
-is the regenerated null arm — measurement-clean AND carry-marginalized at all 30
-handovers, terminal σ̂₀_first 1.39 vs the OFF arm's 2.16.  Before fitting, verify
-σ̂₀_first is quiet at the ten handover epochs (the design-side re-pin still
-happens; only the carry tension is gone).  The same-regime different-seed
-verification-arm rule below still applies.
-
-⚠ **The verification arm must be SAME-REGIME, different-seed — NOT the 60-sta
-fixture.**  `runs/simnet60_tri` is LEGACY-N (N ∈ [1e5,1e6)) and a different
-posture, while the 24-sta null is field-N; the regime alone moves the DD channel
-by 24 points (`project_sim_field_n_regime`).  Fitting on one and verifying on the
-other would conflate REGIME with STATISTIC, and could pass or fail for reasons
-that have nothing to do with the quantile.  Generate the verification fixture
-from the same `config/sim/simnet24_inject.json` with a different roster salt —
-the roster is deterministic in N, so only the noise/integer realization moves.
-
-**⚠ NOT in this class:** MW slip thresholds — empirical by standing decision
-(data-rate-dependent); do not "theorize" them.
+**⚠ NOT in this class:** MW slip thresholds — empirical by standing decision (data-rate-dependent);
+do not "theorize" them.
 
 ## 5 — The level: enforce the written contract (= LV-3 + edge 3)
 
-⚠ **RE-SCOPED 2026-08-14: same field, smaller term.**  The §7.8 truth decomposition puts
-the overall iono LEVEL mu at **0.328 m** against a datum-free per-LOS interaction of
-**0.764 m rms**.  This card is aimed at the minority component of the same error; it
-slips behind item 8.
+⚠ **RE-SCOPED 2026-08-14: same field, smaller term.** The §7.8 truth decomposition puts the overall
+iono LEVEL mu at **0.328 m** against a datum-free per-LOS interaction of **0.764 m rms**. This card
+is aimed at the minority component of the same error; it slips behind item 8.
 
-**Status:** further along than it looks — `docs/CONTRACT_level_authority.md`
-already declares per-posture ownership and measures the accident (rx-CB carry
-~100 info/epoch on the level direction vs the designed authorities' 0.25/0.01);
-LV-2's demean removes the carry's net force.  The card's own verdict stands:
-freeze ⇒ +20 TECU, loosen ⇒ +25, remove ⇒ −9/epoch collapse — the carry is the
-wrong vehicle in every tuning direction.
+**Status:** further along than it looks — `docs/SPEC_level_information_budget.md §30` already
+declares per-posture ownership and measures the accident (rx-CB carry ~100 info/epoch on the level
+direction vs the designed authorities' 0.25/0.01); LV-2's demean removes the carry's net force. The
+card's own verdict stands: freeze ⇒ +20 TECU, loosen ⇒ +25, remove ⇒ −9/epoch collapse — the carry
+is the wrong vehicle in every tuning direction.
 
-**Remaining:** a per-epoch data-derived authority for postures where the
-designed owners are weak — INTERNAL data only (GIM stays diagnostics-only,
-standing directive).
+**Remaining:** a per-epoch data-derived authority for postures where the designed owners are weak —
+INTERNAL data only (GIM stays diagnostics-only, standing directive).
 
-**Sim validation:** the one venue where the LEVEL grades against truth directly
-(the sim provides truth iono; the field never could).  ⚠ Level claims need the
-≥2 h convergence budget — 1 h windows are rank-only.
+**Sim validation:** the one venue where the LEVEL grades against truth directly. ⚠ Level claims need
+the ≥2 h convergence budget — 1 h windows are rank-only.
 
 ## 6 — Retire the half-epoch back-off ritual
 
-**Bandaid:** every `start_offset_hours` is backed off half an epoch because bare
-hour values sit on a double-residue boundary (CLAUDE.md "cold-start hygiene") —
-a floating-point bug institutionalized as ritual.
+**Bandaid:** every `start_offset_hours` is backed off half an epoch because bare hour values sit on a
+double-residue boundary (CLAUDE.md "cold-start hygiene") — a floating-point bug institutionalized as
+ritual.
 
-**Principled replacement:** integer week/TOW arithmetic or round-to-nearest-epoch
-semantics at the epoch seek; then delete the convention from CLAUDE.md.  Bundle
-the recorded leap-second lookup defect (memory `project_point_codebase`,
-`TimeUtils.cpp` leap table) into the same hygiene card.
+**Principled replacement:** integer week/TOW arithmetic or round-to-nearest-epoch semantics at the
+epoch seek; then delete the convention from CLAUDE.md. Bundle the recorded leap-second lookup defect
+(memory `project_point_codebase`, `TimeUtils.cpp` leap table) into the same hygiene card.
 
-**Sim validation:** unit tests + a bare-hour config sweep on the 24-sta fixture
-that must produce epoch sets identical to the backed-off twins.
+**Sim validation:** unit tests + a bare-hour config sweep on the 24-sta fixture that must produce
+epoch sets identical to the backed-off twins.
 
 ## 7 — SH health gate release policy (= edge 4)
 
-**Bandaid:** a binary withhold with no release/degrade path — a sick-field era
-withholds the wire for its full duration (95+ min measured, DOY-129), and the
-doctrine itself grades a withhold as an adaptation failure.
+**Bandaid:** a binary withhold with no release/degrade path — a sick-field era withholds the wire for
+its full duration (95+ min measured, DOY-129), and the doctrine itself grades a withhold as an
+adaptation failure.
 
-**Principled replacement:** attribute-adapt-emit within the detected epoch, with
-the release decision evaluated against the ADAPTED solution — the
-degrade-during-withhold DEADLOCK is already documented
-(`docs/SPEC_day129_gate_policy.md`); the fix must not re-test against the
-withheld state.
+**Principled replacement:** attribute-adapt-emit within the detected epoch, with the release decision
+evaluated against the ADAPTED solution — the degrade-during-withhold DEADLOCK is already documented
+(`docs/SPEC_day129_frame_guards.md Parts C–F`); the fix must not re-test against the withheld state.
 
-**Sim validation:** needs an injected sick-field / storm mode in the injection
-bench — a bench extension, owed before this card can be graded.
+**Sim validation:** needs an injected sick-field / storm mode in the injection bench — a bench
+extension, owed before this card can be graded.
 
 ## 8 — The per-LOS ionosphere representation (NEW 2026-08-14, ranks FIRST)
 
-**Bandaid:** none — this is a *measured root* that three separate cards have been
-treating downstream of.  Item 4 was calibrating a test statistic against it, the level
-card is tuning a carry against a different component of it, and the AR channel has been
-graded as an integer problem when 68–83 % of it is this.
+**Bandaid:** none — a *measured root* that three separate cards have been treating downstream of.
+Item 4 was calibrating a test statistic against it, the level card is tuning a carry against a
+different component of it, and the AR channel has been graded as an integer problem when 68–83 % of
+it is this.
 
-**Measured** (`SPEC_t3_null_derivation.md` §7.8–§7.9, arm `runs/t3iono`, config
-`_simnet24_inj_t3iono.json`).  Estimated per-LOS slant iono graded against the fixture's
-truth field over 13 054 settled triples, decomposed per standing invariant #5 into
-`e = mu + a(sta) + b(sat) + r`:
+**Measured** — the §7.8/§7.9 numbers and the consumer chain are in item 4 above and not repeated;
+what this item adds is the OWNERSHIP split of the same decomposition `e = mu + a(sta) + b(sat) + r`
+(arm `runs/t3iono`, 13 054 settled triples, per standing invariant #5):
 
 | term | value | who owns it today |
 |---|---|---|
@@ -723,54 +610,58 @@ truth field over 13 054 settled triples, decomposed per standing invariant #5 in
 | satellite lump b(sat) | −3.12 … +4.74 m | the sat-DCB datum |
 | **interaction r — datum-free, nobody owns it** | **rms 0.764 m** (0.106 … 2.551 by station) | **this item** |
 
-Consumer chain, all measured: r → ~96 % absorbed by the collinear per-arc ambiguity →
-the unabsorbed ~4 % is 89.8 % of the post-fit phase residual variance, L1-dominant →
-T3 false alarms (corr **+0.9258**) and DD integer error (**68–83 %** explained, corr
-**0.93–0.96**), with the lane sensitivity ladder (5.26 / −1.49 / −0.29 cyc/m) explaining
-why EWL is the only near-integer rung (95.9 % vs 5.1 %).
+Chain in one line (detail in item 4): r → ~96 % absorbed by the collinear per-arc ambiguity → the
+unabsorbed ~4 % is 89.8 % of post-fit phase residual variance, L1-dominant → T3 false alarms and DD
+integer error (68–83 % explained, corr 0.93–0.96).
 
 ### 8(a) — re-measure under the DIRECTIVE posture.  One knob.  Do this first.
 
-⚠ **The entire item-4 lineage ran with `network.estimate_iono_sh` OFF**, and that knob is
-a **Tier::ON posture item carrying a standing USER DIRECTIVE** ("always on";
-`GnssConfigNetworkPosture.cpp:174-179`).  It is absent from
-`_simnet24_inj_pareref_on.json` and therefore from the 1(d) validation arms too.  The
-posture condition (`n_sta >= 3 && tri`) *is* satisfied on this fixture, so the check fires
-and the arm is a genuine deviation.
+⚠ **The entire item-4 lineage ran with `network.estimate_iono_sh` OFF**, and that knob is a Tier::ON
+posture item carrying a standing USER DIRECTIVE ("always on";
+`GnssConfigNetworkPosture.cpp:174-179`). It is absent from `_simnet24_inj_pareref_on.json` and
+therefore from the 1(d) validation arms too. The posture condition (`n_sta >= 3 && tri`) *is*
+satisfied on this fixture, so the check fires and the arm is a genuine deviation.
 
-So **the 0.764 m is measured on a free-slant-only posture, not the mandated one**, and the
-first question is whether it survives with the SH field armed.  Everything needed exists:
-the trace landed (§7.8), the grader is a scratch join, the arm is ~35 s Release.  Three
-outcomes, all decisive:
+So **the 0.764 m is measured on a free-slant-only posture, not the mandated one**, and the first
+question is whether it survives with the SH field armed. Everything needed exists: the trace landed
+(§7.8), the grader is a scratch join, the arm is ~35 s Release. Three outcomes, all decisive:
 
-- **Error collapses with SH on** ⇒ the root is *slant states underdetermined without the
-  SH field*; item 8 largely closes, and item 4's null should be refitted on the correct
-  posture (every §4/§7 number is then posture-specific).
-- **Error persists** ⇒ the root is the representation itself, 8(b) is the real card, and
-  the D5 hold is genuinely lifted.
+- **Error collapses with SH on** ⇒ the root is *slant states underdetermined without the SH field*;
+  item 8 largely closes, and item 4's null should be refitted on the correct posture (every §4/§7
+  number is then posture-specific).
+- **Error persists** ⇒ the root is the representation itself, 8(b) is the real card, and the D5 hold
+  is genuinely lifted.
 - **Error grows** ⇒ the SH field is fighting the slant states, which is its own finding.
 
-⚠ **Grade `iono_total_m`, never `iono_m`** — the latter is the seed-less correction and
-was ~11 % of the quantity (§7.8).
+⚠ **Grade `iono_total_m`, never `iono_m`** — the latter is the seed-less correction and was ~11 % of
+the quantity (§7.8).
 
 ### 8(b) — the representation decision, now with an instrument
 
-Slant vs SH vs hybrid, previously held as "a science program, not a patch swap" because
-nothing quantified the representation error.  The interaction rms is that number: it is
-datum-free, it grades against truth on the sim, and it has a measured consumer chain.
-Related standing material: `project_slant_iono_vs_sh_speed` (2.42× faster, 2.2× worse),
-`project_global_sh_iono`, and the lane-spectrometer verdict that *"chord churn IS the iono
-representation"* — which this measurement now supports quantitatively rather than by
-inference.
+Slant vs SH vs hybrid, previously held as "a science program, not a patch swap" because nothing
+quantified the representation error. The interaction rms is that number: datum-free, graded against
+truth on the sim, with a measured consumer chain. Related standing material:
+`project_slant_iono_vs_sh_speed` (2.42× faster, 2.2× worse), `project_global_sh_iono`, and the
+lane-spectrometer verdict that *"chord churn IS the iono representation"* — which this measurement
+now supports quantitatively rather than by inference.
+
+⚠ **The FIELD evidence on this axis already exists and is negative in BOTH directions —
+`docs/RUNQUEUE_pdfix_reask.md` P3 / P3b**, 63-sta DOY-129 on a working (pd_safe) fold: subtractive
+(layer2 off, mech-B off, σ_rep 5 → 50) = **complete null**; additive (degree 8 → 15) = **an expensive
+null (+34.4 % wall)** and σ_rep 5 → 1.5 = a **FAIL** with the documented aliasing signature. The
+cross-band ratio read **1.263-1.265 in all seven arms** against common-cycle 1.2833 — the residual's
+DIRECTION never moved, so the defect is not the shell's spatial-spectral flexibility. Scope this card
+so it does not re-run that ladder: the new thing here is a *truth-graded* representation-error
+measurement, which the field could not supply.
 
 **Sim validation:** already the venue — the fixture supplies truth slant iono per LOS
-(`truth_atmo.csv` `I_L1_m`), which the field never could.  Grade the datum-free
-interaction, never the raw error (the lumps are 4–6× larger than the signal).
+(`truth_atmo.csv` `I_L1_m`), which the field never could. Grade the datum-free interaction, never the
+raw error (the lumps are 4–6× larger than the signal).
 
 ⚠ **What is NOT established:** n = 1 fixture, GPS-only, 1 h, slant-only posture; the
-fitted-vs-predicted DD slope discrepancy (~1.85×) is unexplained (§7.9); and no field arm
-is possible in the graded sense — the field has no truth ionosphere, so item 8 can be
-*graded* only on the sim and *monitored* on the field.
+fitted-vs-predicted DD slope discrepancy (~1.85×) is unexplained (§7.9); and no field arm is possible
+in the graded sense — the field has no truth ionosphere, so item 8 can be *graded* only on the sim
+and *monitored* on the field.
 
 ---
 
@@ -778,51 +669,41 @@ is possible in the graded sense — the field has no truth ionosphere, so item 8
 
 ## Blocked on root cause — do not build the "correct" fix yet
 
-- ~~**⚠ NEW 2026-08-14 — the clock re-realization churn itself (item 3).**~~
-  **✅ RESOLVED same day — root NAMED and A/B-confirmed.  Moved to item 1(d).**
-  The four nulls and three falsifications below are all *correct as measured* and
-  all *on the wrong side of the edge*: every one probes the design-matrix side of
-  the gauge, while the defect is on the CARRY side.  The live lead recorded below —
-  "threshold crossings of a slowly-evolving quantity … shifted by exactly one
-  epoch" — was the right instinct and resolved structurally, not statistically:
-  `NetworkPhaseDatum.cpp:339` sets `target = 0.0` and overrides it only
-  `if (is_handover && handover)`, so at T+1 the target reverts and the continuous
-  pin is a **one-epoch deferral by construction**.  The decisive test deleted the
-  entire within-epoch QC tier and the re-realization SURVIVED (terminal
-  `clock_std_m` 15.28 → 14.63, against 2.15 on the pdp-OFF twin) — so the tier is
-  the *impulse channel*, not the source.  Full evidence:
-  `SPEC_pivot_visibility_gauge_defect.md` §5.07.  Original text retained below for
-  provenance.
+- ~~**⚠ NEW 2026-08-14 — the clock re-realization churn itself (item 3).**~~ **✅ RESOLVED same day —
+  root NAMED and A/B-confirmed. Moved to item 1(d).** The four nulls and three falsifications below
+  are all *correct as measured* and all *on the wrong side of the edge*: every one probes the
+  design-matrix side of the gauge, while the defect is on the CARRY side. The live lead recorded
+  below — "threshold crossings of a slowly-evolving quantity … shifted by exactly one epoch" — was
+  the right instinct and resolved structurally, not statistically: `NetworkPhaseDatum.cpp:339` sets
+  `target = 0.0` and overrides it only `if (is_handover && handover)`, so at T+1 the target reverts
+  and the continuous pin is a **one-epoch deferral by construction**. The decisive test deleted the
+  entire within-epoch QC tier and the re-realization SURVIVED (terminal `clock_std_m` 15.28 → 14.63,
+  against 2.15 on the pdp-OFF twin) — so the tier is the *impulse channel*, not the source. Full
+  evidence: `SPEC_pivot_visibility_gauge_defect.md` §5.07.
 
-- **⚠ ORIGINAL (superseded) — the clock re-realization churn itself (item 3).**  FOUR
-  independent interventions on the phase-bias gauge left it untouched on the
-  24-sta arm: datum election on the prioritized path,
-  `phase_datum_handover_continuous`, the pin bridge, and the
-  `phase_datum_min_stations` coverage gate (that last was byte-identical at 1/2/3
-  — the gate never binds at this density).  Every arm holds at **7–8 episodes and
-  Σ|dev| ≈ 160 m**.  Three candidate roots were tested and falsified: anchor
-  handovers (compensated, no effect), column-set changes (0/15 correlate), and the
-  CLOCK datum station's own visibility (1/6 — the mechanism that DOES explain the
-  legacy PB defect).  Four nulls plus three falsifications is strong evidence this
-  is **not a gauge problem at all**.  Name the root before building item 3.  Live
-  lead: the episodes behave like threshold crossings of a slowly-evolving
-  quantity — arming the handover knob shifted every one of the seven by exactly
-  one epoch.
+- **⚠ ORIGINAL (superseded) — the clock re-realization churn itself (item 3).** FOUR independent
+  interventions on the phase-bias gauge left it untouched on the 24-sta arm: datum election on the
+  prioritized path, `phase_datum_handover_continuous`, the pin bridge, and the
+  `phase_datum_min_stations` coverage gate (that last byte-identical at 1/2/3 — the gate never binds
+  at this density). Every arm holds at **7–8 episodes and Σ|dev| ≈ 160 m**. Three candidate roots
+  tested and falsified: anchor handovers (compensated, no effect), column-set changes (0/15
+  correlate), and the CLOCK datum station's own visibility (1/6 — the mechanism that DOES explain the
+  legacy PB defect). Four nulls plus three falsifications is strong evidence this is **not a gauge
+  problem at all**. Live lead: the episodes behave like threshold crossings of a slowly-evolving
+  quantity — arming the handover knob shifted every one of the seven by exactly one epoch.
 
-- **Trio-runaway (settled triple-freq divergence):** the INC-1 FREEZE is a
-  bandaid that measured as ~35 % contributor, NOT root (runaway survives
-  1720 → 1132 cyc).  Mechanism card first (suspects: tree re-hosts refolding
-  invariant carry; chord-carry × slant-iono feedback).  FLOAT stays the track.
-- ✅ **D5 born-chord gating — HOLD SUBSTANTIALLY LIFTED 2026-08-14.**  The hold below
-  was "replacing D5 means re-deciding the representation — a science program, not a patch
-  swap", and the reason it stayed a science program is that the representation error had
-  never been quantified.  It now is: datum-free per-LOS interaction **rms 0.764 m**,
-  truth-graded, with a measured consumer chain into both T3 and the DD integers
-  (`SPEC_t3_null_derivation.md` §7.8–§7.9).  See item 8.  ⚠ Still hold D5 itself until
-  8(a) says whether the error survives the directive posture.  Original text follows.
-- **D5 born-chord gating:** the lane spectrometer verdict is that chord churn IS
-  the iono representation.  Replacing D5 means re-deciding the representation
-  (slant vs SH) — a science program, not a patch swap.  Keep D5 until then.
+- **Trio-runaway (settled triple-freq divergence):** the INC-1 FREEZE is a bandaid that measured as
+  ~35 % contributor, NOT root (runaway survives 1720 → 1132 cyc). Mechanism card first (suspects: tree
+  re-hosts refolding invariant carry; chord-carry × slant-iono feedback). FLOAT stays the track.
+- ✅ **D5 born-chord gating — HOLD SUBSTANTIALLY LIFTED 2026-08-14.** The hold below was "replacing D5
+  means re-deciding the representation — a science program, not a patch swap", and the reason it
+  stayed a science program is that the representation error had never been quantified. It now is:
+  datum-free per-LOS interaction **rms 0.764 m**, truth-graded, with a measured consumer chain into
+  both T3 and the DD integers (`SPEC_t3_null_derivation.md` §7.8–§7.9). See item 8. ⚠ Still hold D5
+  itself until 8(a) says whether the error survives the directive posture.
+- **D5 born-chord gating (original):** the lane spectrometer verdict is that chord churn IS the iono
+  representation. Replacing D5 means re-deciding the representation (slant vs SH) — a science
+  program, not a patch swap. Keep D5 until then.
 
 ## Leave alone — falsified or decided; do not re-litigate
 
@@ -830,15 +711,15 @@ is possible in the graded sense — the field has no truth ionosphere, so item 8
 - MW slip thresholds empirical (standing user decision).
 - Lane layer OFF (measured at both 63 and 305 stations, settled windows).
 - Era-2 adaptive iono q (falsified).
-- Datum-choice-at-emit as a consumer fix — ensemble PB, clock s2z,
-  broadcast-anchored (falsified; see item 3).
-- Reset-over-repair and withhold-as-backstop doctrines — principled; the gap is
-  item 7's release policy, not the doctrines.
+- Datum-choice-at-emit as a consumer fix — ensemble PB, clock s2z, broadcast-anchored (falsified;
+  see item 3).
+- Reset-over-repair and withhold-as-backstop doctrines — principled; the gap is item 7's release
+  policy, not the doctrines.
 
 ## Maintenance
 
-Strike items as their cards land; this doc indexes, the SPECs carry the detail.
-When item 1a/1c land, update `docs/SPEC_pivot_visibility_gauge_defect.md` §5.1
-and the memory card `project_pivot_visibility_gauge_defect` in the same commit.
-Item numbers are STABLE — express a re-ranking in the BUILD ORDER block at the
-top rather than renumbering, so cross-references from other docs keep resolving.
+Strike items as their cards land; this doc indexes, the SPECs carry the detail. When item 1a/1c land,
+update `docs/SPEC_pivot_visibility_gauge_defect.md` §5.1 and the memory card
+`project_pivot_visibility_gauge_defect` in the same commit. Item numbers are STABLE — express a
+re-ranking in the BUILD ORDER block at the top rather than renumbering, so cross-references from
+other docs keep resolving.

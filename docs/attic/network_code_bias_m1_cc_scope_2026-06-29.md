@@ -3,7 +3,8 @@
 **Date:** 2026-06-29
 **Target:** `ProcessingMode::PPP_RTK_Network`, flag `network.estimate_sat_code_bias`
 (`estimateNetworkSatCodeBias()`).
-**Source items:** `docs/network_code_bias_review_2026-06-29.md` §2 **M1** (MEDIUM) + the
+**Source items:** `docs/network_code_bias_review_2026-06-29.md` §2 **M1** (MEDIUM) — that file was
+deleted in commit `a8f044f` and was never atticed; recoverable at `39b263a` — + the
 "connected-component datum is future work" note in the datum block header of
 `ApplicationNetwork.cpp`.
 **Method:** orchestrator inline recon + a 7-agent scoping workflow (2 recon · 2 independent

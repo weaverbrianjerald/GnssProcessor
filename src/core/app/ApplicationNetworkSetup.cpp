@@ -24,7 +24,7 @@
  * minimum-constraint S-basis, emitted in IGS-SSR convention for the companion
  * PPP_RTK_User consumer.
  *
- * See docs/ssystem_conformance_2026-06-15.md (§7) and the approved design plan
+ * See docs/SPEC_sbasis_realization_contract.md §F7 and the approved design plan
  * for the full architecture and the staged build-out (W1..W8).
  *
  * ===========================================================================

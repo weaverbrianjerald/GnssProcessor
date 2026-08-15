@@ -1,7 +1,7 @@
 # CARD 4 phase D — emit-layer re-basing + gate 5 (Opus builds, Fable gates)
 
 *Fable-specced 2026-07-12 after the C3c gate PASS (@967def1). Parent: spec D4/D5
-(docs/HANDOFF_card4_invariant_carry.md); lineage in memory
+(docs/SPEC_card4_invariant_carry.md); lineage in memory
 `project-m1-card4-phasec3c`. Field config decision: **carry_invariant_qz=1e-4**
 (beats q_z=0 post-slip-fix: 1.50 vs 2.43 cyc/ep; a00 22.1±3.1). The 6h/12h
 hr-4 cliff-immunity runs are in flight (Fable); results land in memory —

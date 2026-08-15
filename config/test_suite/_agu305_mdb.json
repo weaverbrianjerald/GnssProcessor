@@ -1,5 +1,5 @@
 {
-  "_comment": "MDB at scale (docs/SPEC_network_mdb_reliability.md section 10): 303-sta GPS, 15 min of data (31 epochs), COLD, lane layer OFF (the AGU-26 measured regime). Census stride 5 = 7 sweeps -- the ONLY r_i source on this lineage, because carry_invariant leaves the post-fit RAIM pool empty (pl_amb is built only when !carry_invariant).  ON arm only; no OFF control this pass.",
+  "_comment": "MDB at scale (docs/SPEC_redundancy_census.md §11.10): 303-sta GPS, 15 min of data (31 epochs), COLD, lane layer OFF (the AGU-26 measured regime). Census stride 5 = 7 sweeps -- the ONLY r_i source on this lineage, because carry_invariant leaves the post-fit RAIM pool empty (pl_amb is built only when !carry_invariant).  ON arm only; no OFF control this pass.",
   "extends": [
     "C:/GnssProcessor/config/test_suite/_ft63_pdfix_v3.json"
   ],

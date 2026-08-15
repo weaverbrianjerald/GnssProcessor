@@ -8,7 +8,7 @@
  * Seeded at decomposition INC-2 (ifElevMap / parseIfPairResetKey) and
  * completed at INC-6 (2026-07-16), which relocated the SB_SLIP block's
  * serial drains VERBATIM out of ApplicationNetwork.cpp (see
- * docs/network_decomposition_addendum_2026-07-16.md).  The PASS-A parallel
+ * docs/network_decomposition_plan.md).  The PASS-A parallel
  * detection loop that FILLS PassABuffers — and the SB_SLIP D0b timer
  * bracket around scan + drains — remain in the run TU until INC-7 moves
  * the loop into the Assembly TU.

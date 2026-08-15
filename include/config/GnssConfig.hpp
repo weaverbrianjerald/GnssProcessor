@@ -1652,7 +1652,7 @@ namespace GnssProcessor {
          * pseudo-observation whose information is @f$1/\sigma^2@f$.  @c 0.0
          * (default) means AUTO: the mode-appropriate value is resolved at the
          * producer (unchanged in @c Sp3 mode; broadcast-grade ~3 m in @c BrdcRts,
-         * per @c docs/rtf12_brdc_rts_plan.md D6).  An explicit positive value
+         * per @c docs/rt_service_conventions.md §6 D6).  An explicit positive value
          * overrides the auto in both modes.  Parsed and stored here; consumed by
          * the producer core (a later RTF-1 card).
          */
@@ -1819,6 +1819,41 @@ namespace GnssProcessor {
         bool networkSharedCarryFullCov() const { return network_shared_carry_full_cov_; }
 
         /**
+         * @brief Card C-GF — marginalize the DECLARED datum directions out of the carried
+         *        shared information (`network.shared_carry_gauge_free`).
+         *
+         * The exact information-side marginalization
+         * @f$\Lambda\leftarrow\Lambda-\Lambda U(U^{\mathsf T}\Lambda U)^{-1}U^{\mathsf T}\Lambda@f$
+         * over the datum directions @f$U@f$, so the carry constrains only the ESTIMABLE
+         * combinations and leaves the gauge to the S-basis datum.  Applied on @f$\Lambda@f$
+         * rather than on the covariance because "infinite prior variance along @f$u@f$" has
+         * no finite covariance representation.
+         *
+         * This operator already existed but was reachable ONLY through
+         * @ref networkClockAnchorGaugeFree — an unrelated Q3 temporal-anchor knob — so a
+         * config running the dense carry without that anchor could not have it at all,
+         * even though the carry is what deposits gauge information in the first place.
+         * This knob arms it as a property of the CARRY, and requires
+         * @ref networkSharedCarryFullCov.
+         *
+         * Beyond the re-arming it also generalizes the basis: @f$U@f$ is built from the
+         * epoch's DECLARED datum directions with a SUPPORT-CLOSURE test, where the Q3 path
+         * used the carried clocks alone with a bare "at least two members" floor.  Closure
+         * matters because @f$U=v|_C@f$ restricted to the carried set @f$C@f$ is not the
+         * same functional as @f$v@f$ when @f$\text{supp}(v)\not\subseteq C@f$: the
+         * difference is an ESTIMABLE contrast between the carried and uncarried members
+         * (the normal case — any satellite that just rose), and downdating it would delete
+         * real information rather than gauge.  Directions that are not closed are SKIPPED
+         * and counted.
+         *
+         * Default false (byte-identical).  Both edges of the arming are events: see the
+         * run-end gauge-free readout and the `cgf_*` counters.
+         *
+         * @see networkSharedCarryFullCov, networkClockAnchorGaugeFree
+         */
+        bool networkSharedCarryGaugeFree() const { return network_shared_carry_gauge_free_; }
+
+        /**
          * @brief Carry each persistent LOCAL parameter (phase-leveling ambiguity,
          *        ZWD) across epochs as a CONDITIONAL pseudo-observation row coupling
          *        it to the shared border, instead of an independent diagonal prior
@@ -1889,10 +1924,14 @@ namespace GnssProcessor {
          *       (unchanged from Card 1); only the DEPARTED-column marginalization is
          *       upgraded from scalar to joint.  A present-but-un-stashed WHITE per-epoch
          *       state (e.g. a satellite clock carried by the oscillator outside the dense
-         *       D2 carry under @c clock_model) is NOT yet reclassified into @f$M_w@f$ —
-         *       see docs/HANDOFF_carry_rigor_card1b.md (the a-priori-vs-posterior variance
-         *       for that case is scenario-dependent and pending the card's empirical
-         *       pre-verification).
+         *       D2 carry under @c clock_model) is NOT reclassified into @f$M_w@f$.
+         *       ⚠ The card's empirical pre-verification RAN (2026-07-10) and FALSIFIED the
+         *       premise — docs/SPEC_card1_coupling_carry.md §9: @f$M_w@f$ measured EMPTY in
+         *       723/735 station-epochs (98.4 %), holding 1–2 CodeBias columns when non-empty
+         *       and NEVER a satellite clock, and the marginalized dep term came out
+         *       10–1000× SMALLER than @c var_eff against the card's required ≥10×.  So the
+         *       reclassification has no measured referent and this toggle is a NO-OP on the
+         *       lineage (§9, §11); see also docs/SPEC_card1_coupling_carry.md §8–§11.
          *
          * @see networkCarryConditionalCoupling, networkSharedCarryFullCov
          */
@@ -1915,7 +1954,7 @@ namespace GnssProcessor {
          * @f$q\to\infty@f$ limit of this rule), so every row over-asserts by
          * @f$\approx M^2 q\,\Delta t@f$ at full weight — re-injected each epoch,
          * this is the carried-DD random walk / flat-σ signature (Card 1c verdict,
-         * docs/HANDOFF_carry_timeupdate_card1d.md).
+         * docs/SPEC_card1_coupling_carry.md).
          *
          * When ON, each PRESENT coupled column @f$j@f$ of every coupling row is
          * shrunk by the scalar @f$\kappa_j = P_{\text{prev},jj}/(P_{\text{prev},jj}
@@ -1960,6 +1999,64 @@ namespace GnssProcessor {
          * @see networkCarryCouplingTimeUpdate, networkCarryConditionalCoupling
          */
         bool networkCarryCouplingShMarginalize() const { return network_carry_coupling_sh_marginalize_; }
+
+        /**
+         * @brief Card 1f — hold a TRUNCATED coupling row's per-(constellation,kind)
+         *        coefficient sum at its HARVEST value (`network.carry_coupling_gauge_project`).
+         *
+         * A harvested coupling row is gauge-invariant through the regression identity
+         * @f$M^{\mathsf T}g_s=-g_r(c)@f$: it observes each datum gauge exactly as much as
+         * its own @f$A_r=+1@f$ local requires.  TRUNCATION breaks that — a DEPARTED column
+         * is marginalized by DELETING its coefficient, leaving
+         * @f$\Sigma_{\text{family}}M=-M_{dep}@f$, so the row becomes a high-weight
+         * observation of the CURRENT gauge pinned at the OLD realization.
+         *
+         * Measured (simnet24, TOW 305220, seven G-clock departures in one epoch): the
+         * smallest null-space eigenvalue moved 1e-11 → 9.43e-3 — five decades above the
+         * rank-gate cutoff and level with the weakest genuine phase-bias layer — producing
+         * four spurious OVER-specified withholds that self-healed only at `pl_max_gap_s`
+         * by blanket carry expiry (a silent mass re-cold-start).
+         *
+         * Armed, the deficit that @ref networkCarryCouplingTimeUpdate's re-projection
+         * already repairs is extended to include the truncated columns' coefficients, which
+         * fixes departures and the κ shrink in ONE expression and reduces EXACTLY to the
+         * Card-1d behaviour when nothing was truncated.  Note this is deliberately NOT
+         * "annihilate the family sum": the harvest target is @f$-g_r(c)@f$, and a Galileo
+         * ambiguity row measures @f$\Sigma_E=-1@f$ exactly, so annihilation would itself
+         * inject a gauge observation.
+         *
+         * Default false (byte-identical).  REQUIRES `carry_conditional_coupling`.
+         *
+         * @see networkCarryCouplingReinitSources, networkCarryCouplingTimeUpdate
+         */
+        bool networkCarryCouplingGaugeProject() const { return network_carry_coupling_gauge_project_; }
+
+        /**
+         * @brief Card 1g — widen the coupling REINIT feed to every realization-step source
+         *        and decouple it from κ (`network.carry_coupling_reinit_sources`).
+         *
+         * A shared column that was RE-REALIZED since a row's harvest (phase-anchor
+         * re-reference, eq34 chain re-reference, datum-slip PB re-realization) carries an
+         * unknown frame step in its stashed @f$\hat s_{\text{prev}}@f$.  Each of those
+         * mechanisms erases the re-referenced family's OWN carry, but every OTHER carried
+         * local still holds a `coupling[]` entry on that column — folded at full weight in
+         * the retired frame, which injects the step as row bias at conditional-variance
+         * (millimetre) confidence.
+         *
+         * Armed, the reinit history is keyed `(kind, sat, signal)` with an empty signal as
+         * the sat-wide wildcard (the clock-QC feeds mark whole satellites; the
+         * realization-step feeds mark one (sat,signal) family), it is fed from those
+         * realization-step sets, and it is honoured whether or not the κ border time update
+         * is armed.  Re-realized columns then take the departed route (κ=0), which is the
+         * only correct treatment for an UNKNOWN step — and @ref networkCarryCouplingGaugeProject
+         * repairs the family-sum deficit that marginalization opens.  Arming this alone is
+         * legal but logs a warning: it trades a stale frame step for a gauge observation.
+         *
+         * Default false (byte-identical).  REQUIRES `carry_conditional_coupling`.
+         *
+         * @see networkCarryCouplingGaugeProject
+         */
+        bool networkCarryCouplingReinitSources() const { return network_carry_coupling_reinit_sources_; }
 
         /**
          * @brief Carry per-station tropospheric ZWD across epochs in the network
@@ -5883,10 +5980,13 @@ namespace GnssProcessor {
         bool   network_phase_leveling_warmup_on_convergence_{false}; ///< T1d: gate the leveling-carry warmup on SH-field convergence (epoch-over-epoch coeff RMS Δ < thresh AND a₀₀ in physical band) instead of the fixed emitted-epoch count — avoids locking the wrong iono/ambiguity split while a₀₀ is still diverging.  Falls back to the epoch count when no SH field is active.  OFF = byte-identical.
         bool   network_phase_leveling_refloat_at_convergence_{false}; ///< T1d: one-shot flush of all carried ambiguities at the SH-field convergence rising edge (pairs with the DEFAULT early warmup: keep the epoch-count warm-up but drop the possibly-contaminated early split once the field settles, so the carry re-accumulates from the converged state).  OFF = byte-identical.
         double network_phase_leveling_conv_rms_thresh_tecu_{0.5};  ///< T1d: epoch-over-epoch SH coefficient-vector RMS-change threshold (TECU) defining "stationary" for the convergence latch.  Heuristic; flagged for tuning.
+        bool   network_shared_carry_gauge_free_{false};    ///< Card C-GF: marginalize the DECLARED datum directions out of the carried shared information (Λ ← Λ − ΛU(UᵀΛU)⁻¹UᵀΛ) as a property of the CARRY rather than of the unrelated Q3 clock anchor, with a support-closure test on U so a partially-carried direction is skipped instead of having a real estimable contrast deleted; REQUIRES shared_carry_full_cov. OFF = byte-identical.
         bool   network_shared_carry_full_cov_{false};      ///< C1: carry the FULL dense cross-covariance of the shared border across epochs (information-form KF on the border; recovers the clock↔phase-bias off-diagonals the diagonal D2 stash discards) — fold Λ=(P_prev+Q)⁻¹ as one dense block, marginalize departed/pinned/retired keys, degrade to the diagonal fold on a non-PD block. OFF = legacy per-key diagonal carry (byte-identical).
         bool   network_carry_conditional_coupling_{false}; ///< Card 1: carry each persistent LOCAL parameter (phase-leveling ambiguity, ZWD) as a CONDITIONAL pseudo-observation row coupling it to the free shared border (coeff +1 on the local, regression M_r on the border, variance = pure conditional (N_rr⁻¹)_{rr}), NOT an independent diagonal prior — removes the shared-info double count so the sequential recursion equals the batch solve. REQUIRES shared_carry_full_cov (hard error otherwise). OFF = legacy diagonal addStationPrior carry (byte-identical).
         bool   network_carry_coupling_joint_whiten_{false}; ///< Card 1b: JOINTLY whiten a station's coupling rows (R = diag(var_eff) + M_w·diag(P_w)·M_wᵀ over the DISTINCT departed shared columns, LLᵀ-whitened) instead of marginalizing each departed column per-row into a scalar variance — restores the between-row (DD) correlation the diagonal marginalization destroys (the T7 flat-σ bug). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = Card-1 per-row scalar marginalization (byte-identical).
         bool   network_carry_coupling_sh_marginalize_{false};  ///< Card 1d-SH: fully marginalize (q=∞ / departed treatment) the VtecSh terms of every coupling row — severs the amb↔SH carry feedback (GM-carried border vs RW-modeled κ mismatch); REQUIRES carry_conditional_coupling. OFF = shrink-carry SH terms (byte-identical).
+        bool   network_carry_coupling_gauge_project_{false};   ///< Card 1f: hold each (constellation,kind) coefficient sum of a TRUNCATED coupling row at its HARVEST value, so a departed/re-realized column stops pinning the current datum gauge at the old realization (measured: null ev 1e-11 → 9.43e-3 in one epoch ⇒ 4 spurious OVER-specified withholds); REQUIRES carry_conditional_coupling. OFF = byte-identical.
+        bool   network_carry_coupling_reinit_sources_{false};  ///< Card 1g: key the coupling reinit history (kind,sat,signal) with an empty-signal sat-wide wildcard, feed it from the phase-anchor / eq34 / datum-slip re-reference sets, and honour it independently of carry_coupling_time_update — so a RE-REALIZED column takes the departed route instead of folding a retired-frame ŝ_prev at full weight; REQUIRES carry_conditional_coupling. OFF = byte-identical.
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Only used when network.carry_zwd.

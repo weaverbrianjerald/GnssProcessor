@@ -3,7 +3,7 @@
  * \brief JSON configuration loading for the PPP-RTK @c network section.
  *
  * Split out of @c GnssConfigLoad.cpp (decomposition INC-1, 2026-07-16;
- * see docs/network_decomposition_addendum_2026-07-16.md), then decomposed
+ * see docs/network_decomposition_plan.md), then decomposed
  * internally (2026-08-01) from one 4.4k-line @c loadNetworkSection_ body into a
  * thin orchestrator plus one helper per JSON subsection — the same idiom the
  * eleven top-level section loaders in @c GnssConfigLoad.cpp already use.  Every
@@ -800,7 +800,7 @@ namespace GnssProcessor {
                                           "network_lane_carry_lane_meas", true);
                 lc.bridge_meas = jval<bool>(json, "network.lane_carry.bridge_meas",
                                             "network_lane_carry_bridge_meas", true);
-                // LF-1 INC-1 (docs/SPEC_lane_fold_perf_card.md §3.2): the optimized blocked/sparse
+                // LF-1 INC-1 (docs/SPEC_lane_carry_card.md Appendix LF-1 §3.2): the optimized blocked/sparse
                 // lane fold.  A PERF knob — it changes only HOW the linear algebra is applied
                 // (O(K) sparse SET + hoisted symmetrize), never what folds — so it stays OUT of
                 // the equivalence_shape discriminator below.  Equivalence class (NOT bit-identical).
@@ -2724,6 +2724,42 @@ namespace GnssProcessor {
                       "border) instead of independent per-key diagonals.  Departed/pinned/"
                       "retired keys are marginalized; a non-PD carried block degrades to the "
                       "diagonal fold for that epoch (warned).");
+        // Card C-GF: the gauge-free carry fold, armed as a property of the CARRY.  The
+        // downdate Λ ← Λ − ΛU(UᵀΛU)⁻¹UᵀΛ removes the DECLARED datum directions from the
+        // carried information, so the carry constrains only estimable combinations and
+        // leaves the gauge to the S-basis.  It existed already but was reachable ONLY via
+        // network.clock_anchor_gauge_free — a Q3 temporal-anchor knob with no logical
+        // relation to it — so a config running the dense carry without that anchor could
+        // not have it, even though the carry is what deposits gauge information.  Also
+        // generalizes U: declared directions with a SUPPORT-CLOSURE test rather than the
+        // carried clocks with a bare ">= 2 members" floor.
+        network_shared_carry_gauge_free_ =
+            jval<bool>(json, "network.shared_carry_gauge_free", "shared_carry_gauge_free", false);
+        if (network_shared_carry_gauge_free_ && !network_shared_carry_full_cov_)
+            throw std::runtime_error(
+                "network.shared_carry_gauge_free requires network.shared_carry_full_cov = true "
+                "(it marginalizes the datum directions out of THAT card's dense carried "
+                "information block).");
+        if (network_shared_carry_gauge_free_)
+            log->info("Network producer (Card C-GF): GAUGE-FREE shared carry enabled — the "
+                      "declared datum directions are marginalized out of the carried "
+                      "information (exact information-side downdate), with a support-closure "
+                      "test so a direction whose support is only PARTLY carried is SKIPPED "
+                      "rather than having its carried-vs-uncarried contrast (an ESTIMABLE "
+                      "quantity) deleted.  Fold, withdraw and the within-epoch RAIM replay "
+                      "all read one resolved predicate, so they cannot disagree.");
+        // NOTE: `network_clock_anchor_gauge_free_` is parsed much later in this function,
+        // so it deliberately does NOT appear in this predicate — reading it here would
+        // read its default, not the user's value.  The advisory is therefore phrased to
+        // cover the case where the Q3 path supplies the downdate instead.
+        if (network_shared_carry_full_cov_ && !network_shared_carry_gauge_free_)
+            log->info("Network producer (Card C-GF): the dense shared carry is armed WITHOUT "
+                      "network.shared_carry_gauge_free — unless network.clock_anchor_gauge_free "
+                      "supplies the downdate through the Q3 path, the carried block folds "
+                      "information along the datum's OWN directions every epoch, which is what "
+                      "lets a carry fill a declared gauge (the invariant-#7 ratio is the "
+                      "instrument; see the run-end readout).  Default-OFF is deliberate "
+                      "(byte-identity), but a network config should arm this explicitly.");
         // Card 1: rigorous conditional local carry.  The persistent per-station locals
         // (phase-leveling ambiguities + ZWD) are carried as ONE pseudo-observation row
         // coupling each to the FREE shared border (regression M_r, pure conditional
@@ -2801,6 +2837,65 @@ namespace GnssProcessor {
                       "the dense border fold's (clock-monitor-reinit sats treated as q=∞ ⇒ full "
                       "marginalization).  Removes the stale-row over-assertion (the carried-DD "
                       "random-walk / flat-σ defect, Card 1c).");
+        // Card 1f: GAUGE PROJECTION of a TRUNCATED coupling row.  A harvested row is
+        // gauge-invariant by the identity Mᵀg_s = −g_r(c) — it observes the datum gauge
+        // exactly as much as its own A_r = +1 local requires.  Deleting a DEPARTED
+        // column's coefficient breaks that: the family sum moves to −M_dep and the row
+        // becomes a high-weight observation of the CURRENT gauge pinned at the OLD
+        // realization.  Measured (simnet24, TOW 305220, 7 G-clock departures): smallest
+        // null eigenvalue 1e-11 → 9.43e-3 in ONE epoch — five decades over the gate
+        // cutoff, level with the weakest-real PB layer — ⇒ 4 spurious OVER-specified
+        // withholds, self-healing only at pl_max_gap_s by blanket carry expiry.  The fix
+        // holds each (constellation,kind) coefficient sum at its HARVEST value, which
+        // subsumes Card 1d's κ re-projection and reduces to it exactly when nothing
+        // truncated.  NOT "annihilate the sum": the harvest target is −g_r(c), and a
+        // Galileo ambiguity row measures Σ_E = −1 exactly.
+        network_carry_coupling_gauge_project_ =
+            jval<bool>(json, "network.carry_coupling_gauge_project",
+                       "carry_coupling_gauge_project", false);
+        if (network_carry_coupling_gauge_project_ && !network_carry_conditional_coupling_)
+            throw std::runtime_error(
+                "network.carry_coupling_gauge_project requires network.carry_conditional_coupling "
+                "= true (it only changes how that card's TRUNCATED coupling rows treat the datum "
+                "gauge).");
+        if (network_carry_coupling_gauge_project_)
+            log->info("Network producer (Card 1f): coupling-row DATUM-GAUGE PROJECTION enabled — "
+                      "each (constellation,kind) coefficient sum of a TRUNCATED row is held at "
+                      "its HARVEST value instead of at the surviving-present value, so a departed "
+                      "or re-realized column can no longer turn the row into a high-weight "
+                      "observation of the current datum gauge pinned at the old realization.  "
+                      "Run-end counters: gauge-held / gauge-orphan families (invariant #4 — both "
+                      "zero means no row was ever truncated, i.e. INERT, not clean).");
+        // Card 1g: feed the coupling reinit history from every REALIZATION-STEP source
+        // (phase-anchor re-reference, eq34 chain re-reference, datum-slip PB
+        // re-realization) and honour it with the κ time update OFF.  Each of those
+        // erases the re-referenced family's OWN carry but leaves every OTHER carried
+        // local's coupling[] entry pointing at that column with a RETIRED-frame ŝ_prev,
+        // which buildCplRow then folds at full weight — the stale-ŝ_prev wire-poison
+        // channel (30 PBGAUGE + 27 CLK_STEP re-realizations in 120 epochs).  A
+        // re-realized column's step is UNKNOWN and cannot be transformed, so the only
+        // correct treatment is the departed route (κ=0); Card 1f then repairs the gauge
+        // deficit that marginalization opens.
+        network_carry_coupling_reinit_sources_ =
+            jval<bool>(json, "network.carry_coupling_reinit_sources",
+                       "carry_coupling_reinit_sources", false);
+        if (network_carry_coupling_reinit_sources_ && !network_carry_conditional_coupling_)
+            throw std::runtime_error(
+                "network.carry_coupling_reinit_sources requires network.carry_conditional_coupling "
+                "= true (it only changes which of that card's coupling terms take the departed "
+                "route).");
+        if (network_carry_coupling_reinit_sources_ && !network_carry_coupling_gauge_project_)
+            log->warn("Network producer (Card 1g): carry_coupling_reinit_sources is armed WITHOUT "
+                      "network.carry_coupling_gauge_project.  Routing a re-realized column to the "
+                      "departed route removes its stale frame step but OPENS the same "
+                      "family-sum deficit a departure opens — the row then observes the datum "
+                      "gauge.  The two cards are designed to be armed together.");
+        if (network_carry_coupling_reinit_sources_)
+            log->info("Network producer (Card 1g): coupling REINIT sources widened — the reinit "
+                      "history is now keyed (kind,sat,signal) with an empty signal as the "
+                      "sat-wide wildcard, fed by the phase-anchor / eq34 / datum-slip "
+                      "re-reference sets as well as the clock-QC sources, and honoured "
+                      "independently of network.carry_coupling_time_update.");
         // ZWD random-walk carry (B9): carry per-station tropospheric ZWD across epochs as a
         // diagonal RW prior via the same addStationPrior path as the ambiguity carry.
         network_carry_zwd_ =
@@ -2981,7 +3076,7 @@ namespace GnssProcessor {
                 jval<bool>(json, "network.prior_residual_corroborate",
                            "prior_residual_corroborate", false);
             // CONSTRAINT-AWARE GLOBAL VARIANCE COMPONENT
-            // (docs/SPEC_sigma0_constraint_aware.md) — a rider on the census
+            // (docs/SPEC_prior_residual_census.md §14) — a rider on the census
             // accumulator, parsed with it because it shares its rows.  The
             // raim_redundancy_normalize tripwire canNOT live here:
             // loadNetworkQcTiers_ runs AFTER this helper and has not resolved
@@ -3061,7 +3156,7 @@ namespace GnssProcessor {
                           pnc.prior_residual_corroborate ? "on" : "off");
                 if (pnc.prior_residual_global_sigma0)
                     log->info("Network producer (constraint-aware global σ̂₀, "
-                              "docs/SPEC_sigma0_constraint_aware.md): ARMED — per epoch "
+                              "docs/SPEC_prior_residual_census.md §14): ARMED — per epoch "
                               "σ̂₀²_global = (Σw·v² + Σw·ê²)/(Σr_data + Σr_prior), i.e. LASER 5-74's "
                               "prior residuals in the NUMERATOR and the constraints in the "
                               "REDUNDANCY, with Σw·ê²/Σw·v² ('how much of the epoch's tension lives "
@@ -3549,7 +3644,7 @@ namespace GnssProcessor {
                       "pool, σ̂0_adapt and the A4 ceiling are unchanged.",
                       network_raim_we_code_trigger_, network_raim_we_iono_trigger_);
 
-        // BAARDA RELIABILITY NUMBERS / MDB (docs/SPEC_network_mdb_reliability.md).
+        // BAARDA RELIABILITY NUMBERS / MDB (docs/SPEC_redundancy_census.md).
         // Parsed HERE, next to the B2 redundancy knob it rides, and AFTER
         // loadNetworkObservabilityAndSnapshot_ has resolved the redundancy-census
         // arming — so the precondition below reads final values of BOTH r_i
@@ -3617,7 +3712,7 @@ namespace GnssProcessor {
         }
 
         // BLOCKFORMAL — the (station, satellite) LOS block outlier census
-        // (docs/SPEC_block_baarda.md).  Parsed HERE, next to the MDB precondition
+        // (docs/SPEC_redundancy_census.md).  Parsed HERE, next to the MDB precondition
         // and for the same load-order reason: this card RIDES the redundancy
         // census's swept stations, and loadNetworkObservabilityAndSnapshot_ has
         // already resolved that card's arming, so the precondition below reads a
@@ -3755,7 +3850,7 @@ namespace GnssProcessor {
                 // smoke).  A block dominated by them comes back UNCHECKABLE by
                 // construction, not by data quality.
                 log->info("Network producer (block-Baarda census, "
-                          "docs/SPEC_block_baarda.md): ARMED (families='{}', window={} ep, "
+                          "docs/SPEC_redundancy_census.md): ARMED (families='{}', window={} ep, "
                           "min_blocks={}, report={:g}·t_B, corroborate={}).  Per (station, "
                           "satellite) LOS block of the redundancy census's SWEPT stations: "
                           "T_B = ẽ_Bᵀ Q_ẽ,B⁻¹ ẽ_B / b over the b ≤ 8 code+phase rows of one "
@@ -3778,7 +3873,7 @@ namespace GnssProcessor {
         }
 
         // STATION CONGRUENCE — coordinate-fault detection in position space
-        // (docs/SPEC_station_congruence.md).  Parsed HERE, immediately after the
+        // (docs/SPEC_redundancy_census.md).  Parsed HERE, immediately after the
         // block census and for the same load-order reason: it rides the SAME
         // redundancy-census sweep, whose arming loadNetworkObservabilityAndSnapshot_
         // has already resolved, so the precondition below reads a final value.
@@ -3850,7 +3945,7 @@ namespace GnssProcessor {
                 // struct default and confidently print the wrong regime.  The MDB
                 // table at run end is measured, not predicted, and settles it.
                 log->info("Network producer (station congruence, "
-                          "docs/SPEC_station_congruence.md): ARMED (report={:g}·t, "
+                          "docs/SPEC_redundancy_census.md): ARMED (report={:g}·t, "
                           "holdoff={} ep).  Per SWEPT station of the redundancy census: "
                           "δ̂ = M⁺H_BᵀP_Bẽ_B over its code+phase rows with M = "
                           "H_BᵀP_BQ_ẽ,BP_BH_B, tested as T = δ̂ᵀMδ̂/(q·σ̂₀²) and reported "
@@ -3876,7 +3971,7 @@ namespace GnssProcessor {
             }
         }
 
-        // CONSTRAINT-AWARE GLOBAL σ̂₀ (docs/SPEC_sigma0_constraint_aware.md §4).
+        // CONSTRAINT-AWARE GLOBAL σ̂₀ (docs/SPEC_prior_residual_census.md §14.4).
         // The knob itself was parsed in loadNetworkCarries_ next to the census it
         // rides; this is the DATA-SIDE precondition, and it has to live here
         // because network_raim_ / network_raim_redundancy_normalize_ are resolved
@@ -6495,7 +6590,7 @@ namespace GnssProcessor {
                               ? "EQUIVALENCE (SPEC §6.1: split per-band emission, no lane "
                                 "features — the structural-parity gate; ≤1e-9 equivalence holds "
                                 "in the unit harness, field runs diverge benignly via cycle-path-"
-                                "dependent membership, see HANDOFF_lane_carry_card.md)"
+                                "dependent membership, see SPEC_lane_carry_card.md §10 deviation 5)"
                               : "LANE (joint 2K blocks, diffuse lane birth, per-epoch MW/bridge "
                                 "increments, per-decided-epoch idempotent FFR lane re-pin)",
                           lc.q_wl_scale, lc.sigma_wl_fresh_cyc,

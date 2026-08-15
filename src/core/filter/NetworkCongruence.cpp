@@ -1,7 +1,7 @@
 /**
  * @file NetworkCongruence.cpp
  * @brief The STATION CONGRUENCE screen — the per-station coordinate sweep and its
- *        emission (docs/SPEC_station_congruence.md INC-1..3).  See
+ *        emission (docs/SPEC_redundancy_census.md CG-INC-1..3).  See
  *        NetworkCongruence.hpp for the design argument, the pinned sign
  *        convention and the two @f$\hat\sigma_0@f$ corrections inherited from the
  *        block card.

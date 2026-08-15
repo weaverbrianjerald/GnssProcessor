@@ -931,7 +931,7 @@ public:
     /**
      * @brief The @c b×b RESIDUAL COFACTOR of a block of one station's rows — the
      *        off-diagonal-preserving sibling of @ref rowRedundancy
-     *        (BlockFormal / Baarda block data snooping; @c docs/SPEC_block_baarda.md
+     *        (BlockFormal / Baarda block data snooping; @c docs/SPEC_redundancy_census.md
      *        INC-0).
      *
      * For a row subset @f$B@f$ of one station (the sweep's block is one

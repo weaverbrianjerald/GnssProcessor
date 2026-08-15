@@ -2,7 +2,7 @@
 /**
  * @file NetworkMdb.hpp
  * @brief Baarda reliability numbers (MDB) on the network path —
- *        docs/SPEC_network_mdb_reliability.md.
+ *        docs/SPEC_redundancy_census.md.
  *
  * Measure-only, default-OFF, OFF byte-identical, fingerprint-SAFE (a forward-only
  * readout that changes no stored-state meaning — the adaptive_iono_q /

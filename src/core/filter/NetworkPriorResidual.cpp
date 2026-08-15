@@ -94,7 +94,7 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     q.prires_hits_dropped += prires.hitsDropped();
 
     // --- the constraint-aware global variance component (the rider) -----------
-    // docs/SPEC_sigma0_constraint_aware.md.  Drained HERE and only here: this is
+    // docs/SPEC_prior_residual_census.md §14.  Drained HERE and only here: this is
     // the one point at which both sides are complete — the prior side from the
     // five census feeds (the last of them a few lines above) and the data side
     // from the post-fit RAIM row walk in SB_RAIM, which precedes SB_STASH_STATUS.
@@ -498,7 +498,7 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                   q.prires_max_t, q.prires_max_id);
 
     // --- the constraint-aware global variance component -----------------------
-    // docs/SPEC_sigma0_constraint_aware.md §2/§6.  Invariant #4 first: the
+    // docs/SPEC_prior_residual_census.md §14.2/§14.6.  Invariant #4 first: the
     // DENOMINATORS and the DEGRADATION MODE before any number, because a
     // sigma0_global quoted without knowing whether its data side was r ≡ 1 (or
     // empty) is not a measurement.

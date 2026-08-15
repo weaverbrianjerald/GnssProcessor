@@ -160,7 +160,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the 
  * @param x_s          The epoch's accepted POST-FIT shared solution.  The census
  *                     itself does not read it — @f$r_i@f$ is a property of the
  *                     geometry alone — but the BlockFormal rider that hangs off
- *                     this sweep (docs/SPEC_block_baarda.md) needs the post-fit
+ *                     this sweep (docs/SPEC_redundancy_census.md) needs the post-fit
  *                     residual @f$y - A_s x_s - A_r x_r@f$, and the whole point of
  *                     riding this seam is that the block sweep inherits its
  *                     stride/escalation schedule instead of adding a second one.

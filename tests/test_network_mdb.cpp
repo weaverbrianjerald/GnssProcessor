@@ -1,7 +1,7 @@
 /**
  * @file test_network_mdb.cpp
  * @brief BAARDA RELIABILITY NUMBERS / MDB on the network path
- *        (docs/SPEC_network_mdb_reliability.md).
+ *        (docs/SPEC_redundancy_census.md).
  *
  * MDB answers the service question the redundancy census only answers yes/no:
  * not "is this row checkable?" but "how large a fault could hide in it right

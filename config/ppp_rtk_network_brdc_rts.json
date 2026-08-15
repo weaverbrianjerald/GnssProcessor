@@ -9,7 +9,7 @@
 // the BROADCAST ephemeris (LiveEphemerisStore) instead of precise SP3/CLK; the
 // emitted C0 becomes a delta against broadcast(IODE).
 //
-// ── TURNKEY RUNBOOK (docs/rtf_card8_runbook.md) ─────────────────────────────
+// ── TURNKEY RUNBOOK (docs/rt_service_conventions.md §8) ─────────────────────────────
 // 1. Stage a brdc-only data root ONCE (strips the SP3/CLK that would trip the
 //    getOrbitCount()>0 || getClockCount()>0 hard-refuse):
 //        pwsh scripts/stage_brdc_only_root.ps1

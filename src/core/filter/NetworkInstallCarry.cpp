@@ -367,7 +367,7 @@ void networkInstallCarry(
         mw_wl_run.skip_mixed_frame  += mw_wl_epoch.skip_mixed_frame;
         mw_wl_run.sum_R             += mw_wl_epoch.sum_R;
 
-        // --- F6 one-shot attribution write (log-only; docs/HANDOFF_mw_wl_card.md §6c). ---
+        // --- F6 one-shot attribution write (log-only; docs/SPEC_mw_wl_card.md §14). ---
         // The accepted epoch's x_s is final here; add reconstructed_abs (the estimator's
         // current WL DD over the same cycle) + the kernel WL-block innovation, then dump.
         if (mw_wl_f6_dump && !mw_wl_f6.written && mw_wl_f6.pending
@@ -742,7 +742,7 @@ void networkInstallCarry(
     // F-A attribution dump (log-only, network.mw_wl.d5_dump): one CSV row per D5
     // flag with adjacency tags.  Uses the SAME reverse map as the funnel above.
     //
-    // Card D5-A/D2 (docs/SPEC_slip_qc_followups.md §1): the trailing
+    // Card D5-A/D2 (docs/SPEC_slip_qc_hardening.md §9.1): the trailing
     // `raw_stepped` column is the CHEAP EXACT-EPOCH raw-step tag — did the
     // receiver's own MW/GF level step at this (station, satellite) on this
     // epoch?  It is deliberately TRI-STATE, not 0/1:

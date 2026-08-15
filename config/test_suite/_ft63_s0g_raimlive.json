@@ -1,6 +1,6 @@
 {
  "_comment": [
-  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_sigma0_constraint_aware.md) -- THE",
+  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_prior_residual_census.md §14) -- THE",
   "ARM THE CARD IS GRADED ON.  Extends _ft63_s0g_raimlive_off.json; the ONLY",
   "delta is network.prior_residual_global_sigma0 (plus the run paths).",
   "",

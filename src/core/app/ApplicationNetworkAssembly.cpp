@@ -6,7 +6,7 @@
  *        registration, and PASS-B produce/consume.
  *
  * Decomposition INC-7 (2026-07-16) — bodies relocated VERBATIM from
- * ApplicationNetwork.cpp (see docs/network_decomposition_addendum_2026-07-16.md).
+ * ApplicationNetwork.cpp (see docs/network_decomposition_plan.md).
  * Former run-TU [&] lambdas become private Application member functions:
  * ambient captures become explicit parameters or member reads (capture→param
  * map recorded in the INC-7 cut spec); bodies are textually unchanged.  The
@@ -1890,6 +1890,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // Card 1b: JOINTLY whiten the coupling rows (departed cols → M_w) — requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // Card 1d: border time update of the coupling rows at injection (κ shrink + M²κq inflation) — requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_shmarg = ctx.knobs.carry_cpl_shmarg; // Card 1d-SH: fully marginalize VtecSh coupling terms (GM border ≠ RW κ model — severs the amb↔SH carry feedback) — requires carry_cpl_cond (enforced at load)
+    const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // Card 1g: widen the reinit feed to the realization-step sources and honour it with κ off — requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // B9: carry per-station ZWD across epochs
     const double zwd_q         = ctx.knobs.zwd_q;                // B9: ZWD carry random-walk process noise (m²/s)
     const bool   rx_cb_on      = ctx.knobs.rx_cb_on;             // rx-CB carry (SPEC_rx_cb_carry)
@@ -1918,7 +1919,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // single answer to "which columns are enumerable" (the same discipline that
     // made `pl_amb` a subset of `qc_amb` instead of a sibling).
     const bool pd_handover_continuous  = ctx.knobs.pd_handover_continuous;
-    // Station congruence screen, INC-0 (docs/SPEC_station_congruence.md).  The ONLY
+    // Station congruence screen, CG-INC-0 (docs/SPEC_redundancy_census.md).  The ONLY
     // thing the assembly owes that card: retain each data row's position partial,
     // which networkSplitStation_ is about to drop on the floor because the network
     // holds every coordinate fixed.  OFF ⇒ the block below never runs and
@@ -2099,17 +2100,44 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // and the HARD-refloat mode (clk_mon_reinit_sig ≤ 0 skip-stashes the flagged
     // sat entirely — no prev_carry entry to mirror; all three kinds decorrelate,
     // matching the skip-stash).  Updated SERIALLY; PASS B only reads it.
-    if (carry_cpl_tu) {
+    //
+    // Card 1g (network.carry_coupling_reinit_sources) widens BOTH halves of this: the
+    // key gains a signal field (empty = the SAT-WIDE wildcard these clock-QC feeds
+    // write, since they decorrelate a whole satellite kind-by-kind), and the
+    // REALIZATION-STEP sources below join it.  Those are a different failure: not a
+    // decorrelated variance but a FRAME STEP.  A phase-anchor handover, an eq34 chain
+    // re-reference or a datum-slip PB re-realization each erase the re-referenced
+    // family's OWN carry, yet every OTHER carried local keeps a coupling[] entry on
+    // that column holding a retired-frame ŝ_prev — folded at full weight, that injects
+    // the step as row bias at conditional-variance confidence.  The step is UNKNOWN
+    // (that is what distinguishes it from the eq34 D4 S-transform, which knows its
+    // own shift and re-bases the carry exactly), so the departed route is the only
+    // correct treatment.  Both reref sets are resolved at the phase-datum election,
+    // strictly BEFORE this serial write and hence before PASS B reads it.
+    if (carry_cpl_tu || carry_cpl_reinit) {
         for (const CarryPrior& cp : prev_carry)
             if (cp.inflate_q)
-                tu_reinit_hist[{cp.kind, cp.sat}] = pl_now_s;
+                tu_reinit_hist[{cp.kind, cp.sat, std::string{}}] = pl_now_s;
         for (const std::string& sat : prev_clock_refloat_sats) {
-            tu_reinit_hist[{SharedParamKind::Clock, sat}] = pl_now_s;
+            tu_reinit_hist[{SharedParamKind::Clock, sat, std::string{}}] = pl_now_s;
             if (!(clk_mon_reinit_sig > 0.0)) {
-                tu_reinit_hist[{SharedParamKind::PhaseBias, sat}] = pl_now_s;
-                tu_reinit_hist[{SharedParamKind::CodeBias, sat}] = pl_now_s;
+                tu_reinit_hist[{SharedParamKind::PhaseBias, sat, std::string{}}] = pl_now_s;
+                tu_reinit_hist[{SharedParamKind::CodeBias, sat, std::string{}}] = pl_now_s;
             }
         }
+    }
+    if (carry_cpl_reinit) {
+        // QUEUE item 1(d)'s anchored-election handovers and the eq34 chain datum's
+        // re-references: both are sets of (sat, signal), which is exactly the
+        // granularity at which a phase-bias datum is realized.
+        for (const auto& [sat, sig] : ctx.carry.phase_anchor_reref)
+            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, sig}] = pl_now_s;
+        for (const auto& [sat, sig] : ctx.carry.eq34_reref)
+            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, sig}] = pl_now_s;
+        // The datum-slip re-realization marks whole satellites (the slip is on the
+        // pin-holder's arc, not on one signal) — sat-wide wildcard.
+        for (const std::string& sat : ctx.carry.datum_reref_pb_sats)
+            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, std::string{}}] = pl_now_s;
     }
 
     #pragma omp parallel for schedule(dynamic) num_threads(n_threads) if(parallel_on)
@@ -2178,7 +2206,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             std::map<int, int>& h2local = R.h2local;
             networkSplitStation_(st, est, em, R.A_s, R.A_r, R.w, R.y, h2local);
 
-            // --- INC-0, station congruence screen (docs/SPEC_station_congruence.md)
+            // --- CG-INC-0, station congruence screen (docs/SPEC_redundancy_census.md)
             // Retain the per-row POSITION PARTIAL that networkSplitStation_ just
             // discarded, rotated into the station's local ENU frame.  This is the
             // one place in the run where the row geometry still exists: three
@@ -2260,7 +2288,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 std::vector<int> pin_col;       // A_r column of each pin
                 std::vector<double> pin_y;       // innovation = target - current absolute value
                 std::vector<double> pin_w;       // row information weight: 1e10 hard pins, 1/σ² RPB priors
-                // Chain-pin audit (HANDOFF_wsh_chain_slant T1): each fold lambda
+                // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): each fold lambda
                 // reports its outcome so the eq34 call sites below can tally the
                 // silent early-returns per (constellation,signal) — the number
                 // standing invariant #4 requires.  0 = folded, 1 = state index
@@ -2587,6 +2615,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 // write, safe in the parallel produce phase), appended after the carry loops.
                 CouplingRowBuilder cb{est, shc, q_clock, q_cb, q_pb,
                                       carry_cpl_joint, carry_cpl_tu, carry_cpl_shmarg,
+                                      ctx.knobs.carry_cpl_gauge, ctx.knobs.carry_cpl_reinit,
                                       tu_reinit_hist, R};
                 if (legacy_local_inject) {
                 // Ambiguity carry.  Legacy: the whole pivot station is skipped (all
@@ -2894,6 +2923,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             registered_clock_sats, shared_phase_keys, registered_code_keys,
                             se.time.tow, log,
                             n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
+                            ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan,
+                            ctx.counters.n_cpl_reinit_diverted,
                             n_cpl_row_dump);
 
     // SD pre-reduce EWL trace drain (SERIAL, post-produce — SPEC_sd_ewl_prereduce §6).
@@ -3025,7 +3056,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         }
     }
 
-    // Chain-pin audit (HANDOFF_wsh_chain_slant T1): compare the pins that LANDED
+    // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): compare the pins that LANDED
     // — folded by foldAmb/foldRpb AND sitting on a station est.addStation
     // accepted — against the election's declared per-group gauge dimension
     // Σ (n_c + m_c), minus the hygiene bridge pins realized on the shared side.

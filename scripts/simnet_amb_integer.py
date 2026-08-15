@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """SYNTHETIC MINIMUM NETWORK — the ambiguity-INTEGER grader
-(docs/HANDOFF_slant_triple_next.md §3; SPEC_synthetic_minimum_network §13).
+(docs/SPEC_synthetic_minimum_network.md §13.6 (method rules §13.8); SPEC_synthetic_minimum_network §13).
 
 The first absolute integer test the network has ever had.  The field can only
 measure the FRACTIONAL part of a DD ambiguity (med|frac| 0.248 says "no integer

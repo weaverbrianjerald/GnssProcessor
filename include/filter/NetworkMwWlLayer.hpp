@@ -10,7 +10,7 @@
  * the KF-implied WL is uniform (circR ~ 0.001-0.11) in every configuration even
  * though the estimator-free MW census of the same raw data shows the WL integers
  * plainly present (circR ~ 0.62).  See memory `project_wl_structural_gap_jul15`
- * and `docs/NIGHTRUN_REPORT_2026-07-15.md`.
+ * and `docs/CONFIG_promotion_ledger.md §A1`.
  *
  * This layer supplies the missing accumulator.  The per-station MwSlipDetector
  * already maintains a per-arc Welford mean of the Melbourne-Wubbena observable.
@@ -58,7 +58,7 @@
  * coupling is approximate.  This is a Phase-A float pre-conditioner (the emitted
  * product stays datum-invariant — the WL rows are gauge-free, so the W5 null space
  * is untouched); the empirical size of the approximation is a Phase-A grading
- * question (SPEC §7.6).  See docs/HANDOFF_mw_wl_card.md.
+ * question (SPEC §7.6).  See docs/SPEC_mw_wl_card.md §13.2 (this exact fold-composition question) and §15.
  */
 
 #include "filter/NetworkNormalEquations.hpp"   // DdPriorBlock

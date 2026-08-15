@@ -446,12 +446,15 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
 
 void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
                                         int declared_dim, double tol,
-                                        int* observed_out) const {
+                                        int* observed_out, double* ev_max_out) const {
     // DG6: report the observed count on EVERY exit that computed one, including
     // the throwing one — the caller cannot recompute it from the exception and
     // "over-specified" (observed < declared) has to be countable separately from
     // a generic withhold.  Structurally observational: nothing below reads it.
     if (observed_out) *observed_out = 0;
+    // Invariant #7: same contract for λmax (the caller reconstructs the gate's own
+    // cutoff from it).  -1 = "no spectrum was computed on this exit".
+    if (ev_max_out) *ev_max_out = -1.0;
     const Eigen::Index n = reduced_N_ss.rows();
     if (n == 0) {
         if (declared_dim != 0) {
@@ -491,6 +494,7 @@ void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
     for (Eigen::Index i = 0; i < ev.size(); ++i)
         if (ev(i) < cutoff) ++near_zero;
     if (observed_out) *observed_out = near_zero;
+    if (ev_max_out)   *ev_max_out   = smax;
 
     if (near_zero != declared_dim) {
         throw std::runtime_error(fmt::format(

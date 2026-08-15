@@ -9,7 +9,7 @@
  * stream produces, so a run can feed @c LiveEphemerisStore from a file exactly
  * as the real-time engine feeds it from the wire.  This is the "frame
  * consistency from the shared code path" requirement of the brdc_rts network
- * producer (see @c docs/rt_service_conventions.md §1, @c docs/rtf12_brdc_rts_plan.md
+ * producer (see @c docs/rt_service_conventions.md §1, @c docs/rt_service_conventions.md §7
  * Card 2): the producer and every consumer resolve satellite state through the
  * same store, so replaying with a RINEX-nav-populated store is bit-consistent
  * with a live RTCM-nav-populated store.

@@ -48,9 +48,9 @@
 #include <fmt/format.h>
 
 #include "app/NetworkRunContext.hpp"
-#include "filter/NetworkBlockBaarda.hpp" // BlockFormal LOS-block rider on this sweep (SPEC_block_baarda)
-#include "filter/NetworkCongruence.hpp" // Station congruence rider on this sweep (SPEC_station_congruence)
-#include "filter/NetworkMdb.hpp"        // Baarda MDB rider on the swept r_i (SPEC_network_mdb_reliability)
+#include "filter/NetworkBlockBaarda.hpp" // BlockFormal LOS-block rider on this sweep (SPEC_redundancy_census)
+#include "filter/NetworkCongruence.hpp" // Station congruence rider on this sweep (SPEC_redundancy_census)
+#include "filter/NetworkMdb.hpp"        // Baarda MDB rider on the swept r_i (SPEC_redundancy_census)
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkRowClassify.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -209,12 +209,12 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     const double escal_sig  = nc.redundancy_escalate_sigma;
     const int    stride     = nc.redundancy_census_stride;
     const int    holdoff    = std::max(0, nc.redundancy_event_holdoff_ep);
-    // docs/SPEC_network_mdb_reliability.md INC-0: the MDB rider on this sweep's
+    // docs/SPEC_redundancy_census.md MDB-INC-0: the MDB rider on this sweep's
     // r_i.  Swept-row MDB inherits the census's stride and escalation exactly —
     // no new sweeps, no second covariance product, one division per swept row.
     const bool   mdb_on     = ctx.knobs.mdb_on && ctx.knobs.mdb_from_census;
     const double mdb_delta0 = baardaDelta0(config_.dataSnoopingCritical());
-    // docs/SPEC_block_baarda.md INC-1: the BlockFormal rider on this sweep's
+    // docs/SPEC_redundancy_census.md BB-INC-1: the BlockFormal rider on this sweep's
     // SWEPT stations.  It inherits the stride, the targeted escalation and the
     // trip-forced full sweep exactly — SPEC §4 makes "no new scheduler" the
     // design constraint, which is why it lives here rather than in a seam of its
@@ -222,7 +222,7 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     // that silently censused the PREFIT innovation would produce a plausible
     // ladder of the wrong quantity.
     const bool bb_on = ctx.knobs.bb_on && ctx.carry.bb.enabled() && x_s.size() > 0;
-    // docs/SPEC_station_congruence.md INC-1: the SECOND rider on this sweep — the
+    // docs/SPEC_redundancy_census.md CG-INC-1: the SECOND rider on this sweep — the
     // coordinate-fault screen in position space.  Same host, same stride, same
     // post-fit residual (formed once below and handed to both riders), and the
     // same empty-x_s disarm: a screen run on the PREFIT innovation would produce a
@@ -440,7 +440,7 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         counters.redun_mass        += sta_sum_r;
 
         // ---- BLOCKFORMAL rider: the (station, satellite) LOS blocks ---------
-        // docs/SPEC_block_baarda.md INC-1.  Same station, same rows, same
+        // docs/SPEC_redundancy_census.md BB-INC-1.  Same station, same rows, same
         // hoisted covariance, same kernel slot the row census just used — the
         // whole cost delta is one back-substitution, two GEMVs and a b×b solve
         // per block with b ≤ 8.
@@ -452,7 +452,7 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             // in the D0 cov_consumers_ms line and SPEC §5's budget stays checkable.
             //
             // BOTH riders read it, and it is formed ONCE: the congruence screen
-            // (docs/SPEC_station_congruence.md) needs the same y − A_s x_s − A_r x_r
+            // (docs/SPEC_redundancy_census.md) needs the same y − A_s x_s − A_r x_r
             // over the same station, so a second reconstructStation here would
             // double the one genuinely expensive call in either card's budget.
             Eigen::VectorXd x_r;
@@ -496,7 +496,7 @@ void networkRedundancyCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 }
 
                 // ---- CONGRUENCE rider: the station's coordinates -------------
-                // docs/SPEC_station_congruence.md INC-1.  AFTER the block sweep,
+                // docs/SPEC_redundancy_census.md CG-INC-1.  AFTER the block sweep,
                 // deliberately: INC-3's separability join needs to know whether
                 // the per-LOS tier flagged anything at THIS station THIS epoch,
                 // and the hit-count delta is that verdict at its source.  Reading

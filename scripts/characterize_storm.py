@@ -747,7 +747,7 @@ def _diff_row(name, a, b, na, nb, u):
 # A4 cross-check
 # ---------------------------------------------------------------------------
 ORACLE = {
-    'source': 'docs/HANDOFF_cb_admission_card.md, 305 CONTROL arm '
+    'source': 'docs/SPEC_cb_admission_card.md §10.6, 305 CONTROL arm '
               '(_maxnet_305_gpsgalbds_d15_5ep_ctl.json), 2026-07-22',
     'n_dumps': 6,
     'n_below_across_dumps': 135,

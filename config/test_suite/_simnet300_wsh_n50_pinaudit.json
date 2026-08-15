@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "T1 CHAIN-PIN AUDIT rung (docs/HANDOFF_wsh_chain_slant.md §5) — eq34 re-run",
+    "T1 CHAIN-PIN AUDIT rung (docs/SPEC_synthetic_minimum_network.md §14 T1 (measured record §12.8.1)) — eq34 re-run",
     "with the two confounds cleared and the pin pipeline COUNTED.",
     "",
     "Rungs 2/6 armed the Eq-34 chain datum and still emitted 0/19, which reads as",

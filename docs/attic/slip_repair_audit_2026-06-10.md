@@ -352,7 +352,7 @@ findings were refuted by verification.
 The two missing dimensions ran against the working tree including the Pass-1 fixes
 (F1–F4), with those fixes explicitly in scope for adversarial review. 36 agents, full
 3-lens verification on every finding: **11 confirmed, 0 refuted.** Raw results with all
-verdicts: `docs/slip_repair_audit_2026-06-10_pass2_results.json`.
+verdicts: `docs/attic/slip_repair_audit_2026-06-10_pass2_results.json` (moved with this file).
 The completeness critic additionally built the full tree and ran `gnss_tests` (189/190,
 1 fixture skip) — note **the "no test suite" known-state in CLAUDE.md is stale**: 190
 registered tests across 45 suites exist, none covering the slip chain.

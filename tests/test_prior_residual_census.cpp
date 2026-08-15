@@ -35,7 +35,7 @@
  *
  * ## Cases 13-18: the constraint-aware global variance component (the rider)
  *
- * docs/SPEC_sigma0_constraint_aware.md — LASER 5-74's OTHER half, pooling the
+ * docs/SPEC_prior_residual_census.md §14 — LASER 5-74's OTHER half, pooling the
  * SAME rows into the global scale
  * @f$\hat\sigma_0^2 = (\tilde e^\top P\tilde e + \tilde e_0^\top P_0 \tilde e_0)
  *                     /(n-m+l)@f$.  Same suite and same file on purpose: the
@@ -103,7 +103,7 @@ NetworkPriorResidual::Input row(double e, double fold_var, double post_var,
 }
 
 /// A census with the constraint-aware global variance component ARMED
-/// (docs/SPEC_sigma0_constraint_aware.md).  Warm-up is pushed out of reach by
+/// (docs/SPEC_prior_residual_census.md §14).  Warm-up is pushed out of reach by
 /// default: the rider's sums are independent of the σ̂₀ calibration, and pinning
 /// the ladder side raw-formal keeps the two concerns from being confused.
 NetworkPriorResidual makeGlobalCensus(double min_rows = 1e18) {
@@ -570,7 +570,7 @@ TEST(PriorResidualCensusTest, IdentityBufferCapNeverThinsTheLadder) {
 
 // ===========================================================================
 //  THE CONSTRAINT-AWARE GLOBAL VARIANCE COMPONENT
-//  (docs/SPEC_sigma0_constraint_aware.md) — LASER 5-74's other half
+//  (docs/SPEC_prior_residual_census.md §14) — LASER 5-74's other half
 // ===========================================================================
 
 // ---------------------------------------------------------------------------

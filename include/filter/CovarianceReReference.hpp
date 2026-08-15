@@ -19,14 +19,14 @@
  * others (a different S-transform).  Only the @c enforcePsd guard is shared with
  * DD; its transform stays in @c DdPivotManager.
  *
- * NOTE on guarding (conformance doc §8.7): the single-receiver user BSSD path
- * (@c PivotManager) deliberately runs UNGUARDED — at user scale the groups are
- * small (~8–12 states) and handovers are rare, so FP error in T·P·Tᵀ does not
- * accumulate.  The minimum-constraint NETWORK producer, whose handover groups
- * span every station's ambiguity column and fire every broadcast interval, MUST
- * call @c enforcePsd after the transform.  Keeping the guard a separate, opt-in
- * call preserves the validated user-path numerics byte-for-byte while making the
- * network path safe.
+ * NOTE on guarding (docs/SPEC_sbasis_realization_contract.md §F8.7): the
+ * single-receiver user BSSD path (@c PivotManager) deliberately runs UNGUARDED
+ * — at user scale the groups are small (~8–12 states) and handovers are rare,
+ * so FP error in T·P·Tᵀ does not accumulate.  The minimum-constraint NETWORK
+ * producer, whose handover groups span every station's ambiguity column and
+ * fire every broadcast interval, MUST call @c enforcePsd after the transform.
+ * Keeping the guard a separate, opt-in call preserves the validated user-path
+ * numerics byte-for-byte while making the network path safe.
  */
 
 #pragma once

@@ -7,7 +7,7 @@
  *        counter POD.
  *
  * Hoisted VERBATIM from ApplicationNetwork.cpp (decomposition INC-3,
- * 2026-07-16; see docs/network_decomposition_addendum_2026-07-16.md).  Scope
+ * 2026-07-16; see docs/network_decomposition_plan.md).  Scope
  * is deliberately narrow: this unit owns what needs ONLY streams, paths, and
  * config — the per-epoch/state-reading writers (health heartbeat,
  * emitEpochStatus/emitEvent bodies, the L15 run manifest, the teardown
@@ -143,7 +143,7 @@ namespace GnssProcessor {
         "max_fold_var_m2,max_post_var_m2,max_gap_s,"
         "c_hi_noev,c_hi_flat,c_hi_step,c_lo_noev,c_lo_flat,c_lo_step,"
         "corrob_domain,corrob_or_step,corrob_step,corrob_max_frac\n";
-    /// network_block_baarda.csv header (docs/SPEC_block_baarda.md INC-1..3).
+    /// network_block_baarda.csv header (docs/SPEC_redundancy_census.md BB-INC-1..3).
     /// One row per (constellation family x label) per epoch that swept a block.
     ///
     /// ⚠ THE UNIT OF `t_B` IS A VARIANCE RATIO, NOT A SIGMA.  T_B carries the
@@ -173,7 +173,7 @@ namespace GnssProcessor {
         "n_gt_100,n_gt_200,"
         "max_t,max_T,max_row_t,max_b,max_station,max_sat,max_block_only,"
         "c_hi_noev,c_hi_flat,c_hi_step,c_lo_noev,c_lo_flat,c_lo_step\n";
-    /// network_congruence.csv header (docs/SPEC_station_congruence.md INC-1..3).
+    /// network_congruence.csv header (docs/SPEC_redundancy_census.md CG-INC-1..3).
     /// One row per SWEPT STATION per epoch — not a ladder, unlike the two censuses
     /// above: SPEC §7.2 grades a per-station run-median of `d_e` and §7.3's MDB
     /// table is a per-station, per-direction quantity, and neither survives
@@ -250,7 +250,7 @@ namespace GnssProcessor {
         "obs_src,declared,observed,obs_extras,obs_dirs,"
         "c_pred_obs,c_pred_only,c_obs_only,c_obs_matched,s_pred_obs,s_pred_only,"
         "kp_armed,pred_obs_ids,pred_only_ids,obs_only_ids,ms\n";
-    /// network_mdb.csv header (docs/SPEC_network_mdb_reliability.md INC-1).
+    /// network_mdb.csv header (docs/SPEC_redundancy_census.md MDB-INC-1).
     /// One row per (constellation x row class) per epoch that binned a row.
     ///
     /// `n_rows` = `n_inf` + `n_finite`.  The order statistics are over the FINITE
@@ -454,11 +454,11 @@ namespace GnssProcessor {
         /// OFF: no file opened, no rows written).
         std::ofstream prior_residual_trace;
         const std::filesystem::path prior_residual_trace_path;
-        std::ofstream block_baarda_trace;                       ///< docs/SPEC_block_baarda.md INC-1..3 ladder rows.
+        std::ofstream block_baarda_trace;                       ///< docs/SPEC_redundancy_census.md BB-INC-1..3 ladder rows.
         const std::filesystem::path block_baarda_trace_path;
-        std::ofstream congruence_trace;                         ///< docs/SPEC_station_congruence.md INC-1..3 per-station coordinate-offset rows (the MDB table's source).
+        std::ofstream congruence_trace;                         ///< docs/SPEC_redundancy_census.md CG-INC-1..3 per-station coordinate-offset rows (the MDB table's source).
         const std::filesystem::path congruence_trace_path;
-        /// BAARDA RELIABILITY / MDB (docs/SPEC_network_mdb_reliability.md INC-1):
+        /// BAARDA RELIABILITY / MDB (docs/SPEC_redundancy_census.md MDB-INC-1):
         /// the card's HEADLINE product — one row per (constellation x row class)
         /// per epoch that binned a row, carrying the FORMAL MDB distribution
         /// (median / p95 / max, metres), the count of UNCHECKABLE rows whose MDB
@@ -514,7 +514,7 @@ namespace GnssProcessor {
         /// so a spanning direction can be named, not just weighed.
         std::ofstream sh_spectrum_mode_trace;
         const std::filesystem::path sh_spectrum_mode_trace_path;
-        /// SPEC_day129_frame_guards §4.3 (@c network.trace_postfit_keyed): keyed
+        /// SPEC_day129_frame_guards P1-4 (@c network.trace_postfit_keyed): keyed
         /// robust post-fit pools from the P1-4 residual pass — one row per
         /// (kind ∈ {STA, SAT, SIG}, key) per emitted epoch, {code, phase} pools
         /// each (n, σ̂0 = 1.4826·median, rms, max of |v|√w).  The RHS-localization
@@ -602,7 +602,7 @@ namespace GnssProcessor {
         bool es_prires_columns_ = false;
 
         /// L1: are the three constraint-aware global-σ̂₀ columns part of this
-        /// run's epoch-status schema (docs/SPEC_sigma0_constraint_aware.md)?
+        /// run's epoch-status schema (docs/SPEC_prior_residual_census.md §14)?
         /// DELIBERATELY a separate flag from @ref es_prires_columns_ rather than
         /// three more columns under the census's own arm: the census's §9.1 gate
         /// is a same-build A/B of this very file, so a census-only run must keep

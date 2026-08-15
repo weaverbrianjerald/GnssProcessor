@@ -17,12 +17,15 @@
  * between-row DD information the scalar path drops is preserved; Card 1d
  * (carry_coupling_time_update) shrinks each PRESENT column by
  * @f$\kappa_j=P_{\text{prev}}/(P_{\text{prev}}+q_j\Delta t)@f$ and re-projects the
- * shrink gauge-orthogonally (@ref CouplingRowBuilder::tuGaugeRestore).
+ * shrink gauge-orthogonally (@ref CouplingRowBuilder::tuGaugeRestore); Card 1f
+ * (carry_coupling_gauge_project) extends that same re-projection to cover the
+ * TRUNCATED columns, whose deletion is what actually breaks the row's gauge
+ * invariance — the departed-column defect this card exists to close.
  *
  * Seeded at decomposition INC-7b (2026-07-17), which relocated the coupling
  * cluster VERBATIM out of Application::networkPassB_
  * (ApplicationNetworkAssembly.cpp; see
- * docs/network_decomposition_addendum_2026-07-16.md).  @ref CouplingRowBuilder
+ * docs/network_decomposition_plan.md).  @ref CouplingRowBuilder
  * is constructed FRESH per station inside the PASS-B OpenMP produce loop — it
  * models the former loop-body scratch (the four @c crows / @c craw / @c white_pw
  * / @c white_map containers) and the six former @c [&] lambdas as members over
@@ -43,6 +46,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -98,8 +102,18 @@ struct CouplingRowBuilder {
     bool                       carry_cpl_joint;   ///< Card 1b: joint-whiten departed cols
     bool                       carry_cpl_tu;      ///< Card 1d: border time update (κ shrink)
     bool                       carry_cpl_shmarg;  ///< Card 1d-SH: marginalize VtecSh terms
-    /// Card 1d reinit history (kind,sat)→last reinit-fold content time; read-only here.
-    const std::map<std::pair<SharedParamKind, std::string>, double>& tu_reinit_hist;
+    /// Card 1f (network.carry_coupling_gauge_project): hold each (constellation,kind)
+    /// coefficient sum at its HARVEST value when the row is truncated, instead of at the
+    /// surviving-present value.  See @ref CouplingRowBuilder::tuGaugeRestore.
+    bool                       carry_cpl_gauge;
+    /// Card 1g (network.carry_coupling_reinit_sources): honour @c tu_reinit_hist even with
+    /// the κ time update OFF, and probe the (kind,sat,signal) key as well as the sat-wide
+    /// wildcard.  See @ref CouplingRowBuilder::tuReinitSince.
+    bool                       carry_cpl_reinit;
+    /// Card 1d/1g reinit history (kind,sat,signal)→last reinit-fold content time; read-only
+    /// here.  An EMPTY signal is the SAT-WIDE wildcard (the clock-QC and datum-slip feeds
+    /// mark a whole satellite; the realization-step feeds mark one (sat,signal) family).
+    const std::map<std::tuple<SharedParamKind, std::string, std::string>, double>& tu_reinit_hist;
     StationAssembly&           R;                 ///< this thread's own PASS-B slot (= asm_res[i])
 
     std::vector<PendCplRow>    crows{};    ///< Card 1 scalar-path pending rows
@@ -113,10 +127,32 @@ struct CouplingRowBuilder {
     static std::string couplingId(const CoupledShared& cs);
     /// Per-kind border process noise (m²/s) — the dense-fold q ladder + SH per-degree.
     double couplingQ(const CoupledShared& cs) const;
-    /// Card 1d gauge re-projection: restore each (constellation,kind) coeff sum so the
-    /// κ shrink stays gauge-orthogonal (else every shrunk row observes the gauge).
-    static void tuGaugeRestore(std::vector<TuEnt>& ents);
-    /// True when the (kind,sat) column reinit-folded after @p since_s (q=∞ marginalize).
+    /// Card 1d/1f gauge re-projection: hold each (constellation,kind) coefficient sum at
+    /// the value the HARVEST regression had, so the row keeps observing the datum gauge
+    /// exactly as much as its @f$A_r=+1@f$ local requires — and no more.
+    ///
+    /// The harvest identity is @f$M^{\mathsf T}g_s=-g_r(c)@f$, NOT @f$M^{\mathsf T}g_s=0@f$
+    /// (a Galileo ambiguity row measures @f$\Sigma_E=-1@f$ exactly — the E gauge moves E
+    /// ambiguities by +1; `docs/SPEC_card1_coupling_carry.md` §1).  So the correct target
+    /// is the harvested sum, and "annihilate the sum" would itself inject a gauge
+    /// observation on every row whose local carries gauge weight.
+    ///
+    /// @param ents      buffered PRESENT terms; @c m_shr is updated in place.
+    /// @param trunc_sum Card 1f: per (constellation,kind) sum of the coefficients of the
+    ///        TRUNCATED columns (departed, or reinit-forced onto the departed route).
+    ///        @c nullptr reproduces the Card-1d behaviour byte-for-byte — the deficit is
+    ///        then the κ shrink alone, which is correct only when nothing was truncated.
+    ///
+    /// Card 1d restored @f$\Sigma_{\text{present}}(m_{un}-m_{shr})@f$, which is blind to a
+    /// DEPARTED column: deleting its coefficient leaves @f$\Sigma_{\text{family}}M=-M_{dep}@f$
+    /// and the row becomes a high-weight observation of the CURRENT gauge pinned at the OLD
+    /// realization (measured: 7 departures drove the smallest null eigenvalue 1e-11 → 9.43e-3,
+    /// five decades over the gate cutoff, for 4 spurious OVER-specified withholds).  Folding
+    /// the truncated coefficients into the SAME deficit fixes departures and the κ shrink in
+    /// one expression, and reduces EXACTLY to Card 1d when nothing departed.
+    void tuGaugeRestore(std::vector<TuEnt>& ents,
+                        const std::map<std::pair<char, int>, double>* trunc_sum) const;
+    /// True when the (kind,sat[,signal]) column reinit-folded after @p since_s (q=∞ marginalize).
     bool tuReinitSince(const CoupledShared& cs, double since_s) const;
     /// Build ONE coupling row for carried local column @p col (buffered, not yet appended).
     void buildCplRow(Eigen::Index col, double x_lin_val,
@@ -143,6 +179,9 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                              long long& n_cpl_terms_present,
                              long long& n_cpl_terms_departed,
                              long long& n_cpl_terms_shrunk,
+                             long long& n_cpl_gauge_held,
+                             long long& n_cpl_gauge_orphan,
+                             long long& n_cpl_reinit_diverted,
                              int& n_cpl_row_dump);
 
 } // namespace GnssProcessor

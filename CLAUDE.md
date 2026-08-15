@@ -138,7 +138,7 @@ runs/                 Campaign run outputs.  ⚠️ ARCHIVED OFF C: on 2026-08-1
                       40.6 GB) along with the pre-VS2026 build/ trees, to
                       reclaim disk.  Both are git-ignored.  Reports that cite
                       a `runs/<name>` or `build/x64-Release/run_<name>` path
-                      (e.g. NIGHTRUN_REPORT_2026-07-15.md,
+                      (e.g. CONFIG_promotion_ledger.md §A1,
                       CLOCK_HADAMARD_CALIB_2026-07-14.md) resolve under the
                       archive, NOT in the working tree.  Per user: those
                       results predate the recent network work and are not
@@ -579,7 +579,7 @@ JSON to retain the compressed copy (for byte-exact archival).
 
 ### Network producer — where new code goes (anti-regrowth decision-tree)
 
-`src/core/app/ApplicationNetwork.cpp` (`runNetwork`) was decomposed (INC-0..12) from ~14.7k lines to ~1.6k lines of thin epoch-loop orchestration; the per-epoch body is a sequence of `subBegin; networkX_(...); subEnd;` calls into single-concern seams. **Keep it thin** — new network-producer code goes in the seam matching its concern, NOT inline in the driver:
+`src/core/app/ApplicationNetwork.cpp` (`runNetwork`) was decomposed (INC-0..12) from ~14.7k lines to ~1.6k lines of thin epoch-loop orchestration at INC-12 (**2,359 lines as of 2026-08-15** — accreted ~750 since the cut; re-measure before quoting); the per-epoch body is a sequence of `subBegin; networkX_(...); subEnd;` calls into single-concern seams. **Keep it thin** — new network-producer code goes in the seam matching its concern, NOT inline in the driver:
 
 - **New per-epoch estimation/QC step** → the matching `filter/Network*` seam (or a new one) called from the loop. Datum/solve → `NetworkSbasis` / `NetworkChainDatum` / `NetworkPhaseDatum` / `NetworkSolveGlue` / `NetworkDdPriorBuild` / `NetworkInstallCarry` / `NetworkProducerAr`; post-fit QC → `NetworkRaim` / `NetworkClockQc` / `NetworkRelevel`; slip → `slip/NetworkSlipQc`; coupling → `NetworkCoupling`.
 - **New emit/store behavior** → `NetworkSolPrep` (pre-emit prep) or `NetworkEmitStore` (emit / product-write / closed-loop consume).

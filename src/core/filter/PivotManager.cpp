@@ -370,8 +370,9 @@ void PivotManager::applyCovarianceReReference(
     // Delegate to the shared BSSD transform (single source of truth, reused by
     // the network producer).  The user-side path stays UNGUARDED — at user
     // scale the groups are small and handovers rare, so no PSD guard is applied
-    // here (see CovarianceReReference.hpp / conformance doc §8.7).  The network
-    // producer pairs applyBssd with CovReReference::enforcePsd.
+    // here (see CovarianceReReference.hpp /
+    // docs/SPEC_sbasis_realization_contract.md §F8.7).  The network producer
+    // pairs applyBssd with CovReReference::enforcePsd.
     CovReReference::applyBssd(group_indices, pivot_idx, P);
 }
 

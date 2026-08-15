@@ -2,7 +2,7 @@
 /**
  * @file NetworkCongruence.hpp
  * @brief The STATION CONGRUENCE screen — coordinate-fault detection in position
- *        space (docs/SPEC_station_congruence.md), INC-1..3: the statistic and its
+ *        space (docs/SPEC_redundancy_census.md), CG-INC-1..3: the statistic and its
  *        bookkeeping.
  *
  * Measure-only, default-OFF, OFF byte-identical, fingerprint-SAFE.  Nothing here

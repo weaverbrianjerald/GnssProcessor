@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "THE EWL TRIO, UNBLOCKED (HANDOFF_slant_triple_next §3.3 optimistic arm +",
+    "THE EWL TRIO, UNBLOCKED (SPEC_synthetic_minimum_network §13.7 optimistic arm +",
     "docs/SPEC_eq34_seed_round.md) — posture C + eq34 chain datum + carry_invariant",
     "+ mw_wl.ewl_enable, with SEED-ROUND making the cold start survivable on this",
     "fixture: without it the zero-target pins fight the sim's N ∈ [1e5,1e6) draws",

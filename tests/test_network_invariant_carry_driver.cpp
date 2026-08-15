@@ -2462,7 +2462,7 @@ TEST(NetworkInvariantCarryDriverTest, PairInstallParallelMatchesSerialByteForByt
 }
 
 // ---------------------------------------------------------------------------
-// LF-1 INC-1 (SPEC_lane_fold_perf_card.md §3.2, §5.2) — the blocked/sparse lane
+// LF-1 INC-1 (SPEC_lane_carry_card.md Appendix LF-1 §3.2, §5.2) — the blocked/sparse lane
 // fold (fold_blocked=true: O(K) sparse applyLaneFix + per-row symmetrize hoisted
 // to finalizeLaneBatch) must reproduce the sequential per-row fold to ≤1e-9 over
 // an IDENTICAL row sequence (measurements on every chord, two fixes, then a
@@ -2524,7 +2524,7 @@ TEST(NetworkInvariantCarryDriverTest, FoldBlockedMatchesSequentialLaneFold) {
 }
 
 // ---------------------------------------------------------------------------
-// LF-1 INC-2 (SPEC_lane_fold_perf_card.md §3.3) — pinned-cycle increment skip
+// LF-1 INC-2 (SPEC_lane_carry_card.md Appendix LF-1 §3.3) — pinned-cycle increment skip
 // LIFECYCLE: an undecided chord is never skippable; a committed-decided chord
 // becomes skippable the next epoch; a slip on its arc erases the memory ⇒ it
 // resumes increments the SAME epoch (invariant #1: the slip response is

@@ -647,10 +647,17 @@ public:
     ///        and the rationale).  Applied to the JOINT Λ, so the clock↔code-bias
     ///        off-diagonals the C1 dense carry exists to retain are preserved —
     ///        only the gauge direction's information is removed.
+    /// @param require_closure Card C-GF: apply the downdate along a direction ONLY when
+    ///        every column of its support is in this fold's key set.  A partially-carried
+    ///        direction is skipped and counted (@ref gaugeFreePartialSkipped) — restricted
+    ///        to a subset it is no longer the datum's functional, and downdating it would
+    ///        delete the ESTIMABLE carried-vs-uncarried contrast instead of gauge.
+    ///        Default false = the Q3 behaviour, byte-identical.
     std::size_t addSharedPriorDense(const std::vector<SharedPrior>& keys,
                                     const Eigen::MatrixXd& cov,
                                     Eigen::VectorXd* lambda_diag = nullptr,
-                                    bool clock_gauge_free = false);
+                                    bool clock_gauge_free = false,
+                                    bool require_closure = false);
 
     /**
      * @brief Card Q3 §2.1 — fold diagonal shared priors with the per-constellation
@@ -692,7 +699,17 @@ public:
      * @return Number of clock keys whose information was downdated (0 ⇒ the
      *         gauge-free step was inert for this fold).
      */
-    std::size_t addSharedPriorClockGaugeFree(const std::vector<SharedPrior>& priors);
+    std::size_t addSharedPriorClockGaugeFree(const std::vector<SharedPrior>& priors,
+                                             bool require_closure = false);
+
+    /// Card C-GF: directions SKIPPED because their support was not fully carried,
+    /// accumulated over the WHOLE RUN.  Deliberately NOT cleared by @ref reset: the
+    /// withdraw and within-epoch-replay folds run AFTER the driver's per-epoch read
+    /// point, so an epoch-scoped tally silently under-reports exactly the paths whose
+    /// fold/withdraw symmetry matters most.  Standing invariant #7 — the decoupling
+    /// edge has to be countable, or "the downdate ran" and "the downdate declined"
+    /// look identical in a run log.
+    std::size_t gaugeFreePartialSkipped() const { return gf_partial_skipped_; }
 
     /**
      * @brief Card Q3 — the gauge-free diagonal analogue of
@@ -709,9 +726,13 @@ public:
      *                the re-solve throws and the anchored solve must survive.
      * @return Number of clock keys refloated (0 ⇒ nothing folded).
      */
+    /// @param require_closure Card C-GF: MUST match the flag the original fold used.
+    ///        Closure changes WHICH directions U spans, so a withdraw taken with a
+    ///        different value un-folds a different subspace than was applied.
     std::size_t refoldSharedPriorClockGaugeFreeDropping(
         const std::vector<SharedPrior>& priors,
-        const std::set<std::string>& drop_sats, bool restore = false);
+        const std::set<std::string>& drop_sats, bool restore = false,
+        bool require_closure = false);
 
     /**
      * @brief Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4) — WITHDRAW
@@ -776,10 +797,13 @@ public:
      */
     /// @param clock_gauge_free MUST match the flag the original fold used, or the
     ///        withdrawn block is not the block that was applied.
+    /// @param require_closure  Card C-GF: likewise MUST match — closure changes WHICH
+    ///        directions U spans, so a mismatched withdraw un-folds a different
+    ///        subspace and leaves a negative-semidefinite residue in the normals.
     std::size_t refoldSharedPriorDenseDroppingClocks(
         const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
         const std::set<std::string>& drop_sats, bool restore = false,
-        bool clock_gauge_free = false);
+        bool clock_gauge_free = false, bool require_closure = false);
 
     /**
      * @brief Fold an explicit linear gauge constraint onto the shared border.
@@ -1083,10 +1107,14 @@ private:
                          std::vector<Eigen::Index>& in_idx,
                          Eigen::MatrixXd& Lambda, Eigen::VectorXd& eta,
                          bool clock_gauge_free = false,
-                         std::size_t* gauge_free_keys = nullptr) const;
+                         std::size_t* gauge_free_keys = nullptr,
+                         bool require_closure = false) const;
 
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
+    /// Card C-GF partial-support skip tally.  @c mutable because @ref denseFoldTerms_ is
+    /// const and observational: the skip decision reads the layout, it does not change it.
+    mutable std::size_t gf_partial_skipped_{0};
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)

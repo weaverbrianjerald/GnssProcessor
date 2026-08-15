@@ -364,4 +364,125 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
     }
 }
 
+void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
+                           const SyncedEpoch& se, NetworkEstimator& est,
+                           int declared_dim,
+                           const std::vector<std::string>& registered_clock_sats,
+                           double ev_max, bool gate_over_withheld) {
+    // The gate writes ev_max < 0 on any exit that computed no spectrum (empty
+    // normals, non-square, solver failure).  Nothing to measure against then —
+    // and reconstructing a cutoff from a guess would be worse than silence.
+    if (!(ev_max >= 0.0) || declared_dim <= 0) return;
+    const Eigen::MatrixXd& N = est.reducedSharedNormals();
+    const Eigen::Index n = N.rows();
+    if (n == 0 || N.cols() != n) return;
+
+    // The gate's OWN cutoff, reconstructed from its own λmax — not a second
+    // decomposition and not a re-derived tolerance (the Card DG2 lesson: every
+    // consumer must read the one resolved rank_gate_tol).
+    const double cutoff = est.rankGateTol() * std::max(ev_max, 1.0);
+    if (!(cutoff > 0.0)) return;
+
+    // DECLARED datum directions, analytically.  Plan::declared_dimension counts one
+    // satellite-clock gauge per constellation in PIN mode, and the direction is the
+    // indicator over that constellation's clock columns — exactly what
+    // NetworkSbasis::buildSharedDatum groups (`by_const`) and what the sum-to-zero
+    // branch writes out as an explicit all-ones row.  No eigensolve is involved:
+    // vᵀNv needs the direction, not the spectrum.
+    std::map<char, std::vector<Eigen::Index>> by_const;
+    for (const std::string& sat : registered_clock_sats) {
+        if (sat.empty()) continue;
+        try { by_const[sat[0]].push_back(est.clockColumn(sat)); }
+        catch (...) {}   // not in this epoch's layout — not part of this epoch's gauge
+    }
+    if (by_const.empty()) return;
+
+    ++ctx.counters.ddi_epochs;
+    bool any_breach = false;
+    std::set<std::string> evaluated;   // invariant #7: what this epoch actually judged
+    for (const auto& [cc, cols] : by_const) {
+        // A one-member group is not a gauge DIRECTION in any useful sense (the lone
+        // clock IS the datum), and normalizing it would report the column's own
+        // information as a gauge breach on every epoch.
+        if (cols.size() < 2) continue;
+        // A range error is tracked by its OWN flag, never by the sign of q.  N is only
+        // positive-SEMIdefinite as a whole: its off-diagonals are freely negative, so a
+        // PARTIAL sum of vᵀNv dips below zero routinely.  Overloading q's sign as the
+        // error sentinel therefore aborts the accumulation on ordinary data and reports
+        // zero samples on every epoch — which is exactly what the first armed run
+        // measured (11 epochs, 0 directions).
+        bool bad = false;
+        double q = 0.0;
+        for (const Eigen::Index a : cols) {
+            if (a < 0 || a >= n) { bad = true; break; }
+            for (const Eigen::Index b : cols) {
+                if (b < 0 || b >= n) { bad = true; break; }
+                q += N(a, b);      // vᵀNv with v = indicator (unnormalized)
+            }
+            if (bad) break;
+        }
+        // The COMPLETED quadratic form is >= 0 because N is PSD at the gate; a negative
+        // final value means rounding at the gauge, which floors to 0 rather than being
+        // discarded (a gauge direction reading exactly 0 is the healthy case, and
+        // dropping it would make the healthy case indistinguishable from a miswire).
+        if (bad || !std::isfinite(q)) continue;
+        if (q < 0.0) q = 0.0;
+        // vᵀv = |cols| for the indicator, so the Rayleigh quotient is q/|cols|.
+        const double rq    = q / static_cast<double>(cols.size());
+        const double ratio = rq / cutoff;
+        if (!std::isfinite(ratio)) continue;
+        ++ctx.counters.ddi_dirs;
+        const std::string id = fmt::format("CLK|{}", cc);
+        evaluated.insert(id);
+        if (ctx.counters.ddi_ratio_max < 0.0 || ratio > ctx.counters.ddi_ratio_max) {
+            ctx.counters.ddi_ratio_max     = ratio;
+            ctx.counters.ddi_ratio_max_tow = se.time.tow;
+            ctx.counters.ddi_ratio_max_dir = id;
+        }
+        if (ctx.counters.ddi_ratio_min < 0.0 || ratio < ctx.counters.ddi_ratio_min)
+            ctx.counters.ddi_ratio_min = ratio;
+
+        // Standing invariant #7: this is a mechanism that changes which information
+        // flows into which states, so it is an EVENT at BOTH edges.  The BREACH edge
+        // says a declared gauge stopped being free; the CLEAR edge says it became free
+        // again — and a direction that silently returns must not read as a first
+        // sighting (the FT63 topology-ledger lesson).
+        const bool breach = ratio >= 1.0;
+        const bool was    = ctx.carry.ddi_breached.count(id) > 0;
+        if (breach) any_breach = true;
+        if (breach != was) {
+            ++ctx.counters.ddi_breach_edges;
+            if (breach) ctx.carry.ddi_breached.insert(id);
+            else        ctx.carry.ddi_breached.erase(id);
+            traces.emitEvent(se.time, "GATE", breach ? "ddi_breach" : "ddi_clear",
+                             std::string(1, cc), "", ratio, 1.0,
+                             breach ? "gauge_pinned" : "gauge_free",
+                             fmt::format("{} vtNv/|v|={:.6e} cutoff={:.6e} ncol={}",
+                                         id, rq, cutoff, cols.size()));
+        }
+    }
+    // A latched direction that STOPPED being evaluated (its constellation dropped below
+    // two registered clocks, or left the layout) must emit its CLEAR edge here.  Without
+    // this the flag latches forever, and when the direction returns and breaches again no
+    // edge fires — the re-coupling reads as "already breached" and goes silent, which is
+    // precisely the failure invariant #7 names (a returning member must not be mistaken
+    // for a continuing one).
+    for (auto it = ctx.carry.ddi_breached.begin(); it != ctx.carry.ddi_breached.end();) {
+        if (evaluated.count(*it)) { ++it; continue; }
+        ++ctx.counters.ddi_breach_edges;
+        traces.emitEvent(se.time, "GATE", "ddi_clear",
+                         it->size() > 4 ? it->substr(4) : std::string{}, "",
+                         std::nullopt, 1.0, "not_evaluated",
+                         fmt::format("{} left the evaluated set (constellation below two "
+                                     "registered clocks, or absent from the layout)", *it));
+        it = ctx.carry.ddi_breached.erase(it);
+    }
+    if (any_breach) {
+        ++ctx.counters.ddi_breach_epochs;
+        // The coincidence that makes the run-end advice actionable: an OVER-specified
+        // withhold ON a breached epoch is a FILLED NULL, not a mis-placed tolerance.
+        if (gate_over_withheld) ++ctx.counters.ddi_over_breach;
+    }
+}
+
 }  // namespace GnssProcessor

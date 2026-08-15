@@ -531,6 +531,28 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.sbasis_complete",
               "GPS+Gal adds per-sat channel-family PB<->iono trades the declared dimension does "
               "not count; the armed net when the KP lift falls short" },
+            // Card 1f/1g — only meaningful where the Card-1 coupling rows actually EXIST:
+            // the conditional carry armed and NOT superseded by the Card-4 invariant carry
+            // (under carry_invariant the whole coupling trio is structurally inert, which is
+            // this ledger's own "BIGGEST FINDING").  Both rows are fingerprinted.
+            { network_carry_conditional_coupling_ && !network_carry_invariant_,
+              network_carry_coupling_gauge_project_,
+              Tier::SCOPED, true , "network.carry_coupling_gauge_project",
+              "a DEPARTED coupling column is marginalized by DELETING its coefficient, so the "
+              "family sum moves to -M_dep and the row observes the CURRENT datum gauge at the "
+              "OLD realization. 24-sta/1h/GPS sim positive control at the measured defect epoch "
+              "(TOW 305220): OVER-specified gate withholds 4 -> 0, invariant-#7 ratio 7.1e+06 -> "
+              "2.1e-03 (9.5 decades), observed near-null == declared on every epoch; "
+              "matched-epoch truth grade FLAT (code-bias rms +0.9%) with the sum-to-zero datum "
+              "check 1.6x tighter. n=1, sim only, field + larger-scale arms OWED" },
+            { network_carry_conditional_coupling_ && !network_carry_invariant_,
+              network_carry_coupling_reinit_sources_,
+              Tier::SCOPED, true , "network.carry_coupling_reinit_sources",
+              "the coupling reinit history was fed ONLY by clock-QC sources, so a phase-anchor / "
+              "eq34 / datum-slip re-reference left every OTHER carried local folding that column "
+              "at FULL weight with a retired-frame s_prev. Arm it WITH "
+              "carry_coupling_gauge_project (alone it trades a stale frame step for a gauge "
+              "observation). Same 24-sta control; 507 terms diverted. n=1, sim only" },
         };
         out.insert(out.end(), rows.begin(), rows.end());
     }

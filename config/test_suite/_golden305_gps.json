@@ -57,7 +57,7 @@
   " - sticky_pivot (RTA-1): keep the incumbent clock pivot while it is valid —",
   "   fewer handovers, less re-reference churn. Not fingerprinted; idempotent if",
   "   an ancestor already arms it.",
-  " - PROMOTED 2026-08-08 (user sign-off; SESSION_overnight_2026-08-07.md F16):",
+  " - PROMOTED 2026-08-08 (user sign-off; CONFIG_promotion_ledger.md §A2 F16):",
   "   serialize_sbasis_contract (piece-1 validated: replay emitter stops",
   "   mis-thresholding, -12.7% consumer RMS; header-only, solve-byte-identical),",
   "   emit_epoch_status_record + h_sigma0_prefit_census (live census-fed H sigma0,",

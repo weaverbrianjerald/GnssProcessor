@@ -284,17 +284,20 @@ int networkTeardown(
                       cc.comp_kc_hist[0], cc.comp_kc_hist[1], cc.comp_kc_hist[2], cc.comp_kc_hist[3],
                       cc.comp_kc_hist[4], cc.comp_kc_hist[5], cc.comp_kc_hist[6], cc.comp_kc_hist[7],
                       cc.comp_kc_hist[8], cc.comp_kc_hist[9]);
-            // INC-C0 D-c viability: short fundamental cycles ⇒ sparse DD information matrix
-            // J = Pᶻ⁻¹ ⇒ the exact info-form carry (SPEC_carry_factored_pz_C2 D-c) is bounded;
-            // long cycles ⇒ dense J ⇒ D-c gives no bound (choose D-b/component-cap instead).
-            log->info("Network (D0/INC-C0) D-c viability: max fundamental-cycle length {} | "
-                      "mean {:.1f} over {} folded chord(s) — {} (short ⇒ sparse J ⇒ D-c bounded; "
-                      "long ⇒ dense J ⇒ dense per-block cost is intrinsic).",
+            // INC-C0 D-c viability: short fundamental cycles keep the cycle matrix G sparse,
+            // which is NECESSARY BUT NOT SUFFICIENT for a bounded exact info-form carry
+            // (SPEC_carry_factored_pz_C2 D-c) — the border term is Gᵀ Σ_ss G, so the BINDING
+            // probe is Σ_ss sparsity/rank, not cycle length (that doc's §6.1 corrects the
+            // original "sparse iff cycles are short" claim; this counter only screens G).
+            log->info("Network (D0/INC-C0) D-c viability screen (G-side only): max "
+                      "fundamental-cycle length {} | mean {:.1f} over {} folded chord(s) — {} "
+                      "(short cycles ⇒ sparse G: NECESSARY, not sufficient — the binding probe "
+                      "is Σ_ss sparsity/rank; long ⇒ dense per-block cost is intrinsic).",
                       cc.max_cycle_len,
                       chords_folded ? static_cast<double>(cc.sum_cycle_len)
                                       / static_cast<double>(chords_folded) : 0.0,
                       chords_folded,
-                      cc.max_cycle_len <= 8 ? "SPARSE-J likely" : "DENSE-J risk");
+                      cc.max_cycle_len <= 8 ? "SPARSE-G likely" : "DENSE-G risk");
             // INC-C1 growth bound (also a 12 h robustness assert): a large, still-growing carry
             // with ZERO marginalization over a long run means dead chords are being retained —
             // the §0 case (b) kill-path bug.  A large per-chord count instead means case (a).
@@ -311,7 +314,7 @@ int networkTeardown(
         // recon/solve already in the five D0 sections above is not double-counted.  Σ net vs
         // the D0 `other` figure closes the accounting; "unattributed" = loop regions no
         // bracket covers (pre-slip pivot pass, the trace/readout tail, small comment gaps).
-        // This is the ranked table the perlos card acts on (HANDOFF_perlos_parallel_sweeps
+        // This is the ranked table the perlos card acts on (SPEC_dev_tier_perf_cards
         // §3 gate P0): P1/P2 target the measured top blocks, not §2's guesses.
         std::vector<int> d0b_order(SB_COUNT);
         for (int b = 0; b < SB_COUNT; ++b) d0b_order[b] = b;
@@ -359,17 +362,76 @@ int networkTeardown(
     if (config_.networkRankGateTol() != NetworkEstimator::kNullSpaceTol)
         log->info("Network (Card DG): rank gate evaluated on {} epoch(s) at tol={:g} — {} "
                   "emitted, {} withheld UNDER-specified (observed > declared: a missing "
-                  "datum constraint), {} withheld OVER-specified (observed < declared: the "
-                  "tolerance sits below THIS config's gauge depth, so the declared gauges "
-                  "stopped being counted — RE-CALIBRATE, do not chase the datum).  Observed "
-                  "near-null count over the run: min {}, max {} (declared dim is the "
-                  "target).  [Placement rule: cutoff >= 2 decades above the gauge depth and "
-                  ">= 2 decades below the weakest-real layer, read off this config's own "
-                  "network_estimability.csv.]",
+                  "datum constraint), {} withheld OVER-specified (observed < declared: a "
+                  "declared gauge stopped being counted).  Observed near-null count over "
+                  "the run: min {}, max {} (declared dim is the target).",
                   ctx.counters.n_gate_evaluated, config_.networkRankGateTol(),
                   n_emitted, ctx.counters.n_gate_withheld_under,
                   ctx.counters.n_gate_withheld_over,
                   ctx.counters.nullspace_obs_min, ctx.counters.nullspace_obs_max);
+    // The OVER-specified verdict has TWO causes that need OPPOSITE fixes, and the old
+    // advice ("RE-CALIBRATE, do not chase the datum") named only one of them.  It is
+    // provably WRONG for the other: when a pre-gate fold DEPOSITS information along a
+    // declared gauge direction, that direction moves INTO the real layer, and no
+    // tolerance recovers it — below the filled value it is still not counted as gauge,
+    // above it you begin counting genuine parameter directions as gauge.  Measured on
+    // simnet24: gauge depth 1e-11, carry-filled direction 9.43e-3, weakest-real
+    // phase-bias layer 1.25e-2 — the admissible band is EMPTY, and the placement rule's
+    // own "2 decades either side" cannot be met by any cutoff whatsoever.  The
+    // invariant-#7 ratio is what tells the two apart, so the advice now branches on it
+    // instead of asserting a cause.
+    if (ctx.counters.n_gate_withheld_over > 0) {
+        if (ctx.counters.ddi_over_breach > 0)
+            log->warn("Network (Card DG): {} of the {} OVER-specified withhold(s) landed on an "
+                      "epoch where a DECLARED datum direction was already carrying information "
+                      "(invariant-#7 ratio >= 1; run max R={:.3e} on {} at TOW {:.1f}).  Those "
+                      "are NOT a mis-calibrated tolerance and re-calibrating cannot fix them: "
+                      "the direction has moved up into the real-parameter layer, so every "
+                      "cutoff below it still fails to count it as gauge and every cutoff above "
+                      "it starts counting real directions as gauge.  ATTRIBUTE THE FOLD "
+                      "instead.  ⚠ The ratio is measured on the reduced normals AS THE GATE "
+                      "SEES THEM, i.e. AFTER the station blocks (which carry the Card-1 "
+                      "coupling rows), the clock-constraint rows, the SH prior, the phase hold, "
+                      "the pin bridge and any SBC rows — but BEFORE the D2/C1 dense carry fold "
+                      "and the clock-osc prior, which are applied later and are therefore NOT "
+                      "observable in this number.  So the candidates it CAN indict are the "
+                      "Card-1 coupling rows (a truncated family sum — arm "
+                      "network.carry_coupling_gauge_project) and the pre-gate datum/constraint "
+                      "rows.  The ddi_breach events in network_events.csv name the direction and "
+                      "the epoch.",
+                      ctx.counters.ddi_over_breach, ctx.counters.n_gate_withheld_over,
+                      ctx.counters.ddi_ratio_max, ctx.counters.ddi_ratio_max_dir,
+                      ctx.counters.ddi_ratio_max_tow);
+        if (ctx.counters.n_gate_withheld_over > ctx.counters.ddi_over_breach)
+            log->info("Network (Card DG): {} OVER-specified withhold(s) occurred with every "
+                      "declared datum direction still free (invariant-#7 ratio < 1).  THOSE are "
+                      "the calibration case — the tolerance sits below this config's own gauge "
+                      "depth, so RE-CALIBRATE rather than chasing the datum.  [Placement rule: "
+                      "cutoff >= 2 decades above the gauge depth and >= 2 decades below the "
+                      "weakest-real layer, read off this config's own network_estimability.csv.]",
+                      ctx.counters.n_gate_withheld_over - ctx.counters.ddi_over_breach);
+    }
+    // Invariant #7's own readout, independent of whether the gate ever withheld: a run
+    // whose declared directions all sit decades below the cutoff has a genuinely free
+    // datum, and that is worth stating positively rather than inferring from silence.
+    if (ctx.counters.ddi_epochs > 0 && ctx.counters.ddi_dirs == 0)
+        log->warn("Network (invariant #7): the ratio was reached on {} epoch(s) but sampled "
+                  "ZERO directions — every declared group was below two registered clocks, or "
+                  "its columns fell outside the reduced normals.  The instrument is INERT: "
+                  "'0 breaches' says nothing about this run's datum.",
+                  ctx.counters.ddi_epochs);
+    if (ctx.counters.ddi_epochs > 0 && ctx.counters.ddi_dirs > 0)
+        log->info("Network (invariant #7): datum-direction information ratio measured on {} "
+                  "epoch(s), {} (epoch x direction) samples — R range [{:.3e}, {:.3e}], max on "
+                  "{} at TOW {:.1f}; {} epoch(s) breached R >= 1 across {} edge(s).  R << 1 "
+                  "means the datum still owns its gauge directions; R >= 1 means something "
+                  "folded PRE-gate is pinning one.",
+                  ctx.counters.ddi_epochs, ctx.counters.ddi_dirs,
+                  ctx.counters.ddi_ratio_min, ctx.counters.ddi_ratio_max,
+                  ctx.counters.ddi_ratio_max_dir.empty() ? "(none)"
+                                                         : ctx.counters.ddi_ratio_max_dir,
+                  ctx.counters.ddi_ratio_max_tow,
+                  ctx.counters.ddi_breach_epochs, ctx.counters.ddi_breach_edges);
     // SBC (network.sbasis_complete) run-end telemetry.  Standing invariant #4
     // with the WE-CI twist: an armed completion that never fired on a
     // multi-constellation run means the deficiency it was built for never
@@ -1067,7 +1129,7 @@ int networkTeardown(
     }
 
     // --- Baarda reliability numbers / MDB run-end telemetry -------------------
-    // (docs/SPEC_network_mdb_reliability.md §4).  Standing invariant #4 in its
+    // (docs/SPEC_redundancy_census.md §11.4).  Standing invariant #4 in its
     // reliability form: the aggregates must distinguish "ran, all rows checkable"
     // from "never ran", and the two are reported by the SAME line only if the
     // denominators come first.  Body in filter/NetworkMdb.cpp, next to the
@@ -1076,7 +1138,7 @@ int networkTeardown(
         networkMdbReport(ctx, config_, log);
 
     // --- BLOCKFORMAL LOS-block census run-end telemetry ----------------------
-    // (docs/SPEC_block_baarda.md §10.4).  Standing invariant #4 in this card's
+    // (docs/SPEC_redundancy_census.md §10.4).  Standing invariant #4 in this card's
     // form: "the block tier found no smearing" and "there was never a block to
     // smear across" produce identical ladders, so the BLOCK-SIZE HISTOGRAM is
     // reported before any occupancy and INC-3's fraction is reported last, with
@@ -1086,7 +1148,7 @@ int networkTeardown(
         networkBlockBaardaReport(ctx, log, setup.stations);
 
     // --- STATION CONGRUENCE run-end telemetry --------------------------------
-    // (docs/SPEC_station_congruence.md §7.3).  Standing invariant #4 in this
+    // (docs/SPEC_redundancy_census.md §13.7.3).  Standing invariant #4 in this
     // card's form: "every held coordinate on this network is right" and "the
     // screen never swept a station" produce identical silence, so the
     // denominators come first — and then THE MDB TABLE, which is the card's
@@ -1601,7 +1663,7 @@ int networkTeardown(
                       "no-detector count means phase_leveling / cycle_slip.mw_detect "
                       "are off or every station is the clock datum.)", lead);
         }
-        // --- increment 2a+2b: the INTEGER path (docs/SPEC_sd_ewl_integer_hold.md) -----
+        // --- increment 2a+2b: the INTEGER path (docs/SPEC_sd_ewl_prereduce.md §8) -----
         if (config_.getNetworkConfig().sd_ewl.fix_enable) {
             const auto& K = ctx.counters;
             log->info("Network (SD EWL integer fix, 2a decision): {} epoch(s), {} "
@@ -1823,7 +1885,7 @@ int networkTeardown(
                   "integer), {} pin/gauge-mismatch epoch(s) over the run.",
                   eq34_reref_total, eq34_erase_total, eq34_shift_total,
                   eq34_gap_repin_total, eq34_mismatch_epochs);
-    // Chain-pin AUDIT (docs/HANDOFF_wsh_chain_slant.md T1): declared → folded →
+    // Chain-pin AUDIT (docs/SPEC_synthetic_minimum_network.md §14 T1 (measured record §12.8)): declared → folded →
     // landed per (constellation,signal).  The election's per-epoch cross-check
     // only proves the election RECORDED Σ (n_c + m_c) pins; foldAmb/foldRpb
     // early-return silently (no state / no live phase row) and a station drop
@@ -2816,7 +2878,7 @@ int networkTeardown(
                   c.cta_max_w, ctx.knobs.cta_k,
                   c.cta_max_w_sat.empty() ? std::string("(none)") : c.cta_max_w_sat,
                   c.cta_max_w_tow);
-        if (ctx.knobs.cta_gauge_free) {
+        if (ctx.knobs.carry_gauge_free) {
             // §2.1: the gauge-free step's own denominator.  `gf_keys = 0` on an
             // armed run means the downdate never reached a group of ≥ 2 carried
             // clocks, so the anchor is STILL constraining the gauge — the exact
@@ -2851,7 +2913,7 @@ int networkTeardown(
         log->info("Network (Card Q3 §2.1): guard/census denominator — P⁻ {} , P⁺ {} (fold: {}).",
                   ctx.knobs.cta_stat_proj_prior ? "GAUGE-PROJECTED" : "raw per-satellite var_eff",
                   ctx.knobs.cta_stat_proj_post  ? "GAUGE-PROJECTED" : "raw marginal cov(c,c)",
-                  ctx.knobs.cta_gauge_free ? "gauge-free" : "raw state");
+                  ctx.knobs.carry_gauge_free ? "gauge-free" : "raw state");
         // §3's k derivation, per rung.  The denominator √S shrinks as q tightens, so
         // a FIXED k is a different number of METRES at every rung — the ladder below
         // is what makes that visible without a second disarmed run per rung, and the
@@ -2947,6 +3009,73 @@ int networkTeardown(
                   n_cpl_stash, n_cpl_stash_empty, n_cpl_harvest_fail,
                   n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
                   carry_cpl_tu ? "ON" : "OFF");
+    // Card C-GF run-end readout.  Deliberately OUTSIDE the Card-Q3 `cta_on` nest below:
+    // the downdate can now be armed by the CARRY (shared_carry_gauge_free) with the Q3
+    // temporal anchor off, and the Q3 readout would then print nothing at all — an armed
+    // mechanism with zero telemetry, which is exactly the standing-invariant-#4 failure.
+    if (ctx.knobs.carry_gauge_free && !ctx.knobs.cta_on) {
+        log->info("Network (Card C-GF): gauge-free shared carry active WITHOUT the Q3 clock "
+                  "anchor — {} clock prior key(s) gauge-downdated, {} epoch(s) inert, {} "
+                  "direction(s) DECLINED for partial support (closure test {}).",
+                  ctx.counters.cta_gf_keys, ctx.counters.cta_gf_inert,
+                  est.gaugeFreePartialSkipped(),
+                  ctx.knobs.carry_gauge_free_closure ? "ON" : "off");
+        if (ctx.counters.cta_gf_keys == 0)
+            log->warn("Network (Card C-GF): the gauge-free carry fold is ARMED but downdated "
+                      "ZERO keys — it is INERT for this run, and the carried block is folding "
+                      "information along the datum's own directions exactly as if the knob "
+                      "were off.  Any A/B against a raw-carry arm is measuring nothing.");
+    }
+    if (ctx.knobs.carry_gauge_free_closure && est.gaugeFreePartialSkipped() > 0)
+        log->info("Network (Card C-GF): {} datum direction(s) were left folded because their "
+                  "support was only PARTLY carried (some of the constellation's registered "
+                  "clocks were absent from the carried set).  That is the CORRECT refusal — "
+                  "restricted to a subset the direction is no longer the datum's functional, "
+                  "and downdating it would delete an estimable carried-vs-uncarried contrast "
+                  "rather than gauge.  A count comparable to the downdated-key total means "
+                  "the border turns over faster than the carry, so the gauge-free treatment "
+                  "is reaching only a minority of epochs.",
+                  est.gaugeFreePartialSkipped());
+    // Card 1g run-end readout.  Its own denominator — the run-total departed count moves
+    // for many reasons and cannot tell armed-and-working from armed-and-inert.
+    if (carry_cpl_cond && ctx.knobs.carry_cpl_reinit) {
+        log->info("Network (Card 1g): realization-step reinit sources — {} coupling term(s) "
+                  "diverted to the departed route by the WIDENED (kind,sat,signal) probe "
+                  "(terms the legacy sat-wide probe would have folded as PRESENT, in a "
+                  "retired frame).", ctx.counters.n_cpl_reinit_diverted);
+        if (ctx.counters.n_cpl_reinit_diverted == 0)
+            log->warn("Network (Card 1g): armed but diverted ZERO terms — no realization-step "
+                      "mark ever coincided with a live coupling term on the same "
+                      "(kind,sat,signal).  The card is INERT for this run: either no "
+                      "re-reference occurred, or the feeds are miswired.  Check the "
+                      "PBGAUGE / eq34 / datum-slip event counts before reading an A/B as "
+                      "'no effect'.");
+    }
+    // Card 1f run-end readout.  Standing invariant #4: this card acts only on TRUNCATED
+    // rows, so "0 held / 0 orphan" with departed terms > 0 is a MISWIRE, not a quiet run —
+    // the two are distinguished here rather than left to the reader.
+    if (carry_cpl_cond && ctx.knobs.carry_cpl_gauge) {
+        log->info("Network (Card 1f): coupling-row datum-gauge projection — {} "
+                  "(constellation,kind) family sum(s) HELD at their harvest value against a "
+                  "truncated column, {} ORPHANED (truncated mass with no present recipient — "
+                  "those rows stayed gauge-dirty).",
+                  ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan);
+        if (ctx.counters.n_cpl_gauge_held == 0 && ctx.counters.n_cpl_gauge_orphan == 0
+            && n_cpl_terms_departed > 0)
+            log->warn("Network (Card 1f): {} departed coupling term(s) were injected but the "
+                      "gauge projection held NOTHING — the card is armed and inert.  Expected "
+                      "causes: every departed term was VtecSh or had an empty satellite id "
+                      "(both excluded by design), or the rows never reached the restore.  "
+                      "Investigate before reading an A/B as 'no effect'.",
+                      n_cpl_terms_departed);
+        if (ctx.counters.n_cpl_gauge_orphan > 0)
+            log->warn("Network (Card 1f): {} family(ies) had truncated coefficient mass with NO "
+                      "present column to carry it — the whole family departed at once, so the "
+                      "row cannot be made gauge-invariant this epoch and still observes the "
+                      "datum gauge.  This is the residue the card cannot remove; if it is a "
+                      "large fraction of `held`, the carry is outliving its border.",
+                      ctx.counters.n_cpl_gauge_orphan);
+    }
     if (carry_vce) {
         // M2 (LS-VCE): run-end honesty summary — the trailing-window measured
         // carry-variance FLOOR σ̂ vs the hand floor, per (family, constellation).

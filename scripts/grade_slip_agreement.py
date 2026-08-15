@@ -65,7 +65,7 @@ Sections
     step, new arc) is distinguishable from a genuine missed slip (2-5 cycles).
 (g) D5 RE-TAP ATTRIBUTION -- ``network_d5_flags.csv`` (the Card-4 D5 fine-slip
     innovation gate's per-flag dump, ``network.mw_wl.d5_dump``) joined against
-    the same raw series.  Card D5-A of docs/SPEC_slip_qc_followups.md: the D5
+    the same raw series.  Card D5-A of docs/SPEC_slip_qc_hardening.md §9.1: the D5
     gate re-taps carried DD chords, and each re-tap DISCARDS accumulated
     double-difference information, so a gate firing on model tension rather
     than on observable events is a silent, continuous loss on the NL critical
@@ -977,7 +977,7 @@ def section_d5(segments, seg_note, seg_sel, grid, steps, if_rows,
     if testable_n and st / testable_n < 0.10:
         print('    => the gate is firing overwhelmingly on MODEL TENSION, not on anything the')
         print('       receiver observables can see (Card D5-A: this is the decomposition that')
-        print('       the Iono-2 cross-experiment must move — see docs/SPEC_slip_qc_followups.md)')
+        print('       the Iono-2 cross-experiment must move — see docs/SPEC_slip_qc_hardening.md §10.3)')
 
     # --- cross-check against the run-end counters --------------------------
     if run_end.get('retaps') is not None:

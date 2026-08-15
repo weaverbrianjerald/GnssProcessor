@@ -1,7 +1,7 @@
 {
  "_comment": [
   "EXT-63 SMOKE, arm 9 — arm 4 (rxcb) + a00 ANCHORED TO THE COD GIM.  The ROOT-CAUSE",
-  "VALIDATION arm (docs/HANDOFF_ext_cb_iono_level.md, ROOT CAUSE section).",
+  "VALIDATION arm (docs/SPEC_level_information_budget.md §29.5 (ROOT CAUSE)).",
   "",
   "Measured cause of DEFECT 2: the 61 stations' receiver C1C-C2W GF biases have mean",
   "~-5 ns (-15 slant-TECU) and clustered spread (std ~21 TECU).  rx_code_bias_datum's",

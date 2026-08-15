@@ -411,7 +411,7 @@ TEST(NetworkEstimatorTest, DdPriorAndSumZeroGaugeAreMutuallyExclusive) {
 
 // ---------------------------------------------------------------------------
 // Eq-34 integer-recovery gate (S-system theory reference §6, docs/
-// ssystem_theory_reference_2026-07-09.md).  A network phase-bias datum yields an
+// SPEC_sbasis_realization_contract.md §E).  A network phase-bias datum yields an
 // INTEGER-fixable product for a held-out PPP-RTK user IFF the emitted per-
 // satellite datum reference has INTEGER between-satellite differences.
 //
@@ -2422,7 +2422,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
 
     // Card 1d: `fixed` arms inject each coupling row with the border TIME UPDATE
     // (per-column κ shrink + M²κq inflation, q ladder = the border carry's own
-    // {q_clk, q_pb, q_sh}) — the docs/HANDOFF_carry_timeupdate_card1d.md fix.
+    // {q_clk, q_pb, q_sh}) — the docs/SPEC_card1_coupling_carry.md fix.
     struct Trace { std::vector<double> single_sig, dd_sig, err_ratio; };
     auto run_trace = [&](bool correlated_iono, bool fixed) -> Trace {
         NetworkEstimator est;
@@ -2922,7 +2922,7 @@ inline Batch runBatch(const Fixture& fx, int s) {
 // Card 1d gate: with the LARGE-q moving clock border, the κ-fixed recursion
 // equals the hand-built batch (values AND formal variances) while the raw
 // Card-1 recursion fails grossly; a moderate q exercises κ away from both
-// limits.  See docs/HANDOFF_carry_timeupdate_card1d.md.
+// limits.  See docs/SPEC_card1_coupling_carry.md.
 TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
     using namespace card1d;
     for (const double q : {1e4, 1.0}) {

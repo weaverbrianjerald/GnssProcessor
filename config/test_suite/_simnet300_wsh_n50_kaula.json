@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "T2 rung (a) — cb_kaula_prior ALONE (docs/HANDOFF_wsh_chain_slant.md §5 T2).",
+    "T2 rung (a) — cb_kaula_prior ALONE (docs/SPEC_synthetic_minimum_network.md §14 T2 (measured record §12.8.3)).",
     "The field arms network.cb_kaula_prior (sigma 3 m); every sim rung so far ran",
     "without it.  The BeiDou card measured the Kaula prior LIFTING near-null",
     "directions by construction, so this is the most likely single explanation",

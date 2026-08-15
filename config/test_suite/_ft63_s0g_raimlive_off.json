@@ -1,6 +1,6 @@
 {
  "_comment": [
-  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_sigma0_constraint_aware.md) -- the",
+  "CONSTRAINT-AWARE GLOBAL sigma0 (docs/SPEC_prior_residual_census.md §14) -- the",
   "OFF CONTROL of the arm where BOTH SIDES ARE LIVE.",
   "",
   "WHY THIS LINEAGE AND NOT _ft63_prires_*.  MEASURED 2026-08-04 on the first",

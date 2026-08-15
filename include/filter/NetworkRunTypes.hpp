@@ -6,7 +6,7 @@
  *
  * Hoisted VERBATIM from the ApplicationNetwork.cpp anonymous namespace
  * (decomposition INC-2, 2026-07-16; see
- * docs/network_decomposition_addendum_2026-07-16.md).  Support header for the
+ * docs/network_decomposition_plan.md).  Support header for the
  * network run loop — not a public API seam; the authoritative documentation
  * of each type stays on the type itself.  Former file-static helpers
  * (@ref sharedCarryKey, @ref whitenCouplingRows) are now @c inline with
@@ -465,6 +465,19 @@ struct StationAssembly {
     long long                 cpl_terms_present{0};
     long long                 cpl_terms_departed{0};
     long long                 cpl_terms_shrunk{0};
+    /// Card 1f (network.carry_coupling_gauge_project): (constellation,kind) families whose
+    /// coefficient sum was HELD at its harvest value against a truncated column, and those
+    /// with truncated mass but NO present recipient to carry it (the row stays
+    /// gauge-dirty for that family — the residue this card cannot remove this epoch).
+    /// Both stay 0 with the card off, so a nonzero pair is proof the wiring ran.
+    long long                 cpl_gauge_held{0};
+    long long                 cpl_gauge_orphan{0};
+    /// Card 1g (network.carry_coupling_reinit_sources): coupling terms diverted to the
+    /// departed route by the WIDENED (kind,sat,signal) probe specifically — i.e. terms the
+    /// legacy sat-wide probe would have folded as present.  This is the card's own
+    /// denominator: the run-total departed count moves for many reasons and cannot
+    /// distinguish armed-and-working from armed-and-inert.
+    long long                 cpl_reinit_diverted{0};
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  CARRY-ELIGIBLE SUBSET: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must NOT key on it — see `qc_amb`.
     /// POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): the CARRY-VEHICLE-NEUTRAL census of
     /// ambiguity columns that are present, unpinned and therefore CHECKABLE this epoch —
@@ -517,7 +530,7 @@ struct StationAssembly {
     std::map<std::string, double> pl_cb_sum_lam;
     int pl_cb_demeaned{0};     ///< LV-2: folds that actually applied a non-zero μ (0 through the lag-1 warm-up and any frozen-from-cold era — invariant #4).
     int pl_cb_frame_gate_would_skip{0};  ///< LV-4 same-run A/B: folds the RETIRED frame-dependent screen would have withheld.  Counted only when the invariant step gate is armed.
-    /// Station congruence screen (docs/SPEC_station_congruence.md INC-0): the
+    /// Station congruence screen (docs/SPEC_redundancy_census.md CG-INC-0): the
     /// per-row POSITION PARTIAL @f$\partial y_i/\partial\delta p@f$, expressed in
     /// the station's local ENU frame — @c m_data × 3, row-aligned with the FIRST
     /// @c m_data rows of @c A_s / @c A_r / @c w / @c y.
@@ -557,7 +570,7 @@ struct StationAssembly {
     /// station order, so the file is deterministic for any thread count.  Empty
     /// unless the trace is armed (log-only — it changes no solve).
     std::vector<std::string>  sd_ewl_trace;
-    /// Card 3 chain-pin AUDIT (docs/HANDOFF_wsh_chain_slant.md T1): per
+    /// Card 3 chain-pin AUDIT (docs/SPEC_synthetic_minimum_network.md §14 T1 (measured record §12.8)): per
     /// (constellation,signal) fold tallies for THIS station-epoch's elected datum
     /// pins — key `"<cons>|<signal>"` (the election's @c dr_key), value
     /// {folded, miss_state, miss_row} counting @c foldAmb / @c foldRpb outcomes.
@@ -1387,7 +1400,7 @@ struct EpochStatusRow {
     std::optional<long long> prires_rows_frame;  ///< of those, FRAME (datum handover / reref / inflate-q / hold) — the invariant-#7 edges
     std::optional<long long> prires_n_reported;  ///< of those, |t| above network.prior_residual_report_sigma (a TRACE threshold; nothing acted)
     std::optional<double>    prires_max_t;       ///< the worst |t| this epoch
-    // --- constraint-aware global σ̂₀ (docs/SPEC_sigma0_constraint_aware.md) ----
+    // --- constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14) ----
     // A SEPARATE schema flag from the five above, deliberately: the census's own
     // §9.1 A/B arms compare network_epoch_status.csv across builds, so a
     // census-only run must keep exactly the schema it had before this rider

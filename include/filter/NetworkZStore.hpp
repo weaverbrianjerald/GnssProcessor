@@ -5,7 +5,7 @@
  *        carry the generalized-LS network filter time-links.
  *
  * This is the numerical heart of the "invariant-function carry" (design handoff
- * `docs/HANDOFF_card4_invariant_carry.md`, foundations Teunissen/Khodabandeh/
+ * `docs/SPEC_card4_invariant_carry.md`, foundations Teunissen/Khodabandeh/
  * Psychas 2021 J Geod 95:108 generalized Kalman filter + Hou & Zhang 2025
  * J Geod 99:3 generalized-LS filter).  It answers the question the 2021 paper
  * left open — how to construct the transition @f$\Phi^z@f$ of the time-linked

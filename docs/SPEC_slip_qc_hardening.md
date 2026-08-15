@@ -1,28 +1,52 @@
 # SPEC — Network slip-QC hardening (post IF-TD ↔ MW agreement audit, 2026-07-21)
 
-**Handoff**: written 2026-07-21 by the auditing session for an implementing session.
-Self-contained — do not assume access to the audit conversation. Read `CLAUDE.md`
-(build pattern, layout, conventions, **Standing invariants**) before starting.
+**Intent**: the 2026-07-21 slip-detector cross-check (150 sta, GPS-only, `frequency_mode=all` +
+`channel_mode=all`, em10, 11 epochs, both `network.cycle_slip.{mw_detect,if_phase_td}` armed, full
+MW-AR arm live) found the IF-phase-TD pool detector **clean** (0.37 % flag rate, decisive margins, no
+bunching) and exposed four limitations around it (L1–L4, §0). Cards state MUST criteria (binding) and
+CANDIDATE mechanisms (non-binding — deviate with a stated rationale; if a MUST itself seems wrong, stop
+and ask the user). Read `CLAUDE.md` (build, layout, **Standing invariants**) first.
 
-**Intent**: the 2026-07-21 slip-detector cross-check (150 sta, GPS-only,
-`frequency_mode=all` + `channel_mode=all`, em10, 11 epochs, both
-`network.cycle_slip.{mw_detect,if_phase_td}` armed, full MW-AR arm live) found the
-IF-phase-TD pool detector **clean** (0.37 % flag rate, decisive margins, no bunching)
-but exposed four limitations around it. This spec defines the fixes. You have
-**mechanism latitude**: each card states MUST acceptance criteria (binding) and
-CANDIDATE mechanisms (non-binding — deviate freely with a stated rationale). If a
-MUST itself seems wrong, stop and ask the user; do not silently reinterpret it.
+> **Structure (consolidated 2026-08-14).** §0–§7 are the original spec, **section-pinned**:
+> `ApplicationNetworkAssembly.cpp:1402` cites §1, `ApplicationNetworkSetup.cpp:760` §2,
+> `ApplicationNetwork.cpp:1881` §5, `tests/test_if_phase_slip_detector.cpp:6` "§2, MUST R7",
+> `tests/test_network_slip_qc.cpp:5` §3, and `SPEC_beidou_w6_datum.md` (ground-rules paragraph) /
+> `SPEC_warm_resume_event_card.md` (status header) cite §1 as the project-wide ground-rules block —
+> **cited without line numbers deliberately: both docs are under active compression and the pin has
+> already gone stale three times (`:9` → `:12` → line 3).** **Never renumber or retitle.** §8–§10 absorb three siblings (now `docs/attic/`); §11 is the status ledger.
+>
+> **Absorbed-source section map** (old § → here). `slip_qc_hardening_report_2026-07-21.md` §X → §8.X,
+> no exceptions (§4.1→§8.4.1, §4.2→§8.4.2, §4.4→§8.4.4, §5→§8.5). `SPEC_slip_qc_followups.md` §N →
+> §9.N. `slip_qc_d5a_report_2026-07-22.md` §X → §10.X (§2.2→§10.2.2, §2.3→§10.2.3, §2.4 folded into
+> §10.2.1, §5.1→§10.5.1, §5.2→§10.5.2, §5.4→§10.5.4, §5.5→§10.5.5) **with two exceptions**: d5a §6
+> (Card-W run mechanics) → **§9.2**, d5a §8 (commit logistics) → **§9.4**. Hence no §10.6 / §10.8.
+>
+> **Provenance.** Every `runs/<name>` and `build/x64-Release/logs/` path below is absent from the
+> working tree: `runs/` was archived to `D:\GnssProcessor_archive\2026-08-12\runs\` on 2026-08-12 and
+> the build trees were regenerated under the VS 2026 migration the same day. **The 2026-07-21/22
+> goldens are gone**; a re-run also comes from a different compiler (MSVC 19.51.36256) and invariant #6
+> forbids reading a cross-build delta as a treatment effect — take a fresh same-build baseline before
+> using any table here as an A/B reference. Build: `CLAUDE.md` Build section / `scripts/vs2026_build.ps1`.
+>
+> **Anchor-drift map.** Anchors below are HEAD, re-grepped 2026-08-15; the 2026-07-21/22 text cited
+> pre-decomposition lines. Use this to resolve an old citation.
+>
+> | file | cited 2026-07-21/22 → live at HEAD |
+> |---|---|
+> | `NetworkSlipQc.cpp` | `NetworkSlipQc.cpp:100-193` → `:100-391` (`networkSlipDrainMwRefloat`); `NetworkSlipQc.cpp:134-152` / `NetworkSlipQc.cpp:134-193` → `:141-391` (Card E/L drain body, `refloat_signal` `:147-166`); `NetworkSlipQc.cpp:146` / `NetworkSlipQc.cpp:146-150` → `:160` (pre-warm C3c `carry_slipped_ambs` insert); `NetworkSlipQc.cpp:175-187` → `:276-379` (MW-drain LLI arm); `NetworkSlipQc.cpp:249-330` → `:447-573` (IF-TD pool arm, empirical-Bayes shrink `:515-521`); `NetworkSlipQc.cpp:338` → `:534-537` (IF-TD cold `action=diagnostic` emit); `NetworkSlipQc.cpp:378-393` → `:577-599` (refsat fold) |
+> | `IfPhaseSlipDetector.cpp` | `IfPhaseSlipDetector.cpp:415` / `IfPhaseSlipDetector.cpp:401-448` → `:617` / `:598-687` (legacy ref-slip candidate gate + block) |
+> | `ApplicationNetwork.cpp` | `ApplicationNetwork.cpp:1248` / `ApplicationNetwork.cpp:1248-1250` → `:1428-1430` (`carry_warm`); `ApplicationNetwork.cpp:5255-5290` → `NetworkInstallCarry.cpp:745`–`:840` (`d5_dump` writer) |
+> | `ApplicationNetworkAssembly.cpp` | `ApplicationNetworkAssembly.cpp:629-637` / `ApplicationNetworkAssembly.cpp:648-652` → `:1366` / `:1381` (`sta_mw_refloat` / `sta_if_resets`); `ApplicationNetworkAssembly.cpp:689-760` → `:1481`+ (`trace_slip_raw` writer) |
+> | `NetworkRunTraces.cpp` | `NetworkRunTraces.cpp:279-291` → `:643` header, `:953` emit (`network_events.csv` schema) |
 
 ---
 
 ## 0. Evidence base (what the audit measured)
 
-Run config (in tree, reusable): `config/test_suite/_wlver_150sta_10ep_d10_allfreq_slipcmp.json`.
-Artifacts land in `build/x64-Release/logs/` (`network_events.csv`,
-`network_if_slip.csv`, `network_slip_raw.csv`, `main_log.log`) and are overwritten
-per run — rerun the config to regenerate. ~50 s/epoch, ~8.5 min total.
-
-Headline numbers (2026-07-21 run, 11 epochs emitted / 0 skipped of 12 synced):
+Config (in tree, reusable): `config/test_suite/_wlver_150sta_10ep_d10_allfreq_slipcmp.json`.
+Artifacts in `build/x64-Release/logs/` (`network_events.csv`, `network_if_slip.csv`,
+`network_slip_raw.csv`, `main_log.log`), overwritten per run. ~50 s/epoch, ~8.5 min total.
+2026-07-21 run, 11 epochs emitted / 0 skipped of 12 synced:
 
 | Quantity | Value |
 |---|---|
@@ -30,304 +54,680 @@ Headline numbers (2026-07-21 run, 11 epochs emitted / 0 skipped of 12 synced):
 | IF-TD refsat-reset events | 17 (JPLM00USA/G10 ×9, MKEA00USA/G10 ×5, OWMG00NZL/G31 ×3) |
 | Raw-confirmed flags (ΔMW ≥ 0.5 WL cyc, or ΔGF ≥ 4 cm, or LLI) | 30 of 49 |
 | Unsupported flags (raw series flat) | 14 — **all** the JPLM/MKEA G10 refsat family |
-| LLI-set-but-no-jump rows | 352 over 10 epochs, dominated by STK200JPN (99), ISHI00JPN (90), MCIL00JPN (83), CCJ200JPN (80) |
-| Card-4 carry slip refloats vs real events | 2 318 vs ≈ 50 (LLI chatter feeding the C3c funnel) |
+| LLI-set-but-no-jump rows | 352 over 10 epochs (STK200JPN 99, ISHI00JPN 90, MCIL00JPN 83, CCJ200JPN 80) — ⛔ **FALSIFIED, §8.2 F1**: LLI **bit 2** (antispoofing), never tested by the drain's `lli & 1`. Bit-0 census **122 rows**: OWMG00NZL 33, MAC100AUS 24, MCIL00JPN 11, WARK00NZL 9, ASCG00SHN 9 |
+| Card-4 carry slip refloats vs real events | 2 318 vs ≈ 50 — count right; ⛔ attribution "(LLI chatter feeding the C3c funnel)" **FALSIFIED, §8.2 F2**: D5 contributed 1 560, the coarse layer ≈ 154 |
 | D5 innovation re-taps | 1 560 (σ̂₀ = 1.78) |
-| Reverse check, raw \|ΔMW\| > 3 cyc | 57 candidates → 39 IF-flagged; misses are gap-coincident re-acquisition arcs (DARW00AUS/G28 ±405 cyc, YKRO00CIV/G06 +47/−60/−17 cyc, MAC100AUS/G04) or code-multipath MW steps with flat phase (NLIB00USA/G05, dev 0.02–0.05 m vs thr 0.107 every epoch) |
-| MW/LLI event rows in `network_events.csv` | 0 — structural (see L3), not a null MW result |
+| Reverse check, raw \|ΔMW\| > 3 cyc | 57 → 39 IF-flagged; misses are gap-coincident re-acquisition arcs (DARW00AUS/G28 ±405 cyc, YKRO00CIV/G06 +47/−60/−17 cyc, MAC100AUS/G04) or code-multipath MW steps with flat phase (NLIB00USA/G05, dev 0.02–0.05 m vs thr 0.107 every epoch) |
+| MW/LLI event rows in `network_events.csv` | 0 — structural (L3), not a null MW result |
 
-The DARW00AUS/G28 excursion **was** caught (dev = 179.47 m vs thr = 2.55 m, 70×) at
-the first epoch where one signal pair survived two consecutive epochs — the earlier
-misses are the TD chain breaking during re-acquisition, not threshold failures.
+DARW00AUS/G28 **was** caught (dev 179.47 m vs thr 2.55 m, **70×**) at the first epoch where one signal
+pair survived two consecutive epochs — the earlier misses are the TD chain breaking during
+re-acquisition, not threshold failures. NLIB00USA/G05's 2–4 cyc MW-only steps with flat phase are code
+multipath, correctly unflagged.
 
-The four limitations:
+| id | limitation |
+|---|---|
+| 1 | **L1 — refsat gate false-positive family.** `IfPhaseSlipDetector.cpp:617` fires on `\|median(non-ref DDs)\| > 0.5·λ_IF ≈ 5.3 cm` at only `n ≥ 2` (`:609`): fixed threshold, no elevation normalization, no empirical scale, no persistence. On a thin family (L1C_L2L census ≈ **3.7 arcs/station**) a persistent sub-slip drift re-fires it every epoch — 9 consecutive at JPLM, 5 at MKEA, raw WL/GF flat at ±0.1 cyc, no LLI. Each fire refloats both band ambiguities and marks carry chords slipped. |
+| 2 | **L2 — LLI chatter thrashes the carry funnel.** The MW-drain LLI arm (`NetworkSlipQc.cpp:276-379`) acts on raw RINEX LLI bit-0 unconditionally, and via the pre-warm `carry_slipped_ambs` insert (`:160`, active from epoch 1) that reaches the DD carry cold or warm. ⛔ The audit's causal story (four JPN stations, ~9 sats/epoch, 2 318 refloats) is **FALSIFIED by §8.2 F1/F2**. The DEFECT CLASS survives — real bit-0 chatterers OWMG00NZL / MAC100AUS — but sized at ~122 rows, and Card L cannot move the 2 318. |
+| 3 | **L3 — MW/LLI events invisible when cold.** `refloat_signal` (`NetworkSlipQc.cpp:147-166`) set `refloated` only under `carry_warm` (`ApplicationNetwork.cpp:1428`: `pl_on && n_emitted ≥ pl_warmup`) and both `emitEvent` calls required it, so cold runs wrote **zero** `mw_wl_slip`/`lli_slip` rows even though detections fed the C3c funnel — asymmetric with the IF-TD driver, which emits `action=diagnostic` when cold (`:534-537`). MW ↔ IF agreement was unmeasurable from the event trace on any cold/short run. |
+| 4 | **L4 — gap-coincident slips are detector-invisible while the TD chain is broken.** Estimation behaved correctly (broken arcs → chord death / fresh float, "0 gap re-pins"; D5 fired), but nothing *measures* whether carry- or lane-bridged state rides across a break whose raw level shifted. Instrument-first card, not a mechanism card. |
 
-- **L1 — refsat gate false-positive family.** `IfPhaseSlipDetector.cpp:415`: the
-  reference-satellite slip check fires on `|median(non-ref DDs)| > 0.5·λ_IF ≈ 5.3 cm`
-  with only `n ≥ 2` — fixed threshold, no elevation normalization, no empirical
-  scale, no persistence semantics. On a thin signal family (L1C_L2L: census ≈ 3.7
-  arcs/station) a persistent sub-slip drift re-fires it **every epoch** (9
-  consecutive at JPLM, 5 at MKEA; raw WL/GF flat at ±0.1 cyc, no LLI). Each fire
-  refloats both band ambiguities and marks carry chords slipped.
-- **L2 — LLI chatter thrashes the carry funnel.** `NetworkSlipQc.cpp:175-187`: the
-  MW-drain LLI arm acts on raw RINEX LLI bit-0 unconditionally. Four stations
-  assert LLI on ~9 sats every epoch with zero observable jump; via the pre-warm
-  `carry_slipped_ambs` insert (`NetworkSlipQc.cpp:146`, active from epoch 1) this
-  produced 2 318 carry slip refloats against ≈ 50 real events. In a warm run the
-  legacy pending-reseed path would thrash the same stations' ambiguities too.
-- **L3 — MW/LLI events invisible when cold.** `NetworkSlipQc.cpp:134-152`:
-  `refloat_signal` sets `any = true` only under `carry_warm`
-  (`ApplicationNetwork.cpp:1248`: `pl_on && n_emitted ≥ pl_warmup`), and both
-  `emitEvent` calls require it — so cold runs write **zero** `mw_wl_slip`/`lli_slip`
-  rows even though detections fed the C3c funnel. Asymmetric with the IF-TD driver,
-  which emits `action=diagnostic` when cold. MW ↔ IF agreement is unmeasurable from
-  the event trace on any cold/short run.
-- **L4 — gap-coincident slips are detector-invisible while the TD chain is broken.**
-  The estimation side behaved correctly in the audit (broken arcs → chord death /
-  fresh float, "0 gap re-pins"; D5 fired), but nothing *measures* whether carry- or
-  lane-bridged state ever rides across a break whose raw level shifted. This is an
-  instrument-first card, not a mechanism card.
-
-Out of scope (do **not** bundle): the `dd-build` blowup at all-freq/all-channel
-(35–43 s/ep vs sub-second at triple/single — DD chord population; belongs to the
-LF-1 perf lineage), and root-causing the physical L2L drift at JPLM/MKEA
-(characterize opportunistically from `network_if_slip.csv` if it informs Card R
-thresholds, but it is not a deliverable).
+Out of scope (do **not** bundle): the `dd-build` blowup at all-freq/all-channel (35–43 s/ep vs
+sub-second at triple/single — DD chord population; LF-1 perf lineage), and root-causing the physical L2L
+drift at JPLM/MKEA (characterize opportunistically from `network_if_slip.csv` if it informs Card R
+thresholds; not a deliverable).
 
 ---
 
 ## 1. Ground rules (binding, project-wide)
 
-From `CLAUDE.md` and standing user directives; restated so this spec stands alone:
+From `CLAUDE.md` and standing user directives; restated so this spec stands alone.
 
-1. **Default-OFF + byte-identity.** Every behavior change sits behind a new config
-   toggle following the `GnssConfig` conventions (private member + getter +
-   `jval<>` parse in the matching section helper of
-   `src/core/config/GnssConfigLoadNetwork.cpp`, summary-log line). With all new
-   toggles OFF, artifacts must be **byte-identical to the pre-change binary on the
-   same build config** (same-build golden comparison; never Debug-vs-Release).
-   Emission/logging-only changes (Card E) must not alter any numerical artifact.
-2. **Release-only data runs.** Debug is for compile checks and `gnss_tests` only.
-   Run a renamed exe copy (e.g. `gnss_processor_<card>_run.exe`); pre-kill zombies
-   **name-scoped to your own renamed exe only** (a `gnss_processor*` wildcard kills
-   concurrent sessions' runs); on LNK1104 assume a concurrent build lock and retry.
-3. **Staged test cadence.** 10-epoch smoke first, always. Longer graded runs
-   (≥ 1 h warm validation) only after a clean smoke **and on the user's command** —
-   report readiness, do not launch them unprompted.
-4. **Empirical thresholds only.** Any new gate on raw observables (MW/GF steps,
-   LLI corroboration, refsat scale) derives from the data stream itself
-   (MAD / Welford / EWMA, cross-satellite or per-(station,pair)) — never from the
-   stochastic-model σ. Follow the existing pool-arm pattern
-   (`NetworkSlipQc.cpp:249-330`: pooled MAD prior → per-(station,pair) EWMA with
-   empirical-Bayes shrinkage, physical integer floor kept in raw metres).
-5. **Never hard-exclude measurements.** Fixes qualify, corroborate, deweight, or
-   downgrade to diagnostic — they do not drop stations, satellites, or
-   observations. (Also: reset-over-repair for bias-less signals — the refloat
-   mechanism is already reset-semantics; keep it that way.)
-6. **Run-end counters are the ON-path telemetry** (Standing invariant 4). Every
-   card adds counters proving its wiring is live; "no crash + clean log" is not
-   evidence. Wire them into the existing end-of-run summary block.
-7. **Unit tests are additive.** The slip-detector chain currently has **zero**
-   dedicated unit coverage — these cards add the first. Follow the existing
-   GoogleTest patterns in `tests/` (TestAccess shim where private state must be
-   probed); suite must stay green.
-8. **Doxygen + CMake.** Public headers keep the project's thorough Doxygen style.
-   New `.cpp` files are added to the explicit source list in `CMakeLists.txt`.
-9. **Commits**: no Claude co-author trailer.
+| # | rule |
+|---|---|
+| 1 | **Default-OFF + byte-identity.** Every behavior change sits behind a new toggle following the `GnssConfig` conventions (private member + getter + `jval<>` parse in the matching section helper of `src/core/config/GnssConfigLoadNetwork.cpp`, summary-log line). All toggles OFF ⇒ artifacts **byte-identical to the pre-change binary on the same build config**; never Debug-vs-Release. Emission/logging-only changes (Card E) must not alter any numerical artifact. |
+| 2 | **Release-only data runs.** Debug is for compile checks and `gnss_tests`. Renamed exe copy (`gnss_processor_<card>_run.exe`); pre-kill zombies **name-scoped to your own renamed exe only** (a `gnss_processor*` wildcard kills concurrent sessions' runs); on LNK1104 assume a build lock, retry. |
+| 3 | **Staged test cadence.** 10-epoch smoke first, always; ≥ 1 h graded runs only after a clean smoke **and on the user's command** — report readiness, never launch unprompted. |
+| 4 | **Empirical thresholds only.** Any new gate on raw observables (MW/GF steps, LLI corroboration, refsat scale) derives from the data stream itself (MAD / Welford / EWMA, cross-satellite or per-(station,pair)), never from the stochastic-model σ. Follow the pool-arm pattern (`NetworkSlipQc.cpp:447-573`: pooled MAD prior → per-(station,pair) EWMA with empirical-Bayes shrinkage at `:515-521`, physical integer floor kept in raw metres). |
+| 5 | **Never hard-exclude measurements.** Fixes qualify, corroborate, deweight, or downgrade to diagnostic — never drop stations, satellites, or observations. Reset-over-repair for bias-less signals: the refloat mechanism is already reset-semantics; keep it that way. |
+| 6 | **Run-end counters are the ON-path telemetry** (invariant #4); "no crash + clean log" is not evidence. |
+| 7 | **Unit tests are additive.** The slip-detector chain had **zero** dedicated coverage — these cards add the first (TestAccess shim where private state must be probed); suite stays green. |
+| 8 | **Doxygen + CMake.** Headers keep the project's Doxygen style; new `.cpp` files go in the explicit `CMakeLists.txt` source list. |
+| 9 | **Commits**: no Claude co-author trailer. |
 
-Shared plumbing note (used by Cards L and G): the raw MW/GF observable computation
-exists today inside the `trace_slip_raw` writer
-(`ApplicationNetworkAssembly.cpp:689-760`, gated on the trace stream). Refactor it
-into a shared helper (compute once per epoch when *any* consumer needs it; trace
-output byte-unchanged when only the trace consumes it) rather than duplicating the
-math in the drains.
+Shared plumbing note (Cards L and G): the raw MW/GF observable computation lived inside the
+`trace_slip_raw` writer (`ApplicationNetworkAssembly.cpp:1481`+, gated on the trace stream). Refactor into
+a shared helper — computed once per epoch when *any* consumer needs it, trace output byte-unchanged when
+only the trace consumes it — rather than duplicating the math in the drains. *(Built as
+`include/slip/NetworkRawObservables.hpp` + `src/core/slip/NetworkRawObservables.cpp`; driver call site
+`ApplicationNetworkAssembly.cpp:1402`, which cites this section; qualifier entry `:1416`.)*
 
 ---
 
 ## 2. Card R — refsat slip-gate hardening (fixes L1)
 
-**Where**: `IfPhaseSlipDetector.cpp:401-448` (ref-slip block; gate at :415),
-`:296-320` (ref selection/retention, `kRefElevThreshDeg = 45°`), `:451-496`
-(deferred-mode branch — on the network path `defer_flagging_ = true` and **only**
-the ref-slip branch pushes reset keys; those flow through `sta_if_resets`
-(`ApplicationNetworkAssembly.cpp:648-652`) into the driver's refsat fold
-(`NetworkSlipQc.cpp:378-393`) as `refsat_reset` events + `refloat_pair`).
+**Where**: `IfPhaseSlipDetector.cpp:598-687` (ref-slip block; legacy candidate filter `:617`, `n ≥ 2`
+`:609`, median rebase `:669-671`), `:296-345` (ref selection/retention; `kRefElevThreshDeg = 45°`
+declared at `IfPhaseSlipDetector.hpp:314`, tested `:308`), `:690-694` (deferred-mode branch — on the
+network path `defer_flagging_ = true` and **only** the ref-slip branch pushes reset keys, which flow
+through `sta_if_resets` (`ApplicationNetworkAssembly.cpp:1381`) into the driver's refsat fold
+(`NetworkSlipQc.cpp:577-599`) as `refsat_reset` events + `refloat_pair`).
 
-**Problem restated**: the gate is the only non-empirical decision left in the IF-TD
-chain, and it fired 14/14 false positives in the audit while the empirically-scaled
-pool arm fired ~0. After each fire the code rebases `prev_grad` by the median
-(`:433-434`), so a re-fire next epoch is *evidence of persistent drift, not a
-stale-state bug* — the gate cannot distinguish a step (slip) from a drift.
+**Problem**: the only non-empirical decision left in the IF-TD chain; 14/14 false positives while the
+empirically-scaled pool arm fired ~0. Each fire rebases `prev_grad` by the median, so a re-fire next
+epoch is *evidence of persistent drift, not a stale-state bug* — **the gate cannot distinguish a step
+from a drift.**
 
 **MUST**:
-- R1. The refsat decision becomes scale-aware and empirical, consistent in spirit
-  with the pool arm (driver-side `s_eff` per (station,pair) already exists —
-  reusing it is the architecturally preferred candidate, but not mandatory).
-- R2. Step-vs-drift semantics: a genuine ref slip (a one-epoch common step across
-  the non-ref DDs) fires **once**; a persistent sub-slip drift must not produce an
-  unbounded per-epoch event/refloat stream on the same (station, sat, pair). Cap,
-  de-dup, escalate to re-reference, or discriminate by dispersion — your choice —
-  but the audit's 9-consecutive-epoch pattern must be structurally impossible.
-- R3. Thin-family honesty: below a minimum non-ref population (audit family was
-  2–3 DDs), the median is not a trustworthy common-mode estimate — the gate must
-  either widen empirically or defer with a counted skip (no silent behavior).
-- R4. Genuine ref slips still fire: the OWMG00NZL/G31 events (LLI-corroborated,
-  station re-lock) must survive the rerun. The pool arm is untouched.
-- R5. Both detector modes keep working: deferred (network) and self-contained
-  (user/kinematic — currently STAGED; do not change its defaults or wiring).
-- R6. New toggle(s) under `network.cycle_slip.if_phase_td_ref_*`; default OFF ⇒
-  byte-identical; armed in the audit config for validation.
-- R7. Counters: refsat fires, refsat suppressed-by-{scale, persistence, thin-family},
-  ref re-selections. Unit tests: first coverage of `IfPhaseSlipDetector` —
-  synthetic gradient streams exercising step-fires-once, drift-does-not-refire,
-  thin-family defer, ref handover offset correctness (`:349-363`).
 
-**CANDIDATES** (non-binding):
-- Move refsat adjudication driver-side: detector returns the median + dispersion
-  of non-ref DDs per (station, pair); the driver gates against `k · s_eff ·
-  elev-map` with its existing empirical scale, and applies persistence rules where
-  it already owns event emission. Keeps one empirical-scale authority.
-- Dispersion discriminator: fire only when the non-ref DDs agree on a common step
-  (`MAD(dd_i − median)` small relative to `|median|`) — a drift shows scatter and
-  repeated small exceedance; a slip shows one coherent jump.
-- Post-fire escalation: after a fire on (station, pair), force reference
-  re-selection next epoch; if the *new* reference immediately "slips" too, the
-  common mode is station-local (receiver event) — hand it to the pool/RAIM layer
-  rather than re-firing the refsat path.
+| id | criterion |
+|---|---|
+| **R1** | The refsat decision becomes scale-aware and empirical, consistent with the pool arm (driver-side `s_eff` per (station,pair) exists — reuse preferred, not mandatory). |
+| **R2** | Step-vs-drift: a genuine ref slip (one-epoch common step across the non-ref DDs) fires **once**; a persistent sub-slip drift must not produce an unbounded per-epoch event/refloat stream on the same (station, sat, pair). Cap, de-dup, escalate to re-reference, or discriminate by dispersion — the 9-consecutive-epoch pattern must be **structurally impossible**. |
+| **R3** | Thin-family honesty: below a minimum non-ref population (audit family 2–3 DDs) **the median is untrustworthy** — widen empirically or defer with a counted skip; no silent behavior. |
+| **R4** | Genuine ref slips still fire: OWMG00NZL/G31 (LLI-corroborated station re-lock) must survive the rerun. The pool arm is untouched. |
+| **R5** | Both detector modes keep working: deferred (network) and self-contained (user/kinematic — STAGED; do not change its defaults or wiring). |
+| **R6** | New toggle(s) under `network.cycle_slip.if_phase_td_ref_*`; default OFF ⇒ byte-identical; armed in the audit config for validation. |
+| **R7** | Counters: refsat fires, suppressed-by-{scale, persistence, thin-family}, ref re-selections. Unit tests: first `IfPhaseSlipDetector` coverage — synthetic gradient streams for step-fires-once, drift-does-not-refire, thin-family defer, ref handover offset correctness (`:546-557`). |
 
-**Falsifier (10-ep smoke, audit config)**: JPLM00USA/G10 + MKEA00USA/G10 families
-(14 events, flat raw) vanish; OWMG00NZL/G31 events persist; pool flags ≈ 32 ± noise;
-`network_if_slip.csv` sample population unchanged (8 717 ± sync noise).
+**CANDIDATES → outcomes** (as built, §8.3): driver-side adjudication on one empirical-scale authority —
+**ADOPTED in spirit** (empirical-Bayes `s_eff`); dispersion discriminator (`MAD(dd_i − median)` small vs
+`|median|`) — **ADOPTED** as the coherence test, but it needed the incoherent SPLIT to be safe, since
+coherence alone destroys the very event R4 protects (§8.2 F5); post-fire escalation to a station-local
+hand-off — **FALSIFIED, not built** (§8.2 F4), branch and counter REMOVED rather than shipped
+permanently zero.
+
+**Falsifier (10-ep smoke, audit config)**: JPLM/MKEA G10 families (14 events, flat raw) vanish;
+OWMG00NZL/G31 persists; pool flags ≈ 32 ± noise; sample population unchanged (8 717 ± sync noise).
+**Result: §8.4.4 — PARTIAL, 14 → 4.**
 
 ---
 
 ## 3. Card L — LLI corroboration in the MW drain (fixes L2)
 
-**Where**: `NetworkSlipQc.cpp:100-193` (`networkSlipDrainMwRefloat`; LLI loop
-`:175-187`; pre-warm C3c insert `:146`); shared raw-observable helper (§1 note).
+**Where**: `NetworkSlipQc.cpp:100-391` (`networkSlipDrainMwRefloat`; LLI loop `:276-379`,
+qualification/suppression `:321-348`; `refloat_signal` `:147-166`, C3c insert `:160`); shared
+raw-observable helper (§1).
 
-**Problem restated**: LLI bit-0 is treated as ground truth. It *is* the only
-witness for some real slips (the G23@GAMB precedent in the code comment at
-`:120-132` — preserve that), but four receivers assert it continuously without any
-phase discontinuity, and through the C3c funnel that fiction reaches the DD carry
-from epoch 1, cold or warm.
+**Problem**: LLI bit-0 is treated as ground truth. It *is* the only witness for some real slips (the
+G23@GAMB precedent preserved in the code comment at `:130-135`), but some receivers assert it
+continuously with no phase discontinuity, and through the C3c funnel that fiction reaches the DD carry
+from epoch 1. ⛔ The audit's named offenders (STK2/ISHI/MCIL/CCJ2) are the wrong population — §8.2 F1.
 
 **MUST**:
-- M1. An LLI assertion alone no longer drives refloat/funnel actions at a station
-  whose LLI behavior is demonstrably non-credible; at credible stations LLI stays
-  decisive (do not require corroboration everywhere — that would forfeit the
-  G23@GAMB class of catches where MW/IF genuinely cannot see the slip).
-- M2. Credibility/corroboration is empirical (rule 4). No station or satellite is
-  excluded from estimation (rule 5) — this card only qualifies the *slip action*.
-- M3. Real multi-sat station events survive: the OWMG00NZL re-lock epochs
-  (LLI **with** WL jumps, 3 separate epochs in the audit) must still refloat every
-  affected satellite. Any station-level credibility state must not veto
-  jump-corroborated LLI. (This is why corroboration-per-signal is the preferred
-  primitive and rate-masks at most a prefilter.)
-- M4. Suppressed LLI assertions are visible, not silent: a diagnostic event row
-  (e.g. `lli_chatter` or `lli_slip` with `action=suppressed`) and run-end counters
-  — LLI accepted / suppressed / corroborated-by-{MW step, GF step}; plus a one-line
-  per-run top-offenders summary (the audit's STK2/ISHI/MCIL/CCJ2 list must be
-  reproducible from the log alone).
-- M5. The C3c funnel insert (`:146`) obeys the same qualification as the
-  pending-reseed path — the audit's 2 318-refloat thrash was *cold*, so gating only
-  the warm path is insufficient.
-- M6. Toggle under `network.cycle_slip.` (e.g. `mw_lli_corroborate`); default OFF ⇒
-  byte-identical; armed in the audit config. Unit tests: chatty-station stream
-  (LLI every epoch, flat MW/GF) → suppressed + counted; quiet-station LLI with
-  flat observables → still acts (credibility intact); LLI + WL step → acts.
 
-**CANDIDATES**:
-- Corroboration primitive: per (station, sat, signal), an LLI assertion is
-  confirmed if the shared raw-observable helper shows an MW or GF step above an
-  empirical gate (per-station MAD/EWMA of its own epoch-to-epoch steps — the 30 s
-  ΔMW noise floor differs per station; the audit saw 0.05–0.2 cyc benign vs 2–200
-  cyc real).
-- Credibility state: EWMA of the station's LLI-set fraction across its arcs; a
-  station sustaining an implausible fraction (audit: ~100 % of tracked sats,
-  every epoch) demotes LLI from "decisive" to "corroboration-required". Two-state,
-  hysteresis, never "ignore".
-- Placement latitude: qualification may live in the drain (reading the helper) or
-  in PASS-A next to where `sta_mw_refloat` is filled
-  (`ApplicationNetworkAssembly.cpp:629-637`) — keep the serial, station-ordered
-  determinism of the drain either way.
+| id | criterion |
+|---|---|
+| **M1** | An LLI assertion alone no longer drives refloat/funnel actions at a station whose LLI behavior is demonstrably non-credible; at credible stations LLI stays decisive — corroboration everywhere would forfeit the G23@GAMB class where MW/IF cannot see the slip. |
+| **M2** | Credibility/corroboration is empirical (rule 4); no station or satellite is excluded from estimation (rule 5) — this card qualifies only the *slip action*. |
+| **M3** | Real multi-sat station events survive: the OWMG00NZL re-lock epochs (LLI **with** WL jumps, 3 separate epochs) must still refloat every affected satellite; station-level credibility must not veto jump-corroborated LLI — hence corroboration-per-signal is the preferred primitive and rate-masks are at most a prefilter. |
+| **M4** | Suppressed assertions are visible: a diagnostic event row (`lli_chatter`, or `lli_slip` with `action=suppressed`), run-end counters (LLI accepted / suppressed / corroborated-by-{MW step, GF step}), and a per-run top-offenders line reproducible from the log alone. |
+| **M5** | The C3c funnel insert obeys the same qualification as the pending-reseed path — the 2 318 refloat thrash was *cold*, so gating only the warm path is insufficient. |
+| **M6** | Toggle under `network.cycle_slip.` (e.g. `mw_lli_corroborate`); default OFF ⇒ byte-identical; armed in the audit config. Unit tests: chatty-station stream (LLI every epoch, flat MW/GF) → suppressed + counted; quiet-station LLI with flat observables → still acts; LLI + WL step → acts. |
 
-**Falsifier (10-ep smoke)**: Card-4 slip-refloat counter collapses from 2 318 to
-the same order as (real events × affected chords); JPN stations disappear from the
-refloat population but appear in the suppressed counters; OWMG re-lock epochs
-unchanged. Warm validation (≥ 1 h, **on command**): no ambiguity-variance sawtooth
-at the four JPN stations, D5 re-tap count at those stations drops accordingly.
+**CANDIDATES → outcomes**: per-(station, sat, signal) corroboration from an MW/GF step above an
+empirical gate — **ADOPTED** (per-station robust EWMA of that station's own step magnitudes; audit saw
+0.05–0.2 cyc benign vs 2–200 cyc real); two-state credibility EWMA of the station's LLI-set fraction,
+hysteresis, never "ignore" — **ADOPTED** verbatim; placement in the drain vs PASS-A next to
+`sta_mw_refloat` (`ApplicationNetworkAssembly.cpp:1366`) — built in the **drain**, preserving its
+serial station-ordered determinism.
+
+**Falsifier (10-ep smoke)**: ⛔ two of three clauses are DEAD (results §8.4.4). "Carry refloats 2 318 →
+(real events × affected chords)" assumed a population that does not exist: **NOT MET, NOT ACHIEVABLE BY
+THIS CARD** — the armed run moved it 2 318 → **2 399**, the *wrong* way, for a correct reason (more chords
+survive to be judged by D5). "JPN stations move to suppressed" is **VOID** — never in the arm. What
+stands: OWMG re-lock epochs unchanged (**MET**), plus the warm checks (≥ 1 h, **on command**) — no
+ambiguity-variance sawtooth at the demoted stations, D5 re-tap count there drops — which became Card W
+gate W3 (§9.2) and were **never run**.
 
 ---
 
 ## 4. Card E — diagnostic MW/LLI event emission when cold (fixes L3)
 
-**Where**: `NetworkSlipQc.cpp:134-193`; `carry_warm` at
-`ApplicationNetwork.cpp:1248-1250`; events trace schema
-`NetworkRunTraces.cpp:279-291` (opt-in via `network.trace_events`).
+**Where**: `NetworkSlipQc.cpp:141-391`; `carry_warm` at `ApplicationNetwork.cpp:1428-1430`; events
+schema `NetworkRunTraces.cpp:643` (opt-in via `network.trace_events`, emit helper `:953`).
 
 **MUST**:
-- E1. MW-detect and LLI detections emit event rows when the carry is cold, with
-  `action=diagnostic` (warm keeps `refloat`) — mirroring the IF-TD driver's
-  existing cold behavior (`NetworkSlipQc.cpp:338`). Schema unchanged (the `action`
-  column already carries the distinction).
-- E2. Restructure `refloat_signal`'s return so "matched ambiguities for this
-  (sat, signal)" and "refloated" are separate facts; emission and the
-  `n_mw`/`n_lli` log counters key on *detections*, refloat accounting stays
-  warm-only (separate counter). The `Network[MW detect]` summary line reports cold
-  detections instead of printing nothing.
-- E3. Numerical no-op, strictly: state mutations (`markAmbiguityPendingReseed`,
-  `carry_slipped_ambs`) are untouched by this card. With `trace_events` off,
-  artifacts byte-identical; with it on, only `network_events.csv` rows and log
-  text may differ from pre-change.
-- E4. This card is what makes the MW ↔ IF agreement measurable from
-  `network_events.csv` alone on short runs — the rerun must show nonzero MW-side
-  rows wherever PASS-A detected (the audit could only infer them from raw traces).
-  No new toggle needed if E3 holds (emission rides the existing `trace_events`
-  opt-in); if you find any numerical coupling, stop and gate it.
 
-Sequencing note: land Card E **first** — Cards R and L validation reads the event
-rows it unlocks.
+| id | criterion |
+|---|---|
+| **E1** | MW-detect and LLI detections emit event rows when the carry is cold, `action=diagnostic` (warm keeps `refloat`) — mirroring the IF-TD driver (`NetworkSlipQc.cpp:536`). Schema unchanged (the `action` column already carries the distinction). |
+| **E2** | Restructure `refloat_signal`'s return so "matched ambiguities for this (sat, signal)" and "refloated" are separate facts; emission and the `n_mw`/`n_lli` log counters key on *detections*, refloat accounting stays warm-only (separate counter). The `Network[MW detect]` summary line reports cold detections instead of printing nothing. |
+| **E3** | Numerical no-op, strictly: state mutations (`markAmbiguityPendingReseed`, `carry_slipped_ambs`) untouched. With `trace_events` off, artifacts byte-identical; with it on, only `network_events.csv` rows and log text may differ. |
+| **E4** | Makes MW ↔ IF agreement measurable from `network_events.csv` alone on short runs — the rerun must show nonzero MW-side rows wherever PASS-A detected. No new toggle if E3 holds (emission rides the existing `trace_events` opt-in); if you find any numerical coupling, stop and gate it. |
+
+Sequencing: land Card E **first** — Cards R and L validation reads the event rows it unlocks.
 
 ---
 
 ## 5. Card G — gap-coincident slip instrumentation (addresses L4, instrument-first)
 
-**Framing**: Standing invariant 3 — a mechanism here is *not yet justified by
-data*. The audit showed correct reset semantics on broken arcs (chord
-death/rebirth, 0 gap re-pins) and a live D5 backstop. The unmeasured residual risk
-is state that *bridges* a tracking break — the Card-4 DD carry across
-`phase_leveling_max_gap_s`-tolerated gaps, and the WL-3 lane-carry bridge re-key —
-riding over a level shift. Instrument, measure on a warm run, then decide.
+**Framing**: invariant #3 — a mechanism here is *not yet justified by data*. The audit showed correct
+reset semantics on broken arcs (chord death/rebirth, 0 gap re-pins) and a live D5 backstop. The
+unmeasured residual risk is state that *bridges* a tracking break — the Card-4 DD carry across
+`phase_leveling_max_gap_s`-tolerated gaps, and the WL-3 lane-carry bridge re-key — riding over a level
+shift. Instrument, measure on a warm run, then decide.
 
 **MUST**:
-- G1. Counters (run-end + per-event diagnostic rows via `trace_events`):
-  (a) arcs re-established after ≥ 1 missed epoch whose raw MW (and GF) level
-  shifted across the break by more than an empirical gate (shared helper, §1) —
-  count total resumptions and shifted resumptions separately;
-  (b) among shifted resumptions, how many re-entered with bridged carry/lane state
-  vs a fresh float (the poison case vs the benign case);
-  (c) D5 re-taps whose (station, sat, epoch) coincides with a raw step — making
-  the D5 counter attributable (the audit's 1 560 was un-decomposable).
-- G2. Zero mechanism changes in this card. Default-OFF toggle for the
-  instrumentation only if it touches a hot path; pure counter/trace additions
-  under existing trace flags need no toggle but still obey E3-style byte-identity
-  with traces off.
-- G3. Decision rule, recorded in the card's report: if shifted-resumption-with-
-  bridged-state ≈ 0 on the warm graded run, the mechanism is **deferred with
-  data** (write the number down — that is the required triage artifact). If
-  nonzero, a follow-up card marks such arcs slipped at re-entry (C3c funnel) or
-  blocks the lane bridge — spec that card then, with the measurements in hand.
+
+| id | criterion |
+|---|---|
+| **G1** | Counters (run-end + per-event rows via `trace_events`): (a) arcs re-established after ≥ 1 missed epoch whose raw MW (and GF) level shifted across the break by more than an empirical gate (shared helper, §1) — total and shifted resumptions counted separately; (b) among shifted resumptions, how many re-entered with bridged carry/lane state vs a fresh float (poison vs benign); (c) D5 re-taps whose (station, sat, epoch) coincides with a raw step — making the D5 counter attributable (the audit's 1 560 was un-decomposable). |
+| **G2** | Zero mechanism changes. Default-OFF toggle only if the instrumentation touches a hot path; pure counter/trace additions under existing trace flags need no toggle but still obey E3-style byte-identity with traces off. |
+| **G3** | Decision rule, recorded in the card's report: shifted-resumption-with-bridged-state ≈ 0 on the warm graded run ⇒ mechanism **deferred with data** (write the number down — the required triage artifact). Nonzero ⇒ a follow-up card marks such arcs slipped at re-entry (C3c funnel) or blocks the lane bridge — spec it then, with the measurements. |
+
+⚠ G3's rule is **weaker than it reads** (§10.4 H2): only as strong as the *unmeasurable*-and-bridged
+count is small, and that number was invisible until the arc ledger was split three ways. The warm arm
+that would have executed G3 (gate W1, §9.2) was never launched.
 
 ---
 
 ## 6. Validation harness (shared)
 
-1. **Grader**: port the audit's analysis into `scripts/grade_slip_agreement.py`
-   (session scratchpad scripts do not persist). Required behavior — inputs: a log
-   dir; outputs: (a) event counts by tier/type from `network_events.csv`;
-   (b) IF ↔ MW/LLI matching on (station, sat) with ± 1-epoch tolerance;
-   (c) per-epoch flag histogram (bunch check) + top stations/sats;
-   (d) sample stats from `network_if_slip.csv` (opportunities, flags, margin
-   distribution vs `thr_m`); (e) raw adjudication from `network_slip_raw.csv`
-   (support = |ΔMW| > 0.5 WL cyc or |ΔGF| > 4 cm or LLI; classify flags
-   supported / unsupported / no-series); (f) reverse sweep at |ΔMW| gates 1.5/2/3
-   cyc with hit/miss lists. Cross-check its totals once against the numbers in §0.
-2. **Gates per card**: Release build; `gnss_tests` green (additive cases); OFF
-   byte-identity vs a pre-change same-build golden on the audit config with new
-   toggles stripped; ON 10-ep smoke meeting the card's falsifier; counters nonzero
-   where the card claims wiring (invariant 4).
-3. **Warm validation** (Cards L and G need it; R benefits): ≥ 1 h leg on the same
-   station set — prepared, reported ready, launched **only on the user's command**.
-4. **Run mechanics**: `build/x64-Release`, renamed exe per card, name-scoped
-   zombie pre-kill, lock-retry on LNK1104. The audit config already carries
-   `parallel_carry=true / parallel_reduce=false` — leave that as-is.
+| # | item |
+|---|---|
+| 1 | **Grader**: port the audit's analysis into `scripts/grade_slip_agreement.py` (scratchpad scripts do not persist). Input a log dir; output (a) event counts by tier/type from `network_events.csv`; (b) IF ↔ MW/LLI matching on (station, sat) with ± 1-epoch tolerance; (c) per-epoch flag histogram (bunch check) + top stations/sats; (d) sample stats from `network_if_slip.csv` (opportunities, flags, margin distribution vs `thr_m`); (e) raw adjudication from `network_slip_raw.csv` (support = \|ΔMW\| > 0.5 WL cyc or \|ΔGF\| > 4 cm or LLI; classify supported / unsupported / no-series); (f) reverse sweep at \|ΔMW\| gates 1.5/2/3 cyc with hit/miss lists. Cross-check totals once against §0. *(Card D5-A later added section (g), D5 re-tap attribution — §10.2.2; the run-end-counter echo moved to (h).)* |
+| 2 | **Gates per card**: Release build; `gnss_tests` green (additive cases); OFF byte-identity vs a pre-change same-build golden on the audit config with new toggles stripped; ON 10-ep smoke meeting the card's falsifier; counters nonzero where the card claims wiring (invariant #4). |
+| 3 | **Warm validation** (Cards L and G need it; R benefits): ≥ 1 h leg on the same station set — prepared, reported ready, launched **only on the user's command**. *(Became Card W, §9.2 — PREPARED 2026-07-22, NEVER LAUNCHED.)* |
+| 4 | **Run mechanics**: `build/x64-Release`, renamed exe per card, name-scoped zombie pre-kill, lock-retry on LNK1104. The audit config already carries `parallel_carry=true / parallel_reduce=false` — leave that as-is. |
 
 ## 7. Acceptance summary
 
-| Card | Toggle (default OFF) | OFF gate | ON falsifier (10-ep smoke) |
+| Card | Toggle (default OFF) | OFF gate | ON falsifier (10-ep smoke) | LANDED 2026-07-21/22 |
+|---|---|---|---|---|
+| E (first) | none if numerically inert, else gate it | byte-identical, traces off | MW/LLI rows appear with `action=diagnostic`; counters count detections | **MET, no toggle needed** — 67 WL + 87 LLI detections that previously wrote nothing; `slip refloats` unchanged at 2 318 |
+| R | `network.cycle_slip.if_phase_td_ref_*` | byte-identical | JPLM/MKEA G10 family gone; OWMG G31 survives; pool arm unchanged | **PARTIAL 14 → 4** (−71 %), longest run 1; OWMG survives on the station-event path; pool arm 32 → 33 on 8 717 → 8 727 |
+| L | `network.cycle_slip.mw_lli_corroborate` (name latitude) | byte-identical | carry refloats 2 318 → ≈ real-event order; JPN stations move to suppressed counters; OWMG re-locks still act | **VOID / NOT ACHIEVABLE** on the first two (§8.2 F1/F2); OWMG **MET**; the card demoted the real bit-0 chatterers instead |
+| G | counters/trace only (`network.cycle_slip.gap_instrument`) | byte-identical, traces off | counters populate; decision rule executed on warm run data | counters **MET**; decision rule **NOT executed** — Card W (§9.2) never launched |
+
+---
+
+## 8. Implementation record, 2026-07-21 (absorbed `slip_qc_hardening_report_2026-07-21.md`)
+
+All default-OFF. **Read §8.2 before §8.3** — three premises did not survive measurement and one MUST
+could not be met as literally written.
+
+### 8.1 What landed
+
+| Area | Files |
+|---|---|
+| Shared raw MW/GF/LLI seam (§1) | NEW `include/slip/NetworkRawObservables.hpp`, `src/core/slip/NetworkRawObservables.cpp` |
+| Card E + Card L | `include/slip/NetworkSlipQc.hpp`, `src/core/slip/NetworkSlipQc.cpp` |
+| Card R | `include/slip/IfPhaseSlipDetector.hpp`, `src/core/slip/IfPhaseSlipDetector.cpp`, `src/core/app/ApplicationNetworkSetup.cpp` |
+| Card G + run-end telemetry | `src/core/app/ApplicationNetwork.cpp`, `src/core/app/ApplicationNetworkAssembly.cpp`, `include/app/Application.hpp` |
+| Config | `include/config/GnssConfigTypes.hpp` (`SlipQcConfig`, `:370` / `:911`), `src/core/config/GnssConfigLoadNetwork.cpp:3191` |
+| Grader (§6.1) | NEW `scripts/grade_slip_agreement.py` |
+| Unit tests (rule 7) | NEW `tests/test_if_phase_slip_detector.cpp`, `tests/test_network_slip_qc.cpp` |
+| Build / configs | `CMakeLists.txt` (3 explicit source entries); NEW `config/test_suite/_wlver_150sta_10ep_d10_allfreq_sliphard.json` (cards armed) |
+
+**Toggle deviation (stated).** The spec wanted the toggles armed in the audit config with the OFF
+baseline from a stripped copy; it landed as the mirror image — the audit config
+`_wlver_150sta_10ep_d10_allfreq_slipcmp.json` is **unchanged** (so §0's reproduction stays exact,
+§8.4.1) and a new `..._sliphard.json` twin carries the three masters. Same two-arm gate, one less
+thing that silently drifts.
+
+### 8.2 Findings F1–F5 that contradict the spec's premises
+
+| finding | content |
+|---|---|
+| **F1** | **L2's causal story is false: the four "chatty" stations assert LLI bit 2, not bit 0.** Census of the golden run's `network_slip_raw.csv` by LLI byte: `0` → 28 981; `1` (bit 0, **lost lock**) → 188; `4` (bit 2, **antispoofing**) → 396; `5` (bits 0+2) → 11. **All 396 `LLI=4` rows are the SECOND band of a JPN station** (`lli1/lli2 = 0/4`). The drain has always tested `lli & 1`, so they **never drove a single refloat**; bit-0 census is **122 rows, not 352**. Card L is correct and useful but cannot deliver the "2 318 → real-event order" falsifier — the assumed population does not exist. It found the *real* bit-0 chatterers and demoted them. |
+| **F2** | **the 2 318 carry refloats are dominated by the D5 innovation gate, not the coarse detectors.** Golden run, same epochs: `slip refloats 2318`, of which D5 contributed **1 560 flags**; the coarse layer contributed **67 MW + 87 LLI** satellite detections and **49 IF-TD** flags. Chord kills are not 1:1 with ambiguity marks (one ambiguity is a graph edge), but the ordering is unambiguous: **D5 dominates.** |
+| **F3** | **D5 re-taps are ~97 % NOT coincident with a raw observable step.** Card G(c) made the audit's un-decomposable 1 560 attributable: on the armed run **1 921 D5 re-taps, 54 coincident with a raw MW/GF step** at the same (station, satellite, epoch) — the gate fires on **model tension**, not on anything visible in the receiver's own observables. *(Cited by `include/config/GnssConfigTypes.hpp:2622`, `rep_error_d5_keep`. **ANSWERED from a different direction — §11.**)* |
+| **F4** | **Card R's third CANDIDATE (station-local hand-off) is structurally unimplementable at this seam. NOT BUILT.** Two independent reasons, both verified by construction in `tests/test_if_phase_slip_detector.cpp`: (1) a genuine receiver-level common mode **cancels in the between-satellite single difference**, so it can never reach the non-reference double differences this gate adjudicates; (2) the only epoch it could fire on is the forced re-election epoch, where `ref_changed` is true and `processDoubleDifferences` applies the median-offset rebase (`IfPhaseSlipDetector.cpp:546-557`) — removing exactly the common mode the test looks for, before the gate is consulted. Shipping it would have left a permanently-zero counter reading as "no station-local events occurred" — the invariant-#4 failure mode. **The branch AND its counter were REMOVED**, reasoning at `IfPhaseSlipDetector.cpp:485-495`. |
+| **F5** | **a coherence-only reference gate destroys the event R4 protects.** The first armed smoke suppressed the genuine, LLI-corroborated OWMG00NZL/G31 station re-lock along with the false JPLM/MKEA family: a multi-satellite re-lock produces an *incoherent* family (each satellite jumps by its own amount), exactly the drift signature. Fixed by the incoherent split (§8.3). **Standing rule: the empirical-Bayes cold prior is `floor_frac·λ_IF / k` and NEVER this epoch's dispersion** — the latter is self-contaminating and is what swallowed OWMG. |
+
+
+### 8.3 Card-by-card as built
+
+**Card E (no toggle, numerically inert).** `refloat_signal` reports **matched** and **refloated** as
+separate facts; emission and the `n_mw`/`n_lli` counters key on the detection, refloat accounting is a
+separate warm-only counter. A cold run writes `mw_wl_slip`/`lli_slip` rows with `action=diagnostic`.
+Measured on the golden 11-epoch run: **67 wide-lane + 87 LLI detections that previously wrote nothing
+at all**; `slip refloats` stayed at **2 318** — E3's no-op verified against the actual carry counter,
+not asserted.
+
+**Card R (`network.cycle_slip.if_phase_td_ref_*`).** The legacy gate (`|median(non-ref ΔΔ)| >
+0.5·λ_IF`, `n ≥ 2`, fixed) is kept as the **candidate filter** (`IfPhaseSlipDetector.cpp:617`); when
+armed, `evaluateRefGate` (`:399-518`) adjudicates in five parts.
+| part | rule |
+|---|---|
+| 1 | **Scale** — `\|median\| > max(floor_frac·λ_IF, k·s_eff)`, `s_eff` an empirical-Bayes blend of the constellation's EWMA of non-reference DD **dispersion** with a cold prior of `floor_frac·λ_IF / k` (deliberately *not* this epoch's dispersion — F5). Zero empirical information ⇒ the gate degenerates to exactly the legacy physical floor. **INVARIANT: the dispersion EWMA (`updateRefDispersion`, `:351-397`) advances on EVERY epoch with a usable family, not only candidate epochs**, so a persistent drift cannot raise its own acceptance threshold. |
+| 2 | **Coherence** — a reference slip is a *common* step: `MAD ≤ coherence·\|median\|`. |
+| 3 | **Incoherent split (the F5 fix)** — incoherent families split on whether members are *independently* slip-sized (`\|dd\| > λ_IF`, a full IF cycle, **not** the half-cycle candidate floor). **≥ half the family slip-sized ⇒ STATION EVENT**: reset the reference arc (conservative under a zero-q carry, invariant #1) but **do NOT rebase `prev_grad` by the median** (`:669-671` skipped) — the median is a mixture; rebasing would inject a fictitious step into every other arc and hide the real per-satellite jumps from the pool arm. Otherwise ⇒ **drift: suppress.** *(Violating the invariant in 1 or 3 re-opens a fixed bug; 3 preserves the OWMG multi-sat re-lock.)* |
+| 4 | **Thin family** — below `min_n` non-reference DDs **the median is untrustworthy**, so the physical floor widens by `thin_widen` and the deferral is counted. |
+| 5 | **Persistence cap** — after `max_consecutive` consecutive fires on one reference the gate stops firing and forces a reference **re-selection** (`ref_force_reselect`, `:306`, excluding the incumbent for that one election), moving the drifting satellite into the pool arm. The 9-consecutive pattern is structurally impossible. |
+
+| card | as built |
+|---|---|
+| **Card L** (`network.cycle_slip.mw_lli_corroborate`) | An LLI assertion **acts** when (a) an empirical MW or GF step corroborates it — decisive at *any* station, keeping a real multi-satellite re-lock intact (M3) — or (b) the station's LLI behaviour is still credible. Only an uncorroborated assertion at a demonstrably non-credible station is downgraded, then emitted `action=suppressed` and counted (M4, `NetworkSlipQc.cpp:330-346`); because the whole `refloat_signal` call is skipped, the C3c insert obeys the same qualification as the pending-reseed path (M5). Gates empirical throughout (rule 4): per-station robust EWMA of that station's **own** \|ΔMW\| / \|ΔGF\| steps, floored by a physical bound in raw metres — **0.5 wide-lane cycles / 4 cm**, the audit's own support test — and **CLEAN SURVIVORS ONLY are folded, so the scale never absorbs the event it must catch.** *Scope limitation, counted not hidden:* an LLI asserted only on a band outside the primary dual-frequency pair is not witnessable by MW/GF; those count separately as `lli_offpair` (`:329`), **never absorbed into "uncorroborated"**. |
+| **Card G** (`network.cycle_slip.gap_instrument`) | Zero mechanism change. Counts arc resumptions after ≥ 1 missed **processed** epoch; whether the raw MW/GF level shifted across the break beyond the same empirical gate; and — per arc, after the slip drains have run so the C3c set is complete and before `buildCarryDdPriors` re-keys the carry — whether the arc re-entered with **bridged** carry state (a surviving phase-leveling carry value inside `phase_leveling_max_gap_s`, or a Card-4 chord the driver still holds) versus a fresh float (`ApplicationNetwork.cpp:1881`, ledger at `:1970`). Plus G1(c): D5 re-taps tagged by raw-step coincidence. |
+
+### 8.4 Validation (Release, same-build two-arm gate, 2026-07-21)
+
+Config `_wlver_150sta_10ep_d10_allfreq_slipcmp.json` — 150 stations, GPS-only, `frequency_mode=all` +
+`channel_mode=all`, 11 epochs emitted / 0 skipped of 12 synced.
+
+#### 8.4.1 Baseline reproduces §0 exactly
+
+The comparison is against a real golden, not a re-derivation: IF-TD samples → flags **8 717 → 32
+(0.367 %)**; margin min/med/max **1.19 / 72.6 / 2066** (§0 said med 74); refsat-reset events **17**
+(JPLM ×9, MKEA ×5, OWMG ×3); unsupported flags **14**, exactly JPLM/G10 ×9 + MKEA/G10 ×5; reverse
+sweep **57 → 39**; carry slip refloats **2 318**.
+
+#### 8.4.2 OFF gate — byte-identity (all three masters off)
+
+53 of 57 CSV/trace artifacts **md5-identical**. `network_d5_flags.csv` + `network_wl_lane_trace.csv`
+are append-mode streams whose **per-run content is md5-identical** to the golden's own tail (**1 561 /
+12 569 rows**). `network_run_summary.csv` identical except the two **wall-clock** columns (**576311.5 →
+505196.6 ms**) — 12 synced / 11 emitted / 0/0/0 skipped / 150 stations / 20 threads unchanged.
+`network_events.csv`: pre-existing **57 rows byte-identical**, **+154 rows** every one a `T0_mw_detect`
+row with `action=diagnostic`, i.e. exactly and only Card E's mandated emission. Carry census `slip
+refloats 2318` **unchanged**. `main_log.log` excluded by construction (wall-clock timings).
+
+#### 8.4.3 Unit tests
+
+`gnss_tests.exe`: **864 / 863 passed / 1 skipped** (pre-existing fixture-gated
+`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`). Baseline before this work **839** ⇒ **+25 additive
+cases, the first dedicated coverage the slip-detector chain has ever had.** *(Dated record — the suite
+is 1360 / 196 as of 2026-08-12, CLAUDE.md.)*
+
+#### 8.4.4 ON smoke — falsifiers
+
+| Card | Falsifier | Result |
+|---|---|---|
+| E | MW/LLI rows appear with `action=diagnostic`; counters count detections | **MET** — 67 MW + 87 LLI detections, previously zero rows |
+| E4 | MW ↔ IF agreement readable from `network_events.csv` alone | **MET** — grader reports 57.5 % IF↔MW match on the armed run; on the golden run that section reads "MW/LLI side is EMPTY" |
+| R | pool arm unchanged | **MET** — 8 717 → 8 727 samples (sync noise), 32 → 33 flags |
+| R | OWMG G31 survives | **MET** — TOW 259320, 259380, both on the new **station-event** path (reset without a mixture rebase). Card-L rows show the same re-lock epoch with all 8 satellites `LLI;mw_step` corroborated and acting |
+| R | JPLM/MKEA G10 family gone | **PARTIAL — 14 → 4** (−71 %) at the shipped `max_consecutive=1`. JPLM 9→3, MKEA 5→1; longest consecutive run 1, so the 9-epoch stream is structurally impossible. Not zero: the residual fires are the *physical-floor* arm, which a cold 11-epoch run never gets past (**§8.5** — the source report's row said "see §4.5"; the mechanical map gives §8.4.5, but §8.5 Readiness is the correct target for the physical-floor-arm claim, so this pointer was deliberately corrected, not mapped) |
+| L | JPN stations move to suppressed counters | **VOID** — those stations never entered the LLI arm at all (F1); the card demoted the two that genuinely chatter on bit 0 |
+| L | OWMG re-locks still act | **MET** — see the R row above |
+| L | carry refloats 2 318 → real-event order | **NOT MET, and not achievable by this card** — F1/F2: the assumed population does not exist, and the count is D5-dominated |
+| G | counters populate | **MET** — 16 resumptions (5 unmeasurable, 11 shifted); of the shifted, **0 arcs re-entered bridged / 22 as a fresh float**; 0 clean-bridged; D5 1 689 re-taps, **50 raw-step-coincident (3.0 %)** |
+
+Full armed-run counters (shipped defaults):
+
+```
+card E   67 wide-lane + 73 LLI detections (0 refloated — carry cold)
+card R   10 legacy candidates -> 6 fired (2 station events); 1 suppressed by
+         scale/coherence, 0 thin-family, 3 by the consecutive-fire cap;
+         3 forced reference re-selections
+card L   125 LLI assertions: 34 MW-corroborated, 3 GF, 49 unmeasurable,
+         2 off-primary-pair, 22 SUPPRESSED; 1631 credible / 7 demoted
+         station-epochs.  Offenders: OWMG00NZL 12/33 (now corroboration-
+         required), MAC100AUS 10/24 (demoted then promoted back — the
+         hysteresis working, and visible)
+card G   16 resumptions / 5 unmeasurable / 11 shifted / 0 shifted-bridged /
+         22 shifted-fresh / 0 clean-bridged; D5 1689 re-taps, 50 stepped
+carry    slip refloats 2318 (OFF) -> 2399 (ON)
+```
+
+`slip refloats` rising (2 318 → 2 399) is expected and is why F2 matters: with the refsat false family
+removed, more chords survive to be judged by D5, and D5 — not the coarse layer — sets it.
+
+#### 8.4.4.1 Independent confirmation from the grader
+
+`scripts/grade_slip_agreement.py` adjudicates every IF-tier flag against the raw observables **without
+reading any producer counter**:
+
+| | golden (OFF) | armed (ON) |
+|---|---|---|
+| IF-tier flags adjudicated | 49 | 39 |
+| **raw-confirmed rate** | **71 %** | **90 %** |
+| unsupported (raw series flat) | **14** — JPLM/G10 ×9, MKEA/G10 ×5 | **4** — JPLM/G10 ×3, MKEA/G10 ×1 |
+| `if_slip` (pool arm) unsupported | 0 | 0 |
+
+**The pool arm was never the problem** and is untouched; the entire unsupported population was, and
+still is, the refsat side-channel — now four events with no consecutive run.
+
+#### 8.4.5 Defaults set from the measurement, not from the spec text
+
+`if_phase_td_ref_max_consecutive` = **1** (was 2): a genuine one-epoch common step is never consecutive
+so the cap costs it nothing, while a persistent drift escalates on its second epoch instead of its
+third — measured on this config, the false family goes **14 → 6 at 2, 14 → 4 at 1**, OWMG untouched
+either way. `mw_lli_min_epochs` = **1**: verified safe on this data — no station demoted on epoch 1 (no
+start-of-file blanket LLI), and a station demoted at first sighting has fresh arcs by construction, so
+a suppression there costs the carry nothing.
+
+#### 8.5 Readiness (2026-07-21)
+
+The warm leg was **prepared and not launched**; it became Card W (§9.2) and was **never launched**.
+Needed for: **G3's decision rule** (the shifted-AND-bridged count on a *warm* carry is the required
+triage artifact — the 10-epoch smoke is cold, so almost nothing bridges by construction: necessary,
+not sufficient); **Card L**'s sawtooth / D5 re-tap check at the demoted stations; and **Card R** — the
+empirical dispersion EWMA only reaches full weight after ~`shrink_kappa` samples, so a 10-epoch run
+exercises mostly the cold prior and the residual JPLM/MKEA events are the physical-floor arm firing,
+exactly what the warm empirical arm should take over.
+
+#### 8.6 Follow-ups this work opened (not built here)
+
+| # | follow-up |
+|---|---|
+| 1 | **Re-examine the D5 innovation gate** with F2 + F3 in hand — it drives the large majority of carry slip refloats and ~97 % of its re-taps have no raw observable step; either the gate is over-firing on model tension, or "model tension" is a real slip class the observables cannot see, and `network_d5_flags.csv` plus the new raw-step tag is the instrument to decide *(became Card D5-A, §9.1/§10; **ANSWERED elsewhere — §11**)*. |
+| 2 | **Widen the corroboration primitive** beyond the primary dual-frequency pair if `lli_offpair` is material on a longer/multi-constellation run (2 of 125 here — immaterial) *(became Card OP, §9.3; trigger never fired)*. |
+| 3 | **Standing bit-2 (antispoofing) LLI note: nothing in the producer acts on LLI bit 2, and nothing should** — recorded so the 352-row figure is never re-derived as a defect by a future session. |
+
+---
+
+## 9. Follow-up cards, 2026-07-22 (absorbed `SPEC_slip_qc_followups.md`)
+
+Written by the session that lean-reviewed the Cards E/R/L/G implementation. Its header declared §1 of
+this document "incorporated by reference and binding here unchanged" — it still is.
+
+### 9.0 Evidence base, lean-review notes N1–N5, and why the D5 lead outranks everything else
+
+**Lean-review verdict (2026-07-22): PASS, 0 defects.** Build clean, suite 864/863/1, every parent MUST
+met or its premise measured false and handled (F1/F4/F5), OFF byte-identity documented per-artifact.
+Five minor notes, none a defect:
+
+| note | content |
+|---|---|
+| 1 | **N1** (→ W6, H3): `updateRefDispersion` runs *before the verdict is known*, so an incoherent **STATION EVENT**'s large dispersion is folded into the refsat scale EWMA, inflating the refsat threshold for **~1/α ≈ 7 epochs** afterward. A genuine ref slip just above the floor could be suppressed in that window (pool arm + D5 backstop it). |
+| 2 | **N2** (→ H1): `IfPhaseSlipDetector::RefGateParams::max_consecutive` C++ default is **2**; the config default (the only armed path) is **1**. Cosmetic drift. |
+| 3 | **N3** (→ H2): Card-G counters mix units — `gap_shifted` counts **RESUMPTIONS** (per sat-pair), `gap_shifted_bridged`/`fresh` count **ARCS** (per band), hence "11 shifted … 22 fresh". |
+| 4 | **N4** (→ W4): an **UNMEASURABLE** uncorroborated assertion at a demoted station is suppressed (a single-band arc at a chatty station has no MW/GF/IF witness; only D5 backstops a real slip there). Intended, counted, unvalidated warm. |
+| 5 | **N5**: the drain-level act/suppress path has no direct unit test (primitives + field falsifiers cover it). Acceptable; **no card**. |
+
+Two reframings of §8's numbers. First, the **4 residual refsat fires are the PHYSICAL-FLOOR arm** firing
+while the empirical dispersion EWMA is still cold — `ref_shrink_kappa = 20` samples ≈ **7–10 epochs** to
+warm on the 2–3-DD thin L2L family. Second, **why the D5 lead is first-class**: each re-tap discards
+accumulated DD information, and 1 560–1 689 re-taps per 11 epochs at 150 sta, ~97 % with no raw step, is
+***with* `carry_invariant_innov_calibrate = true` live** (σ̂₀ = 1.78, window 15 — an empirically-calibrated
+≈ 7·σ_formal gate), so **the tension is STRUCTURED and no global scalar can absorb it.** Either (a) the
+gate fires on structured model tension or (b) a real slip class is invisible to MW/GF. Prime suspect for
+(a): **per-LOS iono representation error** — the T4/Jul-17 A/B showed **~70–80 % of LOS residuals > 3σ at
+ANY SH degree**, and the Iono-2 card (`docs/SPEC_iono2_mechB_v3.md §6-§10`) carries that misfit as a
+per-(station,sat) GM deviation. If Iono-2 absorbs the tension, D5 re-taps collapse — the cheapest decisive
+measurement on the NL critical path. *(Out of scope, unchanged from §0: the all-freq `dd-build` perf
+blowup, LF-1 lineage; the physical L2L drift at JPLM/MKEA.)*
+
+### 9.1 Card D5-A — D5 re-tap attribution (instrument-first; land BEFORE Card W)
+
+*FORMERLY cited as `SPEC_slip_qc_followups.md §1` by `src/core/filter/NetworkInstallCarry.cpp:745` and
+`scripts/grade_slip_agreement.py:68`; the 2026-08-14 merge re-pointed both to
+`docs/SPEC_slip_qc_hardening.md §9.1` (read and verified 2026-08-15). Do not hunt for the old string.*
+**Framing**: invariant #3 — no gate mechanism changes until the warm decomposition exists; this card
+makes the warm run produce the attribution dataset in one pass.
+
+**Where** (as spec'd 2026-07-22): `scripts/grade_slip_agreement.py` (extend); the `d5_dump` writer,
+gated on `network.mw_wl.d5_dump && carry_invariant_innov_gate` with `slip_qc.epoch.stepped` in scope
+(columns in §10.2.1). ⚠ That writer **RELOCATED** with the network decomposition (INC-0..12) — see the
+anchor-drift map; live at `NetworkInstallCarry.cpp:745`+ (verified 2026-08-15).
+
+**MUST.** **D1** — grader gains a `--d5` section joining `network_d5_flags.csv` against
+`network_slip_raw.csv` on (station, satellite, epoch ± 1), reporting for the re-tap population the
+raw-step-coincident fraction (cross-checked ≈ the run-end counter pair), the `std_innov` distribution
+vs the k·σ̂₀ gate, top (station, sat) families with consecutive-run lengths, and the warm/cold split —
+**zero producer changes**, working on existing CSVs *(delivered contract: §10.2.2)*. **D2** — append
+`raw_stepped` (0/1 from `slip_qc.epoch.stepped`) to the `d5_dump` row; header-compatible, log-only,
+inert by construction, riding the existing `d5_dump` opt-in — **no new toggle**; the offline join stays
+the source of truth for ±1-epoch tolerance, the column is the cheap exact-epoch tag *(landed
+TRI-STATE, §10.2.1)*. **D3** — the cross-experiment protocol is written into the card's report
+**before** Card W runs *(ruled and extended in §10.3, which also carries the v3 CANDIDATES this
+decomposition is collecting for — reset-over-repair for bias-less signals,
+`[[feedback-reset-over-repair-biasless]]`)*. **D4** — no change to D5 gating, flags, funnel, or
+counters beyond the D2 column; suite green; `d5_dump` OFF runs byte-identical.
+
+**Falsifier (10-ep smoke, sliphard + `d5_dump` armed)**: grader `--d5` totals match the run-end
+`d5_retaps`/`d5_retaps_stepped` counters; `raw_stepped` populated; OFF-toggle runs unchanged. **Result:
+§10.5.3 — MET on both units.**
+
+### 9.2 Card W — warm validation leg (≥ 1 h) — ⛔ PREPARED 2026-07-22, NEVER LAUNCHED
+
+*FORMERLY cited as `SPEC_slip_qc_followups.md sec.2` by the `_comment_card_w` field of all three
+`config/test_suite/_wlver_150sta_1h_d10_allfreq_{slipcmp,sliphard,sliphard_iono2}.json`; the same merge
+re-pointed all three to `docs/SPEC_slip_qc_hardening.md §9.2` (verified 2026-08-15).* §6.3's obligation
+with the full grading protocol so the run is turnkey. **LAUNCH ONLY ON THE USER'S COMMAND.**
+
+| item | content |
+|---|---|
+| **arms** (150-sta GPS-only all-freq/all-channel, same span and station set, all in tree) | **(i) ON** `_wlver_150sta_1h_d10_allfreq_sliphard.json` — hardening armed (Cards R/L/G), Iono-2 OFF, needs `network.mw_wl.d5_dump = true`; **(ii) Iono-2** `_wlver_150sta_1h_d10_allfreq_sliphard_iono2.json` — (i) **plus** `estimation.global_vtec_sh.rep_error_tau_s = 900`; **(iii) OFF** `_wlver_150sta_1h_d10_allfreq_slipcmp.json` — the three slip-QC masters absent |
+| **span** | 1 h = **121 epochs at 30 s**. The followups card's instruction was to raise `processing.max_duration_s` / `network.max_duration_s` to **≥ 3 600 s (≥ 120 ep @ 30 s)** together with `network.mw_wl.d5_dump=true` (D5-A data). **Discharged in fact**: all three configs carry `max_duration_s: 3600.0` and `d5_dump: true` |
+| **cost — two measurements, kept apart** (never average them) | followups §2 estimate ~35–50 s/ep ⇒ ~100–140 min/arm ⇒ ≈ 5–7 h wall for three arms; d5a §6, re-measured from the 2026-07-22 gate run's section timers (`dd-build` alone 37–55 s/ep), 42–60 s/ep ⇒ ~85–120 min/arm ⇒ ≈ 4.5–6 h. Plus ~2 min of 150-station RINEX ingestion per arm. ⚠ The three configs' own `_comment_card_w` carries a **third, unreconciled** figure ("~35-50 s/ep … => ~70-100 min per arm"); it predates the d5a re-measurement |
+| **order** | **Sequence ON → Iono-2 → OFF** so the user can stop after any arm and still hold a complete result: (i) alone answers W1–W6, (i)+(ii) answer W7/D3, (iii) is only needed for W3's ON-vs-OFF comparison. State this when reporting readiness. Release-only, renamed exe (`gnss_processor_sliphard_run.exe`), name-scoped zombie pre-kill, LNK1104 ⇒ retry |
+| **run mechanics beyond §6.4** (from the readiness pass) | **rebuild Release FIRST** (the exe on disk is only as current as the last build), then copy to the renamed exe, then run; **move `logs/network_d5_flags.csv` and `logs/network_wl_lane_trace.csv` aside before each arm** (both append-mode — the grader can segment an appended file, §10.2.2, but a fresh file makes the arm-to-arm comparison trivial); **copy the whole `logs/` dir per arm immediately** (the next arm overwrites it); **smoke arm (ii) for 10 epochs before committing to its 1-hour leg** — the only arm whose knob combination has never been run here (arms (i)/(iii) have 10-epoch twins), ~10 min, arming line `Network (Iono-2/T5v2): … GM deviation ON`. Grading per arm: `python scripts/grade_slip_agreement.py <arm_logdir> --json <arm>.json` |
+| **reporting** | one report file (`docs/slip_qc_warm_report_<date>.md`) with the W1–W7 numbers, each MET / NOT-MET / DEFERRED-WITH-DATA; update the relevant memory files. ⛔ **Never created; it will not exist unless Card W is launched** |
+
+**MUST — per-card warm gates** (record every number):
+
+| gate | source | expectation |
+|---|---|---|
+| **W1 (G3 decision rule — the parent's required triage artifact)** | run-end Card-G line, warm arm: `shifted-AND-bridged` **arcs** | ≈ 0 ⇒ the re-entry mechanism is **DEFERRED WITH DATA** — write the number into the report and close L4. > 0 ⇒ spec the follow-up card (mark such arcs slipped at re-entry via the C3c funnel, or block the lane bridge) with the measured rate in hand |
+| **W2 (Card R warm takeover)** | grader §(e) unsupported refsat count | **0** once the dispersion EWMA is warm (the 4 cold residuals were the physical-floor arm; `s_eff` should exceed the floor on the thin L2L family within ~10 ep). OWMG-class station events still fire on the station-event path. If unsupported fires persist warm, H3's fold-exemption and/or a floor-arm de-dup become a real card — spec then, with the rate |
+| **W3 (Card L sawtooth)** | ON vs OFF at OWMG00NZL / MAC100AUS | no ambiguity-variance sawtooth; per-station D5 re-taps do not increase (a drop is expected); credibility transitions bounded — hysteresis working, not oscillating |
+| **W4 (N4 watch)** | suppressed LLI population vs a later raw step / IF flag on the same (station, sat) within +2 ep | ≈ 0 expected; nonzero ⇒ the unmeasurable-at-demoted-station suppression is costing real events — **feeds Card OP** |
+| **W5 (agreement + E4 sustained)** | grader §(e) raw-confirmed rate; §(b) IF↔MW from `network_events.csv` alone; §(c) histogram | ≥ 90 %; no new bunching at scale |
+| **W6 (N1 observational)** | the log's ref-gate DEFER lines after any station-event epoch | note whether a genuine candidate was suppressed inside the ~7-ep inflation window. Observational only; feeds H3's **go/no-go** |
+| **W7 (D5-A D3)** | grader §(g) per arm | the §10.3 decision rule, with the numbers |
+
+### 9.3 Card OP — off-pair / unmeasurable corroboration widening (CONDITIONAL) — trigger never fired
+
+**Trigger** (do not build otherwise): `lli_offpair` material on a warm or multi-constellation run (cold
+GPS-only measured **2 of 125**) **or** W4 > 0. **MUST** (if triggered): **O1** an LLI'd band outside the
+primary pair gains a witness — either MW/GF formed on (LLI'd band × nearest other band), or the
+per-band phase-minus-code step (`l1_c1_m` generalized) with its own per-station empirical scale, same
+pre-update-scale / clean-survivor discipline as the existing seam; **O2** `lli_offpair` splits into
+corroborated/uncorroborated once witnessable, while `lli_unmeasurable` keeps meaning "structurally no
+witness"; **O3** default-OFF sub-toggle under `network.cycle_slip.mw_lli_*`, byte-identity, additive
+unit tests. **CANDIDATE**: prefer the **phase-minus-code witness** — it exists for every band with a
+matching code and needs no pairing logic; its noise is code-dominated, so the empirical per-station
+scale (not a fixed floor) carries the gate.
+
+### 9.4 Card H — housekeeping (fold into the next slip-QC commit; no field gate)
+
+**H1 (N2)**: `RefGateParams::max_consecutive` default 2 → **1**, matching the config default; update the
+Doxygen line *(LANDED — §10.4)*. **H2 (N3)**: make Card G units explicit; counters may be renamed freely
+(no consumer besides the log line and grader) *(LANDED, and exposed a second defect — §10.4)*. **H3 (N1,
+W6-gated)**: exempt the refsat dispersion EWMA fold on epochs whose verdict lands `FireNoRebase` (compute
+the verdict before the fold, or un-fold after — keep the pre-update-gate property either way); **build
+ONLY if W6 shows a real suppression, otherwise record "deferred, W6 = 0"** *(deferred; W6 unmeasured)*.
+
+**Commit logistics (HISTORICAL — discharged).** The slip-QC work shared `ApplicationNetwork.cpp` /
+`GnssConfigTypes.hpp` / `GnssConfigLoadNetwork.cpp` / `CMakeLists.txt` with the then-uncommitted CB-ADM,
+Iono-2 and UWL/WL-3 workstreams, so a slip-QC-only commit needed **hunk-level staging** on those four
+(the `slip/` TUs, tests, grader and configs are cleanly separable) — keep that as a pattern. All three
+are now in HEAD: `if_phase_td_ref_*`, `mw_lli_*`, and Iono-2's `rep_error_tau_s` / `rep_error_d5_keep` /
+`rep_error_demean` resolve in `GnssConfigLoadNetwork.cpp` and `GnssConfigTypes.hpp:2622`.
+
+### 9.5 Acceptance summary + sequencing
+
+| Card | Type | Gate | Outcome |
 |---|---|---|---|
-| E (first) | none if numerically inert, else gate it | byte-identical, traces off | MW/LLI rows appear with `action=diagnostic`; counters count detections |
-| R | `network.cycle_slip.if_phase_td_ref_*` | byte-identical | JPLM/MKEA G10 family gone; OWMG G31 survives; pool arm unchanged |
-| L | `network.cycle_slip.mw_lli_corroborate` (name latitude) | byte-identical | carry refloats 2 318 → ≈ real-event order; JPN stations move to suppressed counters; OWMG re-locks still act |
-| G | counters/trace only | byte-identical, traces off | counters populate; decision rule executed on warm run data |
+| D5-A (first) | grader + 1 log-only column | `--d5` totals ≡ run-end counters; OFF byte-identical; suite green | **LANDED 2026-07-22** (§10) |
+| W | run + grading (on command) | W1–W7 recorded; each MET / NOT-MET / DEFERRED-WITH-DATA | ⛔ **NEVER LAUNCHED** |
+| OP | conditional mechanism | trigger fires first; then O1–O3 + byte-identity | **UNTRIGGERED** |
+| H | hygiene | H1/H2 with the next commit; H3 only if W6 > 0 | **H1/H2 LANDED; H3 deferred, W6 unmeasured** |
+
+Sequencing: **D5-A → (report readiness) → W on command → OP/H3 as the data rules → any v3 mechanism
+card spec'd fresh with the W numbers.** Execution stopped after D5-A.
+
+---
+
+## 10. Card D5-A + H implementation record, 2026-07-22 (absorbed `slip_qc_d5a_report_2026-07-22.md`)
+
+Instrument-only: **no gate, no funnel membership or ordering, and no numerical path changed** —
+verified by a same-config comparison against the pre-change binary (§10.5.2). The producer-side data
+changes are one appended log-only CSV column plus two *counting* corrections the instrument itself
+exposed (§10.4 H2, §10.2.3), both stated where they change previously-reported numbers.
+
+#### 10.1 What landed
+
+| item | where (HEAD, re-grepped 2026-08-15) | card |
+|---|---|---|
+| `raw_stepped` column on the D5 flag dump (`network.mw_wl.d5_dump` writer) | `NetworkInstallCarry.cpp:745` | D5-A/D2 |
+| Grader section (g), D5 re-tap attribution, elevation carried through `build_raw_steps` | `scripts/grade_slip_agreement.py` | D5-A/D1 |
+| Cross-experiment protocol + decision rule | §10.3 | D5-A/D3 |
+| `RefGateParams::max_consecutive` default 2 → **1** | `include/slip/IfPhaseSlipDetector.hpp` | H/H1 |
+| Card-G counter **units** explicit; arc ledger split three ways (`gap_clean_fresh`, `gap_unmeas_bridged`/`_fresh`); `arc_resume` event tag + ΔGF made to match | `include/slip/NetworkRawObservables.hpp`; `gap_clean_fresh` at `ApplicationNetwork.cpp:1970` | H/H2 |
+| D5 counters gain the **arc** unit (`d5_retap_ambs`, `d5_retap_ambs_stepped`) beside the row unit | declared `include/slip/NetworkRawObservables.hpp:312-313`; ⚠ **incremented at `src/core/filter/NetworkInstallCarry.cpp:723` / `:727`** — they relocated with the `d5_dump` writer, which §9.1's ⚠ note covers only for the writer itself | D5-A/§10.2.3 |
+| Defaults-drift guard + cap-generalized persistence case | `tests/test_if_phase_slip_detector.cpp` | H/H1 |
+| Warm-leg configs, 3 arms, 1 h | `config/test_suite/_wlver_150sta_1h_d10_allfreq_{sliphard,sliphard_iono2,slipcmp}.json` | W |
+
+**No new config toggle**: D2 rides the existing `d5_dump` opt-in; Card H is hygiene on shipped knobs.
+
+### 10.2 D5-A as built
+
+#### 10.2.1 D2 — the `raw_stepped` column (log-only, TRI-STATE)
+
+| D2 as built |
+|---|
+| `network_d5_flags.csv` gains a twelfth column, `week,tow,group,chord_u,chord_v,station,amb_key,std_innov,ewl_stasat,hold_chord,injected_prev,`**`raw_stepped`**. **Deviation from the literal MUST ("0/1 from `slip_qc.epoch.stepped`"), stated:** it is **tri-state** — `1` = this (station, satellite) is in `slip_qc.epoch.stepped` (the Card-G empirical per-station MW/GF gate fired at this exact epoch); `0` = a step *could* be formed (adjacent-epoch dual-band predecessor) and was **flat**; ***blank*** = no evidence (raw observables not computed this run, arc start / gap / single-band, or the flag's ambiguity key did not resolve). **Writing `0` in the blank case would assert "no raw step" on exactly the population this card exists to decompose — a false negative on the headline statistic.** The blank follows this writer family's idiom (the lane trace already writes an empty cell for an absent quantity), and the grader treats it as unknown rather than as evidence. |
+| The column reads the **same** `slip_qc.epoch` evidence the run-end `d5_retaps_stepped` counter uses, a few lines above in the same epoch block, so whenever both are armed they cannot disagree. **Arming matrix (different conditions, not a contradiction):** the column rides `network.mw_wl.d5_dump`; the counters ride `network.cycle_slip.gap_instrument`; the evidence exists only when some consumer armed the raw observables — `trace_slip_raw`, `mw_lli_corroborate` or `gap_instrument`. With `d5_dump` on and all three off, every cell is blank — the honest answer rather than a silent `0`. Numerically inert: the whole block sits inside `if (mw_d5_dump && carry_innov_gate)` and only *reads* `slip_qc.epoch`. *(D5-A/D4's scope statement — no gate/flag/funnel change — closes §10.2.3.)* |
+
+#### 10.2.2 D1 — grader section (g), the eight-item contract
+
+`python scripts/grade_slip_agreement.py <logdir>` gains **(g) D5 RE-TAP ATTRIBUTION** (the old
+run-end-counter echo moved to (h)). No producer change; runs on existing CSVs; all of it also lands in
+`--json`.
+
+| # | item |
+|---|---|
+| 1 | **Dump provenance and RUN SEGMENTATION.** `network_d5_flags.csv` is append-mode, header written once *per file*, so a reused log dir holds several runs under one header — and since D2 under a header that may be one column short of the rows below. The reader segments on (a) a header line, (b) a backwards (week, tow) step, (c) a field-count change, grading the **last** segment by default (`--d5-segment last\|all\|N`). **Without this a cross-check against run-end counters — which describe only the last run — manufactures a disagreement out of good data.** |
+| 2 | **Raw-step coincidence, two independent ways**: the producer's exact-epoch `raw_stepped` census, and an offline join against `network_slip_raw.csv` at ±`--epoch-tol` epochs on the grader's own MW/GF/LLI gates. Prints the coincident fraction over all flags and over flags with a series, flagging the <10 % regime explicitly as "firing on model tension". |
+| 3 | **Cross-check vs run-end counters** scraped from `main_log.log` (`d5_retaps` / `d5_retaps_stepped`, the gate's `k`, the D5-v2 LS-VCE final σ̂₀ and its k·σ̂₀ threshold), with the two legitimate causes of a row-vs-counter delta spelled out (appended file; reverse-map misses, which the producer skips for the counter but still writes a row for). |
+| 4 | **`std_innov` distribution** — min/p25/med/p75/p90/max, median margin against the k·σ̂₀ gate, grazing fraction, and the median of step-coincident vs flat rows (a genuine invisible slip class sits *higher*; a wash is evidence for tension). |
+| 5 | **Top (station, sat) families** with distinct-epoch counts and **longest consecutive-run length** on the *processed*-epoch grid from `network_slip_raw.csv` (the D5 file alone holds only flagged epochs, so runs computed on it are upper bounds — stated in the output when it happens), plus the share of families with a run ≥ 3: impulsive vs sustained is the D5-v3 "innovation-persistence" decision input. |
+| 6 | **Elevation profile in 10° bins** (count, stepped count, median `std_innov`) — decision input for the per-elevation-bin σ̂ candidate and the direct test of "is the tension geometry-structured?" (an iono-representation signature). |
+| 7 | **Warm/cold split** at the first epoch whose `carry_warm` is 1 in `network_if_slip.csv` — **the producer's own flag, so no re-derivation of `pl_warmup` can drift from it** — falling back to `--pl-warmup N` and reporting **"not determined" rather than guessing**. |
+| 8 | **Adjacency-tag census** (`hold_chord`, `injected_prev`, `ewl_stasat`) — free from existing columns, the cheapest test of whether the D5 population concentrates on lane-injected chords. |
+
+#### 10.2.3 THE COUNTING CORRECTION — `d5_retaps` counts ROWS, not re-tapped chords
+
+| the correction |
+|---|
+| Found during this card. Under the WL-3 joint pair block (`network.lane_carry.enable`, **armed in every Card-W arm**) the gate runs per band **ROW** — rows `i` and `K+i` are the two bands of chord `i` — and each flagged row appends the same `(group, chord)` to `lastInnovFlags()`. A chord flagged on both bands is counted twice, while the C3c funnel (a `std::set`) re-taps it **once**. Measured on the gate run: **1 689 flag rows = 1 144 distinct (epoch, group, chord) re-taps + 545 duplicates (32 %)**. So the 2026-07-21 headline "1 689 re-taps" — and the 3.0 % coincidence ratio's denominator — are in band-rows. **The RATIO is unaffected** (both rows carry the same verdict); **the MAGNITUDE of the carry churn was overstated by a third.** |
+| Handled additively, not by rewriting history: `d5_retaps` / `d5_retaps_stepped` **keep their ROW semantics for continuity with the 2026-07-21 headline** (Doxygen says so, with the measured duplication rate); new `d5_retap_ambs` / `d5_retap_ambs_stepped` count distinct `(station, ambiguity)` inserts read straight off the funnel set's own `insert().second`, **so the "true re-tap" number cannot drift from what the funnel does**; the run-end line (`NetworkTeardown.cpp:1789-1794`) and grader §(g) print **both** units; and no gate, flag, funnel membership or ordering changed — the insert's return value was previously discarded. **D4 scope**: counter changes are additive only (`d5_retap_ambs*`; Card G's `gap_clean_fresh` / `gap_unmeas_*` under H2) — no existing counter's value or meaning moved. |
+
+### 10.3 D3 — the cross-experiment protocol (binding, written BEFORE Card W runs)
+
+Arms are §9.2's three. **Metric**: `d5_retaps` (run-end counter, cross-checked by grader §(g) row
+count), plus the coincident fraction, the `std_innov` distribution, and the family/run decomposition —
+per arm, over the *same* epoch span.
+
+**Ruling on what "Iono-2 armed" means here (stated deviation).** Iono-2 carries two independently armable
+mechanisms: **A** the dual-layer SH backbone (`layer2_max_degree`) and **B** the exact per-LOS deviation
+carry (`rep_error_tau_s`). **Arm (ii) arms B ONLY** (`estimation.global_vtec_sh.rep_error_tau_s = 900`),
+which is what the spec names — D3 asks whether *carrying the per-LOS representation error* absorbs the
+tension, and **arming A at the same time would confound that with a change in the backbone the deviation
+is measured against.** `layer2_max_degree = 4 / layer2_height_km = 1300` in the same file runs the full
+card if the combined leg is wanted — noted in the config's `_comment_card_w`.
+
+**Decision rule, recorded with the numbers.** **re-taps(ii) ≪ re-taps(i)** (order-of-magnitude class) ⇒
+the tension **is** iono representation error: no D5 gate change, the D5 re-tap count becomes a standing
+grading metric for Iono-2, residual still-firing population re-examined on its own. **re-taps(ii) ≈
+re-taps(i)** ⇒ both the global-σ̂₀ hypothesis **and** the iono hypothesis are dead for this population ⇒
+spec a **D5-v3** card from the §(g) decomposition — **do NOT build it inside this card** — candidates
+being per-station or per-elevation-bin empirical σ̂ (decided by the elevation profile + top-family
+concentration), innovation-persistence semantics (decided by the consecutive-run distribution), and, if a
+genuinely invisible slip class emerges (raw-flat, iono-clean, sustained, `std_innov` well above the gate),
+**a FINDING, not a gate defect** — reset-over-repair stands, the re-taps are justified, the card closes.
+**Partial movement (a factor of ~2–3)** ⇒ report it as such and **SPLIT the population by whether it
+moved; do not average the two conclusions.**
+
+### 10.4 Card H as built
+
+| item | as built |
+|---|---|
+| **H1 (N2)** | `RefGateParams::max_consecutive` default **2 → 1**, matching `SlipQcConfig::ref_max_consecutive` — the only armed path. Production behaviour is unchanged either way (`ApplicationNetworkSetup` assigns every field explicitly from config), so this is purely about what the *unit tests* and a header reader see. Doxygen carries the measured rationale (14 → 6 at 2, 14 → 4 at 1 on the audit config, OWMG untouched). Two test consequences, both landed: `PersistentCoherentStepEscalatesToReferenceReselection` runs at **BOTH caps (1 and 2)** — fire on each of the first `cap` epochs, escalate on the (cap+1)-th, re-elect on the (cap+2)-th, new reference fires on the (cap+3)-th, covering the run-length arithmetic rather than one operating point; and new **`HeaderDefaultsMatchTheShippedConfigDefaults`** pins every `RefGateParams` default against its `SlipQcConfig` twin, so this class of drift fails a test instead of waiting for a review. |
+| **H2 (N3)** | The Card-G run-end line labels **every** number with its unit — RESUMPTIONS `(station, satellite)` vs ARCS `(station, satellite, signal)` — units documented on `SlipQcCounters` itself and the 2026-07-21 "11 shifted … 22 fresh" reading explained as the factor of two it is. **A SECOND DEFECT surfaced while reading the live log line and was fixed:** the arc-level "clean" cell was absorbing arcs of **UNMEASURABLE** resumptions (no pre-gap dual-band level), so a bridge across a break nobody could check was reported as clean — the `arc_resume` event even printed a fabricated `dGF=0.0000`. True split on the live run: **16 resumptions = 5 unmeasurable + 11 shifted + ZERO measured-and-unshifted** (all 7 of the "unshifted" arcs were untestable). The arc ledger now mirrors the resumption three-way split — SHIFTED / measured-and-unshifted / UNMEASURABLE, each closed as bridged + fresh (`gap_clean_fresh`, `gap_unmeas_bridged`, `gap_unmeas_fresh` added) — and the line says **in words that an unmeasurable-and-bridged arc is UNKNOWN, NOT BENIGN**. ⚠ **This bounds W1**: G3's "shifted-and-bridged ≈ 0 ⇒ defer" is only as strong as the unmeasurable-and-bridged count is small, and that number was previously invisible. Counters had no consumer beyond this log line, so the extension was free; nothing existing was renamed. |
+| **H3 (N1)** | **DEFERRED, W6-gated — not built.** The refsat dispersion EWMA still folds an incoherent station event's dispersion (`updateRefDispersion` runs before the verdict is known), which can inflate the refsat threshold for ~1/α ≈ 7 epochs. Build only if W6 shows a genuine candidate suppressed inside that window; otherwise record "deferred, W6 = 0". Pool arm and D5 back it up. |
+
+
+### 10.5 Validation (2026-07-22)
+
+#### 10.5.1 Unit suite
+
+`gnss_tests.exe` (Debug): **865 / 864 passed / 1 skipped** — the pre-existing fixture-gated
+`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`. Baseline before this card 864/863/1 ⇒ **+1 additive
+case** (`HeaderDefaultsMatchTheShippedConfigDefaults`); the cap-generalized persistence case runs twice
+inside one test. *(Dated record; the suite is 1360 / 196 as of 2026-08-12.)*
+
+#### 10.5.2 Byte-identity — pre-change binary vs D5-A binary, same config, same build
+
+| byte-identity record |
+|---|
+| An actual two-arm comparison. The `build/x64-Release/logs` tree left by the **pre-change** binary (built 2026-07-22 00:11) running `_wlver_150sta_10ep_d10_allfreq_sliphard.json` was snapshotted, then the same config re-run with the D5-A binary (Release, renamed exe `gnss_processor_d5a_run.exe`, 9.5 min, 12 synced / 11 emitted / 0 skipped / 150 stations — identical to the golden). **53 of the 54** comparable artifacts **md5-identical, 0 different**. `network_d5_flags.csv` — same **1 689** rows, **first 11 columns match ROW FOR ROW** (0 mismatches), the only delta the appended `raw_stepped` column. `network_events.csv` — **239 rows in both; exactly 7 lines differ, all `T0_gap arc_resume`**: `clean_fresh` → `unmeas_fresh` with `dGF` blanked instead of a fabricated `0.0000` (the H2 honesty fix); the other 232 rows, including every detector-tier row, byte-identical. `network_run_summary.csv` — identical except the two wall-clock columns (**500 434 → 517 720 ms**). `main_log.log` excluded by construction, plus the intended Card-G line relabel. So the D2 column and the counter work are **provably inert on the ON path**, and the *only* artifact byte that moved is the deliberate, enumerated 7-row re-tag; with `gap_instrument` off there are no `T0_gap` rows at all, so the OFF arm is untouched. ⚠ **A SEPARATE gate from §8.4.2** — different binaries; do not collapse them. |
+
+#### 10.5.3 Card D5-A falsifier (10-ep smoke, sliphard config, `d5_dump` armed)
+
+| falsifier record |
+|---|
+| *Grader `--d5` totals match the run-end counters* — **MET, exactly, on both units**: rows `d5_retaps = 1689` = CSV rows 1689 (delta 0), `d5_retaps_stepped = 50` = CSV `raw_stepped=1` count 50; arcs `d5_retap_ambs = 1144` = the grader's independently-computed distinct `(epoch, group, chord)` count 1144 (delta 0), `d5_retap_ambs_stepped = 36`. *`raw_stepped` populated* — **MET**: **1 631 × `0`, 50 × `1`, 8 × blank**; *review erratum 2026-07-22*: the blanks are flags with **no measurable exact-epoch verdict** (no adjacent-epoch dual-band predecessor at the flag epoch), **NOT reverse-map misses** — the rows-vs-counter delta of **+0** proves every flag resolved, since the counter skips unresolved flags while the dump still writes their row; correctly not claimed as "flat" either way. *OFF-toggle runs unchanged* — **MET**, §10.5.2. The 50 reproduces the hardening report's "1 689 re-taps, 50 raw-step-coincident (3.0 %)" from the *dump* rather than the counter, which is the point of D2: `network_d5_flags.csv` is now self-contained. The arc basis puts the same statistic at **36 / 1 144 = 3.1 %** — **the ratio survives de-duplication, the magnitude does not.** |
+
+#### 10.5.4 The full COLD decomposition (arm (i) of D3)
+
+Not a verdict — the cold arm alone cannot be one — but the instrument works and every number is
+load-bearing for the standing "D5 fires on model tension" reading.
+
+| # | finding |
+|---|---|
+| 1 | **Population**: 1 689 flag rows = **1 144 distinct arc re-taps** over 10 epochs and **542 distinct (station, satellite) pairs**. |
+| 2 | **Exact-epoch coincidence 3.0 %** (50/1 689 rows; 36/1 144 arcs = 3.1 %) at the producer's empirical per-station gate. The **±1-epoch join at the audit's FIXED gates says 33 %** (558/1 689), witnessed by **MW = 281, GF = 161, GF+MW = 102, and only 5 by a bare LLI**. Both are printed with a note that they answer different questions — **strict floor vs permissive ceiling**. The spread is itself a measurement: a 3× epoch window plus a *fixed* 0.5-cycle MW gate sweeps in low-elevation noise excursions the per-station empirical gate rejects. |
+| 3 | **ELEVATION is where the join's "steps" live**: **213 of 297** re-taps in the 10–20° bin are step-coincident, falling monotonically to **4 of 19** at 80–90°, while median `std_innov` is **FLAT at ~8 across every bin**. Low-elevation arcs are where both raw noise and iono representation error are largest — consistent with the iono-representation hypothesis and **not** with a slip class (a real slip population would show elevated `std_innov`, not the same 8). |
+| 4 | **`std_innov`**: med **8.07**, p90 **18.5**, max **355.9** against a gate of k·σ̂₀ = 4 × 1.52 = **6.10**; **median margin 1.32×, 61 % within 1.5× of the gate.** Mostly *grazing* (a global σ̂₀ re-scale would move it wholesale) with a **long structured tail no scalar could absorb**. |
+| 5 | **Step-coincident vs flat rows have the SAME `std_innov`** (med 8.05 vs 8.08) — evidence against "the 3 % are the real slips and the rest are noise". |
+| 6 | **IMPULSIVE, not sustained**: 542 distinct families over 10 epochs, **median longest-run 1, only 4 families (1 %) with a run ≥ 3.** On the *cold* arm the D5 population is scattered rather than a persistent per-arc misfit — **the single most important number to re-measure warm**, because the Iono-2 hypothesis predicts *sustained* per-LOS families once the carry is warm. |
+| 7 | **Adjacency**: only **67 of 1 689** flags sit on an EWL-fixed (station, sat) and **2** on a hold-cycle chord — the D5 population is essentially **DISJOINT from the lane machinery**, so the WL/UWL cards are not what drives it. |
+| 8 | Every re-tap in this run is **COLD** (`carry_warm` never 1 across all **8 727** IF-TD samples), which the grader states explicitly — exactly why D3's decision rule is reserved for the warm leg. |
+
+#### 10.5.5 Adversarial review of this change set
+
+A four-lens review (spec conformance / C++ inertness / grader correctness / run mechanics) with **two
+independent refuters per finding** produced **19 raw findings, of which 5 survived** and were fixed:
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | Card-G arc ledger filed **unmeasurable** resumptions under `clean_*` and called it "the intended behaviour" | fixed — three-way ledger (§10.4 H2); the live run shows all 7 such arcs were untestable, not clean |
+| 2 | the `arc_resume` **event** kept the two-way tag and printed `dGF=0.0000` for unmeasurable arcs | fixed — event mirrors the three-way verdict, ΔGF blank (the 7-row delta in §10.5.2) |
+| 3 | `d5_retaps` counts flag **ROWS**, double-counting a pair chord flagged on both bands | fixed additively — `d5_retap_ambs*` (§10.2.3); 1 689 rows = 1 144 arcs measured |
+| 4 | grader folded `no-series` rows into the **flat** `std_innov` population, corrupting the card's decision statistic | fixed — bucketed by verdict, no-series reported separately |
+| 5 | grader exited **1** ("nothing graded") after a complete section (g) when only the D5 dump was present | fixed — verified `EXIT=0` on a d5-only log dir |
+
+**Findings 1 and 3 are the substantive ones**: both were *silently wrong numbers in the run-end
+telemetry*, invisible until this card printed the ledger and the grader recomputed the population
+independently.
+
+#### 10.7 Not built, and why
+
+**Card OP** — untriggered; its trigger is `lli_offpair` material on a warm or multi-constellation run,
+or W4 > 0, and the cold GPS-only measurement was **2 of 125** assertions; re-evaluate from the Card W
+numbers. **H3** — W6-gated (§10.4). **A D5-v3 mechanism** — **FORBIDDEN by D3** until the
+cross-experiment rules.
+
+---
+
+## 11. Current status and what is still owed (2026-08-14)
+
+**Landed and live** (all committed; every knob default-OFF and fingerprint-SAFE):
+
+| knob | default | status |
+|---|---|---|
+| `network.cycle_slip.if_phase_td_ref_gate` (+ `_k` 6.0, `_min_n` 4, `_thin_widen` 3.0, `_coherence` 0.5, `_max_consecutive` **1**, `_ewma_alpha` 0.15, `_shrink_kappa` **20.0**, `_floor_frac` 0.5) | **OFF** | Card R — validated 10-ep cold; warm takeover (W2) unmeasured |
+| `network.cycle_slip.mw_lli_corroborate` (+ `mw_lli_min_epochs` **1**, `_chatter_frac_hi/lo`, `_ewma_alpha`, `_k_mw`, …) | **OFF** | Card L — validated 10-ep cold; sawtooth check (W3) unmeasured |
+| `network.cycle_slip.gap_instrument` | **OFF** | Card G — counters live; G3 decision rule (W1) **not executed** |
+| `network.mw_wl.d5_dump` | pre-existing | D2's `raw_stepped` column rides it — **no new toggle** |
+| Card E | **no toggle** | numerically inert by construction; emission rides `network.trace_events` |
+
+⚠ The C++ header default `RefGateParams::max_consecutive` is **1** as of H1 (it was 2);
+`HeaderDefaultsMatchTheShippedConfigDefaults` pins the whole struct against its `SlipQcConfig` twin.
+
+**Still OWED.**
+
+| # | item |
+|---|---|
+| 1 | **Card W — PREPARED 2026-07-22, NEVER LAUNCHED** (§9.2): three arm configs in tree, W1–W7 unmeasured, `docs/slip_qc_warm_report_<date>.md` never created. **The cluster's single largest open item** — ~4.5–7 h wall, and since the 2026-07-21/22 goldens are gone a fresh same-build OFF baseline must be taken first (invariant #6). |
+| 2 | **Card H3 — deferred, W6 unmeasured**; undecidable without Card W. |
+| 3 | **Card OP — untriggered.** |
+| 4 | **Detector-side hole handed over by `docs/SPEC_flicker_gap_integrity.md` §8.3 finding 3, explicitly owed by THIS card**: the MW/LLI drain matches assertions against `StateManager::getAmbiguities()` (`src/core/slip/NetworkSlipQc.cpp:151-153`, verified 2026-08-15), but a **re-entering arc's ambiguity has just been pruned** (`pruneAmbiguitiesExcept`, `MeasurementModel.cpp:748`, unconditional, no grace epoch), so `matched` stays false — **2 of 2 LLI assertions raised on a re-entry epoch reached NO refloat funnel**, while any carried invariant-DD chord for that arc, keyed independently of the StateManager, is NOT re-tapped. The flicker card measured the hole and deliberately did not close it. |
+
+**CLOSED elsewhere — do not relitigate.** **The headline D5 lead** ("~97 % of D5 re-taps have no raw
+observable step — over-firing, or an invisible slip class?", §8.2 F3 / §9.0 / §10.5.4) **is ANSWERED
+from a different direction by `docs/SPEC_d5_churn_limit_cycle.md` §2b: 95.3 % of D5 flags are on chords
+BORN that epoch at √var_v = 1000.000 m — the diffuse fresh-chord prior. A born chord has no carried
+prior, so there is no H0 and the ratio was never a hypothesis test.** That card is a genuinely different
+mechanism (four MECHANISM knobs on 63-sta FT63 DOY-129, different code, different graders) and its
+numbers are independent measurements, not duplicates — its §2b closes this lead and its §7 falsifies the
+"remove the churn and integers appear" hypothesis four ways over. The D3 cross-experiment (§10.3) was
+never run and is largely superseded; if it is ever run, read it against §2b's born/carried split. Also
+closed: **the 352-row LLI figure is bit 2 (antispoofing), not a defect** (§8.6 item 3), and **Card R's
+station-local hand-off candidate is structurally unimplementable at this seam** (§8.2 F4).

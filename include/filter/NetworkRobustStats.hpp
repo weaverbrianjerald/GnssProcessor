@@ -6,7 +6,7 @@
  *
  * Hoisted VERBATIM from the ApplicationNetwork.cpp anonymous namespace
  * (decomposition INC-2, 2026-07-16; see
- * docs/network_decomposition_addendum_2026-07-16.md).  Header-only: the pure
+ * docs/network_decomposition_plan.md).  Header-only: the pure
  * helpers are @c inline / templates with no state, so they are independently
  * unit-testable (tests/test_network_robust_stats.cpp).
  */

@@ -1,7 +1,7 @@
 # M5 — Self-AR producer: ambiguity-fixed network corrections
 
 *Fable-specced 2026-07-11 at SCOPE level — interfaces bind to Card 4's z-store
-(docs/HANDOFF_card4_invariant_carry.md), so implementation waits for M1.
+(docs/SPEC_card4_invariant_carry.md), so implementation waits for M1.
 Foundations: TK-2015 (proper PPP-RTK estimators; frac-of-float improper),
 Psychas 2024b (frac operator delivers non-Gaussian biases — distributional
 strike), Zhang 2021 (m−2 partial fixing). Supersedes the sketch in memory

@@ -1,5 +1,5 @@
 {
-  "_comment_card_w": "Card W warm-validation leg (docs/SPEC_slip_qc_followups.md sec.2; report docs/slip_qc_d5a_report_2026-07-22.md).  1 h = 121 epochs @ 30 s, ~35-50 s/ep on this all-freq/all-channel tier => ~70-100 min per arm.  RELEASE ONLY, renamed exe, name-scoped zombie pre-kill.  Identical to the 10-ep smoke twin apart from max_duration_s (and the arm knob noted below), so the smoke IS this run truncated.  ARM (iii): the OFF baseline - byte-identical producer with the three slip-QC masters absent (this file is the 10-ep slipcmp twin, unchanged apart from the span).",
+  "_comment_card_w": "Card W warm-validation leg (docs/SPEC_slip_qc_hardening.md §9.2; report docs/SPEC_slip_qc_hardening.md §10).  1 h = 121 epochs @ 30 s, ~35-50 s/ep on this all-freq/all-channel tier => ~70-100 min per arm.  RELEASE ONLY, renamed exe, name-scoped zombie pre-kill.  Identical to the 10-ep smoke twin apart from max_duration_s (and the arm knob noted below), so the smoke IS this run truncated.  ARM (iii): the OFF baseline - byte-identical producer with the three slip-QC masters absent (this file is the 10-ep slipcmp twin, unchanged apart from the span).",
   "app_mode": "post",
   "data_source": "internal",
   "processing": {

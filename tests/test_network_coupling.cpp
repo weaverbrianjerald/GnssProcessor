@@ -155,12 +155,18 @@ namespace {
 struct BuilderFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    std::map<std::pair<SharedParamKind, std::string>, double> tu_reinit_hist;
+    std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
     StationAssembly R;
-    Eigen::Index clk_col{-1}, pb_col{-1}, sh_col{-1};
+    Eigen::Index clk_col{-1}, pb_col{-1}, sh_col{-1}, clk2_col{-1};
 
-    BuilderFixture() {
+    /// @param second_clock register a SECOND G-constellation clock (G02) before
+    ///        beginEpoch().  The Card-1f cases need a present same-constellation
+    ///        recipient for the truncated column's coefficient; the layout is frozen at
+    ///        beginEpoch(), so it cannot be added afterwards.  Default false keeps every
+    ///        pre-existing case's layout byte-for-byte.
+    explicit BuilderFixture(bool second_clock = false) {
         clk_col = est.registerClock("G01");
+        if (second_clock) clk2_col = est.registerClock("G02");
         pb_col  = est.registerPhaseBias("G01", "L1C");
         sh_col  = est.registerVtecCoeff(1, 0, 'C');   // present SH column (SH-marginalize test)
         est.beginEpoch();
@@ -170,9 +176,13 @@ struct BuilderFixture {
         R.y.resize(0);
     }
 
-    CouplingRowBuilder make(bool joint, bool tu, bool shmarg) {
+    // `gauge` / `reinit` default to false so every pre-existing case exercises the Card
+    // 1f/1g code paths with the cards OFF — that is the OFF-identity proof, and it is
+    // why those cases are left byte-for-byte unmodified.
+    CouplingRowBuilder make(bool joint, bool tu, bool shmarg,
+                            bool gauge = false, bool reinit = false) {
         return CouplingRowBuilder{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
-                                  joint, tu, shmarg, tu_reinit_hist, R};
+                                  joint, tu, shmarg, gauge, reinit, tu_reinit_hist, R};
     }
 };
 
@@ -247,6 +257,198 @@ TEST(NetworkCouplingTest, BuildScalarTimeUpdateShrinksPresentColumn) {
     EXPECT_NEAR(cb.crows[0].shared[0].second, 1.0, 1e-12);
     EXPECT_EQ(f.R.cpl_terms_shrunk, 1);
     EXPECT_GT(cb.crows[0].shared[0].second, kap);          // restored above the raw kappa-shrink
+}
+
+// --- Card 1f: the TRUNCATED-row gauge defect and its repair -----------------
+//
+// A harvested coupling row is gauge-invariant through Mᵀg_s = −g_r(c): its
+// per-(constellation,kind) coefficient sum is whatever the harvest regression made it,
+// and it must STAY there.  Deleting a departed column's coefficient moves that sum by
+// −M_dep, which turns the row into a high-weight observation of the current datum gauge
+// pinned at the old realization (measured: null ev 1e-11 → 9.43e-3 in one epoch).
+//
+// These four cases pin the fix's exact contract: the family sum is HELD AT THE HARVEST
+// VALUE — not annihilated to zero (§13.2: a Galileo ambiguity row measures Σ_E = −1
+// exactly, so annihilation would itself inject a gauge observation).
+
+// The defect itself, with the card OFF: the surviving coefficients sum to the harvest
+// sum MINUS the departed coefficient.  This is the pre-registered "before" measurement.
+TEST(NetworkCouplingTest, GaugeProjectOffLeavesTruncatedFamilySumShort) {
+    BuilderFixture f(/*second_clock=*/true);   // a present recipient exists
+    LocalCarry lc;
+    lc.value_abs = 0.0;
+    lc.last_seen_s = 0.0;
+    lc.coupling = {
+        CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, 0.5, 1.0, 0.2},
+        CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
+        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},  // DEPARTED
+    };
+    auto cb = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false, /*gauge=*/false);
+    cb.buildCplRow(0, 0.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
+
+    ASSERT_EQ(cb.crows.size(), 1u);
+    double sum = 0.0;
+    for (const auto& sc : cb.crows[0].shared) sum += sc.second;
+    EXPECT_NEAR(sum, 0.8, 1e-12);          // harvest sum 1.0 minus the departed 0.2
+    EXPECT_EQ(f.R.cpl_gauge_held, 0);      // card off ⇒ no repair, and no counter movement
+    EXPECT_EQ(f.R.cpl_gauge_orphan, 0);
+}
+
+// Armed: the departed coefficient is redistributed over the PRESENT same-constellation
+// clocks, so the family sum returns to its harvest value — and the RHS follows the
+// corrected coefficients, which is what keeps the row's prediction at ŝ_prev unchanged.
+TEST(NetworkCouplingTest, GaugeProjectHoldsTruncatedFamilySumAtHarvestValue) {
+    BuilderFixture f(/*second_clock=*/true);
+    LocalCarry lc;
+    lc.value_abs = 5.0;
+    lc.last_seen_s = 0.0;
+    lc.coupling = {
+        CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, 0.5, 1.0, 0.2},
+        CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
+        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},  // DEPARTED
+    };
+    auto cb = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false, /*gauge=*/true);
+    cb.buildCplRow(0, 1.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
+
+    ASSERT_EQ(cb.crows.size(), 1u);
+    const PendCplRow& row = cb.crows[0];
+    ASSERT_EQ(row.shared.size(), 2u);
+    double sum = 0.0;
+    for (const auto& sc : row.shared) sum += sc.second;
+    EXPECT_NEAR(sum, 1.0, 1e-12);          // HARVEST sum restored (0.5 + 0.3 + 0.2)
+    // The 0.2 deficit splits evenly over the two present recipients.
+    EXPECT_NEAR(row.shared[0].second, 0.6, 1e-12);
+    EXPECT_NEAR(row.shared[1].second, 0.4, 1e-12);
+    // y = (value_abs − x_lin) + Σ corrected_coeff · s_prev, with the departed term's
+    // own ŝ_prev correctly ABSENT (it was marginalized into the variance).
+    EXPECT_NEAR(row.y, (5.0 - 1.0) + 0.6 * 1.0 + 0.4 * 2.0, 1e-12);
+    // sigma^2 is untouched by the projection — the departed marginalization still pays.
+    EXPECT_NEAR(row.w, 1.0 / (0.01 + 0.2 * 0.2 * 0.4), 1e-12);
+    EXPECT_EQ(f.R.cpl_gauge_held, 1);
+    EXPECT_EQ(f.R.cpl_gauge_orphan, 0);
+}
+
+// No present same-constellation recipient: the deficit has nowhere to go.  The row is
+// left alone and COUNTED — invariant #4, the miss is telemetry, not a silent partial fix.
+TEST(NetworkCouplingTest, GaugeProjectCountsOrphanWhenWholeFamilyDeparted) {
+    BuilderFixture f;
+    LocalCarry lc;
+    lc.value_abs = 0.0;
+    lc.last_seen_s = 0.0;
+    lc.coupling = {
+        CoupledShared{SharedParamKind::Clock, "G98", "", 0, 0, 'C', 0, 0.4, 1.0, 0.1},  // DEPARTED
+        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 1.0, 0.1},  // DEPARTED
+    };
+    auto cb = f.make(false, false, false, /*gauge=*/true);
+    cb.buildCplRow(0, 0.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
+
+    ASSERT_EQ(cb.crows.size(), 1u);
+    EXPECT_TRUE(cb.crows[0].shared.empty());
+    EXPECT_EQ(f.R.cpl_gauge_held, 0);
+    EXPECT_EQ(f.R.cpl_gauge_orphan, 1);
+}
+
+// The card is a strict generalization of Card 1d: with nothing truncated, the armed row
+// is bit-identical to the unarmed one (the deficit map is seeded with nothing).
+TEST(NetworkCouplingTest, GaugeProjectIsIdenticalWhenNothingTruncated) {
+    BuilderFixture f(/*second_clock=*/true);
+    LocalCarry lc;
+    lc.value_abs = 2.0;
+    lc.last_seen_s = 0.0;
+    lc.coupling = {
+        CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, 0.5, 1.0, 0.2},
+        CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
+    };
+    auto off = f.make(false, false, false, /*gauge=*/false);
+    off.buildCplRow(0, 0.5, lc, 0.01, 30.0);
+    BuilderFixture g(/*second_clock=*/true);
+    auto on = g.make(false, false, false, /*gauge=*/true);
+    on.buildCplRow(0, 0.5, lc, 0.01, 30.0);
+
+    ASSERT_EQ(off.crows.size(), 1u);
+    ASSERT_EQ(on.crows.size(), 1u);
+    ASSERT_EQ(off.crows[0].shared.size(), on.crows[0].shared.size());
+    for (size_t i = 0; i < off.crows[0].shared.size(); ++i) {
+        EXPECT_EQ(off.crows[0].shared[i].first, on.crows[0].shared[i].first);
+        EXPECT_DOUBLE_EQ(off.crows[0].shared[i].second, on.crows[0].shared[i].second);
+    }
+    EXPECT_DOUBLE_EQ(off.crows[0].y, on.crows[0].y);
+    EXPECT_DOUBLE_EQ(off.crows[0].w, on.crows[0].w);
+    EXPECT_EQ(g.R.cpl_gauge_held, 0);
+}
+
+// --- Card 1g: the reinit route no longer depends on the kappa knob ----------
+//
+// A column RE-REALIZED since this row's harvest carries an unknown frame step in its
+// stashed ŝ_prev.  Before 1g this was honoured ONLY with carry_coupling_time_update on,
+// so on the plain Card-1 path the retired-frame value folded at FULL weight.
+TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
+    BuilderFixture f;
+    // A (kind,sat,signal) mark, as the phase-anchor / eq34 re-reference feeds write it.
+    f.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", "L1C"}] = 100.0;
+    LocalCarry lc;
+    lc.value_abs = 0.0;
+    lc.last_seen_s = 50.0;            // harvested BEFORE the re-realization at t=100
+    lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', 0,
+                                  /*coeff=*/0.7, /*s_prev=*/9.0, /*p_prev=*/0.25} };
+
+    // kappa OFF, Card 1g OFF: the stale column folds as a full-weight PRESENT term.
+    auto legacy = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false,
+                         /*gauge=*/false, /*reinit=*/false);
+    legacy.buildCplRow(0, 0.0, lc, 0.01, 30.0);
+    ASSERT_EQ(legacy.crows.size(), 1u);
+    EXPECT_EQ(legacy.crows[0].shared.size(), 1u);
+    EXPECT_EQ(f.R.cpl_terms_present, 1);
+
+    // kappa still OFF, Card 1g ON: it takes the departed route (kappa = 0).
+    BuilderFixture g;
+    g.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", "L1C"}] = 100.0;
+    auto fixed = g.make(false, /*tu=*/false, false, /*gauge=*/false, /*reinit=*/true);
+    fixed.buildCplRow(0, 0.0, lc, 0.01, 30.0);
+    ASSERT_EQ(fixed.crows.size(), 1u);
+    EXPECT_TRUE(fixed.crows[0].shared.empty());
+    EXPECT_EQ(g.R.cpl_terms_departed, 1);
+    EXPECT_NEAR(fixed.crows[0].w, 1.0 / (0.01 + 0.7 * 0.7 * 0.25), 1e-12);
+}
+
+// The sat-wide WILDCARD (empty signal) is what the clock-QC feeds write, and it must keep
+// matching every signal of that satellite — otherwise widening the key would silently
+// stop covering the legacy feed.
+TEST(NetworkCouplingTest, ReinitSatWideWildcardMatchesAnySignal) {
+    BuilderFixture f;
+    f.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", std::string{}}] = 100.0;
+    LocalCarry lc;
+    lc.value_abs = 0.0;
+    lc.last_seen_s = 50.0;
+    lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', 0,
+                                  0.7, 9.0, 0.25} };
+    auto cb = f.make(false, /*tu=*/false, false, /*gauge=*/false, /*reinit=*/true);
+    cb.buildCplRow(0, 0.0, lc, 0.01, 30.0);
+    ASSERT_EQ(cb.crows.size(), 1u);
+    EXPECT_TRUE(cb.crows[0].shared.empty());   // wildcard matched the L1C term
+    EXPECT_EQ(f.R.cpl_terms_departed, 1);
+}
+
+// Joint path: the same projection contract, on the Card-1b branch.
+TEST(NetworkCouplingTest, GaugeProjectHoldsFamilySumOnJointPath) {
+    BuilderFixture f(/*second_clock=*/true);
+    LocalCarry lc;
+    lc.value_abs = 0.0;
+    lc.last_seen_s = 0.0;
+    lc.coupling = {
+        CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, 0.5, 1.0, 0.2},
+        CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
+        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},
+    };
+    auto cb = f.make(/*joint=*/true, /*tu=*/false, /*shmarg=*/false, /*gauge=*/true);
+    cb.buildCplRow(0, 0.0, lc, 0.01, 30.0);
+
+    ASSERT_EQ(cb.craw.size(), 1u);
+    double sum = 0.0;
+    for (const auto& sc : cb.craw[0].shared) sum += sc.second;
+    EXPECT_NEAR(sum, 1.0, 1e-12);
+    ASSERT_EQ(cb.craw[0].departed.size(), 1u);   // still jointly marginalized
+    EXPECT_EQ(f.R.cpl_gauge_held, 1);
 }
 
 // Joint path: the same present coupling produces a CplRowRaw (not a PendCplRow),

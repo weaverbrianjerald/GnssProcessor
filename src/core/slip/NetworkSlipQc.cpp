@@ -6,7 +6,7 @@
  *
  * Decomposition INC-6 (2026-07-16) — bodies relocated VERBATIM from the
  * SB_SLIP block of ApplicationNetwork.cpp (see
- * docs/network_decomposition_addendum_2026-07-16.md).  The PASS-A parallel
+ * docs/network_decomposition_plan.md).  The PASS-A parallel
  * scan that FILLS PassABuffers stays in the run TU until INC-7 (Assembly);
  * the SB_SLIP D0b timer bracket also stays there, wrapping the scan plus
  * these three calls.  Each function opens with a short alias block binding

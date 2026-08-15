@@ -97,7 +97,7 @@
  *
  * ## The rider: the constraint-aware global variance component (the honest sigma0)
  *
- * @c docs/SPEC_sigma0_constraint_aware.md, LASER 5-74's OTHER half.  The ladder
+ * @c docs/SPEC_prior_residual_census.md §14, LASER 5-74's OTHER half.  The ladder
  * above tests each carried prior ONE AT A TIME; the rider pools the same rows
  * into the GLOBAL variance component the network has never had:
  * @f[ \hat\sigma_0^2 = \frac{\tilde e^\top P\tilde e + \tilde e_0^\top P_0\tilde e_0}
@@ -475,7 +475,7 @@ public:
 
     // ---------------------------------------------------------------------
     //  The constraint-aware global variance component
-    //  (docs/SPEC_sigma0_constraint_aware.md) — the rider on this accumulator
+    //  (docs/SPEC_prior_residual_census.md §14) — the rider on this accumulator
     // ---------------------------------------------------------------------
 
     /**
@@ -827,7 +827,7 @@ public:
         }
 
         // --- the constraint-aware global variance component (the rider) -------
-        // docs/SPEC_sigma0_constraint_aware.md §2.  FOLDED rows only: an unfolded
+        // docs/SPEC_prior_residual_census.md §14.2.  FOLDED rows only: an unfolded
         // prior is not a stochastic constraint in THIS epoch's solve, so it is
         // neither in LASER's ẽ₀ᵀP₀ẽ₀ nor in its `l`.  Three skips, each counted
         // (a silently one-sided row biases the ratio with nothing saying so):
@@ -877,7 +877,7 @@ public:
     /**
      * @brief Fold one DATA row into the global variance component's data side.
      *
-     * The rider's other half (docs/SPEC_sigma0_constraint_aware.md §2).  Called
+     * The rider's other half (docs/SPEC_prior_residual_census.md §14.2).  Called
      * from the post-fit RAIM Pass-1 row walk, which already holds @p w and — with
      * `network.raim_redundancy_normalize` — the per-row Baarda redundancy
      * @p r, so this costs a multiply and two adds and needs no covariance access,

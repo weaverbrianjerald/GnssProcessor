@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run one decomposition golden-matrix arm into a fresh run directory.
 
-Companion to compare_network_run.py (see docs/network_decomposition_addendum_2026-07-16.md §3).
+Companion to compare_network_run.py (see docs/network_decomposition_plan.md §9).
 Creates <run_dir>, executes the processor with CWD=<run_dir> so the logs/ tree and any
 relative-path artifacts (e.g. the ARM-8 state snapshot) land inside it, tees stdout+stderr to
 run.log, and writes wall.txt as "exit=N" — the two file names the harness maskspec expects.

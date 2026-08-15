@@ -131,7 +131,7 @@ struct NetworkRaimCiTallies {
  * @param prires             [in/out] the prior-residual census accumulator, here
  *                           ONLY as the DATA-SIDE feed of the constraint-aware
  *                           global variance component
- *                           (docs/SPEC_sigma0_constraint_aware.md): the Pass-1
+ *                           (docs/SPEC_prior_residual_census.md §14): the Pass-1
  *                           row walk already holds every row's @c (w, v, r_i), so
  *                           the feed is a multiply and two adds inside a loop
  *                           that already runs.  Inert unless

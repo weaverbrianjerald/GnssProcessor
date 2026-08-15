@@ -142,7 +142,7 @@ void networkEmitStore(
         return;
     }
 
-    // Card 4 (M1) phase D: emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md
+    // Card 4 (M1) phase D: emit-layer frame re-base (docs/SPEC_card4_invariant_carry.md §10
     // §1).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
     // emitted per-(sat,σ) phase bias churns every epoch by a gauge element (a common
     // per-component fractional + a per-sat integer×λ) that leaves user DDs invariant

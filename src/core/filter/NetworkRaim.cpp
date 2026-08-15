@@ -16,7 +16,7 @@
 
 #include "app/NetworkRunContext.hpp"          // ctx.knobs / ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"              // config_ getters
-#include "filter/NetworkMdb.hpp"              // Baarda MDB rider on B2's r_i (SPEC_network_mdb_reliability)
+#include "filter/NetworkMdb.hpp"              // Baarda MDB rider on B2's r_i (SPEC_redundancy_census)
 #include "filter/NetworkRobustStats.hpp"      // medianPolish2Way / robustProminence / medianCopy / MedianPolish
 #include "filter/StateManager.hpp"            // stations[i].sm->markAmbiguityPendingReseed
 #include "logging/NetworkRunTraces.hpp"       // trace streams + emitEvent
@@ -65,13 +65,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const int    raim_maturity_epochs = ctx.knobs.raim_maturity_epochs;  // T2d: maturity horizon
     const bool   raim_redun    = ctx.knobs.raim_redun; // B2: Baarda per-row r_i normalization of the RAIM residual
     const bool   raim_redun_trace = ctx.knobs.raim_redun_trace; // §7.1: COMPUTE r_i for the census without USING it
-    // docs/SPEC_network_mdb_reliability.md INC-0: the MDB rider on B2's r_i.  NOT
+    // docs/SPEC_redundancy_census.md MDB-INC-0: the MDB rider on B2's r_i.  NOT
     // part of the relocated body — a measure-only addition that reads the (w, r_i)
     // pairs the Pass-1 row walk already visits.  Both conjuncts matter: mdb_on is
     // the master, mdb_from_raim says THIS feed site is the armed one.
     const bool   mdb_on        = ctx.knobs.mdb_on && ctx.knobs.mdb_from_raim;
     const double mdb_delta0    = baardaDelta0(config_.dataSnoopingCritical());
-    // docs/SPEC_sigma0_constraint_aware.md §2: the DATA SIDE of the
+    // docs/SPEC_prior_residual_census.md §14.2: the DATA SIDE of the
     // constraint-aware global variance component.  Also NOT part of the relocated
     // body — a measure-only rider reading the same (w, v, r_i) triples the Pass-1
     // walk already visits, and nothing in this seam reads a single number back.
@@ -182,7 +182,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             } catch (...) { row_r.resize(0); }
         }
         const bool redun_trace_here = raim_redun_out.is_open();
-        // --- MDB rider (docs/SPEC_network_mdb_reliability.md INC-0) ------------
+        // --- MDB rider (docs/SPEC_redundancy_census.md MDB-INC-0) ------------
         // Every row this loop is about to visit already has (w, r_i) in hand, so
         // its minimal detectable bias costs one division.  The visited mask exists
         // because the loop below is keyed on AMBIGUITY COLUMNS, not on rows: a row
@@ -197,7 +197,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                              ctx.knobs.mdb_event_m, stations[i].name,
                              NetMdbSource::Raim, 0.0);
         }
-        // --- constraint-aware global σ̂₀, data side (SPEC_sigma0_constraint_aware) --
+        // --- constraint-aware global σ̂₀, data side (SPEC_prior_residual_census §14.2) --
         // Its OWN visited mask, deliberately not shared with the MDB one: MDB
         // needs `raim_redun` to exist at all, this rider does not (it degrades to
         // r ≡ 1 and FLAGS the epoch), so the two populations are not the same set

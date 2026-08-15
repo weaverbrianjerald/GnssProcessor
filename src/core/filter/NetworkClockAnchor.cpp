@@ -234,7 +234,13 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     const double abs_m   = ctx.knobs.cta_abs_m;
     const double s_floor = std::max(1e-12, ctx.knobs.cta_sigma_floor_m
                                          * ctx.knobs.cta_sigma_floor_m);
-    const bool gf         = ctx.knobs.cta_gauge_free;       // the FOLD (what a withdraw must un-fold)
+    // Card C-GF: the RESOLVED predicate, not the Q3 knob.  A withdraw must un-fold
+    // exactly what was folded; reading a different flag than the fold used leaves a
+    // negative-semidefinite residue in the shared normals (see NetworkRunContext.hpp).
+    const bool gf         = ctx.knobs.carry_gauge_free;     // the FOLD (what a withdraw must un-fold)
+    // Card C-GF: closure is part of "what was folded" — it selects WHICH directions U
+    // spans, so every withdraw below must carry it alongside `gf`.
+    const bool gfc        = ctx.knobs.carry_gauge_free_closure;
     const bool proj_post  = ctx.knobs.cta_stat_proj_post;   // the DENOMINATOR's posterior half
     const bool proj_prior = ctx.knobs.cta_stat_proj_prior;  // …and its prior half
     int pass = 0;
@@ -457,7 +463,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 // is not the block that was applied.
                 est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                          ws.cap_dense_cov, dense_drop,
-                                                         /*restore=*/false, gf);
+                                                         /*restore=*/false, gf, gfc);
                 folded_dense = true;
             }
             if (!diag_drop.empty()) {
@@ -469,7 +475,8 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (gf) {
                     std::set<std::string> ds;
                     for (const auto& p : diag_drop) ds.insert(p.sat);
-                    est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds);
+                    est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds,
+                                                                /*restore=*/false, gfc);
                 } else {
                     est.withdrawSharedPrior(diag_drop);
                 }
@@ -485,13 +492,13 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (folded_dense)
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
-                                                             /*restore=*/true, gf);
+                                                             /*restore=*/true, gf, gfc);
                 if (!diag_drop.empty()) {
                     if (gf) {
                         std::set<std::string> ds;
                         for (const auto& p : diag_drop) ds.insert(p.sat);
                         est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds,
-                                                                    /*restore=*/true);
+                                                                    /*restore=*/true, gfc);
                     } else {
                         est.addSharedPrior(diag_drop);
                     }

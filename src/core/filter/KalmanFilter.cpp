@@ -1729,7 +1729,7 @@ namespace GnssProcessor {
         //
         // δ₀, the r-floor and the r→0 ⇒ ∞ convention now come from
         // filter/BaardaReliability.hpp so the NETWORK path's MDB
-        // (docs/SPEC_network_mdb_reliability.md) is commensurable with this one
+        // (docs/SPEC_redundancy_census.md) is commensurable with this one
         // by construction rather than by a second copy of the formula.  Same
         // arithmetic, same order of operations — the PPP path is unchanged.
         // (The r-floor and the r→0 ⇒ +infinity sentinel now live inside

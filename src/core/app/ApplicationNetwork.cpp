@@ -12,7 +12,7 @@
  * minimum-constraint S-basis, emitted in IGS-SSR convention for the companion
  * PPP_RTK_User consumer.
  *
- * See docs/ssystem_conformance_2026-06-15.md (§7) and the approved design plan
+ * See docs/SPEC_sbasis_realization_contract.md §F7 and the approved design plan
  * for the full architecture and the staged build-out (W1..W8).
  *
  * ===========================================================================
@@ -116,7 +116,7 @@
 #include "filter/NetworkClockQc.hpp"
 #include "filter/NetworkFrameDiag.hpp"   // P1-3/P1-4 trigger instrumentation (SPEC_day129_frame_guards)    // INC-10: post-solve satellite-clock QC
 #include "filter/NetworkRhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
-#include "filter/NetworkMdb.hpp"               // Baarda reliability numbers / MDB (SPEC_network_mdb_reliability)
+#include "filter/NetworkMdb.hpp"               // Baarda reliability numbers / MDB (SPEC_redundancy_census)
 #include "filter/NetworkRedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
 #include "filter/NetworkPrefitCensus.hpp"      // prefit census / fuse / birth check / topology (SPEC_prefit_census_observability)
 #include "filter/NetworkDatumGraph.hpp"        // structural S-basis dimension census (SPEC_datum_graph_census)
@@ -406,7 +406,7 @@ int Application::runNetwork() {
         static_cast<double>(nc.prior_residual_min_rows),
         ctx.knobs.prires_report_sigma,
         ctx.knobs.prires_corrob,
-        // docs/SPEC_sigma0_constraint_aware.md — the constraint-aware global
+        // docs/SPEC_prior_residual_census.md §14 — the constraint-aware global
         // variance component rides this same accumulator (its prior side IS the
         // census's folded rows) and is fed its data side from SB_RAIM, one seam
         // earlier than the SB_STASH_STATUS drain.
@@ -485,7 +485,7 @@ int Application::runNetwork() {
                 return PriorResidualEvidence{};
             });
     }
-    // BLOCKFORMAL (docs/SPEC_block_baarda.md).  The accumulator lives in
+    // BLOCKFORMAL (docs/SPEC_redundancy_census.md).  The accumulator lives in
     // ctx.carry (its feed site is inside the redundancy-census seam, which takes
     // ctx but no run-TU reference), so it is SEATED here from config rather than
     // constructed by the context: an unarmed run keeps the default-constructed
@@ -526,7 +526,7 @@ int Application::runNetwork() {
                 });
         }
     }
-    // STATION CONGRUENCE (docs/SPEC_station_congruence.md).  Seated here for the
+    // STATION CONGRUENCE (docs/SPEC_redundancy_census.md).  Seated here for the
     // block census's reason (its feed site is inside the redundancy-census seam),
     // and with no resolver to install: the INC-3 separability join reads the block
     // census's own hit count at the sweep site, not an injected callback.  An
@@ -853,13 +853,13 @@ int Application::runNetwork() {
     NetworkMwWlLayer::Counters mw_wl_run;    // run-total eligibility/skip tallies (invariant #4)
     NetworkMwWlLayer::Counters mw_wl_epoch;  // per-build tallies (the last build before the accepted solve wins)
     // M5 card WL-1 F6 diagnostic: one-shot per-arc/per-row attribution dump of the FIRST
-    // arming epoch's WL rows (docs/HANDOFF_mw_wl_card.md §6c).  Populated in
+    // arming epoch's WL rows (docs/SPEC_mw_wl_card.md §14).  Populated in
     // buildCarryDdPriors (build-time: z_MW/z_lin/z_corr + per-arc MW̄/x_lin, where the
     // resolver + revmap are in scope) and finalized post-solve (reconstructed_abs from
     // reconstructStation + the kernel's WL-block innovation).  Log-only; default OFF.
     const bool mw_wl_f6_dump = mw_wl_on && config_.getNetworkConfig().mw_wl.f6_dump;
     F6Capture mw_wl_f6;
-    // Card 4 (M1) phase D: the emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md).
+    // Card 4 (M1) phase D: the emit-layer frame re-base (docs/SPEC_card4_invariant_carry.md §10).
     // Re-references the emitted per-(sat,σ) phase biases onto the previous EMISSION
     // frame so the freely-re-realized eq34 datum's per-epoch gauge churn does not
     // storm the consumer with spurious ambiguity resets; a genuine reference-path
@@ -1076,7 +1076,7 @@ int Application::runNetwork() {
     // === Tier D0b: sub-instrument the "other" bucket (network.trace_section_timers) ==
     // "other" = loop wall − assembly − reduce − solve − cov-inverse − cov-consumers was
     // measured at ~81 % (42.9 s/ep) of the epoch on the 300 s GPS-only tier and scales
-    // with LOS count (docs/HANDOFF_perlos_parallel_sweeps.md §1) — yet none of it was
+    // with LOS count (docs/SPEC_dev_tier_perf_cards.md §1) — yet none of it was
     // timed individually.  These per-block driver-side wall timers attribute it.  For each
     // block, net = wall − Δ(reduce + solve + cov-inverse + cov-consumers) incurred INSIDE
     // it, so the recon/solve time already counted in the five D0 sections is NOT double-
@@ -2174,13 +2174,13 @@ int Application::runNetwork() {
         // neither call (byte-identical, no cost beyond the flag tests).  The §4.3
         // keyed trace rides the same residual pass, so either toggle runs it.
         subBegin(SB_FRAMEDIAG);
-        // BLOCKFORMAL predict half (docs/SPEC_block_baarda.md §3): freeze each
+        // BLOCKFORMAL predict half (docs/SPEC_redundancy_census.md §12.3): freeze each
         // family's through-PREVIOUS-epoch σ̂₀ and clear the per-epoch ladders
         // BEFORE the census's rider feeds this epoch's blocks.  Predict-then-
         // update is the D5 v2 contract — a block standardized by a calibration it
         // contributed to can standardize itself away.
         if (ctx.knobs.bb_on) ctx.carry.bb.beginEpoch(pl_now_s, se.time.tow);
-        // Station-congruence predict half (docs/SPEC_station_congruence.md §2),
+        // Station-congruence predict half (docs/SPEC_redundancy_census.md §13.2),
         // same contract and same reason: freeze the through-PREVIOUS-epoch σ̂₀
         // before the census's rider feeds this epoch's stations, so a station
         // cannot standardize its own coordinate fault away.
@@ -2209,7 +2209,7 @@ int Application::runNetwork() {
         if (ctx.knobs.redun_census_on)
             networkRedundancyCensus(ctx, config_, log, traces, se, stations, est,
                                     plan.shared_datum, asm_res, est_index_of, x_s);
-        // docs/SPEC_block_baarda.md INC-1..3 — drain this epoch's LOS-block
+        // docs/SPEC_redundancy_census.md BB-INC-1..3 — drain this epoch's LOS-block
         // ladders, write network_block_baarda.csv and emit the block identities.
         // The FEED is inside the census above (that is the whole point: the block
         // sweep inherits its stride and escalation instead of adding a scheduler),
@@ -2218,7 +2218,7 @@ int Application::runNetwork() {
         // report them.
         if (ctx.knobs.bb_on)
             networkBlockBaardaEmit(ctx, config_, log, traces, se, stations);
-        // docs/SPEC_station_congruence.md INC-1..3 — drain this epoch's per-station
+        // docs/SPEC_redundancy_census.md CG-INC-1..3 — drain this epoch's per-station
         // coordinate-offset records, write network_congruence.csv and emit the loud
         // stations' identities.  The FEED is inside the census above (same host,
         // same stride, no scheduler of its own), so this must run AFTER it.  It
@@ -2227,7 +2227,7 @@ int Application::runNetwork() {
         // is free.
         if (ctx.knobs.cg_on)
             networkCongruenceEmit(ctx, config_, log, traces, se, stations);
-        // docs/SPEC_network_mdb_reliability.md INC-1 — aggregate this epoch's
+        // docs/SPEC_redundancy_census.md MDB-INC-1 — aggregate this epoch's
         // Baarda MDB rows, write network_mdb.csv, emit the reporting events and
         // reconcile the uncheckable join.  BOTH orderings here are load-bearing:
         // AFTER networkPostfitSigma0, whose per-family σ̂₀ the SCALED variant needs

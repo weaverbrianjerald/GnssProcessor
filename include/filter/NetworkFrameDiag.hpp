@@ -4,7 +4,7 @@
  * @brief Network producer trigger instrumentation — SPEC_day129_frame_guards Phase 1.
  *
  * Two measure-only per-epoch diagnostics that the DOY-129 investigation
- * (`docs/REPORT_night305_day129_investigation.md`) found MISSING when it tried
+ * (`docs/SPEC_day129_frame_guards.md Part A`) found MISSING when it tried
  * to answer why an `a00` collapse fires:
  *
  *  - @ref networkShSpectrum (P1-3) — the reduced shared-normal spectrum with
@@ -151,5 +151,54 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                           const Eigen::VectorXd& x_s,
                           const std::vector<StationAssembly>& asm_res,
                           const std::vector<int>& est_index_of);
+
+/**
+ * @brief STANDING INVARIANT #7: the per-epoch DATUM-DIRECTION INFORMATION RATIO
+ *        @f$R=(v^{\mathsf T}Nv)/(v^{\mathsf T}v)\,/\,\text{cutoff}@f$ over the DECLARED
+ *        datum directions — the counter that stops a carry from silently eating the
+ *        null space.
+ *
+ * The rank gate collapses the whole spectrum to an integer.  A declared gauge that
+ * ACQUIRES information therefore moves the observed count by exactly one, and the run
+ * log says only "observed 2, declared 3" — the same sentence a mis-calibrated tolerance
+ * produces.  Measured on simnet24 at TOW 305220: seven departed clock columns drove one
+ * constellation's gauge direction from 1e-11 to 9.43e-3 in a single epoch, five decades
+ * over the cutoff, and the only visible symptom was four OVER-specified withholds.
+ *
+ * @f$R\ll 1@f$ ⇒ the direction is still gauge (the datum owns it).  @f$R\ge 1@f$ ⇒
+ * something folded PRE-gate is pinning a direction the datum is supposed to own — a
+ * carry, a coupling row, a prior — and the gate is about to miscount it.  The ratio is
+ * the discriminator the run-end gate advice branches on, because a genuine
+ * mis-calibration leaves @f$R@f$ near zero while a filled null shows it jumping decades
+ * at the offending epoch.
+ *
+ * Cost is one @f$k\times k@f$ quadratic form per constellation (k = that constellation's
+ * clock count, ~10-30) against the @f$O(n^3)@f$ eigensolve the gate already pays — so
+ * this runs UNCONDITIONALLY.  That is deliberate and is the whole point of the
+ * invariant: a diagnostic behind a default-OFF knob would have been dark on exactly the
+ * runs that needed it.  It is measure-only and touches no estimator state, so it is
+ * fingerprint-SAFE and legal on a warm resume.
+ *
+ * Directions are built ANALYTICALLY (the normalized indicator over a constellation's
+ * registered clock columns) rather than from an eigensolve: @f$v^{\mathsf T}Nv@f$ needs
+ * no eigenvector, and the analytic direction is exactly what
+ * @c NetworkSbasis::buildSharedDatum declares.
+ *
+ * @param ctx          Run context (counters written; nothing else touched).
+ * @param traces       Event sink (per-epoch breach/clear edges — invariant #7's two edges).
+ * @param se           Epoch (time stamps the events).
+ * @param est          Estimator — @c reducedSharedNormals() and @c clockColumn().
+ * @param declared_dim @c Plan::declared_dimension for this epoch.
+ * @param registered_clock_sats Satellites with a live clock column this epoch.
+ * @param ev_max       Largest eigenvalue from the gate (<0 ⇒ the gate computed no
+ *                     spectrum on this exit, and this function is a no-op).
+ * @param gate_over_withheld True when THIS epoch was withheld OVER-specified — the
+ *                     coincidence counter that makes the run-end advice actionable.
+ */
+void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
+                           const SyncedEpoch& se, NetworkEstimator& est,
+                           int declared_dim,
+                           const std::vector<std::string>& registered_clock_sats,
+                           double ev_max, bool gate_over_withheld);
 
 }  // namespace GnssProcessor

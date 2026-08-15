@@ -119,7 +119,7 @@ The standard is the Card-4 battery + field grade:
 `include/filter/NetworkInvariantCarryDriver.hpp` (ZComponent::Pz dense-per-
 component, killChord, Counters), `NetworkNormalEquations::{foldReducedDdPriors,
 ddPriorPosteriorMean, jointConditionalCovariance}` (the factored-form identity
-lives here), `docs/HANDOFF_card4_invariant_carry.md` + phase-B/C handoffs (the
+lives here), `docs/SPEC_card4_invariant_carry.md` + phase-B/C handoffs (the
 unit-gate battery to re-run), memory `project_m1_card4_phaseC` (fold algebra,
 M=(Pz+B)⁻¹), `project_m1_card4_d5_innovation` (re-tap semantics),
 `project_dev300s_tier` (tier rules + the P0 measurement chain that led here).

@@ -110,7 +110,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         st.pinned_amb_seed_lambda.clear();   // SEED-ROUND fold-deferred (empty ⇒ inert)
     }
     this_epoch_anchor.clear();
-    // Chain-pin audit (HANDOFF_wsh_chain_slant T1): this epoch's per-group
+    // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): this epoch's per-group
     // declared gauge dimension + shared-side bridge pins, replaced wholesale
     // exactly like the tree maps.  Read after PASS B's serial consume.
     ctx.carry.eq34_epoch_declared.clear();
@@ -835,6 +835,29 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // carries; Δδ_r on the RPB carries; Δb_s on the shared PB carried
     // priors).  Variances untouched — this is an exact basis change,
     // not a refloat.  Runs BEFORE PASS B consumes any carry.
+    //
+    // ⚠ FILED LATENT DEFECT (docs/SPEC_card1_coupling_carry.md §9, 2026-08-15) —
+    // D4 shifts `lc.value_abs` below but NOT `lc.coupling[].s_prev`.  A Card-1
+    // coupling row's RHS is  y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and
+    // `CoupledShared::s_prev` and `CarryPrior::value` are literally the same number
+    // for the same identity (both are `x_s(j)` at harvest: NetworkRunContext.cpp
+    // s_prev assignment and the prev_carry stash).  This block shifts the second and
+    // the `value_abs` term, and leaves the first — so for a gauge-invariant row,
+    // whose correct y-change under a KNOWN frame step is the exact cancellation of
+    // those two moves, it injects precisely the frame step as row bias.
+    //
+    // NOT fixed here on purpose (this pass files it): the correct treatment is to
+    // SHIFT `cs.s_prev` by the same `shift_sat` amount, mirroring the prev_carry
+    // loop below, and the in-tree precedent is NetworkRelevel.cpp's Card-6 eph
+    // cutover, which already walks `local_carry`/`zwd_carry` coupling to shift
+    // `s_prev` for exactly this reason ("the row's functional u = r + Mᵀs is
+    // frame-consistent only if ALL carried references move together").
+    //
+    // Firing condition: the eq34 shift door AND carry_conditional_coupling.  Note
+    // the D4 ERASE above does NOT cover it — the erase set (`eq34_reref`) and the
+    // shift set (`shift_sat`) are MUTUALLY EXCLUSIVE by construction at the
+    // population site, so the shifted keys are precisely the ones whose carries
+    // survive.  It is latent-and-LIVE, not latent-and-harmless.
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         long long n_shifted = 0;
         for (auto& [key, lc] : local_carry) {

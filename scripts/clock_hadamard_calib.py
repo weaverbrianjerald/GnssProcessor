@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Two-state clock-model q1/q2 recalibration instrument (Phase A of
-``docs/HANDOFF_clock_model_revival.md``).
+"""Two-state clock-model q1/q2 recalibration instrument (Phase A of the
+``network.clock_model`` revival card; write-up ``docs/SPEC_c1_clock_rate_validation.md`` §10).
 
 Inverts the network-emitted per-satellite clock series into the process-noise
 diffusion coefficients (q1, q2) of the Zucca-Tavella two-state clock model that
@@ -672,7 +672,8 @@ def render(results, out_path, args):
     W("")
     W("Phase A"
       + (".5" if has_cmp else "")
-      + " of `docs/HANDOFF_clock_model_revival.md`. Produced by "
+      + " of the `network.clock_model` revival card (write-up "
+      "`docs/SPEC_c1_clock_rate_validation.md` §10). Produced by "
       "`scripts/clock_hadamard_calib.py` (analysis-only, no C++). Statistic: "
       "overlapping Hadamard (3rd-difference, drift-insensitive) primary. "
       "Per-constellation common mode removed from every series.")
