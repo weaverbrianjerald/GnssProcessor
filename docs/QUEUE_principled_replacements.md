@@ -407,6 +407,31 @@ and the ionosphere itself (∝1/f²) both have the **wrong sign**.
 ⚠ `network.estimate_iono_sh` is **OFF** on this arm — it runs FREE per-LOS slant iono,
 so an SH-truncation explanation is excluded.
 
+✅✅ **MECHANISM FOUND — per-LOS IONOSPHERE ESTIMATION ERROR, truth-graded (SPEC §7.8).**
+`network.trace_ionosphere` was frame-broken exactly as CLAUDE.md warns (it emitted the
+correction `x_r` alone against a state SEEDED at allocation — median 0.95 m vs the true
+8.88 m, i.e. ~11 % of the quantity).  Fixed on the ZWD block's pattern: `iono_m`
+unchanged, `x_lin_m` + **`iono_total_m`** appended.  Trace-class — with it armed the four
+graded CSVs are **bit-identical** to `runs/pareref_on/logs_v2`.  Arm `runs/t3iono`,
+config `_simnet24_inj_t3iono.json`.
+Graded against `truth_atmo.csv` `I_L1_m` over 13 054 settled triples.  The state is
+LUMPED, so per invariant #5 only the datum-free **interaction** r (after removing the
+receiver term a(sta) and satellite term b(sat)) is gradable: **rms 0.764 m**.
+**corr(log station variance factor, log iono interaction rms) = +0.9258**, per-station
+error **0.106 ... 2.551 m**.  The **lumped** term correlates **-0.103** — so it is NOT the
+receiver code-bias partition and not anything the datum can move.
+**Causal chain:** iono state error 0.817 m rms -> ~96 % absorbed by the collinear per-arc
+ambiguity -> unabsorbed ~4 % lands in the phase residual in the iono direction (0.033 m
+rms) -> L1-dominant per §7.6 -> the 29x per-station variance-factor spread.
+⚠ It tracks the error's **LEVEL** (+0.532), **not** its rate of change (+0.046) — the
+natural "ambiguity soaks up the constant, only the variation shows" guess is falsified.
+⚠ **R2 is now non-negotiable**: a per-station variance component would bury a measured
+0.11-2.55 m per-station ionosphere error inside the noise model.
+⚠ **Likely the same root as the integer-resolution failure** (ambiguities absorbing ~96 %
+of a 0.8 m iono error cannot fix to integers; cf. `project_why_non_integer_rootcause`
+"NL 99.3 % iono" and the AGU-26 0 % fix rate).  Asserted, not measured — no arm ties the
+iono interaction rms to the DD fractional channel yet.
+
 ❌ **TEN candidates falsified (SPEC §7.7) — do NOT re-run.**  phase multipath (arm) ·
 code multipath (arm) · redundancy r_i (census) · elevation +0.24 · arc age (flat) ·
 iono MAGNITUDE **+0.089** · iono RATE OF CHANGE **+0.102** · receiver code biases

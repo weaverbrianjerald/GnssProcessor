@@ -19,6 +19,12 @@ detection power** (§13: 20/24 injected slips, byte-identical per-rung, 3.9× fe
 flags).  The correct replacement is a **stratified studentization**, not a new
 threshold.
 
+✅ **MECHANISM (§7.8): the per-station heterogeneity is per-LOS IONOSPHERE ESTIMATION
+ERROR**, truth-graded — corr(log station variance factor, log datum-free iono error rms)
+= **+0.9258**, error rms 0.11–2.55 m by station.  The per-arc ambiguity absorbs ~96 % of
+it; the unabsorbed ~4 % lands in the phase residual in the iono direction, which is
+L1-dominant.  Ten other candidates falsified (§7.7).
+
 ⚠ **Field check (§12): the structure reproduces and is stronger — station spread 10.5×,
 transferability +0.873 — but the remedy's leverage falls to 1.5×, because the field runs
 with σ̂₀ clamped at the 1.0 floor on 88–96 % of epochs.  In that regime the denominator
@@ -591,6 +597,82 @@ not emit.
 ⚠ **This makes §6's R2 (declare, do not absorb) load-bearing rather than stylistic.**  A
 per-station variance component would bury an unidentified iono-direction defect of 29×
 inside the noise model.
+
+### 7.8 ✅ MECHANISM FOUND — it is per-LOS ionosphere estimation error (+0.926)
+
+§7.7 named the next probe: stop inferring from residuals, grade the **states** against
+truth.  Done, and it closes the question.
+
+**The instrument.**  `network.trace_ionosphere` existed but was frame-broken exactly as
+CLAUDE.md warns — it emitted the reconstructed correction `x_r` alone, while the per-LOS
+iono state is **seeded at allocation**, so the column was a correction, not the absolute
+slant ionosphere.  Fixed on the ZWD block's own pattern (`NetworkIonoDiag.cpp`): the
+`iono_m` column is unchanged (pyviz consumes it) and two columns are appended —
+`x_lin_m` (the seed) and **`iono_total_m` = x_lin + x_r**, the absolute slant ionosphere.
+The scale of the defect: median `iono_m` **0.95 m** against median `iono_total_m`
+**8.88 m**.  Anyone who graded the old column was grading ~11 % of the quantity.
+Trace-class, so the gate is bit-identity: with it armed, `network_solution.csv`,
+`network_dd_fractional.csv`, `network_station_residuals.csv` and
+`network_epoch_status.csv` are **bit-identical** to `runs/pareref_on/logs_v2`.
+Arm `runs/t3iono`, config `_simnet24_inj_t3iono.json`.
+
+**The grade.**  Joined to `truth_atmo.csv`'s `I_L1_m` over 13 054 settled
+(station, sat, epoch) triples.  The state is LUMPED (the config log: *"the receiver code
+delay rides inside the slant ionosphere"*), so per standing invariant #5 the error is
+decomposed `e = mu + a(sta) + b(sat) + r` and only the **interaction r** — what no
+receiver or satellite bias can absorb — is datum-invariant:
+
+| term | value |
+|---|---|
+| raw error (lumped, NOT gradable) | mean 1.407 m, rms 3.564 m |
+| overall mu | 0.328 m |
+| station lump a(sta) — the receiver GF term | −3.137 … +4.156 m |
+| satellite lump b(sat) | −3.116 … +4.736 m |
+| **interaction r — the genuine per-LOS iono error** | **rms 0.764 m**, median\|r\| 0.142, max 9.27 |
+
+**THE RESULT:**
+
+$$\operatorname{corr}igl(\log \hat\sigma^2_{	ext{station}},\; \log 	ext{rms}\,r_{	ext{station}}igr) \;=\; \mathbf{+0.9258}$$
+
+The per-station iono interaction rms runs **0.106 m (S13) … 2.551 m (S06)** and orders
+almost exactly with the §7.4 variance factor (S06 61.80 / S16 2.14).  The contrast is
+decisive: the **lumped** term correlates **−0.103** — so it is *not* the receiver code-bias
+partition, and not any bias the datum can move.  It is the per-line-of-sight ionosphere
+estimate being wrong, by up to 2.5 m rms at the worst station.
+
+### 7.8.1 The causal chain, and one correction to it
+
+| step | measured |
+|---|---|
+| per-LOS slant iono state error (datum-free interaction) | rms **0.817 m** |
+| absorbed by the collinear per-arc **ambiguity** | ~96 % |
+| unabsorbed remainder → phase residual, iono direction | rms **0.033 m** |
+| corr(iono error **level**, residual iono coefficient) | **+0.532** |
+| corr(iono error **change**, residual iono coefficient) | **+0.046** |
+
+⚠ **The residual tracks the iono error's LEVEL, not its rate of change.**  The natural
+guess — that the ambiguity soaks up the constant part so only the time-variation shows —
+is **wrong**: the change correlation is null.  The ambiguity absorbs ~96 % of the level
+and the unabsorbed ~4 % passes through proportionally.
+
+That closes every open thread in §7.7: the effect is universal (every station has iono
+error), stable in time (the error level is persistent per arc), independent of elevation
+and arc age, invisible to `r_i` (the *geometry* is uniform; the *iono fit* is not),
+unmoved by multipath, and L1-dominant because the iono direction is L1-dominant once the
+common mode is removed (§7.6).
+
+### 7.8.2 Two consequences beyond this card
+
+1. **R2 is now non-negotiable.**  A per-station variance component would bury a measured
+   **0.11–2.55 m per-station ionosphere estimation error** inside the noise model.  That
+   is no longer a stylistic worry — it names the quantity that would be hidden.
+2. **This is very likely the same root as the integer-resolution failure.**  The
+   ambiguities are absorbing ~96 % of a 0.8 m iono error; an ambiguity biased by that
+   cannot be fixed to an integer.  The project's standing finding is
+   `project_why_non_integer_rootcause` — *"NL 99.3 % iono"* — and the AGU-26 amendment
+   records AR fix rate 0 % with med\|frac_cyc\| uniform at 0.25.  §7.8 supplies the
+   truth-graded number behind both.  ⚠ Asserted as a connection, not measured here: no
+   arm has tied the iono interaction rms to the DD fractional channel directly.
 
 ## 8. Validation shape
 

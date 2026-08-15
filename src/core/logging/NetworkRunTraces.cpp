@@ -85,7 +85,14 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     if (nc.trace_ionosphere) {
         iono_trace.open(iono_path);
         if (iono_trace)
-            iono_trace << "week,tow,station,sat,iono_m,elevation_deg,azimuth_deg\n";
+            // ⚠ `iono_m` is the reconstructed CORRECTION x_r only — the per-LOS iono
+            // state is SEEDED at allocation, so x_r is NOT the absolute slant
+            // ionosphere (CLAUDE.md's frame-broken note).  Kept unchanged so the pyviz
+            // consumer is unaffected.  `x_lin_m` is that seed and `iono_total_m` =
+            // x_lin_m + iono_m is the absolute slant ionosphere — the only column that
+            // may be graded against a truth field (SPEC_t3_null_derivation §7.8).
+            iono_trace << "week,tow,station,sat,iono_m,elevation_deg,azimuth_deg,"
+                          "x_lin_m,iono_total_m\n";
         else
             log->warn("Network: failed to open ionosphere trace {}", iono_path.string());
     }

@@ -88,12 +88,26 @@ void networkIonoDiag(
                     continue;
                 const auto e = elaz.find(kv.first);
                 if (e == elaz.end()) continue;
+                // FRAME FIX (SPEC_t3_null_derivation §7.8).  `iono_m` is the
+                // reconstructed CORRECTION x_r alone, which is what this trace has
+                // always emitted and what CLAUDE.md flags as frame-broken: the per-LOS
+                // iono state is SEEDED at allocation, so x_r is a correction to that
+                // seed, not the absolute slant ionosphere.  The column is kept
+                // unchanged (pyviz consumes it); the absolute value is appended
+                // instead, on the ZWD block's pattern below — x_lin from the station's
+                // own state vector, iono_total_m = x_lin + x_r.  Grade
+                // `iono_total_m`, never `iono_m`.
+                const double x_lin =
+                    stations[i].sm->getStateVector()(static_cast<Eigen::Index>(kv.second));
+                const double iono_total = x_lin + x_r(hit->second);
                 iono_trace << se.time.week << ','
                            << fmt::format("{:.3f}", se.time.tow) << ','
                            << stations[i].name << ',' << kv.first << ','
                            << fmt::format("{:.4f}", x_r(hit->second)) << ','
                            << fmt::format("{:.2f}", e->second.first) << ','
-                           << fmt::format("{:.2f}", e->second.second) << '\n';
+                           << fmt::format("{:.2f}", e->second.second) << ','
+                           << fmt::format("{:.6f}", x_lin) << ','
+                           << fmt::format("{:.6f}", iono_total) << '\n';
             }
         }
     }
