@@ -525,6 +525,73 @@ changes, where a median of maxima silently conflates "quiet" with "unchecked".
 ⚠ It is also outlier-sensitive, so a production form needs a robust variant (trimmed or
 Huberized numerator) — and the 11.80-vs-1.78 gap above says that choice is not cosmetic.
 
+### 7.6 The residual lives in the IONO DIRECTION — and ten candidates are dead
+
+Decomposing the post-fit phase residual 3-vector (v_L1, v_L2, v_L5) at each
+(station, sat, epoch) onto three physically meaningful directions — `(1,1,1)`
+(anything common in metres: clock, troposphere, orbit, position, tides), the iono
+direction `(1, γ₂, γ₅)` with γ₂ = 1.6469 / γ₅ = 1.7933, and the remaining orthogonal
+direction (reachable only by the per-signal ambiguity/bias states):
+
+| direction | share of residual variance | rms |
+|---|---|---|
+| common (clock / tropo / geometry) | 5.02 % | 7.7 mm |
+| **iono** | **89.76 %** | **32.4 mm** |
+| perp (bias/ambiguity only) | 5.22 % | 7.8 mm |
+
+**This is the L1C answer.**  Once the common mode is removed the iono direction is
+`(−0.804, +0.280, +0.525)` — **L1-dominant**, because L1 has the *smallest* iono
+coefficient (1 vs 1.65 / 1.79) and therefore sits furthest from the mean.  Per signal,
+L1C's 30.6 mm rms is 26.0 mm of iono; L2W's 8.1 mm is 9.0 mm of iono (partly
+cancelling).  **L1C is not noisy — it is where unabsorbed iono-direction error lands.**
+
+And the per-station heterogeneity is the *same* effect, not a second one: the loudest
+four stations are **93.2 %** iono share at 36.3 mm rms; the quietest four are **65.6 %**
+iono at 8.2 mm.
+
+**Structural corollary — the decomposition rules out an entire class by itself.**  Every
+signal-independent error (satellite/receiver clock, troposphere, orbit, station
+position, solid-earth tide, relativity) is identical *in metres* on all three signals
+and can only appear in the common direction, which carries **5 %**.  So the culprit is
+necessarily frequency-dependent.  Phase wind-up (∝ λ) and the ionosphere (∝ 1/f²) both
+have the **wrong sign** — they load L2/L5 more than L1.
+
+### 7.7 Falsification ledger — do NOT re-run these
+
+Every entry measured on this fixture, not argued.  ⚠ Two of them are *arms* with their
+own fixtures; the rest are joins against truth or config.
+
+| # | candidate | test | result |
+|---|---|---|---|
+| 1 | phase multipath | arm `runs/t3mp0` (`phase_amp_zen_m: 0`) | station spread 4.7→4.8×, flag rate UP |
+| 2 | code multipath | arm `runs/t3cmp0` (`code_amp_gps_*: 0`) | iono share 89.76→89.43 %, all vf −8 % uniform |
+| 3 | redundancy r_i | per-row census | r_i uniform 1.24× vs residual 2.6–3.0× |
+| 4 | elevation (PCV) | join vs `truth_atmo` | L1C/L2W 14.9→8.2 over 10–90°, vs a 10–15× base |
+| 5 | arc age (convergence) | first-sighting join | ratio flat 6–17 across all ages |
+| 6 | iono **magnitude** | join vs truth `I_L1_m` | corr(log,log) **+0.089** |
+| 7 | iono **rate of change** | epoch-difference join | corr(log,log) **+0.102** |
+| 8 | receiver code biases | join vs `rx_code_bias` | corr(log,log \|C1C−C2W\|) **+0.264**; S05 has the LARGEST GF bias and is nearly the QUIETEST |
+| 9 | phase-bias anchor / datum | station × signal grid | L1C/L2W > 3 at **22 of 23** stations — universal, not anchor-local |
+| 10 | constellation | field, GPS vs Galileo | scale ratio **1.05×** |
+
+⚠ **Method note, recorded because it cost a wrong claim.**  Candidate 8 was proposed
+from two cherry-picked extremes (the loudest station had a large geometry-free receiver
+bias, the quietest a small one).  Under correlation over all 23 stations it collapsed to
++0.26 and the extremes actively contradict it.  Propose from the correlation, not from
+the ends of the table.
+
+**What survives.**  Two robust facts and no mechanism: (a) ~90 % of the post-fit phase
+residual is in the iono direction, reproduced on two independent fixtures; (b) the
+per-station variance factor spreads **29×**, is stable in time, and correlates with
+nothing observable yet tested.  The next probe should grade the **estimated states
+against truth** (`truth_atmo` slant iono, `truth_bias`) rather than continue inferring
+from residuals — that requires arming a per-LOS iono state trace, which this posture does
+not emit.
+
+⚠ **This makes §6's R2 (declare, do not absorb) load-bearing rather than stylistic.**  A
+per-station variance component would bury an unidentified iono-direction defect of 29×
+inside the noise model.
+
 ## 8. Validation shape
 
 1. **Fit** on `runs/pareref_on` — done, §4.1.
@@ -711,6 +778,47 @@ redundancy shrinkage, a genuinely quieter field posture, or the sim being unreal
 noisy (§7 lead 1) is unresolved — and it is now the sharpest question in the card,
 because the answer decides whether "unclamp the field" or "quiet the sim" is the right
 next move.
+
+### 12.1b ⚠ At 305 stations the remedy stops working — and the reason is drift
+
+`pdp305_pinaware/h3_guard` (DOY-129 field, **303 stations present**, 354 epochs,
+1 016 566 cells, 806 794 settled over 293 epochs).  The leverage trend across all three
+arms:
+
+| | sim 24-sta | field 49-sta | **field 303-sta** |
+|---|---|---|---|
+| station scale spread | 4.7× | 10.5× | 7.1× |
+| corr(log scale, half 1 vs 2) | +0.847 | +0.873 | **+0.782** |
+| as shipped, held-out half | 4.46 % | 27.58 % | 9.57 % |
+| ÷ OOS scale(station) | — | — | **10.31 % — WORSE than shipped** |
+| ÷ OOS scale(station × epoch) | **0.97 %** | 18.48 % | **8.42 %** |
+| net leverage | **4.6×** | 1.5× | **1.14×** |
+| implied c, k=3 → k=10, after stratification | 1.97 → 2.39 | 3.07 → 6.02 | **2.55 → 4.78** |
+
+**Out-of-sample station stratification makes the 305-station arm WORSE** (9.57 % →
+10.31 %); adding the fast epoch factor recovers it only to 8.42 %, a 1.14× net win, and
+the implied-c curve is essentially unmoved (2.68 → 4.79 shipped vs 2.55 → 4.78
+stratified).
+
+**The mechanism is drift, and it is visible in the transferability column.**  The
+station factor's half-to-half correlation *falls* with window length: +0.847 (1 h sim),
++0.873 (1 h field), **+0.782 (3 h field)** — and that is not a sample-size effect, since
+each 305-station half carries ~1300 cells per station against the 24-station arm's ~200.
+**The per-station scale is not stationary over 3 h on real data.**  A factor fitted on
+the first half is stale by the second, and applying a stale scale is worse than applying
+none.
+
+⚠ **This qualifies R1's premise directly.**  §4.1's "+0.847, STABLE, transferable" was
+measured on a 1-hour window and does not survive extension.  The slow factor must
+therefore **track** — an EWMA with a real time constant — rather than be fitted once, and
+**that time constant is unmeasured**.  §6's slow/fast split survives (it is forced by the
+noise budget); what does not survive is the assumption that "slow" can mean "constant
+over the run".
+
+⚠ **Instrument limitation, found here:** `scripts/t3_null_fit.py` is pure-Python by
+design and **timed out after 50 minutes** on this run's 1 M cells; the numbers above come
+from a numpy re-implementation of the same decomposition.  A field-scale run is exactly
+where the tool matters, so this is a defect in the tool, not in the fixture.
 
 ### 12.2 ⚠ This BOUNDS the §5 falsification — reopen B2 for the field
 

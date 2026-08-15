@@ -351,6 +351,20 @@ this purpose.
   spread is **10.5×** (vs the sim's 4.7×) and *more* transferable (**+0.873** over 49
   stations) — but out-of-sample stratification cuts only **27.58 % → 18.48 % (1.5×)**
   against the sim's 4.6×, and the implied-c curve stays steep (3.07 → 6.02).
+  ⚠⚠ **And at 305 stations it stops working entirely.**  On `pdp305_pinaware/h3_guard`
+  (303 sta present, 354 ep, 1.02 M cells) out-of-sample station stratification is
+  **WORSE than shipped** (9.57 % → 10.31 %); station × epoch recovers only to 8.42 %, a
+  **1.14×** net win.  Leverage across the three arms: **4.6× (sim 24) → 1.5× (field 49)
+  → 1.14× (field 303)**.  Mechanism: the station factor's half-to-half transferability
+  FALLS with window length — +0.847 (1 h sim), +0.873 (1 h field), **+0.782 (3 h field)**
+  — and not for sample-size reasons (~1300 cells/station/half at 305 vs ~200 at 24).
+  **The per-station scale is not stationary over 3 h on real data**, so a factor fitted
+  once is stale by the second half and worse than none.  ⚠ This qualifies R1's premise:
+  the slow factor must TRACK (EWMA, real time constant — currently unmeasured), not be
+  fitted once.  The slow/fast split itself survives; "slow = constant over the run" does
+  not.  ⚠ `scripts/t3_null_fit.py` **timed out (50 min)** on 1 M cells — a tool defect,
+  since field scale is exactly where it matters.
+
   **Mechanism identified: σ̂₀ is clamped at the 1.0 floor on 95.7 % of `net50_1h` epochs
   and 88.1 % of `h3_guard`'s (305 sta), against 33 % on the sim.**  In that regime the
   denominator is a constant and the statistic is an unnormalized max against a fixed 6σ
@@ -378,7 +392,39 @@ instead of a fixed k, and the 1.67 % structurally-untestable cells (`s_raw` exac
 dropped from the opportunity count.  Full derivation, build plan and the four owed
 validations: `docs/SPEC_t3_null_derivation.md`.
 
-⚠ **Named but NOT closed:** why the post-fit standardized residual varies 4.7× by
+✅ **THE L1C EXCESS IS EXPLAINED — the residual lives in the IONO DIRECTION (SPEC §7.6).**
+Decomposing the phase residual 3-vector onto (1,1,1) / (1,γ₂,γ₅) / perp:
+**common 5.02 % · IONO 89.76 % · perp 5.22 %**.  Once the common mode is removed the
+iono direction is **(−0.804, +0.280, +0.525) — L1-dominant**, because L1 has the
+SMALLEST iono coefficient (1 vs 1.65/1.79) and sits furthest from the mean.  L1C is not
+noisy; **it is where unabsorbed iono-direction error lands**.  The per-station
+heterogeneity is the same effect: loudest 4 stations **93.2 %** iono share at 36.3 mm
+rms, quietest 4 **65.6 %** at 8.2 mm.
+**Structural corollary:** every signal-independent error (clock, tropo, orbit, position,
+tides) is identical in METRES across signals and can only appear in the common
+direction — 5 %.  So the culprit is necessarily frequency-dependent, and wind-up (∝λ)
+and the ionosphere itself (∝1/f²) both have the **wrong sign**.
+⚠ `network.estimate_iono_sh` is **OFF** on this arm — it runs FREE per-LOS slant iono,
+so an SH-truncation explanation is excluded.
+
+❌ **TEN candidates falsified (SPEC §7.7) — do NOT re-run.**  phase multipath (arm) ·
+code multipath (arm) · redundancy r_i (census) · elevation +0.24 · arc age (flat) ·
+iono MAGNITUDE **+0.089** · iono RATE OF CHANGE **+0.102** · receiver code biases
+**+0.264** (S05 has the LARGEST GF bias and is nearly the QUIETEST) · phase-bias
+anchor/datum (universal at 22/23 stations) · constellation (1.05×).
+⚠ Method note: candidate 8 was proposed from two cherry-picked extremes and collapsed
+under correlation over all 23 stations.  Propose from the correlation, not the ends.
+
+**What survives:** ~90 % iono-direction residual (two independent fixtures) and a 29×
+per-station variance factor that is stable in time and correlates with nothing tested.
+Next probe: grade the **estimated states against truth** (`truth_atmo`, `truth_bias`)
+instead of inferring from residuals — needs a per-LOS iono state trace this posture does
+not emit.
+
+⚠ **This makes R2 (declare, do not absorb) load-bearing:** a per-station variance
+component would bury an unidentified 29× iono-direction defect inside the noise model.
+
+⚠ **Superseded framing —** why the post-fit standardized residual varies 4.7× by
 station when every station draws the same error model, uncorrelated with any
 observational covariate.  That is a stochastic-model card, and until it exists the
 per-station factor is doing double duty as a nuisance absorber.

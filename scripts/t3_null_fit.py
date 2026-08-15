@@ -207,13 +207,24 @@ def load_cells(run: Path) -> Cells:
         sys.exit(f"ERROR: no network_station_residuals.csv under {run} "
                  f"(arm network.trace_station_residuals)")
     tow, sta, sat, sr, sn, s0 = [], [], [], [], [], []
+    # csv.reader on a fixed column order, not DictReader: at ~1e6 cells (a 305-station
+    # field run) the per-row dict construction alone dominates the whole analysis.
     with p.open(newline="", encoding="utf-8", errors="replace") as f:
-        for d in csv.DictReader(f):
+        rd = csv.reader(f)
+        try:
+            hdr = next(rd)
+        except StopIteration:
+            sys.exit(f"ERROR: {p} is empty")
+        try:
+            it, ia, ig, ir, in_, i0 = (hdr.index(c) for c in
+                                       ("tow", "station", "sat", "s_raw", "s_norm", "sigma0"))
+        except ValueError:
+            sys.exit(f"ERROR: {p} header is not the L13 schema: {hdr}")
+        for d in rd:
             try:
-                tow.append(float(d["tow"])); sta.append(d["station"]); sat.append(d["sat"])
-                sr.append(float(d["s_raw"])); sn.append(float(d["s_norm"]))
-                s0.append(float(d["sigma0"]))
-            except (KeyError, ValueError):
+                tow.append(float(d[it])); sta.append(d[ia]); sat.append(d[ig])
+                sr.append(float(d[ir])); sn.append(float(d[in_])); s0.append(float(d[i0]))
+            except (IndexError, ValueError):
                 continue
     if not sr:
         sys.exit(f"ERROR: {p} parsed to zero cells")
@@ -234,29 +245,52 @@ def load_flag_rates(run: Path) -> dict:
 # --- statistics ------------------------------------------------------------------
 
 def median(v):
-    s = sorted(v)
-    n = len(s)
-    if n == 0:
-        return float("nan")
-    return s[n // 2] if n % 2 else 0.5 * (s[n // 2 - 1] + s[n // 2])
+    import numpy as np
+    a = np.asarray(v, dtype=float)
+    return float(np.median(a)) if a.size else float("nan")
 
 
 def quantile(v, q):
-    s = sorted(v)
-    if not s:
-        return float("nan")
-    i = min(len(s) - 1, max(0, int(math.ceil(q * len(s))) - 1))
-    return s[i]
+    import numpy as np
+    a = np.asarray(v, dtype=float)
+    return float(np.quantile(a, q)) if a.size else float("nan")
 
 
 def moments(v):
-    n = len(v)
-    m = sum(v) / n
-    var = sum((x - m) ** 2 for x in v) / (n - 1)
-    sd = math.sqrt(var)
-    sk = sum(((x - m) / sd) ** 3 for x in v) / n
-    ku = sum(((x - m) / sd) ** 4 for x in v) / n - 3.0
-    return m, sd, sk, ku
+    import numpy as np
+    a = np.asarray(v, dtype=float)
+    m, sd = float(a.mean()), float(a.std(ddof=1))
+    z = (a - m) / sd
+    return m, sd, float((z ** 3).mean()), float((z ** 4).mean() - 3.0)
+
+
+def exceed_rate(v, k):
+    import numpy as np
+    a = np.asarray(v, dtype=float)
+    return float((a > k).mean()) if a.size else float("nan")
+
+
+def exceed_count(v, k):
+    import numpy as np
+    a = np.asarray(v, dtype=float)
+    return int((a > k).sum())
+
+
+def _group_medians(vals, codes, n_levels):
+    """Median of `vals` within each integer group code.
+
+    One argsort + contiguous slices, so it is O(N log N) once rather than O(N x groups).
+    """
+    import numpy as np
+    order = np.argsort(codes, kind="stable")
+    c, v = codes[order], vals[order]
+    lo = np.searchsorted(c, np.arange(n_levels), side="left")
+    hi = np.searchsorted(c, np.arange(n_levels), side="right")
+    out = np.full(n_levels, np.nan)
+    for j in range(n_levels):
+        if hi[j] > lo[j]:
+            out[j] = np.median(v[lo[j]:hi[j]])
+    return out
 
 
 def fit_strata(cells: Cells, idx, keys, n_c: int, min_n: int = 20):
@@ -276,33 +310,43 @@ def sweep_strata(cells: Cells, idx, strata, keyfns, n_c, sweeps=1, min_n=20):
     A single pass is a LOWER bound on what the model can absorb — the strata are
     not orthogonal, so the first pass leaves cross-terms behind.
     """
+    import numpy as np                  # in-tree; the pure-Python path timed out at 1e6 cells
     mref = median_max_abs_normal(n_c)
-    maps = {s: {} for s in strata}
+    y = np.asarray([cells.s_raw[i] for i in idx], dtype=float)
+    # Materialize each stratum's group code ONCE.  The pure-Python version called the
+    # key lambda inside every sweep for every row, which is what made a 305-station run
+    # (1.0e6 cells) exceed 50 minutes — see SPEC_t3_null_derivation §12.1b.
+    codes, levels = {}, {}
+    for s in strata:
+        kf = keyfns[s]
+        levels[s], codes[s] = np.unique(np.asarray([kf(cells, i) for i in idx]),
+                                        return_inverse=True)
+    facs = {s: np.ones(len(levels[s])) for s in strata}   # per-level multiplicative scale
     fallback = {s: 1.0 for s in strata}
-
-    def denom_for(i):
-        d = 1.0
-        for s in strata:
-            d *= maps[s].get(keyfns[s](cells, i), fallback[s])
-        return d if d > 0 else 1.0
+    counts = {s: np.bincount(codes[s], minlength=len(levels[s])) for s in strata}
 
     for _ in range(max(1, sweeps)):
         for s in strata:
-            kf = keyfns[s]
-            # hold every OTHER stratum fixed and refit this one on what they leave
             others = [s2 for s2 in strata if s2 != s]
-            resid = []
-            for i in idx:
-                d = 1.0
-                for s2 in others:
-                    d *= maps[s2].get(keyfns[s2](cells, i), fallback[s2])
-                resid.append(cells.s_raw[i] / (d if d > 0 else 1.0))
-            groups = defaultdict(list)
-            for j, i in enumerate(idx):
-                groups[kf(cells, i)].append(resid[j])
-            maps[s] = {k: median(v) / mref for k, v in groups.items() if len(v) >= min_n}
-            fallback[s] = median(resid) / mref
-    return [denom_for(i) for i in idx], maps, mref
+            d = np.ones(len(y))
+            for s2 in others:
+                d *= facs[s2][codes[s2]]
+            resid = y / np.where(d > 0, d, 1.0)
+            f = _group_medians(resid, codes[s], len(levels[s])) / mref
+            fb = float(np.median(resid)) / mref
+            # a level with too few rows keeps the pooled fallback, as before
+            f = np.where(counts[s] >= min_n, f, fb)
+            facs[s] = np.where(np.isfinite(f) & (f > 0), f, fb)
+            fallback[s] = fb
+
+    denom = np.ones(len(y))
+    for s in strata:
+        denom *= facs[s][codes[s]]
+    denom = np.where(denom > 0, denom, 1.0)
+    maps = {s: {levels[s][j]: float(facs[s][j]) for j in range(len(levels[s]))
+                if counts[s][j] >= min_n}
+            for s in strata}
+    return denom, maps, mref
 
 
 def split_half_oos(cells: Cells, idx, strata, keyfns, n_c, sweeps):
@@ -320,22 +364,20 @@ def split_half_oos(cells: Cells, idx, strata, keyfns, n_c, sweeps):
     slow = [s for s in strata if s != "epoch"]
     if not slow:
         return None
+    import numpy as np
     _, maps, mref = sweep_strata(cells, fit, slow, keyfns, n_c, sweeps)
-    gl = median([cells.s_raw[i] for i in fit]) / mref
-    den = []
-    for i in tst:
-        d = 1.0
-        for s in slow:
-            d *= maps[s].get(keyfns[s](cells, i), gl)
-        den.append(d if d > 0 else 1.0)
-    v = [cells.s_raw[i] / den[j] for j, i in enumerate(tst)]
+    gl = float(np.median(np.asarray([cells.s_raw[i] for i in fit]))) / mref
+    den = np.ones(len(tst))
+    for s in slow:
+        den *= np.asarray([maps[s].get(keyfns[s](cells, i), gl) for i in tst])
+    den = np.where(den > 0, den, 1.0)
+    v = np.asarray([cells.s_raw[i] for i in tst]) / den
     if "epoch" in strata:                     # refit the fast factor on the held-out half
-        g = defaultdict(list)
-        for j, i in enumerate(tst):
-            g[cells.tow[i]].append(v[j])
-        sc = {k: median(x) / mref for k, x in g.items()}
-        fb = median(v) / mref
-        v = [v[j] / max(1e-9, sc.get(cells.tow[i], fb)) for j, i in enumerate(tst)]
+        lv, cd = np.unique(np.asarray([cells.tow[i] for i in tst]), return_inverse=True)
+        sc = _group_medians(v, cd, len(lv)) / mref
+        fb = float(np.median(v)) / mref
+        sc = np.where(np.isfinite(sc) & (sc > 1e-9), sc, max(fb, 1e-9))
+        v = v / sc[cd]
     base = [cells.s_norm[i] for i in tst]
     return base, v, len(fit), len(tst), maps, slow
 
@@ -343,7 +385,7 @@ def split_half_oos(cells: Cells, idx, strata, keyfns, n_c, sweeps):
 def curve_line(v, ks=(3, 4, 5, 6, 8, 10, 12)):
     out = []
     for k in ks:
-        r = sum(1 for x in v if x > k) / len(v)
+        r = exceed_rate(v, k)
         c = implied_scale(r, k)
         out.append(f"k={k:<2d} rate={r:.3e} c={c:6.3f}" if r > 0 else f"k={k:<2d} rate=0        c=  ----")
     return out
@@ -397,7 +439,7 @@ def diagnose(run: Path, warmup_s: float, n_c: int, strata: list[str],
     results["shipped"] = shipped
     if not quiet:
         print(f"   {'A. as shipped (one network σ̂₀)':44s} "
-              f"{sum(1 for x in shipped if x>6)/len(shipped):8.4%}")
+              f"{exceed_rate(shipped, 6):8.4%}")
         for ln in curve_line(shipped):
             print(f"        {ln}")
 
@@ -418,7 +460,7 @@ def diagnose(run: Path, warmup_s: float, n_c: int, strata: list[str],
         if not quiet:
             vals = sorted(maps[s].values())
             print(f"   {('B. ÷ scale(' + ' × '.join(label) + ')'):44s} "
-                  f"{sum(1 for x in v if x>6)/len(v):8.4%}"
+                  f"{exceed_rate(v, 6):8.4%}"
                   f"   [{s} factor {vals[0]:.3f}..{vals[-1]:.3f}, "
                   f"spread {vals[-1]/vals[0]:.1f}×]")
             for ln in curve_line(v):
@@ -430,18 +472,22 @@ def diagnose(run: Path, warmup_s: float, n_c: int, strata: list[str],
         print(f"\n-- OUT-OF-SAMPLE (the honest number): {'/'.join(slow)} scale fitted on the "
               f"first half\n   ({nfit} cells), applied to the held-out second half ({ntst} cells) --")
         print(f"   {'as shipped on the held-out half':44s} "
-              f"{sum(1 for x in base if x>6)/len(base):8.4%}")
+              f"{exceed_rate(base, 6):8.4%}")
         print(f"   {('÷ OOS scale(' + ' × '.join(strata) + ')'):44s} "
-              f"{sum(1 for x in v if x>6)/len(v):8.4%}")
+              f"{exceed_rate(v, 6):8.4%}")
         for ln in curve_line(v):
             print(f"        {ln}")
         # is the slow factor a stable property, or noise?
+        # ⚠ The cut MUST be hoisted out of the comprehension.  Inlining
+        # `sorted({cells.tow[j] for j in idx})` in the filter re-evaluates it once per
+        # element — O(N²), which is ~6.5e11 operations on a 305-station field run and was
+        # measured as a >50-minute hang (SPEC_t3_null_derivation §12.1b).
+        _tows_all = sorted({cells.tow[j] for j in idx})
+        _cut2 = _tows_all[len(_tows_all) // 2]
+        _second_half = [i for i in idx if cells.tow[i] >= _cut2]
         for s in slow:
             a = maps[s]
-            _, m2, _ = sweep_strata(cells, [i for i in idx if cells.tow[i] >=
-                                            sorted({cells.tow[j] for j in idx})[len(
-                                                {cells.tow[j] for j in idx}) // 2]],
-                                    slow, keyfns, n_c, sweeps)
+            _, m2, _ = sweep_strata(cells, _second_half, slow, keyfns, n_c, sweeps)
             pair = [(a[k], m2[s][k]) for k in a if k in m2.get(s, {})]
             if len(pair) >= 4:
                 la = [math.log(x) for x, _ in pair]
@@ -480,7 +526,7 @@ def transfer(fit_run: Path, ver_run: Path, warmup_s: float, n_c: int,
     print(f"fit {len(fi)} settled cells / verify {len(vi)} settled cells")
 
     base = [vc.s_norm[i] for i in vi]
-    print(f"\n   {'as shipped on the verify arm':44s} {sum(1 for x in base if x>6)/len(base):8.4%}")
+    print(f"\n   {'as shipped on the verify arm':44s} {exceed_rate(base, 6):8.4%}")
 
     mref = median_max_abs_normal(n_c)
     denom = [1.0] * len(vi)
@@ -515,7 +561,7 @@ def transfer(fit_run: Path, ver_run: Path, warmup_s: float, n_c: int,
                       f"{missing[:6]}{' …' if len(missing) > 6 else ''})")
         v = [vc.s_raw[i] / denom[j] for j, i in enumerate(vi)]
         print(f"   {('÷ scale(' + ' × '.join(lab) + ')'):44s} "
-              f"{sum(1 for x in v if x>6)/len(v):8.4%}")
+              f"{exceed_rate(v, 6):8.4%}")
         for ln in curve_line(v):
             print(f"        {ln}")
     print("\n   * an epoch factor is refitted on the verify arm by construction — it is a")

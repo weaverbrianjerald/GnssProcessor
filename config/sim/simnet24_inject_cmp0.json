@@ -1,0 +1,571 @@
+{
+  "_comment": [
+    "QUEUE item 4 \u2014 is the per-LOS slant IONO state being dragged by CODE error?",
+    "Same fixture with the CODE multipath zeroed (phase MP left at its default, which",
+    "SPEC 7.1 already measured as inert).  The slant iono is a LUMPED state (the log:",
+    "\"the receiver code delay rides inside the slant ionosphere\", \"the geometry-free",
+    "lump is absorbed by the free slant ionosphere\"), so code error propagates into it",
+    "and the PHASE residual then pays in the iono direction \u2014 which carries 89.8% of the",
+    "post-fit phase residual variance and is L1-dominant once the common part is removed."
+  ],
+  "date": {
+    "year": 2024,
+    "doy": 129
+  },
+  "trajectory": {
+    "interval_s": 30.0,
+    "n_epochs": 120,
+    "start_tow_s": 302400.0,
+    "clock_bias0_s": 0.0001,
+    "clock_drift_sps": 1e-09,
+    "clock_rw_q_m2ps": 0.003
+  },
+  "geometry": {
+    "elevation_mask_deg": 10.0
+  },
+  "noise": {
+    "code_sigma_zen_m": 0.3,
+    "phase_sigma_zen_m": 0.003
+  },
+  "atmosphere": {
+    "zwd_m": 0.12,
+    "zwd_rw_sigma_m": 0.01,
+    "zwd_rw_tau_s": 3600.0
+  },
+  "iono": {
+    "storm_scale": 0.0,
+    "background_source": "gim",
+    "shell_height_km": 350.0,
+    "center_lat_deg": 0.0947,
+    "center_lon_deg": 0.3552
+  },
+  "cycle_slips": {
+    "rate_base": 0.0
+  },
+  "corrections": {
+    "relativity": true,
+    "shapiro": true,
+    "solid_earth_tide": true,
+    "pole_tide": true,
+    "sat_antenna": true,
+    "rx_antenna_type": "TRM59800.00     NONE",
+    "phase_windup": true,
+    "signal_bias": true
+  },
+  "network_stations": [
+    {
+      "name": "S01000SIM",
+      "lat_deg": -65.7036,
+      "lon_deg": 0.0,
+      "h_m": 50.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.48
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "S02000SIM",
+      "lat_deg": -56.3228,
+      "lon_deg": 137.5078,
+      "h_m": 778.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.3485
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2524
+        }
+      ]
+    },
+    {
+      "name": "S03000SIM",
+      "lat_deg": -48.8439,
+      "lon_deg": -84.9845,
+      "h_m": 1507.6,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.026
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4413
+        }
+      ]
+    },
+    {
+      "name": "S04000SIM",
+      "lat_deg": -42.3506,
+      "lon_deg": 52.5233,
+      "h_m": 266.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3107
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5193
+        }
+      ]
+    },
+    {
+      "name": "S05000SIM",
+      "lat_deg": -36.4706,
+      "lon_deg": -169.9689,
+      "h_m": 995.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4772
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4669
+        }
+      ]
+    },
+    {
+      "name": "S06000SIM",
+      "lat_deg": -31.0079,
+      "lon_deg": -32.4612,
+      "h_m": 1724.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.3821
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.2971
+        }
+      ]
+    },
+    {
+      "name": "S07000SIM",
+      "lat_deg": -25.8426,
+      "lon_deg": 105.0466,
+      "h_m": 483.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.0526
+        }
+      ]
+    },
+    {
+      "name": "S08000SIM",
+      "lat_deg": -20.8944,
+      "lon_deg": -117.4457,
+      "h_m": 1212.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.2051
+        }
+      ]
+    },
+    {
+      "name": "S09000SIM",
+      "lat_deg": -16.1046,
+      "lon_deg": 20.0621,
+      "h_m": 1940.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4112
+        }
+      ]
+    },
+    {
+      "name": "S10000SIM",
+      "lat_deg": -11.428,
+      "lon_deg": 157.5699,
+      "h_m": 700.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.514
+        }
+      ]
+    },
+    {
+      "name": "S11000SIM",
+      "lat_deg": -6.8276,
+      "lon_deg": -64.9224,
+      "h_m": 1428.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.4876
+        }
+      ]
+    },
+    {
+      "name": "S12000SIM",
+      "lat_deg": -2.2711,
+      "lon_deg": 72.5854,
+      "h_m": 187.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3387
+        }
+      ]
+    },
+    {
+      "name": "S13000SIM",
+      "lat_deg": 2.2711,
+      "lon_deg": -149.9068,
+      "h_m": 916.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.4493
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1047
+        }
+      ]
+    },
+    {
+      "name": "S14000SIM",
+      "lat_deg": 6.8276,
+      "lon_deg": -12.3991,
+      "h_m": 1645.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.1484
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.1557
+        }
+      ]
+    },
+    {
+      "name": "S15000SIM",
+      "lat_deg": 11.428,
+      "lon_deg": 125.1087,
+      "h_m": 404.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.5487
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.3769
+        }
+      ]
+    },
+    {
+      "name": "S16000SIM",
+      "lat_deg": 16.1046,
+      "lon_deg": -97.3835,
+      "h_m": 1133.3,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.2191
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.1777
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.5034
+        }
+      ]
+    },
+    {
+      "name": "S17000SIM",
+      "lat_deg": 20.8944,
+      "lon_deg": 40.1242,
+      "h_m": 1862.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.402
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4356
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.5034
+        }
+      ]
+    },
+    {
+      "name": "S18000SIM",
+      "lat_deg": 25.8426,
+      "lon_deg": 177.632,
+      "h_m": 621.2,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.4883
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4549
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3769
+        }
+      ]
+    },
+    {
+      "name": "S19000SIM",
+      "lat_deg": 31.0079,
+      "lon_deg": -44.8602,
+      "h_m": 1350.0,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0749
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.2248
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1557
+        }
+      ]
+    },
+    {
+      "name": "S20000SIM",
+      "lat_deg": 36.4706,
+      "lon_deg": 92.6475,
+      "h_m": 109.1,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5385
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.1284
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.1047
+        }
+      ]
+    },
+    {
+      "name": "S21000SIM",
+      "lat_deg": 42.3506,
+      "lon_deg": -129.8447,
+      "h_m": 837.9,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.2858
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.4113
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.3387
+        }
+      ]
+    },
+    {
+      "name": "S22000SIM",
+      "lat_deg": 48.8439,
+      "lon_deg": 7.663,
+      "h_m": 1566.7,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.3471
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.4688
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4876
+        }
+      ]
+    },
+    {
+      "name": "S23000SIM",
+      "lat_deg": 56.3228,
+      "lon_deg": 145.1708,
+      "h_m": 325.8,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.5182
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.2694
+        },
+        {
+          "code": "C5Q",
+          "value_m": 0.514
+        }
+      ]
+    },
+    {
+      "name": "S24000SIM",
+      "lat_deg": 65.7036,
+      "lon_deg": -77.3214,
+      "h_m": 1054.5,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": 0.0
+        },
+        {
+          "code": "C2W",
+          "value_m": -0.0777
+        },
+        {
+          "code": "C5Q",
+          "value_m": -0.4112
+        }
+      ]
+    },
+    {
+      "name": "SZZ000SIM",
+      "lat_deg": 28.5,
+      "lon_deg": -16.5,
+      "h_m": 600.0,
+      "consumer": true,
+      "rx_code_bias": [
+        {
+          "code": "C1C",
+          "value_m": -0.37
+        },
+        {
+          "code": "C2W",
+          "value_m": 0.41
+        }
+      ]
+    }
+  ],
+  "_roster": "GENERATED by scripts/simnet_make_roster.py --n 24 --consumer (Fibonacci lattice, |lat| <= 72.0 deg, name-scheme legacy2). Do not hand-edit \u2014 regenerate.",
+  "signals": {
+    "gps_l5": true,
+    "synth_osb_amp_m": {
+      "C5Q": 0.6,
+      "L5Q": 0.02
+    }
+  },
+  "ambiguity": {
+    "regime": "field",
+    "half_width_cycles": 48
+  },
+  "multipath": {
+    "code_amp_gps_l1_m": 0.0,
+    "code_amp_gps_l2_m": 0.0,
+    "code_amp_gps_l5_m": 0.0
+  }
+}
