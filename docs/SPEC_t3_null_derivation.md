@@ -674,6 +674,63 @@ common mode is removed (§7.6).
    truth-graded number behind both.  ⚠ Asserted as a connection, not measured here: no
    arm has tied the iono interaction rms to the DD fractional channel directly.
 
+### 7.9 ✅ The DD-integer tie — MEASURED, and the sensitivity ladder holds
+
+§7.8.2 asserted the connection to integer resolution but flagged it unmeasured.  It is
+now measured, with no free parameter.
+
+**The prediction.**  For phase on signal j, `φ_j = ρ + T − γ_j·I_L1 + λ_j·N_j`.  An iono
+error `d = Î − I_true` must be absorbed by the ambiguity:
+
+$$\lambda_j\,(\hat N_j - N_j^{	ext{true}}) = \gamma_j\, d \quad\Longrightarrow\quad e_j = rac{\gamma_j}{\lambda_j}\, d$$
+
+In DD form the station and satellite main effects cancel exactly, so the driver is the
+double difference of the §7.8 interaction term.  The resulting per-band sensitivities —
+**L1C 5.255, L2W 6.744, L5Q 7.037 cyc/m** — reproduce the ladder
+`scripts/simnet_amb_integer.py` already documents (*"L1 5.26 cyc, WL 1.49, EWL 0.29"*),
+and the lane values fall out as **differences**: WL(1,2) = 5.255 − 6.744 = **−1.489**,
+EWL(2,5) = 6.744 − 7.037 = **−0.293**.  ⚠ The documented figures are magnitudes; the
+**sign is negative** for both lanes.
+
+**The measurement.**  DD integer error `e = dd_cyc − DD_true` from
+`network_dd_fractional.csv` joined to `truth_ambiguities.csv`, regressed on the DD of
+the truth-graded iono interaction (7326 matched quadruples):
+
+| combo | predicted slope (cyc/m) | fitted slope | corr | rms e (cyc) | variance explained, **zero free parameters** |
+|---|---|---|---|---|---|
+| L1C | 5.255 | 9.731 | **+0.9266** | 11.847 | **67.9 %** |
+| L2W | 6.744 | 10.149 | **+0.9543** | 12.003 | **81.0 %** |
+| L5Q | 7.037 | 10.288 | **+0.9585** | 12.116 | **82.8 %** |
+| WL(1,2) | −1.489 | −0.418 | −0.4632 | **1.005** | — |
+| EWL(2,5) | −0.293 | −0.140 | −0.7239 | **0.217** | — |
+
+**The per-band DD ambiguity error is 68–83 % accounted for by the truth-graded per-LOS
+ionosphere error, at correlation 0.93–0.96, using the physics slope with nothing
+fitted.**  That is the tie §7.8.2 owed.
+
+**And the ladder explains which rung survives.**  Measured rms DD error tracks the iono
+sensitivity down the lane ladder:
+
+| combo | sensitivity, relative to L1C | measured rms e, relative to L1C | `round(e)=0` (grader) |
+|---|---|---|---|
+| L1C | 1.000 | 1.000 | 5.1 % |
+| WL(1,2) | 0.283 | 0.085 | 51.0 % |
+| EWL(2,5) | 0.056 | 0.018 | **95.9 %** |
+
+EWL is the only rung that grades near-integer, and it is the rung with **18× less iono
+sensitivity**.  The pre-registered handoff shape ("EWL near-integer, WL plausible, NL
+not") is confirmed, and the reason is now measured rather than inferred.
+
+⚠ **Two honest gaps.**  (1) The *fitted* per-band slope is ~1.85× the predicted one
+(9.7 vs 5.26 on L1C).  The DD annihilates the station and satellite lumps exactly, so
+that is not a datum artifact; the ambiguity is absorbing more than the pure-iono
+prediction and the excess is **unexplained** — most likely a third error the iono and
+ambiguity jointly absorb.  (2) The lane rows show the mirror of it: the measured error
+ladder (1 : 0.085 : 0.018) is ~3× *steeper* than the sensitivity ladder
+(1 : 0.283 : 0.056), so the lanes cancel more than iono alone, and applying the full
+predicted slope over-corrects (hence the negative "explained" for the lanes, omitted
+above rather than dressed up).
+
 ## 8. Validation shape
 
 1. **Fit** on `runs/pareref_on` — done, §4.1.

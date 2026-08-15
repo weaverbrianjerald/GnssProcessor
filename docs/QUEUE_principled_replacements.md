@@ -427,10 +427,24 @@ rms) -> L1-dominant per §7.6 -> the 29x per-station variance-factor spread.
 natural "ambiguity soaks up the constant, only the variation shows" guess is falsified.
 ⚠ **R2 is now non-negotiable**: a per-station variance component would bury a measured
 0.11-2.55 m per-station ionosphere error inside the noise model.
-⚠ **Likely the same root as the integer-resolution failure** (ambiguities absorbing ~96 %
-of a 0.8 m iono error cannot fix to integers; cf. `project_why_non_integer_rootcause`
-"NL 99.3 % iono" and the AGU-26 0 % fix rate).  Asserted, not measured — no arm ties the
-iono interaction rms to the DD fractional channel yet.
+✅✅ **AND IT IS THE INTEGER-RESOLUTION ROOT — MEASURED (SPEC §7.9).**  From the phase
+observation equation, an iono error d forces `e_j = (gamma_j/lambda_j)·d` cycles into the
+ambiguity; in DD form the station and satellite lumps cancel exactly, so the driver is
+the DD of the §7.8 interaction.  Per-band sensitivities **L1C 5.255 / L2W 6.744 /
+L5Q 7.037 cyc/m** reproduce the ladder `simnet_amb_integer.py` already documents, and the
+lanes fall out as differences: **WL −1.489, EWL −0.293** (⚠ the documented 1.49/0.29 are
+MAGNITUDES; the sign is negative).
+Regressing the actual DD integer error (`dd_cyc` − DD_true from `truth_ambiguities`,
+7326 quadruples) on the DD iono error: **corr +0.9266 / +0.9543 / +0.9585** and
+**67.9 % / 81.0 % / 82.8 % of the variance explained with ZERO free parameters**.
+The ladder explains which rung survives: sensitivity relative to L1C 1.000 / 0.283 /
+0.056 against measured rms DD error 1.000 / 0.085 / 0.018, and `round(e)=0` of
+5.1 % / 51.0 % / **95.9 %**.  **EWL is the only near-integer rung and it is the one with
+18× less iono sensitivity** — the pre-registered handoff shape, now measured not inferred.
+⚠ Two honest gaps: the FITTED per-band slope is ~1.85× the predicted one (9.7 vs 5.26 on
+L1C) and is unexplained (not a datum artifact — the DD annihilates both lumps); and the
+measured lane ladder is ~3× steeper than the sensitivity ladder, so the lanes cancel more
+than iono alone.
 
 ❌ **TEN candidates falsified (SPEC §7.7) — do NOT re-run.**  phase multipath (arm) ·
 code multipath (arm) · redundancy r_i (census) · elevation +0.24 · arc age (flat) ·
