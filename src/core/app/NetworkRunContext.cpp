@@ -173,7 +173,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     //
     // The k.carry_invariant conjunct also drags in phase_datum_eq34 (see just above).
     // That is defensive redundancy, not a live discriminator: carry_invariant WITHOUT
-    // eq34 is a hard load error (GnssConfigLoadNetwork.cpp:6129-6135 returns false), so
+    // eq34 is a hard load error (the loader's "network.carry_invariant requires
+    // network.phase_datum_eq34" check in GnssConfigLoadNetwork.cpp returns false), so
     // no config that could exercise the difference ever reaches here.  Kept because it
     // matches how carry_invariant_pd_safe / carry_aware_covariance resolve, and because
     // if that requirement is ever relaxed this line is already correct.
@@ -549,7 +550,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // is a READ-back knob: its two consumers (dd_sigma_cyc, the log-only AR probe) feed
         // nothing back, so no byte of the snapshot — carry blob, stash, emitter state —
         // changes meaning when it flips.  Fingerprinting it would strand every existing
-        // snapshot for a trace column (the GnssConfigLoadNetwork.cpp:2971 precedent).  If a
+        // snapshot for a trace column (the loader's fingerprint-SAFE trace-knob
+        // precedent — the trace-class knobs that stay armable on a warm resume
+        // against an untraced snapshot, in GnssConfigLoadNetwork.cpp).  If a
         // later card routes the correction into the phase-leveling stash (the stored prior
         // variance), THAT knob is a different knob and it MUST be fingerprinted.
         add(fmt::format("{}", pl_on));           add(fmt::format("{}", pl_q_amb));
@@ -2536,6 +2539,27 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         }
     }
 
+    // --- RXCB-DATUM gauge census (docs/SPEC_rx_cb_carry.md) ------------------
+    // The zero-mean receiver-DCB datum's fold count, in its OWN walk, gated on its
+    // OWN knob.  network.rx_code_bias_datum and network.carry_rx_code_bias are
+    // independent, and datum-WITHOUT-carry is the canonical posture; counting this
+    // inside the carry bracket below left n_rxcb_gauges at 0 on every such run, so
+    // the run-end RXCB-DATUM line fired its standing-invariant-#4 alarm against a
+    // HEALTHY gauge.  A false negative on the one instrument whose whole job is to
+    // tell a live gauge from an armed-but-inert one is worse than no instrument.
+    //
+    // This is now the SOLE accumulation site, so an armed-both run cannot double
+    // count.  It is also byte-identical on the carry-only posture: R.pl_cb_datum_rows
+    // is incremented only under `rx_cb_datum` (ApplicationNetworkAssembly.cpp, the
+    // RXCB-DATUM row build), so it is structurally 0 whenever this walk is skipped.
+    if (ctx.knobs.rx_cb_datum) {
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (est_index_of[i] < 0) continue;
+            ctx.counters.n_rxcb_gauges +=
+                static_cast<size_t>(asm_res[i].pl_cb_datum_rows);
+        }
+    }
+
     // --- rx-CB carry (docs/SPEC_rx_cb_carry.md): harvest + stash + prune ------
     // DELIBERATELY OUTSIDE the carry_warm bracket above: the receiver code-bias
     // carry must be live on the carry_invariant/no-phase-leveling lineage (the
@@ -2556,7 +2580,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             if (est_index_of[i] < 0) continue;
             const StationAssembly& R = asm_res[i];
             ctx.carry.rx_cb_injected_total += R.pl_cb_injected;
-            ctx.counters.n_rxcb_gauges  += static_cast<size_t>(R.pl_cb_datum_rows);
+            // n_rxcb_gauges is NOT summed here — it belongs to the RXCB-DATUM knob,
+            // not the carry, and lives in its own walk above.  Every counter that
+            // remains in this bracket is genuinely carry-only: their producer-side
+            // increments all sit BELOW the `if (!rx_cb_on) continue;` in the
+            // assembly's pl_cb walk, so a datum-only run cannot populate them.
             ctx.carry.rx_cb_innov_skips_total += R.pl_cb_innov_skips;
             ctx.carry.lv2_folds_demeaned += R.pl_cb_demeaned;   // Card LV-2
             // Card LV-4 same-run A/B — summed with the other produce-phase tallies,

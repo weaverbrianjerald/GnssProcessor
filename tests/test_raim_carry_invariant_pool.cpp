@@ -211,7 +211,8 @@ TEST(RaimCarryInvariantPool, ActuatorCascadesOffWithLineage) {
 
 // carry_invariant WITHOUT phase_datum_eq34 is a HARD LOAD ERROR, not a silently
 // inert posture: the DD cycle-basis carry is defined only on the eq34 chain datum,
-// so GnssConfigLoadNetwork.cpp:6129-6135 refuses the config outright.
+// so the loader's "network.carry_invariant requires network.phase_datum_eq34"
+// check (GnssConfigLoadNetwork.cpp) refuses the config outright.
 //
 // This matters for the re-host because it bounds where the eq34 conjunct in
 // `k.raim_ci_on = raim_on && k.carry_invariant && …` actually bites: nowhere at

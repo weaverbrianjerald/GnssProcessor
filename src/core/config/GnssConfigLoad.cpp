@@ -1638,40 +1638,18 @@ namespace GnssProcessor {
                 state_ambiguity_basis_ = StateAmbiguityBasis::PerBand;
             }
         }
-        const char* basis_label =
-            state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
-
-        log->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
-            estimate_tropo_gradients_ ? "on" : "off",
-            relinearize_geometry_     ? "on" : "off",
-            run_smoother_             ? "on" : "off",
-            estimate_phase_clock_     ? "on" : "off",
-            enable_if_slip_detector_  ? "on" : "off",
-            accumulate_phase_windup_  ? "on" : "off",
-            enable_between_satellite_sd_ ? "on" : "off",
-            estimate_velocity_        ? "on" : "off",
-            enable_iono_rate_         ? "on" : "off",
-            estimate_ifb_             ? "on" : "off",
-            enable_glonass_ifb_       ? "on" : "off",
-            lock_signals_to_clock_ref_ ? "on" : "off",
-            require_bia_for_signals_  ? "on" : "off",
-            estimate_sat_biases_      ? "on" : "off",
-            no_bia_code_downweight_,
-            imu_config_.enabled
-                ? (imu_config_.coupling_mode == ImuCouplingMode::TightCoupled ? "tight" : "loose")
-                : "off",
-            basis_label,
-            adaptive_iono_q_.enabled ? "on" : "off",
-            exclude_eclipsing_satellites_ ? "on" : "off",
-            enable_cio_frame_ ? "on" : "off",
-            enable_auto_report_ ? "on" : "off",
-            enable_noncausal_slip_bridge_ ? "on" : "off",
-            enable_variance_factor_ ? "on" : "off",
-            enable_data_snooping_ ? "on" : "off",
-            enable_full_r_kernel_ ? "on" : "off",
-            enable_neq_export_ ? "on" : "off",
-            enable_trig_sp3_interp_ ? "on" : "off",
-            enable_orbit_normal_attitude_ ? "on" : "off");
+        // NOTE: the consolidated "Toggles: …" echo used to print HERE, and printed
+        // PRE-RESOLUTION values.  It moved to logConfigurationSummary_ (same reason
+        // the aiding block below is loaded at the tail of the IMU section): this
+        // helper is call #2 of 12 in loadFromJson, and NINE of the fields that line
+        // reports are still mutated by three LATER sections — the IMU section, the
+        // app-mode/real-time section, and the whole network section.  `ifb=` was the
+        // reported case (the W6 and EXT-CB slices and the GLONASS slice all force
+        // estimate_ifb_ on afterwards); `imu=` was strictly worse, since
+        // imu_config_.enabled is still its NSDMI `false` here and is not parsed until
+        // ~800 lines later, so that field could only ever print "off".  Because the
+        // mutations span three different sections, an in-place annotation could not
+        // have named the affected fields — relocation is the fix.
     }
 
     // =================================================================
@@ -3143,6 +3121,49 @@ namespace GnssProcessor {
             mode_str,
             uncombined_enabled_, elevation_mask_deg_, observation_path_.string(),
             navigation_path_.string(), product_paths_.size(), leap_seconds_tai_);
+
+        // Consolidated toggle echo.  RELOCATED here from the tail of
+        // loadEstimationSection_ so every field reports its FINAL, post-resolution
+        // value.  loadFromJson calls this last, after all twelve section helpers and
+        // every cross-section forcing (the W6 / EXT-CB / GLONASS estimate_ifb_
+        // promotions, the IMU parse, the real-time overrides), so what this prints is
+        // what the run actually uses.  Keep it last: a toggle added to this line that
+        // a later section can still mutate re-introduces exactly the staleness this
+        // move removed.
+        const char* basis_label =
+            state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
+
+        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
+            estimate_tropo_gradients_ ? "on" : "off",
+            relinearize_geometry_     ? "on" : "off",
+            run_smoother_             ? "on" : "off",
+            estimate_phase_clock_     ? "on" : "off",
+            enable_if_slip_detector_  ? "on" : "off",
+            accumulate_phase_windup_  ? "on" : "off",
+            enable_between_satellite_sd_ ? "on" : "off",
+            estimate_velocity_        ? "on" : "off",
+            enable_iono_rate_         ? "on" : "off",
+            estimate_ifb_             ? "on" : "off",
+            enable_glonass_ifb_       ? "on" : "off",
+            lock_signals_to_clock_ref_ ? "on" : "off",
+            require_bia_for_signals_  ? "on" : "off",
+            estimate_sat_biases_      ? "on" : "off",
+            no_bia_code_downweight_,
+            imu_config_.enabled
+                ? (imu_config_.coupling_mode == ImuCouplingMode::TightCoupled ? "tight" : "loose")
+                : "off",
+            basis_label,
+            adaptive_iono_q_.enabled ? "on" : "off",
+            exclude_eclipsing_satellites_ ? "on" : "off",
+            enable_cio_frame_ ? "on" : "off",
+            enable_auto_report_ ? "on" : "off",
+            enable_noncausal_slip_bridge_ ? "on" : "off",
+            enable_variance_factor_ ? "on" : "off",
+            enable_data_snooping_ ? "on" : "off",
+            enable_full_r_kernel_ ? "on" : "off",
+            enable_neq_export_ ? "on" : "off",
+            enable_trig_sp3_interp_ ? "on" : "off",
+            enable_orbit_normal_attitude_ ? "on" : "off");
     }
 
 } // namespace GnssProcessor

@@ -148,7 +148,8 @@ void networkIonoDiag(
 
     // --- L14b: per-station RECEIVER state trace (network.trace_rx_states) ------
     // The receiver half of the §4.8 export gap.  Under the W6 slice the loader FORCES
-    // estimate_ifb on (GnssConfigLoadNetwork.cpp:2087) — an explicit receiver DCB state
+    // estimate_ifb on (the W6 slice in GnssConfigLoadNetwork.cpp, where
+    // estimate_sat_code_bias promotes estimate_ifb_) — an explicit receiver DCB state
     // per (station, RINEX code), without which the receiver GF code lump rides inside
     // the slant ionosphere and fights the SH field.  Those columns are nonetheless
     // exported NOWHERE as estimates: they appear only as prior-residual census LABELS

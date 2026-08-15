@@ -1433,7 +1433,18 @@ if (within_epoch_armed && carry_warm) {
             // unless network.carry_zwd), so the within-epoch re-solve matches the
             // primary solve.  refloat_cols only ever names ambiguity columns, so a
             // pivot's lone ZWD column is never in it (empty → the fast path).
-            if (carry_warm && !R.carry_cols.empty()) {
+            // Gate MIRRORS the primary solve's install site (ApplicationNetworkAssembly,
+            // `(carry_warm || rx_cb_on || rx_cb_datum) && !R.carry_cols.empty()`) so the
+            // re-solve folds exactly the priors the primary one did.  BYTE-IDENTICAL
+            // today — this lambda lives inside `if (within_epoch_armed && carry_warm)`,
+            // so carry_warm is already true here and the two added disjuncts cannot
+            // change the predicate.  It is written out anyway because decoupling the
+            // within-epoch tier from carry_warm is a sanctioned open fix (CLAUDE.md,
+            // standard armed set): the moment that lands, a bare `carry_warm` here
+            // would silently drop the rx-CB carry and RXCB-DATUM rows the primary
+            // solve folded, and the replay would disagree with the solve it replays.
+            if ((carry_warm || ctx.knobs.rx_cb_on || ctx.knobs.rx_cb_datum)
+                && !R.carry_cols.empty()) {
                 if (refloat_cols.empty()) {
                     est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                         R.carry_cols, R.carry_dNrr, R.carry_dur);

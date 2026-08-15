@@ -2567,7 +2567,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                              x_lin_qc(amb_idx), key});
                 }
             }
-            if (legacy_local_inject || rx_cb_on) {
+            // `rx_cb_datum` joins the gate for the same reason `rx_cb_on` did: the
+            // RXCB-DATUM row build lives inside this block (the pl_cb walk below),
+            // and its knob is independent of BOTH the legacy carry and the rx-CB
+            // carry.  Without it the datum was silently inert wherever
+            // legacy_local_inject is false — i.e. phase_leveling off entirely, AND
+            // the phase_leveling_warmup_epochs cold window at the head of EVERY
+            // leveled run — while the loader and the run-end line both reported it
+            // ARMED.  That contradicted this block's own contract at the pl_cb walk
+            // ("filled whenever EITHER is armed").
+            if (legacy_local_inject || rx_cb_on || rx_cb_datum) {
                 const Eigen::VectorXd x_lin = st.sm->getStateVector();
                 std::vector<std::tuple<Eigen::Index, double, double>> inj;  // (col, Λ, η) — legacy diagonal path
                 // Card 1 (network.carry_conditional_coupling): each carried local column
@@ -2999,7 +3008,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         // is false the produce phase built ONLY rx-CB rows (the legacy inject paths
         // sit inside legacy_local_inject = carry_warm && …), so the extended gate
         // folds exactly them and rx_cb_on=false remains byte-identical.
-        if ((carry_warm || rx_cb_on) && !R.carry_cols.empty()) {
+        // RXCB-DATUM joins it for the SAME reason, and must: this is the INSTALL
+        // site.  Widening only the build gate above would have produced rows that
+        // are coalesced into R.carry_cols and then dropped here — the worst of both
+        // worlds, because the gauge counter would then report folds that never
+        // reached the normal equations (a telemetry channel that actively lies).
+        // Both edges of the datum move together or neither does.
+        if ((carry_warm || rx_cb_on || rx_cb_datum) && !R.carry_cols.empty()) {
             try {
                 est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                     R.carry_cols, R.carry_dNrr, R.carry_dur);

@@ -363,6 +363,7 @@ add_executable(gnss_tests
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
+    tests/test_rx_cb_datum_gauge.cpp
     tests/test_raim_carry_invariant_pool.cpp
     tests/test_phase_datum_handover.cpp
     tests/test_datum_station_slip_config.cpp

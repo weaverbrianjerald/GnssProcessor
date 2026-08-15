@@ -1957,12 +1957,8 @@ namespace GnssProcessor {
                       "logs every emitted (sat, code signal) bias with its sigma0-scaled formal "
                       "sigma from the gauge-nulled shared covariance (the B record itself has no "
                       "sigma field; this is the code-bias variance-factor channel).");
-            if (!estimate_network_sat_code_bias_ && !network_external_sat_code_bias_)
-                log->warn("Network: network.trace_sat_bias_states is INERT in this posture — "
-                          "with neither estimate_sat_code_bias (W6) nor external_sat_code_bias "
-                          "there are no satellite code-bias columns and no B records, so the "
-                          "trace opens and stays empty.  Standing invariant #4: an armed-but-"
-                          "inert instrument reads exactly like a clean one.");
+            // The "is it INERT?" warning is deliberately NOT here — see the shared
+            // note at the tail of loadNetworkAprioriAndGlonass_, which now owns it.
         }
         network_config_.trace_rx_states =
             jval<bool>(json, "network.trace_rx_states", "trace_rx_states", false);
@@ -1970,11 +1966,8 @@ namespace GnssProcessor {
             log->info("Network: receiver state trace ENABLED — network_rx_states.csv logs each "
                       "station's receiver clock and receiver code-bias (DCB/IFB) states with "
                       "their datum-conditioned formal sigma each emitted epoch.");
-            if (!estimate_ifb_)
-                log->warn("Network: network.trace_rx_states will emit CLOCK rows only — "
-                          "estimation.estimate_ifb is off, so there is no explicit receiver "
-                          "code-bias state (the receiver code delay rides inside the slant "
-                          "ionosphere instead).  The W6 / EXT-CB slices force estimate_ifb on.");
+            // The "CLOCK rows only" warning is deliberately NOT here — see the shared
+            // note at the tail of loadNetworkAprioriAndGlonass_, which now owns it.
         }
         network_config_.trace_station_residuals =
             jval<bool>(json, "network.trace_station_residuals", "trace_station_residuals", false);
@@ -2631,6 +2624,41 @@ namespace GnssProcessor {
                        "the satellite code-bias estimation needs.  Disable one of them.");
             return false;
         }
+
+        // --- POST-RESOLUTION trace-inertness warnings -------------------------
+        // Both of these judge whether an armed trace has any state to write, and
+        // both USED to sit beside their own parse in loadNetworkObservabilityAndSnapshot_
+        // — which runs two helpers EARLIER, before anything they test is resolved.
+        // The predicates were therefore evaluated against header defaults:
+        //
+        //   trace_sat_bias_states: `!estimate_network_sat_code_bias_ &&
+        //   !network_external_sat_code_bias_` read two members that are BOTH parsed
+        //   in loadNetworkSharedStateForcings_, so it was `!false && !false` — TRUE
+        //   ALWAYS.  The warning fired on every run that armed the trace, including
+        //   the W6 and EXT-CB runs where the trace is fully live.  That is standing
+        //   invariant #4 in reverse: a live instrument reporting itself inert, which
+        //   trains the reader to ignore the one line that would matter.
+        //
+        //   trace_rx_states: `!estimate_ifb_` was read before ALL THREE sites that
+        //   force it on — the W6 slice and the SH slice in
+        //   loadNetworkSharedStateForcings_, and the GLONASS slice in this helper.
+        //
+        // This is the tail of the LAST helper that touches any of them, so every
+        // value below is final.  A new forcing added after this point must move
+        // these with it.
+        if (network_config_.trace_sat_bias_states
+            && !estimate_network_sat_code_bias_ && !network_external_sat_code_bias_)
+            log->warn("Network: network.trace_sat_bias_states is INERT in this posture — "
+                      "with neither estimate_sat_code_bias (W6) nor external_sat_code_bias "
+                      "there are no satellite code-bias columns and no B records, so the "
+                      "trace opens and stays empty.  Standing invariant #4: an armed-but-"
+                      "inert instrument reads exactly like a clean one.");
+        if (network_config_.trace_rx_states && !estimate_ifb_)
+            log->warn("Network: network.trace_rx_states will emit CLOCK rows only — "
+                      "estimation.estimate_ifb is off, so there is no explicit receiver "
+                      "code-bias state (the receiver code delay rides inside the slant "
+                      "ionosphere instead).  The W6, EXT-CB and GLONASS slices each force "
+                      "estimate_ifb on; none of them is armed here.");
 
         return true;
     }
@@ -7587,7 +7615,20 @@ namespace GnssProcessor {
                       "withhold for the first validation leg.",
                       network_raim_withhold_sigma0_);
         if (network_raim_) {
-            if (network_phase_leveling_ && !network_raim_carry_invariant_)
+            // ⚠ `!network_carry_invariant_` is load-bearing, and its absence was a live
+            // hole.  ApplicationNetworkAssembly's `do_amb_carry` is
+            // `(prioritized || !is_pivot) && !carry_invariant`, so under carry_invariant
+            // `R.pl_amb` stays empty for EVERY station no matter what phase_leveling
+            // says — and `ambPool()` then hands the seam an empty pool, which skips every
+            // station.  Without this conjunct a `phase_leveling + carry_invariant +
+            // !raim_carry_invariant` run took THIS branch and logged "ENABLED" while
+            // screening nothing: T3 reported 0 opportunities / 0 flags and both
+            // trace_station_residuals and trace_raim_redundancy wrote header-only files.
+            // Measured on a 305-station 20-epoch smoke (2026-08-14) that cost 32 minutes
+            // to learn — the exact "reports ARMED and screens NOTHING" class this ladder
+            // exists to catch.  The carry_invariant branch below now catches it instead.
+            if (network_phase_leveling_ && !network_carry_invariant_
+                && !network_raim_carry_invariant_)
                 log->info("Network producer (RAIM, Increment 3 / T2): post-fit cross-station "
                           "residual consensus ENABLED — a carried ambiguity whose slip the "
                           "pre-processors missed is caught when the network's OTHER stations "
@@ -7609,13 +7650,19 @@ namespace GnssProcessor {
                                 "funnel at the next epoch's head"
                               : "flags are counted and traced but reach no carry consumer");
             else if (network_carry_invariant_)
-                log->warn("Network: network.raim is on with network.carry_invariant but WITHOUT "
-                          "network.phase_leveling — post-fit RAIM is INERT twice over: the seam's "
-                          "call site requires carry_warm (which needs phase_leveling), and its "
-                          "residual pool `pl_amb` is never filled under carry_invariant (Card 4's "
-                          "DD carry supersedes the phase-leveling ambiguity carry).  It will "
-                          "report ARMED and screen NOTHING.  Arm network.raim_carry_invariant to "
-                          "re-host the pool onto this lineage, or enable network.phase_leveling.");
+                log->warn("Network: network.raim is on with network.carry_invariant (phase_leveling"
+                          "={}) but WITHOUT network.raim_carry_invariant — post-fit RAIM is INERT: "
+                          "its residual pool `pl_amb` is never filled under carry_invariant "
+                          "(ApplicationNetworkAssembly's `do_amb_carry` requires !carry_invariant, "
+                          "because Card 4's DD carry supersedes the phase-leveling ambiguity "
+                          "carry), so `ambPool()` hands the seam an EMPTY pool and every station is "
+                          "skipped.  ⚠ phase_leveling does NOT rescue this — it satisfies the "
+                          "carry_warm CALL-SITE gate only, which is why such a run reports ARMED "
+                          "and screens NOTHING: T3 = 0 opportunities, and "
+                          "trace_station_residuals / trace_raim_redundancy write header-only "
+                          "files.  Arm network.raim_carry_invariant to re-host the pool onto this "
+                          "lineage.",
+                          network_phase_leveling_);
             else
                 log->warn("Network: network.raim is on but network.phase_leveling is off — the "
                           "post-fit RAIM protects the carried ambiguities, so it is INERT without "
