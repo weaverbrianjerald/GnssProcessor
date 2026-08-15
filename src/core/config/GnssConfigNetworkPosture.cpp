@@ -443,7 +443,16 @@ namespace GnssProcessor {
               nc.trace_ionosphere,
               Tier::SCOPED, false, "network.trace_ionosphere",
               "the pierce-point / slant-iono viz record; a full extra reconstruct sweep, so KEEP "
-              "OFF above ~50 sta" },
+              "OFF above ~50 sta.  Grade iono_total_m, NEVER iono_m (the latter is the seed-less "
+              "correction: median 0.95 m against a true 8.88 m)" },
+            { network_raim_ && network_phase_leveling_ && n_sta <= 50,
+              nc.trace_raim_redundancy,
+              Tier::SCOPED, false, "network.trace_raim_redundancy",
+              "the ONLY artifact that separates per-SIGNAL Baarda r_i - the RAIM cell is a max "
+              "OVER signals, so trace_station_residuals structurally cannot. Solve-NEUTRAL "
+              "(computes r_i without using it), unlike raim_redundancy_normalize. 573 rows/epoch "
+              "at 24 sta (+17% wall) => ~2.6M rows / 275 MB at 305 sta x 3 h: arm for a residual "
+              "or variance-structure investigation, not as a standing trace" },
             { nc.trace_epoch_status && !network_raim_within_epoch_,
               nc.trace_postfit_sigma0,
               Tier::SCOPED, false, "network.trace_postfit_sigma0",
@@ -501,6 +510,13 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.phase_datum_prioritized",
               "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m "
               "step, JPLM masked)" },
+            { network_phase_datum_prioritized_ && !network_phase_datum_eq34_,
+              network_phase_anchor_carry_reref_,
+              Tier::SCOPED, false, "network.phase_anchor_carry_reref",
+              "QUEUE 1(d): the PHASE_ANCHOR handover re-realizes the datum on the design matrix "
+              "ONLY, so the carry folds in the RETIRED frame and the clock absorbs it (1e10:1). "
+              "24-sta/1h/GPS sim: clock episodes 7 -> 1, sum|dev| 160.5 -> 1.5 m, datum-free C "
+              "contrast 18.66 -> 0.50 m. n=1, field arm OWED; eq34 owns eq34_reref instead" },
             { !network_phase_datum_prioritized_ && !network_phase_datum_eq34_
                   && network_phase_leveling_ && network_cycle_slip_mw_detect_,
               network_cycle_slip_datum_station_detect_,

@@ -1,0 +1,60 @@
+{
+  "_comment": [
+    "305-station x 20-epoch SMOKE for the two traces landed 2026-08-14 (QUEUE item 4 / 8).",
+    "PURPOSE: wiring + COST at scale.  NOT a grading run - 20 epochs is 10 minutes and is",
+    "entirely inside ignition, where r_i ramps 0.0000 -> ~0.52 and epoch-median s_raw runs",
+    "0.836 -> 1.816 on the 24-sta arm.  Do NOT read a variance factor, a flag rate or an",
+    "iono error off this run (CLAUDE.md 'never verdict in ignition').",
+    "",
+    "Base: _golden0729_net305_3h_smoke.json - chosen because the post-fit RAIM seam is",
+    "LIVE there (raim && phase_leveling).  The _agu305_gps_smoke / _ft63 chain arms neither",
+    "phase_leveling nor raim_carry_invariant, so carry_warm || raim_ci_on is FALSE, the RAIM",
+    "seam never runs, and both new traces would have been EMPTY files.",
+    "",
+    "ARMED here, explicitly rather than by flipping loader defaults (standing directive",
+    "feedback_no_knob_promotion_step: 'keep defaults untouched - the ledger recommends, the",
+    "loader reports, the user decides'):",
+    "  network.trace_raim_redundancy   - the per-row/per-SIGNAL Baarda r_i census, the cost",
+    "                                    being measured.  573 rows/epoch at 24 sta (+17% wall);",
+    "                                    this run measures the 305-sta per-epoch cost before",
+    "                                    anyone arms it on a multi-hour run (~2.6M rows /",
+    "                                    275 MB extrapolated at 305 sta x 3 h).",
+    "  network.trace_station_residuals - the T3 cell population, so the census can be joined",
+    "                                    against the cells it explains.",
+    "  network.trace_ionosphere        - deliberately armed ABOVE its SCOPED '<= 50 sta'",
+    "                                    guidance: a full extra reconstruct sweep is exactly",
+    "                                    the cost this smoke exists to measure.  Grade",
+    "                                    iono_total_m, NEVER iono_m.",
+    "",
+    "  network.trace_prefit_census     - RECOMMEND_ON tier, flagged as an in-regime gap by",
+    "                                    scripts/config_posture_check.py.  7.6 ms/epoch (0.4%)",
+    "                                    at 63 sta, solve byte-identical, and it shares ONE walk",
+    "                                    with trace_topology.  Also in CLAUDE.md standard set.",
+    "  network.trace_topology          - same walk, event-only (3.5 events/epoch); standing",
+    "                                    invariant #7 - it is what makes a gate decouple/",
+    "                                    re-couple edge visible at all.",
+    "",
+    "NOT armed, and this is deliberate:",
+    "  network.phase_anchor_carry_reref - QUEUE 1(d) is loader-DISABLED under the eq34 chain",
+    "                                    datum (GnssConfigLoadNetwork.cpp:6750), which this",
+    "                                    lineage runs.  eq34 already owns eq34_reref.  Arming",
+    "                                    it here would be a no-op plus a warn, not a test.",
+    "  network.raim_redundancy_normalize - measured NULL on the flag rate and +38% wall",
+    "                                    (SPEC_t3_null_derivation section 5).  Falsified; the",
+    "                                    census reports the same r_i without it."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net305_3h_smoke.json"
+  ],
+  "processing": {
+    "max_duration_s": 600.0
+  },
+  "network": {
+    "trace_raim_redundancy": true,
+    "trace_station_residuals": true,
+    "trace_ionosphere": true,
+    "trace_prefit_census": true,
+    "trace_topology": true,
+    "product_output_path": "C:/GnssProcessor/runs/t3trace305_smoke/products.txt"
+  }
+}
