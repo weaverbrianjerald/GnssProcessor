@@ -71,6 +71,35 @@ so the re-ranking is expressed here rather than by renumbering:
 > validations owed (§8 of the SPEC), of which the **fault-fixture MDB check is the
 > gate**.  Next: **implement 4 → 2 → 1(b) → 5 → 7 → 6**.
 
+> ✅✅ **RE-RANKED 2026-08-14 (third amendment) — THE IONO ROOT.**  Item 4's
+> investigation ended by measuring that the T3 false-alarm floor, the per-station
+> residual heterogeneity, the L1C excess AND the integer-resolution failure are **ONE
+> defect**: per-LOS ionosphere estimation error, datum-free interaction **rms 0.764 m**
+> (0.106–2.551 m by station).  It drives T3 at corr **+0.9258** station-wise and explains
+> **68–83 %** of the DD integer error at corr **0.93–0.96** with zero fitted parameters
+> (`SPEC_t3_null_derivation.md` §7.8–§7.9).  That outranks everything currently queued.
+>
+> **New order: 8(a) → 8(b) → 4(R2/R4) → 2 → 1(b) → 5 → 7 → 6, with 4(R1) HELD.**
+>
+> - **8 is NEW and ranks first** — see its section below.  **8(a) is one knob on an
+>   existing arm** and decides the scope of everything else, so by this doc's own
+>   payoff × readiness rule nothing comes close.
+> - **4(R1) — the stratified variance component — is HELD, not scheduled.**  It is now
+>   known to be symptom treatment: a per-station variance component would absorb a
+>   measured 0.11–2.55 m per-station ionosphere error into the noise model.  Building it
+>   before 8 would *bury the root*.  **4(R2) (declare the station factor as its own
+>   statistic) and 4(R4) (population hygiene — drop the 1.67 % structurally untestable
+>   cells, fix T3c's conditional α) survive and stay cheap**; 4(R3) (FDR) is correct but
+>   second-order.
+> - **5 (the level) slips behind 8 and re-scopes.**  Same ionospheric field, *smaller*
+>   term: the §7.8 decomposition puts the overall level μ at **0.328 m** against an
+>   interaction of **0.764 m rms**.  The level card is not wrong; it is aimed at the
+>   minority component.
+> - **The D5 / "re-deciding the representation" hold is substantially lifted.**  It was
+>   held as "a science program, not a patch swap" because the representation error had
+>   never been quantified.  It now is, with a truth-graded instrument.
+> - **2, 1(b), 7, 6 are unchanged in kind** and simply move down.
+
 Rationale, applying this doc's own "measured payoff × readiness" rule to the
 arms that have since been measured (`SPEC_pivot_visibility_gauge_defect.md`
 §5.0–§5.06):
@@ -276,6 +305,12 @@ election and sum-to-zero stay listed but inherit the caveat.
 the edge queue holds the candidate list.
 
 ## 4 — T3-class test statistics: correct nulls, not recalibrated constants
+
+⚠ **DOWNGRADED 2026-08-14 (third amendment): R1 is HELD behind item 8.**  The
+investigation below found the root — per-LOS ionosphere error — and a stratified
+per-station variance component would ABSORB it (0.11–2.55 m per station) into the noise
+model.  Build **R2 (declare) and R4 (population hygiene)**, which are correct regardless;
+hold **R1** until 8(a) reports.
 
 **Bandaid:** a Gaussian 6σ quantile under a statistic that is a max-over-rows
 normalized by a median-over-rows.  Measured implied α: 3.78e7× nominal on the
@@ -620,6 +655,11 @@ the roster is deterministic in N, so only the noise/integer realization moves.
 
 ## 5 — The level: enforce the written contract (= LV-3 + edge 3)
 
+⚠ **RE-SCOPED 2026-08-14: same field, smaller term.**  The §7.8 truth decomposition puts
+the overall iono LEVEL mu at **0.328 m** against a datum-free per-LOS interaction of
+**0.764 m rms**.  This card is aimed at the minority component of the same error; it
+slips behind item 8.
+
 **Status:** further along than it looks — `docs/CONTRACT_level_authority.md`
 already declares per-posture ownership and measures the accident (rx-CB carry
 ~100 info/epoch on the level direction vs the designed authorities' 0.25/0.01);
@@ -664,6 +704,76 @@ withheld state.
 **Sim validation:** needs an injected sick-field / storm mode in the injection
 bench — a bench extension, owed before this card can be graded.
 
+## 8 — The per-LOS ionosphere representation (NEW 2026-08-14, ranks FIRST)
+
+**Bandaid:** none — this is a *measured root* that three separate cards have been
+treating downstream of.  Item 4 was calibrating a test statistic against it, the level
+card is tuning a carry against a different component of it, and the AR channel has been
+graded as an integer problem when 68–83 % of it is this.
+
+**Measured** (`SPEC_t3_null_derivation.md` §7.8–§7.9, arm `runs/t3iono`, config
+`_simnet24_inj_t3iono.json`).  Estimated per-LOS slant iono graded against the fixture's
+truth field over 13 054 settled triples, decomposed per standing invariant #5 into
+`e = mu + a(sta) + b(sat) + r`:
+
+| term | value | who owns it today |
+|---|---|---|
+| overall level mu | 0.328 m | item 5 (the LEVEL card) |
+| station lump a(sta) | −3.14 … +4.16 m | the rx-CB / DCB datum |
+| satellite lump b(sat) | −3.12 … +4.74 m | the sat-DCB datum |
+| **interaction r — datum-free, nobody owns it** | **rms 0.764 m** (0.106 … 2.551 by station) | **this item** |
+
+Consumer chain, all measured: r → ~96 % absorbed by the collinear per-arc ambiguity →
+the unabsorbed ~4 % is 89.8 % of the post-fit phase residual variance, L1-dominant →
+T3 false alarms (corr **+0.9258**) and DD integer error (**68–83 %** explained, corr
+**0.93–0.96**), with the lane sensitivity ladder (5.26 / −1.49 / −0.29 cyc/m) explaining
+why EWL is the only near-integer rung (95.9 % vs 5.1 %).
+
+### 8(a) — re-measure under the DIRECTIVE posture.  One knob.  Do this first.
+
+⚠ **The entire item-4 lineage ran with `network.estimate_iono_sh` OFF**, and that knob is
+a **Tier::ON posture item carrying a standing USER DIRECTIVE** ("always on";
+`GnssConfigNetworkPosture.cpp:174-179`).  It is absent from
+`_simnet24_inj_pareref_on.json` and therefore from the 1(d) validation arms too.  The
+posture condition (`n_sta >= 3 && tri`) *is* satisfied on this fixture, so the check fires
+and the arm is a genuine deviation.
+
+So **the 0.764 m is measured on a free-slant-only posture, not the mandated one**, and the
+first question is whether it survives with the SH field armed.  Everything needed exists:
+the trace landed (§7.8), the grader is a scratch join, the arm is ~35 s Release.  Three
+outcomes, all decisive:
+
+- **Error collapses with SH on** ⇒ the root is *slant states underdetermined without the
+  SH field*; item 8 largely closes, and item 4's null should be refitted on the correct
+  posture (every §4/§7 number is then posture-specific).
+- **Error persists** ⇒ the root is the representation itself, 8(b) is the real card, and
+  the D5 hold is genuinely lifted.
+- **Error grows** ⇒ the SH field is fighting the slant states, which is its own finding.
+
+⚠ **Grade `iono_total_m`, never `iono_m`** — the latter is the seed-less correction and
+was ~11 % of the quantity (§7.8).
+
+### 8(b) — the representation decision, now with an instrument
+
+Slant vs SH vs hybrid, previously held as "a science program, not a patch swap" because
+nothing quantified the representation error.  The interaction rms is that number: it is
+datum-free, it grades against truth on the sim, and it has a measured consumer chain.
+Related standing material: `project_slant_iono_vs_sh_speed` (2.42× faster, 2.2× worse),
+`project_global_sh_iono`, and the lane-spectrometer verdict that *"chord churn IS the iono
+representation"* — which this measurement now supports quantitatively rather than by
+inference.
+
+**Sim validation:** already the venue — the fixture supplies truth slant iono per LOS
+(`truth_atmo.csv` `I_L1_m`), which the field never could.  Grade the datum-free
+interaction, never the raw error (the lumps are 4–6× larger than the signal).
+
+⚠ **What is NOT established:** n = 1 fixture, GPS-only, 1 h, slant-only posture; the
+fitted-vs-predicted DD slope discrepancy (~1.85×) is unexplained (§7.9); and no field arm
+is possible in the graded sense — the field has no truth ionosphere, so item 8 can be
+*graded* only on the sim and *monitored* on the field.
+
+---
+
 ---
 
 ## Blocked on root cause — do not build the "correct" fix yet
@@ -703,6 +813,13 @@ bench — a bench extension, owed before this card can be graded.
   bandaid that measured as ~35 % contributor, NOT root (runaway survives
   1720 → 1132 cyc).  Mechanism card first (suspects: tree re-hosts refolding
   invariant carry; chord-carry × slant-iono feedback).  FLOAT stays the track.
+- ✅ **D5 born-chord gating — HOLD SUBSTANTIALLY LIFTED 2026-08-14.**  The hold below
+  was "replacing D5 means re-deciding the representation — a science program, not a patch
+  swap", and the reason it stayed a science program is that the representation error had
+  never been quantified.  It now is: datum-free per-LOS interaction **rms 0.764 m**,
+  truth-graded, with a measured consumer chain into both T3 and the DD integers
+  (`SPEC_t3_null_derivation.md` §7.8–§7.9).  See item 8.  ⚠ Still hold D5 itself until
+  8(a) says whether the error survives the directive posture.  Original text follows.
 - **D5 born-chord gating:** the lane spectrometer verdict is that chord churn IS
   the iono representation.  Replacing D5 means re-deciding the representation
   (slant vs SH) — a science program, not a patch swap.  Keep D5 until then.
