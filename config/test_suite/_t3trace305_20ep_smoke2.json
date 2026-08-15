@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "QUEUE item 4/8 - 305x20 trace smoke, ROUND 2.",
+    "Round 1 (runs/t3trace305_smoke) found the real defect this run existed to catch:",
+    "under carry_invariant the RAIM pool pl_amb is never filled (do_amb_carry requires",
+    "!carry_invariant), so post-fit RAIM screened NOTHING - T3 0 opportunities, and both",
+    "new traces wrote HEADER-ONLY files - while the loader logged \"ENABLED\".  Guard ladder",
+    "hole fixed in GnssConfigLoadNetwork.cpp; this arm adds the pool re-host so the census",
+    "has something to measure.",
+    "WARNING: raim_carry_invariant is SOLVE-AFFECTING (sigma0 goes live => A4 withhold and",
+    "URA move).  Still a COST smoke, not a grading run - 20 epochs is inside ignition."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_golden0729_net305_3h_smoke.json"
+  ],
+  "processing": {
+    "max_duration_s": 600.0
+  },
+  "network": {
+    "trace_raim_redundancy": true,
+    "trace_station_residuals": true,
+    "trace_ionosphere": true,
+    "trace_prefit_census": true,
+    "trace_topology": true,
+    "product_output_path": "C:/GnssProcessor/runs/t3trace305_smoke2/products.txt",
+    "raim_carry_invariant": true
+  }
+}

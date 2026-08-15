@@ -1024,3 +1024,94 @@ Note also the shape of the table: **T3 catches the whole small end** (±1, ±3, 
 4/4) while the ±10 and ±50 rungs are grabbed upstream by MW/IF-slip.  T3 is the
 small-slip tier — which is exactly why its false-alarm burden is worth paying down, and
 why a remedy that preserved detection only for large slips would have been useless.
+
+---
+
+## 14. The 305-station trace smoke — it found a defect, not a cost
+
+Two 20-epoch runs at 305 stations (GPS+Galileo, `_golden0729` lineage: `carry_invariant`
++ eq34 + SH), configs `_t3trace305_20ep_smoke{,2}.json`, arms
+`runs/t3trace305_smoke{,2}`.  Purpose was to measure the new traces' cost at scale
+before anyone armed them on a multi-hour run.  ⚠ Deliberately NOT a grading run: 20
+epochs is 10 minutes and sits entirely inside ignition, where r_i ramps 0.0000 → ~0.52
+(§7.4) — no flag rate, variance factor or iono error may be read off it.
+
+### 14.1 Round 1 — post-fit RAIM screened NOTHING while the loader logged "ENABLED"
+
+`EXIT=0`, 20/20 epochs emitted, and:
+
+```
+T3,post-fit RAIM cell (T3),0,0,0.000000e+00
+network_raim_redundancy.csv      0 rows   (header only)
+network_station_residuals.csv    0 rows   (header only)
+```
+
+**Mechanism.**  `ApplicationNetworkAssembly.cpp:2603-2605` gates the RAIM pool fill on
+
+```cpp
+const bool do_amb_carry = (phase_datum_prioritized || !st.is_pivot) && !carry_invariant;
+```
+
+so under `carry_invariant` **`R.pl_amb` is empty for every station**, `ambPool()` hands
+`networkPostFitRaim` an empty pool, and `if (pool.empty()) continue;` skips all 305.
+`phase_leveling` does **not** rescue it — it satisfies the `carry_warm` CALL-SITE gate
+only.  The alternative pool `qc_amb` is filled solely under
+`raim_carry_invariant`, which this lineage does not arm.
+
+**And the loader's guard ladder had a hole that hid it.**  `GnssConfigLoadNetwork.cpp`
+opened with
+
+```cpp
+if (network_phase_leveling_ && !network_raim_carry_invariant_)   //  ← took this branch
+    log->info("... post-fit RAIM ... ENABLED ...");
+else if (network_raim_carry_invariant_) ...
+else if (network_carry_invariant_)      log->warn("... INERT ... screens NOTHING ...");
+```
+
+With `phase_leveling` **and** `carry_invariant` both on, the run takes the *first*
+branch and the INERT warning is unreachable — exactly the configuration where it is
+needed.  **Fixed**: `!network_carry_invariant_` added to the first branch, and the
+carry_invariant warning rewritten to name the pool as the prerequisite and to say
+explicitly that phase_leveling does not rescue it.
+
+This is the "reports ARMED and screens NOTHING" class (standing invariant #4) *inside
+the ladder built to catch it*.  The loader already carries a comment 400 lines earlier
+saying the same lesson was applied to the `carry_vce_apply` family "before the run
+instead of after it … that costs a whole field run to learn".  Here it cost 32 minutes
+instead of a field run, which is the case for smoke tests stated in one number.
+
+### 14.2 Round 2 — the census armed, and the cost is 2× the estimate
+
+Re-run with `network.raim_carry_invariant: true` (the pool re-host).  ⚠ That knob is
+**solve-affecting** — the loader warns that it makes σ̂₀ real on this lineage for the
+first time, so an armed `raim_withhold_sigma0` can begin withholding and the emitted URA
+moves with the σ̂₀ EWMA.  On this arm nothing was withheld (`n_gate_withheld` =
+`n_sigma0_withheld` = 0).
+
+| trace | rows/epoch | 20 ep | **3 h extrapolation** |
+|---|---|---|---|
+| `network_raim_redundancy.csv` | **14 397** | 287 948 rows / 28.2 MB | **5.18 M rows / 508 MB** |
+| `network_ionosphere.csv` | 4 494 | 89 879 rows / 6.5 MB | 1.62 M rows / 116 MB |
+| `network_station_residuals.csv` | 3 876 | 77 523 rows / 3.8 MB | 1.40 M rows / 69 MB |
+
+| | round 1 | round 2 |
+|---|---|---|
+| epoch wall | **93.7 s** | **199.6 s (2.1×)** |
+| total, 20 epochs | 32 min | 68 min |
+
+Census alive and correct: 303 distinct stations, 5 signals (L1C 65 578, L2W 47 481,
+L5Q 28 794, L7Q 17 999, L5X 17 254).
+
+⚠ **Two of my own estimates were wrong and are corrected in the ledger and the posture
+row.**  (1) I extrapolated ~2.6 M rows / 275 MB from the 24-station GPS-only arm; the
+true figure is **5.2 M rows / 508 MB**, because the field carries **5 signals, not 3**.
+(2) I predicted ~27 s/epoch from CLAUDE.md's lane-off figure and measured **93.7 s**
+(round 1) — 3.5× optimistic — and the re-host plus census doubles it again.
+
+### 14.3 What this does NOT establish
+
+The T3 numbers this arm produced (cell rate 20.7 %, T3c 93.1 %) are **ignition
+measurements on a 20-epoch window** and must not be quoted.  They are listed here only
+to record that the tier is live.  A field-scale T3 reading needs a settled window, and
+§12.1 already shows the field runs mostly in the σ̂₀-floor-pinned regime where the
+statistic degenerates anyway.

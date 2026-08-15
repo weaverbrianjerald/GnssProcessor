@@ -450,9 +450,11 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.trace_raim_redundancy",
               "the ONLY artifact that separates per-SIGNAL Baarda r_i - the RAIM cell is a max "
               "OVER signals, so trace_station_residuals structurally cannot. Solve-NEUTRAL "
-              "(computes r_i without using it), unlike raim_redundancy_normalize. 573 rows/epoch "
-              "at 24 sta (+17% wall) => ~2.6M rows / 275 MB at 305 sta x 3 h: arm for a residual "
-              "or variance-structure investigation, not as a standing trace" },
+              "(computes r_i without using it), unlike raim_redundancy_normalize.  "
+              "NEEDS A NON-EMPTY POOL: header-only under carry_invariant unless "
+              "raim_carry_invariant re-hosts it.  MEASURED at 305 sta: 14397 rows/epoch, "
+              "~5.2M rows / 508 MB per 3 h, epoch wall 93.7 -> 199.6 s with the re-host + "
+              "census armed.  Investigation-only, not a standing trace" },
             { nc.trace_epoch_status && !network_raim_within_epoch_,
               nc.trace_postfit_sigma0,
               Tier::SCOPED, false, "network.trace_postfit_sigma0",
