@@ -540,28 +540,44 @@ code-bias n=5502):**
   field eq34 lineage has no clock truth and its 1g R-worsening is lineage-specific (sim R was
   ~unchanged, 7.12e+06 → 6.91e+06).  1g stays SCOPED.
 
-**Scale addendum (2026-08-17): 1g-alone at 150 stations on eq34** (`_s150eq34_{00,1g}` — the
-`_s150` roster with the datum swapped prioritized→eq34, certified two-flip + path against the
-§13.8 parents; same snapshot build; both cells emit the IDENTICAL 101-epoch set, so the wire
-comparison is matched by construction):
+**Scale addendum (2026-08-17): the FULL 2×2 at 150 stations on eq34** (`_s150eq34_{00,1f,1g,11}`
+— the `_s150` roster with the datum swapped prioritized→eq34, every cell certified single-knob
+against its §13.8 parent; same snapshot build; the 00/1g cells emit the IDENTICAL 101-epoch
+set and the 1f/11 wire numbers below are MASKED to that same set, so every wire comparison is
+matched-epoch; all four solution CSVs pairwise distinct):
 
-| 1g-alone vs 00 (eq34, matched) | 50 sta | 150 sta |
-|---|---|---|
-| withheld | 20 → 20 | 20 → 20 |
-| inv-#7 R max | 1.557e+03 → 1.030e+04 (**6.6×**) | 6.446e+03 → 1.473e+04 (**2.3×**) |
-| diverted (1g) | 54 662 | 65 988 |
-| departed | 14 989 → 72 019 | 98 866 → 168 346 |
-| pivoted wire step | 5.631 → 1.532 (**−73 %**) | 10.788 → 9.328 (**−13.5 %**) |
+| cell | withheld | inv-#7 R max | departed | diverted (1g) | held (1f) | pivoted wire, matched 101 ep |
+|---|---|---|---|---|---|---|
+| 00 | 20/121 | 6.446e+03 | 98 866 | — | — | 10.788 cyc/ep |
+| 1f | **0** | healthy | 5 644 | — | 3 272 | 10.633 |
+| 1g | 20/121 | **1.473e+04** | 168 346 | 65 988 | — | 9.328 |
+| 11 | **0** | healthy | 67 966 | 61 445 | 33 723 | **7.592** |
 
-The qualitative verdict REPLICATES at scale — 1g alone recovers nothing, heats the gauge
-breach, and still improves the wire — but the wire payoff SHRINKS sharply (−73 % → −13.5 %)
-while the eq34 baseline itself degrades with station count (pivoted 5.631 → 10.788 cyc/ep,
-R 1.6e+03 → 6.4e+03, erase volume 1 599 → 3 740): at 150 stations the retired-frame coupling
-error 1g removes is a MINORITY of the wire churn (diverted 66 k vs 99 k baseline departures,
-vs 55 k over 15 k at 50 sta) — the rest is the eq34 chain's own re-reference churn.  Also
-noted in passing: on the IDENTICAL roster the eq34 datum baseline breaches ~8× hotter than the
-prioritized datum (R 6.446e+03 vs §13.8's 7.807e+02).  The 1f-alone and both-on cells at
-150-eq34 are the natural completion if the pair effect is wanted at this scale. — INERT-BY-CLOSURE on every roster tested (2026-08-17)
+What replicates, what changes vs 50 stations:
+
+- **1f's half replicates exactly**: withholds → 0, gauge healthy, departure cycle broken
+  (98 866 → 5 644), and wire-NEUTRAL alone (−1.4 % here, −1.6 % at 50).
+- **1g's with-1f wire contribution is SCALE-STABLE: −29 % at both scales**
+  (50 sta: 5.543 → 3.935; 150 sta: 10.633 → 7.592).  That is the number to quote for the
+  pair's quality win — not the 1g-alone figure, which is scale-dependent (−73 % at 50,
+  −13.5 % at 150) because the eq34 baseline itself degrades with station count
+  (10.788 vs 5.631 cyc/ep, R 6.4e+03 vs 1.6e+03, erases 3 740 vs 1 599) and the
+  retired-frame population 1g removes becomes a minority of the churn.
+- **The 50-sta anomaly does NOT replicate**: at 50, 1g-alone's wire (1.532) was quieter than
+  the pair's (3.935) — under a breached gauge.  At 150 the pair is the QUIETEST cell
+  outright (7.592 < 9.328), i.e. with the gauge held honestly there is nothing left that
+  the breached-gauge quiet was "adding".  This strengthens the pair doctrine and retires
+  any reading that 1g-alone's extreme quiet is desirable.
+- **1g alone stays contraindicated at scale**: zero epochs recovered, R 2.3× hotter
+  (6.6× at 50), departed +70 %.
+- The divert→hold coupling between the cards is visible in the counters: 11's held count is
+  ~10× 1f-alone's (33 723 vs 3 272; 24× at 50 sta) — 1g's diverted terms create the
+  truncations 1f then holds.
+
+Also noted in passing: on the IDENTICAL roster the eq34 datum baseline breaches ~8× hotter
+than the prioritized datum (R 6.446e+03 vs §13.8's 7.807e+02) and carries a ~2× noisier
+pivoted wire (10.788 vs the prioritized lineage's ladder regime) — a datum comparison, not a
+knob verdict. — INERT-BY-CLOSURE on every roster tested (2026-08-17)
 
 §13.8's other open item ("C-GF was not varied in any A/B"), closed with four arms on the same
 build as §13.9: `_fld50_cgf{00,11}` (field eq34) and `_s24cpl2_cgf{00,11}` (sim), each the
