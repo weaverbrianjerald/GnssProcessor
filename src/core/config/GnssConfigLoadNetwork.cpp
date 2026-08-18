@@ -2772,14 +2772,18 @@ namespace GnssProcessor {
         // so it deliberately does NOT appear in this predicate — reading it here would
         // read its default, not the user's value.  The advisory is therefore phrased to
         // cover the case where the Q3 path supplies the downdate instead.
-        if (network_shared_carry_full_cov_ && !network_shared_carry_gauge_free_)
-            log->info("Network producer (Card C-GF): the dense shared carry is armed WITHOUT "
-                      "network.shared_carry_gauge_free — unless network.clock_anchor_gauge_free "
-                      "supplies the downdate through the Q3 path, the carried block folds "
-                      "information along the datum's OWN directions every epoch, which is what "
-                      "lets a carry fill a declared gauge (the invariant-#7 ratio is the "
-                      "instrument; see the run-end readout).  Default-OFF is deliberate "
-                      "(byte-identity), but a network config should arm this explicitly.");
+        if (network_shared_carry_full_cov_ && network_shared_carry_gauge_free_)
+            log->info("Network producer (Card C-GF): shared_carry_gauge_free is armed, but the "
+                      "first-variation A/B (SPEC_card1_coupling_carry §13.10, 2026-08-17) "
+                      "measured it INERT-BY-CLOSURE on every roster tested: the support-closure "
+                      "test correctly declines the declared direction essentially every epoch "
+                      "(a carried clock set almost never spans the full registered "
+                      "constellation), all four arms were byte-identical to their parents, and "
+                      "arming it splits the warm-resume fingerprint (cta:gf) for nothing.  "
+                      "Ledger verdict KEEP_OFF.  The carry-fills-gauge defect it targeted is "
+                      "handled by network.carry_coupling_gauge_project (Card 1f, RECOMMEND_ON); "
+                      "the gauge-free successor is a derivation card over the CARRIED subset, "
+                      "not this knob.");
         // Card 1: rigorous conditional local carry.  The persistent per-station locals
         // (phase-leveling ambiguities + ZWD) are carried as ONE pseudo-observation row
         // coupling each to the FREE shared border (regression M_r, pure conditional

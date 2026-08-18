@@ -251,8 +251,15 @@ posture.
     line, unit-tested); wiring proven live on the archive firing set (225 v2-shifts → 902
     re-bases, clean run).  No fingerprint token discriminates pre/post-fix on a
     carry_shift+coupling lineage — re-baseline any A/B that spans it there.
-  - **Owed for C-GF:** it was **not varied** in the control above, so it has no effect
-    measurement of its own and stays **UNVALIDATED**.
+  - ✅ **C-GF FIRST VARIATION RUN 2026-08-17** (SPEC §13.10): four single-knob arms (field eq34
+    + sim, both corners) — **ALL FOUR BYTE-IDENTICAL to their parents.  INERT-BY-CLOSURE**: the
+    support-closure test correctly declines the sole CLK|G direction essentially every epoch
+    (full-constellation support never holds on a real roster), and the plain-fold decline path
+    is a proven no-op.  Ledger verdict **UNVALIDATED → KEEP_OFF** (arming buys nothing and
+    splits the `cta:gf` fingerprint).  Successor is a **derivation card** — re-derive the datum
+    functional within the CARRIED subset (pins + carried span); a gate tweak cannot fix it, and
+    the run-end refusal message explains why a naive subset restriction would delete estimable
+    contrast instead of gauge.
 
 - **(h) FILED, NOT FIXED — eq34 D4 shifts `value_abs` but not `coupling[].s_prev`.**
   `docs/SPEC_card1_coupling_carry.md` §14.  `CoupledShared::s_prev` and `CarryPrior::value` are the

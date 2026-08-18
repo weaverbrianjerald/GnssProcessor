@@ -540,6 +540,45 @@ code-bias n=5502):**
   field eq34 lineage has no clock truth and its 1g R-worsening is lineage-specific (sim R was
   ~unchanged, 7.12e+06 → 6.91e+06).  1g stays SCOPED.
 
+### 13.10 C-GF FIRST VARIATION — INERT-BY-CLOSURE on every roster tested (2026-08-17)
+
+§13.8's other open item ("C-GF was not varied in any A/B"), closed with four arms on the same
+build as §13.9: `_fld50_cgf{00,11}` (field eq34) and `_s24cpl2_cgf{00,11}` (sim), each the
+matching §13.9 cell plus `network.shared_carry_gauge_free: true` and nothing else.
+
+**Result: all four C-GF arms are BYTE-IDENTICAL to their parents** (products.txt and
+network_solution.csv), and the mechanism is visible in C-GF's own counters: the closure test
+DECLINED the (single) declared CLK|G direction essentially every epoch — field 100/101 and
+120/121 emitted epochs, sim 115/116 and 119/120.  A roster's carried clock set essentially
+never spans the full registered constellation (some registered satellite is always unobserved
+or departed), full-support closure therefore never holds, and per §13.6-defect-1's fix the
+group folds PLAINLY on decline — which byte-identity proves is a true no-op.  The earlier
+50-station wiring probe already showed the same signature (10 declines / 11 epochs) and it
+went unread.
+
+Three consequences:
+
+- **The knob is SAFE and NULL as built**: proven solve-inert in four arms across two lineages.
+  It IS fingerprinted (`cta:gf` / `cta:gf+cl` via the resolved `carry_gauge_free` predicate,
+  NetworkRunContext.cpp:680), so arming it splits a warm-resume lineage while changing
+  NOTHING — the worst combination.  Registered **KEEP_OFF**: nothing to gain, a fingerprint
+  split to lose, and a knob that reads as armed while doing nothing is posture noise.
+- **The refusal is CORRECT, not a bug** (the run-end message states the theory): restricted to
+  a carried subset, the constellation-sum direction is no longer the datum's functional, and
+  downdating it would delete an estimable carried-vs-uncarried CONTRAST rather than gauge.
+  The design gap is real though: a gauge-free treatment that engages on realistic rosters must
+  re-derive the datum functional WITHIN the carried subset (datum pins + carried span), which
+  is a new derivation card, not a gate tweak.
+- **Counter-semantics wart (minor, invariant #4)**: "N clock prior key(s) gauge-downdated"
+  counts keys processed through the gauge-free-capable path, not keys whose information
+  changed — next to universal declines it reads as armed-and-working when the net effect is
+  nil.  The decline count printed beside it is the honest number; read them together (the
+  message's own closing sentence says exactly this).
+
+Note the within-epoch RAIM replay gauge-flag fix that shipped WITH the C-GF card (§13.6, the
+deliberate byte-identity exception) is unconditional and unaffected by this verdict — it is
+live regardless of the knob.
+
 
 ## 14. FIXED — the eq34 D4 S-transform now re-bases `coupling[].s_prev` (filed 2026-08-15, fixed 2026-08-17)
 
