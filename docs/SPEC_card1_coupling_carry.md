@@ -540,7 +540,28 @@ code-bias n=5502):**
   field eq34 lineage has no clock truth and its 1g R-worsening is lineage-specific (sim R was
   ~unchanged, 7.12e+06 → 6.91e+06).  1g stays SCOPED.
 
-### 13.10 C-GF FIRST VARIATION — INERT-BY-CLOSURE on every roster tested (2026-08-17)
+**Scale addendum (2026-08-17): 1g-alone at 150 stations on eq34** (`_s150eq34_{00,1g}` — the
+`_s150` roster with the datum swapped prioritized→eq34, certified two-flip + path against the
+§13.8 parents; same snapshot build; both cells emit the IDENTICAL 101-epoch set, so the wire
+comparison is matched by construction):
+
+| 1g-alone vs 00 (eq34, matched) | 50 sta | 150 sta |
+|---|---|---|
+| withheld | 20 → 20 | 20 → 20 |
+| inv-#7 R max | 1.557e+03 → 1.030e+04 (**6.6×**) | 6.446e+03 → 1.473e+04 (**2.3×**) |
+| diverted (1g) | 54 662 | 65 988 |
+| departed | 14 989 → 72 019 | 98 866 → 168 346 |
+| pivoted wire step | 5.631 → 1.532 (**−73 %**) | 10.788 → 9.328 (**−13.5 %**) |
+
+The qualitative verdict REPLICATES at scale — 1g alone recovers nothing, heats the gauge
+breach, and still improves the wire — but the wire payoff SHRINKS sharply (−73 % → −13.5 %)
+while the eq34 baseline itself degrades with station count (pivoted 5.631 → 10.788 cyc/ep,
+R 1.6e+03 → 6.4e+03, erase volume 1 599 → 3 740): at 150 stations the retired-frame coupling
+error 1g removes is a MINORITY of the wire churn (diverted 66 k vs 99 k baseline departures,
+vs 55 k over 15 k at 50 sta) — the rest is the eq34 chain's own re-reference churn.  Also
+noted in passing: on the IDENTICAL roster the eq34 datum baseline breaches ~8× hotter than the
+prioritized datum (R 6.446e+03 vs §13.8's 7.807e+02).  The 1f-alone and both-on cells at
+150-eq34 are the natural completion if the pair effect is wanted at this scale. — INERT-BY-CLOSURE on every roster tested (2026-08-17)
 
 §13.8's other open item ("C-GF was not varied in any A/B"), closed with four arms on the same
 build as §13.9: `_fld50_cgf{00,11}` (field eq34) and `_s24cpl2_cgf{00,11}` (sim), each the
