@@ -5,15 +5,17 @@
  * Decomposition INC-8b (2026-07-22) — body relocated VERBATIM from
  * Application::runNetwork (dedent 16 -> 4, no other change).  The alias
  * preamble below is a byte-copy of the run TU's own `auto& X = ctx.carry.X;`
- * block, restricted to the 22 entries this body actually references (derived
- * mechanically, not by hand), so the relocated code reads the former local
- * names unchanged.
+ * block, restricted to the 24 entries this body actually references (22 from
+ * the mechanical INC-8b derivation + zwd_carry and eq34_cpl_sprev_total for the
+ * §14 coupling re-base), so the relocated code reads the former local names
+ * unchanged.
  */
 
 #include "filter/NetworkChainDatum.hpp"
 
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
+#include "filter/NetworkCoupling.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "common/PppUtils.hpp"
 #include "logging/LogManager.hpp"
@@ -50,6 +52,7 @@ auto& eq34_ppp_utils = ctx.carry.eq34_ppp_utils;
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
 auto& eq34_erase_total = ctx.carry.eq34_erase_total;
 auto& eq34_shift_total = ctx.carry.eq34_shift_total;
+auto& eq34_cpl_sprev_total = ctx.carry.eq34_cpl_sprev_total;
 auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
 auto& eq34_retained_edges = ctx.carry.eq34_retained_edges;
@@ -57,6 +60,7 @@ auto& eq34_prev_target = ctx.carry.eq34_prev_target;
 auto& eq34_reref = ctx.carry.eq34_reref;
 auto& local_carry = ctx.carry.local_carry;
 auto& rpb_carry = ctx.carry.rpb_carry;
+auto& zwd_carry = ctx.carry.zwd_carry;
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
 const bool eq34_longevity = ctx.knobs.eq34_longevity;
@@ -837,27 +841,28 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // not a refloat.  Runs BEFORE PASS B consumes any carry.
     //
     // ⚠ FILED LATENT DEFECT (docs/SPEC_card1_coupling_carry.md §9, 2026-08-15) —
-    // D4 shifts `lc.value_abs` below but NOT `lc.coupling[].s_prev`.  A Card-1
-    // coupling row's RHS is  y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and
-    // `CoupledShared::s_prev` and `CarryPrior::value` are literally the same number
-    // for the same identity (both are `x_s(j)` at harvest: NetworkRunContext.cpp
-    // s_prev assignment and the prev_carry stash).  This block shifts the second and
-    // the `value_abs` term, and leaves the first — so for a gauge-invariant row,
-    // whose correct y-change under a KNOWN frame step is the exact cancellation of
-    // those two moves, it injects precisely the frame step as row bias.
+    // D4 shifts `lc.value_abs` below AND every coupling `s_prev` on a shifted PB
+    // column (SPEC_card1_coupling_carry §14).  A Card-1 coupling row's RHS is
+    // y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and `CoupledShared::s_prev`
+    // and `CarryPrior::value` are literally the same number for the same identity
+    // (both are `x_s(j)` at harvest: NetworkRunContext.cpp s_prev assignment and
+    // the prev_carry stash) — so for a gauge-invariant row, whose correct
+    // y-change under a KNOWN frame step is the exact cancellation of the two
+    // moves, shifting one reference and not the other injects precisely the
+    // frame step as row bias.  Precedent: NetworkRelevel.cpp's Card-6 eph
+    // cutover ("the row's functional u = r + Mᵀs is frame-consistent only if
+    // ALL carried references move together").
     //
-    // NOT fixed here on purpose (this pass files it): the correct treatment is to
-    // SHIFT `cs.s_prev` by the same `shift_sat` amount, mirroring the prev_carry
-    // loop below, and the in-tree precedent is NetworkRelevel.cpp's Card-6 eph
-    // cutover, which already walks `local_carry`/`zwd_carry` coupling to shift
-    // `s_prev` for exactly this reason ("the row's functional u = r + Mᵀs is
-    // frame-consistent only if ALL carried references move together").
-    //
-    // Firing condition: the eq34 shift door AND carry_conditional_coupling.  Note
-    // the D4 ERASE above does NOT cover it — the erase set (`eq34_reref`) and the
-    // shift set (`shift_sat`) are MUTUALLY EXCLUSIVE by construction at the
-    // population site, so the shifted keys are precisely the ones whose carries
-    // survive.  It is latent-and-LIVE, not latent-and-harmless.
+    // The coupling walk is hoisted OUT of the per-carry `d != 0` guard — a carry
+    // whose own (sat,σ) did not move can still hold coupling terms on OTHER
+    // satellites' shifted columns — and only `shift_sat` participates:
+    // SharedParamKind spans satellite-side + SH columns, so the receiver-side
+    // maps (`shift_rxg`/`shift_rpb`) have no coupling image.  Note the D4 ERASE
+    // above does NOT make this moot — the erase set (`eq34_reref`) and the shift
+    // set (`shift_sat`) are MUTUALLY EXCLUSIVE by construction at the population
+    // site, so the shifted keys are precisely the ones whose carries survive.
+    // With coupling off the stashes are empty and the walk is structurally
+    // byte-identical.
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         long long n_shifted = 0;
         for (auto& [key, lc] : local_carry) {
@@ -893,6 +898,16 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 cp.value += bs->second;
                 ++n_shifted;
             }
+        }
+        if (!shift_sat.empty()) {
+            long long n_cpl = 0;
+            for (auto& kv : local_carry)
+                n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
+            for (auto& kv : rpb_carry)
+                n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
+            for (auto& kv : zwd_carry)
+                n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
+            eq34_cpl_sprev_total += n_cpl;
         }
         eq34_shift_total += n_shifted;
     }

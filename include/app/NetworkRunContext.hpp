@@ -636,6 +636,7 @@ namespace GnssProcessor {
         // Jul-10 field A/B blind to the reref volume).  Untouched on non-eq34 runs.
         long long eq34_reref_total = 0, eq34_erase_total = 0;
         long long eq34_shift_total = 0;   // carry values S-transformed (v2-shift) over the run
+        long long eq34_cpl_sprev_total = 0;   // SPEC_card1_coupling_carry §14: coupling s_prev references re-based WITH those shifts (structurally 0 with coupling off — the stashes are empty)
         long long eq34_gap_repin_total = 0;   // I2: tree edges resumed from a carry-alive gap (re-pinned to their pre-gap integer instead of re-leveling from 0)
         int eq34_mismatch_epochs = 0;
         // Card 3 chain-pin AUDIT (docs/SPEC_synthetic_minimum_network.md §14 T1 (measured record §12.8)): THIS epoch's

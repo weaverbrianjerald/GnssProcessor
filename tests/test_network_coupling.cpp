@@ -16,6 +16,7 @@
 
 #include <Eigen/Dense>
 
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -534,4 +535,59 @@ TEST(NetworkCouplingTest, AppendJointWhitensAndRetainsIngredients) {
     ASSERT_EQ(f.R.cpl_raw.size(), 1u);                    // ingredients retained for refloat
     EXPECT_DOUBLE_EQ(f.R.w(0), 1.0);                      // unit-information whitened row
     EXPECT_DOUBLE_EQ(f.R.A_r(0, 2), 1.0 / std::sqrt(0.02)); // L^{-1} of a 1x1 R=var_eff
+}
+
+// --- rebaseCouplingPhaseBiasSprev: the eq34 D4 §14 re-base ------------------
+// CoupledShared::s_prev and CarryPrior::value are the same number for the same
+// identity, so the D4 v2-shift that applies `cp.value += s` must apply the
+// identical `+s` to every matching coupling term — and to NOTHING else.
+
+// Selectivity: only the PhaseBias entry whose (sat, signal) is in shift_sat
+// moves, by exactly +s, and only s_prev moves (coeff / p_prev untouched).
+TEST(NetworkCouplingTest, Eq34RebaseShiftsOnlyMatchingPhaseBiasSprev) {
+    std::vector<CoupledShared> cpl = {
+        CoupledShared{SharedParamKind::PhaseBias, "G05", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},
+        CoupledShared{SharedParamKind::PhaseBias, "G07", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},  // other sat
+        CoupledShared{SharedParamKind::PhaseBias, "G05", "L2W", 0, 0, 'C', 0, 0.25, 1.5, 0.01},  // other signal
+        CoupledShared{SharedParamKind::Clock,     "G05", "",    0, 0, 'C', 0, 0.50, 3.0, 0.02},  // clock, shifted sat
+        CoupledShared{SharedParamKind::CodeBias,  "G05", "L1C", 0, 0, 'C', 0, 0.10, -2.0, 0.03}, // code bias, same key
+        CoupledShared{SharedParamKind::VtecSh,    "",    "",    2, 1, 'S', 0, 0.05, 4.0, 0.04},  // SH coefficient
+    };
+    const std::map<std::pair<std::string, std::string>, double> shift{{{"G05", "L1C"}, 0.75}};
+
+    EXPECT_EQ(rebaseCouplingPhaseBiasSprev(cpl, shift), 1);
+    EXPECT_DOUBLE_EQ(cpl[0].s_prev, 2.25);   // 1.5 + 0.75, same sign as cp.value += s
+    EXPECT_DOUBLE_EQ(cpl[0].coeff, 0.25);
+    EXPECT_DOUBLE_EQ(cpl[0].p_prev, 0.01);
+    EXPECT_DOUBLE_EQ(cpl[1].s_prev, 1.5);
+    EXPECT_DOUBLE_EQ(cpl[2].s_prev, 1.5);
+    EXPECT_DOUBLE_EQ(cpl[3].s_prev, 3.0);
+    EXPECT_DOUBLE_EQ(cpl[4].s_prev, -2.0);
+    EXPECT_DOUBLE_EQ(cpl[5].s_prev, 4.0);
+}
+
+// Guards mirror the prev_carry walk: a zero or non-finite shift is skipped (not
+// applied, not counted), and empty inputs return 0 without touching anything.
+TEST(NetworkCouplingTest, Eq34RebaseSkipsZeroAndNonFiniteShifts) {
+    std::vector<CoupledShared> cpl = {
+        CoupledShared{SharedParamKind::PhaseBias, "G05", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},
+        CoupledShared{SharedParamKind::PhaseBias, "G07", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},
+        CoupledShared{SharedParamKind::PhaseBias, "G09", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},
+    };
+    const std::map<std::pair<std::string, std::string>, double> shift{
+        {{"G05", "L1C"}, 0.0},
+        {{"G07", "L1C"}, std::numeric_limits<double>::quiet_NaN()},
+        {{"G09", "L1C"}, -0.5},
+    };
+
+    EXPECT_EQ(rebaseCouplingPhaseBiasSprev(cpl, shift), 1);
+    EXPECT_DOUBLE_EQ(cpl[0].s_prev, 1.5);
+    EXPECT_DOUBLE_EQ(cpl[1].s_prev, 1.5);
+    EXPECT_DOUBLE_EQ(cpl[2].s_prev, 1.0);
+
+    std::vector<CoupledShared> empty_cpl;
+    EXPECT_EQ(rebaseCouplingPhaseBiasSprev(empty_cpl, shift), 0);
+    const std::map<std::pair<std::string, std::string>, double> empty_shift;
+    EXPECT_EQ(rebaseCouplingPhaseBiasSprev(cpl, empty_shift), 0);
+    EXPECT_DOUBLE_EQ(cpl[2].s_prev, 1.0);    // second call touched nothing
 }

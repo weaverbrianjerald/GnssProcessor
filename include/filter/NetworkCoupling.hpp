@@ -184,4 +184,25 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                              long long& n_cpl_reinit_diverted,
                              int& n_cpl_row_dump);
 
+/// Card 3 (eq34) × Card 1 — SPEC_card1_coupling_carry §14: re-base the coupling
+/// references that live on D4-S-transformed satellite phase-bias columns.
+/// @c CoupledShared::s_prev and @c CarryPrior::value are literally the same
+/// number for the same identity (both are @f$x_s(j)@f$ at harvest), so the D4
+/// v2-shift that moves the carry values MUST move the matching coupling
+/// @c s_prev by the SAME amount — else the row's two carried references land in
+/// different frames and the coupling row injects exactly the frame step as row
+/// bias (the row's functional @f$u = r + M^\top s@f$ is frame-consistent only if
+/// ALL carried references move together; NetworkRelevel.cpp's Card-6 eph cutover
+/// states the same principle for clock columns).  Touches @c PhaseBias entries
+/// whose (sat, signal) is in @p shift_sat only — Clock/CodeBias/VtecSh columns
+/// are not moved by the D4 shift, and receiver-side columns have no
+/// @c SharedParamKind image at all.  Zero and non-finite shifts are skipped with
+/// the same guards as the prev_carry walk.
+/// @param coupling  one carried local's regression stash, mutated in place.
+/// @param shift_sat the D4 v2-shift set, (sat, signal-group) → shift (m).
+/// @return number of coupling terms re-based (counter fodder; 0 = none matched).
+long long rebaseCouplingPhaseBiasSprev(
+    std::vector<CoupledShared>& coupling,
+    const std::map<std::pair<std::string, std::string>, double>& shift_sat);
+
 } // namespace GnssProcessor

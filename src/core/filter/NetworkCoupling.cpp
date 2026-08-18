@@ -471,4 +471,21 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
         }
 }
 
+long long rebaseCouplingPhaseBiasSprev(
+    std::vector<CoupledShared>& coupling,
+    const std::map<std::pair<std::string, std::string>, double>& shift_sat) {
+    if (shift_sat.empty() || coupling.empty()) return 0;
+    long long n = 0;
+    for (CoupledShared& cs : coupling) {
+        if (cs.kind != SharedParamKind::PhaseBias) continue;
+        const auto bs = shift_sat.find({cs.sat, cs.signal});
+        if (bs != shift_sat.end() && std::isfinite(bs->second)
+            && bs->second != 0.0) {
+            cs.s_prev += bs->second;   // same sign as the prev_carry walk's cp.value += s
+            ++n;
+        }
+    }
+    return n;
+}
+
 } // namespace GnssProcessor

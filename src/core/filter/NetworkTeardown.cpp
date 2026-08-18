@@ -124,6 +124,7 @@ int networkTeardown(
     auto& eq34_reref_total = ctx.carry.eq34_reref_total;
     auto& eq34_erase_total = ctx.carry.eq34_erase_total;
     auto& eq34_shift_total = ctx.carry.eq34_shift_total;
+    auto& eq34_cpl_sprev_total = ctx.carry.eq34_cpl_sprev_total;
     auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
     auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
@@ -1881,9 +1882,13 @@ int networkTeardown(
     if (config_.networkPhaseDatumEq34())
         log->info("Network (Card 3/eq34): {} (sat,σ) re-reference(s), {} local carry "
                   "value(s) erased, {} carry value(s) S-transformed (v2-shift), "
+                  "{} coupling s_prev reference(s) re-based with them (§14 — on an "
+                  "eq34+coupling lineage 0 here with nonzero shifts is the "
+                  "wiring-inert alarm), "
                   "{} gap re-pin(s) (I2 extend-only: arcs resumed to their pre-gap "
                   "integer), {} pin/gauge-mismatch epoch(s) over the run.",
                   eq34_reref_total, eq34_erase_total, eq34_shift_total,
+                  eq34_cpl_sprev_total,
                   eq34_gap_repin_total, eq34_mismatch_epochs);
     // Chain-pin AUDIT (docs/SPEC_synthetic_minimum_network.md §14 T1 (measured record §12.8)): declared → folded →
     // landed per (constellation,signal).  The election's per-epoch cross-check
