@@ -235,9 +235,22 @@ posture.
     ✅ **No runtime cost**: 305-sta arm 15.4 min OFF vs 14.7 min ON (the fix suppresses the
     withhold→expiry→more-departures cycle, so there is less marginalization work).
     ⇒ **1f PROMOTED to RECOMMEND_ON** in the ledger and moved to the loader's ON tier (gaps now
-    WARN).  **1g stays SCOPED**: its INDEPENDENT effect is still unisolated — it rode with 1f at
-    50 sta and diverted ZERO terms at 150/305.  Code defaults still unchanged (fingerprinted;
-    a default flip is a snapshot migration, not an edit).
+    WARN).  Code defaults still unchanged (fingerprinted; a default flip is a snapshot
+    migration, not an edit).
+    ✅ **2×2 ISOLATION RUN 2026-08-17** (SPEC §13.9 — full factorial on the fld50 eq34 lineage
+    AND the s24cpl sim lineage, one build, corner cells byte-identical to the ladder arms):
+    **1f owns availability + gauge honesty + the datum check; 1g owns product quality, and the
+    channel is the CLOCK** — sim datum-free clock contrast rms 4.157 → **0.435 m** alone (~10×,
+    max |err| 17.8 → 1.0 m), 0.378 m with 1f; field matched-epoch pivoted wire 5.631 → **1.532**
+    alone (−73 %), 3.935 with 1f.  The gain holds on the datum-free contrast, so it is real
+    accuracy, NOT the lane-A/B over-retention shape.  ⚠ 1g ALONE recovers zero epochs and makes
+    the eq34 gauge breach **6.6× hotter** (R 1.6e+03 → 1.0e+04) — "arm WITH 1f" is now a
+    measured rule, not advice.  **1g stays SCOPED** (the clock-truth instrument is sim-only).
+    ✅ **SPEC §14 FIXED 2026-08-17** — the eq34 D4 v2-shift now re-bases `coupling[].s_prev`
+    (`rebaseCouplingPhaseBiasSprev` over local/rpb/zwd carries, run counter in the Card 3/eq34
+    line, unit-tested); wiring proven live on the archive firing set (225 v2-shifts → 902
+    re-bases, clean run).  No fingerprint token discriminates pre/post-fix on a
+    carry_shift+coupling lineage — re-baseline any A/B that spans it there.
   - **Owed for C-GF:** it was **not varied** in the control above, so it has no effect
     measurement of its own and stays **UNVALIDATED**.
 

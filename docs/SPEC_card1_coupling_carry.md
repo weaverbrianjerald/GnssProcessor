@@ -482,6 +482,64 @@ are freely negative, an ordinary partial sum aborted the accumulation.  First ar
 reported **11 epochs, 0 direction samples** — the exact "armed and inert" signature invariant
 #4 exists to surface.
 
+### 13.9 THE 2×2 ISOLATION — 1f and 1g each carry a DIFFERENT half of the win (2026-08-17)
+
+§13.8's open item ("1g's INDEPENDENT effect is unisolated"), closed with a full 2×2 factorial
+on BOTH lineages, one build (post-§14-fix — structurally inert here, shift door unarmed on
+both):  field `_fld50_{00,1f,1g,11}` (eq34, 50 real IGS sta, 1 h) and sim `_s24cpl2_{00,1f,1g,11}`
+(pa_carry_reref, 24 sta, truth-graded).  Every config certified single-knob against its §13.8
+parent, and the corner cells REPRODUCE the stored §13.8 arms **byte-for-byte** (products.txt
+and network_solution.csv identical for 00↔off and 11↔on) — the two intervening commits are
+certified inert on these lineages and the 2×2 sits exactly on the ladder baseline.
+
+**Field (matched-epoch wire = the 101 epochs every cell emits):**
+
+| cell | withheld | inv-#7 R max | departed | diverted (1g) | held (1f) | pivoted wire step |
+|---|---|---|---|---|---|---|
+| 00 | 20/121 | 1.557e+03 | 14 989 | — | — | 5.631 cyc/ep |
+| 1f | **0** | healthy | 892 | — | 667 | 5.543 |
+| 1g | 20/121 | **1.030e+04** | 72 019 | 54 662 | — | **1.532** |
+| 11 | **0** | healthy | 38 771 | 37 441 | 15 852 | 3.935 |
+
+**Sim truth (matched to the common 116 epochs — n identical in every cell: clock n=1776,
+code-bias n=5502):**
+
+| cell | withheld | clock CONTRAST rms (datum-free) | clock max abs | code-bias rms | datum-check rms |
+|---|---|---|---|---|---|
+| 00 | 4/120 | 4.157 m | 17.75 m | 0.4306 m | 4.60e-03 |
+| 1f | **0** | 4.688 m | 17.99 m | 0.4495 m | **2.85e-03** |
+| 1g | 4/120 | **0.435 m** | 1.01 m | 0.4195 m | 4.65e-03 |
+| 11 | **0** | **0.378 m** | 0.96 m | 0.4347 m | **2.91e-03** |
+
+**Attribution — the two cards decompose almost cleanly:**
+
+- **1f owns availability, gauge honesty, and the datum realization.**  Withholds → 0 in both
+  1f-armed cells on both lineages; the invariant-#7 ratio collapses only when 1f is armed; the
+  sum-to-zero datum check tightens 1.6× only in the 1f-armed cells.  On the wire it is NEUTRAL
+  (5.631 → 5.543 matched-epoch, −1.6 %) and on truth channels ~flat (code-bias +3–4 %, inside
+  the C5Q heavy tail; clock contrast +13 % alone / −13 % on top of 1g).
+- **1g owns the product-quality win, and the channel is the CLOCK.**  Datum-free clock contrast
+  rms 4.157 → 0.435 m alone (**~10×**, max |err| 17.8 → 1.0 m), 4.688 → 0.378 m on top of 1f;
+  field pivoted wire step 5.631 → 1.532 alone (−73 %), 5.543 → 3.935 on top of 1f (−29 %).
+  Mechanism: a coupling term whose column was RE-REFERENCED folds a retired-frame `s_prev` at
+  full weight, and the injected error lands in the emitted clock/phase products; the divert
+  removes exactly that.
+- **The §13.8 quality attribution is CORRECTED**: the fld50 wire −21 % was implicitly credited
+  to 1f (the promoted knob); the isolation shows the wire/clock gain is **1g's**, while 1f's
+  quality contribution is the datum check plus emitting 20 more epochs at no wire cost.
+  (§13.8's note that the **150-sta** rung's gains are 1f-alone stands — withholds/R are 1f's
+  instruments, and 1g was inert there.)
+- **Over-retention ADJUDICATED (the lane-A/B suspicion pattern):** 1g-alone's very quiet wire
+  under a breached gauge (R 1.0e+04) looked like the "quiet prior / illegitimate pin" shape.
+  The sim truth grade refutes that: the improvement holds on the **datum-free clock contrast**,
+  which a pinned frame cannot fake.  The quiet is real product accuracy, not over-retention.
+- **1g alone remains contraindicated**, now with measured teeth: it recovers zero epochs, and on
+  the field eq34 lineage its unheld diverted mass makes the gauge breach **6.6× hotter**
+  (R 1.557e+03 → 1.030e+04) while departed terms balloon 14 989 → 72 019.  Arm it WITH 1f.
+- Caveats: the clock-truth instrument exists only in sim (one lineage, pa_carry_reref); the
+  field eq34 lineage has no clock truth and its 1g R-worsening is lineage-specific (sim R was
+  ~unchanged, 7.12e+06 → 6.91e+06).  1g stays SCOPED.
+
 
 ## 14. FIXED — the eq34 D4 S-transform now re-bases `coupling[].s_prev` (filed 2026-08-15, fixed 2026-08-17)
 

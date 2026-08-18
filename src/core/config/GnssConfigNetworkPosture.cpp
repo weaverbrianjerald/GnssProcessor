@@ -139,11 +139,12 @@ namespace GnssProcessor {
               Tier::ON, true , "network.carry_coupling_gauge_project",
               "a DEPARTED coupling column is marginalized by DELETING its coefficient, so the "
               "family sum moves to -M_dep and the row observes the CURRENT datum gauge at the "
-              "OLD realization. 24-sta/1h/GPS sim positive control at the measured defect epoch "
-              "(TOW 305220): OVER-specified gate withholds 4 -> 0, invariant-#7 ratio 7.1e+06 -> "
-              "2.1e-03 (9.5 decades), observed near-null == declared on every epoch; "
-              "matched-epoch truth grade FLAT (code-bias rms +0.9%) with the sum-to-zero datum "
-              "check 1.6x tighter. n=1, sim only, field + larger-scale arms OWED" },
+              "OLD realization. 4-rung ladder (SPEC_card1_coupling_carry sec 13.8): 24-sta sim "
+              "+ 50/150/305-sta FIELD, withholds -> 0 and invariant-#7 R down 9-10 decades at "
+              "EVERY rung, no runtime cost. 2x2 isolation (sec 13.9): 1f owns availability + "
+              "gauge honesty + the sum-to-zero datum check (1.6x tighter); it is wire-NEUTRAL "
+              "(the wire/clock quality win is 1g's). Owed: multi-constellation, warm-resume, "
+              "real-time" },
             { warm,
               nc.state_snapshot_require,
               Tier::ON, false, "network.state_snapshot_require",
@@ -553,9 +554,13 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.carry_coupling_reinit_sources",
               "the coupling reinit history was fed ONLY by clock-QC sources, so a phase-anchor / "
               "eq34 / datum-slip re-reference left every OTHER carried local folding that column "
-              "at FULL weight with a retired-frame s_prev. Arm it WITH "
-              "carry_coupling_gauge_project (alone it trades a stale frame step for a gauge "
-              "observation). Same 24-sta control; 507 terms diverted. n=1, sim only" },
+              "at FULL weight with a retired-frame s_prev. 2x2 isolation (SPEC sec 13.9): 1g "
+              "owns the PRODUCT-QUALITY win on the CLOCK channel — sim datum-free clock "
+              "contrast rms 4.157 -> 0.435 m alone (~10x), field matched-epoch wire 5.631 -> "
+              "1.532 cyc/ep; real accuracy (holds on the datum-free contrast), not "
+              "over-retention. ⚠ NEVER alone (measured): zero epochs recovered and the eq34 "
+              "gauge breach 6.6x HOTTER (R 1.6e+03 -> 1.0e+04) — arm WITH "
+              "carry_coupling_gauge_project. Clock-truth instrument is sim-only" },
         };
         out.insert(out.end(), rows.begin(), rows.end());
     }
