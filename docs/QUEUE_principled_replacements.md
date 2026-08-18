@@ -209,8 +209,35 @@ posture.
     ⚠ **n = 1, 24 sta, GPS, sim, 1 h, one lineage.**  Registered **RECOMMEND_SCOPED** in the
     promotion ledger + loader POSTURE rows (parity verified); code defaults deliberately
     unchanged — both knobs are fingerprinted, so a default flip is a snapshot migration.
-    **Still owed: a field arm and a ≥150-station arm** (the `mw_wl.bridge_sample_debias`
-    precedent — validated at 50, net-harmful at 305).
+    ✅ **FIELD + SCALE ARMS RUN 2026-08-15 — PASS at every rung** (`SPEC_card1_coupling_carry.md`
+    §13.8).  Ladder, all single-variable: **24 sta sim** withholds 4→0 (R 7.1e+06→2.1e-03) ·
+    **50 sta FIELD** 20/121→0, i.e. **16.5 % of epochs recovered**, R 1.6e+03→3.1e-06 ·
+    **150 sta FIELD** 20/121→0, R 7.8e+02→9.3e-06.  The field defect is **5× more prevalent
+    than the sim one**, so the sim control under-stated the payoff.  At 150 sta departed
+    coupling terms also fell **111 599 → 6 393 (17×)**: the OFF arm's withholds age the carry
+    past `pl_max_gap_s`, blanket expiry manufactures more departures, and those breach again —
+    the fix breaks that cycle.
+    ⚠ **At 150 sta Card 1g diverted ZERO terms**, so that rung's whole gain is **1f alone**.
+    New measured **FEED INTERLOCK**: 1g's sources come only from `phase_datum_eq34` or
+    `phase_anchor_carry_reref`; with neither armed it is inert.  Now a loader WARN, a ledger
+    interlock, and a tightened posture/ledger regime.
+    ⚠ **305 sta: the knobs are structurally INERT AS SHIPPED** — every 305 config in-tree runs
+    `carry_invariant: true`, under which `do_amb_carry` is false and the coupling rows are never
+    built.  Forced to a non-Card-4 posture the defect IS present at 305 and at full strength:
+    20/121 withheld, R max **7.537e+03**, **284 618** departed coupling terms over 1 h.
+    ❌ **A "dense rosters see every satellite, so departures are rare at scale" hypothesis was
+    FALSIFIED** — it came from an 11-epoch probe that was simply too short.  Departures scale UP
+    with station count (15 k @50 · 112 k @150 · 285 k @305), so the defect gets MORE frequent
+    with scale, not less.
+    ✅ **QUALITY improved, not merely neutral**: field datum-invariant wire step (pivoted
+    between-sat SD) **5.631 → 4.445 cyc/ep (−21 %)**, 1.2549 → 0.9983 m/ep — achieved while
+    emitting 20 MORE epochs.  Sim truth grade flat (+0.9 %) with the datum check 1.6× tighter.
+    ✅ **No runtime cost**: 305-sta arm 15.4 min OFF vs 14.7 min ON (the fix suppresses the
+    withhold→expiry→more-departures cycle, so there is less marginalization work).
+    ⇒ **1f PROMOTED to RECOMMEND_ON** in the ledger and moved to the loader's ON tier (gaps now
+    WARN).  **1g stays SCOPED**: its INDEPENDENT effect is still unisolated — it rode with 1f at
+    50 sta and diverted ZERO terms at 150/305.  Code defaults still unchanged (fingerprinted;
+    a default flip is a snapshot migration, not an edit).
   - **Owed for C-GF:** it was **not varied** in the control above, so it has no effect
     measurement of its own and stays **UNVALIDATED**.
 

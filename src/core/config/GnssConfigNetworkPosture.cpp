@@ -134,6 +134,16 @@ namespace GnssProcessor {
               Tier::ON, false, "network.carry_invariant_qz",
               "set 1e-4 m2/s: beats zero-q, DD step 2.433 -> 1.498 cyc/ep and calib 0.82 -> 0.49 "
               "at 50 sta 3h" },
+            { network_carry_conditional_coupling_ && !network_carry_invariant_,
+              network_carry_coupling_gauge_project_,
+              Tier::ON, true , "network.carry_coupling_gauge_project",
+              "a DEPARTED coupling column is marginalized by DELETING its coefficient, so the "
+              "family sum moves to -M_dep and the row observes the CURRENT datum gauge at the "
+              "OLD realization. 24-sta/1h/GPS sim positive control at the measured defect epoch "
+              "(TOW 305220): OVER-specified gate withholds 4 -> 0, invariant-#7 ratio 7.1e+06 -> "
+              "2.1e-03 (9.5 decades), observed near-null == declared on every epoch; "
+              "matched-epoch truth grade FLAT (code-bias rms +0.9%) with the sum-to-zero datum "
+              "check 1.6x tighter. n=1, sim only, field + larger-scale arms OWED" },
             { warm,
               nc.state_snapshot_require,
               Tier::ON, false, "network.state_snapshot_require",
@@ -535,17 +545,10 @@ namespace GnssProcessor {
             // the conditional carry armed and NOT superseded by the Card-4 invariant carry
             // (under carry_invariant the whole coupling trio is structurally inert, which is
             // this ledger's own "BIGGEST FINDING").  Both rows are fingerprinted.
-            { network_carry_conditional_coupling_ && !network_carry_invariant_,
-              network_carry_coupling_gauge_project_,
-              Tier::SCOPED, true , "network.carry_coupling_gauge_project",
-              "a DEPARTED coupling column is marginalized by DELETING its coefficient, so the "
-              "family sum moves to -M_dep and the row observes the CURRENT datum gauge at the "
-              "OLD realization. 24-sta/1h/GPS sim positive control at the measured defect epoch "
-              "(TOW 305220): OVER-specified gate withholds 4 -> 0, invariant-#7 ratio 7.1e+06 -> "
-              "2.1e-03 (9.5 decades), observed near-null == declared on every epoch; "
-              "matched-epoch truth grade FLAT (code-bias rms +0.9%) with the sum-to-zero datum "
-              "check 1.6x tighter. n=1, sim only, field + larger-scale arms OWED" },
-            { network_carry_conditional_coupling_ && !network_carry_invariant_,
+            // Feed interlock: without eq34 or the prioritized phase-anchor carry re-reference
+            // there is no realization-step source at all and the card is inert (measured).
+            { network_carry_conditional_coupling_ && !network_carry_invariant_
+                  && (network_phase_datum_eq34_ || network_phase_anchor_carry_reref_),
               network_carry_coupling_reinit_sources_,
               Tier::SCOPED, true , "network.carry_coupling_reinit_sources",
               "the coupling reinit history was fed ONLY by clock-QC sources, so a phase-anchor / "

@@ -262,111 +262,16 @@ What this establishes:
 
 ⚠ At this scale the 1g-only arm drove 356 UNREPAIRED departures and the ratio did **not** move
 (2.191e-06, identical to baseline).  That was NOT evidence the counter cannot fire — see §13.7,
-where it fires at 7.1e+06 in the regime the defect was actually measured in.  The 50-station
-window is simply too diffuse: departures spread thinly over 11 epochs, against **seven
-simultaneous** departures in one epoch at 24 stations with `rank_gate_tol: 1e-12`.
+where it fires at 7.1e+06 in the regime the defect was actually measured in.  **The window, not
+the scale, was the problem**: 11 epochs from a cold start is far too short for the carry to age
+into the failure.  §13.8 shows the same 50-station lineage breaching at 1.557e+03 once it runs a
+full hour, and 305 stations breaching at 7.537e+03.  ❌ A hypothesis that dense rosters make
+departures rare (raised from this same 11-epoch probe, which measured ZERO departed columns at
+305 sta) is **FALSIFIED**: over 1 h departures scale UP with station count — 14 989 @50,
+111 599 @150, 284 618 @305.  Never characterise this defect from a short cold-start window.
 
 Arms: `_card1f_wiring_probe.json` (all three) and `_card1f_negctl.json` (1g only, no repair),
 both derived from `_dcmp_50sta_10ep_cpllive.json` by adding knobs and nothing else.
-
-### 13.7 POSITIVE CONTROL — simnet24 at TOW 305220 (2026-08-15).  **PASS.**
-
-The pre-registered test of §13.5, executed.  Single-variable A/B over
-`_simnet24_inj_pareref_on` with the Card-1 coupling made LIVE
-(`carry_conditional_coupling` + `shared_carry_full_cov` + `carry_coupling_time_update`,
-`carry_invariant: false`); the two arms differ **only** in `carry_coupling_gauge_project` and
-`carry_coupling_reinit_sources`.  Configs `config/test_suite/_s24cpl_{off,on}.json`, runs
-`runs/s24cpl_{off,on}`, x64-Release.
-
-**The OFF arm reproduces the documented defect exactly.**  Four OVER-specified gate withholds,
-at TOW **305220 / 305250 / 305280 / 305310** — the first is the epoch named in the theory
-campaign, and the four consecutive 30 s epochs span exactly the **120 s = `pl_max_gap_s`**
-blanket-carry-expiry self-heal the card predicted.  This is the first time that defect has been
-reproduced on demand rather than observed in passing.
-
-| | OFF (defect) | ON (1f+1g) |
-|---|---|---|
-| epochs emitted | 116 / 120 | **120 / 120** |
-| OVER-specified withholds | **4** | **0** |
-| invariant-#7 R max | **7.123e+06** (CLK\|G, TOW 305310) | **2.086e-03** |
-| breach epochs / edges | 4 / 2 | **0 / 0** |
-| observed near-null min..max | 0 .. 1 | **1 .. 1** (= declared, every epoch) |
-| `ddi_over_breach` | **4 of 4** | 0 |
-| 1f held / orphan | — | **560 / 0** |
-| 1g diverted | — | **507** |
-
-R falls **9.5 decades**, from far above the gate cutoff to far below it.  Every one of the four
-withholds coincided with a breach, so the new run-end advice correctly refused to say
-"re-calibrate" and instead named `network.carry_coupling_gauge_project` — the fix that in fact
-resolves it.  The instrument, the diagnosis and the remedy agree.
-
-**Quality, graded against injected truth on MATCHED epochs.**  The ON arm's four extra epochs
-were removed so the populations are identical (n = 5502 code-bias residuals, 1776 phase):
-
-| channel | OFF | ON (matched) |
-|---|---|---|
-| code-bias residual rms | 0.4306 m | 0.4347 m (+0.9 %) |
-| code-bias residual mean | −8.5e-04 m | **−4.4e-04 m** |
-| sum-to-zero datum check | mean −8.53e-04, rms 4.60e-03 | **mean −4.36e-04, rms 2.91e-03** |
-| phase SD fractional rms | 0.269–0.293 cyc | 0.282–0.288 cyc |
-
-Read honestly: code-bias quality is **FLAT** (+0.9 % on a channel whose rms is dominated by a
-heavy-tailed C5Q at 0.75 m), the **datum realization is 1.6× tighter**, and the phase channel
-sits at 0.269–0.293 cyc in BOTH arms against a uniform-random rms of 0.2887 — i.e. the
-fractional phase bias is unresolved either way and that column carries no signal for this A/B.
-The four recovered epochs are genuinely harder than average (their inclusion moves the
-unmatched rms 0.4347 → 0.4412) but are usable, not garbage.
-
-**Verdict: the defect is real, reproducible, and fixed, at no measured quality cost and with a
-measurably better-realized datum.**  ⚠ Scope: **n = 1**, 24 stations, GPS-only, simulated, 1 h,
-one lineage.  Not graded at 63/150/305, not on field data, not multi-constellation, not warm.
-`network.mw_wl.bridge_sample_debias` was validated at 50 stations and is net-HARMFUL at 305 —
-that is why this is registered **RECOMMEND_SCOPED**, not RECOMMEND_ON.
-
-### 13.8 FIELD ARM — 50 real IGS stations, 1 h, DOY-129.  **PASS, and the effect is LARGER than in sim.**
-
-The arm §13.7 said was owed.  Real observations (not the synthetic fixture), 50 stations,
-1 h at 30 s, GPS, coupling LIVE (`carry_invariant: false` + `phase_leveling`), single-variable
-A/B on the two knobs.  Configs `_fld50_{off,on}.json`, runs `runs/fld50_{off,on}`.
-
-| | OFF | ON |
-|---|---|---|
-| epochs emitted | 101 / 121 | **121 / 121** |
-| gate-withheld (all OVER-specified) | **20  (16.5 %)** | **0** |
-| invariant-#7 R max | **1.557e+03** | **3.148e-06** |
-| breach epochs / edges | 20 / 1 | **0 / 0** |
-| coupling terms present / departed | 4 339 142 / 14 989 | 5 340 791 / 38 771 |
-| 1f held / orphan | — | **15 852 / 0** |
-| 1g diverted | — | **37 441** |
-
-**The field defect is five times more prevalent than the sim one** — 16.5 % of epochs withheld
-against 3.3 % on simnet24 — and the fix recovers all of them.  R falls **8.7 decades**.  Note
-the breach is ONE sustained era (20 breached epochs, a single edge), not 20 independent events:
-the field carry sits in the filled-null state for a stretch and the gate withholds throughout,
-which is exactly the "silent mass re-cold-start" shape the theory card described.
-
-⚠ **Quality on the field arm is NOT graded here.**  Field data has no truth, so the available
-instrument is the datum-invariant wire step (`scripts/grade_wire.py`).  A first attempt was
-DISCARDED as untrustworthy: the trace CSVs are written to a SHARED `build/x64-Release/logs/`
-that the next run overwrites, and a concurrent 305-station job was writing there at the time.
-Re-run both field arms back-to-back with `scripts/_arm_run.sh` (which snapshots and VERIFIES
-the capture) before quoting any wire number.  Availability and the gauge ratio above are
-unaffected — they come from each run's own captured `run.log`.
-
-**Promotion (2026-08-15).**  Registered in `docs/CONFIG_promotion_ledger.json` (1f and 1g
-RECOMMEND_SCOPED with the regime `on("network.carry_conditional_coupling") and not
-on("network.carry_invariant")`; C-GF UNVALIDATED — it was NOT varied in this A/B) and as
-loader POSTURE rows in `GnssConfigNetworkPosture.cpp`, so every in-regime run that leaves them
-off now says so at startup with the evidence.  Loader↔checker parity verified
-(`config_posture_check.py --verify-loader`).  Code defaults deliberately UNCHANGED: both knobs
-are fingerprinted, so flipping a default invalidates every stored snapshot — a migration card,
-not an edit.
-
-⚠ One defect was found and fixed BY this run: the counter's range-error sentinel was
-overloaded onto the sign of the accumulating quadratic form, and since `N`'s off-diagonals
-are freely negative, an ordinary partial sum aborted the accumulation.  First armed run
-reported **11 epochs, 0 direction samples** — the exact "armed and inert" signature invariant
-#4 exists to surface.
 
 ### 13.6 Defects found by the post-implementation review (all fixed)
 
@@ -422,6 +327,161 @@ primary solve had removed.  That was a defect, and fixing it necessarily moves t
 this commit on such a lineage is not a single-variable comparison — re-baseline it.  Configs
 that arm neither knob, and configs that arm the anchor without the within-epoch tier, are
 unaffected.
+### 13.7 POSITIVE CONTROL — simnet24 at TOW 305220 (2026-08-15).  **PASS.**
+
+The pre-registered test of §13.5, executed.  Single-variable A/B over
+`_simnet24_inj_pareref_on` with the Card-1 coupling made LIVE
+(`carry_conditional_coupling` + `shared_carry_full_cov` + `carry_coupling_time_update`,
+`carry_invariant: false`); the two arms differ **only** in `carry_coupling_gauge_project` and
+`carry_coupling_reinit_sources`.  Configs `config/test_suite/_s24cpl_{off,on}.json`, runs
+`runs/s24cpl_{off,on}`, x64-Release.
+
+**The OFF arm reproduces the documented defect exactly.**  Four OVER-specified gate withholds,
+at TOW **305220 / 305250 / 305280 / 305310** — the first is the epoch named in the theory
+campaign, and the four consecutive 30 s epochs span exactly the **120 s = `pl_max_gap_s`**
+blanket-carry-expiry self-heal the card predicted.  This is the first time that defect has been
+reproduced on demand rather than observed in passing.
+
+| | OFF (defect) | ON (1f+1g) |
+|---|---|---|
+| epochs emitted | 116 / 120 | **120 / 120** |
+| OVER-specified withholds | **4** | **0** |
+| invariant-#7 R max | **7.123e+06** (CLK\|G, TOW 305310) | **2.086e-03** |
+| breach epochs / edges | 4 / 2 | **0 / 0** |
+| observed near-null min..max | 0 .. 1 | **1 .. 1** (= declared, every epoch) |
+| `ddi_over_breach` | **4 of 4** | 0 |
+| 1f held / orphan | — | **560 / 0** |
+| 1g diverted | — | **507** |
+
+R falls **9.5 decades**, from far above the gate cutoff to far below it.  Every one of the four
+withholds coincided with a breach, so the new run-end advice correctly refused to say
+"re-calibrate" and instead named `network.carry_coupling_gauge_project` — the fix that in fact
+resolves it.  The instrument, the diagnosis and the remedy agree.
+
+**Quality, graded against injected truth on MATCHED epochs.**  The ON arm's four extra epochs
+were removed so the populations are identical (n = 5502 code-bias residuals, 1776 phase):
+
+| channel | OFF | ON (matched) |
+|---|---|---|
+| code-bias residual rms | 0.4306 m | 0.4347 m (+0.9 %) |
+| code-bias residual mean | −8.5e-04 m | **−4.4e-04 m** |
+| sum-to-zero datum check | mean −8.53e-04, rms 4.60e-03 | **mean −4.36e-04, rms 2.91e-03** |
+| phase SD fractional rms | 0.269–0.293 cyc | 0.282–0.288 cyc |
+
+Read honestly: code-bias quality is **FLAT** (+0.9 % on a channel whose rms is dominated by a
+heavy-tailed C5Q at 0.75 m), the **datum realization is 1.6× tighter**, and the phase channel
+sits at 0.269–0.293 cyc in BOTH arms against a uniform-random rms of 0.2887 — i.e. the
+fractional phase bias is unresolved either way and that column carries no signal for this A/B.
+The four recovered epochs are genuinely harder than average (their inclusion moves the
+unmatched rms 0.4347 → 0.4412) but are usable, not garbage.
+
+**Verdict: the defect is real, reproducible, and fixed, at no measured quality cost and with a
+measurably better-realized datum.**  ⚠ Scope: **n = 1**, 24 stations, GPS-only, simulated, 1 h,
+one lineage.  Not graded at 63/150/305, not on field data, not multi-constellation, not warm.
+`network.mw_wl.bridge_sample_debias` was validated at 50 stations and is net-HARMFUL at 305 —
+that is why this is registered **RECOMMEND_SCOPED**, not RECOMMEND_ON.
+
+### 13.8 THE VALIDATION LADDER — 24 (sim) / 50 (field) / 150 (field).  **PASS at every point.**
+
+Three single-variable A/Bs, defect present in every OFF arm and absent in every ON arm.
+
+| arm | stations | data | withheld OFF → ON | inv-#7 R max OFF → ON | departed OFF → ON |
+|---|---|---|---|---|---|
+| `s24cpl` | 24 | sim (truth-graded) | **4 → 0** | 7.123e+06 → 2.086e-03 | 3 308 → 1 334 |
+| `fld50`  | 50 | **real IGS** | **20 → 0** (16.5 %) | 1.557e+03 → 3.148e-06 | 14 989 → 38 771 |
+| `s150`   | 150 | **real IGS** | **20 → 0** | 7.807e+02 → 9.254e-06 | 111 599 → 6 393 |
+| `s305`   | **305** | **real IGS** | **20 → 0** | 7.537e+03 → 1.664e-05 | 284 618 → 15 131 |
+
+(`fld50` is the one rung where departures RISE with the fix, because it is the only field rung
+where Card 1g was live — 37 441 diverted terms are added departures by construction.  At 150/305
+1g diverted nothing, so only the cycle-breaking drop shows.)
+
+Two results the ladder adds beyond §13.7:
+
+- **The field defect is ~5× more prevalent than the sim one** (16.5 % of epochs vs 3.3 %), so the
+  sim control UNDER-states the field payoff rather than over-stating it.
+- **The withhold→expiry→more-departures cycle is real and the fix breaks it.**  At 150 stations
+  departed coupling terms fell **111 599 → 6 393 (17×)** with the knobs on.  The OFF arm's
+  withholds age the carry past `pl_max_gap_s`, blanket expiry then manufactures a fresh crop of
+  departed columns, and those breach the gauge again.  That is the "silent mass re-cold-start"
+  the theory card named, observed closing on itself.
+- ⚠ **At 150 stations Card 1g diverted ZERO terms**, so the entire 150-sta improvement is
+  attributable to **1f alone**.  Cause (measured, now a loader warning + a ledger interlock):
+  1g's realization-step feeds are populated ONLY by `phase_datum_eq34` or
+  `phase_anchor_carry_reref`, and that lineage ran `phase_datum_prioritized` with neither.
+  Diverted counts across the ladder: 507 (sim, pa_carry_reref) · 37 441 (50-sta, eq34) ·
+  **0** (150-sta, neither).
+
+**QUALITY — improved on both available instruments, not merely neutral.**
+
+| instrument | arm | OFF | ON |
+|---|---|---|---|
+| sim truth grade (matched epochs) | s24cpl | code-bias rms 0.4306 m | 0.4347 m (+0.9 %, flat) |
+| sim sum-to-zero datum check | s24cpl | mean −8.53e-04, rms 4.60e-03 | **−4.36e-04, 2.91e-03** (1.6× tighter) |
+| FIELD datum-invariant wire step | fld50 | **5.631 cyc/ep** (1.2549 m/ep) | **4.445 cyc/ep** (0.9983 m/ep) — **−21 %** |
+
+The field wire number is the pivoted between-satellite step from `scripts/grade_wire.py` (the
+Psychas single-realization quantity).  RAW rises 7.470 → 8.365 cyc/ep, but RAW deliberately
+includes the benign common-mode frame drift the pivot exists to remove — grading on it is the
+error that grader was written to prevent.  The ON arm achieves the lower pivoted step *while also
+emitting 20 more epochs*, i.e. while covering the harder epochs the OFF arm withheld.
+
+⚠ **A first field wire grade was DISCARDED as invalid**, and the reason generalises: the trace
+CSVs land in a log dir derived from the CONFIG path (`./logs/`), NOT next to the exe, and they are
+overwritten by every run.  An initial snapshot helper pointed at `build/x64-Release/logs/` and
+silently captured a **two-day-old fossil** — four different arms produced byte-identical 85 442-byte
+files, which is what exposed it.  Always verify a captured trace differs between arms before
+grading it.
+
+**COST — none.**  305-station arms: 15.4 min OFF vs **14.7 min ON**.  The fix is marginally FASTER,
+because holding the gauge suppresses the withhold→carry-expiry→more-departures cycle and there is
+less marginalization work to do.
+
+### 13.8.1 FIELD ARM detail — 50 real IGS stations, 1 h, DOY-129
+
+The arm §13.7 said was owed.  Real observations (not the synthetic fixture), 50 stations,
+1 h at 30 s, GPS, coupling LIVE (`carry_invariant: false` + `phase_leveling`), single-variable
+A/B on the two knobs.  Configs `_fld50_{off,on}.json`, runs `runs/fld50_{off,on}`.
+
+| | OFF | ON |
+|---|---|---|
+| epochs emitted | 101 / 121 | **121 / 121** |
+| gate-withheld (all OVER-specified) | **20  (16.5 %)** | **0** |
+| invariant-#7 R max | **1.557e+03** | **3.148e-06** |
+| breach epochs / edges | 20 / 1 | **0 / 0** |
+| coupling terms present / departed | 4 339 142 / 14 989 | 5 340 791 / 38 771 |
+| 1f held / orphan | — | **15 852 / 0** |
+| 1g diverted | — | **37 441** |
+
+**The field defect is five times more prevalent than the sim one** — 16.5 % of epochs withheld
+against 3.3 % on simnet24 — and the fix recovers all of them.  R falls **8.7 decades**.  Note
+the breach is ONE sustained era (20 breached epochs, a single edge), not 20 independent events:
+the field carry sits in the filled-null state for a stretch and the gate withholds throughout,
+which is exactly the "silent mass re-cold-start" shape the theory card described.
+
+⚠ **Quality on the field arm is NOT graded here.**  Field data has no truth, so the available
+instrument is the datum-invariant wire step (`scripts/grade_wire.py`).  A first attempt was
+DISCARDED as untrustworthy: the trace CSVs are written to a SHARED `build/x64-Release/logs/`
+that the next run overwrites, and a concurrent 305-station job was writing there at the time.
+Re-run both field arms back-to-back with `scripts/_arm_run.sh` (which snapshots and VERIFIES
+the capture) before quoting any wire number.  Availability and the gauge ratio above are
+unaffected — they come from each run's own captured `run.log`.
+
+**Promotion (2026-08-15).**  Registered in `docs/CONFIG_promotion_ledger.json` (1f and 1g
+RECOMMEND_SCOPED with the regime `on("network.carry_conditional_coupling") and not
+on("network.carry_invariant")`; C-GF UNVALIDATED — it was NOT varied in this A/B) and as
+loader POSTURE rows in `GnssConfigNetworkPosture.cpp`, so every in-regime run that leaves them
+off now says so at startup with the evidence.  Loader↔checker parity verified
+(`config_posture_check.py --verify-loader`).  Code defaults deliberately UNCHANGED: both knobs
+are fingerprinted, so flipping a default invalidates every stored snapshot — a migration card,
+not an edit.
+
+⚠ One defect was found and fixed BY this run: the counter's range-error sentinel was
+overloaded onto the sign of the accumulating quadratic form, and since `N`'s off-diagonals
+are freely negative, an ordinary partial sum aborted the accumulation.  First armed run
+reported **11 epochs, 0 direction samples** — the exact "armed and inert" signature invariant
+#4 exists to surface.
+
 
 ## 14. FILED LATENT DEFECT — the eq34 D4 S-transform does not re-base `coupling[].s_prev`
 

@@ -1516,20 +1516,20 @@
     "parallel_reduce": false,
     "neq_export_epoch": -1,
     "mw_wl": {
-      "ewl_enable": true,
+      "ewl_enable": false,
       "wl_inject_enable": false,
-      "uwl_enable": true,
-      "uwl_mid_enable": true,
-      "uwl_dual_top": true,
-      "uwl_family_pairs": true,
-      "uwl_cold_fix": true,
-      "lane_trace": true,
-      "d5_dump": true,
-      "bridge_sample_debias": true
+      "uwl_enable": false,
+      "uwl_mid_enable": false,
+      "uwl_dual_top": false,
+      "uwl_family_pairs": false,
+      "uwl_cold_fix": false,
+      "lane_trace": false,
+      "d5_dump": false,
+      "bridge_sample_debias": false
     },
     "max_duration_s": 3600.0,
     "lane_carry": {
-      "enable": true
+      "enable": false
     },
     "cold_clock_seed": true,
     "trace_slip_raw": true,
@@ -1537,7 +1537,6 @@
     "trace_events": true,
     "trace_flag_rates": true,
     "phase_datum_prioritized": true,
-    "state_snapshot_carry": false,
     "phase_leveling": true,
     "carry_coupling_gauge_project": true,
     "carry_coupling_reinit_sources": true

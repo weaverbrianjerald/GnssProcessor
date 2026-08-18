@@ -169,6 +169,26 @@ namespace GnssProcessor {
         logNetworkSummary_(log);
         finalizeNetworkProcessNoise_(json, log);
 
+        // Card 1g FEED INTERLOCK, measured 2026-08-15.  Deliberately HERE, at the end of
+        // the section, not beside the knob's own parse: `phase_anchor_carry_reref` is
+        // parsed ~2800 lines later and `phase_datum_eq34` ~1700 later, so a check at the
+        // parse site would read their code defaults instead of the user's values.
+        //
+        // The realization-step sources are populated ONLY by the eq34 chain datum
+        // (eq34_reref) and the prioritized phase-anchor carry re-reference
+        // (phase_anchor_reref).  With neither armed the widened probe has nothing to match
+        // and the card is INERT: measured 0 diverted terms on a 150-station field arm
+        // (phase_datum_prioritized WITHOUT phase_anchor_carry_reref) against 37441 on a
+        // 50-station eq34 arm and 507 on a prioritized+pa_carry_reref sim arm.
+        if (network_carry_coupling_reinit_sources_
+            && !network_phase_datum_eq34_ && !network_phase_anchor_carry_reref_)
+            log->warn("Network producer (Card 1g): carry_coupling_reinit_sources is armed but "
+                      "NEITHER network.phase_datum_eq34 NOR network.phase_anchor_carry_reref is "
+                      "on, so no realization-step source will ever populate the reinit history "
+                      "and the card is INERT (the clock-QC feeds it shares with Card 1d are "
+                      "unaffected).  Arm one of those two, or drop this knob — do not read the "
+                      "resulting A/B as 'no effect'.");
+
         logNetworkPosture_(log);
         return true;
     }
