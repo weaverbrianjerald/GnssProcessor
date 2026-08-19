@@ -1,5 +1,6 @@
 #include "atmosphere/Ionosphere.hpp"
 #include "common/Constants.hpp"
+#include "math/Coordinates.hpp"
 #include "products/ProductCache.hpp"
 #include <fstream>
 #include <sstream>
@@ -165,8 +166,17 @@ namespace GnssProcessor {
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 
         double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
-        double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
-        double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
+        // FIXED 2026-08-19: phi previously came from asin(z/|r|), which is the
+        // GEOCENTRIC latitude, while the comment -- and IS-GPS-200, which
+        // specifies the user geodetic latitude phi_u in semicircles -- call for
+        // the GEODETIC one.  The two differ by up to 0.192 deg at 45 deg latitude
+        // (~0.0011 semicircles into phi_m).  Route through the tree's single
+        // ellipsoid solver, as every other latitude consumer does; that also
+        // handles the p ~ 0 polar case the raw asin left as a NaN.  Longitude is
+        // identical in both conventions, so that line is only re-labelled.
+        const Coordinates::Llh rx_llh = Coordinates::ecefToLlh(rx_pos);
+        double phi = rx_llh.lat_rad * 180.0 / Constants::PI;    // Geodetic latitude (degrees)
+        double lambda = rx_llh.lon_rad * 180.0 / Constants::PI; // Geodetic longitude (degrees)
 
         GnssProcessor::Model::Topocentric topo = model_geometry_.computeTopocentric(rx_pos, sat_pos);
         double el = topo.elevation_deg;
@@ -224,8 +234,17 @@ namespace GnssProcessor {
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 
         double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
-        double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
-        double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
+        // FIXED 2026-08-19: phi previously came from asin(z/|r|), which is the
+        // GEOCENTRIC latitude, while the comment -- and IS-GPS-200, which
+        // specifies the user geodetic latitude phi_u in semicircles -- call for
+        // the GEODETIC one.  The two differ by up to 0.192 deg at 45 deg latitude
+        // (~0.0011 semicircles into phi_m).  Route through the tree's single
+        // ellipsoid solver, as every other latitude consumer does; that also
+        // handles the p ~ 0 polar case the raw asin left as a NaN.  Longitude is
+        // identical in both conventions, so that line is only re-labelled.
+        const Coordinates::Llh rx_llh = Coordinates::ecefToLlh(rx_pos);
+        double phi = rx_llh.lat_rad * 180.0 / Constants::PI;    // Geodetic latitude (degrees)
+        double lambda = rx_llh.lon_rad * 180.0 / Constants::PI; // Geodetic longitude (degrees)
 
         double phi_i = phi / 180.0; // Normalized latitude
         double lambda_i = lambda / 180.0; // Normalized longitude

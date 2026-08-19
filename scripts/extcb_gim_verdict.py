@@ -195,13 +195,58 @@ def read_rnx(path, want_sods):
 def unit(v):
     n = sqrt(sum(x * x for x in v)); return [x / n for x in v]
 
+# --------------------------------------------------------------------------
+# Geodesy -- port of math/Coordinates.cpp, so the pierce point this script
+# builds is the SAME one computeIppGeometry() builds in the C++.  The seed and
+# the local frame were previously GEOCENTRIC (lat = asin(z/|r|), up = r/|r|)
+# where the C++ uses the GEODETIC latitude and the ellipsoid-normal ENU frame:
+# up to 0.192 deg of latitude at 45 deg, carried into el -> psi -> the mapping
+# m(el) that multiplies GIM VTEC in the residual.  Same fixed-point iteration
+# as scripts/q5_reanchor_hourly.py, for the same reason -- a different but
+# equally valid solver would leave a residue indistinguishable from a defect.
+# --------------------------------------------------------------------------
+_A = 6378137.0
+_F = 1.0 / 298.257223563
+_E2 = _F * (2.0 - _F)
+
+
+def ecef_to_llh(ecef):
+    """Port of ``Coordinates::ecefToLlh`` (Bowring seed + <=10 fixed-point steps)."""
+    x, y, z = (float(v) for v in ecef)
+    p = math.hypot(x, y)
+    lon = math.atan2(y, x)
+    if p < 1e-12:
+        lat = math.copysign(math.pi / 2.0, z if z != 0.0 else 1.0)
+        n = _A / math.sqrt(1.0 - _E2 * math.sin(lat) ** 2)
+        return lat, lon, abs(z) - n * (1.0 - _E2)
+    lat = math.atan2(z, p * (1.0 - _E2))
+    h = 0.0
+    for _ in range(10):
+        n = _A / math.sqrt(1.0 - _E2 * math.sin(lat) ** 2)
+        h = p / math.cos(lat) - n
+        denom = p * (1.0 - _E2 * (n / (n + h)))
+        if abs(denom) < 1e-15:
+            break
+        lat_next = math.atan2(z, denom)
+        if abs(lat_next - lat) < 1e-13:
+            lat = lat_next
+            break
+        lat = lat_next
+    return lat, lon, h
+
+
+def geodetic_up(lat, lon):
+    """Ellipsoid-normal Up in ECEF -- column 2 of ``Coordinates::enuToEcefMatrix``."""
+    return [cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat)]
+
+
 rows_all = []                                # (sta, sat, m, y_tecu, gim_ipp, net1_ipp, net20_ipp)
 for sta in stations:
     files = glob.glob(root + r"\obs" + "\\" + sta.lower() + r"\*.rnx")
     if not files: continue
     rx = sta_xyz[sta]
-    rxn = sqrt(sum(x * x for x in rx))
-    lat_r = asin(rx[2] / rxn); lon_r = math.atan2(rx[1], rx[0])
+    lat_r, lon_r, _ = ecef_to_llh(rx)          # GEODETIC, matching computeIppGeometry
+    up_r = geodetic_up(lat_r, lon_r)           # ellipsoid normal, not r/|r|
     try:
         data = read_rnx(files[0], set(EPOCH_SODS))
     except Exception:
@@ -214,7 +259,7 @@ for sta in stations:
         ang = OMEGA_E * 0.075
         sr = [sp[0] * cos(ang) + sp[1] * sin(ang), -sp[0] * sin(ang) + sp[1] * cos(ang), sp[2]]
         d = [sr[i] - rx[i] for i in range(3)]
-        u = unit(rx); dn = unit(d)
+        u = up_r; dn = unit(d)
         el = asin(sum(a * b for a, b in zip(dn, u)))
         if degrees(el) < EL_CUT: continue
         e_east = unit([-rx[1], rx[0], 0.0])
