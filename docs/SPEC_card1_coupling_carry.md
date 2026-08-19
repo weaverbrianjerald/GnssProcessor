@@ -577,7 +577,45 @@ What replicates, what changes vs 50 stations:
 Also noted in passing: on the IDENTICAL roster the eq34 datum baseline breaches ~8× hotter
 than the prioritized datum (R 6.446e+03 vs §13.8's 7.807e+02) and carries a ~2× noisier
 pivoted wire (10.788 vs the prioritized lineage's ladder regime) — a datum comparison, not a
-knob verdict. — INERT-BY-CLOSURE on every roster tested (2026-08-17)
+knob verdict.
+
+**Multi-constellation coverage arm (2026-08-19): GPS+Galileo at 50-eq34 — PASS, and the
+ORPHAN channel is nonzero for the first time.**  `_fld50ge_{00,11}` = the §13.9 corner cells
+plus `Galileo` in `active_systems` / `signal_priorities` ("CBXIQ") and nothing else, same
+snapshot build; pair A/B (both knobs together — the per-knob attribution is §13.9's, this arm
+is coverage).  This is the FIRST arm in which the Card-1f family machinery runs with two
+(constellation,kind) family sets, i.e. the first execution of the branch the §1 mechanism's
+own Galileo Σ_E = −1 example describes.
+
+| cell | withheld | inv-#7 R max | departed | diverted (1g) | held (1f) | ORPHANED | pivoted wire, matched 101 ep |
+|---|---|---|---|---|---|---|---|
+| ge_00 | 20/121 | 4.132e+02 (CLK\|G) | 21 366 | — | — | — | 4.815 cyc/ep |
+| ge_11 | **0** | healthy | 84 673 | 82 226 | 32 066 | **62** | **3.383 (−29.7 %)** |
+
+- **PASS on every primary gate**: withholds → 0, gauge healthy, eq34 pin audit COMPLETE for
+  all 10 Galileo signal groups (declared == folded == landed, every epoch), diverted/held live
+  at multi-GNSS volume, §14 counter 0 alongside 0 v2-shifts (door unarmed, posture
+  comparable).
+- **The pair's wire contribution is CONSTELLATION-STABLE: −29.7 % matched-epoch**, the third
+  lineage in a row at −29 % (50-GPS −29.0 %, 150-GPS −28.6 %).  Quote −29 % as the pair's
+  quality number across every regime tested.  The multi-GNSS baseline itself is quieter than
+  GPS-only (4.815 vs 5.631) and breaches softer (4.1e+02 vs 1.6e+03) — more satellites
+  constrain both the frame and the datum directions.
+- ⚠ **62 ORPHANED family sums — first nonzero in any arm** (every GPS-only cell measured 0).
+  Structurally a multi-constellation phenomenon: a coupling row's Galileo family can lose ALL
+  its present columns while its GPS family survives, leaving truncated mass with no present
+  recipient; GPS-only rows in that state are simply not built.  This is the documented
+  gauge-dirty residue the card counts honestly and cannot remove — at 62 / 32 066 held
+  (0.19 %) it does not trip invariant-#7 here (0 withholds, no breach), but the channel is now
+  MEASURED nonzero.  OWED before any multi-GNSS promotion tightening: per-epoch/per-family
+  attribution of the orphans, and a decision on whether the residue needs a recipient
+  fallback (e.g. holding against the row's OTHER surviving family is NOT obviously correct —
+  the sums are per-constellation by construction because the datum realizes per
+  constellation).
+- Still owed for full multi-constellation coverage: per-knob isolation at multi-GNSS
+  (this arm is pair-vs-off), GLONASS/BeiDou regimes (each has its own known hazards —
+  see project_glonass_ifb_network, project_beidou_network_clock_divergence), and the
+  sim-truth clock instrument with a second constellation. — INERT-BY-CLOSURE on every roster tested (2026-08-17)
 
 §13.8's other open item ("C-GF was not varied in any A/B"), closed with four arms on the same
 build as §13.9: `_fld50_cgf{00,11}` (field eq34) and `_s24cpl2_cgf{00,11}` (sim), each the
