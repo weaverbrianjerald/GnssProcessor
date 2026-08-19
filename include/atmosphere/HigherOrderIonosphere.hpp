@@ -69,9 +69,13 @@ namespace GnssProcessor {
          *
          * @param rx_pos_ecef       Receiver ECEF position (m).
          * @param sat_pos_ecef      Satellite ECEF position (m).
-         * @param ipp_lat_rad       Geocentric latitude of the IPP (rad).
-         *                          As produced by @c GimQuery::ipp_lat_rad.
-         * @param ipp_lon_rad       Geocentric longitude of the IPP (rad).
+         * @param ipp_lat_rad       Latitude of the IPP on the shell (rad), as produced
+         *                          by @c GimQuery::ipp_lat_rad.  Consumed here as a
+         *                          SPHERICAL latitude, which is what the thin shell is
+         *                          — but it is spherically propagated from a GEODETIC
+         *                          receiver seed, so see the convention note on
+         *                          @c IppGeometry before reusing it.
+         * @param ipp_lon_rad       Longitude of the IPP on the shell (rad).
          * @param ipp_radius_m      Distance of the IPP from geocentre (m).
          * @param stec_tecu         Absolute slant TEC at the IPP (TECU).
          * @param frequency_hz      Carrier frequency the correction is wanted at (Hz).

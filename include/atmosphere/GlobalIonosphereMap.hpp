@@ -29,8 +29,10 @@ namespace GnssProcessor {
         double delay_m       = 0.0;   ///< Slant ionospheric delay at the requested frequency (m).
         double std_m         = 0.0;   ///< 1-sigma uncertainty of @c delay_m (m), from the IONEX RMS map.
         double stec_tecu     = 0.0;   ///< Absolute slant TEC at the pierce point (TECU = 10^16 el/m²).
-        double ipp_lat_rad   = 0.0;   ///< Geocentric latitude of the IPP on the IONEX shell (rad).
-        double ipp_lon_rad   = 0.0;   ///< Geocentric longitude of the IPP on the IONEX shell (rad).
+        double ipp_lat_rad   = 0.0;   ///< Latitude of the IPP on the IONEX shell (rad).  Copied
+                                      ///< verbatim from @c IppGeometry::ipp_lat_rad — read the
+                                      ///< convention note there; it is NOT plain geodetic.
+        double ipp_lon_rad   = 0.0;   ///< Longitude of the IPP on the IONEX shell (rad).
         double ipp_radius_m  = 0.0;   ///< IPP distance from geocentre (m) = IONEX base radius + shell height.
         bool   valid         = false; ///< False when the GIM has no usable value for this line of sight.
     };

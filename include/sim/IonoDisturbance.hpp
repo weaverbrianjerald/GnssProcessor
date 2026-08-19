@@ -131,7 +131,10 @@ struct IonoConfig {
 
 /** @brief Evaluated ionospheric quantities for one ray at one epoch. */
 struct IonoSample {
-    double ipp_lat_deg{ 0.0 }, ipp_lon_deg{ 0.0 }; ///< Pierce point (geodetic deg).
+    /// Pierce point on the storm shell (deg), spherically propagated from the
+    /// receiver's GEODETIC latitude — the same construction GnssProcessor's
+    /// computeIppGeometry uses, so it is NOT itself a geodetic latitude.
+    double ipp_lat_deg{ 0.0 }, ipp_lon_deg{ 0.0 };
     double obliquity{ 1.0 };          ///< Vertical->slant mapping factor (1/cos z').
     double stec_quiet_tecu{ 0.0 };    ///< Slant quiet background (TECU).
     double dstec_sed_tecu{ 0.0 };     ///< Slant SED disturbance (TECU).

@@ -58,10 +58,14 @@ namespace GnssProcessor {
         if (meas_type != 'C' && meas_type != 'L') return out;
         if (ipp_radius_m <= 0.0 || !std::isfinite(ipp_radius_m)) return out;
 
-        // Reconstruct the IPP ECEF position from the geocentric IPP
-        // coordinates returned by the GIM.  IONEX is a thin-shell
-        // spherical model, so geocentric → ECEF is just spherical →
-        // Cartesian at the IONEX base+shell radius.
+        // Reconstruct the IPP ECEF position from the IPP coordinates the
+        // GIM returned.  IONEX is a thin-shell SPHERICAL model, so shell →
+        // ECEF is just spherical → Cartesian at the IONEX base+shell
+        // radius.  Note the latitude is spherically propagated from a
+        // GEODETIC receiver seed (see the convention note on IppGeometry),
+        // so this point sits ~23 km along-shell from where a strictly
+        // geocentric chain would put it — immaterial for sampling B on a
+        // cm-level term, but it is not a pure geocentric reconstruction.
         const double cos_lat = std::cos(ipp_lat_rad);
         const Eigen::Vector3d ipp_ecef(
             ipp_radius_m * cos_lat * std::cos(ipp_lon_rad),

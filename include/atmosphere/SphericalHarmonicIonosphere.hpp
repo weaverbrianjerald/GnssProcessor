@@ -45,12 +45,35 @@ namespace GnssProcessor {
 /// Single-layer ionospheric pierce-point geometry for one receiver→satellite
 /// line of sight.  Angles in radians; @c valid is false below the horizon or on
 /// a degenerate mapping.
+///
+/// @par IPP latitude convention — read this before reusing @c ipp_lat_rad
+/// The shell is a SPHERE of radius @f$R_e + H@f$ and the IONEX / SH grids are
+/// tabulated on it, so the latitude that indexes them is a spherical
+/// (geocentric) one.  But @ref computeIppGeometry propagates it by spherical
+/// trigonometry from the receiver's GEODETIC latitude
+/// (@c Coordinates::ecefToLlh), because that is the IONEX / RTKLIB @c ionppp
+/// convention.  The seed therefore carries the ellipsoid and the propagation
+/// does not: this value is neither a strict geodetic latitude nor a strictly
+/// geocentric chain.  The two conventions differ by up to 0.192° (11.5′)
+/// near 45°, so "geodetic" and "geocentric" are both wrong labels for it —
+/// hence the deliberately bare wording on the field below.
+///
+/// That is correct for the consumers that index a spherical grid or basis with
+/// it (the IONEX bilinear lookup, the P̄_nm(sin β) basis).  The one consumer
+/// that leaves the shell is @c HigherOrderIonosphere, which rebuilds a
+/// Cartesian IPP as R·(cos φ cos λ, cos φ sin λ, sin φ) — consistent with the
+/// sphere, but inheriting the seed offset as
+/// ~23 km of along-shell displacement where it samples the magnetic field.
+/// Immaterial for a cm-level term; do not silently reuse the value anywhere
+/// 0.2° of latitude would matter.
 struct IppGeometry {
     double elevation_rad = 0.0;   ///< Satellite elevation at the receiver.
     double azimuth_rad   = 0.0;   ///< Satellite azimuth (North→East).
     double mapping       = 0.0;   ///< Thin-shell VTEC→STEC mapping 1/cos(z').
-    double ipp_lat_rad   = 0.0;   ///< Geographic latitude of the IPP on the shell.
-    double ipp_lon_rad   = 0.0;   ///< Geographic longitude of the IPP on the shell.
+    double ipp_lat_rad   = 0.0;   ///< Latitude of the IPP on the shell — see the
+                                  ///< convention note above.  NOT plain geodetic.
+    double ipp_lon_rad   = 0.0;   ///< Longitude of the IPP on the shell (unambiguous:
+                                  ///< geodetic and geocentric longitude are equal).
     bool   valid         = false; ///< False if the LOS is below the horizon / degenerate.
 };
 

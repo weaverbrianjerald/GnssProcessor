@@ -170,8 +170,10 @@ public:
      *
      * @param[out] ipp_lat_deg,ipp_lon_deg  GIM pierce point (deg); longitude wrapped to
      *        (-180, 180] because the map returns it unwrapped and this vessel sits on
-     *        the dateline.  These are the map's GEOCENTRIC IPP on ITS shell, so they
-     *        differ from IonoSample's geodetic IPP on the 350 km storm shell — both are
+     *        the dateline.  These use the SAME construction as IonoSample's IPP — both
+     *        spherically propagate from the receiver's GEODETIC latitude — so they
+     *        differ ONLY by shell height (the GIM's own vs the 350 km storm shell), not
+     *        by latitude convention as this warning previously claimed.  Both are
      *        published in truth_atmo.csv rather than reconciled.
      * @return false if no GIM is loaded or the query is invalid / non-finite.
      */
