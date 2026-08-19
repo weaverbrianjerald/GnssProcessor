@@ -615,7 +615,41 @@ own Galileo Σ_E = −1 example describes.
 - Still owed for full multi-constellation coverage: per-knob isolation at multi-GNSS
   (this arm is pair-vs-off), GLONASS/BeiDou regimes (each has its own known hazards —
   see project_glonass_ifb_network, project_beidou_network_clock_divergence), and the
-  sim-truth clock instrument with a second constellation. — INERT-BY-CLOSURE on every roster tested (2026-08-17)
+  sim-truth clock instrument with a second constellation.
+
+**Warm-resume chain (2026-08-19): the pair survives the seam; the seam sheds history — PASS
+with a quantified cost.**  `_fld50ws_{seed,resume,seamless}` on the 50-eq34 pair-ON lineage,
+same snapshot build: seed = hour 1 + `state_snapshot_path` (canonical log-dir-relative
+`network_state_snapshot.json`, 10 s interval, 113 KB — the base snapshot carries `local_carry`
+values UNCONDITIONALLY, coupling left empty per the documented v1 shape;
+`state_snapshot_carry` is the Card-4 blob and stays off here); resume = same +
+`state_snapshot_require: true` + `start_offset_hours: 1.00417` (half-epoch back-off; the
+offset fast-forwards the OBS READER while the snapshot warms the STATE — its "cold-starts the
+carry" doc describes the no-snapshot case), seeded via `run_decomp_arm.py --seed`; control =
+seamless 2 h.
+
+- **INTEGRITY PASS**: require-armed restore succeeds (fingerprint round-trips WITH the
+  `carrycplgauge=`/`carrycplreinit=` conditional tokens), the leg positions at exactly the
+  next epoch (TOW 262830), emit counters continue chain-cumulatively (241 = 121+120 emitted —
+  read run-end "emitted" as CHAIN totals on a resumed leg, not leg totals), **0 withholds, no
+  invariant-#7 breach at the re-coupling edge, 0 orphans**, §14 counter 0 alongside 0 shifts.
+- **Snapshot WRITING is solve-neutral**: the seed leg's solution rows are byte-identical to
+  the seamless run's hour-1 rows (27 547 rows).
+- **The pair re-ignites through the documented empty-coupling degrade**: leg-local held 9 886
+  / diverted 27 588 vs the seamless control's hour-2 increments 12 043 / 31 067 (−18 % /
+  −11 % — the coupling stash re-grows from empty over the hour).
+- **The seam cost, quantified**: the resumed hour runs **+28 % eq34 re-references (339 vs
+  265) and +45 % erases (2 343 vs 1 617)** vs the seamless same hour — the seam sheds
+  leveling history.  Consequently the resumed wire reads **37 % QUIETER** (pivoted 1.639 vs
+  2.599 cyc/ep on the identical 119-epoch set): **quiet-by-forgetting, NOT a quality gain** —
+  each extra erase re-levels an arc and zeroes its accumulated fractional drift.  This is the
+  standing "a warm-resume seam measurably erases the events" doctrine, now measured on the
+  coupling pair specifically.  Corollary: never compare wire/event statistics across a seam
+  boundary against a seamless arm — the seam side is biased quiet.
+- Still owed: a resume chain on a lineage where the DEFECT fires post-seam (this chain's
+  hour 2 is defect-free even seamlessly, so "does 1f still recover withholds after a resume"
+  is untested — needs a roster/window whose breach epochs land in hour 2), and multi-leg
+  chains (seed → leg → leg). — INERT-BY-CLOSURE on every roster tested (2026-08-17)
 
 §13.8's other open item ("C-GF was not varied in any A/B"), closed with four arms on the same
 build as §13.9: `_fld50_cgf{00,11}` (field eq34) and `_s24cpl2_cgf{00,11}` (sim), each the
