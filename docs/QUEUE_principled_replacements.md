@@ -29,9 +29,25 @@ shape — the synthetic network (truth-graded, injectable) is the venue for all 
 from other docs and from `include/config/GnssConfig.hpp:3469` and `scripts/t3_null_fit.py`, so a
 re-ranking is expressed HERE rather than by renumbering.
 
-> ### **8(a) → 8(b) → 4(R2/R4) → 2 → 1(b) → 5 → 7 → 6**
-> with **4(R1) HELD**, **3 dissolved into 1(d)**, **0 downgraded**, **1(a) demoted**, and
+> ### **9 → 8(b) → 4(R2/R4) → 2 → 1(b) → 5 → 7 → 6**  *(fifth ranking, 2026-08-20)*
+> with **8(a) EXECUTED 2026-08-20 (verdict: PERSISTS — see §8)**, **4(R1) HELD**,
+> **3 dissolved into 1(d)**, **0 downgraded**, **1(a) demoted**, and
 > **R0 + 1(d) already EXECUTED, LANDED and VALIDATED** (2026-08-14).
+>
+> **Item 9 is NEW and ranks FIRST — the slip-RE-LEVEL level walk**
+> (`docs/SPEC_slip_relevel_walk.md`): on the first long/multi-GNSS/realistic-slip
+> truth fixture, every refloat re-levels its arc from ONE epoch of code and freezes
+> the result (zero-q), injecting station-common metre-class iono error into the
+> leveling datum; the ZWD/clock exchange integrates the steps into a √t walk
+> (6 h → ~6.5 m ZWD rms, clock contrast 14 m) with EVERY internal instrument
+> silent.  Isolated by a six-arm ladder: iono posture / arc persistence /
+> coupling stack / Galileo all exonerated; the QUIET twin converges (0.15 m).
+> The T4 arc-refloat storm (21 k arcs / 6 h) is a co-symptom riding the same
+> iono-level error — halving it moves nothing, so 4(R1)-class statistic work
+> stays SECOND to fixing the re-level edge.  Fix options §6 of the SPEC
+> (predicted-phase re-level / validated-delta carry repair / post-re-level vet
+> window / at minimum the injection counter).  This is the measured reason a
+> "robust network run" does not yet survive a realistic slip environment.
 
 Why this order — the measurement that earned each call lives in the item's own section:
 
@@ -682,6 +698,32 @@ question is whether it survives with the SH field armed. Everything needed exist
 
 ⚠ **Grade `iono_total_m`, never `iono_m`** — the latter is the seed-less correction and was ~11 % of
 the quantity (§7.8).
+
+✅ **8(a) MEASURED 2026-08-20 — the error PERSISTS.** Same-build two-arm mini-ladder
+(exe `a4b3eee9`, configs `_q8a_{ctl,sh}.json`, both re-run so the control shares the build;
+grader promoted from the scratch join to `scripts/simnet_iono_interaction.py`, identical
+13 281 settled triples in both arms):
+
+| arm | posture | interaction rms | by station | b(sat) lump range |
+|---|---|---|---|---|
+| `runs/q8a_ctl` | free-slant + GF datum (the item-4 lineage) | **0.7061 m** | 0.175–2.232 (S06 worst) | −4.22…+3.86 m |
+| `runs/q8a_sh` | DIRECTIVE (`estimate_iono_sh` deg-8, cutoff 25, GF datum off per interlock) | **0.6691 m** | 0.225–2.202 (S06 worst) | −1.29…+0.77 m |
+
+The SH field absorbs the satellite-common structure (the b(sat) lump collapses 5×, as it
+should) and moves the interaction **−5 % only**.  Per the pre-registered outcomes: **the
+root is the representation itself, 8(b) is the real card, and the D5 hold is genuinely
+lifted.**  Item 4's sim null numbers are NOT invalidated by the posture deviation — the
+heterogeneity survives the directive posture with the same worst station.  Note the arm
+could not literally be "one knob": `code_bias_gf_datum` is hard-refused with
+`estimate_iono_sh`, so the swap is GF-datum-off + SH-on (datum change ⇒ grader change —
+the interaction decomposition is datum-free by construction, so it grades across the pair).
+
+**Collateral finding (needs its own derivation before any defect claim):** the fitted
+per-station iono lump a(sta) tracks the demeaned truth rx-GF bias (2-band convention
+`(d1−d2)/(1−μ12)`) at **slope +1.86, corr +0.77, IDENTICAL across both postures** — a
+clean Table-8 split would read ~0 (rx-DCB states hold it) or ~±1 (iono absorbs it whole).
+The fixture is TRIPLE-band, so the 2-band GF predictor may simply be the wrong lump
+coefficient — derive the 3-band absorbed lump before reading 1.86 as over-absorption.
 
 ### 8(b) — the representation decision, now with an instrument
 

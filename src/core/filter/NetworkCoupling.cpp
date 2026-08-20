@@ -22,6 +22,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <set>
 #include <string>
 #include <utility>
@@ -96,6 +97,9 @@ void CouplingRowBuilder::tuGaugeRestore(
             const auto it = deficit.find(fam);
             if (it == deficit.end() || it->second.second == 0) {
                 ++R.cpl_gauge_orphan;
+                auto& o = R.cpl_orphan_fam[fam];
+                ++o.first;
+                o.second += std::abs(s);
                 continue;
             }
             it->second.first += s;
@@ -399,10 +403,13 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                             long long& n_cpl_gauge_held,
                             long long& n_cpl_gauge_orphan,
                             long long& n_cpl_reinit_diverted,
-                            int& n_cpl_row_dump) {
+                            int& n_cpl_row_dump,
+                            std::map<std::pair<char,int>, std::pair<long long,double>>*
+                                cpl_orphan_fam_total) {
     // Card 1/1d observability: fold the per-station coupling-term counts into the
     // run totals (SERIAL — the parallel produce above only writes its own slot).
-    if (carry_cpl_cond)
+    if (carry_cpl_cond) {
+        std::map<std::pair<char,int>, std::pair<long long,double>> ep_orphans;
         for (const StationAssembly& Rc : asm_res) {
             n_cpl_terms_present  += Rc.cpl_terms_present;
             n_cpl_terms_departed += Rc.cpl_terms_departed;
@@ -410,7 +417,39 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
             n_cpl_gauge_held     += Rc.cpl_gauge_held;
             n_cpl_gauge_orphan   += Rc.cpl_gauge_orphan;
             n_cpl_reinit_diverted += Rc.cpl_reinit_diverted;
+            for (const auto& [fam, o] : Rc.cpl_orphan_fam) {
+                auto& e = ep_orphans[fam];
+                e.first  += o.first;
+                e.second += o.second;
+            }
         }
+        // Orphan ATTRIBUTION (multi-constellation owed item): one line per epoch that
+        // produced any — names the (constellation,kind) families, counts and |mass|,
+        // so the run log carries the per-epoch attribution the run-total cannot.
+        if (!ep_orphans.empty()) {
+            std::string detail;
+            for (const auto& [fam, o] : ep_orphans) {
+                const char* kind_s =
+                    fam.second == static_cast<int>(SharedParamKind::Clock)     ? "CLK" :
+                    fam.second == static_cast<int>(SharedParamKind::PhaseBias) ? "PB"  :
+                    fam.second == static_cast<int>(SharedParamKind::CodeBias)  ? "CB"  : "SH";
+                detail += fmt::format("{}{}|{}:{} (Σ|m| {:.3g})", detail.empty() ? "" : ", ",
+                                      fam.first, kind_s, o.first, o.second);
+                if (cpl_orphan_fam_total) {
+                    auto& t = (*cpl_orphan_fam_total)[fam];
+                    t.first  += o.first;
+                    t.second += o.second;
+                }
+            }
+            log->info("Network (Card 1f orphan attribution) tow {:.0f}: {} family-sum "
+                      "orphan(s) this epoch — {} — truncated mass with no present "
+                      "same-constellation recipient; the row stays gauge-dirty for that "
+                      "family (no cross-constellation fallback by design).",
+                      tow, std::accumulate(ep_orphans.begin(), ep_orphans.end(), 0LL,
+                                           [](long long a, const auto& kv) { return a + kv.second.first; }),
+                      detail);
+        }
+    }
     // Card 1d debug dump: the first few ASSEMBLED coupling rows of the run
     // (weight, RHS, A_s sparsity/magnitude) — the ground truth of what addStation
     // actually receives, for A/B-arm comparison.  One-shot budget; log-only.

@@ -182,7 +182,9 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                              long long& n_cpl_gauge_held,
                              long long& n_cpl_gauge_orphan,
                              long long& n_cpl_reinit_diverted,
-                             int& n_cpl_row_dump);
+                             int& n_cpl_row_dump,
+                             std::map<std::pair<char,int>, std::pair<long long,double>>*
+                                 cpl_orphan_fam_total = nullptr);
 
 /// Card 3 (eq34) × Card 1 — SPEC_card1_coupling_carry §14: re-base the coupling
 /// references that live on D4-S-transformed satellite phase-bias columns.

@@ -1,0 +1,448 @@
+{
+ "_comment": [
+  "QUEUE item 8(a) ARM (2026-08-20): the DIRECTIVE posture \u2014 network.estimate_iono_sh ON",
+  "(standing user directive 'always on', GnssConfigNetworkPosture.cpp Tier::ON).",
+  "Derived from _simnet24_inj_t3iono.json.  code_bias_gf_datum OFF (loader interlock).",
+  "Question: does the 0.764 m rms per-LOS iono interaction (the T3/integer root, SPEC_t3_null_derivation",
+  "\u00a77.8) collapse / persist / grow with the SH field armed?  Grade iono_total_m, never iono_m."
+ ],
+ "app_mode": "post",
+ "data_source": "internal",
+ "processing": {
+  "mode": "ppp-rtk-network",
+  "active_systems": [
+   "GPS"
+  ],
+  "frequency_mode": "triple",
+  "channel_mode": "all",
+  "elevation_mask_deg": 10.0,
+  "exclude_eclipsing_satellites": true,
+  "leap_seconds_tai": 37.0,
+  "relinearize_geometry": false,
+  "eigen_threads": 10,
+  "max_duration_s": 3900.0,
+  "satellite_interpolation_mode": "lagrange",
+  "satellite_clock_interpolation_mode": "linear",
+  "signal_priorities": {
+   "GPS": [
+    "C1C",
+    "L1C",
+    "C2W",
+    "L2W",
+    "C5Q",
+    "L5Q"
+   ]
+  }
+ },
+ "files": {
+  "internal_data_root": "./data"
+ },
+ "model_corrections": {
+  "enable_troposphere": true,
+  "enable_relativistic_correction": true,
+  "enable_shapiro_delay": true,
+  "enable_solid_earth_tide": true,
+  "enable_ocean_tide_loading": false,
+  "enable_pole_tide": true,
+  "enable_atmospheric_loading": false,
+  "enable_satellite_pco": true,
+  "enable_satellite_pcv": true,
+  "enable_receiver_pco": true,
+  "enable_receiver_pcv": true,
+  "enable_phase_windup": true,
+  "enable_higher_order_ionosphere": false,
+  "enable_code_phase_bias": false
+ },
+ "estimation": {
+  "accumulate_phase_windup": true,
+  "estimate_velocity": false,
+  "estimate_phase_clock": false,
+  "ambiguity_resolution": {
+   "mode": 0
+  },
+  "adaptive_iono_process_noise": {
+   "enable": false
+  },
+  "//iono": "The cutoff, NOT the enable, is the load-bearing field here \u2014 the",
+  "//iono2": "enable is forced on by the W6 slice anyway.  Values other than the",
+  "//iono3": "cutoff are the shipped defaults, restated so an arm cannot inherit a",
+  "//iono4": "changed default silently.",
+  "ionosphere_weighting": {
+   "enable": false,
+   "//": "enable is force-armed by the W6 slice; the CUTOFF is the load-bearing field",
+   "elevation_cutoff_deg": 25.0
+  },
+  "//sh": "Field-matched SH posture (_cbq305_2f_12h_d10): degree 15, single shell,",
+  "//sh2": "sun-fixed, representation-error demean + d5-keep.  trace: true is what",
+  "//sh3": "opens network_vtec_sh.csv (coefficients + sigma) and the per-epoch",
+  "//sh4": "network_vtec_sh_health.csv (a00 + a00 sigma + per-degree rms) \u2014 the a00",
+  "//sh5": "channel of the \u00a711 item 4 decomposition.  network_ionosphere.csv is NOT",
+  "//sh6": "a substitute: it writes x_r alone and is frame-broken (CLAUDE.md).",
+  "global_vtec_sh": {
+   "max_degree": 8,
+   "trace": true,
+   "//": "scale-keyed degree (8 at <=50 sta); layer_height stays the shipped default"
+  }
+ },
+ "filter": {
+  "process_noise": {
+   "position_q": 100.0,
+   "clock_bias_q": 1000.0,
+   "phase_clock_q": 1e-09,
+   "troposphere_q": 1e-09,
+   "ionosphere_q": 0.001,
+   "code_bias_q": 0.0001,
+   "sat_bias_q": 1e-12,
+   "sat_code_bias_q": 1e-10,
+   "sat_phase_bias_q": 1e-12,
+   "sat_clock_q": 0.01,
+   "system_time_offset_q": 1e-12,
+   "ambiguity_q": 1e-12
+  },
+  "initial_std": {
+   "position": 100.0,
+   "clock": 1000.0,
+   "troposphere": 0.5,
+   "ionosphere": 5.0,
+   "ambiguity": 1000.0,
+   "code_bias": 10.0,
+   "sat_bias": 10.0,
+   "sat_phase_bias": 10.0,
+   "sat_clock": 1000.0,
+   "system_time_offset": 1000.0
+  },
+  "measurement_noise": {
+   "code_std_m": 0.3,
+   "phase_std_m": 0.003
+  },
+  "stochastic_model": "elevation"
+ },
+ "network": {
+  "//datum": "Equatorial by choice (\u00a79.8) \u2014 see the header.  Overridden by the",
+  "//datum2": "generator ONLY if this name is absent from the fixture roster.",
+  "clock_datum_station": "S12000SIM",
+  "epoch_sync_tolerance_s": 0.01,
+  "min_stations": 10,
+  "//w6": "=== The W6 + SH-VTEC slice: ONE knob, coupled set forced by the loader ===",
+  "//qc": "=== QC, fingerprint-SAFE ===",
+  "raim": true,
+  "raim_attribution": true,
+  "raim_within_epoch": true,
+  "raim_withhold_sigma0": 6.0,
+  "clock_runaway_check": true,
+  "//qc2": "=== Fingerprinted \u2014 legal only on a FRESH convergence, which this is ===",
+  "phase_leveling": true,
+  "emit_ura": true,
+  "code_bias_disc_jump_test": true,
+  "cycle_slip": {
+   "mw_detect": true,
+   "if_phase_td": true,
+   "datum_station_detect": true
+  },
+  "//qc3": "=== Cold-start hygiene ===",
+  "cold_clock_seed": true,
+  "//mark": "=== Event MARKING (an unarmed marker reads as no event) ===",
+  "emit_clock_disc": true,
+  "clock_disc_jump_test": true,
+  "//sigma": "=== Formal-sigma channels: the vf denominators ===",
+  "serialize_sbasis_contract": true,
+  "emit_phase_bias_sigma": true,
+  "emit_combined_sigma": true,
+  "trace_zwd": true,
+  "trace_sat_bias_states": true,
+  "trace_rx_states": true,
+  "//obs": "=== Observability (durability first: only health_trace flushes) ===",
+  "write_run_manifest": true,
+  "product_flush_per_epoch": true,
+  "health_interval_s": 300,
+  "trace_stations": true,
+  "trace_epoch_status": true,
+  "trace_events": true,
+  "trace_flag_rates": true,
+  "emit_epoch_status_record": true,
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "trace_prefit_census": true,
+  "trace_topology": true,
+  "rhs_attrib_on_trip": true,
+  "trace_estimability": true,
+  "//par": "parallel_carry and parallel_reduce are MUTUALLY EXCLUSIVE \u2014 the loader",
+  "//par2": "silently forces parallel_carry OFF if both are set.",
+  "parallel_stations": true,
+  "parallel_carry": true,
+  "parallel_reduce": false,
+  "//lane": "Lane layer OFF \u2014 measured a net loss at BOTH 63 and 305 stations once",
+  "//lane2": "the window is settled (AGU-26 campaign amendment 1).",
+  "lane_carry": {
+   "enable": false
+  },
+  "closed_loop": {
+   "enable": true,
+   "consumer_undifferenced": true,
+   "consume_network_products": true,
+   "consume_network_clock": true,
+   "ar_mode": 0,
+   "station": {
+    "name": "SZZ000SIM",
+    "rinex_path": "runs/simnet24_inject_null/SZZ000SIM/SZZ000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5378997.6974,
+     -1593331.7073,
+     3025603.1127
+    ]
+   }
+  },
+  "stations": [
+   {
+    "name": "S01000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S01000SIM/S01000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2631677.859,
+     0.0,
+     -5790472.3817
+    ]
+   },
+   {
+    "name": "S02000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S02000SIM/S02000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2614284.2633,
+     2394895.5187,
+     -5285104.8496
+    ]
+   },
+   {
+    "name": "S03000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S03000SIM/S03000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     367755.3958,
+     -4190406.6521,
+     -4780287.0908
+    ]
+   },
+   {
+    "name": "S04000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S04000SIM/S04000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2872469.4101,
+     3746628.7493,
+     -4274644.2456
+    ]
+   },
+   {
+    "name": "S05000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S05000SIM/S05000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5057421.2081,
+     -894590.5883,
+     -3770903.2347
+    ]
+   },
+   {
+    "name": "S06000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S06000SIM/S06000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4617886.7151,
+     -2937523.8217,
+     -3267532.4845
+    ]
+   },
+   {
+    "name": "S07000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S07000SIM/S07000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -1491267.3447,
+     5547434.1274,
+     -2763589.1096
+    ]
+   },
+   {
+    "name": "S08000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S08000SIM/S08000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2748106.1047,
+     -5291300.162,
+     -2260908.3641
+    ]
+   },
+   {
+    "name": "S09000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S09000SIM/S09000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5759244.8105,
+     2103265.5551,
+     -1758390.0362
+    ]
+   },
+   {
+    "name": "S10000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S10000SIM/S10000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5780113.8022,
+     2385944.1722,
+     -1255584.6126
+    ]
+   },
+   {
+    "name": "S11000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S11000SIM/S11000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2684900.8712,
+     -5737487.7752,
+     -753376.9429
+    ]
+   },
+   {
+    "name": "S12000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S12000SIM/S12000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1907440.7893,
+     6081220.115,
+     -251068.248
+    ]
+   },
+   {
+    "name": "S13000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S13000SIM/S13000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5514920.7051,
+     -3196013.3126,
+     251097.1287
+    ]
+   },
+   {
+    "name": "S14000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S14000SIM/S14000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     6187082.9679,
+     -1360216.5305,
+     753402.7047
+    ]
+   },
+   {
+    "name": "S15000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S15000SIM/S15000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3596230.0666,
+     5115266.5797,
+     1255526.0633
+    ]
+   },
+   {
+    "name": "S16000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S16000SIM/S16000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -787831.484,
+     -6079673.8666,
+     1758166.0146
+    ]
+   },
+   {
+    "name": "S17000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S17000SIM/S17000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4559591.9099,
+     3842825.5132,
+     2261140.1844
+    ]
+   },
+   {
+    "name": "S18000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S18000SIM/S18000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5739598.8424,
+     237349.3131,
+     2763649.2203
+    ]
+   },
+   {
+    "name": "S19000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S19000SIM/S19000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3879211.8404,
+     -3860327.5567,
+     3267339.713
+    ]
+   },
+   {
+    "name": "S20000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S20000SIM/S20000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -237201.7004,
+     5129738.3538,
+     3770376.3495
+    ]
+   },
+   {
+    "name": "S21000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S21000SIM/S21000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3025088.7938,
+     -3625069.838,
+     4275029.0433
+    ]
+   },
+   {
+    "name": "S22000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S22000SIM/S22000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4168985.3946,
+     560927.7511,
+     4780331.5883
+    ]
+   },
+   {
+    "name": "S23000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S23000SIM/S23000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2910081.4857,
+     2024759.5867,
+     5284727.8744
+    ]
+   },
+   {
+    "name": "S24000SIM",
+    "rinex_path": "runs/simnet24_inject_null/S24000SIM/S24000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     577696.1768,
+     -2567911.8058,
+     5791387.9123
+    ]
+   }
+  ],
+  "product_output_path": "C:/GnssProcessor/runs/q8a_sh/products.txt",
+  "rank_gate_tol": 1e-12,
+  "rx_code_bias_datum": true,
+  "estimate_sat_code_bias": true,
+  "code_bias_gf_datum": false,
+  "trace_dd_fractional": true,
+  "//ddint": "trace-class (fingerprint-SAFE): network_dd_fractional.csv is what scripts/simnet_amb_integer.py joins against truth_ambiguities + truth_slips to grade the DD ambiguity error in WHOLE CYCLES.  The fractional-only instrument reads an off-by-47.3 as a normal 0.25 and cannot see an integer offset at all.",
+  "trace_station_residuals": true,
+  "trace_slip_events": true,
+  "phase_datum_prioritized": true,
+  "phase_anchor_carry_reref": true,
+  "//pareref": "QUEUE item 1(d) single-knob A/B arm vs _simnet24_inj_pareref_off.json: at a PHASE_ANCHOR handover, marginalize the family's shared PB carry for one epoch + erase its phase-leveling local carries (SPEC_pivot_visibility_gauge_defect \u00a75.07.5 R1).",
+  "//pdp": "A/B arm: network.phase_datum_prioritized ON.  With it OFF the shared phase-bias set is stations.front()'s (the clock pivot's) own phase-bias states, so when the PIVOT loses a satellite the whole network's PB columns for it vanish and the clock absorbs the released direction.  Measured on the OFF twin: pivot S12000SIM loses G15 at tow 303510, PB:G15:{L1C,L2W,L5Q} col_removed the same epoch, CLK_STEP -12.055 m, worst_dev 11.88 m that never recovers, network clock_std 1.00 -> 2.32 permanently.",
+  "trace_raim_redundancy": true,
+  "trace_ionosphere": true,
+  "estimate_iono_sh": true
+ },
+ "data_download": {
+  "enabled": false,
+  "product_source": "COD",
+  "product_type": "FIN",
+  "year": 2024,
+  "doy": 129
+ },
+ "logging": {
+  "enable_main_log": true,
+  "levels": {
+   "measurement_model": "warn",
+   "state_manager": "warn",
+   "state_initializer": "warn",
+   "ppp_model": "warn",
+   "kalman_filter": "warn",
+   "network": "info"
+  }
+ }
+}

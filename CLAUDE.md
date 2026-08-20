@@ -220,7 +220,11 @@ exemption (each was re-learned on a "different" mechanism).
    does not degrade gracefully — it warps the whole solution (iono/clock
    absorb the tension). Instances: phase-leveling zero-q carry (needs slip
    detector), Card-4 invariant DD carry (slip hole → 10.9 cyc/ep field FAIL,
-   Jul 2026).
+   Jul 2026), **and the response's own RE-COUPLING edge: a refloat that
+   re-levels from ONE epoch of code CREATES a fresh zero-q value seeded with
+   station-common iono error — at a realistic slip rate the level channels
+   random-walk metres over hours with every internal instrument silent
+   (60-sta truth campaign, Aug 2026; `docs/SPEC_slip_relevel_walk.md`).**
 2. **Field runs are Release-only** (see Build). Debug perf numbers are
    artifacts; never profile or grade in Debug.
 3. **Every deferral in a card is triaged field-blocking vs field-inert, with

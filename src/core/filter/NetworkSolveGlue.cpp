@@ -916,10 +916,11 @@ if (!gate_ok) {
       emitEpochStatus("gate_withheld", es); }
     // RTA-10: product-level heartbeat for a WITHHELD epoch — an H line with NO
     // E line, so a live tail can tell "gate withheld" from "producer died".
-    // Only once the deferred product writer has opened (the first emit): earlier
-    // withheld epochs precede the product file's existence by construction.
+    // Before the deferred product writer opens (the first emit) the heartbeat is
+    // BUFFERED in setup.pending_h_pre_open and flushed at the open — a leg that
+    // opens inside a withhold era previously wrote nothing for the whole era.
     // σ̂0 is unavailable pre-solve (0 per the H grammar); withheld="*" = whole epoch.
-    if (emit_epoch_status && product_writer) {
+    if (emit_epoch_status) {
         NetworkProducerStatus hst;
         hst.time.week = se.time.week;
         hst.time.tow  = se.time.tow;
@@ -929,8 +930,14 @@ if (!gate_ok) {
         // the feed is off or the pool was empty).
         if (ctx.knobs.h_sigma0_census) hst.sigma0 = ctx.carry.ep_h_sigma0_census;
         hst.withheld  = "*";
-        product_writer->writeEpochStatus(hst);
-        if (nc.product_flush_per_epoch) product_writer->flush();
+        if (product_writer) {
+            product_writer->writeEpochStatus(hst);
+            if (nc.product_flush_per_epoch) product_writer->flush();
+        } else if (setup.contract_pending) {
+            // Buffer ONLY while a v2 writer open is still coming — with no
+            // product path (or v1 immediate open) there is nothing to flush into.
+            setup.pending_h_pre_open.push_back(hst);
+        }
     }
     prev_week = se.time.week; prev_tow = se.time.tow;
     result.action = EpochAction::SkipEpoch;
@@ -1906,10 +1913,10 @@ if (a4_over_ceiling && !perconst_active) {
       }
       emitEpochStatus("sigma0_withheld", es); }
     // RTA-10: product-level heartbeat for the WITHHELD epoch (H line, no E line)
-    // — a live tail can tell "σ̂0 withheld" from "producer died".  Only once the
-    // deferred product writer has opened (the first emit); earlier withheld
-    // epochs precede the product file itself.  withheld="*" = whole epoch.
-    if (emit_epoch_status && product_writer) {
+    // — a live tail can tell "σ̂0 withheld" from "producer died".  Before the
+    // deferred product writer opens (the first emit) the heartbeat is BUFFERED
+    // in setup.pending_h_pre_open and flushed at the open.  withheld="*" = whole epoch.
+    if (emit_epoch_status) {
         NetworkProducerStatus hst;
         hst.time.week = se.time.week;
         hst.time.tow  = se.time.tow;
@@ -1921,8 +1928,14 @@ if (a4_over_ceiling && !perconst_active) {
         hst.sigma0    = ctx.knobs.h_sigma0_census ? ctx.carry.ep_h_sigma0_census
                                                   : sigma0_adapt;
         hst.withheld  = "*";
-        product_writer->writeEpochStatus(hst);
-        if (nc.product_flush_per_epoch) product_writer->flush();
+        if (product_writer) {
+            product_writer->writeEpochStatus(hst);
+            if (nc.product_flush_per_epoch) product_writer->flush();
+        } else if (setup.contract_pending) {
+            // Buffer ONLY while a v2 writer open is still coming — with no
+            // product path (or v1 immediate open) there is nothing to flush into.
+            setup.pending_h_pre_open.push_back(hst);
+        }
     }
     // INC-5: this epoch is about to `continue`, so it never reaches the
     // SB_FRAMEDIAG consumer — the recorder has to fire HERE or the A4 trigger

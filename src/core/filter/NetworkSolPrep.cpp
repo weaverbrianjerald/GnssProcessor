@@ -1106,6 +1106,20 @@ NetworkSolPrepResult networkSolPrep(
             log->info("Network: product serialization open — v2 S-basis contract, "
                       "{} realized clock pivot(s).", pending_contract.decl.clock_pivot_sat.size());
             last_contract_emit_s = pl_now_s;   // RTA-5: the header S line is the first broadcast
+            // RTA-10 gap fix: flush the heartbeats of every withheld epoch that
+            // preceded this open, in tow order (all earlier than this epoch by
+            // construction) — a leg that OPENS inside a withhold era previously
+            // wrote nothing for the whole era.
+            if (!setup.pending_h_pre_open.empty()) {
+                for (const auto& hst : setup.pending_h_pre_open)
+                    product_writer->writeEpochStatus(hst);
+                log->info("Network (RTA-10): flushed {} buffered withheld-epoch "
+                          "heartbeat(s) that preceded the writer open — the wire now "
+                          "covers the pre-emit withhold era.",
+                          setup.pending_h_pre_open.size());
+                setup.pending_h_pre_open.clear();
+                setup.pending_h_pre_open.shrink_to_fit();
+            }
         } else {
             log->error("Network: failed to open product_output_path '{}' for writing; "
                        "disabling on-disk serialization for this run.", prod_path.string());

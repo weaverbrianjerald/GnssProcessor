@@ -1946,6 +1946,12 @@ namespace GnssProcessor {
         // rows this card could NOT make gauge-invariant.  Standing invariant #4: armed with
         // both at 0 means no row was ever truncated — the card is inert, not clean.
         long long n_cpl_gauge_held = 0, n_cpl_gauge_orphan = 0;
+        /// Orphan attribution (owed by the 2026-08-19 multi-constellation arm): run totals
+        /// per (constellation, SharedParamKind) — orphan count + summed |truncated mass|
+        /// left gauge-dirty.  Structurally a >=2-constellation channel (a row's minority
+        /// family can lose ALL present columns while the majority family survives);
+        /// every GPS-only arm measured 0.  Fed by foldAndDumpCouplingRows, read at teardown.
+        std::map<std::pair<char,int>, std::pair<long long,double>> cpl_orphan_fam_total;
         /// Card 1g's own denominator — terms diverted to the departed route by the WIDENED
         /// (kind,sat,signal) probe specifically.  Armed with this at 0 means the
         /// realization-step feeds never matched a live coupling term: INERT, not clean.

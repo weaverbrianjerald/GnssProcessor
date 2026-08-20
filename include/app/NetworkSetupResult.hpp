@@ -105,6 +105,16 @@ namespace GnssProcessor {
         std::filesystem::path prod_path;
         SbasisContract pending_contract;
         bool           contract_pending = false;
+        /// RTA-10 gap fix: H heartbeats for withheld epochs that PRECEDE the
+        /// deferred writer's open.  A leg that opens inside a withhold era
+        /// previously wrote NOTHING for the whole era — the exact "withheld vs
+        /// producer died" ambiguity the H line exists to resolve.  Buffered by
+        /// the three withhold sites (rank gate, A4 σ̂0 ceiling, SH health gate)
+        /// while product_writer is null, flushed in tow order immediately after
+        /// the writer opens at the first emit; a run that NEVER emits WARNs at
+        /// teardown with the count (the v2 contract header cannot be stamped
+        /// without a realized datum, so no file is fabricated for it).
+        std::vector<NetworkProducerStatus> pending_h_pre_open;
         /// Closed-loop consumer: the engine stores a GnssConfig& to
         /// consumer_config (address-pinned) — declared before consumer, which is
         /// destroyed first.

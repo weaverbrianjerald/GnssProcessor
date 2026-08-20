@@ -4325,8 +4325,10 @@ namespace GnssProcessor {
             log->info("Network (RTA-10): network.emit_epoch_status_record on — one positional H "
                       "heartbeat line per epoch in the product file (including gate / σ̂0 "
                       "withholds, which otherwise emit nothing), so a tail consumer can tell "
-                      "\"withheld\" from \"producer died\".  Coverage starts at the first emit "
-                      "(the deferred product writer opens then).");
+                      "\"withheld\" from \"producer died\".  Withheld epochs that precede the "
+                      "first emit are buffered and flushed when the deferred v2 writer opens, "
+                      "so a leg opening inside a withhold era still gets wire coverage (a "
+                      "never-emitting run WARNs at teardown instead — no file is fabricated).");
             // P4: gated on !service_mode — the bundle arms product_flush_per_epoch below.
             if (!network_config_.product_flush_per_epoch && !service_mode)
                 log->info("Network (RTA-10): consider network.product_flush_per_epoch alongside "

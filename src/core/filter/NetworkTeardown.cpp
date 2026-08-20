@@ -354,6 +354,16 @@ int networkTeardown(
               "({} of those withheld by the observability gate, {} by the A4 σ̂0 ceiling) — "
               "of {} synced.",
               n_emitted, n_skipped, n_gate_withheld, n_sigma0_withheld, synced.size());
+    // RTA-10 gap fix: heartbeats buffered for a v2 writer open that never came.
+    // A run that NEVER emits cannot stamp the contract header (no realized
+    // datum), so no product file is fabricated — but the withheld era must not
+    // vanish silently (invariant #4).
+    if (!setup.pending_h_pre_open.empty())
+        log->warn("Network (RTA-10): run ended with {} withheld-epoch heartbeat(s) "
+                  "never written — the run NEVER EMITTED, the deferred v2 product "
+                  "writer never opened, and the product file does not exist.  Every "
+                  "epoch was withheld; read the run log / traces, not the wire.",
+                  setup.pending_h_pre_open.size());
     // Card DG6 — rank-gate calibration telemetry.  Gated on the tolerance being
     // ARMED (non-default) so a default run's log text is byte-identical, per DG5's
     // "with the trace on, the new FILE is the only artifact delta".  The same
@@ -3073,13 +3083,30 @@ int networkTeardown(
                       "(both excluded by design), or the rows never reached the restore.  "
                       "Investigate before reading an A/B as 'no effect'.",
                       n_cpl_terms_departed);
-        if (ctx.counters.n_cpl_gauge_orphan > 0)
+        if (ctx.counters.n_cpl_gauge_orphan > 0) {
+            // Orphan ATTRIBUTION (multi-constellation owed item, closed 2026-08-20):
+            // per-(constellation,kind) totals so the run-end line names WHERE the
+            // gauge-dirty residue lives; per-epoch lines are in the run log
+            // ("Card 1f orphan attribution").  Recipient-fallback decision:
+            // NONE by design — the sums realize per-constellation.
+            std::string fam_detail;
+            for (const auto& [fam, o] : ctx.counters.cpl_orphan_fam_total) {
+                const char* kind_s =
+                    fam.second == static_cast<int>(SharedParamKind::Clock)     ? "CLK" :
+                    fam.second == static_cast<int>(SharedParamKind::PhaseBias) ? "PB"  :
+                    fam.second == static_cast<int>(SharedParamKind::CodeBias)  ? "CB"  : "SH";
+                fam_detail += fmt::format("{}{}|{}: {} (Σ|m| {:.3g})",
+                                          fam_detail.empty() ? "" : ", ",
+                                          fam.first, kind_s, o.first, o.second);
+            }
             log->warn("Network (Card 1f): {} family(ies) had truncated coefficient mass with NO "
                       "present column to carry it — the whole family departed at once, so the "
                       "row cannot be made gauge-invariant this epoch and still observes the "
                       "datum gauge.  This is the residue the card cannot remove; if it is a "
-                      "large fraction of `held`, the carry is outliving its border.",
-                      ctx.counters.n_cpl_gauge_orphan);
+                      "large fraction of `held`, the carry is outliving its border.  "
+                      "Attribution: [{}].",
+                      ctx.counters.n_cpl_gauge_orphan, fam_detail);
+        }
     }
     if (carry_vce) {
         // M2 (LS-VCE): run-end honesty summary — the trailing-window measured

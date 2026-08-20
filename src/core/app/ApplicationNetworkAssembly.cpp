@@ -2925,7 +2925,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
                             ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan,
                             ctx.counters.n_cpl_reinit_diverted,
-                            n_cpl_row_dump);
+                            n_cpl_row_dump,
+                            &ctx.counters.cpl_orphan_fam_total);
 
     // SD pre-reduce EWL trace drain (SERIAL, post-produce — SPEC_sd_ewl_prereduce §6).
     // The rows were formatted per station inside the parallel produce; writing them

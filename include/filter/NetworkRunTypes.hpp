@@ -472,6 +472,16 @@ struct StationAssembly {
     /// Both stay 0 with the card off, so a nonzero pair is proof the wiring ran.
     long long                 cpl_gauge_held{0};
     long long                 cpl_gauge_orphan{0};
+    /// Orphan ATTRIBUTION (owed by the 2026-08-19 multi-constellation arm, which
+    /// measured the first nonzero orphan count — 62, all multi-GNSS): per
+    /// (constellation, SharedParamKind) family, the orphan COUNT and the summed
+    /// |truncated mass| left gauge-dirty.  Recipient-fallback DECISION (recorded
+    /// here so nobody re-derives it): there is NO fallback — the coefficient sums
+    /// realize per-constellation because the datum does, so holding an orphaned
+    /// family's mass against the row's OTHER constellation family would move a
+    /// different datum's gauge.  The residue stays counted, attributed, and
+    /// unfixed by construction; a fallback needs its own derivation card.
+    std::map<std::pair<char,int>, std::pair<long long,double>> cpl_orphan_fam;
     /// Card 1g (network.carry_coupling_reinit_sources): coupling terms diverted to the
     /// departed route by the WIDENED (kind,sat,signal) probe specifically — i.e. terms the
     /// legacy sat-wide probe would have folded as present.  This is the card's own

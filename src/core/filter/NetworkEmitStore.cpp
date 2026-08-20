@@ -127,8 +127,9 @@ void networkEmitStore(
                                      ctx.carry.sh_gate_oob_run));
         // RTA-10: product-level heartbeat for the WITHHELD epoch (H line, no E
         // line) — a live tail can tell "SH gate withheld" from "producer died".
-        // Only once the deferred product writer has opened (the first emit).
-        if (emit_epoch_status && product_writer) {
+        // Before the deferred writer opens (the first emit) the heartbeat is
+        // BUFFERED in setup.pending_h_pre_open and flushed at the open.
+        if (emit_epoch_status) {
             NetworkProducerStatus hst;
             hst.time.week = se.time.week;
             hst.time.tow  = se.time.tow;
@@ -136,8 +137,14 @@ void networkEmitStore(
             // H-rider: the census σ̂₀ exists on a withheld epoch too (pre-solve).
             if (ctx.knobs.h_sigma0_census) hst.sigma0 = ctx.carry.ep_h_sigma0_census;
             hst.withheld  = "*";
-            product_writer->writeEpochStatus(hst);
-            if (nc.product_flush_per_epoch) product_writer->flush();
+            if (product_writer) {
+                product_writer->writeEpochStatus(hst);
+                if (nc.product_flush_per_epoch) product_writer->flush();
+            } else if (setup.contract_pending) {
+                // Buffer ONLY while a v2 writer open is still coming — with no
+                // product path (or v1 immediate open) there is nothing to flush into.
+                setup.pending_h_pre_open.push_back(hst);
+            }
         }
         return;
     }
