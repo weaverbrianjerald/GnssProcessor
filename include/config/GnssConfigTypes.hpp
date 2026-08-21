@@ -619,11 +619,12 @@ namespace GnssProcessor {
         ChainDatumRpb,      ///< Eq-34 chain-datum per-receiver phase-bias split.
         DdCarry,            ///< Card-4 invariant DD carry, z-store.
         SatClockWfm,        ///< Two-state satellite clock model, white-FM term (q1) on the bias.
-        SatClockRwfm        ///< Two-state satellite clock model, random-walk-FM term (q2) on the rate.
+        SatClockRwfm,       ///< Two-state satellite clock model, random-walk-FM term (q2) on the rate.
+        IonoCarry           ///< Per-LOS slant-iono carry across the epoch seam (QUEUE 8b).
     };
 
     /// Number of entries in @ref NetworkQClass / @ref kNetworkQClassTable.
-    inline constexpr std::size_t kNetworkQClassCount = 11;
+    inline constexpr std::size_t kNetworkQClassCount = 12;
 
     /**
      * @brief Static descriptor for one @ref NetworkQClass — the single place
@@ -664,6 +665,7 @@ namespace GnssProcessor {
         { "dd_carry",           "network.carry_invariant_qz",             "network_carry_invariant_qz", 0.0, "m^2/s", "network.carry_invariant" },
         { "sat_clock_wfm",      "network.clock_model_q1",                 "network_clock_model_q1", 0.0, "m^2/s",  "network.clock_model" },
         { "sat_clock_rwfm",     "network.clock_model_q2",                 "network_clock_model_q2", 1.5e-7, "m^2/s^3", "network.clock_model" },
+        { "iono_carry",         "network.iono_carry_q",                   "iono_carry_q",      1e-4,   "m^2/s",   "network.carry_iono" },
     } };
 
     /**

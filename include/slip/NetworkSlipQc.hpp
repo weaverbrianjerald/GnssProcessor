@@ -324,6 +324,87 @@ BridgeReplaceOutcome networkSlipBridgeReplace(
     DeltaBridgeSolve* solved = nullptr);
 
 /**
+ * @brief Bridge v3 — staged closed-form cascade over the pend's equation menu
+ *        (SPEC_slip_relevel_walk §8.2 follow-on: the better second equation).
+ *
+ * Stage 1 resolves the IF-pair plane (ΔN1, ΔN2):
+ *  - E2 route (@c has_dn): the v2 2×2 from the MW wide-lane integer — kept
+ *    verbatim (the integer, when it arrives, is the stronger equation).  When
+ *    the GF row is ALSO present, the E4 measurement over-determines the plane
+ *    and the standardized plane residual @f$|d_{GF} - (\lambda_1\Delta N_1 -
+ *    \lambda_2\Delta N_2)| / \sigma@f$ screens a wrong detector-rounded
+ *    integer (±1 WL sits 2.5–5σ off the float plane) — reject at
+ *    @c kBridgePlaneResidMax.
+ *  - E1+E4 route (@c has_gf, no integer yet): solve
+ *    @f$[\beta_1, -\beta_2; \lambda_1, -\lambda_2][\Delta N_1;\Delta N_2] =
+ *    [\delta_{IF}; d_{GF}]@f$ — same-epoch, float-only, zero
+ *    integer-hypothesis risk.  det ≈ −0.046 m² (GPS) / −0.048 (GAL); at
+ *    cm-class inputs σ(ΔN) ≈ 0.15–0.3 cyc.  The two measurements share the
+ *    same band TDs, so the propagation carries an off-diagonal
+ *    @f$\rho\,\sigma_{IF}\sigma_{GF}@f$ (phase-noise limit ρ ≈ +0.97, and the
+ *    solve coefficients have OPPOSITE signs, so the shared noise partially
+ *    CANCELS: independent propagation (ρ = 0) OVERSTATES σ(ΔN) — up to ~3.7×
+ *    in the pure-phase limit, unit-pinned — costing yield through the σ cap,
+ *    never safety.  ρ must never exceed the physical limit: an over-set ρ
+ *    UNDER-states σ, which is the dangerous direction.  0.6 is the shipped
+ *    conservative middle).
+ * Stage 2 (@c has_ewl) chains band 3: ΔN3 = ΔN_shared + dn_ewl_b3 (the pend
+ * normalized the candidate's frequency-sorted sign at fill), var3 =
+ * var_shared + σ_EWL² (cycles), λ3 derived from (λ_shared, λ_EWL) alone.
+ * FLOAT throughout — the kernel never rounds (rounding its output re-imports
+ * the mw_only wrongness behind an honest-looking σ).
+ */
+struct BridgeV3Solve {
+    bool   ok{false};
+    bool   has3{false};            ///< Band-3 chained (EWL slot present + stage 1 ok).
+    bool   used_gf{false};         ///< Stage 1 took the E1+E4 route (no MW integer).
+    double dn1_cyc{0}, dn2_cyc{0}, dn3_cyc{0};
+    double shift1_m{0}, shift2_m{0}, shift3_m{0};
+    double var1_m2{0}, var2_m2{0}, var3_m2{0};
+    double lam3_m{0};              ///< Band-3 wavelength (for the corroboration).
+    double plane_resid_sigma{-1.0};///< E2-vs-E4 overdetermination residual (σ); <0 = not formed.
+};
+/// Conservative E1/E4 error correlation (shared band-TD content; phase limit 0.97).
+inline constexpr double kBridgeGfIfRho = 0.6;
+/// Plane-residual reject threshold (σ) for a wrong detector-rounded WL integer.
+inline constexpr double kBridgePlaneResidMax = 4.0;
+BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
+                                       double max_abs_cyc, double max_sigma_cyc);
+
+/**
+ * @brief Bridge v3 replace — the v2 outcome ladder over up to THREE bands.
+ *
+ * Same discipline as @ref networkSlipBridgeReplace: kernel caps, then per-band
+ * free-level corroboration (band 3 included when solved and its pre-slip carry
+ * was captured at the FLAG epoch), then value+var-only mutation.  NO partial
+ * apply — a corroboration failure on any solved band rejects the whole bridge
+ * (a half-replaced LOS would mix pre-slip and free-re-level frames).
+ */
+BridgeReplaceOutcome networkSlipBridgeV3Replace(
+    const RelevelPend& pd, int sta, const std::string& sat,
+    std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+    double rho_if_gf, double max_abs_cyc, double max_sigma_cyc, double corrob_cyc,
+    BridgeV3Solve* solved = nullptr);
+
+/**
+ * @brief Bridge v3 E3: fill a pend's EWL slot from a confident MW candidate
+ *        whose pair shares EXACTLY ONE band with the pend's IF pair.
+ *
+ * Normalizes the integer to ΔN(band3) − ΔN(shared band) regardless of the
+ * candidate's frequency-sorted pair order — the panel's #1 defect: the GAL EWL
+ * arrives as (L7Q,L5Q) = ΔN3 − ΔN2 while GPS's (L2W,L5Q) = ΔN2 − ΔN3, and a
+ * missed flip passes every σ cap.  Also derives the shared-band index (1 or 2
+ * within the IF pair) and whether band 3 sits on the EWL pair's high-frequency
+ * side (the λ3 derivation needs the sign of 1/λ_EWL).  @p sigma_floor_eff_cyc
+ * is the ALREADY elevation-mapped floor — the v2 frac proxy understates the
+ * single-epoch EWL σ ~100× at low elevation.  Returns false (pend untouched)
+ * when the pair does not link exactly-one band, the pend already holds an EWL,
+ * or the linked third band contradicts the pend's recorded sig3.
+ */
+bool networkSlipFillEwlSlot(RelevelPend& pd, const MwBridgeCand& cand,
+                            double sigma_floor_eff_cyc);
+
+/**
  * @brief IF-phase triple-difference slip driver: pool the PASS-A deferred
  *        ΔΔφ_IF caches across stations by signal pair, remove the network
  *        common-mode median, threshold elevation-aware against an
@@ -397,6 +478,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                     LocalCarry>* bridge_local_carry = nullptr,
                            SlipQcCounters* bridge_cnt = nullptr,
                            std::map<std::tuple<int, std::string, std::string>,
-                                    RelevelPend>* relevel_pend = nullptr);
+                                    RelevelPend>* relevel_pend = nullptr,
+                           const RawSlipEpoch* raw_epoch = nullptr,
+                           const std::vector<RawSlipHistory>* raw_hist = nullptr);
 
 } // namespace GnssProcessor

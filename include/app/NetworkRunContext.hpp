@@ -38,6 +38,7 @@
 #include "filter/NetworkMeasurementAdmission.hpp" // MeasurementAdmissionArc + tallies (product-referenced admission)
 #include "filter/NetworkRhsAttrib.hpp"       // NetworkAttribFrame (INC-5 flight-recorder retention slot)
 #include "filter/NetworkZStore.hpp"     // ArcKey (D5 inject/hold tag sets)
+#include "slip/NetworkRawObservables.hpp" // IonoCsState (CS-GF authority, QUEUE 8b successor)
 #include "filter/NetworkSbasis.hpp"     // NetworkSbasis::Plan (lifecycle-fn params)
 #include "filter/NetworkBiasAdmission.hpp" // CB-ADM: latched W6 code-bias admission census (ctx.admission)
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
@@ -110,6 +111,12 @@ namespace GnssProcessor {
         /// row bias at conditional-variance (mm) confidence.
         bool carry_cpl_reinit{};
         bool zwd_on{};
+        bool iono_on{};        ///< Slant-iono carry (QUEUE 8b, network.carry_iono); loader guarantees phase_leveling + relevel_free_epoch (scope=relevel) and the SH/mech-B/carry_invariant mutexes.
+        bool iono_scope_always{};  ///< iono_carry_scope == "always" (else "relevel").
+        bool iono_source_smoothed{};  ///< iono_carry_source == "smoothed_gf" (the CS-GF authority) vs "solve".
+        double iono_q{};       ///< Slant-iono carry RW process noise (m²/s).
+        double iono_var_floor{};   ///< Inject-side variance floor (m²) — the wrong-carry healing bound.
+        double iono_max_gap_s{};   ///< Carry eviction gap (s); deliberately longer than pl_max_gap_s.
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
         bool rx_cb_datum{};   ///< RXCB-DATUM: zero-mean-over-receivers DCB datum (network.rx_code_bias_datum).
         double rx_cb_datum_sigma{};  ///< RXCB-DATUM loose physical-bound sigma in m (network.rx_code_bias_datum_sigma_m).
@@ -357,6 +364,7 @@ namespace GnssProcessor {
         bool   prires_pb{};           ///< Satellite phase-bias carry family armed.
         bool   prires_cb{};           ///< Satellite code-bias carry family armed.
         bool   prires_zwd{};          ///< INC-2 ZWD (B9) carry family armed.
+        bool   prires_iono{};         ///< QUEUE 8b slant-iono carry family armed — the ONE instrument that can see a wrong carried iono value (T4 pools phase rows only; the prefit census is x_lin-framed).
         bool   prires_rxcb{};         ///< INC-2 receiver code-bias carry family armed.
         bool   prires_clk{};          ///< Card Q3 INC-0: satellite-CLOCK carry family armed.  Unlike every other family its ê is COMMON-MODE REMOVED per constellation before standardizing — the clock is the one carry with a free per-epoch gauge, and the raw ê would report that gauge on every satellite (standing invariant #5).  Trace-only; this family is the empirical instrument the anchor's q and k are derived from (§3).
         bool   prires_corrob{};       ///< INC-3 raw-observable corroboration join armed.
@@ -946,6 +954,23 @@ namespace GnssProcessor {
         // Per-station ZWD carry (B9): persistent across epochs, keyed by station index
         // (ZWD is one-per-station).  Inert unless network.carry_zwd.
         std::map<int, LocalCarry> zwd_carry;
+        /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed
+        /// (station index, sat).  Diagonal-only (rx-CB rationale — no shared-border
+        /// footprint; the coupling variant is deliberately deferred).  NOT snapshotted:
+        /// a warm resume cold-starts it, degrading to one epoch of today's white-iono
+        /// behavior — the conservative direction (relevel_pend precedent).  The knob IS
+        /// conditionally fingerprinted (solve-affecting; never flip mid-chain).  Inert
+        /// unless network.carry_iono.
+        std::map<std::pair<int, std::string>, LocalCarry> iono_carry;
+        /// CS-GF authority states (QUEUE 8b successor, iono_carry_source =
+        /// smoothed_gf): per (station index, sat) carrier-smoothed GF-code
+        /// slant-iono, advanced serially in the PASS-A slip scan from the
+        /// qualified raw verdicts.  Level-independent evidence — the T4 erase
+        /// edge deliberately does NOT touch it (it erases the carry; the next
+        /// harvest re-stashes from here).  Self-healing scratch, NOT
+        /// snapshotted (the RawSlipHistory rationale).  Bounded at
+        /// (n_stations × visible sats) — no pruning needed.
+        std::map<std::pair<int, std::string>, IonoCsState> iono_cs;
         // Card 3 (eq34): per-(station index, "sys_RPB_σ") receiver phase-bias carry —
         // LOCAL time-linking of δ_{r,σ} (spec D6 v2 in its minimal local form, no
         // border promotion).  Re-estimating the RPB fresh each epoch injects
@@ -1991,6 +2016,22 @@ namespace GnssProcessor {
         /// streak ESCALATIONS to the erase, and flagged arcs with no live carry.
         long long n_relevel_retap_kept = 0, n_relevel_retap_escalated = 0,
                   n_relevel_retap_miss = 0;
+        /// Slant-iono carry (QUEUE 8b) run totals — BOTH coupling edges (invariant #7).
+        /// injected: priors folded (scope-gated).  kept_through_slip: slip-funnel
+        /// entries whose bands were freed (KEEP).  erased_slip: funnel entries not
+        /// freed (ERASE).  erased_t4: T4/RAIM arc-erase hook.  evicted: gap eviction.
+        /// floor_hits: injects clamped by iono_carry_var_floor.  refused_datum:
+        /// DECLARED-ZERO — the code-datum re-realization edge (GF-pin re-election /
+        /// cb_excursion_reinit) ships bare; nonzero means the edge got wired.  Armed
+        /// with injected=0 on a slip-bearing run is a MISWIRE (invariant #4).
+        long long n_iono_carry_injected = 0, n_iono_carry_kept_through_slip = 0,
+                  n_iono_carry_erased_slip = 0, n_iono_carry_erased_t4 = 0,
+                  n_iono_carry_evicted = 0, n_iono_carry_floor_hits = 0,
+                  n_iono_carry_refused_datum = 0;
+        /// CS-GF authority (iono_carry_source = smoothed_gf): recursion resets
+        /// (gap / slip-gate / first sighting) and blend steps.  Armed with
+        /// blends = 0 is a MISWIRE (invariant #4).
+        long long n_iono_cs_resets = 0, n_iono_cs_blends = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

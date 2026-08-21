@@ -393,10 +393,41 @@ struct RelevelPend {
     double lambda_if{0};           ///< (1,1) IF wavelength (m).
     std::string sig1, sig2;        ///< The pair's phase signals.
     double tow_s{0};               ///< Continuous-GPS-s of the flag (expiry base).
+    double el_deg{0};              ///< Elevation at the flag epoch (v3: maps the EWL σ floor at a belated fill).
     bool   has_dn{false};          ///< The MW integer has arrived.
     int    dn_wl{0};               ///< Confident ZD wide-lane integer (cycles).
     double sigma_wl{0};            ///< Its 1σ (cycles, floored).
-    double lambda_wl{0};           ///< Wide-lane wavelength (m).
+    double lambda_wl{0};           ///< Wide-lane wavelength (m).  v3: ALSO set
+                                   ///  (without has_dn) at pend creation when the
+                                   ///  GF row is captured — the kernel derives the
+                                   ///  per-band frequencies from (λ_WL, λ_IF)
+                                   ///  alone, so the E1+E4 route needs it too.
+    // --- Bridge v3, E4: the GF-phase TD row on the SAME pair -----------------
+    // d_gf = λ1·ΔN1 − λ2·ΔN2 + (α2−α1)·δI + ε (geometry/clock-free, undifferenced).
+    // Its σ is EMPIRICAL (the station's own clean-step EWMA gf_step_scale, which
+    // naturally includes the iono-TD content), never a model σ.  Together with
+    // δIF it closes the (1,2) plane at 0.15-0.3 cyc without waiting for MW —
+    // whenever σ_gf ≲ 0.75·σ_IF the GF row is worth as much as a CORRECT WL
+    // integer, with no integer-wrongness risk.
+    bool   has_gf{false};
+    double dgf_m{0};               ///< T1-measured ΔGF across the slip epoch (m).
+    double sigma_gf_m{0};          ///< Its 1σ (m; empirical, floored).
+    // --- Bridge v3, E3: the EWL-MW integer slot (band-3 coverage) ------------
+    // dn_ewl_b3 is NORMALIZED at fill time to ΔN(band3) − ΔN(shared IF band)
+    // regardless of the candidate's frequency-sorted pair order — the GAL EWL
+    // (L7Q,L5Q) is sign-flipped relative to GPS (L2W,L5Q) in raw candidate
+    // order, and a missed flip passes every σ cap (the panel's #1 defect).
+    bool   has_ewl{false};
+    int    dn_ewl_b3{0};           ///< ΔN(band3) − ΔN(shared band), cycles.
+    double sigma_ewl{0};           ///< Its 1σ (cycles; el-mapped floor).
+    double lambda_ewl{0};          ///< EWL wavelength (m).
+    int    ewl_shared_band{0};     ///< Which IF-pair band the EWL pair shares (1 or 2).
+    bool   ewl_b3_hi{false};       ///< Band 3 is the higher-frequency band of the EWL pair.
+    std::string sig3;              ///< The third band's phase signal ("L5Q"/"L7Q").
+    bool   has_pre3{false};        ///< Band-3 pre-slip carry captured at the FLAG epoch
+                                   ///  (a belated capture would read the interim free
+                                   ///  re-level, not the pre-slip level — never do it).
+    double pre3{0}, pre_var3{0};   ///< Pre-slip carry (band 3).
 };
 
 struct RelevelEpochState {
@@ -585,6 +616,15 @@ struct StationAssembly {
     /// the post-solve stash — (rpb_key, A_r column, linearization point).  Empty
     /// unless network.phase_datum_eq34 with phase_datum_eq34_rpb_q_m2s > 0.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_rpb;
+    /// Slant-iono carry (QUEUE 8b): present per-LOS iono columns recorded for the
+    /// post-solve harvest — (sat, A_r column, linearization point).  Recorded
+    /// UNCONDITIONALLY when armed (the harvest stashes every epoch; the inject is
+    /// scope-gated separately).  Same tuple shape as pl_rpb.  Empty unless
+    /// network.carry_iono.
+    std::vector<std::tuple<std::string, Eigen::Index, double>> pl_iono;
+    long long iono_carry_injected{0};   ///< QUEUE 8b: iono carry priors folded this station-epoch (produce-phase local; summed serially).
+    long long iono_carry_floor_hits{0}; ///< QUEUE 8b: injects clamped up to iono_carry_var_floor (expected ~100% mid-arc — the floor IS the effective weight; the q term owns long gaps).
+    std::set<std::string> iono_injected_sats;  ///< QUEUE 8b: sats whose iono prior actually folded this epoch (prires ground-truth `folded`, the pl_zwd_injected pattern).
     /// rx-CB carry (docs/SPEC_rx_cb_carry.md): present receiver code-bias columns
     /// (state key, A_r col, x_lin) recorded for the post-solve harvest.  Filled only
     /// under network.carry_rx_code_bias; same tuple shape as pl_rpb.

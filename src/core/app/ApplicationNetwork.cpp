@@ -305,6 +305,11 @@ int Application::runNetwork() {
         sp.gf_floor_m          = sq.lli_gf_floor_m;
         sp.step_alpha          = sq.lli_step_alpha;
         sp.gap_instrument      = sq.gap_instrument;
+        // Bridge v3 E4: the GF-row capture needs the qualified raw verdicts.
+        sp.bridge_gf           = config_.networkCycleSlipRelevelBridgeGf();
+        // CS-GF authority (iono_carry_source = smoothed_gf): same need.
+        sp.iono_cs             = config_.networkCarryIono()
+                                 && config_.networkIonoCarrySource() == "smoothed_gf";
         slip_qc.hist.resize(stations.size());
     }
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);

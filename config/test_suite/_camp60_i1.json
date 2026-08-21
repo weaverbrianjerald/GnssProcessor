@@ -1,0 +1,784 @@
+{
+ "_comment": "QUEUE 8b arm i1: network.carry_iono scope=relevel on the F4 posture. Pre-registered: the re-draw-event churn kill \u2014 interaction rms 3.57 -> materially toward 0.7 (gate <= 2.0), ZWD settled rms 2.85 -> <= 2.0 with hourly FLAT, census >= 96%, consumer <= 3.26, all six iono-carry counters plausible (injected > 0, kept > 0, t4 erases > 0), T4 attrib_arc expected to SHRINK (feedback broken). NOT dm-class iono, NOT O2/NL delivery (level-locked mid-arc).",
+ "app_mode": "post",
+ "data_source": "internal",
+ "processing": {
+  "mode": "ppp-rtk-network",
+  "active_systems": [
+   "GPS",
+   "Galileo"
+  ],
+  "frequency_mode": "triple",
+  "channel_mode": "all",
+  "elevation_mask_deg": 10.0,
+  "exclude_eclipsing_satellites": true,
+  "leap_seconds_tai": 37.0,
+  "relinearize_geometry": false,
+  "eigen_threads": 10,
+  "max_duration_s": 21900.0,
+  "satellite_interpolation_mode": "lagrange",
+  "satellite_clock_interpolation_mode": "linear",
+  "signal_priorities": {
+   "GPS": [
+    "C1C",
+    "L1C",
+    "C2W",
+    "L2W",
+    "C5Q",
+    "L5Q"
+   ],
+   "Galileo": [
+    "C1C",
+    "L1C",
+    "C5Q",
+    "L5Q",
+    "C7Q",
+    "L7Q"
+   ]
+  }
+ },
+ "files": {
+  "internal_data_root": "./data"
+ },
+ "model_corrections": {
+  "enable_troposphere": true,
+  "enable_relativistic_correction": true,
+  "enable_shapiro_delay": true,
+  "enable_solid_earth_tide": true,
+  "enable_ocean_tide_loading": false,
+  "enable_pole_tide": true,
+  "enable_atmospheric_loading": false,
+  "enable_satellite_pco": true,
+  "enable_satellite_pcv": true,
+  "enable_receiver_pco": true,
+  "enable_receiver_pcv": true,
+  "enable_phase_windup": true,
+  "enable_higher_order_ionosphere": false,
+  "enable_code_phase_bias": false
+ },
+ "estimation": {
+  "accumulate_phase_windup": true,
+  "estimate_velocity": false,
+  "estimate_phase_clock": false,
+  "ambiguity_resolution": {
+   "mode": 0
+  },
+  "adaptive_iono_process_noise": {
+   "enable": false
+  },
+  "//iono": "The cutoff, NOT the enable, is the load-bearing field here \u2014 the",
+  "//iono2": "enable is forced on by the W6 slice anyway.  Values other than the",
+  "//iono3": "cutoff are the shipped defaults, restated so an arm cannot inherit a",
+  "//iono4": "changed default silently.",
+  "ionosphere_weighting": {
+   "enable": false,
+   "//": "enable force-armed by the W6 slice; the CUTOFF is the load-bearing field (10 is the known-bad shipped default)",
+   "elevation_cutoff_deg": 25.0
+  },
+  "//sh": "Field-matched SH posture (_cbq305_2f_12h_d10): degree 15, single shell,",
+  "//sh2": "sun-fixed, representation-error demean + d5-keep.  trace: true is what",
+  "//sh3": "opens network_vtec_sh.csv (coefficients + sigma) and the per-epoch",
+  "//sh4": "network_vtec_sh_health.csv (a00 + a00 sigma + per-degree rms) \u2014 the a00",
+  "//sh5": "channel of the \u00a711 item 4 decomposition.  network_ionosphere.csv is NOT",
+  "//sh6": "a substitute: it writes x_r alone and is frame-broken (CLAUDE.md)."
+ },
+ "filter": {
+  "process_noise": {
+   "position_q": 100.0,
+   "clock_bias_q": 1000.0,
+   "phase_clock_q": 1e-09,
+   "troposphere_q": 1e-09,
+   "ionosphere_q": 0.001,
+   "code_bias_q": 0.0001,
+   "sat_bias_q": 1e-12,
+   "sat_code_bias_q": 1e-10,
+   "sat_phase_bias_q": 1e-12,
+   "sat_clock_q": 0.01,
+   "system_time_offset_q": 1e-12,
+   "ambiguity_q": 1e-12
+  },
+  "initial_std": {
+   "position": 100.0,
+   "clock": 1000.0,
+   "troposphere": 0.5,
+   "ionosphere": 5.0,
+   "ambiguity": 1000.0,
+   "code_bias": 10.0,
+   "sat_bias": 10.0,
+   "sat_phase_bias": 10.0,
+   "sat_clock": 1000.0,
+   "system_time_offset": 1000.0
+  },
+  "measurement_noise": {
+   "code_std_m": 0.3,
+   "phase_std_m": 0.003
+  },
+  "stochastic_model": "elevation"
+ },
+ "network": {
+  "//datum": "Equatorial by choice (\u00a79.8) \u2014 see the header.  Overridden by the",
+  "//datum2": "generator ONLY if this name is absent from the fixture roster.",
+  "clock_datum_station": "S30000SIM",
+  "epoch_sync_tolerance_s": 0.01,
+  "min_stations": 10,
+  "//w6": "=== The W6 + SH-VTEC slice: ONE knob, coupled set forced by the loader ===",
+  "//qc": "=== QC, fingerprint-SAFE ===",
+  "raim": true,
+  "raim_attribution": true,
+  "raim_within_epoch": true,
+  "raim_withhold_sigma0": 6.0,
+  "clock_runaway_check": true,
+  "//qc2": "=== Fingerprinted \u2014 legal only on a FRESH convergence, which this is ===",
+  "phase_leveling": true,
+  "emit_ura": true,
+  "code_bias_disc_jump_test": true,
+  "cycle_slip": {
+   "mw_detect": true,
+   "if_phase_td": true,
+   "datum_station_detect": true,
+   "relevel_free_epoch": true,
+   "relevel_delta_bridge": true
+  },
+  "//qc3": "=== Cold-start hygiene ===",
+  "cold_clock_seed": true,
+  "//mark": "=== Event MARKING (an unarmed marker reads as no event) ===",
+  "emit_clock_disc": true,
+  "clock_disc_jump_test": true,
+  "//sigma": "=== Formal-sigma channels: the vf denominators ===",
+  "serialize_sbasis_contract": true,
+  "emit_phase_bias_sigma": true,
+  "emit_combined_sigma": true,
+  "trace_zwd": true,
+  "trace_sat_bias_states": true,
+  "trace_rx_states": true,
+  "//obs": "=== Observability (durability first: only health_trace flushes) ===",
+  "write_run_manifest": true,
+  "product_flush_per_epoch": true,
+  "health_interval_s": 60,
+  "trace_stations": true,
+  "trace_epoch_status": true,
+  "trace_events": true,
+  "trace_flag_rates": true,
+  "emit_epoch_status_record": true,
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "trace_prefit_census": true,
+  "trace_topology": true,
+  "rhs_attrib_on_trip": true,
+  "trace_estimability": true,
+  "//par": "parallel_carry and parallel_reduce are MUTUALLY EXCLUSIVE \u2014 the loader",
+  "//par2": "silently forces parallel_carry OFF if both are set.",
+  "parallel_stations": true,
+  "parallel_carry": true,
+  "parallel_reduce": false,
+  "//lane": "Lane layer OFF \u2014 measured a net loss at BOTH 63 and 305 stations once",
+  "//lane2": "the window is settled (AGU-26 campaign amendment 1).",
+  "lane_carry": {
+   "enable": false
+  },
+  "closed_loop": {
+   "enable": true,
+   "consumer_undifferenced": true,
+   "consume_network_products": true,
+   "consume_network_clock": true,
+   "ar_mode": 0,
+   "station": {
+    "name": "SZZ000SIM",
+    "rinex_path": "runs/simnet60_campaign/SZZ000SIM/SZZ000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5378997.6974,
+     -1593331.7073,
+     3025603.1127
+    ]
+   }
+  },
+  "stations": [
+   {
+    "name": "S01000SIM",
+    "rinex_path": "runs/simnet60_campaign/S01000SIM/S01000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2265188.7012,
+     0.0,
+     -5942407.3354
+    ]
+   },
+   {
+    "name": "S02000SIM",
+    "rinex_path": "runs/simnet60_campaign/S02000SIM/S02000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2021407.8772,
+     1851772.8674,
+     -5740501.0647
+    ]
+   },
+   {
+    "name": "S03000SIM",
+    "rinex_path": "runs/simnet60_campaign/S03000SIM/S03000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     273912.3392,
+     -3121107.4037,
+     -5538666.6775
+    ]
+   },
+   {
+    "name": "S04000SIM",
+    "rinex_path": "runs/simnet60_campaign/S04000SIM/S04000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2110094.6191,
+     2752245.5542,
+     -5335245.8409
+    ]
+   },
+   {
+    "name": "S05000SIM",
+    "rinex_path": "runs/simnet60_campaign/S05000SIM/S05000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3705701.6763,
+     -655489.3702,
+     -5133600.7216
+    ]
+   },
+   {
+    "name": "S06000SIM",
+    "rinex_path": "runs/simnet60_campaign/S06000SIM/S06000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3397507.9405,
+     -2161218.134,
+     -4932019.1065
+    ]
+   },
+   {
+    "name": "S07000SIM",
+    "rinex_path": "runs/simnet60_campaign/S07000SIM/S07000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -1106673.1228,
+     4116764.3558,
+     -4729018.3704
+    ]
+   },
+   {
+    "name": "S08000SIM",
+    "rinex_path": "runs/simnet60_campaign/S08000SIM/S08000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2064270.9522,
+     -3974619.9047,
+     -4527598.6397
+    ]
+   },
+   {
+    "name": "S09000SIM",
+    "rinex_path": "runs/simnet60_campaign/S09000SIM/S09000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4392069.1972,
+     1603975.5492,
+     -4326232.18
+    ]
+   },
+   {
+    "name": "S10000SIM",
+    "rinex_path": "runs/simnet60_campaign/S10000SIM/S10000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4487672.5452,
+     1852443.8311,
+     -4123617.4908
+    ]
+   },
+   {
+    "name": "S11000SIM",
+    "rinex_path": "runs/simnet60_campaign/S11000SIM/S11000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2128113.2168,
+     -4547662.7078,
+     -3922383.6383
+    ]
+   },
+   {
+    "name": "S12000SIM",
+    "rinex_path": "runs/simnet60_campaign/S12000SIM/S12000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1547939.7961,
+     4935074.6182,
+     -3720038.4962
+    ]
+   },
+   {
+    "name": "S13000SIM",
+    "rinex_path": "runs/simnet60_campaign/S13000SIM/S13000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4596705.4847,
+     -2663888.1516,
+     -3518931.9945
+    ]
+   },
+   {
+    "name": "S14000SIM",
+    "rinex_path": "runs/simnet60_campaign/S14000SIM/S14000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5315422.6762,
+     -1168583.9399,
+     -3317852.9163
+    ]
+   },
+   {
+    "name": "S15000SIM",
+    "rinex_path": "runs/simnet60_campaign/S15000SIM/S15000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3197637.6567,
+     4548309.9624,
+     -3115823.5363
+    ]
+   },
+   {
+    "name": "S16000SIM",
+    "rinex_path": "runs/simnet60_campaign/S16000SIM/S16000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -728568.2988,
+     -5622341.4988,
+     -2914841.8987
+    ]
+   },
+   {
+    "name": "S17000SIM",
+    "rinex_path": "runs/simnet60_campaign/S17000SIM/S17000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4411813.1306,
+     3718277.511,
+     -2713868.7132
+    ]
+   },
+   {
+    "name": "S18000SIM",
+    "rinex_path": "runs/simnet60_campaign/S18000SIM/S18000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5854622.9766,
+     242105.8997,
+     -2512131.2148
+    ]
+   },
+   {
+    "name": "S19000SIM",
+    "rinex_path": "runs/simnet60_campaign/S19000SIM/S19000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4212623.3859,
+     -4192116.0307,
+     -2311239.5401
+    ]
+   },
+   {
+    "name": "S20000SIM",
+    "rinex_path": "runs/simnet60_campaign/S20000SIM/S20000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -277920.2669,
+     6010320.5421,
+     -2109700.1561
+    ]
+   },
+   {
+    "name": "S21000SIM",
+    "rinex_path": "runs/simnet60_campaign/S21000SIM/S21000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3898490.8824,
+     -4671698.1465,
+     -1908866.7055
+    ]
+   },
+   {
+    "name": "S22000SIM",
+    "rinex_path": "runs/simnet60_campaign/S22000SIM/S22000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     6090331.3285,
+     819440.5909,
+     -1708023.4646
+    ]
+   },
+   {
+    "name": "S23000SIM",
+    "rinex_path": "runs/simnet60_campaign/S23000SIM/S23000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5086628.8173,
+     3539145.0419,
+     -1506701.1871
+    ]
+   },
+   {
+    "name": "S24000SIM",
+    "rinex_path": "runs/simnet60_campaign/S24000SIM/S24000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1370263.2173,
+     -6090944.0534,
+     -1305898.9284
+    ]
+   },
+   {
+    "name": "S25000SIM",
+    "rinex_path": "runs/simnet60_campaign/S25000SIM/S25000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3123707.4603,
+     5451277.822,
+     -1105068.7951
+    ]
+   },
+   {
+    "name": "S26000SIM",
+    "rinex_path": "runs/simnet60_campaign/S26000SIM/S26000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -6015176.8024,
+     -1919005.3175,
+     -903941.961
+    ]
+   },
+   {
+    "name": "S27000SIM",
+    "rinex_path": "runs/simnet60_campaign/S27000SIM/S27000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5755649.5185,
+     -2659251.8342,
+     -703132.97
+    ]
+   },
+   {
+    "name": "S28000SIM",
+    "rinex_path": "runs/simnet60_campaign/S28000SIM/S28000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2455423.289,
+     5867116.8614,
+     -502279.4143
+    ]
+   },
+   {
+    "name": "S29000SIM",
+    "rinex_path": "runs/simnet60_campaign/S29000SIM/S29000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2156525.1935,
+     -5995691.5768,
+     -301305.9671
+    ]
+   },
+   {
+    "name": "S30000SIM",
+    "rinex_path": "runs/simnet60_campaign/S30000SIM/S30000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5646469.6887,
+     2967631.571,
+     -100443.0203
+    ]
+   },
+   {
+    "name": "S31000SIM",
+    "rinex_path": "runs/simnet60_campaign/S31000SIM/S31000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -6166935.7629,
+     1625586.9508,
+     100423.3515
+    ]
+   },
+   {
+    "name": "S32000SIM",
+    "rinex_path": "runs/simnet60_campaign/S32000SIM/S32000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3446189.4087,
+     -5359613.3614,
+     301316.2718
+    ]
+   },
+   {
+    "name": "S33000SIM",
+    "rinex_path": "runs/simnet60_campaign/S33000SIM/S33000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1077222.1284,
+     6268014.7823,
+     502255.9947
+    ]
+   },
+   {
+    "name": "S34000SIM",
+    "rinex_path": "runs/simnet60_campaign/S34000SIM/S34000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5012136.8694,
+     -3881678.6011,
+     703043.3609
+    ]
+   },
+   {
+    "name": "S35000SIM",
+    "rinex_path": "runs/simnet60_campaign/S35000SIM/S35000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     6292952.093,
+     -521355.7515,
+     904034.6889
+    ]
+   },
+   {
+    "name": "S36000SIM",
+    "rinex_path": "runs/simnet60_campaign/S36000SIM/S36000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4266630.3117,
+     4612109.0895,
+     1105092.8393
+    ]
+   },
+   {
+    "name": "S37000SIM",
+    "rinex_path": "runs/simnet60_campaign/S37000SIM/S37000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     30453.5145,
+     -6242733.4836,
+     1305821.8198
+    ]
+   },
+   {
+    "name": "S38000SIM",
+    "rinex_path": "runs/simnet60_campaign/S38000SIM/S38000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4164188.9032,
+     4590415.345,
+     1506958.7567
+    ]
+   },
+   {
+    "name": "S39000SIM",
+    "rinex_path": "runs/simnet60_campaign/S39000SIM/S39000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -6117646.8857,
+     -566978.4875,
+     1707646.6163
+    ]
+   },
+   {
+    "name": "S40000SIM",
+    "rinex_path": "runs/simnet60_campaign/S40000SIM/S40000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4846832.3351,
+     -3678572.6668,
+     1908884.5046
+    ]
+   },
+   {
+    "name": "S41000SIM",
+    "rinex_path": "runs/simnet60_campaign/S41000SIM/S41000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -1077158.0771,
+     5920991.0982,
+     2110205.0209
+    ]
+   },
+   {
+    "name": "S42000SIM",
+    "rinex_path": "runs/simnet60_campaign/S42000SIM/S42000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3164833.7543,
+     -5029232.3286,
+     2310887.6559
+    ]
+   },
+   {
+    "name": "S43000SIM",
+    "rinex_path": "runs/simnet60_campaign/S43000SIM/S43000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5651677.5197,
+     1548891.5466,
+     2512326.3397
+    ]
+   },
+   {
+    "name": "S44000SIM",
+    "rinex_path": "runs/simnet60_campaign/S44000SIM/S44000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5133228.1861,
+     2634282.7642,
+     2713860.2821
+    ]
+   },
+   {
+    "name": "S45000SIM",
+    "rinex_path": "runs/simnet60_campaign/S45000SIM/S45000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1970595.7411,
+     -5315348.8366,
+     2914597.4422
+    ]
+   },
+   {
+    "name": "S46000SIM",
+    "rinex_path": "runs/simnet60_campaign/S46000SIM/S46000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2096605.6725,
+     5150264.2131,
+     3116278.4556
+    ]
+   },
+   {
+    "name": "S47000SIM",
+    "rinex_path": "runs/simnet60_campaign/S47000SIM/S47000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4916825.9277,
+     -2330170.6985,
+     3317038.9488
+    ]
+   },
+   {
+    "name": "S48000SIM",
+    "rinex_path": "runs/simnet60_campaign/S48000SIM/S48000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5076915.0258,
+     -1565268.1682,
+     3518877.3484
+    ]
+   },
+   {
+    "name": "S49000SIM",
+    "rinex_path": "runs/simnet60_campaign/S49000SIM/S49000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2615710.4927,
+     4463241.6573,
+     3720835.5886
+    ]
+   },
+   {
+    "name": "S50000SIM",
+    "rinex_path": "runs/simnet60_campaign/S50000SIM/S50000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -1053981.8223,
+     -4908193.4846,
+     3921689.6007
+    ]
+   },
+   {
+    "name": "S51000SIM",
+    "rinex_path": "runs/simnet60_campaign/S51000SIM/S51000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3958209.1877,
+     2811726.1395,
+     4123835.0735
+    ]
+   },
+   {
+    "name": "S52000SIM",
+    "rinex_path": "runs/simnet60_campaign/S52000SIM/S52000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4639766.3632,
+     578242.3955,
+     4326111.3339
+    ]
+   },
+   {
+    "name": "S53000SIM",
+    "rinex_path": "runs/simnet60_campaign/S53000SIM/S53000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2902646.3175,
+     -3410151.6854,
+     4527106.8961
+    ]
+   },
+   {
+    "name": "S54000SIM",
+    "rinex_path": "runs/simnet60_campaign/S54000SIM/S54000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     155372.7678,
+     4260598.8711,
+     4729590.6749
+    ]
+   },
+   {
+    "name": "S55000SIM",
+    "rinex_path": "runs/simnet60_campaign/S55000SIM/S55000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2826473.0884,
+     -2868148.0124,
+     4932218.0185
+    ]
+   },
+   {
+    "name": "S56000SIM",
+    "rinex_path": "runs/simnet60_campaign/S56000SIM/S56000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3758168.7873,
+     192156.2004,
+     5133393.6909
+    ]
+   },
+   {
+    "name": "S57000SIM",
+    "rinex_path": "runs/simnet60_campaign/S57000SIM/S57000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2674021.2834,
+     2209408.5096,
+     5336255.2212
+    ]
+   },
+   {
+    "name": "S58000SIM",
+    "rinex_path": "runs/simnet60_campaign/S58000SIM/S58000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     432848.6339,
+     -3102426.7751,
+     5537550.5097
+    ]
+   },
+   {
+    "name": "S59000SIM",
+    "rinex_path": "runs/simnet60_campaign/S59000SIM/S59000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1554735.7565,
+     2257956.1359,
+     5740661.2559
+    ]
+   },
+   {
+    "name": "S60000SIM",
+    "rinex_path": "runs/simnet60_campaign/S60000SIM/S60000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2208068.2554,
+     -508072.2,
+     5943936.2097
+    ]
+   }
+  ],
+  "product_output_path": "C:/GnssProcessor/runs/camp60_i1/products.txt",
+  "rx_code_bias_datum": true,
+  "estimate_sat_code_bias": true,
+  "code_bias_gf_datum": true,
+  "trace_dd_fractional": true,
+  "//ddint": "trace-class (fingerprint-SAFE): network_dd_fractional.csv is what scripts/simnet_amb_integer.py joins against truth_ambiguities + truth_slips to grade the DD ambiguity error in WHOLE CYCLES.  The fractional-only instrument reads an off-by-47.3 as a normal 0.25 and cannot see an integer offset at all.",
+  "trace_station_residuals": true,
+  "trace_slip_events": true,
+  "phase_datum_prioritized": true,
+  "phase_anchor_carry_reref": true,
+  "//pareref": "QUEUE item 1(d) single-knob A/B arm vs _simnet24_inj_pareref_off.json: at a PHASE_ANCHOR handover, marginalize the family's shared PB carry for one epoch + erase its phase-leveling local carries (SPEC_pivot_visibility_gauge_defect \u00a75.07.5 R1).",
+  "//pdp": "A/B arm: network.phase_datum_prioritized ON.  With it OFF the shared phase-bias set is stations.front()'s (the clock pivot's) own phase-bias states, so when the PIVOT loses a satellite the whole network's PB columns for it vanish and the clock absorbs the released direction.  Measured on the OFF twin: pivot S12000SIM loses G15 at tow 303510, PB:G15:{L1C,L2W,L5Q} col_removed the same epoch, CLK_STEP -12.055 m, worst_dev 11.88 m that never recovers, network clock_std 1.00 -> 2.32 permanently.",
+  "carry_conditional_coupling": true,
+  "shared_carry_full_cov": true,
+  "carry_coupling_time_update": true,
+  "carry_invariant": false,
+  "carry_coupling_gauge_project": true,
+  "carry_coupling_reinit_sources": true,
+  "estimate_iono_sh": false,
+  "trace_ionosphere": true,
+  "trace_slip_raw": true,
+  "h_sigma0_prefit_census": true,
+  "emit_generation_id": true,
+  "emit_clock_frame_hold": true,
+  "carry_iono": true,
+  "prior_residual_census": true,
+  "prior_residual_families": "iono"
+ },
+ "data_download": {
+  "enabled": false,
+  "product_source": "COD",
+  "product_type": "FIN",
+  "year": 2024,
+  "doy": 129
+ },
+ "logging": {
+  "enable_main_log": true,
+  "levels": {
+   "measurement_model": "warn",
+   "state_manager": "warn",
+   "state_initializer": "warn",
+   "ppp_model": "warn",
+   "kalman_filter": "warn",
+   "network": "info"
+  },
+  "enable_rt_engine": true
+ }
+}

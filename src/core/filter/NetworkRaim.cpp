@@ -610,6 +610,15 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             }
                         }
                         local_carry.erase(std::make_tuple(i, pa.sat, pa.signal));
+                        // QUEUE 8b: a T4/consensus erase means the arc's LEVEL is not
+                        // trusted, and the attribution cannot separate level error from
+                        // carried-iono error (the T4 statistic reads their sum) — erase
+                        // the LOS's iono carry with it so the re-level re-draws both.
+                        // Idempotent across the per-signal loop; a retap-KEPT arc above
+                        // never reaches this line (kept level ⇒ kept iono carry).
+                        if (ctx.knobs.iono_on &&
+                            ctx.carry.iono_carry.erase({i, pa.sat}))
+                            ++ctx.counters.n_iono_carry_erased_t4;
                         // BOOKKEEPING, not the actuator on the Card-4 path: the producer
                         // forms every innovation against the linearization point and never
                         // writes the solution back, so moving x_lin leaves the reduced

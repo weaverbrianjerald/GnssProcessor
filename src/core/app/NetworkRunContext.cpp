@@ -63,6 +63,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
     k.zwd_on = config_.networkCarryZwd();
     k.zwd_q = config_.networkZwdCarryQ();
+    k.iono_on = config_.networkCarryIono();  // loader guarantees phase_leveling + relevel_free_epoch (scope=relevel) + the SH/mech-B/carry_invariant mutexes
+    k.iono_scope_always = (config_.networkIonoCarryScope() == "always");
+    k.iono_source_smoothed = (config_.networkIonoCarrySource() == "smoothed_gf");
+    k.iono_q = config_.networkIonoCarryQ();
+    k.iono_var_floor = config_.networkIonoCarryVarFloor();
+    k.iono_max_gap_s = config_.networkIonoCarryMaxGapS();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
     k.rx_cb_datum = config_.networkRxCodeBiasDatum();
     k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
@@ -361,11 +367,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                 else if (f == "pb")   k.prires_pb   = true;
                 else if (f == "cb")   k.prires_cb   = true;
                 else if (f == "zwd")  k.prires_zwd  = true;
+                else if (f == "iono") k.prires_iono = true;   // QUEUE 8b slant-iono carry
                 else if (f == "rxcb") k.prires_rxcb = true;
                 else if (f == "clk")  k.prires_clk  = true;   // Card Q3 INC-0
             }
             k.prires_on = k.prires_pl || k.prires_pb || k.prires_cb
-                       || k.prires_zwd || k.prires_rxcb || k.prires_clk;
+                       || k.prires_zwd || k.prires_iono || k.prires_rxcb || k.prires_clk;
         }
         // The corroboration join is re-AND-ed with the master here rather than
         // trusted from the loader's hard error: belt-and-braces, so a hand-built
@@ -619,6 +626,16 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("rxcbdatum:{}", config_.networkRxCodeBiasDatumSigmaM()));
         add(fmt::format("{}", q_clock)); add(fmt::format("{}", q_pb)); add(fmt::format("{}", q_cb));
         add(fmt::format("{}", nc.warmup_ura_floor_m)); add(fmt::format("{}", nc.warmup_epochs));
+        // Slant-iono carry (QUEUE 8b): solve-affecting — the leveling levels a chain
+        // harvests under iono-carried solves mean something different than white-iono
+        // ones, so a warm resume must not cross the flip even though the carry map
+        // itself is not snapshotted (it cold-starts).  Conditional-append (the
+        // rxcb/shl2/iono2 pattern) so every pre-card snapshot fingerprint is unchanged.
+        if (config_.networkCarryIono())
+            add(fmt::format("ionocarry:{}:{}:{}:{}:{}", config_.networkIonoCarryScope(),
+                            config_.networkIonoCarrySource(),
+                            config_.networkIonoCarryQ(), config_.networkIonoCarryVarFloor(),
+                            config_.networkIonoCarryMaxGapS()));
         // rx-CB carry (SPEC_rx_cb_carry): conditional append ONLY when armed, so every
         // pre-existing snapshot fingerprint is unchanged (the shl2/iono2 pattern).
         if (rx_cb_on) {
@@ -2180,6 +2197,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // former runNetwork() locals under their original names.
     auto& local_carry = ctx.carry.local_carry;
     auto& zwd_carry = ctx.carry.zwd_carry;
+    auto& iono_carry = ctx.carry.iono_carry;   // QUEUE 8b
     auto& rpb_carry = ctx.carry.rpb_carry;
     auto& eq34_reref = ctx.carry.eq34_reref;
     auto& n_cpl_harvest_fail = ctx.counters.n_cpl_harvest_fail;
@@ -2191,6 +2209,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const double pl_q_amb = ctx.knobs.pl_q_amb;
     const double pl_var_floor = ctx.knobs.pl_var_floor;
     const bool   zwd_on = ctx.knobs.zwd_on;
+    const bool   iono_on = ctx.knobs.iono_on;             // QUEUE 8b
+    const double iono_q = ctx.knobs.iono_q;
+    const double iono_var_floor = ctx.knobs.iono_var_floor;
+    const double iono_max_gap_s = ctx.knobs.iono_max_gap_s;
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
     const bool   phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md) — the pl / zwd /
@@ -2198,6 +2220,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // OFF run pays one bool test per harvest loop and nothing else.
     const bool   prires_pl   = ctx.knobs.prires_pl;
     const bool   prires_zwd  = ctx.knobs.prires_zwd;
+    const bool   prires_iono = ctx.knobs.prires_iono;   // QUEUE 8b
     const bool   prires_rxcb = ctx.knobs.prires_rxcb;
     const double zwd_q       = ctx.knobs.zwd_q;
 
@@ -2631,6 +2654,93 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (pl_now_s - it->second.last_seen_s > pl_max_gap_s)
                     it = rpb_carry.erase(it);
                 else ++it;
+            }
+        }
+        // --- Slant-iono carry (QUEUE 8b): harvest posterior per-LOS iono + stash
+        //     + prune.  Mirrors the RPB harvest (plural-column, diagonal
+        //     conditional variance — DELIBERATELY no Card-1 coupling harvest, the
+        //     rx-CB rationale).  Stashes EVERY epoch regardless of the inject
+        //     scope, so the carried value tracks the solution continuously and
+        //     the re-draw-event inject always has a fresh pre-event value.
+        if (iono_on) {
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (est_index_of[i] < 0) continue;
+                const StationAssembly& R = asm_res[i];
+                if (R.pl_iono.empty()) continue;
+                const std::size_t est_idx =
+                    static_cast<std::size_t>(est_index_of[i]);
+                Eigen::VectorXd xr, vard;
+                std::vector<Eigen::Index> cols;
+                cols.reserve(R.pl_iono.size());
+                for (const auto& t : R.pl_iono) cols.push_back(std::get<1>(t));
+                try {
+                    xr = est.reconstructStation(est_idx, x_s);
+                    vard = est.conditionalLocalVarianceDiag(
+                        est_idx, cols, plan.shared_datum);
+                } catch (...) { continue; }
+                for (std::size_t a = 0; a < R.pl_iono.size(); ++a) {
+                    const auto& [isat, icol, ix_lin] = R.pl_iono[a];
+                    if (icol < 0 || icol >= xr.size()) continue;
+                    double value_abs, var;
+                    if (ctx.knobs.iono_source_smoothed) {
+                        // CS-GF authority (§6.2 successor): stash the
+                        // level-independent carrier-smoothed GF-code estimate
+                        // instead of the solve's (level-locked) iono.  A LOS
+                        // whose authority is uninitialized this epoch keeps its
+                        // old carry aging toward eviction — never a stale stash.
+                        const auto csit = ctx.carry.iono_cs.find(
+                            {static_cast<int>(i), isat});
+                        if (csit == ctx.carry.iono_cs.end()
+                            || csit->second.n <= 0) continue;
+                        value_abs = csit->second.val;
+                        var = std::max(csit->second.var, 1e-6);
+                    } else {
+                        value_abs = ix_lin + xr(icol);
+                        var = (a < static_cast<std::size_t>(vard.size()))
+                                  ? vard(a) : -1.0;
+                    }
+                    if (!std::isfinite(value_abs) || !(var > 0.0)
+                        || !std::isfinite(var)) continue;
+                    // PRIOR-RESIDUAL CENSUS, family "iono": the ONE instrument
+                    // that can see a wrong carried iono value (T4 pools phase
+                    // rows only; the prefit census is x_lin-framed; phase is
+                    // self-consistent with a level re-leveled against the wrong
+                    // carry).  `folded` is ground truth from the injector
+                    // (iono_injected_sats).  Read the prior BEFORE the stash
+                    // below overwrites it.
+                    if (prires_iono && prires_est.enabled()) {
+                        const auto pit = iono_carry.find(
+                            {static_cast<int>(i), isat});
+                        if (pit != iono_carry.end()) {
+                            const double igap =
+                                pl_now_s - pit->second.last_seen_s;
+                            if (igap >= 0.0 && igap <= iono_max_gap_s) {
+                                NetworkPriorResidual::Input in;
+                                in.family   = "iono";
+                                in.sat      = isat;
+                                in.station  = static_cast<int>(i);
+                                in.e        = pit->second.value_abs - value_abs;
+                                in.fold_var = std::max(
+                                    pit->second.var + iono_q * std::max(0.0, igap),
+                                    iono_var_floor);
+                                in.post_var = var;
+                                in.gap_s    = igap;
+                                in.folded   = R.iono_injected_sats.count(isat) > 0;
+                                in.label = PriorResidualLabel::Clean;
+                                in.mech  = in.folded ? "" : "not_injected";
+                                prires_est.addRow(in);
+                            }
+                        }
+                    }
+                    iono_carry[{static_cast<int>(i), isat}] =
+                        LocalCarry{value_abs, var, pl_now_s};
+                }
+            }
+            for (auto it = iono_carry.begin(); it != iono_carry.end();) {
+                if (pl_now_s - it->second.last_seen_s > iono_max_gap_s) {
+                    it = iono_carry.erase(it);
+                    ++ctx.counters.n_iono_carry_evicted;
+                } else ++it;
             }
         }
     }

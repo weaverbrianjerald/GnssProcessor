@@ -1801,6 +1801,18 @@ int networkTeardown(
                                     qcc.bridge_fallback_refsat,
                                     qcc.bridge_fallback_unpaired)
                       : std::string{});
+        // Bridge v3 riders (the better second equation): both coupling edges of
+        // the new equation menu, run-end (invariant #4 — gf armed with
+        // gf_captured=0 on a slip-bearing run is a MISWIRE, as is ewl armed
+        // with both fill counters at 0).
+        if (config_.networkCycleSlipRelevelBridgeGf()
+            || config_.networkCycleSlipRelevelBridgeEwl())
+            log->info("Network (bridge v3): GF rows captured {} (E1+E4 float-plane "
+                      "applies {}, wrong-WL plane rejects {}); EWL integers filled "
+                      "{} same-epoch + {} belated, band-3 replaces {}.",
+                      qcc.bridge_gf_captured, qcc.bridge_gf_applied,
+                      qcc.bridge_plane_reject, qcc.bridge_ewl_joint,
+                      qcc.bridge_ewl_belated, qcc.bridge_band3_applied);
     }
     if (config_.networkCycleSlipRelevelRetapStatistical())
         log->info("Network (slip re-level response / retap): {} isolated-arc RAIM "
@@ -1812,6 +1824,35 @@ int networkTeardown(
                   ctx.counters.n_relevel_retap_escalated,
                   config_.networkCycleSlipRelevelRetapStreakMax(),
                   ctx.counters.n_relevel_retap_miss);
+    // QUEUE 8b slant-iono carry: run-end ON-path telemetry at BOTH coupling edges
+    // (invariants #4/#7).  Armed with injected=0 on a slip-bearing run is a
+    // MISWIRE.  refused_datum is the DECLARED-ZERO open valve (the code-datum
+    // re-realization edge ships bare — see the SPEC's valve inventory entry).
+    if (config_.networkCarryIono())
+        log->info("Network (slant-iono carry, QUEUE 8b, scope={} source={} q={} "
+                  "floor={} m² gap={} s): {} prior(s) injected ({} clamped at the "
+                  "var floor), {} kept through freed slips, {} erased at un-freed "
+                  "slip-funnel entries, {} erased by T4/consensus refloats, {} "
+                  "evicted on gap, {} refused at datum re-realizations "
+                  "(DECLARED-ZERO valve).{}",
+                  config_.networkIonoCarryScope(), config_.networkIonoCarrySource(),
+                  config_.networkIonoCarryQ(),
+                  config_.networkIonoCarryVarFloor(), config_.networkIonoCarryMaxGapS(),
+                  ctx.counters.n_iono_carry_injected,
+                  ctx.counters.n_iono_carry_floor_hits,
+                  ctx.counters.n_iono_carry_kept_through_slip,
+                  ctx.counters.n_iono_carry_erased_slip,
+                  ctx.counters.n_iono_carry_erased_t4,
+                  ctx.counters.n_iono_carry_evicted,
+                  ctx.counters.n_iono_carry_refused_datum,
+                  config_.networkIonoCarrySource() == "smoothed_gf"
+                      ? fmt::format("  CS-GF authority: {} blend step(s), {} "
+                                    "reset(s) (gap/slip-gate/first-sighting), "
+                                    "{} LOS state(s) live at run end.",
+                                    ctx.counters.n_iono_cs_blends,
+                                    ctx.counters.n_iono_cs_resets,
+                                    ctx.carry.iono_cs.size())
+                      : std::string{});
     // §9.7.10 datum-station slip detect: run-end ON-path telemetry (invariant #4 —
     // an armed run with injected datum-station slips reporting 0/0 is a MISWIRE,
     // not a quiet day).  Counted separately from Card E: those are non-pivot

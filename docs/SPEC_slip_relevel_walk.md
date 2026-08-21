@@ -281,3 +281,93 @@ low-elevation mass).  **The free epoch remains the load-bearing response;
 the bridge stays a default-OFF precision knob, now safe to arm.**  Raising
 yield would need a better second equation than MW (e.g. a third-band TD or a
 multi-epoch δIF chain) — a new derivation card, not a tuning pass.
+
+### §8.3 Bridge v3 — the better second equation (derived + built 2026-08-20/21)
+
+The derivation card §8.2 asked for.  Design-panel-reviewed (adversarial math
+check on the lane algebra); riders `network.cycle_slip.relevel_bridge_gf` /
+`relevel_bridge_ewl` on `relevel_delta_bridge`, default-OFF, OFF-path
+byte-certified (products + five solve CSVs vs the pre-card exe).
+
+**The rescue accounting that set the scope** (from the F4 teardown + the
+fixture's slip geometry — every slip lives below 45° el, rate 2e-4/sin²):
+
+- **E5 (multi-epoch MW accumulation): REFUSED.**  The λ_IF-amplified σ-cap
+  needs σ_WL ≤ 0.11 cyc ⇒ single-sample σ 0.246/sin(el) demands el ≥ ~48° —
+  above where ANY fixture slip exists; √K over the 120 s window rescues ~0 of
+  the 727 expirations, and a ROUNDED belated float at σ 0.25–0.5 cyc is
+  5–30 % wrong — mw_only re-imported.  Do not re-litigate.
+- **E4 (the same-pair GF-phase TD float row): THE YIELD PIECE.**
+  d_GF = λ₁ΔN₁ − λ₂ΔN₂ + (α₂−α₁)δI + ε — geometry/clock-free, undifferenced,
+  available AT the flag epoch from the qualified raw verdicts
+  (`NetworkRawObservables`), σ EMPIRICAL (the station's own clean-step EWMA
+  `gf_step_scale`, which already contains the iono-TD content; floored).
+  With E1 (δIF) it closes the (ΔN₁,ΔN₂) plane same-epoch:
+  det[β₁ −β₂; λ₁ −λ₂] ≈ −0.0465 m² (GPS) / −0.0485 (GAL); at cm-class inputs
+  σ(ΔN) ≈ 0.15–0.3 cyc — float-only, ZERO integer-hypothesis risk.  Whenever
+  σ_GF ≲ 0.75·σ_IF the GF row is worth as much as a CORRECT WL integer with
+  no wait.  The two measurements share band-TD noise (ρ → +0.97 in the phase
+  limit) and the solve coefficients have OPPOSITE signs, so the shared noise
+  partially CANCELS: independent propagation OVERSTATES σ(ΔN) up to ~3.7×
+  (unit-pinned) — the shipped ρ = 0.6 tightens honestly; over-setting ρ past
+  the physical limit is the dangerous direction (understated σ).
+  When the MW integer IS present the E4 row over-determines the plane and the
+  standardized plane residual screens a wrong detector-rounded integer
+  (±1 WL sits 2.5–5σ off the float plane; reject at 4σ) — the hypothesis-risk
+  channel the §8.1 audit showed the propagated σ cannot carry.
+- **E3 (the EWL-MW integer slot): BAND-3 COVERAGE.**  The MW detector already
+  forms per-arc MW on the extra-widelane pairs (GPS L2W−L5Q λ 5.861 m, GAL
+  L7Q−L5Q λ 9.768 m; single-epoch σ 0.036/0.022 cyc zenith — instantly
+  roundable; wrong∧pass-frac ≈ 2e-5 even at 10°), and slips are independent
+  PER BAND in the sim, so a (1,2)-plane bridge alone leaves band 3
+  free-re-leveling (a band-1/2 slip refloats band 3 as collateral through the
+  (1,3)/(2,3) candidates).  v3 routes one-shared-band candidates into the
+  pend's EWL slot and chains ΔN₃ = ΔN_shared + ΔN_EWL, var₃ = var_shared +
+  σ_EWL², λ₃ derived from (λ_shared, λ_EWL) alone.  **The sign trap this
+  section exists to record**: candidates arrive frequency-sorted, so GAL's
+  EWL is (L7Q,L5Q) = ΔN₃−ΔN₂ while GPS's is (L2W,L5Q) = ΔN₂−ΔN₃ — the fill
+  helper (`networkSlipFillEwlSlot`) normalizes to ΔN₃−ΔN_shared at fill time
+  and both directions are unit-pinned.  Band-3 pre-slip carry is captured at
+  the FLAG epoch (a belated capture would read the interim free re-level).
+  The v2 frac proxy is NOT reused for σ_EWL (it understates the single-epoch
+  EWL noise ~100× at low el — an invariant-#1-class too-stiff inject);
+  the floor is elevation-mapped.
+- **EWL-only band-3 pends** (a band-3-only slip fires no IF flag → no pend at
+  all today, ~830/6 h fully unbridged): DEFERRED to its own increment behind
+  positive-evidence admission (a PRESENT below-threshold IF sample — absence
+  ≠ silence, the exact mw_only failure), not built in this pass.
+
+Kernel `networkSlipBridgeV3Solve` (staged closed form, no ILS: E2-or-E1+E4
+plane, then the EWL chain; FLOAT throughout — rounding kernel output is
+forbidden), replace `networkSlipBridgeV3Replace` (the v2 outcome ladder over
+up to three bands, per-band corroboration, NO partial apply).  v2 kernel and
+its tests untouched; an E2-only pend solves bit-identically through v3
+(unit-pinned).  Suite: `tests/test_relevel_bridge_v3.cpp`, 13 cases.
+Committed truth grader: `scripts/simnet_bridge_truth.py` (reproduces the
+§8.2 scratch audit 25/7/0 on `runs/camp60_f4`; one wrong-row magnitude reads
+8.1 vs the scratch 3.5 — a windowing detail on a double-slip row).
+
+**F5 validation (arm `runs/camp60_b3`, single knob-set over the certified OFF
+path):** 1 425 pends → **1 053 REPLACED (74 %**, vs v2's 32 = 2.2 %), **0
+expired** (vs 727); GF rows captured 1 425/1 425, E1+E4 float-plane applies
+1 048, wrong-WL plane rejects 24 (the screen fired), EWL fills 367 same-epoch
+→ 109 band-3 replaces (belated fills 0 — the GF route makes pends terminal at
+flag+1, as designed); σ-cap 128, corroboration rejects 238.  Truth join
+(`scripts/simnet_bridge_truth.py`, exact-epoch window): **892 correct / 161
+"wrong" / 0 phantom, worst |err| 2.03 cyc** — the "wrong" class is entirely
+float dispersion at the 0.5-cyc tolerance (p50 0.71, p75 0.98), i.e. the
+honest σ(ΔN) ≈ 0.15–0.3 cyc tail; **zero integer-class errors at 33× the v2
+yield**.  ⚠ Grader lesson baked into the script: at a ±90 s window,
+consecutive same-LOS slips graded each other's events "36–112 cyc wrong" in
+complementary pairs — 19 such rows, every one a correct bridge; the exact-
+epoch window is now the default.  The 15.3 %-beyond-tolerance rate exceeds
+the pre-registered 10 %, with magnitude far inside the 2-cyc bound — recorded
+as a calibration note (tolerance vs honest σ), not tuned away.  Truth-channel
+effect: ZWD 2.862 ≈ OFF, interaction 3.72 — NEUTRAL, exactly as the 8(b)
+falsification predicts (level precision is not the plateau's binding
+constraint; the bridge re-asserts pre-slip levels, which carry the same
+displaced state the free re-level would re-absorb anyway).  **Verdict: the
+better second equation is validated as a mechanism — safe, high-yield,
+integer-clean — and stays a default-OFF precision knob whose truth-channel
+value materializes only after the displacement drain
+(`SPEC_iono_carry_8b.md` §6.2) lands.**

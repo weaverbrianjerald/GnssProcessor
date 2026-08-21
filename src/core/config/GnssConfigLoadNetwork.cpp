@@ -211,6 +211,55 @@ namespace GnssProcessor {
             network_cycle_slip_relevel_retap_statistical_ = false;
         }
 
+        // Slant-iono carry (QUEUE 8b) interlocks, deliberately HERE (same Card-1g
+        // parse-order rationale as above).  All warn-and-disarm per invariant #4:
+        // an armed-but-inert knob misleads worse than a refused one.
+        if (network_carry_iono_ && network_carry_invariant_) {
+            log->warn("Network: network.carry_iono scope=relevel keys on the relevel "
+                      "response, which network.carry_invariant disarms (leveling local "
+                      "carry superseded); the scope=always/carry_invariant pairing is "
+                      "the future O2 accumulation card and is unvalidated — disabled.");
+            network_carry_iono_ = false;
+        }
+        if (network_carry_iono_ && !network_phase_leveling_) {
+            log->warn("Network: network.carry_iono requires network.phase_leveling "
+                      "(the carry seam's harvest/inject/warmup infrastructure) — "
+                      "disabled.");
+            network_carry_iono_ = false;
+        }
+        if (network_carry_iono_ && estimate_network_iono_sh_) {
+            log->warn("Network: network.carry_iono under network.estimate_iono_sh is "
+                      "unvalidated — the carried station-common mode and the a00 column "
+                      "form the F4-class quasi-null with no demean derivation yet "
+                      "(docs/SPEC_iono2_mechB_v3.md) — disabled.");
+            network_carry_iono_ = false;
+        }
+        if (network_carry_iono_ && global_vtec_sh_.rep_error_tau_s > 0.0) {
+            log->warn("Network: network.carry_iono is mutually exclusive with the mech-B "
+                      "deviation carry (estimation.global_vtec_sh.rep_error_tau_s > 0): "
+                      "two temporal channels on the same physical column double-count — "
+                      "disabled.");
+            network_carry_iono_ = false;
+        }
+        if (network_carry_iono_ && network_iono_carry_scope_ == "relevel" &&
+            !network_cycle_slip_relevel_free_epoch_) {
+            log->warn("Network: network.carry_iono scope=relevel keys its slip-KEEP edge "
+                      "on network.cycle_slip.relevel_free_epoch, which is off — the "
+                      "detector-freed population would never inject — disabled.");
+            network_carry_iono_ = false;
+        }
+        if (network_carry_iono_)
+            log->info("Network producer (slant-iono carry, QUEUE 8b): carrying per-LOS "
+                      "slant iono across epochs, scope={} — RW q {:.3e} m²/s, inject var "
+                      "floor {:.3f} m², eviction gap {:.0f} s.  KEEP through freed slips, "
+                      "ERASE on un-freed funnel entries and T4/consensus refloats.  The "
+                      "expected win is the re-draw-event churn kill (the freed level "
+                      "re-levels against the transported pre-event iono instead of one "
+                      "epoch of GF code), NOT dm-class iono and NOT the O2/NL "
+                      "accumulation channel on a leveled posture.",
+                      network_iono_carry_scope_, network_iono_carry_q_,
+                      network_iono_carry_var_floor_, network_iono_carry_max_gap_s_);
+
         logNetworkPosture_(log);
         return true;
     }
@@ -2949,6 +2998,38 @@ namespace GnssProcessor {
         network_zwd_carry_q_ =
             jval<double>(json, "network.zwd_carry_q", "zwd_carry_q",
                          network_config_.process_noise.get(NetworkQClass::StationZwd));
+        // Slant-iono carry (QUEUE 8b, docs/SPEC_slip_relevel_walk.md s8 residual): carry
+        // per-LOS slant iono across epochs as a diagonal RW prior via the same
+        // addStationPrior path.  NOT the phantom filter.process_noise.ionosphere_q (which
+        // has no network reader) and NOT the falsified adaptive-q — a new carry seam.
+        network_carry_iono_ =
+            jval<bool>(json, "network.carry_iono", "carry_iono", false);
+        network_iono_carry_q_ =
+            jval<double>(json, "network.iono_carry_q", "iono_carry_q",
+                         network_config_.process_noise.get(NetworkQClass::IonoCarry));
+        network_iono_carry_scope_ =
+            jval<std::string>(json, "network.iono_carry_scope", "iono_carry_scope",
+                              std::string("relevel"));
+        network_iono_carry_var_floor_ =
+            jval<double>(json, "network.iono_carry_var_floor", "iono_carry_var_floor", 0.04);
+        network_iono_carry_max_gap_s_ =
+            jval<double>(json, "network.iono_carry_max_gap_s", "iono_carry_max_gap_s", 300.0);
+        // CS-GF authority (the i1 falsification's successor, SPEC_iono_carry_8b
+        // §6.2): what feeds the carried value.  "solve" = the est-reconstructed
+        // per-LOS iono (measured accumulating the level-locked displacement);
+        // "smoothed_gf" = the carrier-smoothed GF-code authority (level-
+        // independent, drains toward the code realization).
+        network_iono_carry_source_ =
+            jval<std::string>(json, "network.iono_carry_source", "iono_carry_source",
+                              std::string("solve"));
+        if (network_iono_carry_q_ < 0.0)
+            throw std::runtime_error("network.iono_carry_q must be >= 0");
+        if (network_iono_carry_var_floor_ < 0.0)
+            throw std::runtime_error("network.iono_carry_var_floor must be >= 0");
+        if (network_iono_carry_scope_ != "relevel" && network_iono_carry_scope_ != "always")
+            throw std::runtime_error("network.iono_carry_scope must be \"relevel\" or \"always\"");
+        if (network_iono_carry_source_ != "solve" && network_iono_carry_source_ != "smoothed_gf")
+            throw std::runtime_error("network.iono_carry_source must be \"solve\" or \"smoothed_gf\"");
         // rx-CB carry (docs/SPEC_rx_cb_carry.md): carry receiver code biases across
         // epochs.  Independent of the phase-leveling gate by construction.
         network_carry_rx_code_bias_ =
@@ -3157,7 +3238,7 @@ namespace GnssProcessor {
                 // The census would report it as "armed, zero rows" at run end,
                 // which is indistinguishable from a real negative result — so
                 // name it HERE, at load, where the typo is fixable.
-                static const char* kKnownFamilies[] = {"pl", "pb", "cb", "zwd", "rxcb", "clk"};
+                static const char* kKnownFamilies[] = {"pl", "pb", "cb", "zwd", "iono", "rxcb", "clk"};
                 for (const std::string& f :
                      NetworkCarryVce::parseComponents(pnc.prior_residual_families)) {
                     bool known = false;
@@ -3165,7 +3246,7 @@ namespace GnssProcessor {
                     if (!known)
                         log->warn("Network (prior-residual census): family '{}' in "
                                   "network.prior_residual_families has NO feed hook in this build "
-                                  "(known: pl, pb, cb, zwd, rxcb, clk) — it will report zero rows, which "
+                                  "(known: pl, pb, cb, zwd, iono, rxcb, clk) — it will report zero rows, which "
                                   "is indistinguishable from a genuine negative result.  Fix the "
                                   "spelling or drop it.", f);
                 }
@@ -3373,6 +3454,25 @@ namespace GnssProcessor {
         network_cycle_slip_relevel_bridge_pend_window_s_ =
             jval<double>(json, "network.cycle_slip.relevel_bridge_pend_window_s",
                          "network_cycle_slip_relevel_bridge_pend_window_s", 120.0);
+        // Bridge v3 (the better second equation): the GF-phase-TD float row (E4
+        // — closes the (1,2) plane same-epoch without the MW wait; zero
+        // integer-hypothesis risk) and the EWL-MW integer slot (E3 — band-3
+        // coverage from the instantly-roundable extra-widelane).  E5
+        // (multi-epoch MW accumulation) was REFUSED at design review: the
+        // λ_IF-amplified cap needs σ_WL ≤ 0.11 cyc ⇒ el ≥ ~48°, above where any
+        // fixture slip lives, and a rounded belated float re-imports mw_only.
+        network_cycle_slip_relevel_bridge_gf_ =
+            jval<bool>(json, "network.cycle_slip.relevel_bridge_gf",
+                       "network_cycle_slip_relevel_bridge_gf", false);
+        network_cycle_slip_relevel_bridge_ewl_ =
+            jval<bool>(json, "network.cycle_slip.relevel_bridge_ewl",
+                       "network_cycle_slip_relevel_bridge_ewl", false);
+        network_cycle_slip_relevel_bridge_gf_sigma_floor_m_ =
+            jval<double>(json, "network.cycle_slip.relevel_bridge_gf_sigma_floor_m",
+                         "network_cycle_slip_relevel_bridge_gf_sigma_floor_m", 0.01);
+        network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_ =
+            jval<double>(json, "network.cycle_slip.relevel_bridge_ewl_sigma_floor_cyc",
+                         "network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc", 0.05);
         //   relevel_retap_statistical — the STATISTICAL-refloat half (T2/T3/T4
         //     post-fit RAIM): a refloat with NO measured delta hit an arc whose
         //     level was overwhelmingly CORRECT (the FA population) — keep the
@@ -3425,6 +3525,16 @@ namespace GnssProcessor {
                       "already shifts the carried level — a second shift would "
                       "double-apply) — bridge disabled.");
             network_cycle_slip_relevel_delta_bridge_ = false;
+        }
+        if ((network_cycle_slip_relevel_bridge_gf_
+             || network_cycle_slip_relevel_bridge_ewl_)
+            && !network_cycle_slip_relevel_delta_bridge_) {
+            log->warn("Network: network.cycle_slip.relevel_bridge_gf / "
+                      "relevel_bridge_ewl are v3 riders on "
+                      "cycle_slip.relevel_delta_bridge, which is off — both "
+                      "disabled.");
+            network_cycle_slip_relevel_bridge_gf_ = false;
+            network_cycle_slip_relevel_bridge_ewl_ = false;
         }
 
         // --- Slip-QC hardening Cards R / L / G (docs/SPEC_slip_qc_hardening.md) ---

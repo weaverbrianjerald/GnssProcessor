@@ -74,6 +74,7 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
 
             bool dual = !s2.empty();
             double mw = 0.0, gf = 0.0, lam_wl = 0.0;
+            double gf_code = 0.0, gf_denom = 0.0;
             int    lli2 = 0;
             if (dual) {
                 const double lam2 = utils.getWavelength(obs.system, s2, obs.satellite);
@@ -85,6 +86,13 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                     mw = (L1_cyc - L2_cyc) / (inv1 - inv2)
                        - (P1_m * inv1 + P2_m * inv2) / (inv1 + inv2);
                     lli2 = obs.lli_flags.count(s2) ? obs.lli_flags.at(s2) : 0;
+                    // CS-GF authority inputs (QUEUE 8b successor): the code GF
+                    // and the pair's dispersive scale γ−1.  Struct fields only —
+                    // the slip_raw trace writer prints its explicit column list,
+                    // so an OFF run stays byte-identical.
+                    gf_code = P1_m - P2_m;
+                    const double g = (lam2 / lam1) * (lam2 / lam1);
+                    gf_denom = g - 1.0;
                     // Wide-lane wavelength — the PHYSICAL unit the MW floor is
                     // expressed in (0.5 WL cycles).  Exact for FDMA too, since
                     // both wavelengths came from the satellite-aware lookup.
@@ -103,6 +111,8 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
             r.dual        = dual;
             r.mw_m        = mw;
             r.gf_m        = gf;
+            r.gf_code_m   = gf_code;
+            r.gf_denom    = gf_denom;
             r.l1_c1_m     = l1c1;
             r.lambda_wl_m = lam_wl;
             r.lli1        = lli1;
@@ -116,6 +126,40 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
 // =====================================================================
 // Pure helpers (unit-testable without a station)
 // =====================================================================
+
+bool networkIonoCsUpdate(IonoCsState& cs, double i_code_m, double di_carrier_m,
+                         bool adjacent, bool stepped, double sigma_i_code_m) {
+    // Reset ladder (invariant #1 for this authority): lost adjacency (gap /
+    // first sighting / pair change tripping the gate), an empirical MW/GF step
+    // (slip class), or a never-initialized state.  The reset re-seeds from the
+    // code sample alone at its own honest variance — briefly code-noisy, never
+    // level-contaminated.
+    if (!adjacent || stepped || cs.n <= 0 || !std::isfinite(cs.val)) {
+        if (!std::isfinite(i_code_m) || !(sigma_i_code_m > 0.0)) {
+            cs.n = 0;   // nothing usable this epoch — stay uninitialized
+            return true;
+        }
+        cs.val = i_code_m;
+        cs.var = sigma_i_code_m * sigma_i_code_m;
+        cs.n = 1;
+        return true;
+    }
+    // Carrier propagation: the GF-phase delta tracks the true iono change
+    // exactly (ambiguities constant on an un-slipped arc).
+    if (std::isfinite(di_carrier_m)) {
+        cs.val += di_carrier_m;
+        cs.var += kIonoCsPhaseStepVar;
+    }
+    // Kalman blend toward this epoch's code sample.
+    if (std::isfinite(i_code_m) && sigma_i_code_m > 0.0) {
+        const double r = sigma_i_code_m * sigma_i_code_m;
+        const double w = cs.var / (cs.var + r);
+        cs.val += w * (i_code_m - cs.val);
+        cs.var *= (1.0 - w);
+        if (cs.n < 1000000) ++cs.n;
+    }
+    return false;
+}
 
 double networkRobustStepScale(std::vector<double>& abs_steps) {
     if (abs_steps.empty()) return 0.0;

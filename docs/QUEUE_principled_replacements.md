@@ -34,6 +34,15 @@ re-ranking is expressed HERE rather than by renumbering.
 > **3 dissolved into 1(d)**, **0 downgraded**, **1(a) demoted**, and
 > **R0 + 1(d) already EXECUTED, LANDED and VALIDATED** (2026-08-14).
 >
+> **Item 8(b) — EXECUTED 2026-08-20/21 (verdict: the carry family is FALSIFIED
+> at all four points — solve-fed × {relevel, always} and CS-GF code-anchored ×
+> {relevel, always} — with the wiring proven live; the EVENT channel is
+> exonerated and the plateau is the per-epoch exchange equilibrium under
+> mid-arc level lock-in.  `SPEC_iono_carry_8b.md` §6.5/§6.6; execution entry
+> in §8(b) below.  Everything default-OFF, byte-certified.  The next 8-family
+> card is the O2 / carry_invariant-lineage accumulator, unranked until its
+> derivation exists.**
+>
 > **Item 9 — EXECUTED 2026-08-20 (same session): the walk is DEAD under
 > `network.cycle_slip.relevel_free_epoch` (+ `relevel_delta_bridge`), built,
 > suite-green, byte-certified, validated on the slipped fixture (ZWD hourly rms
@@ -761,6 +770,37 @@ raw error (the lumps are 4–6× larger than the signal).
 fitted-vs-predicted DD slope discrepancy (~1.85×) is unexplained (§7.9); and no field arm is possible
 in the graded sense — the field has no truth ionosphere, so item 8 can be *graded* only on the sim
 and *monitored* on the field.
+
+✅ **8(b) EXECUTED 2026-08-20/21 — the temporal-accumulation-channel family is FALSIFIED at all
+four points, wiring proven live; the EVENT channel is exonerated.**  Full record
+`SPEC_iono_carry_8b.md` (diagnosis §2, design §3, results §6, closure §6.6); this entry indexes.
+Built: `network.carry_iono` (+ `iono_carry_scope` relevel|always, `iono_carry_source`
+solve|smoothed_gf, q/floor/gap knobs, `NetworkQClass::IonoCarry`, prires family `iono`, seven
+counters both-edges per invariant #7, conditional fingerprint) and the CS-GF authority
+(`networkIonoCsUpdate`, Hatch-class carrier-smoothed GF-code slant iono, slip-funnel reset) — all
+default-OFF, OFF path byte-certified four exe increments deep vs `runs/camp60_refprod` +
+`runs/camp60_f4/logs`, suite 1469/205 green.  Arms on the slipped 60-sta fixture
+(exe 6B3935C3…, `_camp60_{i1,i2,i3,i4}.json`, single-knob over the certified OFF path):
+
+| arm | source × scope | interaction rms | ZWD settled | T4 arcs | verdict |
+|---|---|---|---|---|---|
+| OFF (f2/f4) | — | 3.568 | 2.845 | 7 876 | baseline |
+| i1 | solve × relevel | 3.800 | 3.099 | 8 165 | **FAIL** (churn killed, plateau ROSE) |
+| i2 | solve × always | 3.726 | 3.140 | — | **no-drain band as pre-registered** |
+| i3 | smoothed_gf × relevel | 3.592 | 2.852 | 8 105 | **FAIL** (= OFF; authority live, 677 848 blends) |
+| i4 | smoothed_gf × always | 3.181 | **3.656 ramp** | **13 982** | **FAIL** (relocation, not drainage) |
+
+Pre-registration (`_camp60_i3.json`): interaction ≤ 2.0 REQUIRED; > 3 ⇒ the code-authority drain
+model is also wrong ⇒ stop.  Both CS-GF arms > 3 ⇒ stopped, no tuning.  The i1 consumer win
+(1.90 vs 3.26) is source-specific (consensus re-assertion = wire continuity) and does not survive
+CS-GF (4.48/4.28) — no surviving carrier, do not quote it.  ⚠ The first i3/i4 attempt was a
+MISWIRE (all counters 0 — caught by invariant #4, fixed at `NetworkRawObservables.cpp:114`,
+byte-recertified); never quote its numbers.  **Closure: three interventions (churn kill,
+event-time code re-draw, per-epoch code pinning) all leave the plateau — it is not event-fed; it
+is the stationary equilibrium of the per-epoch ZWD⇄iono⇄level exchange under mid-arc zero-q level
+lock-in.**  Residues: the O2 / carry_invariant-lineage accumulator (mid-arc transport NOT the
+leveling carry) needs its own derivation card before ranking; the CS-GF kernel stays as
+instrumentation; quiet-twin CS-GF arm dropped as moot; the plateau keeps its owner here.
 
 ---
 

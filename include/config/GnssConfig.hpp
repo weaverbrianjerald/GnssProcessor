@@ -2084,6 +2084,104 @@ namespace GnssProcessor {
         double networkZwdCarryQ() const { return network_zwd_carry_q_; }
 
         /**
+         * @brief Carry per-LOS slant ionosphere across epochs in the network producer
+         *        as a diagonal random-walk prior (@c network.carry_iono, QUEUE 8b).
+         *
+         * On the network path the per-(station,satellite) slant iono is white per epoch:
+         * every arc re-level re-draws it from one epoch of GF code (sigma 0.7-1.5 m plus
+         * the station-common receiver GF hardware bias), which is the measured generator
+         * of the post-relevel-fix stationary ZWD/interaction plateau
+         * (docs/SPEC_slip_relevel_walk.md s8; QUEUE_principled_replacements.md s8(b)).
+         * When on, each LOS's post-solve absolute slant iono estimate is stashed and
+         * re-injected as a diagonal information prior on the iono column (via
+         * @ref NetworkEstimator::addStationPrior, alongside the ZWD carry), aged by
+         * @ref networkIonoCarryQ and floored at @ref networkIonoCarryVarFloor.
+         * Scope of the inject is @ref networkIonoCarryScope; the carry itself is
+         * harvested every epoch regardless of scope.
+         *
+         * Event edges (standing invariants #1/#7): kept through detector slips whose
+         * bands were freed by @c network.cycle_slip.relevel_free_epoch (the physical
+         * ionosphere is continuous through a receiver cycle slip and the free epoch
+         * disarms the stale-level aliasing channel); erased on slip-funnel entries whose
+         * bands were NOT freed, on every T4/RAIM arc erase, and after
+         * @ref networkIonoCarryMaxGapS without a sighting.  NOT snapshotted: a warm
+         * resume cold-starts the carry (one epoch of today's white-iono behavior).
+         * Requires @c network.phase_leveling; disarmed under @c network.carry_invariant,
+         * under @c network.estimate_iono_sh (the carry/a00 quasi-null needs its own
+         * demean derivation first), and when @c rep_error_tau_s > 0 (mutex: one temporal
+         * channel per physical column).  Default false is byte-identical.
+         */
+        bool networkCarryIono() const { return network_carry_iono_; }
+
+        /**
+         * @brief Slant-iono carry random-walk process noise (m²/s) inflating the carried
+         *        variance over the inter-epoch gap (@c network.iono_carry_q, QUEUE 8b).
+         *
+         * @c var_eff = max(var + q·Δt, floor).  Default 1e-4 m²/s is an honest quiet-time
+         * slant iono rate (~5.5 cm over a 30 s gap at L1), an order looser than the
+         * physical quiet rate so the carry never out-stiffens a genuinely moving
+         * ionosphere.  Must be @c >= 0.  Used only when @ref networkCarryIono is on.
+         */
+        double networkIonoCarryQ() const { return network_iono_carry_q_; }
+
+        /**
+         * @brief Inject scope of the slant-iono carry (@c network.iono_carry_scope).
+         *
+         * @c "relevel" (default): the prior is injected only for a LOS that is
+         * RE-LEVELING this epoch — a band freed by the relevel latch, or a LOS with a
+         * present ambiguity column but no live leveling carry on any band (the
+         * post-T4-erase / gap-re-birth population; T4 erases are unreadable by any other
+         * means at the inject site, the Assembly:2679 dead-check lesson).  One epoch of
+         * exposure per re-draw event.
+         * @c "always": the prior is injected every epoch a live carry exists — the full
+         * representation change (the O2 temporal accumulation channel).  Validate
+         * scope=relevel first; grade lump drift before promoting scope=always.
+         */
+        const std::string& networkIonoCarryScope() const { return network_iono_carry_scope_; }
+
+        /**
+         * @brief Inject-side variance floor (m²) for the slant-iono carry
+         *        (@c network.iono_carry_var_floor, QUEUE 8b).
+         *
+         * The harvested iono marginal is phase-locked-tiny mid-arc, so an unfloored
+         * prior out-weighs the fresh GF code ~80:1 and a wrong carried value becomes
+         * invisible to every armed instrument (T4 pools phase rows only; the prefit
+         * census is x_lin-framed).  The floor keeps the per-event code adoption ~10%
+         * so a wrong carry heals over ~10 events while the churn kill (adoption² in
+         * variance) survives.  Default 0.04 = (0.2 m)²; the retap's 0.25 m² is the
+         * in-house precedent for "loose enough that data adjudicates".
+         */
+        double networkIonoCarryVarFloor() const { return network_iono_carry_var_floor_; }
+
+        /**
+         * @brief Maximum sighting gap (s) before a slant-iono carry entry is evicted
+         *        (@c network.iono_carry_max_gap_s, QUEUE 8b).
+         *
+         * Deliberately its OWN knob, longer than @c pl_max_gap_s: the post-gap re-birth
+         * is precisely the population where the carried value beats a fresh GF-code seed
+         * hardest, so the carry must outlive the leveling carry across short outages.
+         * At q = 1e-4 a 300 s gap adds sigma ~17 cm — still far better than a code draw.
+         */
+        double networkIonoCarryMaxGapS() const { return network_iono_carry_max_gap_s_; }
+
+        /**
+         * @brief Data source of the slant-iono carry (@c network.iono_carry_source).
+         *
+         * @c "solve" (default): the est-reconstructed per-LOS iono — MEASURED
+         * accumulating the level-locked displacement rather than draining it
+         * (arm i1, docs/SPEC_iono_carry_8b.md §6.1: interaction 3.57→3.80 with
+         * the churn demonstrably killed — the falsification that named the
+         * successor).  @c "smoothed_gf": the carrier-smoothed GF-code authority
+         * (@ref IonoCsState) — level-independent by construction, converging
+         * 1/√K toward the code channel's realization ι̃ = ι + d_r,GF − d^s_GF
+         * (the same realization the GF-datum pins anchor), slip-reset by the
+         * qualify pass's own empirical gates.  The T4 erase edge cannot defeat
+         * it: T4 erases the CARRY, and the next harvest re-stashes from the
+         * authority, which levels never touch.
+         */
+        const std::string& networkIonoCarrySource() const { return network_iono_carry_source_; }
+
+        /**
          * @brief Carry per-station RECEIVER code biases across epochs in the network
          *        producer as diagonal random-walk priors (@c network.carry_rx_code_bias,
          *        docs/SPEC_rx_cb_carry.md).
@@ -2684,6 +2782,28 @@ namespace GnssProcessor {
         double networkCycleSlipRelevelBridgeCorrobCyc() const { return network_cycle_slip_relevel_bridge_corrob_cyc_; }
         /// @brief Bridge v2 pend expiry window (s) awaiting the MW integer.
         double networkCycleSlipRelevelBridgePendWindowS() const { return network_cycle_slip_relevel_bridge_pend_window_s_; }
+        /// @brief Bridge v3, E4 (@c network.cycle_slip.relevel_bridge_gf): capture
+        ///        the same-pair GF-phase TD at the flag epoch and let the kernel
+        ///        close the (1,2) plane from (δIF, dGF) same-epoch — the float
+        ///        second equation that does not wait for the MW integer and
+        ///        carries zero integer-hypothesis risk.  σ is EMPIRICAL (the
+        ///        station's own clean-step EWMA), floored at
+        ///        @ref networkCycleSlipRelevelBridgeGfSigmaFloorM.  Rider on
+        ///        relevel_delta_bridge; default false is byte-identical.
+        bool networkCycleSlipRelevelBridgeGf() const { return network_cycle_slip_relevel_bridge_gf_; }
+        /// @brief Bridge v3, E3 (@c network.cycle_slip.relevel_bridge_ewl): route
+        ///        confident EWL-MW integers (the instantly-roundable
+        ///        extra-widelane, λ 5.9/9.8 m on GPS L2-L5 / GAL E5b-E5a) into a
+        ///        pend's band-3 slot, chaining ΔN3 = ΔN_shared + ΔN_EWL — the
+        ///        band-3 coverage a (1,2)-plane bridge alone leaves free-re-leveling.
+        ///        Rider on relevel_delta_bridge; default false is byte-identical.
+        bool networkCycleSlipRelevelBridgeEwl() const { return network_cycle_slip_relevel_bridge_ewl_; }
+        /// @brief Floor on the GF-TD step's 1σ (metres) entering the v3 kernel.
+        double networkCycleSlipRelevelBridgeGfSigmaFloorM() const { return network_cycle_slip_relevel_bridge_gf_sigma_floor_m_; }
+        /// @brief Zenith floor on the EWL integer's 1σ (cycles); elevation-mapped
+        ///        at the fill site (the v2 frac proxy understates the single-epoch
+        ///        EWL noise ~100× at low elevation — the too-stiff-band-3 trap).
+        double networkCycleSlipRelevelBridgeEwlSigmaFloorCyc() const { return network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_; }
         /// @brief SPEC_slip_relevel_walk §6 — the STATISTICAL-refloat half of the
         ///        re-level response: a post-fit-RAIM refloat with NO measured
         ///        delta (T2 consensus / T4 arc) keeps its level and re-taps the
@@ -6037,6 +6157,12 @@ namespace GnssProcessor {
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Only used when network.carry_zwd.
+        bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).
+        double network_iono_carry_q_{1e-4};               ///< QUEUE 8b: slant-iono carry random-walk process noise (m²/s); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.
+        std::string network_iono_carry_scope_{"relevel"}; ///< QUEUE 8b: inject scope — "relevel" (re-leveling LOS only, one epoch per re-draw event) or "always" (every epoch; the O2 accumulation channel).
+        double network_iono_carry_var_floor_{0.04};       ///< QUEUE 8b: inject-side variance floor (m²) so the carried prior never out-stiffens the code channel past healing (~10% adoption/event at (0.2 m)²).
+        double network_iono_carry_max_gap_s_{300.0};      ///< QUEUE 8b: carry eviction gap (s); deliberately longer than pl_max_gap_s so the carry survives to the gap re-birth it exists to fix.
+        std::string network_iono_carry_source_{"solve"};  ///< QUEUE 8b: carried-value source — "solve" (est-reconstructed; the i1-falsified displacement accumulator) or "smoothed_gf" (the CS-GF code-anchored authority, §6.2 successor).
         bool   network_carry_rx_code_bias_{false};        ///< rx-CB carry (SPEC_rx_cb_carry): carry per-station receiver code biases across epochs as diagonal RW priors, harvested OUTSIDE the phase-leveling gate. Forced off without code_datum_time_linked. OFF = byte-identical.
         double network_rx_cb_carry_q_{1e-9};              ///< rx-CB carry RW process noise (m²/s); var_eff = var + q·Δt. Only used when network.carry_rx_code_bias.
         bool   network_rx_cb_carry_demean_{false};        ///< Card LV-2 (SPEC_level_information_budget): subtract the information-weighted MEAN innovation (per constellation, computed at the serial harvest, applied lag-1) from every rx-CB carry fold, so the carry transports between-station DIFFERENCES at full stiffness and stops re-asserting last epoch's common-mode realization.  ⚠ It does NOT free that direction: in absolute terms it re-pins the DCB common mode to mean(x_lin), the frozen first-epoch seed frame (SPEC §13).  Requires carry_rx_code_bias.  Fingerprinted when armed.  OFF = byte-identical.
@@ -6075,6 +6201,10 @@ namespace GnssProcessor {
         double network_cycle_slip_relevel_bridge_if_sigma_floor_m_{0.005};  ///< IF step 1σ floor (m).
         double network_cycle_slip_relevel_bridge_corrob_cyc_{3.0};          ///< v2 free-level corroboration gate (cyc).
         double network_cycle_slip_relevel_bridge_pend_window_s_{120.0};     ///< v2 pend expiry window (s).
+        bool   network_cycle_slip_relevel_bridge_gf_{false};                ///< v3 E4: same-pair GF-phase-TD float row (closes the (1,2) plane without the MW wait).
+        bool   network_cycle_slip_relevel_bridge_ewl_{false};               ///< v3 E3: EWL-MW integer slot (band-3 coverage; sign normalized at fill — the GAL flip).
+        double network_cycle_slip_relevel_bridge_gf_sigma_floor_m_{0.01};   ///< v3 E4 σ floor (m) on the empirical GF-step scale.
+        double network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_{0.05};///< v3 E3 zenith σ floor (cyc), elevation-mapped at fill.
         bool   network_cycle_slip_relevel_retap_statistical_{false};        ///< SPEC_slip_relevel_walk: keep+retap on statistical RAIM refloats.
         double network_cycle_slip_relevel_retap_var_m2_{0.25};              ///< Retap SET variance (m²).
         int    network_cycle_slip_relevel_retap_streak_max_{3};             ///< Consecutive-retap fallback-to-erase streak.

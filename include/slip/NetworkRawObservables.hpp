@@ -67,11 +67,60 @@ struct RawSlipObs {
     bool   dual{false};           ///< A valid distinct second band with a finite wavelength.
     double mw_m{0.0};             ///< Melbourne-Wübbena combination (m); 0 when !dual.
     double gf_m{0.0};             ///< Geometry-free L1−L2 phase (m); 0 when !dual.
+    double gf_code_m{0.0};        ///< Geometry-free P1−P2 code (m); 0 when !dual.  (CS-GF authority input; not traced.)
+    double gf_denom{0.0};         ///< γ−1 = (λ2/λ1)²−1 > 0 (dispersive scale of the pair); 0 when !dual.
     double l1_c1_m{0.0};          ///< sig1 phase-minus-code (m); always meaningful.
     double lambda_wl_m{0.0};      ///< Wide-lane wavelength 1/(1/λ1 − 1/λ2) (m); 0 when !dual.
     int    lli1{0};               ///< RINEX LLI byte for sig1 (bit 0 = loss of lock).
     int    lli2{0};               ///< RINEX LLI byte for sig2 (0 when !dual).
 };
+
+/**
+ * @brief CS-GF: one LOS's carrier-smoothed GF-code slant-iono authority
+ *        (QUEUE 8b successor — docs/SPEC_iono_carry_8b.md §6.2).
+ *
+ * A Hatch-class recursive estimate of the slant iono (metres at the primary
+ * band, in the code channel's realization ι̃ = ι + d_r,GF − d^s_GF): the GF
+ * PHASE delta propagates the state between epochs (it tracks the true iono
+ * change exactly, ambiguity-constant), and each epoch's GF CODE sample pulls
+ * it toward the code channel at Kalman weight.  Level-independent BY
+ * CONSTRUCTION — the leveling carry never touches it, which is the entire
+ * point: the solve-fed iono carry was measured accumulating the level-locked
+ * displacement (i1, §6.1), while this accumulates the code evidence the
+ * displacement never drains without.  Reset on the qualify pass's own
+ * empirical step gates (slip) and on lost adjacency (gap) — self-healing,
+ * NOT snapshotted (the RawSlipHistory exemption rationale).
+ */
+struct IonoCsState {
+    double val{0.0};   ///< Smoothed slant iono (m, primary band, code realization).
+    double var{0.0};   ///< Its variance (m²; formal — code multipath correlation makes it optimistic, the inject floor covers).
+    int    n{0};       ///< Samples since the last reset (0 = never initialized).
+};
+
+/// Per-carrier-step variance added by the GF-phase propagation
+/// ((2σ_φ/denom)² class; conservative for the low-elevation tail).
+inline constexpr double kIonoCsPhaseStepVar = 1e-4;   // m²
+/// Zenith 1σ of one GF-code slant-iono sample: √2·σ_P0/denom at σ_P0 = 0.3 m,
+/// GPS L1/L2 denom 0.6469 (the seed-noise analysis' 0.66 m).  Elevation-mapped
+/// 1/sin at the call site.  A variance model for the estimator (stochastic-
+/// model class), not a detector threshold — the MW-thresholds-empirical
+/// directive does not apply to it.
+inline constexpr double kIonoCsCodeSigmaZenith = 0.66; // m
+
+/**
+ * @brief One CS-GF recursion step (pure, unit-testable).
+ *
+ * @param cs            The LOS's state (reset or advanced in place).
+ * @param i_code_m      This epoch's GF-code slant-iono sample −gf_code/denom (m).
+ * @param di_carrier_m  The adjacent-epoch GF-phase delta d_gf/denom (m);
+ *                      meaningful only when @p adjacent.
+ * @param adjacent      An immediately-adjacent predecessor existed (verdict.measured).
+ * @param stepped       The qualify pass's empirical MW/GF gate tripped (slip class).
+ * @param sigma_i_code_m 1σ of @p i_code_m (elevation-mapped).
+ * @return true when the step RESET the state (gap / slip / first sighting).
+ */
+bool networkIonoCsUpdate(IonoCsState& cs, double i_code_m, double di_carrier_m,
+                         bool adjacent, bool stepped, double sigma_i_code_m);
 
 /**
  * @brief Per-(station, satellite) adjudication of THIS epoch's raw step.
@@ -217,9 +266,21 @@ struct SlipQcParams {
     // --- Card G (network.cycle_slip.gap_instrument) ---
     bool   gap_instrument{false};   ///< Master arm for the arc-resumption instrument.
 
+    // --- Bridge v3 E4 (network.cycle_slip.relevel_bridge_gf) ---
+    /// The GF-row capture consumes the qualified verdicts (d_gf + the empirical
+    /// gf_step_scale), so it arms BOTH the compute and the qualify pass.
+    bool   bridge_gf{false};
+
+    // --- CS-GF authority (network.iono_carry_source = smoothed_gf) ---
+    /// The carrier-smoothed GF-code slant-iono authority consumes the verdicts
+    /// (d_gf carrier deltas + the empirical step gates as its slip reset), so
+    /// it arms both passes too.
+    bool   iono_cs{false};
+
     /// True when any consumer needs the raw observables computed this run.
     bool anyConsumer(bool trace_slip_raw) const {
-        return trace_slip_raw || lli_corroborate || gap_instrument;
+        return trace_slip_raw || lli_corroborate || gap_instrument || bridge_gf
+            || iono_cs;
     }
 };
 
@@ -337,6 +398,13 @@ struct SlipQcCounters {
     long long bridge_pend_expired{0};         ///< Pends that never met an MW integer inside the window.
     long long bridge_pend_voided{0};          ///< Pends voided by a fresh mark on the same (station, sat).
     long long bridge_replace_corrob_reject{0};///< Replaces rejected by the free-level corroboration gate.
+    // Bridge v3 (the better second equation — GF row + EWL slot):
+    long long bridge_gf_captured{0};          ///< Pends whose GF-TD row was captured at the flag epoch.
+    long long bridge_gf_applied{0};           ///< Applies whose (1,2) plane came from the E1+E4 float route.
+    long long bridge_plane_reject{0};         ///< E2-route kernel rejects tripped by the E4 plane residual (wrong WL integer screen).
+    long long bridge_ewl_joint{0};            ///< EWL integers filled same-epoch at pend creation.
+    long long bridge_ewl_belated{0};          ///< EWL integers filled belatedly in the MW drain.
+    long long bridge_band3_applied{0};        ///< Applies that chained and replaced band 3.
 };
 
 /**
@@ -364,7 +432,7 @@ struct SlipQcChannel {
     /// True when the raw observables must be computed this run.
     bool armed() const { return static_cast<bool>(utils); }
     /// True when a DECISION card (not merely the trace) is armed.
-    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument; }
+    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs; }
 };
 
 /**

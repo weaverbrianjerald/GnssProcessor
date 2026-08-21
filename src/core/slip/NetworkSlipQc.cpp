@@ -138,6 +138,173 @@ DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_c
     return r;
 }
 
+BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
+                                       double max_abs_cyc, double max_sigma_cyc) {
+    BridgeV3Solve r;
+    if (!(pd.lambda_wl > 0.0) || !(pd.lambda_if > 0.0)) return r;
+    // Band frequencies from the two wavelengths alone (the v2 derivation —
+    // per-satellite exact, GLONASS FDMA included).
+    constexpr double c = 299792458.0;
+    const double f1 = 0.5 * c * (1.0 / pd.lambda_wl + 1.0 / pd.lambda_if);
+    const double f2 = 0.5 * c * (1.0 / pd.lambda_if - 1.0 / pd.lambda_wl);
+    if (!(f2 > 0.0) || !(f1 > f2)) return r;
+    const double lam1 = c / f1, lam2 = c / f2;
+    const double beta1 = pd.lambda_wl * f1 / (f1 + f2);
+    const double beta2 = beta1 - pd.lambda_if;
+
+    double dn1, dn2, v1, v2, cov12 = 0.0;
+    if (pd.has_dn) {
+        // E2 route: the v2 closed form, verbatim math.
+        if (!std::isfinite(pd.dif_m) || !std::isfinite(pd.sigma_if_m)) return r;
+        dn2 = (pd.dif_m - beta1 * pd.dn_wl) / pd.lambda_if;
+        dn1 = dn2 + pd.dn_wl;
+        v2  = (pd.sigma_if_m * pd.sigma_if_m
+               + beta1 * beta1 * pd.sigma_wl * pd.sigma_wl)
+              / (pd.lambda_if * pd.lambda_if);
+        v1  = (pd.sigma_if_m * pd.sigma_if_m
+               + beta2 * beta2 * pd.sigma_wl * pd.sigma_wl)
+              / (pd.lambda_if * pd.lambda_if);
+        // E4 over-determination screen: a wrong detector-rounded WL integer
+        // (±1 cyc) sits 2.5–5σ off the E1+E4 float plane — the propagated σ
+        // cannot see it (the mw_only lesson: propagation carries measurement
+        // noise, not hypothesis risk), the plane residual can.
+        if (pd.has_gf && std::isfinite(pd.dgf_m) && pd.sigma_gf_m > 0.0) {
+            const double pred = lam1 * dn1 - lam2 * dn2;
+            const double sres = std::sqrt(pd.sigma_gf_m * pd.sigma_gf_m
+                                          + lam1 * lam1 * v1 + lam2 * lam2 * v2);
+            if (sres > 0.0) {
+                r.plane_resid_sigma = std::abs(pd.dgf_m - pred) / sres;
+                if (r.plane_resid_sigma > kBridgePlaneResidMax) return r;
+            }
+        }
+    } else if (pd.has_gf) {
+        // E1+E4 route: [β1 −β2; λ1 −λ2]·ΔN = [δIF; dGF], full 2×2 covariance
+        // propagation with the shared-noise off-diagonal ρ·σIF·σGF.
+        if (!std::isfinite(pd.dif_m) || !std::isfinite(pd.sigma_if_m) ||
+            !std::isfinite(pd.dgf_m) || !(pd.sigma_gf_m > 0.0)) return r;
+        const double det = -beta1 * lam2 + beta2 * lam1;  // ≈ −0.046 m² (GPS)
+        if (std::abs(det) < 1e-6) return r;
+        // M⁻¹ = (1/det)·[−λ2, β2; −λ1, β1]
+        const double a11 = -lam2 / det, a12 = beta2 / det;
+        const double a21 = -lam1 / det, a22 = beta1 / det;
+        dn1 = a11 * pd.dif_m + a12 * pd.dgf_m;
+        dn2 = a21 * pd.dif_m + a22 * pd.dgf_m;
+        const double sif = pd.sigma_if_m, sgf = pd.sigma_gf_m;
+        const double c12 = rho_if_gf * sif * sgf;
+        v1 = a11 * a11 * sif * sif + 2.0 * a11 * a12 * c12 + a12 * a12 * sgf * sgf;
+        v2 = a21 * a21 * sif * sif + 2.0 * (a21 * a22) * c12 + a22 * a22 * sgf * sgf;
+        cov12 = a11 * a21 * sif * sif + (a11 * a22 + a12 * a21) * c12
+                + a12 * a22 * sgf * sgf;
+        r.used_gf = true;
+    } else {
+        return r;   // no second equation yet — keep pending
+    }
+    if (!std::isfinite(dn1) || !std::isfinite(dn2)) return r;
+    if (std::abs(dn1) > max_abs_cyc || std::abs(dn2) > max_abs_cyc) return r;
+    if (!(v1 >= 0.0) || !(v2 >= 0.0)) return r;
+    if (std::sqrt(v1) > max_sigma_cyc || std::sqrt(v2) > max_sigma_cyc) return r;
+
+    r.ok = true;
+    r.dn1_cyc = dn1;  r.dn2_cyc = dn2;
+    r.shift1_m = lam1 * dn1;  r.shift2_m = lam2 * dn2;
+    r.var1_m2 = lam1 * lam1 * v1;  r.var2_m2 = lam2 * lam2 * v2;
+
+    // Stage 2: chain band 3 from the EWL integer.  dn_ewl_b3 was NORMALIZED at
+    // fill time to ΔN3 − ΔN_shared, so the chain is sign-free here; the λ3
+    // derivation folds the EWL wavelength against the shared band's own
+    // (1/λ3 = 1/λ_shared ± 1/λ_EWL, + when band 3 is the higher frequency).
+    if (pd.has_ewl && (pd.ewl_shared_band == 1 || pd.ewl_shared_band == 2)
+        && pd.lambda_ewl > 0.0) {
+        const double lam_sh = (pd.ewl_shared_band == 1) ? lam1 : lam2;
+        const double dn_sh  = (pd.ewl_shared_band == 1) ? dn1 : dn2;
+        const double v_sh   = (pd.ewl_shared_band == 1) ? v1 : v2;
+        const double inv_l3 = 1.0 / lam_sh
+                              + (pd.ewl_b3_hi ? 1.0 : -1.0) / pd.lambda_ewl;
+        if (inv_l3 > 0.0) {
+            const double lam3 = 1.0 / inv_l3;
+            const double dn3 = dn_sh + pd.dn_ewl_b3;
+            const double v3 = v_sh + pd.sigma_ewl * pd.sigma_ewl;
+            (void)cov12;  // band-3 var uses the shared band's own var; the
+                          // cross term to the OTHER band is not carried (the
+                          // replace is diagonal by design).
+            if (std::isfinite(dn3) && std::abs(dn3) <= max_abs_cyc
+                && std::sqrt(v3) <= max_sigma_cyc) {
+                r.has3 = true;
+                r.dn3_cyc = dn3;
+                r.shift3_m = lam3 * dn3;
+                r.var3_m2 = lam3 * lam3 * v3;
+                r.lam3_m = lam3;
+            }
+        }
+    }
+    return r;
+}
+
+bool networkSlipFillEwlSlot(RelevelPend& pd, const MwBridgeCand& cand,
+                            double sigma_floor_eff_cyc) {
+    if (pd.has_ewl) return false;
+    const bool s1_shared = (cand.sig1 == pd.sig1 || cand.sig1 == pd.sig2);
+    const bool s2_shared = (cand.sig2 == pd.sig1 || cand.sig2 == pd.sig2);
+    if (s1_shared == s2_shared) return false;  // both shared (IS the IF pair) or disjoint
+    const std::string& shared = s1_shared ? cand.sig1 : cand.sig2;
+    const std::string& band3  = s1_shared ? cand.sig2 : cand.sig1;
+    if (!pd.sig3.empty() && band3 != pd.sig3) return false;
+    if (!(cand.lambda_wl > 0.0)) return false;
+    // cand.dn_wl = ΔN(cand.sig1) − ΔN(cand.sig2) in the detector's
+    // frequency-sorted order; normalize to ΔN(band3) − ΔN(shared).
+    pd.has_ewl        = true;
+    pd.dn_ewl_b3      = s1_shared ? -cand.dn_wl : cand.dn_wl;
+    pd.ewl_b3_hi      = !s1_shared;  // band3 == cand.sig1 ⇒ the higher frequency
+    pd.ewl_shared_band = (shared == pd.sig1) ? 1 : 2;
+    pd.lambda_ewl     = cand.lambda_wl;
+    pd.sigma_ewl      = std::max(cand.sigma_wl_cyc, sigma_floor_eff_cyc);
+    pd.sig3           = band3;
+    return true;
+}
+
+BridgeReplaceOutcome networkSlipBridgeV3Replace(
+        const RelevelPend& pd, int sta, const std::string& sat,
+        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+        double rho_if_gf, double max_abs_cyc, double max_sigma_cyc,
+        double corrob_cyc, BridgeV3Solve* solved) {
+    const auto bs = networkSlipBridgeV3Solve(pd, rho_if_gf,
+                                             max_abs_cyc, max_sigma_cyc);
+    if (solved) *solved = bs;
+    if (!bs.ok) return BridgeReplaceOutcome::KernelReject;
+    auto it1 = carry.find({sta, sat, pd.sig1});
+    auto it2 = carry.find({sta, sat, pd.sig2});
+    if (it1 == carry.end() || it2 == carry.end())
+        return BridgeReplaceOutcome::NoCarry;
+    const bool do3 = bs.has3 && pd.has_pre3 && !pd.sig3.empty();
+    auto it3 = do3 ? carry.find({sta, sat, pd.sig3}) : carry.end();
+    // Per-band wavelengths for the cycle-domain corroboration.
+    constexpr double c = 299792458.0;
+    const double f1 = 0.5 * c * (1.0 / pd.lambda_wl + 1.0 / pd.lambda_if);
+    const double f2 = 0.5 * c * (1.0 / pd.lambda_if - 1.0 / pd.lambda_wl);
+    const double lam1 = c / f1, lam2 = c / f2;
+    const double L1 = pd.pre1 + bs.shift1_m;
+    const double L2 = pd.pre2 + bs.shift2_m;
+    if (std::abs(L1 - it1->second.value_abs) / lam1 > corrob_cyc ||
+        std::abs(L2 - it2->second.value_abs) / lam2 > corrob_cyc)
+        return BridgeReplaceOutcome::CorrobReject;
+    double L3 = 0.0;
+    const bool apply3 = do3 && it3 != carry.end() && bs.lam3_m > 0.0;
+    if (apply3) {
+        L3 = pd.pre3 + bs.shift3_m;
+        // NO partial apply: a band-3 corroboration failure rejects the whole
+        // bridge — a half-replaced LOS mixes pre-slip and free-re-level frames.
+        if (std::abs(L3 - it3->second.value_abs) / bs.lam3_m > corrob_cyc)
+            return BridgeReplaceOutcome::CorrobReject;
+    }
+    it1->second.value_abs = L1;  it1->second.var = pd.pre_var1 + bs.var1_m2;
+    it2->second.value_abs = L2;  it2->second.var = pd.pre_var2 + bs.var2_m2;
+    if (apply3) {
+        it3->second.value_abs = L3;
+        it3->second.var = pd.pre_var3 + bs.var3_m2;
+    }
+    return BridgeReplaceOutcome::Applied;
+}
+
 BridgeReplaceOutcome networkSlipBridgeReplace(
         const RelevelPend& pd, int sta, const std::string& sat,
         std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
@@ -377,13 +544,66 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             }
             return outcome;
         };
+        // Bridge v3 dispatch: when either rider is armed, every replace routes
+        // through the v3 kernel (identical math to v2 on an E2-only pend, plus
+        // the plane-residual screen when the GF row is present and the band-3
+        // chain when the EWL slot is filled).
+        const bool bridge_v3_gf  = bridge_v2 && config_.networkCycleSlipRelevelBridgeGf();
+        const bool bridge_v3_ewl = bridge_v2 && config_.networkCycleSlipRelevelBridgeEwl();
+        const bool bridge_v3     = bridge_v3_gf || bridge_v3_ewl;
+        auto v3_replace = [&](const std::tuple<int, std::string, std::string>& key,
+                              const RelevelPend& pd) {
+            BridgeV3Solve bs;
+            const int rsta = std::get<0>(key);
+            const std::string& rsat = std::get<1>(key);
+            const auto outcome = networkSlipBridgeV3Replace(
+                pd, rsta, rsat, *bridge_local_carry, kBridgeGfIfRho,
+                v2_max_cyc, v2_max_sig, v2_corrob, &bs);
+            switch (outcome) {
+                case BridgeReplaceOutcome::Applied: {
+                    ++qc_cnt.bridge_pairs_applied;
+                    if (bs.used_gf) ++qc_cnt.bridge_gf_applied;
+                    const bool did3 = bs.has3 && pd.has_pre3;
+                    if (did3) ++qc_cnt.bridge_band3_applied;
+                    qc_cnt.bridge_max_abs_dn_cyc =
+                        std::max({qc_cnt.bridge_max_abs_dn_cyc,
+                                  std::abs(bs.dn1_cyc), std::abs(bs.dn2_cyc),
+                                  did3 ? std::abs(bs.dn3_cyc) : 0.0});
+                    emitEvent("T1_if_slip", "bridge_replace", rsat,
+                              stations[rsta].name, bs.dn1_cyc, bs.dn2_cyc, "bridge",
+                              fmt::format("{};{};lag_s={:.0f};sd1={:.3f};sd2={:.3f};"
+                                          "route={}{}",
+                                          pd.sig1, pd.sig2, v2_now_s - pd.tow_s,
+                                          std::sqrt(bs.var1_m2), std::sqrt(bs.var2_m2),
+                                          bs.used_gf ? "gf" : "mw",
+                                          did3 ? fmt::format(";dn3={:.2f};sd3={:.3f}",
+                                                             bs.dn3_cyc,
+                                                             std::sqrt(bs.var3_m2))
+                                               : std::string{}));
+                    break;
+                }
+                case BridgeReplaceOutcome::KernelReject:
+                    ++qc_cnt.bridge_fallback_reject;
+                    if (bs.plane_resid_sigma > kBridgePlaneResidMax)
+                        ++qc_cnt.bridge_plane_reject;
+                    break;
+                case BridgeReplaceOutcome::NoCarry:      ++qc_cnt.bridge_fallback_no_carry;  break;
+                case BridgeReplaceOutcome::CorrobReject: ++qc_cnt.bridge_replace_corrob_reject; break;
+            }
+            return outcome;
+        };
+        auto do_replace = [&](const std::tuple<int, std::string, std::string>& key,
+                              const RelevelPend& pd) {
+            return bridge_v3 ? v3_replace(key, pd) : v2_replace(key, pd);
+        };
         if (bridge_v2)
             for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();) {
                 if (v2_now_s - pit->second.tow_s > v2_window_s) {
                     ++qc_cnt.bridge_pend_expired;
                     pit = relevel_pend->erase(pit);
-                } else if (pit->second.has_dn) {
-                    v2_replace(pit->first, pit->second);
+                } else if (pit->second.has_dn
+                           || (bridge_v3_gf && pit->second.has_gf)) {
+                    do_replace(pit->first, pit->second);
                     pit = relevel_pend->erase(pit);   // terminal either way
                 } else ++pit;
             }
@@ -421,11 +641,34 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         pit->second.sigma_wl  = std::max(cand.frac,
                             config_.networkCycleSlipRelevelBridgeWlSigmaFloorCyc());
                         pit->second.lambda_wl = cand.lambda_wl;
-                        const auto outcome = v2_replace(pkey, pit->second);
+                        const auto outcome = do_replace(pkey, pit->second);
                         relevel_pend->erase(pit);
                         if (outcome == BridgeReplaceOutcome::Applied) {
                             if (mw_done.insert(sat).second) ++qc_cnt.mw_detections;
                             continue;   // suppress the second free — level replaced
+                        }
+                    } else if (bridge_v3_ewl && pit == relevel_pend->end()) {
+                        // Bridge v3 E3, belated: an EWL candidate whose pair
+                        // shares exactly one band with a waiting (sta, sat)
+                        // pend fills its band-3 slot.  No replace here — the
+                        // sweep (or the belated IF-pair MW) closes the (1,2)
+                        // plane; the EWL alone cannot.  The σ floor is mapped
+                        // at the pend's FLAG-epoch elevation.
+                        for (auto& [k3, pd3] : *relevel_pend) {
+                            if (std::get<0>(k3) != i || std::get<1>(k3) != sat)
+                                continue;
+                            const double s3 = std::sin(
+                                pd3.el_deg * 0.017453292519943295);
+                            MwBridgeCand c3{i, sat, sig1, sig2, cand.dn_wl,
+                                            std::max(cand.frac,
+                                config_.networkCycleSlipRelevelBridgeWlSigmaFloorCyc()),
+                                            cand.lambda_wl};
+                            if (networkSlipFillEwlSlot(
+                                    pd3, c3,
+                                    config_.networkCycleSlipRelevelBridgeEwlSigmaFloorCyc()
+                                        / std::max(s3, 0.15)))
+                                ++qc_cnt.bridge_ewl_belated;
+                            break;
                         }
                     }
                 }
@@ -593,7 +836,9 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                     LocalCarry>* bridge_local_carry,
                            SlipQcCounters* bridge_cnt,
                            std::map<std::tuple<int, std::string, std::string>,
-                                    RelevelPend>* relevel_pend) {
+                                    RelevelPend>* relevel_pend,
+                           const RawSlipEpoch* raw_epoch,
+                           const std::vector<RawSlipHistory>* raw_hist) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -718,6 +963,20 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         const double br_if_floor  = config_.networkCycleSlipRelevelBridgeIfSigmaFloorM();
         const double br_wl_floor  = config_.networkCycleSlipRelevelBridgeWlSigmaFloorCyc();
         const double br_now_s     = se.time.week * 604800.0 + se.time.tow;
+        // Bridge v3 riders (loader guarantees relevel_delta_bridge when set).
+        const bool   br_gf_on     = bridge_on
+                                    && config_.networkCycleSlipRelevelBridgeGf()
+                                    && raw_epoch && raw_hist;
+        const bool   br_ewl_on    = bridge_on
+                                    && config_.networkCycleSlipRelevelBridgeEwl();
+        const double br_gf_floor  = config_.networkCycleSlipRelevelBridgeGfSigmaFloorM();
+        const double br_ewl_floor = config_.networkCycleSlipRelevelBridgeEwlSigmaFloorCyc();
+        // Elevation map for the EWL σ floor: the single-epoch EWL-MW noise is
+        // NL-code-driven, ~1/sin(el); clamp low so a horizon arc cannot explode.
+        auto ewlFloorEff = [&](double el_deg) {
+            const double s = std::sin(el_deg * 0.017453292519943295);
+            return br_ewl_floor / std::max(s, 0.15);
+        };
         for (auto& [pair, samples] : by_pair) {
             // (1) Network common-mode center: median of the raw DDs (m).
             std::vector<double> raw;
@@ -795,6 +1054,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                     pd.lambda_if = sp->lambda;
                                     pd.sig1 = sp->sig1;  pd.sig2 = sp->sig2;
                                     pd.tow_s = br_now_s;
+                                    pd.el_deg = sp->el;
                                     const auto ci = cand_idx.find(
                                         std::tuple<int, std::string, std::string>{
                                             sp->sta, sp->sat, pair});
@@ -806,6 +1066,81 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                         pd.lambda_wl = ci->second->lambda_wl;
                                         ci->second->consumed = true;
                                         ++bridge_cnt->bridge_joint;   // same-epoch pairings
+                                    }
+                                    // Bridge v3 E4: the same-pair GF-phase TD
+                                    // (geometry/clock-free) with the station's
+                                    // OWN empirical step scale — closes the
+                                    // (1,2) plane at the first sweep without
+                                    // waiting for the MW integer.  The raw
+                                    // primary pair must BE this IF pair (true
+                                    // for GPS and GAL on the triple posture);
+                                    // a mismatch or a gap re-birth (no adjacent
+                                    // predecessor) keeps the pend E2-only.
+                                    if (br_gf_on
+                                        && sp->sta < static_cast<int>(
+                                               raw_epoch->verdict.size())) {
+                                        const auto& vm =
+                                            raw_epoch->verdict[sp->sta];
+                                        const auto vit = vm.find(sp->sat);
+                                        const RawSlipObs* row = nullptr;
+                                        if (vit != vm.end() && vit->second.measured)
+                                            for (const auto& ro :
+                                                 raw_epoch->rows[sp->sta])
+                                                if (ro.satellite == sp->sat) {
+                                                    row = &ro; break;
+                                                }
+                                        if (row && row->dual
+                                            && row->sig1 == sp->sig1
+                                            && row->sig2 == sp->sig2) {
+                                            pd.has_gf = true;
+                                            pd.dgf_m = vit->second.d_gf;
+                                            pd.sigma_gf_m = std::max(
+                                                (*raw_hist)[sp->sta].gf_step_scale,
+                                                br_gf_floor);
+                                            if (!(pd.lambda_wl > 0.0))
+                                                pd.lambda_wl = row->lambda_wl_m;
+                                            ++bridge_cnt->bridge_gf_captured;
+                                        }
+                                    }
+                                    // Bridge v3 E3: record the third band and
+                                    // capture its PRE-SLIP carry NOW — a belated
+                                    // capture would read the interim free
+                                    // re-level, not the pre-slip level.
+                                    if (br_ewl_on) {
+                                        for (const auto& [k3, i3] :
+                                             stations[sp->sta].sm->getAmbiguities()) {
+                                            const auto p3 =
+                                                StateKeys::parseAmbiguityKey(k3);
+                                            if (!p3 || p3->satellite != sp->sat)
+                                                continue;
+                                            if (p3->signal == sp->sig1
+                                                || p3->signal == sp->sig2)
+                                                continue;
+                                            pd.sig3 = p3->signal;
+                                            const auto it3 =
+                                                bridge_local_carry->find(
+                                                    {sp->sta, sp->sat, p3->signal});
+                                            if (it3 != bridge_local_carry->end()) {
+                                                pd.has_pre3 = true;
+                                                pd.pre3 = it3->second.value_abs;
+                                                pd.pre_var3 = it3->second.var;
+                                            }
+                                            break;
+                                        }
+                                        // Same-epoch EWL integer (the common
+                                        // case — the unlocked MW path publishes
+                                        // the instantly-roundable EWL at the
+                                        // flag epoch, and the MW drain ran
+                                        // before this driver).
+                                        for (auto& c3 : relevel->mw_cands)
+                                            if (!c3.consumed && c3.sta == sp->sta
+                                                && c3.sat == sp->sat
+                                                && networkSlipFillEwlSlot(
+                                                       pd, c3, ewlFloorEff(sp->el))) {
+                                                c3.consumed = true;
+                                                ++bridge_cnt->bridge_ewl_joint;
+                                                break;
+                                            }
                                     }
                                     (*relevel_pend)[std::make_tuple(
                                         sp->sta, sp->sat, pair)] = pd;
