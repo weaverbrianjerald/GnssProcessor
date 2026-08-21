@@ -59,7 +59,6 @@
   "h_sigma0_prefit_census": true,
   "emit_clock_frame_hold": true,
   "emit_clock_disc": true,
-  "sticky_pivot": true,
   "cb_kaula_prior": true,
   "cb_kaula_sigma_m": 3.0,
   "emit_pb_filter_jump_k": 4.0,
