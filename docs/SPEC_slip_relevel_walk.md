@@ -371,3 +371,62 @@ better second equation is validated as a mechanism — safe, high-yield,
 integer-clean — and stays a default-OFF precision knob whose truth-channel
 value materializes only after the displacement drain
 (`SPEC_iono_carry_8b.md` §6.2) lands.**
+
+## §8.4 The ≥4 h field escalation (2026-08-21) — quality instruments all better; the A4-withhold deadlock era is the finding
+
+The §6.4-owed escalation of the 1 h field smoke (`SPEC_iono_carry_8b.md`
+§6.4).  Same-build A/B on the certified 8(b) exe (MD5 6B3935C3…, commit
+803c58a), configs `_fld63_relevel4h_{off,on}.json` — clones of the 1 h pair
+at the same extends-depth (the ext63 chain is at the SS23.7 ceiling of 8)
+with `max_duration_s: 14400`; ext63 leveled posture, `carry_invariant`
+OFF, GPS dual, 63 stations, 483 synced epochs, cold start, settled tail =
+the last 2 h.  Runs `runs/fld63_relevel4h_{off,on}`.  Internal instruments
+only (no field truth).
+
+| gate (from the smoke pre-registration) | OFF | ON | verdict |
+|---|---|---|---|
+| free-epoch latches / inject skips / pends (inv. #4) | — | 338 / 224 / 50 (7 replaced, 22 corrob-rejected) | **live** ✓ |
+| bridge v3 GF (first field era-length exposure) | — | 28 captured, 6 E1+E4 applies, 0 plane rejects | ✓ |
+| settled-tail median post-fit phase σ̂₀ | 2.081 (p90 4.21) | **1.274 (p90 3.21)** | **−39 %** ✓ |
+| settled-tail median prefit σ̂₀ (H census) | 1.811 | **1.171** | **−35 %** ✓ |
+| settled-tail arc refloats | 2 432 (10.3/ep) | **1 818 (8.6/ep)** | **−25 %** ✓ |
+| T4 attribution-ARC flag rate | 2.068e-2 | **1.841e-2** | −11 % ✓ |
+| PB disc marks (products) / frame-consensus | 7 / 0.18 max | 7 / 0.18 max | equal ✓ |
+| σ̂₀ withholds | 5 | **30** | **WORSE** ✗ |
+| availability (emitted / synced) | 476/483 | **451/483** | **WORSE** ✗ |
+
+**The two ✗ are ONE event, and the mechanism is the documented
+degrade-during-withhold deadlock** (`project_day129_gate_policy`), now
+reproduced on the relevel posture with the epoch-status trace as evidence:
+
+- ON's 30 withholds = the shared single-epoch trip at TOW 268620 + **one
+  contiguous 29-epoch era (268890–269730, 14.5 min)** with prefit σ̂₀
+  ramping 9.3 → 26.5 (a second event visibly lands unresponded mid-era at
+  269400: 17.9 → 25.3).  On every withheld epoch `n_arc_refloat` reads 0 —
+  in BOTH legs, structurally: the adaptation channels (arc refloats, T4,
+  the free-epoch response itself) run downstream of emission, so **a
+  withhold era must clear itself**; this one did only at 269760.  OFF sailed
+  through the same TOWs emitting at σ̂₀ 1.1–4.1.
+- The asymmetric twin: at 273270–273360 OFF withheld 4 epochs (σ̂₀ up to
+  26.1) while **ON absorbed the same event** — emitted throughout at σ̂₀
+  1.3–2.0 with the refloat channel live (15/10/5/7 arcs).  The response
+  handles the event class that knocks the stale-injection path out; what it
+  cannot survive is being locked out of its own adaptation by the withhold.
+- ⚠ Unexplained readout, filed not chased: ON's first three post-era epochs
+  report prefit σ̂₀ = 1.000 exactly (a reset/clamp signature in the adapt
+  channel).
+
+**Verdict: NOT unconditionally adopted.**  Every quality instrument is
+better at 4 h — the σ̂₀ −29 % smoke result strengthens to −39 % settled-tail
+with an honest per-epoch median instead of a last-epoch draw — and the
+response absorbs an OFF-killing event; but per the RAIM doctrine
+(adapt-and-EMIT; a withhold is graded as an adaptation failure) the 29-epoch
+era is an availability FAIL the 1 h smoke was structurally too short to see
+(its own §7 lesson).  The blocker is NOT the relevel mechanics: it is the
+A4-withhold ↔ adaptation mutual exclusion, which already carries an open
+policy item (the SH gate's missing release/degrade policy, same shape).
+Field adoption of the relevel knobs stays gated on that WITHHOLD-ERA RELEASE
+POLICY card — a derivation (what may run during a withhold: at minimum the
+slip funnel and the free-epoch latch, precisely the channels that would have
+cleared this era), not a `raim_withhold_sigma0` tune.  Knobs remain
+default-OFF; nothing tuned tonight per the stop-and-record discipline.
