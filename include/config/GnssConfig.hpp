@@ -4535,6 +4535,59 @@ namespace GnssProcessor {
         bool networkRaimRedundancyNormalize() const { return network_raim_redundancy_normalize_; }
 
         /**
+         * @brief QUEUE item 4 R2 — declare the per-station variance factor as its own
+         *        statistic (@c network.raim_station_factor;
+         *        `SPEC_t3_null_derivation.md` §6/§7.5).
+         *
+         * Measure-only: per emitted epoch, each present non-pivot station gets the
+         * trimmed variance component σ̂²_sta = Σw·v²/Σr_i over its post-fit RAIM rows
+         * (spike rows above k·σ̂₀ trimmed from both sums), EWMA-tracked as the SLOW
+         * channel (one station-epoch is ~24 % noise, §6) and DECLARED — trace rows,
+         * both-edge depart/return events at the ratio threshold, counters — never
+         * absorbed into any denominator (§7.8.2: absorption would bury a measured
+         * 0.11–2.55 m per-station iono error inside the noise model; that is R1,
+         * HELD).  Computes r_i via the solve-neutral rowRedundancy read (the census
+         * disjunct).  Requires @ref networkRaim; OFF = byte-identical.
+         */
+        bool networkRaimStationFactor() const { return network_raim_station_factor_; }
+
+        /**
+         * @brief R2 EWMA time constant, seconds (@c network.raim_station_factor_tau_s).
+         *
+         * §12.1b: the slow factor must TRACK (half-to-half transferability falls with
+         * window length) and the right constant is UNMEASURED — this knob exists to
+         * measure it.  Default 1800 s (the card's settled-warmup scale).
+         */
+        double networkRaimStationFactorTauS() const { return network_raim_station_factor_tau_s_; }
+
+        /**
+         * @brief R2 departure threshold (@c network.raim_station_factor_ratio): a
+         *        station whose EWMA factor exceeds this ratio to the network median
+         *        of EWMA factors gets a depart event (hysteresis return at 0.8×).
+         *
+         * Default 6.0 — above the §4 measured 4.7× model-error spread, so the
+         * declaration flags genuine station departures, not the (declared,
+         * traced) heterogeneity itself.
+         */
+        double networkRaimStationFactorRatio() const { return network_raim_station_factor_ratio_; }
+
+        /**
+         * @brief QUEUE item 4 R4 — T3/T3c population hygiene
+         *        (@c network.raim_rate_hygiene; `SPEC_t3_null_derivation.md` §6).
+         *
+         * Two accounting fixes to the flag-rate telemetry, both measure-only:
+         * structurally untestable T3 cells (s_raw exactly 0 — a carried ambiguity
+         * with no phase row this epoch, 1.67 % on the fitted arm) leave the T3
+         * opportunity count (counted separately), and T3c's opportunity becomes the
+         * UNCONDITIONAL population (satellites with cells at ≥ raim_min_stations
+         * stations) so its implied_alpha is like-for-like instead of comparing a
+         * conditional rate against an unconditional α.  Requires
+         * @ref networkRaim + trace_flag_rates (the counters it corrects);
+         * OFF = byte-identical.
+         */
+        bool networkRaimRateHygiene() const { return network_raim_rate_hygiene_; }
+
+        /**
          * @brief Whether the within-epoch adaptation drops the finest contaminated unit
          *        (@c network.raim_surgical_station; used only when @ref networkRaimWithinEpoch).
          *
@@ -6276,6 +6329,10 @@ namespace GnssProcessor {
         bool   network_raim_surgical_station_{true};   ///< Within-epoch adaptation may peel a single (station,sat) ARC instead of excluding the whole station, and de-rates whole-station exclusion by @ref network_raim_station_drop_bias_; false = coarse sat-vs-whole-station peel (A/B baseline).
         double network_raim_station_drop_bias_{1.5};   ///< A whole-station exclusion is chosen only when its median-polish row effect / this factor still beats the best satellite/arc candidate (≥1; 1 disables the bias).
         bool   network_raim_redundancy_normalize_{false}; ///< B2: standardize the post-fit / within-epoch RAIM residual by v_i/(σ_i·√r_i) with the Baarda redundancy r_i = 1 − w_i·a_iᵀCov(θ)a_i (per-row, from the cached per-station Schur factors) before σ̂0 pooling / median-polish; low-redundancy arcs are otherwise under-flagged (response ∝ r_i·fault). OFF = plain |v|·√w (byte-identical); ON deliberately changes the statistic.
+        bool   network_raim_station_factor_{false};        ///< QUEUE item 4 R2 (SPEC_t3_null_derivation §6/§7.5): declare the per-station trimmed variance component Σw·v²/Σr_i as its own EWMA-tracked statistic — trace + both-edge events + counters, NEVER absorbed into a denominator. Measure-only; requires raim; OFF = byte-identical.
+        double network_raim_station_factor_tau_s_{1800.0}; ///< R2 EWMA time constant (s) — §12.1b: unmeasured, this knob measures it.
+        double network_raim_station_factor_ratio_{6.0};    ///< R2 depart threshold: EWMA factor / network median of EWMA factors (return at 0.8×). Above the §4 measured 4.7× model-error spread.
+        bool   network_raim_rate_hygiene_{false};          ///< QUEUE item 4 R4 (SPEC_t3_null_derivation §6): T3 opportunity count excludes s_raw==0 untestable cells (counted separately); T3c opportunity becomes the unconditional ≥min_sta-cells population. Telemetry accounting only; requires raim + trace_flag_rates; OFF = byte-identical.
         bool   network_clock_monitor_{false};           ///< Per-satellite carried-clock sanity monitor: flag+refloat a sat clock past a physical bound (breaks the multi-hour single-sat lock-in the σ̂0 RAIM is blind to); OFF = byte-identical (no clock withheld from the stash).
         double network_clock_monitor_abs_max_m_{20.0};  ///< |Δδtˢ − median| bound (m): a satellite whose de-meaned clock exceeds this has its carried shared state refloated.
         double network_clock_monitor_jump_max_m_{10.0}; ///< One-epoch clock jump bound (m): a satellite whose clock moves more than this across adjacent stable-datum epochs is refloated.

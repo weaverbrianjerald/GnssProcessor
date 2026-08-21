@@ -48,6 +48,44 @@ std::map<KeyT, double> robustProminence(const std::map<KeyT, double>& eff) {
     return out;
 }
 
+/// One post-fit RAIM phase row's contribution to a per-station variance factor
+/// (QUEUE item 4 R2, `SPEC_t3_null_derivation.md` §7.5): the weighted squared
+/// residual, the row's Baarda redundancy, and the SAME standardized statistic
+/// the network σ̂₀ pool uses (for the outlier trim).
+struct StationFactorRow {
+    double wv2;    ///< w·v² (numerator contribution)
+    double ri;     ///< per-row Baarda redundancy r_i (denominator contribution)
+    double r_std;  ///< |v|·√w (÷√r_i under B2) — the pooled statistic, for trimming
+};
+
+/**
+ * @brief Trimmed per-station variance component
+ *        σ̂²_sta = Σ w·v² / Σ r_i over the station's post-fit RAIM rows
+ *        (QUEUE item 4 R2; the §7.5 form with redundancy in the denominator).
+ *
+ * Rows whose pooled statistic exceeds @p trim_above are excluded from BOTH
+ * sums — a spiking row (the T3 detection population) must not set the slow
+ * per-station scale, or one slip would masquerade as a station-scale departure
+ * (§7.5: "outlier-sensitive, so a production form needs a robust variant —
+ * and the 11.80-vs-1.78 gap says that choice is not cosmetic").  Trimming
+ * both sums keeps the E[w·v²] = r_i identity intact for the surviving rows.
+ * @p trim_above ≤ 0 disables the trim.
+ *
+ * @return the variance factor (≈1 when the stochastic model is honest), or a
+ *         negative sentinel when the station has no checkable redundancy this
+ *         epoch (Σr_i ≈ 0 — declare "unavailable", never 0).
+ */
+inline double stationVarianceFactor(const std::vector<StationFactorRow>& rows,
+                                    double trim_above) {
+    double num = 0.0, den = 0.0;
+    for (const auto& q : rows) {
+        if (trim_above > 0.0 && q.r_std > trim_above) continue;
+        num += q.wv2;
+        den += q.ri;
+    }
+    return den > 1e-9 ? num / den : -1.0;
+}
+
 /// Result of a Tukey 2-way median polish: value ≈ overall + row_eff[row] + col_eff[col]
 /// + interaction (parallel to the input cell order).
 struct MedianPolish {

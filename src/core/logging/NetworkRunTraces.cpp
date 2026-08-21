@@ -47,6 +47,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       rx_states_trace_path(log_dir_ / "network_rx_states.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       raim_redun_trace_path(log_dir_ / "network_raim_redundancy.csv"),
+      station_factor_trace_path(log_dir_ / "network_station_factor.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
       carry_vce_apply_trace_path(log_dir_ / "network_carry_vce_apply.csv"),
       prior_residual_trace_path(log_dir_ / "network_prior_residual.csv"),
@@ -717,6 +718,21 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open RAIM redundancy census {}",
                       raim_redun_trace_path.string());
+    }
+    if (config_.networkRaimStationFactor()) {
+        station_factor_trace.open(station_factor_trace_path);
+        if (station_factor_trace)
+            // QUEUE item 4 R2 (SPEC_t3_null_derivation §6/§7.5).  factor = the
+            // per-epoch trimmed variance component Σw·v²/Σr_i (−1 = no checkable
+            // redundancy this epoch — "unavailable is not 0"); ewma = the slow
+            // declared channel; ratio = ewma / network median of ewmas (the
+            // depart statistic); n_rows/n_trim = the trim census; departed = the
+            // station is currently past the depart edge (hysteresis state).
+            station_factor_trace << "week,tow,station,factor,ewma,ratio,"
+                                    "n_rows,n_trim,departed\n";
+        else
+            log->warn("Network: failed to open station-factor trace {}",
+                      station_factor_trace_path.string());
     }
 
     // INC-4: capture the L1/L15 config echoes once (pure getter reads).
@@ -1679,6 +1695,7 @@ void NetworkRunTraces::closeAll() {
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
     if (raim_redun_trace.is_open()) raim_redun_trace.close();
+    if (station_factor_trace.is_open()) station_factor_trace.close();
     if (carry_vce_trace.is_open()) carry_vce_trace.close();
     if (carry_vce_apply_trace.is_open()) carry_vce_apply_trace.close();
     if (block_baarda_trace.is_open()) block_baarda_trace.close();

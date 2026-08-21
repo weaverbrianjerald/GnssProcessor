@@ -426,6 +426,12 @@ namespace GnssProcessor {
         /// neutral: it makes r_i be computed, never used.  Heavy opt-in deep trace.
         std::ofstream raim_redun_trace;
         const std::filesystem::path raim_redun_trace_path;
+        /// QUEUE item 4 R2 (network.raim_station_factor): the DECLARED per-station
+        /// variance factor — one row per (emitted epoch × present non-pivot station)
+        /// with the per-epoch factor, its EWMA, the ratio to the network median of
+        /// EWMAs, and the trim census.  Light (≤ n_sta rows/epoch).
+        std::ofstream station_factor_trace;
+        const std::filesystem::path station_factor_trace_path;
         /// M2 (LS-VCE): per-hour measured carry-variance components — one row per
         /// (family, constellation) whenever the content hour rolls over.  floor_m2 is
         /// the honest constant-cofactor σ̂ to compare against the hand var_floor;

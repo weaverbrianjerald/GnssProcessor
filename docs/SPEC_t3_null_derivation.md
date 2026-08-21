@@ -1003,3 +1003,61 @@ The T3 numbers this arm produced (cell rate 20.7 %, T3c 93.1 %) are **ignition m
 20-epoch window** and must not be quoted.  They are listed only to record that the tier is live.  A
 field-scale T3 reading needs a settled window, and §12.1 already shows the field runs mostly in the
 σ̂₀-floor-pinned regime where the statistic degenerates anyway.
+
+## §15 R2 + R4 BUILT AND VALIDATED (2026-08-21) — the declared station factor reproduces the fitted heterogeneity at corr +0.96
+
+**Built** (both measure-only, default-OFF, byte-identical OFF — recertified on
+the fld63 pair against the `65ba362` references, products + five CSVs
+identical with every new knob absent):
+
+- **R2 `network.raim_station_factor`** (+ `_tau_s` 1800, `_ratio` 6.0): the
+  §7.5 trimmed per-station variance component σ̂²_sta = Σw·v²/Σr_i, computed in
+  Pass 1 of `networkPostFitRaim` with its own row de-dup mask (the MDB/s0g
+  column-keyed-loop lesson), fed ahead of the uncheckable `continue` (the s0g
+  E[w·v²]=r_i argument), trimmed at k·σ̂₀ from BOTH sums, r_i via the
+  solve-neutral rowRedundancy read (the census disjunct gains `staf_on`).
+  EWMA-tracked slow channel (freezes across withholds by construction — the
+  seam is post-acceptance); DECLARED only: `network_station_factor.csv`,
+  both-edge `T3_stafactor/depart|return` events at ratio 6.0 / 0.8×
+  hysteresis with a 10-update warmup, counters + teardown line.  Feeds NO
+  denominator (§7.8.2's R1 stays HELD).  Kernel unit-pinned
+  (`StationFactorKernel` ×5: the identity, trim-both-sums, the negative
+  "unavailable" sentinel, low-r_i immunity).
+- **R4 `network.raim_rate_hygiene`**: structurally-untestable cells leave the
+  T3 opportunity count (counted separately) and T3c's opportunity becomes the
+  UNCONDITIONAL ≥min_sta-cells population.
+
+**Validated** (`runs/staf_{ctl,on}`, `_staf_{ctl,on}.json` — knob-verbatim
+JSON-round-trip clones of `_simnet24_inj_pareref_on.json`, product paths
+redirected; exe MD5 3979C756…, suite 1491/208 green):
+
+- **Measure-only proven by intervention**: armed vs control solve CSVs +
+  products byte-identical.
+- **The §4 structure reproduces on the fresh exe**: station-factor spread
+  4.7× (0.948–4.452), OOS station×epoch 0.9736 %, corr(half1, half2) +0.8468
+  — the §4.1 numbers to the digit.
+- **R2 gate PASS**: corr(log fitted station scale, log run-end EWMA factor)
+  = **+0.9589** over all 24 stations (gate ≥ +0.9); ranking agrees at both
+  ends (S01/S07/S20/S06 top, S03 bottom); log-log slope 1.55 vs the naive
+  2.0 — the trim compressing the heavy-tail stations, the §7.5 "robust
+  variant is not cosmetic" effect, measured.
+- **Deviation recorded, not tuned**: pre-registration expected 0 depart
+  events (the 4.7× model-error spread < the 6.0 bar); the arm produced ONE
+  depart/return pair (run-max ratio 6.45) — an EWMA convergence transient
+  crossing the bar at τ=1800 on a 1 h window, closed by the hysteresis
+  exactly as designed.  Both edges evented; cost-free on a measure-only
+  channel.  A settled-window declaration study belongs to the R2 field arm,
+  not to a threshold tune.
+- **R4 finding — the §4 "1.67 %" was a FORMATTING ARTIFACT**: the L13 trace
+  prints s_raw at 3 decimals, and 355 of the 364 "exactly 0" cells are
+  formatted zeros with real sub-mm rows (testable in principle); only **9
+  cells (0.04 %)** are structurally row-less.  The producer-side exact test
+  is the correct population; the §4 mechanism claim ("no phase row") was
+  97 % wrong about its own population while the hygiene concern survives at
+  40× smaller magnitude.  T3c: opp 712 (conditional) → 3622 (unconditional),
+  rate 5.62e-3 → 1.10e-3 — the implied-α comparison is now like-for-like.
+
+**Still owed** (unchanged): the §8-step-2 different-seed null verify; the
+field B2 unclamp arm (§12.2) before any FIELD grading of the declared factor;
+a station-fault bench extension for the depart-event power claim; R1 stays
+HELD, R3 unbuilt.

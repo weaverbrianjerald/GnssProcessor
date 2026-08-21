@@ -374,6 +374,7 @@ add_executable(gnss_tests
     tests/test_iono_carry_config.cpp
     tests/test_network_process_noise_config.cpp
     tests/test_withhold_release_config.cpp
+    tests/test_station_factor_config.cpp
     tests/test_config_extends.cpp
     tests/test_sd_ewl_prereduce.cpp
     tests/test_sd_ewl_integer.cpp

@@ -101,6 +101,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.wh_free_erase = config_.networkRaimWithholdFreeErase();
     k.raim_redun = config_.networkRaimRedundancyNormalize();
     k.raim_redun_trace = config_.getNetworkConfig().trace_raim_redundancy;
+    k.staf_on = config_.networkRaimStationFactor();
+    k.staf_tau_s = config_.networkRaimStationFactorTauS();
+    k.staf_ratio = config_.networkRaimStationFactorRatio();
+    k.rate_hygiene = config_.networkRaimRateHygiene();
     k.clk_mon_on = config_.networkClockMonitor();
     k.clk_mon_abs = config_.networkClockMonitorAbsMaxM();
     k.clk_mon_jump = config_.networkClockMonitorJumpMaxM();

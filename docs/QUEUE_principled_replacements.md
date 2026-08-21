@@ -363,6 +363,20 @@ found the root — per-LOS ionosphere error — and a stratified per-station var
 ABSORB it (0.11–2.55 m per station) into the noise model. Build **R2 (declare) and R4 (population
 hygiene)**, correct regardless; hold **R1** until 8(a) reports.
 
+✅ **R2 + R4 BUILT AND VALIDATED 2026-08-21** (`SPEC_t3_null_derivation.md` §15):
+`network.raim_station_factor` (the declared §7.5 trimmed variance component, EWMA slow channel,
+both-edge `T3_stafactor` depart/return events, feeds NO denominator — R1 stays HELD) +
+`network.raim_rate_hygiene` (untestable cells out of the T3 opportunity count; T3c opportunities
+unconditional).  Both measure-only, default-OFF, byte-identical OFF (fld63 recert vs the `65ba362`
+references); solve-identity proven by intervention (armed ≡ control on `runs/staf_{ctl,on}`);
+**corr(log fitted station scale, log run-end EWMA factor) = +0.9589** over all 24 stations, the §4
+structure reproduced to the digit on the fresh exe; suite 1491/208 green.  Collateral finding:
+§4's "1.67 % untestable" was a FORMATTING artifact of the 3-decimal L13 trace — the structurally
+row-less population is 9 cells (0.04 %); T3c's like-for-like rate reads 1.10e-3.  One recorded
+deviation: a single depart/return transient (run-max ratio 6.45) during EWMA convergence, closed
+by the hysteresis — recorded, not tuned.  Still owed: the §8-step-2 different-seed null verify,
+the field B2 unclamp arm before any FIELD grading, a station-fault bench for depart power.
+
 **Bandaid:** a Gaussian 6σ quantile under a statistic that is a max-over-rows normalized by a
 median-over-rows. Measured implied α: 3.78e7× nominal on the quiet 24-sta fixture, 2.7e7× on the
 quiet 300-sta fixture; the implied-scale-vs-quantile curve rises monotonically (1.83 → 313) ⇒ the

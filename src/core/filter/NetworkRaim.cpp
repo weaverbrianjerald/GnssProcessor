@@ -103,6 +103,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
 
     auto& local_carry = ctx.carry.local_carry;
     auto& raim_refloat_pending = ctx.carry.raim_refloat_pending;
+    // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6): both measure-only, both
+    // loader-guaranteed to require network.raim.  R2 additionally needs per-row
+    // r_i, obtained through the same solve-neutral rowRedundancy read the census
+    // uses (the disjunct below gains staf_on).
+    const bool staf_on      = ctx.knobs.staf_on;
+    const bool rate_hygiene = ctx.knobs.rate_hygiene;
+    auto&      staf_out     = traces.station_factor_trace;
     auto& raim_ci_tallies = ctx.counters.raim_ci;
     // Denominator #1 (standing invariant #4): "the seam never ran" must be
     // distinguishable from "it ran and screened nothing".
@@ -150,6 +157,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const bool need_attrib = attrib_on || attrib_act || trace_flag_rates;
     struct Cell { int sta; std::string sat, sig; double r; };
     std::vector<Cell> cells;
+    // R2: per-station factor rows, collected during Pass 1 and reduced AFTER σ̂₀
+    // exists (the trim bar is k·σ̂₀, which is not known until the pool closes).
+    std::vector<std::vector<StationFactorRow>> staf_rows;
+    if (staf_on) staf_rows.resize(stations.size());
     for (size_t i = 0; i < stations.size(); ++i) {
         // Prioritized: keep the former pivot — its non-anchored arcs are in
         // R.pl_amb (anchored/pinned keys already excluded at carry build).
@@ -175,12 +186,16 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // could not be run on a validated posture.  Computing row_r is a pure read of the
         // already-factored normal equations, so the disjunct below is solve-NEUTRAL: the
         // value is used only where `raim_redun` itself is tested.
-        if (raim_redun || raim_redun_trace) {
+        if (raim_redun || raim_redun_trace || staf_on) {
             try {
                 row_r = est.rowRedundancy(static_cast<std::size_t>(est_index_of[i]),
                                           R.A_s, R.A_r, R.w, shared_datum);
             } catch (...) { row_r.resize(0); }
         }
+        // R2: this station's factor is computable only with a full r_i vector — a
+        // rowRedundancy throw leaves the station "unavailable" this epoch (the
+        // trace's −1 sentinel path; never 0).
+        const bool staf_here = staf_on && row_r.size() == R.A_r.rows();
         const bool redun_trace_here = raim_redun_out.is_open();
         // --- MDB rider (docs/SPEC_redundancy_census.md MDB-INC-0) ------------
         // Every row this loop is about to visit already has (w, r_i) in hand, so
@@ -209,6 +224,8 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         const bool s0g_redun_here = raim_redun && row_r.size() == R.A_r.rows();
         std::vector<char> s0g_seen;
         if (s0g_on) s0g_seen.assign(static_cast<std::size_t>(R.A_r.rows()), 0);
+        std::vector<char> staf_seen;   // R2: row de-dup (column-keyed loop, MDB lesson)
+        if (staf_here) staf_seen.assign(static_cast<std::size_t>(R.A_r.rows()), 0);
         // Largest measurement-standardized post-fit phase residual PER SATELLITE at this
         // station (a carried ambiguity's phase rows carry +1 on its A_r column; uncombined).
         std::map<std::string, double> sat_rmax;
@@ -242,6 +259,19 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                       /*r_is_approx=*/!s0g_redun_here);
                 }
                 double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
+                // R2 factor feed: HERE, ahead of the uncheckable `continue`, for the
+                // s0g reason (E[w·v²] = r_i — an r_i ≈ 0 row contributes ~0 to both
+                // sums and cannot bias the ratio, while dropping it would overstate
+                // the station's redundancy).  Guarded by its own seen-mask: the loop
+                // is keyed on ambiguity COLUMNS, so a row touched by two carried
+                // ambiguities would otherwise inflate both sums (the MDB/s0g lesson).
+                // The trim statistic is |v|·√w always — the B2 division is a pool
+                // convention, not part of the §7.5 factor.
+                if (staf_here && !staf_seen[static_cast<std::size_t>(row)]) {
+                    staf_seen[static_cast<std::size_t>(row)] = 1;
+                    staf_rows[i].push_back(
+                        {w * resid(row) * resid(row), row_r(row), r});
+                }
                 // §7.1 census.  Emitted HERE — above the uncheckable `continue` below —
                 // for the same reason the MDB and σ̂₀-global feeds are: the rows the
                 // normalization DROPS are precisely the ones worth seeing, and a census
@@ -309,14 +339,106 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         ++ura_ewma_updates;
     }
 
+    // --- QUEUE item 4 R2: the DECLARED per-station variance factor -------------
+    // (SPEC_t3_null_derivation §6/§7.5.)  Measure-only: nothing below feeds any
+    // denominator, gate or response — absorption is R1, HELD behind the measured
+    // per-station iono error it would bury (§7.8.2).  Runs post-σ̂₀ because the
+    // trim bar is k·σ̂₀.  The seam only runs on accepted epochs, so the EWMA
+    // freezes across withholds by construction.
+    if (staf_on) {
+        const double now_tow = se.time.tow;
+        double dt = (ctx.carry.staf_prev_tow >= 0.0)
+                        ? std::max(0.0, now_tow - ctx.carry.staf_prev_tow) : 0.0;
+        const double alpha =
+            (dt > 0.0) ? std::min(1.0, dt / std::max(1.0, ctx.knobs.staf_tau_s)) : 1.0;
+        struct StafOut { int sta; double f, ewma; std::size_t n, n_trim; };
+        std::vector<StafOut> outs;
+        const double trim_above = raim_k * sigma0;
+        for (size_t i = 0; i < staf_rows.size(); ++i) {
+            if (staf_rows[i].empty()) continue;
+            const double f = stationVarianceFactor(staf_rows[i], trim_above);
+            std::size_t n_trim = 0;
+            for (const auto& q : staf_rows[i]) if (q.r_std > trim_above) ++n_trim;
+            double ewma = f;
+            if (f >= 0.0) {
+                auto it = ctx.carry.staf_ewma.find(static_cast<int>(i));
+                if (it == ctx.carry.staf_ewma.end()) {
+                    ctx.carry.staf_ewma[static_cast<int>(i)] = f;   // seed
+                } else {
+                    it->second += alpha * (f - it->second);
+                    ewma = it->second;
+                }
+                ++ctx.carry.staf_updates[static_cast<int>(i)];
+            }
+            outs.push_back({static_cast<int>(i), f, ewma,
+                            staf_rows[i].size(), n_trim});
+        }
+        if (!outs.empty()) {
+            ++ctx.counters.n_staf_epochs;
+            // The depart statistic: EWMA ratio to the network median of EWMAs.
+            std::vector<double> ew;
+            ew.reserve(ctx.carry.staf_ewma.size());
+            for (const auto& kv : ctx.carry.staf_ewma) ew.push_back(kv.second);
+            const double med = std::max(1e-12, medianCopy(ew));
+            for (const auto& o : outs) {
+                const double ratio = ctx.carry.staf_ewma.count(o.sta)
+                                         ? ctx.carry.staf_ewma.at(o.sta) / med : 0.0;
+                if (ratio > ctx.counters.staf_max_ratio)
+                    ctx.counters.staf_max_ratio = ratio;
+                const bool departed = ctx.carry.staf_departed.count(o.sta) > 0;
+                // Declaration warmup: no edge before the EWMA has real memory
+                // (10 updates ≈ 5 min at 30 s — a fresh station must not alarm
+                // off its seed value).
+                const bool warm = ctx.carry.staf_updates[o.sta] >= 10;
+                if (warm && !departed && ratio > ctx.knobs.staf_ratio) {
+                    ctx.carry.staf_departed.insert(o.sta);
+                    ++ctx.counters.n_staf_departs;
+                    if (events_trace.is_open())
+                        emitEvent("T3_stafactor", "depart", "", stations[o.sta].name,
+                                  ratio, ctx.knobs.staf_ratio, "declare",
+                                  fmt::format("ewma={:.3f};net_med={:.3f}",
+                                              ctx.carry.staf_ewma.at(o.sta), med));
+                } else if (departed && ratio < 0.8 * ctx.knobs.staf_ratio) {
+                    ctx.carry.staf_departed.erase(o.sta);
+                    ++ctx.counters.n_staf_returns;
+                    if (events_trace.is_open())
+                        emitEvent("T3_stafactor", "return", "", stations[o.sta].name,
+                                  ratio, 0.8 * ctx.knobs.staf_ratio, "declare",
+                                  fmt::format("ewma={:.3f};net_med={:.3f}",
+                                              ctx.carry.staf_ewma.at(o.sta), med));
+                }
+                if (staf_out.is_open())
+                    staf_out << se.time.week << ','
+                             << fmt::format("{:.3f}", now_tow) << ','
+                             << stations[o.sta].name << ','
+                             << fmt::format("{:.4f}", o.f) << ','
+                             << fmt::format("{:.4f}", o.ewma) << ','
+                             << fmt::format("{:.4f}", ratio) << ','
+                             << o.n << ',' << o.n_trim << ','
+                             << (ctx.carry.staf_departed.count(o.sta) ? 1 : 0)
+                             << '\n';
+            }
+        }
+        ctx.carry.staf_prev_tow = now_tow;
+    }
+
     // Pass 2: normalize by σ̂0 and take the cross-station consensus per satellite.
     std::map<std::string, int> sat_flag_stations;  // satellite -> #stations whose normalized residual spiked
     struct RaimDetail { std::string sat; int sta; double s_raw, s_norm; bool spiked; };
     std::vector<RaimDetail> raim_details;           // per (station, sat); built only when tracing
+    std::map<std::string, int> sat_cell_stations;  // R4: per-sat cell count (unconditional)
     for (const auto& a : amb_stats) {
         const double s_norm = a.r_max / sigma0;
         const bool   spiked = (s_norm > raim_k);
-        if (trace_flag_rates) { ++fr_raim_cell.opp; if (spiked) ++fr_raim_cell.flag; }  // B8/T3 cell
+        if (rate_hygiene) ++sat_cell_stations[a.sat];
+        // B8/T3 cell.  R4: an s_raw exactly 0 cell (carried ambiguity with no phase
+        // row this epoch) is structurally untestable — it can never flag, and
+        // counting it as an opportunity deflates the reported rate (§4: 1.67 %).
+        if (trace_flag_rates) {
+            if (rate_hygiene && a.r_max == 0.0) ++ctx.counters.n_t3_untestable_cells;
+            else ++fr_raim_cell.opp;
+            if (spiked) ++fr_raim_cell.flag;
+        }
         if (station_res_trace.is_open())   // L13: every cell (not just spikes)
             station_res_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow)
                               << ',' << stations[a.sta].name << ',' << a.sat << ','
@@ -333,7 +455,19 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const std::set<std::string> fset(flagged.begin(), flagged.end());
     if (raim_ci_on) raim_ci_tallies.sats_flagged += static_cast<long long>(flagged.size());
     if (trace_flag_rates) {   // B8/T3 consensus: rate of consensus among sats that spiked ≥1 station
-        fr_raim_sat.opp  += static_cast<long>(sat_flag_stations.size());
+        // R4: the shipped opportunity count is CONDITIONAL (only satellites that
+        // already spiked somewhere), so implied_alpha compared a conditional rate
+        // against an unconditional α (§1).  Under hygiene the opportunity is the
+        // UNCONDITIONAL population: every satellite with cells at ≥ raim_min_sta
+        // stations this epoch (the population structurally able to reach consensus).
+        if (rate_hygiene) {
+            long uncond = 0;
+            for (const auto& kv : sat_cell_stations)
+                if (kv.second >= raim_min_sta) ++uncond;
+            fr_raim_sat.opp += uncond;
+        } else {
+            fr_raim_sat.opp += static_cast<long>(sat_flag_stations.size());
+        }
         fr_raim_sat.flag += static_cast<long>(flagged.size());
     }
 

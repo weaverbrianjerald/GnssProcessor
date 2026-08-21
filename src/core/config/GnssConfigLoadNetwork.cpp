@@ -282,6 +282,34 @@ namespace GnssProcessor {
                       "without it the latch is always empty — disabled.");
             network_raim_withhold_free_erase_ = false;
         }
+        // QUEUE item 4 R2/R4 interlocks (Card-1g site: raim and trace_flag_rates are
+        // both settled by here, including the service-mode arming block).
+        if (network_raim_station_factor_ && !network_raim_) {
+            log->warn("Network (R2): network.raim_station_factor rides the post-fit RAIM "
+                      "seam (Pass 1 residuals), which network.raim arms — disabled.");
+            network_raim_station_factor_ = false;
+        }
+        if (network_raim_rate_hygiene_ && !network_raim_) {
+            log->warn("Network (R4): network.raim_rate_hygiene corrects the T3/T3c "
+                      "opportunity accounting inside the post-fit RAIM seam — without "
+                      "network.raim there is nothing to correct — disabled.");
+            network_raim_rate_hygiene_ = false;
+        }
+        if (network_raim_rate_hygiene_ && !network_config_.trace_flag_rates) {
+            log->warn("Network (R4): network.raim_rate_hygiene corrects flag-rate "
+                      "counters that only exist under network.trace_flag_rates — "
+                      "disabled.");
+            network_raim_rate_hygiene_ = false;
+        }
+        if (network_raim_station_factor_)
+            log->info("Network (R2 station factor, SPEC_t3_null_derivation §6): DECLARED "
+                      "per-station variance component (trim at k·σ̂₀, EWMA τ {:.0f} s, "
+                      "depart ratio {:.1f} / return at 0.8×) — measure-only; feeds NO "
+                      "denominator (absorption is R1, HELD behind the measured per-station "
+                      "iono error it would bury).",
+                      network_raim_station_factor_tau_s_,
+                      network_raim_station_factor_ratio_);
+
         if (network_raim_withhold_adapt_escalate_ > 0 || network_raim_withhold_free_erase_)
             log->info("Network (withhold-era release, SPEC_withhold_era_release): {}{}{} — "
                       "era edges evented as SIGMA0/era_enter|era_exit with both-edge "
@@ -3897,6 +3925,33 @@ namespace GnssProcessor {
             jval<double>(json, "network.raim_station_drop_bias", "network_raim_station_drop_bias", 1.5);
         network_raim_redundancy_normalize_ =
             jval<bool>(json, "network.raim_redundancy_normalize", "network_raim_redundancy_normalize", false);
+        // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6): both measure-only, both
+        // default-OFF.  Parsed here beside their statistic; the raim / trace_flag_rates
+        // dependencies are interlocked at the END of the network section (Card-1g
+        // order rule — trace_flag_rates parses in the observability block).
+        network_raim_station_factor_ =
+            jval<bool>(json, "network.raim_station_factor", "network_raim_station_factor", false);
+        network_raim_station_factor_tau_s_ =
+            jval<double>(json, "network.raim_station_factor_tau_s",
+                         "network_raim_station_factor_tau_s", 1800.0);
+        if (network_raim_station_factor_tau_s_ <= 0.0) {
+            log->warn("Network (R2): network.raim_station_factor_tau_s {} <= 0 — the slow "
+                      "channel must TRACK (SPEC_t3_null_derivation §12.1b); reset to 1800.",
+                      network_raim_station_factor_tau_s_);
+            network_raim_station_factor_tau_s_ = 1800.0;
+        }
+        network_raim_station_factor_ratio_ =
+            jval<double>(json, "network.raim_station_factor_ratio",
+                         "network_raim_station_factor_ratio", 6.0);
+        if (network_raim_station_factor_ratio_ <= 1.0) {
+            log->warn("Network (R2): network.raim_station_factor_ratio {} <= 1 would flag "
+                      "at-or-below the network median — reset to 6.0 (above the measured "
+                      "4.7x model-error spread).",
+                      network_raim_station_factor_ratio_);
+            network_raim_station_factor_ratio_ = 6.0;
+        }
+        network_raim_rate_hygiene_ =
+            jval<bool>(json, "network.raim_rate_hygiene", "network_raim_rate_hygiene", false);
         if (network_raim_station_drop_bias_ < 1.0) {
             log->warn("Network: network.raim_station_drop_bias {} < 1 clamped to 1 (a bias below 1 "
                       "would PREFER whole-station exclusion, the opposite of its purpose).",

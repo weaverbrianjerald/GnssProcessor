@@ -1877,6 +1877,25 @@ int networkTeardown(
                   ctx.counters.n_wh_free_erases,
                   ctx.counters.n_wh_free_erases == 1 ? "y" : "ies",
                   ctx.counters.n_wh_perconst_exits);
+    // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6): run-end declaration telemetry.
+    // An armed R2 run with n_staf_epochs = 0 is a MISWIRE (invariant #4) — the seam
+    // never produced a factor (raim off? rowRedundancy throwing fleet-wide?).
+    if (config_.networkRaimStationFactor())
+        log->info("Network (R2 station factor): {} epoch(s) computed over {} station(s); "
+                  "{} depart(s) / {} return(s) at ratio {:.1f} (run-max ratio {:.2f}); "
+                  "EWMA τ {:.0f} s, trim at k·σ̂₀.  DECLARED only — no denominator, no "
+                  "gate, no response consumed this statistic.",
+                  ctx.counters.n_staf_epochs, ctx.carry.staf_ewma.size(),
+                  ctx.counters.n_staf_departs, ctx.counters.n_staf_returns,
+                  config_.networkRaimStationFactorRatio(),
+                  ctx.counters.staf_max_ratio,
+                  config_.networkRaimStationFactorTauS());
+    if (config_.networkRaimRateHygiene())
+        log->info("Network (R4 rate hygiene): {} structurally-untestable T3 cell(s) "
+                  "(s_raw = 0) excluded from the opportunity count; T3c opportunities "
+                  "counted UNCONDITIONALLY (satellites with cells at >= {} stations).",
+                  ctx.counters.n_t3_untestable_cells,
+                  config_.networkRaimMinStations());
     // §9.7.10 datum-station slip detect: run-end ON-path telemetry (invariant #4 —
     // an armed run with injected datum-station slips reporting 0/0 is a MISWIRE,
     // not a quiet day).  Counted separately from Card E: those are non-pivot

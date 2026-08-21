@@ -175,6 +175,13 @@ namespace GnssProcessor {
         /// drained into the C3c funnel at the next epoch's head.  ANDed with
         /// `raim_ci_on`; false = the screen measures and counts but queues nothing.
         bool raim_ci_refloat{};
+        /// QUEUE item 4 R2 (SPEC_t3_null_derivation §6/§7.5): declared per-station
+        /// variance factor — measure-only, feeds no denominator.
+        bool   staf_on{};
+        double staf_tau_s{};
+        double staf_ratio{};
+        /// QUEUE item 4 R4: T3/T3c opportunity-accounting hygiene (telemetry only).
+        bool rate_hygiene{};
         bool clk_mon_on{};
         double clk_mon_abs{};
         double clk_mon_jump{};
@@ -1262,6 +1269,16 @@ namespace GnssProcessor {
         int       wh_era_len      = 0;  ///< consecutive A4-withheld decides (0 = no era)
         long long wh_last_loop_ep = -1; ///< n_loop_epochs at the last withheld decide
 
+        // --- QUEUE item 4 R2: the declared per-station variance factor's SLOW
+        // channel (EWMA over emitted epochs — the seam only runs post-acceptance,
+        // so the factor freezes across withholds by construction, documented).
+        // Keyed by station index (roster stable).  Not snapshotted: a warm resume
+        // re-converges the EWMA over ~τ, the conservative direction.
+        std::map<int, double>    staf_ewma;     ///< EWMA of the per-epoch factor
+        std::map<int, long long> staf_updates;  ///< EWMA update count (declaration warmup)
+        std::set<int>            staf_departed; ///< stations currently past the depart edge
+        double                   staf_prev_tow = -1.0; ///< dt source for the EWMA alpha
+
         // --- PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md) INC-0 cross-epoch state.
         //
         // There is DELIBERATELY no `ddfold_ep_tow` stamp here, unlike the redundancy and
@@ -1982,6 +1999,13 @@ namespace GnssProcessor {
         long long n_wh_escalate_exhausted = 0;  ///< escalated epochs that still withheld
         long long n_wh_free_erases        = 0;  ///< §3b carry entries erased at the withhold branch
         long long n_wh_perconst_exits     = 0;  ///< declared limitation: eras ended by the RTA-10 carve-out publishing (no escalation ran)
+        // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6) — both-edge declaration
+        // telemetry (invariant #7) + hygiene accounting.
+        long long n_staf_departs          = 0;  ///< R2 depart events (EWMA ratio > threshold)
+        long long n_staf_returns          = 0;  ///< R2 return events (hysteresis 0.8×)
+        double    staf_max_ratio          = 0.0;///< run-max EWMA ratio to the network median
+        long long n_staf_epochs           = 0;  ///< epochs the factor was computed on
+        long long n_t3_untestable_cells   = 0;  ///< R4: s_raw==0 cells excluded from T3 opp
         // Phase 2.2: epochs whose EMISSION the SH health gate withheld.  NOT a
         // subset of n_skipped — the solve/carry/QC all ran (emission-only gate),
         // so these epochs are counted nowhere else.
