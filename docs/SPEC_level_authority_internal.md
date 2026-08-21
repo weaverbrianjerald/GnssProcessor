@@ -160,8 +160,20 @@ doc).
    config (BOTH A/B arms) pins `cycle_slip.gap_instrument: true`
    (instrumentation-only) so `cardsArmed()` is equal across the pair; the
    verdict-consuming dump columns stay out of G3's byte set.  The loader's
-   auto-arm `!trace_slip_raw` hole (`GnssConfigLoadNetwork.cpp:5087,5165`)
-   is a pre-existing latent bug FILED separately — not bundled here.
+   auto-arm `!trace_slip_raw` hole (was `GnssConfigLoadNetwork.cpp:5087,5165`)
+   was a pre-existing latent bug filed separately — **FIXED 2026-08-21**: the
+   auto-arm now tests a `cardsArmed()`-equivalent predicate and was RELOCATED
+   to the settled-state Card-1g tail of `loadNetworkSection_`, because one of
+   its inputs (`network_carry_iono_`) is still the raw parsed value at the old
+   site and is cleared by a later interlock — the first of which fires on
+   exactly the `carry_invariant` lineages these knobs live on.  Pinned by
+   `tests/test_d5_corroborate_autoarm.cpp` (suite `D5CorroborationAutoArm`,
+   7 cases; the 3 that pin changed behavior fail against the old loader).
+   Census over the whole config corpus: all 242 configs resolving either D5
+   knob ON already pin `cycle_slip.gap_instrument`, so the fix changes NO
+   committed lineage — byte-certified same-build on a shared-path arm and a
+   corroborate-armed arm (44 CSVs + both `products.txt`, zero non-timing
+   differences).  The pairing advice above still stands as posture hygiene.
 4. **Reduction mechanics**: iterate THIS EPOCH's `modeled[i]` rows (the
    `iono_cs` map is deliberately never pruned — stale entries forever);
    exact reuse of `computeIppGeometry` (free function) + `tecu_to_L1m` +

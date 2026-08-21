@@ -260,6 +260,74 @@ namespace GnssProcessor {
                       network_iono_carry_scope_, network_iono_carry_q_,
                       network_iono_carry_var_floor_, network_iono_carry_max_gap_s_);
 
+        // Card 4 (M1) D5 v3/v4 EVIDENCE interlock, deliberately HERE (the Card-1g order
+        // rule above).  This used to sit beside each knob's own parse in
+        // loadNetworkDatumSignalling_, which was TWO order bugs at once:
+        //
+        //  (a) it tested `network_config_.trace_slip_raw` as if the TRACE supplied the
+        //      evidence.  It does not.  trace_slip_raw arms only the COMPUTE pass
+        //      (SlipQcParams::anyConsumer); the per-(station, satellite) verdicts the D5
+        //      consumers read are filled by the QUALIFY pass, which runs only for a
+        //      DECISION card — SlipQcState::cardsArmed() = lli_corroborate ||
+        //      gap_instrument || bridge_gf || iono_cs
+        //      (include/slip/NetworkRawObservables.hpp, gated at
+        //      ApplicationNetworkAssembly.cpp:1417).  The failure is SILENT, not loud:
+        //      the compute pass sets `epoch.computed = true` and `epoch.reset(n_sta)` SIZES
+        //      `epoch.verdict` to n_sta with EMPTY maps, so the consumers' `epoch.computed`
+        //      gate (NetworkInstallCarry.cpp:152 and :692) PASSES, every per-satellite
+        //      lookup misses, and the suppression set arrives EMPTY.  The gate logs as
+        //      armed and suppresses nothing — standing invariant #4 — and it is LATENT:
+        //      those sets spring to life the moment ANY card arms (the LV-6 census arming
+        //      the CS advance is exactly that), a hidden solve change on a knob nobody
+        //      touched.  Filed at SPEC_level_authority_internal §5.3.
+        //
+        //  (b) it could not have been fixed in place.  `network_carry_iono_` — one of the
+        //      two inputs behind `iono_cs` — is still the RAW parsed value inside
+        //      loadNetworkDatumSignalling_; the five carry_iono interlocks a few lines
+        //      above run LATER and can clear it, and the FIRST of them (carry_iono under
+        //      carry_invariant) fires on precisely the carry_invariant lineages these D5
+        //      knobs live on.  Testing it at the parse site would have re-opened the hole
+        //      in a new form.  Here every input is final.
+        //
+        // The two derived arms mirror ApplicationNetwork.cpp's construction of
+        // SlipQcParams exactly (sp.bridge_gf at :310, sp.iono_cs at :317) — keep them in
+        // step.  gap_instrument (Card G) is instrumentation-only (counters + trace rows,
+        // verified byte-identical), which is why it, and never the mw_lli_corroborate
+        // DECISION card, is what gets auto-armed: a decision card would perturb the very
+        // population being measured.  Same choice the prior-residual (:3718) and
+        // block-Baarda (:4221) census loaders make.
+        //
+        // Census, 2026-08-21: across all 242 configs in the repo that resolve either knob
+        // ON, `cycle_slip.gap_instrument` already resolves TRUE — so this interlock fires
+        // on ZERO committed lineages and the fix is a provable no-op on the corpus.  It
+        // closes a latent hole for future configs, nothing more.
+        if (network_carry_invariant_innov_corroborate_
+            || network_carry_invariant_innov_retap_only_) {
+            const bool iono_cs_armed =
+                (network_carry_iono_ && network_iono_carry_source_ == "smoothed_gf")
+                || network_level_authority_csgf_;
+            const bool cards_armed = network_config_.slip_qc.lli_corroborate
+                                     || network_config_.slip_qc.gap_instrument
+                                     || network_cycle_slip_relevel_bridge_gf_
+                                     || iono_cs_armed;
+            if (!cards_armed) {
+                network_config_.slip_qc.gap_instrument = true;
+                log->info("Network (Card 4 D5 {}): auto-arming "
+                          "network.cycle_slip.gap_instrument — the raw MW/GF step verdicts "
+                          "it needs are filled by the slip-QC QUALIFY pass, which runs only "
+                          "for a DECISION card (cycle_slip.mw_lli_corroborate / "
+                          "cycle_slip.gap_instrument / cycle_slip.relevel_bridge_gf / the "
+                          "CS-GF authority).  network.trace_slip_raw does NOT qualify — it "
+                          "computes the observables but adjudicates none, so the suppression "
+                          "set would have arrived EMPTY and the gate would have been silently "
+                          "inert.  Card G is instrumentation-only (counters + trace rows), so "
+                          "the solve is unchanged.",
+                          network_carry_invariant_innov_corroborate_
+                              ? (network_carry_invariant_innov_retap_only_ ? "v3/v4" : "v3")
+                              : "v4");
+            }
+        }
+
         // Withhold-era release interlocks (SPEC_withhold_era_release §3), deliberately
         // HERE (Card-1g order rule): both responders ride the A4 withhold path, and the
         // ceiling can be armed as late as the service-mode bundle; relevel_free_epoch
@@ -5105,23 +5173,13 @@ namespace GnssProcessor {
                           "to corroborate, so the gate is INERT this run.");
                 network_carry_invariant_innov_corroborate_ = false;
             } else {
-                // The suppression evidence is the slip-QC raw-observable pass.  Without a
-                // consumer it is never COMPUTED (SlipQcParams::anyConsumer), the flat set
-                // arrives empty, nothing is ever suppressed, and the run looks identical to
-                // v2 while claiming to be v3.  Auto-arm the instrumentation-only card that
-                // supplies it rather than failing — Card G is counters + trace rows only
-                // (verified byte-identical: 359 flags/ep, 275 births/ep and an identical
-                // epoch-1 solve checksum vs the same config without it).
-                if (!network_config_.slip_qc.gap_instrument
-                    && !network_config_.slip_qc.lli_corroborate
-                    && !network_config_.trace_slip_raw) {
-                    network_config_.slip_qc.gap_instrument = true;
-                    log->info("Network (Card 4 D5 v3): auto-arming "
-                              "network.cycle_slip.gap_instrument — the corroboration gate needs "
-                              "the raw MW/GF step verdicts, which are only computed when a "
-                              "slip-QC consumer asks for them.  Card G is instrumentation-only "
-                              "(counters + trace rows), so the solve is unchanged.");
-                }
+                // The suppression evidence is the slip-QC QUALIFY pass, and the card that
+                // makes that pass run is auto-armed from the SETTLED-state interlock at the
+                // end of loadNetworkSection_ — NOT here.  One of cardsArmed()'s four inputs
+                // (network_carry_iono_) is still the RAW parsed value at this point and is
+                // cleared by an interlock that runs later, so a test here would read a value
+                // that never reaches the estimator.  @see the "Card 4 (M1) D5 v3/v4 EVIDENCE
+                // interlock" block for the full derivation.
                 log->info("Network (Card 4 D5 v3): D5 re-tap corroboration ON — a flagged chord "
                           "is re-tapped UNLESS the raw observables positively measured its arc "
                           "as continuous.  No-evidence still re-taps (invariant #1).  Magnitude "
@@ -5186,20 +5244,10 @@ namespace GnssProcessor {
                           "out of the funnel, so it is INERT this run.");
                 network_carry_invariant_innov_retap_only_ = false;
             } else {
-                // Same arming gap as v3: without a slip-QC consumer the raw verdicts are
-                // never COMPUTED, no flag is ever tagged flat, and the knob silently equals
-                // v2 while claiming otherwise.  Auto-arm the instrumentation-only card that
-                // supplies them rather than failing (Card G is counters + trace rows only).
-                if (!network_config_.slip_qc.gap_instrument
-                    && !network_config_.slip_qc.lli_corroborate
-                    && !network_config_.trace_slip_raw) {
-                    network_config_.slip_qc.gap_instrument = true;
-                    log->info("Network (Card 4 D5 v4): auto-arming "
-                              "network.cycle_slip.gap_instrument — re-tap-only needs the raw "
-                              "MW/GF step verdicts, which are only computed when a slip-QC "
-                              "consumer asks for them.  Card G is instrumentation-only "
-                              "(counters + trace rows), so the solve is unchanged.");
-                }
+                // Same arming gap as v3, closed the same way: the card that makes the
+                // QUALIFY pass run is auto-armed from the SETTLED-state interlock at the end
+                // of loadNetworkSection_, where all four of cardsArmed()'s inputs are final.
+                // @see the "Card 4 (M1) D5 v3/v4 EVIDENCE interlock" block.
                 log->info("Network (Card 4 D5 v4): D5 re-tap-ONLY ON — a flagged chord whose arc "
                           "the raw observables MEASURED as continuous is reset in-epoch and its "
                           "arc is NOT excluded from next epoch's carry membership, so the gate "

@@ -2737,9 +2737,12 @@ int networkTeardown(
         if (sup == 0)
             log->warn("Network (Card 4/M1 D5 v3): the corroboration gate is ARMED but suppressed "
                       "NOTHING — the flat set never reached the driver.  Standing invariant #4: "
-                      "check that a slip-QC consumer computed the raw observables this run "
+                      "check that a slip-QC DECISION CARD ran the QUALIFY pass this run "
                       "(network.cycle_slip.gap_instrument / .mw_lli_corroborate / "
-                      "network.trace_slip_raw); without one the gate is INERT, not permissive.");
+                      ".relevel_bridge_gf / the CS-GF authority — SlipQcState::cardsArmed()); "
+                      "without one the gate is INERT, not permissive.  ⚠ network.trace_slip_raw "
+                      "is NOT one of them: it COMPUTES the observables but adjudicates none, so "
+                      "every verdict map is empty and nothing is ever taggable.");
     }
     if (carry_innov_gate && config_.networkCarryInvariantInnovCarriedOnly()) {
         const long long bs = carry_driver.counters().innov_born_skipped;
@@ -2778,8 +2781,11 @@ int networkTeardown(
                       "no corroborated-flat D5 flag ever reached a carry arc.  Standing "
                       "invariant #4: the knob is INERT this run, not benign.  Check, in order: "
                       "did the D5 gate flag at all (the innovation-gate line above); did a "
-                      "slip-QC consumer COMPUTE the raw verdicts (without one every flag is "
-                      "'no evidence' and none is taggable); did the flags resolve through the "
+                      "slip-QC DECISION CARD run the QUALIFY pass (cardsArmed() — "
+                      "gap_instrument / mw_lli_corroborate / relevel_bridge_gf / the CS-GF "
+                      "authority; network.trace_slip_raw does NOT qualify, it computes without "
+                      "adjudicating, so every flag reads 'no evidence' and none is taggable); "
+                      "did the flags resolve through the "
                       "reverse map (carry_innov_map_miss); and is "
                       ".carry_invariant_innov_corroborate also armed, which suppresses the same "
                       "population one level earlier and leaves this correctly at zero.");
