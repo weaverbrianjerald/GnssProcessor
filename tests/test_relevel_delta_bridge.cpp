@@ -56,11 +56,15 @@ TEST(RelevelDeltaBridge, IntegerInjectionRoundTrips) {
 }
 
 TEST(RelevelDeltaBridge, MwBlindEqualSlipCase) {
-    // ΔN1 = ΔN2 (the MW null space): ΔN_WL = 0, the IF step alone measures it —
-    // the affirmatively-clean-MW complement branch's shape.
+    // ΔN1 = ΔN2 (the MW null space): ΔN_WL = 0 with the 0.7/3-cyc clean bound.
+    // The propagated σ is β1·(0.7/3)/λ_IF ≈ 1.06 cyc — ABOVE any sane cap, so
+    // the shipped gates MUST reject (this is why the clean-complement branch
+    // was removed, SPEC §8.1); with the cap loosened the algebra is exact.
     const int dn = -7;
+    EXPECT_FALSE(networkSlipDeltaBridgeSolve(
+        0, 0.7 / 3.0, difFor(dn, dn), 0.0, kLamWl, kLamIf, 200.0, 0.50).ok);
     const auto r = networkSlipDeltaBridgeSolve(
-        0, 0.7 / 3.0, difFor(dn, dn), 0.0, kLamWl, kLamIf, 200.0, 0.35);
+        0, 0.7 / 3.0, difFor(dn, dn), 0.0, kLamWl, kLamIf, 200.0, 2.0);
     ASSERT_TRUE(r.ok);
     EXPECT_NEAR(r.dn1_cyc, dn, 1e-9);
     EXPECT_NEAR(r.dn2_cyc, dn, 1e-9);

@@ -582,22 +582,6 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         const double br_max_cyc   = config_.networkCycleSlipRelevelBridgeMaxCycles();
         const double br_max_sig   = config_.networkCycleSlipRelevelBridgeMaxSigmaCyc();
         const double br_if_floor  = config_.networkCycleSlipRelevelBridgeIfSigmaFloorM();
-        // The (1,1)-IF and WL wavelengths satisfy 1/λ_WL = (f1−f2)/c and
-        // 1/λ_IF = (f1+f2)/c; for the clean-MW complement (no MW candidate in
-        // scope) the WL wavelength must be recovered from the pair's own bands.
-        // The IF-TD sample carries only λ_IF, so use the epoch-clean MW arc's
-        // own detector state… not available here either — instead recover both
-        // frequencies from λ_IF and the GPS/GAL L1C anchor is WRONG for FDMA.
-        // The honest cheap route: the clean-complement case needs λ_WL, and the
-        // ONLY per-satellite source in scope is an MW candidate — so the
-        // complement is restricted to pairs whose λ_WL is derivable from a
-        // same-pair candidate seen this epoch at ANY station (same constellation
-        // band pair ⇒ same λ_WL except GLONASS, which never reaches here:
-        // FDMA is excluded from the carry families).
-        std::map<std::string, double> pair_lambda_wl;   // pair string → λ_WL (m)
-        if (bridge_on)
-            for (const auto& c : relevel->mw_cands)
-                pair_lambda_wl.emplace(c.sig1 + "_" + c.sig2, c.lambda_wl);
         // Apply one solved bridge to both band carries; false ⇒ caller falls
         // back (bands stay in the free set).  Per-band at-most-once per epoch.
         auto applyBridge = [&](const PairSample* sp, const DeltaBridgeSolve& bs,
@@ -691,7 +675,6 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                 const auto ci = cand_idx.find(
                                     std::tuple<int, std::string, std::string>{
                                         sp->sta, sp->sat, pair});
-                                const auto pl = pair_lambda_wl.find(pair);
                                 if (ci != cand_idx.end() && !ci->second->consumed) {
                                     const auto bs = networkSlipDeltaBridgeSolve(
                                         ci->second->dn_wl, ci->second->sigma_wl_cyc,
@@ -703,21 +686,14 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                         ++bridge_cnt->bridge_joint;
                                     else if (!bs.ok)
                                         ++bridge_cnt->bridge_fallback_reject;
-                                } else if (pl != pair_lambda_wl.end()
-                                           && stations[sp->sta].mw_slip
-                                           && stations[sp->sta].mw_slip->getEpochCleanPairs()
-                                                  .count(sp->sat + "_" + sp->sig1 + "_" + sp->sig2)) {
-                                    // MW affirmatively clean ⇒ the WL did not slip:
-                                    // ΔN1 = ΔN2, measured by the IF step alone.
-                                    const auto bs = networkSlipDeltaBridgeSolve(
-                                        0.0, 0.7 / 3.0, sp->dd - med, sigma_if,
-                                        pl->second, sp->lambda,
-                                        br_max_cyc, br_max_sig);
-                                    if (bs.ok && applyBridge(sp, bs, "if_clean"))
-                                        ++bridge_cnt->bridge_if_clean;
-                                    else if (!bs.ok)
-                                        ++bridge_cnt->bridge_fallback_reject;
                                 }
+                                // The affirmatively-clean-MW complement (ΔN_WL=0
+                                // at the 0.7/3-cyc clean bound) was REMOVED with
+                                // the mw_only branch (SPEC §8.1): its own σ —
+                                // β1·(0.7/3)/λ_IF ≈ 1.06 cyc — can never pass
+                                // the σ cap, so it was dead as gated (F3: 0
+                                // applications), and un-capping it would apply
+                                // cycle-σ bridges no better than the free epoch.
                                 // no MW cand + not provably clean ⇒ free epoch.
                             }
                         }
@@ -727,30 +703,15 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                                      stations[sp->sta].name, sp->sat, sp->sig1, sp->sig2);
                     } else {
                         clean_zabs.push_back(abs_dev / emap);
-                        // Delta bridge, MW-only path: a confident WL integer whose
-                        // IF sample did NOT flag (near-proportional ΔN1:ΔN2 —
-                        // the IF-blind ratio class).  The MW drain already marked
-                        // + latched the bands; bridge them with this (unflagged)
-                        // sample's delta.
-                        if (bridge_on && sta_if_resets[sp->sta].empty()) {
-                            const auto ci = cand_idx.find(
-                                std::tuple<int, std::string, std::string>{
-                                    sp->sta, sp->sat, pair});
-                            if (ci != cand_idx.end() && !ci->second->consumed) {
-                                const double sigma_if =
-                                    std::max(s_eff * emap, br_if_floor);
-                                const auto bs = networkSlipDeltaBridgeSolve(
-                                    ci->second->dn_wl, ci->second->sigma_wl_cyc,
-                                    sp->dd - med, sigma_if,
-                                    ci->second->lambda_wl, sp->lambda,
-                                    br_max_cyc, br_max_sig);
-                                ci->second->consumed = true;
-                                if (bs.ok && applyBridge(sp, bs, "mw_only"))
-                                    ++bridge_cnt->bridge_mw_only;
-                                else if (!bs.ok)
-                                    ++bridge_cnt->bridge_fallback_reject;
-                            }
-                        }
+                        // Delta bridge, MW-only path: REMOVED after the truth
+                        // audit (SPEC_slip_relevel_walk §8.1) — an MW candidate
+                        // whose IF sample did NOT flag is dominated by the MW
+                        // FALSE-ALARM population on a healthy arc (44 wrong + 16
+                        // no-truth of 73 applied bridges, deltas to ±199 cyc at
+                        // cm-tight propagated σ: the propagation carries the
+                        // measurement noise, not the hypothesis risk).  The
+                        // candidate stays unconsumed and is counted unpaired;
+                        // the bands stay in the free set — the safe response.
                     }
                     // Deep-investigation row: the full decision context for this
                     // (station, sat, pair) sample.  sc.ewma_scale / sc.count are the

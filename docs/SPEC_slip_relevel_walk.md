@@ -217,3 +217,32 @@ Sim network postures with slips: arm `relevel_free_epoch` + `relevel_delta_bridg
 (the campaign `_camp60_f2/f3.json` shape).  `relevel_retap_statistical` stays
 optional.  All inert-and-disarmed under `carry_invariant` (loader interlock at
 the end-of-section site — the Card-1g order-hazard pattern).  Field arm owed.
+
+### §8.1 The bridge truth audit (autonomous follow-up, same day) — and the surgery
+
+Joining F3's 73 `delta_bridge` event rows against `truth_slips` (±3 ep window,
+correct = both bands within 0.5 cyc of the cumulative truth delta):
+
+| source | correct | wrong | no-truth-in-window |
+|---|---|---|---|
+| joint (MW integer + IF-TD FLAG) | 13 | 11 | 0 |
+| mw_only (MW integer + UNFLAGGED IF sample) | **0** | 33 | 16 |
+
+**The mw_only branch was a wrong-bridge factory and was REMOVED**: an MW
+candidate whose IF sample did not flag is dominated by the MW false-alarm
+population on a healthy arc — it bridged deltas to ±199 cyc at cm-tight
+propagated σ (the propagation carries measurement noise, not hypothesis risk).
+The clean-MW complement (`if_clean`) was removed with it: its own σ
+(β1·(0.7/3)/λ_IF ≈ 1.06 cyc) can never pass the σ cap, so it was dead as gated
+(F3: 0 applications) — and the suite's `MwBlindEqualSlipCase` now PINS that
+reject (this closed a latent one-test tally gap: the suite is now a full
+1433 + 1 of 1434).  The quiet-twin neutrality arm PASSED: 808 event-gated
+actions on the no-slip fixture, hourly ZWD grade equal-to-slightly-better
+(h5 0.133 vs 0.153 m) — the response never acts off-event.
+
+**Standing posture after the audit:** `relevel_free_epoch` is the validated,
+recommended piece for slipped sim postures.  `relevel_delta_bridge` (now
+joint-with-flag only, 13/24 correct) stays a default-OFF research knob — do
+NOT arm for graded work until bridge v2 adds corroboration (pend the pre-slip
+carry + δIF, REPLACE on the MW integer's arrival, post-fit validation gate).
+`relevel_retap_statistical` stays default-OFF (truth-neutral).
