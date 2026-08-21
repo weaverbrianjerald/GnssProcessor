@@ -937,3 +937,37 @@ NOT") and stays that way.
   (fingerprint-SAFE trace-class per the armed-set rules) and re-read; the
   12 events are the datum-election exposure item 1(b)'s S-transform would
   close producer-internally.
+
+## §11 Item 1(b) precondition PRICED (2026-08-21) — the refloat cost measures near-zero; the build stays deferred with a concrete trigger
+
+§8.9's standing verdict ("build the transform when a bigger fixture shows the
+one-epoch refloat cost") was written when the only fixture had ONE roster
+event in 1 h.  The bigger fixtures now exist, and the cost is measured from
+data on disk:
+
+| lineage | window | sticky_pivot | PIVOT/handover edges | amputation |
+|---|---|---|---|---|
+| fld63_relevel4h (63-sta field, GPS dual) | 4 h | **true** | **0** | zero |
+| camp60_i3 / _f4 (60-sta sim, GPS+GAL, slipped) | 6 h | off | **3** (G×2, E×1, all `adjacent`) | 3 single-epoch fold-skips per run vs 720 epochs |
+
+The §5.08.5 "30 family-epochs" headroom figure belongs to the PB-anchor edge
+on the pdp posture — not this edge.  On every current lineage the clock-pivot
+handover flux is either zero (sticky election, RTA-1, doing exactly its job)
+or ~1 edge / 2 h with a one-epoch cost the prires census prices as noise.
+The mechanism's target population is measured near-empty — the
+`emit_pb_filter_gate_v2` lesson ("its advertised win has an empty target
+population here"), applied BEFORE the build this time.
+
+**Disposition: 1(b) remains deferred-conditional, precondition now PRICED
+rather than assumed.**  The §8 design (rank-1 transform along the structural
+null, INC-0..3, four knobs) is fully derived and stays ready.  Concrete build
+triggers, any of: (a) a lineage that must run non-sticky election with
+measured handover flux ≳ 1/h; (b) a vanish-return-heavy roster (arm
+`pivot_vanish_return_signal` and read the PIVOT arms mix first); (c) a
+measured per-edge consumer cost at an `adjacent` handover (the A2-marked
+epoch class) that the one-epoch free-fall demonstrably owns.  First response
+on any lineage showing flux is `network.sticky_pivot`, not the transform.
+Census note for the next pricing: the camp60 arms ran
+`prior_residual_families: "iono"` only, so FRAME/mech=handover rows were not
+censused there — a future pricing arm should widen the families to see the
+per-edge amputation directly.

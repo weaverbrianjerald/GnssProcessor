@@ -305,6 +305,13 @@ posture.
   is one loop with an in-tree precedent (`NetworkRelevel.cpp`'s Card-6 eph cutover, same principle).
   `config/archive/_dcmp_50sta_10ep_eq34x.json` already arms the full firing set.
 
+**1(b) precondition PRICED 2026-08-21 — build stays DEFERRED** (`SPEC_pivot_visibility_gauge_defect.md`
+§11): the clock-pivot handover flux measures ZERO over 4 h on the sticky field lineage and 3
+single-epoch edges over 6 h on the non-sticky sim — the transform's target population is near-empty
+on every current lineage, and `sticky_pivot` is the cheaper first response wherever flux appears.
+The §8 design is fully derived and stays ready; concrete triggers in §11.  (The gate-v2 lesson,
+applied before the build.)
+
 ## 2 — Datum-station election by criterion, not luck
 
 **Bandaid:** the field posture dodges the pivot-gauge defect only because MBAR00UGA was hand-picked
