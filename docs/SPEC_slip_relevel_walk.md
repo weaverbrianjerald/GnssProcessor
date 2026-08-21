@@ -246,3 +246,38 @@ joint-with-flag only, 13/24 correct) stays a default-OFF research knob — do
 NOT arm for graded work until bridge v2 adds corroboration (pend the pre-slip
 carry + δIF, REPLACE on the MW integer's arrival, post-fit validation gate).
 `relevel_retap_statistical` stays default-OFF (truth-neutral).
+
+### §8.2 Bridge v2 — pend-and-replace (built + validated 2026-08-20, same session)
+
+Architecture: at the T1 flag epoch a **pend** captures the PRE-slip carry (both
+bands' value/var — the PASS-A map still holds the previous harvest) and the
+measured δIF with its empirical σ; the arc takes the v1 free epoch as before.
+When the confident MW wide-lane integer arrives — same epoch via the candidate
+index (stored in the pend, replaced at the next epoch's sweep) or 1–2 epochs
+later in the MW drain (immediate replace) — the 2×2 solves and the carry is
+REPLACED with `pre_slip + shift`, var = `pre_var + bridge var`, gated by the
+kernel caps AND the **§8.1 corroboration**: the bridged level must agree with
+the interim free re-level within `relevel_bridge_corrob_cyc` (3.0) per band.
+Pends expire (`relevel_bridge_pend_window_s`, 120 s), are voided by any fresh
+mark on the same (station, sat), and every non-Applied outcome keeps the free
+re-level.  Pure replace function `networkSlipBridgeReplace` (unit-tested:
+outcome ladder incl. the wrong-integer CorrobReject with carry untouched).
+Suite 1434+1 of 1435; OFF-path byte-certified again.
+
+**F4 validation (slipped fixture, free+bridge-v2):** 1 426 pends → 313 solve
+attempts → **32 REPLACED**; the two guards did exactly their jobs — the σ-cap
+rejected 238 (low-elevation solves whose bridge σ is honest-worthless) and the
+corroboration rejected **43 of 75** kernel-passing solves (57 % ≈ v1's
+measured ungated wrong-rate).  Truth audit of the 32: **25 correct, 7 wrong,
+0 phantom** — and the wrong class COLLAPSED from v1's 6–113 cyc to 0.5–0.8 cyc
+float dispersion (worst 3.5), covered by the propagated variance.  ZWD ≈ F2
+(pre-registered: 32 events cannot move fleet statistics).
+
+**Verdict:** v2 is correct-by-construction — the corroboration gate converts
+the bridge from a wrong-level factory into a safe precision refinement — but
+its YIELD is structurally capped on this fixture at ~1–2 % of slips (727 pends
+expired awaiting an MW integer that never comes; the σ-cap owns the
+low-elevation mass).  **The free epoch remains the load-bearing response;
+the bridge stays a default-OFF precision knob, now safe to arm.**  Raising
+yield would need a better second equation than MW (e.g. a third-band TD or a
+multi-epoch δIF chain) — a new derivation card, not a tuning pass.

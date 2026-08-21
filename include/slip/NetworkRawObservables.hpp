@@ -332,6 +332,11 @@ struct SlipQcCounters {
     long long bridge_fallback_refsat{0};   ///< Fallbacks: station's IF-TD refsat rebased this epoch (frame invalid).
     long long bridge_fallback_unpaired{0}; ///< Fallbacks: MW candidate never met an IF-TD delta.
     double    bridge_max_abs_dn_cyc{0};    ///< Largest |ΔN_band| ever applied (cycles).
+    // Bridge v2 (pend-and-replace, SPEC §8.2):
+    long long bridge_pends_created{0};        ///< Pends created at T1 flags (pre-slip capture + δIF).
+    long long bridge_pend_expired{0};         ///< Pends that never met an MW integer inside the window.
+    long long bridge_pend_voided{0};          ///< Pends voided by a fresh mark on the same (station, sat).
+    long long bridge_replace_corrob_reject{0};///< Replaces rejected by the free-level corroboration gate.
 };
 
 /**

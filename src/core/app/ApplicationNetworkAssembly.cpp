@@ -1470,7 +1470,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               datum_detect_on ? &ctx.carry.datum_reref_amb_sats : nullptr,
                               datum_detect_on ? &ctx.carry.refsat_mark_sats : nullptr,
                               datum_detect_on ? &local_carry : nullptr,
-                              relevel_ptr);
+                              relevel_ptr,
+                              relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
+                              relevel_ptr ? &local_carry : nullptr);
 
     // Edge-1 piece 2: pass the mark sink ONLY when armed, so the OFF path passes
     // nullptr and the driver's insert is not even reached (byte-identical).
@@ -1481,7 +1483,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               ? &ctx.carry.refsat_mark_sats : nullptr,
                           relevel_ptr,
                           relevel_ptr ? &local_carry : nullptr,
-                          relevel_ptr ? &qc.counters : nullptr);
+                          relevel_ptr ? &qc.counters : nullptr,
+                          relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
 }
 
 void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,

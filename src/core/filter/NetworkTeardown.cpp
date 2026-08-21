@@ -1784,16 +1784,20 @@ int networkTeardown(
                   "a live carry the stale-injection path would otherwise have folded).{}",
                   qcc.relevel_free_marked, ctx.counters.n_relevel_free_skips,
                   config_.networkCycleSlipRelevelDeltaBridge()
-                      ? fmt::format("  Delta bridge: {} pair(s) APPLIED (joint {}, "
-                                    "if-clean {}, mw-only {}; max |ΔN| {:.1f} cyc) — "
-                                    "those arcs kept their level at phase precision; "
-                                    "fallbacks to the free epoch: {} no-carry, {} "
-                                    "kernel-reject, {} refsat-frame, {} unpaired-MW.",
-                                    qcc.bridge_pairs_applied, qcc.bridge_joint,
-                                    qcc.bridge_if_clean, qcc.bridge_mw_only,
-                                    qcc.bridge_max_abs_dn_cyc,
-                                    qcc.bridge_fallback_no_carry,
+                      ? fmt::format("  Bridge v2 (pend-and-replace): {} pend(s) created, "
+                                    "{} REPLACED (of which {} paired same-epoch; max |ΔN| "
+                                    "{:.1f} cyc) — those arcs recovered their pre-slip "
+                                    "level at phase precision; {} corroboration-rejected "
+                                    "(kept the free re-level — the §8.1 wrong-bridge "
+                                    "guard), {} kernel-rejected, {} expired unpaired, {} "
+                                    "voided by re-slip, {} no-carry, {} refsat-frame, {} "
+                                    "MW-without-flag.",
+                                    qcc.bridge_pends_created, qcc.bridge_pairs_applied,
+                                    qcc.bridge_joint, qcc.bridge_max_abs_dn_cyc,
+                                    qcc.bridge_replace_corrob_reject,
                                     qcc.bridge_fallback_reject,
+                                    qcc.bridge_pend_expired, qcc.bridge_pend_voided,
+                                    qcc.bridge_fallback_no_carry,
                                     qcc.bridge_fallback_refsat,
                                     qcc.bridge_fallback_unpaired)
                       : std::string{});

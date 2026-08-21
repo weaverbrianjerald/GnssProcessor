@@ -374,6 +374,31 @@ struct MwBridgeCand {
     double      lambda_wl{0};     ///< WL wavelength (m).
     bool        consumed{false};  ///< Set when the IF-TD driver bridged it.
 };
+/// Bridge v2 (SPEC_slip_relevel_walk §8.2, pend-and-replace): one pended slip
+/// awaiting its MW wide-lane integer.  Created at the T1 flag epoch with the
+/// PRE-slip carry capture (the PASS-A carry still holds the previous harvest)
+/// and the measured δIF; the interim epochs run the v1 free re-level; when the
+/// confident MW integer arrives (same epoch via the candidate index, or 1-2
+/// epochs later via the MW drain — the measured arrival lag that left 3 959
+/// candidates unpaired in v1) the 2×2 solves and the carry is REPLACED with
+/// pre_slip + shift — gated by the kernel caps AND the free-level
+/// CORROBORATION (the §8.1 audit's demand: correct bridges err ≤ 0.5 cyc
+/// against truth, wrong ones 6–113 cyc, while the interim free level sits
+/// within ~2 cyc of truth — agreement with it separates the two populations).
+struct RelevelPend {
+    double pre1{0}, pre_var1{0};   ///< Pre-slip carry (band 1): value_abs (m), var (m²).
+    double pre2{0}, pre_var2{0};   ///< Pre-slip carry (band 2).
+    double dif_m{0};               ///< T1-measured IF step, common-mode removed (m).
+    double sigma_if_m{0};          ///< Its 1σ (m).
+    double lambda_if{0};           ///< (1,1) IF wavelength (m).
+    std::string sig1, sig2;        ///< The pair's phase signals.
+    double tow_s{0};               ///< Continuous-GPS-s of the flag (expiry base).
+    bool   has_dn{false};          ///< The MW integer has arrived.
+    int    dn_wl{0};               ///< Confident ZD wide-lane integer (cycles).
+    double sigma_wl{0};            ///< Its 1σ (cycles, floored).
+    double lambda_wl{0};           ///< Wide-lane wavelength (m).
+};
+
 struct RelevelEpochState {
     /// (station idx, amb key) marked pending-reseed by a detector this epoch —
     /// the inject site skips these (the free epoch the mark always promised).

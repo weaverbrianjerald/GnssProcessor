@@ -3362,6 +3362,17 @@ namespace GnssProcessor {
         network_cycle_slip_relevel_bridge_if_sigma_floor_m_ =
             jval<double>(json, "network.cycle_slip.relevel_bridge_if_sigma_floor_m",
                          "network_cycle_slip_relevel_bridge_if_sigma_floor_m", 0.005);
+        // Bridge v2 (pend-and-replace, SPEC §8.2): the corroboration gate — the
+        // bridged level must agree with the interim free re-level within this
+        // many cycles per band (correct bridges err ≤ 0.5 cyc vs truth, the
+        // §8.1 audit's wrong ones 6–113 cyc) — and the pend expiry window
+        // (the MW integer arrives 1–2 epochs after the T1 flag).
+        network_cycle_slip_relevel_bridge_corrob_cyc_ =
+            jval<double>(json, "network.cycle_slip.relevel_bridge_corrob_cyc",
+                         "network_cycle_slip_relevel_bridge_corrob_cyc", 3.0);
+        network_cycle_slip_relevel_bridge_pend_window_s_ =
+            jval<double>(json, "network.cycle_slip.relevel_bridge_pend_window_s",
+                         "network_cycle_slip_relevel_bridge_pend_window_s", 120.0);
         //   relevel_retap_statistical — the STATISTICAL-refloat half (T2/T3/T4
         //     post-fit RAIM): a refloat with NO measured delta hit an arc whose
         //     level was overwhelmingly CORRECT (the FA population) — keep the

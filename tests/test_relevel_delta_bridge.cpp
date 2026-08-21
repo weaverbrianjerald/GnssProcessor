@@ -151,6 +151,55 @@ TEST(RelevelDeltaBridge, LocalCarryApplyShape) {
     EXPECT_TRUE(c1.coupling.empty());
 }
 
+TEST(RelevelDeltaBridge, BridgeReplaceOutcomeLadder) {
+    // Bridge v2 pend-and-replace on a hand-built carry map: the true slip is
+    // (dN1, dN2) = (3, 1); the interim free re-level sits ~0.3 m off the true
+    // post-slip level (the measured v1 free-epoch error class).
+    const int dn1 = 3, dn2 = 1;
+    RelevelPend pd;
+    pd.pre1 = 100.0;  pd.pre_var1 = 0.01;
+    pd.pre2 = 200.0;  pd.pre_var2 = 0.02;
+    pd.dif_m = difFor(dn1, dn2);  pd.sigma_if_m = 0.01;
+    pd.lambda_if = kLamIf;  pd.sig1 = "L1C";  pd.sig2 = "L2W";
+    pd.has_dn = true;  pd.dn_wl = dn1 - dn2;  pd.sigma_wl = 0.02;
+    pd.lambda_wl = kLamWl;
+    const double true1 = 100.0 + kLam1 * dn1, true2 = 200.0 + kLam2 * dn2;
+
+    const std::tuple<int, std::string, std::string> k1{5, "G09", "L1C"};
+    const std::tuple<int, std::string, std::string> k2{5, "G09", "L2W"};
+    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    carry[k1] = LocalCarry{true1 + 0.3, 0.09, 999.0};
+    carry[k2] = LocalCarry{true2 - 0.2, 0.09, 999.0};
+
+    // Applied: the bridged level agrees with the free level within 3 cyc.
+    DeltaBridgeSolve bs;
+    EXPECT_EQ(networkSlipBridgeReplace(pd, 5, "G09", carry, 200.0, 0.50, 3.0, &bs),
+              BridgeReplaceOutcome::Applied);
+    EXPECT_NEAR(carry[k1].value_abs, true1, 1e-6);
+    EXPECT_NEAR(carry[k2].value_abs, true2, 1e-6);
+    EXPECT_NEAR(carry[k1].var, 0.01 + bs.var1_m2, 1e-12);
+    EXPECT_DOUBLE_EQ(carry[k1].last_seen_s, 999.0);  // untouched
+
+    // CorrobReject: a WRONG MW integer (the audit's failure class) puts the
+    // bridged level cycles away from the free level - carry must be untouched.
+    RelevelPend bad = pd;  bad.dn_wl = dn1 - dn2 + 7;
+    carry[k1] = LocalCarry{true1 + 0.3, 0.09, 999.0};
+    carry[k2] = LocalCarry{true2 - 0.2, 0.09, 999.0};
+    EXPECT_EQ(networkSlipBridgeReplace(bad, 5, "G09", carry, 200.0, 0.50, 3.0),
+              BridgeReplaceOutcome::CorrobReject);
+    EXPECT_NEAR(carry[k1].value_abs, true1 + 0.3, 1e-9);
+
+    // NoCarry: a band died between flag and replace.
+    carry.erase(k2);
+    EXPECT_EQ(networkSlipBridgeReplace(pd, 5, "G09", carry, 200.0, 0.50, 3.0),
+              BridgeReplaceOutcome::NoCarry);
+
+    // KernelReject: sigma cap.
+    RelevelPend noisy = pd;  noisy.sigma_if_m = 0.10;
+    EXPECT_EQ(networkSlipBridgeReplace(noisy, 5, "G09", carry, 200.0, 0.50, 3.0),
+              BridgeReplaceOutcome::KernelReject);
+}
+
 TEST(RelevelDeltaBridge, EpochStateClearDropsEverything) {
     RelevelEpochState st;
     st.free_ambs.insert({1, "G01_L1C"});

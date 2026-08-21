@@ -138,6 +138,44 @@ DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_c
     return r;
 }
 
+BridgeReplaceOutcome networkSlipBridgeReplace(
+        const RelevelPend& pd, int sta, const std::string& sat,
+        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+        double max_abs_cyc, double max_sigma_cyc, double corrob_cyc,
+        DeltaBridgeSolve* solved) {
+    const auto bs = networkSlipDeltaBridgeSolve(pd.dn_wl, pd.sigma_wl,
+                                                pd.dif_m, pd.sigma_if_m,
+                                                pd.lambda_wl, pd.lambda_if,
+                                                max_abs_cyc, max_sigma_cyc);
+    if (solved) *solved = bs;
+    if (!bs.ok) return BridgeReplaceOutcome::KernelReject;
+    auto it1 = carry.find({sta, sat, pd.sig1});
+    auto it2 = carry.find({sta, sat, pd.sig2});
+    if (it1 == carry.end() || it2 == carry.end())
+        return BridgeReplaceOutcome::NoCarry;
+    // Per-band wavelengths for the cycle-domain corroboration (same derivation
+    // as the kernel's).
+    constexpr double c = 299792458.0;
+    const double f1 = 0.5 * c * (1.0 / pd.lambda_wl + 1.0 / pd.lambda_if);
+    const double f2 = 0.5 * c * (1.0 / pd.lambda_if - 1.0 / pd.lambda_wl);
+    const double lam1 = c / f1, lam2 = c / f2;
+    const double L1 = pd.pre1 + bs.shift1_m;
+    const double L2 = pd.pre2 + bs.shift2_m;
+    // CORROBORATION (§8.1): the bridged level must agree with the interim v1
+    // free re-level.  Correct bridges err <= 0.5 cyc against truth and the free
+    // level sits within ~2 cyc, while the audit's wrong bridges erred
+    // 6-113 cyc — agreement separates the populations.
+    if (std::abs(L1 - it1->second.value_abs) / lam1 > corrob_cyc ||
+        std::abs(L2 - it2->second.value_abs) / lam2 > corrob_cyc)
+        return BridgeReplaceOutcome::CorrobReject;
+    // REPLACE: the local-step mutation discipline — value + var only; the
+    // coupling regression and last_seen belong to the current harvest and a
+    // pure level re-base leaves both valid.
+    it1->second.value_abs = L1;  it1->second.var = pd.pre_var1 + bs.var1_m2;
+    it2->second.value_abs = L2;  it2->second.var = pd.pre_var2 + bs.var2_m2;
+    return BridgeReplaceOutcome::Applied;
+}
+
 void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_,
                                std::vector<NetStation>& stations,
                                const std::vector<bool>& present,
@@ -155,7 +193,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::set<std::string>* datum_mark_sats,
                                std::map<std::tuple<int, std::string, std::string>,
                                         LocalCarry>* datum_local_carry,
-                               RelevelEpochState* relevel) {
+                               RelevelEpochState* relevel,
+                               std::map<std::tuple<int, std::string, std::string>,
+                                        RelevelPend>* relevel_pend,
+                               std::map<std::tuple<int, std::string, std::string>,
+                                        LocalCarry>* bridge_local_carry) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_mw_refloat = pa.sta_mw_refloat;
     // Thin event forwarder — textual copy of the run-TU lambda, so the moved
@@ -209,6 +251,16 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                             relevel->free_ambs.insert({i, amb_key});
                             ++qc_cnt.relevel_free_marked;
                         }
+                        // Bridge v2: a fresh mark on this (station, sat) makes any
+                        // outstanding pend's pre-slip capture STALE — void it (the
+                        // T1 flag path re-creates its own pend after this).
+                        if (relevel_pend)
+                            for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();)
+                                if (std::get<0>(pit->first) == i
+                                    && std::get<1>(pit->first) == sat) {
+                                    ++qc_cnt.bridge_pend_voided;
+                                    pit = relevel_pend->erase(pit);
+                                } else ++pit;
                     }
                 }
             }
@@ -288,6 +340,53 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
 
         int n_mw = 0, n_lli = 0, n_lli_supp = 0;
         std::string mw_detail;
+        // --- Bridge v2 pend sweep (once per epoch, serial): expire stale pends
+        // and REPLACE the ones whose MW integer arrived same-epoch at the T1
+        // flag (their corroborating free re-level was harvested last epoch).
+        const bool bridge_v2 = relevel_pend && bridge_local_carry
+                            && carry_warm
+                            && config_.networkCycleSlipRelevelDeltaBridge();
+        const double v2_max_cyc  = config_.networkCycleSlipRelevelBridgeMaxCycles();
+        const double v2_max_sig  = config_.networkCycleSlipRelevelBridgeMaxSigmaCyc();
+        const double v2_corrob   = config_.networkCycleSlipRelevelBridgeCorrobCyc();
+        const double v2_window_s = config_.networkCycleSlipRelevelBridgePendWindowS();
+        const double v2_now_s    = se.time.week * 604800.0 + se.time.tow;
+        auto v2_replace = [&](const std::tuple<int, std::string, std::string>& key,
+                              const RelevelPend& pd) {
+            DeltaBridgeSolve bs;
+            const int rsta = std::get<0>(key);
+            const std::string& rsat = std::get<1>(key);
+            const auto outcome = networkSlipBridgeReplace(
+                pd, rsta, rsat, *bridge_local_carry,
+                v2_max_cyc, v2_max_sig, v2_corrob, &bs);
+            switch (outcome) {
+                case BridgeReplaceOutcome::Applied:
+                    ++qc_cnt.bridge_pairs_applied;
+                    qc_cnt.bridge_max_abs_dn_cyc =
+                        std::max({qc_cnt.bridge_max_abs_dn_cyc,
+                                  std::abs(bs.dn1_cyc), std::abs(bs.dn2_cyc)});
+                    emitEvent("T1_if_slip", "bridge_replace", rsat,
+                              stations[rsta].name, bs.dn1_cyc, bs.dn2_cyc, "bridge",
+                              fmt::format("{};{};lag_s={:.0f};sd1={:.3f};sd2={:.3f}",
+                                          pd.sig1, pd.sig2, v2_now_s - pd.tow_s,
+                                          std::sqrt(bs.var1_m2), std::sqrt(bs.var2_m2)));
+                    break;
+                case BridgeReplaceOutcome::KernelReject: ++qc_cnt.bridge_fallback_reject;    break;
+                case BridgeReplaceOutcome::NoCarry:      ++qc_cnt.bridge_fallback_no_carry;  break;
+                case BridgeReplaceOutcome::CorrobReject: ++qc_cnt.bridge_replace_corrob_reject; break;
+            }
+            return outcome;
+        };
+        if (bridge_v2)
+            for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();) {
+                if (v2_now_s - pit->second.tow_s > v2_window_s) {
+                    ++qc_cnt.bridge_pend_expired;
+                    pit = relevel_pend->erase(pit);
+                } else if (pit->second.has_dn) {
+                    v2_replace(pit->first, pit->second);
+                    pit = relevel_pend->erase(pit);   // terminal either way
+                } else ++pit;
+            }
         for (int i = (datum_active ? 0 : i_lo); i < n_sta_total; ++i) {
             if (!present[i]) continue;
             // (a) confident wide-lane integer slips detected in PASS A.  A satellite
@@ -305,13 +404,37 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         datum_slip_detect(sat, "MW;" + sig1 + ";" + sig2);
                     continue;
                 }
+                // Bridge v2 intercept BEFORE the mark: the belated MW integer for
+                // a slip T1 already flagged (and freed) 1-2 epochs ago.  Fill the
+                // waiting pend and REPLACE immediately (the corroborating free
+                // re-level was harvested at least one epoch ago).  On Applied the
+                // normal mark/free path is SUPPRESSED — the slip's event already
+                // fired at the flag epoch, and a second free would discard the
+                // just-replaced level.  Every other outcome falls through to
+                // today's path (the arc frees again — conservative).
+                if (bridge_v2) {
+                    const auto pkey = std::make_tuple(i, sat, sig1 + "_" + sig2);
+                    const auto pit = relevel_pend->find(pkey);
+                    if (pit != relevel_pend->end() && !pit->second.has_dn) {
+                        pit->second.has_dn    = true;
+                        pit->second.dn_wl     = cand.dn_wl;
+                        pit->second.sigma_wl  = std::max(cand.frac,
+                            config_.networkCycleSlipRelevelBridgeWlSigmaFloorCyc());
+                        pit->second.lambda_wl = cand.lambda_wl;
+                        const auto outcome = v2_replace(pkey, pit->second);
+                        relevel_pend->erase(pit);
+                        if (outcome == BridgeReplaceOutcome::Applied) {
+                            if (mw_done.insert(sat).second) ++qc_cnt.mw_detections;
+                            continue;   // suppress the second free — level replaced
+                        }
+                    }
+                }
                 const auto a = refloat_signal(i, sat, sig1);
                 const auto b = refloat_signal(i, sat, sig2);
-                // SPEC_slip_relevel_walk §6: defer the confident WL integer into the
-                // IF-TD driver for the float 2×2 delta bridge (only that scope holds
-                // the pooled IF delta + its empirical scale).  The mark/funnel above
-                // stay exactly as today — the bridge replaces only the LOSS of the
-                // carried level, nothing consumer-side.
+                // Bridge v2: the same-epoch candidate (MW and T1 firing together)
+                // is deferred into the IF-TD driver, which stores the integer IN
+                // the pend it creates this epoch; the replace then runs at the
+                // NEXT epoch's sweep, once the corroborating free re-level exists.
                 if (relevel && carry_warm && config_.networkCycleSlipRelevelDeltaBridge()
                     && (a.refloated || b.refloated))
                     relevel->mw_cands.push_back(MwBridgeCand{
@@ -468,7 +591,9 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            RelevelEpochState* relevel,
                            std::map<std::tuple<int, std::string, std::string>,
                                     LocalCarry>* bridge_local_carry,
-                           SlipQcCounters* bridge_cnt) {
+                           SlipQcCounters* bridge_cnt,
+                           std::map<std::tuple<int, std::string, std::string>,
+                                    RelevelPend>* relevel_pend) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -539,6 +664,17 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             relevel->free_ambs.insert({i, amb_key});
                             if (bridge_cnt) ++bridge_cnt->relevel_free_marked;
                         }
+                        // Bridge v2: a fresh mark voids any outstanding pend for
+                        // this (station, sat) — its pre-slip capture is stale.
+                        // The T1 flag path re-creates its own pend AFTER this.
+                        if (relevel_pend)
+                            for (auto pit = relevel_pend->begin();
+                                 pit != relevel_pend->end();)
+                                if (std::get<0>(pit->first) == i
+                                    && std::get<1>(pit->first) == sat) {
+                                    if (bridge_cnt) ++bridge_cnt->bridge_pend_voided;
+                                    pit = relevel_pend->erase(pit);
+                                } else ++pit;
                     }
                 }
             }
@@ -563,55 +699,25 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         int n_if_arcs = 0, n_sparse = 0, n_warm_sp = 0;
         std::string if_detail;
 
-        // --- SPEC_slip_relevel_walk §6: the float 2×2 delta bridge -----------
-        // Executes HERE because only this scope holds the pooled IF delta
-        // (dd − med) and its empirical scale (s_eff·emap).  The bridge shifts
-        // the carried level in place (the T0-repair mutation shape: value_abs
-        // only; coupling s_prev untouched — a slip is a LOCAL step, the shared
-        // frame did not move) and REMOVES the bands from the free-epoch set so
-        // the corrected carry injects this epoch.  Every fallback leaves the
-        // bands in the free set — never the pre-fix stale-injection path.
+        // --- SPEC_slip_relevel_walk §8.2: bridge v2, PEND side ---------------
+        // The flag epoch only CAPTURES: the pre-slip carry (this PASS-A map
+        // still holds the previous harvest) and the measured δIF with its
+        // empirical σ — only this scope has (dd − med) and s_eff·emap.  The
+        // arc then takes the v1 free epoch.  The REPLACE (with the §8.1
+        // corroboration against that free level) runs in the MW drain when the
+        // confident WL integer arrives — measured 1–2 epochs later; a
+        // same-epoch MW candidate is stored IN the pend (cand_idx below) and
+        // replaced at the next epoch's sweep.
         const bool bridge_on = relevel && bridge_local_carry && bridge_cnt
-                            && carry_warm
+                            && relevel_pend && carry_warm
                             && config_.networkCycleSlipRelevelDeltaBridge();
         std::map<std::tuple<int, std::string, std::string>, MwBridgeCand*> cand_idx;
-        std::set<std::tuple<int, std::string, std::string>> bridged_bands;
         if (bridge_on)
             for (auto& c : relevel->mw_cands)
                 cand_idx[{c.sta, c.sat, c.sig1 + "_" + c.sig2}] = &c;
-        const double br_max_cyc   = config_.networkCycleSlipRelevelBridgeMaxCycles();
-        const double br_max_sig   = config_.networkCycleSlipRelevelBridgeMaxSigmaCyc();
         const double br_if_floor  = config_.networkCycleSlipRelevelBridgeIfSigmaFloorM();
-        // Apply one solved bridge to both band carries; false ⇒ caller falls
-        // back (bands stay in the free set).  Per-band at-most-once per epoch.
-        auto applyBridge = [&](const PairSample* sp, const DeltaBridgeSolve& bs,
-                               const char* source) -> bool {
-            const std::tuple<int, std::string, std::string>
-                k1{sp->sta, sp->sat, sp->sig1}, k2{sp->sta, sp->sat, sp->sig2};
-            if (bridged_bands.count(k1) || bridged_bands.count(k2)) return false;
-            auto it1 = bridge_local_carry->find(k1);
-            auto it2 = bridge_local_carry->find(k2);
-            if (it1 == bridge_local_carry->end() || it2 == bridge_local_carry->end()) {
-                ++bridge_cnt->bridge_fallback_no_carry;   // cold / pinned arc
-                return false;
-            }
-            it1->second.value_abs += bs.shift1_m;  it1->second.var += bs.var1_m2;
-            it2->second.value_abs += bs.shift2_m;  it2->second.var += bs.var2_m2;
-            bridged_bands.insert(k1);  bridged_bands.insert(k2);
-            relevel->bridged.insert(k1);  relevel->bridged.insert(k2);
-            relevel->free_ambs.erase({sp->sta, sp->sat + "_" + sp->sig1});
-            relevel->free_ambs.erase({sp->sta, sp->sat + "_" + sp->sig2});
-            ++bridge_cnt->bridge_pairs_applied;
-            bridge_cnt->bridge_max_abs_dn_cyc =
-                std::max({bridge_cnt->bridge_max_abs_dn_cyc,
-                          std::abs(bs.dn1_cyc), std::abs(bs.dn2_cyc)});
-            emitEvent("T1_if_slip", "delta_bridge", sp->sat, stations[sp->sta].name,
-                      bs.dn1_cyc, bs.dn2_cyc, "bridge",
-                      fmt::format("{};{};src={};sd1={:.3f};sd2={:.3f}",
-                                  sp->sig1, sp->sig2, source,
-                                  std::sqrt(bs.var1_m2), std::sqrt(bs.var2_m2)));
-            return true;
-        };
+        const double br_wl_floor  = config_.networkCycleSlipRelevelBridgeWlSigmaFloorCyc();
+        const double br_now_s     = se.time.week * 604800.0 + se.time.tow;
         for (auto& [pair, samples] : by_pair) {
             // (1) Network common-mode center: median of the raw DDs (m).
             std::vector<double> raw;
@@ -662,39 +768,49 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                   stations[sp->sta].name, abs_dev, thr,
                                   carry_warm ? "refloat" : "diagnostic",
                                   sp->sig1 + ";" + sp->sig2);
-                        // Delta bridge, flagged path: joint (MW integer + this IF
-                        // delta) or the affirmatively-clean-MW complement (ΔN_WL=0
-                        // at the 0.7/3-cyc clean bound).  A station whose IF-TD
-                        // refsat rebased this epoch is frame-invalid — fall back.
+                        // Bridge v2, flagged path: CREATE (or refresh — the
+                        // refloat_pair above just voided any stale one) the pend
+                        // with the pre-slip capture + this δIF.  A station whose
+                        // IF-TD refsat rebased this epoch is frame-invalid — no
+                        // pend, the arc keeps the plain free epoch.
                         if (bridge_on) {
                             if (!sta_if_resets[sp->sta].empty()) {
                                 ++bridge_cnt->bridge_fallback_refsat;
                             } else {
-                                const double sigma_if =
-                                    std::max(s_eff * emap, br_if_floor);
-                                const auto ci = cand_idx.find(
-                                    std::tuple<int, std::string, std::string>{
-                                        sp->sta, sp->sat, pair});
-                                if (ci != cand_idx.end() && !ci->second->consumed) {
-                                    const auto bs = networkSlipDeltaBridgeSolve(
-                                        ci->second->dn_wl, ci->second->sigma_wl_cyc,
-                                        sp->dd - med, sigma_if,
-                                        ci->second->lambda_wl, sp->lambda,
-                                        br_max_cyc, br_max_sig);
-                                    ci->second->consumed = true;
-                                    if (bs.ok && applyBridge(sp, bs, "joint"))
-                                        ++bridge_cnt->bridge_joint;
-                                    else if (!bs.ok)
-                                        ++bridge_cnt->bridge_fallback_reject;
+                                auto it1 = bridge_local_carry->find(
+                                    {sp->sta, sp->sat, sp->sig1});
+                                auto it2 = bridge_local_carry->find(
+                                    {sp->sta, sp->sat, sp->sig2});
+                                if (it1 == bridge_local_carry->end()
+                                    || it2 == bridge_local_carry->end()) {
+                                    ++bridge_cnt->bridge_fallback_no_carry;
+                                } else {
+                                    RelevelPend pd;
+                                    pd.pre1 = it1->second.value_abs;
+                                    pd.pre_var1 = it1->second.var;
+                                    pd.pre2 = it2->second.value_abs;
+                                    pd.pre_var2 = it2->second.var;
+                                    pd.dif_m = sp->dd - med;
+                                    pd.sigma_if_m = std::max(s_eff * emap, br_if_floor);
+                                    pd.lambda_if = sp->lambda;
+                                    pd.sig1 = sp->sig1;  pd.sig2 = sp->sig2;
+                                    pd.tow_s = br_now_s;
+                                    const auto ci = cand_idx.find(
+                                        std::tuple<int, std::string, std::string>{
+                                            sp->sta, sp->sat, pair});
+                                    if (ci != cand_idx.end() && !ci->second->consumed) {
+                                        pd.has_dn    = true;
+                                        pd.dn_wl     = ci->second->dn_wl;
+                                        pd.sigma_wl  = std::max(ci->second->sigma_wl_cyc,
+                                                                br_wl_floor);
+                                        pd.lambda_wl = ci->second->lambda_wl;
+                                        ci->second->consumed = true;
+                                        ++bridge_cnt->bridge_joint;   // same-epoch pairings
+                                    }
+                                    (*relevel_pend)[std::make_tuple(
+                                        sp->sta, sp->sat, pair)] = pd;
+                                    ++bridge_cnt->bridge_pends_created;
                                 }
-                                // The affirmatively-clean-MW complement (ΔN_WL=0
-                                // at the 0.7/3-cyc clean bound) was REMOVED with
-                                // the mw_only branch (SPEC §8.1): its own σ —
-                                // β1·(0.7/3)/λ_IF ≈ 1.06 cyc — can never pass
-                                // the σ cap, so it was dead as gated (F3: 0
-                                // applications), and un-capping it would apply
-                                // cycle-σ bridges no better than the free epoch.
-                                // no MW cand + not provably clean ⇒ free epoch.
                             }
                         }
                         ++n_if_arcs;

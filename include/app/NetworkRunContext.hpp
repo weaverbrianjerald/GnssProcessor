@@ -1106,6 +1106,12 @@ namespace GnssProcessor {
         std::map<std::tuple<int, std::string, std::string>, std::pair<double, int>>
                                      relevel_retap_streak;
         std::set<std::tuple<int, std::string, std::string>> relevel_retapped_prev;
+        /// Bridge v2 pend store, keyed (station idx, sat, "sig1_sig2") —
+        /// PERSISTENT across epochs (the MW integer arrives 1-2 epochs after the
+        /// T1 flag), swept for expiry/replace at the top of the MW drain.  NOT
+        /// snapshotted: a resume drops outstanding pends and those slips keep
+        /// their v1 free re-level — the conservative direction.
+        std::map<std::tuple<int, std::string, std::string>, RelevelPend> relevel_pend;
         // RTB-7(b/c): startup quality-ramp state.  The DEGRADED URA floor
         // (nc.warmup_ura_floor_m) applies until ramp_lifted; the lift rule is
         // networkWarmupRampLifted (emitted-epoch horizon AND σ̂0-EWMA update count,

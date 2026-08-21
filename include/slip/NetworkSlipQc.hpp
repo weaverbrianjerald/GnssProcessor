@@ -258,7 +258,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::set<std::string>* datum_mark_sats = nullptr,
                                std::map<std::tuple<int, std::string, std::string>,
                                         LocalCarry>* datum_local_carry = nullptr,
-                               RelevelEpochState* relevel = nullptr);
+                               RelevelEpochState* relevel = nullptr,
+                               std::map<std::tuple<int, std::string, std::string>,
+                                        RelevelPend>* relevel_pend = nullptr,
+                               std::map<std::tuple<int, std::string, std::string>,
+                                        LocalCarry>* bridge_local_carry = nullptr);
 
 /**
  * @brief SPEC_slip_relevel_walk §6 — float 2×2 delta-bridge solve for one
@@ -297,6 +301,27 @@ DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_c
                                              double dif_m, double sigma_if_m,
                                              double lambda_wl_m, double lambda_if_m,
                                              double max_abs_cyc, double max_sigma_cyc);
+
+/**
+ * @brief Bridge v2 (pend-and-replace) — execute one pended replace against the
+ *        live carry map.  Pure function of its arguments (unit-test seam).
+ *
+ * Solves the 2×2 from the pend's (δIF, σIF) and its arrived MW integer, then
+ * gates on the §8.1 audit's CORROBORATION: the bridged level (pre_slip + shift)
+ * must agree with the CURRENT carry value — the interim v1 free re-level —
+ * within @p corrob_cyc cycles per band (correct bridges err ≤ 0.5 cyc against
+ * truth while wrong ones err 6–113 cyc; the free level sits within ~2 cyc, so
+ * agreement separates the populations).  On Applied the carry values are
+ * REPLACED (value = pre + shift, var = pre_var + bridge var; coupling and
+ * last_seen untouched — the local-step mutation discipline).  Every non-Applied
+ * outcome leaves the carry exactly as found (the arc keeps its free re-level).
+ */
+enum class BridgeReplaceOutcome { Applied, KernelReject, NoCarry, CorrobReject };
+BridgeReplaceOutcome networkSlipBridgeReplace(
+    const RelevelPend& pd, int sta, const std::string& sat,
+    std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+    double max_abs_cyc, double max_sigma_cyc, double corrob_cyc,
+    DeltaBridgeSolve* solved = nullptr);
 
 /**
  * @brief IF-phase triple-difference slip driver: pool the PASS-A deferred
@@ -370,6 +395,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            RelevelEpochState* relevel = nullptr,
                            std::map<std::tuple<int, std::string, std::string>,
                                     LocalCarry>* bridge_local_carry = nullptr,
-                           SlipQcCounters* bridge_cnt = nullptr);
+                           SlipQcCounters* bridge_cnt = nullptr,
+                           std::map<std::tuple<int, std::string, std::string>,
+                                    RelevelPend>* relevel_pend = nullptr);
 
 } // namespace GnssProcessor

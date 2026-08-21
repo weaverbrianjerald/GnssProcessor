@@ -2679,6 +2679,11 @@ namespace GnssProcessor {
         /// @brief Floor on the IF-TD step's 1σ (metres) entering the bridge
         ///        variance (the pooled scale can read implausibly small early).
         double networkCycleSlipRelevelBridgeIfSigmaFloorM() const { return network_cycle_slip_relevel_bridge_if_sigma_floor_m_; }
+        /// @brief Bridge v2 corroboration gate (cycles per band): the bridged
+        ///        level must agree with the interim free re-level within this.
+        double networkCycleSlipRelevelBridgeCorrobCyc() const { return network_cycle_slip_relevel_bridge_corrob_cyc_; }
+        /// @brief Bridge v2 pend expiry window (s) awaiting the MW integer.
+        double networkCycleSlipRelevelBridgePendWindowS() const { return network_cycle_slip_relevel_bridge_pend_window_s_; }
         /// @brief SPEC_slip_relevel_walk §6 — the STATISTICAL-refloat half of the
         ///        re-level response: a post-fit-RAIM refloat with NO measured
         ///        delta (T2 consensus / T4 arc) keeps its level and re-taps the
@@ -6068,6 +6073,8 @@ namespace GnssProcessor {
         double network_cycle_slip_relevel_bridge_max_sigma_cyc_{0.50};    ///< Bridge reject: σ(ΔN_band) cap (cycles).
         double network_cycle_slip_relevel_bridge_wl_sigma_floor_cyc_{0.02}; ///< WL integer 1σ floor (cycles — a CONFIDENT integer's residual, not a float's).
         double network_cycle_slip_relevel_bridge_if_sigma_floor_m_{0.005};  ///< IF step 1σ floor (m).
+        double network_cycle_slip_relevel_bridge_corrob_cyc_{3.0};          ///< v2 free-level corroboration gate (cyc).
+        double network_cycle_slip_relevel_bridge_pend_window_s_{120.0};     ///< v2 pend expiry window (s).
         bool   network_cycle_slip_relevel_retap_statistical_{false};        ///< SPEC_slip_relevel_walk: keep+retap on statistical RAIM refloats.
         double network_cycle_slip_relevel_retap_var_m2_{0.25};              ///< Retap SET variance (m²).
         int    network_cycle_slip_relevel_retap_streak_max_{3};             ///< Consecutive-retap fallback-to-erase streak.
