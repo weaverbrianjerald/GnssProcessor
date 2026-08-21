@@ -147,6 +147,15 @@ namespace GnssProcessor {
         bool raim_maturity_gate{};
         int raim_maturity_epochs{};
         double raim_withhold{};
+        /// Withhold-era release (SPEC_withhold_era_release §3a): escalated within-epoch
+        /// adaptation budget on epochs whose predecessor was A4-withheld; 0 = off
+        /// (stock budget everywhere).  Loader guarantees 0 or > 5, and 0 without an
+        /// armed A4 ceiling.
+        int wh_escalate{};
+        /// §3b: erase detector-freed leveling carries at the A4 withhold branch so the
+        /// free re-level survives the discarded epoch.  Loader guarantees
+        /// relevel_free_epoch + an armed ceiling.
+        bool wh_free_erase{};
         bool raim_redun{};
         /// SPEC_t3_null_derivation §7.1: emit the per-ROW Baarda redundancy census
         /// (`network.trace_raim_redundancy`).  DIAGNOSTIC ONLY and deliberately
@@ -1241,6 +1250,18 @@ namespace GnssProcessor {
         double      ep_we_clk_move_max = -1.0; ///< max |final − primary| clock move (m)
         std::string ep_we_clk_move_sat;        ///< identity of that max (invariant #7)
 
+        // --- A4 withhold-era continuity (SPEC_withhold_era_release §3).  Advanced
+        // ONLY at epochs that reach the A4 decision; continuity is the census
+        // freshness idiom (`wh_last_loop_ep == n_loop_epochs − 1`), so ANY
+        // intervening bypass epoch — datum_failed, gate_withheld, solve_failed,
+        // PASS-A-head skip, decimation tick — breaks the era (strictly-consecutive
+        // C5/C7; an interrupted era is exited with detail "interrupted" at the next
+        // decide).  Deliberately distinct from the flight recorder's ceiling-BREACH
+        // era (`networkRhsTripEdge` "sigma0"), which is carve-out-independent —
+        // two co-located eras, different edges.
+        int       wh_era_len      = 0;  ///< consecutive A4-withheld decides (0 = no era)
+        long long wh_last_loop_ep = -1; ///< n_loop_epochs at the last withheld decide
+
         // --- PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md) INC-0 cross-epoch state.
         //
         // There is DELIBERATELY no `ddfold_ep_tow` stamp here, unlike the redundancy and
@@ -1949,6 +1970,18 @@ namespace GnssProcessor {
         double health_win_ms_anchor     = 0.0;
         size_t health_win_epochs_anchor = 0;
         size_t n_sigma0_withheld = 0;   // A4/R8: epochs skipped specifically by the σ̂0 withhold ceiling (subset of n_skipped)
+        // Withhold-era release policy (SPEC_withhold_era_release §3) — both-edge era
+        // telemetry per invariant #7.  All zero unless one of the two knobs is armed
+        // (the era bookkeeping itself is knob-gated to keep the events CSV
+        // byte-identical on OFF paths).
+        long long n_wh_era_entries        = 0;  ///< SIGMA0/era_enter events
+        long long n_wh_era_exits          = 0;  ///< SIGMA0/era_exit events (a run ending mid-era exits nowhere — max_len covers)
+        long long n_wh_era_max_len        = 0;  ///< longest era (withheld decides)
+        long long n_wh_escalated_epochs   = 0;  ///< era epochs run at the escalated budget
+        long long n_wh_escalate_landed    = 0;  ///< escalated epochs that landed σ̂₀ ≤ ceiling (took the accepted path)
+        long long n_wh_escalate_exhausted = 0;  ///< escalated epochs that still withheld
+        long long n_wh_free_erases        = 0;  ///< §3b carry entries erased at the withhold branch
+        long long n_wh_perconst_exits     = 0;  ///< declared limitation: eras ended by the RTA-10 carve-out publishing (no escalation ran)
         // Phase 2.2: epochs whose EMISSION the SH health gate withheld.  NOT a
         // subset of n_skipped — the solve/carry/QC all ran (emission-only gate),
         // so these epochs are counted nowhere else.

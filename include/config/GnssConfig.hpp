@@ -4347,6 +4347,44 @@ namespace GnssProcessor {
         double networkRaimWithholdSigma0() const { return network_raim_withhold_sigma0_; }
 
         /**
+         * @brief Escalated within-epoch adaptation budget on WITHHOLD-ERA epochs
+         *        (@c network.raim_withhold_adapt_escalate;
+         *        `SPEC_withhold_era_release.md` §3(a)).
+         *
+         * When the PREVIOUS epoch was A4-withheld (the era-continuity state, C5/C7 of
+         * the SPEC), the within-epoch drop-culprit/re-solve loop runs up to this many
+         * iterations instead of the stock cap (5).  Nothing else changes — same culprit
+         * scoring, same k-gate, same σ̂0, same ceiling: a landed escalation EMITS through
+         * the normal accepted path (the §1.5 healing — harvest + post-fit commit), an
+         * exhausted one withholds exactly as today.  Measured motivation: the fld63
+         * 29-epoch era ran n_adapt pinned at the cap on every epoch with culprits still
+         * clearing the k-gate.  0 (default) = off (byte-identical).  Values in (0, 5]
+         * are rejected to 0 at load (an "escalation" at or below the stock budget is a
+         * no-op that would read as armed).  Inert without a withhold ceiling.
+         */
+        int networkRaimWithholdAdaptEscalate() const { return network_raim_withhold_adapt_escalate_; }
+
+        /**
+         * @brief Erase detector-freed leveling carries AT the A4 withhold site
+         *        (@c network.raim_withhold_free_erase;
+         *        `SPEC_withhold_era_release.md` §3(b)).
+         *
+         * A slip detected ON a withheld epoch otherwise loses its response: the
+         * free-epoch latch is consumed against a solve that is then discarded, the
+         * completing harvest is skipped, and the latch is cleared at the next PASS-A —
+         * so the next accepted epoch re-injects the stale PRE-SLIP level at converged
+         * weight (the QUEUE-9 walk mechanism re-opened through the withhold path;
+         * measured live at TOW 269400 of the fld63 era).  With this armed, the withhold
+         * branch erases the freed (station, sat, signal) entries from the leveling
+         * carry so carry-absence makes the free re-level durable to the next accepted
+         * epoch.  Reset-class only (no value from the contaminated solve is stored);
+         * delta-bridged bands are structurally excluded (removed from the latch before
+         * this site).  Requires @c cycle_slip.relevel_free_epoch and a withhold
+         * ceiling; OFF = byte-identical.
+         */
+        bool networkRaimWithholdFreeErase() const { return network_raim_withhold_free_erase_; }
+
+        /**
          * @brief Extend the within-epoch screening to the CODE and IONO-CONSTRAINT
          *        rows (@c network.raim_we_code_iono, WE-CI; used only when
          *        @ref networkRaimWithinEpoch).
@@ -6225,6 +6263,8 @@ namespace GnssProcessor {
         bool   network_raim_within_epoch_{false}; ///< Arm within-epoch adaptation (detect→drop-culprit→re-solve) when σ̂0 exceeds the trigger; OFF = emit the first solve as today.
         double network_raim_sigma0_trigger_{3.0}; ///< σ̂0 above which an epoch is "so bad" that within-epoch adaptation fires.
         double network_raim_withhold_sigma0_{0.0}; ///< A4: within-epoch escape-hatch ceiling — if σ̂0 STILL exceeds this after the 5-pass adaptation, WITHHOLD the epoch (reuse the observability-gate disposition) instead of emitting with a warning; 0 = off (emit anyway, current behaviour). Used only when @ref networkRaimWithinEpoch. Typically ~2× @ref networkRaimSigma0Trigger.
+        int    network_raim_withhold_adapt_escalate_{0}; ///< Withhold-era release (SPEC_withhold_era_release §3a): escalated within-epoch adaptation budget on epochs whose PREDECESSOR was A4-withheld; 0 = off (stock kMaxAdapt = 5, byte-identical); (0,5] rejected to 0 at load.
+        bool   network_raim_withhold_free_erase_{false}; ///< Withhold-era release (SPEC_withhold_era_release §3b): at the A4 withhold branch, erase detector-freed leveling-carry entries so the free re-level survives the discarded epoch (reset-class only). Requires relevel_free_epoch + a withhold ceiling; OFF = byte-identical.
         bool   network_raim_we_code_iono_{false};  ///< WE-CI: extend the within-epoch screening to the CODE and IONO-CONSTRAINT row pools (own triggers, station-exclusion / sat-code-deweight responses); the phase pool, σ̂0_adapt and A4 are unchanged. OFF = byte-identical.
         double network_raim_we_code_trigger_{10.0}; ///< WE-CI code-pool σ̂0 trigger (empirical: quiet 2.5–4.7 / q99 ≈ 8; events 17.8–288 on DOY-129@305). Inert unless network_raim_we_code_iono_.
         double network_raim_we_iono_trigger_{12.0}; ///< WE-CI iono-pool σ̂0 trigger (first placement — the pool had no prior statistic; calibrate from the run-end max-observed telemetry). Inert unless network_raim_we_code_iono_.

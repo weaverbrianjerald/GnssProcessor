@@ -1853,6 +1853,30 @@ int networkTeardown(
                                     ctx.counters.n_iono_cs_resets,
                                     ctx.carry.iono_cs.size())
                       : std::string{});
+    // Withhold-era release policy (SPEC_withhold_era_release §3): both-edge era
+    // telemetry per invariant #7.  An armed run whose eras never enter/exit or
+    // whose escalation counters stay 0 through a known sick window is a MISWIRE
+    // (invariant #4), not a quiet day.  landed + exhausted must sum to escalated.
+    if (config_.networkRaimWithholdAdaptEscalate() > 0 ||
+        config_.networkRaimWithholdFreeErase())
+        log->info("Network (withhold-era release, escalate={} free_erase={}): {} era "
+                  "entr{}, {} exit(s), longest {} withheld epoch(s); {} escalated "
+                  "epoch(s) = {} landed (emitted through the accepted path) + {} "
+                  "exhausted; {} detector-freed carry entr{} erased at the withhold "
+                  "branch; {} era(s) ended by the RTA-10 carve-out publishing "
+                  "(DECLARED limitation — no escalation ran there).",
+                  config_.networkRaimWithholdAdaptEscalate(),
+                  config_.networkRaimWithholdFreeErase(),
+                  ctx.counters.n_wh_era_entries,
+                  ctx.counters.n_wh_era_entries == 1 ? "y" : "ies",
+                  ctx.counters.n_wh_era_exits,
+                  ctx.counters.n_wh_era_max_len,
+                  ctx.counters.n_wh_escalated_epochs,
+                  ctx.counters.n_wh_escalate_landed,
+                  ctx.counters.n_wh_escalate_exhausted,
+                  ctx.counters.n_wh_free_erases,
+                  ctx.counters.n_wh_free_erases == 1 ? "y" : "ies",
+                  ctx.counters.n_wh_perconst_exits);
     // §9.7.10 datum-station slip detect: run-end ON-path telemetry (invariant #4 —
     // an armed run with injected datum-station slips reporting 0/0 is a MISWIRE,
     // not a quiet day).  Counted separately from Card E: those are non-pivot

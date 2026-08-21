@@ -1,0 +1,40 @@
+{
+ "_comment": "Withhold-era release policy armed arm (SPEC_withhold_era_release s4): _fld63_relevel4h_on.json + raim_withhold_adapt_escalate 12 + raim_withhold_free_erase, single knob-set over the byte-certified pair. PRE-REGISTERED GATES: the 268890 era 29 -> <= 6 withheld epochs (expected mechanism: an escalated EMIT, n_wh_escalate_landed >= 1) and no era > 6; n_emitted >= 474/483, total sigma0 withholds <= 12; settled-tail median pf phase sigma0 <= 1.35, T4 attrib-ARC rate <= 2.0e-2, PB disc marks equal-class; NO fleet-expiry cliff (no epoch with pl prires rows = 0 while n_present > 50; run-max prior_tension_ratio < 1e6); verdict-untouched check: rows identical to the certified ON run up to the first era's second epoch. STOP RULE: if the escalated budget exhausts era-long (n_wh_escalate_exhausted ~ era length, era not collapsed), the budget-limited model is falsified -> the residual is common-mode -> STOP, record; do not raise the budget, do not resurrect the v1 recipe-commit (SPEC s2-R).",
+ "extends": "_ext63_1h_evt_pl.json",
+ "processing": {
+  "max_duration_s": 14400.0
+ },
+ "network": {
+  "carry_invariant": false,
+  "product_output_path": "C:/GnssProcessor/runs/fld63_relevel4h_wh/products.txt",
+  "raim_withhold_adapt_escalate": 12,
+  "raim_withhold_free_erase": true,
+  "cycle_slip": {
+   "if_phase_td": true,
+   "mw_detect": true,
+   "if_phase_td_ref_gate": true,
+   "mw_lli_corroborate": true,
+   "gap_instrument": true,
+   "relevel_free_epoch": true,
+   "relevel_delta_bridge": true,
+   "relevel_bridge_gf": true
+  },
+  "carry_invariant_innov_gate": false,
+  "carry_invariant_innov_refold": false,
+  "carry_invariant_honesty": false,
+  "carry_invariant_pd_safe": false,
+  "carry_invariant_innov_corroborate": false,
+  "carry_invariant_innov_calibrate_window": 0,
+  "carry_invariant_qz": 0.0,
+  "carry_invariant_innov_calibrate": false,
+  "carry_invariant_innov_k": 4.0,
+  "mw_wl": {
+   "ewl_enable": false,
+   "wl_inject_enable": false,
+   "uwl_enable": false,
+   "uwl_cold_fix": false,
+   "uwl_mid_enable": false,
+   "uwl_dual_top": false
+  }
+ }
+}

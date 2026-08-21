@@ -674,6 +674,26 @@ evaluated against the ADAPTED solution — the degrade-during-withhold DEADLOCK 
 **Sim validation:** needs an injected sick-field / storm mode in the injection bench — a bench
 extension, owed before this card can be graded.
 
+✅ **The A4 HALF of this item EXECUTED 2026-08-21 — mechanism VALIDATED, promotion REFUSED**
+(`docs/SPEC_withhold_era_release.md`; the SH-gate emission-only half above remains open and is NOT
+covered).  The fld63 29-epoch A4 deadlock era (`SPEC_slip_relevel_walk.md` §8.4) was root-caused to a
+BUDGET-limited within-epoch tier (`n_adapt` pinned at the hard cap 5 for 29 epochs with culprits
+still clearing k=6) whose verdicts die with each withheld epoch; the v1 fix (commit the recipe's
+carry erases durably) was KILLED in adversarial review before build — the scratch re-solve had
+already removed the culprits and σ̂₀ stayed 9.3–26.5, and the commit's blast radius under a stable
+scapegoat re-implements the 900 s mass-expiry cliff as policy (SPEC §2-R; do not rebuild).  The v2
+build — `network.raim_withhold_adapt_escalate` (era-gated deeper peel budget, scratch-solve only,
+verdict provably untouched: 315/315 pre-divergence epoch-status rows byte-equal) +
+`raim_withhold_free_erase` (the era-slip response hole) — collapsed the era **29 → 1 withheld epoch
+(three 1-epoch eras, all `escalate_landed`, 0 exhausted)** at availability **478/483** (beats both
+references) and absorbed the mid-era second event withhold-free.  **But the pre-registered settled-σ̂₀
+gate FAILED (2.42 vs ≤ 1.35)**: armed-OFF's reference was cliff-flattered AND the escalation removes
+the cliff's accidental therapy — the stressed zero-q carry population persists and pays out under T4
+attrition (the 8(b) plateau's representation defect on a third instrument).  Both knobs stay
+default-OFF research; arming is a service-posture (availability-first) decision with its own
+consumer-graded card.  Byte-certified OFF (products + five CSVs ≡ `65ba362` refs), suite 1480/206
+green, no A4-tune (the ceiling and statistic are untouched).
+
 ## 8 — The per-LOS ionosphere representation (NEW 2026-08-14, ranks FIRST)
 
 **Bandaid:** none — a *measured root* that three separate cards have been treating downstream of.

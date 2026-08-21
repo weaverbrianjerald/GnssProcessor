@@ -260,6 +260,44 @@ namespace GnssProcessor {
                       network_iono_carry_scope_, network_iono_carry_q_,
                       network_iono_carry_var_floor_, network_iono_carry_max_gap_s_);
 
+        // Withhold-era release interlocks (SPEC_withhold_era_release §3), deliberately
+        // HERE (Card-1g order rule): both responders ride the A4 withhold path, and the
+        // ceiling can be armed as late as the service-mode bundle; relevel_free_epoch
+        // parses in the cycle_slip block above.  Warn-and-disarm per invariant #4.
+        if (network_raim_withhold_adapt_escalate_ > 0 && network_raim_withhold_sigma0_ <= 0.0) {
+            log->warn("Network (withhold-era): network.raim_withhold_adapt_escalate needs an "
+                      "armed A4 ceiling (network.raim_withhold_sigma0 > 0) — without it there "
+                      "are no withhold eras to escalate inside — disabled.");
+            network_raim_withhold_adapt_escalate_ = 0;
+        }
+        if (network_raim_withhold_free_erase_ && network_raim_withhold_sigma0_ <= 0.0) {
+            log->warn("Network (withhold-era): network.raim_withhold_free_erase needs an armed "
+                      "A4 ceiling (network.raim_withhold_sigma0 > 0) — the erase site is the "
+                      "withhold branch — disabled.");
+            network_raim_withhold_free_erase_ = false;
+        }
+        if (network_raim_withhold_free_erase_ && !network_cycle_slip_relevel_free_epoch_) {
+            log->warn("Network (withhold-era): network.raim_withhold_free_erase consumes the "
+                      "free-epoch latch, which network.cycle_slip.relevel_free_epoch fills — "
+                      "without it the latch is always empty — disabled.");
+            network_raim_withhold_free_erase_ = false;
+        }
+        if (network_raim_withhold_adapt_escalate_ > 0 || network_raim_withhold_free_erase_)
+            log->info("Network (withhold-era release, SPEC_withhold_era_release): {}{}{} — "
+                      "era edges evented as SIGMA0/era_enter|era_exit with both-edge "
+                      "counters; the A4 verdict statistic and ceiling are unchanged.",
+                      network_raim_withhold_adapt_escalate_ > 0
+                          ? fmt::format("escalated era adaptation budget {} (stock 5)",
+                                        network_raim_withhold_adapt_escalate_)
+                          : "",
+                      network_raim_withhold_adapt_escalate_ > 0 &&
+                              network_raim_withhold_free_erase_
+                          ? " + "
+                          : "",
+                      network_raim_withhold_free_erase_
+                          ? "detector-freed carry erase at the withhold branch"
+                          : "");
+
         logNetworkPosture_(log);
         return true;
     }
@@ -3803,6 +3841,27 @@ namespace GnssProcessor {
                       network_raim_withhold_sigma0_);
             network_raim_withhold_sigma0_ = 0.0;
         }
+        // Withhold-era release policy (SPEC_withhold_era_release §3) — two independent
+        // default-OFF responders on the A4 path.  Parsed here beside their gate; the
+        // cross-knob interlocks (withhold ceiling present, relevel_free_epoch for the
+        // erase half) live at the END of the network section per the Card-1g order rule
+        // (cycle_slip and the service-mode arming block both parse after this site).
+        network_raim_withhold_adapt_escalate_ =
+            jval<int>(json, "network.raim_withhold_adapt_escalate",
+                      "network_raim_withhold_adapt_escalate", 0);
+        if (network_raim_withhold_adapt_escalate_ < 0 ||
+            (network_raim_withhold_adapt_escalate_ > 0 &&
+             network_raim_withhold_adapt_escalate_ <= 5)) {
+            log->warn("Network (withhold-era): network.raim_withhold_adapt_escalate {} is not "
+                      "above the stock within-epoch budget (5) — an \"escalation\" at or below "
+                      "it is a no-op that would read as armed.  Disabling (0).  Set > 5 "
+                      "(the fld63 arm pre-registered 12).",
+                      network_raim_withhold_adapt_escalate_);
+            network_raim_withhold_adapt_escalate_ = 0;
+        }
+        network_raim_withhold_free_erase_ =
+            jval<bool>(json, "network.raim_withhold_free_erase",
+                       "network_raim_withhold_free_erase", false);
         // RTA-10: per-constellation carve-out of the A4 σ̂0 withhold.  Activates ONLY at a
         // tripped withhold (raim_withhold_sigma0 > 0), so without that ceiling it is a silent
         // no-op — warn rather than auto-arm (choosing a σ̂0 ceiling is a numeric decision the

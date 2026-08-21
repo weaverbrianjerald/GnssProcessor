@@ -1108,6 +1108,15 @@ networkClockAnchorGuard(ctx, config_, log, traces, se.time, est, plan, x_s, ws,
 int  n_adapt = 0;
 bool we_adapt_attempted = false;   // a within-epoch re-solve was launched (est layout was rebuilt)
 double sigma0_adapt = 0.0;         // A4: final within-epoch σ̂0 (0 = adaptation did not run this epoch)
+// SPEC_withhold_era_release: era continuity resolved ONCE per epoch (the census-
+// freshness idiom — the era lives iff the immediately-previous LOOP epoch was the
+// last A4-withheld decide; any bypass/skip epoch breaks it, C5/C7).  Declared at
+// function scope like sigma0_adapt because the A4 decision site consumes both
+// after the within-epoch block closes.
+const bool wh_era_live = ctx.carry.wh_era_len > 0 &&
+    ctx.carry.wh_last_loop_ep ==
+        static_cast<long long>(ctx.counters.n_loop_epochs) - 1;
+bool wh_escalated = false;         // §3(a) budget escalation in effect THIS epoch
 // RTA-10 (network.per_const_withhold): per-CONSTELLATION partition of the LAST
 // assess()'s standardized-residual pool — the very rows whose median is the global
 // σ̂0 the A4 withhold compares, keyed by the ambiguity's satellite constellation
@@ -1133,6 +1142,15 @@ if (within_epoch_armed && carry_warm) {
     const bool   surgical  = config_.networkRaimSurgicalStation();
     const double sta_bias  = surgical ? config_.networkRaimStationDropBias() : 1.0;
     constexpr int    kMaxAdapt   = 5;
+    // SPEC_withhold_era_release §3(a): inside a live withhold era the budget
+    // escalates so the era can end the SANCTIONED way — a landed adaptation
+    // takes the normal accepted path and the full downstream healing (harvest +
+    // post-fit RAIM commit) runs.  Nothing else changes: same culprit scoring,
+    // same k-gate, same σ̂0, same ceiling.  Measured motivation (fld63 29-epoch
+    // era): n_adapt pinned at kMaxAdapt on every era epoch with culprits still
+    // clearing the k-gate.  Loader guarantees wh_escalate is 0 or > kMaxAdapt.
+    wh_escalated = wh_era_live && ctx.knobs.wh_escalate > kMaxAdapt;
+    const int max_adapt_eff = wh_escalated ? ctx.knobs.wh_escalate : kMaxAdapt;
     // --- WE-CI (network.raim_we_code_iono): code + iono-constraint row pools ----
     // The historical pool below is the carried-ambiguity PHASE rows; the code and
     // per-LOS↔SH iono-constraint rows were screened by NO tier (P1-4 skips
@@ -1573,7 +1591,7 @@ if (within_epoch_armed && carry_warm) {
     }
     std::string adapt_detail;
     for (int iter = 0;
-         iter < kMaxAdapt
+         iter < max_adapt_eff
          && (sigma0 > trig
              || (we_ci && (s0_code_we > trig_code || s0_iono_we > trig_iono)));
          ++iter) {
@@ -1886,6 +1904,53 @@ if (perconst_on && raim_withhold > 0.0 && sigma0_adapt > raim_withhold) {
 // carve-out does not suppress it: the epoch is still contaminated.
 const bool a4_over_ceiling = raim_withhold > 0.0 && sigma0_adapt > raim_withhold;
 networkRhsTripEdge(ctx, "sigma0", a4_over_ceiling);
+// --- A4 withhold-era bookkeeping (SPEC_withhold_era_release §3; both edges per
+// invariant #7).  Gated on the policy knobs so the OFF path emits no events and
+// keeps every counter at zero (network_events.csv is in the byte-cert set).  The
+// era here is the withhold ACTION (a carve-out-published epoch EXITS it — the
+// declared RTA-10 limitation); the recorder line above tracks the ceiling
+// BREACH — a deliberately different edge, kept unconfusable by the n_wh_* names.
+if (ctx.knobs.wh_escalate > 0 || ctx.knobs.wh_free_erase) {
+    const bool wh_withholding = a4_over_ceiling && !perconst_active;
+    if (wh_escalated) {
+        ++ctx.counters.n_wh_escalated_epochs;
+        if (wh_withholding) ++ctx.counters.n_wh_escalate_exhausted;
+        else                ++ctx.counters.n_wh_escalate_landed;
+    }
+    if (wh_withholding) {
+        if (ctx.carry.wh_era_len > 0 && !wh_era_live) {
+            // An era interrupted by a bypass path (datum_failed / gate_withheld /
+            // solve_failed / head-skip) never reached an exiting decide — close it
+            // honestly before opening the new one (C7).
+            ++ctx.counters.n_wh_era_exits;
+            emitEvent("SIGMA0", "era_exit", "", "",
+                      static_cast<double>(ctx.carry.wh_era_len), 0.0,
+                      "interrupted", "era broken by a non-decide epoch");
+            ctx.carry.wh_era_len = 0;
+        }
+        if (ctx.carry.wh_era_len == 0) {
+            ++ctx.counters.n_wh_era_entries;
+            emitEvent("SIGMA0", "era_enter", "", "", sigma0_adapt, raim_withhold,
+                      "withhold_era", fmt::format("{} re-solve(s)", n_adapt));
+        }
+        ++ctx.carry.wh_era_len;
+        ctx.carry.wh_last_loop_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+        if (ctx.carry.wh_era_len > ctx.counters.n_wh_era_max_len)
+            ctx.counters.n_wh_era_max_len = ctx.carry.wh_era_len;
+    } else if (ctx.carry.wh_era_len > 0) {
+        ++ctx.counters.n_wh_era_exits;
+        if (a4_over_ceiling) ++ctx.counters.n_wh_perconst_exits;
+        emitEvent("SIGMA0", "era_exit", "", "",
+                  static_cast<double>(ctx.carry.wh_era_len), sigma0_adapt,
+                  !wh_era_live         ? "interrupted"
+                  : a4_over_ceiling    ? "perconst_published"
+                  : wh_escalated       ? "escalate_landed"
+                                       : "cleared",
+                  fmt::format("{} withheld epoch(s)", ctx.carry.wh_era_len));
+        ctx.carry.wh_era_len = 0;
+        ctx.carry.wh_last_loop_ep = -1;
+    }
+}
 if (a4_over_ceiling && !perconst_active) {
     log->warn("Network[RAIM within-epoch]: TOW {:.1f} σ̂0={:.2f} > withhold ceiling {:.2f} "
               "after {} re-solve(s) — WITHHOLDING epoch (too contaminated to publish).",
@@ -1945,6 +2010,25 @@ if (a4_over_ceiling && !perconst_active) {
     // the next trip's "before" frame.
     networkRhsAttribTrip(ctx, config_, log, traces, se, setup.stations, est,
                          plan.shared_datum, asm_res, est_index_of);
+    // SPEC_withhold_era_release §3(b): make the free-epoch response durable to
+    // the discarded epoch.  Detection ran pre-solve on raw observables (a
+    // withhold-independent verdict); erasing the freed entries makes
+    // carry-absence the durable free re-level at the next ACCEPTED epoch
+    // (Assembly:2781 — no entry, no inject).  Reset-class only: no value from
+    // this contaminated solve is stored.  Bridged bands were already removed
+    // from the latch, so a delta-bridged carry can never be erased here; the
+    // pending-reseed mark was consumed in PASS-B — the ERASE is the
+    // load-bearing half.  Touches nothing the epoch-status/H/recorder writes
+    // above read (G5-safe placement).
+    if (ctx.knobs.wh_free_erase) {
+        for (const auto& fa : ctx.carry.relevel.free_ambs) {
+            const auto parts = StateKeys::parseAmbiguityKey(fa.second);
+            if (!parts) continue;
+            if (ctx.carry.local_carry.erase(
+                    std::make_tuple(fa.first, parts->satellite, parts->signal)))
+                ++ctx.counters.n_wh_free_erases;
+        }
+    }
     prev_week = se.time.week; prev_tow = se.time.tow;
     result.action = EpochAction::SkipEpoch;
     return result;

@@ -430,3 +430,13 @@ POLICY card — a derivation (what may run during a withhold: at minimum the
 slip funnel and the free-epoch latch, precisely the channels that would have
 cleared this era), not a `raim_withhold_sigma0` tune.  Knobs remain
 default-OFF; nothing tuned tonight per the stop-and-record discipline.
+
+**Same-day sequel**: the policy card was derived, adversary-reviewed, built
+and validated as `docs/SPEC_withhold_era_release.md` — the era was
+BUDGET-limited (n_adapt cap-pinned all 29 epochs), and the era-gated
+escalation collapses it 29 → 1 withheld epoch at 478/483 availability with
+the verdict provably untouched; the pre-registered settled-σ̂₀ gate FAILED
+(the cliff this section documents was accidentally amputating the stressed
+carries — removing the deadlock exposes that population instead), so the
+knobs stay default-OFF research and the §8.4 verdict on the relevel knobs
+is unchanged.

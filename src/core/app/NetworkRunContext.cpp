@@ -97,6 +97,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.raim_maturity_gate = config_.networkRaimRefloatMaturityGate();
     k.raim_maturity_epochs = config_.networkRaimRefloatMaturityEpochs();
     k.raim_withhold = config_.networkRaimWithholdSigma0();
+    k.wh_escalate = config_.networkRaimWithholdAdaptEscalate();
+    k.wh_free_erase = config_.networkRaimWithholdFreeErase();
     k.raim_redun = config_.networkRaimRedundancyNormalize();
     k.raim_redun_trace = config_.getNetworkConfig().trace_raim_redundancy;
     k.clk_mon_on = config_.networkClockMonitor();
