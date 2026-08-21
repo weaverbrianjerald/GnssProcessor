@@ -71,9 +71,17 @@ constraint-aware global σ̂₀ data side; the L13 per-station residual trace; a
 here** — the within-epoch tier, which has the identical dependency. CLAUDE.md already flags that as a
 sanctioned open fix; deferred deliberately (§6 D1).
 
-Shipped configs (literal grep, `config/test_suite/`): **203** arm `carry_invariant`, **129** arm `raim`;
-the whole `_ft63_*` field lineage (~70 configs) arms both. Corroborates the stored GOLDEN-0729
-observation that armed QC tiers never fired.
+Shipped configs, **`extends`-RESOLVED** (`scripts/gnss_config_chain.py`, re-measured 2026-08-21):
+**632** arm `carry_invariant` and **543** arm `raim` across all of `config/` (511 / 538 of those in
+`config/test_suite/` alone); the whole `_ft63_*` field lineage arms both. Corroborates the stored
+GOLDEN-0729 observation that armed QC tiers never fired.
+
+⚠ The resolved count is the one that governs behaviour, and it is ~3× the literal one — a bare
+`grep '"carry_invariant": true'` over `config/test_suite/` returns **203** (and **197** for `raim`),
+because most lineages inherit the flag through an `extends` chain rather than restating it. The
+earlier revision of this line quoted those literal figures as the population; 203 was reproducible
+but counted only the configs that spell the knob out, and the companion `raim` figure (129) had
+since drifted. Any "how many configs are affected" question here must be resolved, not grepped.
 
 ### 1.3 The codebase already knew
 
@@ -254,7 +262,8 @@ threshold here was calibrated against a constant.
 ## 8. Promotion
 
 Per the standing no-promotion directive: `network.raim` stays as-is, both new knobs stay default-OFF, and
-the ~203 shipped `carry_invariant` configs keep their current (inert) behaviour until a validated arm.
+the **632** shipped `carry_invariant` configs (§1.2 — `extends`-resolved, not the literal-grep 203)
+keep their current (inert) behaviour until a validated arm.
 
 ## 9. Related
 
