@@ -97,6 +97,47 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
                   se.time.tow, n_t0_repairs, t0_detail, n_t0_left);
 }
 
+DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_cyc,
+                                             double dif_m, double sigma_if_m,
+                                             double lambda_wl_m, double lambda_if_m,
+                                             double max_abs_cyc, double max_sigma_cyc) {
+    DeltaBridgeSolve r;
+    if (!std::isfinite(dn_wl_cyc) || !std::isfinite(sigma_wl_cyc) ||
+        !std::isfinite(dif_m) || !std::isfinite(sigma_if_m) ||
+        !(lambda_wl_m > 0.0) || !(lambda_if_m > 0.0))
+        return r;
+    // Band frequencies from the two wavelengths alone (per-satellite exact —
+    // GLONASS FDMA included): 1/λ_WL = (f1−f2)/c, 1/λ_IF = (f1+f2)/c.
+    constexpr double c = 299792458.0;
+    const double f1 = 0.5 * c * (1.0 / lambda_wl_m + 1.0 / lambda_if_m);
+    const double f2 = 0.5 * c * (1.0 / lambda_if_m - 1.0 / lambda_wl_m);
+    if (!(f2 > 0.0) || !(f1 > f2)) return r;
+    const double lam1 = c / f1, lam2 = c / f2;
+    // δ_IF = β1·ΔN1 − β2·ΔN2 with β_j = λ_WL·f_j/(f1+f2); β1 − β2 ≡ λ_IF.
+    const double beta1 = lambda_wl_m * f1 / (f1 + f2);
+    // FLOAT solve (a bridge, never an integer fix):
+    //   ΔN2 = (δ_IF − β1·ΔN_WL)/λ_IF;   ΔN1 = ΔN2 + ΔN_WL.
+    // (The β1-times-ΔN_WL-over-λ_IF step is this kernel's analogue of the GF
+    //  kernel's documented λ1-in-numerator trap — integer-injection tested.)
+    const double dn2 = (dif_m - beta1 * dn_wl_cyc) / lambda_if_m;
+    const double dn1 = dn2 + dn_wl_cyc;
+    if (!std::isfinite(dn1) || !std::isfinite(dn2)) return r;
+    if (std::abs(dn1) > max_abs_cyc || std::abs(dn2) > max_abs_cyc) return r;
+    // Variance propagation (independent σ_IF [m], σ_WL [cyc]); the 1/λ_IF²
+    // factor is the ~9× amplification the bridged prior must honestly carry.
+    const double beta2 = beta1 - lambda_if_m;
+    const double v2 = (sigma_if_m * sigma_if_m + beta1 * beta1 * sigma_wl_cyc * sigma_wl_cyc)
+                      / (lambda_if_m * lambda_if_m);
+    const double v1 = (sigma_if_m * sigma_if_m + beta2 * beta2 * sigma_wl_cyc * sigma_wl_cyc)
+                      / (lambda_if_m * lambda_if_m);
+    if (std::sqrt(v1) > max_sigma_cyc || std::sqrt(v2) > max_sigma_cyc) return r;
+    r.ok = true;
+    r.dn1_cyc = dn1;  r.dn2_cyc = dn2;
+    r.shift1_m = lam1 * dn1;  r.shift2_m = lam2 * dn2;
+    r.var1_m2 = lam1 * lam1 * v1;  r.var2_m2 = lam2 * lam2 * v2;
+    return r;
+}
+
 void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_,
                                std::vector<NetStation>& stations,
                                const std::vector<bool>& present,
@@ -113,7 +154,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::set<std::string>* datum_amb_reref_sats,
                                std::set<std::string>* datum_mark_sats,
                                std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>* datum_local_carry) {
+                                        LocalCarry>* datum_local_carry,
+                               RelevelEpochState* relevel) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_mw_refloat = pa.sta_mw_refloat;
     // Thin event forwarder — textual copy of the run-TU lambda, so the moved
@@ -159,7 +201,15 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                     // MeasurementModel consumes+clears it before the fold).
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     // Legacy phase-leveling refloat: only meaningful once warm.
-                    if (carry_warm) { sm.markAmbiguityPendingReseed(amb_key); act.refloated = true; }
+                    if (carry_warm) { sm.markAmbiguityPendingReseed(amb_key); act.refloated = true;
+                        // SPEC_slip_relevel_walk: the mark alone never delivered the
+                        // free epoch (PASS-B consumes it pre-inject) — latch the set
+                        // the inject site actually reads.
+                        if (relevel) {
+                            relevel->free_ambs.insert({i, amb_key});
+                            ++qc_cnt.relevel_free_marked;
+                        }
+                    }
                 }
             }
             return act;
@@ -244,7 +294,10 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             // can slip on several signal-pairs at once (multi-freq); refloat every
             // band but count / log / emit ONCE per (station, satellite).
             std::set<std::string> mw_done;
-            for (const auto& [sat, sig1, sig2] : sta_mw_refloat[i]) {
+            for (const auto& cand : sta_mw_refloat[i]) {
+                const auto& sat  = cand.sat;
+                const auto& sig1 = cand.sig1;
+                const auto& sig2 = cand.sig2;
                 if (datum_active && i == 0) {
                     // Datum station: a confident WL integer jump takes the network
                     // re-reference path — never refloat_signal (pinned ambiguities).
@@ -254,6 +307,18 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 }
                 const auto a = refloat_signal(i, sat, sig1);
                 const auto b = refloat_signal(i, sat, sig2);
+                // SPEC_slip_relevel_walk §6: defer the confident WL integer into the
+                // IF-TD driver for the float 2×2 delta bridge (only that scope holds
+                // the pooled IF delta + its empirical scale).  The mark/funnel above
+                // stay exactly as today — the bridge replaces only the LOSS of the
+                // carried level, nothing consumer-side.
+                if (relevel && carry_warm && config_.networkCycleSlipRelevelDeltaBridge()
+                    && (a.refloated || b.refloated))
+                    relevel->mw_cands.push_back(MwBridgeCand{
+                        i, sat, sig1, sig2, cand.dn_wl,
+                        std::max(cand.frac,
+                                 config_.networkCycleSlipRelevelBridgeWlSigmaFloorCyc()),
+                        cand.lambda_wl});
                 const bool matched   = a.matched   || b.matched;
                 const bool refloated = a.refloated || b.refloated;
                 if (matched && mw_done.insert(sat).second) {
@@ -399,7 +464,11 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            bool trace_flag_rates, FlagRate& fr_if_slip,
                            const SyncedEpoch& se, NetworkRunTraces& traces,
                            const std::shared_ptr<spdlog::logger>& log,
-                           std::set<std::string>* refsat_mark_sats) {
+                           std::set<std::string>* refsat_mark_sats,
+                           RelevelEpochState* relevel,
+                           std::map<std::tuple<int, std::string, std::string>,
+                                    LocalCarry>* bridge_local_carry,
+                           SlipQcCounters* bridge_cnt) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -462,7 +531,15 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 if (parts->signal == sig1 || parts->signal == sig2) {
                     // Card 4 C3c: feed the DD carry from epoch 1 (see refloat_signal).
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
-                    if (carry_warm) sm.markAmbiguityPendingReseed(amb_key);
+                    if (carry_warm) {
+                        sm.markAmbiguityPendingReseed(amb_key);
+                        // SPEC_slip_relevel_walk: latch the free epoch the consumed
+                        // mark never delivered (see refloat_signal).
+                        if (relevel) {
+                            relevel->free_ambs.insert({i, amb_key});
+                            if (bridge_cnt) ++bridge_cnt->relevel_free_marked;
+                        }
+                    }
                 }
             }
         };
@@ -485,6 +562,72 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
 
         int n_if_arcs = 0, n_sparse = 0, n_warm_sp = 0;
         std::string if_detail;
+
+        // --- SPEC_slip_relevel_walk §6: the float 2×2 delta bridge -----------
+        // Executes HERE because only this scope holds the pooled IF delta
+        // (dd − med) and its empirical scale (s_eff·emap).  The bridge shifts
+        // the carried level in place (the T0-repair mutation shape: value_abs
+        // only; coupling s_prev untouched — a slip is a LOCAL step, the shared
+        // frame did not move) and REMOVES the bands from the free-epoch set so
+        // the corrected carry injects this epoch.  Every fallback leaves the
+        // bands in the free set — never the pre-fix stale-injection path.
+        const bool bridge_on = relevel && bridge_local_carry && bridge_cnt
+                            && carry_warm
+                            && config_.networkCycleSlipRelevelDeltaBridge();
+        std::map<std::tuple<int, std::string, std::string>, MwBridgeCand*> cand_idx;
+        std::set<std::tuple<int, std::string, std::string>> bridged_bands;
+        if (bridge_on)
+            for (auto& c : relevel->mw_cands)
+                cand_idx[{c.sta, c.sat, c.sig1 + "_" + c.sig2}] = &c;
+        const double br_max_cyc   = config_.networkCycleSlipRelevelBridgeMaxCycles();
+        const double br_max_sig   = config_.networkCycleSlipRelevelBridgeMaxSigmaCyc();
+        const double br_if_floor  = config_.networkCycleSlipRelevelBridgeIfSigmaFloorM();
+        // The (1,1)-IF and WL wavelengths satisfy 1/λ_WL = (f1−f2)/c and
+        // 1/λ_IF = (f1+f2)/c; for the clean-MW complement (no MW candidate in
+        // scope) the WL wavelength must be recovered from the pair's own bands.
+        // The IF-TD sample carries only λ_IF, so use the epoch-clean MW arc's
+        // own detector state… not available here either — instead recover both
+        // frequencies from λ_IF and the GPS/GAL L1C anchor is WRONG for FDMA.
+        // The honest cheap route: the clean-complement case needs λ_WL, and the
+        // ONLY per-satellite source in scope is an MW candidate — so the
+        // complement is restricted to pairs whose λ_WL is derivable from a
+        // same-pair candidate seen this epoch at ANY station (same constellation
+        // band pair ⇒ same λ_WL except GLONASS, which never reaches here:
+        // FDMA is excluded from the carry families).
+        std::map<std::string, double> pair_lambda_wl;   // pair string → λ_WL (m)
+        if (bridge_on)
+            for (const auto& c : relevel->mw_cands)
+                pair_lambda_wl.emplace(c.sig1 + "_" + c.sig2, c.lambda_wl);
+        // Apply one solved bridge to both band carries; false ⇒ caller falls
+        // back (bands stay in the free set).  Per-band at-most-once per epoch.
+        auto applyBridge = [&](const PairSample* sp, const DeltaBridgeSolve& bs,
+                               const char* source) -> bool {
+            const std::tuple<int, std::string, std::string>
+                k1{sp->sta, sp->sat, sp->sig1}, k2{sp->sta, sp->sat, sp->sig2};
+            if (bridged_bands.count(k1) || bridged_bands.count(k2)) return false;
+            auto it1 = bridge_local_carry->find(k1);
+            auto it2 = bridge_local_carry->find(k2);
+            if (it1 == bridge_local_carry->end() || it2 == bridge_local_carry->end()) {
+                ++bridge_cnt->bridge_fallback_no_carry;   // cold / pinned arc
+                return false;
+            }
+            it1->second.value_abs += bs.shift1_m;  it1->second.var += bs.var1_m2;
+            it2->second.value_abs += bs.shift2_m;  it2->second.var += bs.var2_m2;
+            bridged_bands.insert(k1);  bridged_bands.insert(k2);
+            relevel->bridged.insert(k1);  relevel->bridged.insert(k2);
+            relevel->free_ambs.erase({sp->sta, sp->sat + "_" + sp->sig1});
+            relevel->free_ambs.erase({sp->sta, sp->sat + "_" + sp->sig2});
+            ++bridge_cnt->bridge_pairs_applied;
+            bridge_cnt->bridge_max_abs_dn_cyc =
+                std::max({bridge_cnt->bridge_max_abs_dn_cyc,
+                          std::abs(bs.dn1_cyc), std::abs(bs.dn2_cyc)});
+            emitEvent("T1_if_slip", "delta_bridge", sp->sat, stations[sp->sta].name,
+                      bs.dn1_cyc, bs.dn2_cyc, "bridge",
+                      fmt::format("{};{};src={};sd1={:.3f};sd2={:.3f}",
+                                  sp->sig1, sp->sig2, source,
+                                  std::sqrt(bs.var1_m2), std::sqrt(bs.var2_m2)));
+            return true;
+        };
         for (auto& [pair, samples] : by_pair) {
             // (1) Network common-mode center: median of the raw DDs (m).
             std::vector<double> raw;
@@ -535,12 +678,79 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                   stations[sp->sta].name, abs_dev, thr,
                                   carry_warm ? "refloat" : "diagnostic",
                                   sp->sig1 + ";" + sp->sig2);
+                        // Delta bridge, flagged path: joint (MW integer + this IF
+                        // delta) or the affirmatively-clean-MW complement (ΔN_WL=0
+                        // at the 0.7/3-cyc clean bound).  A station whose IF-TD
+                        // refsat rebased this epoch is frame-invalid — fall back.
+                        if (bridge_on) {
+                            if (!sta_if_resets[sp->sta].empty()) {
+                                ++bridge_cnt->bridge_fallback_refsat;
+                            } else {
+                                const double sigma_if =
+                                    std::max(s_eff * emap, br_if_floor);
+                                const auto ci = cand_idx.find(
+                                    std::tuple<int, std::string, std::string>{
+                                        sp->sta, sp->sat, pair});
+                                const auto pl = pair_lambda_wl.find(pair);
+                                if (ci != cand_idx.end() && !ci->second->consumed) {
+                                    const auto bs = networkSlipDeltaBridgeSolve(
+                                        ci->second->dn_wl, ci->second->sigma_wl_cyc,
+                                        sp->dd - med, sigma_if,
+                                        ci->second->lambda_wl, sp->lambda,
+                                        br_max_cyc, br_max_sig);
+                                    ci->second->consumed = true;
+                                    if (bs.ok && applyBridge(sp, bs, "joint"))
+                                        ++bridge_cnt->bridge_joint;
+                                    else if (!bs.ok)
+                                        ++bridge_cnt->bridge_fallback_reject;
+                                } else if (pl != pair_lambda_wl.end()
+                                           && stations[sp->sta].mw_slip
+                                           && stations[sp->sta].mw_slip->getEpochCleanPairs()
+                                                  .count(sp->sat + "_" + sp->sig1 + "_" + sp->sig2)) {
+                                    // MW affirmatively clean ⇒ the WL did not slip:
+                                    // ΔN1 = ΔN2, measured by the IF step alone.
+                                    const auto bs = networkSlipDeltaBridgeSolve(
+                                        0.0, 0.7 / 3.0, sp->dd - med, sigma_if,
+                                        pl->second, sp->lambda,
+                                        br_max_cyc, br_max_sig);
+                                    if (bs.ok && applyBridge(sp, bs, "if_clean"))
+                                        ++bridge_cnt->bridge_if_clean;
+                                    else if (!bs.ok)
+                                        ++bridge_cnt->bridge_fallback_reject;
+                                }
+                                // no MW cand + not provably clean ⇒ free epoch.
+                            }
+                        }
                         ++n_if_arcs;
                         if (n_if_arcs <= 12)
                             if_detail += fmt::format("{}{}/{}_{}_{}", if_detail.empty() ? "" : ", ",
                                                      stations[sp->sta].name, sp->sat, sp->sig1, sp->sig2);
                     } else {
                         clean_zabs.push_back(abs_dev / emap);
+                        // Delta bridge, MW-only path: a confident WL integer whose
+                        // IF sample did NOT flag (near-proportional ΔN1:ΔN2 —
+                        // the IF-blind ratio class).  The MW drain already marked
+                        // + latched the bands; bridge them with this (unflagged)
+                        // sample's delta.
+                        if (bridge_on && sta_if_resets[sp->sta].empty()) {
+                            const auto ci = cand_idx.find(
+                                std::tuple<int, std::string, std::string>{
+                                    sp->sta, sp->sat, pair});
+                            if (ci != cand_idx.end() && !ci->second->consumed) {
+                                const double sigma_if =
+                                    std::max(s_eff * emap, br_if_floor);
+                                const auto bs = networkSlipDeltaBridgeSolve(
+                                    ci->second->dn_wl, ci->second->sigma_wl_cyc,
+                                    sp->dd - med, sigma_if,
+                                    ci->second->lambda_wl, sp->lambda,
+                                    br_max_cyc, br_max_sig);
+                                ci->second->consumed = true;
+                                if (bs.ok && applyBridge(sp, bs, "mw_only"))
+                                    ++bridge_cnt->bridge_mw_only;
+                                else if (!bs.ok)
+                                    ++bridge_cnt->bridge_fallback_reject;
+                            }
+                        }
                     }
                     // Deep-investigation row: the full decision context for this
                     // (station, sat, pair) sample.  sc.ewma_scale / sc.count are the
@@ -572,6 +782,12 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 }
             }
         }
+
+        // Delta bridge: candidates whose (station,sat,pair) never met an IF-TD
+        // sample this epoch — their bands stay in the free set (safe fallback).
+        if (bridge_on)
+            for (const auto& c : relevel->mw_cands)
+                if (!c.consumed) ++bridge_cnt->bridge_fallback_unpaired;
 
         // Reference-satellite common-mode slips (per station; pool can't see them).
         for (int i = i_lo; i < n_sta_total; ++i) {

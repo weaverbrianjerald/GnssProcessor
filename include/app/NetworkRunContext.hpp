@@ -1086,6 +1086,26 @@ namespace GnssProcessor {
         // re-reference drops it (the slip then surfaces to post-fit RAIM instead).
         std::set<std::string>        datum_reref_pb_sats;
         std::set<std::string>        datum_reref_amb_sats;
+        /// SPEC_slip_relevel_walk §6: the slip re-level response's per-epoch
+        /// state (free-epoch latched set, deferred MW bridge candidates, the
+        /// bridged-band set for the harvest-side statistics guard).  Filled by
+        /// the PASS-A serial drains, read by the PASS-B inject + the post-solve
+        /// harvest, cleared at the next epoch's PASS-A entry.  NOT snapshotted
+        /// (one-epoch lifetime; a resumed leg's first epochs degrade to the
+        /// pre-fix path, the conservative direction — the same argument as the
+        /// pending-re-reference queues above).
+        RelevelEpochState            relevel;
+        /// Retap piece (relevel_retap_statistical): per-arc consecutive-retap
+        /// streak (key → last continuous-GPS-s, streak) — an arc that re-trips
+        /// relevel_retap_streak_max times inside the 120 s window falls back to
+        /// the erase (a real missed slip the loose prior cannot shake).  And the
+        /// one-RAIM-to-next-harvest set of retapped arcs for the statistics
+        /// guard (read + cleared by the next harvest's labeling).  Neither is
+        /// snapshotted (forward-only response state; a resume degrades to the
+        /// erase path, the conservative direction).
+        std::map<std::tuple<int, std::string, std::string>, std::pair<double, int>>
+                                     relevel_retap_streak;
+        std::set<std::tuple<int, std::string, std::string>> relevel_retapped_prev;
         // RTB-7(b/c): startup quality-ramp state.  The DEGRADED URA floor
         // (nc.warmup_ura_floor_m) applies until ramp_lifted; the lift rule is
         // networkWarmupRampLifted (emitted-epoch horizon AND σ̂0-EWMA update count,
@@ -1956,6 +1976,15 @@ namespace GnssProcessor {
         /// (kind,sat,signal) probe specifically.  Armed with this at 0 means the
         /// realization-step feeds never matched a live coupling term: INERT, not clean.
         long long n_cpl_reinit_diverted = 0;
+        /// SPEC_slip_relevel_walk: run total of inject-site free-epoch skips
+        /// (relevel_free_epoch).  Armed with this at 0 on a slip-bearing run is
+        /// a MISWIRE (invariant #4) — the drains latched but the inject never
+        /// consulted, or no marked arc ever had a live carry.
+        long long n_relevel_free_skips = 0;
+        /// Retap piece run totals: arcs KEPT (level preserved, var re-tapped),
+        /// streak ESCALATIONS to the erase, and flagged arcs with no live carry.
+        long long n_relevel_retap_kept = 0, n_relevel_retap_escalated = 0,
+                  n_relevel_retap_miss = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

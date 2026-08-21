@@ -562,10 +562,53 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // single arc, per the decomposition).  Erasing local_carry + pending-reseed is
         // the same one-shot refloat the consensus path uses.
         if (attrib_act && (!bad_sats.empty() || !bad_stations.empty() || !bad_arcs.empty())) {
-            auto refloat_sat_at = [&](int i, const std::string& sat) -> int {
+            const bool retap_on =
+                config_.networkCycleSlipRelevelRetapStatistical();
+            const double retap_var = config_.networkCycleSlipRelevelRetapVarM2();
+            const int    retap_streak_max = config_.networkCycleSlipRelevelRetapStreakMax();
+            auto refloat_sat_at = [&](int i, const std::string& sat,
+                                      bool statistical_arc) -> int {
                 int n = 0;
                 for (const auto& pa : ambPool(asm_res[i]))
                     if (pa.sat == sat) {
+                        // SPEC_slip_relevel_walk §6, retap piece: an ISOLATED-ARC
+                        // refloat carries NO measured delta and its population is
+                        // FA-dominated (21114 arc refloats vs ~4500 slip-driven on
+                        // the 60-sta campaign) — the arc's level is overwhelmingly
+                        // CORRECT, so erasing it was the steady-state injection.
+                        // KEEP the level, SET the confidence loose (idempotent —
+                        // the bad_sats+bad_arcs double-visit is reachable), clear
+                        // the coupling regression (the warm-resume empty-coupling
+                        // degrade precedent), and let the data adjudicate: a real
+                        // missed slip wins against the loose prior within an epoch
+                        // or two, and an arc re-tripping relevel_retap_streak_max
+                        // times inside 120 s falls back to the erase.  Whole-sat
+                        // CONSENSUS refloats (statistical_arc = false) keep the
+                        // strong erase — a ≥min_sta network event has real
+                        // evidence behind it.
+                        if (retap_on && statistical_arc) {
+                            const auto key = std::make_tuple(i, pa.sat, pa.signal);
+                            auto it = local_carry.find(key);
+                            if (it != local_carry.end()) {
+                                const double now_s =
+                                    se.time.week * 604800.0 + se.time.tow;
+                                auto& streak = ctx.carry.relevel_retap_streak[key];
+                                streak.second =
+                                    (now_s - streak.first <= 120.0) ? streak.second + 1 : 1;
+                                streak.first = now_s;
+                                if (streak.second < retap_streak_max) {
+                                    it->second.var = std::max(it->second.var, retap_var);
+                                    it->second.coupling.clear();
+                                    ctx.carry.relevel_retapped_prev.insert(key);
+                                    ++ctx.counters.n_relevel_retap_kept;
+                                    ++n;
+                                    continue;   // level kept — no erase, no mark, no queue
+                                }
+                                ++ctx.counters.n_relevel_retap_escalated;
+                            } else {
+                                ++ctx.counters.n_relevel_retap_miss;
+                            }
+                        }
                         local_carry.erase(std::make_tuple(i, pa.sat, pa.signal));
                         // BOOKKEEPING, not the actuator on the Card-4 path: the producer
                         // forms every innovation against the linearization point and never
@@ -591,10 +634,12 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 for (size_t i = 0; i < stations.size(); ++i)
                     if (present[i] && est_index_of[i] >= 0
                         && (phase_datum_prioritized || !stations[i].is_pivot))
-                        n_ref += refloat_sat_at(static_cast<int>(i), sat);
+                        n_ref += refloat_sat_at(static_cast<int>(i), sat,
+                                                /*statistical_arc=*/false);
             // (bad_stations is intentionally empty — the whole-station refloat path is
             //  disabled to avoid the regional mis-attribution mass-refloat.)
-            for (const auto& [sta, sat] : bad_arcs) n_ref += refloat_sat_at(sta, sat);
+            for (const auto& [sta, sat] : bad_arcs)
+                n_ref += refloat_sat_at(sta, sat, /*statistical_arc=*/true);
             attrib_acted = true;
             if (raim_ci_on) raim_ci_tallies.arcs_flagged += static_cast<long long>(bad_arcs.size());
 

@@ -311,6 +311,27 @@ struct SlipQcCounters {
     /// own insert result, so it cannot drift from what the funnel does.
     long long d5_retap_ambs{0};
     long long d5_retap_ambs_stepped{0}; ///< …of those, coincident with a raw step at the same (station, satellite, epoch).
+
+    // --- SPEC_slip_relevel_walk §6: the slip re-level response ---------------
+    // relevel_free_epoch: (station, amb key) insertions into the latched
+    // free-epoch set (the inject skip the consumed pending-reseed mark could
+    // never deliver).  relevel_delta_bridge: the float 2×2 ladder — pairs
+    // APPLIED (both bands shifted in place, arc keeps its level at phase
+    // precision) and the fallback reasons (each falls back to the free epoch,
+    // never to the pre-fix stale-injection path).  Invariant #4: either knob
+    // armed with its headline counter at 0 on a slip-bearing run is a MISWIRE,
+    // not a quiet run.
+    long long relevel_free_marked{0};      ///< (station, amb key) free-epoch latches.
+    long long relevel_free_skips{0};       ///< Inject-site skips actually taken (arc had a live carry).
+    long long bridge_pairs_applied{0};     ///< Delta-bridged (station, sat, pair) applications.
+    long long bridge_joint{0};             ///< …with a same-epoch MW integer + IF-TD delta (the full 2×2).
+    long long bridge_if_clean{0};          ///< …IF-TD flag + affirmatively-clean MW arc (ΔN_WL = 0 branch).
+    long long bridge_mw_only{0};           ///< …MW integer + unflagged IF-TD delta (the IF-blind-ratio case).
+    long long bridge_fallback_no_carry{0}; ///< Fallbacks: a band had no live carry entry (cold / pinned arc).
+    long long bridge_fallback_reject{0};   ///< Fallbacks: kernel reject (magnitude / sigma / degenerate).
+    long long bridge_fallback_refsat{0};   ///< Fallbacks: station's IF-TD refsat rebased this epoch (frame invalid).
+    long long bridge_fallback_unpaired{0}; ///< Fallbacks: MW candidate never met an IF-TD delta.
+    double    bridge_max_abs_dn_cyc{0};    ///< Largest |ΔN_band| ever applied (cycles).
 };
 
 /**

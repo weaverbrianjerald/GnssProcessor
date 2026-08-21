@@ -2652,6 +2652,48 @@ namespace GnssProcessor {
          */
         double networkCycleSlipIfPhaseTdShrinkKappa() const { return network_cycle_slip_if_phase_td_shrink_kappa_; }
 
+        /// @brief SPEC_slip_relevel_walk §6 — latch a detector-marked arc's free
+        ///        epoch where the leveling-carry inject can still see it (the
+        ///        pending-reseed mark is consumed by the PASS-B measurement
+        ///        pre-pass before the inject reads it, so the stale pre-slip
+        ///        level otherwise injects at converged weight — the measured
+        ///        level-walk root).  Default off; byte-identical off;
+        ///        fingerprint-exempt (forward-only response policy).
+        bool networkCycleSlipRelevelFreeEpoch() const { return network_cycle_slip_relevel_free_epoch_; }
+        /// @brief Float per-band delta bridge at the MW/IF-TD drains: when the
+        ///        slip's magnitude was MEASURED (confident wide-lane integer +
+        ///        IF-TD phase step), shift the carried level in place instead of
+        ///        freeing the arc — the level survives the slip at phase
+        ///        precision.  Requires relevel_free_epoch (fallbacks land there),
+        ///        mw_detect + if_phase_td; mutually exclusive with turbo_edit.
+        bool networkCycleSlipRelevelDeltaBridge() const { return network_cycle_slip_relevel_delta_bridge_; }
+        /// @brief Bridge reject: either |ΔN_band| above this (cycles) falls back
+        ///        to the free epoch (detector-confusion guard).
+        double networkCycleSlipRelevelBridgeMaxCycles() const { return network_cycle_slip_relevel_bridge_max_cycles_; }
+        /// @brief Bridge reject: either propagated σ(ΔN_band) above this
+        ///        (cycles) falls back to the free epoch.
+        double networkCycleSlipRelevelBridgeMaxSigmaCyc() const { return network_cycle_slip_relevel_bridge_max_sigma_cyc_; }
+        /// @brief Floor on the wide-lane integer's 1σ (cycles) entering the
+        ///        bridge variance (the MW frac can read implausibly small).
+        double networkCycleSlipRelevelBridgeWlSigmaFloorCyc() const { return network_cycle_slip_relevel_bridge_wl_sigma_floor_cyc_; }
+        /// @brief Floor on the IF-TD step's 1σ (metres) entering the bridge
+        ///        variance (the pooled scale can read implausibly small early).
+        double networkCycleSlipRelevelBridgeIfSigmaFloorM() const { return network_cycle_slip_relevel_bridge_if_sigma_floor_m_; }
+        /// @brief SPEC_slip_relevel_walk §6 — the STATISTICAL-refloat half of the
+        ///        re-level response: a post-fit-RAIM refloat with NO measured
+        ///        delta (T2 consensus / T4 arc) keeps its level and re-taps the
+        ///        confidence to relevel_retap_var_m2 (idempotent SET) instead of
+        ///        erasing; the FA population's levels are overwhelmingly correct
+        ///        and the free re-level was the steady-state injection.  A real
+        ///        missed slip loses to the data through the loose prior; an arc
+        ///        that re-trips relevel_retap_streak_max times in a row falls
+        ///        back to the erase.  Fingerprint-exempt, byte-identical off.
+        bool networkCycleSlipRelevelRetapStatistical() const { return network_cycle_slip_relevel_retap_statistical_; }
+        /// @brief Retap SET value (m²) — the kept level's loosened confidence.
+        double networkCycleSlipRelevelRetapVarM2() const { return network_cycle_slip_relevel_retap_var_m2_; }
+        /// @brief Consecutive-retap streak at which an arc falls back to erase.
+        int networkCycleSlipRelevelRetapStreakMax() const { return network_cycle_slip_relevel_retap_streak_max_; }
+
         /**
          * @brief Whether the post-fit network RAIM backstop is on
          *        (@c network.raim; phase-leveling Increment 3, tier T2).
@@ -6020,6 +6062,15 @@ namespace GnssProcessor {
         int    network_cycle_slip_if_phase_td_min_pool_{30};    ///< Min pooled per-pair samples for a robust network MAD (advisory; under-count pairs are logged).
         double network_cycle_slip_if_phase_td_ewma_alpha_{0.15};   ///< EWMA recency weight for the per-(station,pair) elevation-normalized IF-phase noise scale; smaller = longer memory.
         double network_cycle_slip_if_phase_td_shrink_kappa_{20.0}; ///< Clean-sample count at which the per-station IF EWMA scale and the network pool prior are weighted equally (empirical-Bayes shrinkage w=count/(count+κ)).
+        bool   network_cycle_slip_relevel_free_epoch_{false};             ///< SPEC_slip_relevel_walk: latched free epoch for detector-marked arcs.
+        bool   network_cycle_slip_relevel_delta_bridge_{false};           ///< SPEC_slip_relevel_walk: float 2×2 level bridge (MW + IF-TD).
+        double network_cycle_slip_relevel_bridge_max_cycles_{200.0};      ///< Bridge reject: |ΔN_band| cap (cycles).
+        double network_cycle_slip_relevel_bridge_max_sigma_cyc_{0.50};    ///< Bridge reject: σ(ΔN_band) cap (cycles).
+        double network_cycle_slip_relevel_bridge_wl_sigma_floor_cyc_{0.02}; ///< WL integer 1σ floor (cycles — a CONFIDENT integer's residual, not a float's).
+        double network_cycle_slip_relevel_bridge_if_sigma_floor_m_{0.005};  ///< IF step 1σ floor (m).
+        bool   network_cycle_slip_relevel_retap_statistical_{false};        ///< SPEC_slip_relevel_walk: keep+retap on statistical RAIM refloats.
+        double network_cycle_slip_relevel_retap_var_m2_{0.25};              ///< Retap SET variance (m²).
+        int    network_cycle_slip_relevel_retap_streak_max_{3};             ///< Consecutive-retap fallback-to-erase streak.
         bool   network_raim_{false};              ///< Post-fit network RAIM (Increment 3, T2): cross-station post-fit residual consensus refloats a carried ambiguity whose slip the pre-processors missed; OFF = byte-identical.
         double network_raim_k_sigma_{6.0};        ///< Standardized post-fit residual threshold (σ) above which a carried-ambiguity phase row is flagged slip-contaminated.
         double network_raim_sigma0_floor_{1.0};   ///< Floor on the RAIM robust a-posteriori variance factor σ̂0 = max(floor, 1.4826·median|v·√w|); 1.0 default (never below the a-priori σ); lower lets σ̂0 drop below 1 (tightens the gate).

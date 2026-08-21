@@ -34,7 +34,17 @@ re-ranking is expressed HERE rather than by renumbering.
 > **3 dissolved into 1(d)**, **0 downgraded**, **1(a) demoted**, and
 > **R0 + 1(d) already EXECUTED, LANDED and VALIDATED** (2026-08-14).
 >
-> **Item 9 is NEW and ranks FIRST — the slip-RE-LEVEL level walk**
+> **Item 9 — EXECUTED 2026-08-20 (same session): the walk is DEAD under
+> `network.cycle_slip.relevel_free_epoch` (+ `relevel_delta_bridge`), built,
+> suite-green, byte-certified, validated on the slipped fixture (ZWD hourly rms
+> FLAT 2.3–3.1 m vs 2.6→6.5 √t; `SPEC_slip_relevel_walk.md` §8).  The deeper
+> code fact: the pending-reseed mark was CONSUMED by PASS-B before the inject
+> read it — the leveling slip refloat had been structurally inert all along.
+> Residues: the stationary ~2.3–3.1 m plateau (→ 8(b)), bridge v2 cross-epoch
+> pairing (3 959 unpaired MW candidates), retap truth-neutral (default-OFF),
+> field arm owed.  Original filing below.**
+>
+> **Item 9 was NEW and ranked FIRST — the slip-RE-LEVEL level walk**
 > (`docs/SPEC_slip_relevel_walk.md`): on the first long/multi-GNSS/realistic-slip
 > truth fixture, every refloat re-levels its arc from ONE epoch of code and freezes
 > the result (zero-q), injecting station-common metre-class iono error into the

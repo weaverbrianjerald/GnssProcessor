@@ -1773,6 +1773,41 @@ int networkTeardown(
                   qcc.mw_detections, qcc.mw_refloats,
                   qcc.lli_detections, qcc.lli_refloats);
     }
+    // SPEC_slip_relevel_walk §6 run-end readout (invariant #4: either knob
+    // armed with its headline counter at 0 on a slip-bearing run is a MISWIRE,
+    // not a quiet run — the drains latched but the inject never consulted, or
+    // the bridge never met a joint (MW, IF-TD) delta).
+    if (config_.networkCycleSlipRelevelFreeEpoch()) {
+        const auto& qcc = slip_qc.counters;
+        log->info("Network (slip re-level response): {} detector-marked (station, amb) "
+                  "free-epoch latches, {} inject-site skips actually taken (the arc had "
+                  "a live carry the stale-injection path would otherwise have folded).{}",
+                  qcc.relevel_free_marked, ctx.counters.n_relevel_free_skips,
+                  config_.networkCycleSlipRelevelDeltaBridge()
+                      ? fmt::format("  Delta bridge: {} pair(s) APPLIED (joint {}, "
+                                    "if-clean {}, mw-only {}; max |ΔN| {:.1f} cyc) — "
+                                    "those arcs kept their level at phase precision; "
+                                    "fallbacks to the free epoch: {} no-carry, {} "
+                                    "kernel-reject, {} refsat-frame, {} unpaired-MW.",
+                                    qcc.bridge_pairs_applied, qcc.bridge_joint,
+                                    qcc.bridge_if_clean, qcc.bridge_mw_only,
+                                    qcc.bridge_max_abs_dn_cyc,
+                                    qcc.bridge_fallback_no_carry,
+                                    qcc.bridge_fallback_reject,
+                                    qcc.bridge_fallback_refsat,
+                                    qcc.bridge_fallback_unpaired)
+                      : std::string{});
+    }
+    if (config_.networkCycleSlipRelevelRetapStatistical())
+        log->info("Network (slip re-level response / retap): {} isolated-arc RAIM "
+                  "refloat(s) KEPT their level (confidence re-tapped to {:.2f} m²), "
+                  "{} escalated to the erase on the {}-in-120s streak, {} had no live "
+                  "carry.  Whole-sat consensus refloats keep the strong erase.",
+                  ctx.counters.n_relevel_retap_kept,
+                  config_.networkCycleSlipRelevelRetapVarM2(),
+                  ctx.counters.n_relevel_retap_escalated,
+                  config_.networkCycleSlipRelevelRetapStreakMax(),
+                  ctx.counters.n_relevel_retap_miss);
     // §9.7.10 datum-station slip detect: run-end ON-path telemetry (invariant #4 —
     // an armed run with injected datum-station slips reporting 0/0 is a MISWIRE,
     // not a quiet day).  Counted separately from Card E: those are non-pivot

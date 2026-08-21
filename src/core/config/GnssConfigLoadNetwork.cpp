@@ -189,6 +189,28 @@ namespace GnssProcessor {
                       "unaffected).  Arm one of those two, or drop this knob — do not read the "
                       "resulting A/B as 'no effect'.");
 
+        // SPEC_slip_relevel_walk interlock, deliberately HERE (the Card-1g
+        // pattern above): network.carry_invariant parses ~1500 lines after the
+        // cycle_slip block, so a check at the parse site would read its code
+        // default.  Under carry_invariant the leveling local carry is
+        // superseded and structurally EMPTY — the re-level response cannot
+        // move a byte there (and the DD invariant carry owns its own slip
+        // funnel), so arming it would only mislead (standing invariant #4).
+        if (network_cycle_slip_relevel_free_epoch_ && network_carry_invariant_) {
+            log->warn("Network: network.cycle_slip.relevel_free_epoch (and its "
+                      "delta_bridge rider) is inert under network.carry_invariant "
+                      "(the leveling local carry is superseded and structurally "
+                      "empty there) — both disabled.");
+            network_cycle_slip_relevel_free_epoch_ = false;
+            network_cycle_slip_relevel_delta_bridge_ = false;
+        }
+        if (network_cycle_slip_relevel_retap_statistical_ && network_carry_invariant_) {
+            log->warn("Network: network.cycle_slip.relevel_retap_statistical is inert "
+                      "under network.carry_invariant (the leveling local carry is "
+                      "superseded and structurally empty there) — disabled.");
+            network_cycle_slip_relevel_retap_statistical_ = false;
+        }
+
         logNetworkPosture_(log);
         return true;
     }
@@ -3306,6 +3328,93 @@ namespace GnssProcessor {
         network_cycle_slip_if_phase_td_shrink_kappa_ =
             jval<double>(json, "network.cycle_slip.if_phase_td_shrink_kappa",
                          "network_cycle_slip_if_phase_td_shrink_kappa", 20.0);
+
+        // --- SPEC_slip_relevel_walk §6: the slip re-level response ------------
+        // Root defect: a detector's pending-reseed mark is CONSUMED by the
+        // PASS-B measurement pre-pass before the leveling-carry inject reads
+        // it, so the documented "re-float from data this epoch" never happened
+        // — the stale pre-slip level injected at converged weight and the level
+        // channels random-walked (~6.5 m ZWD / 6 h at a realistic slip rate).
+        //   relevel_free_epoch — latch the marked set where the inject site can
+        //     still see it: a detector-marked arc's carry is NOT folded that
+        //     epoch (the free epoch the mark always promised).
+        //   relevel_delta_bridge — better than freeing when the delta was
+        //     MEASURED: shift the carried level by the float per-band solve of
+        //     (MW wide-lane integer, IF-TD phase step) so the arc keeps its
+        //     level at phase precision; every fallback lands on the free epoch.
+        // Both default-OFF, byte-identical OFF, fingerprint-EXEMPT (forward-only
+        // response policy — see networkSnapshotFingerprint's exemption list).
+        network_cycle_slip_relevel_free_epoch_ =
+            jval<bool>(json, "network.cycle_slip.relevel_free_epoch",
+                       "network_cycle_slip_relevel_free_epoch", false);
+        network_cycle_slip_relevel_delta_bridge_ =
+            jval<bool>(json, "network.cycle_slip.relevel_delta_bridge",
+                       "network_cycle_slip_relevel_delta_bridge", false);
+        network_cycle_slip_relevel_bridge_max_cycles_ =
+            jval<double>(json, "network.cycle_slip.relevel_bridge_max_cycles",
+                         "network_cycle_slip_relevel_bridge_max_cycles", 200.0);
+        network_cycle_slip_relevel_bridge_max_sigma_cyc_ =
+            jval<double>(json, "network.cycle_slip.relevel_bridge_max_sigma_cyc",
+                         "network_cycle_slip_relevel_bridge_max_sigma_cyc", 0.50);
+        network_cycle_slip_relevel_bridge_wl_sigma_floor_cyc_ =
+            jval<double>(json, "network.cycle_slip.relevel_bridge_wl_sigma_floor_cyc",
+                         "network_cycle_slip_relevel_bridge_wl_sigma_floor_cyc", 0.02);
+        network_cycle_slip_relevel_bridge_if_sigma_floor_m_ =
+            jval<double>(json, "network.cycle_slip.relevel_bridge_if_sigma_floor_m",
+                         "network_cycle_slip_relevel_bridge_if_sigma_floor_m", 0.005);
+        //   relevel_retap_statistical — the STATISTICAL-refloat half (T2/T3/T4
+        //     post-fit RAIM): a refloat with NO measured delta hit an arc whose
+        //     level was overwhelmingly CORRECT (the FA population) — keep the
+        //     level, re-tap the confidence to a loose SET value so a genuinely
+        //     missed slip still loses to the data within an epoch or two.  The
+        //     escalation streak falls back to the erase for an arc that keeps
+        //     re-tripping (a real missed slip the loose prior cannot shake).
+        network_cycle_slip_relevel_retap_statistical_ =
+            jval<bool>(json, "network.cycle_slip.relevel_retap_statistical",
+                       "network_cycle_slip_relevel_retap_statistical", false);
+        network_cycle_slip_relevel_retap_var_m2_ =
+            jval<double>(json, "network.cycle_slip.relevel_retap_var_m2",
+                         "network_cycle_slip_relevel_retap_var_m2", 0.25);
+        network_cycle_slip_relevel_retap_streak_max_ =
+            jval<int>(json, "network.cycle_slip.relevel_retap_streak_max",
+                      "network_cycle_slip_relevel_retap_streak_max", 3);
+        // Interlocks (the warn-and-disarm pattern — an arm that cannot move a
+        // byte is DISABLED here rather than discovered after a field run):
+        if (network_cycle_slip_relevel_retap_statistical_ && !network_phase_leveling_) {
+            log->warn("Network: network.cycle_slip.relevel_retap_statistical needs "
+                      "network.phase_leveling (its target is the leveling carry) "
+                      "— disabled.");
+            network_cycle_slip_relevel_retap_statistical_ = false;
+        }
+        if (network_cycle_slip_relevel_free_epoch_ && !network_phase_leveling_) {
+            log->warn("Network: network.cycle_slip.relevel_free_epoch needs "
+                      "network.phase_leveling (its target is the leveling carry) "
+                      "— disabled.");
+            network_cycle_slip_relevel_free_epoch_ = false;
+        }
+        if (network_cycle_slip_relevel_delta_bridge_
+            && !network_cycle_slip_relevel_free_epoch_) {
+            log->warn("Network: network.cycle_slip.relevel_delta_bridge requires "
+                      "network.cycle_slip.relevel_free_epoch (its fallbacks land on "
+                      "the free epoch) — disabled.");
+            network_cycle_slip_relevel_delta_bridge_ = false;
+        }
+        if (network_cycle_slip_relevel_delta_bridge_
+            && (!network_cycle_slip_mw_detect_ || !network_cycle_slip_if_phase_td_)) {
+            log->warn("Network: network.cycle_slip.relevel_delta_bridge needs BOTH "
+                      "cycle_slip.mw_detect (the wide-lane integer) and "
+                      "cycle_slip.if_phase_td (the IF phase step) — disabled; "
+                      "relevel_free_epoch stays as configured.");
+            network_cycle_slip_relevel_delta_bridge_ = false;
+        }
+        if (network_cycle_slip_relevel_delta_bridge_
+            && network_cycle_slip_turbo_edit_) {
+            log->warn("Network: network.cycle_slip.relevel_delta_bridge is mutually "
+                      "exclusive with cycle_slip.turbo_edit (the T0 integer REPAIR "
+                      "already shifts the carried level — a second shift would "
+                      "double-apply) — bridge disabled.");
+            network_cycle_slip_relevel_delta_bridge_ = false;
+        }
 
         // --- Slip-QC hardening Cards R / L / G (docs/SPEC_slip_qc_hardening.md) ---
         // Three independent, default-OFF qualifications of decisions the detector

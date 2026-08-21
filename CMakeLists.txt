@@ -395,6 +395,7 @@ add_executable(gnss_tests
     tests/test_smoother_frame.cpp
     tests/test_jump_gap_fitter.cpp
     tests/test_slip_bridge_kernel.cpp
+    tests/test_relevel_delta_bridge.cpp
     tests/test_planetary_cio.cpp
     tests/test_orbit_enhancements.cpp
     tests/test_neq_accumulator.cpp

@@ -97,11 +97,22 @@ struct PassABuffers {
     /// (networkSlipIfTdDriver — refsat common-mode fold).
     std::vector<std::vector<std::string>> sta_if_resets;
     /// MW DETECTOR (mw_detect) output: confident wide-lane integer slips to
-    /// REFLOAT, as (satellite, sig1, sig2) tuples, consumed in the serial
-    /// MW-detect drain (networkSlipDrainMwRefloat).  Empty when turbo_edit
-    /// runs the integer-repair path instead, or when mw_detect is off.
-    std::vector<std::vector<std::tuple<std::string, std::string, std::string>>>
-        sta_mw_refloat;
+    /// REFLOAT, consumed in the serial MW-detect drain
+    /// (networkSlipDrainMwRefloat).  Empty when turbo_edit runs the
+    /// integer-repair path instead, or when mw_detect is off.  Widened from a
+    /// (sat, sig1, sig2) tuple (SPEC_slip_relevel_walk §6): the confident WL
+    /// integer, its fractional confidence, and the WL wavelength now travel to
+    /// the drain so the delta bridge can use them — the fill gates
+    /// (slip_wl_known && != 0 && frac <= frac_max) are unchanged, and NEVER
+    /// fill from slip_wl_float (candidate-selector-only contract,
+    /// MwSlipDetector.hpp).
+    struct MwRefloatCand {
+        std::string sat, sig1, sig2;
+        int    dn_wl{0};        ///< Confident ZD wide-lane integer (cycles).
+        double frac{0.0};       ///< MW fractional distance (cycles) — confidence.
+        double lambda_wl{0.0};  ///< Wide-lane wavelength (m).
+    };
+    std::vector<std::vector<MwRefloatCand>> sta_mw_refloat;
 
     explicit PassABuffers(std::size_t n)
         : a_ok(n, 0), a_err(n), sta_repairs(n), sta_if_resets(n), sta_mw_refloat(n) {}
@@ -246,7 +257,46 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::set<std::string>* datum_amb_reref_sats = nullptr,
                                std::set<std::string>* datum_mark_sats = nullptr,
                                std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>* datum_local_carry = nullptr);
+                                        LocalCarry>* datum_local_carry = nullptr,
+                               RelevelEpochState* relevel = nullptr);
+
+/**
+ * @brief SPEC_slip_relevel_walk §6 — float 2×2 delta-bridge solve for one
+ *        (MW, IF-TD) detector pair.
+ *
+ * Given the confident zero-differenced wide-lane integer @f$\Delta N_{WL} =
+ * \Delta N_1 - \Delta N_2@f$ (cycles) and the measured ionosphere-free phase
+ * step @f$\delta_{IF} = \beta_1\lambda_1... = \beta_1 \Delta N_1 - \beta_2
+ * \Delta N_2@f$ (metres, @f$\beta_j = \lambda_{WL} f_j/(f_1+f_2)@f$ with the
+ * identity @f$\beta_1-\beta_2 = \lambda_{IF}@f$), solve the per-band deltas as
+ * FLOATS — a bridge, never an integer fix, so a wrong wide-lane integer can
+ * bias but never lock the gauge, and the propagated variance keeps the bridged
+ * prior loose enough for the data to re-pull it (invariant #1: the arc stays
+ * catchable).  The band frequencies are derived from the two wavelengths alone
+ * (@f$f_1 = \tfrac{c}{2}(1/\lambda_{WL} + 1/\lambda_{IF})@f$, exact per
+ * satellite — GLONASS FDMA included), so the kernel needs no signal tables.
+ *
+ * @param dn_wl_cyc     Confident ZD wide-lane integer (cycles).
+ * @param sigma_wl_cyc  Its 1σ confidence (cycles).
+ * @param dif_m         Measured IF phase step, common-mode removed (m).
+ * @param sigma_if_m    Its 1σ (m) — the detector's own pooled scale.
+ * @param lambda_wl_m   Wide-lane wavelength (m).
+ * @param lambda_if_m   (1,1) IF wavelength c/(f1+f2) (m).
+ * @param max_abs_cyc   Reject when either |ΔN_j| exceeds this (cycles).
+ * @param max_sigma_cyc Reject when either propagated σ(ΔN_j) exceeds this.
+ * @return ok=false on any reject; else the per-band float deltas, the metre
+ *         shifts λ_j·ΔN_j, and the per-band shift variances (m²).
+ */
+struct DeltaBridgeSolve {
+    bool   ok{false};
+    double dn1_cyc{0}, dn2_cyc{0};
+    double shift1_m{0}, shift2_m{0};
+    double var1_m2{0}, var2_m2{0};
+};
+DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_cyc,
+                                             double dif_m, double sigma_if_m,
+                                             double lambda_wl_m, double lambda_if_m,
+                                             double max_abs_cyc, double max_sigma_cyc);
 
 /**
  * @brief IF-phase triple-difference slip driver: pool the PASS-A deferred
@@ -316,6 +366,10 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            bool trace_flag_rates, FlagRate& fr_if_slip,
                            const SyncedEpoch& se, NetworkRunTraces& traces,
                            const std::shared_ptr<spdlog::logger>& log,
-                           std::set<std::string>* refsat_mark_sats = nullptr);
+                           std::set<std::string>* refsat_mark_sats = nullptr,
+                           RelevelEpochState* relevel = nullptr,
+                           std::map<std::tuple<int, std::string, std::string>,
+                                    LocalCarry>* bridge_local_carry = nullptr,
+                           SlipQcCounters* bridge_cnt = nullptr);
 
 } // namespace GnssProcessor

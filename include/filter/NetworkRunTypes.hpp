@@ -345,6 +345,47 @@ struct LocalCarry {
     std::vector<CoupledShared> coupling{};  ///< Card 1: the regression on the FREE shared border.  Empty on the legacy diagonal path AND for a warm-resume-restored entry (not persisted in the v1 snapshot) — an empty coupling injects as a plain diagonal row (graceful one-epoch degrade).
 };
 
+/// SPEC_slip_relevel_walk §6 — the slip re-level response's per-epoch state
+/// (network.cycle_slip.relevel_free_epoch / relevel_delta_bridge).
+///
+/// Root defect this exists to fix: a detector's pending-reseed mark is CONSUMED
+/// (arc re-seeded, flag cleared) by the PASS-B measurement pre-pass
+/// (MeasurementModel::ensureRequiredStates) BEFORE the inject-skip check at the
+/// leveling-carry fold ever reads it — so the documented "re-float from data
+/// this epoch rather than clamp to the stale carry" NEVER happened for
+/// detector-caught slips: the pre-slip level injected at converged weight and
+/// the level channels random-walked (~6.5 m ZWD / 6 h at a realistic slip rate,
+/// the 60-sta campaign).  @c free_ambs is the latched marked set the inject
+/// site consults INSTEAD of the consumed flag; @c mw_cands defers the MW
+/// drain's confident WL integers into the IF-TD driver (the only scope holding
+/// the pooled IF delta + scale) for the float 2×2 delta bridge; @c touched
+/// feeds the harvest-side VCE / prior-residual census guard so a bridged or
+/// freed arc's slip-scale innovation is never ingested as a Clean row.
+///
+/// Lifetime: ONE epoch — filled by the PASS-A serial drains, read by the
+/// PASS-B inject + the post-solve harvest, cleared at the next epoch's PASS-A
+/// entry.  Deliberately NOT snapshotted (forward-only response policy; a
+/// post-resume epoch degrades to the pre-fix path, the conservative direction).
+struct MwBridgeCand {
+    int         sta{-1};          ///< Station index.
+    std::string sat, sig1, sig2;  ///< Satellite + the MW pair's phase signals.
+    int         dn_wl{0};         ///< Confident ZD wide-lane integer (cycles).
+    double      sigma_wl_cyc{0};  ///< WL confidence (cycles; MW frac, floored).
+    double      lambda_wl{0};     ///< WL wavelength (m).
+    bool        consumed{false};  ///< Set when the IF-TD driver bridged it.
+};
+struct RelevelEpochState {
+    /// (station idx, amb key) marked pending-reseed by a detector this epoch —
+    /// the inject site skips these (the free epoch the mark always promised).
+    std::set<std::pair<int, std::string>> free_ambs;
+    /// Deferred MW candidates for the IF-TD-driver delta bridge.
+    std::vector<MwBridgeCand> mw_cands;
+    /// Arcs whose carry was delta-bridged this epoch (station, sat, signal) —
+    /// harvest-side statistics guard (exclude from LS-VCE, relabel prires).
+    std::set<std::tuple<int, std::string, std::string>> bridged;
+    void clear() { free_ambs.clear(); mw_cands.clear(); bridged.clear(); }
+};
+
 /// One present, carry-eligible (non-pivot) ambiguity this epoch, recorded in
 /// PASS B for the post-solve harvest/stash: its A_r column, identity, and the
 /// linearization point used this epoch (so the absolute value is
@@ -488,6 +529,9 @@ struct StationAssembly {
     /// denominator: the run-total departed count moves for many reasons and cannot
     /// distinguish armed-and-working from armed-and-inert.
     long long                 cpl_reinit_diverted{0};
+    /// SPEC_slip_relevel_walk: inject-site free-epoch skips actually taken this
+    /// station-epoch (the arc had a live carry the latched set suppressed).
+    long long                 relevel_free_skips{0};
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  CARRY-ELIGIBLE SUBSET: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must NOT key on it — see `qc_amb`.
     /// POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): the CARRY-VEHICLE-NEUTRAL census of
     /// ambiguity columns that are present, unpinned and therefore CHECKABLE this epoch —

@@ -1363,7 +1363,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                             if (r.slip_wl_known && r.slip_wl_cycles != 0
                                 && r.slip_frac <= frac_max
                                 && !r.sig1.empty() && !r.sig2.empty())
-                                sta_mw_refloat[i].emplace_back(r.satellite, r.sig1, r.sig2);
+                                sta_mw_refloat[i].push_back(PassABuffers::MwRefloatCand{
+                                    r.satellite, r.sig1, r.sig2,
+                                    r.slip_wl_cycles, r.slip_frac, r.lambda_wl});
                         }
                     }
                 } catch (...) { /* best-effort: no MW action this epoch */ }
@@ -1437,7 +1439,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                 if (r.slip_wl_known && r.slip_wl_cycles != 0
                     && r.slip_frac <= frac_max
                     && !r.sig1.empty() && !r.sig2.empty())
-                    sta_mw_refloat[0].emplace_back(r.satellite, r.sig1, r.sig2);
+                    sta_mw_refloat[0].push_back(PassABuffers::MwRefloatCand{
+                        r.satellite, r.sig1, r.sig2,
+                        r.slip_wl_cycles, r.slip_frac, r.lambda_wl});
             }
         } catch (...) { /* best-effort: no datum-station MW detection this epoch */ }
     }
@@ -1448,6 +1452,16 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     networkSlipDrainT0Repairs(pa, config_, stations, present, i_lo, n_sta_total,
                               local_carry, se, log);
 
+    // SPEC_slip_relevel_walk §6: the per-epoch re-level response state —
+    // cleared HERE (the harvest and the PASS-B inject consumed last epoch's
+    // sets after this point in the previous epoch), filled by the two drains
+    // below, read by the inject site, the harvest guard, and the IF-TD bridge.
+    // nullptr when the knob is off ⇒ the drains' inserts are never reached
+    // (byte-identical — the refsat_mark_sats pattern).
+    ctx.carry.relevel.clear();
+    RelevelEpochState* relevel_ptr =
+        config_.networkCycleSlipRelevelFreeEpoch() ? &ctx.carry.relevel : nullptr;
+
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
                               n_sta_total, carry_invariant, carry_warm,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
@@ -1455,7 +1469,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               datum_detect_on ? &ctx.carry.datum_reref_pb_sats : nullptr,
                               datum_detect_on ? &ctx.carry.datum_reref_amb_sats : nullptr,
                               datum_detect_on ? &ctx.carry.refsat_mark_sats : nullptr,
-                              datum_detect_on ? &local_carry : nullptr);
+                              datum_detect_on ? &local_carry : nullptr,
+                              relevel_ptr);
 
     // Edge-1 piece 2: pass the mark sink ONLY when armed, so the OFF path passes
     // nullptr and the driver's insert is not even reached (byte-identical).
@@ -1463,7 +1478,10 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                           carry_invariant, carry_warm, carry_slipped_ambs,
                           trace_flag_rates, fr_if_slip, se, traces, log,
                           config_.networkMarkRefsatResetDisc()
-                              ? &ctx.carry.refsat_mark_sats : nullptr);
+                              ? &ctx.carry.refsat_mark_sats : nullptr,
+                          relevel_ptr,
+                          relevel_ptr ? &local_carry : nullptr,
+                          relevel_ptr ? &qc.counters : nullptr);
 }
 
 void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,
@@ -1885,6 +1903,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double pl_q_amb      = ctx.knobs.pl_q_amb;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
+    // SPEC_slip_relevel_walk: read-only parallel consult of the latched
+    // free-epoch set (filled serially in PASS-A; const for the whole produce).
+    const bool   relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
     const auto&  vce_apply     = ctx.carry.vce_apply;     // M2 v2: carry variance factor α² (unity when off)
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // Card 1: conditional local carry (coupling rows) — requires fullcov_on (enforced at load)
     const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // Card 1b: JOINTLY whiten the coupling rows (departed cols → M_w) — requires carry_cpl_cond (enforced at load)
@@ -2652,7 +2673,22 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // stash below then captures the fresh value.  (Slip-driven
                     // REFLOAT/DROP proper is Increment 2+; this is the cheap guard
                     // for the only reset trigger the network can raise today.)
+                    // ⚠ SPEC_slip_relevel_walk: for DETECTOR marks this check is
+                    // structurally DEAD — the PASS-B measurement pre-pass
+                    // (ensureRequiredStates) consumes+clears the mark before this
+                    // line runs, so the stale pre-slip level injected at converged
+                    // weight for every detector-caught slip (the measured level-walk
+                    // root).  The latched free set below is the same predicate on
+                    // state that survives to this read point; bridged bands were
+                    // REMOVED from it (their carry is already shifted to the
+                    // post-slip level and SHOULD inject).
                     if (st.sm->isAmbiguityPendingReseed(key)) continue;
+                    if (relevel_free_on
+                        && ctx.carry.relevel.free_ambs.count(
+                               {static_cast<int>(i), key})) {
+                        ++R.relevel_free_skips;
+                        continue;
+                    }
                     if (!std::isfinite(x_lin(amb_idx))) continue;  // non-finite state → don't inject
 
                     const auto cit = local_carry.find(
@@ -2919,6 +2955,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // Card 1/1d observability (SERIAL, post-produce): fold the per-station
     // coupling-term counts into the run totals + the one-shot Card-1d debug dump
     // of the first few assembled coupling rows (see filter/NetworkCoupling.hpp).
+    // SPEC_slip_relevel_walk: fold the per-station free-epoch skip counts
+    // (SERIAL, post-produce — same discipline as the coupling fold below).
+    if (relevel_free_on)
+        for (const StationAssembly& Rc : asm_res)
+            ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
     foldAndDumpCouplingRows(carry_cpl_cond, asm_res, est,
                             registered_clock_sats, shared_phase_keys, registered_code_keys,
                             se.time.tow, log,

@@ -1,8 +1,10 @@
 # SPEC — the slip-RE-LEVEL level walk (the 60-sta campaign's central defect)
 
-**Session 2026-08-20 ("settle the network processing").  Status: MEASURED and
-ISOLATED to one cause; fix NOT built (design options §6).  Exe `a02717a5`
-(post H-buffer/orphan-attribution build), fixture regenerated post-`1b9e157`.**
+**Session 2026-08-20 ("settle the network processing").  Status: MEASURED,
+ISOLATED, and the fix is BUILT + VALIDATED same-day (§8) — the √t walk is
+DEAD under `network.cycle_slip.relevel_free_epoch` (+ delta_bridge); the
+residual plateau is QUEUE 8(b) territory.  Diagnosis exe `a02717a5`, fix exe
+`919bb885`; fixture regenerated post-`1b9e157`.**
 
 The first long (6 h), multi-GNSS (GPS+GAL triple+triple), field-N, truth-graded
 network runs with a **realistic natural slip population** (§9.7.9 rate 2e-4,
@@ -101,7 +103,7 @@ the GF pin locks the code channel (B rms 1.39 m / p50 4.9 cm vs SH's 8.3 m);
 Galileo makes the network QUIETER (GPS-only arm is worse); the coupling stack
 attenuates refloat churn.
 
-## §6 Fix directions (design card owed — none built)
+## §6 Fix directions (as designed pre-build — §8 records what was BUILT)
 
 The doctrine "reset over repair" stands; the fix is at the RESET's re-coupling
 edge:
@@ -141,3 +143,77 @@ Related session results recorded elsewhere: QUEUE item 8(a) verdict
 H-buffer fix, Card-1f orphan per-family attribution (88 orphans, all PB,
 E:39/Σ2.5 m G:49/Σ35.5 m at the champion), CLK-R first sim validation at 60
 sta (Σ|μ| drained 229.7 m / max |A_c| 9.67 m / 174 marks, leash margin OK).
+
+---
+
+## §8 THE FIX — BUILT AND VALIDATED (same session, 2026-08-20)
+
+Three knobs under `network.cycle_slip.*`, all default-OFF, byte-identical OFF
+(certified: post-fix exe `919bb885` reproduces the pre-fix q8a control
+products.txt byte-exactly), fingerprint-EXEMPT (the seventh instance, recorded
+in `networkSnapshotFingerprint`'s block).  Suite 1432/1434 green (+8 kernel
+tests, `tests/test_relevel_delta_bridge.cpp`).
+
+**The design panel's decisive code fact (found before implementation):** the
+pending-reseed mark is CONSUMED by PASS-B's `ensureRequiredStates`
+(`MeasurementModel.cpp:566-610` — re-seeds x_lin, clears the flag) BEFORE the
+inject check reads it — so §3's "free re-level" was wrong in an important way:
+for detector-caught slips the leveling refloat NEVER HAPPENED AT ALL; the
+stale pre-slip level injected at converged weight and the T4 arc tier's
+delayed erase was the de-facto (and miscalibrated) response path.  The walk
+was the stale-injection → residual-tension → T4-cascade → code-re-level loop.
+
+1. **`relevel_free_epoch`** — latch the detector-marked set
+   (`RelevelEpochState.free_ambs`, filled beside every mark in the MW/LLI/IF-TD
+   drains) where the inject site can still see it.  THE LOAD-BEARING PIECE.
+2. **`relevel_delta_bridge`** — float 2×2 (MW WL integer + IF-TD step) solved
+   by `networkSlipDeltaBridgeSolve`; shifts the carried level in place (the T0
+   repair mutation shape), removes the bands from the free set.  Requires
+   free_epoch + mw_detect + if_phase_td; mutex with turbo_edit.
+3. **`relevel_retap_statistical`** — T4 isolated-arc refloats keep their level
+   at a loosened SET variance (0.25 m²), 3-in-120s streak escalates to erase.
+   Whole-sat consensus keeps the strong erase.
+
+### Validation (slipped 60-sta fixture, same exe, single-knob ladder)
+
+| arm | ZWD hourly rms (h0..h5) | T4 arc events | interaction | consumer 3D |
+|---|---|---|---|---|
+| baseline (camp60_gf) | 2.6 → **6.5 monotone** | 21 114 | 4.61 m | 4.06 m |
+| F2 free(+inert bridge) | **2.34 2.34 3.03 3.04 3.09 2.35 — FLAT** | 7 876 | 3.57 m | 3.26 m |
+| F3 + fixed bridge + retap | 2.23 2.34 3.07 3.21 3.09 2.40 — FLAT | (24 660 KEPT / 519 escalated) | 3.70 m | ≈F2 |
+| quiet twin (reference) | 0.48 → 0.15 converging | — | — | — |
+
+**The √t walk is DEAD — the free-epoch piece alone kills it** (7 141
+stale-injections prevented; ZWD settled rms 5.95 → 2.85 m, p50 0.58 m).
+Detection coverage unchanged (94.1 % + responded; the ~20 extra "silent" are
+slips previously RESPONDED by the FA storm itself).  **The retap is
+truth-NEUTRAL here** (F3 ≈ F2 on every channel): after the free-epoch fix an
+FA refloat's free re-level already lands near the correct level.  Keep it
+default-OFF; its value is churn hygiene, not accuracy (n=1).
+
+### Honest residuals and the follow-on cards
+
+- The ~2.3–3.2 m ZWD plateau (and interaction 3.6 m) is a STATIONARY process,
+  not a walk — owned by the per-LOS iono representation under a constant
+  arc-reset rate: **QUEUE item 8(b) territory, not re-level mechanics.**
+- The bridge reached only 73/2486 slips: my first defaults were mutually
+  contradictory (WL σ floor 0.10 cyc × β1/λ_IF = 0.45 > the 0.35 cap — fixed
+  to 0.02/0.50), and **MW confirms its integer 1–2 epochs after T1 fires**, so
+  the same-epoch joint gate leaves 3 959 candidates unpaired.  Bridge v2
+  (pend the pre-slip carry + the T1-measured δIF, REPLACE the level when the
+  MW integer lands, void on re-slip/datum doors) is the specified follow-on.
+- One bridge applied |ΔN| 199.7 cyc at the 200 cap — audit the delta_bridge
+  event rows against truth before trusting large-|ΔN| bridges; the loose
+  variance bounds the damage by design.
+- Known edge (audit NEEDS-GUARD, accepted by population argument): a KEPT
+  retap arc is invisible to AnchorHygiene's slip feed that epoch (it reads the
+  pending mark, which the retap deliberately does not set) — an anchor
+  reattach could land on a kept arc.  FA-dominated population + loose var
+  bound it; revisit if retap is ever promoted.
+
+### Arming guidance
+
+Sim network postures with slips: arm `relevel_free_epoch` + `relevel_delta_bridge`
+(the campaign `_camp60_f2/f3.json` shape).  `relevel_retap_statistical` stays
+optional.  All inert-and-disarmed under `carry_invariant` (loader interlock at
+the end-of-section site — the Card-1g order-hazard pattern).  Field arm owed.

@@ -901,6 +901,19 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Its own state (phase_anchor_reref) is per-epoch, cleared at each
         // election, never serialized.  Keeping it out of the fingerprint is what
         // makes the 1(d) OFF/ON validation pair on one seed legal at all.
+        //
+        // SPEC_slip_relevel_walk — network.cycle_slip.relevel_free_epoch /
+        // relevel_delta_bridge: the SAME exemption, the SEVENTH instance.  Both
+        // are forward-only slip-RESPONSE policies: they change what happens to a
+        // leveling carry at the epochs FOLLOWING a detection (skip the fold, or
+        // shift the level by the measured float delta), re-reference nothing
+        // retroactively, and change what no serialized state MEANS (a snapshot's
+        // LocalCarry {value, var} is the same quantity either way).  All of
+        // their own state (RelevelEpochState) is one-epoch, never serialized —
+        // a resumed leg's first epochs degrade to the pre-fix path, the
+        // conservative direction.  ⚠ Do not "fix" these into the fingerprint:
+        // that would invalidate every stored seed AND outlaw the same-snapshot
+        // OFF/ON A/B their validation depends on.
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
 }
@@ -2423,6 +2436,19 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     const bool reseed_pending =
                         stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
                     const bool reref = eq34_reref.count({pa.sat, pa.signal}) > 0;
+                    // SPEC_slip_relevel_walk harvest guard: a freed or bridged arc's
+                    // (prior − solved) innovation is slip-scale — without this it
+                    // would be ingested as a CLEAN row (the detector's own mark was
+                    // consumed by the PASS-B pre-pass, so reseed_pending is false
+                    // here for every detector-caught slip).
+                    const bool relevel_freed =
+                        ctx.carry.relevel.free_ambs.count({static_cast<int>(i), pa.amb_key}) > 0;
+                    const bool relevel_bridged =
+                        ctx.carry.relevel.bridged.count(
+                            {static_cast<int>(i), pa.sat, pa.signal}) > 0;
+                    const bool relevel_retapped =
+                        ctx.carry.relevel_retapped_prev.count(
+                            {static_cast<int>(i), pa.sat, pa.signal}) > 0;
                     if (oc != local_carry.end()) {
                         const double gapv = pl_now_s - oc->second.last_seen_s;
                         if (gapv >= 0.0 && gapv <= pl_max_gap_s) {
@@ -2446,7 +2472,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                 fold_var_hand * ctx.carry.vce_apply.factor(
                                                     NetworkCarryVceApply::kPl, pa.sat);
                             const double innov = oc->second.value_abs - value_abs;
-                            if (carry_vce && !reseed_pending && !reref)
+                            if (carry_vce && !reseed_pending && !reref
+                                && !relevel_freed && !relevel_bridged
+                                && !relevel_retapped)
                                 carry_vce_est.addRow("pl", pa.sat, innov,
                                                      gapv, var, fold_var, fold_var_hand);
                             if (prires_want) {
@@ -2460,14 +2488,21 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                 in.post_var = var;
                                 in.gap_s    = gapv;
                                 // The inject predicate, reproduced (see above).
-                                in.folded   = !reseed_pending
+                                // A freed arc's inject was SKIPPED (the latched set);
+                                // a bridged arc's (shifted) prior DID fold.
+                                in.folded   = !reseed_pending && !relevel_freed
                                            && std::isfinite(pa.x_lin)
                                            && fold_var > 0.0;
-                                in.label = reseed_pending ? PriorResidualLabel::Responded
-                                         : reref          ? PriorResidualLabel::Frame
-                                                          : PriorResidualLabel::Clean;
-                                in.mech  = reseed_pending ? "reseed"
-                                         : reref          ? "eq34_reref" : "";
+                                in.label = (reseed_pending || relevel_freed || relevel_bridged
+                                            || relevel_retapped)
+                                               ? PriorResidualLabel::Responded
+                                         : reref ? PriorResidualLabel::Frame
+                                                 : PriorResidualLabel::Clean;
+                                in.mech  = reseed_pending   ? "reseed"
+                                         : relevel_bridged  ? "delta_bridge"
+                                         : relevel_retapped ? "raim_retap"
+                                         : relevel_freed    ? "relevel_free"
+                                         : reref            ? "eq34_reref" : "";
                                 prires_est.addRow(in);
                             }
                         }
@@ -2487,6 +2522,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) it = local_carry.erase(it);
             else ++it;
         }
+        // Retap statistics-guard set: one RAIM-to-harvest lifetime, consumed by
+        // the labeling above — cleared here so next epoch's RAIM refills it.
+        ctx.carry.relevel_retapped_prev.clear();
         // --- ZWD carry (B9): harvest posterior ZWD + stash (mirrors the ambiguity
         //     harvest; independent loop so it works regardless of ambiguity presence).
         if (zwd_on) {
