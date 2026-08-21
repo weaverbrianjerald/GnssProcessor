@@ -320,6 +320,18 @@ luck"; the 300-sta sim arm's default datum carries 8/8 avoidable events;
 **Sim validation:** already done — the three-arm prediction test measured 5.9× C-contrast and a 40 %
 T3 cut for clean election. Remaining work is plumbing.
 
+
+✅ **EXECUTED 2026-08-21 — the plumbing is landed and validated** (`SPEC_pivot_visibility_gauge_defect.md`
+§10): generator election (losses → equatorial tiebreak → name, deterministic and fingerprint-stable;
+silent most-polar fallback replaced by a hard error), field-config preflight
+(`datum_gauge_audit.py --config`, extends-chain-aware, exit 1 on unset/absent/polar-with-alternative +
+marking-channel and slip-response warnings), `--run` harness gate confirmed (exit 1 on avoidable
+removals).  Reproduces the record: 24-sta GPS ⇒ S06000SIM (0 losses, arm B); 60-sta ⇒ S30000SIM
+(10 losses, −0.9°, wins the equatorial tiebreak over S26000SIM) — the camp60 hand-election
+retro-validated.  First gate readings: camp60_i3 ⇒ 0 avoidable; **fld63_relevel4h_on ⇒ 12 avoidable
+pivot-only removals / 4 h, ALL unmarked** (the ext63 lineage lacks `clock_disc_jump_test` +
+`datum_station_detect` — filed).  No producer code; the falsified producer-side family stays dead.
+
 ## 3 — Clock: from per-event patches to a re-realization-free posture (= edge 2)
 
 **Bandaids:** CLK-R emission re-base (correct triage — census 613→1 — but applied at the emission

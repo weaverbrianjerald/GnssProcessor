@@ -892,3 +892,48 @@ what the re-coupling edge moved.
 **transforms** the clock-pivot carry instead of deleting it, on an edge 1(d) never touches.
 **"Transform > delete" remains UNMEASURED** (§5.07.6 / §5.08.5) — build the transform when a
 bigger fixture shows the one-epoch refloat cost, or for §8's own clock-pivot edge.
+
+## §10 QUEUE item 2 EXECUTED (2026-08-21) — the election is formalized as plumbing; first standard-gate readings
+
+The §4-measured remedy (clean election: 5.9× datum-free contrast, 40 % T3
+cut) is now enforced by tooling, not luck.  No producer code changed — every
+producer-side alternative in this space is falsified (§ "What this card is
+NOT") and stays that way.
+
+- **Generator election** (`scripts/simnet_make_producer_config.py`): with no
+  `--datum-station`, the datum is ELECTED — fewest mid-arc losses over the
+  post-stride roster (`datum_gauge_audit.compute_rank`), most equatorial
+  among ties (§9.8's 8× enforced, not advised), name for determinism (the
+  elected value is warm-resume-fingerprinted).  An explicit station absent
+  from the roster is a hard error (exit 2, ranking printed) — the old silent
+  fall-back to the most-polar `stations[0]` is gone.  `--constellations`
+  matches the producer's active systems (a satellite the producer does not
+  estimate cannot cost a gauge event).
+- **Field-config preflight** (`datum_gauge_audit.py --config <json>`):
+  flattens the extends chain (`gnss_config_chain.load_config`) and gates the
+  declaration — set (exit 1 on the `stations.front()` default), in-roster,
+  not polar (≥55°) while an equatorial (≤30°) alternative exists
+  (`--allow-polar` downgrades to a warning), marking channel armed
+  (`emit_clock_disc` + `clock_disc_jump_test`), datum-station slip response
+  armed (invariant #1).  Continuity is documented as NOT statically
+  checkable — `--run` is the post-hoc, truth-free gate (exit 1 on any
+  avoidable removal, both modes sharing the harness-gate exit).
+- **Validation against this SPEC's own record**: the 24-sta GPS-only
+  election returns **S06000SIM (0 losses)** — arm B, reproduced; the 60-sta
+  GPS+GAL election returns **S30000SIM (10 losses, −0.9°)**, winning the
+  equatorial tiebreak over S26000SIM (10 losses, −8.1°) — the camp60
+  campaign's hand-elected datum, retro-validated by the formalized
+  criterion.  All fail paths verified (unset ⇒ exit 1; absent ⇒ exit 2, no
+  config written).
+- **First standard-gate readings**: `--run runs/camp60_i3` (elected datum)
+  ⇒ **0 avoidable removals, exit 0**.  `--run runs/fld63_relevel4h_on`
+  (field, MBAR00UGA) ⇒ **12 avoidable pivot-only removals over 4 h, ALL
+  unmarked** — exit 1.  The preflight predicts the silence exactly: the
+  ext63 lineage arms `emit_clock_disc` but NOT `clock_disc_jump_test`, so
+  every avoidable re-realization is silent to the consumer; it also runs
+  without `datum_station_detect`.  MBAR00UGA's geometry is fine (−0.6°);
+  its §4.2 "arrived at by luck" continuity did not survive a 4 h window.
+  Filed for the ext63 lineage owners: arm the marking channel
+  (fingerprint-SAFE trace-class per the armed-set rules) and re-read; the
+  12 events are the datum-election exposure item 1(b)'s S-transform would
+  close producer-internally.

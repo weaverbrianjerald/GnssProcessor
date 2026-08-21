@@ -35,10 +35,18 @@ def main():
     ap.add_argument("--epochs", type=int, default=None,
                     help="walk only the first N epochs (default: the whole fixture arc)")
     ap.add_argument("--datum-station", default=None,
-                    help="network.clock_datum_station.  Worth setting per arm: §9.8 "
-                         "measured that the common clock level FOLLOWS the datum "
-                         "station and wanders ~8x more from a polar one.  Must survive "
-                         "--stride; the fallback below is stations[0], the most polar.")
+                    help="network.clock_datum_station, explicit override.  When OMITTED "
+                         "the generator ELECTS it (QUEUE item 2): fewest mid-arc "
+                         "satellite losses over the post-stride roster, most equatorial "
+                         "among ties (SPEC_pivot_visibility_gauge_defect section 4: 5.9x "
+                         "datum-free contrast + a 40 percent T3 cut for clean election; "
+                         "section 9.8: 8x wander from a polar pivot).  An explicit "
+                         "station absent from the roster is now a hard error, never a "
+                         "silent fallback.")
+    ap.add_argument("--constellations", nargs="*", default=None, metavar="LETTER",
+                    help="count election losses only for these systems (match the "
+                         "producer's active_systems; a satellite the producer does not "
+                         "estimate cannot cost a gauge event)")
     ap.add_argument("--stride", type=int, default=1,
                     help="use every Nth solve station (default 1 = all).  This is the "
                          "ONLY correct way to subset a Fibonacci roster: its index is "
@@ -76,20 +84,59 @@ def main():
             "name": c["name"], "rinex_path": c["rinex_path"],
             "position_ecef": c["position_ecef"],
         }
+    # QUEUE item 2 — datum-station election by criterion, not luck.  An explicit
+    # --datum-station wins but must exist in the (post-stride) roster: the old
+    # silent fallback to stations[0] handed a Fibonacci roster its MOST POLAR
+    # station (§9.8: ~8x more common-level wander), which is precisely the
+    # "arrived at by luck" failure the item names.  With no explicit choice, the
+    # election runs: fewest mid-arc satellite losses (each pivot loss is a
+    # network-wide avoidable gauge event — the measured 5.9x contrast / 40% T3
+    # lever), most equatorial among ties, name for determinism (the elected value
+    # is warm-resume-fingerprinted; a fixed roster must always elect the same
+    # station).
+    roster_names = {s["name"] for s in solve}
     if args.datum_station:
+        if args.datum_station not in roster_names:
+            print(f"ERROR: --datum-station '{args.datum_station}' is not in the "
+                  f"{len(solve)}-station (post-stride) roster.  Election ranking:")
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from datum_gauge_audit import compute_rank
+            rank = compute_rank(fixture_dir,
+                                set(args.constellations) if args.constellations else None,
+                                roster=roster_names) or []
+            for r in rank[:8]:
+                print(f"    {r['station']:<12} losses {r['losses']:>3}  "
+                      f"lat {r['lat_deg']:+.1f}")
+            return 2
         cfg["network"]["clock_datum_station"] = args.datum_station
-    # The clock datum station must exist in the roster.  The fallback is stations[0],
-    # which on a Fibonacci roster is the MOST POLAR station — and §9.8 measured that
-    # the common clock level FOLLOWS the datum station, wandering ~8x more from a
-    # polar datum than an equatorial one.  A silent fallback would therefore hand a
-    # wander-grading arm the worst available datum, so say it out loud.
-    if cfg["network"].get("clock_datum_station") not in {s["name"] for s in solve}:
-        want = cfg["network"].get("clock_datum_station")
-        cfg["network"]["clock_datum_station"] = solve[0]["name"]
-        print(f"WARNING: clock_datum_station '{want}' is not in this fixture's roster; "
-              f"fell back to stations[0] = {solve[0]['name']}.  On a Fibonacci roster "
-              f"that is the most POLAR station and §9.8 measured ~8x more common-level "
-              f"wander from a polar datum — pick an equatorial one explicitly.")
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from datum_gauge_audit import compute_rank
+        rank = compute_rank(fixture_dir,
+                            set(args.constellations) if args.constellations else None,
+                            roster=roster_names)
+        if rank:
+            winner = rank[0]
+            cfg["network"]["clock_datum_station"] = winner["station"]
+            lat = (f"{winner['lat_deg']:+.1f} deg" if winner["lat_deg"] is not None
+                   else "lat ?")
+            print(f"ELECTED clock_datum_station = {winner['station']} "
+                  f"({winner['losses']} mid-arc losses, {lat}; "
+                  f"{len(rank)} candidates ranked by losses then |lat|)")
+            if winner["losses"] > 0:
+                print(f"  NOTE: the roster offers no zero-loss candidate — the elected "
+                      f"datum still loses {winner['losses']} satellite(s) mid-arc; "
+                      f"gate the run with datum_gauge_audit.py --run.")
+        else:
+            # No truth_visibility (non-sim fixture): geometry-only election.
+            def lat_of(s):
+                x, y, z = s["position_ecef"]
+                import math
+                return abs(math.degrees(math.atan2(z, math.hypot(x, y))))
+            winner = min(solve, key=lambda s: (round(lat_of(s), 1), s["name"]))
+            cfg["network"]["clock_datum_station"] = winner["name"]
+            print(f"ELECTED clock_datum_station = {winner['name']} (geometry-only: no "
+                  f"truth_visibility.csv in this fixture; most equatorial station).")
 
     # Product path and any run-dir-derived path follow the fixture directory.
     # ABSOLUTIZE: the producer resolves a relative product_output_path against its
