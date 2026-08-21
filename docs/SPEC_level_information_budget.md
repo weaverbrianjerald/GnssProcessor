@@ -8,7 +8,7 @@ armed per-config. Absorbed 2026-08-15: `docs/HANDOFF_ext_cb_iono_level.md` → *
 CONTRACT §5 (the unbuilt `lvlauth=` / `rxdcb=` S-line tokens) went to `docs/SPEC_product_cbpin_contract.md`
 **§6.6**, which owns the S-line grammar.
 
-⚠ **APPEND-ONLY NUMBERING.** 30+ code/test/script sites and 12 configs cite this document by section (§3, §4,
+⚠ **APPEND-ONLY NUMBERING.** 30+ code/test/script sites and **15** configs (re-counted 2026-08-21) cite this document by section (§3, §4,
 §11, §11.3, §12, §13, §14, §17 item 0/1/3, §19.6, §20.2, §20.3, §25.2, §27 item 1, §28, and the range §9–§20)
 and by card label (LV-1…LV-5, S2H). None of those citations fails loudly. Compressing a section's BODY is
 safe; changing which card a number names is a silent break. The page was reordered into numeric order

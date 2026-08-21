@@ -445,8 +445,13 @@ reported as a delta against the pre-8b tree state, not against the last commit.
 
 - ⚠ **Stale-doc finding, still owed to another card:** the INC-6 slip-QC claim — *"the
   allon/jw/snap arms run `if_phase_td` armed and the harness asserts non-vacuous QC row counts"* —
-  is **measured FALSE**: every `_dcmp_*` arm has it OFF (all 15 configs checked; every one has
-  `cycle_slip: {if_phase_td: false}` and none mentions `mw_detect`). **INC-6's slip-QC seam was
+  is **measured FALSE**: every `_dcmp_*` arm has it OFF. Re-measured `extends`-resolved
+  2026-08-21 (`scripts/gnss_config_chain.py`): **19** `_dcmp_*` configs exist repo-wide (14 in
+  `config/test_suite/`, 5 in `config/archive/`), of which the gate script drives the **13**
+  audited in §5.1 — and `network.cycle_slip.if_phase_td` resolves FALSE on all 19, with
+  `mw_detect` resolving false on all 19 too. The conclusion is unchanged and now covers the
+  whole lineage rather than a subset. *(This line previously said "all 15 configs checked",
+  which matched neither the 13 gate arms nor the 19 files on disk.)* **INC-6's slip-QC seam was
   therefore gated by a matrix that never armed IF-TD**, and the QC-row assertion does not exist in
   `run_inc4_gate.ps1`. `docs/network_decomposition_plan.md` §9 (subsection "⚠ What this matrix does
   NOT cover — slip QC") now records this refutation directly, and its Appendix A carries the stale

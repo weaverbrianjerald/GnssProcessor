@@ -222,10 +222,14 @@ reasons:
    `Pair{key, satellite, signal, support, Verdict}` only. `bridges(F)` is **not** derivable
    from `ctx.admission`.
 2. **CB-ADM does not run on this lineage at all.** It is gated on `config_.networkCbAdmission()`
-   (ApplicationNetwork.cpp:1192-1194), and `network.cb_admission` appears in exactly two
-   configs repo-wide (`_cbadm_50sta_15ep_gpsgalbds.json`,
-   `_maxnet_305_gpsgalbds_d15_5ep_datum.json`) — neither in the
-   `_pc305_ggq_tri_slant_20m → … → _ft63_24h_conv` chain. Arming it would switch code-bias
+   (ApplicationNetwork.cpp:1192-1194), and `network.cb_admission` resolves TRUE in **five**
+   configs repo-wide — two live in `config/test_suite/` (`_cbadm_50sta_15ep_gpsgalbds.json`,
+   `_maxnet_305_gpsgalbds_d15_5ep_datum.json`) plus three in `config/archive/`
+   (`_maxnet_305_gpsgalbds_d15_5ep_cbadm.json`, `…_datum_dgonly.json`, `…_datum_kp.json`) —
+   and **none** of the five is in the
+   `_pc305_ggq_tri_slant_20m → … → _ft63_24h_conv` chain, so the conclusion stands.
+   *(Corrected 2026-08-21: previously "exactly two configs repo-wide" — the two named are the
+   live ones, but "repo-wide" also covers `config/archive/`.)* Arming it would switch code-bias
    registration to the structurally different never-prune branch
    (ApplicationNetworkAssembly.cpp:1745-1778): **a posture change, not a free ride.**
 

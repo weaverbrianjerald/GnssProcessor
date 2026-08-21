@@ -397,9 +397,16 @@ corrupt rate is published at release."**
 
 **Severity: latent, not live.**  `network.emit_clock_rate` is OFF (default and in every
 current config; `leg01/snap.txt` contains zero `O,` and zero `K,` records `[M]`, so both C1
-mechanisms are dormant and a `leg02` resume inherits no rate state).  `network.clock_model`
-shares the same gate at `NetworkSolPrep.cpp:220-229` and is likewise off.  **No run is
-affected.**  But the fix is a prerequisite for arming either toggle: the card needs an
+mechanisms are dormant and a `leg02` resume inherits no rate state; re-measured 2026-08-21 —
+exactly one config arms `emit_clock_rate`, `config/archive/_emit_c1_on.json`, and it is
+archived, so no live lineage is affected).  `network.clock_model` shares the same gate at
+`NetworkSolPrep.cpp:220-229` and is **not** universally off: **3** configs resolve it true,
+two of them LIVE — `config/ppp_rtk_network_brdc_rts.json` and `config/_rtseam_cl.json`
+(the third, `config/archive/_net305_clockmodel_1h.json`, is archived).  **No FIELD run on the
+`_ft63`/`_golden` lineage is affected**, but the "likewise off" claim was wrong: those two
+configs do reach the C1 mechanism, so the fix below is a prerequisite for them, not merely
+for a future arming.  *(Counts are `extends`-resolved via `scripts/gnss_config_chain.py`; a
+literal grep undercounts — see `docs/SPEC_raim_pool_rehost.md` §1.2.)*  But the fix is a prerequisite for arming either toggle: the card needs an
 **emitted-epoch** staleness clock (a `t_last_emitted` advanced only on actual emission)
 alongside the solved-epoch one, and must ZOH on the emission gap.  Prefer that over gating
 on `sh_gate_engaged` — it also covers `WithheldGate` and `WithheldSigma0`.  Fold into §6 G0.
