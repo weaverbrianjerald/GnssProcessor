@@ -113,6 +113,7 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
             r.gf_m        = gf;
             r.gf_code_m   = gf_code;
             r.gf_denom    = gf_denom;
+            r.lam1_m      = lam1;
             r.l1_c1_m     = l1c1;
             r.lambda_wl_m = lam_wl;
             r.lli1        = lli1;

@@ -678,6 +678,18 @@ is the wrong vehicle in every tuning direction.
 **Remaining:** a per-epoch data-derived authority for postures where the designed owners are weak —
 INTERNAL data only (GIM stays diagnostics-only, standing directive).
 
+✅ **TWO MOVES EXECUTED 2026-08-21.**  (1) The deferred **S2H 12 h tracking verdict was READ**
+(`SPEC_level_information_budget.md` §31): fold ceilings hold, P2 drains perfect, but |a00 − GIM| =
+13.6/9.6 TECU at h0/h11 — the SECOND pre-registered branch: the per-epoch-valued a00 anchor is the
+designed next authority (and the rxcb σ̂₀-compounding sub-gate failed: ON growth 2.255 vs ctl 1.831 —
+S2H is fold-side cheap, not free, at 12 h).  (2) That authority is being built internally-sourced as
+**LV-6 (`SPEC_level_authority_internal.md`)** — the per-epoch fleet CS-GF census
+(`network.level_authority_csgf`, measure-only, adversary-reviewed; the fold stage is a future card
+gated on the census's §4 tracking verdict, with G1 on a REGENERATED wsh fixture carrying injected
+receiver biases and G2 against the sampling-matched censusOperator{GIM} reference — the panel killed
+the naive fleet-median-vs-planetary-mean grade before it shipped).  The item stays OPEN until the
+census verdict lands; the falsified-tuning ledger is unchanged.
+
 **Sim validation:** the one venue where the LEVEL grades against truth directly. ⚠ Level claims need
 the ≥2 h convergence budget — 1 h windows are rank-only.
 

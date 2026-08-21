@@ -405,8 +405,14 @@ onset-enrichment grade on a leveled long arm. Arms: `runs/replay_1h_pl_{maju,win
 doubled), time-matched fold fraction +19 %, wire step census statistically identical, μ →
 +0.0000 m settled (the transform's fixed point). Level (diagnostic): sits lower
 (−4.35 ± 1.75 at h2-3 vs control's +0.44) — the zero-mean convention as a declared,
-per-epoch-drained frame; the 12 h tracking verdict stays DEFERRED, and item 0b /
-§13.4-option-1 remains the designed answer if the anchor's authority does not suffice.
+per-epoch-drained frame; **the 12 h tracking verdict was READ 2026-08-21**
+(`SPEC_level_information_budget.md` §31): fold ceilings hold (phase ratio 1.0010),
+the P2 drains are perfect (μ +0.0000, step census 7/7, folds +0.048), but
+|a00 − GIM| reads 13.6/9.6 TECU at h0/h11 — the second pre-registered branch:
+item 0b / the per-epoch-valued a00 anchor IS the designed next authority, now
+being built internally-sourced as LV-6 (`SPEC_level_authority_internal.md`);
+and the rxcb σ̂₀-compounding sub-gate FAILED (ON growth 2.255 vs the control's
+own 1.831 — S2H is fold-side cheap, not free, at 12 h).
 Default-OFF, fingerprinted, no promotion.
 
 ## Edge 2 — the clock datum (worst re-realizer on the leveled lineage; candidates never validated)

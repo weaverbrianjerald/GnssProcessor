@@ -182,6 +182,11 @@ namespace GnssProcessor {
         double staf_ratio{};
         /// QUEUE item 4 R4: T3/T3c opportunity-accounting hygiene (telemetry only).
         bool rate_hygiene{};
+        /// LV-6 (SPEC_level_authority_internal): the per-epoch fleet CS-GF level
+        /// census — measure-only.
+        bool lvlauth_on{};
+        int  lvlauth_min_n{};
+        int  lvlauth_min_los{};
         bool clk_mon_on{};
         double clk_mon_abs{};
         double clk_mon_jump{};
@@ -2006,6 +2011,12 @@ namespace GnssProcessor {
         double    staf_max_ratio          = 0.0;///< run-max EWMA ratio to the network median
         long long n_staf_epochs           = 0;  ///< epochs the factor was computed on
         long long n_t3_untestable_cells   = 0;  ///< R4: s_raw==0 cells excluded from T3 opp
+        // LV-6 census (SPEC_level_authority_internal §3) — invariant #4 counters.
+        long long n_lvlauth_epochs   = 0;       ///< epochs with a FLEET row
+        long long n_lvlauth_immature = 0;       ///< LOS skipped at the min_n screen
+        double    lvlauth_sum = 0.0;            ///< Σ L_cs (teardown mean)
+        double    lvlauth_min =  1.0e30;        ///< run min L_cs (TECU)
+        double    lvlauth_max = -1.0e30;        ///< run max L_cs (TECU)
         // Phase 2.2: epochs whose EMISSION the SH health gate withheld.  NOT a
         // subset of n_skipped — the solve/carry/QC all ran (emission-only gate),
         // so these epochs are counted nowhere else.

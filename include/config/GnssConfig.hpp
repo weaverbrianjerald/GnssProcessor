@@ -4588,6 +4588,33 @@ namespace GnssProcessor {
         bool networkRaimRateHygiene() const { return network_raim_rate_hygiene_; }
 
         /**
+         * @brief LV-6 — the internal per-epoch level-authority CENSUS
+         *        (@c network.level_authority_csgf;
+         *        `SPEC_level_authority_internal.md`).
+         *
+         * Measure-only: per epoch, the mature CS-GF states reduce to one fleet
+         * level L_cs(t) (per-station information-weighted means, fleet median —
+         * `levelAuthorityReduce`), traced with the per-station means (the
+         * d_r,GF-class diagnostic).  Folds NOTHING — the fold is a future card
+         * gated on this census's §4 tracking verdict.  Arms the CS-GF advance
+         * independently of the (falsified, OFF) iono-carry inject path; ⚠ any
+         * census A/B pair must pin `cycle_slip.gap_instrument` in BOTH arms so
+         * `cardsArmed()` is equal across the pair (§5.3 — the qualify pass's
+         * verdicts feed dormant D5 consumers on corroborate-armed lineages).
+         * OFF = byte-identical; ON = solve-byte-identical (trace only).
+         */
+        bool networkLevelAuthorityCsgf() const { return network_level_authority_csgf_; }
+
+        /// LV-6: minimum CS-GF sample count for a LOS to enter the census
+        /// (@c network.level_authority_min_n, default 10 — the kernel's √K
+        /// maturity; ~5 min at 30 s).
+        int networkLevelAuthorityMinN() const { return network_level_authority_min_n_; }
+
+        /// LV-6: minimum qualifying LOS for a station to enter the fleet median
+        /// (@c network.level_authority_min_los, default 4).
+        int networkLevelAuthorityMinLos() const { return network_level_authority_min_los_; }
+
+        /**
          * @brief Whether the within-epoch adaptation drops the finest contaminated unit
          *        (@c network.raim_surgical_station; used only when @ref networkRaimWithinEpoch).
          *
@@ -6333,6 +6360,9 @@ namespace GnssProcessor {
         double network_raim_station_factor_tau_s_{1800.0}; ///< R2 EWMA time constant (s) — §12.1b: unmeasured, this knob measures it.
         double network_raim_station_factor_ratio_{6.0};    ///< R2 depart threshold: EWMA factor / network median of EWMA factors (return at 0.8×). Above the §4 measured 4.7× model-error spread.
         bool   network_raim_rate_hygiene_{false};          ///< QUEUE item 4 R4 (SPEC_t3_null_derivation §6): T3 opportunity count excludes s_raw==0 untestable cells (counted separately); T3c opportunity becomes the unconditional ≥min_sta-cells population. Telemetry accounting only; requires raim + trace_flag_rates; OFF = byte-identical.
+        bool   network_level_authority_csgf_{false};       ///< LV-6 (SPEC_level_authority_internal): per-epoch fleet CS-GF level census — measure-only, folds nothing; arms the CS advance without the carry; OFF = byte-identical.
+        int    network_level_authority_min_n_{10};         ///< LV-6: LOS maturity screen (CS-GF samples since reset).
+        int    network_level_authority_min_los_{4};        ///< LV-6: per-station qualifying-LOS floor for the fleet median.
         bool   network_clock_monitor_{false};           ///< Per-satellite carried-clock sanity monitor: flag+refloat a sat clock past a physical bound (breaks the multi-hour single-sat lock-in the σ̂0 RAIM is blind to); OFF = byte-identical (no clock withheld from the stash).
         double network_clock_monitor_abs_max_m_{20.0};  ///< |Δδtˢ − median| bound (m): a satellite whose de-meaned clock exceeds this has its carried shared state refloated.
         double network_clock_monitor_jump_max_m_{10.0}; ///< One-epoch clock jump bound (m): a satellite whose clock moves more than this across adjacent stable-datum epochs is refloated.

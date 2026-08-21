@@ -1896,6 +1896,23 @@ int networkTeardown(
                   "counted UNCONDITIONALLY (satellites with cells at >= {} stations).",
                   ctx.counters.n_t3_untestable_cells,
                   config_.networkRaimMinStations());
+    // LV-6 census run-end readout (invariant #4: an armed run with 0 census
+    // epochs past warmup is a MISWIRE, not a quiet day).
+    if (config_.networkLevelAuthorityCsgf()) {
+        const auto& c = ctx.counters;
+        if (c.n_lvlauth_epochs > 0)
+            log->info("Network (LV-6 level-authority census): {} FLEET epoch(s); "
+                      "L_cs mean {:.3f} / min {:.3f} / max {:.3f} TECU; {} immature-LOS "
+                      "skip(s) (min_n {}).  MEASURE-ONLY — nothing folded, nothing "
+                      "gated on this statistic.",
+                      c.n_lvlauth_epochs, c.lvlauth_sum / c.n_lvlauth_epochs,
+                      c.lvlauth_min, c.lvlauth_max, c.n_lvlauth_immature,
+                      config_.networkLevelAuthorityMinN());
+        else
+            log->warn("Network (LV-6 level-authority census): ARMED but produced ZERO "
+                      "fleet epochs — past the min_n warmup this is a MISWIRE "
+                      "(invariant #4), not a quiet day.");
+    }
     // §9.7.10 datum-station slip detect: run-end ON-path telemetry (invariant #4 —
     // an armed run with injected datum-station slips reporting 0/0 is a MISWIRE,
     // not a quiet day).  Counted separately from Card E: those are non-pivot

@@ -134,6 +134,7 @@
 #include "filter/NetworkShDevVtec.hpp"    // INC-11b
 #include "filter/NetworkShHealth.hpp"    // INC-11b
 #include "filter/NetworkIonoDwRelease.hpp" // iono-deweight release hygiene: reseed / park bound / row screen
+#include "filter/NetworkLevelAuthority.hpp"  // LV-6 census
 #include "filter/NetworkLeveling.hpp"    // INC-11b
 #include "filter/NetworkStashStatus.hpp"    // INC-11b
 #include "logging/CsvRotator.hpp"     // P1: size-based rotation of the unbounded service CSVs
@@ -307,9 +308,15 @@ int Application::runNetwork() {
         sp.gap_instrument      = sq.gap_instrument;
         // Bridge v3 E4: the GF-row capture needs the qualified raw verdicts.
         sp.bridge_gf           = config_.networkCycleSlipRelevelBridgeGf();
-        // CS-GF authority (iono_carry_source = smoothed_gf): same need.
-        sp.iono_cs             = config_.networkCarryIono()
-                                 && config_.networkIonoCarrySource() == "smoothed_gf";
+        // CS-GF authority (iono_carry_source = smoothed_gf): same need.  The
+        // LV-6 census arms the ADVANCE independently — the kernel is
+        // 8(b)-sanctioned instrumentation; the carry's falsified inject path
+        // stays gated on carry_iono and untouched (SPEC_level_authority_internal
+        // §3).  ⚠ Arming iono_cs flips cardsArmed(): census A/B pairs must pin
+        // cycle_slip.gap_instrument in BOTH arms (SPEC §5.3).
+        sp.iono_cs             = (config_.networkCarryIono()
+                                  && config_.networkIonoCarrySource() == "smoothed_gf")
+                                 || config_.networkLevelAuthorityCsgf();
         slip_qc.hist.resize(stations.size());
     }
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
@@ -1773,6 +1780,14 @@ int Application::runNetwork() {
         // the empty-system skip keeps its exact bookkeeping inside (SkipEpoch
         // return), and the Next-return below bypasses subEnd(SB_PREASM) exactly as
         // the original site did.  est.beginEpoch() runs inside on Proceed.
+        // --- LV-6 level-authority census (SPEC_level_authority_internal §3) --
+        // Serial, after PASS A's CS-GF advance, deliberately BEFORE the
+        // RegisterColumns SkipEpoch below (an empty-system epoch still gets its
+        // census row) and upstream of every withhold decision (the census
+        // measures through withhold eras).  Measure-only; no-op unless armed.
+        networkLevelAuthorityCensus(ctx, config_, log, traces, se,
+                                    setup.stations, modeled, present);
+
         std::vector<std::string> registered_clock_sats;
         std::vector<std::pair<std::string, std::string>> registered_code_keys;
         std::vector<std::string> col_desc;

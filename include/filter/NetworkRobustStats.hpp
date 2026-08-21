@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -84,6 +85,49 @@ inline double stationVarianceFactor(const std::vector<StationFactorRow>& rows,
         den += q.ri;
     }
     return den > 1e-9 ? num / den : -1.0;
+}
+
+/// LV-6 internal level authority (SPEC_level_authority_internal §3): the
+/// two-tier robust fleet reduction, pure and unit-testable.
+struct LevelAuthorityResult {
+    double level_tecu;  ///< fleet MEDIAN over per-station weighted means
+    double mad_tecu;    ///< 1.4826·MAD across the station means (never a formal σ — the kernel variances are documented optimistic)
+    int    n_sta;       ///< stations that cleared min_los
+    int    n_los;       ///< mature LOS folded across those stations
+};
+
+/**
+ * @brief Two-tier reduction: per-station information-weighted mean of mature
+ *        vertical-mapped LOS values (tier 1 — equalizes station weighting;
+ *        the station means double as the d_r,GF-class diagnostic), then the
+ *        fleet MEDIAN across stations (tier 2 — kills the fleet-clustered
+ *        bias tail and roster imbalance; the median of static per-station
+ *        offsets is a deterministic order statistic, not a sampled one).
+ *
+ * @param sta_rows  per station: (vertical TECU, weight) pairs, mature only.
+ * @param min_los   a station enters tier 2 only with at least this many rows.
+ * @return nullopt when no station qualifies ("unavailable is not 0").
+ */
+inline std::optional<LevelAuthorityResult> levelAuthorityReduce(
+    const std::vector<std::vector<std::pair<double, double>>>& sta_rows,
+    int min_los) {
+    std::vector<double> means;
+    int n_los = 0;
+    for (const auto& rows : sta_rows) {
+        if (static_cast<int>(rows.size()) < min_los) continue;
+        double sw = 0.0, swv = 0.0;
+        for (const auto& [v, w] : rows) { sw += w; swv += w * v; }
+        if (!(sw > 0.0)) continue;
+        means.push_back(swv / sw);
+        n_los += static_cast<int>(rows.size());
+    }
+    if (means.empty()) return std::nullopt;
+    const double med = medianCopy(means);
+    std::vector<double> ad;
+    ad.reserve(means.size());
+    for (double m : means) ad.push_back(std::abs(m - med));
+    return LevelAuthorityResult{med, 1.4826 * medianCopy(ad),
+                                static_cast<int>(means.size()), n_los};
 }
 
 /// Result of a Tukey 2-way median polish: value ≈ overall + row_eff[row] + col_eff[col]

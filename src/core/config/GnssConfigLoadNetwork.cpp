@@ -3952,6 +3952,36 @@ namespace GnssProcessor {
         }
         network_raim_rate_hygiene_ =
             jval<bool>(json, "network.raim_rate_hygiene", "network_raim_rate_hygiene", false);
+        // LV-6 census (SPEC_level_authority_internal §3) — measure-only, no
+        // interlocks beyond the reject bands: it arms the CS-GF advance itself
+        // and depends on no other card.
+        network_level_authority_csgf_ =
+            jval<bool>(json, "network.level_authority_csgf",
+                       "network_level_authority_csgf", false);
+        network_level_authority_min_n_ =
+            jval<int>(json, "network.level_authority_min_n",
+                      "network_level_authority_min_n", 10);
+        if (network_level_authority_min_n_ < 2) {
+            log->warn("Network (LV-6): network.level_authority_min_n {} < 2 — a 1-sample "
+                      "CS-GF state is raw code; reset to 10.",
+                      network_level_authority_min_n_);
+            network_level_authority_min_n_ = 10;
+        }
+        network_level_authority_min_los_ =
+            jval<int>(json, "network.level_authority_min_los",
+                      "network_level_authority_min_los", 4);
+        if (network_level_authority_min_los_ < 1) {
+            log->warn("Network (LV-6): network.level_authority_min_los {} < 1 reset to 4.",
+                      network_level_authority_min_los_);
+            network_level_authority_min_los_ = 4;
+        }
+        if (network_level_authority_csgf_)
+            log->info("Network (LV-6 level-authority census, SPEC_level_authority_internal): "
+                      "per-epoch fleet CS-GF reduction (min_n {}, min_los {}) — MEASURE-ONLY, "
+                      "folds nothing; the fold is a future card gated on this census's "
+                      "tracking verdict.  ⚠ A/B pairs must pin cycle_slip.gap_instrument in "
+                      "BOTH arms (the cardsArmed() side-effect, SPEC §5.3).",
+                      network_level_authority_min_n_, network_level_authority_min_los_);
         if (network_raim_station_drop_bias_ < 1.0) {
             log->warn("Network: network.raim_station_drop_bias {} < 1 clamped to 1 (a bias below 1 "
                       "would PREFER whole-station exclusion, the opposite of its purpose).",

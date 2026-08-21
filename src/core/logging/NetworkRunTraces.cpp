@@ -48,6 +48,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       raim_redun_trace_path(log_dir_ / "network_raim_redundancy.csv"),
       station_factor_trace_path(log_dir_ / "network_station_factor.csv"),
+      level_authority_trace_path(log_dir_ / "network_level_authority.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
       carry_vce_apply_trace_path(log_dir_ / "network_carry_vce_apply.csv"),
       prior_residual_trace_path(log_dir_ / "network_prior_residual.csv"),
@@ -733,6 +734,22 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open station-factor trace {}",
                       station_factor_trace_path.string());
+    }
+    if (config_.networkLevelAuthorityCsgf()) {
+        level_authority_trace.open(level_authority_trace_path);
+        if (level_authority_trace)
+            // LV-6 (SPEC_level_authority_internal §3).  FLEET rows: level =
+            // the two-tier reduction (per-station info-weighted means → fleet
+            // median), disp = 1.4826·MAD across station means (never a formal
+            // σ — the kernel variances are documented optimistic), a00 filled
+            // only when the SH channel exists.  STA rows: the tier-1 station
+            // mean and its LOS count (level column reused; disp/n_sta/a00
+            // blank).  All values vertical TECU in the pair-exact conversion.
+            level_authority_trace << "week,tow,kind,station,level_tecu,"
+                                     "disp_tecu,n_sta,n_los,n_immature,a00_tecu\n";
+        else
+            log->warn("Network: failed to open level-authority census {}",
+                      level_authority_trace_path.string());
     }
 
     // INC-4: capture the L1/L15 config echoes once (pure getter reads).
@@ -1696,6 +1713,7 @@ void NetworkRunTraces::closeAll() {
     if (station_res_trace.is_open()) station_res_trace.close();
     if (raim_redun_trace.is_open()) raim_redun_trace.close();
     if (station_factor_trace.is_open()) station_factor_trace.close();
+    if (level_authority_trace.is_open()) level_authority_trace.close();
     if (carry_vce_trace.is_open()) carry_vce_trace.close();
     if (carry_vce_apply_trace.is_open()) carry_vce_apply_trace.close();
     if (block_baarda_trace.is_open()) block_baarda_trace.close();

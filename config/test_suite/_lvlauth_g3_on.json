@@ -1,0 +1,11 @@
+{
+ "_comment": "LV-6 G3 armed twin (SPEC_level_authority_internal s4/s5.3): control + level_authority_csgf, single knob. PRE-REGISTERED: solve CSVs + products byte-identical to runs/lvlauth_g3_ctl (measure-only proof by intervention); network_level_authority.csv FLEET rows present from ~min_n epochs in (G4: census epochs ~ run epochs minus warmup); L_cs settled value recorded as the first ext63 internal-level reading (DIAGNOSTIC - the G2 verdict needs the sampling-matched GIM operator + a >= 2h window, not this 1h smoke).",
+ "extends": "_ext63_1h_evt_pl.json",
+ "network": {
+  "product_output_path": "C:/GnssProcessor/runs/lvlauth_g3_on/products.txt",
+  "level_authority_csgf": true,
+  "cycle_slip": {
+   "gap_instrument": true
+  }
+ }
+}

@@ -105,6 +105,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.staf_tau_s = config_.networkRaimStationFactorTauS();
     k.staf_ratio = config_.networkRaimStationFactorRatio();
     k.rate_hygiene = config_.networkRaimRateHygiene();
+    k.lvlauth_on = config_.networkLevelAuthorityCsgf();
+    k.lvlauth_min_n = config_.networkLevelAuthorityMinN();
+    k.lvlauth_min_los = config_.networkLevelAuthorityMinLos();
     k.clk_mon_on = config_.networkClockMonitor();
     k.clk_mon_abs = config_.networkClockMonitorAbsMaxM();
     k.clk_mon_jump = config_.networkClockMonitorJumpMaxM();

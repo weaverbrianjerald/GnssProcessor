@@ -1448,6 +1448,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                         ++ctx.counters.n_iono_cs_resets;
                     else
                         ++ctx.counters.n_iono_cs_blends;
+                    cs.lam1_m = row.lam1_m;   // LV-6: exact per-pair TECU conversion
                 }
             }
         }

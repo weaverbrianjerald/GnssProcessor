@@ -432,6 +432,13 @@ namespace GnssProcessor {
         /// EWMAs, and the trim census.  Light (≤ n_sta rows/epoch).
         std::ofstream station_factor_trace;
         const std::filesystem::path station_factor_trace_path;
+        /// LV-6 (network.level_authority_csgf): the internal level-authority
+        /// census — one FLEET row per epoch (L_cs, MAD, counts, a00 when the SH
+        /// channel exists) + one STA row per qualifying station (the tier-1
+        /// mean — the d_r,GF-class diagnostic and the sampling-matched grading
+        /// population).  Light (≤ 1 + n_sta rows/epoch).
+        std::ofstream level_authority_trace;
+        const std::filesystem::path level_authority_trace_path;
         /// M2 (LS-VCE): per-hour measured carry-variance components — one row per
         /// (family, constellation) whenever the content hour rolls over.  floor_m2 is
         /// the honest constant-cofactor σ̂ to compare against the hand var_floor;

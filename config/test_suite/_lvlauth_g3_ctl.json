@@ -1,0 +1,10 @@
+{
+ "_comment": "LV-6 G3 control twin (SPEC_level_authority_internal s4/s5.3): the ext63 1h EVENT posture (_ext63_1h_evt_pl - cold-startable; the bare golden _ext63_gps_dual_1h is a warm-resume chain and gate-withholds every epoch on a cold start - venue lesson recorded) + cycle_slip.gap_instrument pinned (BOTH arms carry it so cardsArmed() is equal across the pair - the qualify-pass side effect would otherwise make the census read as solve-affecting). PRE-REGISTERED: runs/lvlauth_g3_on solve CSVs + products byte-identical to THIS run (the measure-only proof); the armed twin additionally writes network_level_authority.csv with FLEET rows on ~every settled epoch.",
+ "extends": "_ext63_1h_evt_pl.json",
+ "network": {
+  "product_output_path": "C:/GnssProcessor/runs/lvlauth_g3_ctl/products.txt",
+  "cycle_slip": {
+   "gap_instrument": true
+  }
+ }
+}

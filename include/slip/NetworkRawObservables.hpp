@@ -69,6 +69,7 @@ struct RawSlipObs {
     double gf_m{0.0};             ///< Geometry-free L1−L2 phase (m); 0 when !dual.
     double gf_code_m{0.0};        ///< Geometry-free P1−P2 code (m); 0 when !dual.  (CS-GF authority input; not traced.)
     double gf_denom{0.0};         ///< γ−1 = (λ2/λ1)²−1 > 0 (dispersive scale of the pair); 0 when !dual.
+    double lam1_m{0.0};           ///< Primary-band wavelength of the pair (m) — the LV-6 census's exact per-pair TECU conversion (the (L2,L5) fallback pair is a 65 % mis-scale under an assumed-L1 constant); 0 when !dual. Not traced.
     double l1_c1_m{0.0};          ///< sig1 phase-minus-code (m); always meaningful.
     double lambda_wl_m{0.0};      ///< Wide-lane wavelength 1/(1/λ1 − 1/λ2) (m); 0 when !dual.
     int    lli1{0};               ///< RINEX LLI byte for sig1 (bit 0 = loss of lock).
@@ -95,6 +96,7 @@ struct IonoCsState {
     double val{0.0};   ///< Smoothed slant iono (m, primary band, code realization).
     double var{0.0};   ///< Its variance (m²; formal — code multipath correlation makes it optimistic, the inject floor covers).
     int    n{0};       ///< Samples since the last reset (0 = never initialized).
+    double lam1_m{0.0};///< The pair's primary-band wavelength (m), stamped at the advance — the LV-6 census converts val with THIS pair's frequency, never an assumed L1.
 };
 
 /// Per-carrier-step variance added by the GF-phase propagation

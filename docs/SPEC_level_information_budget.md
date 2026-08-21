@@ -2280,3 +2280,45 @@ it with the footprint restriction per §26.4.
 - `docs/SPEC_rx_cb_carry.md` — the carry whose common-mode force LV-2 removes.
 - `docs/SPEC_beidou_w6_datum.md` — the satellite-side gauge §30.2.1 leans on.
 - `docs/SPEC_pivot_visibility_gauge_defect.md §8` — the reduced-level 5-86 transform (§16/12.3's escalation).
+
+## §31 The S2H 12 h tracking verdict (2026-08-21) — §28's deferred questions ANSWERED; the level authority question resolves onto LV-6
+
+Run as staged (`_ext63_gps_dual_12h_s2h_{ctl,on}.json`, fresh seamless
+lineages, one knob), on the session-certified exe MD5 3979C756… (the staged
+comments name the Aug-8 session binary 82B44507 — superseded; BOTH arms share
+today's build, so the same-build pair discipline holds).  1443 synced / 1440
+emitted / 0 withholds, both arms.  Runs `runs/s2h_12h_{ctl,on}`.
+
+- **P1 (fold-side gates at 12 h): ceilings PASS, expectation MISSED.**
+  h2–12 postfit phase rms ratio **1.0010** (±5 % gate).  prires rxcb σ̂₀
+  ratios **1.064** (h0–6) / **1.311** (h6–12) — inside the ≤1.5× gate, but
+  the 3 h read's "~0.9× quieter priors" did NOT persist, and the
+  σ̂₀-compounding sub-gate FAILS: ON growth h6-12/h0-6 = **2.255** vs the
+  control's own **1.831**.  The S-consistent harvest is fold-side CHEAP but
+  not fold-side free at 12 h.
+- **P2: PASS.**  μ last +0.0000 m (mean |μ| 0.0040, max 0.4685), 0
+  thin-skips, 693 peer-screen exclusions; wire step census identical (7/7
+  disc marks); time-matched folds 0.5765 vs 0.5287 (ON ≥ ctl).
+- **P3 — THE VERDICT: the second pre-registered branch.**  ON reads
+  |a00 − GIM(t)| = **13.6 TECU at h0** and **9.6 at h11** (ctl 7.2 / 12.0)
+  — neither arm within ±4 at both ends; both wander a −5..−20 band with the
+  h6–7 dip to −19/−20 against the 08 UT GIM peak.  Per §28's own
+  pre-registration: *"below −4 settled ⇒ the a00 anchor's 0.25 is still
+  outvoted by per-epoch GF information and item 0b / a per-epoch-valued a00
+  anchor is the designed next authority — that is a FINDING either way."*
+  So: **the level card does NOT close on S2H**; S2H stands as the Edge-3
+  frame hygiene it validated as (zero-mean by construction, P2's drains),
+  and the LEVEL authority must be a per-epoch data-derived a00-direction
+  value — which is precisely LV-6
+  (`SPEC_level_authority_internal.md`), whose census stage was built the
+  same session this verdict landed.  The convergence is independent: the
+  staged experiment's outcome selects the card already in flight.
+- **P4: footprint mean −17.00 / rms 18.58 vs global −12.21 / 13.35 —
+  ≈1.4×, the §18 direction** (marginally under the 1.5–2× band).
+
+Disposition: S2H keeps its standing (default-OFF, fingerprinted, Edge-3
+validated; the 12 h read adds the compounding caveat to any future
+promotion case).  The level-authority thread moves to LV-6's gates
+(§4 there): census tracking first, fold second, with the fold's natural
+EXT-route being L_cs as the per-epoch VALUE of the existing a00 anchor —
+item 0b's design, internally sourced.
