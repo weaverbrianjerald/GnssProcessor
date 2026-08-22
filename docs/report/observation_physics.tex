@@ -346,14 +346,26 @@ line-of-sight, $(\isun,\jcross)$ the satellite body $\pm X,+Y$ axes and
 $(\bm{x}_\rx,\bm{y}_\rx)$ the receiver local North/East axes, the
 \emph{effective dipoles} are
 \begin{equation}
-\dipS = \isun - \bm{k}\,(\bm{k}\cdot\isun) + \bm{k}\times\jcross,
+\dipS = \isun - \bm{k}\,(\bm{k}\cdot\isun) - \bm{k}\times\jcross,
 \qquad
-\dipR = \bm{x}_\rx - \bm{k}\,(\bm{k}\cdot\bm{x}_\rx) + \bm{k}\times\bm{y}_\rx,
+\dipR = \bm{x}_\rx - \bm{k}\,(\bm{k}\cdot\bm{x}_\rx) - \bm{k}\times\bm{y}_\rx,
 \label{eq:obsphys-windup-dipoles}
 \end{equation}
 the standard Wu construction: each dipole is the antenna $X$ axis
-projected into the plane orthogonal to $\bm{k}$, plus the $\bm{k}\times Y$
-quadrature term (\texttt{corrections/GnssCorrections.cpp}).  The receiver
+projected into the plane orthogonal to $\bm{k}$, \emph{minus} the
+$\bm{k}\times Y$ quadrature term (\texttt{corrections/GnssCorrections.cpp}).
+The sign is not free: it is $-\operatorname{sgn}\!\big((\bm{x}\times\bm{y})
+\cdot\bm{k}\big)$, i.e.\ negative whenever the antenna's own third axis points
+along $+\bm{k}$, which is the case for both triads here (the satellite's
+$\bm{e}_z$ is the geocentric nadir; the receiver's implied third axis is
+$\mathrm{North}\times\mathrm{East}=\mathrm{Down}$).  The wrong sign gives
+$|\bm{D}| = 1-\cos\varepsilon$, a dipole that \emph{vanishes on boresight}.
+Note that RTKLIB's familiar $(-,+)$ pairing is stated with
+$\bm{y}_\rx = -\mathrm{East}$ and is numerically the same construction; with the
+$+\mathrm{East}$ convention used here it becomes $(-,-)$.
+\emph{Prior revisions of this document printed $(+,+)$, transcribed from a
+defect in the code that was corrected on 2026-08-21; see
+\texttt{docs/SPEC\_phase\_windup\_sign.md}.}  The receiver
 North and East axes are built directly from the geodetic latitude
 $\phi$ and longitude $\lambda$,
 $\bm{x}_\rx = (-\sin\phi\cos\lambda,\,-\sin\phi\sin\lambda,\,\cos\phi)$ and

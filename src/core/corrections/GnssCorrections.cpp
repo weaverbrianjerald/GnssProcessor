@@ -1869,7 +1869,25 @@ namespace GnssProcessor {
         const Eigen::Vector3d& sat_vel,
         bool accumulate) const {
 
-        // Wu et al. (1993): k = sat->rx, D = x - k(k.x) + k x y
+        // Wu et al. (1993), stated in THIS function's variables.  k = sat->rx.
+        //
+        // The quadrature term's sign is -sgn((x cross y) . k): MINUS when the
+        // antenna's own third axis points along +k, PLUS when it points along -k.
+        // All three satellite branches below build x_s cross y_s == ez (the
+        // geocentric nadir, ~ +k), and the receiver pair is x_r = NORTH,
+        // y_r = EAST with x_r cross y_r == DOWN and (DOWN).k == +cos(zenith) > 0
+        // over the whole observable hemisphere.  Hence MINUS on BOTH dipoles:
+        //
+        //     D = x - k(k.x) - k x y      =>  |D| = 1 + cos(eps)
+        //
+        // (The wrong sign gives |D| = 1 - cos(eps), a dipole that VANISHES on
+        //  boresight, and mirrors the phase about the LOS-vertical plane.)
+        //
+        // WARNING: RTKLIB's familiar (-, +) pairing is stated with eyr = -east
+        // (WEST).  Transcribing its '+' onto this file's y_r = +east flips only
+        // one of the two lines, and a HALF FIX matches neither the model nor its
+        // negative -- a uniformly distributed band-common error spanning a full
+        // cycle.  See docs/SPEC_phase_windup_sign.md section 3.
         Eigen::Vector3d k_raw = rx_pos - sat_pos;
         double k_raw_norm = k_raw.norm();
         if (k_raw_norm < 1e-3) {
@@ -1916,8 +1934,18 @@ namespace GnssProcessor {
             x_s = ex;
             y_s = ey;
         } else {
-            // Velocity-based fallback
-            Eigen::Vector3d z_s = -ez;
+            // Velocity-based fallback.  Built about the NADIR axis (ez), exactly
+            // as the orbit-normal and yaw-steering branches above, so that
+            // x_s cross y_s == ez in ALL THREE branches and the single
+            // -k.cross(y_s) quadrature sign below is valid unconditionally.
+            //
+            // This branch previously framed about z_s = -ez (radially OUTWARD),
+            // giving x_s cross y_s == -ez -- the OPPOSITE handedness relative to
+            // k from its two sibling branches.  Reframing negates y_s and leaves
+            // x_s bit-identical, so the effective dipole built below with the
+            // corrected MINUS is numerically identical to what the old frame
+            // produced with the old PLUS.  That identity is the review gate: if
+            // this branch's Ds moves, the reframe is wrong.
             Eigen::Vector3d vel = sat_vel;
             if (vel.norm() < 1e-8 && !orbits_->empty()) {
                 auto orbit_it = std::find_if(orbits_->begin(), orbits_->end(),
@@ -1925,12 +1953,19 @@ namespace GnssProcessor {
                 if (orbit_it != orbits_->end() && orbit_it->velocity_valid)
                     vel = orbit_it->velocity;
             }
-            y_s = vel.norm() > 1e-8 ? vel.normalized().cross(z_s) : Eigen::Vector3d::Zero();
+            y_s = vel.norm() > 1e-8 ? vel.normalized().cross(ez) : Eigen::Vector3d::Zero();
             if (y_s.norm() < 1e-8) y_s = Eigen::Vector3d(0, 1, 0);
             y_s.normalize();
-            x_s = y_s.cross(z_s);
+            x_s = y_s.cross(ez);
             if (x_s.norm() < 1e-8) x_s = Eigen::Vector3d::UnitX();
             x_s.normalize();
+            // Re-derive y_s from the settled x_s so that x_s cross y_s == ez
+            // EXACTLY, mirroring the orbit-normal branch.  A no-op whenever y_s
+            // is already perpendicular to ez (every non-degenerate path); it
+            // matters only in the doubly-degenerate sub-case where y_s fell
+            // through to the hard-coded (0, 1, 0).
+            y_s = ez.cross(x_s);
+            y_s.normalize();
         }
 
         // --- Receiver local frame (North / East) ---
@@ -1940,9 +1975,11 @@ namespace GnssProcessor {
         Eigen::Vector3d x_r(-std::sin(phi)*std::cos(lam), -std::sin(phi)*std::sin(lam), std::cos(phi));
         Eigen::Vector3d y_r(-std::sin(lam), std::cos(lam), 0.0);
 
-        // Effective dipoles
-        Eigen::Vector3d Ds = x_s - k * (k.dot(x_s)) + k.cross(y_s);
-        Eigen::Vector3d Dr = x_r - k * (k.dot(x_r)) + k.cross(y_r);
+        // Effective dipoles.  MINUS on both -- see the sign rule at the top of
+        // this function.  BOTH LINES MUST CARRY THE SAME SIGN: flipping one is
+        // strictly worse than flipping neither.
+        Eigen::Vector3d Ds = x_s - k * (k.dot(x_s)) - k.cross(y_s);   // satellite
+        Eigen::Vector3d Dr = x_r - k * (k.dot(x_r)) - k.cross(y_r);   // receiver, y_r = +EAST
         double Ds_norm = Ds.norm(), Dr_norm = Dr.norm();
         if (Ds_norm < 1e-10 || Dr_norm < 1e-10) {
             log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: degenerate dipole", satellite);

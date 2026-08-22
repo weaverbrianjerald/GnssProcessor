@@ -312,6 +312,7 @@ add_executable(gnss_tests
     tests/test_math_core.cpp
     tests/test_atmosphere_models.cpp
     tests/test_site_displacement.cpp
+    tests/test_phase_windup_sign.cpp
     tests/test_antenna_model.cpp
     tests/test_state_key_schema.cpp
     tests/test_covariance_rereference.cpp

@@ -520,6 +520,16 @@ int Application::runRealTime() {
                 contract_expectation.atx_id = ncc.expect_atx_id;
             if (!ncc.expect_orbit_ref.empty())
                 contract_expectation.orbit_ref = ncc.expect_orbit_ref;
+            // Wind-up model: pin to what THIS BINARY implements, never to the
+            // adopted receipt.  Every other field above is a config pin that
+            // falls back to the file's own value, which makes checkContract
+            // compare the string to itself — fine for conventions the operator
+            // chooses, useless for one the CODE fixes.  A pre-fix product
+            // (windup_id "nominal") absorbed +2*phi_wu into its satellite clocks
+            // and phase biases; consuming it with a corrected model is a silent
+            // phase-frame mismatch, and this line is the only thing that makes
+            // it audible.  See docs/SPEC_phase_windup_sign.md section 8 item 2.
+            contract_expectation.decl.windup_yaw_model_id = kWindUpYawModelId;
             have_contract_expectation = true;
         }
         std::vector<std::string> mismatches;

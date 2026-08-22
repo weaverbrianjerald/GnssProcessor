@@ -21,6 +21,7 @@
 #include "filter/NetworkInvariantCarryDriver.hpp"   // RTB-7(c) branch-faithful carry (de)serialize
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey (handover scope predicate)
+#include "filter/NetworkSbasis.hpp"          // kWindUpYawModelId (wind-up model revision token)
 #include "filter/StateKeySchema.hpp"         // StateKeys::parseSatPhaseBiasKey (harvest/stash)
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"
@@ -566,6 +567,20 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         auto add = [&fp](const std::string& v) { fp += v; fp += '\x1f'; };
         for (const auto& st : stations) { add(st.name); add(st.is_pivot ? "P" : "-"); }
         add(nc.clock_datum_station); add(nc.clock_datum_satellite);
+        // Carrier-phase wind-up MODEL REVISION.  Unlike every other token here
+        // this is a CODE constant, not a knob — and it has to be, because the
+        // thing that changes what the carried state means is a source fix, not a
+        // config.  The pre-2026-08-21 dipole sign left +2*phi_wu in every phase
+        // observation (~0.4 cyc ZD arc range), which the carried ambiguities,
+        // the phase-leveling zero-q level and the shared PB/CB carry all
+        // absorbed.  Resuming a snapshot written under the old convention into a
+        // corrected binary would re-reference stiff carries levelled in a frame
+        // that no longer exists — standing invariant #1 (a stale zero-q value
+        // carried past a jump) and #7 (a re-coupling edge with nothing
+        // re-validating what it reconnects).  Nothing else in this fingerprint
+        // can see it: it hashes config knobs only, with no code version or
+        // binary hash.  Appending the token forces a COLD start across the fix.
+        add(kWindUpYawModelId);
         // The phase-bias gauge realization (single-pivot vs prioritized anchor)
         // defines which station's ambiguities carry the datum; a resume across a
         // toggle change would interpret the carried anchors in the wrong frame.

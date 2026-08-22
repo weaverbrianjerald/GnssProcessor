@@ -70,6 +70,28 @@
 namespace GnssProcessor {
 
 /**
+ * @brief The wind-up / yaw-attitude model this BINARY implements.
+ *
+ * A compile-time constant, deliberately NOT a config knob: it declares what the
+ * code does, and a declaration that a QC/trace toggle could move would drift
+ * away from the thing it declares.  It is written into every emitted product's
+ * S record (field 3, legended @c windup_id) and is the value a consumer pins its
+ * own expectation to, so a product built under a different wind-up convention
+ * trips @c NetworkProductIO::checkContract instead of being consumed silently.
+ *
+ * Revisions:
+ *   - @c "nominal"      yaw-steering triads, effective dipole built with a PLUS
+ *                       on both quadrature terms — the inverted-sign defect;
+ *                       every product emitted before 2026-08-21.
+ *   - @c "nominal-wu93" the corrected Wu et al. (1993) construction (MINUS on
+ *                       both), with all three satellite-frame branches sharing
+ *                       the nadir handedness.
+ *
+ * @see docs/SPEC_phase_windup_sign.md
+ */
+inline constexpr const char* kWindUpYawModelId = "nominal-wu93";
+
+/**
  * @brief Serializable record of the network product's S-basis convention.
  *
  * Travels with the emitted product so a consumer can confirm it adopts a
@@ -169,7 +191,16 @@ struct SbasisDeclaration {
     double bias_sign{ +1.0 };
     /// Declared wind-up / yaw-attitude model id (producer and consumer must agree;
     /// "nominal" = yaw-steering from sun/velocity geometry, eclipse AR ungated).
-    std::string windup_yaw_model_id{ "nominal" };
+    ///
+    /// The suffix is a WIND-UP MODEL REVISION, not a yaw-attitude change.
+    /// "nominal-wu93" marks the corrected Wu et al. (1993) effective-dipole
+    /// construction (@c GnssCorrections::computePhaseWindUp, minus on BOTH
+    /// quadrature terms).  Products emitted before that fix carry the bare
+    /// "nominal" and are in a DIFFERENT phase frame — their satellite clocks and
+    /// phase biases absorbed +2*phi_wu.  Bumping the token is what makes a
+    /// producer-fixed / consumer-unfixed pairing visible at all; see
+    /// docs/SPEC_phase_windup_sign.md section 8 item 2.
+    std::string windup_yaw_model_id{ kWindUpYawModelId };
     /// V1 emits satellite clock + phase bias only; W6 (network.estimate_sat_code_bias)
     /// adds satellite code bias.  True when the network emits its own OSB.
     bool emit_code_bias{ false };
