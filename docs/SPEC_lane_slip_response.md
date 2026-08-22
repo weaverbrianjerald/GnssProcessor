@@ -134,3 +134,36 @@ Invariant pre-flight (standing invariants #1/#4/#7):
 - Field transfer is not automatic: the field's T4 population and false-alarm
   mix differ (the campaign's field arm hit an A4-withhold deadlock era on an
   unrelated axis) — a field leg re-grades this before any default flips.
+
+## §5 Rung 1′ VERDICT (2026-08-22, `runs/camp60wu_f4c`) — FALSIFIED AS ARMED; the evidence lacks resolution
+
+720/720 emitted; counters both ways (24 315 kept-with-evidence, 360
+refused-STEPPED, 0 refused-UNMEASURED — the wiring is live and the qualify
+pass ran).  But the refusal rate is **1.5 %**: the raw MW/GF empirical step
+gates call almost every T4-flagged arc FLAT, so the corroborated keep
+degenerates to near-blanket keep and inherits its harm:
+
+| settled GPS lane | F1 refloat-always | F4C corroborated keep | F3 keep-always |
+|---|---|---|---|
+| EWL(2,5) at own integer | **70.2 %** | 59.6 % | 54.0 % |
+| WL(1,2) | **21.1 %** | 17.0 % | 13.9 % |
+
+**Root cause — the evidence measures the wrong failure mode.**  A raw MW/GF
+step gate detects DISCRETE jumps at multi-tenths-of-a-cycle thresholds; the
+levels T4 catches are DRIFTS (sub-threshold accumulation) that the network
+solve sees at > kσ̂₀ while the per-arc band-pair observables see nothing.
+"No step" and "level wrong vs the network" are simultaneously true, and the
+T4 flag IS the higher-resolution evidence — corroborating it against a
+coarser instrument and keeping on the coarser instrument's silence was
+backwards.  The knob stays built, default-OFF, counters intact (it is the
+correct SHAPE for any future finer evidence source), but do NOT arm it with
+the raw-step verdicts as the evidence.
+
+**Standing conclusion of this card:** for T4-flagged arcs the refloat is the
+better response (the code re-level is EWL-good at λ 5.86 m); the recoverable
+losses are (a) rung 2 — vertex-wide responses hitting truth-continuous bands
+(10–15 pts, band-scoped refloat where the detector localizes), and (b) rung 3
+— making the refloat LANE-PRESERVING: after the per-band code re-level,
+integer-snap the EWL lane to its EWL-MW-measured delta (σ ≈ 0.05 cyc
+single-epoch ⇒ a confident snap), bridge-v2 corroboration shape.  Rung 3 is
+the next build; this decomposition (F1/F3/F4C + the age tables) is its brief.
