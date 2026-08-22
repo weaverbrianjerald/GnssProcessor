@@ -2071,6 +2071,25 @@ namespace GnssProcessor {
             model_corrections_.enable_atx_frequency_fallback  ? "on" : "off");
         log->info("Emission-time refinement: {} (second-pass slant-ZHD + IF-ATX subtraction in geometry pipeline)",
             model_corrections_.refine_emission_time ? "ENABLED" : "disabled");
+        // SPEC_phase_windup_sign.md §7: with the correction modeled but NOT
+        // accumulated, the raw atan2 angle is applied per epoch, so every
+        // half-cycle crossing steps the modeled phase by EXACTLY one cycle
+        // mid-pass — a band-common, equal-in-cycles staircase that is invisible
+        // to MW (ΔWL = 0) and lands as a phantom slip/level event (measured 43
+        // one-cycle jumps/day/sat ⇒ ~753/day at 63 stations; a standing
+        // invariant #1/#7 instance).  Every field lineage inherits this silently
+        // because the estimation key parses absent ⇒ false.  Behavior-neutral
+        // WARN only: flipping the loader default is a migration card
+        // (fingerprint-invalidating), not a quick edit.
+        if (model_corrections_.enable_phase_windup && !accumulate_phase_windup_) {
+            log->warn("Phase wind-up runs in FRACTIONAL (wrapping) mode — "
+                      "estimation.accumulate_phase_windup is absent/false.  Each "
+                      "half-cycle crossing steps the correction by exactly one "
+                      "cycle mid-pass (MW-blind staircase; see "
+                      "docs/SPEC_phase_windup_sign.md §7).  Set "
+                      "estimation.accumulate_phase_windup: true on any "
+                      "fresh-convergence lineage.");
+        }
         if (model_corrections_.require_atx_coverage) {
             log->info("ATX coverage: STRICT — observations without complete sat+rx PCO+PCV "
                 "for the exact signal frequency will be dropped.");

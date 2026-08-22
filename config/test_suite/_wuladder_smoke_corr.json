@@ -1,0 +1,25 @@
+{
+ "_comment": [
+  "SPEC_phase_windup_sign 9.6 NETWORK-producer wind-up ladder arm 'smoke_corr'.",
+  "Extends the golden63 GPS laneoff chain; 3 h leg; trace_station_residuals armed",
+  "(trace-class).  Per-arm state_snapshot_path guarantees a COLD start on every arm",
+  "(the shipped exe lacks the wu93 fingerprint token, so a shared snapshot would",
+  "let it warm-resume while the fixed arms cold-start - an arm-comparability trap).",
+  "Predicted ladder on the carry-tension instruments (prires families, block-Baarda",
+  "G, congruence): corrected < OFF < shipped, the slope-2 structure of section 9."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_golden63_gps_1h_laneoff.json"
+ ],
+ "processing": {
+  "max_duration_s": 300.0
+ },
+ "model_corrections": {
+  "enable_phase_windup": true
+ },
+ "network": {
+  "trace_station_residuals": true,
+  "state_snapshot_path": "C:/GnssProcessor/runs/wuladder_smoke_corr/state_snapshot",
+  "product_output_path": "C:/GnssProcessor/runs/wuladder_smoke_corr/products.txt"
+ }
+}

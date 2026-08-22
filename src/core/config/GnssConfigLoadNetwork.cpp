@@ -5158,6 +5158,26 @@ namespace GnssProcessor {
         network_carry_invariant_innov_gate_ =
             jval<bool>(json, "network.carry_invariant_innov_gate",
                        "network_carry_invariant_innov_gate", false);
+        // Standing invariant #1 interlock (config-level): a zero-q invariant carry
+        // with the innovation gate OFF is a stiff time-linked quantity whose ONLY
+        // event responses are the pre-processor slip detectors — a jump they miss
+        // is carried at full weight forever and warps the solution silently (the
+        // SPEC_synthetic_minimum_network §13.7 runaway arm is exactly this
+        // posture, and all 7 sim carry_invariant configs shipped it unwarned —
+        // SPEC_o2_carry_invariant_accumulator hygiene item).  WARN, do not
+        // disarm: silently arming a solve-affecting gate would be worse, and
+        // qz > 0 is an equally valid cure.  Both flags are parsed-final here
+        // (network_carry_invariant_ is written once, never cleared).
+        if (network_carry_invariant_ && network_carry_invariant_qz_ <= 0.0
+            && !network_carry_invariant_innov_gate_) {
+            log->warn("Network (Card 4 / invariant #1): carry_invariant is ON with "
+                      "carry_invariant_qz = {} and carry_invariant_innov_gate OFF — a "
+                      "zero-q carried cycle basis with NO wired jump response beyond the "
+                      "pre-processor slip detectors.  A missed jump is carried stiff "
+                      "indefinitely.  Arm network.carry_invariant_innov_gate or set a "
+                      "physical carry_invariant_qz before any ON field run.",
+                      network_carry_invariant_qz_);
+        }
         network_carry_invariant_innov_k_ =
             jval<double>(json, "network.carry_invariant_innov_k",
                          "network_carry_invariant_innov_k", 4.0);
