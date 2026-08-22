@@ -883,3 +883,14 @@ Any sim arm that mixes a pre-fix fixture with a post-fix producer (or vice
 versa) is confounded; the fixture and the producer must sit on the same side of
 the fix.  (Same-side pairs cancel identically — §2 stands: the sim remains
 structurally blind to the sign itself.)
+
+**Measured (`runs/camp60wu_smoke_mixed`, 10 ep, pre-fix fixture x post-fix
+producer): the mixed pairing is INVISIBLE to every short-horizon internal
+instrument** — code σ̂₀ 0.9555 vs 0.9558 matched-clean, phase σ̂₀ 0.0080
+identical, epoch-1 clock-Δ identical (wind-up never touches code, and over
+5 min the 2φ_wu error is ~constant per (station, sat), so the free ambiguities
+absorb it whole).  It expresses only in the emitted wire frame (clocks / phase
+biases) and over arc-length leveling horizons — §4's split, reproduced.  So the
+fixture-side discipline cannot be enforced by watching σ̂₀; it is enforced by
+provenance (the `_wu93` fixture suffix + this section), which is the same
+invariant-#4 lesson the product token encodes one layer up.

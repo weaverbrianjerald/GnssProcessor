@@ -440,3 +440,37 @@ the verdict provably untouched; the pre-registered settled-σ̂₀ gate FAILED
 carries — removing the deadlock exposes that population instead), so the
 knobs stay default-OFF research and the §8.4 verdict on the relevel knobs
 is unchanged.
+
+## §9 The wu93 rerun (2026-08-21 second session) — fix holds across the wind-up-sign fix, and the first slipped-vs-quiet INTEGER matrix
+
+Fixtures regenerated post-wind-up-fix (`runs/simnet60_{campaign,quiet}_wu93`,
+sim exe `21C2DCD0…`, same salts/seeds — single knob `cycle_slips.rate_base`
+2e-4 vs 0); producer `AA472278…` (post-fix), arm configs
+`_camp60wu_{smoke,f1,quiet}.json` = the free_epoch champion posture (GF datum,
+triple, all QC).  Both arms **720/720 emitted, 0 withheld**.
+
+**Stability — the walk stays dead** (grade.json in each run dir):
+hourly ZWD err rms 2.29/1.85/2.44/2.69/3.08/2.42 m — FLAT, the §8 fixed-arm
+band, vs the pre-fix 2.6→6.5 walk.  T4 arc flags 7 648/6 h (pre-fix storm ~21k).
+Census: 94.0 % detected of 2 486, silent 3.5 % all at the 10–12° mask edge —
+reproduces §5.  Consumer 2.31 m rms 3D (quiet twin 0.61 m).  Quiet ZWD is the
+cleanest this posture has ever graded: **rms 0.252 m, p50 2.5 cm** (slipped
+2.74 m / 0.59 m — the residual ~10× is the stationary 8(b) plateau, not a walk).
+
+**Integers — first slipped-vs-quiet matrix at matched everything**
+(`simnet_amb_integer.py`, settled last 25 %, `round(e)=0` = at OWN true
+integer; float only, AR unarmed):
+
+| lane | quiet | slipped | slip cost |
+|---|---|---|---|
+| EWL(2,5) | **95.1 %** (med\|e\| 0.113 cyc) | **70.2 %** (0.277) | −25 pts |
+| WL(1,2)  | 46.2 % (0.553) | 21.1 % (1.387) | −25 pts |
+| L1C per-band | 12.3 % (2.41) | 3.4 % (9.57) | −9 pts, 4× med\|e\| |
+
+The EWL cascade substrate (§13.6's finding) survives live slips at 70 % and the
+slip cost is ~25 points at BOTH lane rungs — the next integer lever on this
+posture is slip-proofing the lanes (or an EWL-first partial cascade), not iono.
+⚠ The wind-up sign fix CANNOT be credited for any of this — the sim is
+structurally blind to it (SPEC_phase_windup_sign §2, §9.9: the mixed-pairing
+smoke is bit-near-identical), and these arms exist to prove the slip stack
+still stands on the regenerated frame-consistent fixtures.
