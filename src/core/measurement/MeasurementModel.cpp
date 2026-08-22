@@ -648,26 +648,25 @@ namespace GnssProcessor {
                 // lane there is nothing to preserve (counted).  FLOAT snap,
                 // never rounded; values only — the diffuse seed variance is
                 // untouched, so nothing here is stiff.
+                auto bandOf = [](const std::string& t) { return t.size() >= 2 ? t[1] : '?'; };
+                const double now_s = obs.time.week * 604800.0 + obs.time.tow;
+                const double c = Constants::SPEED_OF_LIGHT;
+                auto mwCyc = [&](const std::string& a, const std::string& b,
+                                 double lam_a, double lam_b) -> double {
+                    const std::string ca = "C" + a.substr(1), cb = "C" + b.substr(1);
+                    if (!obs.observed.count(ca) || !obs.observed.count(cb)
+                        || !obs.observed.count(a) || !obs.observed.count(b))
+                        return std::numeric_limits<double>::quiet_NaN();
+                    const double fa = c / lam_a, fb = c / lam_b;
+                    return ((fa * obs.observed.at(a) - fb * obs.observed.at(b)) / (fa - fb)
+                            - (fa * obs.observed.at(ca) + fb * obs.observed.at(cb)) / (fa + fb))
+                           * (fa - fb) / c;
+                };
                 if (lane_snap_on && !lane_snap_seeded.empty()) {
-                    auto bandOf = [](const std::string& t) { return t.size() >= 2 ? t[1] : '?'; };
                     std::sort(lane_snap_seeded.begin(), lane_snap_seeded.end(),
                               [&](const std::string& a, const std::string& b) {
                                   return bandOf(a) < bandOf(b);
                               });
-                    const double now_s =
-                        obs.time.week * 604800.0 + obs.time.tow;
-                    const double c = Constants::SPEED_OF_LIGHT;
-                    auto mwCyc = [&](const std::string& a, const std::string& b,
-                                     double lam_a, double lam_b) -> double {
-                        const std::string ca = "C" + a.substr(1), cb = "C" + b.substr(1);
-                        if (!obs.observed.count(ca) || !obs.observed.count(cb)
-                            || !obs.observed.count(a) || !obs.observed.count(b))
-                            return std::numeric_limits<double>::quiet_NaN();
-                        const double fa = c / lam_a, fb = c / lam_b;
-                        return ((fa * obs.observed.at(a) - fb * obs.observed.at(b)) / (fa - fb)
-                                - (fa * obs.observed.at(ca) + fb * obs.observed.at(cb)) / (fa + fb))
-                               * (fa - fb) / c;
-                    };
                     // Anchor: lowest-band live type NOT seeded this epoch (its
                     // state value IS its pre-event value)…
                     std::string anchor;
@@ -758,10 +757,17 @@ namespace GnssProcessor {
                         lane_snap_.skip_birth +=
                             static_cast<long long>(lane_snap_seeded.size());
                     }
-                    // History update — AFTER the snap so pre excludes the
-                    // current epoch.  Every unordered live pair of this obs,
-                    // under the canonical (lo, hi) ordering the snap reads; at
-                    // most one push per (pair, epoch).
+                }
+                // History update — EVERY obs, EVERY epoch (v2.1: the F5B
+                // counters caught this block living inside the seed-gated
+                // branch above, so history only accumulated at seed events —
+                // 18 399 of 24 968 snap attempts had no pre-event MW and the
+                // few that did read a stale sample).  Runs AFTER the snap so
+                // pre excludes the current epoch.  Every unordered live pair
+                // of this obs, under the canonical (lo, hi) ordering the snap
+                // reads; at most one push per (pair, epoch) — the ensure pass
+                // can run more than once per epoch on measurement rebuilds.
+                if (lane_snap_on) {
                     std::vector<std::string> live;
                     for (const auto& [t, v] : obs.observed)
                         if (!t.empty() && t[0] == 'L') live.push_back(t);
