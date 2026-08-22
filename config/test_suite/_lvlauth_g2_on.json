@@ -1,0 +1,13 @@
+{
+  "_comment": "LV-6 gate G2 (SPEC_level_authority_internal §4): the census armed on the canonical 12 h EXT-CB arm-32 posture. Extends _ext63_gps_dual_12h_s2h_ctl (proven COLD-STARTABLE 2026-08-21: 1443 synced / 1440 emitted / 0 gate-withheld). cycle_slip.gap_instrument is pinned explicitly even though the chain root already sets it — arming level_authority_csgf flips SlipQcState::cardsArmed() and activates the dormant D5 v3/v4 solve consumers (§5.3), so a census A/B must pin it in BOTH arms. level_authority_los_dump publishes the census's own IPPs so censusOperator{GIM} is evaluated on the IDENTICAL sampling (§5.2's 'SAME'). Own product/snapshot paths: without them this OVERWRITES the stored s2h_12h_ctl denominator.",
+  "extends": [ "C:/GnssProcessor/config/test_suite/_ext63_gps_dual_12h_s2h_ctl.json" ],
+  "network": {
+    "level_authority_csgf": true,
+    "level_authority_min_n": 10,
+    "level_authority_min_los": 4,
+    "level_authority_los_dump": true,
+    "cycle_slip": { "gap_instrument": true },
+    "product_output_path": "C:/GnssProcessor/runs/lvlauth_g2_on/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/lvlauth_g2_on/state_snapshot.bin"
+  }
+}

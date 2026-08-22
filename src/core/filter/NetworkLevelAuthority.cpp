@@ -8,6 +8,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
+#include "common/Constants.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkRobustStats.hpp"
@@ -63,6 +64,25 @@ void networkLevelAuthorityCensus(
             const double w = cs.var > 1e-12 ? 1.0 / cs.var : 1.0e12;
             if (!std::isfinite(v_tecu)) continue;
             sta_rows[i].emplace_back(v_tecu, w);
+            // LV-6 G2 (§4): publish THIS row's pierce point and weight so an
+            // offline reference field (GIM in the field, truth in sim) can be
+            // reduced through the identical sampling.  §5 killed the naive
+            // planetary-mean grade because an unmatched sampling term measures
+            // the roster's geography; re-deriving the LOS set offline would
+            // reintroduce it in miniature (all-visible vs mature-CS-GF-only).
+            // Written BEFORE the min_los gate — a row that entered tier 1 is
+            // dumped even if its station later fails to qualify for tier 2, so
+            // the reference can apply the identical gate itself.
+            if (ctx.knobs.lvlauth_los_dump && traces.level_authority_los_trace.is_open())
+                traces.level_authority_los_trace
+                    << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
+                    << stations[i].name << ',' << o.satellite << ','
+                    << fmt::format("{:.6f}", g.ipp_lat_rad * 180.0 / Constants::PI) << ','
+                    << fmt::format("{:.6f}", g.ipp_lon_rad * 180.0 / Constants::PI) << ','
+                    << fmt::format("{:.6f}", g.mapping) << ','
+                    << fmt::format("{:.4f}", g.elevation_rad * 180.0 / Constants::PI) << ','
+                    << fmt::format("{:.6f}", v_tecu) << ','
+                    << fmt::format("{:.6e}", w) << ',' << cs.n << '\n';
         }
     }
     ctx.counters.n_lvlauth_immature += immature;

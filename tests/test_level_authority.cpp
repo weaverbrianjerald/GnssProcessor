@@ -96,6 +96,34 @@ TEST(LevelAuthorityConfig, RejectBandsResetToDefaults) {
     EXPECT_EQ(cfg.networkLevelAuthorityMinLos(), 4);
 }
 
+// LV-6 G2 support: the per-LOS pierce-point dump exists so a reference field can
+// be reduced through the census's OWN sampling (SPEC §4 G2 / §5.2 — an unmatched
+// LOS set reintroduces, in miniature, the sampling error that killed the naive
+// planetary-mean grade).  Default OFF, and INERT without the census it dumps.
+TEST(LevelAuthorityConfig, LosDumpDefaultsOffAndNeedsTheCensus) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadInto("losdump_default", networkConfig(), cfg));
+    EXPECT_FALSE(cfg.networkLevelAuthorityLosDump());
+
+    // Armed WITHOUT the census: there is no census to dump, so it is
+    // warn-and-disarmed rather than left armed-but-inert (invariant #4).
+    GnssConfig alone;
+    ASSERT_TRUE(loadInto("losdump_alone",
+        networkConfig("    \"level_authority_los_dump\": true,\n"), alone));
+    EXPECT_FALSE(alone.networkLevelAuthorityLosDump())
+        << "the dump must not survive without level_authority_csgf";
+
+    // Armed WITH the census: survives, and does not disturb the census knobs.
+    GnssConfig both;
+    ASSERT_TRUE(loadInto("losdump_armed",
+        networkConfig("    \"level_authority_csgf\": true,\n"
+                      "    \"level_authority_los_dump\": true,\n"), both));
+    EXPECT_TRUE(both.networkLevelAuthorityCsgf());
+    EXPECT_TRUE(both.networkLevelAuthorityLosDump());
+    EXPECT_EQ(both.networkLevelAuthorityMinN(), 10);
+    EXPECT_EQ(both.networkLevelAuthorityMinLos(), 4);
+}
+
 // ---------------------------------------------------------------- kernel ----
 
 TEST(LevelAuthorityKernel, WeightedMeanThenMedian) {

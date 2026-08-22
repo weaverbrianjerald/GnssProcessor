@@ -206,4 +206,121 @@ doc).
 
 ## §6 Results
 
-(filled after the arms)
+### 6.1 G1 (sim, truth-graded) — **FAIL on corr; the fold card does NOT open**
+
+Venue: `config/test_suite/_lv6g1_wsh50_census.json` over the REGENERATED
+`runs/simnet50_wsh_f29p5` fixture (50 solve stations + 1 consumer, 480 epochs
+@ 30 s, GPS-only, `rx_code_bias` drawn from the §29.5 empirical distribution —
+roster mean −15.34 / median −22.21 / sd 22.28 slant TECU, min −38.4 max +45.8,
+reproducing §29.5's "mean ≈ −15, std ≈ 21, Europe ≈ −22, southern outliers
++40..+47").  Run `runs/lv6g1_wsh50/run`: 480 synced / 313 emitted /
+38 σ̂₀-withheld, 471 FLEET census epochs (480 − 9 warmup ⇒ **G4 PASSES**).
+Reference evaluated on the census's OWN LOS set via
+`network.level_authority_los_dump` — 208 296 rows joined, **100 % matched**.
+
+| settled window | epochs | corr | offset (TECU) | d(offset)/dt |
+|---|---|---|---|---|
+| last 3 h | 354 | +0.625 | +17.35 | −1.25 /h |
+| **last 2 h (pre-registered)** | **236** | **+0.681** | **+16.83** | **−1.81 /h** |
+| last 1 h | 118 | +0.330 | +16.23 | +0.07 /h |
+
+- **Offset test PASSES, and is the card's strongest positive result.** The
+  injected median in vertical TECU is **+17.69**; the measured offset is
+  **+16.83** (agreement 0.86 TECU) and moves < 1.2 TECU across every window.
+  The C4 confound model is confirmed quantitatively in sim: the census level is
+  displaced by essentially exactly the receiver-bias median.
+- **Drift test PASSES**: |d(offset)/dt| ≤ 2 TECU/h at every window, → +0.07 /h
+  on the last hour.
+- **Correlation test FAILS**: +0.681 < +0.8 at the pre-registered window, and
+  it FALLS as the window shortens (+0.33 on the last hour, inside the < +0.5
+  STOP band).  Correlation is therefore carried by the slow diurnal component,
+  not by epoch-to-epoch tracking.
+- **Forward-model closure is exact** (+0.157 TECU): reducing truth PLUS the
+  injected biases reproduces L_cs, so the conversion chain — CS-GF slant metres
+  → pair-λ1 STEC → `computeIppGeometry` mapping → vertical TECU — is right.
+  The defect is not wiring.
+
+**Where the tracking is lost — diagnostic only, no reduction was changed.**
+Per-station corr(tier-1 mean, truth on the same LOS) over the same settled
+window: **median +0.8895**, quartiles +0.489 / +0.987, with three stations
+ANTI-correlated (S50000SIM −0.840, S14000SIM −0.470, S03000SIM −0.147); median
+per-station sd 2.253 obs vs 1.390 truth.  So the CS-GF kernel tracks (the
+median station clears the +0.8 bar the fleet misses), and the fleet statistic
+is WORSE than its own median member.  Hypothesis for the record, NOT acted on:
+tier 2 is an order statistic, so under the §29.5 ±21 TECU inter-station bias
+dispersion the identity of the median station churns epoch to epoch and each
+swap steps the fleet value by a bias difference uncorrelated with the
+ionosphere.  **§4's stop rule forbids tuning the reduction, and none was
+attempted** — no re-weighting, no trimming, no alternative tier-2 estimator.
+
+**Verdict: G1 does not pass ⇒ the fold stage does not open.**  The level is
+measured correctly; the per-epoch VALUE is not tracked well enough to be an
+authority.  That is precisely the claim the fold card would have rested on.
+
+⚠ **A grader defect was found and fixed before this read** — the first version
+built the injected biases into the reference as well as the observable
+(`v = stec + GF·(gs + dgf)`), which made the offset cancel by construction and
+reported a spurious **PASS (corr +0.8804, offset +0.956)**.  A gate that cannot
+fail is not a gate.  `scripts/simnet_level_authority_grade.py` now computes the
+bias-free reference for the C4 test and keeps the contaminated one as the
+closure check, and prints which sampling it used.
+
+### 6.2 G2 (field, GIM) — **FAIL on both sub-tests; stop rule NOT triggered**
+
+Venue: `config/test_suite/_lvlauth_g2_on.json` — the census armed on the
+canonical 12 h EXT-CB arm-32 posture (`_ext63_gps_dual_12h_s2h_ctl`, 61 sta,
+GPS dual, SH deg 8 / shell 450 km, COD `.BIA` OSB), cold-started.  Run
+`runs/lvlauth_g2_on/run`: 1443 synced / 1440 emitted / 0 withheld,
+**1431 FLEET census epochs** (1440 − 9 warmup ⇒ **G4 PASSES** on the field arm
+too).  Reference: `scripts/census_gim_operator.py` on the run's own LOS dump —
+same stations, same pierce points, same weights, same two-tier reduction.
+Settled window = from +7200 s (the level channel's convergence budget),
+1191 epochs.
+
+| quantity | settled mean | sd |
+|---|---|---|
+| L_cs | +19.910 | 3.939 |
+| censusOperator{GIM} | +17.439 | 1.799 |
+| GIM **planetary** mean | +27.253 | — |
+| **offset L_cs − operator** | **+2.471** | 3.378 (p2p 13.165) |
+
+- **§5.2 is vindicated, and now priced.**  The sampling term — planetary mean
+  minus the sampling-matched operator — is **9.8 TECU**.  Grading against the
+  planetary mean, as the pre-panel draft would have, would have been wrong by
+  that much and would have put the offset squarely inside the acceptance
+  window for entirely the wrong reason.
+- **Stability FAILS**: peak-to-peak 13.2 TECU against a ±2 TECU (p2p ≤ 4)
+  requirement; the offset's own sd (3.38) exceeds the whole tolerance.
+- **Offset window FAILS**: +2.47 against the pre-registered −10..−20.
+- **The stop rule is NOT triggered**: +2.47 is inside −25..+5, so the C4
+  confound model is not falsified by this arm — but it is at the extreme top
+  edge of the non-falsifying band.
+
+⚠ **SIGN TENSION worth resolving before any successor card.**  G1 measured the
+census reading **HIGH** by the injected receiver-bias median (+16.83 against a
+predicted +17.69 — the biases are negative in metres and `GF_TECU_PER_M` is
+negative, so the confound pushes L_cs UP).  G2's pre-registered window expects
+the field census to read **LOW** (−10..−20).  Those have opposite signs.  The
+−10..−20 window descends from §29.5's "measured field−GIM at IPPs: −13.5",
+which is an **a00 vs GIM** statistic, not **L_cs vs censusOperator{GIM}** — a
+different left-hand side.  The field offset (+2.47) is in fact on the SAME side
+as G1's, just far smaller.  Recorded, not reconciled: do not re-derive the
+window to fit this result.
+
+### 6.3 Verdict
+
+**Both gates fail; the FOLD STAGE DOES NOT OPEN.**  G1 fails on tracking
+(corr +0.681 < +0.8) while confirming the level offset to 0.86 TECU; G2 fails
+on both stability and window while confirming that the sampling-matched
+reference was a necessary correction (9.8 TECU).  Neither stop rule fired, so
+the census itself is not falsified as an INSTRUMENT — what is falsified is the
+premise the fold rested on, that L_cs is a good enough per-epoch VALUE to be
+the level authority.  Per §4: **record, do not tune the reduction.**  No
+re-weighting, trimming or alternative tier-2 estimator was tried, and none
+should be without a fresh derivation and adversary pass.
+
+The census stays default-OFF, measure-only, and is retained: it is the only
+instrument that prices a level authority, and G1's per-station diagnostic
+(median corr +0.889) says the CS-GF kernel itself is sound — the loss is in
+the fleet reduction, which is where a successor card should start.
+

@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "LV-6 G1 PROBE — 40 epochs over the §29.5-biased wsh fixture runs/simnet50_wsh_f29p5.",
+    "Three jobs, all cheap, ALL of them owed BEFORE the 4 h arm is worth spending:",
+    "  1. network_estimability.csv -> place network.rank_gate_tol from THIS arm's own dump",
+    "     (BeiDou card rule; SPEC_synthetic_minimum_network §12.2 rung 4 used 1e-12 on the",
+    "     300-station lineage -- NEVER copy it globally, assertNullSpaceRank throws in both",
+    "     directions).  Expect 0 epochs emitted here: the PB|*|L2W near-null withholds until",
+    "     the tol is placed, and that does not matter for jobs 2 and 3.",
+    "  2. network_level_authority.csv -> the SIGN and magnitude of L_cs.  The census sits in",
+    "     the serial pre-PASS-B slot, UPSTREAM of every withhold decision, so it writes FLEET",
+    "     rows even on a run that emits nothing.  This is what settles the §29.5 sign",
+    "     convention BY MEASUREMENT instead of by argument (see the fixture header).",
+    "  3. G4 counter wiring: the run-end 'LV-6 level-authority census' line must report",
+    "     ~30 FLEET epochs (40 minus the min_n = 10 warmup).  ZERO past warmup is a MISWIRE.",
+    "cycle_slip.gap_instrument is pinned per SPEC_level_authority_internal §5 item 3 so that",
+    "cardsArmed() is equal against any control twin."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_lv6g1_wsh50_smoke.json"
+  ],
+  "network": {
+    "level_authority_csgf": true,
+    "level_authority_min_n": 10,
+    "level_authority_min_los": 4,
+    "cycle_slip": {
+      "gap_instrument": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/lv6g1_wsh50_probe/products.txt"
+  }
+}

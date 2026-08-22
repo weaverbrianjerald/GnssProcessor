@@ -4615,6 +4615,34 @@ namespace GnssProcessor {
         int networkLevelAuthorityMinLos() const { return network_level_authority_min_los_; }
 
         /**
+         * @brief LV-6 G2 support: dump the census's OWN per-LOS pierce points
+         *        (@c network.level_authority_los_dump).
+         *
+         * Writes `network_level_authority_los.csv` — one row per (station,
+         * satellite) row that entered tier 1, carrying the IPP latitude /
+         * longitude, the thin-shell mapping, the vertical TECU and the
+         * information weight the reduction actually used.
+         *
+         * WHY IT EXISTS.  §4's G2 grades L_cs(t) against
+         * censusOperator{GIM}(t) — the reference field pushed through the SAME
+         * two-tier reduction — and §5 killed the naive fleet-median-vs-
+         * planetary-mean grade precisely because an unmatched sampling term
+         * measures the roster's geography instead of the level.  The census CSV
+         * publishes the station SET and each station's tier-1 mean, but not the
+         * pierce points or the weights, so an offline reference could only
+         * RE-DERIVE a LOS set (all visible satellites) that is not the one the
+         * census used (mature CS-GF states only).  This dump removes that
+         * approximation: the reference is evaluated at exactly the same IPPs
+         * with exactly the same weights.
+         *
+         * Its own file, never extra columns on the census CSV — the FLEET/STA
+         * rows stay byte-identical so G3's certification is untouched.
+         * Trace-only and O(stations x LOS) per epoch; INERT unless
+         * @ref networkLevelAuthorityCsgf.
+         */
+        bool networkLevelAuthorityLosDump() const { return network_level_authority_los_dump_; }
+
+        /**
          * @brief Whether the within-epoch adaptation drops the finest contaminated unit
          *        (@c network.raim_surgical_station; used only when @ref networkRaimWithinEpoch).
          *
@@ -6363,6 +6391,7 @@ namespace GnssProcessor {
         bool   network_level_authority_csgf_{false};       ///< LV-6 (SPEC_level_authority_internal): per-epoch fleet CS-GF level census — measure-only, folds nothing; arms the CS advance without the carry; OFF = byte-identical.
         int    network_level_authority_min_n_{10};         ///< LV-6: LOS maturity screen (CS-GF samples since reset).
         int    network_level_authority_min_los_{4};        ///< LV-6: per-station qualifying-LOS floor for the fleet median.
+        bool   network_level_authority_los_dump_{false};   ///< LV-6 G2: emit the census's own per-LOS pierce points + weights to network_level_authority_los.csv so a reference field can be reduced through the IDENTICAL sampling (§4 G2 / §5). Trace-only, own file, INERT unless network_level_authority_csgf_.
         bool   network_clock_monitor_{false};           ///< Per-satellite carried-clock sanity monitor: flag+refloat a sat clock past a physical bound (breaks the multi-hour single-sat lock-in the σ̂0 RAIM is blind to); OFF = byte-identical (no clock withheld from the stash).
         double network_clock_monitor_abs_max_m_{20.0};  ///< |Δδtˢ − median| bound (m): a satellite whose de-meaned clock exceeds this has its carried shared state refloated.
         double network_clock_monitor_jump_max_m_{10.0}; ///< One-epoch clock jump bound (m): a satellite whose clock moves more than this across adjacent stable-datum epochs is refloated.

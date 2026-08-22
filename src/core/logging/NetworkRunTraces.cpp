@@ -49,6 +49,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       raim_redun_trace_path(log_dir_ / "network_raim_redundancy.csv"),
       station_factor_trace_path(log_dir_ / "network_station_factor.csv"),
       level_authority_trace_path(log_dir_ / "network_level_authority.csv"),
+      level_authority_los_trace_path(log_dir_ / "network_level_authority_los.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
       carry_vce_apply_trace_path(log_dir_ / "network_carry_vce_apply.csv"),
       prior_residual_trace_path(log_dir_ / "network_prior_residual.csv"),
@@ -750,6 +751,20 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open level-authority census {}",
                       level_authority_trace_path.string());
+        // LV-6 G2 (§4): the census's OWN sampling, so an offline reference field
+        // is reduced through the identical IPP set and the identical weights
+        // instead of a re-derived all-visible one.  Separate file on purpose —
+        // the census CSV above must stay byte-identical for G3.
+        if (config_.networkLevelAuthorityLosDump()) {
+            level_authority_los_trace.open(level_authority_los_trace_path);
+            if (level_authority_los_trace)
+                level_authority_los_trace
+                    << "week,tow,station,sat,ipp_lat_deg,ipp_lon_deg,mapping,"
+                       "el_deg,v_tecu,weight,n_cs\n";
+            else
+                log->warn("Network: failed to open level-authority LOS dump {}",
+                          level_authority_los_trace_path.string());
+        }
     }
 
     // INC-4: capture the L1/L15 config echoes once (pure getter reads).

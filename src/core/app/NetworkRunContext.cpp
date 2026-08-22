@@ -108,6 +108,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.lvlauth_on = config_.networkLevelAuthorityCsgf();
     k.lvlauth_min_n = config_.networkLevelAuthorityMinN();
     k.lvlauth_min_los = config_.networkLevelAuthorityMinLos();
+    k.lvlauth_los_dump = config_.networkLevelAuthorityLosDump();
     k.clk_mon_on = config_.networkClockMonitor();
     k.clk_mon_abs = config_.networkClockMonitorAbsMaxM();
     k.clk_mon_jump = config_.networkClockMonitorJumpMaxM();

@@ -439,6 +439,10 @@ namespace GnssProcessor {
         /// population).  Light (≤ 1 + n_sta rows/epoch).
         std::ofstream level_authority_trace;
         const std::filesystem::path level_authority_trace_path;
+        /// LV-6 G2: the census's own per-LOS pierce points (own file so the
+        /// census CSV stays byte-identical).  @see GnssConfig::networkLevelAuthorityLosDump
+        std::ofstream level_authority_los_trace;
+        const std::filesystem::path level_authority_los_trace_path;
         /// M2 (LS-VCE): per-hour measured carry-variance components — one row per
         /// (family, constellation) whenever the content hour rolls over.  floor_m2 is
         /// the honest constant-cofactor σ̂ to compare against the hand var_floor;

@@ -4038,6 +4038,19 @@ namespace GnssProcessor {
         network_level_authority_min_los_ =
             jval<int>(json, "network.level_authority_min_los",
                       "network_level_authority_min_los", 4);
+        // LV-6 G2 support (SPEC_level_authority_internal §4): the census's own
+        // per-LOS pierce points, so a reference field (GIM in the field, truth in
+        // sim) can be pushed through the IDENTICAL sampling rather than a
+        // re-derived one.  Trace-only, its own file; INERT without the census.
+        network_level_authority_los_dump_ =
+            jval<bool>(json, "network.level_authority_los_dump",
+                       "network_level_authority_los_dump", false);
+        if (network_level_authority_los_dump_ && !network_level_authority_csgf_) {
+            log->warn("Network (LV-6): network.level_authority_los_dump is set but "
+                      ".level_authority_csgf is OFF — there is no census to dump the "
+                      "pierce points of, so it is INERT this run.");
+            network_level_authority_los_dump_ = false;
+        }
         if (network_level_authority_min_los_ < 1) {
             log->warn("Network (LV-6): network.level_authority_min_los {} < 1 reset to 4.",
                       network_level_authority_min_los_);

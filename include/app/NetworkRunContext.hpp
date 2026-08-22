@@ -187,6 +187,7 @@ namespace GnssProcessor {
         bool lvlauth_on{};
         int  lvlauth_min_n{};
         int  lvlauth_min_los{};
+        bool lvlauth_los_dump{};   ///< LV-6 G2: dump the census's own per-LOS pierce points.
         bool clk_mon_on{};
         double clk_mon_abs{};
         double clk_mon_jump{};
