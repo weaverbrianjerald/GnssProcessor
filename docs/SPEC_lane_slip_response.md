@@ -232,3 +232,26 @@ births skipped and counted (no pre-event lane to preserve).
 (v1's 92 % was the falsification signature); snapped dominated by the reseed
 population with |correction| in the 0.1–2 cyc class; settled GPS EWL ≥ F1's
 70.2 %, target the 98.9 % virgin ceiling; per-band unchanged; ZWD flat.**
+
+### §7.1 v2.1 verdict (`runs/camp60wu_f5c`) — the SEED SITE is the wrong site; rung 3 OPEN at the leveling inject
+
+History fixed (74 no-history vs F5B's 18 399), yet **21 461 of 22 068
+attempts (97 %) still blow the 25-cyc cap** and the 533 applied average
+15.9 cyc — the discrepancy `implied − (pre_lane + Δmw)` is STRUCTURAL and
+its scale matches the x_lin-DEVIATION frame class
+(`SPEC_o2_carry_invariant_accumulator`: state z vs absolute (z+z_lin)/λ,
+median 78.5 cyc).  Working hypothesis: on the leveling lineage the
+per-station ambiguity seed is not the object that carries the lane — the
+LEVELING CARRY (local_carry) re-leveled at the free-epoch INJECT is — and
+the pre-event state value and the fresh seed do not live in one frame the
+lane algebra can difference.  Three counter-caught iterations (v1
+bias-convention, v2 history placement, v2.1 frame) all died BEFORE reaching
+a field arm — the pre-registration + counter discipline working as designed.
+
+**Rung 3 status: OPEN, re-scoped to the leveling-inject site** (apply the
+delta to the CARRY levels at `relevel_free_epoch`'s inject, where the lane
+actually lives).  The knob + counters + MW-history infrastructure stand;
+do NOT arm `relevel_lane_snap` until the inject-site derivation card lands.
+The field lane-snap arm (`_fld63_lanesnap4h.json`) is ON HOLD accordingly;
+the field CONTROL (`_fld63_relevel4h_ctlw.json`) runs regardless — it is
+the standalone field-stability measurement on the wind-up-fixed binary.
