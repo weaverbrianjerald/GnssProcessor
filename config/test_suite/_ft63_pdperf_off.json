@@ -1,0 +1,50 @@
+{
+  "_comment": [
+    "PD-SAFE FOLD CARD - PERF ARM, OFF (3 h, 63 sta, DOY-129, cold).",
+    "",
+    "PURPOSE: close the ONE number still owed by the network.carry_invariant_pd_safe",
+    "promotion row (docs/CONFIG_promotion_ledger.md, 'STILL OWED: fold_minv_ms delta",
+    "< 25 % was never reported'), on the CURRENT VS2026 toolchain.  The archived",
+    "pdfix_off/pdfix_on pair measured it at +51.4 % on the Aug-3 exe, but that predates",
+    "the 2026-08-12 migration and CLAUDE.md's standing rule is regenerate, not re-grade.",
+    "",
+    "SOLE FUNCTIONAL DELTA vs _ft63_pdperf_on.json: network.carry_invariant_pd_safe.",
+    "Everything else is inherited from _ft63_pdfix_off.json -> _ft63_churn_base.json.",
+    "",
+    "WHY PRODUCT + SNAPSHOT OUTPUT ARE DISABLED HERE (and identically in the ON arm):",
+    "this is a TIMING measurement.  Product emission and the 3600 s snapshot writes are",
+    "I/O outside the fold bracket that add machine-load jitter to a number whose bar is",
+    "25 %.  Disabling both in BOTH arms keeps the A/B fair and the box quieter.  It also",
+    "avoids C:/GnssProcessor/runs/pdfix_off/ which no longer exists (runs/ was archived",
+    "to D: on 2026-08-12).  An empty state_snapshot_path additionally means",
+    "networkSnapshotFingerprint is never computed (NetworkRunContext.cpp:559 guards on",
+    "!snap_path.empty()), so the FINGERPRINTED pd_safe knob cannot strand anything -",
+    "both arms are fresh cold convergence by construction.",
+    "",
+    "DURATION IS LOAD-BEARING - DO NOT SHORTEN.  Measured on the archived pair: at 300 s",
+    "the same single knob reads +18.6 % (PASS) because the OFF arm only trips 16.10 % of",
+    "the carried dimension; at 3 h it reads +51.4 % (FAIL) at 85.24 %.  The giant joint",
+    "lane block only goes indefinite by ~ep0122.  A short arm manufactures a false PASS,",
+    "and +18.6 % is itself inside the measured 11-epoch noise floor (ten archived runs",
+    "with byte-identical network_solution.csv spread 641-902 ms, CV 11.9 %).",
+    "NOTE: network.max_duration_s is a PHANTOM key - the loader reads only",
+    "processing.max_duration_s (GnssConfigLoad.cpp:506).  Change duration THERE.",
+    "",
+    "READ THE NUMBER FROM (NetworkTeardown.cpp:238-244, run-end, once per run):",
+    "  Network (D0)   foldDdPriors: per-station-loop ... | M-inverse <N> ms ... | GMG^T ...",
+    "The delta is UNINTERPRETABLE without the INC-0 census line from this OFF arm:",
+    "  'N block-epoch(s) and M row-epoch(s) (P %) folded INERTLY on a failed PD screen'.",
+    "ddMiddleInverseLegacy (NetworkNormalEquations.cpp:170-176) sets M = Zero and returns",
+    "WITHOUT calling inverseFromLdlt, so every inert block-epoch is an O(K^3) explicit",
+    "inverse this arm never performed.  Normalize by inverses actually done, or the",
+    "'< 25 %' bar is measuring work-volume, not arithmetic overhead."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_off.json"
+  ],
+  "network": {
+    "product_output_path": "",
+    "state_snapshot_path": "",
+    "trace_section_timers": true
+  }
+}

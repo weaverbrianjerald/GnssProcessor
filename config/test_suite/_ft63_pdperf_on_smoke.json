@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "PD-SAFE PERF ARM on - 300 s WIRING SMOKE.  NOT A MEASUREMENT.",
+    "",
+    "Its ONLY job is to prove, before committing ~30 min of Release compute, that this",
+    "posture actually PRINTS the run-end readout: the D0 'foldDdPriors: ... M-inverse ...'",
+    "line (NetworkTeardown.cpp:238-244) and the INC-0 'folded INERTLY' census.  Both are",
+    "run-END lines, so a completed short run is the only way to check them.",
+    "",
+    "*** DO NOT QUOTE fold_minv_ms FROM THIS RUN. *** Measured on the archived smoke pair,",
+    "300 s reads +18.6 % where the 3 h arm on the same single knob reads +51.4 %: at 11",
+    "epochs the OFF arm has only tripped 16.10 % of the carried dimension vs 85.24 % at",
+    "360 epochs, because the giant joint lane block only goes indefinite by ~ep0122.",
+    "+18.6 % is ALSO inside the noise floor (ten archived byte-identical 11-epoch runs",
+    "spread 641-902 ms, CV 11.9 %).  A 300 s arm manufactures a false PASS."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdperf_on.json"
+  ],
+  "processing": {
+    "max_duration_s": 300.0
+  }
+}

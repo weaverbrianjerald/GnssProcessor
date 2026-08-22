@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "PD-SAFE FOLD CARD - PERF ARM, ON (3 h, 63 sta, DOY-129, cold).",
+    "",
+    "The armed twin of _ft63_pdperf_off.json.  Sole functional delta between the two:",
+    "network.carry_invariant_pd_safe (true here, absent -> loader default false there).",
+    "See the OFF arm's _comment for the full rationale, the duration warning, and how to",
+    "read the number.  Everything structural is inherited from _ft63_pdfix_on.json ->",
+    "_ft63_churn_base.json; this file only strips product/snapshot I/O so the timing A/B",
+    "is not polluted by writes outside the fold bracket.",
+    "",
+    "EXPECTED, from the archived Aug-3 pair (same posture, same duration):",
+    "  fold_minv_ms   OFF 17088 -> ON 25877   (+51.4 %)",
+    "  install/post-cov  102856 -> 149808     (+45.6 %)",
+    "  epoch-loop wall   811903 -> 893320     (+10.0 %)",
+    "  INC-0 census:  OFF 85.24 % of the carried dimension folded INERTLY;  ON 0.00 %.",
+    "If this rebuild reproduces those RATIOS the mechanism is confirmed on the VS2026",
+    "toolchain; absolute ms will move under MSVC 19.51 and that is expected.",
+    "",
+    "ALSO CAPTURE, in both arms, for the like-for-like normalization:",
+    "  ddfold_folds / ddfold_degen_blocks  (run-end INC-0 line) - the OFF arm skipped the",
+    "  O(K^3) explicit inverse on every degenerate block-epoch, so total fold_minv_ms is",
+    "  NOT comparing equal work.  Cost per inverse actually performed is the honest",
+    "  arithmetic-overhead number; total delta is the honest whole-system number.",
+    "  Report BOTH - the ledger row's '< 25 %' wording does not say which it means."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ft63_pdfix_on.json"
+  ],
+  "network": {
+    "product_output_path": "",
+    "state_snapshot_path": "",
+    "trace_section_timers": true
+  }
+}
