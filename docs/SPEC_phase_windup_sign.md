@@ -894,3 +894,36 @@ biases) and over arc-length leveling horizons — §4's split, reproduced.  So t
 fixture-side discipline cannot be enforced by watching σ̂₀; it is enforced by
 provenance (the `_wu93` fixture suffix + this section), which is the same
 invariant-#4 lesson the product token encodes one layer up.
+
+### §9.10 The NETWORK-producer arm (§9.6 item 1) — EXECUTED 2026-08-22
+
+Three 3 h golden63 GPS laneoff legs (`_wuladder_{corr,off,ship}.json`, 362/362
+emitted each, cold start each — per-arm `state_snapshot_path`, since the
+shipped exe lacks the fingerprint token and a shared snapshot would have let it
+warm-resume asymmetrically).  Exes: corr/off `AA472278…` (windup on/off), ship
+`727A9E96…` (pre-fix, windup on).
+
+- **The one phase-sensitive data-side instrument orders exactly as the slope-2
+  model predicts**: block-Baarda `geo(t_B)` = **2.187 (corr) < 2.215 (off) <
+  2.271 (ship)** — corrected best, shipped worst, ~4 % spread at 3 h.
+- **Null controls behave**: the prires 'cb'/'rxcb' families (CODE-prior
+  residuals — wind-up-free channels) sit flat to slightly reversed (±0.2–2 %),
+  and D5's carry σ̂₀ moves < 1 %.  The signal is confined to the channel the
+  physics says it should load.
+- **Single-leg WIRE comparisons are gauge-noise dominated**: PB med|Δ| after
+  epoch common-mode removal is 25.4 cm for the 2φ pair (corr–ship) vs 22.4
+  (corr–off) and 19.1 (ship–off) — ordered as a wind-up excess on top of a
+  ~19 cm per-leg gauge-realization floor, but nowhere near the clean 2:1:1 of
+  a pure signal.  A wire-frame grade needs matched-gauge processing (same
+  datum realization), not independent legs.
+- Posture note: `network.trace_station_residuals` opens but writes ZERO rows
+  on this carry_invariant chain — the writer rides the LEVELING RAIM pool,
+  which is structurally empty here (the known pool re-host gap).  The σ̂₀
+  ladder above is the working instrument set.
+- The §7 FRACTIONAL-mode loader warn (commit `90e68d3`) fired at runtime on
+  this chain — the field lineage inherits wrapping mode exactly as §7 claims.
+
+Verdict: the network arm is CONSISTENT with the inverted-sign model and the
+fix, with the effect small at 3 h on carry-tension statistics — the USER-path
+ladder (§9, slope 9/9) remains the decisive instrument.  §9.6's "owed network
+arm" is closed as EXECUTED-and-measured, not as a second decisive proof.
