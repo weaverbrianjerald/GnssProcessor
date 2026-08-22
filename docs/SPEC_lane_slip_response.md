@@ -63,16 +63,45 @@ structure.
 
 ## §3 The fix ladder (leverage order), and what each must pre-flight
 
-1. **T4 keep+retap instead of refloat — ALREADY BUILT** (`relevel_retap_statistical`,
-   default-OFF, `SPEC_slip_relevel_walk.md` §8): keeps the arc's level, re-taps
-   variance to 0.25.  It was graded TRUTH-NEUTRAL on ZWD/storm/census (F3≈F2)
-   — but the lane-integer instrument did not exist then, and this SPEC's
-   decomposition predicts it should recover most of the T4 share.
-   **Hypothesis arm running: `runs/camp60wu_f3` (`_camp60wu_f3.json`).
-   Pre-registered: GPS EWL at-own-integer ≥ +10 points over F1's 70.2 % (the
-   T4 share of the deficit); ZWD hourly walk stays flat (F1's 1.85–3.08 band);
-   census unchanged; if EWL moves < +3 the retap's kept level is NOT what the
-   lane needs and rung 2 is the card.**
+1. **T4 keep+retap instead of refloat — RAN, and the gate fired the OTHER way
+   (FALSIFIED as a blanket policy).**  `runs/camp60wu_f3` (`_camp60wu_f3.json`,
+   retap live: 24 870 kept / 462 escalated, 720/720 emitted; the bridge applied
+   33 times — negligible, the retap is the mover):
+
+   | settled (last 25 %) | F1 refloat-always | F3 keep-always |
+   |---|---|---|
+   | GPS EWL(2,5) at own integer | 70.2 % | **54.0 %** |
+   | GPS WL(1,2) | 21.1 % | 13.9 % |
+   | ZWD hourly err rms | 1.85–3.08 flat | 2.20–3.28 flat |
+
+   Blanket keep is 16 points WORSE than blanket refloat on the lane instrument
+   while staying ZWD-NEUTRAL — the §8 "truth-neutral" grade was
+   instrument-limited, not wrong.  The age decomposition explains it: under
+   keep, rows within 5 ep of a response fall to EWL 47.7 % (refloat: 66.6 %)
+   with med|e| 0.544 — **at flag time the flagged arc's level really is wrong
+   more often than a code re-level**, and var 0.25 anchors it.  Both blanket
+   policies lose; the population is heterogeneous and only per-arc EVIDENCE
+   separates it.
+
+   **Rung 1′ — the corroborated retap (BUILT 2026-08-22, default-OFF):**
+   `network.cycle_slip.relevel_retap_corroborate` gates the keep on POSITIVE
+   pre-solve raw-observable continuity — the slip-QC QUALIFY verdicts (measured
+   AND not stepped), the same tri-state the D5-v3 corroboration gate consumes.
+   Unmeasured / stepped / no-evidence arcs take the full erase (invariant #1).
+   Wiring: `NetworkRaim.cpp` keep-branch gate fed by `RawSlipEpoch*` through
+   the seam signature; the knob registers as a slip-QC DECISION card
+   (`SlipQcParams::retap_corr` in `anyConsumer` + `cardsArmed` — without that
+   the qualify pass never fills the verdicts and the gate silently degenerates
+   to refloat-always, the exact trap the D5-v3 auto-arm comment names).
+   Counters both ways (`corr_kept` / `corr_stepped` / `corr_unmeasured`),
+   teardown line prints all three; loader interlocks: corroborate without
+   retap_statistical warns + disarms, and dies with its base under
+   carry_invariant.
+   **Validation arm pre-registered (`_camp60wu_f4c.json` = free_epoch +
+   retap_statistical + corroborate, NO bridge): corr counters nonzero BOTH
+   ways; settled GPS EWL ≥ F1's 70.2 % (must not lose to refloat-always),
+   target toward the 85 %+ virgin band; ZWD flat in F1's band; census
+   unchanged.**
 2. **Band-scoped response**: LLI detections are band-specific and the §2
    other-band class shows vertex-wide refloat costs 10–15 points on bands
    whose truth is continuous.  Refloat only the detected band's level where

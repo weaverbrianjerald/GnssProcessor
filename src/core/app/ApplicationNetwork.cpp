@@ -317,6 +317,9 @@ int Application::runNetwork() {
         sp.iono_cs             = (config_.networkCarryIono()
                                   && config_.networkIonoCarrySource() == "smoothed_gf")
                                  || config_.networkLevelAuthorityCsgf();
+        // Corroborated retap (SPEC_lane_slip_response §3): the SB_RAIM keep
+        // consumes the qualified verdicts, so it must arm the evidence passes.
+        sp.retap_corr          = config_.networkCycleSlipRelevelRetapCorroborate();
         slip_qc.hist.resize(stations.size());
     }
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
@@ -2179,7 +2182,8 @@ int Application::runNetwork() {
             networkPostFitRaim(ctx, config_, log, traces, se,
                                stations, asm_res, est_index_of, present, x_s, est,
                                plan.shared_datum, clock_refloat_sats, retro_flag_sats,
-                               retro_feed, n_arc_refloat_epoch, prires_est);
+                               retro_feed, n_arc_refloat_epoch, prires_est,
+                               &slip_qc.epoch);
         }
         subEnd(SB_RAIM);       // D0b: close block 2 (RAIM)
         subBegin(SB_CLOCKUPD); // D0b block 8: two-state clock update + fault QC + retro-flag feed

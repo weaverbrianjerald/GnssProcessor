@@ -209,6 +209,7 @@ namespace GnssProcessor {
                       "under network.carry_invariant (the leveling local carry is "
                       "superseded and structurally empty there) — disabled.");
             network_cycle_slip_relevel_retap_statistical_ = false;
+            network_cycle_slip_relevel_retap_corroborate_ = false;   // rider dies with its base
         }
 
         // Slant-iono carry (QUEUE 8b) interlocks, deliberately HERE (same Card-1g
@@ -3617,6 +3618,16 @@ namespace GnssProcessor {
         network_cycle_slip_relevel_retap_statistical_ =
             jval<bool>(json, "network.cycle_slip.relevel_retap_statistical",
                        "network_cycle_slip_relevel_retap_statistical", false);
+        //   relevel_retap_corroborate — SPEC_lane_slip_response §3: the keep above
+        //     fires ONLY on POSITIVE pre-solve evidence of arc continuity (slip-QC
+        //     raw MW/GF: measured AND not stepped — the same tri-state the D5-v3
+        //     corroboration gate consumes).  Blanket keep was measured 16 points
+        //     WORSE on settled EWL at-own-integer than blanket refloat, and
+        //     blanket refloat ~29 points worse than response-virgin — only
+        //     evidence separates the flagged population.
+        network_cycle_slip_relevel_retap_corroborate_ =
+            jval<bool>(json, "network.cycle_slip.relevel_retap_corroborate",
+                       "network_cycle_slip_relevel_retap_corroborate", false);
         network_cycle_slip_relevel_retap_var_m2_ =
             jval<double>(json, "network.cycle_slip.relevel_retap_var_m2",
                          "network_cycle_slip_relevel_retap_var_m2", 0.25);
@@ -3630,6 +3641,14 @@ namespace GnssProcessor {
                       "network.phase_leveling (its target is the leveling carry) "
                       "— disabled.");
             network_cycle_slip_relevel_retap_statistical_ = false;
+        }
+        // AFTER the leveling disarm above so it reads the SETTLED base flag.
+        if (network_cycle_slip_relevel_retap_corroborate_
+            && !network_cycle_slip_relevel_retap_statistical_) {
+            log->warn("Network: network.cycle_slip.relevel_retap_corroborate is set "
+                      "but relevel_retap_statistical is OFF (or was disarmed) — "
+                      "there is no keep branch to gate, so it is INERT this run.");
+            network_cycle_slip_relevel_retap_corroborate_ = false;
         }
         if (network_cycle_slip_relevel_free_epoch_ && !network_phase_leveling_) {
             log->warn("Network: network.cycle_slip.relevel_free_epoch needs "

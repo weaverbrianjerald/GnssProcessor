@@ -51,6 +51,8 @@
 #include <string>
 #include <vector>
 
+namespace GnssProcessor { struct RawSlipEpoch; }   // slip/NetworkRawObservables.hpp
+
 namespace spdlog { class logger; }
 
 namespace GnssProcessor {
@@ -142,6 +144,16 @@ struct NetworkRaimCiTallies {
  *                           accumulator is drained in SB_STASH_STATUS, which runs
  *                           after this seam, so the epoch's data side is complete
  *                           when the column is written.
+ * @param slip_ep            THIS epoch's pre-solve slip-QC raw-observable evidence
+ *                           (nullable).  Consulted ONLY by the corroborated retap
+ *                           (network.cycle_slip.relevel_retap_corroborate): the
+ *                           keep branch requires the (station, sat) to be measured
+ *                           AND not stepped — the same tri-state the D5-v3
+ *                           corroboration gate consumes (SPEC_lane_slip_response
+ *                           §3).  nullptr / !computed means no positive evidence
+ *                           exists, so every corroborated keep refuses to the
+ *                           erase (standing invariant #1: a slip response is never
+ *                           suppressed on ABSENCE of evidence).
  */
 void networkPostFitRaim(NetworkRunContext& ctx,
                         const GnssConfig& config_,
@@ -159,6 +171,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         std::set<std::string>& retro_flag_sats,
                         bool retro_feed,
                         int& n_arc_refloat_epoch,
-                        NetworkPriorResidual& prires);
+                        NetworkPriorResidual& prires,
+                        const RawSlipEpoch* slip_ep = nullptr);
 
 } // namespace GnssProcessor

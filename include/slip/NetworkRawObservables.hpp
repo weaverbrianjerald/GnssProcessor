@@ -279,10 +279,18 @@ struct SlipQcParams {
     /// it arms both passes too.
     bool   iono_cs{false};
 
+    // --- Corroborated retap (network.cycle_slip.relevel_retap_corroborate) ---
+    /// The SB_RAIM corroborated keep consumes the qualified verdicts (measured
+    /// AND not stepped), so it arms both passes.  Without this, an armed
+    /// corroborate would find `computed == false` every epoch and refuse every
+    /// keep — a silent degeneration to refloat-always that only the refusal
+    /// counters would reveal (SPEC_lane_slip_response §3).
+    bool   retap_corr{false};
+
     /// True when any consumer needs the raw observables computed this run.
     bool anyConsumer(bool trace_slip_raw) const {
         return trace_slip_raw || lli_corroborate || gap_instrument || bridge_gf
-            || iono_cs;
+            || iono_cs || retap_corr;
     }
 };
 
@@ -434,7 +442,7 @@ struct SlipQcChannel {
     /// True when the raw observables must be computed this run.
     bool armed() const { return static_cast<bool>(utils); }
     /// True when a DECISION card (not merely the trace) is armed.
-    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs; }
+    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.retap_corr; }
 };
 
 /**

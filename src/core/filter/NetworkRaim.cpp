@@ -21,6 +21,7 @@
 #include "filter/StateManager.hpp"            // stations[i].sm->markAmbiguityPendingReseed
 #include "logging/NetworkRunTraces.hpp"       // trace streams + emitEvent
 #include "products/NetworkStateSnapshot.hpp"  // networkWarmupRampLifted
+#include "slip/NetworkRawObservables.hpp"     // RawSlipEpoch (corroborated retap evidence)
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -53,7 +54,8 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         std::set<std::string>& retro_flag_sats,
                         bool retro_feed,
                         int& n_arc_refloat_epoch,
-                        NetworkPriorResidual& prires) {
+                        NetworkPriorResidual& prires,
+                        const RawSlipEpoch* slip_ep) {
     // --- Alias preamble: byte-copies of the former Application::runNetwork alias
     //     block, so the relocated SB_RAIM body below reads the original names. ---
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
@@ -700,6 +702,31 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 config_.networkCycleSlipRelevelRetapStatistical();
             const double retap_var = config_.networkCycleSlipRelevelRetapVarM2();
             const int    retap_streak_max = config_.networkCycleSlipRelevelRetapStreakMax();
+            // SPEC_lane_slip_response §3: corroborated keep.  The wu93 lane-integer
+            // A/B measured BOTH blanket policies wrong — blanket refloat (F1) costs
+            // ~29 points of settled EWL at-own-integer vs response-virgin chords,
+            // and blanket keep (F3) costs a further 16 vs F1 (the kept levels were
+            // wrong at flag time and var 0.25 anchors them).  The flagged population
+            // is heterogeneous; only per-arc EVIDENCE separates it.  Rule (the
+            // D5-v3 tri-state): keep ONLY when the pre-solve raw MW/GF pass
+            // POSITIVELY measured this (station, sat) as continuous — measured AND
+            // not stepped.  Unmeasured, stepped, no-evidence-this-epoch, or the
+            // qualification pass not run at all ⇒ the erase, exactly as without
+            // the retap (invariant #1: never suppress a slip response on absence
+            // of evidence).
+            const bool retap_corr =
+                retap_on && config_.networkCycleSlipRelevelRetapCorroborate();
+            auto retapEvidenceFlat = [&](int i, const std::string& sat,
+                                         bool& was_stepped) -> bool {
+                was_stepped = false;
+                if (!slip_ep || !slip_ep->computed
+                    || static_cast<std::size_t>(i) >= slip_ep->verdict.size())
+                    return false;
+                if (slip_ep->stepped.count({ i, sat })) { was_stepped = true; return false; }
+                const auto& vmap = slip_ep->verdict[static_cast<std::size_t>(i)];
+                const auto vit = vmap.find(sat);
+                return vit != vmap.end() && vit->second.measured;
+            };
             auto refloat_sat_at = [&](int i, const std::string& sat,
                                       bool statistical_arc) -> int {
                 int n = 0;
@@ -724,21 +751,37 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             const auto key = std::make_tuple(i, pa.sat, pa.signal);
                             auto it = local_carry.find(key);
                             if (it != local_carry.end()) {
-                                const double now_s =
-                                    se.time.week * 604800.0 + se.time.tow;
-                                auto& streak = ctx.carry.relevel_retap_streak[key];
-                                streak.second =
-                                    (now_s - streak.first <= 120.0) ? streak.second + 1 : 1;
-                                streak.first = now_s;
-                                if (streak.second < retap_streak_max) {
-                                    it->second.var = std::max(it->second.var, retap_var);
-                                    it->second.coupling.clear();
-                                    ctx.carry.relevel_retapped_prev.insert(key);
-                                    ++ctx.counters.n_relevel_retap_kept;
-                                    ++n;
-                                    continue;   // level kept — no erase, no mark, no queue
+                                bool corr_ok = true;
+                                if (retap_corr) {
+                                    bool was_stepped = false;
+                                    corr_ok = retapEvidenceFlat(i, pa.sat, was_stepped);
+                                    if (!corr_ok)
+                                        ++(was_stepped
+                                               ? ctx.counters.n_relevel_retap_corr_stepped
+                                               : ctx.counters.n_relevel_retap_corr_unmeasured);
                                 }
-                                ++ctx.counters.n_relevel_retap_escalated;
+                                if (corr_ok) {
+                                    const double now_s =
+                                        se.time.week * 604800.0 + se.time.tow;
+                                    auto& streak = ctx.carry.relevel_retap_streak[key];
+                                    streak.second =
+                                        (now_s - streak.first <= 120.0) ? streak.second + 1 : 1;
+                                    streak.first = now_s;
+                                    if (streak.second < retap_streak_max) {
+                                        it->second.var = std::max(it->second.var, retap_var);
+                                        it->second.coupling.clear();
+                                        ctx.carry.relevel_retapped_prev.insert(key);
+                                        ++ctx.counters.n_relevel_retap_kept;
+                                        if (retap_corr)
+                                            ++ctx.counters.n_relevel_retap_corr_kept;
+                                        ++n;
+                                        continue;   // level kept — no erase, no mark, no queue
+                                    }
+                                    ++ctx.counters.n_relevel_retap_escalated;
+                                }
+                                // corroboration refused (or streak escalated): fall
+                                // through to the erase — the un-kept arc takes the
+                                // full refloat exactly as without the retap.
                             } else {
                                 ++ctx.counters.n_relevel_retap_miss;
                             }

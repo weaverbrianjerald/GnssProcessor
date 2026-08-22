@@ -2085,6 +2085,14 @@ namespace GnssProcessor {
         /// streak ESCALATIONS to the erase, and flagged arcs with no live carry.
         long long n_relevel_retap_kept = 0, n_relevel_retap_escalated = 0,
                   n_relevel_retap_miss = 0;
+        /// Corroborated retap (SPEC_lane_slip_response §3): keeps that carried
+        /// positive raw-observable continuity evidence / refusals because the
+        /// raw level STEPPED / refusals because the arc was UNMEASURED (no
+        /// predecessor or the qualification pass did not run).  Both refusal
+        /// counters landing at 0 on a slip-bearing armed run is invariant #4's
+        /// "clean log, dead wiring" — check them, not the keep count.
+        long long n_relevel_retap_corr_kept = 0, n_relevel_retap_corr_stepped = 0,
+                  n_relevel_retap_corr_unmeasured = 0;
         /// Slant-iono carry (QUEUE 8b) run totals — BOTH coupling edges (invariant #7).
         /// injected: priors folded (scope-gated).  kept_through_slip: slip-funnel
         /// entries whose bands were freed (KEEP).  erased_slip: funnel entries not

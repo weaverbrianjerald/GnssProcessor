@@ -1824,6 +1824,16 @@ int networkTeardown(
                   ctx.counters.n_relevel_retap_escalated,
                   config_.networkCycleSlipRelevelRetapStreakMax(),
                   ctx.counters.n_relevel_retap_miss);
+    if (config_.networkCycleSlipRelevelRetapCorroborate())
+        log->info("Network (retap corroboration, SPEC_lane_slip_response): {} keep(s) "
+                  "carried positive raw-observable continuity evidence; {} refused — "
+                  "raw level STEPPED; {} refused — arc UNMEASURED (no predecessor / "
+                  "qualification pass idle).  Refused arcs took the full erase.  "
+                  "BOTH refusal counters at 0 on a slip-bearing run = dead wiring "
+                  "(invariant #4), not clean data.",
+                  ctx.counters.n_relevel_retap_corr_kept,
+                  ctx.counters.n_relevel_retap_corr_stepped,
+                  ctx.counters.n_relevel_retap_corr_unmeasured);
     // QUEUE 8b slant-iono carry: run-end ON-path telemetry at BOTH coupling edges
     // (invariants #4/#7).  Armed with injected=0 on a slip-bearing run is a
     // MISWIRE.  refused_datum is the DECLARED-ZERO open valve (the code-datum

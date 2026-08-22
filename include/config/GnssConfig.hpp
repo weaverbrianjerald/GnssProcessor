@@ -2814,6 +2814,18 @@ namespace GnssProcessor {
         ///        that re-trips relevel_retap_streak_max times in a row falls
         ///        back to the erase.  Fingerprint-exempt, byte-identical off.
         bool networkCycleSlipRelevelRetapStatistical() const { return network_cycle_slip_relevel_retap_statistical_; }
+        /// @brief Corroborated retap (SPEC_lane_slip_response §3 rung 1'): the keep
+        ///        branch above fires ONLY when the pre-solve raw-observable pass
+        ///        (slip-QC MW/GF, the same evidence the D5-v3 corroboration gate
+        ///        consumes) positively measured the arc as continuous this epoch —
+        ///        measured AND not stepped.  Unmeasured or stepped arcs fall
+        ///        through to the erase.  Motivated by the wu93 lane-integer A/B:
+        ///        blanket keep (F3) lost 16 points of settled EWL at-own-integer
+        ///        rate vs blanket refloat (F1) while blanket refloat lost ~29
+        ///        points vs response-virgin chords — the flagged population is
+        ///        heterogeneous and only EVIDENCE separates it.  Requires
+        ///        relevel_retap_statistical; fingerprint-exempt, byte-identical off.
+        bool networkCycleSlipRelevelRetapCorroborate() const { return network_cycle_slip_relevel_retap_corroborate_; }
         /// @brief Retap SET value (m²) — the kept level's loosened confidence.
         double networkCycleSlipRelevelRetapVarM2() const { return network_cycle_slip_relevel_retap_var_m2_; }
         /// @brief Consecutive-retap streak at which an arc falls back to erase.
@@ -6352,6 +6364,7 @@ namespace GnssProcessor {
         double network_cycle_slip_relevel_bridge_gf_sigma_floor_m_{0.01};   ///< v3 E4 σ floor (m) on the empirical GF-step scale.
         double network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_{0.05};///< v3 E3 zenith σ floor (cyc), elevation-mapped at fill.
         bool   network_cycle_slip_relevel_retap_statistical_{false};        ///< SPEC_slip_relevel_walk: keep+retap on statistical RAIM refloats.
+        bool   network_cycle_slip_relevel_retap_corroborate_{false};        ///< SPEC_lane_slip_response: keep ONLY on positive raw-observable continuity evidence.
         double network_cycle_slip_relevel_retap_var_m2_{0.25};              ///< Retap SET variance (m²).
         int    network_cycle_slip_relevel_retap_streak_max_{3};             ///< Consecutive-retap fallback-to-erase streak.
         bool   network_raim_{false};              ///< Post-fit network RAIM (Increment 3, T2): cross-station post-fit residual consensus refloats a carried ambiguity whose slip the pre-processors missed; OFF = byte-identical.
