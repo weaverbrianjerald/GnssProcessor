@@ -1297,3 +1297,24 @@ against the `###` list; the last row is the exception and says so.
 | `network.emit_clock_frame_hold` (Tier 1) + `network.clock_disc_jump_test` (Tier 4) | **§A2 F15** | the 613/1440 internal-clock re-realization census Card CLK-R was written against |
 | `network.raim_within_epoch` (Tier 2) and the RAIM cross-cutting note | **§A2 F1** | the leveled arm's T2 115-opportunities / 0-flags reading and the degenerate constant-1.0000 H σ₀ |
 | ⚠ **NO TIER ENTRY EXISTS** for `network.h_sigma0_prefit_census`, `h_sigma0_classes`, `emit_epoch_status_record`, `serialize_sbasis_contract`, `rx_cb_harvest_demean`, `rx_cb_harvest_screen_z`, `network.mark_refsat_reset_disc` | **§A2 F2 / F3 / F16** | knob contracts, defaults, fingerprint status, and the applied / not-applied promotion dispositions — this row points at APPENDIX PROSE, not at a `###` entry, because none of these seven has one (nor a JSON object; see the membership-drift note in the header). Two of them have SHIPPED into the golden lineage. |
+
+## A3 — the wu93 night (2026-08-21/22): wind-up fix landed; slip-response lane verdicts; golden capture
+
+Session commits `4f49fa2..daadb73` (+ the A3 golden capture itself).  Scoped
+promotions and pins — no loader default moved (standing rule: defaults are a
+fingerprint-migration card).
+
+| knob / posture | verdict | evidence |
+|---|---|---|
+| `cycle_slip.relevel_free_epoch` | **RECOMMEND_SCOPED: ARM on every slipped sim posture** (field arm still blocked on the withhold-era release policy) | wu93 rerun `runs/camp60wu_f1`: walk dead (hourly ZWD 1.85–3.08 flat), 720/720, census 94.0 %; quiet twin ZWD rms 0.252 m / p50 2.5 cm — cleanest this posture has graded |
+| `cycle_slip.relevel_retap_statistical` | **KEEP_OFF — FALSIFIED for lanes** (ZWD-neutral, lane-harmful) | F3: settled GPS EWL at-own-integer 70.2 → **54.0 %** (SPEC_lane_slip_response §3) |
+| `cycle_slip.relevel_retap_corroborate` | **KEEP_OFF — falsified AS ARMED** (raw MW/GF evidence lacks resolution; refuses 1.5 %) | F4C: 59.6 % (SPEC_lane_slip_response §5); knob stays built for a finer evidence source |
+| `cycle_slip.relevel_delta_bridge` | KEEP_OFF (research) | 33 applies / 720 ep — negligible yield, unchanged verdict |
+| wind-up `nominal-wu93` frame | **CODE — landed**, product token + fingerprint + all-consumer interlocks | SPEC_phase_windup_sign §9.7–9.10; pre-fix fixtures/products/snapshots are expected-fail baselines |
+| fixture discipline | **RULE: fixture and producer must sit on the same side of the wind-up fix** | §9.9: the mixed pairing is INVISIBLE to σ̂₀ (absorbed), enforce by provenance (`_wu93` fixtures) |
+| `estimation.accumulate_phase_windup` | OPEN CARD (queued): loader now WARNS on fractional mode; do not flip the default without the migration card | SPEC §7 + §9.5; warn verified live on the golden63 chain |
+
+Applied to the tree: `_simnet60_campaign_template.json` arms `relevel_free_epoch`
+and PINS the three falsified/off knobs at their verdict values with the verdict
+comment (the template's restate-the-default idiom).  Canonical champion arm =
+`_camp60wu_f1.json` on the `_wu93` fixtures; graders unchanged.

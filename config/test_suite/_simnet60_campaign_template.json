@@ -148,7 +148,12 @@
   "cycle_slip": {
    "mw_detect": true,
    "if_phase_td": true,
-   "datum_station_detect": true
+   "datum_station_detect": true,
+   "//relevel": "SPEC_slip_relevel_walk 8 + SPEC_lane_slip_response (2026-08-22): free_epoch is the LOAD-BEARING slip response on slipped sim postures (walk dead, 720/720). The other three are restated at their verdict values so an arm cannot inherit a changed default silently: retap_statistical FALSIFIED for lanes (EWL 70.2->54.0), retap_corroborate FALSIFIED AS ARMED (raw MW/GF evidence lacks resolution, refuses 1.5%), delta_bridge = default-OFF research (33 applies/720ep).",
+   "relevel_free_epoch": true,
+   "relevel_retap_statistical": false,
+   "relevel_retap_corroborate": false,
+   "relevel_delta_bridge": false
   },
   "//qc3": "=== Cold-start hygiene ===",
   "cold_clock_seed": true,
