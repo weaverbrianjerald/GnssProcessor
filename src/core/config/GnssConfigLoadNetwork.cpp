@@ -3628,6 +3628,16 @@ namespace GnssProcessor {
         network_cycle_slip_relevel_retap_corroborate_ =
             jval<bool>(json, "network.cycle_slip.relevel_retap_corroborate",
                        "network_cycle_slip_relevel_retap_corroborate", false);
+        //   relevel_lane_snap — SPEC_lane_slip_response §3 rung 3: every fresh
+        //     per-band seed (birth or re-level) has its non-anchor bands
+        //     re-anchored so the LANES equal the epoch's iono-free MW float
+        //     instead of the difference of two independent code levels.  A seed
+        //     VALUE improvement under unchanged diffuse variance — no stiffness,
+        //     no event edge; works with or without phase_leveling (the seed path
+        //     is universal), so no interlock.
+        network_cycle_slip_relevel_lane_snap_ =
+            jval<bool>(json, "network.cycle_slip.relevel_lane_snap",
+                       "network_cycle_slip_relevel_lane_snap", false);
         network_cycle_slip_relevel_retap_var_m2_ =
             jval<double>(json, "network.cycle_slip.relevel_retap_var_m2",
                          "network_cycle_slip_relevel_retap_var_m2", 0.25);

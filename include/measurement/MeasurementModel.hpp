@@ -353,6 +353,25 @@ namespace GnssProcessor {
             return nlwl_ref_band_;
         }
 
+        /**
+         * @brief Run-length counters for the lane-preserving seed snap
+         *        (network.cycle_slip.relevel_lane_snap — SPEC_lane_slip_response
+         *        §3 rung 3).  Per MeasurementModel instance (= per network
+         *        station); the network teardown sums them across the roster
+         *        (standing invariant #4: an armed mechanism must prove itself
+         *        through nonzero counters, and its skip channels must be
+         *        readable separately).
+         */
+        struct LaneSnapCounters {
+            long long snapped{0};        ///< non-anchor band seeds re-anchored to the MW float
+            long long kept_anchor{0};    ///< …of those, snapped against a KEPT (non-reseeding) band
+            long long fresh_anchor{0};   ///< …of those, snapped against a fresh code-derived anchor
+            long long skip_no_pair{0};   ///< no usable phase+code pair for the MW (either leg)
+            long long skip_wild{0};      ///< |lane discrepancy| above the sanity cap — left unsnapped
+            double    abs_delta_sum_cyc{0.0};  ///< Σ|applied lane correction| (cycles) — the magnitude telemetry
+        };
+        const LaneSnapCounters& laneSnapCounters() const { return lane_snap_; }
+
     private:
         // -------------------------------------------------------------------
         // Core dependencies (non-owning references)
@@ -428,6 +447,9 @@ namespace GnssProcessor {
         /// Refreshed each epoch via @c setProtectedAmbiguityKeys; empty
         /// unless something is held.
         std::set<std::string> protected_ambiguity_keys_;
+
+        /// Lane-preserving seed-snap counters (see @ref laneSnapCounters).
+        LaneSnapCounters lane_snap_;
 
         /// Measurement-differencing strategy (None / BetweenSatellite /
         /// DoubleDifference), selected once from config via

@@ -2826,6 +2826,20 @@ namespace GnssProcessor {
         ///        heterogeneous and only EVIDENCE separates it.  Requires
         ///        relevel_retap_statistical; fingerprint-exempt, byte-identical off.
         bool networkCycleSlipRelevelRetapCorroborate() const { return network_cycle_slip_relevel_retap_corroborate_; }
+        /// @brief Lane-preserving seed snap (SPEC_lane_slip_response §3 rung 3): on
+        ///        every fresh per-band ambiguity seed (birth or post-refloat
+        ///        re-level), re-anchor the non-anchor bands of the (station, sat)
+        ///        so each LANE (between-band cycle difference) equals the
+        ///        iono-free MW float measured from THIS epoch's raw phase+code
+        ///        (EWL-class σ ≈ 0.05 cyc at λ 5.86 m) instead of inheriting the
+        ///        iono-contaminated difference of two independent code levels.
+        ///        The ABSOLUTE level stays the anchor band's code-derived seed and
+        ///        the seed VARIANCE is untouched (still diffuse) — the snap
+        ///        improves an initialization value, it does not add stiffness, so
+        ///        no invariant-#1 event edge is created.  FLOAT-snap, never
+        ///        rounded: rounding would commit an integer through the per-arc
+        ///        MW bias, the killed §8.1 shape.  Default OFF, byte-identical.
+        bool networkCycleSlipRelevelLaneSnap() const { return network_cycle_slip_relevel_lane_snap_; }
         /// @brief Retap SET value (m²) — the kept level's loosened confidence.
         double networkCycleSlipRelevelRetapVarM2() const { return network_cycle_slip_relevel_retap_var_m2_; }
         /// @brief Consecutive-retap streak at which an arc falls back to erase.
@@ -6365,6 +6379,7 @@ namespace GnssProcessor {
         double network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_{0.05};///< v3 E3 zenith σ floor (cyc), elevation-mapped at fill.
         bool   network_cycle_slip_relevel_retap_statistical_{false};        ///< SPEC_slip_relevel_walk: keep+retap on statistical RAIM refloats.
         bool   network_cycle_slip_relevel_retap_corroborate_{false};        ///< SPEC_lane_slip_response: keep ONLY on positive raw-observable continuity evidence.
+        bool   network_cycle_slip_relevel_lane_snap_{false};                ///< SPEC_lane_slip_response rung 3: MW-float lane snap on fresh per-band seeds.
         double network_cycle_slip_relevel_retap_var_m2_{0.25};              ///< Retap SET variance (m²).
         int    network_cycle_slip_relevel_retap_streak_max_{3};             ///< Consecutive-retap fallback-to-erase streak.
         bool   network_raim_{false};              ///< Post-fit network RAIM (Increment 3, T2): cross-station post-fit residual consensus refloats a carried ambiguity whose slip the pre-processors missed; OFF = byte-identical.

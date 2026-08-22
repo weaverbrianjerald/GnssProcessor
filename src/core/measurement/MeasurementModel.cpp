@@ -555,7 +555,13 @@ namespace GnssProcessor {
 
         // Per-band seed/add loop (skipped under NlWl basis — see below).
         if (!nlwl) {
+            const bool lane_snap_on =
+                config_.networkCycleSlipRelevelLaneSnap() && !bssd_active;
             for (const auto& obs : observations) {
+                // Lane snap (SPEC_lane_slip_response §3 rung 3): phase types of
+                // THIS satellite freshly seeded in the loop below.  Consumed by
+                // the per-obs snap pass after the loop.
+                std::vector<std::string> lane_snap_seeded;
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type[0] != 'L') continue;
                     const std::string amb_key = obs.satellite + "_" + ref_type;
@@ -566,6 +572,7 @@ namespace GnssProcessor {
                     bool needs_seed = (existing_idx < 0)
                                    || state_manager_.isAmbiguityPendingReseed(amb_key);
 
+                    if (needs_seed && lane_snap_on) lane_snap_seeded.push_back(ref_type);
                     if (needs_seed) {
                         const Eigen::VectorXd x_now = state_manager_.getStateVector();
                         double seed = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
@@ -608,6 +615,83 @@ namespace GnssProcessor {
                                 bssd_active ? " (SD)" : "");
                         }
                         state_manager_.clearPendingReseed(amb_key);
+                    }
+                }
+
+                // ---- Lane-preserving seed snap (rung 3) -------------------
+                // Re-anchor every band seeded THIS epoch so its lane against
+                // the anchor equals the epoch's iono-free MW float.  Two
+                // independent code-derived levels differ by
+                // (α_a/λ_a − α_b/λ_b)·(I−Î) + noise — the iono-seeded lane
+                // error the wu93 decomposition measured at med 0.22–0.33 EWL
+                // cyc post-response; the MW float measures the same lane at
+                // σ ≈ 0.05 cyc (EWL) with NO iono term.  Anchor preference:
+                // the lowest-band NON-seeding live state (a kept, converged
+                // level — lane continuity through a band-scoped event), else
+                // the lowest seeded band (fresh code anchor).  FLOAT snap —
+                // never rounded (per-arc MW bias makes rounding an integer
+                // commitment, the killed §8.1 shape).  Values only: the seed
+                // variance is untouched, so nothing here is stiff.
+                if (lane_snap_on && !lane_snap_seeded.empty()) {
+                    // All live phase types of this obs, by band character.
+                    auto bandOf = [](const std::string& t) { return t.size() >= 2 ? t[1] : '?'; };
+                    std::sort(lane_snap_seeded.begin(), lane_snap_seeded.end(),
+                              [&](const std::string& a, const std::string& b) {
+                                  return bandOf(a) < bandOf(b);
+                              });
+                    // Anchor: lowest-band live type NOT seeded this epoch…
+                    std::string anchor;
+                    bool anchor_kept = false;
+                    for (const auto& [t, v] : obs.observed) {
+                        if (t.empty() || t[0] != 'L') continue;
+                        if (std::find(lane_snap_seeded.begin(), lane_snap_seeded.end(), t)
+                            != lane_snap_seeded.end()) continue;
+                        if (state_manager_.getAmbiguityIndex(obs.satellite + "_" + t) < 0)
+                            continue;
+                        if (anchor.empty() || bandOf(t) < bandOf(anchor)) anchor = t;
+                    }
+                    if (!anchor.empty()) anchor_kept = true;
+                    else anchor = lane_snap_seeded.front();   // …else lowest fresh seed
+
+                    const double c = Constants::SPEED_OF_LIGHT;
+                    const double lam_a = ppp_utils_.getWavelength(obs.system, anchor, obs.satellite);
+                    const std::string code_a = "C" + anchor.substr(1);
+                    const int idx_a = state_manager_.getAmbiguityIndex(obs.satellite + "_" + anchor);
+                    for (const std::string& b : lane_snap_seeded) {
+                        if (b == anchor) continue;
+                        const double lam_b = ppp_utils_.getWavelength(obs.system, b, obs.satellite);
+                        const std::string code_b = "C" + b.substr(1);
+                        const int idx_b = state_manager_.getAmbiguityIndex(obs.satellite + "_" + b);
+                        if (idx_a < 0 || idx_b < 0
+                            || !std::isfinite(lam_a) || lam_a <= 0.0
+                            || !std::isfinite(lam_b) || lam_b <= 0.0
+                            || !obs.observed.count(code_a) || !obs.observed.count(code_b)) {
+                            ++lane_snap_.skip_no_pair;
+                            continue;
+                        }
+                        const double fa = c / lam_a, fb = c / lam_b;
+                        const double phi_a = obs.observed.at(anchor), phi_b = obs.observed.at(b);
+                        const double p_a = obs.observed.at(code_a), p_b = obs.observed.at(code_b);
+                        // MW float in cycles of the (a,b) lane: N_a − N_b.
+                        const double mw_cyc =
+                            ((fa * phi_a - fb * phi_b) / (fa - fb)
+                             - (fa * p_a + fb * p_b) / (fa + fb)) * (fa - fb) / c;
+                        Eigen::VectorXd x_snap = state_manager_.getStateVector();
+                        const double implied =
+                            x_snap(idx_a) / lam_a - x_snap(idx_b) / lam_b;
+                        const double d = implied - mw_cyc;   // lane discrepancy, cycles
+                        if (!std::isfinite(d)) { ++lane_snap_.skip_no_pair; continue; }
+                        if (std::abs(d) > 25.0) { ++lane_snap_.skip_wild; continue; }
+                        x_snap(idx_b) += d * lam_b;          // lane_new == mw_cyc exactly
+                        state_manager_.setStateVector(x_snap);
+                        ++lane_snap_.snapped;
+                        ++(anchor_kept ? lane_snap_.kept_anchor : lane_snap_.fresh_anchor);
+                        lane_snap_.abs_delta_sum_cyc += std::abs(d);
+                        log_manager_.getLogger("measurement_model")->debug(
+                            "{}Lane snap {}: {}-{} lane re-anchored to MW float "
+                            "(|d| {:.3f} cyc, anchor {}).",
+                            epoch_prefix, obs.satellite, anchor, b, std::abs(d),
+                            anchor_kept ? "kept" : "fresh");
                     }
                 }
             }

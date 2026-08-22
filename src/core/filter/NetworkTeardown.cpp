@@ -10,6 +10,7 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "logging/NetworkRunTraces.hpp"
+#include "measurement/MeasurementModel.hpp"   // laneSnapCounters (rung-3 run-end sum)
 #include "app/Application.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -1824,6 +1825,25 @@ int networkTeardown(
                   ctx.counters.n_relevel_retap_escalated,
                   config_.networkCycleSlipRelevelRetapStreakMax(),
                   ctx.counters.n_relevel_retap_miss);
+    if (config_.networkCycleSlipRelevelLaneSnap()) {
+        long long snapped = 0, kept = 0, fresh = 0, no_pair = 0, wild = 0;
+        double dsum = 0.0;
+        for (const auto& st : stations)
+            if (st.mm) {
+                const auto& lc = st.mm->laneSnapCounters();
+                snapped += lc.snapped; kept += lc.kept_anchor; fresh += lc.fresh_anchor;
+                no_pair += lc.skip_no_pair; wild += lc.skip_wild;
+                dsum += lc.abs_delta_sum_cyc;
+            }
+        log->info("Network (lane snap, SPEC_lane_slip_response rung 3): {} fresh band "
+                  "seed(s) re-anchored to the epoch MW float ({} against a KEPT band, "
+                  "{} against a fresh code anchor; mean |lane correction| {:.3f} cyc), "
+                  "{} skipped with no usable phase+code pair, {} skipped over the 25-cyc "
+                  "sanity cap.  0 snapped on a slip-bearing armed run = dead wiring "
+                  "(invariant #4).",
+                  snapped, kept, fresh, snapped > 0 ? dsum / snapped : 0.0,
+                  no_pair, wild);
+    }
     if (config_.networkCycleSlipRelevelRetapCorroborate())
         log->info("Network (retap corroboration, SPEC_lane_slip_response): {} keep(s) "
                   "carried positive raw-observable continuity evidence; {} refused — "

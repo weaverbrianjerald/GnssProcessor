@@ -167,3 +167,35 @@ losses are (a) rung 2 — vertex-wide responses hitting truth-continuous bands
 integer-snap the EWL lane to its EWL-MW-measured delta (σ ≈ 0.05 cyc
 single-epoch ⇒ a confident snap), bridge-v2 corroboration shape.  Rung 3 is
 the next build; this decomposition (F1/F3/F4C + the age tables) is its brief.
+
+## §6 Rung 3 BUILT (2026-08-22) — the lane-preserving seed snap, pre-registered
+
+`network.cycle_slip.relevel_lane_snap` (default OFF, byte-identical): on every
+fresh per-band ambiguity seed (birth or post-refloat re-level) in the per-band
+seed loop (`MeasurementModel::ensureRequiredStates`), the non-anchor bands of
+the (station, sat) are re-anchored so each lane equals the epoch's IONO-FREE
+MW float — replacing the (α_a/λ_a − α_b/λ_b)·(I−Î) iono-seeded lane error
+(measured med 0.22–0.33 EWL cyc post-response) with the MW measurement
+(σ ≈ 0.05 cyc EWL, ≈ 0.35 WL).  Anchor preference: lowest-band KEPT live
+state (lane continuity through a band-scoped event), else lowest fresh seed.
+**FLOAT snap, never rounded** (per-arc MW bias ⇒ rounding is an integer
+commitment, the killed §8.1 shape).  **Values only — the diffuse seed
+variance is untouched**, so nothing becomes stiff and no invariant-#1 event
+edge is created; skip channels (`no_pair`, `wild` at a 25-cyc cap) and both
+anchor classes are counted per station and summed at teardown (invariant #4).
+BSSD-SD seeding is excluded (different algebra; not the producer path).
+
+Rung-2 note: with the snap ON, even VERTEX-WIDE refloats become
+lane-preserving (all-band events take fresh-anchor snaps — lanes land on MW
+regardless), and band-scoped events take the kept-anchor path automatically —
+so rung 3 subsumes rung 2's LANE benefit.  Rung 2's residual value is
+per-band ABSOLUTE continuity only; narrow the LLI response scope later only
+if F5 leaves points on the table.
+
+**Validation arm pre-registered (`_camp60wu_f5.json` = free_epoch +
+lane_snap, retap and bridge OFF): snapped counter in the 1e4–1e5 class with
+small skip channels; settled GPS EWL at-own-integer ≥ F1's 70.2 % with the
+target the 98.9 % response-virgin ceiling; WL improves materially (0.35-class
+snap vs the 0.97–1.6 inherited error); per-band UNCHANGED (the snap moves
+lanes, not absolutes — a per-band move means the mechanism did something it
+must not); ZWD flat in F1's band; census unchanged.**
