@@ -363,12 +363,14 @@ namespace GnssProcessor {
          *        readable separately).
          */
         struct LaneSnapCounters {
-            long long snapped{0};        ///< non-anchor band seeds re-anchored to the MW float
-            long long kept_anchor{0};    ///< …of those, snapped against a KEPT (non-reseeding) band
-            long long fresh_anchor{0};   ///< …of those, snapped against a fresh code-derived anchor
-            long long skip_no_pair{0};   ///< no usable phase+code pair for the MW (either leg)
-            long long skip_wild{0};      ///< |lane discrepancy| above the sanity cap — left unsnapped
-            double    abs_delta_sum_cyc{0.0};  ///< Σ|applied lane correction| (cycles) — the magnitude telemetry
+            long long snapped{0};          ///< reseeded band seeds re-anchored to pre-lane + MW-measured jump
+            long long kept_anchor{0};      ///< …of those, against a KEPT (non-reseeding) band
+            long long fresh_anchor{0};     ///< …of those, against a reseeding anchor with a captured pre-value
+            long long skip_birth{0};       ///< band BORN this epoch — no pre-event lane to preserve
+            long long skip_no_pair{0};     ///< no usable phase+code pair for the MW (either leg)
+            long long skip_no_history{0};  ///< no pre-event MW sample in the (60, 330] s window
+            long long skip_wild{0};        ///< |correction| above the sanity cap — left unsnapped
+            double    abs_delta_sum_cyc{0.0};  ///< Σ|applied lane correction| (cycles)
         };
         const LaneSnapCounters& laneSnapCounters() const { return lane_snap_; }
 
@@ -450,6 +452,16 @@ namespace GnssProcessor {
 
         /// Lane-preserving seed-snap counters (see @ref laneSnapCounters).
         LaneSnapCounters lane_snap_;
+
+        /// Rolling per-(satellite, band-pair) MW-float history (cycles), newest
+        /// last, ≤ 10 samples ≈ 300 s at 30 s cadence.  The v2 DELTA snap reads
+        /// the pre-event MW as the median of samples aged (60, 330] s — the
+        /// 2-epoch exclusion absorbs detector latency (a T1 flag confirms 0–2
+        /// epochs after the physical slip, so the newest samples may already be
+        /// post-slip).  Pushed at most once per (pair, epoch) — the ensure pass
+        /// can run more than once per epoch on measurement rebuilds.
+        std::map<std::pair<std::string, std::string>,
+                 std::vector<std::pair<double, double>>> lane_mw_hist_;
 
         /// Measurement-differencing strategy (None / BetweenSatellite /
         /// DoubleDifference), selected once from config via

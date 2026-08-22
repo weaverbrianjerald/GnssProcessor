@@ -1826,23 +1826,27 @@ int networkTeardown(
                   config_.networkCycleSlipRelevelRetapStreakMax(),
                   ctx.counters.n_relevel_retap_miss);
     if (config_.networkCycleSlipRelevelLaneSnap()) {
-        long long snapped = 0, kept = 0, fresh = 0, no_pair = 0, wild = 0;
+        long long snapped = 0, kept = 0, fresh = 0, birth = 0,
+                  no_pair = 0, no_hist = 0, wild = 0;
         double dsum = 0.0;
         for (const auto& st : stations)
             if (st.mm) {
                 const auto& lc = st.mm->laneSnapCounters();
                 snapped += lc.snapped; kept += lc.kept_anchor; fresh += lc.fresh_anchor;
-                no_pair += lc.skip_no_pair; wild += lc.skip_wild;
+                birth += lc.skip_birth; no_pair += lc.skip_no_pair;
+                no_hist += lc.skip_no_history; wild += lc.skip_wild;
                 dsum += lc.abs_delta_sum_cyc;
             }
-        log->info("Network (lane snap, SPEC_lane_slip_response rung 3): {} fresh band "
-                  "seed(s) re-anchored to the epoch MW float ({} against a KEPT band, "
-                  "{} against a fresh code anchor; mean |lane correction| {:.3f} cyc), "
-                  "{} skipped with no usable phase+code pair, {} skipped over the 25-cyc "
-                  "sanity cap.  0 snapped on a slip-bearing armed run = dead wiring "
-                  "(invariant #4).",
+        log->info("Network (lane snap v2, SPEC_lane_slip_response rung 3): {} reseeded "
+                  "band(s) re-anchored to pre-lane + MW-measured jump ({} vs a KEPT "
+                  "anchor, {} vs a reseeding anchor; mean |correction| {:.3f} cyc); "
+                  "skipped: {} births (no pre-event lane), {} no phase+code pair, "
+                  "{} no pre-event MW history, {} over the 25-cyc cap.  0 snapped on "
+                  "a slip-bearing armed run = dead wiring (invariant #4); a large "
+                  "wild count = the v1 bias-mismatch shape, investigate before "
+                  "trusting anything downstream.",
                   snapped, kept, fresh, snapped > 0 ? dsum / snapped : 0.0,
-                  no_pair, wild);
+                  birth, no_pair, no_hist, wild);
     }
     if (config_.networkCycleSlipRelevelRetapCorroborate())
         log->info("Network (retap corroboration, SPEC_lane_slip_response): {} keep(s) "

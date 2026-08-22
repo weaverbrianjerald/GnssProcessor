@@ -199,3 +199,36 @@ target the 98.9 % response-virgin ceiling; WL improves materially (0.35-class
 snap vs the 0.97–1.6 inherited error); per-band UNCHANGED (the snap moves
 lanes, not absolutes — a per-band move means the mechanism did something it
 must not); ZWD flat in F1's band; census unchanged.**
+
+## §7 Rung 3 v1 FALSIFIED BY ITS OWN COUNTERS; v2 is the DELTA form
+
+`runs/camp60wu_f5` (v1, absolute-MW snap): 720/720, but **24 368 of 26 372
+snap attempts (92 %) blew the 25-cyc sanity cap** and the 2 004 applied
+(mean |d| 2.96 cyc) left the integer grade statistically at F1 (settled EWL
+70.2 %, traces differ, effect diluted to invisibility).  Root cause, in two
+layers:
+
+1. **Bias-convention mismatch.**  The seed lane is state-bias-CLEANED (the
+   modeled phase subtracts the shared PB states; code biases live in CB/rxCB
+   states), while the raw MW float CARRIES the true satellite+receiver code
+   and phase biases.  d = implied − mw measures the bias gap, not the lane
+   error — tens of cycles through the per-signal phase biases.
+2. **DD-closure break.**  Even where applied, an ABSOLUTE re-reference moves
+   snapped arcs onto the raw-MW convention while unsnapped arcs stay on the
+   state convention; a DD mixing the two sees the convention DIFFERENCE.
+   Partial application is structurally wrong for any absolute snap.
+
+**v2 (the card's original delta design, now implemented):**
+`lane_target = pre_lane + (mw_now − mw_pre)` — the pair's own pre-event lane
+(the erased state values, captured before the overwrite) plus the MW-measured
+lane JUMP across the event.  Every per-(station, sat, pair) bias is constant
+across the event and cancels in BOTH differences, so each arc keeps its own
+convention and snapped/unsnapped arcs mix freely in a DD.  `mw_pre` = median
+of the pair's rolling MW history aged (60, 330] s (the 2-epoch exclusion
+absorbs detector latency); canonical (lo, hi) pair keys with a sign map;
+births skipped and counted (no pre-event lane to preserve).
+
+**F5B pre-registration (same arm config, v2 exe): wild count COLLAPSES
+(v1's 92 % was the falsification signature); snapped dominated by the reseed
+population with |correction| in the 0.1–2 cyc class; settled GPS EWL ≥ F1's
+70.2 %, target the 98.9 % virgin ceiling; per-band unchanged; ZWD flat.**
