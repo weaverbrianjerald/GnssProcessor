@@ -815,3 +815,71 @@ error on a field lineage.  Do not close §7 by assuming this card covered it.
   extrapolation.  Its *differential* ladder is unaffected (it needs no truth); its
   absolute bias is truth-ambiguous at a scale larger than the entire effect.  Quote
   absolute grades from JPLM (0.50 cm SINEX/SIF agreement) and CIT1 (1.38 cm).
+
+### §9.7 Replication + extension — the 5-station 4-arm matrix (2026-08-21, second session)
+
+Independent re-execution with a different harness (`scripts/windup_ab_slice.py`,
+`test_suite_results/windup_ab/`), different exes (shipped `727A9E96…` built at
+`3861718` — the last pre-fix commit — in a worktree; fixed `AA472278…` from the
+fixed working tree), five stations
+(JPLM, ALGO, ALIC, ABPO, ZIMM — three not in §9's set), daily static PPP
+GPS+Galileo on 2024-129 vs ITRF2020 SINEX, warm-up 1800 s.  Four arms close the
+loop the ladder's three cannot: `shipped_off` vs `fixed_off` is a SAME-SOURCE
+identity gate across the two binaries.
+
+- **Identity gate: EXACT.**  `shipped_off ≡ fixed_off` in every metric at every
+  station (3D-RMS 4.83/11.67/3.70/5.67/2.37 cm) — the sign is the only mover
+  between the two builds on the user path.
+- **Horizontal RMS (the channel wind-up actually loads; cm):**
+
+  | arm | JPLM | ALGO | ALIC | ABPO | ZIMM | mean |
+  |---|---|---|---|---|---|---|
+  | shipped_on  | 2.1 | 1.9 | 4.4 | 6.0 | 1.5 | 3.18 |
+  | off (both)  | 1.1 | 1.2 | 3.1 | 4.3 | 1.6 | 2.26 |
+  | fixed_on    | 1.0 | 0.7 | 0.8 | 2.7 | 1.3 | 1.30 |
+
+  `fixed_on` beats OFF at **5/5** stations; `shipped_on` is worse than OFF at
+  4/5 (ZIMM ~tie) — the §8 item 1 shape, now at five geometries.  The East bias
+  collapses under the fix (ALIC −4.1 → −0.7 cm, ABPO −5.7 → −2.1 cm).
+- **§9.1's caveat reproduces**: in 3D at JPLM, `fixed_on` (5.16 cm) > OFF
+  (4.83 cm) — the `v·û` geometry, not a counter-signal; JPLM's H-RMS still
+  improves (1.1 → 1.0 cm).  3D is diluted by arm-invariant vertical biases
+  (ALGO carries +11.5 cm U in all four arms).
+
+### §9.8 §8 item 2 CLOSED — the contract now covers every consumer path
+
+The `kWindUpYawModelId = "nominal-wu93"` token (S-record field 3) is pinned by
+the BINARY, not adopted from the file, on all three consumer entry points:
+
+- `ApplicationRealtime.cpp` `checkConsumerContract` — pin at the expectation
+  seed; the check now runs on EVERY consuming posture (previously gated on the
+  `network_consumer` profile, leaving the legacy default-flags tail silent),
+  and an S-less (v1) wire draws a one-shot UNVERIFIABLE warn instead of
+  default-matching silently.
+- `ApplicationConsumerReplay.cpp` — previously read the contract and never
+  called `checkContract` at all: the offline replay driver, the path most
+  exposed to archived pre-fix products, consumed them with zero trip.  Now
+  adopts the file contract pivot-less, pins the wind-up token, hard-warns
+  (never aborts) on mismatch, and warns on a v1 wire.
+- `networkSnapshotFingerprint` (`NetworkRunContext.cpp`) — the token is in the
+  warm-resume fingerprint, so resuming a pre-fix snapshot cold-starts (or, on
+  require-armed lineages, hard-errors LOUDLY — intended).
+
+Ops consequences, both intended and both by design LOUD:
+- Every stored pre-fix product / golden byte-cert hash (e.g. the
+  `_camp60_bytecert*` captures, exe `919bb885`) is now an **expected-fail**
+  baseline — the fix is solve-affecting on every path.  Re-capture, do not
+  re-grade.
+- Live snapshots on disk written pre-fix will not warm-resume across the fix
+  (8 present on 2026-08-21).
+
+### §9.9 The sim is frame-consistent again — fixtures regenerated
+
+`runs/simnet60_campaign_wu93` + `runs/simnet60_quiet_wu93` regenerated with the
+fixed simulator (`21C2DCD0…`).  A pre-fix fixture consumed by a fixed producer
+carries −φ injected vs +φ modelled = a 2φ_wu band-common phase error in every
+observation — the same mismatch class the product token guards, one layer down.
+Any sim arm that mixes a pre-fix fixture with a post-fix producer (or vice
+versa) is confounded; the fixture and the producer must sit on the same side of
+the fix.  (Same-side pairs cancel identically — §2 stands: the sim remains
+structurally blind to the sign itself.)

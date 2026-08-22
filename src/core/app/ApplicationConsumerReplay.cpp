@@ -39,6 +39,7 @@
 #include "app/Application.hpp"
 
 #include "config/GnssConfig.hpp"
+#include "filter/NetworkSbasis.hpp"   // kWindUpYawModelId (wind-up model revision pin)
 #include "logging/LogManager.hpp"
 #include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"
@@ -180,6 +181,48 @@ int Application::runConsumerReplay() {
                   file_contract.apriori_product_id, file_contract.disc_threshold_m,
                   file_contract.code_bias_jump_test ? "on" : "off",
                   file_contract.emit_clock_disc ? "on" : "off");
+
+    // Contract interlock (mirrors ApplicationRealtime's checkConsumerContract).
+    // The expectation ADOPTS the file's own contract pivot-less, then pins the
+    // wind-up model revision to what THIS BINARY implements — so the effective
+    // comparison here is exactly the convention the CODE fixes, not the ones the
+    // operator chooses.  This driver's whole purpose is grading already-written
+    // product streams, which makes it the path MOST exposed to pre-fix products
+    // (windup_id "nominal": satellite clocks and phase biases that absorbed
+    // +2*phi_wu).  Replaying one into a corrected consumer is a silent
+    // phase-frame mismatch — degraded integer recovery that would be
+    // misattributed to product quality — unless it is named here.  HARD-WARN,
+    // never abort: grading a legacy leg on purpose stays possible, but never
+    // silently.  See docs/SPEC_phase_windup_sign.md §8 item 2.
+    if (file_contract.present) {
+        SbasisContract replay_expectation = file_contract;
+        replay_expectation.decl.clock_pivot_sat.clear();   // pivots evolve
+        replay_expectation.decl.windup_yaw_model_id = kWindUpYawModelId;
+        std::vector<std::string> mismatches;
+        if (NetworkProductReader::checkContract(file_contract, replay_expectation,
+                                                &mismatches)) {
+            log->info("Consumer replay: S-basis contract verified (windup model '{}').",
+                      file_contract.decl.windup_yaw_model_id);
+        } else {
+            std::string joined;
+            for (const auto& m : mismatches) {
+                if (!joined.empty()) joined += "; ";
+                joined += m;
+            }
+            log->warn("Consumer replay: S-basis contract MISMATCH — the product was "
+                      "emitted under a different convention than this binary "
+                      "implements; the replayed frame is incompatible and every "
+                      "position/AR grade downstream is confounded.  Continuing "
+                      "anyway (legacy-leg grading), but do NOT read this run as a "
+                      "product-quality measurement.  {}",
+                      joined);
+        }
+    } else {
+        log->warn("Consumer replay: product file carries no S-basis contract (v1 "
+                  "wire) — conventions are UNVERIFIABLE, including the carrier-"
+                  "phase wind-up model revision (this binary: '{}').  A pre-fix "
+                  "product is indistinguishable here.", kWindUpYawModelId);
+    }
 
     // --- Phase 3: the consumer's observations --------------------------------
     // MultiRinexSync with a ONE-station roster: the consumer IS the reference, so

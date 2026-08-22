@@ -473,15 +473,20 @@ int Application::runRealTime() {
 
     // --- RTA-7(c): startup / per-change S-contract check ---------------------
     // When the tail sees a contract (v2 header S line, or an RTA-5 re-broadcast
-    // after a mid-file join) and the consumer profile is on, cross-check it
-    // against the consumer's declared expectation and HARD-WARN (never abort) on
-    // mismatch — once per contract CHANGE, keyed on the convention fields
-    // (pivot-only refreshes are routine handovers, not contract changes).  The
-    // expectation is pivot-less (like the closed-loop per-receipt check): the
-    // FIRST received contract seeds it, overlaid with the profile's optional
-    // expect_* pins so a declared pin mismatches even on first receipt.
+    // after a mid-file join), cross-check it against the consumer's declared
+    // expectation and HARD-WARN (never abort) on mismatch — once per contract
+    // CHANGE, keyed on the convention fields (pivot-only refreshes are routine
+    // handovers, not contract changes).  The expectation is pivot-less (like
+    // the closed-loop per-receipt check): the FIRST received contract seeds it,
+    // overlaid with the profile's optional expect_* pins so a declared pin
+    // mismatches even on first receipt.  The check runs on EVERY consuming
+    // posture, not just under the network_consumer profile: the legacy
+    // default-flags tail (profile off) consumes clocks and biases all the same,
+    // and the wind-up model-revision pin below is a property of the BINARY, not
+    // of the operator profile — a pre-fix product must trip it on either path.
     SbasisContract contract_expectation;
     bool           have_contract_expectation = false;
+    bool           warned_contract_absent    = false;
     std::string    last_contract_fp;
     auto contractFp = [](const SbasisContract& c) {
         // RTA-12: the identity fields (frame/cepoch/atx/oref) are convention
@@ -635,10 +640,25 @@ int Application::runRealTime() {
                                "(store size {}).",
                                new_products.size(), network_store->size());
                     engine.notifyProductsAdvanced();   // RTA-6(d): product-arrival wake
-                    if (consumer_profile_on)
-                        for (const auto& rec : new_products)
-                            if (rec.contract_refresh.present)
-                                checkConsumerContract(rec.contract_refresh);
+                    for (const auto& rec : new_products)
+                        if (rec.contract_refresh.present)
+                            checkConsumerContract(rec.contract_refresh);
+                    // A v1 / S-less wire never reaches checkConsumerContract, so
+                    // its conventions — the wind-up model revision above all —
+                    // would silently default-match.  Say so exactly once: a
+                    // pre-fix product (windup_id "nominal", +2*phi_wu absorbed
+                    // into its clocks and phase biases) is indistinguishable on
+                    // such a wire.  See docs/SPEC_phase_windup_sign.md §8.
+                    if (last_contract_fp.empty() && !warned_contract_absent) {
+                        warned_contract_absent = true;
+                        log->warn("Network products: stream carries no S-basis "
+                                  "contract (v1 wire) — conventions are "
+                                  "UNVERIFIABLE, including the carrier-phase "
+                                  "wind-up model revision (this binary: '{}'). "
+                                  "A pre-fix product is indistinguishable here; "
+                                  "re-emit with a v2 producer to make the frame "
+                                  "checkable.", kWindUpYawModelId);
+                    }
                 }
                 // RTA-10: forward the producer's epoch-status heartbeat (H record) into
                 // the owned store.  Read the tail's latest-status surface — NOT the
