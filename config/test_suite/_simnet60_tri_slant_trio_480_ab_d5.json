@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "D5 A/B — TREATMENT arm.  Identical to _..._ab_base.json except that the Card-4 D5",
+    "innovation gate is armed.",
+    "",
+    "WHY.  The §13.7 trio arm runs carry_invariant with q_z = 0 (random-constant DDs) and",
+    "the D5 gate OFF.  Its pre-fit slip detectors (mw_detect + if_phase_td) ARE armed, so",
+    "the carry is not unguarded in the invariant-#1 sense — but the fixture injects ZERO",
+    "cycle slips (runs/simnet60_tri/*/truth_slips.csv: 61 files, 0 data rows), so those",
+    "detectors are idle by construction.  D5 is the only response that fires on MODEL",
+    "ERROR rather than on a detected raw slip, and with it off a model-error excursion has",
+    "no in-epoch response while q_z = 0 leaves it no way to leak off either.",
+    "",
+    "HYPOTHESIS.  The ~1720 cyc per-band runaway (vs 8.0-9.4 cyc for the float twin) is a",
+    "model-error divergence D5 would re-tap.  If arming D5 collapses it, §13.7's runaway is",
+    "partly an artifact of the posture; if it does not move, §13.7 is measuring the",
+    "estimator and the attribution stands.",
+    "",
+    "Grade both arms with scripts/simnet_amb_integer.py on the settled window (--last-frac",
+    "0.25), same build, and compare per-band med|e| and EWL-at-true-integer."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_tri_slant_trio_480.json"
+  ],
+  "network": {
+    "carry_invariant_innov_gate": true,
+    "product_output_path": "C:/GnssProcessor/runs/ab_d5_on/products.txt"
+  }
+}

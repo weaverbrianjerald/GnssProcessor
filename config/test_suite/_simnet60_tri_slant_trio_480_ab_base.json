@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "D5 A/B — CONTROL arm.  Byte-for-byte the posture of _simnet60_tri_slant_trio_480",
+    "(the SPEC_synthetic_minimum_network §13.7 settled-trio RUNAWAY arm), re-run on the",
+    "CURRENT Release build into a fresh run dir so the contrast is a SAME-BUILD one",
+    "(standing invariant #6).  The original runs/simnet60_tri_slant_trio_480/ is left",
+    "untouched as the historical §13.7 record; it was produced by an older build and a",
+    "regrade on a newer one already moved the headline (~1720 -> ~2280 cyc), which is",
+    "exactly why this control is re-run rather than reused.",
+    "",
+    "Single knob against _..._ab_d5.json: network.carry_invariant_innov_gate."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_tri_slant_trio_480.json"
+  ],
+  "network": {
+    "product_output_path": "C:/GnssProcessor/runs/ab_d5_base/products.txt"
+  }
+}

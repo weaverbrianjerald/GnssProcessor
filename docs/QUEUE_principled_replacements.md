@@ -40,8 +40,19 @@ re-ranking is expressed HERE rather than by renumbering.
 > exonerated and the plateau is the per-epoch exchange equilibrium under
 > mid-arc level lock-in.  `SPEC_iono_carry_8b.md` §6.5/§6.6; execution entry
 > in §8(b) below.  Everything default-OFF, byte-certified.  The next 8-family
-> card is the O2 / carry_invariant-lineage accumulator, unranked until its
-> derivation exists.**
+> card was the O2 / carry_invariant-lineage accumulator — **DERIVED AND CLOSED
+> UNBUILT 2026-08-21, `docs/SPEC_o2_carry_invariant_accumulator.md`, never
+> ranked.  Three independent sufficient reasons: the channel already exists
+> (mech-B, τ = 900 s, armed on the whole pdfix lineage, P3 measured its removal
+> null); two of the three iono-error subspaces are EXACT null directions of the
+> data rows (gauge, not estimable — they belong to item 5 / LV-6); and the third
+> is floored at σ_eff 0.35–0.45 cyc, invariant across five representation
+> interventions × two q_z values × two lane arms.  The 8-family is CLOSED.**
+> Its one forward lead is not an 8-family question: the measured cross-band
+> residual direction is **common-cycle, not ionospheric** (the iono direction has
+> never been observed), matching the truth-graded equal-in-cycles component of
+> `SPEC_synthetic_minimum_network.md` §13.6 with phase-windup as the named
+> candidate.**
 >
 > **Item 9 — EXECUTED 2026-08-20 (same session): the walk is DEAD under
 > `network.cycle_slip.relevel_free_epoch` (+ `relevel_delta_bridge`), built,
@@ -864,8 +875,13 @@ byte-recertified); never quote its numbers.  **Closure: three interventions (chu
 event-time code re-draw, per-epoch code pinning) all leave the plateau — it is not event-fed; it
 is the stationary equilibrium of the per-epoch ZWD⇄iono⇄level exchange under mid-arc zero-q level
 lock-in.**  Residues: the O2 / carry_invariant-lineage accumulator (mid-arc transport NOT the
-leveling carry) needs its own derivation card before ranking; the CS-GF kernel stays as
-instrumentation; quiet-twin CS-GF arm dropped as moot; the plateau keeps its owner here.
+leveling carry) — **DERIVED AND CLOSED UNBUILT 2026-08-21,
+`docs/SPEC_o2_carry_invariant_accumulator.md`; never ranked, and it closes the 8-family.  Note
+its §1: BOTH ingredients of the mechanism named in this paragraph (the zero-q level AND the ZWD
+carry) are absent on the carry_invariant posture — the ZWD carry rides `carry_warm` and
+`phase_leveling` is absent from the whole `_ft63_*`/`_ext63_*` family — so the plateau as stated
+has no counterpart there and the successor question was never the one filed.** The CS-GF kernel
+stays as instrumentation; quiet-twin CS-GF arm dropped as moot; the plateau keeps its owner here.
 
 ---
 

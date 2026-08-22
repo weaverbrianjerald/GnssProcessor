@@ -419,9 +419,16 @@ DROPPED as moot (a neutrality certification of a mechanism no posture will
 arm).  The CS-GF kernel itself (`networkIonoCsUpdate` + the RawSlipObs GF
 fields) stays: it is level-independent instrumentation with unit-pinned
 semantics, and any future per-LOS work wants it.  The surviving next question
-belongs to the O2 / `carry_invariant`-lineage card (scope=always on a
-representation whose mid-arc transport is NOT the leveling carry), plus the
-mechanism question §6.5(3) opens — none of it in this card's scope.  The
+belonged to the O2 / `carry_invariant`-lineage card (scope=always on a
+representation whose mid-arc transport is NOT the leveling carry) — **DERIVED
+AND CLOSED UNBUILT 2026-08-21, `SPEC_o2_carry_invariant_accumulator.md`.  ⚠ Read
+its §1 before quoting this section's mechanism forward: on the `carry_invariant`
+posture the ZWD carry is INERT (it rides `carry_warm = pl_on && …`) and the
+leveling carry is structurally empty, so BOTH ingredients of the ZWD⇄iono⇄level
+equilibrium named above are absent there.  The 8-family is closed; the one live
+lead is §7 of that card — the measured cross-band residual direction is
+common-cycle, not ionospheric.**  Plus the mechanism question §6.5(3) opens —
+none of it in this card's scope.  The
 session's validated survivors are `relevel_free_epoch` (load-bearing),
 bridge v3 (§8.3 — 74 % yield, 0 integer-class wrong), and the §6.4 field-smoke
 σ̂₀ −29 % with its ≥4 h escalation owed.

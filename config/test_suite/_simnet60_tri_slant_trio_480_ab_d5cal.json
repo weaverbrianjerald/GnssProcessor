@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "D5 A/B — TREATMENT arm 2, CALIBRATED gate.  Identical to _..._ab_d5.json plus",
+    "network.carry_invariant_innov_calibrate.",
+    "",
+    "WHY THIS ARM EXISTS.  The uncalibrated arm (_ab_d5.json) fired 140126 innovation",
+    "flags over 480 epochs against 960 carried DDs — ~292/epoch, driving chord births",
+    "3984 -> 143405 and slip refloats 1956 -> 141377.  That is not a gate screening a",
+    "runaway, it is the carry being dismantled and rebuilt every epoch, so any grade",
+    "improvement there is the carry getting OUT OF THE WAY (regressing toward the float",
+    "twin) rather than the runaway being caught.  The loader's own posture ledger names",
+    "the cause: raw formal Cov(v) is 10-30x optimistic (M2), so the default k=4 is right",
+    "ONLY with innov_calibrate; on raw formal covariance the field value is k=10.",
+    "",
+    "This arm therefore tests the gate as it is meant to be armed.  Read the run-end D5",
+    "flag count and the birth/refloat counters FIRST: if they are still ~100x the",
+    "control's, the gate is still dismantling rather than screening and the grade cannot",
+    "be attributed to screening (standing invariant #4)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_simnet60_tri_slant_trio_480.json"
+  ],
+  "network": {
+    "carry_invariant_innov_gate": true,
+    "carry_invariant_innov_calibrate": true,
+    "product_output_path": "C:/GnssProcessor/runs/ab_d5_cal/products.txt"
+  }
+}

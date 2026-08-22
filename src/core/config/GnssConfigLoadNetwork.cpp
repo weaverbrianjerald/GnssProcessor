@@ -6755,6 +6755,98 @@ namespace GnssProcessor {
                        "carry_invariant or disable the innovation gate.");
             return false;
         }
+        // ---------------------------------------------------------------------
+        // Standing invariant #1, applied to the Card-4 invariant DD carry.
+        // ---------------------------------------------------------------------
+        // The carried z is a stiff time-linked quantity: the recursion is a Kalman
+        // filter with Φ = I on z, and at the shipped default q_z = 0.0 it is a pure
+        // random CONSTANT.  Invariant #1 says such a quantity MUST have a wired
+        // event response before an ON field run — "erase, refloat, or re-tap".
+        //
+        // What actually counts as that response for THIS carry (nothing else does):
+        //   * the pre-fit raw detectors — network.cycle_slip.mw_detect (wide-lane +
+        //     LLI) and network.cycle_slip.if_phase_td (IF-phase triple difference).
+        //     Both drain into carry_slipped_ambs, which networkBuildCarryDdPriors
+        //     reads via ambSlipped() to re-tap the chord from a diffuse prior.  The
+        //     drain is guarded by `if (carry_invariant)` alone, so it is live from
+        //     epoch 1 and does NOT need the innovation gate.
+        //   * the post-fit D5 innovation gate — network.carry_invariant_innov_gate —
+        //     which re-taps in-epoch and enters the funnel for the next one.  D5 is
+        //     the only response that fires on MODEL ERROR rather than on a detected
+        //     raw slip, so it covers a failure mode the pre-fit detectors cannot see.
+        //
+        // q_z is deliberately NOT accepted as a response.  It adds q_z·dt to Pᶻ's
+        // DIAGONAL only (NetworkInvariantCarryDriver::beginEpoch); it never moves the
+        // carried mean and never touches the off-diagonals that pin a stale value in
+        // place, and it is applied identically to slipped and clean chords.  That is
+        // undirected decay, not erase/refloat/re-tap — a q_z > 0 posture is leaky,
+        // not guarded, which is exactly the distinction invariant #1 was written to
+        // stop us from blurring.
+        //
+        // turbo_edit is NOT accepted either, even though the phase-leveling auto-arm
+        // in loadNetworkSlipDetectors_ counts it as a pre-fit detector.  Under
+        // carry_invariant its PASS-A branch takes the repair arm INSTEAD of collecting
+        // MW refloat candidates, and the repair list it produces is consumed against
+        // the phase-leveling LOCAL carry — the one carry_invariant supersedes.  It
+        // therefore contributes nothing to carry_slipped_ambs.  A leveling config that
+        // arms turbo_edit alone satisfies that auto-arm and still leaves this carry
+        // with no response; naming it here is what closes that seam.
+        //
+        // Relation to the POSTURE BUNDLE "zero-q phase memory + slip response"
+        // (GnssConfigNetworkPosture.cpp:595).  That row already names this invariant,
+        // but it is an INFO line inside the once-per-run posture dump and its companion
+        // list is the two raw detectors ONLY — so it reports "0/2 companions armed" on
+        // the 107 configs whose wired response is the D5 gate, and a reader who has
+        // learned to skim it past those false positives will skim it past a real one.
+        // This interlock is the precise complement: WARN severity, D5 counted as the
+        // response it is, turbo_edit explicitly refused, and zero false positives.
+        //
+        // WARN, not reject, and no state change: the solve stays byte-identical
+        // (invariant #6) and no loader DEFAULT moves.  Measured over the whole config
+        // corpus (1004 files resolved through their "extends" chains, not grepped),
+        // 633 arm carry_invariant and ZERO reach this branch — 526 carry a pre-fit
+        // detector and 107 rely on the D5 gate alone.  The invariant holds today by
+        // convention across every config rather than by construction; this makes the
+        // absence of a response impossible to reach silently.
+        if (network_carry_invariant_ && !network_cycle_slip_mw_detect_
+            && !network_cycle_slip_if_phase_td_ && !network_carry_invariant_innov_gate_) {
+            log->warn("Network (Card 4, standing invariant #1): network.carry_invariant carries "
+                      "the DD cycle basis as a stiff time-linked state (q_z = {:g} m²/s) but NO "
+                      "event response is wired — network.cycle_slip.mw_detect and "
+                      ".cycle_slip.if_phase_td are both off, so carry_slipped_ambs is never fed, "
+                      "and network.carry_invariant_innov_gate is off, so there is no D5 re-tap "
+                      "either.  An un-screened slip does not degrade this carry gracefully: the "
+                      "post-slip phase is self-consistent with the SLIPPED integer, so the stiff "
+                      "carry does not fight the slip, it LOCKS IT IN and the tension is absorbed "
+                      "by the clock and iono states.  This posture is NOT field-runnable.  Arm "
+                      "network.cycle_slip.mw_detect (the robust default — wide-lane + LLI, needs "
+                      "no a-priori position), and/or .cycle_slip.if_phase_td, and/or "
+                      "network.carry_invariant_innov_gate.  NOTE turbo_edit does NOT satisfy this "
+                      "requirement under carry_invariant (it suppresses MW refloat collection and "
+                      "repairs only the superseded leveling carry), and neither does a nonzero "
+                      "q_z — that inflates Pᶻ's diagonal without moving the carried mean, which "
+                      "is decay, not an event response.",
+                      network_carry_invariant_qz_);
+        } else if (network_carry_invariant_ && network_carry_invariant_qz_ <= 0.0
+                   && !network_carry_invariant_innov_gate_) {
+            // Response present, but it is pre-fit-detector-ONLY on a q_z = 0 carry.
+            // Two gaps remain open and both are worth naming before a grading run:
+            // a slip the raw detectors miss has no second line of defence, and a
+            // MODEL-ERROR excursion (D5's target, not the detectors') has none at all.
+            // This is the posture SPEC_synthetic_minimum_network §13.7's settled-trio
+            // arm was measured on.
+            log->warn("Network (Card 4, standing invariant #1): network.carry_invariant is armed "
+                      "with q_z = 0 (random-constant DDs) and network.carry_invariant_innov_gate "
+                      "OFF, so the ONLY event response on the carry is the pre-fit raw detector "
+                      "drain (mw_detect={}, if_phase_td={}).  That covers DETECTED slips and "
+                      "nothing else: a missed slip has no second line of defence, and a MODEL-"
+                      "ERROR excursion — which is what the D5 innovation gate exists to catch — "
+                      "has no response at all, while q_z = 0 means the carry cannot even leak "
+                      "such an excursion off.  Legitimate as a research contrast; before grading "
+                      "an integer or level channel on this posture, consider arming "
+                      "network.carry_invariant_innov_gate so the runaway mode is instrumented.",
+                      network_cycle_slip_mw_detect_, network_cycle_slip_if_phase_td_);
+        }
         // Card 4 (M1) PD-safe DD fold: every mechanism it changes — the fold's middle
         // inverse, the posterior read-back, the degenerate-block rebirth, the restore
         // guard — lives inside the invariant carry.  Without carry_invariant there is no

@@ -18,9 +18,12 @@
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 
+#include <spdlog/sinks/ostream_sink.h>
+
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -2309,5 +2312,169 @@ TEST(NetworkExternalSatCodeBiasConfig, RejectsBrdcRtsApriori) {
                     "    \"apriori_source\": \"brdc_rts\",\n"));
     GnssConfig cfg;
     EXPECT_FALSE(cfg.loadFromJson(p, log));
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// ---------------------------------------------------------------------------
+// Card 4 (M1), standing invariant #1: the invariant DD carry's event response.
+// ---------------------------------------------------------------------------
+// The carried z is stiff (Φ = I, and q_z = 0 by default ⇒ a random CONSTANT), so
+// invariant #1 requires a wired erase/refloat/re-tap before an ON field run.  For
+// THIS carry that means a pre-fit raw detector (network.cycle_slip.mw_detect /
+// .if_phase_td, which drain into carry_slipped_ambs) or the post-fit D5 gate
+// (network.carry_invariant_innov_gate).  The interlock is WARN-only and changes no
+// state, so the solve stays byte-identical — which means it can only be asserted
+// through the log.  These tests attach an in-memory sink to the loader's own
+// "gnss_config" logger to do that.
+namespace {
+
+/// Result of a load performed with the loader's WARN stream captured.
+struct CapturedLoad {
+    bool        ok{false};   ///< What loadFromJson returned.
+    std::string text;        ///< Everything the "gnss_config" logger emitted.
+    GnssConfig  cfg;         ///< The loaded config, for state-change assertions.
+};
+
+/// Load @p p, capturing the "gnss_config" logger into a string.
+///
+/// getLogger() before initialize() hands back a TRANSIENT console-only logger
+/// (LogManager.hpp:110-126), so a sink attached to it would not be the one the
+/// loader writes through — the manager has to be initialized first.
+/// @p tag must be unique per call: initialize() opens gnss_config.log in @p dir and
+/// re-initializing into a directory whose previous handle is still open throws on
+/// Windows, so each load gets its own directory and shuts its manager down again.
+CapturedLoad loadCapturingConfigLog(const fs::path& p, const std::string& tag) {
+    CapturedLoad out;
+    LogManager log;
+    const fs::path dir = fs::temp_directory_path() / ("codebias_net_cfg_caplog_" + tag);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    // Registry hygiene, TARGETED.  Another test in the same binary may have left a
+    // "gnss_processor" logger registered, and initialize() THROWS on the duplicate
+    // ("logger with name 'gnss_processor' already exists") — these tests pass in
+    // isolation and fail in the full suite without this, so the drop is load-bearing.
+    //
+    // It must NOT be spdlog::drop_all() (nor LogManager::shutdown(), which calls it):
+    // that wipes loggers other live objects still hold, and doing so faults
+    // RtcmParserDecodeTest with 0xC0000005 — the same dangling-logger class of defect
+    // CLAUDE.md records from the VS 2026 migration.  Drop only the two names this
+    // helper is about to create, and restore that state on the way out.
+    spdlog::drop("gnss_processor");
+    spdlog::drop("gnss_config");
+    log.initialize(dir, LogLevel::Info);          // WARN must pass this level
+    auto cfg_log = log.getLogger("gnss_config");
+    std::ostringstream oss;
+    cfg_log->sinks().push_back(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss));
+    out.ok = out.cfg.loadFromJson(p, log);
+    cfg_log->flush();
+    out.text = oss.str();                          // capture BEFORE dropping the logger
+    // Leave the registry as we found it, without disturbing anyone else's loggers.
+    spdlog::drop("gnss_processor");
+    spdlog::drop("gnss_config");
+    return out;
+}
+
+/// The invariant-#1 "no response at all" warning's stable identifying phrase.
+constexpr const char* kNoResponse = "NO event response is wired";
+/// The softer "pre-fit detector only, on a q_z = 0 carry" advisory's phrase.
+constexpr const char* kDetectorOnly = "ONLY event response on the carry is the pre-fit";
+
+} // namespace
+
+// carry_invariant with neither a pre-fit detector nor the D5 gate is the exact
+// posture invariant #1 forbids.  It must WARN loudly — and must NOT silently
+// "fix" itself, because auto-arming a detector here would change the solve.
+TEST(CodeBiasNetworkConfig, CarryInvariantWithoutEventResponseWarnsAndChangesNothing) {
+    const fs::path p = writeTempConfig("ci_inv1_none",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"carry_invariant\": true,\n"));
+    CapturedLoad r = loadCapturingConfigLog(p, "ci_inv1_none");
+    ASSERT_TRUE(r.ok) << "the interlock is advisory — it must not fail the load.";
+    EXPECT_NE(r.text.find(kNoResponse), std::string::npos)
+        << "carry_invariant with no detector and no D5 gate must warn under invariant #1.\n"
+        << r.text;
+    // Byte-identity: the warning is the whole mechanism.  Nothing may be armed.
+    EXPECT_FALSE(r.cfg.networkCycleSlipMwDetect());
+    EXPECT_FALSE(r.cfg.networkCycleSlipIfPhaseTd());
+    EXPECT_FALSE(r.cfg.networkCarryInvariantInnovGate());
+    EXPECT_DOUBLE_EQ(r.cfg.networkCarryInvariantQz(), 0.0);
+    EXPECT_TRUE(r.cfg.networkCarryInvariant()) << "carry_invariant itself must stay armed.";
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// A pre-fit detector IS the response (it feeds carry_slipped_ambs from epoch 1,
+// gated on carry_invariant alone), so the loud warning must not fire.  The softer
+// q_z=0 advisory still does: detected slips are covered, model error is not.
+TEST(CodeBiasNetworkConfig, CarryInvariantWithPrefitDetectorDropsToTheSofterAdvisory) {
+    const fs::path p = writeTempConfig("ci_inv1_mw",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"carry_invariant\": true,\n"
+            "    \"cycle_slip\": { \"mw_detect\": true },\n"));
+    CapturedLoad r = loadCapturingConfigLog(p, "ci_inv1_mw");
+    ASSERT_TRUE(r.ok);
+    ASSERT_TRUE(r.cfg.networkCycleSlipMwDetect()) << "fixture must actually arm mw_detect.";
+    EXPECT_EQ(r.text.find(kNoResponse), std::string::npos)
+        << "a pre-fit detector satisfies invariant #1; the loud warning must not fire.\n"
+        << r.text;
+    EXPECT_NE(r.text.find(kDetectorOnly), std::string::npos)
+        << "q_z=0 with the D5 gate off is still detector-only and must be flagged.\n"
+        << r.text;
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// The D5 innovation gate is the response that fires on MODEL ERROR rather than on
+// a detected raw slip, so it silences BOTH tiers on its own.
+TEST(CodeBiasNetworkConfig, CarryInvariantWithInnovGateIsQuiet) {
+    const fs::path p = writeTempConfig("ci_inv1_d5",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"carry_invariant\": true,\n"
+            "    \"carry_invariant_innov_gate\": true,\n"));
+    CapturedLoad r = loadCapturingConfigLog(p, "ci_inv1_d5");
+    ASSERT_TRUE(r.ok);
+    ASSERT_TRUE(r.cfg.networkCarryInvariantInnovGate());
+    EXPECT_EQ(r.text.find(kNoResponse), std::string::npos) << r.text;
+    EXPECT_EQ(r.text.find(kDetectorOnly), std::string::npos) << r.text;
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// A nonzero q_z is NOT an event response — it inflates Pᶻ's diagonal without moving
+// the carried mean.  It must not buy an exemption from the loud warning.
+TEST(CodeBiasNetworkConfig, CarryInvariantNonzeroQzIsNotAnEventResponse) {
+    const fs::path p = writeTempConfig("ci_inv1_qz",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"carry_invariant\": true,\n"
+            "    \"carry_invariant_qz\": 1e-4,\n"));
+    CapturedLoad r = loadCapturingConfigLog(p, "ci_inv1_qz");
+    ASSERT_TRUE(r.ok);
+    ASSERT_DOUBLE_EQ(r.cfg.networkCarryInvariantQz(), 1e-4) << "fixture must actually set q_z.";
+    EXPECT_NE(r.text.find(kNoResponse), std::string::npos)
+        << "q_z > 0 is decay, not erase/refloat/re-tap; the warning must still fire.\n"
+        << r.text;
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// turbo_edit satisfies the PHASE-LEVELING invariant-#1 auto-arm, but under
+// carry_invariant it takes the repair arm instead of collecting MW refloat
+// candidates and repairs only the superseded leveling local carry — so it feeds
+// carry_slipped_ambs nothing.  It must not silence this warning.
+TEST(CodeBiasNetworkConfig, CarryInvariantTurboEditAloneStillWarns) {
+    const fs::path p = writeTempConfig("ci_inv1_turbo",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"carry_invariant\": true,\n"
+            "    \"cycle_slip\": { \"turbo_edit\": true },\n"));
+    CapturedLoad r = loadCapturingConfigLog(p, "ci_inv1_turbo");
+    ASSERT_TRUE(r.ok);
+    ASSERT_TRUE(r.cfg.networkCycleSlipTurboEdit()) << "fixture must actually arm turbo_edit.";
+    if (r.cfg.networkCycleSlipMwDetect() || r.cfg.networkCycleSlipIfPhaseTd())
+        GTEST_SKIP() << "turbo_edit auto-armed a raw detector; the trap does not exist.";
+    EXPECT_NE(r.text.find(kNoResponse), std::string::npos)
+        << "turbo_edit contributes nothing to carry_slipped_ambs under carry_invariant.\n"
+        << r.text;
     std::error_code ec; fs::remove(p, ec);
 }

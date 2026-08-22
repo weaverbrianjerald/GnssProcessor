@@ -1973,6 +1973,65 @@ float-side notes: the lanes DEGRADE with settling (1 h EWL 96 % → settled 74.7
 read this runaway as a NORMAL uniform fractional distribution — only the truth grade can
 see it.
 
+#### 13.7.1 The D5 hypothesis, TESTED and REJECTED (2026-08-21)
+
+A config audit raised the objection that this arm runs `carry_invariant` with `q_z = 0`
+and `carry_invariant_innov_gate` OFF — a stiff zero-q carry — and that the runaway might
+therefore be an artifact of an unguarded posture rather than a property of the estimator.
+**The objection's premise is half right and its conclusion is wrong.  Tested; §13.7 stands.**
+
+*What the audit got right.*  The arm does run `q_z = 0` with D5 off, and this fixture
+injects **zero** cycle slips (`runs/simnet60_tri/*/truth_slips.csv`: 61 files, 0 data rows),
+so the arm's `mw_detect` + `if_phase_td` are armed but idle **by construction**.  D5 is the
+only response that fires on MODEL ERROR rather than on a detected raw slip, so on this arm
+the effective event response really is nil.
+
+*What it got wrong.*  Not "unguarded" in the invariant-#1 sense — the C3c funnel
+`carry_slipped_ambs` is gated on `if (carry_invariant)` alone and is live with D5 off; the
+config simply has nothing to trigger it.  (Corpus-wide: 633 configs arm `carry_invariant`
+and **zero** lack a response entirely.  Loader interlock now at
+`GnssConfigLoadNetwork.cpp:6759`.)
+
+*The test.*  Three same-build 480-epoch arms on the CURRENT Release build, single knob,
+matched populations (n = 18 980/band settled, 57 272 full).  Configs
+`_simnet60_tri_slant_trio_480_ab_{base,d5,d5cal}.json`; the historical
+`runs/simnet60_tri_slant_trio_480/` is left untouched as the §13.7 record.
+
+| settled half | control | D5 (k=4, uncal) | D5 CALIBRATED | float twin |
+|---|---|---|---|---|
+| per-band med\|e\| L1C/L2W/L5Q | 1780 / 1735 / 1745 | 1522 / 1490 / 1492 | **1503 / 1481 / 1483** | 8.0–9.4 |
+| EWL med\|e\| | 13.58 | 3.24 | **10.49** | — |
+| EWL at true integer | 3.3 % | 11.2 % | **3.6 %** | 74.7 % |
+| WL at true integer | 0.3 % | 0.8 % | **0.6 %** | 26.2 % |
+| D5 flags | — | 140 126 | **25 709** | — |
+| chord births / slip refloats | 3 984 / 1 956 | 143 405 / 141 377 | 29 701 / 27 673 | — |
+
+**The control reproduces §13.7 on the current build** (settled per-band 1735–1780 vs the
+recorded ~1720; full-window EWL 33.1 % → settled 3.3 %, against the recorded 32 % → 5 %),
+so the contrast is sound and the earlier worry that a newer build had moved the headline
+does not apply here.
+
+**Read the counters before the grade (invariant #4).**  The uncalibrated arm flagged
+140 126 times over 480 epochs against 960 carried DDs — ~292/epoch, a ~30 % turnover of the
+whole carry every epoch, driving births 3 984 → 143 405.  That is not a gate screening a
+runaway; it is the carry being dismantled and rebuilt continuously, so its apparent EWL win
+(3.3 % → 11.2 %) is the carry getting OUT OF THE WAY — the arm regressing toward the float
+twin that already beats it ~200×.  The loader's own posture ledger predicts exactly this:
+raw formal Cov(v) is 10–30× optimistic (M2), so `innov_k = 4` is correct ONLY with
+`innov_calibrate`.
+
+**Calibrated, the win evaporates.**  5.4× fewer flags (25 709), and settled EWL integer
+recovery falls back to control — **3.6 % vs 3.3 %** — while per-band med\|e\| improves only
+15.6 % (1780 → 1503) and stays **~160× worse than the float twin**.  The gate is live, not
+dead wiring (27 673 refloats, 14× the control), and it still does not touch the runaway.
+
+⇒ **The runaway is a property of the estimator on this posture, not an artifact of the
+missing D5 gate.**  §13.7's "do NOT arm the trio posture for settled work" and the §13.8
+rule-5 injection freeze both stand unchanged.  What this does retire is one candidate
+mechanism: the mechanism card owed by §13.7 should not spend another arm on the innovation
+gate.  Note also that arming D5 here would have looked like a large win to anyone who read
+the grade without the counters.
+
 ### 13.8 GRADING RULES AND TRAPS for the triple/slant posture
 ### (absorbed 2026-08-15 from `docs/HANDOFF_slant_triple_next.md`, now attic'd)
 

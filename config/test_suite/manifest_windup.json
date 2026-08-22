@@ -1,0 +1,88 @@
+{
+  "_comment": "WIND-UP SIGN acceptance tier (docs/SPEC_phase_windup_sign.md section 8 item 1). Four config cells x TWO EXES: run once with the shipped exe (--exe gnss_processor_shipped.exe --output-root .../A_shipped) and once with the sign-corrected exe (--exe gnss_processor_windupfix.exe --output-root .../B_fixed). arm1 = A/a_wu_on_*, arm2 = A/b_wu_off_* (must be BYTE-IDENTICAL to B/b_wu_off_*, the built-in null control), arm3 = B/a_wu_on_*. Cell labels are prefixed a_/b_/c_/d_ so the harness's alphabetical A-B reference fallback (run_test_suite.py:387) lands on the shipped default. Decide with scripts/windup_ab_linearity.py, NOT with the 2 cm golden gate.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor_shipped.exe",
+  "output_root": "test_suite_results/windup/A_shipped",
+
+  "truth": {
+    "sinex_dir": "data/static/sinex",
+    "sif_paths": [
+      "data/static/sif/igs20_SIF.json",
+      "data/static/sif/ncn20_SIF.json"
+    ],
+    "auto_fetch_sinex": true,
+    "sif_with_periodic": true,
+    "cross_check_tol_m": 0.05
+  },
+
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA",
+      "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" },
+    { "name": "CIT1", "truth_key": "CIT100USA",
+      "obs": "data/2024-129/obs/cit1/cit11290.24o" },
+    { "name": "GCGO", "truth_key": "GCGO00USA",
+      "obs": "data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+
+  "bases": { "ppp": "config/test_suite/ppp_static.jsonc" },
+
+  "cells": [
+    { "label": "a_wu_on_frac", "base": "ppp", "overrides": {
+        "model_corrections.enable_phase_windup": true,
+        "estimation.accumulate_phase_windup": false,
+        "processing.eigen_threads": 1,
+        "logging.enable_windup_trace": true,
+        "logging.enable_residual_trace": true } },
+
+    { "label": "b_wu_off_frac", "base": "ppp", "overrides": {
+        "model_corrections.enable_phase_windup": false,
+        "estimation.accumulate_phase_windup": false,
+        "processing.eigen_threads": 1,
+        "logging.enable_windup_trace": true,
+        "logging.enable_residual_trace": true } },
+
+    { "label": "c_wu_on_acc", "base": "ppp", "overrides": {
+        "model_corrections.enable_phase_windup": true,
+        "estimation.accumulate_phase_windup": true,
+        "processing.eigen_threads": 1,
+        "logging.enable_windup_trace": true,
+        "logging.enable_residual_trace": true } },
+
+    { "label": "d_wu_off_acc", "base": "ppp", "overrides": {
+        "model_corrections.enable_phase_windup": false,
+        "estimation.accumulate_phase_windup": true,
+        "processing.eigen_threads": 1,
+        "logging.enable_windup_trace": true,
+        "logging.enable_residual_trace": true } },
+
+    { "label": "e_wu_on_acc_kin", "base": "ppp", "overrides": {
+        "model_corrections.enable_phase_windup": true,
+        "estimation.accumulate_phase_windup": true,
+        "estimation.estimate_velocity": true,
+        "processing.rinex_types": "CLD",
+        "filter.process_noise.position_q": 100.0,
+        "filter.process_noise.acceleration_psd_q": 1.0,
+        "processing.eigen_threads": 1,
+        "logging.enable_windup_trace": true,
+        "logging.enable_residual_trace": true } },
+
+    { "label": "f_wu_off_acc_kin", "base": "ppp", "overrides": {
+        "model_corrections.enable_phase_windup": false,
+        "estimation.accumulate_phase_windup": true,
+        "estimation.estimate_velocity": true,
+        "processing.rinex_types": "CLD",
+        "filter.process_noise.position_q": 100.0,
+        "filter.process_noise.acceleration_psd_q": 1.0,
+        "processing.eigen_threads": 1,
+        "logging.enable_windup_trace": true,
+        "logging.enable_residual_trace": true } }
+  ],
+
+  "matrix": [
+    { "station": "JPLM", "cells": ["a_wu_on_frac", "b_wu_off_frac", "c_wu_on_acc", "d_wu_off_acc", "e_wu_on_acc_kin", "f_wu_off_acc_kin"] },
+    { "station": "CIT1", "cells": ["a_wu_on_frac", "b_wu_off_frac", "c_wu_on_acc", "d_wu_off_acc"] },
+    { "station": "GCGO", "cells": ["a_wu_on_frac", "b_wu_off_frac", "c_wu_on_acc", "d_wu_off_acc"] }
+  ]
+}
