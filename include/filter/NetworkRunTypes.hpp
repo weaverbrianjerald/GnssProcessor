@@ -450,6 +450,12 @@ struct RelevelEpochState {
     /// §7.6(c) cause tag, parallel to @c free_ambs (same one-epoch lifetime;
     /// measure-only — nothing downstream reads it but the lane observatory).
     std::map<std::pair<int, std::string>, std::uint8_t> free_cause;
+    /// §7.7 handover cross-guard: satellites whose datum-station slip
+    /// re-reference APPLIED this epoch (network-wide carry erase + reseed —
+    /// a family frame step on every signal).  Same one-epoch lifetime; the
+    /// apply edge runs in PASS A after clear(), the T4 measurement reads it
+    /// at the harvest.  Measure-only.
+    std::set<std::string> datum_reref_sats;
     /// Deferred MW candidates for the IF-TD-driver delta bridge.
     std::vector<MwBridgeCand> mw_cands;
     /// Arcs whose carry was delta-bridged this epoch (station, sat, signal) —
@@ -504,8 +510,8 @@ struct RelevelEpochState {
     std::vector<LaneObsRow> lane_obs_rows;
 
     void clear() {
-        free_ambs.clear(); free_cause.clear(); mw_cands.clear(); bridged.clear();
-        lane_mw.clear(); lane_obs_rows.clear();
+        free_ambs.clear(); free_cause.clear(); datum_reref_sats.clear();
+        mw_cands.clear(); bridged.clear(); lane_mw.clear(); lane_obs_rows.clear();
     }
 };
 

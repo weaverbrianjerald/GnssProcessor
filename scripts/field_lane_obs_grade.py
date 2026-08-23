@@ -107,6 +107,12 @@ def main():
                     help="elevation cut for the pre-registered clean sub-population (deg)")
     ap.add_argument("--big", type=float, default=10.0,
                     help="attribution listing threshold (cyc)")
+    ap.add_argument("--cluster-floor", type=float, default=5.0,
+                    help="min |delta| for coherence clustering (cyc)")
+    ap.add_argument("--cluster-gap", type=float, default=90.0,
+                    help="max tow gap inside a cluster (s)")
+    ap.add_argument("--cluster-min", type=int, default=3,
+                    help="min distinct stations per cluster")
     args = ap.parse_args()
 
     rows = load_rows(args.run_dir)
@@ -133,6 +139,39 @@ def main():
     print("\n-- T4 population (refloat-justification census; NEVER pooled into the grade) --")
     report_pop("all T4", t4)
     report_pop(f"T4 el > {args.el_cut:.0f}", [r for r in t4 if r["el"] > args.el_cut])
+
+    # §7.7 satellite-coherence split: a FRAME step is satellite-common at one
+    # epoch (near-identical |delta| at several stations simultaneously); a real
+    # per-arc carried error is not.  Cluster = same satellite, tows within
+    # --cluster-gap of each other, >= --cluster-min distinct stations, all with
+    # measured |delta| >= --cluster-floor.  Clustered rows are reported apart
+    # and the census is re-stated without them; the in-run gauge guard already
+    # vets the traced frame channels, so a surviving cluster is either an
+    # untraced frame event or a genuinely satellite-common carried error — the
+    # spread column is the discriminator (a frame constant has ~zero spread).
+    sus = sorted((r for r in t4 if r["measured"] and abs(r["delta"]) >= args.cluster_floor),
+                 key=lambda r: (r["sat"], r["tow"]))
+    clusters, cur = [], []
+    for r in sus:
+        if cur and (r["sat"] != cur[-1]["sat"] or r["tow"] - cur[-1]["tow"] > args.cluster_gap):
+            clusters.append(cur); cur = []
+        cur.append(r)
+    if cur:
+        clusters.append(cur)
+    clusters = [c for c in clusters if len({r["sta"] for r in c}) >= args.cluster_min]
+    clustered = {id(r) for c in clusters for r in c}
+    print(f"\n-- §7.7 coherence clusters (sat-common, >= {args.cluster_min} sta, "
+          f"|d| >= {args.cluster_floor:.0f}, gap <= {args.cluster_gap:.0f} s): {len(clusters)} --")
+    for c in sorted(clusters, key=lambda c: -max(abs(r["delta"]) for r in c)):
+        ads = sorted(abs(r["delta"]) for r in c)
+        med = median(ads)
+        spread = (ads[-1] - ads[0]) / med if med else float("inf")
+        print(f"  {c[0]['sat']}  tow {c[0]['tow']:.0f}-{c[-1]['tow']:.0f}  n={len(c)}"
+              f" sta={len({r['sta'] for r in c})}  med|d| {med:.1f}  range {ads[0]:.1f}-{ads[-1]:.1f}"
+              f"  spread/med {spread:.2f}  stas={','.join(sorted({r['sta'][:4] for r in c}))}")
+    report_pop("T4 EXCLUDING clustered rows", [r for r in t4 if id(r) not in clustered])
+    report_pop(f"T4 excl. clustered, el > {args.el_cut:.0f}",
+               [r for r in t4 if id(r) not in clustered and r["el"] > args.el_cut])
 
     big = sorted((r for r in rows if r["measured"] and abs(r["delta"]) >= args.big),
                  key=lambda r: -abs(r["delta"]))

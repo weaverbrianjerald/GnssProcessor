@@ -2839,8 +2839,19 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     if (!ca.second || !cb.second) {
                         skip(ctx.counters.n_lane_t4_skip_no_pre, "t4_skip_no_pre"); continue;
                     }
+                    // §7.7 handover cross-guard: EVERY frame channel that can
+                    // re-realize this pair's family between capture and
+                    // measurement — the eq34 (sat,σ) re-reference (this
+                    // lineage), the phase-anchor election's re-referenced
+                    // families (non-eq34 lineages; the set deliberately
+                    // persists across withheld epochs until a stash commits
+                    // the new frame), and the datum-station slip's
+                    // network-wide reseed (per-satellite, all signals).
                     if (eq34_reref.count({sat, *ca.first})
-                        || eq34_reref.count({sat, *cb.first})) {
+                        || eq34_reref.count({sat, *cb.first})
+                        || ctx.carry.phase_anchor_reref.count({sat, *ca.first})
+                        || ctx.carry.phase_anchor_reref.count({sat, *cb.first})
+                        || ctx.carry.relevel.datum_reref_sats.count(sat)) {
                         skip(ctx.counters.n_lane_t4_skip_gauge, "t4_skip_gauge"); continue;
                     }
                     if (!(ctx.carry.pl_prev_now_s > 0.0)

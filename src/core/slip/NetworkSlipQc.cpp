@@ -498,6 +498,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                     }
                 }
                 datum_mark_sats->insert(sat);
+                // §7.7 handover cross-guard: the network-wide reseed is a family
+                // frame step on every signal of `sat` — the T4-side lane
+                // measurement must not difference a pre-step capture against a
+                // post-step re-level.  Measure-only tag.
+                if (relevel) relevel->datum_reref_sats.insert(sat);
                 ++qc_cnt.datum_slip_rerefs;
                 emitEvent("T0_mw_detect", "datum_reref", sat, stations[0].name,
                           std::nullopt, std::nullopt, "refloat",

@@ -115,6 +115,16 @@ void networkLeveling(
         }
         ctx.carry.relevel.lane_obs_rows.clear();
     }
+    // --- §7.7: eq34 (sat,σ) re-reference ATTRIBUTION rows.  The chain datum
+    // counts its re-references (683/4 h measured) but only the reattach
+    // hygiene emitted rows (148), so a frame step could not be joined against
+    // the lane census post-hoc — the exact gap the T4 tail investigation hit.
+    // `eq34_reref` persists until the NEXT chain-datum entry clears it, so at
+    // this seam it is exactly THIS epoch's set.  One row per (sat,σ); the
+    // stream gate (network.trace_events) is inside emitEvent.  Measure-only.
+    for (const auto& [rr_sat, rr_sig] : ctx.carry.eq34_reref)
+        traces.emitEvent(se.time, "PHASE_DATUM", "eq34_reref", rr_sat, "",
+                         std::nullopt, std::nullopt, "re_realize", rr_sig);
 
     // --- Card LV-2 (docs/SPEC_level_information_budget.md): trace μ ------------
     // One `lv2_mu` row per receiver-code-bias family per epoch on the EXISTING

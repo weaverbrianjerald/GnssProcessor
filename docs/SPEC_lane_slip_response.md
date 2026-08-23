@@ -842,3 +842,54 @@ hazards plus the new question this census poses (a lane-preserving response
 must beat a channel that is measurably removing 4–6 cyc of real error);
 (3) the detector-side δ record stays open as a secondary instrument — the
 population is simply too thin at high elevation on this posture.
+### §7.8 The T4-tail handover cross-guard + the coherence re-grade (2026-08-23)
+
+**Guard extended to every traced frame channel** (measure-only, same knob):
+the T4 measurement now skips (`t4_skip_gauge`) when the pair's family appears
+in ANY of — the eq34 `(sat,σ)` re-reference set (already live in §7.7), the
+phase-anchor election's `phase_anchor_reref` (the non-eq34 lineage channel;
+the set deliberately persists across withheld epochs until a stash commits
+the new frame), or the new `datum_reref_sats` (the datum-station slip's
+network-wide reseed, tagged at the apply edge in `NetworkSlipQc`).  On THIS
+lineage the two new channels are inert (zero PBGAUGE / datum events in the
+run) — i.e. the §7.7 census was already fully vetted against the traced
+channels at its measuring epochs; the extension is correctness for the
+postures that use them.
+
+**The eq34 attribution gap is closed**: the chain datum counted 683
+re-references but traced only the 148 reattach-hygiene rows — a frame step
+could not be joined against the lane census post-hoc.  The full per-epoch
+`eq34_reref` set is now emitted as `PHASE_DATUM/eq34_reref` event rows from
+the leveling seam (658 rows on the field re-run; the 25-row shortfall vs the
+counter is withheld epochs, where the seam does not run).
+
+**Coherence re-grade of the §7.7 census** (`field_lane_obs_grade.py`
+`--cluster-*`: same-satellite, ≥ 3 stations, |δ| ≥ 5, gap ≤ 90 s; the
+`spread/med` column is the discriminator — a frame constant has ~zero
+spread, per-arc carried error does not):
+
+- **122 clusters / 583 measured rows.  Only 34 clusters (127 rows = 5.0 % of
+  measured) are TIGHT (spread/med < 1) — the frame-suspect class.**  Exemplar:
+  G28 @ TOW 268680, five Americas stations at 74.4–85.6 cyc, spread 0.13.
+- The bulk is heterogeneous: the TOW-265590 event — G14 across 22 stations
+  AND G22 across 24 stations simultaneously — has spread/med 6–9, i.e. an
+  ATTRIBUTION STORM refloating real per-arc error network-wide, not a frame
+  event.  (Its epoch carried `BLOCKBAARDA corrob=raw_flat` + a pl-family
+  prior-residual σ̂₀ of 162 — the estimation-side signature, with no frame
+  event in any traced channel.)
+- **De-clustered census — the quotable numbers**: all-T4 med |δ| 3.77 cyc,
+  40.8 % ≥ 5; **el > 30°: med 2.94 cyc, 32.2 % ≥ 5** (from 4.36 / 46.1 %
+  clustered).  The 604-cyc max is a SINGLE-station event (never coherent) and
+  survives exclusion.
+
+**Verdict of the re-grade: the §7.7 census core claim STANDS.**  Field T4
+refloats typically remove real multi-cycle carried-lane error — median ~3 cyc
+at high elevation with every coherent event excluded — and the frame-suspect
+share is 5 %, now permanently separable (grader split + attribution rows).
+The §7.7 apply-leg brief is unchanged and sharpened: the mechanism must beat
+a channel that is measurably removing ~3 cyc of real error per refloat.
+
+**Certification (build `A9C47C45…`)**: sim A/B PASS — products ON ≡ OFF ≡ the
+§7.7 build's products; non-LANE_OBS event rows identical; 477 LANE_OBS rows
+reproduced exactly.  Field products SHA256-identical to the control for the
+FOURTH time; T4 closures OK; gauge skips unchanged (62).
