@@ -129,7 +129,10 @@ LAMBDA_WL_DEFAULT = 0.8619
 
 # main_log lines that mention "Network (" and "slip" but are per-epoch TIMING
 # chatter (slip-scans=... ms), not run-end counters.
-_TIMING_NOISE = ('other-net ms', ' ms (')
+# 'lane observatory' also matches the SPEC filename token 'slip' via
+# SPEC_lane_slip_response and would displace a genuine slip counter from the
+# tail window; it is a lane-integer instrument, not a slip counter.
+_TIMING_NOISE = ('other-net ms', ' ms (', 'lane observatory')
 
 
 # ---------------------------------------------------------------------------

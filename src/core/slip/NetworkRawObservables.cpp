@@ -221,6 +221,13 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
             if (pit != h.prev.end() && pit->second.epoch_idx == epoch_idx - 1
                 && pit->second.obs.dual && r.dual) {
                 v.measured = true;
+                // The step is real, but if the PAIR changed the two MW values sit
+                // on different wide-lane wavelengths — d_mw is still a level
+                // change, yet converting it to cycles of THIS pair's lane is
+                // meaningless.  Flagged, not suppressed: the slip cards want the
+                // step; the lane observatory refuses it.
+                v.pair_changed = (pit->second.obs.sig1 != r.sig1)
+                              || (pit->second.obs.sig2 != r.sig2);
                 v.d_mw = r.mw_m - pit->second.obs.mw_m;
                 v.d_gf = r.gf_m - pit->second.obs.gf_m;
                 mw_abs.push_back(std::abs(v.d_mw));

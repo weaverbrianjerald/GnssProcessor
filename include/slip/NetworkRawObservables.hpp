@@ -143,6 +143,13 @@ struct RawSlipVerdict {
     double d_gf{0.0};         ///< ΔGF across the epoch (m); 0 when !measured or !dual.
     double gate_mw{0.0};      ///< Effective MW gate applied (m) — max(k·scale, floor).
     double gate_gf{0.0};      ///< Effective GF gate applied (m).
+    /// The adjacent predecessor used a DIFFERENT (sig1, sig2) pair, so @ref d_mw
+    /// differences two MW combinations built on different wide-lane wavelengths.
+    /// @ref measured stays true (the step exists and the slip cards want it), but
+    /// any consumer that converts @ref d_mw into CYCLES of a specific lane must
+    /// refuse the row — the lane it would be compared against is not the lane the
+    /// step was formed on.
+    bool   pair_changed{false};
 };
 
 /**
@@ -287,10 +294,25 @@ struct SlipQcParams {
     /// counters would reveal (SPEC_lane_slip_response §3).
     bool   retap_corr{false};
 
+    /// SPEC_lane_slip_response §7.3 — the carry-domain lane observatory
+    /// (@c network.cycle_slip.relevel_lane_snap).  LOAD-BEARING in BOTH
+    /// predicates below, for two different reasons:
+    ///   - @ref anyConsumer decides whether the raw observables are computed at
+    ///     all (a null @c slip_qc.utils leaves every row absent);
+    ///   - @ref cardsArmed decides whether the QUALIFICATION pass runs, and the
+    ///     observatory reads @c RawSlipVerdict::measured / @c d_mw, which only
+    ///     that pass ever writes.
+    /// Omitting it from cardsArmed was measured on the first smoke run: rows
+    /// existed (0 "no MW pair") while every verdict stayed default-constructed,
+    /// so the card reported 159 attempts and 0 measured — ARMED and inert, the
+    /// exact shape standing invariant #4 exists to expose.  The closure identity
+    /// still held, which is why the skip channel had to be separable.
+    bool   lane_snap{false};
+
     /// True when any consumer needs the raw observables computed this run.
     bool anyConsumer(bool trace_slip_raw) const {
         return trace_slip_raw || lli_corroborate || gap_instrument || bridge_gf
-            || iono_cs || retap_corr;
+            || iono_cs || retap_corr || lane_snap;
     }
 };
 
@@ -394,6 +416,13 @@ struct SlipQcCounters {
     // not a quiet run.
     long long relevel_free_marked{0};      ///< (station, amb key) free-epoch latches.
     long long relevel_free_skips{0};       ///< Inject-site skips actually taken (arc had a live carry).
+    /// SPEC_withhold_era_release §8 (family D): leveling-carry entries erased by
+    /// the DATUM-SLIP re-reference inside the MW refloat drain — the frame moved
+    /// under the arc, so the carried value is stale in the old gauge.  Counted
+    /// here rather than on NetworkServiceCounters because this drain already
+    /// takes the SlipQcCounters by reference and threading an eighth optional
+    /// sink through it would be worse than reading this one at teardown.
+    long long datum_slip_carry_erases{0};
     long long bridge_pairs_applied{0};     ///< Delta-bridged (station, sat, pair) applications.
     long long bridge_joint{0};             ///< …with a same-epoch MW integer + IF-TD delta (the full 2×2).
     long long bridge_if_clean{0};          ///< …IF-TD flag + affirmatively-clean MW arc (ΔN_WL = 0 branch).
@@ -442,7 +471,7 @@ struct SlipQcChannel {
     /// True when the raw observables must be computed this run.
     bool armed() const { return static_cast<bool>(utils); }
     /// True when a DECISION card (not merely the trace) is armed.
-    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.retap_corr; }
+    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.retap_corr || params.lane_snap; }
 };
 
 /**

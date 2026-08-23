@@ -1,5 +1,6 @@
 {
  "_comment": [
+  "*** STALE 2026-08-22: relevel_lane_snap no longer drives the seed-site snap this arm was built to test.  That mechanism was DELETED as a proven exact solve no-op (SPEC_lane_slip_response 7.2) and its counters are gone; the knob now arms the MEASURE-ONLY carry-domain observatory (7.3).  Re-running this file today exercises v3, not the snap it is named for -- the results below are the historical record. ***",
   "F5B: rung-3 v2 DELTA snap validation (same knob, v2 exe) - see SPEC section 7.",
   "free_epoch champion + relevel_lane_snap, retap OFF (falsified), bridge OFF - the snap is the",
   "single new mechanism vs _camp60wu_f1.  PRE-REGISTERED: snapped counter in the 1e4-1e5 class",
@@ -74,7 +75,7 @@
   "adaptive_iono_process_noise": {
    "enable": false
   },
-  "//iono": "The cutoff, NOT the enable, is the load-bearing field here \u2014 the",
+  "//iono": "The cutoff, NOT the enable, is the load-bearing field here — the",
   "//iono2": "enable is forced on by the W6 slice anyway.  Values other than the",
   "//iono3": "cutoff are the shipped defaults, restated so an arm cannot inherit a",
   "//iono4": "changed default silently.",
@@ -86,8 +87,8 @@
   "//sh": "Field-matched SH posture (_cbq305_2f_12h_d10): degree 15, single shell,",
   "//sh2": "sun-fixed, representation-error demean + d5-keep.  trace: true is what",
   "//sh3": "opens network_vtec_sh.csv (coefficients + sigma) and the per-epoch",
-  "//sh4": "network_vtec_sh_health.csv (a00 + a00 sigma + per-degree rms) \u2014 the a00",
-  "//sh5": "channel of the \u00a711 item 4 decomposition.  network_ionosphere.csv is NOT",
+  "//sh4": "network_vtec_sh_health.csv (a00 + a00 sigma + per-degree rms) — the a00",
+  "//sh5": "channel of the §11 item 4 decomposition.  network_ionosphere.csv is NOT",
   "//sh6": "a substitute: it writes x_r alone and is frame-broken (CLAUDE.md)."
  },
  "filter": {
@@ -124,7 +125,7 @@
   "stochastic_model": "elevation"
  },
  "network": {
-  "//datum": "Equatorial by choice (\u00a79.8) \u2014 see the header.  Overridden by the",
+  "//datum": "Equatorial by choice (§9.8) — see the header.  Overridden by the",
   "//datum2": "generator ONLY if this name is absent from the fixture roster.",
   "clock_datum_station": "S30000SIM",
   "epoch_sync_tolerance_s": 0.01,
@@ -136,7 +137,7 @@
   "raim_within_epoch": true,
   "raim_withhold_sigma0": 6.0,
   "clock_runaway_check": true,
-  "//qc2": "=== Fingerprinted \u2014 legal only on a FRESH convergence, which this is ===",
+  "//qc2": "=== Fingerprinted — legal only on a FRESH convergence, which this is ===",
   "phase_leveling": true,
   "emit_ura": true,
   "code_bias_disc_jump_test": true,
@@ -174,12 +175,12 @@
   "trace_topology": true,
   "rhs_attrib_on_trip": true,
   "trace_estimability": true,
-  "//par": "parallel_carry and parallel_reduce are MUTUALLY EXCLUSIVE \u2014 the loader",
+  "//par": "parallel_carry and parallel_reduce are MUTUALLY EXCLUSIVE — the loader",
   "//par2": "silently forces parallel_carry OFF if both are set.",
   "parallel_stations": true,
   "parallel_carry": true,
   "parallel_reduce": false,
-  "//lane": "Lane layer OFF \u2014 measured a net loss at BOTH 63 and 305 stations once",
+  "//lane": "Lane layer OFF — measured a net loss at BOTH 63 and 305 stations once",
   "//lane2": "the window is settled (AGU-26 campaign amendment 1).",
   "lane_carry": {
    "enable": false
@@ -752,7 +753,7 @@
   "trace_slip_events": true,
   "phase_datum_prioritized": true,
   "phase_anchor_carry_reref": true,
-  "//pareref": "QUEUE item 1(d) single-knob A/B arm vs _simnet24_inj_pareref_off.json: at a PHASE_ANCHOR handover, marginalize the family's shared PB carry for one epoch + erase its phase-leveling local carries (SPEC_pivot_visibility_gauge_defect \u00a75.07.5 R1).",
+  "//pareref": "QUEUE item 1(d) single-knob A/B arm vs _simnet24_inj_pareref_off.json: at a PHASE_ANCHOR handover, marginalize the family's shared PB carry for one epoch + erase its phase-leveling local carries (SPEC_pivot_visibility_gauge_defect §5.07.5 R1).",
   "//pdp": "A/B arm: network.phase_datum_prioritized ON.  With it OFF the shared phase-bias set is stations.front()'s (the clock pivot's) own phase-bias states, so when the PIVOT loses a satellite the whole network's PB columns for it vanish and the clock absorbs the released direction.  Measured on the OFF twin: pivot S12000SIM loses G15 at tow 303510, PB:G15:{L1C,L2W,L5Q} col_removed the same epoch, CLK_STEP -12.055 m, worst_dev 11.88 m that never recovers, network clock_std 1.00 -> 2.32 permanently.",
   "carry_conditional_coupling": true,
   "shared_carry_full_cov": true,

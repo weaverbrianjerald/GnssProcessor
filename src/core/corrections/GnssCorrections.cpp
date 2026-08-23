@@ -1867,7 +1867,8 @@ namespace GnssProcessor {
         const GnssTime& time,
         const Eigen::Vector3d& sun_pos,
         const Eigen::Vector3d& sat_vel,
-        bool accumulate) const {
+        bool accumulate,
+        double max_gap_s) const {
 
         // Wu et al. (1993), stated in THIS function's variables.  k = sat->rx.
         //
@@ -2002,7 +2003,11 @@ namespace GnssProcessor {
         bool   restarted = false;
         if (accumulate) {
             constexpr double TWO_PI = 2.0 * Constants::PI;
-            constexpr double kMaxGapSeconds = 300.0; // 5 minutes
+            // Continuity horizon, now caller-supplied (estimation.phase_windup_
+            // max_gap_s; the historic hard-coded value was 300 s and remains the
+            // default).  See the header's parameter doc for why this horizon's
+            // ordering against network.phase_leveling_max_gap_s matters.
+            const double kMaxGapSeconds = max_gap_s;
             auto pw_it = prev_windup_.find(satellite);
             if (pw_it == prev_windup_.end()) {
                 // First epoch this satellite is seen: seed the accumulator
@@ -2036,6 +2041,68 @@ namespace GnssProcessor {
                         gap, satellite, kMaxGapSeconds);
                 }
                 prev_windup_[satellite] = { windUp_c, epoch_s };
+            }
+        }
+
+        // ---- Wind-up census (read-only; both accumulation postures) --------
+        // Counts the step in the APPLIED correction between consecutive
+        // PROCESSED epochs.  In fractional mode that step is the one-cycle
+        // staircase at each half-cycle crossing (SPEC_phase_windup_sign §7,
+        // measured 43/day/station on the one user-path trace that exists); in
+        // accumulated mode a >= 0.9 cyc step means the accumulator RESTARTED.
+        // Deduped on epoch_s exactly as the CSV trace is, because this function
+        // runs once per signal and once per measurement-rebuild pass.
+        if (wu_census_on_) {
+            const double cyc_now = windUp_c / (2.0 * Constants::PI);
+            auto& prev = wu_census_prev_[satellite];
+            // `restarted` is the ACCUMULATOR'S OWN verdict, set above.  Counting
+            // it directly is what makes accumulated mode measurable: the applied
+            // step cannot reveal a restart, because every in-horizon transition
+            // is unwrapped into [-0.5, +0.5] cyc, so a threshold on the step is
+            // identically silent there (`wraps` is fractional-only by
+            // construction — see the header).
+            if (restarted) ++wu_census_.restarts;
+            if (!prev.seeded) {
+                prev.cycles = cyc_now; prev.epoch_s = epoch_s; prev.seeded = true;
+            } else if (epoch_s != prev.epoch_s) {
+                const double gap  = epoch_s - prev.epoch_s;
+                const double step = std::abs(cyc_now - prev.cycles);
+                if (gap > 0.0) {
+                    ++wu_census_.steps;
+                    const bool in_horizon = gap < wu_census_gap_s_;
+                    if (in_horizon) {
+                        ++wu_census_.gap_lt_wu;
+                        wu_census_.sum_abs_step_cyc += step;
+                        if (step >= 0.9) ++wu_census_.wraps;
+                        if (step > wu_census_.max_abs_step_in_cyc)
+                            wu_census_.max_abs_step_in_cyc = step;
+                    } else {
+                        // Bucket against the LATER of the two horizons, so the
+                        // two buckets stay closed under either ordering.  The
+                        // between-horizons bucket is the invariant-#1 exposure
+                        // ONLY when the carry outlives the accumulator; at the
+                        // loader default the ordering is inverted (carry 120 s <
+                        // wind-up 300 s), and there this bucket instead holds the
+                        // benign inverse (the carry dies while the model stays
+                        // continuous).  The teardown states which ordering it saw
+                        // and suppresses the exposure narrative when it does not
+                        // hold, so the bucket is never read as the wrong thing.
+                        if (wu_census_carry_gap_s_ > 0.0) {
+                            const double hi = std::max(wu_census_gap_s_, wu_census_carry_gap_s_);
+                            if (gap <= hi) ++wu_census_.gap_wu_to_carry;
+                            else           ++wu_census_.gap_gt_carry;
+                        }
+                        if (step >= 0.9) ++wu_census_.gap_steps;
+                        if (step > wu_census_.max_abs_step_gap_cyc)
+                            wu_census_.max_abs_step_gap_cyc = step;
+                    }
+                } else {
+                    ++wu_census_.backwards;   // epochs out of order: counted, not bucketed
+                }
+                // Advance the reference unconditionally — including after a
+                // backwards transition — so one out-of-order epoch cannot make
+                // the NEXT gap measurement meaningless as well.
+                prev.cycles = cyc_now; prev.epoch_s = epoch_s;
             }
         }
 

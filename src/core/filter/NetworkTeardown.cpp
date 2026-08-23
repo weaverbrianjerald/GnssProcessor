@@ -10,7 +10,8 @@
 
 #include "app/NetworkRunContext.hpp"
 #include "logging/NetworkRunTraces.hpp"
-#include "measurement/MeasurementModel.hpp"   // laneSnapCounters (rung-3 run-end sum)
+#include "measurement/MeasurementModel.hpp"   // complete type for NetStation::mm
+#include "model/PppModel.hpp"                  // complete type for NetStation::model (wind-up census)
 #include "app/Application.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -1825,29 +1826,296 @@ int networkTeardown(
                   ctx.counters.n_relevel_retap_escalated,
                   config_.networkCycleSlipRelevelRetapStreakMax(),
                   ctx.counters.n_relevel_retap_miss);
-    if (config_.networkCycleSlipRelevelLaneSnap()) {
-        long long snapped = 0, kept = 0, fresh = 0, birth = 0,
-                  no_pair = 0, no_hist = 0, wild = 0;
-        double dsum = 0.0;
-        for (const auto& st : stations)
-            if (st.mm) {
-                const auto& lc = st.mm->laneSnapCounters();
-                snapped += lc.snapped; kept += lc.kept_anchor; fresh += lc.fresh_anchor;
-                birth += lc.skip_birth; no_pair += lc.skip_no_pair;
-                no_hist += lc.skip_no_history; wild += lc.skip_wild;
-                dsum += lc.abs_delta_sum_cyc;
-            }
-        log->info("Network (lane snap v2, SPEC_lane_slip_response rung 3): {} reseeded "
-                  "band(s) re-anchored to pre-lane + MW-measured jump ({} vs a KEPT "
-                  "anchor, {} vs a reseeding anchor; mean |correction| {:.3f} cyc); "
-                  "skipped: {} births (no pre-event lane), {} no phase+code pair, "
-                  "{} no pre-event MW history, {} over the 25-cyc cap.  0 snapped on "
-                  "a slip-bearing armed run = dead wiring (invariant #4); a large "
-                  "wild count = the v1 bias-mismatch shape, investigate before "
-                  "trusting anything downstream.",
-                  snapped, kept, fresh, snapped > 0 ? dsum / snapped : 0.0,
-                  birth, no_pair, no_hist, wild);
+    // ---- Leveling-carry RETIREMENT census (SPEC_withhold_era_release §8) ----
+    // Always on: pure counters, no CSV row, no solve effect.  It exists so a
+    // fleet-scale carry loss can be ATTRIBUTED rather than inferred.
+    //
+    // Reported as FOUR FAMILIES, never as one total: the units are not
+    // commensurable.  A frame skip costs one solve of continuity for an arc the
+    // same epoch re-stashes; a refloat costs one solve on the next epoch; a
+    // departure is permanent; and the inject-side stale skip erases nothing at
+    // all yet is the mechanism behind the §1.3 mass re-level.  Summing them
+    // would make a lineage with a churning chain datum look like it retires an
+    // order of magnitude more carry than one that does not — precisely the
+    // inference the §7 promotion argument would misuse.
+    {
+        const auto& C = ctx.counters;
+        const double pl_gap = config_.networkPhaseLevelingMaxGapS();
+        // Armed-state disclosure, the same qualifier family [C] already carries.
+        // Families [A] and [B] both live on the phase-leveling carry, and [B]
+        // additionally sits at an inject site that carry_invariant supersedes —
+        // so on those postures a 0 means UNWIRED, not clean.  Saying so is the
+        // whole point of the census (invariant #4).
+        const bool pl_live    = config_.networkPhaseLeveling();
+        const bool cliff_live = pl_live && !config_.networkCarryInvariant();
+        log->info("Network (leveling-carry retirement census) [B] THE CLIFF{} — "
+                  "inject-side stale skips: {} carried prior(s) NOT injected for "
+                  "gap > {:.0f} s over {} epoch(s); worst epoch {} at week {} tow "
+                  "{:.1f} across {} station(s).  Nothing is erased by this path — "
+                  "the arc simply solves FREE and the harvest re-stashes it from "
+                  "one epoch of code, which is why the post-harvest prune below "
+                  "cannot see it.  A worst-epoch count near the carried fleet, on "
+                  "ONE epoch, spanning MANY stations, is the §1.3 mass re-level; "
+                  "the same count concentrated on one station index is that "
+                  "station dropping out, which is a different event entirely.",
+                  cliff_live ? "" : " ⚠ CHANNEL NOT ARMED on this posture "
+                                    "(phase_leveling off or carry_invariant on) — a 0 "
+                                    "here means UNWIRED, not clean",
+                  C.n_cr_inject_stale, pl_gap, C.n_cr_inject_stale_epochs,
+                  C.n_cr_inject_stale_max, C.n_cr_inject_stale_max_week,
+                  C.cr_inject_stale_max_tow, C.n_cr_inject_stale_max_sta);
+        log->info("Network (leveling-carry retirement census) [A] DEPARTURES{} "
+                  "(permanent): {} amb-carry entr(ies) pruned on the {:.0f} s gap "
+                  "over {} epoch(s); worst {} of a {}-entry carry ({:.1f} %) at week "
+                  "{} tow {:.1f}.  Siblings on the same predicate: {} ZWD, {} "
+                  "receiver-PB.  ⚠ The prune runs AFTER the harvest has refreshed "
+                  "last_seen_s for every arc it stashed, so its candidates are only "
+                  "arcs NOT observed this epoch — read it as departures, never as "
+                  "amputation.",
+                  pl_live ? "" : " ⚠ CHANNEL NOT ARMED (phase_leveling off) — a 0 "
+                                 "here means UNWIRED, not clean",
+                  C.n_cr_gap_prune, pl_gap, C.n_cr_gap_prune_epochs,
+                  C.n_cr_gap_prune_max, C.n_cr_gap_prune_max_fleet,
+                  C.n_cr_gap_prune_max_fleet > 0
+                      ? 100.0 * static_cast<double>(C.n_cr_gap_prune_max)
+                              / static_cast<double>(C.n_cr_gap_prune_max_fleet)
+                      : 0.0,
+                  C.n_cr_gap_prune_max_week, C.cr_gap_prune_max_tow,
+                  C.n_cr_zwd_gap_prune, C.n_cr_rpb_gap_prune);
+        log->info("Network (leveling-carry retirement census) [C] ONE-SOLVE "
+                  "REFLOATS: {} T4 attribution, {} T3 consensus (quality-selected), and {} "
+                  "entr(ies) in {} whole-fleet SH-convergence flush(es) — the largest "
+                  "single removal in the producer, but the arcs stay tracked and the "
+                  "next harvest re-stashes them, so it costs one solve, not a departure.  "
+                  "⚠ These are a run-constant EITHER/OR, not a split — "
+                  "network.raim_attribution is {} on this run, so the other channel "
+                  "is structurally 0 and its zero means \"path not armed\", not "
+                  "\"path found nothing\".  [D] ONE-SOLVE FRAME SKIPS: {} eq34 "
+                  "chain-datum re-reference, {} phase-datum family re-reference, {} "
+                  "datum-slip re-reference.  [RESPONSE] {} A4 withhold free-erase.",
+                  C.n_cr_raim_attrib, C.n_cr_raim_consensus,
+                  C.n_cr_sh_conv_flush, C.n_cr_sh_conv_flushes,
+                  config_.networkRaimAttribution() ? "ARMED" : "off",
+                  C.n_cr_eq34_reref, C.n_cr_phase_datum_reref,
+                  slip_qc.counters.datum_slip_carry_erases, C.n_wh_free_erases);
     }
+
+    // ---- Phase wind-up census (estimation.trace_windup_census) -------------
+    // The FIRST instrument to reach the network path's wind-up channel:
+    // windup_trace.csv is written only from Application::run (one caller,
+    // Application.cpp), which runNetwork never reaches, so until now the
+    // fractional staircase was measured on exactly one PPP station and scaled
+    // by hand to 63.  Read-only — arming this cannot move a byte of the solve.
+    if (config_.traceWindUpCensus()) {
+        GnssCorrections::WindUpCensus c{};
+        int n_sta = 0;
+        for (const auto& st : stations) {
+            if (!st.model) continue;
+            const auto& w = st.model->windUpCensus();
+            if (w.steps == 0 && w.restarts == 0 && w.backwards == 0) continue;
+            ++n_sta;
+            c.steps            += w.steps;
+            c.wraps            += w.wraps;
+            c.restarts         += w.restarts;
+            c.gap_steps        += w.gap_steps;
+            c.backwards        += w.backwards;
+            c.gap_lt_wu        += w.gap_lt_wu;
+            c.gap_wu_to_carry  += w.gap_wu_to_carry;
+            c.gap_gt_carry     += w.gap_gt_carry;
+            c.sum_abs_step_cyc += w.sum_abs_step_cyc;
+            c.max_abs_step_in_cyc  = std::max(c.max_abs_step_in_cyc,  w.max_abs_step_in_cyc);
+            c.max_abs_step_gap_cyc = std::max(c.max_abs_step_gap_cyc, w.max_abs_step_gap_cyc);
+        }
+        const bool acc      = config_.accumulatePhaseWindUp();
+        const double wu_gap = config_.phaseWindUpMaxGapS();
+        const double cy_gap = config_.networkPhaseLevelingMaxGapS();
+        // The exposure narrative is only true when the carry OUTLIVES the
+        // accumulator.  At the loader default it does not (120 s vs 300 s), and
+        // printing the sentence anyway would let a structural zero read as a
+        // clean bill of health — the invariant-#4 failure mode this whole card
+        // exists to avoid.
+        const bool exposure_ordering = cy_gap > wu_gap;
+        log->info("Network (wind-up census, SPEC_phase_windup_sign §10): mode {}, "
+                  "horizons wind-up {:.0f} s / leveling carry {:.0f} s ({}).  {} "
+                  "station(s), {} forward transitions ({} out-of-order, excluded).  "
+                  "IN-horizon: {} transitions, {} step(s) >= 0.9 cyc, mean |step| "
+                  "{:.4f} cyc, max {:.3f}.  OUT-of-horizon: {} transitions total "
+                  "(attributed: {} between the horizons, {} beyond both — the two "
+                  "buckets are only filled when the carry horizon is > 0, so trust "
+                  "the TOTAL, not their sum), {} of which stepped >= 0.9 cyc "
+                  "(max {:.3f}).  "
+                  "Accumulator RESTARTS (its own verdict, not a threshold): {}.",
+                  acc ? "ACCUMULATED" : "fractional", wu_gap, cy_gap,
+                  exposure_ordering ? "carry outlives the accumulator"
+                                    : "⚠ INVERTED — carry expires FIRST, so the "
+                                      "between-horizons bucket is structurally empty "
+                                      "and says nothing about the invariant-#1 hole",
+                  n_sta, c.steps, c.backwards,
+                  c.gap_lt_wu, c.wraps,
+                  c.gap_lt_wu > 0 ? c.sum_abs_step_cyc / static_cast<double>(c.gap_lt_wu) : 0.0,
+                  c.max_abs_step_in_cyc,
+                  c.steps - c.gap_lt_wu,
+                  c.gap_wu_to_carry, c.gap_gt_carry, c.gap_steps,
+                  c.max_abs_step_gap_cyc, c.restarts);
+        if (!acc)
+            log->info("Network (wind-up census) READING [fractional]: the {} "
+                      "in-horizon step(s) >= 0.9 cyc ARE the one-cycle staircase — "
+                      "applied mid-pass in good data, band-common (so ΔWL = 0 and MW "
+                      "is structurally blind), and invisible to every slip detector.  "
+                      "`restarts` is 0 by construction here: there is no accumulator.  "
+                      "{}  0 transitions on an armed run = dead wiring (invariant #4).",
+                      c.wraps,
+                      exposure_ordering
+                          ? fmt::format("The {} between-horizon transition(s) are the "
+                                        "population that WOULD restart the accumulator "
+                                        "while the leveling carry survives — that is the "
+                                        "invariant-#1 exposure blocking "
+                                        "estimation.accumulate_phase_windup on this "
+                                        "lineage, and a response is a prerequisite for "
+                                        "any accumulate arm.",
+                                        c.gap_wu_to_carry)
+                          : fmt::format("The horizon ordering is inverted on this "
+                                        "posture, so this run CANNOT measure the "
+                                        "invariant-#1 exposure; re-run with "
+                                        "network.phase_leveling_max_gap_s > {:.0f} s "
+                                        "(the field lineages use 900) to size it.",
+                                        wu_gap));
+        else
+            log->info("Network (wind-up census) READING [accumulated]: `wraps` is 0 by "
+                      "CONSTRUCTION in this posture — every in-horizon transition is "
+                      "unwrapped into ±0.5 cyc, so no threshold on the applied step can "
+                      "see anything; do NOT read it as \"no restarts\".  The restart "
+                      "population is the {} counted above, each applying an exact "
+                      "integer-cycle step to every signal of its satellite with NO "
+                      "ambiguity response wired (invariants #1 and #7).",
+                      c.restarts);
+    }
+
+    // ---- Rung 3 v3: carry-domain lane observatory (SPEC_lane_slip_response §7.3)
+    if (config_.networkCycleSlipRelevelLaneSnap()) {
+        const auto& C = ctx.counters;
+        const long long closure = C.n_lane_measured + C.n_lane_skip_no_row
+                                + C.n_lane_skip_no_mw + C.n_lane_skip_unmeasured
+                                + C.n_lane_skip_pair_changed
+                                + C.n_lane_skip_no_freed_band
+                                + C.n_lane_skip_no_pre + C.n_lane_skip_stale_pre
+                                + C.n_lane_skip_no_post + C.n_lane_skip_bridged
+                                + C.n_lane_skip_bad_lambda;
+        const long long hsum = C.n_lane_hist[0] + C.n_lane_hist[1] + C.n_lane_hist[2]
+                             + C.n_lane_hist[3] + C.n_lane_hist[4] + C.n_lane_hist[5]
+                             + C.n_lane_hist[6] + C.n_lane_hist[7] + C.n_lane_hist[8];
+        log->info("Network (lane observatory v3, SPEC_lane_slip_response §7.3): {} "
+                  "attempt(s) [(station,sat) with >= 1 freed band]; "
+                  "{} MEASURED ({} vertex-wide / {} band-scoped), mean |delta| {:.3f} "
+                  "cyc, max {:.3f}.  |delta| histogram (cyc): <0.1 {} | <0.25 {} | "
+                  "<0.5 {} | <1 {} | <2 {} | <5 {} | <10 {} | <25 {} | >=25 {}.  "
+                  "Skipped: {} no raw row, {} no MW pair, {} MW unmeasured (no adjacent "
+                  "predecessor — if this is ~100 % of attempts the QUALIFICATION pass did "
+                  "not run and the card is ARMED-BUT-INERT, not null), {} pair changed, "
+                  "{} no freed band in THIS pair (a third band was freed), {} no pre-event "
+                  "carry, {} stale pre-event carry, {} not RE-STASHED this epoch, {} "
+                  "delta-bridged, {} bad wavelength.  CLOSURE {} vs attempts {} ({}); histogram sum {} vs "
+                  "measured {} ({}).  READING: this is MEASURE-ONLY — an armed run is "
+                  "byte-identical on every solve artifact, so a difference in products "
+                  "is a bug, not an effect.  The carry-frame hypothesis predicts the "
+                  "mass of |delta| BELOW ~2 cyc (residual eps_L(t+)-eps_L(t-)-eps_MW, "
+                  "with eps_MW 0.351 cyc on GPS L1/L2 and 0.051 on L2/L5 EWL); the "
+                  "DELETED seed site put 97 % above 25 cyc, which is what a frame "
+                  "mismatch looks like.  Mass in the top bins here FALSIFIES the "
+                  "carry-domain diagnosis and no apply leg should be built.  0 "
+                  "attempts on a slip-bearing armed run = dead wiring (invariant #4).",
+                  C.n_lane_attempts, C.n_lane_measured, C.n_lane_both_freed,
+                  C.n_lane_one_freed,
+                  C.n_lane_measured > 0
+                      ? C.lane_abs_delta_sum_cyc / static_cast<double>(C.n_lane_measured)
+                      : 0.0,
+                  C.lane_abs_delta_max_cyc,
+                  C.n_lane_hist[0], C.n_lane_hist[1], C.n_lane_hist[2], C.n_lane_hist[3],
+                  C.n_lane_hist[4], C.n_lane_hist[5], C.n_lane_hist[6], C.n_lane_hist[7],
+                  C.n_lane_hist[8],
+                  C.n_lane_skip_no_row, C.n_lane_skip_no_mw,
+                  C.n_lane_skip_unmeasured, C.n_lane_skip_pair_changed,
+                  C.n_lane_skip_no_freed_band, C.n_lane_skip_no_pre,
+                  C.n_lane_skip_stale_pre,
+                  C.n_lane_skip_no_post, C.n_lane_skip_bridged, C.n_lane_skip_bad_lambda,
+                  closure, C.n_lane_attempts,
+                  closure == C.n_lane_attempts ? "OK" : "*** MISWIRE ***",
+                  hsum, C.n_lane_measured,
+                  hsum == C.n_lane_measured ? "OK" : "*** MISWIRE ***");
+        // §7.6(b)+(c): the band-scoped subset histogram (vertex-wide = bin-wise
+        // difference against the line above) and the freeing-cause split.  The
+        // cause counts are BIT counts — a pair freed by two detectors lands in
+        // two of them, so they sum to >= measured.
+        const long long bs_sum = C.n_lane_hist_bandscoped[0] + C.n_lane_hist_bandscoped[1]
+                               + C.n_lane_hist_bandscoped[2] + C.n_lane_hist_bandscoped[3]
+                               + C.n_lane_hist_bandscoped[4] + C.n_lane_hist_bandscoped[5]
+                               + C.n_lane_hist_bandscoped[6] + C.n_lane_hist_bandscoped[7]
+                               + C.n_lane_hist_bandscoped[8];
+        log->info("Network (lane observatory §7.6 instrument): cause split over "
+                  "measured — MW {} / LLI {} / IF-TD {} (bit counts; rows may carry "
+                  "several).  BAND-SCOPED |delta| histogram (cyc): <0.1 {} | <0.25 {} | "
+                  "<0.5 {} | <1 {} | <2 {} | <5 {} | <10 {} | <25 {} | >=25 {} — sum {} "
+                  "vs one-freed {} ({}).  Per-event rows ride the events stream "
+                  "(tier=LANE_OBS; arm network.trace_events to keep them).",
+                  C.n_lane_meas_mw, C.n_lane_meas_lli, C.n_lane_meas_iftd,
+                  C.n_lane_hist_bandscoped[0], C.n_lane_hist_bandscoped[1],
+                  C.n_lane_hist_bandscoped[2], C.n_lane_hist_bandscoped[3],
+                  C.n_lane_hist_bandscoped[4], C.n_lane_hist_bandscoped[5],
+                  C.n_lane_hist_bandscoped[6], C.n_lane_hist_bandscoped[7],
+                  C.n_lane_hist_bandscoped[8],
+                  bs_sum, C.n_lane_one_freed,
+                  bs_sum == C.n_lane_one_freed ? "OK" : "*** MISWIRE ***");
+        // §7.6(d): the T4-side census — the SAME delta on the RAIM
+        // attribution/consensus erase channel (97.3 % of field freeing,
+        // structurally invisible to free_ambs).  Read APART from the lane-cost
+        // grade: dMW ≈ 0 there, so a large delta is the carry error the refloat
+        // REMOVED — response working, not response damage.  0 captured on a run
+        // with nonzero n_cr_raim_attrib/consensus = dead wiring (invariant #4).
+        const long long t4_closure = C.n_lane_t4_measured + C.n_lane_t4_skip_no_row
+                                   + C.n_lane_t4_skip_no_mw + C.n_lane_t4_skip_unmeasured
+                                   + C.n_lane_t4_skip_pair_changed + C.n_lane_t4_skip_gauge
+                                   + C.n_lane_t4_skip_no_pre + C.n_lane_t4_skip_stale_pre
+                                   + C.n_lane_t4_skip_no_post + C.n_lane_t4_skip_bad_lambda;
+        const long long t4_hsum = C.n_lane_t4_hist[0] + C.n_lane_t4_hist[1]
+                                + C.n_lane_t4_hist[2] + C.n_lane_t4_hist[3]
+                                + C.n_lane_t4_hist[4] + C.n_lane_t4_hist[5]
+                                + C.n_lane_t4_hist[6] + C.n_lane_t4_hist[7]
+                                + C.n_lane_t4_hist[8];
+        log->info("Network (lane observatory T4 census, §7.6(d)): {} arc(s) captured at "
+                  "the erase sites; {} attempt(s) [(station,sat) with >= 1 captured band]; "
+                  "{} MEASURED, mean |delta| {:.3f} cyc, max {:.3f}.  |delta| histogram "
+                  "(cyc): <0.1 {} | <0.25 {} | <0.5 {} | <1 {} | <2 {} | <5 {} | <10 {} | "
+                  "<25 {} | >=25 {}.  Skipped: {} no raw row, {} no MW pair, {} MW "
+                  "unmeasured, {} pair changed, {} GAUGE (the pair's (sat,σ) was "
+                  "eq34-re-referenced in the measuring epoch — the capture predates the "
+                  "frame step), {} no captured band, {} stale capture, {} not RE-STASHED, "
+                  "{} bad wavelength.  CLOSURE {} vs attempts {} ({}); histogram sum {} vs "
+                  "measured {} ({}).",
+                  C.n_lane_t4_captured, C.n_lane_t4_attempts, C.n_lane_t4_measured,
+                  C.n_lane_t4_measured > 0
+                      ? C.lane_t4_abs_delta_sum_cyc / static_cast<double>(C.n_lane_t4_measured)
+                      : 0.0,
+                  C.lane_t4_abs_delta_max_cyc,
+                  C.n_lane_t4_hist[0], C.n_lane_t4_hist[1], C.n_lane_t4_hist[2],
+                  C.n_lane_t4_hist[3], C.n_lane_t4_hist[4], C.n_lane_t4_hist[5],
+                  C.n_lane_t4_hist[6], C.n_lane_t4_hist[7], C.n_lane_t4_hist[8],
+                  C.n_lane_t4_skip_no_row, C.n_lane_t4_skip_no_mw,
+                  C.n_lane_t4_skip_unmeasured, C.n_lane_t4_skip_pair_changed,
+                  C.n_lane_t4_skip_gauge, C.n_lane_t4_skip_no_pre,
+                  C.n_lane_t4_skip_stale_pre, C.n_lane_t4_skip_no_post,
+                  C.n_lane_t4_skip_bad_lambda,
+                  t4_closure, C.n_lane_t4_attempts,
+                  t4_closure == C.n_lane_t4_attempts ? "OK" : "*** MISWIRE ***",
+                  t4_hsum, C.n_lane_t4_measured,
+                  t4_hsum == C.n_lane_t4_measured ? "OK" : "*** MISWIRE ***");
+    }
+
+    // Lane snap (SPEC_lane_slip_response rung 3): the v1/v2/v2.1 SEED-SITE
+    // readout is deleted with its mechanism — see the DELETED banner in
+    // MeasurementModel::ensureRequiredStates.  Its counters described a write
+    // that was a proven exact solve no-op, so a nonzero `snapped` was never
+    // evidence of an effect; leaving the line would have kept reporting one.
+    // Rung 3 v3 measures the lane in the CARRY domain and reports there.
     if (config_.networkCycleSlipRelevelRetapCorroborate())
         log->info("Network (retap corroboration, SPEC_lane_slip_response): {} keep(s) "
                   "carried positive raw-observable continuity evidence; {} refused — "

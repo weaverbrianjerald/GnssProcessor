@@ -410,6 +410,9 @@ add_executable(gnss_tests
     tests/test_station_info.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
+    tests/test_log_manager_init.cpp
+    tests/test_windup_census_config.cpp
+    tests/test_lane_observatory_config.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

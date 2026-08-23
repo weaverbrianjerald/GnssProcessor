@@ -1,0 +1,59 @@
+{
+ "_comment": [
+  "FIELD lane OBSERVATORY arm (SPEC_lane_slip_response 7.3, real-data test).",
+  "*** RE-POINTED 2026-08-22.  relevel_lane_snap no longer drives the seed-site snap",
+  "this file was originally written for -- that mechanism was DELETED as a proven exact",
+  "solve no-op (7.2) and its 'snapped' counter no longer exists.  The knob now arms the",
+  "CARRY-DOMAIN lane observatory, which is MEASURE-ONLY. ***",
+  "Consequence for this arm's design: it is BYTE-IDENTICAL to the control",
+  "_fld63_relevel4h_ctlw on every solve artifact, so it is no longer an A/B -- it is a",
+  "single measurement that carries its own wiring check.",
+  "PRE-REGISTERED: (1) n_lane_measured nonzero and BOTH closure identities OK in the",
+  "run-end 'lane observatory v3' line -- 0 attempts on this slip-bearing posture is dead",
+  "wiring, not a null (invariant #4); (2) the |delta| histogram mass sits BELOW ~2 cyc",
+  "(the carry-frame prediction; residual eps_L(t+)-eps_L(t-)-eps_MW, with eps_MW ~0.351",
+  "cyc on the DUAL WL(1,2) chain this config runs) -- mass in the >=10/>=25 bins",
+  "reproduces the deleted seed site's own signature and FALSIFIES the carry-domain",
+  "diagnosis, in which case no apply leg gets built; (3) scripts/field_lane_frac.py must",
+  "return IDENTICAL numbers on this arm and on the control -- any difference is a bug in",
+  "the observatory, not an effect, because nothing is written back."
+ ],
+ "extends": "_ext63_1h_evt_pl.json",
+ "processing": {
+  "max_duration_s": 14400.0
+ },
+ "network": {
+  "carry_invariant": false,
+  "product_output_path": "C:/GnssProcessor/runs/fld63_lanesnap4h/products.txt",
+  "cycle_slip": {
+   "if_phase_td": true,
+   "mw_detect": true,
+   "if_phase_td_ref_gate": true,
+   "mw_lli_corroborate": true,
+   "gap_instrument": true,
+   "relevel_free_epoch": true,
+   "relevel_delta_bridge": true,
+   "relevel_bridge_gf": true,
+   "relevel_lane_snap": true
+  },
+  "carry_invariant_innov_gate": false,
+  "carry_invariant_innov_refold": false,
+  "carry_invariant_honesty": false,
+  "carry_invariant_pd_safe": false,
+  "carry_invariant_innov_corroborate": false,
+  "carry_invariant_innov_calibrate_window": 0,
+  "carry_invariant_qz": 0.0,
+  "carry_invariant_innov_calibrate": false,
+  "carry_invariant_innov_k": 4.0,
+  "mw_wl": {
+   "ewl_enable": false,
+   "wl_inject_enable": false,
+   "uwl_enable": false,
+   "uwl_cold_fix": false,
+   "uwl_mid_enable": false,
+   "uwl_dual_top": false
+  },
+  "state_snapshot_path": "C:/GnssProcessor/runs/fld63_lanesnap4h/state_snapshot.bin",
+  "trace_dd_fractional": true
+ }
+}

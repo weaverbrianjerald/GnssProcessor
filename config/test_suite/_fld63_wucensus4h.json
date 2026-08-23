@@ -1,0 +1,62 @@
+{
+ "_comment": [
+  "WIND-UP CENSUS arm (SPEC_phase_windup_sign 10.4).  Knob-verbatim clone of",
+  "_fld63_relevel4h_ctlw plus estimation.trace_windup_census -- a READ-ONLY counter set,",
+  "so this arm is byte-identical to the control on every solve artifact and needs no A/B:",
+  "it is a single measurement on the canonical FRACTIONAL field posture (the posture every",
+  "field lineage runs, and the one no instrument has ever reached on the network path --",
+  "windup_trace.csv is written only from Application::run).",
+  "PRE-REGISTERED: (1) wraps per station per day near SPEC 7's measured 43 (GCGO, 24 h);",
+  "materially below => the census under-counts, check steps against the epoch count first;",
+  "materially above => 7's single-station figure did not generalise and its 63-station",
+  "scaling is an UNDERestimate.  (2) gap_wu_to_carry is THE number that decides the",
+  "accumulate_phase_windup default: zero on a settled run => the inverted-horizon hole has",
+  "an empty population on this posture and the flip can be argued on 9.5's residual algebra",
+  "alone; nonzero => a wired restart response is a BLOCKING prerequisite and no accumulate",
+  "arm runs until it lands.  (3) restarts must be 0 here (fractional mode has no",
+  "accumulator).  (4) steps == 0 on an armed run is dead wiring, not a null (invariant #4).",
+  "NOTE the horizon ordering: this chain sets phase_leveling_max_gap_s 900 > the 300 s",
+  "wind-up horizon, so the exposure bucket IS meaningful here.  On a config taking the",
+  "120 s loader default the ordering inverts and the teardown suppresses the narrative."
+ ],
+ "extends": "_ext63_1h_evt_pl.json",
+ "processing": {
+  "max_duration_s": 14400.0
+ },
+ "network": {
+  "carry_invariant": false,
+  "product_output_path": "C:/GnssProcessor/runs/fld63_wucensus4h/products.txt",
+  "cycle_slip": {
+   "if_phase_td": true,
+   "mw_detect": true,
+   "if_phase_td_ref_gate": true,
+   "mw_lli_corroborate": true,
+   "gap_instrument": true,
+   "relevel_free_epoch": true,
+   "relevel_delta_bridge": true,
+   "relevel_bridge_gf": true
+  },
+  "carry_invariant_innov_gate": false,
+  "carry_invariant_innov_refold": false,
+  "carry_invariant_honesty": false,
+  "carry_invariant_pd_safe": false,
+  "carry_invariant_innov_corroborate": false,
+  "carry_invariant_innov_calibrate_window": 0,
+  "carry_invariant_qz": 0.0,
+  "carry_invariant_innov_calibrate": false,
+  "carry_invariant_innov_k": 4.0,
+  "mw_wl": {
+   "ewl_enable": false,
+   "wl_inject_enable": false,
+   "uwl_enable": false,
+   "uwl_cold_fix": false,
+   "uwl_mid_enable": false,
+   "uwl_dual_top": false
+  },
+  "state_snapshot_path": "C:/GnssProcessor/runs/fld63_relevel4h_ctlw/state_snapshot.bin",
+  "trace_dd_fractional": true
+ },
+ "estimation": {
+  "trace_windup_census": true
+ }
+}

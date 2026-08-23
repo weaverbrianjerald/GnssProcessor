@@ -127,7 +127,7 @@ src/core/             Implementation files mirror the include/ subdir layout
                       products/, slip/, etc.).  src/core/config/ also holds
                       gnss_config.json — the primary user-edited config file.
 
-tests/                GoogleTest unit suite (1522 cases / 212 suites across 101
+tests/                GoogleTest unit suite (1540 cases / 215 suites across 104
                       files) linked into `gnss_tests.exe`.  tests/sim/ is a
                       SEPARATE target, `gnss_simulator_selftest` (80 cases).
                       Note: docs/test_suite.md documents the real-data
@@ -439,6 +439,71 @@ unless the epoch is provably unrecoverable.  (The SH gate currently has no
 release/degrade policy — a sick-field era withholds the wire for its full
 duration, 95+ min measured on DOY-129; open policy item.)
 
+### Amendments from the wu93 night (2026-08-21/22) — ledger §A3, measured
+
+**1. The carrier-phase wind-up frame is `nominal-wu93`** (the sign fix,
+`4f49fa2` + consumer-gap closure `0d25aa0`).  Every pre-fix product, golden
+byte-cert hash, and state snapshot is an **expected-fail baseline** —
+re-capture, never re-grade.  **A sim fixture and a producer must sit on the
+SAME side of the fix** (`runs/simnet60_{campaign,quiet}_wu93` are the current
+fixtures): the mixed pairing injects 2φ_wu into every phase obs and is
+INVISIBLE to σ̂₀ at short horizons (ambiguity-absorbed) — enforce by
+provenance, not by instruments (SPEC_phase_windup_sign §9.9).
+
+**2. Slipped sim postures arm `cycle_slip.relevel_free_epoch`** (walk dead,
+720/720, quiet-twin ZWD p50 2.5 cm — the campaign template now pins this).
+**`relevel_retap_statistical` and `relevel_retap_corroborate` are KEEP_OFF —
+both FALSIFIED on the lane-integer instrument** (settled GPS EWL at-own-true-
+integer: refloat-always 70.2 %, corroborated keep 59.6 %, keep-always 54.0 %;
+the raw MW/GF evidence refuses only 1.5 % because T4 catches sub-threshold
+DRIFTS, not steps — SPEC_lane_slip_response).  The lane-integer slip cost is
+**100 % response-inflicted** (response-virgin chords: 98.9–100 % at their own
+true integer); the open build is the LANE-PRESERVING refloat (EWL-MW snap,
+σ ≈ 0.05 cyc) + band-scoped refloat.
+⚠ **UPDATE 2026-08-22 (SPEC_lane_slip_response §7.2): the SEED-SITE snap is
+DELETED and must not be rebuilt.**  Its only write was an `x_lin` shift on a
+local ambiguity column — a proven EXACT solve no-op on the network producer, so
+all three iterations were debugging a mechanism that could not actuate (the
+carried prior's RHS `η = Λ·(value_abs − x_lin)` absorbs the shift, and the
+graded instrument `network_dd_fractional.csv` forms `x_lin + x_r`).  Its `d`
+degenerated to `−Δe_b/λ_b`: one band's frozen-frame model-error change over a
+SINGLE-band wavelength, 3.53× the lane coefficient — which is the whole 15.9-cyc
+"structural discrepancy".  **The lane lives in `LocalCarry::value_abs`** (the
+absolute estimate `x_lin + x_r`, where the frozen frame is structurally absent);
+rung 3 v3 measures it there, OBSERVATORY-FIRST (measure-only, byte-identical on
+every solve artifact — SPEC §7.3).  `network.cycle_slip.relevel_lane_snap` is
+RE-POINTED at that observatory behind two interlocks (`phase_leveling`, and
+`relevel_free_epoch` on its SETTLED value; dies under `carry_invariant`).
+
+**3. `estimation.accumulate_phase_windup` is an OPEN default card** — every
+field lineage silently runs FRACTIONAL (wrapping) mode (±1-cycle staircase,
+MW-blind; the loader now warns).  Do not flip the loader default without the
+migration card; arm it explicitly on fresh-convergence lineages.
+⚠ **UPDATE 2026-08-22 (SPEC_phase_windup_sign §10): the flip is BLOCKED on an
+inverted horizon, not just on evidence.**  The accumulator's continuity horizon
+is 300 s while the FT63/EXT63/FLD63 chain runs `phase_leveling_max_gap_s: 900`,
+so a gap in **(300, 900] s** restarts the unwrap — an exact integer-cycle step
+on every signal of that satellite — while the carried ambiguity and the zero-q
+leveling level SURVIVE and re-inject at their pre-gap values.  Invariant #1 with
+no wired response, invariant #7 with both edges silent, and MW-blind (the step
+is band-common, ΔWL = 0).  The accumulator itself is safe as KEYED (one
+`GnssCorrections` per station makes the satellite-only key injective — verified;
+the simulator's shared-provider fan-out is the exception and already pays a
+process-per-station cost).  **Arm `estimation.trace_windup_census` on a
+fractional field lineage first** — DONE 2026-08-22 (`_fld63_wucensus4h`, 4 h,
+61 sta): the staircase is **51 in-horizon one-cycle steps (~306/day network-wide,
+2.15e-4 per sat-epoch — §7's GCGO rate once cadence-normalised)**, and
+`gap_wu_to_carry` = **20** (~120/day) — NONZERO, so the wired restart response is
+a BLOCKING prerequisite.  ⚠ Sharper than §9.5's algebra implies: accumulation does
+not zero the defect, it trades ~306 fractional wraps/day for ~120 UNCOMPENSATED
+restarts/day — a ~2.5× reduction that moves the problem to an uninstrumented
+channel.  Build the response, not the flip.
+
+**4. `network.trace_station_residuals` writes ZERO rows on `carry_invariant`
+chains** — the writer rides the leveling RAIM pool, structurally empty there
+(the known pool re-host gap).  Use the prires / block-Baarda / congruence
+run-end counters as the σ̂₀ instrument set on those lineages.
+
 ## File management (RINEX, products, downloads)
 
 Input-file location goes through one class — `PathResolver` — driven
@@ -566,8 +631,8 @@ JSON to retain the compressed copy (for byte-exact archival).
 
 ## Known state
 
-- **Test suite.** `gnss_tests.exe` runs 1522 GoogleTest cases across 212 suites in 101 files (~83 s, full Debug run under VS 2026, measured 1521 passed + 1 skip; re-counted 2026-08-21 after the phase-wind-up sign card — the previous 1469/205/96 figures predate it; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (80 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
-  - Suite hygiene: every suite name should be owned by exactly one file — keep it that way, and prefer a new file over widening an existing one (the zero-cross-file-overlap property was re-verified at 212 suites on 2026-08-21, tests/ + tests/sim/ both scanned). At 51.5k test LOC against 189.2k production LOC the suite is *thin* (0.27 ratio, ~1 case per 139 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
+- **Test suite.** `gnss_tests.exe` runs 1540 GoogleTest cases across 215 suites in 104 files (~90 s, full Debug run under VS 2026, measured 1539 passed + 1 skip; re-counted 2026-08-22 after the wind-up census + lane observatory cards — the previous 1527/213/102 figures predate them; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (80 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
+  - Suite hygiene: every suite name should be owned by exactly one file — keep it that way, and prefer a new file over widening an existing one (the zero-cross-file-overlap property was re-verified at 215 suites on 2026-08-22, tests/ + tests/sim/ both scanned). At 51.5k test LOC against 189.2k production LOC the suite is *thin* (0.27 ratio, ~1 case per 139 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
 - **Pre-existing C4828 warnings** (illegal characters at codepage 65001) are from older mixed-encoding files and unrelated to new work. Ignore unless the user asks to clean them up.
 - **`vswhere.exe not recognized`** messages from cmd subshells are benign noise when using the vcvars64 pattern above — the build proceeds.
 - **Real-time mode** uses a separate path (`Application::runRealTime` → `RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `Application::run` and should guard against `AppMode::RealTime`.

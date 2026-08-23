@@ -216,6 +216,16 @@ namespace GnssProcessor {
             return antenna_.enableWindUpTracing(log_dir);
         }
 
+        /// @brief Arm the per-receiver phase wind-up census.  Telemetry only —
+        ///        arming it cannot move a byte of the solve.
+        void enableWindUpCensus(double wu_gap_s, double carry_gap_s) {
+            antenna_.enableWindUpCensus(wu_gap_s, carry_gap_s);
+        }
+        /// @brief The census counters for this model's receiver.
+        const GnssCorrections::WindUpCensus& windUpCensus() const {
+            return antenna_.windUpCensus();
+        }
+
         /**
          * @brief Check whether the BIA product has an entry for a satellite+signal pair.
          *

@@ -398,6 +398,22 @@ namespace GnssProcessor {
          *        (Sun direction + nadir). When zero, falls back to velocity-based attitude.
          * @param sat_vel Satellite ECEF velocity (meters/second). Used as fallback
          *        for attitude when sun_pos is not available or during eclipse/noon turn.
+         * @param accumulate When true, unwrap against the previous epoch so the
+         *        applied correction is continuous (required for IAR).  When false
+         *        (the loader default, hence every field lineage) the raw @c atan2
+         *        angle is applied, which steps a FULL cycle at each half-cycle
+         *        crossing — see @ref enableWindUpCensus for the instrument that
+         *        counts those steps.
+         * @param max_gap_s Accumulator continuity horizon (seconds).  A gap larger
+         *        than this restarts accumulation from the raw angle, which applies
+         *        an exact integer-cycle step to every signal of that satellite.
+         *        ⚠ This horizon is INDEPENDENT of, and on the field lineages
+         *        SHORTER than, @c network.phase_leveling_max_gap_s (900 s there) —
+         *        so a gap in (max_gap_s, phase_leveling_max_gap_s] steps the model
+         *        while the carried ambiguity and the zero-q leveling level survive
+         *        and are re-injected at their pre-gap values.  That is standing
+         *        invariant #1 with no wired response; the census counts the
+         *        exposure so the ordering can be fixed on evidence.
          * @return Phase wind-up correction in meters (to add to carrier range).
          *
          * Computes the phase bias caused by relative antenna orientation
@@ -407,7 +423,8 @@ namespace GnssProcessor {
             const Eigen::Vector3d& sat_pos, double wavelength, const GnssTime& time,
             const Eigen::Vector3d& sun_pos = Eigen::Vector3d::Zero(),
             const Eigen::Vector3d& sat_vel = Eigen::Vector3d::Zero(),
-            bool accumulate = false) const;
+            bool accumulate = false,
+            double max_gap_s = 300.0) const;
 
         /**
          * @brief Enable CSV tracing of per-satellite phase wind-up diagnostics.
@@ -540,7 +557,94 @@ namespace GnssProcessor {
             double angle{ 0.0 };      ///< Accumulated wind-up angle (radians).
             double epoch_s{ 0.0 };    ///< Continuous GPS seconds of last update.
         };
+        // ⚠ OWNERSHIP CONTRACT — the key is the SATELLITE ALONE, so this map is
+        // only correct if the owning GnssCorrections instance serves exactly ONE
+        // receiver.  It does on every production path: each network station owns
+        // its own PppModel (ApplicationNetworkSetup.cpp) -> Antenna (by value)
+        // -> GnssCorrections (by value), and the only caller that reaches the
+        // wind-up path is Antenna's receiver/satellite correction assembly,
+        // behind an `is_phase` gate.  (ModelGeometry's emission-time refinement
+        // calls the same instance with CODE signals only; that gate is what
+        // keeps those calls out of both the accumulator and the census.)  If this object is ever shared
+        // across receivers, accumulated mode silently interleaves their arcs and
+        // the unwrap reference becomes another station's angle.  The simulator's
+        // shared-provider fan-out already pays a process-per-station cost for
+        // exactly this reason.  Re-key to (station, satellite) before sharing.
         mutable std::unordered_map<std::string, WindUpState> prev_windup_;
+
+    public:
+        /**
+         * @brief Per-instance (i.e. per-receiver) phase wind-up census counters.
+         *
+         * Armed by @ref enableWindUpCensus; populated from @c computePhaseWindUp
+         * in BOTH accumulation postures, so the dominant field posture
+         * (fractional) is measurable for the first time.  Read-only telemetry —
+         * arming it cannot move a byte of the solve.
+         */
+        struct WindUpCensus {
+            long long steps{0};          ///< FORWARD consecutive-processed-epoch transitions observed (the denominator; @ref backwards excluded).
+            /// |Delta applied| >= 0.9 cyc across an IN-HORIZON gap: the fractional
+            /// staircase.  ⚠ FRACTIONAL-POSTURE ONLY.  In accumulated mode an
+            /// in-horizon transition passes through the unwrap, which confines the
+            /// step to [-0.5, +0.5] cyc BY CONSTRUCTION, so this counter is
+            /// identically zero there — a zero must NOT be read as "no restarts".
+            /// The restart population is @ref restarts.
+            long long wraps{0};
+            /// Accumulator RESTARTS, taken from the accumulator's OWN decision
+            /// rather than re-derived from a threshold on the applied step.
+            /// Zero in fractional mode (there is no accumulator to restart).
+            long long restarts{0};
+            long long gap_steps{0};      ///< |Delta applied| >= 0.9 cyc across an out-of-horizon gap.
+            long long backwards{0};      ///< transitions with gap <= 0 (epochs out of order); excluded from @ref steps and from every bucket, and they do NOT corrupt the next gap because the reference is still advanced.
+            long long gap_lt_wu{0};      ///< transitions with gap < the wind-up horizon (accumulation continues).
+            /// Out-of-horizon transitions falling between the two horizons — the
+            /// model would step while the leveling carry SURVIVES.
+            /// ⚠ Meaningful ONLY when the carry horizon exceeds the wind-up
+            /// horizon.  It does on the field lineages (900 s vs 300 s) but NOT at
+            /// the loader default (@c network.phase_leveling_max_gap_s defaults to
+            /// 120 s, BELOW the wind-up horizon), where the ordering is inverted
+            /// and this bucket is structurally empty.  The teardown prints the
+            /// ordering it observed and suppresses the exposure narrative when the
+            /// ordering does not hold, so a structural zero can never be read as a
+            /// clean bill of health.
+            long long gap_wu_to_carry{0};
+            long long gap_gt_carry{0};   ///< out-of-horizon transitions beyond the carry horizon (the carry is dropped too — no invariant-#1 hole).
+            double    max_abs_step_in_cyc{0.0};  ///< largest |Delta applied| over IN-horizon transitions (cycles).
+            double    max_abs_step_gap_cyc{0.0}; ///< largest |Delta applied| over OUT-of-horizon transitions (cycles).
+            double    sum_abs_step_cyc{0.0};     ///< Sigma |Delta applied| over in-horizon transitions (cycles).
+        };
+
+        /**
+         * @brief Arm the wind-up census on this instance.
+         *
+         * @param wu_gap_s    the accumulator continuity horizon in force.
+         * @param carry_gap_s the phase-leveling carry horizon (@c
+         *        network.phase_leveling_max_gap_s), used ONLY to bucket gaps so
+         *        the invariant-#1 exposure between the two horizons is counted.
+         *        Pass 0 to disable that bucketing (user path).
+         */
+        void enableWindUpCensus(double wu_gap_s, double carry_gap_s) {
+            wu_census_on_ = true;
+            wu_census_gap_s_ = wu_gap_s;
+            wu_census_carry_gap_s_ = carry_gap_s;
+        }
+        /// @brief The census counters (all zero unless @ref enableWindUpCensus ran).
+        const WindUpCensus& windUpCensus() const { return wu_census_; }
+
+    private:
+        bool   wu_census_on_{false};
+        double wu_census_gap_s_{300.0};
+        double wu_census_carry_gap_s_{0.0};
+        mutable WindUpCensus wu_census_;
+        /// Last APPLIED wind-up in cycles per satellite, with its epoch — the
+        /// census's own state, deliberately separate from @c prev_windup_ so the
+        /// census reads identically in both accumulation postures.  Same
+        /// one-receiver-per-instance contract as @c prev_windup_ above.
+        /// @c seeded is an explicit flag rather than an @c epoch_s == 0 sentinel:
+        /// 0.0 is a legal continuous-GPS-second value, and overloading it would
+        /// make a satellite at that epoch re-seed forever and never be counted.
+        struct WuCensusState { double cycles{0.0}; double epoch_s{0.0}; bool seeded{false}; };
+        mutable std::unordered_map<std::string, WuCensusState> wu_census_prev_;
 
         // Phase wind-up CSV diagnostic trace.  Opened on demand via
         // enableWindUpTracing(); written from the const computePhaseWindUp(),

@@ -87,6 +87,13 @@ namespace GnssProcessor {
          *                used as the base path for rotating log files.
          * @param level  Initial logging level to apply to all created loggers.
          * @return true if initialization succeeded (sinks and default logger created), false on failure.
+         *
+         * @note Never throws. Log-directory preparation (create + stale-.log
+         *       scrub) is best-effort via the @c error_code overloads, and any
+         *       remaining exception degrades to a console-only logger with a
+         *       @c false return. Callers must not be aborted by a logging-setup
+         *       failure — on Windows a concurrently-running process holding a
+         *       @c .log open makes the scrub's @c remove() fail routinely.
          */
         bool initialize(const std::filesystem::path& log_dir, LogLevel level);
 

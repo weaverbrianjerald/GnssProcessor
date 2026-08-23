@@ -8,6 +8,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 namespace GnssProcessor {
 
@@ -119,14 +120,34 @@ namespace GnssProcessor {
         log_dir_ = log_dir;
         level_ = level;
         try {
-            // Create log directory if it doesn't exist
-            if (!std::filesystem::exists(log_dir)) {
-                std::filesystem::create_directories(log_dir);
+            // Log-directory preparation is BEST-EFFORT and must never throw.
+            //
+            // Every std::filesystem call below raises std::filesystem_error —
+            // which is NOT an spdlog_ex, so it would escape the catch clause
+            // and abort the caller, contradicting this function's documented
+            // "fall back to console-only, return false" contract.  That is not
+            // hypothetical: concurrent runs are normal in this project, and on
+            // Windows `remove()` on a .log another live process still holds
+            // open fails with ERROR_SHARING_VIOLATION.  It surfaced as
+            // Gpt3Test's SetUpTestSuite dying with
+            //   C++ exception ... "remove: The process cannot access the file
+            //   because it is being used by another process"
+            // whenever a second gnss_tests.exe (or a WER-zombied one) still had
+            // the shared temp gpt3.log open.
+            //
+            // So use the error_code overloads and SKIP what we cannot touch: an
+            // undeletable stale .log costs us the overwrite of that one file
+            // (spdlog appends/rotates instead), which beats failing the run.
+            std::error_code ec;
+            if (!std::filesystem::exists(log_dir, ec)) {
+                std::filesystem::create_directories(log_dir, ec);
             }
-            // Remove existing .log files to ensure overwrite
-            for (const auto& entry : std::filesystem::directory_iterator(log_dir)) {
-                if (entry.is_regular_file() && entry.path().extension() == ".log") {
-                    std::filesystem::remove(entry.path());
+            for (std::filesystem::directory_iterator it(log_dir, ec), end; it != end;
+                 it.increment(ec)) {
+                if (ec) break;
+                std::error_code entry_ec;
+                if (it->is_regular_file(entry_ec) && it->path().extension() == ".log") {
+                    std::filesystem::remove(it->path(), entry_ec);
                 }
             }
 
@@ -155,14 +176,26 @@ namespace GnssProcessor {
             initialized_ = true;
             return true;
         }
-        catch (const spdlog::spdlog_ex& e) {
+        // Catch std::exception, not just spdlog_ex: the point of this clause is
+        // that NO caller can be aborted by a logging-setup failure, and the
+        // things that throw here are not all spdlog's (formatter construction,
+        // allocation, and — before the error_code rewrite above — filesystem).
+        // The recovery must itself be exception-safe: the most common arrival
+        // is register_logger() rejecting a duplicate "gnss_processor", and the
+        // retry below would hit that same rejection, so it is guarded.
+        catch (const std::exception& e) {
             auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
             auto logger = std::make_shared<spdlog::logger>("gnss_processor", console_sink);
             logger->set_formatter(makeGpsFormatter());
             logger->set_level(toSpdlogLevel(level));
             logger->error("Failed to initialize file logging: {}. Using console logging.", e.what());
             loggers_["gnss_processor"] = logger;
-            spdlog::register_logger(logger);
+            try {
+                spdlog::register_logger(logger);
+            } catch (const spdlog::spdlog_ex&) {
+                // Name already registered — the map entry above is what this
+                // manager hands out, so a failed registry insert is harmless.
+            }
             initialized_ = true;
             return false;
         }

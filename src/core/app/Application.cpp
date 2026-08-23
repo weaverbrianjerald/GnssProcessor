@@ -1630,6 +1630,13 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     if (logging_cfg.enable_windup_trace && ppp_model_) {
         ppp_model_->enableWindUpTracing(log_dir_);
     }
+    // Wind-up census (estimation.trace_windup_census): the same read-only
+    // step/gap counters the network teardown sums across its roster, armed here
+    // for the single-receiver paths.  carry_gap_s = 0 disables the leveling-carry
+    // bucketing, which has no meaning off the network producer.
+    if (config_.traceWindUpCensus() && ppp_model_) {
+        ppp_model_->enableWindUpCensus(config_.phaseWindUpMaxGapS(), 0.0);
+    }
     if (iono_variability_monitor_ && config_.getAdaptiveIonoQConfig().trace) {
         iono_variability_monitor_->enableTracing(log_dir_);
     }
@@ -2128,6 +2135,44 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         logEpochSummary(epoch_prefix);
         writeEpochTraces(current_time, epoch_obs, modeled_obs, drop_reasons,
                          applied_meas, have_applied, epoch_reset_sats);
+    }
+
+    // --- Wind-up census readout (estimation.trace_windup_census) ------------
+    // Single-receiver counterpart of the network teardown's roster sum.  This
+    // is the path SPEC_phase_windup_sign §7's 43-jumps/day figure came from, so
+    // an armed PPP run is the cross-check on the network census's calibration.
+    if (config_.traceWindUpCensus() && ppp_model_) {
+        const auto& w = ppp_model_->windUpCensus();
+        auto wu_log = log_manager_.getLogger("ppp_model");
+        const bool acc = config_.accumulatePhaseWindUp();
+        if (wu_log) {
+            wu_log->info("Wind-up census (mode {}, horizon {:.0f} s): {} forward "
+                         "transitions ({} out-of-order, excluded).  IN-horizon: {} "
+                         "transitions, {} step(s) >= 0.9 cyc, mean |step| {:.4f} cyc, "
+                         "max {:.3f}.  OUT-of-horizon: {} transitions, {} stepped "
+                         ">= 0.9 cyc (max {:.3f}).  Accumulator RESTARTS (its own "
+                         "verdict, not a threshold): {}.",
+                         acc ? "ACCUMULATED" : "fractional",
+                         config_.phaseWindUpMaxGapS(), w.steps, w.backwards,
+                         w.gap_lt_wu, w.wraps,
+                         w.gap_lt_wu > 0
+                             ? w.sum_abs_step_cyc / static_cast<double>(w.gap_lt_wu)
+                             : 0.0,
+                         w.max_abs_step_in_cyc,
+                         w.steps - w.gap_lt_wu, w.gap_steps, w.max_abs_step_gap_cyc,
+                         w.restarts);
+            wu_log->info("Wind-up census READING: {}  0 transitions on an armed run = "
+                         "dead wiring (invariant #4).",
+                         acc ? "`wraps` is 0 by CONSTRUCTION in accumulated mode — every "
+                               "in-horizon transition is unwrapped into ±0.5 cyc, so a "
+                               "threshold on the applied step is blind; the restart "
+                               "population is the count reported above, and each restart "
+                               "steps the model by an exact integer cycle."
+                             : "the in-horizon steps >= 0.9 cyc ARE the one-cycle "
+                               "staircase (SPEC_phase_windup_sign §7); this is the "
+                               "single-receiver cross-check on the network census, and "
+                               "the path §7's own 43/day figure came from.");
+        }
     }
 
     // --- Phase 5: Optional backward RTS smoother pass ---

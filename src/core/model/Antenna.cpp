@@ -975,7 +975,7 @@ namespace GnssProcessor {
 
         double wind_up_corr = 0.0;
         if (config_.getModelCorrections().enable_phase_windup && is_phase && wavelength > 0.0) {
-            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel, config_.accumulatePhaseWindUp());
+            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel, config_.accumulatePhaseWindUp(), config_.phaseWindUpMaxGapS());
             if (std::isfinite(wind_up)) {
                 wind_up_corr = wind_up;
                 correction += wind_up_corr;
@@ -1310,6 +1310,14 @@ namespace GnssProcessor {
      * @param dzen Zenith spacing in degrees between PCV rows.
      * @return Interpolated PCV value in same units as table (meters if table was in meters; caller scales).
      */
+    void Antenna::enableWindUpCensus(double wu_gap_s, double carry_gap_s) {
+        gnss_corrections_.enableWindUpCensus(wu_gap_s, carry_gap_s);
+    }
+
+    const GnssCorrections::WindUpCensus& Antenna::windUpCensus() const {
+        return gnss_corrections_.windUpCensus();
+    }
+
     bool Antenna::enableWindUpTracing(const std::filesystem::path& log_dir) {
         return gnss_corrections_.enableWindUpTracing(log_dir);
     }

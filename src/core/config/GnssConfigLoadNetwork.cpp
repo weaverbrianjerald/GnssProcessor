@@ -203,6 +203,10 @@ namespace GnssProcessor {
                       "empty there) — both disabled.");
             network_cycle_slip_relevel_free_epoch_ = false;
             network_cycle_slip_relevel_delta_bridge_ = false;
+            // Rider: the lane observatory reads local_carry.value_abs and the
+            // freed set, both structurally empty here.  Riders die with their
+            // base (SPEC_lane_slip_response §7.3).
+            network_cycle_slip_relevel_lane_snap_ = false;
         }
         if (network_cycle_slip_relevel_retap_statistical_ && network_carry_invariant_) {
             log->warn("Network: network.cycle_slip.relevel_retap_statistical is inert "
@@ -3628,13 +3632,23 @@ namespace GnssProcessor {
         network_cycle_slip_relevel_retap_corroborate_ =
             jval<bool>(json, "network.cycle_slip.relevel_retap_corroborate",
                        "network_cycle_slip_relevel_retap_corroborate", false);
-        //   relevel_lane_snap — SPEC_lane_slip_response §3 rung 3: every fresh
-        //     per-band seed (birth or re-level) has its non-anchor bands
-        //     re-anchored so the LANES equal the epoch's iono-free MW float
-        //     instead of the difference of two independent code levels.  A seed
-        //     VALUE improvement under unchanged diffuse variance — no stiffness,
-        //     no event edge; works with or without phase_leveling (the seed path
-        //     is universal), so no interlock.
+        //   relevel_lane_snap — SPEC_lane_slip_response §7.3.  ⚠ THIS KNOB
+        //     CHANGED MEANING.  The SEED-SITE mechanism it used to drive
+        //     (v1/v2/v2.1) is DELETED: its only write was an x_lin shift on a
+        //     local ambiguity column, which the reduced network solve absorbs
+        //     exactly, so no arm of it ever moved the ESTIMATE (the two
+        //     default-off prefit screens that gate on H·x_lin are the sole
+        //     exception; see the DELETED banner in
+        //     MeasurementModel::ensureRequiredStates for the full derivation,
+        //     including why its `d` measured −Δe_b/λ_b rather than a lane error).
+        //     It now arms the CARRY-DOMAIN lane observatory: the lane response of
+        //     the free re-level, measured in local_carry.value_abs — the frame
+        //     where the lane actually lives — and MEASURE-ONLY, so an armed run
+        //     is byte-identical on every solve artifact.
+        //     Hence the two interlocks below, which the old mechanism lacked:
+        //     its comment claimed it "works with or without phase_leveling … so
+        //     no interlock", and that is exactly what let an inert knob be armed
+        //     in two configs and graded as a null result.
         network_cycle_slip_relevel_lane_snap_ =
             jval<bool>(json, "network.cycle_slip.relevel_lane_snap",
                        "network_cycle_slip_relevel_lane_snap", false);
@@ -3660,11 +3674,36 @@ namespace GnssProcessor {
                       "there is no keep branch to gate, so it is INERT this run.");
             network_cycle_slip_relevel_retap_corroborate_ = false;
         }
+        // relevel_lane_snap interlocks.  Its object is the LEVELING CARRY, so
+        // both are hard requirements — unlike the deleted seed-site mechanism,
+        // whose "works with or without phase_leveling, so no interlock" comment
+        // is exactly what let an inert knob be armed in two configs and graded
+        // as a null result.  Sited AFTER the free_epoch disarm below?  No — it
+        // must read the SETTLED base flags, so the free_epoch check is repeated
+        // at the end of this interlock band instead (see the rider below).
+        if (network_cycle_slip_relevel_lane_snap_ && !network_phase_leveling_) {
+            log->warn("Network: network.cycle_slip.relevel_lane_snap needs "
+                      "network.phase_leveling (the lane it measures lives in the "
+                      "leveling carry's absolute levels) — disabled.");
+            network_cycle_slip_relevel_lane_snap_ = false;
+        }
         if (network_cycle_slip_relevel_free_epoch_ && !network_phase_leveling_) {
             log->warn("Network: network.cycle_slip.relevel_free_epoch needs "
                       "network.phase_leveling (its target is the leveling carry) "
                       "— disabled.");
             network_cycle_slip_relevel_free_epoch_ = false;
+        }
+        // AFTER the free_epoch disarm above so it reads the SETTLED base flag:
+        // free_ambs IS the observatory's population, so without it every epoch
+        // takes the `any_freed` continue and the counters read a structural
+        // zero that is indistinguishable from dead wiring (invariant #4).
+        if (network_cycle_slip_relevel_lane_snap_
+            && !network_cycle_slip_relevel_free_epoch_) {
+            log->warn("Network: network.cycle_slip.relevel_lane_snap requires "
+                      "network.cycle_slip.relevel_free_epoch (its population is the "
+                      "freed set; without it every counter is a structural zero) "
+                      "— disabled.");
+            network_cycle_slip_relevel_lane_snap_ = false;
         }
         if (network_cycle_slip_relevel_delta_bridge_
             && !network_cycle_slip_relevel_free_epoch_) {

@@ -1298,6 +1298,43 @@ namespace GnssProcessor {
         bool accumulatePhaseWindUp() const { return accumulate_phase_windup_; }
 
         /**
+         * @brief Accumulator continuity horizon for phase wind-up (seconds).
+         *
+         * A processed-epoch gap longer than this restarts the unwrap from the
+         * raw @c atan2 angle, which applies an exact integer-cycle step to every
+         * signal of that satellite.  Default 300.0 — the value that was hard
+         * coded before this knob existed, so the default is behaviour-preserving.
+         *
+         * ⚠ On the field network lineages @c network.phase_leveling_max_gap_s is
+         * 900 s, i.e. THREE TIMES this horizon.  A gap in (300, 900] s therefore
+         * steps the model while the carried ambiguity and the zero-q leveling
+         * level survive and are re-injected at their pre-gap values — standing
+         * invariant #1 with no wired response.  @c estimation.trace_windup_census
+         * counts that exposure; do not arm @c accumulate_phase_windup on a
+         * network lineage until it has been measured.
+         *
+         * @return Continuity horizon in seconds (> 0).
+         */
+        double phaseWindUpMaxGapS() const { return phase_windup_max_gap_s_; }
+
+        /**
+         * @brief Arm the read-only phase wind-up census.
+         *
+         * Counts, per receiver, the step in the APPLIED wind-up between
+         * consecutive processed epochs, plus the gap distribution bucketed
+         * against this horizon and the leveling-carry horizon.  Armable in BOTH
+         * accumulation postures — which matters because the default (fractional)
+         * posture is the one every field lineage runs and the one no instrument
+         * has ever reached on the network path (@c windup_trace.csv is written
+         * only from @c Application::run, unreachable from @c runNetwork).
+         *
+         * Telemetry only: arming it cannot move a byte of the solve.
+         *
+         * @return True if the wind-up census is armed.
+         */
+        bool traceWindUpCensus() const { return trace_windup_census_; }
+
+        /**
          * @brief Check if receiver velocity estimation from Doppler is enabled.
          *
          * When true, three velocity states (Vx, Vy, Vz) are added to the
@@ -2826,19 +2863,44 @@ namespace GnssProcessor {
         ///        heterogeneous and only EVIDENCE separates it.  Requires
         ///        relevel_retap_statistical; fingerprint-exempt, byte-identical off.
         bool networkCycleSlipRelevelRetapCorroborate() const { return network_cycle_slip_relevel_retap_corroborate_; }
-        /// @brief Lane-preserving seed snap (SPEC_lane_slip_response §3 rung 3): on
-        ///        every fresh per-band ambiguity seed (birth or post-refloat
-        ///        re-level), re-anchor the non-anchor bands of the (station, sat)
-        ///        so each LANE (between-band cycle difference) equals the
-        ///        iono-free MW float measured from THIS epoch's raw phase+code
-        ///        (EWL-class σ ≈ 0.05 cyc at λ 5.86 m) instead of inheriting the
-        ///        iono-contaminated difference of two independent code levels.
-        ///        The ABSOLUTE level stays the anchor band's code-derived seed and
-        ///        the seed VARIANCE is untouched (still diffuse) — the snap
-        ///        improves an initialization value, it does not add stiffness, so
-        ///        no invariant-#1 event edge is created.  FLOAT-snap, never
-        ///        rounded: rounding would commit an integer through the per-arc
-        ///        MW bias, the killed §8.1 shape.  Default OFF, byte-identical.
+        /**
+         * @brief Carry-domain lane OBSERVATORY (SPEC_lane_slip_response §7.3).
+         *
+         * ⚠ THIS KNOB CHANGED MEANING (2026-08-22).  It used to drive a
+         * lane-preserving snap at the per-band ambiguity SEED.  That mechanism
+         * (rung 3 v1/v2/v2.1) is **DELETED**: its only write was an @c x_lin
+         * shift on a local ambiguity column, which the reduced network solve
+         * absorbs exactly, so no arm of it ever moved the estimate.  Do not
+         * reconstruct it from this comment's history — the derivation, including
+         * why its correction measured @c -Δe_b/λ_b rather than a lane error,
+         * is kept at the deletion site in
+         * @c MeasurementModel::ensureRequiredStates.
+         *
+         * What it arms now: on every epoch where the free-epoch response frees
+         * an arc, compute the lane response of the free re-level in the
+         * LEVELING CARRY's absolute levels — the frame where the lane actually
+         * lives, because @c LocalCarry::value_abs IS the estimate
+         * (@c x_lin + back-substituted Δx) and the frozen linearization is
+         * therefore structurally absent:
+         *
+         *     δ = [C_a(t⁺)/λ_a − C_b(t⁺)/λ_b]
+         *       − [C_a(t⁻)/λ_a − C_b(t⁻)/λ_b] − ΔM_MW      [cycles]
+         *
+         * **MEASURE-ONLY**: the result is counted and histogrammed at run end,
+         * never written back, so an armed run is byte-identical on every solve
+         * artifact.  That is deliberate — three preceding iterations died on
+         * unreconciled counters, and the |δ| distribution is what decides
+         * whether an apply leg is worth building at all.
+         *
+         * Interlocks (warn-and-disarm): requires @c network.phase_leveling (no
+         * leveling carry, no levels to difference) and
+         * @c network.cycle_slip.relevel_free_epoch evaluated on its SETTLED
+         * value (the freed set is the population — without it every counter is
+         * a structural zero indistinguishable from dead wiring); dies under
+         * @c network.carry_invariant with its base.
+         *
+         * @return True if the carry-domain lane observatory is armed.
+         */
         bool networkCycleSlipRelevelLaneSnap() const { return network_cycle_slip_relevel_lane_snap_; }
         /// @brief Retap SET value (m²) — the kept level's loosened confidence.
         double networkCycleSlipRelevelRetapVarM2() const { return network_cycle_slip_relevel_retap_var_m2_; }
@@ -6270,6 +6332,8 @@ namespace GnssProcessor {
         bool estimate_phase_clock_;            ///< Estimate separate phase clock offset.
         bool enable_if_slip_detector_;             ///< INERT — IfPhaseSlipDetector is staged/uncompiled and has no instantiation path yet (see include/slip/IfPhaseSlipDetector.hpp). Parsed for forward-compat; toggling it currently has no effect.
         bool accumulate_phase_windup_;                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
+        double phase_windup_max_gap_s_{300.0};        ///< Wind-up accumulator continuity horizon (s); see @ref phaseWindUpMaxGapS.
+        bool trace_windup_census_{false};             ///< Read-only wind-up step/gap census; see @ref traceWindUpCensus.
         bool enable_between_satellite_sd_;                ///< Between-satellite single-difference operator in measurement model.
         bool enable_glonass_bssd_;                        ///< Allow GLONASS satellites in BSSD (FDMA ICB → off by default).
         bool enable_glonass_ifb_;                         ///< Estimate per-FCN-slot GLONASS receiver code IFB (requires estimate_ifb + uncombined).
@@ -6379,7 +6443,7 @@ namespace GnssProcessor {
         double network_cycle_slip_relevel_bridge_ewl_sigma_floor_cyc_{0.05};///< v3 E3 zenith σ floor (cyc), elevation-mapped at fill.
         bool   network_cycle_slip_relevel_retap_statistical_{false};        ///< SPEC_slip_relevel_walk: keep+retap on statistical RAIM refloats.
         bool   network_cycle_slip_relevel_retap_corroborate_{false};        ///< SPEC_lane_slip_response: keep ONLY on positive raw-observable continuity evidence.
-        bool   network_cycle_slip_relevel_lane_snap_{false};                ///< SPEC_lane_slip_response rung 3: MW-float lane snap on fresh per-band seeds.
+        bool   network_cycle_slip_relevel_lane_snap_{false};                ///< SPEC_lane_slip_response §7.3: carry-domain lane OBSERVATORY (measure-only).  ⚠ NOT the deleted seed-site snap — see @ref networkCycleSlipRelevelLaneSnap.
         double network_cycle_slip_relevel_retap_var_m2_{0.25};              ///< Retap SET variance (m²).
         int    network_cycle_slip_relevel_retap_streak_max_{3};             ///< Consecutive-retap fallback-to-erase streak.
         bool   network_raim_{false};              ///< Post-fit network RAIM (Increment 3, T2): cross-station post-fit residual consensus refloats a carried ambiguity whose slip the pre-processors missed; OFF = byte-identical.

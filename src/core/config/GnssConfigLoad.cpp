@@ -1134,6 +1134,16 @@ namespace GnssProcessor {
 
         accumulate_phase_windup_  = jval<bool>(json, "estimation.accumulate_phase_windup",
                                                 "accumulate_phase_windup", false);
+        phase_windup_max_gap_s_   = jval<double>(json, "estimation.phase_windup_max_gap_s",
+                                                 "phase_windup_max_gap_s", 300.0);
+        if (!(phase_windup_max_gap_s_ > 0.0)) {
+            log->warn("estimation.phase_windup_max_gap_s must be > 0 (a non-positive "
+                      "horizon restarts the accumulator every epoch, silently "
+                      "collapsing accumulated mode to fractional) — reset to 300.0 s.");
+            phase_windup_max_gap_s_ = 300.0;
+        }
+        trace_windup_census_      = jval<bool>(json, "estimation.trace_windup_census",
+                                               "trace_windup_census", false);
 
         // Between-satellite single differencing
         enable_between_satellite_sd_ = jval<bool>(json, "estimation.between_satellite_sd.enabled",
@@ -2597,6 +2607,21 @@ namespace GnssProcessor {
                 app_mode_ = AppMode::PostProcessing;
             }
             log->info("Application mode: {}", app_mode_ == AppMode::RealTime ? "realtime" : "post");
+            // Wiring reality (invariant #4), sited HERE because app_mode_ is
+            // settled only at this point: the wind-up census is armed on the
+            // network producer and on the single-receiver Application::run path
+            // only.  In baseline and real-time modes it collects nothing and
+            // prints nothing, which is indistinguishable from a clean result —
+            // so say so at load time rather than let a reader infer a null from
+            // silence.
+            if (trace_windup_census_
+                && (isBaselineMode() || app_mode_ == AppMode::RealTime)) {
+                log->warn("estimation.trace_windup_census has no wiring in this "
+                          "mode (baseline / real-time): its counters are never "
+                          "armed and nothing is reported, so a silent run here is "
+                          "NOT a null result.  It is INERT — arm it on a network "
+                          "or PPP run to measure the wind-up step/gap population.");
+            }
 
             // Smoother is post-processing only.
             if (run_smoother_ && app_mode_ == AppMode::RealTime) {
@@ -3152,13 +3177,14 @@ namespace GnssProcessor {
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 
-        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
+        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
             estimate_phase_clock_     ? "on" : "off",
             enable_if_slip_detector_  ? "on" : "off",
             accumulate_phase_windup_  ? "on" : "off",
+            phase_windup_max_gap_s_, trace_windup_census_ ? "on" : "off",
             enable_between_satellite_sd_ ? "on" : "off",
             estimate_velocity_        ? "on" : "off",
             enable_iono_rate_         ? "on" : "off",

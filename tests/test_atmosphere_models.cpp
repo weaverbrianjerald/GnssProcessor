@@ -18,7 +18,8 @@
  *
  * Fixtures: Gpt3Test needs the 5° binary grid under
  * data/static/gpt3/gpt3_5.grd, injected via the GNSS_TEST_DATA_DIR macro
- * defined by CMake; if the grid is absent the suite is skipped, not failed.
+ * defined by CMake; if the grid is absent the suite is skipped, not failed —
+ * but a grid that is PRESENT and fails to load is a failure, not a skip.
  * The other three suites are fully synthetic.
  *
  * @see test_math_core.cpp          Coordinates / TimeUtils / Interpolate
@@ -42,7 +43,16 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
+
+#ifdef _WIN32
+#include <process.h>
+#define GNSS_TEST_GETPID _getpid
+#else
+#include <unistd.h>
+#define GNSS_TEST_GETPID getpid
+#endif
 
 #ifndef GNSS_TEST_DATA_DIR
 #define GNSS_TEST_DATA_DIR ""
@@ -61,30 +71,53 @@ namespace {
 // across the suite.
 class Gpt3Test : public ::testing::Test {
 protected:
-    static LogManager log_mgr_;
-    static Gpt3       model_;
-    static bool       have_fixture_;
+    static LogManager  log_mgr_;
+    static Gpt3        model_;
+    static bool        have_fixture_;   ///< grid present AND load() succeeded
+    static bool        grid_present_;   ///< grid file found on disk
+    static std::string grid_path_;      ///< resolved grid path, for the failure message
 
     static void SetUpTestSuite() {
         namespace fs = std::filesystem;
         const std::string data_dir = GNSS_TEST_DATA_DIR;
         if (data_dir.empty()) return;
         fs::path grid = fs::path(data_dir) / "static" / "gpt3" / "gpt3_5.grd";
-        if (!fs::exists(grid)) return;
+        std::error_code ec;
+        if (!fs::exists(grid, ec)) return;
+        grid_path_    = grid.string();
+        grid_present_ = true;
 
-        const auto log_dir = fs::temp_directory_path() / "gnss_gpt3_test_logs";
-        fs::create_directories(log_dir);
+        // Per-PROCESS log directory.  LogManager::initialize() scrubs stale
+        // .log files out of this directory, and the getLogger("gpt3") inside
+        // load() then holds gpt3.log open for the rest of the process.  With a
+        // fixed shared path, two concurrently running gnss_tests.exe fought
+        // over that one file and the loser took a filesystem_error straight out
+        // of SetUpTestSuite ("remove: The process cannot access the file...") —
+        // reported by gtest as "Gpt3Test: SetUpTestSuite or TearDownTestSuite"
+        // with all three cases skipped as if the fixture were missing.
+        // LogManager no longer throws there, but concurrent suites have no
+        // reason to share the file in the first place.
+        const auto log_dir = fs::temp_directory_path()
+                             / ("gnss_gpt3_test_logs_" + std::to_string(GNSS_TEST_GETPID()));
+        fs::create_directories(log_dir, ec);
         log_mgr_.initialize(log_dir, LogLevel::Warn);
         have_fixture_ = model_.load(grid, log_mgr_);
     }
 
     void SetUp() override {
-        if (!have_fixture_) GTEST_SKIP() << "GPT3 grid fixture not present";
+        if (!grid_present_) GTEST_SKIP() << "GPT3 grid fixture not present";
+        // Grid present but load() failed is a REAL defect, not a missing
+        // fixture.  Folding both into one skip is what let an environmental
+        // failure masquerade as "fixture not present" for a whole release.
+        ASSERT_TRUE(have_fixture_)
+            << "GPT3 grid is present at " << grid_path_ << " but Gpt3::load() failed";
     }
 };
-LogManager Gpt3Test::log_mgr_;
-Gpt3       Gpt3Test::model_;
-bool       Gpt3Test::have_fixture_ = false;
+LogManager  Gpt3Test::log_mgr_;
+Gpt3        Gpt3Test::model_;
+bool        Gpt3Test::have_fixture_ = false;
+bool        Gpt3Test::grid_present_ = false;
+std::string Gpt3Test::grid_path_;
 
 // A query at the exact first grid cell (87.5°N, 2.5°E) at the cell's own
 // orthometric height should reproduce the harmonic value built from the

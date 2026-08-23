@@ -28,6 +28,7 @@
 #include <algorithm>      // rxCbStepScale's median / MAD (nth_element, remove_if)
 #include <array>
 #include <cmath>          // the invariant step z (std::abs / std::isfinite)
+#include <cstdint>        // §7.6 lane-observatory freeing-cause bitmask
 #include <map>
 #include <memory>
 #include <optional>
@@ -431,15 +432,81 @@ struct RelevelPend {
 };
 
 struct RelevelEpochState {
+    /// §7.6(c) freeing-cause bits for the lane observatory.  A bitmask because
+    /// one (station, amb key) can be freed by several detectors in the same
+    /// epoch (an LLI assertion corroborated by an MW step marks twice); the
+    /// T4 bits are used only by the RAIM-side pre-erase capture (§7.6(d)) —
+    /// the RAIM path never touches @c free_ambs (verified §7.6 confound (1)).
+    enum : std::uint8_t {
+        kCauseMw        = 1,   ///< MW wide-lane integer-jump drain.
+        kCauseLli       = 2,   ///< Receiver LLI loss-of-lock drain.
+        kCauseIfTd      = 4,   ///< IF-phase time-difference pool drain.
+        kCauseT4Attrib  = 8,   ///< RAIM prominence-ATTRIBUTION erase (T4).
+        kCauseT4Consens = 16,  ///< RAIM per-satellite CONSENSUS erase (T3).
+    };
     /// (station idx, amb key) marked pending-reseed by a detector this epoch —
     /// the inject site skips these (the free epoch the mark always promised).
     std::set<std::pair<int, std::string>> free_ambs;
+    /// §7.6(c) cause tag, parallel to @c free_ambs (same one-epoch lifetime;
+    /// measure-only — nothing downstream reads it but the lane observatory).
+    std::map<std::pair<int, std::string>, std::uint8_t> free_cause;
     /// Deferred MW candidates for the IF-TD-driver delta bridge.
     std::vector<MwBridgeCand> mw_cands;
     /// Arcs whose carry was delta-bridged this epoch (station, sat, signal) —
     /// harvest-side statistics guard (exclude from LS-VCE, relabel prires).
     std::set<std::tuple<int, std::string, std::string>> bridged;
-    void clear() { free_ambs.clear(); mw_cands.clear(); bridged.clear(); }
+
+    /// SPEC_lane_slip_response §7.3 / rung 3 v3 — the CARRY-DOMAIN lane
+    /// observatory's per-(station, satellite) raw-MW input for THIS epoch.
+    ///
+    /// Why the MW delta travels here rather than being read at the measuring
+    /// site: the raw MW is a pure observable, so it is unaffected by the eq34
+    /// D4 / phase-datum S-transforms that shift @c LocalCarry::value_abs
+    /// between PASS A and the harvest.  Carrying only the OBSERVABLE across
+    /// the seam, and reading BOTH lane levels inside the harvest, keeps the
+    /// pre- and post-event lanes in one gauge by construction — which is the
+    /// hazard that has to be designed out rather than interlocked around.
+    ///
+    /// Lifetime: ONE epoch (same contract as @c free_ambs).  Populated by the
+    /// PASS-A raw-observable pass when the observatory is armed; consumed by
+    /// the harvest; cleared at the next PASS-A entry.  Not snapshotted.
+    struct LaneMw {
+        std::string sig1, sig2;    ///< The raw pass's primary (lo, hi) band pair.
+        double lam1_m{0.0};        ///< sig1 wavelength (m).
+        double lam2_m{0.0};        ///< sig2 wavelength (m).
+        double lambda_wl_m{0.0};   ///< Wide-lane wavelength 1/(1/lam1 - 1/lam2) (m).
+        double d_mw_cyc{0.0};      ///< ΔMW across the epoch in WL CYCLES (d_mw / lambda_wl_m).
+        double el_deg{0.0};        ///< §7.6(a) elevation at this epoch (deg; 0 = unavailable).
+        bool   measured{false};    ///< An adjacent-epoch predecessor existed, so the step is real.
+        bool   pair_changed{false};///< That predecessor used a DIFFERENT band pair — d_mw_cyc is not in this lane's cycles.
+    };
+    std::map<std::pair<int, std::string>, LaneMw> lane_mw;
+
+    /// §7.6(a) one per-event record of the lane observatory — one row per
+    /// ATTEMPT (measured AND skipped; the skip channel is the outcome).  Filled
+    /// by the harvest, emitted onto the EXISTING events stream by the leveling
+    /// seam right after the harvest returns (the LV-2 precedent: the trace
+    /// sinks and the epoch time live on that side of the seam), then cleared —
+    /// belt-and-suspenders, clear() wipes it too.  Measure-only.
+    struct LaneObsRow {
+        int          sta{-1};        ///< Station index.
+        std::string  sat;            ///< RINEX satellite id.
+        std::string  sig1, sig2;     ///< The measured band pair (carry namespace; empty when unresolved).
+        std::uint8_t cause{0};       ///< Freeing-cause bitmask (kCause*).
+        bool         t4{false};      ///< §7.6(d) T4-side row (pre-erase capture), not a detector-freed one.
+        bool         vertex_wide{false}; ///< Both bands freed (detector rows; T4 rows always vertex-wide).
+        double       el_deg{0.0};    ///< Elevation at the measuring epoch (deg; 0 = unavailable).
+        double       delta_cyc{0.0}; ///< The lane delta (cycles; only valid when measured).
+        double       d_mw_cyc{0.0};  ///< The raw ΔMW in WL cycles (0 when unmeasured).
+        bool         measured{false};///< True = delta valid; false = see outcome.
+        const char*  outcome{"measured"}; ///< "measured" or the skip channel (string literals only).
+    };
+    std::vector<LaneObsRow> lane_obs_rows;
+
+    void clear() {
+        free_ambs.clear(); free_cause.clear(); mw_cands.clear(); bridged.clear();
+        lane_mw.clear(); lane_obs_rows.clear();
+    }
 };
 
 /// One present, carry-eligible (non-pivot) ambiguity this epoch, recorded in
@@ -588,6 +655,14 @@ struct StationAssembly {
     /// SPEC_slip_relevel_walk: inject-site free-epoch skips actually taken this
     /// station-epoch (the arc had a live carry the latched set suppressed).
     long long                 relevel_free_skips{0};
+    /// SPEC_withhold_era_release §8: carried leveling priors this station SKIPPED
+    /// because their gap exceeded @c phase_leveling_max_gap_s.  This — not the
+    /// post-harvest prune — is the "cliff" mechanism: the entry is not erased,
+    /// it is simply not injected, so the arc solves FREE and is re-stashed from
+    /// one epoch of code.  Accumulated per station in the PARALLEL produce phase
+    /// and folded into the run counters SERIALLY afterwards, exactly as
+    /// @c relevel_free_skips is.
+    long long                 inject_stale_skips{0};
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  CARRY-ELIGIBLE SUBSET: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must NOT key on it — see `qc_amb`.
     /// POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): the CARRY-VEHICLE-NEUTRAL census of
     /// ambiguity columns that are present, unpinned and therefore CHECKABLE this epoch —

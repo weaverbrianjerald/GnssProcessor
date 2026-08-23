@@ -320,6 +320,11 @@ int Application::runNetwork() {
         // Corroborated retap (SPEC_lane_slip_response §3): the SB_RAIM keep
         // consumes the qualified verdicts, so it must arm the evidence passes.
         sp.retap_corr          = config_.networkCycleSlipRelevelRetapCorroborate();
+        // SPEC_lane_slip_response §7.3: the lane observatory consumes both the
+        // raw rows AND the qualified verdict (d_mw / measured), so it must arm
+        // anyConsumer AND cardsArmed — see the member's doc for the measured
+        // failure when it armed only the former.
+        sp.lane_snap           = config_.networkCycleSlipRelevelLaneSnap();
         slip_qc.hist.resize(stations.size());
     }
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
@@ -1739,6 +1744,7 @@ int Application::runNetwork() {
                     const int n_erased = networkApplyPhaseAnchorCarryReref(
                             pa_reref, ctx.carry.local_carry);
                     ctx.carry.pa_reref_erase_total += n_erased;
+                    ctx.counters.n_cr_phase_datum_reref += n_erased;   // retirement census: FRAME step
                     log->debug("Network[1(d)]: {} marked (sat,signal) family(ies) "
                                "marginalized ({} new this election); {} phase-"
                                "leveling local carry(ies) erased — refloat next "

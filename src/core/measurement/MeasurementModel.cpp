@@ -555,16 +555,7 @@ namespace GnssProcessor {
 
         // Per-band seed/add loop (skipped under NlWl basis — see below).
         if (!nlwl) {
-            const bool lane_snap_on =
-                config_.networkCycleSlipRelevelLaneSnap() && !bssd_active;
             for (const auto& obs : observations) {
-                // Lane snap (SPEC_lane_slip_response §3 rung 3, v2 DELTA form):
-                // phase types of THIS satellite freshly seeded in the loop below,
-                // and — for RESEEDS — the state value each carried BEFORE the
-                // overwrite (the pre-event level, still in the state vector at
-                // this point).  Consumed by the per-obs snap pass after the loop.
-                std::vector<std::string> lane_snap_seeded;
-                std::map<std::string, double> lane_snap_pre;
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type[0] != 'L') continue;
                     const std::string amb_key = obs.satellite + "_" + ref_type;
@@ -575,12 +566,6 @@ namespace GnssProcessor {
                     bool needs_seed = (existing_idx < 0)
                                    || state_manager_.isAmbiguityPendingReseed(amb_key);
 
-                    if (needs_seed && lane_snap_on) {
-                        lane_snap_seeded.push_back(ref_type);
-                        if (existing_idx >= 0)
-                            lane_snap_pre[ref_type] =
-                                state_manager_.getStateVector()(existing_idx);
-                    }
                     if (needs_seed) {
                         const Eigen::VectorXd x_now = state_manager_.getStateVector();
                         double seed = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
@@ -626,175 +611,53 @@ namespace GnssProcessor {
                     }
                 }
 
-                // ---- Lane-preserving seed snap (rung 3, v2 DELTA form) ----
-                // v1 (absolute MW) was falsified by its own counters on F5: a
-                // state-bias-CLEANED lane was compared against a raw-bias-
-                // CARRYING MW float, 92 % of attempts blew the sanity cap, and
-                // partial application broke DD closure between snapped and
-                // unsnapped arcs.  The delta form is bias-immune by
-                // construction: every per-(station, sat, pair) bias — receiver
-                // and satellite, code and phase, state-modeled or not — is
-                // CONSTANT across the event and cancels in BOTH differences:
+                // ---- Rung 3 v1/v2/v2.1 seed-site lane snap: DELETED --------
+                // SPEC_lane_slip_response §7.2.  The mechanism that lived here
+                // could not act on the network solve AT ALL, so its three
+                // counter-caught iterations were debugging a no-op:
                 //
-                //   lane_target = pre_lane + (mw_now − mw_pre)
+                //   1. Its only write was `state_manager_.setStateVector` on a
+                //      local ambiguity column.  On the network producer that
+                //      vector is a LINEARIZATION POINT: the solve is never
+                //      written back into it, so every write to it — including
+                //      the reseed a few lines above — is a pre-solve frame edit.
+                //      An x_lin shift on a local column is absorbed EXACTLY by
+                //      the reduced solve: the data rows move as y → y − A_r e_c δ
+                //      and the carried prior's RHS absorbs the same shift through
+                //      η = Λ·(value_abs − x_lin) (ApplicationNetworkAssembly.cpp),
+                //      leaving b_red = u_s − N_sr N_rr⁻¹ u_r invariant and the
+                //      ABSOLUTE estimate x_lin + x_r unchanged.
+                //      ⚠ ONE QUALIFICATION, and it is the only one: the shift is
+                //      not byte-neutral through the two PREFIT screens that gate
+                //      on H·x_lin rather than on the estimate — the SD-EWL
+                //      correction-frame cut (`network.sd_ewl.max_abs_z_m`, a
+                //      ROW-SET change) and the INC-2 prefit fuse
+                //      (`network.prefit_fuse_sigma`, a row-WEIGHT change).  Both
+                //      default OFF, and the fuse's default classes exclude phase,
+                //      so the deletion is behaviour-preserving at defaults; but a
+                //      run that armed either of those knobs alongside the snap
+                //      did see second-order leakage, and that is what "the traces
+                //      differ" meant on F5/F5B/F5C.
+                //   2. The graded instrument is x_lin-invariant too
+                //      (NetworkDdFrac.cpp forms value_m = x_lin + x_r), so the
+                //      snap could neither be right nor be seen.
+                //   3. Its `d` was not a lane error.  With a kept anchor the
+                //      anchor term cancels identically and the integer cancels
+                //      against s·ΔMW, leaving d = −Δe_b/λ_b — the change in ONE
+                //      band's frozen-frame model error (frozen receiver clock,
+                //      ZWD, iono seed) over a SINGLE band wavelength.  1/λ_L2 =
+                //      4.095 cyc/m is 3.53× the lane coefficient 1/λ_WL = 1.160
+                //      cyc/m, so F5C's applied mean |d| = 15.9 cyc is 3.9 m of
+                //      frozen-frame drift.  That is the whole "structural
+                //      discrepancy" §7.1 could not name.
                 //
-                // pre_lane is the pair's own pre-event lane (the erased state
-                // values, captured above before the overwrite); (mw_now −
-                // mw_pre) is the MW-measured lane JUMP across the event, with
-                // mw_pre the median of this pair's MW samples aged (60, 330] s
-                // — the 2-epoch exclusion absorbs detector latency.  Each arc
-                // keeps its own bias convention, so snapped and unsnapped arcs
-                // mix freely in a DD.  BIRTHS are skipped: with no pre-event
-                // lane there is nothing to preserve (counted).  FLOAT snap,
-                // never rounded; values only — the diffuse seed variance is
-                // untouched, so nothing here is stiff.
-                auto bandOf = [](const std::string& t) { return t.size() >= 2 ? t[1] : '?'; };
-                const double now_s = obs.time.week * 604800.0 + obs.time.tow;
-                const double c = Constants::SPEED_OF_LIGHT;
-                auto mwCyc = [&](const std::string& a, const std::string& b,
-                                 double lam_a, double lam_b) -> double {
-                    const std::string ca = "C" + a.substr(1), cb = "C" + b.substr(1);
-                    if (!obs.observed.count(ca) || !obs.observed.count(cb)
-                        || !obs.observed.count(a) || !obs.observed.count(b))
-                        return std::numeric_limits<double>::quiet_NaN();
-                    const double fa = c / lam_a, fb = c / lam_b;
-                    return ((fa * obs.observed.at(a) - fb * obs.observed.at(b)) / (fa - fb)
-                            - (fa * obs.observed.at(ca) + fb * obs.observed.at(cb)) / (fa + fb))
-                           * (fa - fb) / c;
-                };
-                if (lane_snap_on && !lane_snap_seeded.empty()) {
-                    std::sort(lane_snap_seeded.begin(), lane_snap_seeded.end(),
-                              [&](const std::string& a, const std::string& b) {
-                                  return bandOf(a) < bandOf(b);
-                              });
-                    // Anchor: lowest-band live type NOT seeded this epoch (its
-                    // state value IS its pre-event value)…
-                    std::string anchor;
-                    bool anchor_kept = false;
-                    for (const auto& [t, v] : obs.observed) {
-                        if (t.empty() || t[0] != 'L') continue;
-                        if (std::find(lane_snap_seeded.begin(), lane_snap_seeded.end(), t)
-                            != lane_snap_seeded.end()) continue;
-                        if (state_manager_.getAmbiguityIndex(obs.satellite + "_" + t) < 0)
-                            continue;
-                        if (anchor.empty() || bandOf(t) < bandOf(anchor)) anchor = t;
-                    }
-                    if (!anchor.empty()) anchor_kept = true;
-                    else {
-                        // …else the lowest reseeding band WITH a captured pre.
-                        for (const std::string& t : lane_snap_seeded)
-                            if (lane_snap_pre.count(t)) { anchor = t; break; }
-                    }
-                    if (!anchor.empty()) {
-                        const double lam_a =
-                            ppp_utils_.getWavelength(obs.system, anchor, obs.satellite);
-                        const int idx_a =
-                            state_manager_.getAmbiguityIndex(obs.satellite + "_" + anchor);
-                        for (const std::string& b : lane_snap_seeded) {
-                            if (b == anchor) continue;
-                            if (!lane_snap_pre.count(b)) { ++lane_snap_.skip_birth; continue; }
-                            const double lam_b =
-                                ppp_utils_.getWavelength(obs.system, b, obs.satellite);
-                            const int idx_b =
-                                state_manager_.getAmbiguityIndex(obs.satellite + "_" + b);
-                            if (idx_a < 0 || idx_b < 0
-                                || !std::isfinite(lam_a) || lam_a <= 0.0
-                                || !std::isfinite(lam_b) || lam_b <= 0.0) {
-                                ++lane_snap_.skip_no_pair;
-                                continue;
-                            }
-                            // Canonical (lo, hi) pair for the MW and its history —
-                            // the snap anchor is not always the lowest band, and
-                            // MW(a,b) = −MW(b,a): s maps the canonical jump into
-                            // the (anchor, b) lane.
-                            const bool a_is_lo = bandOf(anchor) < bandOf(b);
-                            const std::string& lo = a_is_lo ? anchor : b;
-                            const std::string& hi = a_is_lo ? b : anchor;
-                            const double s = a_is_lo ? 1.0 : -1.0;
-                            const double mw_now =
-                                mwCyc(lo, hi,
-                                      a_is_lo ? lam_a : lam_b,
-                                      a_is_lo ? lam_b : lam_a);
-                            if (!std::isfinite(mw_now)) { ++lane_snap_.skip_no_pair; continue; }
-                            // Pre-event MW: median of samples aged (60, 330] s.
-                            const auto hkey = std::make_pair(obs.satellite, lo + "|" + hi);
-                            std::vector<double> pre_samples;
-                            if (auto hit = lane_mw_hist_.find(hkey);
-                                hit != lane_mw_hist_.end())
-                                for (const auto& [t, v] : hit->second) {
-                                    const double age = now_s - t;
-                                    if (age > 60.0 && age <= 330.0)
-                                        pre_samples.push_back(v);
-                                }
-                            if (pre_samples.empty()) { ++lane_snap_.skip_no_history; continue; }
-                            std::sort(pre_samples.begin(), pre_samples.end());
-                            const double mw_pre = pre_samples[pre_samples.size() / 2];
+                // The lane lives in the CARRY (local_carry.value_abs = x_lin +
+                // back-substituted Δx, an absolute metre level in the epoch's
+                // realized gauge), which is where rung 3 v3 measures it.  Do NOT
+                // rebuild a seed-site snap: no seed-domain edit can move this
+                // solve's estimate, and the only channels it CAN move are two
+                // default-off prefit screens that were never its target.
 
-                            Eigen::VectorXd x_snap = state_manager_.getStateVector();
-                            const double pre_a = anchor_kept ? x_snap(idx_a)
-                                                             : lane_snap_pre.at(anchor);
-                            const double pre_lane =
-                                pre_a / lam_a - lane_snap_pre.at(b) / lam_b;
-                            const double target = pre_lane + s * (mw_now - mw_pre);
-                            const double implied =
-                                x_snap(idx_a) / lam_a - x_snap(idx_b) / lam_b;
-                            const double d = implied - target;   // cycles
-                            if (!std::isfinite(d)) { ++lane_snap_.skip_no_pair; continue; }
-                            if (std::abs(d) > 25.0) { ++lane_snap_.skip_wild; continue; }
-                            x_snap(idx_b) += d * lam_b;          // lane_new == target
-                            state_manager_.setStateVector(x_snap);
-                            ++lane_snap_.snapped;
-                            ++(anchor_kept ? lane_snap_.kept_anchor : lane_snap_.fresh_anchor);
-                            lane_snap_.abs_delta_sum_cyc += std::abs(d);
-                            log_manager_.getLogger("measurement_model")->debug(
-                                "{}Lane snap {}: {}-{} lane -> pre + MW jump "
-                                "({:+.3f} cyc; |d| {:.3f}, anchor {}).",
-                                epoch_prefix, obs.satellite, anchor, b,
-                                mw_now - mw_pre, std::abs(d),
-                                anchor_kept ? "kept" : "reseed");
-                        }
-                    } else {
-                        lane_snap_.skip_birth +=
-                            static_cast<long long>(lane_snap_seeded.size());
-                    }
-                }
-                // History update — EVERY obs, EVERY epoch (v2.1: the F5B
-                // counters caught this block living inside the seed-gated
-                // branch above, so history only accumulated at seed events —
-                // 18 399 of 24 968 snap attempts had no pre-event MW and the
-                // few that did read a stale sample).  Runs AFTER the snap so
-                // pre excludes the current epoch.  Every unordered live pair
-                // of this obs, under the canonical (lo, hi) ordering the snap
-                // reads; at most one push per (pair, epoch) — the ensure pass
-                // can run more than once per epoch on measurement rebuilds.
-                if (lane_snap_on) {
-                    std::vector<std::string> live;
-                    for (const auto& [t, v] : obs.observed)
-                        if (!t.empty() && t[0] == 'L') live.push_back(t);
-                    std::sort(live.begin(), live.end(),
-                              [&](const std::string& a, const std::string& b) {
-                                  return bandOf(a) < bandOf(b);
-                              });
-                    for (std::size_t i = 0; i + 1 < live.size(); ++i)
-                        for (std::size_t j = i + 1; j < live.size(); ++j) {
-                            const std::string& lo = live[i];
-                            const std::string& hi = live[j];
-                            const double lam_lo =
-                                ppp_utils_.getWavelength(obs.system, lo, obs.satellite);
-                            const double lam_hi =
-                                ppp_utils_.getWavelength(obs.system, hi, obs.satellite);
-                            if (!std::isfinite(lam_lo) || lam_lo <= 0.0
-                                || !std::isfinite(lam_hi) || lam_hi <= 0.0
-                                || lam_lo == lam_hi) continue;
-                            const double mw = mwCyc(lo, hi, lam_lo, lam_hi);
-                            if (!std::isfinite(mw)) continue;
-                            auto& hist = lane_mw_hist_[{obs.satellite, lo + "|" + hi}];
-                            if (!hist.empty() && hist.back().first == now_s) continue;
-                            hist.emplace_back(now_s, mw);
-                            if (hist.size() > 10)
-                                hist.erase(hist.begin());
-                        }
-                }
             }
         }
 

@@ -575,6 +575,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         st.sm->setStateEpochTime(synced.front().time);
         st.model = std::make_unique<PppModel>(
             config_, *product_parser_, log_manager_, *parser, *st.sm);
+        // Wind-up census (estimation.trace_windup_census): read-only per-receiver
+        // step/gap counters, armed on every station so the run-end readout is a
+        // roster sum.  The carry horizon is passed so the census can bucket the
+        // gap population against it — the (wind-up horizon, carry horizon]
+        // bucket IS the invariant-#1 exposure that blocks arming accumulated
+        // mode on a leveling lineage.
+        if (config_.traceWindUpCensus())
+            st.model->enableWindUpCensus(config_.phaseWindUpMaxGapS(),
+                                         config_.networkPhaseLevelingMaxGapS());
         // Network coverage gate: restrict this station's model to the codes that
         // enough of the whole network tracks (empty allowlist ⇒ no-op, admit all).
         if (!signal_allowlist.empty()) st.model->setSignalAllowlist(signal_allowlist);

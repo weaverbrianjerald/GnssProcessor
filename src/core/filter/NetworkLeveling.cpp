@@ -73,6 +73,49 @@ void networkLeveling(
                                carry_warm, pl_now_s, registered_clock_sats,
                                shared_phase_keys, registered_code_keys);
 
+    // --- §7.6(a): lane-observatory per-event rows onto the EXISTING events
+    // stream (SPEC_lane_slip_response §7.6; the LV-2 precedent below — the
+    // trace sinks and the epoch time live on this side of the seam, and the
+    // spec's "do not create a new stream" rationale holds here too).  One row
+    // per attempt, detector-freed (`delta`) and T4-captured (`t4_delta`) alike;
+    // `action` is "measured" or the skip channel, `statistic` the lane delta in
+    // cycles, `threshold` the raw ΔMW it was differenced against.  Measure-only;
+    // buffered by the harvest, cleared here (and again at the next PASS-A
+    // clear(), belt-and-suspenders).
+    if (!ctx.carry.relevel.lane_obs_rows.empty()) {
+        const auto cause_str = [](std::uint8_t c) {
+            std::string s;
+            const auto add = [&s](const char* tag) {
+                if (!s.empty()) s += '|';
+                s += tag;
+            };
+            if (c & RelevelEpochState::kCauseMw)        add("MW");
+            if (c & RelevelEpochState::kCauseLli)       add("LLI");
+            if (c & RelevelEpochState::kCauseIfTd)      add("IFTD");
+            if (c & RelevelEpochState::kCauseT4Attrib)  add("T4A");
+            if (c & RelevelEpochState::kCauseT4Consens) add("T3C");
+            return s.empty() ? std::string("none") : s;
+        };
+        for (const auto& row : ctx.carry.relevel.lane_obs_rows) {
+            const std::string& sta_name =
+                (row.sta >= 0 && row.sta < static_cast<int>(stations.size()))
+                    ? stations[static_cast<std::size_t>(row.sta)].name
+                    : std::string{};
+            traces.emitEvent(
+                se.time, "LANE_OBS", row.t4 ? "t4_delta" : "delta",
+                row.sat, sta_name,
+                row.measured ? std::optional<double>(row.delta_cyc) : std::nullopt,
+                std::optional<double>(row.d_mw_cyc),
+                row.outcome,
+                fmt::format("cause={};scope={};pair={}-{};el={:.1f}",
+                            cause_str(row.cause),
+                            row.t4 ? "t4" : (row.vertex_wide ? "vertex" : "band"),
+                            row.sig1.empty() ? "?" : row.sig1,
+                            row.sig2.empty() ? "?" : row.sig2, row.el_deg));
+        }
+        ctx.carry.relevel.lane_obs_rows.clear();
+    }
+
     // --- Card LV-2 (docs/SPEC_level_information_budget.md): trace μ ------------
     // One `lv2_mu` row per receiver-code-bias family per epoch on the EXISTING
     // events stream (the spec's "do not create a new stream for one scalar").  μ is
@@ -150,8 +193,17 @@ void networkLeveling(
                           "carry {}.", n_emitted, rms_delta, pl_conv_rms_thresh, a00,
                           pl_warmup_on_conv ? "warm-gate released"
                                             : (pl_refloat_on_conv ? "refloated" : "unchanged"));
-                if (pl_refloat_on_conv)
+                if (pl_refloat_on_conv) {
+                    // SPEC_withhold_era_release §8: the LARGEST single carry
+                    // retirement in the producer — a whole-fleet clear.  Counted
+                    // before the clear so the census can attribute it; without
+                    // this the census could report zero on exactly the event
+                    // shape it exists to attribute.
+                    ctx.counters.n_cr_sh_conv_flush +=
+                        static_cast<long long>(local_carry.size());
+                    ++ctx.counters.n_cr_sh_conv_flushes;
                     local_carry.clear();   // one-shot flush ⇒ ambiguities refloat next epoch
+                }
             }
         }
         if (ok) sh_coeff_prev = cur;   // roll the reference forward until latched

@@ -188,6 +188,12 @@ namespace GnssProcessor {
 		 */
 		bool enableWindUpTracing(const std::filesystem::path& log_dir);
 
+		/// @brief Arm the per-receiver phase wind-up census (see
+		///        GnssCorrections::enableWindUpCensus).  Telemetry only.
+		void enableWindUpCensus(double wu_gap_s, double carry_gap_s);
+		/// @brief The census counters for this receiver's corrections instance.
+		const GnssCorrections::WindUpCensus& windUpCensus() const;
+
 		/**
 		 * @brief Dump the receiver antenna model to trace log for ATX comparison.
 		 *

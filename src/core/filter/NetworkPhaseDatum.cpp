@@ -426,7 +426,7 @@ int networkApplyPhaseAnchorCarryReref(
         const auto& key = it->first;   // (station idx, sat, signal)
         if (reref.count({std::get<1>(key), std::get<2>(key)})) {
             it = local_carry.erase(it);
-            ++n_erased;
+            ++n_erased;   // returned; the caller folds it into the retirement census
         } else {
             ++it;
         }

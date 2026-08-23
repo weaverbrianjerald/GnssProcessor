@@ -1,0 +1,59 @@
+{
+ "_comment": [
+  "WITHHOLD-ERA ATTRIBUTION arm (SPEC_withhold_era_release 8.5 step 1).",
+  "Knob-verbatim clone of _fld63_relevel4h_on.json -- the certified ON leg whose 29-epoch",
+  "A4 era and subsequent fleet re-level the therapy premise rests on -- with ONLY the",
+  "product output path redirected, so the reference run's artifacts are not overwritten",
+  "(the 8b overwrite trap).  No new knob: the leveling-carry retirement census is",
+  "always-on counters with no CSV row and no solve effect, so this run is byte-identical",
+  "to the reference ON leg on every solve artifact given the same exe.",
+  "*** NOTE the exe DIFFERS from the reference: this build is POST the carrier-phase",
+  "wind-up SIGN fix (4f49fa2 + 0d25aa0), which is documented solve-affecting on field",
+  "data.  So this is NOT a byte-cert of the reference; it is a fresh measurement of what",
+  "the same CONFIG does on the current binary. ***",
+  "PRE-REGISTERED reading of the four families at the era's end:",
+  "(1) the TIMER model predicts a single-epoch [B] n_cr_inject_stale near the carried",
+  "fleet, spanning MANY stations, with [A] departures small -- the carry is bypassed, not",
+  "erased.  (2) If instead [C] quality refloats dominate, the 'cliff was therapy' premise",
+  "gets its first actual support.  (3) If [A] carries the mass, the arcs genuinely",
+  "departed and neither reading holds.  (4) If NO era recurs at all on this binary (as on",
+  "the ctlw control, which showed 20- and 7-epoch eras and ZERO fleet expiry), the fixture",
+  "no longer reproduces the event and the successor card needs a new repro before any",
+  "mechanism is designed."
+ ],
+ "extends": "_ext63_1h_evt_pl.json",
+ "processing": {
+  "max_duration_s": 14400.0
+ },
+ "network": {
+  "carry_invariant": false,
+  "product_output_path": "C:/GnssProcessor/runs/fld63_wh_attrib4h/products.txt",
+  "cycle_slip": {
+   "if_phase_td": true,
+   "mw_detect": true,
+   "if_phase_td_ref_gate": true,
+   "mw_lli_corroborate": true,
+   "gap_instrument": true,
+   "relevel_free_epoch": true,
+   "relevel_delta_bridge": true,
+   "relevel_bridge_gf": true
+  },
+  "carry_invariant_innov_gate": false,
+  "carry_invariant_innov_refold": false,
+  "carry_invariant_honesty": false,
+  "carry_invariant_pd_safe": false,
+  "carry_invariant_innov_corroborate": false,
+  "carry_invariant_innov_calibrate_window": 0,
+  "carry_invariant_qz": 0.0,
+  "carry_invariant_innov_calibrate": false,
+  "carry_invariant_innov_k": 4.0,
+  "mw_wl": {
+   "ewl_enable": false,
+   "wl_inject_enable": false,
+   "uwl_enable": false,
+   "uwl_cold_fix": false,
+   "uwl_mid_enable": false,
+   "uwl_dual_top": false
+  }
+ }
+}

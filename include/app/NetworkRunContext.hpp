@@ -973,6 +973,32 @@ namespace GnssProcessor {
         // (which feeds rank-1 LDLᵀ updates) is byte-identical serial≡parallel.  Inert
         // unless network.phase_leveling.
         std::map<std::tuple<int, std::string, std::string>, LocalCarry> local_carry;
+        /// Continuous-GPS-seconds stamp of the PREVIOUS harvest, i.e. the value
+        /// @c LocalCarry::last_seen_s carries for an entry stashed one processed
+        /// epoch ago.  Written at the end of every harvest; -1 before the first.
+        /// Used by the §7.3 lane observatory to require that a pre-event carry is
+        /// exactly one epoch old, so a stale level is never differenced against a
+        /// one-epoch ΔMW.
+        double pl_prev_now_s{-1.0};
+        /// §7.6(d) lane observatory T4-side pre-erase capture: the
+        /// about-to-be-erased @c LocalCarry::value_abs (+ its @c last_seen_s
+        /// stamp + the erase-cause bit) at the RAIM attribution / consensus
+        /// erase sites, keyed like @c local_carry.  MEASURE-ONLY, armed with
+        /// the observatory knob.  Lifetime: ONE epoch — filled at SB_RAIM of
+        /// epoch t (post-harvest), consumed AND cleared at epoch t+1's harvest
+        /// (invariant #1's bound on what a decoupled capture may carry; a
+        /// missed epoch drops the capture rather than measuring across an
+        /// unequal interval).  NOT snapshotted.  ⚠ Unlike the §7.3 detector
+        /// path (whose pre level lives in @c local_carry and is therefore
+        /// gauge-current by construction), this is a COPY across one epoch
+        /// boundary — the consumer must skip pairs whose (sat,σ) appears in
+        /// this epoch's @c eq34_reref set (n_lane_t4_skip_gauge).
+        struct LaneT4Pre {
+            double value_abs{0.0};
+            double stamp_s{-1.0};
+            std::uint8_t cause{0};   ///< RelevelEpochState::kCauseT4Attrib / kCauseT4Consens.
+        };
+        std::map<std::tuple<int, std::string, std::string>, LaneT4Pre> lane_t4_pre;
         // Per-station ZWD carry (B9): persistent across epochs, keyed by station index
         // (ZWD is one-per-station).  Inert unless network.carry_zwd.
         std::map<int, LocalCarry> zwd_carry;
@@ -2005,6 +2031,136 @@ namespace GnssProcessor {
         long long n_wh_escalate_exhausted = 0;  ///< escalated epochs that still withheld
         long long n_wh_free_erases        = 0;  ///< §3b carry entries erased at the withhold branch
         long long n_wh_perconst_exits     = 0;  ///< declared limitation: eras ended by the RTA-10 carve-out publishing (no escalation ran)
+
+        // --- Leveling-carry RETIREMENT census (SPEC_withhold_era_release §8) ---
+        // Every path that removes a phase-leveling carry entry, counted at its
+        // own site, so a run can ATTRIBUTE a fleet-scale carry loss instead of
+        // inferring one.  Motivation: §7's promotion refusal rests on the claim
+        // that the invariant-#1 gap CLIFF was performing useful therapy by
+        // amputating stressed carries.  That claim was never measured — the
+        // gap prune reads only `last_seen_s`, i.e. it selects on ELAPSED TIME
+        // and on nothing else, and no instrument distinguished it from the four
+        // quality-driven retirement paths that run beside it.  These counters
+        // are pure telemetry (no solve effect, no CSV row) and are always on.
+        // (A) DEPARTURES — entries physically removed and not replaced this epoch.
+        //     ⚠ The gap prune runs immediately AFTER the harvest has refreshed
+        //     last_seen_s for every arc it stashed, so its candidate set is
+        //     disjoint from the arcs observed this epoch: it can only retire
+        //     arcs that were NOT harvested (set satellites, absent stations,
+        //     harvest failures).  It is therefore a DEPARTURE counter and NOT
+        //     the cliff — see (B), which is.
+        long long n_cr_gap_prune          = 0;  ///< amb-carry entries dropped by the pl_max_gap_s prune (departures; TIME-selected)
+        long long n_cr_gap_prune_epochs   = 0;  ///< epochs on which that prune removed at least one entry
+        long long n_cr_gap_prune_max      = 0;  ///< largest single-epoch prune removal
+        long long n_cr_gap_prune_max_week = 0;  ///< GPS week of that epoch (attribution handle)
+        double    cr_gap_prune_max_tow    = 0.0;///< TOW (s) of that epoch — joins directly to the `tow` column of every trace CSV
+        long long n_cr_gap_prune_max_fleet= 0;  ///< carry size immediately BEFORE that removal
+
+        // (B) THE CLIFF — the inject-side stale skip.  This is the mechanism
+        //     §1.3 observed as "pl prires rows 753 -> 0": the carried prior is
+        //     NOT injected because its gap exceeded the horizon, so the arc
+        //     solves FREE and is then re-stashed from one epoch of code.  The
+        //     entry is never erased, which is exactly why the prune above
+        //     cannot see it.  Counted at the inject predicate itself.
+        long long n_cr_inject_stale       = 0;  ///< carried priors skipped for gap > pl_max_gap_s (the mass re-level)
+        long long n_cr_inject_stale_epochs= 0;  ///< epochs on which at least one prior was skipped stale
+        long long n_cr_inject_stale_max   = 0;  ///< largest single-epoch stale-skip count
+        long long n_cr_inject_stale_max_week = 0; ///< GPS week of that epoch
+        double    cr_inject_stale_max_tow = 0.0;  ///< TOW (s) of that epoch — THE attribution handle for a cliff
+        long long n_cr_inject_stale_max_sta  = 0; ///< distinct stations in that epoch's stale set (separates a fleet-wide era from one station dropping out)
+
+        // (C) ONE-SOLVE REFLOATS — the entry is erased AFTER the harvest, so the
+        //     arc refloats on the NEXT epoch.  Quality-selected.
+        long long n_cr_sh_conv_flush      = 0;  ///< WHOLE-FLEET one-shot flush at SH convergence (pl_refloat_on_conv) — the largest single removal in the producer.  Family (C), NOT (A): the arcs are still tracked and the next harvest re-stashes them, so it costs one solve, not a departure.
+        long long n_cr_sh_conv_flushes    = 0;  ///< how many times that flush fired (expected 1)
+        long long n_cr_raim_attrib        = 0;  ///< T4 ATTRIBUTION refloat (live only when network.raim_attribution is armed)
+        long long n_cr_raim_consensus     = 0;  ///< T3 CONSENSUS refloat (live only when raim_attribution is NOT armed — the two are a run-constant either/or, never a split)
+
+        // (D) ONE-SOLVE FRAME SKIPS — the frame stepped, so the carried value is
+        //     stale in the OLD gauge; the same epoch's harvest re-stashes any
+        //     still-tracked arc, so the cost is one solve of continuity.
+        long long n_cr_eq34_reref         = 0;  ///< eq34 D4 chain-datum re-reference
+        long long n_cr_phase_datum_reref  = 0;  ///< phase-datum family re-reference
+
+        // Siblings on the SAME gap predicate, different carries (departures).
+        long long n_cr_zwd_gap_prune      = 0;  ///< ZWD carry entries dropped by the pl_max_gap_s prune
+        long long n_cr_rpb_gap_prune      = 0;  ///< receiver-PB carry entries dropped by the pl_max_gap_s prune
+
+        // --- Rung 3 v3: the CARRY-DOMAIN lane observatory ----------------------
+        // (SPEC_lane_slip_response §7.3.)  Measure-only: it computes the lane
+        // response of the free re-level and histograms it.  Nothing is written
+        // back, so an armed run is byte-identical on every solve artifact — that
+        // is deliberate, because the three preceding iterations all died on
+        // unreconciled counters and the |delta| DISTRIBUTION is the number that
+        // decides whether an apply leg is worth building at all.
+        //
+        // delta = [C_a(t+)/lam_a - C_b(t+)/lam_b] - [C_a(t-)/lam_a - C_b(t-)/lam_b] - dM
+        // Residual is eps_L(t+) - eps_L(t-) - eps_MW, with eps_MW = 0.351 cyc on
+        // GPS L1/L2 and 0.051 cyc on L2/L5 EWL at sigma_P = 0.3 m.  The carry
+        // frame hypothesis PREDICTS the bulk of |delta| below ~2 cyc; the seed
+        // site's own counters showed 97 % above 25 cyc, which is what a frame
+        // mismatch looks like and is the falsifier to watch for.
+        //
+        // CLOSURE IDENTITY (invariant #4 — a channel that does not close is a
+        // miswire, not a null):
+        //     n_lane_attempts == n_lane_measured
+        //                      + n_lane_skip_no_row     + n_lane_skip_no_mw
+        //                      + n_lane_skip_unmeasured + n_lane_skip_pair_changed
+        //                      + n_lane_skip_no_freed_band
+        //                      + n_lane_skip_no_pre     + n_lane_skip_stale_pre
+        //                      + n_lane_skip_no_post
+        //                      + n_lane_skip_bridged    + n_lane_skip_bad_lambda
+        //     n_lane_measured  == sum(n_lane_hist[0..8])
+        long long n_lane_attempts        = 0;  ///< (station, satellite) pairs with >= 1 freed signal this epoch — the denominator.  Counted over the FREED set, not over the raw rows, so an arc the raw pass never saw is still visible (as n_lane_skip_no_row) instead of silently leaving the denominator.
+        long long n_lane_measured        = 0;  ///< pairs that yielded a finite delta.
+        long long n_lane_skip_no_row     = 0;  ///< the freed (station, satellite) had NO raw-observable row this epoch at all (satellite not tracked by the raw pass, or station absent).
+        long long n_lane_skip_no_mw      = 0;  ///< a raw row existed but carried no usable second band (not dual).
+        long long n_lane_skip_unmeasured = 0;  ///< raw-MW entry present but no adjacent predecessor (step not formable).
+        long long n_lane_skip_pair_changed = 0;///< the adjacent raw predecessor used a DIFFERENT band pair, so ΔMW is not in this lane's cycles.
+        long long n_lane_skip_no_freed_band = 0;///< the satellite had a freed band, but NOT one of this pair's two — both carries are continuous, so there is no re-level response to measure.  (Third-band frees: L5 on a triple posture, or a second channel of the same band under channel_mode=all.)
+        long long n_lane_skip_no_pre     = 0;  ///< a band had no live pre-event carry (new arc, or retired last epoch).
+        long long n_lane_skip_stale_pre  = 0;  ///< a pre-event carry existed but was NOT stashed at the immediately preceding processed epoch, so differencing it against a one-epoch ΔMW would compare unequal intervals.
+        long long n_lane_skip_no_post    = 0;  ///< a band was not RE-STASHED this epoch.  ⚠ Tested on last_seen_s, not on map presence: an un-refreshed entry survives for a full pl_max_gap_s, and accepting it would silently contribute the PRE value as the POST value — collapsing δ to a one-band code re-level (top bins) or to exactly −ΔMW (≈0.35 cyc, bottom bins).  Both directions manufacture a verdict.
+        long long n_lane_skip_bridged    = 0;  ///< a band was delta-bridged — its carry is already re-based, so the lane response is the bridge's, not the free re-level's.
+        long long n_lane_skip_bad_lambda = 0;  ///< non-finite / non-positive wavelength on either band.
+        long long n_lane_both_freed      = 0;  ///< ...of the measured, pairs where BOTH bands were freed (vertex-wide response).
+        long long n_lane_one_freed       = 0;  ///< ...of the measured, pairs where exactly one band was freed (band-scoped response; its partner's carry is continuous).
+        double    lane_abs_delta_sum_cyc = 0.0;///< Sigma |delta| over measured pairs (cycles) — UNCONDITIONAL, unlike the seed site's post-cap sum that hid its own falsification.
+        double    lane_abs_delta_max_cyc = 0.0;///< max |delta| (cycles).
+        /// |delta| histogram, bins < 0.1 / 0.25 / 0.5 / 1 / 2 / 5 / 10 / 25 / >= 25 cyc.
+        long long n_lane_hist[9]         = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+        // --- §7.6 instrument additions (SPEC_lane_slip_response §7.6) --------
+        // (b) band-scoped-only histogram: the one_freed subset of n_lane_hist,
+        //     so the vertex-wide distribution is the bin-wise difference and the
+        //     two responses (rung-2 contrast) separate.  Closure:
+        //     sum(n_lane_hist_bandscoped) == n_lane_one_freed.
+        long long n_lane_hist_bandscoped[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+        // (c) cause split over MEASURED pairs — BIT counts (a pair freed by two
+        //     detectors increments two of these), so they sum to >= n_lane_measured.
+        long long n_lane_meas_mw   = 0;  ///< measured pairs with the MW bit.
+        long long n_lane_meas_lli  = 0;  ///< measured pairs with the LLI bit.
+        long long n_lane_meas_iftd = 0;  ///< measured pairs with the IF-TD bit.
+        // (d) T4-side coverage: the SAME delta measured on pairs whose carries
+        //     the RAIM attribution/consensus erase refloated — the channel that
+        //     is 97.3 % of all field freeing and structurally invisible to
+        //     free_ambs.  Pre-erase values captured at the erase site
+        //     (lane_t4_pre), measured at the NEXT harvest.  Separate closure:
+        //     n_lane_t4_attempts == n_lane_t4_measured + Σ n_lane_t4_skip_*.
+        long long n_lane_t4_captured     = 0;  ///< (station,sat,signal) arcs captured at the erase sites.
+        long long n_lane_t4_attempts     = 0;  ///< (station,sat) pairs with >= 1 captured band last epoch.
+        long long n_lane_t4_measured     = 0;  ///< pairs that yielded a finite T4 delta.
+        long long n_lane_t4_skip_no_row  = 0;  ///< no raw-observable row this epoch.
+        long long n_lane_t4_skip_no_mw   = 0;  ///< raw row not dual.
+        long long n_lane_t4_skip_unmeasured = 0;   ///< no adjacent raw predecessor.
+        long long n_lane_t4_skip_pair_changed = 0; ///< predecessor used a different band pair.
+        long long n_lane_t4_skip_gauge   = 0;  ///< the pair's (sat,σ) was eq34-re-referenced THIS epoch — the capture predates the frame step (the one guard the detector path gets for free from lane_pre living in local_carry; the capture is a copy and must be interlocked).
+        long long n_lane_t4_skip_no_pre  = 0;  ///< a band of the MW pair had no capture.
+        long long n_lane_t4_skip_stale_pre = 0;///< capture not from the immediately preceding harvest.
+        long long n_lane_t4_skip_no_post = 0;  ///< a band was not RE-STASHED this epoch (same last_seen_s test as the detector path).
+        long long n_lane_t4_skip_bad_lambda = 0; ///< non-finite wavelength/delta.
+        double    lane_t4_abs_delta_sum_cyc = 0.0;
+        double    lane_t4_abs_delta_max_cyc = 0.0;
+        long long n_lane_t4_hist[9]      = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6) — both-edge declaration
         // telemetry (invariant #7) + hygiene accounting.
         long long n_staf_departs          = 0;  ///< R2 depart events (EWMA ratio > threshold)

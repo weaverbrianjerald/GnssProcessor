@@ -1525,6 +1525,65 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                           // GF row is armed (nullptr keeps the OFF path inert).
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.epoch : nullptr,
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.hist : nullptr);
+
+    // ---- Rung 3 v3: the carry-domain lane observatory, PASS-A half ----------
+    // (SPEC_lane_slip_response §7.3.)  Sited AFTER both slip drains so this
+    // epoch's freed set is complete.  It carries ONLY the raw-MW observable
+    // forward — no carry level is read here.  That is the design point: the raw
+    // MW is untouched by the eq34 D4 / phase-datum S-transforms that shift
+    // LocalCarry::value_abs between this seam and the harvest, so reading BOTH
+    // lane levels inside the harvest keeps them in one gauge by construction
+    // instead of interlocking around a frame step after the fact.
+    //
+    // Measure-only: nothing downstream mutates a value from this map, so an
+    // armed run stays byte-identical on every solve artifact.
+    if (relevel_ptr && config_.networkCycleSlipRelevelLaneSnap() && qc.epoch.computed) {
+        for (std::size_t i = 0; i < stations.size() && i < qc.epoch.rows.size(); ++i) {
+            if (i < present.size() && !present[i]) continue;
+            // §7.6(a): per-satellite elevation for the per-event trace rows —
+            // the raw pass carries none, but the modeled set (same station,
+            // same epoch) does.  0 stays "unavailable" for a satellite the
+            // model pass dropped.
+            std::map<std::string, double> el_of;
+            if (i < modeled.size())
+                for (const auto& mo : modeled[i]) el_of[mo.satellite] = mo.elevation;
+            for (const auto& row : qc.epoch.rows[i]) {
+                // NON-dual rows are admitted too (sig2 empty).  Without them a
+                // satellite the raw pass tracked single-band is indistinguishable
+                // from one it never saw, and the "no MW pair" channel would be
+                // dead by construction — an invariant-#4 shape in the very
+                // instrument built to expose them.
+                const auto vit = qc.epoch.verdict[i].find(row.satellite);
+                RelevelEpochState::LaneMw m;
+                m.sig1 = row.sig1;
+                m.lam1_m = row.lam1_m;
+                const auto eit = el_of.find(row.satellite);
+                if (eit != el_of.end()) m.el_deg = eit->second;
+                if (row.dual && row.lambda_wl_m > 0.0 && std::isfinite(row.lambda_wl_m)) {
+                    m.sig2        = row.sig2;
+                    m.lambda_wl_m = row.lambda_wl_m;
+                    // lam2 from the WL definition 1/lam_wl = 1/lam1 - 1/lam2, so
+                    // the pair's wavelengths stay mutually consistent with the MW
+                    // being differenced against them.  ⚠ lambda_wl_m is stored as
+                    // an ABSOLUTE value, so this inversion is only valid when the
+                    // lower-band-digit signal has the SHORTER wavelength; the
+                    // consumer rejects the pair when it does not (bad_lambda),
+                    // because there the derived lam2 is wrong AND the MW's phase
+                    // term is sign-flipped relative to the carry lane.
+                    const double inv2 = (row.lam1_m > 0.0)
+                                            ? (1.0 / row.lam1_m - 1.0 / row.lambda_wl_m)
+                                            : 0.0;
+                    m.lam2_m = (inv2 > 0.0) ? 1.0 / inv2 : 0.0;
+                    if (vit != qc.epoch.verdict[i].end()) {
+                        m.measured     = vit->second.measured;
+                        m.pair_changed = vit->second.pair_changed;
+                        m.d_mw_cyc     = m.measured ? vit->second.d_mw / row.lambda_wl_m : 0.0;
+                    }
+                }
+                relevel_ptr->lane_mw[{static_cast<int>(i), row.satellite}] = m;
+            }
+        }
+    }
 }
 
 void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,
@@ -2783,7 +2842,18 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         std::make_tuple(i, parts->satellite, parts->signal));
                     if (cit == local_carry.end()) continue;       // no carry yet (new arc)
                     const double gap = pl_now_s - cit->second.last_seen_s;
-                    if (gap > pl_max_gap_s) continue;             // stale — housekeeping will drop it
+                    if (gap > pl_max_gap_s) {
+                        // SPEC_withhold_era_release §8: THE CLIFF.  The entry is
+                        // not erased here — it is simply not injected, so this
+                        // arc solves free this epoch and the harvest re-stashes
+                        // it from one epoch of code.  A whole fleet crossing on
+                        // one epoch is the §1.3 mass re-level; the post-harvest
+                        // prune cannot see it, because the harvest refreshes
+                        // last_seen_s first.  Per-station (parallel produce);
+                        // folded serially below.
+                        ++R.inject_stale_skips;
+                        continue;
+                    }
                     if (iono_on) iono_sats_carried.insert(parts->satellite);
                     // var_eff = var + q·gap, floored by the optional lock-in guard
                     // (var_floor>0 caps Λ so a slowly-biasing ambiguity can never
@@ -3111,6 +3181,23 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     if (relevel_free_on)
         for (const StationAssembly& Rc : asm_res)
             ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
+    // SPEC_withhold_era_release §8: fold the inject-side stale skips (the cliff
+    // mechanism) and record the worst epoch with a handle a trace filter can use.
+    {
+        long long stale_ep = 0, stale_sta = 0;
+        for (const StationAssembly& Rc : asm_res)
+            if (Rc.inject_stale_skips > 0) { stale_ep += Rc.inject_stale_skips; ++stale_sta; }
+        if (stale_ep > 0) {
+            ctx.counters.n_cr_inject_stale += stale_ep;
+            ++ctx.counters.n_cr_inject_stale_epochs;
+            if (stale_ep > ctx.counters.n_cr_inject_stale_max) {
+                ctx.counters.n_cr_inject_stale_max      = stale_ep;
+                ctx.counters.n_cr_inject_stale_max_week = se.time.week;
+                ctx.counters.cr_inject_stale_max_tow    = se.time.tow;
+                ctx.counters.n_cr_inject_stale_max_sta  = stale_sta;
+            }
+        }
+    }
     // QUEUE 8b: fold the per-station iono-carry inject counts (same discipline).
     if (iono_on)
         for (const StationAssembly& Rc : asm_res) {

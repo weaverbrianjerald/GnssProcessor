@@ -786,7 +786,24 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                 ++ctx.counters.n_relevel_retap_miss;
                             }
                         }
-                        local_carry.erase(std::make_tuple(i, pa.sat, pa.signal));
+                        {
+                            const auto lane_lk = std::make_tuple(i, pa.sat, pa.signal);
+                            const auto lane_lit = local_carry.find(lane_lk);
+                            if (lane_lit != local_carry.end()) {
+                                // §7.6(d) lane-observatory T4-side pre-erase capture
+                                // (measure-only; consumed at the NEXT harvest).  The
+                                // erase below is the existing actuator, untouched.
+                                if (config_.networkCycleSlipRelevelLaneSnap()) {
+                                    ctx.carry.lane_t4_pre[lane_lk] = {
+                                        lane_lit->second.value_abs,
+                                        lane_lit->second.last_seen_s,
+                                        RelevelEpochState::kCauseT4Attrib };
+                                    ++ctx.counters.n_lane_t4_captured;
+                                }
+                                local_carry.erase(lane_lit);
+                                ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 ATTRIBUTION refloat
+                            }
+                        }
                         // QUEUE 8b: a T4/consensus erase means the arc's LEVEL is not
                         // trusted, and the attribution cannot separate level error from
                         // carried-iono error (the T4 statistic reads their sum) — erase
@@ -888,7 +905,23 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     // re-floats from data — a direct, unambiguous refloat that does
                     // not depend on the deferred pending-reseed skip path.  The mark
                     // is also set (belt-and-suspenders / cleared by the next stash).
-                    local_carry.erase(std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
+                    {
+                        const auto lane_lk =
+                            std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
+                        const auto lane_lit = local_carry.find(lane_lk);
+                        if (lane_lit != local_carry.end()) {
+                            // §7.6(d) pre-erase capture — see the attribution site.
+                            if (config_.networkCycleSlipRelevelLaneSnap()) {
+                                ctx.carry.lane_t4_pre[lane_lk] = {
+                                    lane_lit->second.value_abs,
+                                    lane_lit->second.last_seen_s,
+                                    RelevelEpochState::kCauseT4Consens };
+                                ++ctx.counters.n_lane_t4_captured;
+                            }
+                            local_carry.erase(lane_lit);
+                            ++ctx.counters.n_cr_raim_consensus;   // census (C): T3 CONSENSUS refloat
+                        }
+                    }
                     // Bookkeeping on the Card-4 path (see refloat_sat_at above); the real
                     // actuator there is the deferred funnel queue.
                     stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);

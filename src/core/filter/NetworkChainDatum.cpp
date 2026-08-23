@@ -824,6 +824,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (eq34_reref.count({std::get<1>(key), std::get<2>(key)})) {
                 it = local_carry.erase(it);
                 ++n_erased;
+                ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: FRAME step
             } else {
                 ++it;
             }

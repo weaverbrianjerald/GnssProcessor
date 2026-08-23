@@ -395,8 +395,12 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
         // them is exactly what made every cold run report zero MW/LLI events
         // while still feeding the C3c funnel (limitation L3).
         struct SignalAction { bool matched{false}; bool refloated{false}; };
+        // §7.6(c): `cause` is the lane observatory's freeing-cause bit
+        // (RelevelEpochState::kCauseMw / kCauseLli) — measure-only tag, OR-merged
+        // so a doubly-freed key keeps both bits.
         auto refloat_signal = [&](int i, const std::string& sat,
-                                  const std::string& signal) -> SignalAction {
+                                  const std::string& signal,
+                                  std::uint8_t cause) -> SignalAction {
             SignalAction act;
             StateManager& sm = *stations[i].sm;
             for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
@@ -416,6 +420,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         // the inject site actually reads.
                         if (relevel) {
                             relevel->free_ambs.insert({i, amb_key});
+                            relevel->free_cause[{i, amb_key}] |= cause;
                             ++qc_cnt.relevel_free_marked;
                         }
                         // Bridge v2: a fresh mark on this (station, sat) makes any
@@ -485,9 +490,10 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         if (!parts || parts->satellite != sat) continue;
                         if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                         sm.markAmbiguityPendingReseed(amb_key);
-                        if (datum_local_carry)
-                            datum_local_carry->erase(
-                                std::make_tuple(i, parts->satellite, parts->signal));
+                        if (datum_local_carry
+                            && datum_local_carry->erase(
+                                   std::make_tuple(i, parts->satellite, parts->signal)))
+                            ++qc_cnt.datum_slip_carry_erases;   // retirement census (D)
                         ++n_marked;
                     }
                 }
@@ -672,8 +678,10 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         }
                     }
                 }
-                const auto a = refloat_signal(i, sat, sig1);
-                const auto b = refloat_signal(i, sat, sig2);
+                const auto a = refloat_signal(i, sat, sig1,
+                                              RelevelEpochState::kCauseMw);
+                const auto b = refloat_signal(i, sat, sig2,
+                                              RelevelEpochState::kCauseMw);
                 // Bridge v2: the same-epoch candidate (MW and T1 firing together)
                 // is deferred into the IF-TD driver, which stores the integer IN
                 // the pend it creates this epoch; the replace then runs at the
@@ -792,7 +800,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 bool matched = false, refloated = false;
                 for (const auto& [code, lli] : obs.lli_flags) {
                     if (code.empty() || code[0] != 'L' || !(lli & 1)) continue;
-                    const auto sa = refloat_signal(i, obs.satellite, code);
+                    const auto sa = refloat_signal(i, obs.satellite, code,
+                                                   RelevelEpochState::kCauseLli);
                     if (sa.matched)   matched   = true;
                     if (sa.refloated) refloated = true;
                 }
@@ -907,6 +916,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                         // mark never delivered (see refloat_signal).
                         if (relevel) {
                             relevel->free_ambs.insert({i, amb_key});
+                            relevel->free_cause[{i, amb_key}] |=
+                                RelevelEpochState::kCauseIfTd;
                             if (bridge_cnt) ++bridge_cnt->relevel_free_marked;
                         }
                         // Bridge v2: a fresh mark voids any outstanding pend for
