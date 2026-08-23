@@ -412,6 +412,7 @@ add_executable(gnss_tests
     tests/test_antenna_eccentricity.cpp
     tests/test_log_manager_init.cpp
     tests/test_windup_census_config.cpp
+    tests/test_windup_restart_response_config.cpp
     tests/test_lane_observatory_config.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")

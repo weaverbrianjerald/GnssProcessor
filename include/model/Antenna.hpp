@@ -193,6 +193,11 @@ namespace GnssProcessor {
 		void enableWindUpCensus(double wu_gap_s, double carry_gap_s);
 		/// @brief The census counters for this receiver's corrections instance.
 		const GnssCorrections::WindUpCensus& windUpCensus() const;
+		/// @brief The accumulator-restart ledger (§10.4 response; see
+		///        GnssCorrections::wuRestarts).
+		const std::map<std::string, GnssCorrections::WuRestart>& wuRestarts() const;
+		/// @brief Clear the restart ledger (the response drain's consume edge).
+		void clearWuRestarts();
 
 		/**
 		 * @brief Dump the receiver antenna model to trace log for ATX comparison.

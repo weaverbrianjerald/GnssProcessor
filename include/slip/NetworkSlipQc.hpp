@@ -265,6 +265,39 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                         LocalCarry>* bridge_local_carry = nullptr);
 
 /**
+ * @brief SPEC_phase_windup_sign §10.4 — drain the accumulator-RESTART ledgers
+ *        and refloat the stepped arcs (the wired response standing invariant
+ *        #1 demands before any @c accumulate_phase_windup arm).
+ *
+ * A restart applies an exact integer-cycle step to EVERY signal of the
+ * satellite (MW-blind: the step is band-common so ΔWL = 0) while the carried
+ * ambiguity and the zero-q leveling level survive at their pre-gap values.
+ * The response is the same free-epoch refloat the raw-slip drains use: mark
+ * pending-reseed, latch @c free_ambs (cause @c kCauseWindup — the lane
+ * observatory grades this response like any other), feed the C3c funnel under
+ * carry_invariant.  Runs SERIAL, station-ordered, AFTER the per-station model
+ * evaluations filled the ledgers and BEFORE the lane observatory's PASS-A
+ * half (the freed set must be complete).  Each station's ledger is cleared
+ * after the drain; entries stamped with an earlier epoch (the station was
+ * absent when its restart fired) are REFUSED and counted — a response to
+ * history would refloat an arc whose step was already absorbed at re-entry.
+ * No-op unless @c network.cycle_slip.windup_restart_refloat (which the loader
+ * disarms without accumulated mode — the verdict does not exist otherwise).
+ */
+void networkSlipDrainWindupRestart(const GnssConfig& config_,
+                                   std::vector<NetStation>& stations,
+                                   const std::vector<bool>& present,
+                                   int i_lo, int n_sta_total,
+                                   bool carry_invariant, bool carry_warm,
+                                   std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                                   SlipQcCounters& qc_cnt,
+                                   const SyncedEpoch& se, NetworkRunTraces& traces,
+                                   const std::shared_ptr<spdlog::logger>& log,
+                                   RelevelEpochState* relevel = nullptr,
+                                   std::map<std::tuple<int, std::string, std::string>,
+                                            RelevelPend>* relevel_pend = nullptr);
+
+/**
  * @brief SPEC_slip_relevel_walk §6 — float 2×2 delta-bridge solve for one
  *        (MW, IF-TD) detector pair.
  *

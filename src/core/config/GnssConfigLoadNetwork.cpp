@@ -3712,6 +3712,29 @@ namespace GnssProcessor {
                       "the free epoch) — disabled.");
             network_cycle_slip_relevel_delta_bridge_ = false;
         }
+        // windup_restart_refloat — SPEC_phase_windup_sign §10.4: the WIRED
+        // response to an accumulator restart (an exact integer-cycle step on
+        // every signal of the satellite, MW-blind because it is band-common).
+        // Refloats the stepped arcs at the restart epoch, from the accumulator's
+        // OWN verdict.  The restart verdict exists ONLY in accumulated mode, so
+        // arming this on a fractional lineage is a structural zero — the
+        // armed-but-inert shape invariant #4 names — hence the disarm below.
+        network_cycle_slip_windup_restart_refloat_ =
+            jval<bool>(json, "network.cycle_slip.windup_restart_refloat",
+                       "network_cycle_slip_windup_restart_refloat", false);
+        if (network_cycle_slip_windup_restart_refloat_ && !accumulate_phase_windup_) {
+            log->warn("Network: network.cycle_slip.windup_restart_refloat needs "
+                      "estimation.accumulate_phase_windup (the restart verdict it "
+                      "responds to exists only in accumulated mode; fractional "
+                      "wind-up wraps instead of restarting) — disabled.");
+            network_cycle_slip_windup_restart_refloat_ = false;
+        }
+        if (network_cycle_slip_windup_restart_refloat_ && !network_phase_leveling_) {
+            log->warn("Network: network.cycle_slip.windup_restart_refloat needs "
+                      "network.phase_leveling (the stale value it exists to refloat "
+                      "is the zero-q leveling carry) — disabled.");
+            network_cycle_slip_windup_restart_refloat_ = false;
+        }
         if (network_cycle_slip_relevel_delta_bridge_
             && (!network_cycle_slip_mw_detect_ || !network_cycle_slip_if_phase_td_)) {
             log->warn("Network: network.cycle_slip.relevel_delta_bridge needs BOTH "

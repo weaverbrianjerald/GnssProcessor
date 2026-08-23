@@ -415,6 +415,15 @@ struct SlipQcCounters {
     // armed with its headline counter at 0 on a slip-bearing run is a MISWIRE,
     // not a quiet run.
     long long relevel_free_marked{0};      ///< (station, amb key) free-epoch latches.
+    // §10.4 wind-up restart response (network.cycle_slip.windup_restart_refloat).
+    // Closure: wu_restart_events == wu_restart_refloated + wu_restart_cold
+    //          + wu_restart_beyond_carry + wu_restart_stale.
+    long long wu_restart_events{0};        ///< (station, sat) restart ledger entries drained.
+    long long wu_restart_refloated{0};     ///< ...responded: arcs marked + free-epoch latched (carry warm, gap within the carry horizon).
+    long long wu_restart_cold{0};          ///< ...carry not warm — diagnostic only (nothing stale to refloat yet).
+    long long wu_restart_beyond_carry{0};  ///< ...gap exceeded the carry horizon — the carry died with the gap, no response needed.
+    long long wu_restart_stale{0};         ///< ...ledger entry from an EARLIER epoch (station was absent at its restart) — refused, never respond to history.
+    long long wu_restart_arcs{0};          ///< individual ambiguities refloated across all responses.
     long long relevel_free_skips{0};       ///< Inject-site skips actually taken (arc had a live carry).
     /// SPEC_withhold_era_release §8 (family D): leveling-carry entries erased by
     /// the DATUM-SLIP re-reference inside the MW refloat drain — the frame moved

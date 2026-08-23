@@ -1122,3 +1122,64 @@ unwrap in accumulated mode are BOTH structural, so neither counter alone answers
 the question — the pair does.  The horizon-ordering disclosure printed
 "carry outlives the accumulator", i.e. the exposure bucket was meaningful on this
 posture (it is NOT at the 120 s loader default).
+## §11 The §10.4 RESTART RESPONSE — BUILT (2026-08-23, default-OFF)
+
+The blocking prerequisite is now wired: `network.cycle_slip.windup_restart_refloat`.
+
+**Mechanism.**  The accumulator itself keeps a restart LEDGER
+(`GnssCorrections::wu_restarts_`, filled ONLY in accumulated mode at the §10.2
+restart branch — satellite → {gap_s, epoch_s}, bounded at the visible
+constellation, inert until drained).  A serial PASS-A drain
+(`networkSlipDrainWindupRestart`, `slip/NetworkSlipQc.cpp`) runs after the
+per-station model evaluations filled the ledgers and BEFORE the lane
+observatory's PASS-A half, so a restart-freed pair enters the same epoch's
+freed set.  Per fresh entry it applies the SAME response the raw-slip drains
+use: mark pending-reseed, latch `free_ambs` with the new cause bit
+`kCauseWindup`, feed the C3c funnel under carry_invariant, and VOID any
+outstanding bridge pend for the (station, satellite) — a restart is a MODEL
+step, and a pend's pre-slip capture predates it.
+
+**Refusals, both counted** (closure printed at teardown):
+- `epoch_s != now` → STALE (the station was absent at its restart; the step
+  was absorbed at re-entry — responding to history would refloat a healthy
+  arc);
+- `gap_s > phase_leveling_max_gap_s` → BEYOND-CARRY (the carry died with the
+  gap; nothing stale survives to refloat).
+
+**Both edges (invariant #7):** `T0_windup/wu_restart` event rows per
+(station, satellite) with gap and horizon (`refloat` / `no_arc` /
+`diagnostic` / `stale_refused` / `beyond_carry`), run-end closure line
+(`wu_restart_events = refloated + cold + beyond_carry + stale`), and the lane
+observatory measures the response's own lane cost under `cause=WU` — the
+§10.2 step is band-common (ΔWL = 0), so the observatory is the ONLY
+instrument that can grade it.
+
+**Interlocks (warn-and-disarm, invariant #4):** without
+`estimation.accumulate_phase_windup` the verdict does not exist (fractional
+mode wraps instead of restarting — a structural zero); without
+`network.phase_leveling` there is no zero-q level to refloat.  The census's
+accumulated-mode READING line now reports whether the response is armed.
+Config-contract tests: `tests/test_windup_restart_response_config.cpp`
+(defaults-off, both disarms, arm-does-not-drag-accumulation).
+
+**Pre-registered validation ladder (in order; the accumulate flip stays
+BLOCKED until (c) passes):**
+(a) unit suite green;
+(b) fractional field lineage: the knob DISARMS by loader (warn line present)
+    and the run is byte-identical — trivial by construction, asserted once;
+(c) ACCUMULATED sim arm on a gap-bearing fixture (⚠ §10.4's provenance
+    caveat: leave `phase_windup_max_gap_s` at 300 on sim lineages — the
+    injector's horizon is not threaded): gates = `wu_restart` counters
+    NONZERO with closure OK; responded events consistent with the census's
+    restart population on the same run; the relevel walk stays dead
+    (SPEC_slip_relevel_walk quiet-twin gates); lane observatory `cause=WU`
+    rows present and their |δ| mass read against the §7.6 null;
+(d) only then: the accumulate-flip field arm (fresh convergence,
+    conditional-fingerprint semantics), graded against §7's fractional
+    staircase baseline (~306 wraps/day network-wide) with the response's own
+    counters as the restart-side ledger.
+
+**Deferral, named:** a restart at the legacy DATUM station (stations[0]) is
+not responded (its ambiguities are gauge-pinned — the same scope every other
+detector drain has); prioritized/eq34 lineages have no such station.
+Field-inert on the FT63 chain (eq34).

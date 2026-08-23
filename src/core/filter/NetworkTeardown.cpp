@@ -1986,9 +1986,32 @@ int networkTeardown(
                       "unwrapped into ±0.5 cyc, so no threshold on the applied step can "
                       "see anything; do NOT read it as \"no restarts\".  The restart "
                       "population is the {} counted above, each applying an exact "
-                      "integer-cycle step to every signal of its satellite with NO "
-                      "ambiguity response wired (invariants #1 and #7).",
-                      c.restarts);
+                      "integer-cycle step to every signal of its satellite — {}",
+                      c.restarts,
+                      config_.networkCycleSlipWindupRestartRefloat()
+                          ? "the §10.4 refloat response is ARMED (see its line below)."
+                          : "with NO ambiguity response armed this run (invariants #1 "
+                            "and #7; arm network.cycle_slip.windup_restart_refloat).");
+    }
+    // §10.4 wind-up restart RESPONSE readout (the wired invariant-#1 response;
+    // counters are the ON-path telemetry — invariant #4).
+    if (config_.networkCycleSlipWindupRestartRefloat()) {
+        const auto& qcc = slip_qc.counters;
+        const long long closure = qcc.wu_restart_refloated + qcc.wu_restart_cold
+                                + qcc.wu_restart_beyond_carry + qcc.wu_restart_stale;
+        log->info("Network (wind-up restart response, SPEC_phase_windup_sign §10.4): "
+                  "{} restart event(s) drained → {} RESPONDED ({} arc(s) refloated), "
+                  "{} cold (diagnostic), {} beyond the carry horizon (carry died with "
+                  "the gap — no response owed), {} STALE refused (ledger from an "
+                  "earlier epoch — never respond to history).  CLOSURE {} vs events "
+                  "{} ({}).  0 responded on an accumulated run whose census counts "
+                  "restarts = dead wiring (invariant #4); the lane observatory grades "
+                  "this response under cause=WU.",
+                  qcc.wu_restart_events, qcc.wu_restart_refloated,
+                  qcc.wu_restart_arcs, qcc.wu_restart_cold,
+                  qcc.wu_restart_beyond_carry, qcc.wu_restart_stale,
+                  closure, qcc.wu_restart_events,
+                  closure == qcc.wu_restart_events ? "OK" : "*** MISWIRE ***");
     }
 
     // ---- Rung 3 v3: carry-domain lane observatory (SPEC_lane_slip_response §7.3)

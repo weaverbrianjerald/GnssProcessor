@@ -443,6 +443,7 @@ struct RelevelEpochState {
         kCauseIfTd      = 4,   ///< IF-phase time-difference pool drain.
         kCauseT4Attrib  = 8,   ///< RAIM prominence-ATTRIBUTION erase (T4).
         kCauseT4Consens = 16,  ///< RAIM per-satellite CONSENSUS erase (T3).
+        kCauseWindup    = 32,  ///< Wind-up accumulator RESTART response (§10.4).
     };
     /// (station idx, amb key) marked pending-reseed by a detector this epoch —
     /// the inject site skips these (the free epoch the mark always promised).

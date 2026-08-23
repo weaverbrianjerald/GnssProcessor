@@ -94,6 +94,7 @@ void networkLeveling(
             if (c & RelevelEpochState::kCauseIfTd)      add("IFTD");
             if (c & RelevelEpochState::kCauseT4Attrib)  add("T4A");
             if (c & RelevelEpochState::kCauseT4Consens) add("T3C");
+            if (c & RelevelEpochState::kCauseWindup)    add("WU");
             return s.empty() ? std::string("none") : s;
         };
         for (const auto& row : ctx.carry.relevel.lane_obs_rows) {

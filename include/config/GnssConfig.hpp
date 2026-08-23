@@ -2902,6 +2902,23 @@ namespace GnssProcessor {
          * @return True if the carry-domain lane observatory is armed.
          */
         bool networkCycleSlipRelevelLaneSnap() const { return network_cycle_slip_relevel_lane_snap_; }
+        /**
+         * @brief SPEC_phase_windup_sign §10.4 — the wired accumulator-RESTART
+         *        response (@c network.cycle_slip.windup_restart_refloat).
+         *
+         * An accumulated-mode wind-up restart applies an exact integer-cycle
+         * step to every signal of the satellite while the carried ambiguity
+         * and the zero-q leveling level survive at their pre-gap values —
+         * standing invariant #1 with no wired response, and MW-blind (the
+         * step is band-common, ΔWL = 0).  When armed, the restart ledger the
+         * accumulator itself fills is drained at PASS-A serial time and the
+         * stepped (station, satellite)'s ambiguities take the free-epoch
+         * refloat, with identities at both edges.  Default OFF; loader
+         * disarms it (warn) without @c estimation.accumulate_phase_windup
+         * (the verdict does not exist in fractional mode — a structural zero)
+         * or without @c network.phase_leveling (nothing stale to refloat).
+         */
+        bool networkCycleSlipWindupRestartRefloat() const { return network_cycle_slip_windup_restart_refloat_; }
         /// @brief Retap SET value (m²) — the kept level's loosened confidence.
         double networkCycleSlipRelevelRetapVarM2() const { return network_cycle_slip_relevel_retap_var_m2_; }
         /// @brief Consecutive-retap streak at which an arc falls back to erase.
@@ -6444,6 +6461,7 @@ namespace GnssProcessor {
         bool   network_cycle_slip_relevel_retap_statistical_{false};        ///< SPEC_slip_relevel_walk: keep+retap on statistical RAIM refloats.
         bool   network_cycle_slip_relevel_retap_corroborate_{false};        ///< SPEC_lane_slip_response: keep ONLY on positive raw-observable continuity evidence.
         bool   network_cycle_slip_relevel_lane_snap_{false};                ///< SPEC_lane_slip_response §7.3: carry-domain lane OBSERVATORY (measure-only).  ⚠ NOT the deleted seed-site snap — see @ref networkCycleSlipRelevelLaneSnap.
+        bool   network_cycle_slip_windup_restart_refloat_{false};           ///< SPEC_phase_windup_sign §10.4: refloat arcs an accumulator RESTART stepped — see @ref networkCycleSlipWindupRestartRefloat.
         double network_cycle_slip_relevel_retap_var_m2_{0.25};              ///< Retap SET variance (m²).
         int    network_cycle_slip_relevel_retap_streak_max_{3};             ///< Consecutive-retap fallback-to-erase streak.
         bool   network_raim_{false};              ///< Post-fit network RAIM (Increment 3, T2): cross-station post-fit residual consensus refloats a carried ambiguity whose slip the pre-processors missed; OFF = byte-identical.

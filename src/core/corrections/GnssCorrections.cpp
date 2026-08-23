@@ -2035,6 +2035,12 @@ namespace GnssProcessor {
                     // backwards): the unwrap reference is no longer reliable,
                     // so restart accumulation from the raw atan2 angle.
                     restarted = true;
+                    // §10.4 restart ledger: the response drain consumes this
+                    // (satellite, gap, epoch) at PASS-A serial time.  Recorded
+                    // unconditionally in accumulated mode — bounded at the
+                    // visible constellation, and a consumer-less ledger is
+                    // inert by construction.
+                    wu_restarts_[satellite] = { gap, epoch_s };
                     log_manager_.getLogger("ppp_model")->debug(
                         "Phase wind-up gap {:.0f}s for {} exceeds {:.0f}s "
                         "continuity threshold: restarting accumulation",

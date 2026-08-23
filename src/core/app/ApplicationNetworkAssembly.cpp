@@ -1526,6 +1526,20 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.epoch : nullptr,
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.hist : nullptr);
 
+    // ---- §10.4: wind-up accumulator-restart response ------------------------
+    // (SPEC_phase_windup_sign §10.4.)  Drains the per-station restart ledgers
+    // the model evaluations above just filled and refloats the stepped arcs —
+    // the wired invariant-#1 response that gates any accumulate_phase_windup
+    // arm.  Sited BEFORE the lane observatory's PASS-A half below so a
+    // restart-freed pair enters this epoch's freed set (and its lane response
+    // is measured under cause=WU like every other).  No-op unless
+    // network.cycle_slip.windup_restart_refloat (loader-disarmed without
+    // accumulated mode).
+    networkSlipDrainWindupRestart(config_, stations, present, i_lo, n_sta_total,
+                                  carry_invariant, carry_warm,
+                                  carry_slipped_ambs, qc.counters, se, traces,
+                                  log, relevel_ptr, &ctx.carry.relevel_pend);
+
     // ---- Rung 3 v3: the carry-domain lane observatory, PASS-A half ----------
     // (SPEC_lane_slip_response §7.3.)  Sited AFTER both slip drains so this
     // epoch's freed set is complete.  It carries ONLY the raw-MW observable

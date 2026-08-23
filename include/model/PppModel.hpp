@@ -225,6 +225,12 @@ namespace GnssProcessor {
         const GnssCorrections::WindUpCensus& windUpCensus() const {
             return antenna_.windUpCensus();
         }
+        /// @brief The accumulator-restart ledger (§10.4 response drain).
+        const std::map<std::string, GnssCorrections::WuRestart>& wuRestarts() const {
+            return antenna_.wuRestarts();
+        }
+        /// @brief Clear the restart ledger (the drain's consume edge).
+        void clearWuRestarts() { antenna_.clearWuRestarts(); }
 
         /**
          * @brief Check whether the BIA product has an entry for a satellite+signal pair.

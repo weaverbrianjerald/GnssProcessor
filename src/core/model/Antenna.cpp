@@ -1318,6 +1318,14 @@ namespace GnssProcessor {
         return gnss_corrections_.windUpCensus();
     }
 
+    const std::map<std::string, GnssCorrections::WuRestart>& Antenna::wuRestarts() const {
+        return gnss_corrections_.wuRestarts();
+    }
+
+    void Antenna::clearWuRestarts() {
+        gnss_corrections_.clearWuRestarts();
+    }
+
     bool Antenna::enableWindUpTracing(const std::filesystem::path& log_dir) {
         return gnss_corrections_.enableWindUpTracing(log_dir);
     }

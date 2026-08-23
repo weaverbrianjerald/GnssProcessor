@@ -1,0 +1,65 @@
+{
+  "_comment": [
+    "WITHHOLD ESCALATION arm, RE-RUN POST-WIND-UP-FIX (SPEC_withhold_era_release 8.5 step 2).",
+    "Knob-verbatim clone of _fld63_relevel4h_wh.json (escalate 12 + free_erase over the ON leg)",
+    "with only the product path redirected.  Section 7 measured this arm on a binary that",
+    "PREDATES the carrier-phase wind-up sign fix (4f49fa2 + 0d25aa0), which is documented",
+    "solve-affecting on field data, so every G3 number is inadmissible under invariant #6.",
+    "WHY THIS RUN IS DECISIVE: section 7 refused promotion because settled sigma0 rose to 2.42,",
+    "and attributed the rise to the escalation REMOVING the invariant-#1 cliff that had been",
+    "amputating stressed carries.  On the current binary THERE IS NO CLIFF: the same ON config",
+    "now runs eras of 1/20/7 epochs, the 20-epoch era exits by EMIT at tow 269760 without ever",
+    "reaching the 30-epoch (900 s) timer, and the retirement census shows the worst inject-side",
+    "stale event is 21 entries across 2 stations -- a station-dropout signature, not a fleet",
+    "re-level.  So the attribution's premise is absent, and this run tests it directly.",
+    "REFERENCE (same exe, same posture, measured): ON leg = 453 emitted / 28 withheld, eras",
+    "1/20/7, settled-tail (tow>=266400) median sigma0_pf_phase = 2.0902 over 213 emitted epochs,",
+    "with ZERO vacuous (<0.10) epochs in that tail -- an honest bar, unlike the cliff-flattered",
+    "1.274 section 7 graded against.",
+    "PRE-REGISTERED: (1) the 20-epoch era collapses (escalate_landed >= 1 inside it) and total",
+    "withholds fall below 28.  (2) settled-tail median sigma0_pf_phase vs 2.0902: at or below",
+    "=> section 7's quality objection was an artifact of the retired binary and the escalation",
+    "is promotable on availability grounds; materially above => the cost is real and INDEPENDENT",
+    "of the cliff, which falsifies section 7's own attribution while upholding its verdict.",
+    "(3) the stop rule stands: escalate_exhausted ~ era length with no collapse => the",
+    "budget-limited model fails on this binary and the residual is common-mode."
+  ],
+  "extends": "_ext63_1h_evt_pl.json",
+  "processing": {
+    "max_duration_s": 21600.0
+  },
+  "network": {
+    "carry_invariant": false,
+    "product_output_path": "C:/GnssProcessor/runs/fld63_wh_escal6h/products.txt",
+    "raim_withhold_adapt_escalate": 12,
+    "raim_withhold_free_erase": true,
+    "cycle_slip": {
+      "if_phase_td": true,
+      "mw_detect": true,
+      "if_phase_td_ref_gate": true,
+      "mw_lli_corroborate": true,
+      "gap_instrument": true,
+      "relevel_free_epoch": true,
+      "relevel_delta_bridge": true,
+      "relevel_bridge_gf": true
+    },
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_refold": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_innov_calibrate_window": 0,
+    "carry_invariant_qz": 0.0,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_k": 4.0,
+    "mw_wl": {
+      "ewl_enable": false,
+      "wl_inject_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "uwl_mid_enable": false,
+      "uwl_dual_top": false
+    }
+  },
+  "//": "SPEC_withhold_era_release §11.3: era-3 re-convergence limb, ESCALATION arm (escalate=12 + free_erase) — knob-verbatim CLONE of _fld63_wh_escal_postfix, 6 h window; same-build pair with _fld63_wh_attrib6h."
+}

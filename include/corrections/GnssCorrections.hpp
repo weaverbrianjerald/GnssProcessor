@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <map>
 #include <unordered_map>
 #include <memory>
 #include <vector>
@@ -631,7 +632,34 @@ namespace GnssProcessor {
         /// @brief The census counters (all zero unless @ref enableWindUpCensus ran).
         const WindUpCensus& windUpCensus() const { return wu_census_; }
 
+        /**
+         * @brief One accumulator RESTART, recorded for the wired response
+         *        (SPEC_phase_windup_sign §10.4: refloat the arcs the restart
+         *        stepped).  @c gap_s is the gap that tripped the horizon
+         *        (≤ 0 for out-of-order epochs — the same branch restarts);
+         *        @c epoch_s stamps WHEN, so a consumer that missed an epoch
+         *        (absent station) can refuse the stale entry instead of
+         *        responding to history.
+         */
+        struct WuRestart { double gap_s{0.0}; double epoch_s{0.0}; };
+        /**
+         * @brief The restart ledger — filled ONLY in accumulated mode (the
+         *        restart verdict does not exist in fractional mode), keyed by
+         *        satellite, overwritten per restart, bounded at the visible
+         *        constellation.  Telemetry-class until a consumer drains it:
+         *        nothing here moves the correction itself.  The network
+         *        response drain reads and clears it per epoch
+         *        (@c network.cycle_slip.windup_restart_refloat); with no
+         *        consumer it simply holds the last restart per satellite.
+         */
+        const std::map<std::string, WuRestart>& wuRestarts() const { return wu_restarts_; }
+        /// @brief Clear the restart ledger (the consumer's drain edge).
+        void clearWuRestarts() { wu_restarts_.clear(); }
+
     private:
+        /// §10.4 restart ledger (see @ref wuRestarts).  Written from the const
+        /// computePhaseWindUp, hence mutable — the same pattern as the census.
+        mutable std::map<std::string, WuRestart> wu_restarts_;
         bool   wu_census_on_{false};
         double wu_census_gap_s_{300.0};
         double wu_census_carry_gap_s_{0.0};

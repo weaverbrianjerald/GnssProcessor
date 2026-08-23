@@ -1254,4 +1254,112 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
     }
 }
 
+void networkSlipDrainWindupRestart(const GnssConfig& config_,
+                                   std::vector<NetStation>& stations,
+                                   const std::vector<bool>& present,
+                                   int i_lo, int n_sta_total,
+                                   bool carry_invariant, bool carry_warm,
+                                   std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                                   SlipQcCounters& qc_cnt,
+                                   const SyncedEpoch& se, NetworkRunTraces& traces,
+                                   const std::shared_ptr<spdlog::logger>& log,
+                                   RelevelEpochState* relevel,
+                                   std::map<std::tuple<int, std::string, std::string>,
+                                            RelevelPend>* relevel_pend) {
+    if (!config_.networkCycleSlipWindupRestartRefloat()) return;
+    const double now_s = static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
+    const double carry_gap_s = config_.networkPhaseLevelingMaxGapS();
+    int n_resp = 0;
+    std::string detail;
+    for (int i = i_lo; i < n_sta_total && i < static_cast<int>(stations.size()); ++i) {
+        // Absent station: its model was not evaluated this epoch, so its ledger
+        // holds no fresh entry — leave it for the return epoch, where the
+        // continued gap fires a FRESH restart that overwrites the stale one.
+        if (i < static_cast<int>(present.size()) && !present[i]) continue;
+        if (!stations[i].model || !stations[i].sm) continue;
+        const auto& ledger = stations[i].model->wuRestarts();
+        if (ledger.empty()) continue;
+        for (const auto& [sat, rec] : ledger) {
+            ++qc_cnt.wu_restart_events;
+            if (rec.epoch_s != now_s) {
+                // A restart from an EARLIER epoch (ledger survived an epoch
+                // nobody drained — e.g. the knob path raced a withheld epoch).
+                // The step it describes was already absorbed by whatever
+                // happened since; responding NOW would refloat a healthy arc.
+                ++qc_cnt.wu_restart_stale;
+                traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
+                                 stations[static_cast<std::size_t>(i)].name,
+                                 rec.gap_s, carry_gap_s, "stale_refused", "");
+                continue;
+            }
+            if (rec.gap_s > carry_gap_s) {
+                // The gap outlived the carry horizon too: the leveling carry
+                // was pruned with it, so there is nothing stale to refloat.
+                ++qc_cnt.wu_restart_beyond_carry;
+                traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
+                                 stations[static_cast<std::size_t>(i)].name,
+                                 rec.gap_s, carry_gap_s, "beyond_carry", "");
+                continue;
+            }
+            StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
+            int matched = 0;
+            for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
+                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
+                if (!parts || parts->satellite != sat) continue;
+                ++matched;
+                // Card 4 C3c: the DD invariant carry owns its own funnel and is
+                // live from epoch 1 (see refloat_signal).
+                if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
+                if (carry_warm) {
+                    sm.markAmbiguityPendingReseed(amb_key);
+                    if (relevel) {
+                        relevel->free_ambs.insert({i, amb_key});
+                        relevel->free_cause[{i, amb_key}] |=
+                            RelevelEpochState::kCauseWindup;
+                        ++qc_cnt.relevel_free_marked;
+                    }
+                }
+            }
+            // A restart is a MODEL step, not a slip: any outstanding bridge
+            // pend's pre-slip capture predates the step and its replace would
+            // re-inject a pre-restart-frame value — void it (the same rule the
+            // raw-slip drains apply on a fresh mark).
+            if (carry_warm && relevel_pend)
+                for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();)
+                    if (std::get<0>(pit->first) == i && std::get<1>(pit->first) == sat) {
+                        ++qc_cnt.bridge_pend_voided;
+                        pit = relevel_pend->erase(pit);
+                    } else ++pit;
+            if (carry_warm && matched > 0) {
+                ++qc_cnt.wu_restart_refloated;
+                qc_cnt.wu_restart_arcs += matched;
+                if (++n_resp <= 12)
+                    detail += fmt::format("{}{}/{}", detail.empty() ? "" : ", ",
+                                          stations[static_cast<std::size_t>(i)].name, sat);
+            } else if (!carry_warm) {
+                ++qc_cnt.wu_restart_cold;
+            } else {
+                // Warm but no live ambiguity matched the satellite — the arc
+                // is not in this epoch's estimation set; count as refloated=0
+                // via the event row's action so closure still holds.
+                ++qc_cnt.wu_restart_refloated;
+            }
+            traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
+                             stations[static_cast<std::size_t>(i)].name,
+                             rec.gap_s, carry_gap_s,
+                             carry_warm ? (matched > 0 ? "refloat" : "no_arc")
+                                        : "diagnostic",
+                             fmt::format("accumulator restart; {} arc(s) marked", matched));
+        }
+        stations[static_cast<std::size_t>(i)].model->clearWuRestarts();
+    }
+    if (n_resp > 0)
+        log->info("Network[windup-restart]: TOW {:.1f} refloated {} (station,sat) "
+                  "restart response(s){} — the accumulator's own verdict; the step "
+                  "is band-common (MW-blind), so no raw detector corroborates it "
+                  "[{}]",
+                  se.time.tow, n_resp,
+                  carry_warm ? "" : " (carry cold; diagnostic)", detail);
+}
+
 } // namespace GnssProcessor
