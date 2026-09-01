@@ -1160,6 +1160,49 @@ namespace GnssProcessor {
         return true;
     }
 
+    bool StateManager::restoreDynamicState(RestoredStateKind kind, const std::string& key,
+                                           double value, size_t expect_idx) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (key.empty()) {
+            logger->error("restoreDynamicState: empty key at expected index {}", expect_idx);
+            return false;
+        }
+        std::map<std::string, size_t>* map = nullptr;
+        switch (kind) {
+            case RestoredStateKind::Ionosphere:        map = &ionosphere_indices_; break;
+            case RestoredStateKind::IonosphereRate:    map = &iono_rate_indices_; break;
+            case RestoredStateKind::Ambiguity:         map = &ambiguity_indices_; break;
+            case RestoredStateKind::ReceiverCodeBias:  map = &code_bias_indices_; break;
+            case RestoredStateKind::SatBias:           map = &sat_bias_indices_; break;
+            case RestoredStateKind::SatPhaseBias:      map = &sat_phase_bias_indices_; break;
+            case RestoredStateKind::ReceiverPhaseBias: map = &receiver_phase_bias_indices_; break;
+            case RestoredStateKind::SatClock:          map = &sat_clock_indices_; break;
+        }
+        if (!map) return false;
+        if (map->count(key)) {
+            logger->error("restoreDynamicState: key '{}' already registered — the resume "
+                          "replay must run on a core-only manager", key);
+            return false;
+        }
+        // Verify the landing index BEFORE appending.  getStateSize() is
+        // MAP-DERIVED (core + Σ registered map sizes), so an appended-but-
+        // unregistered row would desynchronize the vector from the reported
+        // size (the next append's head-copy silently truncates it) — every
+        // refusal from this function must therefore be mutation-free.
+        if (getStateSize() != expect_idx) {
+            logger->error("restoreDynamicState: '{}' would land at index {} but the "
+                          "snapshot serialized it at {} — layout divergence, resume "
+                          "aborted (no mutation)",
+                          key, getStateSize(), expect_idx);
+            return false;
+        }
+        // Placeholder unit variance: the resume's wholesale setCovariance follows
+        // the layout rebuild, so nothing ever reads this value.
+        const size_t idx = appendState(value, 1.0);
+        (*map)[key] = idx;
+        return true;
+    }
+
     bool StateManager::renameAmbiguity(const std::string& old_key, const std::string& new_key) {
         auto logger = log_manager_.getLogger("state_manager");
         if (old_key.empty() || new_key.empty()) {

@@ -3018,6 +3018,67 @@ invariant-#1 channel the slip campaign named.  Verdict: the template pin is
 retro-validated with an absolute grade and its scope WIDENS from "slipped
 postures" to this producer posture generally (ledger table row updated).
 
+**RT FILTER-STATE SNAPSHOT (CONSUMER WARM START) — BUILT; THE SIM CO-RESTART
+VENUE IS MEASURED ZERO-WIN, AND HOUR 1 IS RE-ATTRIBUTED (2026-09-01, the
+"consumer-side warm start" completion candidate; exe `gnss_processor_fable_cw`,
+runs `camp60wu_q6wsnap_cw` (w'') + `camp60wu_q6warm_cw{,3,4,5}`, configs
+`_camp60wu_q6w*_cw*.json`):**
+**Built.**  The RTB-7 complement: `realtime.state_snapshot_path` arms a
+periodic atomic snapshot of the RT/consumer engine's OWN Kalman memory —
+core block + every dynamic state (exact-layout replay via the new
+mutation-free `StateManager::restoreDynamicState`; `getStateSize()` is
+map-derived, so refusals must not append) + full covariance + the SSR
+continuity baselines (generation id, `noteSsrDiscontinuity` memory, A5
+applied maps, epoch counter) — and a staged warm RESUME (parse at
+initialize, age+fingerprint gates at the first processed epoch; the restored
+prev-epoch time makes the first predict inflate over the true gap).  New
+seam `RealTimeEngineStateSnap.cpp` + `RtStateSnapshot.{hpp,cpp}`; knobs
+`state_snapshot_{path,interval_s,horizon_s,seam_refloat,restore_scope}`;
+unit suite `RtStateSnapshotTest` (3 cases: exact round-trip, six
+corruption rejections, layout-replay contract).  The closed-loop consumer
+inherits the knobs through `deriveClosedLoopConsumerConfig`'s full copy.
+Byte gates all PASS: (w'') writer arm — producer products + closed-loop
+trace + network_zwd all BYTE-IDENTICAL to `runs/camp60wu_q6wsnap` with both
+snapshot writers live; every resume arm — producer products byte-identical
+to (c') (the consumer is passive).
+**The five-arm ablation (consumer hourly 3D rms, h6 | h7 | h8-h11), against
+a producer that ALSO warm-resumed (the (c') posture):**
+cold (c') 1.068|0.258|0.33/0.15/0.13/0.12; full-STIFF (cw)
+7.443|0.942|0.20/0.12/0.13/0.13; +amb-refloat (BIT-IDENTICAL to cw — this
+consumer re-seeds ambiguities per epoch, so ambiguity stiffness was never
+its channel); +ZWD-freed (cw3) 10.721|0.917 (the freed ZWD absorbed 2.9 m
+before snapping back at the ~20-min DCB relax); core-scope-ISB-stiff (cw4)
+9.237|0.907 (epoch-0 10.95 vs cold 4.46 — the ISB, q 1e-12, the stiffest
+core state, isolated as the last liar); core-scope + ISB freed (cw5)
+**≡ COLD to 3.4 mm max / 0.0 mm p50 per-epoch over all 720 epochs**.
+**Three invariant-#1 instances in one card** (ambiguities → ZWD → ISB), each
+isolated by its own arm: a producer that warm-resumes emits a deliberately
+UNSIGNALLED product transient (gen id preserved, no disc bumps — the
+seamlessness that protects cold consumers), and every stiff restored state
+fights it — while every free-q state (position q 100 m²/s ⇒ σ≈55 m after
+one 30 s predict; receiver clock) is forgotten before the first update.
+**Memory either evaporates or fights; on this venue the best warm start IS
+the cold start, and the card's default now guarantees exactly that**
+(`restore_scope: "core"` + `seam_refloat: true` ⇒ measured cold-equivalent).
+**Hour 1 re-attributed.**  The reference ladder's "hour 1 is
+CONSUMER-self-convergence-bound" conflated two things: the consumer's own
+bootstrap is ~4 epochs on this bed (free-q position; cold epoch-0 4.5 m →
+t+90 s 0.7 m), and the h6-h7 rms (1.07/0.26) is the PRODUCER'S OWN
+post-resume product transient passing through the applied products — which
+no consumer-side state can absorb better than fresh states do.  The h6
+lever is therefore PRODUCER-side (bind the resumed leg's first minutes,
+bca-σ-schedule-shaped, or extend the seam-scoped re-seed family to the
+producer's station filters) — future cards, not this one.
+**Venue scoping (the card's real regime, validation OWED):** engines with
+PERSISTENT cross-epoch memory facing a CONTINUOUS product stream — the
+covl145-class rooftop replay (2.8 min of ambiguity/ZWD/bias convergence,
+`project_rt_report_surveyed_reference`), turbo_edit/AR lineages, static
+consumers with tight position q, and consumer-only restarts against a live
+producer.  There `restore_scope: "full"` (+`seam_refloat` per continuity)
+is the designed posture; arm it on that venue's own A/B before quoting any
+benefit.  Ledger row `realtime.state_snapshot_path` carries the scoped
+verdict.
+
 **SEAM-SCOPED ZWD SERIALIZATION — BUILT + VALIDATED (2026-09-01, the card the
 carry_zwd re-base arms derived (finding 3 below); `runs/camp60wu_quiet12h_r2q3_szv`
 (a) / `_q6wsnap_szv` (w') / `_q6warm_szv` (c'), configs `_camp60wu_*_szv.json`,

@@ -554,6 +554,20 @@ namespace GnssProcessor {
         size_t getSystemTimeOffsetIndex(const std::string& system_name) const;
 
         /**
+         * @brief Read-only view of the inter-system time-offset (ISB) key map
+         *        (system name → state index).
+         *
+         * Added for the RT warm-resume seam response: the ISB is the stiffest
+         * core state (near-zero random walk), so a resume across a producer
+         * frame re-realization must re-inflate every registered ISB via
+         * @ref reinflateSystemTimeOffsetVariance — enumerating them needs the
+         * map, not a per-name probe.
+         */
+        const std::map<std::string, size_t>& getSystemTimeOffsetStates() const {
+            return system_time_offset_indices_;
+        }
+
+        /**
          * @brief Get the inter-system clock-rate offset state index for a system.
          *
          * Mirrors @c getSystemTimeOffsetIndex but for the rate (ISBR).  The
@@ -656,6 +670,71 @@ namespace GnssProcessor {
          * @return true iff the counter changed since the last recorded value.
          */
         bool noteSsrDiscontinuity(const std::string& key, int counter);
+
+        /**
+         * @brief Read-only view of the SSR discontinuity-counter memory
+         *        (per-"sat|signal" last-seen counters behind
+         *        @ref noteSsrDiscontinuity).
+         *
+         * Serialized by the RT filter-state snapshot so a warm-resumed engine
+         * keeps its counter baselines: a producer disc bump DURING the outage
+         * then fires the existing ambiguity-reset reaction at the first
+         * post-resume sighting instead of being silently absorbed as a fresh
+         * baseline (the consumer-gap silent-frame-swap class).
+         */
+        const std::map<std::string, int>& getSsrDiscontinuityMemory() const {
+            return last_ssr_discontinuity_;
+        }
+
+        /**
+         * @brief Replace the SSR discontinuity-counter memory wholesale (RT
+         *        warm resume only — see @ref getSsrDiscontinuityMemory).
+         */
+        void setSsrDiscontinuityMemory(std::map<std::string, int> mem) {
+            last_ssr_discontinuity_ = std::move(mem);
+        }
+
+        /// Dynamic state kinds the RT filter-state snapshot serializes — one per
+        /// dynamic key→index map.  The core block (position, clock, ZWD, …) is
+        /// index-stable by construction and is not kind-tagged.
+        enum class RestoredStateKind {
+            Ionosphere,        ///< per-satellite slant iono (getIonosphereStates)
+            IonosphereRate,    ///< per-satellite iono rate (getIonosphereRateStates)
+            Ambiguity,         ///< carrier ambiguity (getAmbiguities)
+            ReceiverCodeBias,  ///< receiver code bias / IFB (getCodeBiasStates)
+            SatBias,           ///< satellite bias (getSatBiasStates)
+            SatPhaseBias,      ///< satellite phase bias (getSatPhaseBiasStates)
+            ReceiverPhaseBias, ///< receiver phase bias (getReceiverPhaseBiasStates)
+            SatClock,          ///< satellite clock (getSatClockStates)
+        };
+
+        /**
+         * @brief RT warm resume: re-create one dynamic state EXACTLY as serialized.
+         *
+         * Appends a state row with @p value (placeholder unit variance — the
+         * resume overwrites the whole covariance via @ref setCovariance
+         * immediately after the layout is rebuilt) and registers @p key in the
+         * map selected by @p kind.  Deliberately BYPASSES the semantic add*
+         * functions: those carry creation side effects (elevation-scaled seeds,
+         * the enableIonoRate paired-rate append, duplicate-key short-circuits)
+         * that would diverge the rebuilt layout from the serialized one after
+         * any in-run prune had interleaved the original indices.
+         *
+         * @param kind        Which dynamic map owns the key.
+         * @param key         The map key, verbatim from the snapshot.
+         * @param value       Serialized state value.
+         * @param expect_idx  The index this row held at serialization; the append
+         *                    must land exactly there (the caller replays rows in
+         *                    ascending index order onto a core-only manager).
+         * @return true if the row landed at @p expect_idx and the key was newly
+         *         registered; false on any mismatch — and every refusal is
+         *         MUTATION-FREE (the landing index is verified before the
+         *         append, because getStateSize() is map-derived and an
+         *         unregistered appended row would desynchronize it from the
+         *         actual vector length).
+         */
+        bool restoreDynamicState(RestoredStateKind kind, const std::string& key,
+                                 double value, size_t expect_idx);
 
         /**
          * @brief Compute an approximate ambiguity seed value from an observation.

@@ -7,6 +7,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "realtime/RtStateSnapshot.hpp"  // complete type for staged_rt_snap_'s destructor
 #include "aiding/ImuAidingSource.hpp"   // full type for aiding_manager_->imu() wiring
 #include "app/EpochUpdateSupport.hpp"
 #include "products/ProductCache.hpp"
@@ -74,6 +75,10 @@ RealTimeEngine::RealTimeEngine(GnssConfig& config, LogManager& log_manager)
     : config_(config), log_manager_(log_manager) {
 }
 
+// Out-of-line so the staged_rt_snap_ unique_ptr's deleter sees the complete
+// RtStateSnapshot type (forward-declared in the header).
+RealTimeEngine::~RealTimeEngine() = default;
+
 // ---------------------------------------------------------------------------
 // GPS -> UTC helper
 // ---------------------------------------------------------------------------
@@ -105,6 +110,11 @@ bool RealTimeEngine::initialize() {
     initAmbiguityResolver();
     seedInitialState();
     initTraceLoggers();
+    // RT filter-state snapshot (consumer warm start): parse + STAGE only — the
+    // fingerprint depends on post-initialize setters (setSsrStore etc.) and the
+    // age gate needs a real epoch, so application defers to the first
+    // processed epoch.  No-op with realtime.state_snapshot_path empty.
+    loadStateSnapshotStaged_();
 
     log->info("Real-time engine initialized (position seeded at ({:.1f}, {:.1f}, {:.1f}))",
               initial_position_.x(), initial_position_.y(), initial_position_.z());
@@ -382,6 +392,13 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // when both modes share a console.
     ctx.epoch_prefix = "[RT] ";
 
+    // RT filter-state snapshot: one-shot staged warm resume, BEFORE the
+    // admission gates — restoring the prev-epoch time here lets
+    // stepTimeAndDetectGap compute the first dt over the TRUE outage gap, and
+    // an epoch the gates then defer leaves the applied state waiting exactly
+    // like any other quiet epoch.  No-op unless a snapshot was staged.
+    applyStagedStateSnapshot_(ctx);
+
     // --- Admission gates ---------------------------------------------------
     // The only steps that can end the epoch early.  Ordered exactly as before:
     // lag/sync deferral, then the data-time budget, then the time step (whose
@@ -499,6 +516,11 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     resolveAmbiguities(ctx);
     writeEpochTraces(ctx);
+
+    // RT filter-state snapshot: cadence-gated atomic write of the live filter
+    // memory, AFTER the epoch's full estimation tail so the snapshot carries
+    // this epoch's posterior.  No-op with realtime.state_snapshot_path empty.
+    writeStateSnapshot_(ctx);
 
     return true;
 }

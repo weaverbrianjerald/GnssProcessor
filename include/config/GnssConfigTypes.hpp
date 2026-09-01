@@ -1775,6 +1775,109 @@ namespace GnssProcessor {
         std::string network_products_path;
 
         /**
+         * @brief RT filter-state snapshot path (@c realtime.state_snapshot_path).
+         *
+         * The consumer-side warm start (the RTB-7 complement: the producer snapshot
+         * deliberately excludes per-station filter state, and the closed-loop /
+         * user engine's own KF memory — position, ZWD, per-sat iono, receiver
+         * biases, AMBIGUITIES + full covariance — is what re-converges for hours
+         * after every restart).  Non-empty arms BOTH halves on the engine: a
+         * periodic atomic snapshot write (every @ref state_snapshot_interval_s of
+         * data time), and a staged warm RESUME at startup — applied at the first
+         * processed epoch when the fingerprint matches and the age is within
+         * @ref state_snapshot_horizon_s, else discarded with a logged reason and a
+         * clean cold start.  The closed-loop consumer inherits this via
+         * @c deriveClosedLoopConsumerConfig (full config copy), so setting it in a
+         * network run's config arms the HELD-OUT consumer, not the producer.
+         * Empty (default) = off, byte-identical.  See
+         * @c src/core/realtime/RealTimeEngineStateSnap.cpp.
+         */
+        std::string state_snapshot_path;
+
+        /**
+         * @brief RT snapshot write cadence in data seconds
+         *        (@c realtime.state_snapshot_interval_s, default 10).
+         */
+        double state_snapshot_interval_s{ 10.0 };
+
+        /**
+         * @brief RT warm-resume staleness horizon in seconds
+         *        (@c realtime.state_snapshot_horizon_s, default 300).
+         *
+         * Past it the staged snapshot is discarded (every restored arc would be
+         * stale: undetected in-gap cycle slips are the exposure, and the engine's
+         * own LLI / slip QC / SSR-break reactions are the wired response only for
+         * bounded gaps).  The first post-resume predict inflates over the TRUE gap
+         * (prev-epoch time restores to the snapshot epoch), so within the horizon
+         * the covariance honestly reflects the outage.
+         */
+        double state_snapshot_horizon_s{ 300.0 };
+
+        /**
+         * @brief The warm-resume SEAM RESPONSE: refloat the restored stiff
+         *        time-linked states (@c realtime.state_snapshot_seam_refloat,
+         *        default true).
+         *
+         * The invariant-#1 response, measured necessary on the sim closed-loop
+         * ladder (2026-09-01) in two steps.  A producer that itself warm-resumed
+         * emits a deliberately UNSIGNALLED product transient (generation id
+         * preserved, no disc bumps — that seamlessness is what protects cold
+         * consumers), so none of the restored datum-break baselines fire on it.
+         * The restored state then fights it wherever it is stiff:
+         *
+         *  - The restored ZWD (troposphere q ~1e-9) pins the pre-outage
+         *    clock/tropo/vertical partition.  A COLD consumer parks the
+         *    transient's elevation-common part in ZWD (measured: 0.16 -> 0.64 m
+         *    excursion off the converged 0.10 before relaxing back); the warm
+         *    consumer's pinned ZWD sends the same tension to the VERTICAL at
+         *    mapping-amplified scale — a monotone U walk to ~-9 m over the
+         *    first minutes (h6 rms 7.44 vs cold 1.07), recovering only as the
+         *    producer's own transient decays.
+         *  - Restored stiff carrier ambiguities do the same on engines that
+         *    carry them across epochs (this consumer re-seeds per epoch, so the
+         *    ambiguity half measured inert here — kept for the lineages where
+         *    it is not).
+         *
+         * ON (default): every restored ambiguity is marked pending-reseed
+         * through the same @c StateManager::resetAmbiguity path the
+         * disc-counter and slip reactions use, and the restored ZWD VARIANCE is
+         * re-inflated to @c initial_std.troposphere with its cross-covariances
+         * zeroed — the VALUE stays as the (correct) seed, so the transient can
+         * park in ZWD exactly as a cold start would while position starts warm.
+         * Per-satellite iono is left alone (its own q relaxes it within an
+         * epoch, and its value re-anchors the geometry-free split).  OFF keeps
+         * everything stiff: only for a producer proven emission-continuous
+         * across the outage.
+         */
+        bool state_snapshot_seam_refloat{ true };
+
+        /**
+         * @brief What the warm resume restores
+         *        (@c realtime.state_snapshot_restore_scope, default "core").
+         *
+         * "core" — restore the CORE block only (position / receiver clock /
+         * ZWD-as-seed / ISBs, plus the producer-continuity baselines: generation
+         * id, disc counters, A5 applied maps, epoch counter and prev-epoch
+         * time).  Dynamic states (ambiguities, per-sat iono, receiver DCBs) are
+         * NOT restored — they re-create per epoch exactly as on a cold start.
+         * Measured (sim ladder 2026-09-01): across a producer that ALSO
+         * warm-resumed, every restored dynamic state fights the producer's
+         * deliberately-unsignalled resume transient — stiff ambiguities walked U
+         * to −9 m (h6 rms 7.44 vs cold 1.07), and freeing them + the ZWD only
+         * re-parked the tension in the freed states (ZWD spiked to 2.9 m, h6
+         * 10.7) — while the core memory is the part that actually starts warm
+         * (epoch-0 3D 1.7 m restored vs 4.5 cold).
+         *
+         * "full" — additionally rebuild and restore every dynamic state
+         * (exact-layout replay + covariance).  The right scope when the
+         * PRODUCT stream is continuous across the outage — a consumer-only
+         * restart against a producer that kept running (the RT service-bounce
+         * case this card exists for); the sim co-restart venue is its measured
+         * worst case.  The seam-refloat policy applies in both scopes.
+         */
+        std::string state_snapshot_restore_scope{ "core" };
+
+        /**
          * @brief RTA-12(3): blunder gate on the RTCM 1005/1006 a-priori seed (m).
          *
          * The engine seeds the filter a-priori from a decoded station ARP when no

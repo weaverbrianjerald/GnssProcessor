@@ -2668,6 +2668,47 @@ namespace GnssProcessor {
             // RTA-6: live network product file to tail (empty = off).  Consumed
             // by runRealTime via NetworkProductTail into an OWNED SsrCorrectionStore.
             realtime_config_.network_products_path = rt.value("network_products_path", "");
+            // RT filter-state snapshot (consumer warm start — the RTB-7 complement).
+            // Non-empty path arms the periodic write AND the staged warm resume on
+            // any engine built from this config; the closed-loop consumer inherits
+            // it through deriveClosedLoopConsumerConfig's full copy.  Empty =
+            // byte-identical off.
+            realtime_config_.state_snapshot_path = rt.value("state_snapshot_path", "");
+            realtime_config_.state_snapshot_interval_s =
+                rt.value("state_snapshot_interval_s", 10.0);
+            realtime_config_.state_snapshot_horizon_s =
+                rt.value("state_snapshot_horizon_s", 300.0);
+            realtime_config_.state_snapshot_seam_refloat =
+                rt.value("state_snapshot_seam_refloat", true);
+            realtime_config_.state_snapshot_restore_scope =
+                rt.value("state_snapshot_restore_scope", "core");
+            if (realtime_config_.state_snapshot_restore_scope != "core"
+                && realtime_config_.state_snapshot_restore_scope != "full") {
+                log->warn("realtime.state_snapshot_restore_scope '{}' is not one of "
+                          "core|full; using the default 'core'.",
+                          realtime_config_.state_snapshot_restore_scope);
+                realtime_config_.state_snapshot_restore_scope = "core";
+            }
+            if (!realtime_config_.state_snapshot_path.empty()) {
+                if (realtime_config_.state_snapshot_interval_s <= 0.0) {
+                    log->warn("realtime.state_snapshot_interval_s {} must be > 0; clamped to "
+                              "the default 10 s.", realtime_config_.state_snapshot_interval_s);
+                    realtime_config_.state_snapshot_interval_s = 10.0;
+                }
+                if (realtime_config_.state_snapshot_horizon_s <= 0.0) {
+                    log->warn("realtime.state_snapshot_horizon_s {} must be > 0; clamped to "
+                              "the default 300 s.", realtime_config_.state_snapshot_horizon_s);
+                    realtime_config_.state_snapshot_horizon_s = 300.0;
+                }
+                log->info("realtime.state_snapshot_path set — RT filter-state snapshot armed: "
+                          "atomic write to '{}' every {:.0f} s of data time, and a staged warm "
+                          "RESUME at startup (fingerprint-gated, horizon {:.0f} s, applied at "
+                          "the first processed epoch).  The engine's slip QC / LLI / SSR "
+                          "datum-break reactions are the restored state's event responses.",
+                          realtime_config_.state_snapshot_path,
+                          realtime_config_.state_snapshot_interval_s,
+                          realtime_config_.state_snapshot_horizon_s);
+            }
             // RTA-12(3): blunder gate on the RTCM 1005/1006 a-priori seed (m).
             // 0 (default) = off, legacy seed-always behaviour; suggested 10.0.
             realtime_config_.arp_blunder_gate_m = rt.value("arp_blunder_gate_m", 0.0);

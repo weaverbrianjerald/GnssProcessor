@@ -356,6 +356,16 @@
    "family": "Card-4 invariant DD carry, its carry couplings"
   },
   {
+   "knob": "realtime.state_snapshot_path",
+   "default_at": "\"\" (off); riders state_snapshot_{interval_s:10, horizon_s:300, seam_refloat:true, restore_scope:\"core\"}; parsed GnssConfigLoad.cpp realtime section (grep state_snapshot_path); seam src/core/realtime/RealTimeEngineStateSnap.cpp + RtStateSnapshot.{hpp,cpp}",
+   "verdict": "UNVALIDATED",
+   "regime": "False",
+   "scope": "RT/consumer engines with PERSISTENT cross-epoch memory facing a CONTINUOUS product stream (covl145-class replays, turbo_edit/AR lineages, consumer-only restarts against a live producer). Benefit validation on that venue OWED. Sim co-restart venue MEASURED ZERO-WIN by construction; the default posture (core scope + seam refloat) is measured cold-equivalent (3.4 mm max per-epoch over 720 ep).",
+   "evidence": "SPEC_synthetic_minimum_network s17 RT FILTER-STATE SNAPSHOT entry (2026-09-01, five-arm ablation): mechanism fully exercised + byte gates PASS; consumer h6 cold 1.068 / full-stiff 7.443 / +ZWD-freed 10.721 / core-ISB-stiff 9.237 / core+ISB-freed == cold. THREE invariant-#1 instances (ambiguities -> ZWD -> ISB q1e-12); free-q states (position q 100) forget in one predict. Hour 1 RE-ATTRIBUTED to the producer post-resume product transient - the h6 lever is producer-side.",
+   "interlock": "OFF = byte-identical. restore_scope \"full\" is KEEP_OFF on co-restart venues (U walked to -9 m). Seam refloat reuses wired responses (resetAmbiguity pending-reseed, reinflateSystemTimeOffsetVariance, ZWD var to initial_std with value kept). Own fingerprint checked at the first processed epoch; gen-id continuity delegated to the RTA-3 reaction via the restored baseline. Closed-loop consumer inherits through deriveClosedLoopConsumerConfig.",
+   "family": "RT service / consumer warm start"
+  },
+  {
    "knob": "network.zwd_seam_reseed",
    "default_at": "include/config/GnssConfig.hpp (network_zwd_seam_reseed_{false}, network_zwd_seam_reseed_epochs_{480}); parsed GnssConfigLoadNetwork.cpp beside zwd_carry_q (grep the symbol)",
    "verdict": "RECOMMEND_SCOPED",

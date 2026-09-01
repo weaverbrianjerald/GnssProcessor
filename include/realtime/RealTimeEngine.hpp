@@ -66,6 +66,11 @@ public:
      */
     RealTimeEngine(GnssConfig& config, LogManager& log_manager);
 
+    /// Out-of-line (RealTimeEngine.cpp): the staged_rt_snap_ unique_ptr holds a
+    /// forward-declared RtStateSnapshot, so the destructor must be emitted where
+    /// the complete type is visible.
+    ~RealTimeEngine();
+
     /**
      * @brief Initialize products, filter and models.
      *
@@ -523,6 +528,22 @@ private:
     void resolveAmbiguities(RtEpochContext& ctx);       ///< Integer ambiguity resolution (MLAMBDA).
     void writeEpochTraces(RtEpochContext& ctx);         ///< Posterior extract, epoch log line, trace-logger sweep.
 
+    // --- RT filter-state snapshot (RealTimeEngineStateSnap.cpp) -----------
+    // The consumer-side warm start — the RTB-7 complement.  Armed by
+    // realtime.state_snapshot_path; all three no-op (byte-identical) with the
+    // path empty.  loadStateSnapshotStaged_ runs at the initialize() tail and
+    // only STAGES the parsed file; applyStagedStateSnapshot_ runs at the top of
+    // the first processEpoch — the first moment the fingerprint can be checked
+    // against the fully-armed engine (setSsrStore / setConsumeNetworkIono run
+    // after initialize()) and the age against a real epoch time.  A refused
+    // stage discards with a logged reason and the cold start proceeds
+    // untouched.  writeStateSnapshot_ runs at the processEpoch tail on the
+    // configured data-time cadence.
+    uint64_t rtSnapshotFingerprint_() const;            ///< FNV-1a over the state-meaning config facts.
+    void loadStateSnapshotStaged_();                    ///< Parse + stage the snapshot file (initialize tail).
+    void applyStagedStateSnapshot_(RtEpochContext& ctx);///< One-shot: age/fingerprint gate, layout rebuild, wholesale x/P + baselines restore.
+    void writeStateSnapshot_(RtEpochContext& ctx);      ///< Cadence-gated atomic snapshot write.
+
     // =====================================================================
     // initialize() seams (RealTimeEngineInit.cpp)
     // =====================================================================
@@ -664,6 +685,13 @@ private:
     /// ambiguities + re-inflate every receiver code-bias state.  An absent id
     /// (RTCM streams / pre-RTA-3 products) never reacts — byte-identical.
     uint32_t  last_ssr_generation_id_{ 0 };
+    // --- RT filter-state snapshot (RealTimeEngineStateSnap.cpp) -----------
+    /// Parsed-but-unapplied snapshot staged by loadStateSnapshotStaged_; applied
+    /// or discarded (one-shot) at the top of the first processEpoch.  Never set
+    /// unless realtime.state_snapshot_path is non-empty.
+    std::unique_ptr<struct RtStateSnapshot> staged_rt_snap_;
+    double    rt_snap_last_write_s_{ -1.0 };   ///< Continuous GPS seconds of the last snapshot write (-1 = never).
+    bool      rt_snap_layout_warned_{ false }; ///< One-shot warn for an unserializable state layout (unknown dynamic index).
     /// RTA-10: last observed network-producer epoch-status STATE from the SSR
     /// store's heartbeat surface (nullopt = never seen).  Edge-trigger for the
     /// one-shot transition log (ok→withheld_sigma0 etc.): the first sighting

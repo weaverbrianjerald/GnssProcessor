@@ -165,6 +165,8 @@ add_library(gnss_core STATIC
     src/core/realtime/RealTimeEngineEstimate.cpp
     src/core/realtime/RealTimeEngineInit.cpp
     src/core/realtime/RealTimeEngineIngest.cpp
+    src/core/realtime/RealTimeEngineStateSnap.cpp
+    src/core/realtime/RtStateSnapshot.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
@@ -415,6 +417,7 @@ add_executable(gnss_tests
     tests/test_windup_restart_response_config.cpp
     tests/test_lane_observatory_config.cpp
     tests/test_zwd_seam_reseed_config.cpp
+    tests/test_rt_state_snapshot.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)
