@@ -265,6 +265,7 @@ Valve inventory to audit against it (status as of Aug-1 — **re-audit before qu
 | station vanish-return | **nothing** | **nothing** (phantom pin) | OPEN — S-system catalog |
 | warm-resume seam | RTB-7d event ✓ | resume_warmup_vet UNBUILT | open deviation (flicker §8) |
 | RAIM withhold / re-entry | events ✓ | re-entry un-validated | audit |
+| eclipse exclusion (`exclude_eclipsing_satellites`) | **nothing** (no per-event log; windows only inferable wire-vs-visibility) | **wrong thing validated** — cta_recouple checks the post-re-solve value; clock-disc jump test GAP-BLIND across the absence | **OPEN — measured 2026-09-01**: ~55-min exclusions re-realize the clock↔C5Q split by 6.3–6.7 m at re-admission, held stiff for hours, URA silent (SPEC_synthetic_minimum_network §18.1) |
 
 The audit is cheap (read each site against the invariant, one short card per NO cell, cheapest
 first).  Keep this table here until the user wants it promoted to its own doc.

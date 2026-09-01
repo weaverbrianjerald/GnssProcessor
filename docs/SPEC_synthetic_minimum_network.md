@@ -3192,3 +3192,112 @@ Scoping discovery: the IONO pool max σ̂₀ read 0.00 — structurally EMPTY on
 is quiet-validated; the iono half needs an SH-armed lineage.  The DETECTION
 half (the DOY-129 19:26 detonation warm-start) remains the blocker before
 WE-CI joins the standard armed set (ledger row updated).
+
+## §18 THE STABILITY CAMPAIGN — the settled state must stop moving (2026-09-01 →)
+
+Successor phase to the §17 deep on/off campaign (7 verdicts, fd1d123→c799a8b,
+plus the seam-ZWD/RT-snapshot session ed170b2/8da1de6).  The standardized base
+is `_camp60wu_quiet12h_r2q3` (R2 sticky continuous handover + Q3 anchor q 3e-6
++ relevel_free_epoch + pivot clock datum + zwd_seam_reseed on resume postures);
+targets, in priority order: (1) settled late drift, (2) producer post-resume
+transient, (3) per-sat settled clock tails, (4) T3/T4 MDB on a faulted bed,
+(5) LV-6 design.  One mechanism per arm; verdicts land here + ledger rows.
+
+### 18.1 TARGET 3 — per-sat metre-class settled clock tails: ROOT-CAUSED
+### (2026-09-01, census instrument on the 12 h bed; fix cards derived, not built)
+
+Instrument: `scripts/simnet_sat_clock_census.py` — per-sat settled clock
+residual, median-demeaned per constellation per epoch (datum-free, robust to
+level wander), joined against fixture `truth_visibility` coverage, wire
+presence (emitted vs truth-visible), and the producer's own URA.  Run over
+`_r2q3`, `_r2q3s0`, `_r2q3bca`.
+
+**The tails are not a fixture property and not "clock quality" — they are a
+producer RE-COUPLING defect acting on the fixture's eclipse schedule:**
+
+1. **Every metre-class tail sat has a ~55-min visible(≥10 sta)-but-NOT-emitted
+   window**, and the 15 windows over 12 h form the classic eclipse staircase
+   (sequential per orbital plane, ~1.8 h spacing).  The excluder is
+   `exclude_eclipsing_satellites` (armed in the standard set; it logs no
+   per-event line — the census infers the windows from wire-vs-visibility).
+2. **The tail is a STEP exactly at the re-admission epoch, then constant for
+   hours** (p50 ≈ rms ≈ max): G25 d −0.43 → −7.13 at h3.22 (±3 cm for the
+   following 8.7 h), G12 +6.33 at h2.35, G26 −9.4 (own frame) at h5.9, G22
+   +1.81 at h11.30 (mid-settled, the directly-measured case).
+3. **Mechanism: the clock ↔ C5Q-code-bias split RE-REALIZES at re-admission.**
+   Pre-eclipse G25 carried clock −0.90 m / b_C5Q −7.53 m — the ~7 m is a
+   COLD-START third-frequency misrealization parked in the weakly-estimable
+   C5Q channel (7 m from the injected ±0.6 m OSB truth) where it is
+   consumer-inert.  Post-readmission: clock −7.62 / b_C5Q −0.42 — the
+   misrealization RELOCATED into the consumer-visible clock, and the stiff
+   states hold the new split for the rest of the run.  G12 shows the exchange
+   with BOTH channels landing badly (clock +0.06→+6.42, C5Q +1.91→−4.89):
+   the re-seed lands wherever the readmission epoch's estimability puts it,
+   then freezes.  The applied C1C combination (clk + b_C1C) steps ~6.6 m.
+4. **Silent on every armed instrument.**  URA/sigcc stays 4–7 mm through the
+   step.  NO clock-disc mark despite `emit_clock_disc` +
+   `clock_disc_jump_test` armed — the jump test compares successive emitted
+   values and a 110-epoch absence leaves it nothing to compare: **GAP-BLIND**,
+   the same shape as the wind-up accumulator's 300/900 s horizon defect.  The
+   only event at the edge is `cta_recouple` (statistic 0.057 vs threshold 6):
+   the Q3 anchor re-couples against the post-re-solve value — invariant #7's
+   re-coupling edge validating the wrong thing, measured.
+5. **Datum posture changes WHO PAYS, not whether.**  r2q3 and bca reproduce
+   the same top-3 (G25 7.2/7.6, G26 6.9/7.0, G12 6.7/6.4 — the "fixture-
+   common, both datums" reading from the bca session, explained).  Under bca
+   the r2q3 pivot G01 itself shows a 4.1 m tail (it eclipses h4.7–5.6; under
+   the pivot datum its own re-realization redistributes network-wide through
+   the gauge).  Under s0 the per-sat tails collapse ~10× (G25 0.71, G12
+   0.28): the per-epoch Σclk=0 constraint SMEARS the misrealization across
+   the ~18-sat constellation (7 m/18 ≈ 0.4 m each) — the S0 lesson again;
+   the bill moves to cb.
+6. **Bridge to target 1 (hypothesis, 24 h bed will test):** GPS sats eclipse
+   twice daily; the 12 h bed's rising h10–h11 contains the G14 (h10.69), G22
+   (h11.29), E21 (h11.70) readmissions.  The settled consumer level-wander
+   may be partly the superposition of these split re-realizations passing
+   through the applied products.
+
+Derived fix cards (NOT built; each is invariant-#7 work on the eclipse valve —
+row added to SPEC_prefit_census_observability §13):
+- **Gap-aware clock-disc marking**: the disc test must span an emission gap
+  (compare against the pre-gap value with a gap-scaled band), so a
+  re-admission step is MARKED and the consumer re-references instead of
+  silently absorbing ~7 m.
+- **Re-coupling-edge split re-validation**: on re-admission, re-validate the
+  returning sat's clock+bias SPLIT against its pre-gap realization (or
+  deliberately re-seed and mark), not merely the post-re-solve innovation.
+- **The C5Q cold-start misrealization itself** (why 7 m parks in the third
+  frequency at ignition) — LV-6 / level-authority family; without it the
+  re-coupling fix merely keeps the 7 m where it is inert, which may be the
+  correct product decision anyway.
+
+### 18.2 TARGET 1 — settled late drift: instrument + 12 h re-analysis
+### (24 h verdict PENDING — the arm is running as this lands)
+
+Instrument: `scripts/simnet_drift_age.py` (commit 2306134) — hourly
+consumer/channel/event decomposition + DD-truth-error-vs-chord-age join
+(the simnet_amb_integer join; stations from the FIXTURE dir).  Join gate:
+reproduces the flagship's published hourly consumer values exactly.
+
+12 h re-analysis, before the 24 h bed:
+- **h11 is partly product-day-edge artifact**: all 79 h11 `attrib_arc` events
+  sit in the final 5 epochs (tow 345420–345540, many-sat = product-quality);
+  h11 decomposes pre-zone 0.157 / edge-zone 0.200 / final-6-ep 0.269.  The
+  real drift is h7 0.107 → h10 0.132 → h11-clean ~0.157.
+- **The drift is a wandering UP-dominated BIAS** (hourly up-mean −0.073 →
+  −0.111 → +0.008 → +0.108 → +0.145 m h7→h11, zero-crossing at h9 where 3D
+  dropped back to 0.107; rms ≈ |mean|) — level-wander signature, not noise
+  growth and not monotone aging.
+- **No graded channel moves h7→h10** (clk residual/contrast flat, cb falls,
+  network-median ZWD flat); settled per-epoch consumer 3D correlates +0.53
+  rxdcb_contrast, +0.45 clk_contrast, −0.67 rxclk_contrast.
+- **DD ambiguity truth error does NOT age**: med|e| by chord-age bucket
+  3.57 → 3.45 → 3.32 → 3.13 → 2.96 → 3.16 cyc (0-10 → 481-960 ep) —
+  flat-to-improving; traced population constant (~320–400k rows/h).
+
+The 24 h bed (`runs/simnet60_quiet_wu93_24h`, `config/sim/simnet60_quiet_24h.
+json`: 00:00:30 → 23:59:30 of DOY 129, single product day, final epoch = the
+12 h fixture's exact trailing epoch) decides monotone-aging vs bounded-wander
+with 15 clean settled hours, decorrelates run-hour from time-of-day (the
+00:00 anchor), and carries the RTB-7 snapshot writer + per-epoch history so
+the scheduled mid-run seam-reseed arm can branch from any hour.
