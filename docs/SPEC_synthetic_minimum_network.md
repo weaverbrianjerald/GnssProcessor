@@ -3002,6 +3002,22 @@ own A/B owed (it alters the flagship, so it re-bases the ladder); (ii) the
 consumer-side warm start for hour 1; (iii) evaluate `state_snapshot_resume_shock_m`
 (RE-2, default 0) against the measured 40 cm seam.
 
+**RELEVEL-FREE-EPOCH OFF-CHECK (2026-09-01, `runs/camp60wu_quiet12h_r2q3rfoff`
+= r2q3 with `cycle_slip.relevel_free_epoch` FALSE, single knob):** the
+pre-registered near-null FAILED in the informative direction — **OFF costs
++29 % settled consumer (3D rms 0.204 → 0.263, p50 0.128 → 0.166) and +17 %
+ZWD rms on the ZERO-slip bed.**  The detection layer is identical in both
+arms (159 MW detections, 16 refloats; event census flat; clock channel flat),
+so the delta is pure RESPONSE policy: the ON arm's run-end counters show 1608
+detector-marked free-epoch latches with **1514 inject-site skips taken** —
+stale carried priors NOT folded at arc re-latches — and the OFF arm folded
+them.  ⚠ The latch population (1608) is 10× the slip count (159): the knob is
+NOT a slip response, it is the guard against stale-carry injection at EVERY
+arc re-latch, and the quiet bed pays for its absence through the same
+invariant-#1 channel the slip campaign named.  Verdict: the template pin is
+retro-validated with an absolute grade and its scope WIDENS from "slipped
+postures" to this producer posture generally (ledger table row updated).
+
 **WE-CI ARM (2026-08-31, `runs/camp60wu_quiet12h_r2q3weci` = r2q3 +
 raim_we_code_iono, + 1 h smoke):** the SAFETY half of this knob's first ON
 validation, and it is maximal — armed and LIVE (code pool populated all day,
