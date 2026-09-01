@@ -3137,6 +3137,14 @@ namespace GnssProcessor {
         network_zwd_carry_q_ =
             jval<double>(json, "network.zwd_carry_q", "zwd_carry_q",
                          network_config_.process_noise.get(NetworkQClass::StationZwd));
+        // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17, carry_zwd
+        // re-base arms finding 3): the resume-path-only successor to the continuous
+        // B9 carry.  Injection window + horizon; the WRITE side (Z rows in every
+        // snapshot) is unconditional and knob-free.
+        network_zwd_seam_reseed_ =
+            jval<bool>(json, "network.zwd_seam_reseed", "zwd_seam_reseed", false);
+        network_zwd_seam_reseed_epochs_ =
+            jval<int>(json, "network.zwd_seam_reseed_epochs", "zwd_seam_reseed_epochs", 480);
         // Slant-iono carry (QUEUE 8b, docs/SPEC_slip_relevel_walk.md s8 residual): carry
         // per-LOS slant iono across epochs as a diagonal RW prior via the same
         // addStationPrior path.  NOT the phantom filter.process_noise.ionosphere_q (which
@@ -8318,6 +8326,38 @@ namespace GnssProcessor {
                 log->warn("Network: network.carry_zwd is on but network.phase_leveling is off — the "
                           "ZWD carry reuses the phase-leveling warmup gate, so it is INERT without "
                           "phase-leveling.  Enable network.phase_leveling too.");
+        }
+        if (network_zwd_seam_reseed_) {
+            if (network_zwd_seam_reseed_epochs_ <= 0) {
+                log->error("Network: network.zwd_seam_reseed_epochs must be > 0 (got {}); a "
+                           "non-positive horizon arms a window that can never inject.",
+                           network_zwd_seam_reseed_epochs_);
+                return false;
+            }
+            if (network_zwd_carry_q_ < 0.0) {
+                log->error("Network: network.zwd_carry_q must be >= 0 (got {}); the seam re-seed "
+                           "inflates the restored variance by q*dt.", network_zwd_carry_q_);
+                return false;
+            }
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (ZWD seam re-seed): network.zwd_seam_reseed is on but "
+                          "network.state_snapshot_path is EMPTY — no warm resume can ever happen, "
+                          "so the seam window is structurally INERT on this run.");
+            if (!network_phase_leveling_)
+                log->warn("Network (ZWD seam re-seed): network.zwd_seam_reseed is on but "
+                          "network.phase_leveling is off — the seam inject rides the carry_warm "
+                          "(phase-leveling) gate, so it is INERT without phase-leveling.");
+            if (network_carry_zwd_)
+                log->info("Network (ZWD seam re-seed): network.carry_zwd is ALSO on — B9 already "
+                          "injects on every epoch, so the seam window is subsumed (its counters "
+                          "still tick during the post-resume horizon).");
+            log->info("Network (ZWD seam re-seed): armed — after a warm resume that restores Z "
+                      "rows, the B9 ZWD inject+stash runs for {} emitted epoch(s) with RW q "
+                      "{:.3e} m²/s, then retires (the station filter re-establishes its own "
+                      "memory; continuous epochs NEVER carry — that path is falsified).  "
+                      "Deliberately NOT in the warm-resume fingerprint (forward-only resume "
+                      "response policy).",
+                      network_zwd_seam_reseed_epochs_, network_zwd_carry_q_);
         }
         if (network_cycle_slip_if_phase_td_) {
             if (network_phase_leveling_)

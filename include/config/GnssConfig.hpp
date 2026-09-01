@@ -2121,6 +2121,41 @@ namespace GnssProcessor {
         double networkZwdCarryQ() const { return network_zwd_carry_q_; }
 
         /**
+         * @brief Seam-scoped post-resume ZWD re-seed (@c network.zwd_seam_reseed,
+         *        SPEC_synthetic_minimum_network §17 carry_zwd re-base arms, finding 3).
+         *
+         * On a warm resume (RTB-7) that restored Z rows, run the B9 ZWD carry —
+         * inject + rolling stash, identical fold mechanics — for the first
+         * @ref networkZwdSeamReseedEpochs emitted epochs after the seam, then retire.
+         * The per-station filter state is deliberately not snapshotted, so its ZWD
+         * memory cold-starts at every resume; the seam window bridges that re-warm
+         * with the snapshot's h-vintage posterior (measured: seam ZWD no-restart,
+         * `runs/camp60wu_q6warmz`).  NEVER runs on continuous epochs — the blanket
+         * @ref networkCarryZwd was FALSIFIED there (structural information
+         * double-count against the station filter's own in-process persistence).
+         * Uses @ref networkZwdCarryQ for the RW inflation.  Deliberately NOT in the
+         * warm-resume fingerprint: a forward-only resume response policy (the
+         * relevel_free_epoch exemption class) — it changes what a resumed run DOES
+         * with restored Z rows, re-references nothing retroactively, and changes what
+         * no serialized state means.  Default false = byte-identical.
+         */
+        bool networkZwdSeamReseed() const { return network_zwd_seam_reseed_; }
+
+        /**
+         * @brief Post-resume ZWD re-seed horizon in emitted epochs
+         *        (@c network.zwd_seam_reseed_epochs).
+         *
+         * The seam window's retirement clock: how long the restored ZWD keeps being
+         * folded while the (un-snapshotted) station filter re-establishes its own
+         * memory.  Default 480 (4 h at 30 s) sits past the measured ~3.1 h
+         * cold-resume re-convergence (`runs/camp60wu_q6coldz` mission-start snap)
+         * and below the >=6-8 h onset of the continuous-carry double-memory
+         * pathology; the 720-epoch (cz) arm bounds it as validated-safe.  Only used
+         * when @ref networkZwdSeamReseed is on.
+         */
+        int networkZwdSeamReseedEpochs() const { return network_zwd_seam_reseed_epochs_; }
+
+        /**
          * @brief Carry per-LOS slant ionosphere across epochs in the network producer
          *        as a diagonal random-walk prior (@c network.carry_iono, QUEUE 8b).
          *
@@ -6408,8 +6443,10 @@ namespace GnssProcessor {
         bool   network_carry_coupling_gauge_project_{false};   ///< Card 1f: hold each (constellation,kind) coefficient sum of a TRUNCATED coupling row at its HARVEST value, so a departed/re-realized column stops pinning the current datum gauge at the old realization (measured: null ev 1e-11 → 9.43e-3 in one epoch ⇒ 4 spurious OVER-specified withholds); REQUIRES carry_conditional_coupling. OFF = byte-identical.
         bool   network_carry_coupling_reinit_sources_{false};  ///< Card 1g: key the coupling reinit history (kind,sat,signal) with an empty-signal sat-wide wildcard, feed it from the phase-anchor / eq34 / datum-slip re-reference sets, and honour it independently of carry_coupling_time_update — so a RE-REALIZED column takes the departed route instead of folding a retired-frame ŝ_prev at full weight; REQUIRES carry_conditional_coupling. OFF = byte-identical.
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
-        bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).
-        double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Only used when network.carry_zwd.
+        bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).  ⚠ FALSIFIED for continuous runs of the standard posture (2026-09-01, consumer 0.204 → 0.723 m rms — information double-count against the station filter's own persistence); its seam value is delivered by network.zwd_seam_reseed instead.
+        double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Used by network.carry_zwd and by the network.zwd_seam_reseed post-resume window.
+        bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.
         bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).
         double network_iono_carry_q_{1e-4};               ///< QUEUE 8b: slant-iono carry random-walk process noise (m²/s); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.
         std::string network_iono_carry_scope_{"relevel"}; ///< QUEUE 8b: inject scope — "relevel" (re-leveling LOS only, one epoch per re-draw event) or "always" (every epoch; the O2 accumulation channel).

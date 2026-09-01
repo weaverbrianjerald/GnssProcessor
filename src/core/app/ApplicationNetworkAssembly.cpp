@@ -2030,6 +2030,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // Card 1g: widen the reinit feed to the realization-step sources and honour it with κ off — requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // B9: carry per-station ZWD across epochs
     const double zwd_q         = ctx.knobs.zwd_q;                // B9: ZWD carry random-walk process noise (m²/s)
+    // Seam-scoped ZWD re-seed + unconditional Z-row capture (§17 finding 3).
+    // zwd_seam_live: the post-resume inject window is open — run the exact B9 fold.
+    // zwd_capture: snapshot-armed run — RECORD R.pl_zwd for the harvest (no inject).
+    // Both are stable across the parallel produce phase (the countdown decrements
+    // serially at the post-solve harvest).
+    const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
+    const bool   zwd_capture   = ctx.knobs.zwd_capture;
     const bool   iono_on       = ctx.knobs.iono_on;              // QUEUE 8b: slant-iono carry
     const bool   iono_scope_always = ctx.knobs.iono_scope_always; // QUEUE 8b: inject every epoch (vs re-leveling LOS only)
     const double iono_q        = ctx.knobs.iono_q;               // QUEUE 8b: iono carry RW process noise (m²/s)
@@ -2731,8 +2738,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // receiver code-bias carry can enter this block WITHOUT the carry_warm
             // (phase-leveling) gate — the legacy interior below keeps its exact
             // original condition, so rx_cb_on=false is byte-identical.
+            // zwd_seam_live joins the pivot-inclusion OR for the same reason zwd_on
+            // is there: B9 keeps the ZWD carry out of any pivot/anchor exclusion,
+            // and the seam window is the same fold on the same column.
             const bool legacy_local_inject =
-                carry_warm && (phase_datum_prioritized || !st.is_pivot || zwd_on || iono_on);
+                carry_warm && (phase_datum_prioritized || !st.is_pivot || zwd_on
+                               || zwd_seam_live || iono_on);
             // --- RAIM POOL RE-HOST (docs/SPEC_raim_pool_rehost.md) ----------------
             // The CHECKABLE-COLUMN census.  Deliberately its own block, ABOVE and
             // OUTSIDE `legacy_local_inject` (carry_warm ⇒ needs phase_leveling) and
@@ -2900,7 +2911,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 //     local state (random WALK, not random constant → positive q).  The
                 //     prior tuple joins `inj` so it is ordered by the same ascending sort
                 //     and folded by the single addStationPrior inject (byte-identical OFF).
-                if (zwd_on) {
+                //     zwd_seam_live opens the SAME fold for the bounded post-resume
+                //     window (network.zwd_seam_reseed): first epoch folds the restored
+                //     Z-row posterior, later epochs the rolling re-stash — (cz)'s
+                //     validated mechanism with a retirement clock.
+                if (zwd_on || zwd_seam_live) {
                     const size_t tropo_idx_sz = st.sm->getTropoIndex();
                     if (tropo_idx_sz != std::numeric_limits<size_t>::max()) {
                         const int tropo_idx = static_cast<int>(tropo_idx_sz);
@@ -3176,6 +3191,31 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         R.carry_cols[static_cast<size_t>(k)] = std::get<0>(inj[static_cast<size_t>(k)]);
                         R.carry_dNrr(k) = std::get<1>(inj[static_cast<size_t>(k)]);
                         R.carry_dur(k)  = std::get<2>(inj[static_cast<size_t>(k)]);
+                    }
+                }
+            }
+            // --- Unconditional Z-row capture (§17 finding 3): RECORD the tropo
+            // column + x_lin for the post-solve ZWD harvest on any snapshot-armed
+            // run, so every RTB-7 snapshot serializes fresh Z rows without the B9
+            // carry.  Record-only — no carry lookup, no fold: the solve is
+            // untouched (read-only getStateVector copy, the qc_amb precedent).
+            // Skipped when the B9/seam block above already recorded (identical
+            // fields), and deliberately its own block OUTSIDE legacy_local_inject
+            // — the RAIM-pool-re-host pattern — so the capture works through the
+            // phase-leveling warmup window and on no-leveling lineages.
+            if (zwd_capture && !R.pl_zwd_present) {
+                const size_t tropo_idx_sz = st.sm->getTropoIndex();
+                if (tropo_idx_sz != std::numeric_limits<size_t>::max()) {
+                    const int tropo_idx = static_cast<int>(tropo_idx_sz);
+                    const Eigen::VectorXd x_lin_z = st.sm->getStateVector();
+                    if (tropo_idx >= 0 && tropo_idx < x_lin_z.size()
+                        && std::isfinite(x_lin_z(tropo_idx))) {
+                        const auto zhit = h2local.find(tropo_idx);
+                        if (zhit != h2local.end()) {
+                            R.pl_zwd_present = true;
+                            R.pl_zwd = PlZwd{static_cast<Eigen::Index>(zhit->second),
+                                             x_lin_z(tropo_idx)};
+                        }
                     }
                 }
             }

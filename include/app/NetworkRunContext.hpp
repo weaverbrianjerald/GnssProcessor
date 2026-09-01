@@ -131,6 +131,9 @@ namespace GnssProcessor {
         bool lv1_seed_frame{};       ///< Card LV-1 (SPEC_level_information_budget): reframe per-LOS iono seeds into the field's frame at allocation; loader guarantees estimate_iono_sh.
         int lv1_min_sats{};          ///< Card LV-1: minimum raw seeds for the per-station median offset.
         double zwd_q{};
+        bool zwd_seam_on{};    ///< network.zwd_seam_reseed: post-resume ZWD re-seed window (SPEC_synthetic_minimum_network §17 finding 3).  NOT fingerprinted (forward-only resume response policy).
+        int  zwd_seam_epochs{};   ///< network.zwd_seam_reseed_epochs: seam-window horizon in emitted epochs.
+        bool zwd_capture{};    ///< Snapshot-armed run (state_snapshot_path non-empty): record + harvest the per-station ZWD posterior every processed epoch so EVERY snapshot carries Z rows — read-only w.r.t. the solve (no inject; capture only).
         bool carry_vce{};
         bool vce_apply_on{};   ///< M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor apply. SOLVE-AFFECTING; loader guarantees carry_vce.
         bool ura_on{};
@@ -1012,8 +1015,18 @@ namespace GnssProcessor {
         };
         std::map<std::tuple<int, std::string, std::string>, LaneT4Pre> lane_t4_pre;
         // Per-station ZWD carry (B9): persistent across epochs, keyed by station index
-        // (ZWD is one-per-station).  Inert unless network.carry_zwd.
+        // (ZWD is one-per-station).  Solve-inert unless network.carry_zwd (every-epoch
+        // inject) or a live zwd_seam_ep_left window (post-resume inject); ALSO kept
+        // fresh — capture-only, no inject — on any snapshot-armed run (knobs.zwd_capture)
+        // so every RTB-7 snapshot serializes Z rows regardless of carry_zwd.
         std::map<int, LocalCarry> zwd_carry;
+        /// Seam-scoped ZWD re-seed window (network.zwd_seam_reseed): emitted epochs
+        /// REMAINING in the post-resume inject window.  Armed by networkTryWarmResume
+        /// when the knob is on and the snapshot restored >= 1 Z row; decremented once
+        /// per processed epoch at the serial harvest; 0 = window closed (the retire /
+        /// decoupling edge, logged).  Read-only in the parallel produce phase.  NOT
+        /// snapshotted: each resume is its own seam and re-arms a full horizon.
+        int zwd_seam_ep_left{0};
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed
         /// (station index, sat).  Diagonal-only (rx-CB rationale — no shared-border
         /// footprint; the coupling variant is deliberately deferred).  NOT snapshotted:
@@ -2097,6 +2110,13 @@ namespace GnssProcessor {
         // Siblings on the SAME gap predicate, different carries (departures).
         long long n_cr_zwd_gap_prune      = 0;  ///< ZWD carry entries dropped by the pl_max_gap_s prune
         long long n_cr_rpb_gap_prune      = 0;  ///< receiver-PB carry entries dropped by the pl_max_gap_s prune
+
+        // --- Seam-scoped ZWD re-seed (network.zwd_seam_reseed) ------------------
+        // The ON-path telemetry (standing invariant #4): 0 folds under an armed
+        // knob means the window never armed (no warm resume / no restored Z rows)
+        // or every fold was skipped — check the resume log line, not just this.
+        long long n_zwd_seam_folds        = 0;  ///< station-fold count inside the post-resume window
+        long long n_zwd_seam_epochs       = 0;  ///< epochs inside the window with >= 1 fold
 
         // --- Rung 3 v3: the CARRY-DOMAIN lane observatory ----------------------
         // (SPEC_lane_slip_response §7.3.)  Measure-only: it computes the lane

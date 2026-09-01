@@ -1882,6 +1882,20 @@ int networkTeardown(
                       : 0.0,
                   C.n_cr_gap_prune_max_week, C.cr_gap_prune_max_tow,
                   C.n_cr_zwd_gap_prune, C.n_cr_rpb_gap_prune);
+        // Seam-scoped ZWD re-seed (network.zwd_seam_reseed) — the ON-path telemetry
+        // (standing invariant #4): an armed knob with 0 folds means the window never
+        // armed (no warm resume, or the snapshot carried no Z rows) or every fold
+        // was skipped (stale entries / carry_warm cold) — the resume-time ARMED /
+        // INERT log line says which.
+        if (config_.networkZwdSeamReseed())
+            log->info("Network (ZWD seam re-seed): {} station-fold(s) over {} epoch(s) of the "
+                      "post-resume window (horizon {} epochs).{}",
+                      C.n_zwd_seam_folds, C.n_zwd_seam_epochs,
+                      config_.networkZwdSeamReseedEpochs(),
+                      C.n_zwd_seam_folds == 0
+                          ? "  ⚠ 0 folds under an ARMED knob — the wiring was inert this "
+                            "run; check the resume log for the ARMED/INERT line."
+                          : "");
         log->info("Network (leveling-carry retirement census) [C] ONE-SOLVE "
                   "REFLOATS: {} T4 attribution, {} T3 consensus (quality-selected), and {} "
                   "entr(ies) in {} whole-fleet SH-convergence flush(es) — the largest "

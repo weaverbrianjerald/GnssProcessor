@@ -283,6 +283,11 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.state_snapshot_carry_diagonal",
               "GPS-only: accuracy >= dense at 478x smaller (270.9 -> 0.57 MB at 305 sta); dense "
               "churns ~186 GB per 6h" },
+            { warm && network_phase_leveling_,
+              network_zwd_seam_reseed_,
+              Tier::SCOPED, false, "network.zwd_seam_reseed",
+              "warm-resume ZWD no-restart (h6 truth rms 0.124 vs cold 0.390); settled h9-12 "
+              "consumer 0.134 vs no-Z warm 0.278; NOT fingerprinted (resume response policy)" },
             // --- SCOPED tier: QC, RAIM and SLIP knobs ---------------------------------
             { estimate_network_sat_code_bias_ && !warm,
               network_code_bias_disc_jump_test_,

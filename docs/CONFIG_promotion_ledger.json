@@ -349,11 +349,21 @@
   {
    "knob": "network.carry_zwd",
    "default_at": "include/config/GnssConfig.hpp:4709 (network_carry_zwd_{false}); parsed GnssConfigLoadNetwork.cpp:1171",
-   "verdict": "UNVALIDATED",
-   "scope": "Never set true in any shipped config (0 occurrences across config/test_suite/*.json). Included here because it is the ONLY thing that keeps the Card-1 coupling machinery alive under carry_invariant.",
-   "evidence": "No field measurement found in the loader, the Doxygen, the memory record, or docs/. The Doxygen states the mechanism only: 'carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior ... OFF = per-epoch white-noise ZWD (byte-identical)'. That is a code assertion with no measurement => UNVALIDATED. SETTLING RUN: 3h 50-sta Card-4 A/B (carry_invariant ON, coupling trio ON) with carry_zwd true vs false, graded on DD-step + the ZWD trace + the coupling-volume counters (which would go from 0 injected terms to non-zero — the same A/B also re-activates and thereby re-tests the coupling trio under Card 4).",
-   "interlock": "Under carry_invariant it is the sole surviving producer of coupling rows; without it carry_conditional_coupling / _time_update / _joint_whiten / _sh_marginalize are all structurally inert.",
+   "verdict": "KEEP_OFF",
+   "scope": "KEEP_OFF on continuous runs of the standard posture - FALSIFIED 2026-09-01 on the 60-sta quiet truth bed (consumer 3D rms 0.204 -> 0.723 m; structural information double-count against the station filter's own in-process ZWD persistence; not a q-tuning issue). Its SEAM value is delivered by network.zwd_seam_reseed instead. Under carry_invariant it remains the sole producer of Card-1 coupling rows (structural note only).",
+   "evidence": "SPEC_synthetic_minimum_network s17 CARRY_ZWD RE-BASE ARMS (2026-09-01): continuous falsified on runs/camp60wu_quiet12h_r2q3z vs _r2q3 single-knob (0.204 -> 0.723 m, diverging h8-11 0.72/0.64/0.79/1.09; ZWD 3x slower); seam mechanics PROVEN on _q6warmz (60 Z rows restored, ZWD no-restart 0.172 vs cold 0.390, h8-h11 consumer 0.088-0.134). The derived seam-scoped card is BUILT + VALIDATED 2026-09-01 - see network.zwd_seam_reseed. This JSON row was re-synced 2026-09-01 from a stale UNVALIDATED copy (the .md duplicate absorbed the same day, s2z single-entry rule).",
+   "interlock": "zwd_on and zwd_carry_q are IN the warm-resume fingerprint (fresh convergence only). Rides the Card-1 conditional-coupling inject when armed. carry_iono is NOT its sibling (falsified x4, QUEUE 8b).",
    "family": "Card-4 invariant DD carry, its carry couplings"
+  },
+  {
+   "knob": "network.zwd_seam_reseed",
+   "default_at": "include/config/GnssConfig.hpp (network_zwd_seam_reseed_{false}, network_zwd_seam_reseed_epochs_{480}); parsed GnssConfigLoadNetwork.cpp beside zwd_carry_q (grep the symbol)",
+   "verdict": "RECOMMEND_SCOPED",
+   "scope": "Any RTB-7 warm-resume lineage (arm on the RESUME leg; the Z-row capture is knob-free wherever state_snapshot_path is set). Sim-validated on the 60-sta quiet wu93 truth bed at the r2q3 flagship posture; field arm inherits the RTB-7 service-bounce scope.",
+   "evidence": "SPEC_synthetic_minimum_network s17 SEAM-SCOPED ZWD SERIALIZATION (2026-09-01, single build 87d8629c): (a) 12 h continuous byte-identity PASS cross-build (products + closed_loop + network_zwd sha256-equal to runs/camp60wu_quiet12h_r2q3); (w prime) capture-live byte-identity PASS with 60 Z rows under the UNCHANGED fingerprint 35860c5f45b8a004; (c prime) runs/camp60wu_q6warm_szv: 60/60 restored+ARMED, 28800 folds = 60x480 exact, RETIRED on schedule; ZWD no-restart (h6 0.124 vs cold 0.390, beats the full-B9 reference 0.172); settled h9-12 consumer 0.134 m rms vs flagship 0.143 / no-Z warm 0.278 (the whole settled warm-resume gap recovered); retirement consumer-free (h11 0.119 vs still-injecting 0.134); ZWD vf 0.206 conservative vs 1.232 optimistic.",
+   "interlock": "Deliberately NOT fingerprinted (8th forward-only response-policy exemption, networkSnapshotFingerprint comment) - a token would outlaw the same-snapshot cold/warm A/B. Warn-inert without state_snapshot_path and without phase_leveling (carry_warm gate); horizon <= 0 or negative zwd_carry_q are load FAILURES. Subsumed (info-logged) when carry_zwd is also on. Countdown never serialized: each resume re-arms a full horizon. Unit contract tests/test_zwd_seam_reseed_config.cpp.",
+   "family": "RTB-7 state snapshot / warm resume",
+   "regime": "warm and on(\"network.phase_leveling\")"
   },
   {
    "knob": "network.cb_excursion_reinit",

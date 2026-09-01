@@ -1493,6 +1493,13 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"carry_vce_apply_min_rows\":" << config_.networkCarryVceApplyMinRows() << ','
                << "\"carry_zwd\":" << (zwd_on ? "true" : "false") << ','
                << fmt::format("\"zwd_carry_q\":{},", zwd_q)
+               // Seam-scoped ZWD re-seed (§17 finding 3).  In the manifest so an
+               // archived logs/ folder can say whether a resumed leg's first hours
+               // rode the seam window; the capture flag records whether this run's
+               // snapshots carry Z rows.
+               << "\"zwd_seam_reseed\":" << (config_.networkZwdSeamReseed() ? "true" : "false") << ','
+               << "\"zwd_seam_reseed_epochs\":" << config_.networkZwdSeamReseedEpochs() << ','
+               << "\"zwd_snapshot_capture\":" << (nc.state_snapshot_path.empty() ? "false" : "true") << ','
                << "\"raim\":" << (raim_on ? "true" : "false") << ','
                << fmt::format("\"raim_k_sigma\":{},", raim_k)
                << "\"raim_min_stations\":" << raim_min_sta << ','

@@ -3018,6 +3018,72 @@ invariant-#1 channel the slip campaign named.  Verdict: the template pin is
 retro-validated with an absolute grade and its scope WIDENS from "slipped
 postures" to this producer posture generally (ledger table row updated).
 
+**SEAM-SCOPED ZWD SERIALIZATION — BUILT + VALIDATED (2026-09-01, the card the
+carry_zwd re-base arms derived (finding 3 below); `runs/camp60wu_quiet12h_r2q3_szv`
+(a) / `_q6wsnap_szv` (w') / `_q6warm_szv` (c'), configs `_camp60wu_*_szv.json`,
+exe `gnss_processor_fable_szv.exe` = sha256 `87d8629c…` beside its DLLs, runs
+sequential each from its own CWD):**
+**Design as built.**  (1) WRITE side, knob-free: any snapshot-armed run
+(`state_snapshot_path` set ⇒ `NetworkKnobs::zwd_capture`) records the tropo
+column per station (its own assembly block OUTSIDE `legacy_local_inject`, the
+RAIM-pool-re-host pattern — live through warmup and on no-leveling lineages;
+`ApplicationNetworkAssembly.cpp` capture block) and runs the existing B9
+harvest/stash every processed epoch (`networkHarvestLocalCarries`, gate now
+`zwd_on || zwd_capture || zwd_seam_live`) — `est.reconstructStation` +
+`stationRegression`/`conditionalLocalVarianceDiag` are READ-ONLY, so every
+RTB-7 snapshot serializes fresh Z rows with zero solve effect.  (2) RESUME
+side, default-OFF knob `network.zwd_seam_reseed` (+`_epochs`, default 480 =
+4 h): a warm resume that restores ≥1 Z row arms a countdown
+(`NetworkCarryState::zwd_seam_ep_left`); while it runs, the UNCHANGED B9 fold
+injects (gate `zwd_on || zwd_seam_live`, pivot included via the
+`legacy_local_inject` OR) and the rolling stash refreshes — (cz)'s validated
+mechanism with a retirement clock.  Both invariant-#7 edges are logged (ARMED
+at resume / RETIRED at exhaustion) + run-end fold counters (invariant #4) +
+manifest fields.  (3) Fingerprint: NO new token — the EIGHTH forward-only
+response-policy exemption (`networkSnapshotFingerprint` comment): Z rows mean
+the same thing armed or not, and a token would outlaw the same-snapshot
+cold/warm A/B this validation ran; `zwd_on`/`zwd_q` stay fingerprinted.  The
+horizon default sits past the ~3.1 h measured cold re-convergence and under
+the ≥6-8 h double-memory onset, inside (cz)'s validated 720.  Unit contract:
+`tests/test_zwd_seam_reseed_config.cpp` (suite ZwdSeamReseedConfig, 7 cases;
+suite total 1554+1 skip).
+**Gates, all PASS.**  (a) CONTINUOUS BYTE-IDENTITY: 12 h flagship-verbatim run
+→ products.txt (34 524 993 B, sha256 `09da28d2…`) + closed_loop_trace.csv +
+network_zwd.csv all BYTE-IDENTICAL to `runs/camp60wu_quiet12h_r2q3` —
+cross-BUILD, so the golden stands un-rebuilt.  (w') CAPTURE-LIVE IDENTITY: the
+q6wsnap pattern re-run with capture live (snapshots every 10 s, 60-station
+stash every epoch) → the same three artifacts BYTE-IDENTICAL to the old-build
+`runs/camp60wu_q6wsnap`; final snapshot = same epoch (tow 323970), SAME
+fingerprint `35860c5f45b8a004`, now with **60 Z rows** (σ 3.8-8.2 mm — the
+honest single-epoch datum-conditioned formal σ; (z)'s 0.9-1.5 mm was the
+double-count-tightened one).  (c') SEAM: resume ACCEPTED (age 30 s, gen id
+preserved, 369 D2 + 2751 amb carries as the reference (c) + the 60 Z rows);
+window ran **28 800 folds = exactly 60 sta × 480 ep** (zero stale skips),
+RETIRED on schedule at tow 338370.
+**Verdict (hourly 3D consumer rms | ZWD truth rms, T0 302400):**
+h6 1.068|0.124, h7 0.258|0.119, h8 0.329|0.119, h9 0.150|0.108,
+h10 0.132|0.141, h11 0.119|0.199.  Mission-start snap (the campaign's pinned
+forward-120-ep-median-<0.5 m metric, which reproduces every published ladder
+value exactly): **0.11 h** vs (cz) 0.00 / no-Z warm 0.38 / cold 3.15 /
+flagship-from-own-start 4.37.  ZWD does NOT restart — h6 0.124 beats
+(cz)'s 0.172, the (z) ceiling's own 0.169, and cold's 0.390.  Settled h9-12
+consumer **0.134 m rms (p50 0.125)** vs flagship 0.143 / (cz) 0.112 / no-Z
+warm (c) 0.278 / cold 0.379 — **the reference ladder's "recovers under half
+the settled gap" is now ALL of it, at or past the continuous flagship's own
+level**, with the continuous run byte-identical instead of (z)-divergent.
+Retirement costs the CONSUMER nothing (h11 0.119 vs (cz)'s still-injecting
+0.134); the ZWD truth error relaxes h10→h11 (0.141→0.199) toward the
+filter-own plateau — that late drift is the restored zero-q AMBIGUITY
+carries' invariant-#1 drag (this section's part-3 finding, unchanged by this
+card: (c) paid 0.173 at h11 with no seam at all), not a seam defect.  σ
+honesty moves the right way: ZWD vf 0.206 (conservative) vs (cz) 1.232
+(optimistic).  (c')'s own end-of-run snapshot carries 60 fresh Z rows — a
+resume chain re-seeds at every seam.  **Still open, unchanged: hour 1 is
+consumer-self-convergence-bound (h6 1.068 ≈ (cz) 1.039) — the consumer-side
+warm start remains the other half of the first-half fix.**  Ledger:
+`network.zwd_seam_reseed` row added; `network.carry_zwd` row + JSON twin
+re-synced (stale duplicate absorbed).
+
 **CARRY_ZWD RE-BASE ARMS (2026-09-01, `runs/camp60wu_quiet12h_r2q3z` (z) /
 `_q6coldz` (bz) / `_q6warmz` (cz) — the warm-start completion candidate; NOTE
 `carry_iono` was deliberately NOT armed, the 8(b) campaign falsified it):**
@@ -3045,7 +3111,8 @@ postures" to this producer posture generally (ledger table row updated).
    Hour 1 stays consumer-bound (1.04/1.08 both arms — the r2q3 experiment's
    irreducible hour reproduced).  Seam frame continuity ~50 cm (vs cold's
    ~90-110), same class as the r2q3-posture resume.
-3. **The derived card (NOT built): SEAM-SCOPED ZWD serialization.**  Write
+3. **The derived card — BUILT + VALIDATED 2026-09-01, see the SEAM-SCOPED
+   ZWD SERIALIZATION entry above: SEAM-SCOPED ZWD serialization.**  Write
    the station ZWD posterior into the snapshot UNCONDITIONALLY (read from
    the station filter at write time — no continuous-run carry needed) and
    inject it as a B9-style prior ONLY on post-resume epochs, retiring as the

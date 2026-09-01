@@ -64,6 +64,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
     k.zwd_on = config_.networkCarryZwd();
     k.zwd_q = config_.networkZwdCarryQ();
+    k.zwd_seam_on = config_.networkZwdSeamReseed();
+    k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
+    // Unconditional Z-row capture (SPEC_synthetic_minimum_network §17 finding 3):
+    // any snapshot-armed run records + harvests the per-station ZWD posterior so
+    // EVERY snapshot carries Z rows — read-only w.r.t. the solve, no inject.
+    k.zwd_capture = !nc.state_snapshot_path.empty();
     k.iono_on = config_.networkCarryIono();  // loader guarantees phase_leveling + relevel_free_epoch (scope=relevel) + the SH/mech-B/carry_invariant mutexes
     k.iono_scope_always = (config_.networkIonoCarryScope() == "always");
     k.iono_source_smoothed = (config_.networkIonoCarrySource() == "smoothed_gf");
@@ -956,6 +962,21 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // conservative direction.  ⚠ Do not "fix" these into the fingerprint:
         // that would invalidate every stored seed AND outlaw the same-snapshot
         // OFF/ON A/B their validation depends on.
+        //
+        // network.zwd_seam_reseed — the EIGHTH instance, a forward-only RESUME
+        // response policy (SPEC_synthetic_minimum_network §17 finding 3).  It
+        // changes what a resumed run DOES with restored Z rows (inject them for a
+        // bounded post-seam window), re-references nothing retroactively, and
+        // changes what no serialized state MEANS — a Z row is the same station
+        // ZWD posterior whether or not the resuming run folds it.  Its own state
+        // (zwd_seam_ep_left) is never serialized: each resume is its own seam.
+        // Fingerprinting it would strand every stored snapshot AND outlaw the
+        // same-snapshot cold/warm A/B the seam validation is built on.  (zwd_on /
+        // zwd_q above stay fingerprinted — the CONTINUOUS carry is solve-affecting
+        // on both sides of a seam.)  The unconditional Z-row CAPTURE needs no
+        // token either: it adds rows an old reader already parses and changes no
+        // solve byte; a resume of a capture-era snapshot under zwd_seam_reseed
+        // OFF restores the rows into a map nothing reads.
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
 }
@@ -1153,6 +1174,31 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     zwd_carry.clear();
                     for (const auto& [idx, l] : snap.zwd_carry)
                         zwd_carry[idx] = LocalCarry{l.value_abs, l.var, l.last_seen_s};
+                    // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17
+                    // finding 3): arm the post-resume inject window.  This is the
+                    // RE-COUPLING edge (invariant #7): the restored h-vintage ZWD
+                    // posteriors reconnect to the solve for a bounded horizon while
+                    // the (deliberately un-snapshotted) station filters re-establish
+                    // their own memory; the retire at horizon exhaustion is the
+                    // DECOUPLING edge, logged at the harvest.  The window rides the
+                    // ordinary B9 fold — per-entry staleness (pl_max_gap_s) and the
+                    // carry_warm gate still apply per epoch.
+                    if (ctx.knobs.zwd_seam_on) {
+                        if (!zwd_carry.empty()) {
+                            ctx.carry.zwd_seam_ep_left = ctx.knobs.zwd_seam_epochs;
+                            log->info("Network (ZWD seam re-seed): ARMED at the resume seam — {} "
+                                      "restored Z row(s) will fold as B9-style priors for the next "
+                                      "{} emitted epoch(s) (RW q {:.3e} m²/s over the true gap), "
+                                      "then retire.",
+                                      zwd_carry.size(), ctx.knobs.zwd_seam_epochs,
+                                      ctx.knobs.zwd_q);
+                        } else {
+                            log->warn("Network (ZWD seam re-seed): warm resume completed but the "
+                                      "snapshot carried ZERO Z rows (written by a pre-capture "
+                                      "build?) — the seam window is INERT this run; the ZWD "
+                                      "restarts exactly as an unarmed resume.");
+                        }
+                    }
                     ura_sigma0_ewma     = snap.ura_sigma0_ewma;
                     ura_refloat_horizon = snap.ura_refloat_horizon;
                     ura_retro_sats      = snap.ura_retro_sats;
@@ -2248,6 +2294,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const bool   prires_iono = ctx.knobs.prires_iono;   // QUEUE 8b
     const bool   prires_rxcb = ctx.knobs.prires_rxcb;
     const double zwd_q       = ctx.knobs.zwd_q;
+    // Seam-scoped ZWD re-seed + unconditional Z-row capture (§17 finding 3).
+    const bool   zwd_capture   = ctx.knobs.zwd_capture;
+    const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
 
     // --- TWO-EDGE CONTINUOUS HANDOVER: ledger harvest -------------------------
     // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1)
@@ -2940,7 +2989,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         ctx.carry.relevel_retapped_prev.clear();
         // --- ZWD carry (B9): harvest posterior ZWD + stash (mirrors the ambiguity
         //     harvest; independent loop so it works regardless of ambiguity presence).
-        if (zwd_on) {
+        //     Runs for B9 proper, for a live post-resume seam window (rolling B9),
+        //     AND — capture-only, feeding nothing back — on any snapshot-armed run,
+        //     so every RTB-7 snapshot serializes fresh Z rows (§17 finding 3).  The
+        //     capture path is read-only w.r.t. the solve: R.pl_zwd_present is
+        //     record-only on those epochs and no inject ever fires.
+        if (zwd_on || zwd_capture || zwd_seam_live) {
             for (size_t i = 0; i < stations.size(); ++i) {
                 // B9: harvest the pivot's ZWD too — R.pl_zwd_present is set for the
                 // pivot now that the carry inject above runs for it.
@@ -2973,8 +3027,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 // this card was built to inventory.  Unlike pl, `folded` is
                 // GROUND TRUTH here and needs no reproduction: PASS B already
                 // records R.pl_zwd_injected at the injector itself.  Read the
-                // prior BEFORE the stash below overwrites it.
-                if (prires_zwd && prires_est.enabled()) {
+                // prior BEFORE the stash below overwrites it.  Additionally gated
+                // on an inject-capable epoch (B9 or a live seam window) so the
+                // capture-only path adds no rows — a snapshot-armed run's census
+                // stays byte-identical to a pre-capture build's.
+                if (prires_zwd && prires_est.enabled() && (zwd_on || zwd_seam_live)) {
                     const auto zit = zwd_carry.find(static_cast<int>(i));
                     if (zit != zwd_carry.end()) {
                         const double zgap = pl_now_s - zit->second.last_seen_s;
@@ -3007,6 +3064,34 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     ++ctx.counters.n_cr_zwd_gap_prune;   // same predicate, same census
                 }
                 else ++it;
+            }
+            // Seam-window bookkeeping (network.zwd_seam_reseed): count this epoch's
+            // actual folds (R.pl_zwd_injected is the injector's own ground truth),
+            // advance the retirement clock, and log the DECOUPLING edge when the
+            // horizon exhausts (invariant #7 — the ARMED line at the resume was the
+            // re-coupling edge).  Serial section: the parallel produce phase only
+            // ever READS zwd_seam_ep_left.
+            if (zwd_seam_live) {
+                long long seam_folds = 0;
+                for (size_t i = 0; i < stations.size(); ++i)
+                    if (est_index_of[i] >= 0 && asm_res[i].pl_zwd_injected) ++seam_folds;
+                ctx.counters.n_zwd_seam_folds += seam_folds;
+                if (seam_folds > 0) ++ctx.counters.n_zwd_seam_epochs;
+                if (--ctx.carry.zwd_seam_ep_left == 0) {
+                    // This seam has no logger parameter — resolve per call and
+                    // null-guard (the spdlog free-function / cached-static hazard:
+                    // never cache, never deref unguarded).
+                    if (auto lg = spdlog::get("main_log"))
+                        lg->info("Network (ZWD seam re-seed): RETIRED — the {}-epoch "
+                                 "post-resume window is exhausted at tow {:.1f}; {} "
+                                 "station-fold(s) over {} epoch(s) rode the window.  The "
+                                 "station filters carry their own ZWD memory from here; "
+                                 "continuous epochs never carry.",
+                                 ctx.knobs.zwd_seam_epochs,
+                                 std::fmod(pl_now_s, 604800.0),
+                                 ctx.counters.n_zwd_seam_folds,
+                                 ctx.counters.n_zwd_seam_epochs);
+                }
             }
         }
         // --- Card 3 (eq34): RPB carry — harvest δ̂_{r,σ} + stash + prune ----
