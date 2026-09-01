@@ -3018,6 +3018,41 @@ invariant-#1 channel the slip campaign named.  Verdict: the template pin is
 retro-validated with an absolute grade and its scope WIDENS from "slipped
 postures" to this producer posture generally (ledger table row updated).
 
+**CARRY_ZWD RE-BASE ARMS (2026-09-01, `runs/camp60wu_quiet12h_r2q3z` (z) /
+`_q6coldz` (bz) / `_q6warmz` (cz) — the warm-start completion candidate; NOTE
+`carry_iono` was deliberately NOT armed, the 8(b) campaign falsified it):**
+1. **The re-base is FALSIFIED for continuous runs.**  `carry_zwd: true` on
+   the flagship (B9 at the resolved default q 1e-9 m²/s, mirroring the
+   filter's own troposphere_q) is net-harmful on every applied channel:
+   consumer 3D rms 0.204 → **0.723 m** (p50 0.128 → 0.660, snap NEVER, and
+   DIVERGING at run end — h8-h11: 0.72, 0.64, 0.79, 1.09); ZWD converges
+   monotonically but ~3× slower (h11 0.077 vs 0.026); cb p50 +32 % / vf
+   +66 %.  Mechanism: the carry re-injects last epoch's ZWD posterior as a
+   prior ON TOP of the station filter's own persistence — a structural
+   information double-count that halves the effective q and cannot forget
+   ignition errors at the filter's natural rate.  Not a q-tuning issue; a
+   compensating retune would tune around the defect.  **KEEP_OFF.**
+2. **The seam mechanics are PROVEN on the same arms.**  (z)'s hour-6 history
+   snapshot carries 60 Z rows; (cz) restored all 60 (vs 0 on the r2q3
+   posture) and its ZWD does NOT restart — absolute-h6 rms 0.172 vs the
+   ceiling's own 0.169 vs cold's 0.390.  Mission-start snap **0.00 h** (vs
+   coldz 3.12, and 0.38 on the r2q3-posture warm resume), and h8-h11
+   consumer **0.088-0.134 m — true-r2q3-flagship-class, the best settled
+   hours any arm has produced on this bed**.  (cz) even beats its own
+   continuous ceiling: the resume rebuilds fresh station filters against
+   h6-vintage carries, RESETTING the double-memory pathology clock — the
+   resumed leg's success independently confirms finding 1's mechanism.
+   Hour 1 stays consumer-bound (1.04/1.08 both arms — the r2q3 experiment's
+   irreducible hour reproduced).  Seam frame continuity ~50 cm (vs cold's
+   ~90-110), same class as the r2q3-posture resume.
+3. **The derived card (NOT built): SEAM-SCOPED ZWD serialization.**  Write
+   the station ZWD posterior into the snapshot UNCONDITIONALLY (read from
+   the station filter at write time — no continuous-run carry needed) and
+   inject it as a B9-style prior ONLY on post-resume epochs, retiring as the
+   filter re-establishes its own memory.  Gets (cz)'s seam behaviour with
+   the continuous run byte-identical to r2q3.  That card, plus the
+   consumer-side warm start for hour 1, is the complete first-half fix.
+
 **WE-CI ARM (2026-08-31, `runs/camp60wu_quiet12h_r2q3weci` = r2q3 +
 raim_we_code_iono, + 1 h smoke):** the SAFETY half of this knob's first ON
 validation, and it is maximal — armed and LIVE (code pool populated all day,
