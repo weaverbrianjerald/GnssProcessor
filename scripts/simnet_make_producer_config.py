@@ -73,15 +73,24 @@ def main():
         print(f"stride {args.stride}: {n_all} -> {len(solve)} solve stations "
               f"(near-uniform subset; a prefix would be a latitude band)")
 
+    # ABSOLUTIZE rinex_path too (same rationale as product_output_path below):
+    # synth-network stores whatever path string it was launched with, so a
+    # fixture generated from a relative output dir carries relative paths, and
+    # the producer — which runs from its own per-arm CWD — then resolves them
+    # against the run dir and fails every station load in 2 ms.
+    def _abs(p):
+        return os.path.abspath(p).replace("\\", "/")
+
     cfg.setdefault("network", {})
     cfg["network"]["stations"] = [
-        {"name": s["name"], "rinex_path": s["rinex_path"], "position_ecef": s["position_ecef"]}
+        {"name": s["name"], "rinex_path": _abs(s["rinex_path"]),
+         "position_ecef": s["position_ecef"]}
         for s in solve
     ]
     if cons:
         c = cons[0]
         cfg["network"].setdefault("closed_loop", {})["station"] = {
-            "name": c["name"], "rinex_path": c["rinex_path"],
+            "name": c["name"], "rinex_path": _abs(c["rinex_path"]),
             "position_ecef": c["position_ecef"],
         }
     # QUEUE item 2 — datum-station election by criterion, not luck.  An explicit
