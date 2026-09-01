@@ -212,6 +212,11 @@ def consumer_verdict_caveats(census):
 def parse_s_line(p):
     """Decode the S-basis contract line.  Fields 11+ are shape-dispatched."""
     out = {"ref_rx": p[1], "apriori_id": p[10] if len(p) > 10 else "",
+           # Positional field 5 = SbasisDeclaration::IsbDatum (NetworkProductIO
+           # header row): "0" pivot pin, "1" SUM-TO-ZERO per constellation,
+           # "2" broadcast-anchored.  The clock transform is datum-dependent, so
+           # this is read off the wire, never assumed (invariant #5).
+           "isb_datum": p[5] if len(p) > 5 else "",
            "pivots": {}, "cbpin": {}, "gfpin": {}, "extra": {}}
     for f in p[11:]:
         if "=" in f:
@@ -414,7 +419,8 @@ def if_lump_by_sat(osb_truth, pin):
     return lumps
 
 
-def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None, series=None):
+def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None, series=None,
+                s2z=False):
     """C record: transform truth into the producer's basis, then compare.
 
     Wire meaning (contract section B.1):
@@ -449,6 +455,20 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None, series=None
         piv_truth_of = {}
         for cst, pv in pivots.items():
             piv_truth_of[cst] = sc_truth.get((tow, pv), 0.0) + lump.get(pv, 0.0)
+        # SUM-TO-ZERO clock datum (isb_datum = 1 on the S line): the realized
+        # gauge is Σ δtˢ = 0 per constellation over THIS epoch's emitted set, so
+        # S[truth] zero-means (sc + lump) over the same set — the exact analogue
+        # of the code-bias channel's stage-2 zero-mean.  No pivot exists and no
+        # row is skipped; the datum-free contrast cross-check below is unchanged
+        # and must agree exactly as it does under the pivot datum.
+        s2z_mean_of = {}
+        if s2z:
+            by_c = {}
+            for s in ep["clocks"]:
+                if s:
+                    by_c.setdefault(s[0], []).append(
+                        sc_truth.get((tow, s), 0.0) + lump.get(s, 0.0))
+            s2z_mean_of = {c: sum(v) / len(v) for c, v in by_c.items() if v}
 
         ep_e, ep_sig = [], []
         for sat, c0 in ep["clocks"].items():
@@ -456,11 +476,11 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None, series=None
                 continue
             cst = sat[0]
             piv = pivots.get(cst)
-            if piv and sat == piv:
+            if not s2z and piv and sat == piv:
                 if settled:
                     n_pivot_skipped += 1
                 continue                      # pinned to 0; nothing to grade
-            piv_truth = piv_truth_of.get(cst, 0.0)
+            piv_truth = s2z_mean_of.get(cst, 0.0) if s2z else piv_truth_of.get(cst, 0.0)
             t = sc_truth.get((tow, sat), 0.0) + lump.get(sat, 0.0) - piv_truth  # S[truth]
             e = c0 - t
             ep_e.append(e)
@@ -586,7 +606,7 @@ def grade_zwd(run_dir, truth, settle_frac, series=None):
             continue
         e = float(r["zwd_m"]) - tt[key]
         _srow(series, tow, "zwd_e", r["station"], e)
-        sd = r.get("std_m", "").strip()
+        sd = (r.get("std_m") or "").strip()
         if sd:
             _srow(series, tow, "zwd_sig", r["station"], float(sd))
         if not settled:
@@ -612,10 +632,10 @@ def grade_consumer(run_dir, settle_frac):
         return None
     n = len(rows)
     e3 = [float(r["pos_err_3d_m"]) for r in rows[int(n * settle_frac):]
-          if r.get("pos_err_3d_m", "").strip()]
+          if (r.get("pos_err_3d_m") or "").strip()]
     up = [float(r["up_m"]) for r in rows[int(n * settle_frac):]
-          if r.get("up_m", "").strip()]
-    ar = sum(1 for r in rows if r.get("ar_success", "0").strip() in ("1", "true"))
+          if (r.get("up_m") or "").strip()]
+    ar = sum(1 for r in rows if (r.get("ar_success") or "0").strip() in ("1", "true"))
     return {"err3d": stats(e3), "up": stats(up), "n_epochs": n, "ar_success": ar}
 
 
@@ -1096,7 +1116,7 @@ def grade_rx_states(run_dir, truth, settle_frac, series=None):
             contrast.extend(diffs)
             level.append(lvl)
     for r in cb:
-        s = r.get("std_m", "").strip()
+        s = (r.get("std_m") or "").strip()
         if s:
             sd_used.append(float(s))
     return {"n_cb": len(cb), "n_clk": len(clk), "contrast": stats(contrast),
@@ -1198,8 +1218,16 @@ def main():
     print(f"  epochs       : {len(epochs)} emitted of {man['n_epochs']} synthesized "
           f"@ {man['interval_s']} s")
     print(f"  settle       : discarding first {args.settle_frac:.0%} as ignition")
+    s2z = bool(s_line) and s_line.get("isb_datum") == "1"
+    if s2z and s_line.get("pivots"):
+        print("  *** S line declares the SUM-TO-ZERO clock datum (isb_datum=1) AND per-")
+        print("      constellation pivots — contradictory wire; grading as sum-to-zero.")
     if s_line:
-        print(f"  realized datum: pivot {s_line['pivots']}  ref_rx {s_line['ref_rx']}")
+        if s2z:
+            print(f"  realized datum: SUM-TO-ZERO per constellation (isb_datum=1, no pivot"
+                  f" — no handover seam)  ref_rx {s_line['ref_rx']}")
+        else:
+            print(f"  realized datum: pivot {s_line['pivots']}  ref_rx {s_line['ref_rx']}")
         print(f"                  cbpin {s_line['cbpin'] or '(none declared)'}"
               f"  gfpin {s_line['gfpin'] or '(none — single-layer code-bias datum)'}")
         print(f"  apriori_id   : {s_line['apriori_id']}")
@@ -1262,9 +1290,13 @@ def main():
     osb_truth, osb_disagree = osb_truth_by_key(truth)
     if_lump = if_lump_by_sat(osb_truth, (s_line or {}).get("cbpin", {}))
     clk = grade_clock(epochs, s_line, sc_truth, args.settle_frac, if_lump,
-                      series=series)
+                      series=series, s2z=s2z)
     print("\n-- C record (satellite clock), truth in the producer's basis " + "-" * 16)
-    print(f"  pivot {clk['pivot']} excluded ({clk['n_pivot_skipped']} rows, pinned to 0 by the datum)")
+    if s2z:
+        print("  SUM-TO-ZERO datum: truth zero-meaned per (constellation, epoch set); no")
+        print("  pivot row exists, so every emitted clock is graded (0 skipped)")
+    else:
+        print(f"  pivot {clk['pivot']} excluded ({clk['n_pivot_skipped']} rows, pinned to 0 by the datum)")
     if if_lump:
         vals = sorted(if_lump.values())
         print(f"  W6 arm: truth includes the ABSORBED IF code-bias lump on {len(if_lump)} "

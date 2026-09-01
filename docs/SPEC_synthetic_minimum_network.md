@@ -2886,3 +2886,24 @@ ceiling): churn −98.5 %, consumer settled 2-2.5× better (3D med 0.16-0.19 m),
 clock walk / AR wall unchanged, cb/level lock-in tax named (LV-6).  Present the
 baseline beside it — the pair is a controlled exhibit of response-inflicted
 churn vs frame survival.  Both dashboards: `<run>/simnet_dashboard.html`.
+
+**S0 ARM (2026-08-31, `runs/camp60wu_quiet12h_r2q3s0` = r2q3 + clock_datum_sum_to_zero —
+its SECOND sim validation, 60 sta / 12 h):** the producer clock channel is
+transformed — residual rms 2.06 → **0.377 m** (−82 %), datum-free contrast 1.92 →
+0.518 m (−73 %), vf −94 %, hourly level FLAT at ~0.3 m from h1 (no h0-4 walk, no
+h4-6 pivot staircase — zero pivot events, anchor datum-decouples 214 → 15, the
+first-generation pivot seam is structurally gone).  Grader support landed: the
+S line's positional `isb_datum` field is read (1 = sum-to-zero) and the clock
+truth transform zero-means per (constellation, epoch set); byte-inert on
+pivot-datum products; live-tail torn-row reads hardened.
+**⚠ VERDICT: NOT PROMOTED — the level bill moved to the consumer's channel.**
+The unobservable common level must park SOMEWHERE until an external authority
+exists (LV-6): the pivot datum parks it in the satellite clock, which a
+consumer ABSORBS into its own receiver clock (r2q3 held a ~2 m clock level and
+still positioned at 0.13 m); sum-to-zero evicts it into the code bias (rms
++38 %, p50 2.8 → 4.6 cm, vf ×6, ZWD +21 %), which the consumer APPLIES — 3D
+rms 0.20 → 0.87 m, convergence snap h5.1 → h10.0.  **The datum choice decides
+WHO PAYS for the level, not whether it exists** — the sharpest exhibit this
+fixture has produced, and the concrete producer-side case for the LV-6
+per-epoch level authority.  Keep S0 for clock-product/exhibit postures; the
+consumer flagship remains `_r2q3`.
