@@ -1296,3 +1296,61 @@ as the fix (it passes at `p_succ = 1.0`), covariance inflation as the cause (a c
 consumer logger as broken, then the level as its cause — plus a stale renamed exe making a correct
 fix read as not-applied.  **On this card the plausible reading of a symptom was wrong essentially
 every time**, and three of those readings reached a SPEC before they were caught.
+
+---
+
+## §9 (2026-08-31) G4's SIM HALF EXECUTED — the anchor truth-graded on the 12 h quiet flagship, and the displaced cb tension is REAL
+
+**Bed:** `runs/camp60wu_quiet12h_r2q3` vs `runs/camp60wu_quiet12h_r2` — single
+mechanism (the full Q3 arm at the CALIBRATED rung: q 3e-6, derived floors, proj
+denominator, k 6, guard+resolve), over the R2 sticky-handover flagship on the
+truth-graded synthetic network (SPEC_synthetic_minimum_network §17).  1440/1440.
+
+**Mechanism read:** 71 983 anchored folds; **ZERO fault trips (0 nis + 0 abs)**
+over 12 h — at q 3e-6 on a quiet field the guard never fires, which is §7's "at
+the floor QUIET IS REAL" reading one decade above the floor.  214 decouples are
+all MECHANICAL (201 datum + 13 gap), each wire-marked; 266 re-coupling edges.
+Guard σ̂₀ 0.443 (conservative side, matching the ladder's descent), mean |ê|
+3.6 mm against the 9.5 mm √(q·Δt) allowance.
+
+**Truth A/B (settled half), the first ABSOLUTE grade any Q3 arm has had:**
+
+| | R2 | R2+Q3 | Δ |
+|---|---|---|---|
+| consumer 3D rms (m) | 0.265 | **0.204** | **−23 %** |
+| ZWD rms (m) / vf | 0.073 / 123 | **0.054 / 82** | −25 % / −33 % |
+| clock contrast rms (m) | 1.940 | 1.922 | −1 % |
+| clock residual rms (m) | 2.000 | 2.058 | +2.9 % (level) |
+| clock vf | 33 358 | **216 567** | ×6.5 |
+| **code bias rms / p50 (m)** | 0.538 / 0.0248 | **0.609 / 0.0277** | **+13 % / +11 %** |
+| code bias vf | 4 841 | 6 460 | +34 % |
+
+- **The §8.8 open question is ANSWERED: the tension the descent displaced into
+  the code-bias carry is REAL ERROR, not a formal artifact** — cb truth rms
+  +13 % under the anchor, the sim's absolute grade confirming what the field
+  ladder could only see as vf.  The anchor buys wire/consumer quality partly by
+  spending the cb channel — the LV-6 level-authority successor card inherits
+  this bill.
+- Consumer −23 % and ZWD −25 % are the anchor working as designed (temporal
+  stiffness where the physics is quiet); per-sat clock contrast is flat (the
+  truth error there is the level/exchange wander, not epoch noise — Q3 was
+  never its cure).
+- **Clock vf ×6.5**: the anchor tightens the published σ against a level error
+  it cannot see — the carry-aware σ frontier, sharpened not created.  ⚠ Do not
+  read Q3's clock vf as calibration on a truth-graded arm; the ladder's
+  "vf = 0.99 at 3e-6" was the INTERNAL census against the carry, a different
+  statistic.
+
+**Telemetry fix (same session):** the run-end "N trips but ZERO in-epoch
+re-solves — every trip shipped an anchor-warped epoch" warning counted the
+COMPOSITE trip figure; gap/datum/ext decouples are not resolve candidates (the
+prior is withdrawn BECAUSE the frame or visibility moved).  On this arm it
+cried 214 warped epochs against a true fault-trip count of ZERO.  The warn now
+fires on `nis + abs` only (`NetworkTeardown.cpp`) — the §8.11 ratio=inf lesson,
+recurring in the code written after that lesson.
+
+**Status:** G4's sim half is EXECUTED with the anchor NET-POSITIVE on the
+product channels at the calibrated rung.  The FIELD half (the DOY-129 event
+window — does the guard catch a real clock event without the withdraw path
+regressing?) remains the arming blocker for field lineages; this arm never
+exercised a fault trip, so the resolve path is still field-unvalidated.

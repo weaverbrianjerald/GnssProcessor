@@ -214,9 +214,15 @@ void networkElectEnsembleDatum(
  *                          / first epoch) still pins at 0 and is counted as a COLD
  *                          handover: an unavoidable re-realization the consumer is
  *                          TOLD about is a different object from a silent one.
- *                          Only a HANDOVER is retargeted — a key whose anchor did
- *                          not move keeps its 0.0 pin, so a settled network is
- *                          byte-identical even with the ledger supplied.
+ *                          R2 (§5.09): a continuous target is STICKY — it is
+ *                          stored in @p anchor_pin_target and re-applied every
+ *                          epoch the incoming anchor remains incumbent, so the
+ *                          inherited frame persists for the anchor's whole
+ *                          tenure instead of reverting to 0 at T+1 (the §5.07.3
+ *                          one-epoch deferral that made the unsticky version
+ *                          measure null).  A key with no stored target keeps its
+ *                          0.0 pin, so a settled network that never handed over
+ *                          is byte-identical even with the ledger supplied.
  * @param handovers_out     [out, optional] APPENDED per-handover attribution
  *                          (@ref AnchorHandoverEvent) for the caller's
  *                          @c trace_events rows — BOTH edges in one record.
@@ -227,9 +233,17 @@ void networkElectEnsembleDatum(
  *                          be MEASURED before the fix is armed.
  * @param reref_out         [out, optional] QUEUE item 1(d)
  *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1):
- *                          INSERTED (sat, signal) of every handover this epoch —
- *                          the families whose datum re-realized and whose carried
- *                          state therefore belongs to the RETIRED frame.  The
+ *                          INSERTED (sat, signal) of every COLD handover this
+ *                          epoch — the families whose datum re-realized and whose
+ *                          carried state therefore belongs to the RETIRED frame.
+ *                          A CONTINUOUS handover is deliberately NOT marked
+ *                          (§5.09): under the sticky target the successor is
+ *                          pinned in the outgoing frame for its whole tenure, the
+ *                          family provably does not step at T or T+1, and the
+ *                          carried state remains in-frame — erasing it would be
+ *                          exactly the arc-truncation this card exists to stop
+ *                          (measured: 582/621 cold handovers erased 10 236
+ *                          leveling carries on a 12 h zero-slip fixture).  The
  *                          caller routes it to ctx.carry.phase_anchor_reref, where
  *                          the D2/C1 shared-carry consume marginalizes those PB
  *                          keys for one epoch (exactly as @c eq34_reref) and
@@ -248,6 +262,7 @@ void networkElectPhaseAnchors(
         const AnchorHygiene& hyg,
         NetworkAnchorTallies& tally,
         std::map<std::string, std::string>& anchor_incumbent,
+        std::map<std::string, double>& anchor_pin_target,
         std::map<std::string, std::string>& this_epoch_anchor,
         std::set<std::string>& shared_phase_keys,
         const AnchorHandoverLedger* handover = nullptr,

@@ -3388,11 +3388,20 @@ int networkTeardown(
                       "re-validation ({} consecutive in-band epochs) and that the staleness "
                       "bound ({:.0f} s) is above this run's epoch spacing.",
                       ctx.knobs.cta_recouple_ep, ctx.knobs.cta_max_gap_s);
-        if (ctx.knobs.cta_resolve && c.cta_resolves == 0 && trips > 0)
-            log->warn("Network (Card Q3): {} trip(s) but ZERO in-epoch re-solves — every trip was "
-                      "decoupled and marked WITHOUT the same-epoch value correction, so each one "
-                      "shipped an anchor-warped epoch.  See the per-trip warnings for the cause "
-                      "(prior-dominated column, or no captured prior to withdraw).", trips);
+        // Only the FAULT-class trips (nis/abs) are resolve candidates: a gap,
+        // datum or ext decouple withdraws the prior BECAUSE the frame or the
+        // visibility moved, emits a fresh solve, and has no anchored value to
+        // correct.  Counting them here cried "214 warped epochs" on a 12 h quiet
+        // arm whose fault-trip count was exactly zero (0 nis + 0 abs + 13 gap +
+        // 201 datum, `camp60wu_quiet12h_r2q3`) — the ratio=inf lesson again: a
+        // composite denominator makes a healthy run read as a broken one.
+        if (const long long fault_trips = c.cta_trip_nis + c.cta_trip_abs;
+            ctx.knobs.cta_resolve && c.cta_resolves == 0 && fault_trips > 0)
+            log->warn("Network (Card Q3): {} FAULT trip(s) (nis+abs) but ZERO in-epoch "
+                      "re-solves — every one was decoupled and marked WITHOUT the same-epoch "
+                      "value correction, so each shipped an anchor-warped epoch.  See the "
+                      "per-trip warnings for the cause (prior-dominated column, or no "
+                      "captured prior to withdraw).", fault_trips);
         // §2.1 — which DENOMINATOR this run's guard and census standardized by.
         // Two arms of the bisection differ ONLY here, so a run-end line that omits
         // it makes the pair indistinguishable in the archived console.

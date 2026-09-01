@@ -1712,7 +1712,9 @@ int Application::runNetwork() {
                 const std::size_t pa_before = pa_reref.size();
                 networkElectPhaseAnchors(sticky, stations, present, cnd, hyg,
                                          ctx.counters.hyg,
-                                         anchor_incumbent, this_epoch_anchor,
+                                         anchor_incumbent,
+                                         ctx.carry.anchor_pin_target,
+                                         this_epoch_anchor,
                                          shared_phase_keys,
                                          hv_on ? &ctx.carry.handover : nullptr,
                                          &handovers,

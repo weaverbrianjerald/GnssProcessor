@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from .base import Viewer, ViewerResult
 
+# Surveyed-reference scorecard (real-time / rooftop runs; auto-skip without a
+# reference from --run-config / --ref-ecef)
+from .rt_scorecard import viewer as _rt_scorecard
 # Exam / simulator truth (truth-referenced; auto-skip without --truth-dir)
 from .exam_scorecard import viewer as _exam_scorecard
 from .exam_spp_reference import viewer as _exam_spp_reference
@@ -23,6 +26,10 @@ from .exam_iono_truth import viewer as _exam_iono_truth
 from .exam_otl_truth import viewer as _exam_otl_truth
 from .exam_skyplot_slips import viewer as _exam_skyplot_slips
 from .exam_slip_timeline import viewer as _exam_slip_timeline
+# Simulated-network truth (simnet fixture; auto-skip without simnet_grade artifacts)
+from .simnet_scorecard import viewer as _simnet_scorecard
+from .simnet_theory import viewer as _simnet_theory
+from .simnet_truth_series import viewer as _simnet_truth_series
 # State / position
 from .state import viewer as _state
 from .wls import viewer as _wls
@@ -69,12 +76,17 @@ from .network_station_strip import viewer as _network_station_strip
 from .network_manifest import viewer as _network_manifest
 
 REGISTRY = [
+    # Surveyed-reference scorecard leads a real-time / rooftop report (skips
+    # without a reference; exam runs never bind one, so the two never collide).
+    _rt_scorecard,
     # Exam / simulator truth (lead the dashboard; each auto-skips without a truth dir)
     # Part B (SPP reference, truth-only) leads Part C (PPP vs truth) — student order.
     _exam_scorecard, _exam_spp_reference, _exam_static_window,
     _exam_position_truth, _exam_truth_lines, _exam_track, _exam_map,
     _exam_visibility, _exam_iono_truth, _exam_otl_truth,
     _exam_skyplot_slips, _exam_slip_timeline,
+    # Simulated network (lead the network report; auto-skip on ordinary runs)
+    _simnet_scorecard, _simnet_theory, _simnet_truth_series,
     _state, _wls, _baseline,
     _measurement_residuals, _residual_strip, _plot_satellite_signals,
     _dops, _satellite_status, _satellite_strip,

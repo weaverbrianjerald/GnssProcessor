@@ -99,6 +99,7 @@ Census makeCensus(const std::vector<StationSpec>& spec) {
 /// Drive one election.  `ledger == nullptr` is the pre-card path.
 struct Elected {
     std::map<std::string, std::string> incumbent;
+    std::map<std::string, double> pin_target;   ///< R2 sticky continuous targets
     std::map<std::string, std::string> this_epoch;
     std::set<std::string> shared;
     NetworkAnchorTallies tally;
@@ -111,8 +112,8 @@ void elect(Census& c, Elected& e, const AnchorHandoverLedger* ledger,
     AnchorHygiene hyg;   // default-constructed = inactive
     e.events.clear();
     networkElectPhaseAnchors(sticky, c.stations, c.present, c.cnd, hyg, e.tally,
-                             e.incumbent, e.this_epoch, e.shared, ledger,
-                             &e.events, max_var, reref);
+                             e.incumbent, e.pin_target, e.this_epoch, e.shared,
+                             ledger, &e.events, max_var, reref);
 }
 
 double pinOf(const Census& c, const std::string& station, const std::string& amb) {
@@ -405,13 +406,101 @@ TEST(PhaseDatumHandover, CarryRerefMarksBridgeExitRepin) {
         << "the incumbent-less re-pin must be marked regardless";
 }
 
-/// The ELECTION marks continuous handovers too — but note the PAIRING is
-/// loader-disarmed (CarryRerefDisarmsTheContinuousPairing below): under the
-/// ledger pin the frame step lands at T+1 (the §5.07.3 revert) while this mark
-/// covers T, so production never arms both.  The election-level mark stays so a
-/// future R2-style sticky target can re-enable the pairing without touching the
-/// election again; this case pins that the mark is there.
-TEST(PhaseDatumHandover, CarryRerefMarksContinuousHandoversToo) {
+/// R2 (§5.09): a CONTINUOUS handover is NOT marked.  Under the sticky target the
+/// successor realizes the outgoing frame for its whole tenure, so the family
+/// provably does not step at T or T+1 and the carried state stays in-frame —
+/// marking it would marginalize a valid fold and erase live leveling carries
+/// (the measured arc truncation: 582/621 cold handovers erased 10 236 carries on
+/// a 12 h zero-slip fixture).  A COLD handover in the same election still marks.
+TEST(PhaseDatumHandover, CarryRerefSkipsContinuousHandoversUnderTheStickyTarget) {
+    std::set<std::pair<std::string, std::string>> reref;
+    auto c = makeCensus({{"STA_A", {"G01", "G02"}, 10}, {"STA_B", {"G01", "G02"}, 5}});
+    Elected e;
+    AnchorHandoverLedger led;
+    led.primed = true;
+    elect(c, e, &led);
+    auto c2 = makeCensus({{"STA_B", {"G01", "G02"}, 5}});
+    Elected e2;
+    e2.incumbent = e.this_epoch;
+    AnchorHandoverLedger led2;
+    led2.primed = true;
+    led2.value_abs[{0, "G01_L1C"}] = {-12.0554, kGoodVar};   // G02 has no entry -> COLD
+    elect(c2, e2, &led2, true, kMaxVar, &reref);
+    ASSERT_EQ(e2.tally.handover_continuous, 1) << "precondition: G01 continuous";
+    ASSERT_EQ(e2.tally.handover_cold, 1) << "precondition: G02 cold";
+    EXPECT_FALSE(reref.count({"G01", "L1C"}))
+        << "continuous + sticky = the frame never steps; the carry stays valid";
+    EXPECT_TRUE(reref.count({"G02", "L1C"}))
+        << "the cold edge in the SAME election must still mark";
+}
+
+/// R2 (§5.09): the continuous target is STICKY — re-applied every epoch the
+/// successor remains incumbent.  This is the exact defect that made the unsticky
+/// version measure null (§5.0): the pin reverted to 0 at T+1 and the family
+/// stepped one epoch late, with the mark already spent at T.
+TEST(PhaseDatumHandover, StickyTargetPersistsForTheSuccessorsTenure) {
+    auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
+    Elected e;
+    AnchorHandoverLedger led;
+    led.primed = true;
+    elect(c, e, &led);
+    // T: handover A -> B, continuous at the ledger value.
+    auto c2 = makeCensus({{"STA_B", {"G01"}, 5}});
+    Elected e2;
+    e2.incumbent = e.this_epoch;
+    AnchorHandoverLedger led2;
+    led2.primed = true;
+    led2.value_abs[{0, "G01_L1C"}] = {-12.0554, kGoodVar};
+    elect(c2, e2, &led2);
+    ASSERT_EQ(pinOf(c2, "STA_B", "G01_L1C"), -12.0554);
+    // T+1 and T+2: same incumbent, NO handover — the pin must NOT revert to 0.
+    for (int k = 0; k < 2; ++k) {
+        auto c3 = makeCensus({{"STA_B", {"G01"}, 5}});
+        AnchorHandoverLedger led3;   // empty: a retained incumbent needs no ledger
+        led3.primed = true;
+        elect(c3, e2, &led3);
+        EXPECT_EQ(e2.tally.reattaches, 1) << "no further handover";
+        EXPECT_EQ(pinOf(c3, "STA_B", "G01_L1C"), -12.0554)
+            << "T+" << (k + 1) << ": the inherited frame must persist";
+    }
+}
+
+/// A COLD handover drops any stored target: the frame re-realized at 0, so a
+/// later retained epoch must keep realizing 0, not resurrect the dead frame.
+TEST(PhaseDatumHandover, ColdHandoverDropsTheStoredTarget) {
+    auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
+    Elected e;
+    AnchorHandoverLedger led;
+    led.primed = true;
+    elect(c, e, &led);
+    auto c2 = makeCensus({{"STA_B", {"G01"}, 5}, {"STA_C", {"G01"}, 3}});
+    Elected e2;
+    e2.incumbent = e.this_epoch;
+    AnchorHandoverLedger led2;
+    led2.primed = true;
+    led2.value_abs[{0, "G01_L1C"}] = {7.25, kGoodVar};   // index 0 = STA_B here
+    elect(c2, e2, &led2);
+    ASSERT_EQ(pinOf(c2, "STA_B", "G01_L1C"), 7.25) << "continuous A->B";
+    // B drops the key: handover B->C with NO ledger entry for C -> COLD.
+    auto c3 = makeCensus({{"STA_C", {"G01"}, 3}});
+    AnchorHandoverLedger led3;
+    led3.primed = true;
+    elect(c3, e2, &led3);
+    EXPECT_EQ(e2.tally.handover_cold, 1);
+    EXPECT_EQ(pinOf(c3, "STA_C", "G01_L1C"), 0.0) << "honest cold re-realization";
+    // Retained epoch after the cold handover: still the 0-frame.
+    auto c4 = makeCensus({{"STA_C", {"G01"}, 3}});
+    AnchorHandoverLedger led4;
+    led4.primed = true;
+    elect(c4, e2, &led4);
+    EXPECT_EQ(pinOf(c4, "STA_C", "G01_L1C"), 0.0)
+        << "the dead frame must not resurrect on a retained epoch";
+}
+
+/// A key that leaves the union drops its target with its incumbent, so its
+/// eventual return is an incumbent-less pin at 0 — marked, honest, no stale
+/// frame smuggled across the gap.
+TEST(PhaseDatumHandover, KeyLeavingTheUnionDropsItsTarget) {
     std::set<std::pair<std::string, std::string>> reref;
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -423,11 +512,24 @@ TEST(PhaseDatumHandover, CarryRerefMarksContinuousHandoversToo) {
     e2.incumbent = e.this_epoch;
     AnchorHandoverLedger led2;
     led2.primed = true;
-    led2.value_abs[{0, "G01_L1C"}] = {-12.0554, kGoodVar};
-    elect(c2, e2, &led2, true, kMaxVar, &reref);
-    ASSERT_EQ(e2.tally.handover_continuous, 1) << "precondition: continuous handover";
-    EXPECT_TRUE(reref.count({"G01", "L1C"}))
-        << "continuous defers the step by one epoch; the carry is stale either way";
+    led2.value_abs[{0, "G01_L1C"}] = {3.5, kGoodVar};
+    elect(c2, e2, &led2);
+    ASSERT_EQ(e2.pin_target.at("G01_L1C"), 3.5);
+    // The key vanishes for one election (nobody tracks G01).
+    auto c3 = makeCensus({{"STA_B", {"G02"}, 5}});
+    AnchorHandoverLedger led3;
+    led3.primed = true;
+    elect(c3, e2, &led3);
+    EXPECT_FALSE(e2.pin_target.count("G01_L1C")) << "target dies with the incumbent";
+    // Return: incumbent-less -> 0-pin, marked.
+    auto c4 = makeCensus({{"STA_B", {"G01"}, 5}});
+    AnchorHandoverLedger led4;
+    led4.primed = true;
+    led4.value_abs[{0, "G01_L1C"}] = {3.5, kGoodVar};   // present, but must be ignored
+    elect(c4, e2, &led4, true, kMaxVar, &reref);
+    EXPECT_EQ(pinOf(c4, "STA_B", "G01_L1C"), 0.0)
+        << "a first sighting has no outgoing frame to inherit";
+    EXPECT_TRUE(reref.count({"G01", "L1C"})) << "and it is marked";
 }
 
 /// The null-pointer path is the OFF contract: nothing is populated, nothing
@@ -596,20 +698,20 @@ TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheEnsembleDatum) {
     EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
 }
 
-/// THE INCOHERENT PAIRING (review finding, confirmed): with the continuous
-/// handover armed the frame step lands at T+1 (the ledger pin reverts —
-/// §5.07.3) while the carry mark covers T, so the pair would marginalize the
-/// valid fold and miss the stale one.  The loader resolves the conflict in the
-/// reref's favour — it alone closed the churn (§5.08.3) — by disarming the
-/// handover knob, loudly.  Every handover then takes the honest COLD path,
-/// where mark-at-T is provably correct.
-TEST(PhaseDatumHandoverLoader, CarryRerefDisarmsTheContinuousPairing) {
+/// THE PAIRING, COMPOSED (R2, §5.09).  The 2026-08-14 review disarmed this pair
+/// because the unsticky ledger pin deferred the frame step to T+1 while the
+/// carry mark covered T.  The R2 sticky target removes the revert and the
+/// election marks only COLD re-realizations, so each mechanism treats exactly
+/// its own edge — continuous handovers keep frame and carries, cold handovers
+/// mark + marginalize + erase.  Both knobs must now survive the loader.
+TEST(PhaseDatumHandoverLoader, CarryRerefComposesWithTheContinuousPairing) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_pairing",
                         "    \"phase_datum_prioritized\": true,\n"
                         "    \"phase_datum_handover_continuous\": true,\n"
                         "    \"phase_anchor_carry_reref\": true,\n", cfg));
     EXPECT_TRUE(cfg.networkPhaseAnchorCarryReref()) << "the reref survives";
-    EXPECT_FALSE(cfg.networkPhaseDatumHandoverContinuous())
-        << "the continuous handover must be disarmed under the pairing";
+    EXPECT_TRUE(cfg.networkPhaseDatumHandoverContinuous())
+        << "R2: the continuous handover survives the pairing (the T+1 revert is "
+           "gone, so the mark-timing conflict no longer exists)";
 }

@@ -511,5 +511,93 @@ pipeline and are deliberately absent:
       (no GIM source) and is warned-and-skipped if enabled.
 \end{itemize}
 
+\subsection{Assessing a real-time run}\label{sec:rt-assess}
+
+A streaming run cannot be graded the way a simulated one is: there is no
+answer key, and the self-referenced statistic the ordinary state viewer
+reports (scatter about the run's own median) is blind to any error
+\emph{common} to every epoch, which is precisely the error a
+correction-driven pipeline is most likely to make.  A static receiver on
+a surveyed mark supplies the missing datum.  Let
+$\rxpos_{\text{ref}}$ be the surveyed antenna position
+(\texttt{receiver.reference\_position\_ecef}) with geodetic latitude and
+longitude $(\varphi,\lambda)$, and $\hat{\rxpos}_k$ the filter's
+posterior position at epoch $k$.  The error is the ECEF difference
+rotated into the local horizon frame at the \emph{reference} point,
+\begin{equation}
+\begin{bmatrix} e_k \\ n_k \\ u_k \end{bmatrix}
+= \bm{R}(\varphi,\lambda)\,
+  \bigl(\hat{\rxpos}_k - \rxpos_{\text{ref}}\bigr),
+\qquad
+\bm{R} =
+\begin{bmatrix}
+-\sin\lambda & \cos\lambda & 0\\
+-\sin\varphi\cos\lambda & -\sin\varphi\sin\lambda & \cos\varphi\\
+ \cos\varphi\cos\lambda &  \cos\varphi\sin\lambda & \sin\varphi
+\end{bmatrix},
+\label{eq:rt-enu-error}
+\end{equation}
+with $\varepsilon^{\text{3D}}_k = \lVert(e_k,n_k,u_k)\rVert$ and
+$\varepsilon^{\text{H}}_k = \lVert(e_k,n_k)\rVert$.  Because the
+difference is taken in ECEF before rotating, the rotation origin cancels
+and \eqref{eq:rt-enu-error} is exact rather than a local-tangent
+approximation.
+
+\paragraph{Convergence must be suffix-stable.}
+The naive convergence time --- the first epoch whose error falls below a
+threshold --- is not a property of the solution but of its noise: a
+float PPP-RTK trajectory dips under any loose bound long before it
+\emph{holds} it, and a run that later diverges scores identically to one
+that does not.  Define instead, for threshold $\theta$,
+\begin{equation}
+k^{\star}(\theta) = \min\Bigl\{\,k :
+  \max_{j \ge k}\ \varepsilon^{\text{3D}}_j \le \theta \,\Bigr\},
+\label{eq:rt-converge}
+\end{equation}
+the first epoch from which the error stays within $\theta$ for the
+\emph{entire remainder} of the run ($k^\star = \varnothing$ when no such
+epoch exists, which is the honest verdict for a run that never settles).
+The suffix maximum is computed in one reverse cumulative pass, and
+non-finite epochs are treated as violations, so a dropout breaks the
+hold rather than being skipped over.  Reporting the ladder
+$\theta \in \{1.0, 0.5, 0.2, 0.1\}$\,m rather than a single number keeps
+the metric informative for runs at very different quality levels, and
+the steady-state statistics are then taken over $k \ge k^{\star}$ of the
+coarsest achieved rung --- so the convergence transient is excluded from
+the accuracy claim by construction, and the window is stated alongside
+the number it produced.
+
+\paragraph{Covariance credibility.}
+Grading the solution against the surveyed point also exposes whether the
+filter's own uncertainty is honest.  With the position block
+$\covM_k^{xx}$ of the posterior covariance, the rotation-invariant
+scalar
+\begin{equation}
+\sigma^{\text{3D}}_k = \sqrt{\operatorname{tr} \covM_k^{xx}}
+= \sqrt{\sigma_x^2 + \sigma_y^2 + \sigma_z^2}
+\label{eq:rt-sigma3d}
+\end{equation}
+is compared against $\varepsilon^{\text{3D}}_k$ directly, its trace
+being invariant under the rotation \eqref{eq:rt-enu-error} so no
+per-axis horizon $\sigma$ need be fabricated from a
+diagonal-only trace.  A float solution whose error persistently exceeds
+$3\sigma^{\text{3D}}$ is not merely inaccurate but
+\emph{overconfident} --- the usual signature of unmodelled correction
+error being absorbed by ambiguity and bias states whose formal variances
+never learn of it.  This is the same covariance-optimism diagnostic the
+simulator dashboard applies against its answer key, transported to a
+field run by substituting the surveyed mark for the truth trajectory.
+
+\paragraph{What the reference does not certify.}
+The surveyed point grades \emph{position} only.  A static run cannot
+separate a receiver-clock error from a common-mode range error, and
+under BSSD (\Cref{sec:rt-epoch}) there is no receiver-clock state to
+grade in the first place; the per-satellite bias states are gauge-fixed,
+so their absolute values are not verifiable against anything external
+either.  A position that grades well therefore certifies the geometry
+and the correction stack \emph{jointly}, not any single component of
+it.  The report built by \texttt{pyviz/run\_report.py --run-config}
+implements \eqref{eq:rt-enu-error}--\eqref{eq:rt-sigma3d} verbatim.
+
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

@@ -44,7 +44,9 @@ class TraceContext:
     def __init__(self, log_dir: Optional[str] = None, *,
                  network_config: Optional[str] = None,
                  data_root: Optional[str] = None,
-                 truth_dir: Optional[str] = None):
+                 truth_dir: Optional[str] = None,
+                 run_config: Optional[str] = None,
+                 ref_ecef=None):
         self.log_dir = os.path.abspath(log_dir) if log_dir else default_log_dir()
         #: Optional path to the NETWORK run's config JSON -- lets the geographic
         #: viewers resolve station positions/roles when no roster CSV was emitted.
@@ -56,6 +58,16 @@ class TraceContext:
         #: viewers light up; when unset they auto-skip (a plain processor run is
         #: unchanged).  Mirrors the ``network_config`` / ``data_root`` pattern.
         self.truth_dir = os.path.abspath(truth_dir) if truth_dir else None
+        #: Optional path to THIS run's processor config JSON (comments tolerated,
+        #: read via :mod:`gnssviz.runconfig`).  Supplies the surveyed reference
+        #: position (``receiver.reference_position_ecef``) to the
+        #: ``rt_scorecard`` viewer and the ``app_mode`` to the report title.
+        self.run_config = os.path.abspath(run_config) if run_config else None
+        #: Optional explicit surveyed reference ECEF ``(x, y, z)`` [m].  Wins
+        #: over ``run_config``'s block when both are given; ``None`` (with no
+        #: usable ``run_config``) auto-skips the truth-referenced scorecard.
+        self.ref_ecef = (tuple(float(v) for v in ref_ecef)
+                         if ref_ecef is not None else None)
 
     def path(self, csv_name: str) -> str:
         """Full path of a trace CSV inside this run's folder."""

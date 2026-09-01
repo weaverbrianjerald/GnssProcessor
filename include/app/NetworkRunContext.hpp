@@ -604,6 +604,18 @@ namespace GnssProcessor {
         //    first sighting, not a fault — matches the last_pivot never-erase policy).
         std::map<std::string, std::string> anchor_incumbent;
         std::map<std::string, std::string> this_epoch_anchor;
+        /// R2 STICKY CONTINUOUS TARGET (SPEC_pivot_visibility_gauge_defect §5.09):
+        /// the pin target each incumbent anchor is currently realized at, per
+        /// (sat,signal) "sat_signal" key.  Without it the continuous handover is a
+        /// one-epoch deferral — the ledger pin reverts to 0 at T+1 (§5.07.3) and
+        /// the frame steps anyway, which is why §5.0 measured it null.  Entries
+        /// exist only for keys whose LAST handover was continuous (a cold pin or a
+        /// first sighting realizes the 0-frame and stores nothing); rebuilt
+        /// alongside anchor_incumbent each election, so a key that leaves the
+        /// union drops its target with its incumbent.  Empty forever unless
+        /// `knobs.pd_handover_continuous`; deliberately NOT snapshotted, exactly
+        /// like the ledger below (a resume's first handover is honestly cold).
+        std::map<std::string, double> anchor_pin_target;
         /// TWO-EDGE CONTINUOUS HANDOVER ledger (docs/SPEC_pivot_visibility_gauge_defect.md):
         /// each anchor-candidate station's ABSOLUTE ambiguity estimate from the
         /// PREVIOUS epoch's solve, so a handover can re-pin the successor in the

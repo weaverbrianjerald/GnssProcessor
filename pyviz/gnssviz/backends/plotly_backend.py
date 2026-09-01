@@ -98,10 +98,23 @@ class PlotlyBackend(Backend):
                     showlegend=leg and tr.show_in_legend and tr.label is not None),
                     row=row, col=1, secondary_y=(tr.axis == "right"))
             elif isinstance(tr, Scatter):
+                marker = dict(size=max(3, tr.size ** 0.5 * 2),
+                              symbol=_symbol(tr.marker), opacity=tr.alpha)
+                if tr.c is not None:
+                    # Per-point scalar through the axes cmap/clim (mirror of the
+                    # PolarScatter branch; the mpl backend maps c the same way).
+                    marker.update(color=_f(tr.c), colorscale=_colorscale(spec.cmap)
+                                  if spec.cmap is not None else "Viridis",
+                                  showscale=spec.colorbar is not None,
+                                  colorbar=(dict(title=spec.colorbar.label)
+                                            if spec.colorbar else None))
+                    if spec.clim is not None:
+                        marker.update(cmin=spec.clim[0], cmax=spec.clim[1])
+                else:
+                    marker.update(color=_rgb(tr.color))
                 gofig.add_trace(go.Scatter(
                     x=_np(tr.x), y=_f(tr.y), mode="markers", name=tr.label,
-                    marker=dict(color=_rgb(tr.color), size=max(3, tr.size ** 0.5 * 2),
-                                symbol=_symbol(tr.marker), opacity=tr.alpha),
+                    marker=marker,
                     showlegend=leg and tr.show_in_legend and tr.label is not None),
                     row=row, col=1, secondary_y=(tr.axis == "right"))
             elif isinstance(tr, Band):

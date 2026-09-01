@@ -374,6 +374,22 @@ public:
         const Datum& datum, bool carry_aware = false) const;
 
     /**
+     * @brief BORDER-EXACT conditional variance diagonal: @f$\mathrm{diag}
+     *        (N_{rr}^{-1})@f$ restricted to @p local_cols — the local columns'
+     *        uncertainty RELATIVE to the shared frame, with the entire border
+     *        treated as known (@f$\Sigma_{ss}\equiv 0@f$).
+     *
+     * The anchor-handover ledger re-validation needs exactly this flavor
+     * (SPEC_pivot_visibility_gauge_defect §5.09.1): the shared phase-bias
+     * column's own uncertainty moves the pin target and the realized frame
+     * TOGETHER, so it is common-mode in the handover step; gating on the
+     * border-inclusive marginal (@ref conditionalLocalVarianceDiag) measures
+     * the wrong quantity in both directions.  Requires a prior @ref solve.
+     */
+    Eigen::VectorXd pureConditionalLocalVarianceDiag(
+        std::size_t station, const std::vector<Eigen::Index>& local_cols) const;
+
+    /**
      * @brief Regression of one local column on the shared border and its pure
      *        conditional variance — the ingredients of the rigorous between-epoch
      *        conditional carry (Card 1, @c network.carry_conditional_coupling).

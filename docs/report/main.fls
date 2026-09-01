@@ -464,6 +464,7 @@ INPUT observation_physics.tex
 INPUT .\observation_physics.tex
 INPUT .\observation_physics.tex
 INPUT observation_physics.tex
+INPUT C:\Users\weaverb\AppData\Local\Programs\MiKTeX\fonts\tfm\public\cm\cmitt10.tfm
 INPUT .\kalman_smoother.tex
 INPUT .\kalman_smoother.tex
 INPUT kalman_smoother.tex

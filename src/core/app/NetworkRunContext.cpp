@@ -2287,11 +2287,16 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 xr  = est.reconstructStation(est_idx_hv, x_s);
                 // The pin is a hard ~1e10-weight constraint, so the re-coupling edge
                 // must be able to RE-VALIDATE the value before stamping it in
-                // (invariant #7).  Same conditional-diagonal harvest the phase-
-                // leveling carry uses for its own priors — cheap per-column, not a
-                // full per-station inverse.
-                vhv = est.conditionalLocalVarianceDiag(est_idx_hv, cols_hv,
-                                                       plan.shared_datum);
+                // (invariant #7).  BORDER-EXACT flavor (§5.09.1), deliberately NOT
+                // the leveling carry's border-inclusive harvest: the shared phase-
+                // bias column's uncertainty moves the pin target and the realized
+                // frame TOGETHER (common-mode in the handover step), and folding it
+                // in refused 552/582 settled successors on the 12 h quiet flagship
+                // while §5.0's G21 (+17.07 m, 378 σ) sailed under a 1.0 m² ceiling —
+                // the marginal gates the wrong quantity in both directions.  What
+                // the ceiling must bound is the successor's error RELATIVE to the
+                // shared frame, which is what this returns.
+                vhv = est.pureConditionalLocalVarianceDiag(est_idx_hv, cols_hv);
             } catch (...) { continue; }
             for (std::size_t a = 0; a < R.qc_amb.size(); ++a) {
                 const PlAmb& pa = R.qc_amb[a];

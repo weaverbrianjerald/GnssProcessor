@@ -61,6 +61,25 @@ EXAM_DASHBOARD_OFF = {
 }
 
 
+#: Viewers dropped from the **real-time dashboard** (``--run-config`` with
+#: ``app_mode=real_time``) by default.  Same composition-not-judgement rule as
+#: :data:`EXAM_DASHBOARD_OFF`, with one extra constraint the exam never had: an
+#: RT replay traces at 1 Hz, so the per-(sat,signal) slip/residual internals run
+#: to tens of MB of CSV and an *interactive* (plotly) report embedding them blew
+#: past 70 MB — the composition below keeps the standing artifact in the
+#: 10-20 MB class.  Bring any back with ``--only <name>`` or all with ``--all``.
+RT_DASHBOARD_OFF = {
+    "measurement_residuals": "per-signal residual series (heavy at 1 Hz; on demand)",
+    "residual_strip": "raster of the same residuals",
+    "ambiguities": "raw float ambiguities are unreadable without time-differencing",
+    "mwwl_trace": "internal MW slip-detector series (the report keeps the epoch strips)",
+    "turbo_edit_trace": "internal TurboEdit detector series",
+    "slip_gate_strip": "internal slip-detector gate strip",
+    "slip_conditions": "internal slip-detector condition panels",
+    "iono_strip": "raster duplicate of the ionosphere line panels",
+}
+
+
 def _resolve_verify_report(log_dir: str, explicit):
     """Resolve the verify_report.json path: explicit flag, else auto-detect."""
     if explicit:
@@ -100,6 +119,8 @@ def main(argv=None) -> int:
                     help="output HTML path (default: <log_dir>/gnss_report.html)")
     ap.add_argument("--only", nargs="*", default=None,
                     help="only run these viewer names (e.g. state dops)")
+    ap.add_argument("--title", default=None,
+                    help="report <h1>/<title> override (e.g. the simnet dashboard)")
     ap.add_argument("--exclude", nargs="*", default=None,
                     help="drop these viewer names from the report (applied after --only)")
     ap.add_argument("--all", action="store_true",
@@ -113,6 +134,15 @@ def main(argv=None) -> int:
     ap.add_argument("--truth-dir", default=None,
                     help="GnssSimulator answer-key folder (truth_*.csv + "
                          "scenario_summary.json); lights up the exam_* viewers")
+    ap.add_argument("--run-config", default=None,
+                    help="THIS run's processor config JSON (// comments ok). "
+                         "Supplies receiver.reference_position_ecef to the "
+                         "rt_scorecard viewer/banner, and flips the title for "
+                         "app_mode=real_time runs")
+    ap.add_argument("--ref-ecef", nargs=3, type=float, default=None,
+                    metavar=("X", "Y", "Z"),
+                    help="surveyed reference ECEF [m] for rt_scorecard "
+                         "(overrides the run config's block)")
     ap.add_argument("--verify-report", default=None,
                     help="verify_report.json for the PASS/FAIL banner + scorecard "
                          "(default: auto-detect <log_dir>/verify_report.json)")
@@ -147,7 +177,8 @@ def main(argv=None) -> int:
     from gnssviz.backends import get_backend
 
     ctx = TraceContext(args.log_dir, network_config=args.network_config,
-                       data_root=args.data_root, truth_dir=args.truth_dir)
+                       data_root=args.data_root, truth_dir=args.truth_dir,
+                       run_config=args.run_config, ref_ecef=args.ref_ecef)
 
     # Exam mode: bind the verify report + default the standardized panels on.
     is_exam = bool(args.truth_dir)
@@ -155,10 +186,20 @@ def main(argv=None) -> int:
     ctx.verify_report = verify_path
     std_residuals = args.std_residuals if args.std_residuals is not None else is_exam
 
+    # Real-time flavour: --run-config declaring app_mode=real_time retitles the
+    # report; a surveyed reference (from either source) adds the scorecard banner.
+    from gnssviz import runconfig
+    from gnssviz.viewers.rt_scorecard import resolve_reference, rt_banner_html
+    is_rt = runconfig.is_realtime_config(runconfig.load_run_config(ctx.run_config))
+    ref = resolve_reference(ctx)
+
     print(f"=== gnssviz: {ctx.log_dir} ===")
     if is_exam:
         print(f"    truth dir: {ctx.truth_dir}")
         print(f"    verify report: {verify_path or '(none found)'}")
+    if ref is not None:
+        print(f"    surveyed reference: {ref[0]:.3f} {ref[1]:.3f} {ref[2]:.3f}"
+              f"  ({ref[3]})")
     registry = _registry_for(std_residuals)
     # Exam-dashboard composition (EXAM_DASHBOARD_OFF).  Skipped when the caller
     # has already named an explicit subset (--only) or opted everything in (--all),
@@ -167,6 +208,12 @@ def main(argv=None) -> int:
         registry = [v for v in registry if v.name not in EXAM_DASHBOARD_OFF]
         print("    dashboard: "
               + ", ".join(sorted(EXAM_DASHBOARD_OFF))
+              + "  off by default (--all, or --only <name>, to include)")
+    # Real-time dashboard composition (RT_DASHBOARD_OFF), same override rules.
+    if is_rt and not is_exam and not args.only and not args.all:
+        registry = [v for v in registry if v.name not in RT_DASHBOARD_OFF]
+        print("    dashboard: "
+              + ", ".join(sorted(RT_DASHBOARD_OFF))
               + "  off by default (--all, or --only <name>, to include)")
     if args.exclude:
         drop = set(args.exclude)
@@ -191,13 +238,17 @@ def main(argv=None) -> int:
     else:
         from gnssviz.report import write_html_report
         output = args.output or os.path.join(ctx.log_dir, "gnss_report.html")
-        title = ("GnssSimulator exam run report" if is_exam
-                 else "GnssProcessor run report")
+        title = args.title or ("GnssSimulator exam run report" if is_exam
+                               else "GnssProcessor real-time run report" if is_rt
+                               else "GnssProcessor run report")
         # Verifier PASS/FAIL banner + per-check chip row (exam runs with a report).
         extra_html = ""
         if is_exam and verify_path:
             from gnssviz.viewers.exam_common import verify_report, verifier_banner_html
             extra_html = verifier_banner_html(verify_report(ctx), verify_path)
+        # Surveyed-reference scorecard banner (real-time / rooftop runs; "" when
+        # no reference resolves, so other reports are unchanged).
+        extra_html += rt_banner_html(ctx)
         # The exam dashboard is a polished artifact: suppress the "Skipped viewers"
         # plumbing list (viewers that auto-skip for lack of their inputs are expected,
         # not something the reader should see).

@@ -7519,14 +7519,21 @@ namespace GnssProcessor {
             network_phase_datum_handover_continuous_ = false;
         }
         if (network_phase_datum_handover_continuous_)
-            log->info("Network producer (PB-GAUGE HANDOVER, two-edge): an anchor handover now "
-                      "pins the INCOMING anchor at its own absolute ambiguity estimate in the "
-                      "OUTGOING frame instead of at 0, so the gauge change is an S-transform "
-                      "and the emitted (sat,signal) family does not step.  Both edges are "
-                      "counted and traced (PBGAUGE rows); a successor with no ledger entry "
-                      "(fresh arc / first epoch) still pins at 0 and is counted as a COLD "
-                      "handover — an unavoidable re-realization the consumer is TOLD about.  "
-                      "Ledger is harvested post-solve and consumed one epoch later.");
+            log->info("Network producer (PB-GAUGE HANDOVER, two-edge + R2 sticky target): an "
+                      "anchor handover pins the INCOMING anchor at its own absolute ambiguity "
+                      "estimate in the OUTGOING frame instead of at 0, and the target is "
+                      "STICKY — re-applied every epoch of the successor's tenure — so the "
+                      "gauge change is an S-transform whose frame persists (the pre-R2 "
+                      "one-epoch deferral reverted to 0 at T+1 and measured null, "
+                      "SPEC_pivot_visibility_gauge_defect §5.0/§5.09).  Both edges are "
+                      "counted and traced (PBGAUGE rows); a successor with no ledger entry, "
+                      "or one whose conditional variance exceeds "
+                      "network.phase_datum_handover_max_var_m2 ({} m^2 — keep this TIGHT: the "
+                      "inherited frame is preserved only to the ledger value's own error), "
+                      "still pins at 0 and is counted as a COLD handover — an unavoidable "
+                      "re-realization the consumer is TOLD about.  Ledger is harvested "
+                      "post-solve and consumed one epoch later.",
+                      network_phase_datum_handover_max_var_m2_);
         // QUEUE item 1(d) — same INERT-guard ladder as the handover knob above,
         // for the same reasons: no anchors ⇒ no anchor handovers ⇒ nothing to
         // re-reference.  The eq34 guard is FIRST, deliberately unlike the ladder
@@ -7558,27 +7565,28 @@ namespace GnssProcessor {
             network_phase_anchor_carry_reref_ = false;
         }
         // The continuous-handover PAIRING is INCOHERENT with the reref and is
-        // disarmed on the handover side (review finding, 2026-08-14): under the
-        // ledger pin the frame step lands at T+1 — the documented one-epoch
-        // revert (SPEC §5.07.3) — while the reref mark covers T only, so the
-        // pairing would marginalize the one fold that was IN-frame and miss the
-        // stale one, with run-end telemetry claiming the family was treated.
-        // 1(d) alone measured strictly better than the continuous handover ever
-        // did on its own target channel (§5.08.3 vs §5.0.1), so the reref wins
-        // the conflict.  Compose them only after an R2-style sticky target or a
-        // T+1-pending mark exists AND is validated.
+        // COMPOSED as of R2 (SPEC §5.09).  The 2026-08-14 review disarmed this
+        // pairing because the ledger pin was a one-epoch deferral: the frame
+        // step landed at T+1 (§5.07.3) while the reref mark covered T, so the
+        // pair marginalized the valid fold and missed the stale one.  The R2
+        // sticky target removes the T+1 revert — a continuous handover now
+        // realizes the inherited frame for the successor's whole tenure — and
+        // the election marks ONLY cold re-realizations, so each mechanism
+        // treats exactly its own edge: continuous handovers keep frame AND
+        // carries; cold handovers mark, marginalize and erase as validated in
+        // §5.08.3.  This composition is what stops the reref's arc truncation
+        // (582/621 cold handovers erased 10 236 leveling carries on a 12 h
+        // zero-slip fixture, SPEC §5.09).
         if (network_phase_anchor_carry_reref_
-            && network_phase_datum_handover_continuous_) {
-            log->warn("Network (phase-anchor carry reref): "
-                      "network.phase_datum_handover_continuous is DISABLED under "
-                      "network.phase_anchor_carry_reref — the ledger pin defers the frame "
-                      "step to T+1 (SPEC_pivot_visibility_gauge_defect §5.07.3) while the "
-                      "carry mark covers T, so the pair would marginalize the valid fold "
-                      "and miss the stale one.  The reref alone closed the churn "
-                      "(§5.08.3); every handover now takes the honest COLD path, where "
-                      "the mark timing is correct.");
-            network_phase_datum_handover_continuous_ = false;
-        }
+            && network_phase_datum_handover_continuous_)
+            log->info("Network (phase-anchor carry reref + continuous handover, R2 "
+                      "composition): CONTINUOUS handovers inherit the outgoing frame via a "
+                      "sticky ledger target and keep the family's carries; COLD handovers "
+                      "(no ledger value, or conditional variance above "
+                      "network.phase_datum_handover_max_var_m2) re-realize honestly and are "
+                      "marked for the one-epoch carry marginalization + leveling-carry "
+                      "erase.  Keep the variance ceiling TIGHT — the preserved frame is "
+                      "only as good as the ledger value it pins.");
         if (network_phase_anchor_carry_reref_)
             log->info("Network producer (PHASE_ANCHOR carry re-reference, QUEUE 1(d)): at an "
                       "anchor handover the (sat,signal) family's shared phase-bias carry is "

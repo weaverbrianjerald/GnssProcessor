@@ -321,6 +321,34 @@ def fmt(s, unit=""):
 
 
 # --------------------------------------------------------------------------- #
+# Per-epoch series collection (--series)
+#
+# Every channel grader below optionally records per-epoch aggregates of the SAME
+# residuals it grades (same transform, same code path — never a re-derivation,
+# which is how a series would silently drift from the verdict).  The collector is
+# a plain list of (tow, channel, id, value, n) rows; None disables collection and
+# leaves every grader byte-identical in output and behavior.
+# --------------------------------------------------------------------------- #
+
+def _rms(vals):
+    return math.sqrt(sum(v * v for v in vals) / len(vals)) if vals else None
+
+
+def _med_abs(vals):
+    if not vals:
+        return None
+    a = sorted(abs(v) for v in vals)
+    return a[len(a) // 2]
+
+
+def _srow(series, tow, channel, sid, value, n=None):
+    """Append one series row; a None value (empty population) is skipped."""
+    if series is None or value is None:
+        return
+    series.append((tow, channel, sid, value, "" if n is None else n))
+
+
+# --------------------------------------------------------------------------- #
 # Channel graders
 # --------------------------------------------------------------------------- #
 
@@ -386,7 +414,7 @@ def if_lump_by_sat(osb_truth, pin):
     return lumps
 
 
-def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
+def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None, series=None):
     """C record: transform truth into the producer's basis, then compare.
 
     Wire meaning (contract section B.1):
@@ -406,7 +434,13 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
     res, res_vf, contrast_res = [], [], []
     n_no_sigma, n_pivot_skipped = 0, 0
 
-    for ep in epochs[start:]:
+    # Settled epochs feed the graded stats exactly as before; when a series
+    # collector is bound, the pre-settle epochs run the SAME transform so the
+    # ignition transient is visible on the time axis (marked, never graded).
+    for i_ep, ep in enumerate(epochs):
+        settled = i_ep >= start
+        if series is None and not settled:
+            continue
         tow = round(ep["tow"], 3)
         # The clock gauge is PER CONSTELLATION (one pinned pivot each), so the pivot
         # and its truth must be resolved per satellite.  Reading pivots["G"] alone
@@ -416,19 +450,26 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
         for cst, pv in pivots.items():
             piv_truth_of[cst] = sc_truth.get((tow, pv), 0.0) + lump.get(pv, 0.0)
 
+        ep_e, ep_sig = [], []
         for sat, c0 in ep["clocks"].items():
             if not sat:
                 continue
             cst = sat[0]
             piv = pivots.get(cst)
             if piv and sat == piv:
-                n_pivot_skipped += 1
+                if settled:
+                    n_pivot_skipped += 1
                 continue                      # pinned to 0; nothing to grade
             piv_truth = piv_truth_of.get(cst, 0.0)
             t = sc_truth.get((tow, sat), 0.0) + lump.get(sat, 0.0) - piv_truth  # S[truth]
             e = c0 - t
-            res.append(e)
+            ep_e.append(e)
             sig = ep["ura"].get(sat)
+            if sig is not None and sig > 0:
+                ep_sig.append(sig)
+            if not settled:
+                continue
+            res.append(e)
             if sig is None or not (sig > 0):
                 n_no_sigma += 1               # blank means "not emitted", never 0
             else:
@@ -440,6 +481,7 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
         # Contrasts are formed WITHIN a constellation only.  A G-vs-E clock difference
         # is not datum-invariant — each constellation carries its own pivot, so the
         # contrast retains the inter-system bias and would read as a residual.
+        ep_con = []
         by_cst = {}
         for s in ep["clocks"]:
             if s:
@@ -450,7 +492,13 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
                 a, b = group[i], group[i + 1]
                 ta = sc_truth.get((tow, a), 0.0) + lump.get(a, 0.0)
                 tb = sc_truth.get((tow, b), 0.0) + lump.get(b, 0.0)
-                contrast_res.append((ep["clocks"][a] - ep["clocks"][b]) - (ta - tb))
+                ep_con.append((ep["clocks"][a] - ep["clocks"][b]) - (ta - tb))
+        if settled:
+            contrast_res.extend(ep_con)
+
+        _srow(series, tow, "clk_rms", "", _rms(ep_e), len(ep_e))
+        _srow(series, tow, "clk_sig_med", "", _med_abs(ep_sig), len(ep_sig))
+        _srow(series, tow, "clk_contrast_rms", "", _rms(ep_con), len(ep_con))
 
     vf = sum(res_vf) / len(res_vf) if res_vf else None
     return {"residual": stats(res), "contrast": stats(contrast_res), "vf": vf,
@@ -458,7 +506,7 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None):
             "pivot": dict(pivots), "n_pivot_skipped": n_pivot_skipped}
 
 
-def grade_phase(epochs, settle_frac):
+def grade_phase(epochs, settle_frac, series=None):
     """P record: the between-satellite single difference must be integer x lambda.
 
     In the INT posture (no satellite phase bias injected) the estimable content of
@@ -467,8 +515,12 @@ def grade_phase(epochs, settle_frac):
     the invariant-#5 mistake: the datum receiver's ambiguity rides inside the bias.
     """
     n_ep = len(epochs)
+    start = int(n_ep * settle_frac)
     fracs = {}
-    for ep in epochs[int(n_ep * settle_frac):]:
+    for i_ep, ep in enumerate(epochs):
+        settled = i_ep >= start
+        if series is None and not settled:
+            continue
         by_sig = {}
         for (sat, sig), v in ep["phase"].items():
             if not sat:
@@ -479,6 +531,7 @@ def grade_phase(epochs, settle_frac):
             # Pooling them was harmless while only GPS emitted; on a GPS+Galileo
             # posture-C product it would difference across two datums.
             by_sig.setdefault((sat[0], sig), []).append((sat, v))
+        ep_fr = {}
         for (cst, sig), items in by_sig.items():
             lam = wavelength(cst, sig)
             if not lam or len(items) < 2:
@@ -488,11 +541,17 @@ def grade_phase(epochs, settle_frac):
             for _, v in items[1:]:
                 cyc = (v - ref) / lam
                 f = cyc - round(cyc)
-                fracs.setdefault(f"{cst}:{sig}", []).append(f)
+                ep_fr.setdefault(f"{cst}:{sig}", []).append(f)
+                if settled:
+                    fracs.setdefault(f"{cst}:{sig}", []).append(f)
+        if series is not None:
+            tow = round(ep["tow"], 3)
+            for key, fl in ep_fr.items():
+                _srow(series, tow, "phase_frac_med", key, _med_abs(fl), len(fl))
     return {sig: stats(v) for sig, v in fracs.items()}
 
 
-def grade_zwd(run_dir, truth, settle_frac):
+def grade_zwd(run_dir, truth, settle_frac, series=None):
     """ZWD: not gauge-bearing, so grade it ABSOLUTELY, with the one clean vf.
 
     network_zwd.csv is the only per-station state channel emitted with a
@@ -513,15 +572,26 @@ def grade_zwd(run_dir, truth, settle_frac):
             tt[(name, round(float(r["tow_s"]), 3))] = float(r["zwd_m"])
 
     n = len(rows)
+    start = int(n * settle_frac)
     res, vfs, missing = [], [], 0
-    for r in rows[int(n * settle_frac):]:
-        key = (r["station"], round(float(r["tow"]), 3))
+    for i_r, r in enumerate(rows):
+        settled = i_r >= start
+        if series is None and not settled:
+            continue
+        tow = round(float(r["tow"]), 3)
+        key = (r["station"], tow)
         if key not in tt:
-            missing += 1
+            if settled:
+                missing += 1
             continue
         e = float(r["zwd_m"]) - tt[key]
-        res.append(e)
+        _srow(series, tow, "zwd_e", r["station"], e)
         sd = r.get("std_m", "").strip()
+        if sd:
+            _srow(series, tow, "zwd_sig", r["station"], float(sd))
+        if not settled:
+            continue
+        res.append(e)
         if sd:                                 # blank = did not run, never 0
             s = float(sd)
             if s > 0:
@@ -650,7 +720,7 @@ def osb_truth_by_key(truth):
 
 
 def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=False,
-                    gf_forced=False):
+                    gf_forced=False, series=None):
     """B record: apply the producer's OWN two-stage S-transform to TRUTH (SPEC §4.4).
 
     The wire value is not the injected OSB — it is that OSB seen through the W6
@@ -907,15 +977,18 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
             if abs(gf_t) > 1e-9:
                 n_pin_residual += 1
                 max_pin_residual = max(max_pin_residual, abs(gf_t))
+        ep_res, ep_chmean = [], []
         for (cst, j), items in by_sig.items():
             if not items:
                 continue
             t_mean = sum(t for _, _, t in items) / len(items)
             e_mean = sum(v for _, v, _ in items) / len(items)
             est_channel_mean.append(e_mean)
+            ep_chmean.append(e_mean)
             for s, v, t in items:
                 e = v - (t - t_mean)
                 res.append(e)
+                ep_res.append(e)
                 per_sig.setdefault(f"{cst}:{j}", []).append(e)
                 sv = sig.get((tow, s, j))
                 if sv is None:
@@ -926,6 +999,12 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
                     sd = float(sv)
                     if sd > 0:
                         res_vf.append((e / sd) ** 2)
+        # Series rows exist for the SETTLED window only: this loop's transform
+        # (deliberately) never runs on ignition epochs, and re-running it there
+        # would double the cost for a window the grade refuses to read anyway.
+        _srow(series, tow, "cb_rms", "", _rms(ep_res), len(ep_res))
+        _srow(series, tow, "cb_chmean_absmax", "",
+              max(abs(v) for v in ep_chmean) if ep_chmean else None, len(ep_chmean))
     return {"armed": True, "datum": datum, "refused": refused, "consts": consts,
             "residual": stats(res), "per_signal": {j: stats(v) for j, v in per_sig.items()},
             "vf": (sum(res_vf) / len(res_vf)) if res_vf else None, "n_vf": len(res_vf),
@@ -934,7 +1013,7 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
             "n_pin_residual": n_pin_residual, "max_pin_residual": max_pin_residual}
 
 
-def grade_rx_states(run_dir, truth, settle_frac):
+def grade_rx_states(run_dir, truth, settle_frac, series=None):
     """network_rx_states.csv: the receiver DCB, graded as a CONTRAST (SPEC §4.5).
 
     The estimator carries ONE receiver differential code bias per (station,
@@ -978,7 +1057,7 @@ def grade_rx_states(run_dir, truth, settle_frac):
         per_tow = {}
         for r in clk:
             t = round(float(r["tow"]), 3)
-            if t < ccut or (r["station"], t) not in tclk:
+            if (series is None and t < ccut) or (r["station"], t) not in tclk:
                 continue
             per_tow.setdefault(t, []).append(
                 (r["station"], float(r["value_m"]) - tclk[(r["station"], t)]))
@@ -987,7 +1066,10 @@ def grade_rx_states(run_dir, truth, settle_frac):
                 continue
             items.sort()
             base = items[0][1]
-            clk_contrast.extend(v - base for _, v in items[1:])
+            diffs = [v - base for _, v in items[1:]]
+            _srow(series, t, "rxclk_contrast_rms", "", _rms(diffs), len(diffs))
+            if t >= ccut:
+                clk_contrast.extend(diffs)
     if not cb:
         return {"n_cb": 0, "n_clk": len(clk), "clk_contrast": stats(clk_contrast)}
     tows = sorted({round(float(r["tow"]), 3) for r in cb})
@@ -995,7 +1077,7 @@ def grade_rx_states(run_dir, truth, settle_frac):
     by_tow = {}
     for r in cb:
         t = round(float(r["tow"]), 3)
-        if t < cut or r["station"] not in tt:
+        if (series is None and t < cut) or r["station"] not in tt:
             continue
         by_tow.setdefault(t, []).append((r["station"], float(r["value_m"])))
     contrast, level, sd_used = [], [], []
@@ -1006,9 +1088,13 @@ def grade_rx_states(run_dir, truth, settle_frac):
         # Contrast against the first station in the epoch's set: removes the fleet
         # gauge without needing to know how the producer realized it.
         r0, v0 = items[0]
-        for name, v in items[1:]:
-            contrast.append((v - v0) - (tt[name] - tt[r0]))
-        level.append(sum(v - tt[n] for n, v in items) / len(items))
+        diffs = [(v - v0) - (tt[name] - tt[r0]) for name, v in items[1:]]
+        lvl = sum(v - tt[n] for n, v in items) / len(items)
+        _srow(series, t, "rxdcb_contrast_rms", "", _rms(diffs), len(diffs))
+        _srow(series, t, "rxdcb_level", "", lvl, len(items))
+        if t >= cut:
+            contrast.extend(diffs)
+            level.append(lvl)
     for r in cb:
         s = r.get("std_m", "").strip()
         if s:
@@ -1068,6 +1154,13 @@ def main():
                          "(default 0.5; the level channel needs ~2 h and a short "
                          "arc will otherwise grade the transient)")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--series", default=None,
+                    help="write per-epoch truth-error series to this CSV "
+                         "(tow,channel,id,value,n) for the pyviz simnet viewers.  "
+                         "Clock/phase/ZWD/rx channels cover the FULL run (the settle "
+                         "boundary is emitted as a _settle row and must be drawn, "
+                         "never graded); the code-bias channel covers the settled "
+                         "window only.")
     ap.add_argument("--gf-datum", dest="gf_datum", action="store_true",
                     help="the run folded the per-satellite GEOMETRY-FREE code-bias pin "
                          "(network.code_bias_gf_datum, the Odijk slant posture).  "
@@ -1088,6 +1181,11 @@ def main():
     s_line, epochs, census = parse_products(prod)
     sc_truth, sc_disagree = satclock_truth_by_tow(truth)
     void_reason = consumer_verdict_void_reason(census)
+
+    series = [] if args.series else None
+    if series is not None and epochs:
+        i_settle = min(int(len(epochs) * args.settle_frac), len(epochs) - 1)
+        _srow(series, round(epochs[i_settle]["tow"], 3), "_settle", "", 1.0)
 
     print("=" * 78)
     print("SYNTHETIC MINIMUM NETWORK — truth grade")
@@ -1163,7 +1261,8 @@ def main():
 
     osb_truth, osb_disagree = osb_truth_by_key(truth)
     if_lump = if_lump_by_sat(osb_truth, (s_line or {}).get("cbpin", {}))
-    clk = grade_clock(epochs, s_line, sc_truth, args.settle_frac, if_lump)
+    clk = grade_clock(epochs, s_line, sc_truth, args.settle_frac, if_lump,
+                      series=series)
     print("\n-- C record (satellite clock), truth in the producer's basis " + "-" * 16)
     print(f"  pivot {clk['pivot']} excluded ({clk['n_pivot_skipped']} rows, pinned to 0 by the datum)")
     if if_lump:
@@ -1202,7 +1301,7 @@ def main():
             print("    phase_leveling makes the σ̂0 EWMA available and moves this scale "
                   "SILENTLY — never pool vf across arms that differ in it.")
 
-    ph = grade_phase(epochs, args.settle_frac)
+    ph = grade_phase(epochs, args.settle_frac, series=series)
     print("\n-- P record (phase bias), between-satellite SD, fractional cycles " + "-" * 11)
     if not ph:
         print("  (no population)")
@@ -1227,7 +1326,7 @@ def main():
             if gf_datum:
                 gf_src = "console.txt scrape (no gfpin= on the wire)"
     cb = grade_code_bias(epochs, s_line, osb_truth, sig_rows, args.settle_frac, gf_datum,
-                         gf_forced=bool(args.gf_datum))
+                         gf_forced=bool(args.gf_datum), series=series)
     print("\n-- B record (satellite code bias), truth through the W6 S-transform " + "-" * 8)
     if not cb.get("armed"):
         print("  NOT ARMED: no injected satellite OSB (truth_bias.csv empty/absent).")
@@ -1297,7 +1396,7 @@ def main():
             print(f"  {cb['n_no_truth']} emitted (sat,signal) had no injected truth "
                   f"(or an untransformable pin) and were skipped")
 
-    rx = grade_rx_states(run_dir, truth, args.settle_frac)
+    rx = grade_rx_states(run_dir, truth, args.settle_frac, series=series)
     print("\n-- Receiver states (DCB contrast; level is the absorbed gauge) " + "-" * 14)
     if rx is None:
         print("  no network_rx_states.csv — arm network.trace_rx_states")
@@ -1315,7 +1414,7 @@ def main():
         print(f"  rx clock  {fmt(rx['clk_contrast'], ' m')}   <- between-station "
               f"contrast vs truth_clock.csv (the common part is the network clock datum)")
 
-    zwd = grade_zwd(run_dir, truth, args.settle_frac)
+    zwd = grade_zwd(run_dir, truth, args.settle_frac, series=series)
     print("\n-- ZWD (absolute; the cleanest available vf) " + "-" * 32)
     if zwd is None:
         print("  no network_zwd.csv — arm network.trace_zwd")
@@ -1399,6 +1498,14 @@ def main():
         print(f"  epochs {con['n_epochs']}, AR accepted {con['ar_success']}")
 
     print("\n" + "=" * 78)
+    if args.series:
+        # The consumer channel has no series here on purpose: closed_loop_trace.csv
+        # is already the per-epoch record and the viewers read it directly.
+        with open(args.series, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["tow", "channel", "id", "value", "n"])
+            w.writerows(series)
+        print(f"series -> {args.series}  ({len(series)} rows)")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump({"clock": clk, "phase": ph, "code_bias": cb, "rx_states": rx,

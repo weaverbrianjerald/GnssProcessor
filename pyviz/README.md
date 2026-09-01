@@ -47,6 +47,7 @@ that is what the abstraction buys.
 | Cycle-slip | `mwwl_trace` (mwwl_trace) · `turbo_edit_trace` (turbo_edit_trace) · `slip_gate_strip`, `slip_conditions` (mwwl/turbo) · `graphic_trace`, `gf_trace`, `if_slip_trace` (staged detectors) |
 | **Network** (PPP-RTK NETWORK producer) | `network_map` (network_stations.csv / config) · `network_health` (network_trace) · `network_products` (network_solution) · `network_iono_map` (network_ionosphere) · `network_closed_loop` (closed_loop_trace) |
 | **Exam / simulator truth** (`--truth-dir`) | `exam_scorecard` (verify_report + scenario_summary + truth_scalars) · `exam_position_truth` (truth_position + state_trace) · `exam_truth_lines` (truth_scalars + state_trace) · `exam_track` (truth_position + state_trace) · `exam_map` (truth_position; **satellite-imagery** basemap, coastline fallback) · `exam_visibility` (truth_visibility) · `exam_iono_truth` (truth_atmo) · `exam_skyplot_slips` (truth_atmo + truth_slips) · `exam_slip_timeline` (truth_slips) |
+| **Surveyed reference** (`--run-config` / `--ref-ecef`) | `rt_scorecard` (state_trace vs `receiver.reference_position_ecef`) |
 
 Each viewer auto-skips when its trace CSV is missing/empty (header-only too), so
 one invocation works unchanged across PPP / PPP-RTK / baseline / replay runs.
@@ -140,6 +141,70 @@ The simulator's `all` one-shot and `harness/gnss_verify_loop.ps1` invoke this
 automatically after `verify` (`--backend plotly --plotly-js inline`), writing
 `<run_logs>/dashboard.html`.  The default **matplotlib** backend is offline by
 construction (base64-PNG); use it for a static grader archive.
+
+### Simulated-network dashboard (simnet truth grade)
+
+The network analogue of the exam dashboard: the synthetic minimum-network
+fixture (`docs/SPEC_synthetic_minimum_network.md`) injects truth, and
+`scripts/simnet_grade.py` transforms it into the producer's realized S-basis.
+One wrapper chains grade → report:
+
+```powershell
+cd C:\GnssProcessor
+venv\Scripts\python.exe scripts\simnet_report.py runs\simnet60_quiet_wu93 --run runs\camp60wu_quiet
+# -> <run>\simnet_dashboard.html  (offline, self-contained)
+```
+
+The wrapper writes `simnet_grade.{json,txt}` + `simnet_grade_series.csv` into
+the run's `logs/`, and the `simnet_*` viewers key on them (auto-skip
+everywhere else): `simnet_scorecard` (the grader's verdict + verbatim
+readout), `simnet_theory` (uncombined model / rank defect, the run's realized
+S-basis wire contracts, truth-projection grading — mathtext, offline), and
+`simnet_truth_series` (per-epoch truth error vs published σ — the calibration
+exhibit — plus per-station ZWD, rx DCB contrast/level, phase SD fractional).
+The series is produced by the grader's own transform code path (`--series`),
+so the panels cannot drift from the verdict; the settle boundary is drawn on
+every axis and everything left of it is shown, never graded.
+
+### Real-time / rooftop report (surveyed reference)
+
+A field run has no simulator answer key, but a **static receiver on a surveyed
+mark** does have a truth point: the config's `receiver.reference_position_ecef`.
+Bind the run's own config and the `rt_scorecard` viewer grades the solution
+against it — the field analogue of the exam dashboard.
+
+```powershell
+# Replay the archived SBF capture through the real-time engine, then report it.
+cd C:\GnssProcessor\build\x64-Release\run_rt_workshop
+..\gnss_processor.exe C:\GnssProcessor\config\sbf_replay_covl145.json
+
+cd C:\GnssProcessor\pyviz
+..\venv\Scripts\python.exe run_report.py <run>\logs `
+    --run-config C:\GnssProcessor\config\sbf_replay_covl145.json `
+    -o <run>\rt_report.html --backend plotly --plotly-js inline
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--run-config <cfg.json>` | This run's processor config (`//` and `/* */` comments tolerated). Supplies `receiver.reference_position_ecef` to `rt_scorecard`, adds the summary banner + metric chips, and — for `app_mode: "real_time"` — retitles the report *GnssProcessor real-time run report*. |
+| `--ref-ecef X Y Z` | Surveyed reference ECEF [m] directly; **wins** over the config block (same explicit-beats-auto rule as the C++ path fields). |
+
+Without either flag `rt_scorecard` auto-skips and the banner is empty, so every
+existing report is byte-unchanged. The viewer draws: truth-referenced E/N/U + 3D
+error, a log-scale convergence panel against the `3·σ3D` envelope, the
+post-convergence horizontal scatter (time-coloured, 50 %/95 % circles) and the
+steady-state error CDFs.
+
+**Convergence is suffix-stable**: converged-at-`thr` means the 3D error stays
+`≤ thr` from that epoch *to the end of the run*, so a dip that later diverges
+does not count. The ladder is 1.0 / 0.5 / 0.2 / 0.1 m and steady-state
+statistics run from the coarsest achieved rung (the summary names which, and
+says so explicitly when even 1.0 m was never held).
+
+An RT report drops the per-(sat,signal) slip/residual internals by default
+(`RT_DASHBOARD_OFF` in `run_report.py`) — at 1 Hz those traces are tens of MB
+each and an interactive report embedding them exceeded 70 MB. `--all`, or
+`--only <name>`, brings any of them back.
 
 ### Automatic report at end of a run
 

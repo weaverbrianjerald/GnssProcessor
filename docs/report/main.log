@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.2) (preloaded format=pdflatex 2026.5.1)  5 AUG 2026 10:07
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.2) (preloaded format=pdflatex 2026.5.1)  31 AUG 2026 00:12
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1491,6 +1491,7 @@ Underfull \hbox (badness 5908) in paragraph at lines 295--302
 t ex-ists on the net-work path.
  []
 
+[69]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                removing `math shift' on input line 303.
@@ -1499,7 +1500,7 @@ Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                removing `math shift' on input line 303.
 
-[69] [70]
+[70]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                removing `math shift' on input line 452.
@@ -1719,7 +1720,7 @@ Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 LaTeX Font Warning: Font shape `OT1/cmr/bx/sc' undefined
 (Font)              using `OT1/cmr/bx/n' instead on input line 376.
 
-[115] [116]) (network.tex
+[115] [116] [117]) (network.tex
 Underfull \hbox (badness 1281) in paragraph at lines 50--71
 \OT1/cmtt/m/n/10.95 DifferencingMode::None \OT1/cmr/m/n/10.95 (+20) (\OT1/cmtt/
 m/n/10.95 measurement/MeasurementBuilder\OT1/cmr/m/n/10.95 (+20) ), the ex-plic
@@ -1733,11 +1734,11 @@ Underfull \hbox (badness 1199) in paragraph at lines 50--71
 S-basis da-tum with its null-space rank gate
  []
 
-[117] [118] [119]
+[118] [119] [120]
 Overfull \vbox (181.26999pt too high) has occurred while \output is active []
 
 
-[120] [121] [122]
+[121] [122] [123]
 Underfull \hbox (badness 2689) in paragraph at lines 436--467
 \OT1/cmtt/m/n/10.95 filter/NetworkPhaseDatum\OT1/cmr/m/n/10.95 (+20) ), which i
 s the same one-pin-per-freedom con-straint re-alised
@@ -1750,7 +1751,7 @@ r \OT1/cmr/m/n/10.95 (+20) en-sem-ble (\OT1/cmtt/m/n/10.95 network.phase[]datum
 []ensemble\OT1/cmr/m/n/10.95 (+20) ), and a
  []
 
-[123] [124]
+[124] [125]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                removing `math shift' on input line 608.
@@ -1770,7 +1771,7 @@ y[]products[]path $\OMS/cmtt/m/n/10.95 !$ \OT1/cmtt/m/n/10.95 Application::runC
 onsumerReplay\OT1/cmr/m/n/10.95 (+20) ,
  []
 
-[125]) (network_example.tex [126] [127]
+[126]) (network_example.tex [127] [128]
 Underfull \hbox (badness 1097) in paragraph at lines 256--269
 []\OT1/cmr/m/n/10.95 (+20) This four-satellite, two-receiver in-stance is, up t
 o the ge-om-e-try and the sec-ond fre-
@@ -1783,7 +1784,7 @@ Underfull \hbox (badness 2111) in paragraph at lines 256--269
 95 (+20) ) builds
  []
 
-[128]) (network_carry.tex [129] [130] [131] [132] [133] [134] [135] [136]
+[129]) (network_carry.tex [130] [131] [132] [133] [134] [135] [136] [137]
 Underfull \hbox (badness 10000) in paragraph at lines 821--821
 []|\OT1/cmtt/m/n/10 addStation\OT1/cmr/m/n/10 (+20) , \OT1/cmtt/m/n/10 reduce\O
 T1/cmr/m/n/10 (+20) ,
@@ -1834,7 +1835,7 @@ Underfull \hbox (badness 10000) in paragraph at lines 846--846
 []|\OT1/cmtt/m/n/10 NetworkSbasis\OT1/cmr/m/n/10 (+20) ,
  []
 
-[137]) (pipeline_diagrams.tex
+[138]) (pipeline_diagrams.tex
 Overfull \hbox (24.68227pt too wide) in paragraph at lines 61--61
 []\OT1/cmtt/m/it/9 RealTime $\OMS/cmsy/m/n/9 !$ \OT1/cmtt/m/it/9 RealTimeEngine
 \OT1/cmr/m/it/9 (-20) ;  
@@ -1853,9 +1854,9 @@ Overfull \hbox (17.03683pt too wide) in paragraph at lines 153--153
 
 LaTeX Warning: Float too large for page by 14.04388pt on input line 285.
 
-) (generated_tables.tex (generated/processing_modes.tex [138] [139] [140]
-[141] [142] [143]
-ignored: Infinite glue shrinkage found in box being split [144]
+) (generated_tables.tex (generated/processing_modes.tex [139] [140] [141]
+[142] [143] [144]
+ignored: Infinite glue shrinkage found in box being split [145]
 Underfull \hbox (badness 1178) in paragraph at lines 88--89
 \OT1/cmr/m/n/10.95 (+20) The dif-fer-enc-ing regime is re-solved once per run b
 y the fac-tory be-low (ver-ba-tim from
@@ -1868,26 +1869,26 @@ Underfull \hbox (badness 4242) in paragraph at lines 11--11
  []
 
 
-ignored: Infinite glue shrinkage found in box being split [145]
+ignored: Infinite glue shrinkage found in box being split [146]
 ignored: Infinite glue shrinkage f
-ound in box being split [146]
+ound in box being split [147]
 ignored: Infinite glue shrinkage found in box being split [
-147]
-ignored: Infinite glue shrinkage found in box being split [148]
+148]
+ignored: Infinite glue shrinkage found in box being split [149]
 ignored: Infinite glue shrinka
-ge found in box being split [149]
+ge found in box being split [150]
 ignored: Infinite glue shrinkage found in box being spl
-it [150]
-ignored: Infinite glue shrinkage found in box being split [151]
+it [151]
+ignored: Infinite glue shrinkage found in box being split [152]
 ignored: Infinite glue shr
-inkage found in box being split [152]
+inkage found in box being split [153]
 ignored: Infinite glue shrinkage found in box being
- split [153]
-ignored: Infinite glue shrinkage found in box being split [154]
+ split [154]
+ignored: Infinite glue shrinkage found in box being split [155]
 ignored: Infinite glue
- shrinkage found in box being split [155]
+ shrinkage found in box being split [156]
 ignored: Infinite glue shrinkage found in box b
-eing split [156])
+eing split [157])
 (generated/slip_detectors.tex
 Underfull \hbox (badness 10000) in paragraph at lines 8--8
 []\OT1/cmr/m/n/10.95 (+20) Table 8: Cycle-slip de-tec-tors known to
@@ -1904,7 +1905,7 @@ Overfull \hbox (12.3112pt too wide) in paragraph at lines 19--19
 []|\OT1/cmtt/m/n/10.95 MelbourneWubbena|  
  []
 
-[157]) (generated/state_keys.tex
+[158]) (generated/state_keys.tex
 Overfull \hbox (15.62158pt too wide) in paragraph at lines 26--27
 []|\OT1/cmtt/m/n/10.95 makeGlonassPerSlotIfbKey|  
  []
@@ -1920,13 +1921,13 @@ Overfull \hbox (9.8729pt too wide) in paragraph at lines 31--32
  []
 
 
-ignored: Infinite glue shrinkage found in box being split [158])) [159]
+ignored: Infinite glue shrinkage found in box being split [159])) [160]
 Underfull \hbox (badness 1199) in paragraph at lines 174--174
 []\OT1/cmr/m/n/10.95 (+20) P. J. G. Te-u-nis-sen. ``Gen-er-al-ized in-verses, a
 d-just-ment, the da-tum prob-lem and S-
  []
 
-[160] (main.aux)
+[161] (main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-03-20>
@@ -1936,17 +1937,17 @@ L3 programming layer <2026-03-20>
 LaTeX Font Warning: Some font shapes were not available, defaults substituted.
 
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 68E72FBEA878D5C922D4B905AA72C636;43816.
+(rerunfilecheck)             Checksum: C9697160857636B6B4780BFC69CEB6A9;44012.
 Package logreq Info: Writing requests to 'main.run.xml'.
 \openout1 = `main.run.xml'.
 
  ) 
 Here is how much of TeX's memory you used:
- 41919 strings out of 467691
- 849274 string characters out of 5414020
- 1832472 words of memory out of 5000000
- 69007 multiletter control sequences out of 15000+600000
- 663630 words of font info for 320 fonts, out of 8000000 for 9000
+ 41938 strings out of 467691
+ 849581 string characters out of 5414020
+ 1831886 words of memory out of 5000000
+ 69018 multiletter control sequences out of 15000+600000
+ 663798 words of font info for 321 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  117i,26n,121p,2022b,2104s stack positions out of 10000i,1000n,20000p,200000b,200000s
  <C:\Users\weaverb\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\tc
@@ -1991,9 +1992,9 @@ iKTeX/fonts/type1/public/amsfonts/cm/cmtt9.pfb><C:/Users/weaverb/AppData/Local/
 Programs/MiKTeX/fonts/type1/public/amsfonts/symbols/msam10.pfb><C:/Users/weaver
 b/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
 
-Output written on main.pdf (160 pages, 1635762 bytes).
+Output written on main.pdf (161 pages, 1647156 bytes).
 PDF statistics:
- 3276 PDF objects out of 3580 (max. 8388607)
- 976 named destinations out of 1000 (max. 500000)
- 64437 words of extra memory for PDF output out of 74296 (max. 10000000)
+ 3297 PDF objects out of 3580 (max. 8388607)
+ 984 named destinations out of 1000 (max. 500000)
+ 64957 words of extra memory for PDF output out of 74296 (max. 10000000)
 

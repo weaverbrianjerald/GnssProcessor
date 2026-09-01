@@ -426,6 +426,26 @@ Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
                                                 carry_aware);
 }
 
+Eigen::VectorXd NetworkEstimator::pureConditionalLocalVarianceDiag(
+    std::size_t station, const std::vector<Eigen::Index>& local_cols) const {
+    CovTimer _t(neq_);  // D0 (cov consumer)
+    // BORDER-EXACT: the ENTIRE shared border is treated as known (Σ_ss ≡ 0), so
+    // this is diag((N_rr⁻¹)) restricted to local_cols — the local column's
+    // uncertainty RELATIVE to the shared frame, with no border variance
+    // propagated in.  The anchor-handover ledger re-validation
+    // (SPEC_pivot_visibility_gauge_defect §5.09.1) needs exactly this flavor:
+    // the shared phase-bias column's own uncertainty moves the pin target and
+    // the realized frame TOGETHER, so it is common-mode in the handover step
+    // and gating on the border-inclusive marginal measures the wrong quantity
+    // in both directions (it refused every settled successor whose family bias
+    // was loose — 552/582 on the 12 h quiet flagship — and it is why §5.0's
+    // G21 +17.07 m target passed a 1.0 m² ceiling while landing a 378 σ spike).
+    const Eigen::MatrixXd cov_zero =
+        Eigen::MatrixXd::Zero(shared_cov_.rows(), shared_cov_.cols());
+    return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_zero,
+                                                 /*carry_aware=*/false);
+}
+
 NetworkNormalEquations::StationRegression NetworkEstimator::stationRegression(
     std::size_t station, Eigen::Index local_col, bool carry_aware) const {
     CovTimer _t(neq_);  // D0 (cov consumer)

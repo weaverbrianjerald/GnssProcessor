@@ -239,6 +239,7 @@ void networkElectPhaseAnchors(
         const AnchorHygiene& hyg,
         NetworkAnchorTallies& tally,
         std::map<std::string, std::string>& anchor_incumbent,
+        std::map<std::string, double>& anchor_pin_target,
         std::map<std::string, std::string>& this_epoch_anchor,
         std::set<std::string>& shared_phase_keys,
         const AnchorHandoverLedger* handover,
@@ -280,6 +281,12 @@ void networkElectPhaseAnchors(
     this_epoch_anchor.clear();
     shared_phase_keys.clear();
     std::map<std::string, std::string> new_incumbent;
+    // R2 (§5.09): the sticky continuous targets surviving this election.  Rebuilt
+    // wholesale like new_incumbent, so a key that leaves the union (or whose
+    // handover goes COLD) drops its target — the 0-frame is then realized
+    // honestly.  Never populated on the handover == nullptr path, which keeps the
+    // knob-OFF election byte-identical.
+    std::map<std::string, double> new_target;
     for (const auto& [amb, pbkey] : union_keys) {
         const char c = amb.empty() ? char(0) : amb.front();
         // eq34 REATTACH HYGIENE INC-2: a BRIDGED key's gauge is the soft shared
@@ -340,6 +347,20 @@ void networkElectPhaseAnchors(
                                   && inc->second != stations[anchor].name;
         double target = 0.0;
         bool   continuous = false;
+        // R2 (§5.09): a RETAINED incumbent keeps realizing the frame it inherited.
+        // Without this the ledger pin is a one-epoch deferral — the very next
+        // election re-pins the same anchor at 0 and the family steps at T+1
+        // exactly as it would have at T (the §5.07.3 revert that made the
+        // unsticky handover measure null on its own target channel).  The map is
+        // populated only by continuous handovers below, so the knob-OFF path
+        // never finds an entry and stays byte-identical.
+        if (!is_handover && inc != anchor_incumbent.end()) {
+            const auto tgt = anchor_pin_target.find(amb);
+            if (tgt != anchor_pin_target.end()) {
+                target = tgt->second;
+                new_target[amb] = target;
+            }
+        }
         if (is_handover && handover) {
             const auto hit = handover->value_abs.find(
                     {static_cast<int>(anchor), amb});
@@ -361,6 +382,12 @@ void networkElectPhaseAnchors(
             if (usable) {
                 target     = hit->second.value;
                 continuous = true;
+                // R2: persist — the successor stays pinned HERE for its whole
+                // tenure, so the inherited frame survives past the handover
+                // epoch.  Chains compose: the ledger is harvested in whatever
+                // frame the previous pins realized, so each continuous handover
+                // extends the same original frame.
+                new_target[amb] = target;
                 ++tally.handover_continuous;
                 tally.handover_max_abs_m =
                         std::max(tally.handover_max_abs_m, std::abs(target));
@@ -394,7 +421,15 @@ void networkElectPhaseAnchors(
         // inside the prune horizon) is exactly the stale-frame case the mark
         // exists for.  The key is parsed from the registered pbkey, never split
         // from the amb string.
-        if (reref_out && (is_handover || inc == anchor_incumbent.end())) {
+        // R2 (§5.09) narrows the mark to COLD re-realizations: a CONTINUOUS
+        // handover under the sticky target provably realizes the SAME frame at T
+        // and every following epoch (up to the ledger value's own ε ≤ √max_var —
+        // which is why the armed configs run a tight ceiling), so the family's
+        // carried state stays in-frame and marginalizing/erasing it would be pure
+        // arc truncation.  The incumbent-less clause is unchanged: a first
+        // sighting / bridge exit realizes a fresh frame and must stay marked.
+        if (reref_out && ((is_handover && !continuous)
+                          || inc == anchor_incumbent.end())) {
             const auto p = StateKeys::parseSatPhaseBiasKey(pbkey);
             if (p) reref_out->insert({p->satellite, p->signal});
         }
@@ -412,6 +447,7 @@ void networkElectPhaseAnchors(
         shared_phase_keys.insert(pbkey);
     }
     anchor_incumbent.swap(new_incumbent);
+    anchor_pin_target.swap(new_target);
 }
 
 int networkApplyPhaseAnchorCarryReref(
