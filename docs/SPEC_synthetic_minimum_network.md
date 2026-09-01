@@ -2953,6 +2953,15 @@ candidate should buy the same first half with no settled tax.  Ledger row
 updated (`network.clock_datum_broadcast_anchored`): scoped regime now includes
 ignition/bootstrap service windows; stale brdc_rts-only interlock corrected.
 
+**Q3 q-LADDER ARMS (2026-09-01, `runs/camp60wu_quiet12h_r2q35` q 3e-5 /
+`_r2q37` q 3e-7):** full record in SPEC_clock_temporal_anchor §9.1.  Headline:
+**3e-6 is a consumer LOCAL OPTIMUM confirmed from both sides** (rms 0.209 /
+0.204 / 0.240 across the rungs); the cb bill is stiffness-independent (prices
+ARMING, not q); 3e-7 mints the first quiet-bed nis trips (5) exactly at the
+§8.1 floor-crossover rung and doubles ZWD rms on their shock tails; clk-σ
+overconfidence grows monotonically with stiffness.  The q choice is CLOSED on
+this bed.
+
 **WE-CI ARM (2026-08-31, `runs/camp60wu_quiet12h_r2q3weci` = r2q3 +
 raim_we_code_iono, + 1 h smoke):** the SAFETY half of this knob's first ON
 validation, and it is maximal — armed and LIVE (code pool populated all day,

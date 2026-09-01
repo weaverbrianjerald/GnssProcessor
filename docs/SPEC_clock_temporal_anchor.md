@@ -1354,3 +1354,40 @@ product channels at the calibrated rung.  The FIELD half (the DOY-129 event
 window — does the guard catch a real clock event without the withdraw path
 regressing?) remains the arming blocker for field lineages; this arm never
 exercised a fault trip, so the resolve path is still field-unvalidated.
+
+### §9.1 (2026-09-01) THE SIM q-LADDER — 3e-6 confirmed a LOCAL OPTIMUM on truth, from both sides
+
+Single-knob rungs around the calibrated point on the same bed
+(`runs/camp60wu_quiet12h_r2q35` q 3e-5, `_r2q37` q 3e-7, vs the `_r2q3`
+flagship at 3e-6 and `_r2` without the anchor; one build, fresh convergence
+each, 1440/1440 all).  Settled-half truth grades:
+
+| q [m²/s] | consumer 3D rms / p50 (m) | ZWD rms / p50 (m) | cb p50 (m) | clk vf | quiet trips |
+|---|---|---|---|---|---|
+| — (R2)   | 0.265 / 0.177 | 0.073 / 0.0160 | 0.0248 | 33 358 | — |
+| 3e-5     | 0.209 / 0.143 | 0.062 / 0.0118 | 0.0275 | 112 736 | 0 nis |
+| **3e-6** | **0.204 / 0.128** | **0.054 / 0.0116** | 0.0277 | 216 567 | 0 nis |
+| 3e-7     | 0.240 / 0.171 | 0.101 / 0.0112 | 0.0272 | 406 038 | **5 nis** |
+
+- **The §8.1-derived rung is the consumer optimum from BOTH sides**: loosening
+  a decade gives back a third of the ZWD win and +12 % consumer p50; stiffening
+  a decade costs +18 % consumer rms and DOUBLES ZWD rms on tails (p50 flat —
+  the 5 quiet-bed nis trips' re-realization shocks, landing exactly at the
+  §8.1 floor-crossover rung, are the tail source).  The sim independently
+  confirms the field ladder's calibration with an absolute grade.
+- **The cb bill is STIFFNESS-INDEPENDENT** across the two-decade window
+  (p50 0.0272-0.0277 at every rung vs 0.0248 unanchored): the +11 % is the
+  price of ARMING the anchor at all, not of its q — retuning q cannot buy it
+  back; only the LV-6-class level authority addresses it.
+- **Clock-σ overconfidence grows monotonically with stiffness** (vf 33 k →
+  113 k → 217 k → 406 k): each decade of q tightens the published σ against
+  the same level error it cannot see.  Consistent with §9's "sharpened, not
+  created" reading; a stiffer-than-calibrated rung is strictly worse on
+  honesty with no consumer payoff.
+- Event census: identical mechanical decouples at 3e-5/3e-6 (214); 3e-7 adds
+  its 5 nis trips (219 total).  Handovers, slips, refsat resets byte-flat
+  across rungs.
+
+**Status: the q choice is CLOSED on this bed** — 3e-6 stands in the flagship
+and no rung retune is a live candidate.  The G4 FIELD half (guard catching a
+real event) remains the field-lineage blocker, unchanged by this ladder.
