@@ -2907,3 +2907,48 @@ WHO PAYS for the level, not whether it exists** — the sharpest exhibit this
 fixture has produced, and the concrete producer-side case for the LV-6
 per-epoch level authority.  Keep S0 for clock-product/exhibit postures; the
 consumer flagship remains `_r2q3`.
+
+**BCA ARM (2026-08-31, `runs/camp60wu_quiet12h_r2q3bca` = r2q3 +
+clock_datum_broadcast_anchored + apriori_clock_anchor_sigma_m 3.0 — the
+loader-required pair under this bed's apriori_source=sp3, i.e. the
+EXTERNAL-CLOCK HOLD; on this fixture the a-priori IS truth (C-channel truth
+identically 0), so the anchors park the level in the truth frame and the
+clock channel is σ-bounded partly BY CONSTRUCTION — the graded channels are
+the consumer and the applied products, per the loader's own warning):**
+1440/1440 emitted, 0 withheld; smoke 120/120.  Datum realized as per-sat soft
+anchors (declared_dim=0, rank gate clean, pivot rows skipped 1396 → 0), and the
+pivot seam is structurally gone exactly as under S0 (cta_decouple 214 → 15,
+clock-pivot handovers 4 → 0).
+**The finding is a clean TIME-SPLIT, and both halves matter:**
+- **Ignition (h0-h6): the biggest first-half consumer win of the campaign.**
+  Snap (sustained fwd-1h-median < 0.5 m — definition re-derived this session;
+  ladder column base 8.78 / r2 4.46 / r2q3 4.37 / s0 8.44 h) drops 4.37 →
+  **1.01 h**; hourly consumer 3D rms h0-h5 {0.72, 0.98, 1.31, 1.25, 1.04,
+  0.47} → {0.55, 0.49, 0.30, 0.31, 0.40, 0.13} (2-4×); worst excursion 1.06 →
+  0.51 m.  ZWD converges faster too (h3: 0.31 → 0.17 rms).  Mechanism: the
+  anchor supplies the clock frame during exactly the window in which the
+  network's own datum is still converging — the r2q3 ignition plateau IS
+  producer frame wander, and an external hold deletes it.
+- **Settled (h6+): NOT PROMOTED as flagship — the S0 lesson, third instance.**
+  The per-epoch anchor is an information FLOOR the settled network cannot
+  average past: consumer 3D rms 0.204 → 0.280 m (p50 0.128 → 0.253, floor
+  wandering 0.17-0.38 by hour, never reaching r2q3's 0.11-0.13); the level
+  bill lands in the APPLIED channels — cb p50 2.8 → 4.6 cm (+67 %, the same
+  bill as S0's 4.6), cb vf ×6.8, and ZWD stalls at a 0.12-0.18 m rms floor
+  (h11: 0.026 → 0.138, ×5) instead of converging.  Datum-free clock contrast
+  p50 0.195 → 0.383 (rms +7 %).  Evicting the level from the sat-clock
+  channel — even into a TRUTH-quality external frame — sends it to channels
+  the consumer applies.
+Side findings: (a) per-sat settled clock means carry the same metre-class
+tails in BOTH arms (G25/G26/G12; sd over sats 1.90 vs 1.70 m — a fixture/
+posture property, NOT a bca defect; anchor-vs-IF-lump tension measured nil,
+corr +0.06).  (b) Post-fit QC volume collapses under bca — T3 flags 11110 →
+17, T4 arc 699 → 2 on identical opportunity counts (1.3 M) — consistent with
+the pivot-frame re-referencing churn being the flag source (the chord-churn
+result), but it moves the tier's effective operating point ~650×: re-verify
+MDB on a FAULTED bed before trusting T3/T4 under any anchor-free datum.
+Derived follow-up (NOT built): a σ-SCHEDULE (bind in ignition, release as data
+information overtakes) — equivalently, warm-start-shaped: the snapshot-resume
+candidate should buy the same first half with no settled tax.  Ledger row
+updated (`network.clock_datum_broadcast_anchored`): scoped regime now includes
+ignition/bootstrap service windows; stale brdc_rts-only interlock corrected.
