@@ -2952,3 +2952,15 @@ information overtakes) — equivalently, warm-start-shaped: the snapshot-resume
 candidate should buy the same first half with no settled tax.  Ledger row
 updated (`network.clock_datum_broadcast_anchored`): scoped regime now includes
 ignition/bootstrap service windows; stale brdc_rts-only interlock corrected.
+
+**WE-CI ARM (2026-08-31, `runs/camp60wu_quiet12h_r2q3weci` = r2q3 +
+raim_we_code_iono, + 1 h smoke):** the SAFETY half of this knob's first ON
+validation, and it is maximal — armed and LIVE (code pool populated all day,
+max σ̂₀ 1.85 vs trigger 10), **zero trips over 1440 epochs, and products.txt +
+closed_loop_trace.csv + network_zwd.csv BYTE-IDENTICAL to the `_r2q3`
+flagship under the same build** — the armed screen costs nothing when quiet.
+Scoping discovery: the IONO pool max σ̂₀ read 0.00 — structurally EMPTY on any
+`estimate_iono_sh: false` lineage (this bed included), so only the CODE half
+is quiet-validated; the iono half needs an SH-armed lineage.  The DETECTION
+half (the DOY-129 19:26 detonation warm-start) remains the blocker before
+WE-CI joins the standard armed set (ledger row updated).
