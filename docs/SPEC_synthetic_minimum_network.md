@@ -2962,6 +2962,46 @@ ARMING, not q); 3e-7 mints the first quiet-bed nis trips (5) exactly at the
 overconfidence grows monotonically with stiffness.  The q choice is CLOSED on
 this bed.
 
+**WARM-START ARMS (2026-09-01, the bca-derived first-half candidate —
+`runs/camp60wu_q6wsnap` (w) / `_q6cold` (b) / `_q6warm` (c), flagship posture,
+one build):** (w) = flagship stopped at 5h59m31s + RTB-7 snapshot writer —
+**products PREFIX-BYTE-MATCH the 12 h flagship** (snapshot write proven
+outputs-only; the snapshot IS the flagship at hour 6).  (b)/(c) start at hour
+6 exactly (`start_offset_hours 5.9958333`, the 15 s half-epoch back-off); (c)
+warm-resumes a COPY of (w)'s snapshot under `state_snapshot_require` (age
+30 s vs the 120 s horizon; fingerprint accepted; generation id PRESERVED;
+restored 369 D2 shared-carries, 2751 leveling ambiguity carries, 2/2 pivots,
+emitter state, n_emitted 720 ⇒ carry stays warm — and **0 ZWD carries**: with
+`network.carry_zwd` false this lineage's ZWD memory lives only in the
+in-process station filters, which the snapshot structurally cannot carry).
+**The verdict decomposes the first-half problem into three parts:**
+1. **Hour 1 is CONSUMER-self-convergence-bound** — warm ≡ cold in the first
+   mission hour (3D rms 1.145 both, max ~4.3 both) while the continuous
+   flagship's consumer sat at 0.41: no producer-side fix can buy hour 1; the
+   consumer-side warm start (the RT filter-state snapshot card) is that half.
+2. **The producer frame IS the plateau, and the warm resume buys it** —
+   mission-start snap 3.15 h (cold) → **0.38 h (warm, −88 %)**; h7 rms 0.374 →
+   0.211; seam continuity: warm's first-epoch same-TOW clock delta vs the
+   flagship is ~40 cm median vs cold's ~95-120 cm (3× — not carry-precision,
+   because station states and cross-covariances do not travel).
+3. **As-built it is PARTIAL, and the stiff half actively drags the soft
+   half** — ZWD re-converges from scratch in BOTH arms, and the warm arm is
+   SLOWER late (absolute-h11 ZWD rms: flagship 0.026, cold 0.095, warm
+   0.173): the restored zero-q ambiguity carries were leveled under the old
+   ZWD trajectory and retard the fresh station filters' re-convergence — the
+   invariant-#1 drag shape, measured.  The arms CROSS: by h10-11 cold ties or
+   beats warm on the consumer (0.207/0.335 vs 0.280/0.260), and the common
+   settled window h9-12 reads flagship 0.143 / warm 0.278 / cold 0.379 m rms
+   — the warm resume recovers under half of the settled gap.
+**VERDICT: scoped to the designed RTB-7 use (service bounce: generation
+continuity, no consumer reset, snap −88 %) — NOT yet the full first-half fix.**
+Completion path, in order of leverage: (i) arm `network.carry_zwd` (+
+`carry_iono`) in BOTH writer and resume postures so tropo/iono memory moves
+into the snapshotable carry seam — a solve-affecting posture change with its
+own A/B owed (it alters the flagship, so it re-bases the ladder); (ii) the
+consumer-side warm start for hour 1; (iii) evaluate `state_snapshot_resume_shock_m`
+(RE-2, default 0) against the measured 40 cm seam.
+
 **WE-CI ARM (2026-08-31, `runs/camp60wu_quiet12h_r2q3weci` = r2q3 +
 raim_we_code_iono, + 1 h smoke):** the SAFETY half of this knob's first ON
 validation, and it is maximal — armed and LIVE (code pool populated all day,
