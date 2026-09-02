@@ -666,6 +666,14 @@
    "interlock": "Derived cards (not built): E3 pivot hygiene at the exclusion edge - THE consumer lever (edge steps p50 0.060 m ordinary sats, 0.31-0.83 m when pivots G01/E02 transit; s18.3); E2 realization-continuity re-seed at return (prevent, not mark); E1 gap-aware CLK-R baseline (non-Q3-posture robustness); the C5Q cold-start misrealization (LV-6 family - it is why every re-realization is LARGE)."
   },
   {
+   "knob": "network.amb_seam_reinflate_var_m2",
+   "default_at": "0.0 = OFF (GnssConfigLoadNetwork.cpp beside zwd_seam_reseed; apply at the NetworkRunContext restore block)",
+   "verdict": "DO NOT ARM - INERT AS BUILT on every relevel_free_epoch posture (proven NULL, byte-identical products)",
+   "scope": "STABILITY target-2 leg C",
+   "evidence": "SPEC_synthetic_minimum_network s18.7: leg C byte-identical to control (sha256) despite +2.5e-3 m2 on 2811 restored carries; relevel_free_epoch's inject-site skip (ApplicationNetworkAssembly.cpp:2860) precedes the only live LocalCarry.var read (:2889) and the harvest overwrites the entries (2294 latches / 1824 skips).  The seam already gets a native per-arc free re-level; no drag on this bed to cure.",
+   "interlock": "NOT fingerprinted (forward-only resume response policy).  A working soft refloat needs a WINDOWED post-harvest inflation (zwd_seam-style), not a one-shot restore-site add."
+  },
+  {
    "knob": "network.sticky_pivot",
    "default_at": "false (GnssConfigLoadNetwork.cpp:5089-5090); election NetworkSbasis.cpp:252-275 (declared pin > sticky incumbent > lexical front)",
    "verdict": "RECOMMEND_SCOPED (2026-09-01) - pivot-datum lineages where clock pivots can be eclipse-excluded; IN the warm-resume fingerprint (fresh convergence only)",

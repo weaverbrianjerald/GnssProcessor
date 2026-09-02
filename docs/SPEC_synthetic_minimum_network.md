@@ -3494,3 +3494,52 @@ raim_postfit / raim_within_epoch.
   posture on this fixture; the original bench was GPS-only and the E-event
   plan wasted 10 events on a G-blind producer).  Recorded; a GPS+GAL bench
   needs its own estimability card first.
+
+### 18.7 TARGET 2 VERDICT — the post-resume transient is a ~4 h WIRE-REALIZATION
+### re-convergence; carry-side seam responses are already native (2026-09-01)
+
+Leg A (`runs/camp60wu_q12warm_szv`): the flagship posture warm-resumed at h12
+of the 24 h bed from the continuous run's `.ep1440` snapshot, zwd_seam_reseed
+armed (window ran exactly: 28800 = 60×480 folds).  Leg C
+(`runs/camp60wu_q12warm_ari`): leg A + `amb_seam_reinflate_var_m2 0.0025`.
+`state_snapshot_resume_shock_m` recorded INAPPLICABLE on this posture (it
+shocks the carry_invariant blob only; this bed runs carry_invariant false).
+
+1. **The transient is real and lasts ~4 h, not minutes**: consumer 3D rms
+   h12 0.733 → h13 0.254 → h14 0.336 → h15 0.300 vs continuous 0.115/0.083/
+   0.053/0.056; parity ~h16.  ZWD no-restart at the seam (h12 0.014 vs
+   cold-class ~0.39) — the zwd_seam card's value reproduces at h12.
+2. **It lives ENTIRELY in the applied-products realization.**  Every
+   datum-invariant channel is equal-or-BETTER on the warm leg through
+   h12–h16 (clk contrast h12: 1.29 vs 2.30; rxdcb/rxclk/phase flat) — the
+   §18.3 signature again: consumer-visible, datum-invisible.  The binding
+   candidate for the first minutes is EMITTED-FRAME continuity across the
+   resume seam (the products' realization re-settling through the consumer),
+   not any carry-side memory.
+3. **After parity the young leg beats the aged continuous 2–3× through the
+   eclipse evening** (h19–h23: 0.119/0.095/0.078/0.073/0.048 vs 0.225/0.267/
+   0.207/0.117/0.113) — "young legs beat the flagship" reproduced at matched
+   TOW; consistent with §18.3's h17 old-chord vulnerability.  The
+   still-converging leg takes the pivot cluster harder (h17 0.832 vs 0.434)
+   — with `sticky_pivot` landed (§18.5) that cluster cost is gone anyway.
+4. **Leg C = a proven NULL, and the mechanism is named.**  Products
+   BYTE-IDENTICAL to leg A (sha256 equal) despite the mechanism firing
+   ("+2.5e-3 m² added to 2811 restored leveling carries").  Cause:
+   `relevel_free_epoch` (standard-armed) latches EVERY re-latching arc at
+   the seam — the inject-site skip (ApplicationNetworkAssembly.cpp:2860)
+   precedes the only live read of `LocalCarry.var` (:2889), and the harvest
+   then overwrites the entries with fresh posteriors (run counters: 2294
+   latches, 1824 inject skips).  So (a) the knob is INERT AS BUILT on any
+   relevel_free_epoch posture — ledger row says DO NOT ARM; (b) the seam
+   already gets a native per-arc free re-level — a stronger response than
+   the soft refloat the knob intended; (c) the (c')-bed "restored amb-carry
+   drag" reading deserves a re-look on relevel_free_epoch postures (the
+   h-vintage amb VALUES survive only one epoch there).  No follow-up build
+   warranted: leg A shows no post-retire ZWD drag on this bed (h16–h23
+   0.009–0.018 ≈ continuous).
+
+Open (cards, not built): emitted-frame continuity across the resume seam —
+the ~4 h consumer re-convergence against flat datum-invariant channels is
+the §18.1/§18.3 family's resume-seam instance; the RTB-7 `resume_seam`
+datum-mark exists, the CONTINUITY (bridging the realization instead of
+re-marking it) does not.
