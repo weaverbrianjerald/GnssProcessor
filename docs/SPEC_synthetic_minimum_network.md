@@ -3456,3 +3456,41 @@ Scoped recommendation (ledger row): arm on this bed's posture family
 called for, at zero mechanism cost.  Field lineages inherit the same
 argument wherever the clock datum is pivot-realized and pivots can be
 eclipse-excluded; their arm needs the standard fresh-convergence discipline.
+
+### 18.6 TARGET 4 VERDICT — the injection bench re-verified on the r2q3 posture:
+### MDB unchanged at 2 cycles, 22/24 attributable (2026-09-01)
+
+The §15 bench REGENERATED post-wu93 (the 2026-08-13 fixtures predate the
+wind-up fix — A3 rule: re-capture, never re-grade) and re-run under the
+STANDARDIZED posture (the full r2q3 armed set, GPS-scoped): fixture
+`runs/simnet24_inject_{null,fault}_wu93[g]`, plan `--constellations G`
+(ladder 1/2/3/5/10/50 cyc ×2, seed 7, 24 per-band events), arms
+`runs/inj24g_{null,fault}` under `_inj24g_{null,fault}_r2q3.json`
+(elected datum S15000SIM), preflight CLEARED on slip_detect /
+raim_postfit / raim_within_epoch.
+
+- **22/24 = 91.7 % attributable within 3 epochs, median latency 0 —
+  reproducing the published bench rate; empirical MDB: every ≥2-cycle rung
+  100 % except one +50 miss.**  The bca-session worry ("T3/T4 flag volume
+  collapses 650× under anchor-free datums — re-verify MDB before trusting
+  post-fit QC") does NOT transfer to the standardized posture: Q3+R2
+  preserve the detection stack's power intact.
+- Misses, both gradeable: a +1 cyc L5Q at elev 22° (below MDB — expected
+  class) and **a +50 cyc L2W at elev 50° — a detector-RANGE hole** (a huge
+  step evading the slip funnel, plausibly rejected as an outlier instead of
+  flagged; S05000SIM G20 tow 305400).  Own follow-up note; the 50-cyc rung
+  read 75 % here and the mechanism deserves a look before any field claim
+  about large-slip immunity.
+- Null arm NOT quiet (35 WL detections — the §15 known caveat, reproduced),
+  but ZERO coincidence with fault flags, so the attributable rate is honest.
+- Scope honesty: detection is T0/T1-led (median latency 0), so this
+  re-verifies the DETECTION STACK's MDB under r2q3; T3/T4's isolated
+  post-fit power (catching what the pre-processors miss) was not separately
+  exercised (3 T4-differential flags rode along) — the isolation extension
+  is a T0/T1-disarmed arm pair, not run.
+- ⚠ GPS+Galileo postscript: the full r2q3 posture FAILS the NetworkSbasis
+  null-space gate on this tri-family fixture (21–25 near-zero eigenvalues
+  vs declared dim 2 — the Galileo side lacks a closing datum in this
+  posture on this fixture; the original bench was GPS-only and the E-event
+  plan wasted 10 events on a G-blind producer).  Recorded; a GPS+GAL bench
+  needs its own estimability card first.
