@@ -3419,3 +3419,40 @@ grades per-sat steps).  Prediction to pre-register when built: the per-sat
 census tails (§18.1) collapse to the pre-gap realization's continuity, and
 the ordinary-sat consumer edge steps (~0.06 m) shrink toward zero; the PIVOT
 edges are NOT E2's to fix (that is E3's sticky/hygiene territory).
+
+### 18.5 E3 VERDICT — `network.sticky_pivot` (RTA-1) removes the pivot-eclipse
+### consumer cost: settled 24 h consumer 3D rms 0.303 → 0.078 m (−74 %)
+### (2026-09-01, arm `runs/camp60wu_quiet24h_sticky`, single knob vs §18.3's baseline)
+
+Prediction verified EXACTLY: **2 PIVOT handovers** (G01→G02 at G01's eclipse
+leave h4.70, E02→E03 at E02's leave — both `adjacent`, no flip-backs) vs the
+baseline's 8; on this roster the advanced-to pivots G02/E03 never eclipse, so
+the datum never rides an excluded satellite again.
+
+- **The h16–h18 pivot-cluster excursion is GONE**: 0.054/0.052/0.052 rms vs
+  0.434/0.434/0.711.  The evening staircase response collapses with it
+  (h19–h23: 0.058–0.080 vs 0.113–0.267).  Settled (h12–24) consumer 3D
+  **rms 0.078 / p50 0.064 / max 0.192** vs 0.303/0.130/2.24 — the largest
+  single-knob consumer win this bed has produced (R2 gave 0.49→0.27, Q3
+  0.27→0.20).  Ignition also improves (first-transit cluster no longer
+  disturbs convergence: snap 5.26 → 4.73 h; h5 0.471 vs 1.235).
+- **Built-in structural control**: h0–h3 are numerically IDENTICAL to the
+  baseline — sticky differs only when the incumbent vanishes, and the first
+  divergence is exactly G01's leave epoch.
+- **Mechanism separation proven**: the per-sat census tails are UNCHANGED
+  (G26 6.35 / G12 5.96 / G25 5.79 vs baseline 6.36/5.98/5.75) — the split
+  re-realizations still happen per satellite (E2's territory); sticky removes
+  their NETWORK-WIDE datum ride (E3's).  URA/coverage unchanged.
+- **Who pays (S0-lesson diligence)**: cb residual p50 2.4 → 3.9 cm, rms
+  0.54 → 0.79 (max unchanged ≈ 7.1 = the C5Q lumps) — a small bill does move
+  to cb, but unlike s0 the CONSUMER (which applies cb) wins outright.  ZWD
+  improves (0.0109 → 0.0091); clk contrast flat (2.13 → 2.15).  Minor: h11–
+  h14 slightly worse (e.g. h12 0.145 vs 0.115) — small against the wins.
+- Fingerprint: `sticky_pivot` is IN the warm-resume fingerprint (fresh
+  convergence only — never flip it mid-chain); this arm was fresh.
+
+Scoped recommendation (ledger row): arm on this bed's posture family
+(pivot-datum quiet-bed lineages) — it is the E3 lever the §18.3 verdict
+called for, at zero mechanism cost.  Field lineages inherit the same
+argument wherever the clock datum is pivot-realized and pivots can be
+eclipse-excluded; their arm needs the standard fresh-convergence discipline.

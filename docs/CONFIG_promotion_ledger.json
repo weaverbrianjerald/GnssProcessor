@@ -666,6 +666,14 @@
    "interlock": "Derived cards (not built): E3 pivot hygiene at the exclusion edge - THE consumer lever (edge steps p50 0.060 m ordinary sats, 0.31-0.83 m when pivots G01/E02 transit; s18.3); E2 realization-continuity re-seed at return (prevent, not mark); E1 gap-aware CLK-R baseline (non-Q3-posture robustness); the C5Q cold-start misrealization (LV-6 family - it is why every re-realization is LARGE)."
   },
   {
+   "knob": "network.sticky_pivot",
+   "default_at": "false (GnssConfigLoadNetwork.cpp:5089-5090); election NetworkSbasis.cpp:252-275 (declared pin > sticky incumbent > lexical front)",
+   "verdict": "RECOMMEND_SCOPED (2026-09-01) - pivot-datum lineages where clock pivots can be eclipse-excluded; IN the warm-resume fingerprint (fresh convergence only)",
+   "scope": "the STABILITY E3 lever; measured on the 24 h quiet bed",
+   "evidence": "SPEC_synthetic_minimum_network s18.5 (single knob vs the 24 h flagship): 8 -> 2 PIVOT handovers/day (advance-once, no flip-back; advanced-to G02/E03 never eclipse); h16-h18 pivot-eclipse consumer excursion ELIMINATED (0.434/0.434/0.711 -> 0.052-0.054); settled h12-24 consumer 3D rms 0.303 -> 0.078 (-74%), p50 0.130 -> 0.064, max 2.24 -> 0.19; snap 5.26 -> 4.73 h; h0-h3 numerically identical (structural control).  Per-sat census tails UNCHANGED - sticky removes the datum RIDE, not the re-realizations (E2's territory).",
+   "interlock": "INERT under clock_datum_sum_to_zero / broadcast_anchored.  clock_datum_satellite outranks it.  cb bill note: cb p50 2.4 -> 3.9 cm on the E3 arm; the consumer (which applies cb) wins outright - grade any new posture on the CONSUMER."
+  },
+  {
    "knob": "network.emit_clock_disc",
    "default_at": "src/core/config/GnssConfigLoadNetwork.cpp:1957-1958 (false)",
    "verdict": "RECOMMEND_SCOPED",
