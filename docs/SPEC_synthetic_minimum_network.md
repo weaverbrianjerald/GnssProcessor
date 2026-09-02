@@ -3543,3 +3543,47 @@ the ~4 h consumer re-convergence against flat datum-invariant channels is
 the §18.1/§18.3 family's resume-seam instance; the RTB-7 `resume_seam`
 datum-mark exists, the CONTINUITY (bridging the realization instead of
 re-marking it) does not.
+
+### 18.8 E3 FIELD TRANSFER (2026-09-02, `runs/fld63_stk_{ctl,on}`):
+### mechanism transfers EXACTLY; the sim bed's harm is ABSENT on the GPS-dual
+### lineage, so the recommendation stays SCOPED
+
+The pair: `_ext63_12h_evt_pl_clkpin` (61 real stations, GPS dual, DOY-129
+UTC 00–12, pivot datum MBAR00UGA, eclipse exclusion armed, NO Q3 / NO CLK-R
+jump test) re-run FRESH under the current build (the archived
+`evt_pl_clkpin12` predates wu93 — A3), single knob `network.sticky_pivot`
+between arms, both cold starts.  Instrument:
+`scripts/field_eclipse_census.py` (wire-only; join-gated on the sim bed).
+
+1. **Mechanism transfer: EXACT.**  All 8 GPS exclusion windows appear at the
+   sim bed's UTC schedule (G01 h4.70–5.62 vs sim h4.70–5.60; G12/G25/G26/
+   G16/G14/G22/G20 all match) — same day, same constellation, same shadow.
+   Control: 2 PIVOT handovers (G01→G02 `adjacent` at the leave, **flip-back
+   G02→G01 at h5.62**); sticky: 1 (no flip-back; the non-eclipsing G02 holds
+   the pivot for the rest of the run).  Arms numerically identical to h4.71
+   (the structural control transfers too).
+2. **The harm sticky prevents is ABSENT here.**  Per-sat return steps are
+   MILLIMETRE-class (2–8 mm vs the sim bed's 6.3–6.7 m): GPS-dual has no
+   weakly-estimable third frequency to park a cold-start misrealization in,
+   and the SH iono field tightens the bias estimability.  The producers are
+   arm-equal on every instrument: post-fit σ̂₀ 0.0683 both (phase 0.0093 vs
+   0.0092), prefit H 8.40 vs 8.55, event census matching tier-by-tier
+   through the divergent hours.
+3. **Consumer: NO attributable difference.**  This chain's closed-loop
+   consumer floats at metre level with ±3 m hourly swings in BOTH arms (the
+   known consumer pathologies — vertical bug / FAIL-UNSAFE AR family); the
+   post-divergence hour deltas (including one h8 excursion, sticky 9.09 vs
+   control 2.39 rms) have NO producer-side driver and are consumer
+   realization, not product quality.  No field consumer win is demonstrated
+   — and none was expected, given (2).
+4. **Scoping (ledger row updated):** the §18.5 RECOMMEND stays scoped to
+   postures with MATERIAL per-sat re-realizations at re-admission —
+   triple-frequency / weak-third-signal lineages, the sim bed family.  On
+   GPS-dual + SH field lineages sticky is mechanism-sound (strictly fewer
+   datum re-references, one instead of two per pivot transit) and
+   cost-free on every producer instrument, but benefit-undemonstrated:
+   legal to arm on a fresh convergence, not evidence-recommended.
+5. **E1 corollary**: the unmarked-re-admission gap E1 catches is likewise
+   immaterial on GPS-dual + SH — E1's field validation arm belongs on a
+   TRIPLE-frequency field lineage, where the C5Q-class misrealization
+   exists to relocate.
