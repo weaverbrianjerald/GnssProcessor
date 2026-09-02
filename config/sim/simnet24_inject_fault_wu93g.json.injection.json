@@ -1,0 +1,264 @@
+{
+  "null_fixture": "runs/simnet24_inject_null_wu93",
+  "base_sim": "config/sim/simnet24_inject.json",
+  "out_sim": "config/sim/simnet24_inject_fault_wu93g.json",
+  "seed": 7,
+  "signal_mode": "per-band",
+  "ladder": [
+    1,
+    2,
+    3,
+    5,
+    10,
+    50
+  ],
+  "constellations": [
+    "G"
+  ],
+  "repeat_per_rung": 2,
+  "flag_lli": false,
+  "n_epochs": 120,
+  "interval_s": 30.0,
+  "events": [
+    {
+      "station": "S11000SIM",
+      "sat": "G17",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 51,
+      "delta_cycles": 1,
+      "mode": "per-band"
+    },
+    {
+      "station": "S02000SIM",
+      "sat": "G11",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 46,
+      "delta_cycles": 1,
+      "mode": "per-band"
+    },
+    {
+      "station": "S19000SIM",
+      "sat": "G30",
+      "signals": [
+        "L1C"
+      ],
+      "epoch": 45,
+      "delta_cycles": -1,
+      "mode": "per-band"
+    },
+    {
+      "station": "S02000SIM",
+      "sat": "G28",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 47,
+      "delta_cycles": -1,
+      "mode": "per-band"
+    },
+    {
+      "station": "S03000SIM",
+      "sat": "G03",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 57,
+      "delta_cycles": 2,
+      "mode": "per-band"
+    },
+    {
+      "station": "S14000SIM",
+      "sat": "G02",
+      "signals": [
+        "L1C"
+      ],
+      "epoch": 45,
+      "delta_cycles": 2,
+      "mode": "per-band"
+    },
+    {
+      "station": "S21000SIM",
+      "sat": "G30",
+      "signals": [
+        "L1C"
+      ],
+      "epoch": 82,
+      "delta_cycles": -2,
+      "mode": "per-band"
+    },
+    {
+      "station": "S19000SIM",
+      "sat": "G27",
+      "signals": [
+        "L1C"
+      ],
+      "epoch": 79,
+      "delta_cycles": -2,
+      "mode": "per-band"
+    },
+    {
+      "station": "S08000SIM",
+      "sat": "G22",
+      "signals": [
+        "L1C"
+      ],
+      "epoch": 44,
+      "delta_cycles": 3,
+      "mode": "per-band"
+    },
+    {
+      "station": "S10000SIM",
+      "sat": "G11",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 68,
+      "delta_cycles": 3,
+      "mode": "per-band"
+    },
+    {
+      "station": "S04000SIM",
+      "sat": "G26",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 78,
+      "delta_cycles": -3,
+      "mode": "per-band"
+    },
+    {
+      "station": "S22000SIM",
+      "sat": "G07",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 53,
+      "delta_cycles": -3,
+      "mode": "per-band"
+    },
+    {
+      "station": "S19000SIM",
+      "sat": "G10",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 82,
+      "delta_cycles": 5,
+      "mode": "per-band"
+    },
+    {
+      "station": "S04000SIM",
+      "sat": "G03",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 77,
+      "delta_cycles": 5,
+      "mode": "per-band"
+    },
+    {
+      "station": "S02000SIM",
+      "sat": "G19",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 81,
+      "delta_cycles": -5,
+      "mode": "per-band"
+    },
+    {
+      "station": "S22000SIM",
+      "sat": "G23",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 76,
+      "delta_cycles": -5,
+      "mode": "per-band"
+    },
+    {
+      "station": "S15000SIM",
+      "sat": "G23",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 79,
+      "delta_cycles": 10,
+      "mode": "per-band"
+    },
+    {
+      "station": "S08000SIM",
+      "sat": "G09",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 47,
+      "delta_cycles": 10,
+      "mode": "per-band"
+    },
+    {
+      "station": "S16000SIM",
+      "sat": "G14",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 98,
+      "delta_cycles": -10,
+      "mode": "per-band"
+    },
+    {
+      "station": "S15000SIM",
+      "sat": "G11",
+      "signals": [
+        "L1C"
+      ],
+      "epoch": 60,
+      "delta_cycles": -10,
+      "mode": "per-band"
+    },
+    {
+      "station": "S17000SIM",
+      "sat": "G16",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 68,
+      "delta_cycles": 50,
+      "mode": "per-band"
+    },
+    {
+      "station": "S05000SIM",
+      "sat": "G20",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 101,
+      "delta_cycles": 50,
+      "mode": "per-band"
+    },
+    {
+      "station": "S02000SIM",
+      "sat": "G11",
+      "signals": [
+        "L5Q"
+      ],
+      "epoch": 84,
+      "delta_cycles": -50,
+      "mode": "per-band"
+    },
+    {
+      "station": "S19000SIM",
+      "sat": "G21",
+      "signals": [
+        "L2W"
+      ],
+      "epoch": 92,
+      "delta_cycles": -50,
+      "mode": "per-band"
+    }
+  ]
+}

@@ -324,3 +324,98 @@ instrument that prices a level authority, and G1's per-station diagnostic
 (median corr +0.889) says the CS-GF kernel itself is sound — the loss is in
 the fleet reduction, which is where a successor card should start.
 
+
+## §7 LV-6b DESIGN — the INCREMENT authority (fresh derivation; NOT built)
+## (2026-09-01, STABILITY campaign target 5.  §6 closed the VALUE fold with
+## "start at the reduction, not the kernel"; §4 forbids tuning the existing
+## reduction and this section does not touch it — it derives a DIFFERENT
+## estimator, with its own gates, staged measure-only first.)
+
+### 7.1 Derivation, from §6's own numbers
+
+The tier-1 model the census already validated: per-station value
+L_i(t) = ℓ(t) + b_i + ε_i(t), with ℓ(t) the common level, b_i the §29.5
+receiver-bias term (quasi-static, ±21 TECU dispersion), ε_i the kernel noise.
+§6 measured: corr(L_i, truth) median **+0.889** per station (the kernel
+tracks) while the fleet median of values reads **+0.681, falling with
+window** — the order statistic's median-identity churns under the b_i
+dispersion and every identity swap steps the fleet value by a bias gap
+uncorrelated with the ionosphere.  The offset test PASSED to 0.86 TECU: the
+LEVEL is right, the per-epoch VALUE is not.
+
+The fresh estimator follows from the failure algebra directly.  First
+difference per station on the epoch pair's INTERSECTION LOS set:
+
+    ΔL_i(t) = L_i(t) − L_i(t−1)   ⇒   b_i cancels EXACTLY.
+
+The bias dispersion — the entire cause of the tier-2 churn — is out of the
+statistic identically, not robustly.  A fleet median over {ΔL_i} then has no
+bias-gap steps to take (identity swaps move it by ε differences only), and
+the anti-correlated minority §6 found (3 of 50 stations) is absorbed by the
+same median without any per-station screening (screening would be tuning; the
+robust estimator is not).  Integrate the fleet increment Δ̄(t) and bind it to
+the existing slow absolute memory with a complementary split:
+
+    ℓ̂(t) = α-low-pass[ existing rolling common-mode memory ]
+          + high-pass[ Σ Δ̄ ]
+
+The slow memory is the rx-CB carry's rolling common-mode — the §15 corollary
+measured that it TRACKS the level (±6 TECU breathing is its price); the
+increments supply exactly the per-epoch motion it cannot.  The crossover is
+DERIVED, not tuned: it sits where the measured Δ̄-noise random-walk integral
+crosses the measured ±6 TECU breathing band (both numbers exist in the
+record; compute, don't fit).
+
+### 7.2 Adversary pass (pre-build, the §5 discipline)
+
+1. **LOS-set churn is the new confound.**  Without intersection matching,
+   a rising/setting/eclipse-excluded satellite steps ΔL_i by a sampling
+   difference — the SAME error family as §5.2's 9.8 TECU sampling term, and
+   the same valve churn the STABILITY campaign measured (SPEC_synthetic_
+   minimum_network §18: 30 eclipse edges / 12 h).  The Δ is DEFINED on the
+   intersection of the two epochs' modeled-row sets per station, with a
+   min-pairs floor; a station whose intersection is thin contributes nothing
+   that epoch (variance, not bias — b_i is already out).
+2. **Slips**: a mid-pair slip aliases a step into ΔL_i.  The CS-GF store's
+   own advance hygiene excludes slipped pairs; the Δ pathway must consume
+   only pairs CONTINUOUS across the two epochs (make the store's continuity
+   explicit in the join, not assumed).
+3. **Integration is a random walk.**  Pure Σ Δ̄ accumulates ε noise — the
+   complementary anchor exists precisely to bound it; the gate (G3′ below)
+   verifies the bound rather than trusting the derivation.
+4. **The anchor must not smuggle C4 back in.**  The absolute component
+   carries whatever level the network actually realizes (C4-ambiguous by
+   Table-8); that is CORRECT for an internal authority — the authority's job
+   is the per-epoch VALUE of the realized level, not planetary truth.  Grade
+   G-side against the sampling-matched censusOperator (never the planetary
+   mean; §5.3 stands).
+5. **Mapping-function motion within one epoch** (30 s) enters ΔL_i through
+   M(el) drift: bound it analytically at the elevation floor before the
+   first run; if the bound is not ≪ the per-epoch iono motion, the kernel
+   must difference vertical-equivalents, not slants.
+
+### 7.3 Pre-registered gates (increment domain; stop rules, no tuning)
+
+- **G1′ (sim, `runs/simnet50_wsh_f29p5`, ≥ 4 h, settled 2 h window):**
+  corr(Δ̄, Δ censusOperator{truth}) ≥ +0.8; integrated ℓ̂ offset within
+  2 TECU of the injected median (bias-free reference — §6's grader-defect
+  lesson: a gate that cannot fail is not a gate); ℓ̂−truth variance growth
+  within the pre-computed Δ-noise integral.  STOP: corr < +0.5 ⇒ the
+  increment premise itself is falsified; record and close LV-6b.
+- **G2′ (field, ext63, ≥ 2 h):** p2p of (ℓ̂ − censusOperator{GIM}) ≤ 4 TECU
+  — the original G2 stability bar, now attempted with the churn term
+  removed.  The §6 sign tension (G1 high-by-bias vs G2 low-window) does not
+  transfer: increments carry no window.
+- **G3′ (both venues):** the complementary split's residual (ℓ̂ minus the
+  slow memory alone) stays inside the derived crossover envelope — the
+  "derived, not tuned" claim made falsifiable.
+
+### 7.4 Staging
+
+Measure-only first, the house pattern: the Δ pathway publishes its own trace
+beside the census (`network.level_authority_increment`, default-OFF,
+OFF-byte-identical; rides the existing census walk and los_dump join — no
+solve effect, no fold).  The FOLD (LV-6b as the actual per-epoch level
+authority in the estimator) opens only on G1′+G2′+G3′ PASS, as its own card
+with its own A/B.  The existing §3 census and §4 gates are untouched — this
+section supersedes nothing in them.

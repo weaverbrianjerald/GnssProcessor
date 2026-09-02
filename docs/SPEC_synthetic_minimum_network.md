@@ -3391,3 +3391,31 @@ rms gap is entirely the h16–h18 excursion tail.
      eclipse schedule as part of the bed: quote settled p50 alongside rms,
      and never grade a settled window without stating which transit windows
      it contains.
+
+### 18.4 E2 DESIGN SKETCH — realization continuity at re-admission (not built)
+
+The current chain (per the §18.1 correction) MARKS the re-realization and the
+consumer resets; E2 would PREVENT it.  Mechanism: retain per satellite, at
+last emission, the realized split — common-removed clock (the E1 stage-2b
+baseline already retains exactly this) plus the per-signal code-bias values.
+On re-registration within a horizon, seed the returning sat's fresh columns
+AT the pre-gap realization as a PRIOR with gap-grown σ (never a pin —
+invariant #1: a real in-gap jump must be able to win), instead of the
+generic wide initial_std.  The estimator then re-converges FROM the old
+realization: continuity is free unless the data genuinely moves it, and a
+genuine move still trips CLK-R/Q3 marking — the response ladder becomes
+seed-first, mark-if-moved.
+
+The hard part, named: the stored realization lives in the EMITTED estimable
+frame; the seed must enter the estimator's internal frame through the frame
+map current at the seed epoch (the carried-prior η = Λ·(value_abs − x_lin)
+family — the exact algebra the seed-site snap card got wrong before it was
+deleted, SPEC_lane_slip_response §7.2).  The seam is the returning-sat column
+initialization path (StateInitializer / the shared-column registration in the
+estimator), NOT the emitter.  Own card, with the frame-map derivation done
+first and a sim A/B on this bed's eclipse schedule as the validation venue
+(the schedule provides 30 natural events/12 h; the census instrument already
+grades per-sat steps).  Prediction to pre-register when built: the per-sat
+census tails (§18.1) collapse to the pre-gap realization's continuity, and
+the ordinary-sat consumer edge steps (~0.06 m) shrink toward zero; the PIVOT
+edges are NOT E2's to fix (that is E3's sticky/hygiene territory).
