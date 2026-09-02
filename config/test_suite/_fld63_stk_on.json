@@ -1,0 +1,24 @@
+{
+ "_comment": [
+  "STABILITY E3 field arm (STICKY, 2026-09-02): the",
+  "_ext63_12h_evt_pl_clkpin pivot-pin field lineage (61 real sta, GPS dual, DOY-129",
+  "UTC 00-12, eclipse exclusion armed, NO Q3 / NO CLK-R jump test => re-admission",
+  "steps UNMARKED on this lineage) re-run FRESH under the current build (the old",
+  "evt_pl_clkpin12 run predates the wu93 wind-up fix - expected-fail baseline,",
+  "A3 rule: re-capture never re-grade).  Single mechanism between the pair:",
+  "network.sticky_pivot (IN the warm-resume fingerprint - both arms are fresh",
+  "cold starts with their own snapshot paths).  Sim-bed verdict being transferred:",
+  "SPEC_synthetic_minimum_network s18.5 (settled consumer -74%, 8->2 handovers).",
+  "Field prediction: control ~2 PIVOT handovers (G01 eclipse leave + flip-back at",
+  "return), sticky ~1 (advance once to a non-eclipsing sat); the flip-back edge's",
+  "consumer/wire cost removed."
+ ],
+ "extends": [
+  "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+ ],
+ "network": {
+  "sticky_pivot": true,
+  "product_output_path": "C:/GnssProcessor/runs/fld63_stk_on/products.txt",
+  "state_snapshot_path": "C:/GnssProcessor/runs/fld63_stk_on/state_snapshot.bin"
+ }
+}
