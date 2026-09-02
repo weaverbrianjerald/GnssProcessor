@@ -134,6 +134,7 @@ namespace GnssProcessor {
         bool zwd_seam_on{};    ///< network.zwd_seam_reseed: post-resume ZWD re-seed window (SPEC_synthetic_minimum_network §17 finding 3).  NOT fingerprinted (forward-only resume response policy).
         int  zwd_seam_epochs{};   ///< network.zwd_seam_reseed_epochs: seam-window horizon in emitted epochs.
         bool zwd_capture{};    ///< Snapshot-armed run (state_snapshot_path non-empty): record + harvest the per-station ZWD posterior every processed epoch so EVERY snapshot carries Z rows — read-only w.r.t. the solve (no inject; capture only).
+        double amb_seam_reinflate_var{};  ///< network.amb_seam_reinflate_var_m2: one-shot variance ADD (m²) on every restored leveling carry at a warm resume (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF.
         bool carry_vce{};
         bool vce_apply_on{};   ///< M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor apply. SOLVE-AFFECTING; loader guarantees carry_vce.
         bool ura_on{};

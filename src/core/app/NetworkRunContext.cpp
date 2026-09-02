@@ -66,6 +66,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.zwd_q = config_.networkZwdCarryQ();
     k.zwd_seam_on = config_.networkZwdSeamReseed();
     k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
+    k.amb_seam_reinflate_var = config_.networkAmbSeamReinflateVarM2();
     // Unconditional Z-row capture (SPEC_synthetic_minimum_network §17 finding 3):
     // any snapshot-armed run records + harvests the per-station ZWD posterior so
     // EVERY snapshot carries Z rows — read-only w.r.t. the solve, no inject.
@@ -1171,6 +1172,24 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     local_carry.clear();
                     for (const auto& [key, l] : snap.local_carry)
                         local_carry[key] = LocalCarry{l.value_abs, l.var, l.last_seen_s};
+                    // STABILITY target 2 leg C: seam-scoped soft refloat of the
+                    // restored leveling carries.  The h-vintage zero-q levels were
+                    // leveled under the OLD run's ZWD realization; against the
+                    // resume's fresh station filters they are an invariant-#1
+                    // stiff prior (measured: the post-retire ZWD drag, §18).  A
+                    // one-shot variance ADD keeps the carried value as the prior
+                    // mean — no refloat-from-code, no fresh station-common-iono
+                    // seeding — and lets the fold re-earn the stiffness.  RESUME
+                    // path only: continuous epochs structurally never reach here.
+                    if (ctx.knobs.amb_seam_reinflate_var > 0.0 && !local_carry.empty()) {
+                        for (auto& [key, l] : local_carry)
+                            l.var += ctx.knobs.amb_seam_reinflate_var;
+                        log->info("Network (amb seam re-inflate): +{:.3e} m² added to {} restored "
+                                  "leveling carr{} at the resume seam (one-shot soft refloat; "
+                                  "values kept as prior means).",
+                                  ctx.knobs.amb_seam_reinflate_var, local_carry.size(),
+                                  local_carry.size() == 1 ? "y" : "ies");
+                    }
                     zwd_carry.clear();
                     for (const auto& [idx, l] : snap.zwd_carry)
                         zwd_carry[idx] = LocalCarry{l.value_abs, l.var, l.last_seen_s};

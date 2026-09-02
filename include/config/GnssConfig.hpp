@@ -2156,6 +2156,28 @@ namespace GnssProcessor {
         int networkZwdSeamReseedEpochs() const { return network_zwd_seam_reseed_epochs_; }
 
         /**
+         * @brief Seam-scoped ambiguity-carry variance re-inflation at a warm resume
+         *        (@c network.amb_seam_reinflate_var_m2, m², STABILITY target 2 leg C,
+         *        SPEC_synthetic_minimum_network §18).
+         *
+         * On a warm resume (RTB-7), ADD this variance to every restored
+         * phase-leveling local ambiguity carry — a one-shot soft refloat at the seam.
+         * Mechanism it treats (measured, §17 warm-start arms + the zwd_seam_reseed
+         * residual): the restored zero-q ambiguity carries were leveled under the
+         * OLD run's ZWD realization; against the resume's fresh station filters they
+         * are an invariant-#1 stiff prior dragging the ZWD toward the pre-seam
+         * plateau (post-retire ZWD truth drift 0.141 → 0.199 on the (c') arm).  The
+         * carried VALUE stays as the prior mean — this is not a refloat-from-code
+         * (no fresh station-common-iono seeding, the relevel-walk failure mode);
+         * the data re-earns the stiffness through the ordinary fold.  Applies at the
+         * restore site only — continuous epochs structurally never execute it.
+         * Deliberately NOT in the warm-resume fingerprint (the forward-only resume
+         * response policy, same exemption class as @ref networkZwdSeamReseed).
+         * Default 0.0 = OFF, byte-identical.
+         */
+        double networkAmbSeamReinflateVarM2() const { return network_amb_seam_reinflate_var_m2_; }
+
+        /**
          * @brief Carry per-LOS slant ionosphere across epochs in the network producer
          *        as a diagonal random-walk prior (@c network.carry_iono, QUEUE 8b).
          *
@@ -6447,6 +6469,7 @@ namespace GnssProcessor {
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Used by network.carry_zwd and by the network.zwd_seam_reseed post-resume window.
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.
+        double network_amb_seam_reinflate_var_m2_{0.0};   ///< Seam-scoped one-shot variance ADD (m²) on every restored phase-leveling local ambiguity carry at a warm resume — a soft refloat that keeps the carried value as prior mean (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF, byte-identical.
         bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).
         double network_iono_carry_q_{1e-4};               ///< QUEUE 8b: slant-iono carry random-walk process noise (m²/s); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.
         std::string network_iono_carry_scope_{"relevel"}; ///< QUEUE 8b: inject scope — "relevel" (re-leveling LOS only, one epoch per re-draw event) or "always" (every epoch; the O2 accumulation channel).

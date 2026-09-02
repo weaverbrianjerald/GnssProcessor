@@ -3145,6 +3145,9 @@ namespace GnssProcessor {
             jval<bool>(json, "network.zwd_seam_reseed", "zwd_seam_reseed", false);
         network_zwd_seam_reseed_epochs_ =
             jval<int>(json, "network.zwd_seam_reseed_epochs", "zwd_seam_reseed_epochs", 480);
+        network_amb_seam_reinflate_var_m2_ =
+            jval<double>(json, "network.amb_seam_reinflate_var_m2",
+                         "amb_seam_reinflate_var_m2", 0.0);
         // Slant-iono carry (QUEUE 8b, docs/SPEC_slip_relevel_walk.md s8 residual): carry
         // per-LOS slant iono across epochs as a diagonal RW prior via the same
         // addStationPrior path.  NOT the phantom filter.process_noise.ionosphere_q (which
@@ -8358,6 +8361,30 @@ namespace GnssProcessor {
                       "Deliberately NOT in the warm-resume fingerprint (forward-only resume "
                       "response policy).",
                       network_zwd_seam_reseed_epochs_, network_zwd_carry_q_);
+        }
+        if (network_amb_seam_reinflate_var_m2_ != 0.0) {
+            if (network_amb_seam_reinflate_var_m2_ < 0.0) {
+                log->error("Network: network.amb_seam_reinflate_var_m2 must be >= 0 (got {}); a "
+                           "negative variance ADD would deflate the restored carries.",
+                           network_amb_seam_reinflate_var_m2_);
+                return false;
+            }
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (amb seam re-inflate): network.amb_seam_reinflate_var_m2 is set "
+                          "but network.state_snapshot_path is EMPTY — no warm resume can ever "
+                          "happen, so the re-inflation is structurally INERT on this run.");
+            if (!network_phase_leveling_)
+                log->warn("Network (amb seam re-inflate): network.amb_seam_reinflate_var_m2 is set "
+                          "but network.phase_leveling is off — there are no local ambiguity "
+                          "carries to re-inflate; INERT.");
+            log->info("Network (amb seam re-inflate): armed — at a warm resume, every restored "
+                      "phase-leveling local ambiguity carry gets +{:.3e} m² variance (one-shot "
+                      "soft refloat at the seam; the carried value stays as prior mean, the data "
+                      "re-earns the stiffness).  Treats the invariant-#1 drag of h-vintage "
+                      "zero-q carries against fresh station filters (SPEC_synthetic_minimum_"
+                      "network §18).  Deliberately NOT in the warm-resume fingerprint "
+                      "(forward-only resume response policy).",
+                      network_amb_seam_reinflate_var_m2_);
         }
         if (network_cycle_slip_if_phase_td_) {
             if (network_phase_leveling_)

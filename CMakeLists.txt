@@ -417,6 +417,7 @@ add_executable(gnss_tests
     tests/test_windup_restart_response_config.cpp
     tests/test_lane_observatory_config.cpp
     tests/test_zwd_seam_reseed_config.cpp
+    tests/test_amb_seam_reinflate_config.cpp
     tests/test_rt_state_snapshot.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
