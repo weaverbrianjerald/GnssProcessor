@@ -265,7 +265,7 @@ Valve inventory to audit against it (status as of Aug-1 — **re-audit before qu
 | station vanish-return | **nothing** | **nothing** (phantom pin) | OPEN — S-system catalog |
 | warm-resume seam | RTB-7d event ✓ | resume_warmup_vet UNBUILT | open deviation (flicker §8) |
 | RAIM withhold / re-entry | events ✓ | re-entry un-validated | audit |
-| eclipse exclusion (`exclude_eclipsing_satellites`) | **nothing** (no per-event log; windows only inferable wire-vs-visibility) | **wrong thing validated** — cta_recouple checks the post-re-solve value; clock-disc jump test GAP-BLIND across the absence | **OPEN — measured 2026-09-01**: ~55-min exclusions re-realize the clock↔C5Q split by 6.3–6.7 m at re-admission, held stiff for hours, URA silent (SPEC_synthetic_minimum_network §18.1) |
+| eclipse exclusion (`exclude_eclipsing_satellites`) | no exclusion log line (windows only inferable wire-vs-visibility); on Q3-armed postures the gap itself becomes `cta_decouple(reason=gap)` | **marked but not re-validated** — Q3's pending disc LANDS at return (`cta_disc_landed`: R record + all counters + URA spike ~0.3 m + consumer resets; verified G25 tow 314010), but the split re-realizes freely and freezes; CLK-R magnitude test GAP-BLIND (0 CLK_STEP on 6.7 m steps) so non-Q3 postures (all field lineages) have NO catcher | **PARTIALLY OPEN — measured + corrected 2026-09-01** (SPEC_synthetic_minimum_network §18.1): cards E1 (gap-aware CLK-R baseline, non-Q3 robustness), E2 (realization-continuity re-seed at return), E3 (pivot hygiene — the §18.3 consumer lever, 0.3–0.8 m steps) |
 
 The audit is cheap (read each site against the invariant, one short card per NO cell, cheapest
 first).  Keep this table here until the user wants it promoted to its own doc.

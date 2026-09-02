@@ -3234,14 +3234,31 @@ producer RE-COUPLING defect acting on the fixture's eclipse schedule:**
    with BOTH channels landing badly (clock +0.06→+6.42, C5Q +1.91→−4.89):
    the re-seed lands wherever the readmission epoch's estimability puts it,
    then freezes.  The applied C1C combination (clk + b_C1C) steps ~6.6 m.
-4. **Silent on every armed instrument.**  URA/sigcc stays 4–7 mm through the
-   step.  NO clock-disc mark despite `emit_clock_disc` +
-   `clock_disc_jump_test` armed — the jump test compares successive emitted
-   values and a 110-epoch absence leaves it nothing to compare: **GAP-BLIND**,
-   the same shape as the wind-up accumulator's 300/900 s horizon defect.  The
-   only event at the edge is `cta_recouple` (statistic 0.057 vs threshold 6):
-   the Q3 anchor re-couples against the post-re-solve value — invariant #7's
-   re-coupling edge validating the wrong thing, measured.
+4. **Marking status — CORRECTED 2026-09-01 (same session, deeper read; the
+   first published form of this point claimed "silent on every armed
+   instrument" and was WRONG in two parts).**  On THIS posture the
+   re-admission IS marked, by Card Q3's pending-disc path: the anchor
+   decouples during the gap (`cta_decouple` reason=gap), the disc mark goes
+   PENDING and LANDS at the return epoch (`cta_disc_landed` — R record +
+   per-sat phase/code/clock counter bumps; verified at G25's return tow
+   314010), the URA spikes to ~0.30 m at the return epoch and decays to
+   ~0.02 m within 4–5 epochs (honest at the edge — the earlier "URA silent
+   4–7 mm" reading sampled settled medians and post-window epochs, missing
+   the single-epoch spike), and the closed-loop consumer logs phase + code +
+   clock discontinuity resets for the sat.  The ~0.06 m ordinary-sat edge
+   response of §18.3 is this MARKED chain working.  What remains true and
+   defective: (a) the CLK-R magnitude tier (`clock_disc_jump_test`, armed)
+   emitted ZERO CLK_STEP events for these 6.3–6.7 m steps — **gap-blind**
+   (the rebase engine treats a vanish-return as a first sighting), so on any
+   posture WITHOUT `clock_temporal_anchor` + `clock_anchor_mark` (every
+   field lineage while G4 blocks Q3) the re-admission re-realization goes
+   unmarked; (b) the re-coupling edge is marked but NOT re-validated — the
+   split is free to re-realize anywhere and the stiff states freeze it, so
+   the churn and the frozen far-from-truth realization are signalled, not
+   prevented; (c) the settled URA returns to mm on a lump sitting ~7 m from
+   the truth satellite clock — contract-legal (the wire carries estimable
+   lumps and the consumer applies C+B+P coherently), but any absolute-clock
+   consumer pays it unwarned.
 5. **Datum posture changes WHO PAYS, not whether.**  r2q3 and bca reproduce
    the same top-3 (G25 7.2/7.6, G26 6.9/7.0, G12 6.7/6.4 — the "fixture-
    common, both datums" reading from the bca session, explained).  Under bca
@@ -3257,19 +3274,25 @@ producer RE-COUPLING defect acting on the fixture's eclipse schedule:**
    may be partly the superposition of these split re-realizations passing
    through the applied products.
 
-Derived fix cards (NOT built; each is invariant-#7 work on the eclipse valve —
-row added to SPEC_prefit_census_observability §13):
-- **Gap-aware clock-disc marking**: the disc test must span an emission gap
-  (compare against the pre-gap value with a gap-scaled band), so a
-  re-admission step is MARKED and the consumer re-references instead of
-  silently absorbing ~7 m.
-- **Re-coupling-edge split re-validation**: on re-admission, re-validate the
-  returning sat's clock+bias SPLIT against its pre-gap realization (or
-  deliberately re-seed and mark), not merely the post-re-solve innovation.
+Derived fix cards (NOT built; re-prioritized by the marking correction above
+and by §18.3's consumer numbers — row updated in
+SPEC_prefit_census_observability §13):
+- **E3 (THE lever, from §18.3): satellite-pivot / datum hygiene at the
+  exclusion edge** — the pivot sats' own transits step the consumer
+  0.3–0.8 m network-wide; election avoiding eclipse-season sats, or a
+  level-bridged re-pin at pivot return.
+- **E2 — realization-continuity at re-admission**: re-seed the returning
+  sat's clock↔bias split AT its pre-gap realization (then let the data
+  re-earn any true change) instead of letting it re-realize freely and
+  freezing the result.  Prevents the churn the current chain can only mark.
+- **E1 — gap-aware CLK-R jump test**: give `clock_disc_jump_test` a pre-gap
+  baseline so it catches re-admission steps on postures without Q3 +
+  `clock_anchor_mark` (all current field lineages).  Redundant on this bed;
+  the robustness card elsewhere.
 - **The C5Q cold-start misrealization itself** (why 7 m parks in the third
-  frequency at ignition) — LV-6 / level-authority family; without it the
-  re-coupling fix merely keeps the 7 m where it is inert, which may be the
-  correct product decision anyway.
+  frequency at ignition) — LV-6 / level-authority family; it is the reason
+  every re-realization is LARGE.  Keeping the lump parked consumer-inert may
+  remain the right product call; shrinking it shrinks every edge.
 
 ### 18.2 TARGET 1 — settled late drift: instrument + 12 h re-analysis
 ### (verdict in §18.3)
