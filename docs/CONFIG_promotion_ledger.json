@@ -658,11 +658,19 @@
    "fingerprinted": false
   },
   {
+   "knob": "processing.exclude_eclipsing_satellites",
+   "default_at": "true in the standard armed set (every camp60wu config); eclipse gate in the measurement admission path",
+   "verdict": "KEEP ARMED - CAVEAT (invariant-#7 valve, both edges bare, measured)",
+   "scope": "caveat applies to every posture that estimates sat clocks/biases across an exclusion window",
+   "evidence": "STABILITY target 3 (2026-09-01, SPEC_synthetic_minimum_network s18.1; instrument scripts/simnet_sat_clock_census.py; valve row in SPEC_prefit_census_observability s13): ~55-min exclusions re-realize the returning sat's clock<->C5Q-bias split (steps 6.3-6.7 m G25/G12/G26; +1.81 G22 mid-settled), held stiff for the rest of the run, silent on URA and disc channels; cta_recouple validates the post-re-solve value (0.057 vs threshold 6).  The relocated ~7 m is a COLD-START C5Q third-frequency misrealization, consumer-inert where it sat.  Datum decides who pays: r2q3/bca the sat's clock (pivot G01 itself 4.1 m under bca); s0 smears it constellation-wide and the bill moves to cb.",
+   "interlock": "Derived cards (not built): gap-aware clock-disc marking at re-admission; re-coupling split re-validation against the PRE-GAP realization; the C5Q cold-start misrealization itself (LV-6 family - keeping it parked consumer-inert may be the right product call)."
+  },
+  {
    "knob": "network.emit_clock_disc",
    "default_at": "src/core/config/GnssConfigLoadNetwork.cpp:1957-1958 (false)",
    "verdict": "RECOMMEND_SCOPED",
    "scope": "Any product a real consumer consumes (service / RT / closed-loop). Pointless for pure producer-internal grading runs, where it only changes the product format.",
-   "evidence": "It is the only channel carrying the per-satellite clock discontinuity counter: 'the emitter only maintains/stamps the CLOCK counter when emit_clock_disc is on (otherwise disc_counter stays 0 for byte-identity). So with ura_retro_bump on but emit_clock_disc off, the clock channel would silently never bump - the consumer would reset the phase/code ambiguities of a contaminated satellite but keep integrating its bad clock' (:2283-2295). Armed in the one field-run service config (config/ppp_rtk_network_brdc_rts.json:205; Card-8 run 117/121 epochs emitted, criteria 1-4 PASS). CAVEAT: never isolated in an A/B - the benefit is contract-level consumer-reset correctness, not a measured position delta.",
+   "evidence": "It is the only channel carrying the per-satellite clock discontinuity counter: 'the emitter only maintains/stamps the CLOCK counter when emit_clock_disc is on (otherwise disc_counter stays 0 for byte-identity). So with ura_retro_bump on but emit_clock_disc off, the clock channel would silently never bump - the consumer would reset the phase/code ambiguities of a contaminated satellite but keep integrating its bad clock' (:2283-2295). Armed in the one field-run service config (config/ppp_rtk_network_brdc_rts.json:205; Card-8 run 117/121 epochs emitted, criteria 1-4 PASS). CAVEAT: never isolated in an A/B - the benefit is contract-level consumer-reset correctness, not a measured position delta.  GAP-BLINDNESS MEASURED (2026-09-01, STABILITY target 3, SPEC_synthetic_minimum_network s18.1): even armed with clock_disc_jump_test, an eclipse-readmission step emits ZERO disc marks - the jump comparator has nothing to compare across a ~110-epoch emission absence; 6.3-6.7 m clock<->C5Q split re-realizations went unmarked with URA 4-7 mm.  Derived card: gap-aware disc marking vs the pre-gap value.",
    "interlock": "FORCE-ARMED by network.ura_retro_bump (:2289-2295) and by network.clock_disc_on_set_change (:2484-2489); service_mode arms it (:3056-3057). clock_disc_on_set_change is itself auto-armed when sum_to_zero + emit_clock_disc are both on (:2463-2470) and fail-louds without sum_to_zero (:2477-2483). In the warm-resume fingerprint.",
    "family": "EMISSION and PRODUCT knobs",
    "regime": "on(\"network.closed_loop.enable\") or on(\"network.service_mode\")",
