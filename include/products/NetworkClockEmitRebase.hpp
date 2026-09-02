@@ -102,6 +102,7 @@ public:
         bool   jump_test{false};  ///< Stage 2: mark per-sat common-removed steps (independent of stage 1 — alone it marks the raw wire).
         double jump_m{1.5};       ///< Stage 2: flat step threshold (m).  Empirical: ≈16 σ of the per-epoch walk step (SPEC §1); the census outlier floor (0.5 m) would mark 10× as often.
         double max_gap_s{600.0};  ///< Key gap (s) beyond which a returning satellite is a first sighting (re-init, no step test).
+        double gap_jump_m{0.0};   ///< Stage 2b (E1, `network.clock_disc_gap_jump_m`): on a beyond-max_gap_s RETURN, test the common-removed step against the RETAINED pre-gap baseline with THIS threshold (m).  0 = OFF (a stale return stays an untested first sighting — the measured gap-blindness on ~55-min eclipse re-admissions, SPEC_synthetic_minimum_network §18.1; on non-Q3 postures nothing else marks those steps).  Designed for frame_hold lineages: with the hold OFF, the un-drained common wander over the gap contaminates the statistic and this threshold must absorb it.
         int    min_common{4};     ///< Minimum fresh unforced keys for a valid μ vote; below it the frame does not move this epoch.
     };
 
@@ -122,6 +123,7 @@ public:
         long long reanchors{0};   ///< stage-1 leash re-anchors (each paired with a datum mark by the caller).
         long long inits{0};       ///< first-sighting seeds.
         long long gaps{0};        ///< beyond-horizon re-inits.
+        long long gap_marks{0};   ///< stage-2b beyond-horizon-return step marks (gap_jump_m armed).
         double    sum_abs_mu{0.0};///< Σ|μ| drained into the frame accumulators (m) — the churn the wire no longer carries.
         double    max_abs_acc{0.0};///< max |A_c| reached (m) — headroom against the leash.
     };

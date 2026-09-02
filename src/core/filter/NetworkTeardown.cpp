@@ -3343,13 +3343,17 @@ int networkTeardown(
         log->info("Network (Card CLK-R / clock emission re-base): {} emit epoch(s), {} row(s); "
                   "frame hold {} — Σ|μ| drained {:.2f} m, max |A_c| {:.2f} m, {} leash "
                   "re-anchor(s); step marks {} — {} mark(s) > {:.2f} m; {} init(s), {} gap "
-                  "re-init(s).  OUTPUTS-only: solve byte-identical; between-sat differences "
-                  "preserved exactly.",
+                  "re-init(s), {} gap-return mark(s) (stage 2b {}).  OUTPUTS-only: solve "
+                  "byte-identical; between-sat differences preserved exactly.",
                   cr.epochs, cr.rows,
                   ctx.knobs.clk_frame_hold ? "ON" : "off",
                   cr.sum_abs_mu, cr.max_abs_acc, cr.reanchors,
                   ctx.knobs.clk_jump_test ? "ON" : "off",
-                  cr.marks, config_.networkClockDiscJumpM(), cr.inits, cr.gaps);
+                  cr.marks, config_.networkClockDiscJumpM(), cr.inits, cr.gaps,
+                  cr.gap_marks,
+                  config_.networkClockDiscGapJumpM() > 0.0
+                      ? fmt::format("ON at {:.2f} m", config_.networkClockDiscGapJumpM())
+                      : std::string("off — a stale return is an UNTESTED first sighting"));
     }
     if (ctx.knobs.cta_on) {
         // Card Q3 run-end telemetry (standing invariant #4 — the ON-path counters

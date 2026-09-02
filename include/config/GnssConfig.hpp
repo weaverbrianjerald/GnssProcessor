@@ -3671,6 +3671,17 @@ namespace GnssProcessor {
         /// clock_emit_rebase §1): ~7 marks/h on the reference internal lineage;
         /// the census outlier floor (0.5 m) would mark ~10× as often.
         double networkClockDiscJumpM() const { return network_clock_disc_jump_m_; }
+        /// Card CLK-R stage 2b (E1, @c network.clock_disc_gap_jump_m): on a
+        /// beyond-max_gap_s RETURN, test the common-removed step against the
+        /// RETAINED pre-gap baseline with this threshold (m).  0 (default) = OFF:
+        /// a stale return stays an untested first sighting — the measured
+        /// gap-blindness on eclipse re-admissions (SPEC_synthetic_minimum_network
+        /// §18.1: 6.3–6.7 m clock↔C5Q split re-realizations, zero CLK_STEP marks).
+        /// On Q3-armed postures cta_disc_landed already marks those returns; this
+        /// knob is the catcher for postures WITHOUT clock_temporal_anchor +
+        /// clock_anchor_mark (every current field lineage).  Inert without
+        /// networkClockDiscJumpTest().
+        double networkClockDiscGapJumpM() const { return network_clock_disc_gap_jump_m_; }
 
         /// @name Card Q3 — the guarded temporal clock anchor
         /// (docs/SPEC_clock_temporal_anchor.md).  The per-satellite clock's D2
@@ -6623,6 +6634,7 @@ namespace GnssProcessor {
         double network_clock_frame_leash_m_{50.0};         ///< Card CLK-R stage 1: |A_c| re-anchor bound (m). Crossing it re-anchors the constellation to the solve frame WITH markDatumChange (the invariant-#7 marked re-coupling edge; never silent). Measured 12 h wander on the reference lineage: 23 m. INERT unless network_emit_clock_frame_hold_.
         bool   network_clock_disc_jump_test_{false};       ///< Card CLK-R stage 2: mark per-satellite common-removed clock steps > network_clock_disc_jump_m_ via the markSatDiscontinuity retro-bump — R record + per-sat phase/code/clock counters, the consumer-reset chain Q4 proved end-to-end. Independent of the frame hold (alone it marks the RAW wire with the census's own statistic). RTA-11 stands: the emitter's clock counter keeps NO internal magnitude test — this test lives at the emission-prep tier and replay reproduces it from the serialized R/E records. OFF = byte-identical.
         double network_clock_disc_jump_m_{1.5};            ///< Card CLK-R stage 2: flat per-sat step threshold (m). Empirical (SPEC clock_emit_rebase §1): 1.5 ≈ 16σ of the measured per-epoch walk step (robust σ 0.092 m) ⇒ ~7 marks/h on the reference internal lineage; the census outlier floor (0.5) would mark 73/h — a consumer reset storm. INERT unless network_clock_disc_jump_test_.
+        double network_clock_disc_gap_jump_m_{0.0};        ///< Card CLK-R stage 2b (E1): beyond-horizon-RETURN step threshold (m) against the retained pre-gap baseline.  0 = OFF (stale return = untested first sighting — the measured eclipse-readmission gap-blindness).  The non-Q3-posture catcher.  INERT unless network_clock_disc_jump_test_.
         bool   network_clock_temporal_anchor_{false};      ///< Card Q3 (docs/SPEC_clock_temporal_anchor.md): the GUARDED temporal clock anchor. The satellite clock's D2 carry folds at network_clock_anchor_q_ instead of filter.process_noise.sat_clock_q, over a PER-SATELLITE elapsed time, with a variance floor — plus the guard (standardized generalized predicted residual, common-mode removed), the in-epoch withdraw+re-solve, the LOOSE/ANCHORED re-validation state machine, and marks at the decoupling edge. Rationale: √(sat_clock_q·Δt) = 17.3 cm sits ABOVE the realized 9.2 cm walk, so the prior never binds and the emitted clock is per-epoch estimation noise (uniform to 1.37× across 32 satellites — not clock physics) against ~2 cm of physical change. SOLVE-AFFECTING + FINGERPRINTED. OFF = byte-identical (no fold change, no state allocated).
         double network_clock_anchor_q_{1e-4};              ///< Card Q3: the anchor's random-walk rate (m²/s). Steady-state identity: the emitted per-satellite walk is √(q·Δt), so this knob IS the walk target (1e-4 → 5.5 cm, 3e-5 → 3.0, 1e-5 → 1.7; the FC-1 physical floor ~2 cm sits at 1.3e-5). Default 1e-4 is the conservative first rung, BELOW the measured binding knee and well above the physical floor. INERT unless network_clock_temporal_anchor_.
         double network_clock_anchor_var_floor_m2_{0.0};    ///< Card Q3: consistency floor on the folded carry variance (m²) — the clock analogue of the B4 pb/cb floors, whose own comment exempted the clock ("own two-state model / monitor"); that exemption ends with a binding carry. Caps folded prior information at 1/floor so an independence-assuming (diagonal OR dense-diagonal) carry cannot accumulate unbounded information against a time-correlated error floor — assessment deviation #1, ranked-plan item 3. 0 = no floor. INERT unless network_clock_temporal_anchor_.

@@ -6109,6 +6109,26 @@ namespace GnssProcessor {
         network_clock_disc_jump_m_ =
             jval<double>(json, "network.clock_disc_jump_m",
                          "network_clock_disc_jump_m", 1.5);
+        network_clock_disc_gap_jump_m_ =
+            jval<double>(json, "network.clock_disc_gap_jump_m",
+                         "network_clock_disc_gap_jump_m", 0.0);
+        if (network_clock_disc_gap_jump_m_ < 0.0) {
+            log->warn("Network (Card CLK-R/E1): network.clock_disc_gap_jump_m {} < 0 — "
+                      "clamped to 0 (OFF).", network_clock_disc_gap_jump_m_);
+            network_clock_disc_gap_jump_m_ = 0.0;
+        }
+        if (network_clock_disc_gap_jump_m_ > 0.0 && !network_clock_disc_jump_test_)
+            log->warn("Network (Card CLK-R/E1): network.clock_disc_gap_jump_m is set but "
+                      "network.clock_disc_jump_test is OFF — stage 2b rides stage 2's engine "
+                      "walk, so the gap test is INERT.  Arm clock_disc_jump_test with it.");
+        if (network_clock_disc_gap_jump_m_ > 0.0 && network_clock_disc_jump_test_)
+            log->info("Network (Card CLK-R/E1): GAP-AWARE clock step test ON — a satellite "
+                      "returning after > the stage-2 horizon is tested against its RETAINED "
+                      "pre-gap held-frame baseline at {:.2f} m (0 was the old behavior: an "
+                      "untested first sighting — the measured eclipse-readmission blindness, "
+                      "6.3-6.7 m re-realizations with zero CLK_STEP marks).  Marks route to "
+                      "the same markSatDiscontinuity retro-bump chain.",
+                      network_clock_disc_gap_jump_m_);
         if (network_emit_clock_frame_hold_) {
             log->info("Network producer (Card CLK-R): CLOCK EMISSION FRAME HOLD ON — the emitted "
                       "satellite clocks ride a per-constellation HELD frame (per-epoch median "

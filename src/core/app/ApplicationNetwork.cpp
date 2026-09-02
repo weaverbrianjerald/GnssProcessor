@@ -914,6 +914,7 @@ int Application::runNetwork() {
     clk_rebase_cfg.leash_m    = config_.networkClockFrameLeashM();
     clk_rebase_cfg.jump_test  = ctx.knobs.clk_jump_test;
     clk_rebase_cfg.jump_m     = config_.networkClockDiscJumpM();
+    clk_rebase_cfg.gap_jump_m = config_.networkClockDiscGapJumpM();
     NetworkClockEmitRebase clk_rebase_engine(clk_rebase_cfg);
     auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
     auto& carry_group_id = ctx.carry.carry_group_id;

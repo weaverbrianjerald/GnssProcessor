@@ -92,6 +92,25 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
                     e->step_m = dev;
                     ++counters_.marks;
                 }
+            } else if (!reanchor && have && stale && !e->forced && cfg_.jump_test
+                       && cfg_.gap_jump_m > 0.0) {
+                // Stage 2b (E1): a beyond-horizon RETURN, tested against the
+                // RETAINED pre-gap baseline instead of being treated as a
+                // first sighting.  With the frame hold on, the held frame is
+                // gap-consistent (the accumulator carried through the absence)
+                // so the statistic is the genuine common-removed step across
+                // the gap — the measured eclipse-readmission re-realization
+                // (6.3–6.7 m on the quiet bed) that stage 2's fresh-only test
+                // structurally cannot see.  Threshold is gap_jump_m, not
+                // jump_m: legitimate motion over a long gap is larger than a
+                // one-epoch step, and the caller picks the band.
+                const double innov = held - it->second.last_held_m;
+                const double dev   = cfg_.frame_hold ? innov : (innov - mu);
+                if (std::abs(dev) > cfg_.gap_jump_m) {
+                    e->marked = true;
+                    e->step_m = dev;
+                    ++counters_.gap_marks;
+                }
             }
             if (!have) ++counters_.inits;
             else if (stale) ++counters_.gaps;

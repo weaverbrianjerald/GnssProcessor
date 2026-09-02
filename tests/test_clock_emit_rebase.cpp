@@ -269,6 +269,49 @@ TEST(ClockEmitRebase, BeyondHorizonReturnIsAFirstSighting) {
     EXPECT_EQ(eng.counters().marks, 0);
 }
 
+TEST(ClockEmitRebase, GapAwareReturnMarksAgainstPreGapBaseline) {
+    // Stage 2b (E1): the same beyond-horizon return, with gap_jump_m armed —
+    // the retained pre-gap baseline now tests the return.  This is the
+    // measured eclipse-readmission re-realization (6.3-6.7 m steps that
+    // stage 2's fresh-only test structurally cannot see).
+    NetworkClockEmitRebase::Config c = holdCfg();
+    c.jump_test  = true;
+    c.max_gap_s  = 600.0;
+    c.gap_jump_m = 3.0;
+    NetworkClockEmitRebase eng(c);
+    epoch(eng, 0.0, kBase);
+    std::map<std::string, double> five = kBase;
+    five.erase("G06");
+    for (double t = 30.0; t <= 660.0; t += 30.0) epoch(eng, t, five);
+    auto raw = five;
+    raw["G06"] = kBase.at("G06") + 50.0;      // far beyond the 3 m gap band
+    auto e = epoch(eng, 690.0, raw);
+    EXPECT_TRUE(markedOf(e, "G06"));
+    EXPECT_EQ(eng.counters().gap_marks, 1);
+    EXPECT_EQ(eng.counters().marks, 0);       // the fresh-path counter is untouched
+    EXPECT_EQ(eng.counters().gaps, 1);        // still counted as a gap re-init
+}
+
+TEST(ClockEmitRebase, GapAwareReturnWithinBandStaysUnmarked) {
+    // A quiet return inside the gap band: no mark, no false positive — the
+    // knob must not turn every readmission into a consumer reset.
+    NetworkClockEmitRebase::Config c = holdCfg();
+    c.jump_test  = true;
+    c.max_gap_s  = 600.0;
+    c.gap_jump_m = 3.0;
+    NetworkClockEmitRebase eng(c);
+    epoch(eng, 0.0, kBase);
+    std::map<std::string, double> five = kBase;
+    five.erase("G06");
+    for (double t = 30.0; t <= 660.0; t += 30.0) epoch(eng, t, five);
+    auto raw = five;
+    raw["G06"] = kBase.at("G06") + 0.5;       // inside the 3 m band
+    auto e = epoch(eng, 690.0, raw);
+    EXPECT_FALSE(markedOf(e, "G06"));
+    EXPECT_EQ(eng.counters().gap_marks, 0);
+    EXPECT_EQ(eng.counters().gaps, 1);
+}
+
 // ===========================================================================
 // loader contract
 // ===========================================================================
