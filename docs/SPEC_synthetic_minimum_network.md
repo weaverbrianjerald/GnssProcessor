@@ -3272,7 +3272,7 @@ row added to SPEC_prefit_census_observability §13):
   correct product decision anyway.
 
 ### 18.2 TARGET 1 — settled late drift: instrument + 12 h re-analysis
-### (24 h verdict PENDING — the arm is running as this lands)
+### (verdict in §18.3)
 
 Instrument: `scripts/simnet_drift_age.py` (commit 2306134) — hourly
 consumer/channel/event decomposition + DD-truth-error-vs-chord-age join
@@ -3301,3 +3301,70 @@ json`: 00:00:30 → 23:59:30 of DOY 129, single product day, final epoch = the
 with 15 clean settled hours, decorrelates run-hour from time-of-day (the
 00:00 anchor), and carries the RTB-7 snapshot writer + per-epoch history so
 the scheduled mid-run seam-reseed arm can branch from any hour.
+
+### 18.3 TARGET 1 VERDICT (2026-09-01, the 24 h arm `runs/camp60wu_quiet24h_r2q3`):
+### carry aging FALSIFIED; the "late drift" is the transient response to the
+### ECLIPSE-EXCLUSION valve's edge events, dominated by the clock PIVOTS' own transits
+
+The arm: `_camp60wu_quiet24h_r2q3` = the flagship posture on the 24 h bed
+(single mechanism: fixture + duration; datum pinned S30000SIM, which is also
+the elected #1 on this arc), RTB-7 writer + per-epoch `.ep` history armed
+(write-outputs-only, proven).  2879/2879 epochs emitted, 0 withheld, consumer
+processed all; 1395 ms/epoch.  Pinned snap 5.26 h (vs 4.37 on the 12 h bed —
+NOT like-for-like: the 00:00 anchor puts the first-transit eclipse cluster
+h2.3–6.9 inside the convergence window).  Settled (h12–h24) consumer 3D rms
+0.303 / p50 0.130 — the p50 matches the 12 h flagship (0.128) exactly; the
+rms gap is entirely the h16–h18 excursion tail.
+
+1. **Aging falsified on every axis it could act.**  Hourly consumer 3D rms
+   h7→h15: 0.108, 0.069, 0.065, 0.072, 0.077, 0.115, 0.083, **0.053, 0.056**
+   — the BEST hours of the whole run at 14–15 h of carry age.  DD ambiguity
+   truth error IMPROVES monotonically with chord age (med|e| 3.67 → 3.57 →
+   3.53 → 3.43 → 3.35 → 2.98 cyc, 7.85M rows joined, 0 dropped).  Old chords
+   beat young in every settled hour except h17 (old 5.11 vs young 3.39 — the
+   pivot-cluster hour: the EVENT damages carried state more than fresh state,
+   a micro-confirmation of the mechanism).  Network-median per-station ZWD
+   drift h7→h23: −0.004 m (flat over 16 h).
+2. **The only settled excursions coincide with eclipse windows.**  h16–h18
+   (rms 0.434/0.434/0.711, excursion-dominated: h16 rms 0.434 vs p50 0.079)
+   contains, in sequence: E25 readmit h16.61, **G01 (the GPS clock pivot)
+   leave h16.68 / return h17.58**, G26 h16.94/17.83, **E02 (the Galileo
+   clock pivot) leave h17.41 / return h18.35**, G16 h18.01/18.87.  The h12
+   bump (0.115) aligns with the E31/G20 windows.  Edge-aligned consumer bias
+   steps ([-30,-5] vs [+5,+30] min): ordinary sats p50 **0.060 m**; the
+   pivot cluster: E02 RETURN **0.826 m**, E02 LEAVE 0.515, G16 LEAVE 0.510,
+   G26 RETURN 0.441, E25 RETURN 0.422, G01 0.308/0.343.  (No control
+   stretch exists: in the settled half no 50-min window is ever > 45 min
+   from an eclipse edge — the "quiet bed" is not quiet, it carries a
+   30-edge/12 h event schedule.)  Corroborated by the event census:
+   cta_decouple/recouple spike ~50–100/h exactly at the two transit
+   clusters (h3–h5, h16–h18) against a ~1/h background — same UTC as the
+   12 h bed's h4–h5 spike.
+3. **Not TOW-deterministic — a transient response, not a diurnal signal.**
+   Identical UTC evenings across beds (12 h h7–h11 ≡ 24 h h19–h23):
+   0.107/0.115/0.107/0.132/0.179 vs 0.225/0.267/0.207/0.117/0.113.  The
+   schedule is deterministic; the network's response depends on state
+   history.
+4. **The 12 h bed's "monotone h7→h11 rise" decomposes fully**: the evening
+   eclipse staircase (E30/E27/G14/G22/E21 readmissions, UTC 20–24) + the
+   final-5-epoch product-day-edge artifact (§18.2).  The wandering
+   UP-dominated bias of §18.2 is the low-frequency tail of these edge
+   responses.  "Young-carry resumed legs beat the flagship h8–11" re-reads
+   the same way: fresh filters respond differently to the same evening
+   edges — not evidence of aging.
+5. **Consequences for the campaign:**
+   - The mid-run scheduled seam-reseed arm is DE-MOTIVATED as an aging probe
+     (nothing ages); the `.ep` history (2879 files) stays as target-2's
+     branch library.
+   - The dominant stability lever is now TARGET 3's valve: the biggest
+     consumer steps ride the SATELLITE clock pivots G01/E02 — both
+     lowest-PRN elected, both eclipsing daily on this fixture.  Satellite
+     pivot election that avoids eclipse-season sats (or pivot-handover
+     hygiene at the exclusion edge) attacks the largest term; the §9.8
+     "pivot election is a product-quality decision" lesson, now for
+     SATELLITE pivots.  Plus §18.1's cards: gap-aware disc marking +
+     re-coupling split re-validation.
+   - Any future "settled stability" grading on this fixture must treat the
+     eclipse schedule as part of the bed: quote settled p50 alongside rms,
+     and never grade a settled window without stating which transit windows
+     it contains.
