@@ -207,6 +207,52 @@ struct NetworkStateSnapshot {
     /// (per-component DD means, dense @f$P^z@f$, tree/chord/vertex structure) = the branch.
     std::string carry_state;
 
+    // --- Resume FRAME state (format v2; SPEC_synthetic_minimum_network §18.10) ----
+    //
+    // The realization-frame bookkeeping RTB-7 v1 deliberately omitted and the
+    // §18.9 seam census showed to be the whole post-resume transient: without it
+    // the first warm epoch's phase-anchor election runs INCUMBENT-LESS for every
+    // (sat,signal) family, marks them all as re-referenced, erases every restored
+    // leveling carry, marginalizes their D2 phase-bias prior and re-pins the frame
+    // at fresh code seeds; the Q3 clock anchor folds LOOSE for its re-couple
+    // horizon; and the CLK-R held frame restarts at zero.  Captured UNCONDITIONALLY
+    // whenever a snapshot is written (the Z-row precedent) — a run that carries
+    // none of it writes the v1 format byte-for-byte.  A reader that finds them
+    // restores them into maps nothing reads unless `network.resume_frame_restore`
+    // is armed (the forward-only resume response policy, not fingerprinted).
+    /// "sat_signal" ambiguity key -> sticky phase-anchor STATION NAME (the
+    /// incumbent the next election must find to keep the family's frame).
+    std::map<std::string, std::string> anchor_incumbent;
+    /// "sat_signal" -> R2 sticky continuous pin target (m): the absolute value the
+    /// incumbent anchor is realized at.  Absent ⇒ the 0-frame (a cold pin realizes
+    /// the same frame as long as the incumbent is kept).
+    std::map<std::string, double> anchor_pin_target;
+    /// Card Q3 guarded temporal clock anchor — per-satellite state (mirrors the
+    /// driver's @c ClockAnchorSat).  Restoring it lets the first post-resume fold
+    /// run ANCHORED over the true elapsed time instead of LOOSE from a first
+    /// sighting; the stale test still runs on @c t_last (a resume older than the
+    /// anchor's own max gap decouples honestly).
+    struct ClockAnchorSat {
+        double t_last{0.0};        ///< continuous-GPS s of the last fold.
+        double last_value{0.0};    ///< prior mean folded at that epoch (m).
+        double last_var_eff{0.0};  ///< prior variance folded at that epoch (m²).
+        int    in_band{0};         ///< consecutive in-band epochs while LOOSE.
+        bool   anchored{false};    ///< ANCHORED (true) or LOOSE.
+    };
+    std::map<std::string, ClockAnchorSat> clock_anchor;  ///< sat -> anchor state.
+    /// CLK-R stage-1 held-frame engine state (@c NetworkClockEmitRebase): the
+    /// per-constellation frame accumulator A_c, the per-sat previous held value +
+    /// last-seen stamp, and the epoch count (so the F1 `resume_seam` datum mark —
+    /// keyed on a fresh engine — does not fire when the frame actually continues).
+    std::map<char, double> clk_frame_acc;                        ///< constellation -> A_c (m).
+    std::map<std::string, std::pair<double, double>> clk_frame_prev; ///< sat -> {last held (m), last seen (s)}.
+    long long clk_frame_epochs{0};                               ///< rebaseEpoch count.
+    /// True when any frame record is present (the writer then emits the v2 header).
+    bool hasFrameState() const {
+        return !anchor_incumbent.empty() || !anchor_pin_target.empty()
+            || !clock_anchor.empty() || !clk_frame_acc.empty()
+            || !clk_frame_prev.empty() || clk_frame_epochs > 0;
+    }
     // --- Emitter layer -----------------------------------------------------
     /// Verbatim @c NetworkProductEmitter::serializeState blob (its own
     /// @c EMITTER header through its @c EEND terminator, newline-separated).

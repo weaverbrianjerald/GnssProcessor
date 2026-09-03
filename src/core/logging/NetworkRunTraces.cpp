@@ -1500,6 +1500,11 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"zwd_seam_reseed\":" << (config_.networkZwdSeamReseed() ? "true" : "false") << ','
                << "\"zwd_seam_reseed_epochs\":" << config_.networkZwdSeamReseedEpochs() << ','
                << "\"zwd_snapshot_capture\":" << (nc.state_snapshot_path.empty() ? "false" : "true") << ','
+               // Resume FRAME restore (§18.10): whether a resumed leg continued the
+               // pre-seam realization frame, and the post-resume MW/LLI warm-up.
+               << "\"state_snapshot_frame_capture\":" << (nc.state_snapshot_frame_capture ? "true" : "false") << ','
+               << "\"resume_frame_restore\":" << (config_.networkResumeFrameRestore() ? "true" : "false") << ','
+               << "\"resume_slip_warmup_ep\":" << config_.networkResumeSlipWarmupEp() << ','
                << "\"raim\":" << (raim_on ? "true" : "false") << ','
                << fmt::format("\"raim_k_sigma\":{},", raim_k)
                << "\"raim_min_stations\":" << raim_min_sta << ','

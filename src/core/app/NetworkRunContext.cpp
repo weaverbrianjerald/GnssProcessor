@@ -19,6 +19,7 @@
 #include "filter/NetworkClockAnchor.hpp"      // Card Q3 guarded temporal clock anchor
 #include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkInvariantCarryDriver.hpp"   // RTB-7(c) branch-faithful carry (de)serialize
+#include "products/NetworkClockEmitRebase.hpp"       // §18.10 resume frame restore: CLK-R held frame travels
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey (handover scope predicate)
 #include "filter/NetworkSbasis.hpp"          // kWindUpYawModelId (wind-up model revision token)
@@ -67,6 +68,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.zwd_seam_on = config_.networkZwdSeamReseed();
     k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
     k.amb_seam_reinflate_var = config_.networkAmbSeamReinflateVarM2();
+    k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
+    k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     // Unconditional Z-row capture (SPEC_synthetic_minimum_network §17 finding 3):
     // any snapshot-armed run records + harvests the per-station ZWD posterior so
     // EVERY snapshot carries Z rows — read-only w.r.t. the solve, no inject.
@@ -978,6 +981,20 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // token either: it adds rows an old reader already parses and changes no
         // solve byte; a resume of a capture-era snapshot under zwd_seam_reseed
         // OFF restores the rows into a map nothing reads.
+        //
+        // network.resume_frame_restore / network.resume_slip_warmup_ep — the NINTH
+        // and TENTH instances (SPEC_synthetic_minimum_network §18.10).  Both are
+        // forward-only RESUME response policies: they change what a resumed run
+        // DOES with the snapshot's frame rows (restore them before the first
+        // election / fold / emit) and with its cold MW reference (diagnostic-only
+        // for K epochs), re-reference nothing retroactively, and change what no
+        // serialized state MEANS — a PA/PT/CA/FA/FP row is the same anchor station,
+        // pin target, anchor state or held frame whether or not the resuming run
+        // reads it.  Their own countdown state is never serialized.  The frame
+        // CAPTURE needs no token either: rows an unarmed resume parses into maps
+        // nothing reads (a v1 reader cannot parse a v2 file — that is a binary
+        // vintage question, not a fingerprint one).  Fingerprinting either would
+        // outlaw the same-snapshot OFF/ON A/B their validation is built on.
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
 }
@@ -985,7 +1002,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
 void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                           const MultiRinexSync& sync, NetworkProductEmitter& emitter,
                           NetworkInvariantCarryDriver& carry_driver,
-                          const std::shared_ptr<spdlog::logger>& log) {
+                          const std::shared_ptr<spdlog::logger>& log,
+                          NetworkClockEmitRebase* clk_rebase) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
     const auto& nc = config_.getNetworkConfig();
@@ -1218,6 +1236,108 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "restarts exactly as an unarmed resume.");
                         }
                     }
+                    // Resume FRAME restore (network.resume_frame_restore, SPEC_synthetic_
+                    // minimum_network §18.10).  The RE-COUPLING edge (invariant #7): the
+                    // realization-frame bookkeeping the v1 snapshot omitted — per-(sat,
+                    // signal) phase-anchor incumbents + R2 sticky pin targets, the Q3
+                    // clock-anchor per-sat state (with its t_last, so the stale test runs
+                    // on the TRUE gap), and the CLK-R held frame — reconnects to the solve
+                    // BEFORE the first election / clock fold / emit.  Measured without it
+                    // (§18.9): the election runs incumbent-less for every family, marks
+                    // them all, erases every restored leveling carry, marginalizes their
+                    // D2 PB prior and re-pins the frame at fresh code seeds; every clock
+                    // folds LOOSE for the re-couple horizon; the held frame restarts at 0.
+                    // Identities are counted (invariant #4: 0 under an armed knob = INERT).
+                    if (ctx.knobs.resume_frame_restore) {
+                        if (!snap.hasFrameState()) {
+                            log->warn("Network (resume frame restore): ARMED but the snapshot "
+                                      "carries NO frame rows (written by a pre-v2 build?) — "
+                                      "INERT this run; the first election re-pins cold exactly "
+                                      "as an unarmed resume.");
+                        } else {
+                            ctx.carry.anchor_incumbent  = snap.anchor_incumbent;
+                            ctx.carry.anchor_pin_target = snap.anchor_pin_target;
+                            ctx.counters.n_resume_frame_anchors =
+                                static_cast<long long>(snap.anchor_incumbent.size());
+                            ctx.counters.n_resume_frame_targets =
+                                static_cast<long long>(snap.anchor_pin_target.size());
+                            ctx.carry.clk_anchor.sat.clear();
+                            for (const auto& [sat, ca] : snap.clock_anchor) {
+                                ClockAnchorSat st;
+                                st.t_last       = ca.t_last;
+                                st.last_value   = ca.last_value;
+                                st.last_var_eff = ca.last_var_eff;
+                                st.in_band      = ca.in_band;
+                                st.anchored     = ca.anchored;
+                                ctx.carry.clk_anchor.sat[sat] = st;
+                                ++ctx.counters.n_resume_frame_cta;
+                                if (ca.anchored) ++ctx.counters.n_resume_frame_cta_anchored;
+                            }
+                            // Judge graft (Card 3 → the built card): PRIME the two-edge
+                            // handover ledger from the restored leveling rows, so a
+                            // family whose restored incumbent no longer tracks the
+                            // satellite at the first live epoch takes the CONTINUOUS
+                            // handover path (NetworkPhaseDatum.cpp re-validate gate on
+                            // the restored conditional variance) instead of the cold
+                            // pin + 1(d) mark + erase.  The ledger is rebuilt wholesale
+                            // by the first post-resume harvest, so this is a one-epoch
+                            // seed exactly like the ordinary ledger lifetime.  Only when
+                            // the continuous-handover machinery is armed (the map is
+                            // unread otherwise).
+                            std::size_t n_ledger_primed = 0;
+                            if (ctx.knobs.pd_handover_continuous) {
+                                for (const auto& [key, lc] : ctx.carry.local_carry) {
+                                    if (!(lc.var > 0.0) || !std::isfinite(lc.value_abs)) continue;
+                                    AnchorHandoverLedger::Entry e;
+                                    e.value = lc.value_abs;
+                                    e.var   = lc.var;
+                                    ctx.carry.handover.value_abs[{std::get<0>(key),
+                                        std::get<1>(key) + "_" + std::get<2>(key)}] = e;
+                                    ++n_ledger_primed;
+                                }
+                            }
+                            ctx.counters.n_resume_frame_ledger =
+                                static_cast<long long>(n_ledger_primed);
+                            if (clk_rebase && (!snap.clk_frame_acc.empty()
+                                               || !snap.clk_frame_prev.empty()
+                                               || snap.clk_frame_epochs > 0)) {
+                                NetworkClockEmitRebase::FrameState fs;
+                                fs.acc    = snap.clk_frame_acc;
+                                fs.prev   = snap.clk_frame_prev;
+                                fs.epochs = snap.clk_frame_epochs;
+                                clk_rebase->restoreFrameState(fs);
+                                ctx.counters.n_resume_frame_clk_keys =
+                                    static_cast<long long>(snap.clk_frame_prev.size());
+                            }
+                            log->info("Network (resume frame restore): ARMED at the resume seam — "
+                                      "{} phase-anchor incumbent(s), {} sticky pin target(s), {} "
+                                      "clock-anchor sat state(s) ({} anchored), {} CLK-R held-frame "
+                                      "key(s) (A_c over {} constellation(s), {} engine epoch(s)), "
+                                      "handover ledger primed from {} restored leveling row(s), "
+                                      "restored BEFORE the first election / clock fold / emit "
+                                      "(re-coupling edge; the election keeps each incumbent and "
+                                      "pins at its restored target, so no 1(d) re-reference mark "
+                                      "and no carry erase fire at the seam).",
+                                      ctx.counters.n_resume_frame_anchors,
+                                      ctx.counters.n_resume_frame_targets,
+                                      ctx.counters.n_resume_frame_cta,
+                                      ctx.counters.n_resume_frame_cta_anchored,
+                                      ctx.counters.n_resume_frame_clk_keys,
+                                      snap.clk_frame_acc.size(), snap.clk_frame_epochs,
+                                      n_ledger_primed);
+                        }
+                    }
+                    // Resume slip warm-up (network.resume_slip_warmup_ep, §18.10): the
+                    // MW/LLI drain is diagnostic-only for K post-resume epochs (its cold
+                    // reference fires en masse at the second warm epoch); T1 / wind-up
+                    // drains stay live.  Countdown decremented at the PASS-A dispatch.
+                    if (ctx.knobs.resume_slip_warmup_ep > 0) {
+                        ctx.carry.resume_slip_warmup_left = ctx.knobs.resume_slip_warmup_ep;
+                        log->info("Network (resume slip warm-up): ARMED — the MW/LLI (T0) drain "
+                                  "acts diagnostic-only for the next {} processed epoch(s); "
+                                  "IF-TD (T1) and wind-up drains stay live.",
+                                  ctx.knobs.resume_slip_warmup_ep);
+                    }
                     ura_sigma0_ewma     = snap.ura_sigma0_ewma;
                     ura_refloat_horizon = snap.ura_refloat_horizon;
                     ura_retro_sats      = snap.ura_retro_sats;
@@ -1412,7 +1532,8 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                const GnssTime& t, double pl_now_s,
                                NetworkProductEmitter& emitter,
                                const NetworkInvariantCarryDriver& carry_driver,
-                               const std::shared_ptr<spdlog::logger>& log) {
+                               const std::shared_ptr<spdlog::logger>& log,
+                               const NetworkClockEmitRebase* clk_rebase) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
     const auto& nc = config_.getNetworkConfig();
@@ -1542,6 +1663,34 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
         snap.retro_active        = retro_active;
         snap.relevel_iode              = relevel_iode;              // Card 6
         snap.eph_cutover_disc_pending  = eph_cutover_disc_pending;  // Card 6
+        // Resume FRAME state (§18.10, snapshot format v2) — captured when
+        // network.state_snapshot_frame_capture is armed (judge graft over the Z-row
+        // precedent: a v2 file is unreadable to a pre-card binary, so the default
+        // snapshot must stay v1 byte-for-byte): the per-(sat,signal) phase-anchor
+        // incumbents + R2 sticky targets as of THIS epoch's election, the Q3 clock-
+        // anchor per-sat state (folded sats only), and the CLK-R held frame.
+        // Whether a resume USES the rows is the resume-side knob
+        // network.resume_frame_restore.
+        if (nc.state_snapshot_frame_capture) {
+        snap.anchor_incumbent  = ctx.carry.anchor_incumbent;
+        snap.anchor_pin_target = ctx.carry.anchor_pin_target;
+        for (const auto& [sat, st] : ctx.carry.clk_anchor.sat) {
+            if (!(st.t_last > 0.0)) continue;   // never folded: nothing to carry
+            NetworkStateSnapshot::ClockAnchorSat cs;
+            cs.t_last       = st.t_last;
+            cs.last_value   = st.last_value;
+            cs.last_var_eff = st.last_var_eff;
+            cs.in_band      = st.in_band;
+            cs.anchored     = st.anchored;
+            snap.clock_anchor[sat] = cs;
+        }
+        if (clk_rebase) {
+            const auto fs = clk_rebase->exportFrameState();
+            snap.clk_frame_acc    = fs.acc;
+            snap.clk_frame_prev   = fs.prev;
+            snap.clk_frame_epochs = fs.epochs;
+        }
+        }   // state_snapshot_frame_capture
         // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
         // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
         // resume reproduces the phase-ambiguity branch instead of re-converging one.

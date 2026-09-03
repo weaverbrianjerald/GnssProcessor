@@ -135,6 +135,8 @@ namespace GnssProcessor {
         int  zwd_seam_epochs{};   ///< network.zwd_seam_reseed_epochs: seam-window horizon in emitted epochs.
         bool zwd_capture{};    ///< Snapshot-armed run (state_snapshot_path non-empty): record + harvest the per-station ZWD posterior every processed epoch so EVERY snapshot carries Z rows — read-only w.r.t. the solve (no inject; capture only).
         double amb_seam_reinflate_var{};  ///< network.amb_seam_reinflate_var_m2: one-shot variance ADD (m²) on every restored leveling carry at a warm resume (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF.
+        bool   resume_frame_restore{};    ///< network.resume_frame_restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the serialized FRAME state — phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-sat state, the CLK-R held frame — so the first post-resume election/fold/emit continue the pre-seam realization instead of re-pinning at cold seeds.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into maps nothing reads).
+        int    resume_slip_warmup_ep{};   ///< network.resume_slip_warmup_ep: epochs after a warm resume during which the MW/LLI (T0) drain is DIAGNOSTIC-ONLY — its cold Welford reference (2 samples at the second warm epoch) declared 146 false WL slips on the §18.9 bed and re-leveled 5 % of the restored arcs; IF-TD (T1) and wind-up drains stay live, so an in-gap slip keeps a detector.  0 = OFF.  NOT fingerprinted.
         bool carry_vce{};
         bool vce_apply_on{};   ///< M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor apply. SOLVE-AFFECTING; loader guarantees carry_vce.
         bool ura_on{};
@@ -1028,6 +1030,12 @@ namespace GnssProcessor {
         /// decoupling edge, logged).  Read-only in the parallel produce phase.  NOT
         /// snapshotted: each resume is its own seam and re-arms a full horizon.
         int zwd_seam_ep_left{0};
+        /// network.resume_slip_warmup_ep countdown (SPEC_synthetic_minimum_network
+        /// §18.10): epochs REMAINING during which the MW/LLI drain acts diagnostic-
+        /// only after a warm resume.  Armed by networkTryWarmResume, decremented
+        /// once per processed epoch at the PASS-A drain dispatch, never serialized
+        /// (each resume is its own seam).  0 on every continuous epoch.
+        int resume_slip_warmup_left{0};
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed
         /// (station index, sat).  Diagonal-only (rx-CB rationale — no shared-border
         /// footprint; the coupling variant is deliberately deferred).  NOT snapshotted:
@@ -2118,6 +2126,16 @@ namespace GnssProcessor {
         // or every fold was skipped — check the resume log line, not just this.
         long long n_zwd_seam_folds        = 0;  ///< station-fold count inside the post-resume window
         long long n_zwd_seam_epochs       = 0;  ///< epochs inside the window with >= 1 fold
+        // Resume FRAME restore (network.resume_frame_restore, §18.10) — the re-coupling
+        // edge's identities: what the seam reconnected, so a 0 under an armed knob
+        // reads as INERT (standing invariant #4).
+        long long n_resume_frame_anchors     = 0;  ///< phase-anchor incumbents restored
+        long long n_resume_frame_targets     = 0;  ///< sticky pin targets restored
+        long long n_resume_frame_cta         = 0;  ///< clock-anchor per-sat states restored
+        long long n_resume_frame_cta_anchored = 0; ///< ...of which ANCHORED
+        long long n_resume_frame_clk_keys    = 0;  ///< CLK-R held-frame per-sat keys restored
+        long long n_resume_frame_ledger      = 0;  ///< handover-ledger entries primed from restored leveling rows
+        long long n_resume_slip_warmup_epochs = 0; ///< epochs the MW/LLI drain ran diagnostic-only post-resume
 
         // --- Rung 3 v3: the CARRY-DOMAIN lane observatory ----------------------
         // (SPEC_lane_slip_response §7.3.)  Measure-only: it computes the lane
@@ -2617,16 +2635,22 @@ namespace GnssProcessor {
     void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config_,
                                     const std::vector<NetStation>& stations);
 
+    class NetworkClockEmitRebase;   // fwd: include/products/NetworkClockEmitRebase.hpp
+    // Resume FRAME restore (§18.10): both seams take the CLK-R held-frame engine
+    // (a runNetwork local) so its A_c / per-sat baselines travel with the snapshot.
+    // nullptr ⇒ the engine's frame is neither captured nor restored.
     void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               const MultiRinexSync& sync, NetworkProductEmitter& emitter,
                               NetworkInvariantCarryDriver& carry_driver,
-                              const std::shared_ptr<spdlog::logger>& log);
+                              const std::shared_ptr<spdlog::logger>& log,
+                              NetworkClockEmitRebase* clk_rebase = nullptr);
 
     void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_,
                                    const GnssTime& t, double pl_now_s,
                                    NetworkProductEmitter& emitter,
                                    const NetworkInvariantCarryDriver& carry_driver,
-                                   const std::shared_ptr<spdlog::logger>& log);
+                                   const std::shared_ptr<spdlog::logger>& log,
+                                   const NetworkClockEmitRebase* clk_rebase = nullptr);
 
     void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                   const GnssConfig& config_, NetworkEstimator& est,

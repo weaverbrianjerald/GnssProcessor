@@ -1497,8 +1497,28 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     RelevelEpochState* relevel_ptr =
         config_.networkCycleSlipRelevelFreeEpoch() ? &ctx.carry.relevel : nullptr;
 
+    // Resume slip warm-up (network.resume_slip_warmup_ep, SPEC_synthetic_minimum_
+    // network §18.10): for the first K processed epochs after a warm resume the
+    // MW/LLI (T0) drain runs DIAGNOSTIC-ONLY — its cold reference (two samples at
+    // the second warm epoch, no Welford history) declared 146 false integer WL
+    // slips on the §18.9 bed and re-levelled 5 % of the restored arcs.  The T1
+    // IF-TD and wind-up drains below keep their live carry_warm, so a genuine
+    // in-gap slip still has a response.  Decremented once per processed epoch
+    // HERE (the single dispatch site); the retire is the DECOUPLING edge of the
+    // warm-up window (invariant #7) and is logged.  0 on every continuous epoch
+    // ⇒ mw_carry_warm == carry_warm ⇒ byte-identical.
+    bool mw_carry_warm = carry_warm;
+    if (ctx.carry.resume_slip_warmup_left > 0) {
+        mw_carry_warm = false;
+        ++ctx.counters.n_resume_slip_warmup_epochs;
+        if (--ctx.carry.resume_slip_warmup_left == 0)
+            log->info("Network (resume slip warm-up): RETIRED at TOW {:.1f} — the MW/LLI "
+                      "drain acted diagnostic-only for {} post-resume epoch(s); it is live "
+                      "from the next epoch.",
+                      se.time.tow, ctx.counters.n_resume_slip_warmup_epochs);
+    }
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
-                              n_sta_total, carry_invariant, carry_warm,
+                              n_sta_total, carry_invariant, mw_carry_warm,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
                               qc.counters, se, traces, log,
                               datum_detect_on ? &ctx.carry.datum_reref_pb_sats : nullptr,

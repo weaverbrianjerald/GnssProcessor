@@ -2176,6 +2176,42 @@ namespace GnssProcessor {
          * Default 0.0 = OFF, byte-identical.
          */
         double networkAmbSeamReinflateVarM2() const { return network_amb_seam_reinflate_var_m2_; }
+        /**
+         * @brief Resume FRAME restore (@c network.resume_frame_restore,
+         *        SPEC_synthetic_minimum_network §18.10).
+         *
+         * Mechanism it treats (measured, §18.9): a warm resume that restores every
+         * carry still loses the REALIZATION FRAME — the per-(sat,signal) phase-anchor
+         * incumbent and its R2 sticky pin target, the Q3 clock anchor's per-satellite
+         * state and the CLK-R held frame were not serialized — so the first warm
+         * epoch's election runs incumbent-less (every family marked as re-referenced,
+         * all restored leveling carries erased, their D2 phase-bias prior
+         * marginalized, the frame re-pinned at fresh code seeds), every clock folds
+         * LOOSE for the anchor's re-couple horizon, and the emitted common mode
+         * restarts at zero.  The wire then re-converges its phase-bias split for
+         * ~4 h and every consumer pays for it.  With this knob the snapshot's frame
+         * rows (captured unconditionally, snapshot format v2) are restored before
+         * the first election / fold / emit, so the resumed run continues the
+         * pre-seam realization.  Applies at the restore site only — continuous
+         * epochs never execute it.  Deliberately NOT in the warm-resume fingerprint
+         * (the forward-only resume response policy, same exemption class as
+         * @ref networkZwdSeamReseed).  Default false = byte-identical.
+         */
+        bool networkResumeFrameRestore() const { return network_resume_frame_restore_; }
+        /**
+         * @brief Post-resume MW/LLI slip-drain warm-up (@c network.resume_slip_warmup_ep,
+         *        epochs, SPEC_synthetic_minimum_network §18.10).
+         *
+         * RTB-7 restores tight carries but no slip-detector history, so the MW
+         * detector's first post-resume difference (two samples, no Welford
+         * reference) declares integer WL slips from noise — 146 false refloats at
+         * the second warm epoch on the §18.9 bed, re-levelling 5 % of the restored
+         * arcs.  For this many processed epochs after a resume the T0 (MW/LLI) drain
+         * runs DIAGNOSTIC-ONLY (its detections are logged, not acted on); the T1
+         * IF-TD and wind-up drains are untouched, so a genuine in-gap slip keeps a
+         * live response.  0 = OFF.  Not fingerprinted.
+         */
+        int networkResumeSlipWarmupEp() const { return network_resume_slip_warmup_ep_; }
 
         /**
          * @brief Carry per-LOS slant ionosphere across epochs in the network producer
@@ -5163,6 +5199,32 @@ namespace GnssProcessor {
         bool enableCioFrame() const { return enable_cio_frame_; }
 
         /**
+         * @brief Correct the Sun/Moon ECI frame double-count before the ECI→ECEF rotation.
+         *
+         * `Planetary::sunMoonPosEci` evaluates its Sun/Moon series with TROPICAL
+         * (of-date) mean-longitude rates — 36000.770 °/cy for the Sun, 481267.883
+         * °/cy for the Moon — and rotates ecliptic→equatorial with the OF-DATE mean
+         * obliquity, so its output already sits in the mean equinox and equator of
+         * date (MOD).  Both ECI→ECEF chains then apply precession a SECOND time:
+         * the legacy `eci2ecef` via its IAU-1976 `P`, and `celestialToTerrestrial`
+         * via the SOFA bias-precession-nutation matrix.  The result is a spurious
+         * rotation about the ecliptic pole of 50.3″/yr since J2000 — 20.41′
+         * (0.34019°) at 2024-05-08 — in the delivered ECEF Sun and Moon directions.
+         *
+         * When true, the of-date vectors are de-precessed to J2000 (Pᵀ) before the
+         * ECI→ECEF rotation, cancelling the double-count.  Nutation and GAST are
+         * NOT double-counted (the series carries no nutation term and uses the mean
+         * obliquity), so they are left untouched.
+         *
+         * Default false: the defect is inherited from RTKLIB and is baked into every
+         * existing product, sim fixture, and stored fingerprint, so flipping it is a
+         * migration, not an edit.  See @c estimation.enable_sun_frame_correction.
+         *
+         * @return True when the of-date→J2000 de-precession is applied.
+         */
+        bool enableSunFrameCorrection() const { return enable_sun_frame_correction_; }
+
+        /**
          * @brief Get the BSSD pivot minimum elevation (degrees).
          *
          * The current pivot satellite is retained as long as its elevation
@@ -6481,6 +6543,8 @@ namespace GnssProcessor {
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.
         double network_amb_seam_reinflate_var_m2_{0.0};   ///< Seam-scoped one-shot variance ADD (m²) on every restored phase-leveling local ambiguity carry at a warm resume — a soft refloat that keeps the carried value as prior mean (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF, byte-identical.
+        bool   network_resume_frame_restore_{false};       ///< Resume FRAME restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the snapshot's phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-satellite state and the CLK-R held frame, so the first post-resume election / clock fold / emit continue the pre-seam realization.  Capture is unconditional (format v2); this knob only decides whether a resume USES the rows.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires en masse at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = OFF.  NOT fingerprinted.
         bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).
         double network_iono_carry_q_{1e-4};               ///< QUEUE 8b: slant-iono carry random-walk process noise (m²/s); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.
         std::string network_iono_carry_scope_{"relevel"}; ///< QUEUE 8b: inject scope — "relevel" (re-leveling LOS only, one epoch per re-draw event) or "always" (every epoch; the O2 accumulation channel).
@@ -6689,6 +6753,7 @@ namespace GnssProcessor {
         bool   network_require_signal_integer_for_ar_{false}; ///< T3a: consumer marks an ambiguity UNRESOLVABLE (AR-ineligible) when its covering network phase bias declares signal_integer=false (e.g. the anchor-free ensemble datum, whose bias references the receiver-ensemble mean and is NOT integer-preserving). OFF = the historical coverage-only gate (byte-identical); no consumer reads signal_integer today.
         double network_start_offset_hours_{0.0};        ///< Testing fast-forward: skip epochs until this many hours of data have elapsed from the first synced epoch, then cold-start (0 = process from the start).
         bool enable_cio_frame_{false};                    ///< Use the CIO IAU 2000A/2006 ECI↔ECEF transform (SOFA) for Sun/Moon; legacy equinox chain when off.
+        bool enable_sun_frame_correction_{false};         ///< De-precess the of-date Sun/Moon ECI vectors to J2000 before the ECI→ECEF rotation, cancelling the inherited RTKLIB precession double-count (20.41' at 2024-05-08). Default off: fixing it moves solid tides, satellite attitude/PCO, wind-up and the eclipse gate on every existing lineage.
         double bssd_pivot_min_elevation_deg_;              ///< Elevation threshold below which the BSSD pivot is handed over (degrees).
         double pivot_slip_min_cycles_;                     ///< Minimum |median SD residual| in band-wavelength cycles for pivot-slip detection.  0 disables.
         double persistent_bias_min_cycles_;                ///< Min EWMA |mean| (in cycles) before a phase row's R is inflated to downweight persistent bias.  0 disables.

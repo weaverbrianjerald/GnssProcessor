@@ -1887,6 +1887,23 @@ int networkTeardown(
         // armed (no warm resume, or the snapshot carried no Z rows) or every fold
         // was skipped (stale entries / carry_warm cold) — the resume-time ARMED /
         // INERT log line says which.
+        // Resume FRAME restore + slip warm-up (§18.10) — ON-path telemetry (invariant
+        // #4): the re-coupling edge's identities.  0 anchors under an ARMED knob means
+        // the snapshot carried no frame rows (a v1 file) or no resume happened.
+        if (config_.networkResumeFrameRestore() || config_.networkResumeSlipWarmupEp() > 0)
+            log->info("Network (resume frame restore): {} phase-anchor incumbent(s), {} sticky "
+                      "pin target(s), {} clock-anchor sat state(s) ({} anchored), {} CLK-R "
+                      "held-frame key(s), {} ledger entr(ies) primed, restored at the seam; MW/LLI drain diagnostic-only "
+                      "for {} post-resume epoch(s) (knob {}).{}",
+                      C.n_resume_frame_anchors, C.n_resume_frame_targets,
+                      C.n_resume_frame_cta, C.n_resume_frame_cta_anchored,
+                      C.n_resume_frame_clk_keys, C.n_resume_frame_ledger, C.n_resume_slip_warmup_epochs,
+                      config_.networkResumeSlipWarmupEp(),
+                      (config_.networkResumeFrameRestore() && C.n_resume_frame_anchors == 0)
+                          ? "  ⚠ 0 anchors under an ARMED frame restore — the snapshot "
+                            "carried no frame rows (pre-v2 writer?) or no warm resume "
+                            "happened; check the resume log for the FRAME line."
+                          : "");
         if (config_.networkZwdSeamReseed())
             log->info("Network (ZWD seam re-seed): {} station-fold(s) over {} epoch(s) of the "
                       "post-resume window (horizon {} epochs).{}",

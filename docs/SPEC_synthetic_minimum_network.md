@@ -3725,3 +3725,179 @@ threshold.  Pre-registered predictions for the ON arm on the .ep1440 branch:
 first-warm-epoch PB σ median < 0.02 m; keys over 0.05 m at epoch 2 < 10 (from
 150); consumer h13–h15 within 1.5× of the continuous-wire replay (0.060/0.067/
 0.062); the +30 min late-start consumer converges monotonically (no walk-out).
+
+### 18.10 RESUME FRAME RESTORE — the seam is a FRAME loss; the card restores the
+### frame state the snapshot omitted (built 2026-09-02; verdict in §18.11)
+
+**Root cause, verified with counters (five readers, R1/R5 derivation).**  RTB-7
+restores every carry (376 D2, 2811 leveling, 60 Z) but NOT the realization-frame
+bookkeeping, and the seam census (§18.9) is entirely that omission:
+
+1. **Phase-anchor election state.**  `anchor_incumbent` / `anchor_pin_target`
+   (NetworkRunContext.hpp:609-644, "deliberately NOT snapshotted") are empty at
+   the first warm epoch, so the prioritized election (NetworkPhaseDatum.cpp:
+   300-470) finds NO incumbent for any of the 162 (sat,signal) families.  The
+   QUEUE-1(d) clause `inc == anchor_incumbent.end()` (:431-435) then marks every
+   family as re-referenced — silently, no event — and `networkApplyPhaseAnchor
+   CarryReref` (:453-471, called from ApplicationNetwork.cpp:1745-1750 BEFORE
+   PASS B) ERASES every restored leveling carry; the marked families' D2
+   phase-bias prior is marginalized for the epoch (NetworkRunContext.cpp:
+   1909-1911); every family re-pins at target 0 = the anchor's fresh single-
+   epoch code seed (pin_y = target − piv_x, Assembly:2500-2517; sticky targets
+   up to |T| 29 m in this leg).  Counters: "phase-leveling local carry(ies)
+   erased" **2862** on the 12 h warm leg vs **129** on the 24 h continuous run
+   (~2811 = the whole restored set); B1b phase-bias σ at 302430 **1.112 m vs
+   0.012**; the estimability DIR rows appear only at 302430–302580 on the warm
+   leg and only at 259230–259380 (ignition) on the continuous run.  The
+   restored `LocalCarry` values are therefore folded ZERO epochs — which is
+   also why leg C (ledger row 321) measured NULL (§18.7 correction note).
+2. **Q3 clock-anchor state.**  `ClockAnchorState` (NetworkRunTypes.hpp:891-920)
+   is "deliberately NOT snapshotted … every satellite must re-earn the anchor
+   from LOOSE after a resume"; a first sighting folds LOOSE at the legacy
+   sat_clock_q 0.01 m²/s (σ 0.55 m over 30 s, NetworkClockAnchor.cpp:104-149)
+   for `clock_anchor_recouple_epochs` epochs, then re-engages on whatever the
+   code-only solve realized.  Events: 302430 nothing; 302520/302550 **48 + 4
+   `CLK_ANCHOR cta_recouple reengage`** (continuous run at the same TOWs: 0).
+   That is the constant post-seam clock re-split (G 1.30 m / E 0.53 m SD).
+3. **CLK-R held frame.**  `NetworkClockEmitRebase` is a runNetwork local
+   (ApplicationNetwork.cpp:918) with no snapshot fields; its accumulator A_c
+   and per-sat baselines restart at zero, so the emitted common mode steps by
+   A_c (G −0.87 / E −0.22 m at the seam — the continuous run emits the pivots
+   G01 at +1.2179 m and E02 at +0.27 m held) and the F1 rule (NetworkEmitStore
+   .cpp:338-340, `counters().epochs == 0 && n_emitted > 0`) marks `CLK_FRAME
+   resume_seam` for both constellations — the ONLY events at 302430.
+4. **Slip-detector history.**  Not snapshotted; the MW detector's first post-
+   resume difference (two samples, no Welford reference; MwSlipDetector.cpp:
+   1376-1385 gross gate, :2100-2127 one-sample integer path) declares **146**
+   "confident" WL slips at the second warm epoch (continuous run: 0) and the
+   `carry_warm` switch (NetworkSlipQc.cpp:828) makes them ACT — 292 latches, a
+   second re-level of arcs that had just been re-seeded.  The raw MW TD census
+   is identical in both runs (984 arcs, MAD-σ 0.553 m ≈ 0.7 WL cycle): a
+   one-sample integer gate on that noise is the h0 cold-start population
+   (139 flagged at 259260, diagnostic there) re-fired through an open guard.
+
+Corollaries the readers settled: `η = Λ·(value_abs − x_lin)` is x_lin-invariant
+(NetworkRunContext.cpp:2329-2333), so the cold `x_lin` is harmless — what does
+not survive is the phase-bias GAUGE (the pins), and restoring VALUES against a
+stepped frame would be the §5.07 defect (41 σ innovations) 1(d) exists to
+prevent; the frame STATE must be restored instead.  Code bias survives to
+0.1 mm because its D2 carry is neither marginalized nor loosened and its frame
+is re-fixed by the IF/GF/s2z gauge rows every epoch — and holding B while C
+re-drew is exactly what put the re-split on the consumer's code side.  The
+per-sat clock re-split moves TOWARD truth on aggregate (R4: G rms 2.41 → 1.66,
+regression slope −0.42 / r −0.79 on the continuous run's own error; G17/G10/G29
+hold 0.1–0.2 m all day on the warm leg vs 1.9/2.2/1.6 m frozen on the
+continuous) — so a continuity mechanism deliberately carries the OLD split
+forward; the §18.1 tails are E2's card, not this one's.  Consumer-invariance
+subspace (R3/R5): a wire transform is invisible iff it is a per-constellation
+common κ on C, a per-sat lump δ on C AND every B_j AND every P_j, per-(sat,
+signal) integers on P, and per-(const,band) commons; the seam violates both the
+code condition (dB ≡ 0, dC per-sat SD 1.3 m) and the phase condition (uniform
+fractional part) — no outputs-only hold can bridge it without lying, and a
+decaying hold is invariant #7's silent walk.
+
+**Mechanism (single card, two knobs, both default-OFF, both fingerprint-exempt
+as the ninth/tenth forward-only resume response policies):**
+
+- **Snapshot format v2** (include/products/NetworkStateSnapshot.hpp, .cpp):
+  the frame rows are captured whenever a snapshot is written under
+  **`network.state_snapshot_frame_capture`** (write-side, default OFF — the
+  judges' graft over the Z-row precedent: a v2 file is unreadable to a
+  pre-card binary, so the DEFAULT snapshot must stay v1 byte-for-byte) —
+  `PA,<sat_sig>,<station>` (phase-anchor incumbent),
+  `PT,<sat_sig>,<target_m>` (R2 sticky pin target), `CA,<sat>,t_last,last_value,
+  last_var_eff,in_band,anchored` (Q3 per-sat state, folded sats only),
+  `FA,<const>,A_c` / `FP,<sat>,last_held,last_seen` / `FE,<epochs>` (CLK-R held
+  frame, exported through the new `NetworkClockEmitRebase::exportFrameState`).
+  The v2 header is written only when at least one frame record exists, so a run
+  carrying none writes v1 byte-for-byte; the reader accepts v1 and v2 (a v1 file
+  restores empty maps = today's behaviour, and an armed resume logs INERT).  The
+  snapshot writer and the resume take the CLK-R engine as a new (nullable)
+  parameter (ApplicationNetwork.cpp call sites).
+- **`network.resume_frame_restore`** (GnssConfigLoadNetwork.cpp beside
+  zwd_seam_reseed; NetworkRunContext.cpp restore block after the ZWD-seam
+  arming): at a warm resume, restore `anchor_incumbent`, `anchor_pin_target`,
+  `clk_anchor.sat` (with t_last, so the stale test runs on the TRUE gap and a
+  resume older than `clock_anchor_max_gap_s` still decouples honestly) and the
+  engine's frame state BEFORE the first election / fold / emit.  The election
+  then keeps each incumbent (`sticky` path, NetworkPhaseDatum.cpp:302-308), the
+  R2 clause pins at the restored target (:355-361), `is_handover` is false and
+  `inc != end()` so the 1(d) clause does not mark → no erase, the D2 PB prior
+  folds, the restored leveling carries fold in-frame; every anchored clock folds
+  at `cta_q` over dt_sat; `counters().epochs > 0` so the F1 seam mark does not
+  fire.  Re-coupling edge logged with identities (counts per class) and counted
+  (`n_resume_frame_anchors/targets/cta/cta_anchored/clk_keys/ledger`, run-end
+  line in NetworkTeardown, manifest fields).  Judges' graft (Card 3): the
+  two-edge handover LEDGER is primed from every restored leveling row
+  (`handover.value_abs[{station, sat_signal}] = {value_abs, var}`, only under
+  `pd_handover_continuous`), so a family whose restored incumbent no longer
+  tracks the satellite at the first live epoch takes the CONTINUOUS handover
+  path through the existing re-validate gate (`pd_handover_max_var`, 1e-4 m²
+  on r2q3) instead of the cold pin + 1(d) mark + erase; the first post-resume
+  harvest rebuilds the ledger wholesale, so the seed lives one epoch like any
+  ledger entry.  Judges' second graft: `amb_seam_reinflate_var_m2` becomes
+  ACTIVE once the erase stops (its restore-site add was neutralized by the
+  erase, §18.7 correction) — it is pinned to 0 in every arm here and its
+  ledger row (321) must be re-read as "untested under frame restore".
+  Accepted limitations named by the judges: (i) the `resume_seam` mark is
+  suppressed by the restored engine state whether or not every family's frame
+  came back — a family the election still cold-pins (absent incumbent, ledger
+  entry over the ceiling) is marked individually by 1(d) and its phase-bias
+  step by the emitter's 0.05 m jump test, so the consumer is not blind, but
+  the constellation-level mark no longer fires (an invariant-#7 identity
+  gap, visible in `n_resume_frame_anchors` vs the election's cold-pin tally);
+  (ii) there is no seam-scoped validator of the restored zero-q levels beyond
+  the live T1 drain and the post-fold instruments — a family-median innovation
+  test was shown to be attenuated by the stiff rows it would test; the rail is
+  the bounded gap (≤ 120 s) and the continuous-handover path above.
+- **`network.resume_slip_warmup_ep`** (int, epochs): for K processed epochs
+  after a resume the MW/LLI (T0) drain runs DIAGNOSTIC-ONLY (its `carry_warm`
+  argument is forced false at the single dispatch site, ApplicationNetwork
+  Assembly.cpp:1500); the T1 IF-TD and wind-up drains keep their live gate, so
+  a genuine in-gap slip keeps a detector.  Countdown in `ctx.carry.resume_slip_
+  warmup_left`, never serialized; ARMED at the resume and RETIRED (logged) at
+  the dispatch.  Rationale: the false-alarm population (146/2811 arcs at the
+  second warm epoch) is two orders above the true slip rate over a ≤120 s seam
+  (the continuous run's MW rate is 1–6/h network-wide), and the same one-epoch
+  no-slip assumption already underlies every one of the 2811 restored carries.
+- **Invariant #1 rail** for the restored pin targets: the seam gap is bounded by
+  the resume gate (age ≤ max(pl_max_gap_s, clk_model_max_gap) = 120 s), the
+  restored target is the same one-epoch continuity assumption as any carried
+  arc, and an anchor arc that DID slip in the gap is caught by the live T1
+  drain (refloat → not usable → the ledger, harvested at the first post-resume
+  solve, hands the pin over CONTINUOUSLY at the second epoch — the existing
+  machinery for a mid-run anchor slip).  Invariant #7: both edges are events
+  with identities (ARMED line + counters at the re-coupling edge; the warm-up
+  RETIRED line at the decoupling edge; the run-end line reads 0 under an armed
+  knob as INERT).
+- **Structural byte-identity:** knobs OFF ⇒ the resume path reads nothing new,
+  `mw_carry_warm == carry_warm`, and a snapshot without frame rows is v1
+  byte-for-byte; a run with frame rows writes v2 (an output-format change on
+  the snapshot only — products/traces untouched).  Unit contract:
+  tests/test_resume_frame_restore.cpp (v2 round-trip, v1-header byte-identity
+  without frame rows, v1 backward parse, malformed-row refusal, CLK-R
+  export/restore equivalence, loader defaults/validation).
+
+**Venue and pre-registered predictions.**  The v1 `.ep1440` library cannot
+carry the rows, so the branch point is re-created: `runs/camp60wu_quiet12h_
+frwriter` = the 24 h base config limited to 12 h 5 min under the v2 writer
+(gate: its products.txt is a byte-identical PREFIX of the continuous run's).
+Legs branch from ITS `.ep1440` via `scripts/simnet_make_seam_leg.py`: OFF
+control (same snapshot, knobs off — must reproduce leg A's numbers), ON
+(`resume_frame_restore` + `resume_slip_warmup_ep 5`), and a frame-only ablation
+if the ON leg passes.  Graded with `scripts/simnet_seam_tools.py` (diff /
+decompose / steps / quality / walk against the continuous run's same hours) and
+the consumer-only replays (§18.9).  Predictions (from R5 + §18.9, to be resolved
+in §18.11): first-warm-epoch B1b PB σ **≈ 0.012 m** (from 1.112); emitted clock
+between-sat SD at 302430 **≤ 0.02 m** G / E (from 1.30 / 0.53); phase-side
+|frac| **≤ 0.05 cyc** (from a uniform 0.28); URA **0.004–0.005** (from 0.30);
+keys over the 0.05 m disc threshold at the second warm epoch **< 10** (from
+150), consumer resets there **< 10** (from 51); the MW burst **146 → ≲ 2** with
+the warm-up armed; run-end "local carries erased" **≈ 129-class, not 2862**;
+`cta_recouple` at 302520 **0** (from 48); the `CLK_FRAME resume_seam` mark
+**absent**; consumer h13–h15 within **1.5×** of the continuous-wire replay
+(0.060 / 0.067 / 0.062) instead of 0.254 / 0.336 / 0.300; and the late-start
+consumer (+30 min) converges monotonically.  The held-frame common mode κ
+(G −0.87 / E −0.22) collapses too, because the engine's A_c travels.  What the
+card does NOT promise: the per-sat tails (E2), the eclipse-cluster excursions
+(sticky_pivot / E2), and any h16+ difference (shared eclipse schedule).

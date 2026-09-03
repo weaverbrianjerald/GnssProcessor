@@ -2082,6 +2082,22 @@ namespace GnssProcessor {
         network_config_.state_snapshot_keep_history =
             jval<bool>(json, "network.state_snapshot_keep_history",
                        "state_snapshot_keep_history", false);
+        // §18.10 resume FRAME capture (write side of network.resume_frame_restore).
+        network_config_.state_snapshot_frame_capture =
+            jval<bool>(json, "network.state_snapshot_frame_capture",
+                       "state_snapshot_frame_capture", false);
+        if (network_config_.state_snapshot_frame_capture) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (resume frame capture): state_snapshot_frame_capture armed "
+                          "but state_snapshot_path is empty — no snapshot is written, INERT.");
+            else
+                log->info("Network (resume frame capture): every snapshot also carries the "
+                          "realization-frame rows (PA/PT phase-anchor incumbents + sticky "
+                          "targets, CA clock-anchor per-sat state, FA/FP/FE CLK-R held frame) "
+                          "under the format-v2 header — a resume armed with "
+                          "network.resume_frame_restore can continue the pre-seam frame.  "
+                          "Write-side only; the products and every trace are byte-identical.");
+        }
         if (network_config_.state_snapshot_require)
             log->info("Network (RTB-7d/HB-1): warm resume REQUIRED — any resume failure "
                       "(missing/parse/fingerprint/age/emitter) is a hard run error instead "
@@ -3148,6 +3164,32 @@ namespace GnssProcessor {
         network_amb_seam_reinflate_var_m2_ =
             jval<double>(json, "network.amb_seam_reinflate_var_m2",
                          "amb_seam_reinflate_var_m2", 0.0);
+        // Resume FRAME restore + post-resume slip warm-up (SPEC_synthetic_minimum_
+        // network §18.10).  Both are forward-only RESUME response policies (not
+        // fingerprinted); both are inert on a run that never resumes.
+        network_resume_frame_restore_ =
+            jval<bool>(json, "network.resume_frame_restore", "resume_frame_restore", false);
+        network_resume_slip_warmup_ep_ =
+            jval<int>(json, "network.resume_slip_warmup_ep", "resume_slip_warmup_ep", 0);
+        if (network_resume_slip_warmup_ep_ < 0)
+            throw std::runtime_error("network.resume_slip_warmup_ep must be >= 0");
+        if (network_resume_frame_restore_ || network_resume_slip_warmup_ep_ > 0) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (resume frame restore): resume_frame_restore / "
+                          "resume_slip_warmup_ep armed but network.state_snapshot_path is "
+                          "empty — nothing can resume, both are INERT this run.");
+            else
+                log->info("Network (resume frame restore): frame restore {} — at a warm "
+                          "resume the snapshot's phase-anchor incumbents + sticky pin "
+                          "targets, Q3 clock-anchor per-sat state and CLK-R held frame "
+                          "are restored before the first election/fold/emit (§18.10; "
+                          "rows are captured unconditionally, snapshot format v2); MW/LLI "
+                          "drain diagnostic-only for {} post-resume epoch(s).  Neither is "
+                          "in the warm-resume fingerprint (forward-only resume response "
+                          "policy).",
+                          network_resume_frame_restore_ ? "ON" : "off",
+                          network_resume_slip_warmup_ep_);
+        }
         // Slant-iono carry (QUEUE 8b, docs/SPEC_slip_relevel_walk.md s8 residual): carry
         // per-LOS slant iono across epochs as a diagonal RW prior via the same
         // addStationPrior path.  NOT the phantom filter.process_noise.ionosphere_q (which

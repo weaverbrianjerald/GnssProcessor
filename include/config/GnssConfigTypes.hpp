@@ -1591,6 +1591,13 @@ namespace GnssProcessor {
         /// the read path is untouched and the estimation is structurally byte-identical
         /// (the writer runs after emit over const refs).  Off by default; heavy on disk.
         bool state_snapshot_keep_history{ false };
+        /// §18.10 resume FRAME capture: also serialize the realization-frame state
+        /// (phase-anchor incumbents + sticky pin targets, Q3 clock-anchor per-sat
+        /// state, CLK-R held frame) into every snapshot, under the format-v2 header.
+        /// OFF (default) ⇒ the v1 format byte-for-byte (old readers keep parsing);
+        /// a resume can only USE the rows (network.resume_frame_restore) when the
+        /// writer captured them.  Write-side only; INERT unless state_snapshot_path.
+        bool state_snapshot_frame_capture{ false };
         bool trace_station_residuals{ false }; ///< L13: emit @c network_station_residuals.csv — EVERY post-fit RAIM cell (per non-pivot station with carried ambiguities, per sat) with its measurement-standardized residual @c s_raw (already B2-normalized), the σ̂0-normalized @c s_norm, and the epoch σ̂0.  Answers "which station is poisoning the network".  VERY heavy (≈ stations x sats x RAIM-epochs — e.g. 50x40x3600 ≈ 7M rows); requires @ref raim (+ @ref phase_leveling) at runtime.  Off by default — byte-identical when OFF.
         bool trace_raim_redundancy{ false }; ///< SPEC_t3_null_derivation §7.1: emit @c network_raim_redundancy.csv — one row per POST-FIT RAIM phase row (station x sat x SIGNAL x row) with its weight, Baarda redundancy @c r_i, raw residual, measurement-standardized @c z_meas = |v|·√w and Baarda-standardized @c z_baarda = z_meas/√r_i.  The RAIM cell is a max OVER signals, so @ref trace_station_residuals cannot separate L1C from L2W/L5Q — this can.  DIAGNOSTIC: it makes @c row_r be COMPUTED but never USED, so unlike @ref raim_redundancy_normalize (which is solve-affecting) the census is solve-NEUTRAL.  Costs one @c rowRedundancy call per station per epoch.  Requires @ref raim (+ @ref phase_leveling) at runtime.  Off by default — byte-identical when OFF.
         bool trace_ssr_consumer{ false }; ///< L10: CONSUMER-side trace — the RealTimeEngine SSR consumer writes @c ssr_consumer_trace.csv (correction age, clk-applied, c0, URA, the recomputed R-inflation add-variance, phase-bias age/freshness, and disc counters) per modeled sat per processed epoch.  The V4 consumer-side evidence that the producer's URA/disc actually reach the user solution.  Off by default — byte-identical when OFF.

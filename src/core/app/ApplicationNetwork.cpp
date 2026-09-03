@@ -1174,7 +1174,8 @@ int Application::runNetwork() {
         if (snap_path.is_relative()) snap_path = log_dir_ / snap_path;
     }
     networkSnapshotFingerprint(ctx, config_, stations);
-    networkTryWarmResume(ctx, config_, sync, emitter, carry_driver, log);
+    networkTryWarmResume(ctx, config_, sync, emitter, carry_driver, log,
+                         &clk_rebase_engine);   // §18.10: the CLK-R held frame travels too
 
     // Card 5 (RTF-1 / plan D6): resolve the a-priori satellite-clock anchor σ ONCE
     // (loop-invariant, config-only) so the anchor fold and its B7 information-fraction
@@ -2354,7 +2355,8 @@ int Application::runNetwork() {
 
         // RTB-7(a) periodic atomic snapshot (INC-4: body in NetworkRunContext.cpp;
         // stays AFTER the prev_week/prev_tow advance — snap captures THIS epoch).
-        networkWriteStateSnapshot(ctx, config_, se.time, pl_now_s, emitter, carry_driver, log);
+        networkWriteStateSnapshot(ctx, config_, se.time, pl_now_s, emitter, carry_driver, log,
+                                  &clk_rebase_engine);   // §18.10 frame rows (v2)
         return LoopSignal::Next;
     };
 

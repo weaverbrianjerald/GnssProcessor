@@ -22,6 +22,12 @@ namespace GnssProcessor {
 namespace {
 
 constexpr const char* kHeader = "# gnss_network_state_snapshot v1";
+// Format v2 (SPEC_synthetic_minimum_network §18.10): v1 + the resume FRAME records
+// (PA/PT phase-anchor incumbent + sticky pin target, CA clock-anchor per-sat state,
+// FA/FP/FE CLK-R held frame).  Written only when at least one frame record is
+// present, so a run that carries none writes v1 byte-for-byte; the reader accepts
+// both (a v1 file restores empty frame maps = the pre-card cold-pin behaviour).
+constexpr const char* kHeaderV2 = "# gnss_network_state_snapshot v2";
 
 /// Split a line on ','.  Keys/values in this format never contain commas
 /// (sat ids, RINEX signals, "sat|signal" keys, ISO timestamps), so a plain
@@ -114,7 +120,7 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         ++n_lines;
     };
 
-    os << kHeader << '\n';
+    os << (snap.hasFrameState() ? kHeaderV2 : kHeader) << '\n';
     put(fmt::format("M,{},{},{},{},{:016x}", snap.snap_week, snap.snap_tow,
                     snap.wall_utc.empty() ? std::string("unknown") : snap.wall_utc,
                     snap.generation_id, snap.config_fingerprint));
@@ -143,6 +149,19 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
                         std::get<2>(key), l.value_abs, l.var, l.last_seen_s));
     for (const auto& [idx, l] : snap.zwd_carry)
         put(fmt::format("Z,{},{},{},{}", idx, l.value_abs, l.var, l.last_seen_s));
+    // Resume FRAME records (format v2, §18.10) — absent on a run without them.
+    for (const auto& [amb, sta] : snap.anchor_incumbent)
+        put(fmt::format("PA,{},{}", amb, sta));
+    for (const auto& [amb, tgt] : snap.anchor_pin_target)
+        put(fmt::format("PT,{},{}", amb, tgt));
+    for (const auto& [sat, ca] : snap.clock_anchor)
+        put(fmt::format("CA,{},{},{},{},{},{}", sat, ca.t_last, ca.last_value,
+                        ca.last_var_eff, ca.in_band, ca.anchored ? 1 : 0));
+    for (const auto& [c, acc] : snap.clk_frame_acc)
+        put(fmt::format("FA,{},{}", std::string(1, c), acc));
+    for (const auto& [sat, hp] : snap.clk_frame_prev)
+        put(fmt::format("FP,{},{},{}", sat, hp.first, hp.second));
+    if (snap.clk_frame_epochs > 0) put(fmt::format("FE,{}", snap.clk_frame_epochs));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -185,7 +204,8 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     std::string line;
     if (!std::getline(is, line)) return fail("empty file");
     if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line != kHeader) return fail("unrecognized header: '" + line + "'");
+    if (line != kHeader && line != kHeaderV2)
+        return fail("unrecognized header: '" + line + "'");
 
     NetworkStateSnapshot s;
     uint64_t n_lines = 0;
@@ -366,6 +386,33 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             if (f.size() != 4 || f[1].size() != 1) return fail("malformed GG line");
             if (!parseI(f[3], i1)) return fail("malformed GG group id");
             s.carry_group_id.emplace_back(f[1][0], f[2], static_cast<int>(i1));
+        } else if (tag == "PA") {   // §18.10 frame: phase-anchor incumbent
+            if (f.size() != 3) return fail("malformed PA line");
+            s.anchor_incumbent[f[1]] = f[2];
+        } else if (tag == "PT") {   // §18.10 frame: sticky pin target
+            if (f.size() != 3) return fail("malformed PT line");
+            if (!parseD(f[2], d1)) return fail("malformed PT target");
+            s.anchor_pin_target[f[1]] = d1;
+        } else if (tag == "CA") {   // §18.10 frame: clock-anchor per-sat state
+            if (f.size() != 7) return fail("malformed CA line");
+            NetworkStateSnapshot::ClockAnchorSat ca;
+            if (!parseD(f[2], ca.t_last) || !parseD(f[3], ca.last_value)
+                || !parseD(f[4], ca.last_var_eff) || !parseI(f[5], i1) || !parseI(f[6], i2))
+                return fail("malformed CA fields");
+            ca.in_band  = static_cast<int>(i1);
+            ca.anchored = (i2 != 0);
+            s.clock_anchor[f[1]] = ca;
+        } else if (tag == "FA") {   // §18.10 frame: CLK-R accumulator
+            if (f.size() != 3 || f[1].size() != 1) return fail("malformed FA line");
+            if (!parseD(f[2], d1)) return fail("malformed FA value");
+            s.clk_frame_acc[f[1][0]] = d1;
+        } else if (tag == "FP") {   // §18.10 frame: CLK-R per-sat baseline
+            if (f.size() != 4) return fail("malformed FP line");
+            if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed FP fields");
+            s.clk_frame_prev[f[1]] = {d1, d2};
+        } else if (tag == "FE") {   // §18.10 frame: CLK-R epoch count
+            if (f.size() != 2 || !parseI(f[1], i1)) return fail("malformed FE line");
+            s.clk_frame_epochs = static_cast<long long>(i1);
         } else {
             return fail("unknown record tag '" + tag + "'");
         }

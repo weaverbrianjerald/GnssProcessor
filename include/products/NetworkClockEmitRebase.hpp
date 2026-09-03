@@ -136,6 +136,41 @@ public:
     void configure(const Config& cfg) { cfg_ = cfg; }
 
     /**
+     * @brief The engine's cross-epoch FRAME state, exportable for the RTB-7
+     *        snapshot (SPEC_synthetic_minimum_network §18.10 resume frame
+     *        restore): the per-constellation accumulator A_c, the per-sat
+     *        previous held value + last-seen stamp, and the epoch count.
+     *
+     * Without it every resume restarts the held frame at zero, so the emitted
+     * common mode steps by A_c and the F1 seam rule (keyed on
+     * `counters().epochs == 0`) marks a datum change that the consumer must
+     * re-absorb — on a resume whose solve frame is otherwise continuous, that
+     * mark is the only re-realization left on the wire.
+     */
+    struct FrameState {
+        std::map<char, double>                          acc;     ///< constellation -> A_c (m).
+        std::map<std::string, std::pair<double, double>> prev;   ///< sat -> {last held (m), last seen (s)}.
+        long long                                       epochs{0};
+    };
+    /// Snapshot the frame state (cheap: a few hundred entries).
+    FrameState exportFrameState() const {
+        FrameState fs;
+        fs.acc = acc_;
+        for (const auto& [sat, ks] : prev_) fs.prev[sat] = {ks.last_held_m, ks.last_seen_s};
+        fs.epochs = counters_.epochs;
+        return fs;
+    }
+    /// Restore a previously exported frame state (a warm resume that continues
+    /// the held frame).  Counters other than @c epochs restart at zero — they
+    /// are run telemetry, not frame state.
+    void restoreFrameState(const FrameState& fs) {
+        acc_ = fs.acc;
+        prev_.clear();
+        for (const auto& [sat, hp] : fs.prev) prev_[sat] = KeyState{hp.first, hp.second};
+        counters_.epochs = fs.epochs;
+    }
+
+    /**
      * @brief Re-base one epoch's emitted clocks IN PLACE.
      *
      * Per constellation: form innovations of fresh unforced keys against the
