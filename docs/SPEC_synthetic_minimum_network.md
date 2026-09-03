@@ -3537,6 +3537,24 @@ shocks the carry_invariant blob only; this bed runs carry_invariant false).
    h-vintage amb VALUES survive only one epoch there).  No follow-up build
    warranted: leg A shows no post-retire ZWD drag on this bed (h16–h23
    0.009–0.018 ≈ continuous).
+   ⚠ **CORRECTION (2026-09-02, §18.10 readers):** the NULL verdict stands but
+   the mechanism named above is wrong.  The 2811 restored leveling carries
+   are never re-leveled by `relevel_free_epoch` — they are ERASED before PASS
+   B at the first warm epoch by the QUEUE-1(d) phase-anchor carry
+   re-reference (`networkApplyPhaseAnchorCarryReref`, NetworkPhaseDatum.cpp:
+   453-471), because `anchor_incumbent` / `anchor_pin_target` are not
+   snapshotted and the election at 302430 runs incumbent-less for all 162
+   (sat,signal) families (NetworkPhaseDatum.cpp:431-435, no event emitted).
+   Run-end counters: "phase-leveling local carry(ies) erased" 2862 on the
+   12 h warm leg vs 129 on the 24 h continuous run; the "2294 latches / 1824
+   inject skips" are the ordinary RUN RATE (continuous 24 h: 4010/3762), not
+   the seam; `free_ambs` is empty at 302430 (the only events there are the
+   two CLK_FRAME resume_seam marks), and the free-epoch latch's seam role is
+   the SECOND epoch's 146 cold-MW false refloats (292 latches).  So
+   `amb_seam_reinflate_var_m2` inflates entries that are deleted one pass
+   later: the h-vintage values survive ZERO epochs, not one.  The (c')-bed
+   "restored amb-carry drag" re-read (queue item 6) is moot for the same
+   reason — no restored value is ever folded on this posture.
 
 Open (cards, not built): emitted-frame continuity across the resume seam —
 the ~4 h consumer re-convergence against flat datum-invariant channels is
