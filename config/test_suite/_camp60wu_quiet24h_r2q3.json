@@ -4,7 +4,8 @@
     "template: config/test_suite/_camp60wu_quiet12h_r2q3.json",
     "60 solve stations + 1 consumer; 2879 epochs @ 30.0 s",
     "Do not hand-edit the station block \u2014 regenerate it, or the held coordinates",
-    "can silently drift from the fixture and nothing downstream will notice."
+    "can silently drift from the fixture and nothing downstream will notice.",
+    "HAND-ADDED after generation: network.state_snapshot_{path,keep_history} - the RTB-7 writer (proven write-outputs-only, products prefix-byte-matched the flagship, commit 82ae829) + per-epoch .ep history, so mid-run branch legs (the scheduled seam-reseed arm) can resume from any hour of THIS continuous run without a re-run."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -776,7 +777,9 @@
     "clock_anchor_sigma_floor_m": 0.0018,
     "clock_anchor_gauge_free": false,
     "clock_anchor_gauge_free_stat": "proj",
-    "clock_anchor_q": 3e-06
+    "clock_anchor_q": 3e-06,
+    "state_snapshot_path": "C:/GnssProcessor/runs/camp60wu_quiet24h_r2q3/state_snapshot.bin",
+    "state_snapshot_keep_history": true
   },
   "data_download": {
     "enabled": false,
