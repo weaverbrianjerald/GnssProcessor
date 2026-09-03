@@ -3901,3 +3901,111 @@ consumer (+30 min) converges monotonically.  The held-frame common mode κ
 (G −0.87 / E −0.22) collapses too, because the engine's A_c travels.  What the
 card does NOT promise: the per-sat tails (E2), the eclipse-cluster excursions
 (sticky_pivot / E2), and any h16+ difference (shared eclipse schedule).
+
+### 18.11 RESUME FRAME RESTORE — VERDICT (2026-09-03, legs from the v2 .ep1440 of
+### `runs/camp60wu_quiet12h_frwriter`; ON `runs/camp60wu_q12warm_fron`, OFF control
+### `runs/camp60wu_q12warm_frctl`, rung 3 `runs/camp60wu_q12warm_fron_ari`)
+
+**Writer gate PASSED.**  The 12 h frame writer (24 h base config, 12 h 5 min,
+`state_snapshot_frame_capture` — under the pre-knob build the capture was
+unconditional, equivalent) produced products BYTE-IDENTICAL to the continuous
+run over all 1450 epochs (34.8 MB prefix compare), so the capture is
+write-outputs-only as claimed; its `.ep1440` is a v2 snapshot carrying 162 PA
+(every family has an incumbent), 153 PT (sticky targets), 52 CA (all 52
+folded clocks ANCHORED), 54 FP + FA(E −0.2675, G −1.2179 — the held frame the
+continuous run emits) + FE 1440, with fingerprint `35860c5f45b8a004` = the v1
+library's, so the same-snapshot OFF/ON A/B is legal.  (The other session's
+unrelated tree changes — Planetary / SatAttitude / GnssCorrections — were
+compiled in; the prefix identity shows they are default-inert on this bed.)
+
+**1. The seam itself is CLOSED on the phase side and on the marks.**  ON leg
+at the first warm epoch: the restore logs 162 incumbents / 153 targets / 52
+anchored clocks / 54 CLK-R keys / 2811 ledger entries; B1b phase-bias σ
+**0.008 m median** (leg A 1.112; prediction ≈ 0.012); the E record carries
+**no datum mark** (leg A: `CLK_FRAME resume_seam` ×2); run-end 1(d) **48
+marked / 54 erased** (leg A 210 / 2862; continuous 24 h 253 / 129) — the
+seam erase is gone; the MW burst is **146 "detected (carry cold;
+diagnostic)"**, acted on 0 (leg A refloated 146); consumer ambiguity resets
+at the second warm epoch **5** (leg A 51), then 1/1/0/0/0; emitted
+phase-bias between-sat SD vs the continuous run at 302430 **0.04–0.08 m**
+(leg A 8–12 m) and it STAYS there all evening (P L1C SD 1.5–2.1 m vs leg A's
+8–12 m: the ON wire continues the continuous realization; code bias
+identical to 0.1 mm as before).  Phase-side fractional part |frac| p50
+0.12 (E) / 0.19 (G) cyc — improved from a uniform 0.28 but not integer-
+continuous, for the reason in 2.
+
+**2. The residual is the CLOCK: 33 of the 52 restored anchors TRIP at the
+first fold.**  Q3 run-end: "Trips 247 = **33 nis** + 0 abs + 13 gap + 201
+datum" (leg A: 0 nis) — `CLK_ANCHOR cta_decouple` ×33 + `cta_disc_landed` ×33
+at 302430, innovations e = 3.6–7.6 cm against √S 3–5 mm (w 6.1–25.5, k 6;
+worst G22 25.5, G14 19.5, G17 15.2, G20 15.2), all 33 re-engaged by
+`cta_recouple` within the hour.  Cause (R5's catch, verified): the restored
+leveling rows fold WITHOUT their Card-1 coupling regressors (the snapshot
+carries value/var only), so 2811 stiff rows constrain the ambiguities
+absolutely instead of "relative to the shared border" and the anchored clock
+priors (9.5 mm) lose the vote by 5–7 cm → the guard refuses them, they fold
+LOOSE (σ 0.55 m) on a code-only border for 4 epochs and the anchor freezes
+whatever that re-draw produced.  Wire: emitted clock between-sat SD vs the
+continuous run **0.28 m G / 0.16 m E** at 302430 (leg A 1.30 / 0.53), growing
+to 0.48 / 0.24 while the 33 are loose, then flat (0.62 / 0.33 all evening).
+Truth-graded (null-truth bed, per-constellation median-demeaned emitted
+clock = the per-sat error): GPS rms over h13–15 ON 2.19 / leg A 1.59 /
+continuous 2.11 m; over h18.7–20.5 ON 2.16 / leg A 2.21 / continuous 2.21 —
+in aggregate no worse than the continuous run, but the TAILS moved onto the
+tripped satellites: hourly means h13–h21 **G14 +3.0 (continuous +1.85),
+G17 +2.9 (+1.9), G22 +2.2 (+0.78), G20 −1.35 (0.0)**; leg A's full cold
+re-draw had landed G17 −0.27, G20 −0.35, G22 +0.65 (the R4 "fresh re-draw is
+closer to truth" effect).  The ON leg got the worst of both: the pre-seam
+frame for most satellites AND a code-only re-draw for 33 of them at the one
+epoch when the border was over-stiff.
+
+**3. Consumer: the seam transient is 2–3× smaller but a NEW h19 excursion
+appears, and it is a WIRE property of the residual in 2.**  Hourly 3D rms
+(ON / leg A / cold consumer on the continuous wire from h12): h12 0.564 /
+0.736 / 0.523 (p50 0.30 / 0.71 / 0.12); **h13 0.173 / 0.254 / 0.060; h14
+0.135 / 0.336 / 0.067; h15 0.114 / 0.300 / 0.062**; h16 0.468 / 0.437 /
+0.405; h17 0.386 / 0.833 / 0.457; h18 0.543 / 0.874 / 0.636; **h19 0.964 /
+0.119 / 0.223; h20 0.576 / 0.096 / 0.262**; h21 0.130 / 0.078 / 0.205; h22
+0.089 / 0.073 / 0.113; h23 0.098 / 0.048 / 0.107.  The h19 excursion (p50
+≈ rms ≈ 1.0 m; E −0.8 / U +0.5; ZERO consumer resets in h18.7–h20.5; the
+wire's per-epoch phase-side steps and σ at the continuous run's level) is
+reproduced by a FRESH consumer replayed cold from h18.0 on the ON wire
+(20-min bins 1.14 / 1.19 / 1.04 / 0.88 at h19.0–h20.0) and NOT on the
+continuous wire (0.33 / 0.25 / 0.19 / 0.24), so it is carried by the wire:
+after the h18.3 eclipse-cluster resets the consumer re-seeds its float from
+the code side, whose per-sat clock tails on the ON wire (G14/G17/G22 +2–3 m,
+G20 −1.35 m — high-weight satellites for this consumer) pull the float
+solution ~1 m off for the ~2 h the phase needs to override it; on leg A's
+wire the tails sit on other satellites and its consumer recovered in 20 min.
+Same family as the h13–h15 residual (0.11–0.17 vs the 0.06 floor).
+
+**4. Verdict.**  The FRAME-loss mechanism (§18.10) is CONFIRMED and the
+frame restore closes it: no erase, no marginalized phase-bias prior, no
+datum mark, no reset storm, phase-bias σ 0.008 m at the first warm epoch,
+and the wire continues the pre-seam realization in every channel but the
+tripped clocks.  The card is NOT yet shippable on this posture because of
+the second-order effect in 2: the restored leveling rows are over-stiff
+without their coupling regressors, the guard (correctly) refuses 33 anchored
+clocks, and the LOOSE re-draw creates new metre-class clock tails on ~4
+satellites that cost the consumer more at h19 than the seam ever did.  The
+stop rule from §18.10's own predictions applies (clock SD ≤ 0.02 m: FAILED
+at 0.28; `cta_recouple` 0: FAILED at 33).  Second increment, named:
+serialize the Card-1 `CoupledShared` regressors of every restored L row (M_j,
+s_prev, p_prev — R2 sized it at ~250 KB for 2811 rows) so the first fold is
+conditional and the anchored clocks are not out-voted; rung 3 (ON +
+`amb_seam_reinflate_var_m2 0.0025`, the now-live one-shot 5 cm σ soft refloat
+of the restored rows) is the cheap proxy test of that hypothesis —
+rung 3 was RUNNING at the session wind-down (2026-09-03 00:38 start, `runs/camp60wu_q12warm_fron_ari`); the decisive number for the next session is the `CLK_ANCHOR cta_decouple` count at 302430 (33 on the ON leg): 0 confirms the over-stiff-row hypothesis and makes the regressor increment the definitive fix, and its consumer h13–h15 / h19 figures against the ON leg's 0.17/0.14/0.11 and 0.96 say whether the soft refloat alone is shippable.  Until then: `network.resume_frame_restore` is **BUILT, mechanism
+verified, KEEP OFF pending the regressor increment** (ledger); the capture
+knob is safe to arm on any writer (write-outputs-only, proven).
+
+**5. Structural control PASSED.**  The OFF control (same v2 snapshot, knobs
+off, same build) reproduces leg A — run on the Sep-1 build from the v1
+library — TO THE DIGIT in every hourly consumer figure h12–h23 (0.736 /
+0.254 / 0.336 / 0.300 / 0.437 / 0.833 / 0.874 / 0.119 / 0.096 / 0.078 /
+0.073 / 0.048 rms) and in every run-end counter (1(d) 210 marked / 2862
+erased; Q3 0 nis / 13 gap / 201 datum trips, 1068 LOOSE folds; the two
+`CLK_FRAME resume_seam` marks; B1b σ 1.112 m).  So (a) the v2 capture and
+the resume-side code are byte-inert with the knobs off, (b) the other
+session's concurrent tree changes are inert on this bed, and (c) every ON
+vs OFF difference above is the knob.
