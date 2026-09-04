@@ -1904,6 +1904,84 @@ int networkTeardown(
                             "carried no frame rows (pre-v2 writer?) or no warm resume "
                             "happened; check the resume log for the FRAME line."
                           : "");
+        // §18.12 coupling-regressor restore — the RE-COUPLING edge of the seam (standing
+        // invariant #7): what came back, and what it actually BOUND TO at the first fold.
+        // Restoring (value, var) alone injects a carried leveling row as a PLAIN DIAGONAL
+        // prior asserted at the PURE CONDITIONAL variance — a combination no continuous
+        // epoch produces — so the row drives the shared border by the full α‖M_d‖ at
+        // α ≈ 1/cond_var ≈ 1e6 m⁻², four orders above the Q3 anchored clock prior's
+        // 1/9e-5 ≈ 1.1e4 m⁻².  That is the §18.11 first-fold trip count, so "how many rows
+        // came back" is NOT the readout — "how many of their terms resolved to a live
+        // column" is, and both edges are printed here.
+        //
+        // The census vectors hold ONE entry per row of the FIRST post-resume harvest (the
+        // measure-only observatory in networkHarvestLocalCarries), so they are reduced HERE
+        // rather than accumulated online: nth_element is O(n), the run is over, and the
+        // observatory stays byte-identical on every solve artifact.  Reduced on COPIES so
+        // the readout never permutes carried state.
+        double rel_p50 = 0.0, rel_p90 = 0.0, rel_max = 0.0, rhs_p50 = 0.0, rhs_max = 0.0;
+        {
+            using Diff = std::vector<double>::difference_type;
+            std::vector<double> cen_rel = ctx.carry.resume_cpl_census_rel;
+            if (!cen_rel.empty()) {
+                const std::size_t i50 = cen_rel.size() / 2;
+                const std::size_t i90 = (cen_rel.size() * 9) / 10;   // < size for size >= 1
+                std::nth_element(cen_rel.begin(),
+                                 cen_rel.begin() + static_cast<Diff>(i50),
+                                 cen_rel.end());
+                rel_p50 = cen_rel[i50];
+                std::nth_element(cen_rel.begin(),
+                                 cen_rel.begin() + static_cast<Diff>(i90),
+                                 cen_rel.end());
+                rel_p90 = cen_rel[i90];
+                rel_max = *std::max_element(cen_rel.begin(), cen_rel.end());
+            }
+            std::vector<double> cen_rhs = ctx.carry.resume_cpl_census_rhs;
+            if (!cen_rhs.empty()) {
+                const std::size_t j50 = cen_rhs.size() / 2;
+                std::nth_element(cen_rhs.begin(),
+                                 cen_rhs.begin() + static_cast<Diff>(j50),
+                                 cen_rhs.end());
+                rhs_p50 = cen_rhs[j50];
+                rhs_max = *std::max_element(cen_rhs.begin(), cen_rhs.end());
+            }
+        }
+        if (config_.networkResumeCouplingRestore())
+            log->info("Network (resume coupling restore): {} L row(s) + {} Z row(s), {} "
+                      "regressor(s) over a {}-column dictionary ({} orphan row(s)); {} "
+                      "clock reinit seed(s) planted at the seam.  First fold: {} present, "
+                      "{} departed/diverted ({:.1f} % present), {} border key(s) folded "
+                      "DIAGONALLY (the known one-epoch C1 asymmetry).  First-harvest "
+                      "census over {} row(s) / {} matched term(s): |M-M_d|/max|M_d| p50 "
+                      "{:.3e}, p90 {:.3e}, max {:.3e}; |delta sum M*s_prev| p50 {:.3e} m, "
+                      "max {:.3e} m ({} restored identit(ies) not re-harvested).{}",
+                      C.n_resume_cpl_rows, C.n_resume_cpl_zrows, C.n_resume_cpl_terms,
+                      C.n_resume_cpl_dict, C.n_resume_cpl_orphan,
+                      C.n_resume_cpl_seed_reinit,
+                      C.n_resume_cpl_seam_present, C.n_resume_cpl_seam_departed,
+                      (C.n_resume_cpl_seam_present + C.n_resume_cpl_seam_departed) > 0
+                          ? 100.0 * static_cast<double>(C.n_resume_cpl_seam_present)
+                            / static_cast<double>(C.n_resume_cpl_seam_present
+                                                + C.n_resume_cpl_seam_departed)
+                          : 0.0,
+                      C.n_resume_cpl_diag_border,
+                      C.n_resume_cpl_census_rows, C.n_resume_cpl_census_terms,
+                      rel_p50, rel_p90, rel_max, rhs_p50, rhs_max,
+                      C.n_resume_cpl_census_unmatched,
+                      C.n_resume_cpl_rows == 0
+                          ? "  ⚠ 0 rows under an ARMED coupling restore — the snapshot "
+                            "carried no QS/QL records (a pre-v3 writer, or a writer "
+                            "without network.state_snapshot_coupling_capture), or no warm "
+                            "resume happened: every restored leveling row injected as a "
+                            "plain DIAGONAL prior, which IS the §18.11 defect."
+                      : (C.n_resume_cpl_seam_present * 10
+                             < (C.n_resume_cpl_seam_present
+                                + C.n_resume_cpl_seam_departed) * 9)
+                          ? "  ⚠ under 90 % of the restored terms resolved to a live column "
+                            "at the first warm epoch — the rows were SOFTENED by "
+                            "Sum M^2*P_prev, which is rung 3's mechanism by another route; "
+                            "grade the h12 consumer before trusting the clock result."
+                          : "");
         if (config_.networkZwdSeamReseed())
             log->info("Network (ZWD seam re-seed): {} station-fold(s) over {} epoch(s) of the "
                       "post-resume window (horizon {} epochs).{}",
@@ -2670,6 +2748,29 @@ int networkTeardown(
                           ? "DIAGONAL-ONLY (v3 — Sum K_c numbers)"
                           : "dense (v2 — Sum K_c^2 numbers)");
     }
+    // §18.12 coupling CAPTURE, write side — the RTB-7(e) snapshot readout's sibling, but
+    // at FUNCTION scope on purpose: the RTB-7(d/e) block above is gated on carry_invariant,
+    // while the coupling capture rides the phase-leveling carries
+    // (carry_conditional_coupling, which supersedes carry_invariant — the target lineage
+    // runs carry_invariant: false), so nesting it there would make the ON-path telemetry
+    // structurally INERT on exactly the postures that arm it (standing invariant #4).
+    // ~25 B per (id, coeff) pair is the §2.7 size budget's own figure; it is what turns
+    // "rows captured" into the disk/IO fact a keep-history leg has to plan for.
+    if (config_.getNetworkConfig().state_snapshot_coupling_capture)
+        log->info("Network (§18.12 coupling capture): last snapshot carried {} L row(s) "
+                  "+ {} Z row(s), {} regressor term(s) over {} shared column(s) "
+                  "(~{:.2f} MB of QL/QZ payload); {} row(s) omitted whole for a "
+                  "non-finite field over the run.{}",
+                  ctx.carry.snap_cpl_rows_last, ctx.carry.snap_cpl_zrows_last,
+                  ctx.carry.snap_cpl_terms_last, ctx.carry.snap_cpl_dict_last,
+                  static_cast<double>(ctx.carry.snap_cpl_terms_last) * 25.0
+                      / (1024.0 * 1024.0),
+                  ctx.carry.snap_cpl_rows_dropped,
+                  ctx.carry.snap_cpl_rows_last == 0
+                      ? "  ⚠ 0 rows under an ARMED capture — carry_conditional_coupling "
+                        "off, or every carry harvested EMPTY: the file is v1/v2 and no "
+                        "resume can use it."
+                      : "");
     if (sh_dev_on) {
         log->info("Network (Iono-2/T5v2 per-LOS deviation carry): {} warm harvest(s), "
                   "{} cold seed(s), {} slip reset(s) (C3c funnel), {} no-information "

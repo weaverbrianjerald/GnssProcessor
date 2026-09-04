@@ -136,6 +136,7 @@ namespace GnssProcessor {
         bool zwd_capture{};    ///< Snapshot-armed run (state_snapshot_path non-empty): record + harvest the per-station ZWD posterior every processed epoch so EVERY snapshot carries Z rows — read-only w.r.t. the solve (no inject; capture only).
         double amb_seam_reinflate_var{};  ///< network.amb_seam_reinflate_var_m2: one-shot variance ADD (m²) on every restored leveling carry at a warm resume (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF.
         bool   resume_frame_restore{};    ///< network.resume_frame_restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the serialized FRAME state — phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-sat state, the CLK-R held frame — so the first post-resume election/fold/emit continue the pre-seam realization instead of re-pinning at cold seeds.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into maps nothing reads).
+        bool   resume_coupling_restore{}; ///< network.resume_coupling_restore (SPEC_synthetic_minimum_network §18.12): at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, in harvest order) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING, so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, shared-neutral) instead of the plain DIAGONAL prior asserted at the PURE CONDITIONAL variance that out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (LocalCarry::coupling stays empty exactly as the aggregate init leaves it).
         int    resume_slip_warmup_ep{};   ///< network.resume_slip_warmup_ep: epochs after a warm resume during which the MW/LLI (T0) drain is DIAGNOSTIC-ONLY — its cold Welford reference (2 samples at the second warm epoch) declared 146 false WL slips on the §18.9 bed and re-leveled 5 % of the restored arcs; IF-TD (T1) and wind-up drains stay live, so an in-gap slip keeps a detector.  0 = OFF.  NOT fingerprinted.
         bool carry_vce{};
         bool vce_apply_on{};   ///< M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor apply. SOLVE-AFFECTING; loader guarantees carry_vce.
@@ -1618,6 +1619,20 @@ namespace GnssProcessor {
         long long snap_writes             = 0;      // snapshots written this run
         long long snap_carry_bytes_last   = 0;      // bytes of the last serialized carry blob
         bool      snap_carry_diagonal     = false;  // that blob was diagonal-only (v3)
+        // §18.12 coupling-regressor capture (network.state_snapshot_coupling_capture):
+        // the QS/QL/QZ payload is ~37x the rest of the file, so "how many rows, how many
+        // terms, over how many shared columns" is the only readout that shows the capture
+        // took effect — and rows_dropped is a writer-side numerical problem that is
+        // otherwise invisible (a row with a non-finite field is omitted WHOLE, never in
+        // part: an amputated coefficient vector breaks Card 1e's gauge identity).
+        long long snap_cpl_dict_last     = 0;   // §18.12: shared columns in the last snapshot's QS dictionary
+        long long snap_cpl_rows_last     = 0;   // §18.12: QL rows in the last snapshot
+        long long snap_cpl_zrows_last    = 0;   // §18.12: QZ rows in the last snapshot
+        long long snap_cpl_terms_last    = 0;   // §18.12: regressor entries in the last snapshot
+        long long snap_cpl_rows_dropped  = 0;   // §18.12: rows OMITTED WHOLE for a non-finite/negative field (run total)
+        bool      resume_cpl_census_pending = false;  // §18.12: latch the first-post-resume harvest census + fold split
+        std::vector<double> resume_cpl_census_rel;    // §18.12: per-row max|M − M_d| / max|M_d| at the first harvest
+        std::vector<double> resume_cpl_census_rhs;    // §18.12: per-row |Δ Σ M·ŝ_prev| (m) at the first harvest
 
         // --- redundancy / testability census (docs/SPEC_redundancy_census.md) ---
         // [snapshot: EXEMPT] Every field here is diagnostic state of a MEASURE-ONLY
@@ -2136,6 +2151,29 @@ namespace GnssProcessor {
         long long n_resume_frame_clk_keys    = 0;  ///< CLK-R held-frame per-sat keys restored
         long long n_resume_frame_ledger      = 0;  ///< handover-ledger entries primed from restored leveling rows
         long long n_resume_slip_warmup_epochs = 0; ///< epochs the MW/LLI drain ran diagnostic-only post-resume
+        // Card 1 coupling-regressor restore (network.resume_coupling_restore, §18.12) —
+        // BOTH edges of the seam (standing invariant #7).  rows/zrows/terms/dict are the
+        // RE-COUPLING edge's identities; seed_reinit is the DECOUPLING edge (columns the
+        // write epoch was re-drawing, diverted on purpose); seam_present/seam_departed are
+        // what the first fold ACTUALLY bound to.  Rows > 0 with seam_present == 0 is the
+        // MISWIRE reading, not a clean one.
+        long long n_resume_cpl_rows        = 0;  ///< L leveling rows whose regression was rebuilt
+        long long n_resume_cpl_zrows       = 0;  ///< Z (ZWD) rows whose regression was rebuilt
+        long long n_resume_cpl_terms       = 0;  ///< regressor entries restored across both
+        long long n_resume_cpl_dict        = 0;  ///< shared-column dictionary entries read
+        long long n_resume_cpl_orphan      = 0;  ///< QL/QZ rows with no live carry to attach to
+        long long n_resume_cpl_seed_reinit = 0;  ///< tu_reinit_hist seeds planted (LOOSE anchor / eph cutover)
+        long long n_resume_cpl_seam_present  = 0;  ///< first warm epoch: coupling terms that RESOLVED to a live column
+        long long n_resume_cpl_seam_departed = 0;  ///< ...that marginalized (departed or reinit-diverted)
+        long long n_resume_cpl_diag_border   = 0;  ///< C1 border keys that folded DIAGONALLY at the first post-resume fold (the known one-epoch Card-1 asymmetry — NetworkRunContext.cpp:1163-1169)
+        // First-post-resume-harvest OBSERVATORY (measure-only, byte-identical): the
+        // restored M against the epoch's OWN freshly derived M_d for the same key.  This
+        // is the only direct evidence the restored row was frame-valid, and it needs no
+        // second leg.  It is also the instrument that separates "the regressors were
+        // stale" from "the residual is the diagonal C1 border" if the trips do not reach 0.
+        long long n_resume_cpl_census_rows      = 0;  ///< rows compared against their own fresh harvest
+        long long n_resume_cpl_census_terms     = 0;  ///< identities matched in both vectors
+        long long n_resume_cpl_census_unmatched = 0;  ///< restored identities the fresh harvest did not produce
 
         // --- Rung 3 v3: the CARRY-DOMAIN lane observatory ----------------------
         // (SPEC_lane_slip_response §7.3.)  Measure-only: it computes the lane

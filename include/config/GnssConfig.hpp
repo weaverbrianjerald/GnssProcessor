@@ -2190,7 +2190,8 @@ namespace GnssProcessor {
          * LOOSE for the anchor's re-couple horizon, and the emitted common mode
          * restarts at zero.  The wire then re-converges its phase-bias split for
          * ~4 h and every consumer pays for it.  With this knob the snapshot's frame
-         * rows (captured unconditionally, snapshot format v2) are restored before
+         * rows (captured under network.state_snapshot_frame_capture since 90718c3,
+         * snapshot format v2) are restored before
          * the first election / fold / emit, so the resumed run continues the
          * pre-seam realization.  Applies at the restore site only — continuous
          * epochs never execute it.  Deliberately NOT in the warm-resume fingerprint
@@ -2198,6 +2199,52 @@ namespace GnssProcessor {
          * @ref networkZwdSeamReseed).  Default false = byte-identical.
          */
         bool networkResumeFrameRestore() const { return network_resume_frame_restore_; }
+        /**
+         * @brief Resume COUPLING-REGRESSOR restore (@c network.resume_coupling_restore,
+         *        SPEC_synthetic_minimum_network §18.12).
+         *
+         * The SECOND half of the resume frame restore, and the RE-COUPLING edge for the
+         * leveling carry itself (standing invariant #7).  RTB-7 serializes a
+         * @c LocalCarry's @c (value_abs, var, last_seen_s) and NOT its @c coupling
+         * (include/filter/NetworkRunTypes.hpp), so a warm-resumed row injects with an
+         * EMPTY regression: @c buildCplRow's per-entry loop never runs, @c row.shared is
+         * empty, @c rhs = value_abs − x_lin and @f$\sigma^2 = @f$ var_eff — i.e. a plain
+         * DIAGONAL prior asserted at the PURE CONDITIONAL variance, a combination no
+         * continuous epoch produces (the legacy diagonal carry is stiff at the MARGINAL
+         * variance; the Card-1 row is stiff at the conditional variance but
+         * SHARED-NEUTRAL, because its @f$A_s = M_r@f$ cancels the reduced-normals
+         * contribution @f$\alpha(M-M_d)(M-M_d)^\top@f$).  Measured (§18.11): 2811 such
+         * rows drive the border at @f$\alpha \approx 1/\mathrm{cond\_var} \approx
+         * 10^{6}\,\mathrm{m^{-2}}@f$ per row against the Q3 anchored clock prior's
+         * @f$1/9\!\times\!10^{-5} \approx 1.1\times10^{4}@f$, 33 of 52 restored anchors
+         * trip at the first fold and the consumer pays 0.96 m rms at h19.
+         *
+         * With this knob armed the restore rebuilds each carry's regression VERBATIM from
+         * the v3 snapshot's QS dictionary + QL/QZ rows (bit-exact, in harvest order;
+         * coefficients are NOT re-sparsified and @c ŝ_prev / @c P_prev are NOT re-derived —
+         * @c P_prev == 0 is the MEANINGFUL "datum-pinned / ensemble-gauge, exactly known"
+         * value of Card 1e, and re-deriving it would activate the κ shrink), and seeds
+         * @c tu_reinit_hist from the columns the write epoch was demonstrably RE-DRAWING
+         * (LOOSE @c CA anchors, pending eph cutovers, the @c QR refloat set) so the
+         * DECOUPLING edge is wired too.  A row with no QL/QZ record keeps its empty
+         * coupling and degrades to today's diagonal.
+         *
+         * @warning This is NOT rung 3.  @ref networkAmbSeamReinflateVarM2 attacked the
+         *          row's WEIGHT and walked the consumer 5.13 m in h12 by letting the level
+         *          re-float on the cold station layer (standing invariant #1); this
+         *          touches DIRECTION only and never modifies @c var.  The loader makes the
+         *          two MUTUALLY EXCLUSIVE, and hard-requires
+         *          @ref networkResumeFrameRestore, @ref networkCarryConditionalCoupling
+         *          and @ref networkCarryCouplingGaugeProject (Card 1f — the resume is the
+         *          maximum-scale truncation regime for a carried row).
+         *
+         * Requires a writer armed with @c network.state_snapshot_coupling_capture: on a
+         * pre-v3 (or uncaptured) file the restore is INERT and warns, which invariant #4
+         * says to read as INERT rather than clean.  Deliberately NOT in the warm-resume
+         * fingerprint (forward-only resume response policy, the same exemption class as
+         * @ref networkZwdSeamReseed).  Default false = byte-identical.
+         */
+        bool networkResumeCouplingRestore() const { return network_resume_coupling_restore_; }
         /**
          * @brief Post-resume MW/LLI slip-drain warm-up (@c network.resume_slip_warmup_ep,
          *        epochs, SPEC_synthetic_minimum_network §18.10).
@@ -6543,7 +6590,8 @@ namespace GnssProcessor {
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.
         double network_amb_seam_reinflate_var_m2_{0.0};   ///< Seam-scoped one-shot variance ADD (m²) on every restored phase-leveling local ambiguity carry at a warm resume — a soft refloat that keeps the carried value as prior mean (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF, byte-identical.
-        bool   network_resume_frame_restore_{false};       ///< Resume FRAME restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the snapshot's phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-satellite state and the CLK-R held frame, so the first post-resume election / clock fold / emit continue the pre-seam realization.  Capture is unconditional (format v2); this knob only decides whether a resume USES the rows.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        bool   network_resume_frame_restore_{false};       ///< Resume FRAME restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the snapshot's phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-satellite state and the CLK-R held frame, so the first post-resume election / clock fold / emit continue the pre-seam realization.  Capture rides its OWN write knob, network.state_snapshot_frame_capture (format v2, knob-gated by 90718c3); this knob only decides whether a resume USES the rows.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        bool   network_resume_coupling_restore_{false};    ///< §18.12 resume COUPLING-REGRESSOR restore: at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order — never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING (LOOSE CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain DIAGONAL prior asserted AT that conditional variance which out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project (Card 1f), and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only — var is never modified).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires en masse at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = OFF.  NOT fingerprinted.
         bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).
         double network_iono_carry_q_{1e-4};               ///< QUEUE 8b: slant-iono carry random-walk process noise (m²/s); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.

@@ -343,7 +343,7 @@ struct LocalCarry {
     double value_abs;     ///< Carried absolute ambiguity estimate (m).
     double var;           ///< Last-solve posterior variance (m²): the MARGINAL (conditionalLocalVarianceDiag) on the legacy diagonal carry, or — under network.carry_conditional_coupling — the PURE CONDITIONAL @f$(N_{rr}^{-1})_{rr}@f$.
     double last_seen_s;   ///< Continuous-GPS seconds when last stashed (gap inflation).
-    std::vector<CoupledShared> coupling{};  ///< Card 1: the regression on the FREE shared border.  Empty on the legacy diagonal path AND for a warm-resume-restored entry (not persisted in the v1 snapshot) — an empty coupling injects as a plain diagonal row (graceful one-epoch degrade).
+    std::vector<CoupledShared> coupling{};  ///< Card 1: the regression on the FREE shared border.  Empty on the legacy diagonal path, and for a warm-resume-restored entry unless network.resume_coupling_restore rebuilt it from a v3 snapshot's QL/QZ record (§18.12); empty on a v1/v2 file or with the knob off — an empty coupling injects as a plain diagonal row (graceful one-epoch degrade).
 };
 
 /// SPEC_slip_relevel_walk §6 — the slip re-level response's per-epoch state

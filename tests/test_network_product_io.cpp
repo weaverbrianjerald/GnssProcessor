@@ -3101,6 +3101,26 @@ NetworkStateSnapshot makeFullSnapshot() {
     s.relevel_iode   = {{"G01", 10}, {"E11", 7}};   // Card 6 re-level baselines
     s.eph_cutover_disc_pending = {"C21"};           // Card 6 pending forced disc
 
+    // §18.12 Card-1 coupling regressors (format v3): the shared-column
+    // DICTIONARY plus one packed regression per carried row, keyed on exactly
+    // the L / Z keys above (the parser refuses an orphan QL/QZ, so these must
+    // reference local_carry[{7,"G01","L1C"}] and zwd_carry[7]).  Entry order
+    // inside a row is HARVEST order and is preserved verbatim — it is observable
+    // at the ulp, since buildCplRow accumulates rhs += coeff*s_prev in vector
+    // order — so ids are deliberately NOT monotone here.  The dictionary carries
+    // a Clock column (empty signal), a PhaseBias column, and a VtecSh column
+    // (empty sat, sh_layer as its OWN field, never the D record's "L1"-in-sat
+    // hack).  QR is the write-epoch clock-refloat set, which no other record in
+    // the file can carry (a hard-refloated sat is skip-stashed).
+    s.coupling_dict = {
+        {0, "G01", "",    0, 0, 'C', 0, -0.9718706123456789, 1.7312e-05},
+        {2, "G01", "L1C", 0, 0, 'C', 0, -1.2178912315598864, 8.128093975162085e-07},
+        {3, "",    "",    2, 1, 'S', 1,  0.4471821,          0.0},   // pinned: p_prev == 0
+    };
+    s.coupling_rows[{7, "G01", "L1C"}] = {{2, -0.99876543210987}, {0, 0.48312}};
+    s.coupling_zrows[7]                = {{1, 0.331}, {0, -0.0042}};
+    s.clock_refloat_sats = {"G14", "G17"};
+
     // A REAL emitter blob (round-trips through restoreState in the driver),
     // carrying a PENDING forced datum bump: G is tracked (first emit), then a
     // G-scoped markDatumChange lands on an E-only epoch — the RT0-5 seam keeps
@@ -3193,6 +3213,30 @@ TEST(NetworkStateSnapshotTest, SerializeParseRoundTripsEveryGroup) {
     EXPECT_EQ(r.c1_zoh_active, s.c1_zoh_active);
     EXPECT_EQ(r.relevel_iode, s.relevel_iode);                       // Card 6
     EXPECT_EQ(r.eph_cutover_disc_pending, s.eph_cutover_disc_pending);// Card 6
+    // §18.12 coupling regressors: the dictionary field-for-field, then whole-
+    // container equality on the rows (std::vector<std::pair<int,double>>
+    // compares element-wise IN ORDER, which is the property that matters — the
+    // restored row must be bit-for-bit the write epoch's harvest, in harvest
+    // order).  The format-contract detail (traps, negative cases, the loader
+    // interlocks) lives in tests/test_resume_coupling_restore.cpp; this suite
+    // only keeps its "every group" claim true.
+    ASSERT_EQ(r.coupling_dict.size(), s.coupling_dict.size());
+    for (size_t i = 0; i < s.coupling_dict.size(); ++i) {
+        SCOPED_TRACE(i);
+        EXPECT_EQ(r.coupling_dict[i].kind,     s.coupling_dict[i].kind);
+        EXPECT_EQ(r.coupling_dict[i].sat,      s.coupling_dict[i].sat);
+        EXPECT_EQ(r.coupling_dict[i].signal,   s.coupling_dict[i].signal);
+        EXPECT_EQ(r.coupling_dict[i].sh_n,     s.coupling_dict[i].sh_n);
+        EXPECT_EQ(r.coupling_dict[i].sh_m,     s.coupling_dict[i].sh_m);
+        EXPECT_EQ(r.coupling_dict[i].sh_trig,  s.coupling_dict[i].sh_trig);
+        EXPECT_EQ(r.coupling_dict[i].sh_layer, s.coupling_dict[i].sh_layer);
+        EXPECT_DOUBLE_EQ(r.coupling_dict[i].s_prev, s.coupling_dict[i].s_prev);
+        EXPECT_DOUBLE_EQ(r.coupling_dict[i].p_prev, s.coupling_dict[i].p_prev);
+    }
+    EXPECT_EQ(r.coupling_rows, s.coupling_rows);
+    EXPECT_EQ(r.coupling_zrows, s.coupling_zrows);
+    EXPECT_EQ(r.clock_refloat_sats, s.clock_refloat_sats);
+    EXPECT_TRUE(r.hasCouplingState());
     // Emitter blob verbatim — and it restores into a matching emitter with the
     // PENDING G datum bump intact: G's next emit after the round trip lands it.
     EXPECT_EQ(r.emitter_state, s.emitter_state);

@@ -3278,6 +3278,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             ctx.counters.n_iono_carry_injected += Rc.iono_carry_injected;
             ctx.counters.n_iono_carry_floor_hits += Rc.iono_carry_floor_hits;
         }
+    // §18.12: latch the FIRST warm epoch's present/departed split across this fold.  A
+    // restore that reads 2871 rows and then MARGINALIZES most of their terms has SOFTENED
+    // the rows (σ² += Sum M²·P_prev) — rung 3's mechanism by another route — and must be
+    // read as a failure even though every "restored" counter looks healthy.  Both names
+    // are run-total aliases into ctx.counters (:2115-2116), so the seam value is a
+    // DIFFERENCE bracketing this one call, not anything the call returns.
+    const long long cpl_p0 = n_cpl_terms_present, cpl_d0 = n_cpl_terms_departed;
     foldAndDumpCouplingRows(carry_cpl_cond, asm_res, est,
                             registered_clock_sats, shared_phase_keys, registered_code_keys,
                             se.time.tow, log,
@@ -3286,6 +3293,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             ctx.counters.n_cpl_reinit_diverted,
                             n_cpl_row_dump,
                             &ctx.counters.cpl_orphan_fam_total);
+    if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond) {
+        ctx.counters.n_resume_cpl_seam_present  = n_cpl_terms_present  - cpl_p0;
+        ctx.counters.n_resume_cpl_seam_departed = n_cpl_terms_departed - cpl_d0;
+    }
 
     // SD pre-reduce EWL trace drain (SERIAL, post-produce — SPEC_sd_ewl_prereduce §6).
     // The rows were formatted per station inside the parallel produce; writing them

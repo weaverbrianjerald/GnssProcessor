@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -28,6 +29,12 @@ constexpr const char* kHeader = "# gnss_network_state_snapshot v1";
 // present, so a run that carries none writes v1 byte-for-byte; the reader accepts
 // both (a v1 file restores empty frame maps = the pre-card cold-pin behaviour).
 constexpr const char* kHeaderV2 = "# gnss_network_state_snapshot v2";
+// Format v3 (SPEC_synthetic_minimum_network §18.12): v2 + the Card-1 coupling
+// regressors (QS shared-column dictionary, QL/QZ per-row (id, M_rj) lists, QR
+// write-epoch clock-refloat set).  Written only when at least one coupling record
+// is present, so a frame-only run still writes v2 and a bare run v1 byte-for-byte;
+// the reader accepts all three.
+constexpr const char* kHeaderV3 = "# gnss_network_state_snapshot v3";
 
 /// Split a line on ','.  Keys/values in this format never contain commas
 /// (sat ids, RINEX signals, "sat|signal" keys, ISO timestamps), so a plain
@@ -120,7 +127,8 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         ++n_lines;
     };
 
-    os << (snap.hasFrameState() ? kHeaderV2 : kHeader) << '\n';
+    os << (snap.hasCouplingState() ? kHeaderV3
+         : snap.hasFrameState()    ? kHeaderV2 : kHeader) << '\n';
     put(fmt::format("M,{},{},{},{},{:016x}", snap.snap_week, snap.snap_tow,
                     snap.wall_utc.empty() ? std::string("unknown") : snap.wall_utc,
                     snap.generation_id, snap.config_fingerprint));
@@ -162,6 +170,29 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, hp] : snap.clk_frame_prev)
         put(fmt::format("FP,{},{},{}", sat, hp.first, hp.second));
     if (snap.clk_frame_epochs > 0) put(fmt::format("FE,{}", snap.clk_frame_epochs));
+    // Card 1 coupling regressors (format v3, §18.12): the shared-column dictionary
+    // first, then one PACKED line per carried row holding only (dictionary id, M_rj)
+    // in HARVEST order, then the write epoch's clock-refloat set.  Emitted BEFORE the
+    // CARRY/EMITTER blobs so the verbatim blob state machines never swallow them.
+    // The driver leaves these containers empty unless network.state_snapshot_coupling_
+    // capture is armed, so a run without them writes the v1/v2 bytes unchanged.
+    for (std::size_t qi = 0; qi < snap.coupling_dict.size(); ++qi) {
+        const NetworkStateSnapshot::CouplingCol& q = snap.coupling_dict[qi];
+        put(fmt::format("QS,{},{},{},{},{},{},{},{},{},{}", qi, q.kind, q.sat, q.signal,
+                        q.sh_n, q.sh_m, q.sh_trig, q.sh_layer, q.s_prev, q.p_prev));
+    }
+    for (const auto& [key, ents] : snap.coupling_rows) {
+        std::string ln = fmt::format("QL,{},{},{},{}", std::get<0>(key), std::get<1>(key),
+                                     std::get<2>(key), ents.size());
+        for (const auto& [id, mj] : ents) ln += fmt::format(",{},{}", id, mj);
+        put(ln);
+    }
+    for (const auto& [idx, ents] : snap.coupling_zrows) {
+        std::string ln = fmt::format("QZ,{},{}", idx, ents.size());
+        for (const auto& [id, mj] : ents) ln += fmt::format(",{},{}", id, mj);
+        put(ln);
+    }
+    for (const std::string& s : snap.clock_refloat_sats) put(fmt::format("QR,{}", s));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -204,7 +235,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     std::string line;
     if (!std::getline(is, line)) return fail("empty file");
     if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line != kHeader && line != kHeaderV2)
+    if (line != kHeader && line != kHeaderV2 && line != kHeaderV3)
         return fail("unrecognized header: '" + line + "'");
 
     NetworkStateSnapshot s;
@@ -212,6 +243,13 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     bool saw_meta = false, saw_counters = false, saw_ramp = false;
     bool saw_end = false, in_emitter = false, emitter_done = false;
     bool in_carry = false, carry_done = false;
+    // §18.12 coupling records are STAGED and spliced AFTER the loop, so the record
+    // dispatch stays ORDER-FREE (a QL may legally precede its L row).  Resolving a QL
+    // into s.local_carry inline would silently make correctness depend on writer line
+    // order — a property nothing else in this format has.
+    std::map<std::tuple<int, std::string, std::string>,
+             std::vector<std::pair<int, double>>> q_rows;
+    std::map<int, std::vector<std::pair<int, double>>> q_zrows;
 
     while (std::getline(is, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -413,6 +451,68 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
         } else if (tag == "FE") {   // §18.10 frame: CLK-R epoch count
             if (f.size() != 2 || !parseI(f[1], i1)) return fail("malformed FE line");
             s.clk_frame_epochs = static_cast<long long>(i1);
+        } else if (tag == "QS") {   // §18.12: coupling shared-column dictionary entry
+            if (f.size() != 11) return fail("malformed QS line");
+            long long id = 0, kd = 0, shn = 0, shm = 0, trg = 0, lay = 0;
+            if (!parseI(f[1], id) || !parseI(f[2], kd) || !parseI(f[5], shn)
+                || !parseI(f[6], shm) || !parseI(f[7], trg) || !parseI(f[8], lay)
+                || !parseD(f[9], d1) || !parseD(f[10], d2))
+                return fail("malformed QS fields");
+            if (id != static_cast<long long>(s.coupling_dict.size()))
+                return fail(fmt::format("QS ids must be dense and ascending "
+                                        "(expected {}, saw {})",
+                                        s.coupling_dict.size(), id));
+            if (kd < 0 || kd > 3) return fail("QS kind out of range");
+            // p_prev == 0 is MEANINGFUL (datum-pinned / ensemble-gauge column, exactly
+            // known — Card 1e); only a NEGATIVE or non-finite value is corrupt.  fmt
+            // writes "nan"/"inf" and parseD consumes them fully, so without this screen a
+            // poisoned value round-trips silently and then hits buildCplRow's own guard
+            // (NetworkCoupling.cpp:305), which DROPS the whole row — losing the arc's
+            // LEVEL, not just its coupling.
+            if (!std::isfinite(d1) || !std::isfinite(d2) || d2 < 0.0)
+                return fail("QS ŝ_prev/P_prev not finite, or P_prev < 0");
+            NetworkStateSnapshot::CouplingCol q;
+            q.kind = static_cast<int>(kd);
+            q.sat = f[3];  q.signal = f[4];        // legally EMPTY (VtecSh / Clock)
+            q.sh_n = static_cast<int>(shn);
+            q.sh_m = static_cast<int>(shm);
+            q.sh_trig = static_cast<int>(trg);
+            q.sh_layer = static_cast<int>(lay);
+            q.s_prev = d1;  q.p_prev = d2;
+            s.coupling_dict.push_back(std::move(q));
+        } else if (tag == "QL" || tag == "QZ") {   // §18.12: one carried row's regression
+            const bool zrow = (tag == "QZ");
+            const std::size_t head = zrow ? 3u : 5u;   // tag, idx [, sat, signal], k
+            if (f.size() < head) return fail("malformed " + tag + " line");
+            long long k = 0;
+            if (!parseI(f[head - 1], k) || k <= 0)
+                return fail("malformed " + tag + " entry count");
+            // Row COMPLETENESS is a parser-enforced invariant: a PARTIALLY restored
+            // coefficient vector breaks Card 1e's exact gauge identity and is strictly
+            // WORSE than no coupling at all.  The explicit k is what makes this
+            // checkable — a line that lost one whole (id, M) pair still has even arity.
+            if (f.size() != head + 2u * static_cast<std::size_t>(k))
+                return fail(fmt::format("{} entry-count mismatch (says {}, saw {} field(s))",
+                                        tag, k, f.size() - head));
+            if (!parseI(f[1], i1)) return fail("malformed " + tag + " station index");
+            std::vector<std::pair<int, double>> ents;
+            ents.reserve(static_cast<std::size_t>(k));
+            for (long long e = 0; e < k; ++e) {
+                const std::size_t b = head + 2u * static_cast<std::size_t>(e);
+                long long eid = 0;
+                if (!parseI(f[b], eid) || !parseD(f[b + 1u], d1))
+                    return fail("malformed " + tag + " entry");
+                if (!std::isfinite(d1)) return fail(tag + " coefficient not finite");
+                ents.emplace_back(static_cast<int>(eid), d1);
+            }
+            const bool fresh = zrow
+                ? q_zrows.emplace(static_cast<int>(i1), std::move(ents)).second
+                : q_rows.emplace(std::make_tuple(static_cast<int>(i1), f[2], f[3]),
+                                 std::move(ents)).second;
+            if (!fresh) return fail("duplicate " + tag + " row");
+        } else if (tag == "QR") {   // §18.12: write-epoch clock-monitor refloat set
+            if (f.size() != 2) return fail("malformed QR line");
+            s.clock_refloat_sats.insert(f[1]);
         } else {
             return fail("unknown record tag '" + tag + "'");
         }
@@ -423,6 +523,43 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     if (!saw_end)   return fail("missing END terminator (truncated file)");
     if (!saw_meta || !saw_counters || !saw_ramp)
         return fail("missing mandatory metadata (M/N/U) line");
+
+    // §18.12 splice: bind the staged coupling rows to their L / Z carries.  EVERY
+    // failure here is a HARD parse failure — never a silent partial restore.  The
+    // caller already treats a parse failure as the cold-start signal
+    // (NetworkRunContext.cpp:1087-1091), which is byte-identical to today, and
+    // throws under network.state_snapshot_require; a file whose regressors cannot be
+    // read WHOLE must not resume with truncated rows (Card 1e amputation:
+    // Mᵀg_s ≠ −g_r(c) ⇒ every coupling row observes the clock gauge ⇒ the W5
+    // null-space gate withholds each rows-carrying epoch).
+    const auto ids_ok = [&](const std::vector<std::pair<int, double>>& v, int& bad) {
+        for (const auto& e : v)
+            if (e.first < 0
+                || static_cast<std::size_t>(e.first) >= s.coupling_dict.size()) {
+                bad = e.first;
+                return false;
+            }
+        return true;
+    };
+    for (auto& [key, ents] : q_rows) {
+        int bad = 0;
+        if (!ids_ok(ents, bad))
+            return fail(fmt::format("QL dictionary id {} out of range (dict size {})",
+                                    bad, s.coupling_dict.size()));
+        if (s.local_carry.find(key) == s.local_carry.end())
+            return fail(fmt::format("QL,{},{},{} has no matching L row",
+                                    std::get<0>(key), std::get<1>(key), std::get<2>(key)));
+        s.coupling_rows[key] = std::move(ents);
+    }
+    for (auto& [idx, ents] : q_zrows) {
+        int bad = 0;
+        if (!ids_ok(ents, bad))
+            return fail(fmt::format("QZ dictionary id {} out of range (dict size {})",
+                                    bad, s.coupling_dict.size()));
+        if (s.zwd_carry.find(idx) == s.zwd_carry.end())
+            return fail(fmt::format("QZ,{} has no matching Z row", idx));
+        s.coupling_zrows[idx] = std::move(ents);
+    }
 
     out = std::move(s);
     return true;

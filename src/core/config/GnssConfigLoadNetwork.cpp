@@ -2098,6 +2098,34 @@ namespace GnssProcessor {
                           "network.resume_frame_restore can continue the pre-seam frame.  "
                           "Write-side only; the products and every trace are byte-identical.");
         }
+        // §18.12 Card-1 coupling-regressor capture (write side of
+        // network.resume_coupling_restore).  Its OWN knob, not the frame capture's:
+        // the payload is ~37x the rest of the file, so riding the frame knob would
+        // blow up every existing frame recipe and make the branch library ambiguous.
+        network_config_.state_snapshot_coupling_capture =
+            jval<bool>(json, "network.state_snapshot_coupling_capture",
+                       "state_snapshot_coupling_capture", false);
+        if (network_config_.state_snapshot_coupling_capture) {
+            if (!network_config_.state_snapshot_frame_capture)
+                throw std::runtime_error(
+                    "network.state_snapshot_coupling_capture requires "
+                    "network.state_snapshot_frame_capture: the coupling restore is only "
+                    "reachable behind network.resume_frame_restore, which is INERT on a "
+                    "snapshot with no frame rows — a coupling-only snapshot is unusable "
+                    "by construction.");
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (coupling capture): state_snapshot_coupling_capture "
+                          "armed but network.state_snapshot_path is empty — no snapshot "
+                          "is written, INERT.");
+            else
+                log->info("Network (coupling capture): every snapshot also carries the "
+                          "Card-1 coupling regressors (QS shared-column dictionary + one "
+                          "packed QL/QZ line per carried row + the QR write-epoch "
+                          "clock-refloat set) under the format-v3 header.  Write-side "
+                          "only; products and every trace are byte-identical.  ⚠ ~37x the "
+                          "snapshot size (~9.9 MB at 63 stations, 131 terms/row); with "
+                          "network.state_snapshot_keep_history a 12 h leg writes ~14 GB.");
+        }
         if (network_config_.state_snapshot_require)
             log->info("Network (RTB-7d/HB-1): warm resume REQUIRED — any resume failure "
                       "(missing/parse/fingerprint/age/emitter) is a hard run error instead "
@@ -3173,6 +3201,46 @@ namespace GnssProcessor {
             jval<int>(json, "network.resume_slip_warmup_ep", "resume_slip_warmup_ep", 0);
         if (network_resume_slip_warmup_ep_ < 0)
             throw std::runtime_error("network.resume_slip_warmup_ep must be >= 0");
+        // §18.12 Card-1 coupling-regressor restore (read side of
+        // network.state_snapshot_coupling_capture).  Same exemption class as the two
+        // above: forward-only resume response policy, inert on a run that never resumes.
+        network_resume_coupling_restore_ =
+            jval<bool>(json, "network.resume_coupling_restore",
+                       "resume_coupling_restore", false);
+        if (network_resume_coupling_restore_) {
+            if (!network_resume_frame_restore_)
+                throw std::runtime_error(
+                    "network.resume_coupling_restore requires "
+                    "network.resume_frame_restore: the restored ŝ_prev are only "
+                    "frame-valid once the pre-seam realization is restored, and the "
+                    "first incumbent-less election's QUEUE-1(d) clause would erase the "
+                    "leveling carries — coupling and all — before PASS B reads them.");
+            if (!network_carry_conditional_coupling_)
+                throw std::runtime_error(
+                    "network.resume_coupling_restore requires "
+                    "network.carry_conditional_coupling: buildCplRow is never called "
+                    "otherwise, so the restored regressors would be dead weight.");
+            if (!network_carry_coupling_gauge_project_)
+                throw std::runtime_error(
+                    "network.resume_coupling_restore requires "
+                    "network.carry_coupling_gauge_project (Card 1f): the resume seam is "
+                    "the maximum-scale truncation regime for a carried row, and 1f is "
+                    "the shipped repair for the family-sum defect a truncated row leaves "
+                    "(Mᵀg_s = −g_r(c)).  Without it the W5 null-space gate can withhold "
+                    "every rows-carrying epoch.");
+            if (network_amb_seam_reinflate_var_m2_ > 0.0)
+                throw std::runtime_error(
+                    "network.resume_coupling_restore and "
+                    "network.amb_seam_reinflate_var_m2 > 0 are mutually exclusive.  Under "
+                    "conditional coupling `var` IS the row's pure conditional variance, so "
+                    "inflating it loosens the very row the regressors make border-neutral "
+                    "while the row still asserts Σ M_j·ŝ_prev,j — a combination no "
+                    "continuous epoch produces, and the in-tree precedent runs the other "
+                    "way (NetworkRaim.cpp:771-772 CLEARS the regression whenever it "
+                    "loosens the variance).  SPEC §18.11 rung 3 measured the inflation "
+                    "alone at a 5.13 m consumer walk in h12.  Set "
+                    "amb_seam_reinflate_var_m2 to 0.");
+        }
         if (network_resume_frame_restore_ || network_resume_slip_warmup_ep_ > 0) {
             if (network_config_.state_snapshot_path.empty())
                 log->warn("Network (resume frame restore): resume_frame_restore / "
@@ -3183,7 +3251,10 @@ namespace GnssProcessor {
                           "resume the snapshot's phase-anchor incumbents + sticky pin "
                           "targets, Q3 clock-anchor per-sat state and CLK-R held frame "
                           "are restored before the first election/fold/emit (§18.10; "
-                          "rows are captured unconditionally, snapshot format v2); MW/LLI "
+                          "frame rows are captured under network.state_snapshot_frame_"
+                          "capture, snapshot format v2 — v3 when "
+                          "network.state_snapshot_coupling_capture also carries the Card-1 "
+                          "regressors, §18.12); MW/LLI "
                           "drain diagnostic-only for {} post-resume epoch(s).  Neither is "
                           "in the warm-resume fingerprint (forward-only resume response "
                           "policy).",

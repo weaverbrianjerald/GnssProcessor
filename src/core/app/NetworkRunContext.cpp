@@ -69,6 +69,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
     k.amb_seam_reinflate_var = config_.networkAmbSeamReinflateVarM2();
     k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
+    k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     // Unconditional Z-row capture (SPEC_synthetic_minimum_network §17 finding 3):
     // any snapshot-armed run records + harvests the per-station ZWD posterior so
@@ -817,9 +818,15 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (shc.layer2_max_degree > 0)
             add(fmt::format("shl2={}@{}", shc.layer2_max_degree, shc.layer2_height_km));
         // Card 1: the conditional local carry changes what the per-station carry MEANS
-        // (a shared-coupled conditional row vs an independent diagonal marginal) and the
-        // per-column coupling data (M_r rows, ŝ_prev, P_prev) is NOT persisted in the v1
-        // snapshot — a resume across a toggle change would fold a carry of the wrong kind.
+        // (a shared-coupled conditional row vs an independent diagonal marginal) — a
+        // resume across a toggle change would fold a carry of the wrong KIND, and that
+        // alone is why the token exists.  §18.12 AMENDMENT: the per-column coupling data
+        // (M_r rows, ŝ_prev, P_prev) IS persisted now, but only into a format-v3 snapshot
+        // written under network.state_snapshot_coupling_capture and only rebuilt by a
+        // reader that arms network.resume_coupling_restore; a v1/v2 file still carries
+        // none of it and a restored row degrades to a plain diagonal.  So the rationale is
+        // the MEANING change, no longer "the data is missing" — the token stays either
+        // way (deleting it would strand every stored seed).
         // Conditional-append (only when armed) keeps every existing fingerprint byte-identical.
         if (carry_cpl_cond)
             add(fmt::format("carrycplcond={}", carry_cpl_cond));
@@ -995,6 +1002,27 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // nothing reads (a v1 reader cannot parse a v2 file — that is a binary
         // vintage question, not a fingerprint one).  Fingerprinting either would
         // outlaw the same-snapshot OFF/ON A/B their validation is built on.
+        //
+        // network.state_snapshot_coupling_capture / network.resume_coupling_restore --
+        // the ELEVENTH and TWELFTH instances (SPEC_synthetic_minimum_network §18.12).
+        // The RESTORE is forward-only resume-response policy in the same sense as the
+        // ninth/tenth: it changes what a resumed run DOES with the snapshot's QS/QL/QZ/QR
+        // rows (rebuild each carried row's Card-1 regression before the first PASS-B
+        // inject, so the row folds CONDITIONAL instead of as a plain diagonal), it
+        // re-references nothing retroactively, and it changes what no serialized state
+        // MEANS -- a QL row is the same harvest-epoch regression whether or not the
+        // reading run rebuilds it.  The CAPTURE is a serialization REPRESENTATION only,
+        // exactly the precedent network.state_snapshot_carry_diagonal set: it adds rows
+        // and bumps the header to v3, which is a binary-vintage question (a pre-card
+        // reader fails the header check and cold-starts), not a fingerprint one, and the
+        // WRITER run's products and traces stay byte-identical because the capture block
+        // reads ctx.carry after the emit and writes only into `snap`.  The Card-1
+        // arithmetic tokens these rows depend on (carrycplcond / carrycpltu / cplshmarg /
+        // carrycplgauge / carrycplreinit / carrycpljoint) are ALREADY in fp above, so a
+        // writer/reader coupling-arithmetic mismatch is unreachable.  Fingerprinting
+        // either knob would outlaw the same-snapshot OFF/ON A/B the §18.12 validation is
+        // built on (arm B = frame ON / coupling OFF must reproduce the frame-only leg to
+        // the digit on the SAME snapshot as arm C).
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
 }
@@ -1325,6 +1353,180 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_frame_clk_keys,
                                       snap.clk_frame_acc.size(), snap.clk_frame_epochs,
                                       n_ledger_primed);
+                        }
+                    }
+                    // Card 1 coupling regressors (network.resume_coupling_restore,
+                    // §18.12) — the SECOND half of the frame restore and the
+                    // RE-COUPLING edge for the leveling carry itself.
+                    //
+                    // Without it a restored LocalCarry has an empty `coupling`, so
+                    // buildCplRow's per-entry loop (NetworkCoupling.cpp:248) never runs:
+                    // row.shared is empty, rhs = value_abs − x_lin, σ² = var_eff.  That is
+                    // a plain DIAGONAL prior asserted at the PURE CONDITIONAL variance —
+                    // a combination no continuous epoch produces (the legacy diagonal
+                    // carry is stiff at the MARGINAL variance; the Card-1 row is stiff at
+                    // the conditional variance but SHARED-NEUTRAL, because its A_s = M_r
+                    // cancels the reduced-normals contribution).  Schur-reducing the
+                    // station block for a carry row (A_r = e_c, A_s = M, weight w, with
+                    // P = N_rr⁻¹, n_c = e_cᵀPe_c the harvested conditional variance,
+                    // M_d = N_sr P e_c THIS epoch's data regression, α = w/(1 + w·n_c)):
+                    // the reduced shared normals gain α(M − M_d)(M − M_d)ᵀ and the reduced
+                    // shared RHS gains α(y − β)(M − M_d).  An empty coupling is the M = 0
+                    // case — it drives the border by the FULL α‖M_d‖ at α ≈ 1/cond_var
+                    // ≈ 1e6 m⁻² per row, four orders above the Q3 anchored clock prior's
+                    // 1/9e-5 ≈ 1.1e4 m⁻².  That is the 33 first-fold trips of §18.11.
+                    //
+                    // ⚠ This is NOT rung 3.  Rung 3 attacked the row's WEIGHT and walked
+                    // the consumer 5.13 m in h12 by letting the level re-float on the cold
+                    // station layer (invariant #1, the slip-relevel-walk family).  This
+                    // touches DIRECTION only: `var` is never modified.
+                    //
+                    // ALL-OR-NOTHING PER ROW, and already guaranteed upstream: the parser
+                    // refuses any file whose rows are incomplete, out of range, non-finite
+                    // or orphaned, so a row that reaches here is EXACT — bit-for-bit the
+                    // write epoch's harvest, in harvest order.  A row with no QL/QZ record
+                    // keeps its empty coupling and degrades to today's diagonal.
+                    //
+                    // Restored VERBATIM.  Coefficients are NOT re-sparsified and
+                    // ŝ_prev / P_prev are NOT re-derived: P_prev = 0 is the MEANINGFUL
+                    // "datum-pinned / ensemble-gauge, exactly known" value (Card 1e), and
+                    // re-deriving it would activate the κ shrink (guarded on p_prev > 0,
+                    // NetworkCoupling.cpp:277) on a column the datum re-applies exactly.
+                    //
+                    // Deliberately OUTSIDE the resume_frame_restore block above: it rides
+                    // its OWN knob, so arm B (frame ON / coupling OFF) is byte-for-byte
+                    // today's path in the NEW binary — the same-build control standing
+                    // invariant #6 requires.  hasFrameState() is also the wrong INERT
+                    // predicate here, and the frame block's ledger sub-block carries a
+                    // third gate (pd_handover_continuous) this must not inherit.
+                    if (ctx.knobs.resume_coupling_restore) {
+                        // Gate on the population the restore actually REBUILDS, not on
+                        // hasCouplingState() (which is true for a QR- or QS-only file too):
+                        // otherwise a file with no QL/QZ takes the else branch and logs
+                        // "ARMED ... 0 L row(s) + 0 Z row(s)" while seeding tu_reinit_hist —
+                        // the invariant-#4 'inert reported as armed' shape.
+                        if (snap.coupling_rows.empty() && snap.coupling_zrows.empty()) {
+                            log->warn("Network (resume coupling restore): ARMED but the "
+                                      "snapshot carries NO QS/QL records (a writer without "
+                                      "network.state_snapshot_coupling_capture, or a pre-v3 "
+                                      "file) — INERT this run; every restored leveling row "
+                                      "injects as a plain DIAGONAL prior, which IS the "
+                                      "§18.11 defect (33 of 52 anchored clocks refused).");
+                        } else {
+                            const auto rebuild =
+                                [&](const std::vector<std::pair<int, double>>& ents,
+                                    LocalCarry& lc) {
+                                    std::vector<CoupledShared> cpl;
+                                    cpl.reserve(ents.size());
+                                    for (const auto& [id, mj] : ents) {
+                                        const auto& q = snap.coupling_dict[
+                                            static_cast<std::size_t>(id)];
+                                        CoupledShared cs;
+                                        cs.kind     = static_cast<SharedParamKind>(q.kind);
+                                        cs.sat      = q.sat;
+                                        cs.signal   = q.signal;
+                                        cs.n        = q.sh_n;
+                                        cs.m        = q.sh_m;
+                                        cs.trig     = static_cast<char>(q.sh_trig);
+                                        cs.sh_layer = q.sh_layer;   // a layer-1 SH coeff
+                                        cs.coeff    = mj;           // must NOT resolve to
+                                        cs.s_prev   = q.s_prev;     // the layer-0 column
+                                        cs.p_prev   = q.p_prev;
+                                        cpl.push_back(std::move(cs));
+                                    }
+                                    lc.coupling = std::move(cpl);
+                                };
+                            long long n_rows = 0, n_zrows = 0, n_terms = 0, n_miss = 0;
+                            for (const auto& [key, ents] : snap.coupling_rows) {
+                                const auto it = local_carry.find(key);
+                                if (it == local_carry.end()) { ++n_miss; continue; }
+                                rebuild(ents, it->second);
+                                ++n_rows;
+                                n_terms += static_cast<long long>(ents.size());
+                            }
+                            for (const auto& [idx, ents] : snap.coupling_zrows) {
+                                const auto it = zwd_carry.find(idx);
+                                if (it == zwd_carry.end()) { ++n_miss; continue; }
+                                rebuild(ents, it->second);
+                                ++n_zrows;
+                                n_terms += static_cast<long long>(ents.size());
+                            }
+                            ctx.counters.n_resume_cpl_dict =
+                                static_cast<long long>(snap.coupling_dict.size());
+                            ctx.counters.n_resume_cpl_rows    = n_rows;
+                            ctx.counters.n_resume_cpl_zrows   = n_zrows;
+                            ctx.counters.n_resume_cpl_terms   = n_terms;
+                            ctx.counters.n_resume_cpl_orphan  = n_miss;
+                            ctx.carry.resume_cpl_census_pending = (n_rows + n_zrows) > 0;
+
+                            // ---- The DECOUPLING edge the snapshot cannot otherwise reach
+                            // (standing invariant #7).  ctx.carry.tu_reinit_hist is
+                            // per-epoch state and is never serialized, so on the first warm
+                            // epoch NO restored term would be diverted for a column that was
+                            // demonstrably being RE-DRAWN at the write epoch.  Seed it from
+                            // the three sources the snapshot DOES carry, at a stamp strictly
+                            // above every restored last_seen_s so tuReinitSince
+                            // (NetworkCoupling.cpp:117-139, which compares against
+                            // lc.last_seen_s) fires for exactly the restored population:
+                            // the term then takes the DEPARTED route (κ = 0, M²·P_prev
+                            // marginalized into σ², coefficient handed to Card 1f's gauge
+                            // restore) instead of folding a re-drawn value at full weight.
+                            //
+                            // NOT seeded, deliberately: a pivot change, a sticky re-pin, a
+                            // Σz=0 re-realization, or a per-epoch set-mean code-bias datum
+                            // step.  Those are PURE GAUGE motions, and Card 1e's identity
+                            // Mᵀg_s = −g_r(c) makes a COMPLETE row exactly invariant under
+                            // them (the solution moves as (r + αg_r, s + αg_s) and the row
+                            // residual is unchanged).  Blanket-diverting them would inflate
+                            // σ² on ~40 % of every row's terms — the rung-3 mechanism by
+                            // another route — for no correctness gain.  Card 1f
+                            // (carry_coupling_gauge_project, loader-required here) repairs
+                            // the family sum for whatever DOES truncate.
+                            //
+                            // The fourth source, prev_carry.inflate_q, needs no seed: it is
+                            // restored on the D rows and the first warm epoch's serial
+                            // pre-pass writes it at pl_now_s
+                            // (ApplicationNetworkAssembly.cpp:2317-2320), which is already
+                            // above every restored stamp.
+                            double t_seed = 0.0;
+                            for (const auto& [k2, lc] : local_carry)
+                                t_seed = std::max(t_seed, lc.last_seen_s);
+                            for (const auto& [i2, lc] : zwd_carry)
+                                t_seed = std::max(t_seed, lc.last_seen_s);
+                            t_seed = std::nextafter(t_seed,
+                                         std::numeric_limits<double>::infinity());
+                            long long n_seed = 0, n_loose = 0;
+                            const auto seedClock = [&](const std::string& sat) {
+                                ctx.carry.tu_reinit_hist[{SharedParamKind::Clock, sat,
+                                                          std::string{}}] = t_seed;
+                                ++n_seed;
+                            };
+                            for (const auto& [sat, ca] : snap.clock_anchor)
+                                if (!ca.anchored) { seedClock(sat); ++n_loose; }
+                            for (const std::string& sat : snap.eph_cutover_disc_pending)
+                                seedClock(sat);
+                            // QR: a hard-refloated sat is skip-stashed, so restoring the set
+                            // is the only way the first warm epoch's pre-pass
+                            // (ApplicationNetworkAssembly.cpp:2320-2326) behaves as a
+                            // continuous epoch's would.
+                            ctx.carry.prev_clock_refloat_sats = snap.clock_refloat_sats;
+                            ctx.counters.n_resume_cpl_seed_reinit = n_seed;
+
+                            log->info("Network (resume coupling restore): ARMED at the resume "
+                                      "seam — {} L row(s) + {} Z row(s) rebuilt their Card-1 "
+                                      "regression from {} term(s) over a {}-column dictionary "
+                                      "({} row(s) had no matching carry); {} clock reinit "
+                                      "seed(s) planted ({} LOOSE anchor(s), {} pending eph "
+                                      "cutover(s)) and {} write-epoch refloat(s) restored, so a "
+                                      "column that was being RE-DRAWN at the seam takes the "
+                                      "departed route.  The first PASS-B inject now builds a "
+                                      "CONDITIONAL row (A_s = M_r, y = (value_abs − x_lin) + "
+                                      "Σ M_j·ŝ_prev,j at the pure conditional variance) instead "
+                                      "of a plain diagonal.",
+                                      n_rows, n_zrows, n_terms, snap.coupling_dict.size(),
+                                      n_miss, n_seed, n_loose,
+                                      snap.eph_cutover_disc_pending.size(),
+                                      snap.clock_refloat_sats.size());
                         }
                     }
                     // Resume slip warm-up (network.resume_slip_warmup_ep, §18.10): the
@@ -1691,6 +1893,97 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             snap.clk_frame_epochs = fs.epochs;
         }
         }   // state_snapshot_frame_capture
+        // Card 1 coupling regressors (§18.12, snapshot format v3) — captured under
+        // network.state_snapshot_coupling_capture (its OWN knob, not the frame knob:
+        // the rows multiply the file ~37x and the keep-history library with it, and a
+        // frame-only writer must stay available for cheap legs and for the arm-B
+        // control).  Layout: a DICTIONARY of shared columns keyed on
+        // (identity, ŝ_prev, P_prev) plus one packed line per carried row.
+        //
+        // Why the value pair is part of the dictionary KEY and not just the payload:
+        // harvestCoupling assigns cs.s_prev = x_s(j) and cs.p_prev = cov_df(j,j) from
+        // the shared COLUMN alone (the harvest lambda in networkHarvestLocalCarries),
+        // so rows of ONE harvest epoch agree — but a station whose harvest FAILED hits
+        // `continue` before the stash and keeps an OLDER coupling.  Measured on the
+        // branch-point file: 12 of 2811 L rows carry an older last_seen_s.  An
+        // identity-only hoist would restore those rows against the wrong frame — the
+        // frozen-frame class of defect that killed the lane seed site.
+        //
+        // ROW ATOMICITY (Card 1e): a row is written WHOLE or not at all.  An amputated
+        // coefficient vector loses the exact gauge identity Mᵀg_s = −g_r(c); every
+        // coupling row then observes the clock gauge and the W5 null-space gate
+        // WITHHOLDS each rows-carrying epoch — strictly worse than the diagonal degrade
+        // an empty vector already gives.  fmt writes "nan"/"inf" and the parser's strtod
+        // would accept and fully consume them, so the finite screen here is
+        // load-bearing, not belt-and-braces.
+        if (nc.state_snapshot_coupling_capture && config_.networkCarryConditionalCoupling()) {
+            using CplKey = std::tuple<int, std::string, std::string, int, int, int, int,
+                                      double, double>;
+            const auto keyOf = [](const CoupledShared& cs) {
+                return CplKey{static_cast<int>(cs.kind), cs.sat, cs.signal, cs.n, cs.m,
+                              static_cast<int>(cs.trig), cs.sh_layer, cs.s_prev, cs.p_prev};
+            };
+            std::map<CplKey, int> dict_id;          // scratch; ordered => deterministic
+            std::vector<std::pair<int, double>> ents;
+            long long n_terms = 0, n_drop = 0;
+            const auto pack = [&](const std::vector<CoupledShared>& cpl) -> bool {
+                ents.clear();
+                // Screen the WHOLE row BEFORE hoisting anything.  Bailing inside the build
+                // loop below would leave the columns already pushed for terms 0..k-1 in
+                // snap.coupling_dict as ORPHAN QS records no QL/QZ line references: it
+                // inflates snap_cpl_dict_last (the '{}-column dictionary' the run-end line
+                // prints), and if EVERY row drops it leaves hasCouplingState() true, so a v3
+                // header is written for a file holding a dictionary and zero rows — a shape
+                // this format's own prose says cannot occur.  Row atomicity is the stated
+                // invariant (Card 1e); it has to cover the dictionary half too.
+                for (const CoupledShared& cs : cpl)
+                    if (!std::isfinite(cs.coeff) || !std::isfinite(cs.s_prev)
+                        || !std::isfinite(cs.p_prev) || cs.p_prev < 0.0)
+                        return false;               // omit the WHOLE row, never part of it
+                ents.reserve(cpl.size());
+                for (const CoupledShared& cs : cpl) {
+                    const CplKey k = keyOf(cs);
+                    auto it = dict_id.find(k);
+                    if (it == dict_id.end()) {
+                        NetworkStateSnapshot::CouplingCol q;
+                        q.kind     = static_cast<int>(cs.kind);
+                        q.sat      = cs.sat;
+                        q.signal   = cs.signal;
+                        q.sh_n     = cs.n;
+                        q.sh_m     = cs.m;
+                        q.sh_trig  = static_cast<int>(cs.trig);
+                        q.sh_layer = cs.sh_layer;   // own field: never the D "L1" hack
+                        q.s_prev   = cs.s_prev;
+                        q.p_prev   = cs.p_prev;
+                        it = dict_id.emplace(
+                                 k, static_cast<int>(snap.coupling_dict.size())).first;
+                        snap.coupling_dict.push_back(std::move(q));
+                    }
+                    ents.emplace_back(it->second, cs.coeff);   // HARVEST order preserved
+                }
+                return !ents.empty();
+            };
+            for (const auto& [key, lc] : local_carry) {
+                if (lc.coupling.empty()) continue;             // legacy-diagonal entry
+                if (!pack(lc.coupling)) { ++n_drop; continue; }
+                n_terms += static_cast<long long>(ents.size());
+                snap.coupling_rows[key] = ents;
+            }
+            for (const auto& [idx, lc] : zwd_carry) {
+                if (lc.coupling.empty()) continue;
+                if (!pack(lc.coupling)) { ++n_drop; continue; }
+                n_terms += static_cast<long long>(ents.size());
+                snap.coupling_zrows[idx] = ents;
+            }
+            // Card 1d/1g: the refloat set has no D-row carrier (a hard-refloated sat is
+            // skip-stashed), so the resume cannot otherwise reproduce the pre-pass mark.
+            snap.clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
+            ctx.carry.snap_cpl_dict_last    = static_cast<long long>(snap.coupling_dict.size());
+            ctx.carry.snap_cpl_rows_last    = static_cast<long long>(snap.coupling_rows.size());
+            ctx.carry.snap_cpl_zrows_last   = static_cast<long long>(snap.coupling_zrows.size());
+            ctx.carry.snap_cpl_terms_last   = n_terms;
+            ctx.carry.snap_cpl_rows_dropped += n_drop;
+        }   // state_snapshot_coupling_capture
         // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
         // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
         // resume reproduces the phase-ambiguity branch instead of re-converging one.
@@ -2247,6 +2540,18 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             }
         }
         est.attribTag("d2_leftover");
+        // §18.12 (invariant #7, silent side): the dense border block is deliberately NOT
+        // snapshotted (see the C1 dense-covariance note in networkTryWarmResume), so at
+        // the FIRST post-resume fold every carried key misses prev_carry_cov.row and
+        // folds through the legacy DIAGONAL path while the restored coupling rows are
+        // already conditional.  That asymmetry lasts exactly one epoch and is present in
+        // EVERY arm (it is not an A/B confounder), but its SIZE is the follow-on
+        // increment's target — measure it instead of assuming it.  Read HERE, one step
+        // above the gauge-free / plain addSharedPrior branch below, so the count is the
+        // same population on BOTH fold routes.
+        if (ctx.carry.resume_cpl_census_pending)
+            ctx.counters.n_resume_cpl_diag_border =
+                static_cast<long long>(leftovers.size());
         // Card Q3 §2.1: leftovers are the keys the dense fold could not take (no
         // matrix row after a warm resume, or a non-finite screen).  Under the
         // gauge-free fold they form their own group — and a constellation that
@@ -2821,6 +3126,50 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         }
                     }
                 }
+                // §18.12 OBSERVATORY (the SPEC_lane_slip_response §7.3 measure-first
+                // shape): at the FIRST post-resume harvest the restored regressor and
+                // this epoch's freshly derived one are both in hand.  Their agreement is
+                // the ONLY direct evidence the restored row was frame-valid.  Read it
+                // against the algebra: a row with A_r = e_c, A_s = M contributes
+                // α(M − M_d)(M − M_d)ᵀ to the reduced SHARED normals and α(y − β)(M − M_d)
+                // to the shared RHS, so M == M_d makes the row EXACTLY shared-neutral and
+                // rel ≪ 1 proves it was.  M == 0 — today's diagonal restore — is the
+                // MAXIMAL deviation, and that drive is the 4-8 cm the 9.5 mm clock priors
+                // lose to.  Nothing is written back: byte-identical on every solve artifact.
+                if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond
+                    && !coupling.empty()) {
+                    const auto old = local_carry.find(std::make_tuple(
+                        static_cast<int>(i), pa.sat, pa.signal));
+                    if (old != local_carry.end() && !old->second.coupling.empty()) {
+                        const auto idOf = [](const CoupledShared& c) {
+                            return std::make_tuple(static_cast<int>(c.kind), c.sat,
+                                                   c.signal, c.n, c.m,
+                                                   static_cast<int>(c.trig), c.sh_layer);
+                        };
+                        std::map<decltype(idOf(coupling.front())), double> now;
+                        double maxabs = 0.0, rhs_new = 0.0, rhs_old = 0.0, dmax = 0.0;
+                        for (const CoupledShared& cs : coupling) {
+                            now[idOf(cs)] = cs.coeff;
+                            maxabs  = std::max(maxabs, std::abs(cs.coeff));
+                            rhs_new += cs.coeff * cs.s_prev;
+                        }
+                        long long matched = 0, gone = 0;
+                        for (const CoupledShared& cs : old->second.coupling) {
+                            rhs_old += cs.coeff * cs.s_prev;
+                            const auto h = now.find(idOf(cs));
+                            if (h == now.end()) { ++gone; continue; }
+                            ++matched;
+                            dmax = std::max(dmax, std::abs(cs.coeff - h->second));
+                        }
+                        ++ctx.counters.n_resume_cpl_census_rows;
+                        ctx.counters.n_resume_cpl_census_terms     += matched;
+                        ctx.counters.n_resume_cpl_census_unmatched += gone;
+                        if (maxabs > 0.0)
+                            ctx.carry.resume_cpl_census_rel.push_back(dmax / maxabs);
+                        ctx.carry.resume_cpl_census_rhs.push_back(
+                            std::abs(rhs_new - rhs_old));
+                    }
+                }
                 local_carry[std::make_tuple(static_cast<int>(i), pa.sat, pa.signal)] =
                     LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
                 // One-shot IF-phase refloat: the fresh post-slip value is now
@@ -3221,6 +3570,46 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             in.mech  = R.pl_zwd_injected ? "" : "not_injected";
                             prires_est.addRow(in);
                         }
+                    }
+                }
+                // §18.12 OBSERVATORY, ZWD half.  The Z rows are restored and counted
+                // exactly like the L rows (n_resume_cpl_zrows, and they arm the same
+                // resume_cpl_census_pending latch), so a census that covered only the L
+                // side would report rel ≈ 0 on a leg whose ZWD regression was stale --
+                // the invariant-#4 shape where the instrument reads clean because it never
+                // looked.  Same measure-only body as the phase-leveling census above; read
+                // BEFORE the stash below moves `coupling` out.
+                if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond
+                    && !coupling.empty()) {
+                    const auto zold = zwd_carry.find(static_cast<int>(i));
+                    if (zold != zwd_carry.end() && !zold->second.coupling.empty()) {
+                        const auto idOfZ = [](const CoupledShared& c) {
+                            return std::make_tuple(static_cast<int>(c.kind), c.sat,
+                                                   c.signal, c.n, c.m,
+                                                   static_cast<int>(c.trig), c.sh_layer);
+                        };
+                        std::map<decltype(idOfZ(coupling.front())), double> znow;
+                        double zmaxabs = 0.0, zrhs_new = 0.0, zrhs_old = 0.0, zdmax = 0.0;
+                        for (const CoupledShared& cs : coupling) {
+                            znow[idOfZ(cs)] = cs.coeff;
+                            zmaxabs  = std::max(zmaxabs, std::abs(cs.coeff));
+                            zrhs_new += cs.coeff * cs.s_prev;
+                        }
+                        long long zmatched = 0, zgone = 0;
+                        for (const CoupledShared& cs : zold->second.coupling) {
+                            zrhs_old += cs.coeff * cs.s_prev;
+                            const auto h = znow.find(idOfZ(cs));
+                            if (h == znow.end()) { ++zgone; continue; }
+                            ++zmatched;
+                            zdmax = std::max(zdmax, std::abs(cs.coeff - h->second));
+                        }
+                        ++ctx.counters.n_resume_cpl_census_rows;
+                        ctx.counters.n_resume_cpl_census_terms     += zmatched;
+                        ctx.counters.n_resume_cpl_census_unmatched += zgone;
+                        if (zmaxabs > 0.0)
+                            ctx.carry.resume_cpl_census_rel.push_back(zdmax / zmaxabs);
+                        ctx.carry.resume_cpl_census_rhs.push_back(
+                            std::abs(zrhs_new - zrhs_old));
                     }
                 }
                 zwd_carry[static_cast<int>(i)] =
@@ -3784,6 +4173,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             ++ctx.carry.lv1_field_snapshots;
         }
     }
+
+    // §18.12: retire the first-warm-epoch latch at the END of this epoch's SERIAL
+    // harvest.  Everything the latch gates — the C1 diagonal-border count and the
+    // present/departed fold split (both earlier in the epoch, in the assembly) and the
+    // restored-vs-fresh regressor census above — therefore covers EXACTLY the first
+    // post-resume epoch.  Unconditional: a run that never resumed leaves it false, and
+    // clearing a false bool is a no-op on every OFF path.
+    ctx.carry.resume_cpl_census_pending = false;
 }
 
 void networkRetroUraBookkeeping(NetworkRunContext& ctx,

@@ -157,6 +157,15 @@ TEST(ResumeFrameRestoreTest, NoFrameStateWritesV1HeaderByteIdentical) {
     EXPECT_EQ(text.find("\nFA,"), std::string::npos);
     EXPECT_EQ(text.find("\nFP,"), std::string::npos);
     EXPECT_EQ(text.find("\nFE,"), std::string::npos);
+    // §18.12: the format-v3 Card-1 coupling records belong in the same absence
+    // list — the coupling capture is knob-gated and its containers stay
+    // default-constructed, so hasCouplingState() is false, the three-way header
+    // selector still yields v1, the four emit loops iterate zero times and the
+    // END,<n> trailer is unchanged.  This is the OFF-path byte-identity lock.
+    EXPECT_EQ(text.find("\nQS,"), std::string::npos);
+    EXPECT_EQ(text.find("\nQL,"), std::string::npos);
+    EXPECT_EQ(text.find("\nQZ,"), std::string::npos);
+    EXPECT_EQ(text.find("\nQR,"), std::string::npos);
 }
 
 TEST(ResumeFrameRestoreTest, V1FileParsesWithEmptyFrameMaps) {

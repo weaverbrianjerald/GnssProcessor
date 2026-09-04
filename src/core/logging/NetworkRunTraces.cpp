@@ -1505,6 +1505,14 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"state_snapshot_frame_capture\":" << (nc.state_snapshot_frame_capture ? "true" : "false") << ','
                << "\"resume_frame_restore\":" << (config_.networkResumeFrameRestore() ? "true" : "false") << ','
                << "\"resume_slip_warmup_ep\":" << config_.networkResumeSlipWarmupEp() << ','
+               // §18.12 Card-1 coupling regressors, both halves of the frame restore:
+               // the WRITE knob says whether this run's snapshots carry QS/QL/QZ/QR
+               // records (format v3), the READ knob whether a resumed leg rebuilt
+               // LocalCarry::coupling from them.  STARTUP record only — an archived
+               // logs/ folder must be able to say which half this leg ran, and the
+               // run-end log line is this group's invariant-#4 counter instrument.
+               << "\"state_snapshot_coupling_capture\":" << (nc.state_snapshot_coupling_capture ? "true" : "false") << ','
+               << "\"resume_coupling_restore\":" << (config_.networkResumeCouplingRestore() ? "true" : "false") << ','
                << "\"raim\":" << (raim_on ? "true" : "false") << ','
                << fmt::format("\"raim_k_sigma\":{},", raim_k)
                << "\"raim_min_stations\":" << raim_min_sta << ','

@@ -65,6 +65,11 @@
  *   O,<sat>,x0,x1,p00,p01,p11,t_last,init               # emit_clock_rate decoupled C1 rate state
  *   I,<sat>,<iode>                                      # Card6 eph re-level baseline (brdc_rts)
  *   X,<sat>                                             # Card6 pending eph-cutover disc bump
+ *   QS,<id>,<kind>,<sat>,<signal>,<sh_n>,<sh_m>,<sh_trig>,<sh_layer>,<s_prev>,<p_prev>
+ *                                                       # Card1 coupling dictionary (v3)
+ *   QL,<station_idx>,<sat>,<signal>,<k>,<id>,<M_rj>,...  # L row's regression, harvest order
+ *   QZ,<station_idx>,<k>,<id>,<M_rj>,...                 # Z row's regression
+ *   QR,<sat>                                             # write-epoch clock-refloat set
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
  *   ...                                                 #  NetworkProductEmitter::serializeState)
  *   EEND
@@ -75,6 +80,12 @@
  * treats as the cold-start signal.  Station identity in the @c L / @c Z keys is
  * the ROSTER INDEX — valid only under an identical station roster, which the
  * config fingerprint guarantees.
+ *
+ * The header LITERAL carries the format version: @c v3 when any Card-1 coupling
+ * record (@c QS / @c QL / @c QZ / @c QR) is present, @c v2 when only the §18.10
+ * frame records are, @c v1 otherwise.  The reader accepts all three and an absent
+ * record group simply restores empty containers, so an older file is always a
+ * legal input and a run carrying neither group writes the v1 bytes unchanged.
  *
  * This module is entirely OUTSIDE the @c NetworkProductIO replay path: product
  * files know nothing of snapshots and replay reproduces every discontinuity
@@ -247,6 +258,81 @@ struct NetworkStateSnapshot {
     std::map<char, double> clk_frame_acc;                        ///< constellation -> A_c (m).
     std::map<std::string, std::pair<double, double>> clk_frame_prev; ///< sat -> {last held (m), last seen (s)}.
     long long clk_frame_epochs{0};                               ///< rebaseEpoch count.
+    // --- Card 1 coupling regressors (format v3; SPEC_synthetic_minimum_network §18.12) ---
+    //
+    // The SECOND half of the resume frame restore.  Restoring a leveling carry's
+    // (value, var) alone (v1/v2) injects it as a PLAIN DIAGONAL row at the PURE
+    // CONDITIONAL variance — a combination NO continuous epoch produces: the legacy
+    // diagonal carry is stiff at the MARGINAL variance, while the Card-1 row is stiff
+    // at the conditional variance but SHARED-NEUTRAL (its @f$A_s = M_r@f$ cancels the
+    // reduced-normals contribution).  Measured (§18.11): 2811 such rows out-vote the
+    // 9.5 mm Q3 anchored clock priors and 33 of 52 anchors trip at the first fold.
+    /// One shared-border COLUMN's identity plus the two quantities that depend on the
+    /// column and not on the carried row.  A POD mirror of the driver's @c CoupledShared
+    /// MINUS the coefficient, with @c SharedParamKind and the SH trig char stored as
+    /// their integer values exactly as @ref SharedCarry does.
+    ///
+    /// @note @c p_prev == 0 is MEANINGFUL — a datum-pinned or ensemble-gauge column is
+    ///       "exactly known" (Card 1e, src/core/app/NetworkRunContext.cpp:2609-2632).
+    ///       A reader must never treat it as absent or re-derive it: the κ shrink is
+    ///       guarded on @c p_prev > 0 (NetworkCoupling.cpp:277), so re-deriving would
+    ///       shrink a column the datum re-applies exactly and change the row's gauge sum.
+    /// @note @c sh_layer is its OWN field, never the @c D record's "L1"-in-the-sat-string
+    ///       hack (NetworkRunContext.cpp:1631-1634): @c resolveSharedCol resolves through
+    ///       @c vtecCoeffColumn(n,m,trig,sh_layer), so a lost layer would bind a layer-1
+    ///       coefficient to the live layer-0 column.
+    struct CouplingCol {
+        int         kind{0};      ///< SharedParamKind as int: 0 Clock, 1 CodeBias, 2 PhaseBias, 3 VtecSh.
+        std::string sat;          ///< satellite id (EMPTY for VtecSh).
+        std::string signal;       ///< signal id (EMPTY for Clock and VtecSh).
+        int         sh_n{0};      ///< SH degree (VtecSh).
+        int         sh_m{0};      ///< SH order (VtecSh).
+        int         sh_trig{'C'}; ///< SH cos/sin as the char's int value (67/83).
+        int         sh_layer{0};  ///< SH shell index (VtecSh; 0 = legacy layer).
+        double      s_prev{0.0};  ///< @f$\hat s_{\text{prev},j}=x_s(j)@f$ at harvest (m, datum-realized).
+        double      p_prev{0.0};  ///< @f$P_{\text{prev},jj}@f$ at harvest (m², datum frame).  0 = pinned/exact.
+    };
+    /// Dense, first-encounter-ordered dictionary of every shared column any carried
+    /// row's regression references.  Its index is the @c QL / @c QZ entry id.
+    ///
+    /// @note The dictionary KEY is (identity, @c s_prev, @c p_prev), NOT identity alone.
+    ///       @c harvestCoupling assigns both values from the shared column @c j
+    ///       (NetworkRunContext.cpp:2629-2630), so rows of ONE harvest epoch necessarily
+    ///       agree — but a station whose harvest FAILED keeps an older coupling
+    ///       (@c continue before the stash, :2715), so two rows can legitimately hold
+    ///       different VINTAGES of one identity.  Measured on the branch-point file:
+    ///       2799 of 2811 L rows at one stamp, 12 at three older ones.  An identity-only
+    ///       hoist would silently restore those 12 against the wrong frame.
+    std::vector<CouplingCol> coupling_dict;
+    /// (station roster index, sat, signal) — the SAME key as @ref local_carry — mapped to
+    /// the row's regression as (dictionary id, @f$M_{rj}@f$) pairs IN HARVEST ORDER.
+    /// The order is preserved because it is OBSERVABLE: the row RHS and the Card-1f
+    /// family deficit are accumulated in it (NetworkCoupling.cpp:294/:301, :75-113).
+    std::map<std::tuple<int, std::string, std::string>,
+             std::vector<std::pair<int, double>>> coupling_rows;
+    /// station roster index -> the ZWD carry's regression (same shape).  ZWD coupling IS
+    /// harvested (NetworkRunContext.cpp:3227) and IS injected
+    /// (ApplicationNetworkAssembly.cpp:2956-2958), so the Z rows have the identical defect.
+    std::map<int, std::vector<std::pair<int, double>>> coupling_zrows;
+    /// Card 1d/1g: the write epoch's clock-monitor refloat set
+    /// (@c NetworkCarryState::prev_clock_refloat_sats).  A hard-refloated satellite is
+    /// SKIP-STASHED, so it has no @c D row and nothing else in this file can carry the
+    /// flag; without it the first warm epoch's serial pre-pass
+    /// (ApplicationNetworkAssembly.cpp:2320-2326) writes no @c tu_reinit_hist mark for it
+    /// and every restored term on that satellite folds at FULL weight onto a re-drawn column.
+    std::set<std::string> clock_refloat_sats;
+    /// True when any coupling record is present (the writer then emits the v3 header).
+    ///
+    /// @warning Deliberately SEPARATE from @ref hasFrameState.  That predicate ALSO gates
+    ///          the resume-side frame restore (NetworkRunContext.cpp:1252), so widening it
+    ///          would let a coupling-bearing snapshot with no PA/PT/CA rows claim frame
+    ///          state it does not have — the restore would proceed with an empty
+    ///          @c anchor_incumbent, the QUEUE-1(d) erase would fire anyway, and this card
+    ///          would silently defeat itself.
+    bool hasCouplingState() const {
+        return !coupling_dict.empty() || !coupling_rows.empty()
+            || !coupling_zrows.empty() || !clock_refloat_sats.empty();
+    }
     /// True when any frame record is present (the writer then emits the v2 header).
     bool hasFrameState() const {
         return !anchor_incumbent.empty() || !anchor_pin_target.empty()
