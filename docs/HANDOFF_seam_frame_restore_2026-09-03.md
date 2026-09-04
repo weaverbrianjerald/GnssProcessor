@@ -8,7 +8,7 @@ build), §18.11 (leg verdict), then `docs/CONFIG_promotion_ledger.md` rows
 `network.state_snapshot_frame_capture`.  Commit chain: 953290f (§18.9 data
 verdict) → cd930a3 (ledger σ-hook addendum) → cdd19bc (§18.7 + row-321
 corrections) → f5a7a93 (instruments) → 90718c3 (the BUILD) → 98295ec (§18.11 +
-ledger rows).  All on `master`.
+ledger rows) → 09ab716 (this handoff) → d9b49e6 (rung 3 falsified).  All on `master`.
 
 ## 0. Baseline posture: build on the BEST STABLE network, not the campaign control
 
@@ -75,29 +75,14 @@ as the reading recipe for any future rung.)
 
 ## 2a. Reading a rung (recipe)
 
-`runs/camp60wu_q12warm_fron_ari` (ON + `amb_seam_reinflate_var_m2 0.0025`, the
-now-live one-shot 5 cm σ soft refloat of the restored rows) was RUNNING at
-wind-down (started 00:38, ~36 min).  Grade it with the script pattern in §18.11 /
-`scripts/simnet_seam_tools.py`:
-
-```bash
-cd C:/GnssProcessor && cat runs/camp60wu_q12warm_fron_ari/exitcode.txt
-```
-```bash
-cd C:/GnssProcessor && awk -F, 'NR>1 && $2==302430 && $4=="cta_decouple"' runs/camp60wu_q12warm_fron_ari/logs/network_events.csv | wc -l
-```
-```bash
-cd C:/GnssProcessor && python scripts/simnet_seam_tools.py consumer runs/camp60wu_q12warm_fron_ari:rung3 runs/camp60wu_q12warm_fron:frame_ON runs/camp60wu_q12warm_frctl:frame_CTL runs/seamctl_replay_cont:cold_vs_CONT --tow-lo 302400 --tow-hi 345600
-```
-
-Decisive numbers: the `cta_decouple` count at 302430 (33 on the ON leg; 0 = the
-over-stiff-row hypothesis is confirmed and the regressor increment is the
-definitive fix) and consumer h13–h15 / h19 against the ON leg's 0.17/0.14/0.11 /
-0.96.  Fold the result into SPEC §18.11 (the "rung 3 was RUNNING" sentence) and
-the `network.resume_frame_restore` ledger row.  If rung 3 removes the trips AND
-the h19 excursion, the soft refloat is a legitimate interim posture (re-read
-ledger row 321 as "ACTIVE under frame restore"); the regressors remain the
-rigorous fix.
+For any future leg `<leg>` under `runs/`: check `exitcode.txt`; count the first-fold
+clock trips with `awk -F, 'NR>1 && $2==302430 && $4=="cta_decouple"' runs/<leg>/logs/network_events.csv | wc -l`
+(ON leg 33, rung 3 14; the target is 0); read the first-epoch B1b line
+(`grep -m1 "302430.*B1b" runs/<leg>/console.txt`, target ~0.01 m); then
+`python scripts/simnet_seam_tools.py consumer runs/<leg>:x runs/camp60wu_q12warm_fron:frame_ON runs/camp60wu_q12warm_frctl:frame_CTL runs/seamctl_replay_cont:cold_vs_CONT --tow-lo 302400 --tow-hi 345600`
+(targets: h13-h15 within 1.5x of 0.060/0.067/0.062, no h19 excursion, no metre-class
+h12).  Fold every result into SPEC §18.11 and the `network.resume_frame_restore`
+ledger row; quote settled p50 beside rms and name the h16.7-h18.3 eclipse cluster.
 
 ## 3. Second increment (the fix): serialize the coupling regressors
 
