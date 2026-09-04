@@ -1,0 +1,220 @@
+{
+  "_comment": [
+    "USGS SJWSE_111_1424 baseline N141 -> M141, GPS+GLONASS COMPARISON ARM.",
+    "Identical to _usgs_n141_m141.json except active_systems adds GLONASS.",
+    "Expected to be WORSE, not better: the two receivers are different types",
+    "(IGAIG9 vs CHC 1915) with 'Unknown' antennas, so the GLONASS inter-frequency",
+    "phase bias does not cancel in the double difference.  Run only to MEASURE that,",
+    "so the GPS-only choice is evidence-backed rather than asserted.",
+    "",
+    "REVISION (verified against the NGS datasheets, sub-mm reproduction):",
+    "   (E -4.64 N +7.17 U +5.59).  The VECTOR is insensitive either way",
+    "   (1352 x 10 / 20.2e6 = 0.7 mm), but holding the published value puts the",
+    "   solution in NAD 83(2011) so the solved ROVER position is directly",
+    "   comparable to HN0157's published coordinate.",
+    " - Precise products REQUIRED: baseline mode fills its orbit cache from SP3",
+    "   only (ProductParser::loadProducts -> parseSp3); the RNX broadcast path",
+    "   feeds Klobuchar coefficients ALONE, so broadcast-only cannot drive",
+    "   geometry despite the comment at ApplicationBaseline.cpp:113.",
+    " - TRUTH for grading, ARP-to-ARP, published-derived and independently",
+    "   recomputed: dXYZ +987.7631 +311.4830 +869.7388, length 1352.4582 m;",
+    "   ENU E +817.5041 N +1077.2070 U +21.3394.",
+    "   NOTE U != dh: dh(ARP) = 21.4830 m and U = 21.3394 m differ by the",
+    "   curvature term s^2/2R = 0.1435 m.  Grade against U, not dh.",
+    " - ⚠ CONVENTION: config-supplied position_ecef is consumed AT FACE VALUE as the",
+    "   ANTENNA (ARP) position — ApplicationBaseline.cpp:173 takes reference.position_ecef",
+    "   verbatim, and the rover comment at :350-353 states it: 'a config-supplied",
+    "   coordinate is taken at face value (the user owns its reference point)'.  Only the",
+    "   RINEX-HEADER fallback reduces marker -> ARP (getArpPositionXyz).  So the published",
+    "   datasheet coordinate, which is the MARK/monument, MUST be pre-reduced here.",
+    "   Base  = HN0156 mark + 2.0750 m along its own up vector.",
+    "   Rover = HN0157 mark + 2.0000 m along its own up vector (a-priori only; estimated).",
+    "   Failing to pre-reduce would have put a 2.075 m error on the base and made the",
+    "   solved vector match NEITHER truth row.",
+    " - GRADE AGAINST THE ARP-to-ARP ROW (both endpoints are ARP by the above):",
+    "     dXYZ +987.7631 +311.4830 +869.7388   len 1352.4582",
+    "     ENU  E +817.5041  N +1077.2070  U +21.3394",
+    "   The MARK-to-MARK row differs ONLY in Up, by exactly the 0.0750 m antenna-height",
+    "   difference (U +21.4144); horizontal agrees to <0.5 mm.  Grading against the wrong",
+    "   row manufactures a 75 mm vertical bias, 3x the 24 mm realization floor.",
+    "   To compare the solved ROVER position to HN0157's published MARK, subtract",
+    "   2.0000 m along the rover's up vector first.",
+    " - ⚠ processing.gnss_rate_s is INERT in baseline mode: it is applied only in",
+    "   Application::run (Application.cpp:1723); neither ApplicationBaseline.cpp nor",
+    "   MultiRinexSync references it.  The observation files are therefore PRE-DECIMATED",
+    "   to 30 s with scripts/decimate_rinex3_obs.py; the knob is left in place only as",
+    "   documentation of intent."
+  ],
+  "app_mode": "post",
+  "data_source": "production",
+  "processing": {
+    "mode": "Baseline-Single",
+    "active_systems": [
+      "GPS",
+      "GLONASS"
+    ],
+    "frequency_mode": "dual",
+    "elevation_mask_deg": 10.0,
+    "gnss_rate_s": 30.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.0,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": true,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "excluded_satellites": [],
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ",
+      "GLONASS": "CPIXQ",
+      "BeiDou": "IDPXQZ",
+      "QZSS": "CSLXIQDEX",
+      "SBAS": "CXIQ"
+    }
+  },
+  "baseline_fixture": "Custom",
+  "baseline": {
+    "reference": {
+      "name": "N141",
+      "rinex_path": "C:/GnssProcessor/runs/usgs_n141_m141/obs30/N141_25_111P.30s.25o",
+      "fixed": true,
+      "position_ecef": [
+        -1768867.0807,
+        -4762431.3072,
+        3845293.4236
+      ]
+    },
+    "rover": {
+      "name": "M141",
+      "rinex_path": "C:/GnssProcessor/runs/usgs_n141_m141/obs30/M141_25_111A0.30s.25o",
+      "position_ecef": [
+        -1767879.3176,
+        -4762119.8241,
+        3846163.1625
+      ]
+    },
+    "max_baseline_km": 30.0,
+    "epoch_sync_tolerance_s": 0.01,
+    "code_only": false,
+    "signal_aliasing": true,
+    "use_iono_free": false,
+    "estimate_differential_tropo": true,
+    "differential_tropo_init_std_m": 0.1,
+    "differential_tropo_process_noise_m_per_sqrt_s": 0.0001,
+    "enable_pivot_handover": true
+  },
+  "files": {
+    "internal_data_root": "./data",
+    "navigation_path": "C:/GnssProcessor/runs/usgs_n141_m141/brdc_merged_2025111.rnx"
+  },
+  "estimation": {
+    "between_satellite_sd": {
+      "enabled": true,
+      "pivot_min_elevation": 25.0
+    },
+    "ambiguity_resolution": {
+      "mode": 0,
+      "ratio_threshold": 3.0,
+      "elevation_mask": 20.0,
+      "hold_variance": 0.001
+    }
+  },
+  "filter": {
+    "process_noise": {
+      "position_q": 0.0,
+      "clock_bias_q": 1000.0,
+      "phase_clock_q": 1e-09,
+      "troposphere_q": 1e-08,
+      "ionosphere_q": 0.03,
+      "code_bias_q": 0.0001,
+      "sat_bias_q": 1e-10,
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "acceleration_psd_q": 100.0
+    },
+    "initial_std": {
+      "position": 30.0,
+      "velocity": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 100.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "system_time_offset": 1000.0,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      "code_std_m": 0.3,
+      "phase_std_m": 0.001,
+      "doppler_std_m": 0.5
+    },
+    "stochastic_model": "satellite_block",
+    "snr_model_params": {
+      "code_a": 0.1,
+      "code_b": 1.0,
+      "phase_a": 0.001,
+      "phase_b": 0.01,
+      "snr_floor_dbhz": 20.0,
+      "snr_ceil_dbhz": 55.0
+    }
+  },
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": false,
+    "enable_receiver_pcv": false,
+    "enable_phase_windup": true,
+    "enable_code_phase_bias": true
+  },
+  "receiver": {
+    "antenna_orientation": {
+      "azimuth_deg": 0.0,
+      "elevation_deg": 90.0
+    },
+    "zhd_pressure_mbar": 1013.25,
+    "zhd_temp_kelvin": 288.15
+  },
+  "imu": {
+    "enabled": false
+  },
+  "data_download": {
+    "enabled": true,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "product_source": "COD",
+    "product_type": "FIN",
+    "station": "N141",
+    "station_country": "USA",
+    "year": 2025,
+    "doy": 111,
+    "download_rinex": false,
+    "download_products": true,
+    "atx_path": "C:/GnssProcessor/data/static/atx/igs20.atx",
+    "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe",
+    "keep_zip_after_unzip": false
+  },
+  "logging": {
+    "enable_main_log": true,
+    "enable_kalman_filter": false,
+    "enable_state_manager": false,
+    "enable_measurement_model": false,
+    "enable_mw_slip_detector": false,
+    "enable_cycle_slip_manager": false,
+    "enable_ambiguity_resolver": true,
+    "enable_state_initializer": false,
+    "enable_bssd_pivot_manager": false,
+    "enable_bssd_transform": false,
+    "enable_state_trace": true,
+    "enable_ambiguity_trace": true,
+    "enable_residual_trace": true,
+    "enable_wls_trace": false,
+    "enable_mw_slip_trace": false
+  }
+}
