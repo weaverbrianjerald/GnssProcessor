@@ -29,7 +29,7 @@ best validated posture instead:
   | `network.state_snapshot_frame_capture` | ON on every WRITER | write-outputs-only, proven; needed for any frame-restore leg |
   | `network.resume_frame_restore` | OFF until §3 lands (then ON on resume legs) | 33-clock trip residual (§18.11) |
   | `network.resume_slip_warmup_ep` | 5 together with frame restore, else 0 | safe response, pointless alone |
-  | `network.amb_seam_reinflate_var_m2` | 0 (unless rung 3 promotes it) | now ACTIVE under frame restore |
+  | `network.amb_seam_reinflate_var_m2` | 0 — FALSIFIED under frame restore (rung 3: 5 m consumer walk) | now ACTIVE there, and harmful |
   | `network.clock_disc_gap_jump_m` (E1) | default OFF | validation owed on a triple-frequency lineage |
   | `emit_pb_filter_gate_v2`, `relevel_retap_*`, `carry_iono`, `resume_shock_m` | OFF | falsified / null (ledger) |
 - **Regenerate the branch library on that base**: sticky_pivot is fingerprinted, so
@@ -64,7 +64,16 @@ LOOSE re-draw freezes new metre-class clock tails on G14/G17/G20/G22 and the
 consumer pays at h19 (0.96 rms, a wire property).  Verdict: mechanism confirmed,
 `resume_frame_restore` KEEP OFF until the regressors are serialized.
 
-## 2. First thing to do: read rung 3
+## 2. Rung 3 — DONE (read 2026-09-03 17:07): the proxy is FALSIFIED
+
+Result: `cta_decouple` at 302430 = **14** (ON leg 33), B1b PB σ 0.009 m, but the
+consumer walked **5.13 m rms in h12, 2.93 / 1.79 / 1.10 / 0.86 in h13–h16**, recovering
+to 0.07 by h21.  Inflating the restored rows lets them re-float on the cold station
+layer — the slip-relevel-walk family.  `amb_seam_reinflate_var_m2` stays 0 in every
+arm; the coupling-regressor increment (§3) is the fix.  (The section below is kept
+as the reading recipe for any future rung.)
+
+## 2a. Reading a rung (recipe)
 
 `runs/camp60wu_q12warm_fron_ari` (ON + `amb_seam_reinflate_var_m2 0.0025`, the
 now-live one-shot 5 cm σ soft refloat of the restored rows) was RUNNING at
