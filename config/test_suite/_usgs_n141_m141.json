@@ -59,7 +59,12 @@
     "   Application::run (Application.cpp:1723); neither ApplicationBaseline.cpp nor",
     "   MultiRinexSync references it.  The observation files are therefore PRE-DECIMATED",
     "   to 30 s with scripts/decimate_rinex3_obs.py; the knob is left in place only as",
-    "   documentation of intent."
+    "   documentation of intent.",
+    " - AR MODE 1 (continuous).  The bundled config/baseline_single.json template ships",
+    "   estimation.ambiguity_resolution.mode = 0, which is FLOAT — 'Baseline AR disabled",
+    "   (ar_mode=0); DD ambiguities stay float'.  The first run inherited that and so",
+    "   never attempted an integer fix at all, which is the whole question being asked.",
+    "   0=float, 1=continuous, 2=instantaneous, 3=fix-and-hold (GnssConfig.hpp:6862)."
   ],
   "app_mode": "post",
   "data_source": "production",
@@ -128,7 +133,7 @@
       "pivot_min_elevation": 25.0
     },
     "ambiguity_resolution": {
-      "mode": 0,
+      "mode": 1,
       "ratio_threshold": 3.0,
       "elevation_mask": 20.0,
       "hold_variance": 0.001

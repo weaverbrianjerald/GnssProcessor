@@ -1,0 +1,184 @@
+{
+  "_comment": [
+    "SECOND decisive test for the ~74 mm vertical: identical to _usgs_n141_m141.json except",
+    "both observation files have ANTENNA: DELTA H/E/N zeroed in the header.",
+    "The mark-vs-ARP test already ruled out the config->solve path (vector moved 0.7 mm).",
+    "But that test is BLIND to a header-driven application, which is identical in both arms",
+    "and cancels.  Algebra: an additive header application predicts +75 mm, a SUBTRACTIVE",
+    "one predicts -75 mm -- which is the sign actually observed.",
+    "PREDICTION: if the header delta is applied anywhere in the path, zeroing it removes the",
+    "(2.0750 - 2.0000) = 0.0750 m differential and Up shifts by ~75 mm.  If Up does not move,",
+    "the header delta is inert here and the -73.5 mm is NOT antenna-height bookkeeping."
+  ],
+  "app_mode": "post",
+  "data_source": "production",
+  "processing": {
+    "mode": "Baseline-Single",
+    "active_systems": [
+      "GPS"
+    ],
+    "frequency_mode": "dual",
+    "elevation_mask_deg": 10.0,
+    "gnss_rate_s": 30.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.0,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": true,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "excluded_satellites": [],
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ",
+      "GLONASS": "CPIXQ",
+      "BeiDou": "IDPXQZ",
+      "QZSS": "CSLXIQDEX",
+      "SBAS": "CXIQ"
+    }
+  },
+  "baseline_fixture": "Custom",
+  "baseline": {
+    "reference": {
+      "name": "N141",
+      "rinex_path": "C:/GnssProcessor/runs/usgs_n141_m141/obs30_nodelta/N141_25_111P.30s.25o",
+      "fixed": true,
+      "position_ecef": [
+        -1768867.0807,
+        -4762431.3072,
+        3845293.4236
+      ]
+    },
+    "rover": {
+      "name": "M141",
+      "rinex_path": "C:/GnssProcessor/runs/usgs_n141_m141/obs30_nodelta/M141_25_111A0.30s.25o",
+      "position_ecef": [
+        -1767879.3176,
+        -4762119.8241,
+        3846163.1625
+      ]
+    },
+    "max_baseline_km": 30.0,
+    "epoch_sync_tolerance_s": 0.01,
+    "code_only": false,
+    "signal_aliasing": true,
+    "use_iono_free": false,
+    "estimate_differential_tropo": true,
+    "differential_tropo_init_std_m": 0.1,
+    "differential_tropo_process_noise_m_per_sqrt_s": 0.0001,
+    "enable_pivot_handover": true
+  },
+  "files": {
+    "internal_data_root": "./data",
+    "navigation_path": "C:/GnssProcessor/runs/usgs_n141_m141/brdc_merged_2025111.rnx"
+  },
+  "estimation": {
+    "between_satellite_sd": {
+      "enabled": true,
+      "pivot_min_elevation": 25.0
+    },
+    "ambiguity_resolution": {
+      "mode": 1,
+      "ratio_threshold": 3.0,
+      "elevation_mask": 20.0,
+      "hold_variance": 0.001
+    }
+  },
+  "filter": {
+    "process_noise": {
+      "position_q": 0.0,
+      "clock_bias_q": 1000.0,
+      "phase_clock_q": 1e-09,
+      "troposphere_q": 1e-08,
+      "ionosphere_q": 0.03,
+      "code_bias_q": 0.0001,
+      "sat_bias_q": 1e-10,
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "acceleration_psd_q": 100.0
+    },
+    "initial_std": {
+      "position": 30.0,
+      "velocity": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 100.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "system_time_offset": 1000.0,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      "code_std_m": 0.3,
+      "phase_std_m": 0.001,
+      "doppler_std_m": 0.5
+    },
+    "stochastic_model": "satellite_block",
+    "snr_model_params": {
+      "code_a": 0.1,
+      "code_b": 1.0,
+      "phase_a": 0.001,
+      "phase_b": 0.01,
+      "snr_floor_dbhz": 20.0,
+      "snr_ceil_dbhz": 55.0
+    }
+  },
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": false,
+    "enable_receiver_pcv": false,
+    "enable_phase_windup": true,
+    "enable_code_phase_bias": true
+  },
+  "receiver": {
+    "antenna_orientation": {
+      "azimuth_deg": 0.0,
+      "elevation_deg": 90.0
+    },
+    "zhd_pressure_mbar": 1013.25,
+    "zhd_temp_kelvin": 288.15
+  },
+  "imu": {
+    "enabled": false
+  },
+  "data_download": {
+    "enabled": true,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "product_source": "COD",
+    "product_type": "FIN",
+    "station": "N141",
+    "station_country": "USA",
+    "year": 2025,
+    "doy": 111,
+    "download_rinex": false,
+    "download_products": true,
+    "atx_path": "C:/GnssProcessor/data/static/atx/igs20.atx",
+    "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe",
+    "keep_zip_after_unzip": false
+  },
+  "logging": {
+    "enable_main_log": true,
+    "enable_kalman_filter": false,
+    "enable_state_manager": false,
+    "enable_measurement_model": false,
+    "enable_mw_slip_detector": false,
+    "enable_cycle_slip_manager": false,
+    "enable_ambiguity_resolver": true,
+    "enable_state_initializer": false,
+    "enable_bssd_pivot_manager": false,
+    "enable_bssd_transform": false,
+    "enable_state_trace": true,
+    "enable_ambiguity_trace": true,
+    "enable_residual_trace": true,
+    "enable_wls_trace": false,
+    "enable_mw_slip_trace": false
+  }
+}

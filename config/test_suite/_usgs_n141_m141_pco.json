@@ -1,0 +1,188 @@
+{
+  "_comment": [
+    "PCO DIAGNOSTIC (not a fix): substitute plausible antenna types so receiver PCO/PCV can be",
+    "applied, and see whether the -73.5 mm vertical residual collapses.",
+    "  base  N141 -> IGAIG8 NONE  (iGage family; the header says IGAIG9, which is NOT in igs20.atx)",
+    "  rover M141 -> CHCI93 NONE  (CHC family)",
+    "RATIONALE: with enable_receiver_pco=false the solver treats both PHASE CENTRES as sitting at",
+    "the supplied ARPs, so the reported vector is V_ARP + (pco_rover - pco_base) and the",
+    "differential PCO is a structural offset present BY CONSTRUCTION, not an optional caveat.",
+    "igs20.atx: IGAIG8 L1 up 114.0 / L2 91.1 mm; CHCI93 L1 78.4 / L2 66.5.  Differential",
+    "  L1 +35.6, L2 +24.6, ionosphere-free +52.5 mm -- correct SIGN for the observed residual.",
+    "PREDICTION: applying PCO should remove ~52 mm of the -73.5 mm, leaving ~-21 mm.",
+    "The antenna TYPES ARE INFERRED FROM RECEIVER NAMES, so a PARTIAL collapse is the expected",
+    "outcome and is still decisive about the MECHANISM.  Do not read the residual as an accuracy",
+    "result -- these are not the real antennas."
+  ],
+  "app_mode": "post",
+  "data_source": "production",
+  "processing": {
+    "mode": "Baseline-Single",
+    "active_systems": [
+      "GPS"
+    ],
+    "frequency_mode": "dual",
+    "elevation_mask_deg": 10.0,
+    "gnss_rate_s": 30.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.0,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": true,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "excluded_satellites": [],
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ",
+      "GLONASS": "CPIXQ",
+      "BeiDou": "IDPXQZ",
+      "QZSS": "CSLXIQDEX",
+      "SBAS": "CXIQ"
+    }
+  },
+  "baseline_fixture": "Custom",
+  "baseline": {
+    "reference": {
+      "name": "N141",
+      "rinex_path": "C:/GnssProcessor/runs/usgs_n141_m141/obs30_pco/N141_25_111P.30s.25o",
+      "fixed": true,
+      "position_ecef": [
+        -1768867.0807,
+        -4762431.3072,
+        3845293.4236
+      ]
+    },
+    "rover": {
+      "name": "M141",
+      "rinex_path": "C:/GnssProcessor/runs/usgs_n141_m141/obs30_pco/M141_25_111A0.30s.25o",
+      "position_ecef": [
+        -1767879.3176,
+        -4762119.8241,
+        3846163.1625
+      ]
+    },
+    "max_baseline_km": 30.0,
+    "epoch_sync_tolerance_s": 0.01,
+    "code_only": false,
+    "signal_aliasing": true,
+    "use_iono_free": false,
+    "estimate_differential_tropo": true,
+    "differential_tropo_init_std_m": 0.1,
+    "differential_tropo_process_noise_m_per_sqrt_s": 0.0001,
+    "enable_pivot_handover": true
+  },
+  "files": {
+    "internal_data_root": "./data",
+    "navigation_path": "C:/GnssProcessor/runs/usgs_n141_m141/brdc_merged_2025111.rnx"
+  },
+  "estimation": {
+    "between_satellite_sd": {
+      "enabled": true,
+      "pivot_min_elevation": 25.0
+    },
+    "ambiguity_resolution": {
+      "mode": 1,
+      "ratio_threshold": 3.0,
+      "elevation_mask": 20.0,
+      "hold_variance": 0.001
+    }
+  },
+  "filter": {
+    "process_noise": {
+      "position_q": 0.0,
+      "clock_bias_q": 1000.0,
+      "phase_clock_q": 1e-09,
+      "troposphere_q": 1e-08,
+      "ionosphere_q": 0.03,
+      "code_bias_q": 0.0001,
+      "sat_bias_q": 1e-10,
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "acceleration_psd_q": 100.0
+    },
+    "initial_std": {
+      "position": 30.0,
+      "velocity": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 100.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "system_time_offset": 1000.0,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      "code_std_m": 0.3,
+      "phase_std_m": 0.001,
+      "doppler_std_m": 0.5
+    },
+    "stochastic_model": "satellite_block",
+    "snr_model_params": {
+      "code_a": 0.1,
+      "code_b": 1.0,
+      "phase_a": 0.001,
+      "phase_b": 0.01,
+      "snr_floor_dbhz": 20.0,
+      "snr_ceil_dbhz": 55.0
+    }
+  },
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_code_phase_bias": true
+  },
+  "receiver": {
+    "antenna_orientation": {
+      "azimuth_deg": 0.0,
+      "elevation_deg": 90.0
+    },
+    "zhd_pressure_mbar": 1013.25,
+    "zhd_temp_kelvin": 288.15
+  },
+  "imu": {
+    "enabled": false
+  },
+  "data_download": {
+    "enabled": true,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "product_source": "COD",
+    "product_type": "FIN",
+    "station": "N141",
+    "station_country": "USA",
+    "year": 2025,
+    "doy": 111,
+    "download_rinex": false,
+    "download_products": true,
+    "atx_path": "C:/GnssProcessor/data/static/atx/igs20.atx",
+    "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe",
+    "keep_zip_after_unzip": false
+  },
+  "logging": {
+    "enable_main_log": true,
+    "enable_kalman_filter": false,
+    "enable_state_manager": false,
+    "enable_measurement_model": false,
+    "enable_mw_slip_detector": false,
+    "enable_cycle_slip_manager": false,
+    "enable_ambiguity_resolver": true,
+    "enable_state_initializer": false,
+    "enable_bssd_pivot_manager": false,
+    "enable_bssd_transform": false,
+    "enable_state_trace": true,
+    "enable_ambiguity_trace": true,
+    "enable_residual_trace": true,
+    "enable_wls_trace": false,
+    "enable_mw_slip_trace": false
+  }
+}
