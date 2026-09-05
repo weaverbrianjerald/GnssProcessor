@@ -108,7 +108,10 @@ namespace GnssProcessor {
 
         const std::vector<Item> rows = {
             // --- ON tier: Card-4 invariant DD carry, its carry couplings --------------
-            { true,
+            // 2026-09-05: NOT reported on the phase-leveling F1/F3 lineages — the two carry
+            // VEHICLES are mutually exclusive (do_amb_carry skips the leveling inject under
+            // carry_invariant, so F3 would be inert there; SPEC_amb_iono_split_overcount).
+            { !network_phase_leveling_local_block_ && !network_phase_leveling_los_scale_,
               network_carry_invariant_,
               Tier::ON, true , "network.carry_invariant",
               "the ONLY cross-epoch phase memory a per-epoch estimator has; consumer 3D float "
@@ -177,6 +180,22 @@ namespace GnssProcessor {
               Tier::ON, true , "network.phase_leveling",
               "armed in 107 of 108 shipped configs; zero-q sharpens clock 2.44 -> 2.00 m (-18%); "
               "the carry_warm gate for RAIM" },
+            // B6 S-basis contract line (ledger §A2 F16, APPLIED into the goldens 2026-08-08):
+            // header-only, solve-byte-identical; replay consumer -12.7 % RMS, 45 spurious
+            // resets removed.  Was a ledger row with no loader row until 2026-09-05.
+            // RTA-10 H heartbeat record (ledger §A2 F16, APPLIED with h_sigma0_prefit_census):
+            // record stream 0-diff, solve-neutral; a tail consumer distinguishes "withheld"
+            // from "producer died".  Was a ledger row with no loader row until 2026-09-05.
+            { true,
+              network_emit_epoch_status_record_,
+              Tier::ON, false, "network.emit_epoch_status_record",
+              "one positional H heartbeat record per epoch incl. withheld ones (gate + sigma0): "
+              "record stream 0-diff, solve-neutral; pair with h_sigma0_prefit_census" },
+            { true,
+              nc.serialize_sbasis_contract,
+              Tier::ON, false, "network.serialize_sbasis_contract",
+              "stamp the S-basis contract into the product header: replay consumer -12.7 % RMS, "
+              "45 spurious resets removed; header-only, solve byte-identical" },
             { true,
               nc.write_run_manifest,
               Tier::ON, false, "network.write_run_manifest",
@@ -547,6 +566,51 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.sbasis_complete",
               "GPS+Gal adds per-sat channel-family PB<->iono trades the declared dimension does "
               "not count; the armed net when the KP lift falls short" },
+            // PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md): the fix for the corrupt
+            // carry substrate — PD gate 87.7 % failing -> 0 on the 3 h field leg.  Only where the
+            // Card-4 carry exists; fingerprinted ('carry:pdsafe').
+            { network_carry_invariant_,
+              network_carry_invariant_pd_safe_,
+              Tier::SCOPED, true , "network.carry_invariant_pd_safe",
+              "PD-safe fold of the invariant DD carry: PD gate 686/782 failing -> 0/782, mature "
+              "DD steps 2.75 -> 1.02 cyc/ep (fresh-convergence lineages only)" },
+            // RTA-1 sticky clock-pivot election (STABILITY E3, SPEC_synthetic_minimum_network
+            // §18.5/§18.8): recommended where per-satellite re-realizations at re-admission are
+            // material — triple-frequency / weak-third-signal postures (settled 24 h consumer
+            // 3D rms 0.303 -> 0.078 m on the sim bed).  GPS-dual+SH field: mechanism transfers,
+            // harm absent, so not evidence-recommended there.  Inert under the anchor-free
+            // clock datums.  Fingerprinted (fresh lineage only).
+            { r.tri && !network_clock_datum_sum_to_zero_ && !network_clock_datum_broadcast_anchored_,
+              network_sticky_pivot_,
+              Tier::SCOPED, true , "network.sticky_pivot",
+              "sticky clock-pivot election: 8 -> 2 pivot handovers/day, the h16-h18 pivot-eclipse "
+              "consumer excursion eliminated (settled 24 h 3D rms 0.303 -> 0.078 m); "
+              "triple-freq / weak-third-signal postures" },
+            // --- SCOPED tier: the phase-leveling carry over-count fixes (2026-09-04/05,
+            //     SPEC_amb_iono_split_overcount).  Only where the leveling carry is the live
+            //     vehicle (phase_leveling on, carry_invariant off, Card-1 coupling rows on,
+            //     Card-1b joint whitening off).  Both fingerprinted ('pl:losblock' /
+            //     'pl:losscale').  F3 supersedes F1, so F1 is reported only without F3.
+            { network_phase_leveling_ && !network_carry_invariant_
+                  && network_carry_conditional_coupling_ && !network_carry_coupling_joint_whiten_,
+              network_phase_leveling_local_block_,
+              Tier::SCOPED, true , "network.phase_leveling_local_block",
+              "F3 station-wide whitened local block: removes the B-fold per-LOS and the "
+              "~n_LOS-fold station-common over-count of the diagonal leveling carry — settled DD "
+              "2.72 -> 0.22 cyc, WL 36 -> 99 % at the true integer (sim 3 h); pair with "
+              "phase_datum_handover_max_var_m2 >= 1e-2" },
+            { network_phase_leveling_ && !network_carry_invariant_
+                  && !network_phase_leveling_local_block_,
+              network_phase_leveling_los_scale_,
+              Tier::SCOPED, true , "network.phase_leveling_los_scale",
+              "F1 per-LOS B_eff variance scale: undoes the B-fold iono-direction over-count "
+              "(settled DD 2.72 -> 1.28 cyc); SUPERSEDED by phase_leveling_local_block" },
+            { network_phase_leveling_local_block_ || network_phase_leveling_los_scale_,
+              network_phase_datum_handover_max_var_m2_ >= 0.0099,
+              Tier::SCOPED, false, "network.phase_datum_handover_max_var_m2",
+              "under F1/F3's honest sigma the lineage's 1e-4 m^2 PB-gauge handover ceiling refuses "
+              "93/93 successors (cold handovers, 4-14 m PB frame steps); 1e-2 restores 70/93 and "
+              "the settled window — set >= 1e-2 (a working value, not a promotion)" },
             // Card 1f/1g — only meaningful where the Card-1 coupling rows actually EXIST:
             // the conditional carry armed and NOT superseded by the Card-4 invariant carry
             // (under carry_invariant the whole coupling trio is structurally inert, which is

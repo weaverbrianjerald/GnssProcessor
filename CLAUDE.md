@@ -258,6 +258,27 @@ exemption (each was re-learned on a "different" mechanism).
 
 ## Standard armed set — every NETWORK run uses these (directive, Jul-28)
 
+**⚠ THE GOLDEN CONFIGS ARE THIS SET MADE EXECUTABLE (2026-09-05).** Do not re-derive the
+armed set from this prose or from an old arm — start every new network arm from a golden:
+
+```
+config/golden/golden_sim_tri_w6.json       # sim truth bed: GPS+Gal triple, W6+GF datum, free slant iono,
+                                           #   phase_leveling + F3 station block, r2q3 anchor, sticky pivot
+config/golden/golden_field_gps_dual.json   # field DOY-129 63-sta GPS L1/L2/L5, SH deg-15, W6 OSB,
+                                           #   Card-4 carry_invariant + PD-safe fold + D5 v3, WTZZ consumer
+python scripts/make_golden_config.py --verify   # run at session start and after ANY ledger change
+```
+
+They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
++ `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base
+lineage, pins the manifest's knobs, and FAILS if any ledger RECOMMEND_ON/SCOPED knob that is
+in regime for the golden is unarmed without a documented exception — so a new validated card
+that the goldens do not carry breaks the verify, which is the promotion step this project
+lacked (`docs/CONFIG_promotion_ledger.md` §A4).  An arm = a copy of a golden with ONLY the
+knob under test and the run paths changed.  If you find yourself chasing a problem the
+ledger already resolved, the golden was not the base — check `git diff` of your arm against
+its golden first.
+
 "Unguarded" arms are over (the diagnostic cards that needed them are closed).
 Loader DEFAULTS stay off (flipping them invalidates stored-snapshot
 fingerprints — a migration card, not a quick edit); the rule is that every new
