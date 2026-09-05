@@ -17,10 +17,11 @@ rows this card adds).
 |---|---|
 | §1–§4 | **live** — round-1 measurements on the 24 h bed, five independent lenses (theory, carry code-read, event-conditioning, time-structure, truth-iono), 2026-09-04 |
 | §2.7 / §3.1 | **round-2 amendments** (2026-09-04, two adversarial lenses): B_fit = 3.00 ± 0.03; three round-1 datapoints RETRACTED; puzzles (a),(b) CLOSED; the station-common channel MEASURED (ZWD + birth-frame inheritance) |
-| §5 fix ladder | live — F1 `network.phase_leveling_los_scale` BUILT + **VALIDATED sim 3 h** (`runs/nonint_los3h`, §6.7); F2 RETIRED (adds nothing over F1 along the iono direction); **F3 `network.phase_leveling_local_block` = the next build** (spec §5.1; BUILD in progress round 3) |
+| §5 fix ladder | live — F1 `network.phase_leveling_los_scale` BUILT + **VALIDATED sim 3 h** (`runs/nonint_los3h`, §6.7); F2 RETIRED (adds nothing over F1 along the iono direction); **F3 `network.phase_leveling_local_block` BUILT + VALIDATED sim 3 h** (spec §5.1; results §6.8, round 4) |
 | **§6.3 predictions** | **PRE-REGISTERED** — written 2026-09-04 BEFORE any round-2 arm result was read (`runs/nonint_*/ambint.txt` deliberately not opened).  The prediction rows are never edited |
 | **§6.7 results** | **round-2 amendment** — every §6.3 row graded CONFIRMED / FALSIFIED / MIXED against `runs/nonint_*`; three point predictions were WRONG for one reason (§6.7.2) |
-| §7 open | live — re-cut in round 2 |
+| **§6.8 F3 results** | **round-4 amendment** (2026-09-04) — F3 graded against its §5.1 / r3_5 pre-registration: **BEAT it 2.7×** (0.217 cyc / 79.3 % vs 0.55–0.62 / 42–46 %) and the reason is named (§6.8.2); wire + consumer graded on five arms (§6.8.4); the PB-gauge handover ceiling measured at 1e-4 and 1e-2 m² (§6.8.3); 24 h reading pre-registered (§6.8.6) |
+| §7 open | live — re-cut in round 2; round-4 closures and items 15–21 |
 
 **Provenance.**  Round-1 scripts live under the session scratchpad
 `C:/Users/weaverb/AppData/Local/Temp/claude/C--GnssProcessor/4d31ca6a-c7d9-4b89-895c-055dcfa292a7/scratchpad/{theory,lens_memory,evt,lensT,iono,record}/`
@@ -56,6 +57,15 @@ which F3 (§5.1) is built to remove.  The var-floor point predictions (0.27 / 0.
 WRONG: both floor arms got WORSE in total (3.46 / 3.64) because a floor releases the
 geometric/station-common share the stiff carry had pinned (§6.7.2).  OFF byte-identity of the
 F1 build is MEASURED (sha256-identical products across the two exes).
+
+**Round-4 addendum (2026-09-04, §6.8).**  F3 `network.phase_leveling_local_block` took the
+settled L1C error **1.28 → 0.217 cyc** (round0 23.1 → 79.3 %; WL 98.8 %, EWL 100 %; **0.187 /
+83.1 %** with the handover ceiling lifted to 1e-2 m²), the ZWD to 5.5 mm with |err|/σ 0.94, and
+B = 1.000 ± 0.002 with no mature-leg floor — 2.7× BETTER than its own pre-registration, because
+the round-3 "honest per-LOS floor" of 0.57 cyc was 54 %-by-variance the wandering ZWD leaked into
+the per-LOS levels plus the diagonal carry's cross-band loss; OFF byte-identity holds across all
+three exes, and the one regression is inherited, not F3's: the 1e-4 m² PB-gauge handover ceiling
+refuses every honest-σ successor (§6.8.3).
 
 ---
 
@@ -653,7 +663,217 @@ ladders, all six arms), `scratchpad/record/zwd_freeze_arms.out`; event counts by
 
 ---
 
-## §7 Open questions (re-cut 2026-09-04, round 2)
+### 6.8 F3 results — AMENDMENT (2026-09-04, round 4; §6.3 and §6.7 untouched)
+
+Arms: Release, `config/test_suite/_nonint_*.json`, 60 sta, tow 259230 + 360 epochs, quiet wu93 bed.
+`nonint_losblock3h` (F3, handover ceiling 1e-4 m²), `nonint_losblock3h_hv` (F3 + ceiling **1e-2**),
+`nonint_los3h_hv` (F1 + 1e-2), OFF twin `nonint_base3h_f3exe`; two independent graders; MEASURED
+unless marked.
+
+#### 6.8.1 Truth grade vs the pre-registered line (settled = last 25 %; grader flags as §6.7.3, `--stride 1`)
+
+| quantity | pre-registered (§5.1 / r3_5) | base3h | los3h (F1) | **losblock3h (F3)** | **losblock3h_hv** | verdict |
+|---|---|---|---|---|---|---|
+| L1C med\|e\| / round0 | 0.55–0.62 cyc / 42–46 % | 2.720 / 10.2 % | 1.276 / 23.1 % | **0.217 / 79.3 %** (full window 0.357 / 59.7 %) | **0.187 / 83.1 %** | **BEATEN 2.7×** (the > 0.8 falsifier not tripped) |
+| L2W / L5Q / L7Q med\|e\| (round0) | ~0.66 / 0.76 / 0.86 | 3.223 / 3.614 / 3.974 | 1.133 / 1.293 / 1.517 | **0.266 / 0.287 / 0.287** (72.9 / 70.9 / 70.9 %) | 0.203 / 0.243 / 0.274 (80.8 / 76.5 / 73.2 %) | BEATEN |
+| WL(1,2) / EWL(2,5) round0 | ~93 % / 100 % | 36.5 / 97.9 | 87.4 / 100 | **98.8 / 100** (med 0.065 / 0.022 cyc) | 99.0 / 100 | BEATEN / CONFIRMED |
+| first-inject σ(7)/σ(6) L1C (L2W / L5Q / L7Q) | ≈ 0.707 | 0.494 (0.548 / 0.561 / 0.570) | 0.588 (0.650 / 0.660 / 0.665) | **0.720** (0.722 / 0.728 / 0.722) | identical | CONFIRMED (+3 %) |
+| \|e\|/σ settled (p90) | ~1.0–1.1 | 83 (275) | 1.9 (6) | **0.8** (2) | 0.7–0.8 | CONFIRMED, slightly conservative |
+| formal σ_DD settled, legs ≥ 30 (≥ 100) | "unchanged ~0.55" | 0.026 | 0.616 | **0.239 (0.190)** | 0.199 (0.153) | **FALSIFIED** — 0.55 was not the floor (§6.8.2) |
+| implied B, mid-run newborn chords (a5 fit) | 1.00 ± 0.01, same mature-leg floor | 3.00 | 1.000 ± 0.005, v_m 0.38 cyc² | **1.000 ± 0.002, v_m −0.07 (floor GONE)** | 1.000 ± 0.002, v_m −0.09 | B CONFIRMED; floor FALSIFIED |
+| DD identity slope / r² (grader, L1C) | — | 1.01 / 0.94 | 1.99 / 0.82 | **0.983 / 0.95–0.99** (resid med 0.045) | 0.98–1.00 | exact |
+| \|e\| vs age slope (runs ≥ 60) | — | −0.24 | −0.36 | **−0.60** (1/√K = −0.5; elevation rises along the arc) | −0.62 … −0.68 | — |
+| L1C by min-leg elevation 10-15 / 15-20 / 20-30 / 30-45 / 45-90° | 1.0 → 0.23 (elevation-limited) | flat 2.5–2.7 | 1.08 / 0.66 / 0.50 / 0.33 / 0.23 | **0.20 / 0.22 / 0.19 / 0.13 / 0.09** | — | **FALSIFIED** (flat) |
+| ZWD h2 med\|err\| / \|err\|/σ / D(10) | ≤ 0.02 m / ~1 / < 0.01 | 0.027 / 4.9 / 0.008 | 0.127 / 2.2 / 0.039 | **0.0056 m / 1.0 / 0.0064** | 0.0053 / 0.9 / — | CONFIRMED |
+| ZWD-geometry DD part Z (a3), med [rms] | ≤ 0.10 cyc | 0.201 [1.02] | 0.694 [1.88] | **0.032 [0.079]** | 0.03 [0.067] | CONFIRMED |
+| T4 attrib_arc / T3 cell flags | 0 / — | 288 / 4900 | 0 / 0 | **0 / 1** (k = 42, ignition, unacted) | 0 / 1 | CONFIRMED |
+| data-skeptic (a) c_a at a = 1..5 / (b) med\|r(100)\|/med\|r(0)\| / (c) DD level vs spread | (b),(c) PASS; (a) proxy-incapable | 0.18/0.04/0.03/0.02/0.03 / 0.718 / rising | 0.31/0.11/0.10/0.09/0.07 / 0.153 / flat | **0.477/0.257/0.234/0.189/0.250 = the 1/(a+1) law / 0.066 / 0.070, 0.047, 0.052 m flat** | identical ± 0.01 | all three PASS |
+
+`los3h_hv` (F1 + 1e-2) on the same instrument: 1.200 / 24.8 %, WL 87.5 %, EWL 100 % — the ceiling
+lift buys F1 0.08 cyc; F1 stays in §6.4's "intermediate" row.
+
+#### 6.8.2 Why the prediction UNDER-shot — plainly (residue verifier; DERIVED from the MEASURED parts)
+
+The §5.1 / r3_5 line took F1's settled iono-direction part (0.569 cyc) as the "honest per-LOS
+accumulation floor" no local-local fix could lower at 3 h, and predicted F3 would remove only
+the 0.69-cyc ZWD-geometry term.  Both halves were wrong, each for one reason:
+
+1. **The 0.57 was not honest — it carried the ZWD wander.**  Per station, the frame-removed per-LOS
+   iono error regressed on mf(el) has an elevation-shaped station term of rms 0.0975 of 0.1258 m
+   under F1 (**60 % of the variance**) whose slope tracks the station's ZWD error at corr **−0.83**
+   (−0.44 m/m); under F3 0.012 of 0.037 m (10 %), corr +0.14.  At DD level F1's "iono part"
+   correlates with Z at −0.73 — a Z-projected share of rms **0.878 of 1.197 cyc (54 % of its
+   variance)**: the ZWD wander entered F1's DD error at ~1.45× (0.46 via the iono part + 0.99 via
+   ν) and round 3 credited only the 0.99.
+2. **The rest was the diagonal carry's cross-band information LOSS.**  The single-LOS recursion
+   with the F1 prior (diag(posterior) × 3) reproduces the B = 1 ladder exactly (0.7073 / 0.8168)
+   yet its actual σ saturates at DIAG3/FULL = 1.06 / 1.31 / 1.58 / 1.73 at k = 100 / 200 / 300 /
+   360 — the mature-leg floor v_m = 0.38 cyc² a5 fitted on F1, gone on F3 (−0.07).
+3. **"The CRLB gap is age" is FALSIFIED.**  The white population CRLB on the 24 h producer run's
+   own DD population reads L1C **0.145 / 86.1 % at h2–3 and 0.137 / 86.4 % at h12–24** (min-leg
+   age p50 117 vs 119) — the 3 h settled quarter already IS the steady-state age mix; the F3
+   residue is mechanism, not K.
+
+Residue table (settled L1C, cycles; a3 subset ep ≥ 270 / legs ≥ 30 unless noted):
+
+| component | base3h | los3h (F1) | **losblock3h (F3)** | losblock3h_hv |
+|---|---|---|---|---|
+| TOTAL med\|e\| (a3) [grader all rows / round0] | 2.594 [2.720 / 10.2 %] | 1.159 [1.276 / 23.1 %] | **0.187 [0.217 / 79.3 %]** | 0.159 [0.187 / 83.1 %] |
+| per-LOS iono part, med [rms] | 2.565 [3.96] | 0.569 [1.20] | **0.183 [0.342]** | 0.155 [0.284] |
+| — of which Z-projected (ZWD leaked into per-LOS levels), rms | 0.038 | **0.878** | 0.007 | 0.025 |
+| ZWD-geometry part DD(mf·δZWD), med [rms] | 0.201 [1.02] | 0.694 [1.88] | **0.032 [0.079]** | 0.03 [0.067] |
+| remainder | 0.048 | 0.057 | 0.032 | 0.031 |
+| identity slope (a3) | ~1.1 | 2.13 | 0.97 | 0.96 |
+| population CRLB mixture on the same rows (white) | 0.124 / 93.9 % | same | same | same |
+| med \|e\|/σ_crlb (bound 0.674) | 12.2 | 5.58 | **0.970 (1.44×)** | **0.839 (1.24×)** |
+| formal σ_DD (legs ≥ 30) / formal ÷ crlb / \|e\| ÷ formal | 0.026 / 0.14 / 90 | 0.616 / 3.15 / 1.90 | 0.239 / 1.10 / 0.79 | 0.199 / 1.03 / 0.80 |
+| ZWD h2 med\|err\| / rms / \|err\|/σ (m) | 0.027 / 0.401 / 4.9 | 0.127 / 0.202 / 2.2 | **0.0056 / 0.0091 / 1.0** | 0.0053 / 0.0083 / 0.9 |
+| PB-gauge handovers continuous / cold; leveling carries erased | 90 / 3; 57 | 0 / 93; 1653 | 0 / 93; 1653 | **70 / 23; 408** |
+
+Where the remaining 1.44× (hv 1.24×) lives — the population-CRLB instrument
+(`r4resid/crlb_pop.py`: white 0.003 / 0.30 m per sin el, I free per epoch, ρ′ known, each leg's
+information summed over its PRESENT epochs since birth at the producer's elevations, DD = 4
+independent legs) is the standing grade from here on:
+
+| row class (losblock3h / hv) | med \|e\|/σ_crlb | reading |
+|---|---|---|
+| all four legs born mid-run (n = 1627) | **0.694 / 0.640** (0.230 vs CRLB 0.222) | AT the bound (sim GM code multipath is worth +4–12 % in σ at K = 100–300) |
+| 1–2 / 3–4 ignition-born legs | 0.925 / 1.075 (hv 0.832 / 0.882) | the whole excess |
+| ignition-born, NO cold-handover hit, NO T1/T0 refloat on the leg (n = 2085 / 5936) | 0.843 / 0.904 | 1.25–1.34× with no logged event; T1/T0 history moves nothing (± 0.02) |
+| leg hit by a cold PB-gauge handover since birth | 1.163–1.206 (unhit 0.842) | ~1.4× σ cost on hit legs; hv shrinks the hit population to 93 rows |
+| 1+ re-birth leg | 0.78 / 0.66 | gap re-births NOT measurable above the bound (§7 item 9) |
+| by min-leg age [1,30) / [30,60) / [60,120) / [120,240) / [240,361) | 0.81 / 0.79 / 0.86 / 0.99 / 1.20 (hv 0.80 / 0.70 / 0.77 / 0.91 / 0.90) | the ignition class ageing in |
+| by min-leg elevation (5 bins) | 0.97 / 0.92 / 1.03 / 0.98 / 0.88 | elevation-flat |
+
+#### 6.8.3 The handover ceiling — census, refusal attribution, wire continuity
+
+`network.phase_datum_handover_max_var_m2` (`NetworkPhaseDatum.cpp:376-403`: usable = ledger hit
+∧ finite ∧ var > 0 ∧ var ≤ max_var, else `++handover_cold` and `++handover_refused_var` when
+var > max_var; the ledger var is the successor's border-exact `pureConditionalLocalVarianceDiag`,
+`NetworkRunContext.cpp:2806-2846`).  The lineage value **1e-4 m²** (σ = 1 cm; config line 764,
+inherited from the camp60wu sticky base; loader default 1.0, banner "keep this TIGHT") was sized
+against the OVER-COUNTED σ; F1 and F3 both make the successor's σ honest (settled P σ 3–5 cm), so
+the round-3 prediction "F3 will be refused the same way" is CONFIRMED.
+
+| arm | ceiling | continuous / cold (refused) | per hour cont \| cold | settled cont / cold | carries erased | 1(d) marked |
+|---|---|---|---|---|---|---|
+| base3h | 1e-4 | 90 / 3 (3) | 33,30,27 \| 0,3,0 | 21 / 0 | 57 | 174 |
+| los3h (F1) | 1e-4 | 0 / 93 (93) | 0 \| 33,33,27 | 0 / 21 | 1653 | 264 |
+| los3h_hv (F1) | 1e-2 | 67 / 26 (26) | 27,23,17 \| 6,10,10 | 13 / 8 | 461 | 197 |
+| losblock3h (F3) | 1e-4 | 0 / 93 (93) | 0 \| 33,33,27 | 0 / 21 | 1653 | 264 |
+| **losblock3h_hv (F3)** | 1e-2 | **70 / 23 (23)** | 17,26,27 \| 16,7,0 | **21 / 0** | 408 | 194 |
+
+Refusal attribution at 1e-2 (`r4_wire/handover_age.py`, successor arc age from `station_residuals`
+presence): under **F3 every refusal is a YOUNG successor** — cold ages n = 23, med 1680, max
+**3120 s**, all in h0/h1; continuous ≥ 960 s (med 4170) — an AGE gate under honest σ, so the settled
+window is fully continuous.  Under **F1 the refusals are per-BAND** — cold L1C 3 / L2W 7 / L5Q 12 /
+L7Q 4 on arcs up to 10560 s old, 9 MIXED families (L1C continuous, other bands cold), four settled
+(268530 G29, 269040 E33, 269280 E25, 269970 G31): the B_eff-scaled non-L1C bands sit above σ = 10 cm
+while their L1C passes (DERIVED — no per-handover var is traced).  Neither reaches the ≥ 90/93 bar.
+
+Wire continuity (`simnet_seam_tools.py steps`, phase-side P − C per (sat, signal), settled last 25 %):
+
+| arm | n > 0.05 m | n > 0.5 cyc | step rms (m) | max (m) | epochs with a PB step > 1 m | matched to cold-handover tows |
+|---|---|---|---|---|---|---|
+| base3h | 47 | 22 | 0.0104 | 0.285 | 0 | — |
+| los3h | 233 | 91 | 0.3095 | 14.25 | 7 | 7/7 |
+| los3h_hv | 87 | 34 | 0.2077 | 14.58 | 4 | 4/4 (268530 6.39, 269040 14.58, 269280 4.45, 269970 10.96 m) |
+| losblock3h | 200 | 85 | 0.3117 | 15.15 | 7 | 7/7 (268050 G32 10.38, 268530 G29 2.65, 268980 E10 7.06, 269040 E33 14.47, 269280 E25 7.59, 269640 G22 15.15, 269970 G31 9.07 m) |
+| **losblock3h_hv** | **78** | **21** | **0.0111** | 0.291 | **0** | — (whole run after 20 min: 8 epochs > 1 m, all matched, all h0/h1) |
+
+Wire ACCURACY is neutral to the ceiling on both mechanisms (clock / CB / rx-DCB identical to 3
+digits; ZWD 0.0088 → 0.0081 under F3, 0.191 → 0.204 under F1); the only wire-side gain is
+continuity (Psig med 0.049 → 0.031 m; settled integer-class drifts E 30 → 6).  **F1 + 1e-2 is NOT
+a valid combination** (band-mixed handovers; consumer +0.43 m up bias, §6.8.4).  **F3 + 1e-2 is
+the arm to carry forward** — a working value, not a promotion (§7 item 15).
+
+#### 6.8.4 Wire and consumer (settled last 25 %; `simnet_grade.py --settle-frac 0.75`, `simnet_sat_clock_census.py`, `network_epoch_status.csv`)
+
+| channel | base3h | los3h (F1) | los3h_hv | **losblock3h (F3)** | losblock3h_hv |
+|---|---|---|---|---|---|
+| sat clock residual rms / p50 / contrast rms (m) | 1.704 / 1.112 / 2.194 | **1.437 / 0.832 / 1.751** | 1.437 / 0.833 / 1.756 | 1.583 / 1.011 / 2.039 | 1.582 / 1.000 / 2.040 |
+| sat clock vf / URA med (m) | 135958 / 0.0045 | 7423 / 0.0172 | 7472 / 0.0172 | 106552 / **0.0048** (base-like) | 112029 / 0.0047 |
+| per-sat settled tails G12 / G16 / G09 / G18 (m) | 7.08 / 4.41 / 3.00 / 1.86 | 6.28 / 3.49 / 2.10 / 1.35 | 6.24 / 3.53 / 2.12 / 1.33 | 6.31 / 4.23 / 2.78 / 1.88 | 6.28 / 4.25 / 2.79 / 1.89 |
+| sat code bias rms / p50 (m) | 0.814 / 0.046 | 0.504 / 0.011 | 0.504 / 0.012 | **0.507 / 0.011** | 0.507 / 0.012 |
+| ZWD rms / p50 / max / \|err\|/σ (m); stations > 2 cm | 0.416 / 0.026 / 3.39 / 4.72; 12 > 0.10 | 0.191 / 0.122 / 0.84 / 2.59; 40 > 0.10 | 0.204 / 0.121 / 0.86 / 2.62 | **0.0088 / 0.0055 / 0.047 / 0.94; 1** (S26 0.021) | 0.0081 / 0.0051 / 0.035 / 0.91; 0 |
+| rx-DCB contrast rms / formal σ (m) | 1.587 / 0.066 | 1.228 / 0.089 | 1.236 / 0.089 | **1.226 / 0.067** | 1.226 / 0.067 |
+| rx clock between-station contrast rms (m) | 1.941 | 1.675 | 1.761 | 1.684 | 1.738 |
+| σ̂0 post-fit / code / phase (epoch_status medians) | 1.198 / 1.699 / 0.939 | 0.053 / 1.063 / 0.0078 | 0.053 / 1.069 / 0.0078 | 0.920 / **1.104** / 0.830 | 0.932 / 1.105 / 0.848 |
+| station_residuals rms(s) / \|s\| > 6 | 1.782 / 1014 | 0.275 / 0 | 0.274 / 0 | 1.179 / 0 | 1.182 / 0 |
+| DD-fractional trace (tail 2700 s): med\|f\| / P(< 0.1) / circR | 0.253 / 0.195 / 0.016 | 0.248 / 0.202 / 0.006 | 0.248 / 0.202 / 0.005 | **0.203 / 0.265 / 0.152** | **0.185 / 0.292 / 0.214** |
+| consumer SZZ000SIM settled 3D rms / p50 / max (m) | 0.414 / 0.411 / 0.477 | 0.296 / 0.239 / 0.548 | 0.535 / 0.544 / 0.650 | 0.295 / 0.280 / 0.392 | **0.245 / 0.233 / 0.359** |
+| consumer up mean / E rms / N rms (m) | +0.191 / 0.091 / 0.350 | +0.007 / 0.225 / 0.165 | **+0.428** / 0.301 / 0.100 | +0.023 / 0.283 / 0.070 | +0.039 / 0.237 / 0.028 |
+| consumer 30-min bins, 3D rms (m) | 2.42 / 3.06 / 1.77 / 0.76 / 0.44 / 0.41 | 2.32 / 0.77 / 0.66 / 0.28 / 0.15 / 0.34 | 2.09 / 0.55 / 0.41 / 0.49 / 0.45 / 0.56 | 2.13 / 0.72 / 0.47 / 0.23 / 0.24 / 0.31 | 2.13 / 0.77 / 0.79 / 0.24 / 0.21 / 0.27 |
+| consumer walk (last-10 median − median at [2.33, 2.42) h) | −0.006 | +0.333 | +0.063 | +0.128 | +0.172 |
+
+Readings.  (i) F3 equals or beats F1 on every station-common channel (ZWD 47× base, 22× F1; CB and
+rx-DCB equal) and is the first arm to move the DD-fractional trace off uniform (circR 0.016 → 0.15 /
+0.21); the P-record between-sat fractional vs truth stays uniform (0.25–0.31 cyc rms) and AR 0/360
+on every arm.  (ii) The ONE channel worse than F1 is the satellite clock (rms 1.583 vs 1.437; G16 /
+G09 / G18 tails at base level) with a base-like URA 0.005 m — better than base, a regression on F1
+(§7 item 18).  (iii) F3's whitened rows do NOT enter the post-fit pool (n_pf_rows identical on all
+five arms): the phase σ̂0 0.83 is the data rows fitted under an exact stiff prior, F1's 0.008 the
+free-ambiguity zero; in the RAIM-attrib pool |effect| p50 ARC 0.454 → 1.463 (max 4.07 < 6), pool σ̂0
+0.233 → 0.991, 0 acted (§7 item 4).  (iv) The final-40-min consumer WALK is NOT the cold handovers:
+an EAST drift (blk_hv −0.15 → −0.32 m from ~267930, G12's re-emission epoch) on every F arm, wire
+flat (clk contrast 2.110 → 2.089, cb_rms 0.559 → 0.518, n_sats 16) — blk_hv has ZERO settled cold
+handovers and still walks; round 3's cold-handover half is FALSIFIED, its G12 half untested (§7 item
+19).  (v) The los3h_hv +0.43 m up bias (264510 → 265710, that arm alone) is specific to F1 + lifted
+ceiling — HYPOTHESIS.  (vi) Every pre-existing event family is identical across the five arms
+(refsat_reset 1170, mw_wl_slip 143, anchor_handover 102, cta_* 64, CLK_STEP 11, topology 28 / 28);
+only the PB-gauge mode and its 1(d) / 1f / 1g counters move.  Runtime +7.4 % ms/epoch (F3 and F1 +
+ceiling alike; uncontrolled load).  prires / block-Baarda / congruence not armed in any `_nonint`
+config — UNAVAILABLE, not clean.
+
+#### 6.8.5 Invariants #6 / #4 / #7 on the F3 build
+
+- **#6 byte identity — PASS, MEASURED.**  sha256(`products.txt`) `nonint_base3h` = `nonint_base3h_f1exe`
+  = `nonint_base3h_f3exe` = `1c1b60c7792e5f91ef6e4e2f659883603a9fc0ae8112d3a26f86c3355029229d`
+  (8,601,257 B) — three exes, both knobs OFF.  ON arms differ (los3h `ccfa9eba…`, los3h_hv
+  `bd16aca2…`, losblock3h `cdbeaee0…`, losblock3h_hv `b7cea2ad…`).
+- **#4 run-end counters (armed only; `main_log.log:803` / `:796`).**  losblock3h: `Network (leveling
+  local-block F3): 21180 block(s) whitened, 950551 row(s) emitted, 8534 column(s) marginalized at
+  inject, 0 pair(s) zeroed (harvest-stamp mismatch), 0 column(s) refused, 0 factorization
+  fallback(s); block dim histogram <10:0 10-24:221 25-49:15834 50-74:5125 75+:0 (max 66);
+  within-epoch refloat re-whiten 0 ok / 0 failed`; hv 951726 / 8859 / dims 218 : 15773 : 5189.
+  21180 = 60 sta × 353 epochs (every station every epoch from k = 7); the F1 fallback never fired;
+  the refloat re-whiten path was never exercised (T2 354 opportunities, 0 flags) — uncertified.
+- **#7 edges.**  No new event population; the PB-gauge flip is inherited (§6.8.3).  Gap: the 8,534
+  marginalized columns are not traced by reason (§7 item 16).
+
+#### 6.8.6 What remains, and the 24 h pre-registration (HYPOTHESIS, written before any 24 h F3 arm exists)
+
+Remaining F3 residue on this window, in order: (a) the cold PB-gauge handover erase edge (~1.4× σ on
+hit legs; 408 carries still erased at 1e-2 — §7 item 15); (b) an ignition residue on legs born at
+k = 0 with no logged event (1.25–1.34×; §7 item 8); (c) the rx-CB direction's 2× over-count (§7 item
+17); (d) L7Q's satellite-arc-mean frame term (§7 item 3); (e) the satellite-clock gap to F1 (§7 item 18).
+
+**Pre-registered 24 h F3 + hv reading** (same bed; grade the last 25 %, where 99.5 % of rows are
+mid-run-born): settled L1C med|e| **0.14–0.15 cyc / round0 84–86 %** (L2W ~0.19–0.20 / 79–80 %,
+L5Q ~0.19–0.20 / 78–80 %, L7Q ~0.18–0.19 / 79–81 %), WL(1,2) ≥ 99 %, EWL 100 %, ZWD |err|/σ ~1;
+with the 1e-4 ceiling (every handover cold, ~550 erased carries / h) **0.16–0.17 / 82–83 %**.
+Basis: the h12–24 CRLB mixture 0.136 / 86.4 % × the measured mid-run-born excess 1.03 × multipath
+1.04–1.10 → f = 1.03–1.10; the cold lineage adds 1.1–1.2× on hit legs → f ≈ 1.15–1.25 (factor
+table f 1.00 / 1.03 / 1.10 / 1.24 / 1.44 → 0.136 / 0.141 / 0.150 / 0.169 / 0.197 cyc, 86.4 / 85.8 /
+84.5 / 82.0 / 78.5 %).  **FALSIFIERS:** settled L1C > 0.20 cyc or round0 < 80 % on the hv posture
+(an unmodelled floor); |e| rising with age beyond 360 (an erase / handover mechanism still
+active); ZWD |err|/σ > 1.5.
+
+#### 6.8.7 Provenance
+
+Wire + consumer: `<scratchpad>/r4_wire/` (grade_*_s75.{txt,json}, series_*.csv, steps_*, quality_*,
+diff_*, drift_*, consumer_{30min,5min}, consumer_at_handovers, handover_age, events_census,
+sigma0_consumer, ddfrac_*, census.txt).  Residue verifier: `<scratchpad>/r4resid/` (grader_*.txt;
+build_arm.py + arms/*/{dd_e,los,frame}.npz; a1..a5_nonint_losblock3h{,_hv}.txt; **crlb_pop.py — the
+population-CRLB instrument**; crlb_24h, crlb_f1model, crlb_ref, leak_test, handover_hit, ev_raim).
+Recipe (extends §8): F3 arms = the F1 arm + `network.phase_leveling_local_block: true` (+
+`network.phase_datum_handover_max_var_m2: 0.01` for `_hv`); `python "<scratchpad>/r4resid/crlb_pop.py"`;
+`grep "leveling local-block F3" runs/nonint_losblock3h/logs/main_log.log`;
+`sha256sum runs/nonint_base3h{,_f1exe,_f3exe}/products.txt`.
+
+---
+
+## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
 
 1. ~~**The birth value.**~~ **CLOSED (§2.7)** — age 0 IS the free single-epoch absolute-code
    solve at the birth elevation (med|r0| tracks 0.6745·σ_P/(sin el·√Σμ²) within 15 % in every
@@ -661,19 +881,23 @@ ladders, all six arms), `scratchpad/record/zwd_freeze_arms.out`; event counts by
    tail-dominated 6-station rms.  Residual sub-item: ~30–40 % of the age-0 level not explained
    by the LOS's own 2-band proxy — station-common per-epoch rx-DCB code noise vs proxy
    attenuation (a 3-band proxy needs the L1C/L5Q pair rows, absent from `network_slip_raw.csv`).
-2. ~~**Birth-spread dependence.**~~ **CLOSED (§3.1a)** — birth-frame inheritance (station-term
-   slope 1.18).  Its F1 validation criterion (the DD level vs birth-spread slope 0.37 → 0.61 m
-   must go flat) was NOT measured on `nonint_los3h` — owed with the F3 arm.
-3. **L7Q med(e)** — still open.  24 h bed +0.79; `base3h` settled +1.01 (full-window +1.67);
-   `los3h` settled **−0.115** (full −0.239, and every band's full-window median is −0.235 …
-   −0.239 under F1 — a common offset, not E5b-specific).  F1 removed most of it, so the
-   candidate is now a station-common frozen term rather than an E5b model term; re-bin under
-   F3.
-4. **T4 pools the coupling row** (`NetworkRaim.cpp:236`, no `cpl_row_start` exclusion) — now
-   SUPPORTED by an ON-path counter: attribution erases 288 (base3h) → **0** under F1 (the row's
-   standardized residual shrinks by 1/√B_eff) and 0 under both var floors (looser rows).  The
-   fix is still owed: exclude `[cpl_row_start, end)` from the pool or grade the prior residual
-   as its own tier — a coupling-row false alarm re-draws the level, it does not correct it.
+2. ~~**Birth-spread dependence.**~~ **CLOSED (§3.1a; criterion measured §6.8.1)** — birth-frame
+   inheritance (station-term slope 1.18); the DD-level-vs-birth-spread criterion reads flat under
+   F1 (0.299 / 0.269 / 0.214 m) and F3 (0.070 / 0.047 / 0.052 m, slope −0.16 / −0.02 / −0.03) — PASS.
+3. **L7Q** — the median OFFSET is CLOSED (§6.8): +1.01 (base) → −0.115 (F1) → **+0.017 / +0.009**
+   (F3 / F3+hv), every band's settled med(e) +0.004 … +0.017 — it was the station-common frozen
+   term.  What survives is a satellite-arc-mean-FRAME term in L7Q's iono part (M_t slope
+   +2.7 … +6.4, R² 0.46–0.58 on 454 mid-run rows) invisible in its CRLB ratio (0.92); candidate
+   the Galileo E5b satellite code bias (wire E:C7Q residual 0.53 m rms on every F arm).  Unquantified.
+4. **RAIM pool admission of block rows** (`NetworkRaim.cpp:236` admits any row with |A_r| > 0.5,
+   no `cpl_row_start` exclusion).  Round 3: T4 erases 288 → 0 under F1 (the coupling row's own
+   standardized residual shrinks 1/√B_eff).  Round 4 (§6.8.4): under F3 the POST-FIT pool census
+   is unchanged (n_pf_rows identical on all five arms) but the RAIM-attrib pool σ̂0 goes
+   0.233 → 0.991 with |effect| p50 ARC 0.454 → 1.463 (max 4.07 < k = 6, 0 acted) and one ARC row
+   at prominence 4.0e9 (a near-zero denominator) — the dense L⁻¹ rows sit in the T3/T4 pool at
+   unit variance, admitted arbitrarily by the 0.5 test.  Still owed: tag block rows prior-class
+   and exclude them (or grade the prior residual as its own tier), a per-column pool census so
+   admission is READ not inferred, and the 4e9 denominator fix.
 5. **IF-TD reference gate: 1917 false refloats/day** (1170 per 3 h arm, IDENTICAL across
    base / vf005 / vf001 / los3h; 1051 per 1 h) — a detector rule, level-inert here (§2.7:
    touched σ ×1.6–1.7 at the phase class, |Δe| ≤ 0.06 cyc).  Card R
@@ -685,33 +909,80 @@ ladders, all six arms), `scratchpad/record/zwd_freeze_arms.out`; event counts by
    for B ≥ 2; the 24 h value needs an additive ~1.5e-6 m²/epoch, i.e. the Card-1d
    `tu_var = M²·κ·q·Δt` with P_prev ~1e-6 m² (inferred — `cov_df(j,j)` is not traced).  A
    one-station dump of (M_clk, κ, tu_var) per row would pin it.
-8. **Ignition cohort.**  First-inject ratio 0.39 / 0.56 / 0.84 by elevation, cold rows at
-   1.0–7.5 m² (3–30× the honest conditional), VALUE not stepping at k = 6..9 yet the error
-   RISING 0.98 → 1.24 m over k = 6..9 before decaying by k = 60: Card-1d tu_var/dep_var
-   inflation against a still-converging border, or the hour-0 refsat_reset storm (486 + 1051)?
-   Repeat the TOW 259440 `cplrow` weight dump for one station over k = 6..15.  Never quote an
-   ignition-epoch ratio as a B test.
-9. **Gap re-births carry ONE effective prior row at the first re-inject** (ratio 0.72–0.75 on
-   all four bands, then B = 3; 429 arcs at el ≥ 20°, no event logged).  Candidate: the
-   detector-pair bands are not harvested / are free-latched for the re-birth epoch after the
-   120 s prune (`NetworkRunContext.cpp:3476-3486`, `NetworkSlipQc` post-gap state) — a second,
-   band-scoped invariant-#7 edge if so.  Not observable from the traces.
-10. **F1's L1C first-inject 0.588 vs 0.707** — the station-common share of the cold DD
-    variance still collapses at the station-wide rate under F1 (§6.7.2); F3's pre-registered
-    reading is ≈ 0.707 on every band.  If it stays below 0.65 under F3 the share is not
-    station-local.
+8. **Ignition cohort — now the LARGEST F3 residue** (§6.8.2).  Under F3 the per-chord clean
+   first-inject reads 0.715 / 0.731 / 0.761 by elevation (the station-common share collapses at
+   the honest rate) — but legs born at k = 0 with NO logged event (no cold-handover hit, no
+   T1/T0 refloat) sit at 1.25–1.34× the population CRLB (0.843 F3 / 0.904 hv, n = 2085 / 5936)
+   where mid-run-born legs sit AT it (0.72 / 0.64), and the T1/T0 history moves nothing (± 0.02).
+   Candidates: the k ≤ 6 warmup solves before the first block exists (blocks start at k = 7),
+   the k = 7 first-inject where rx-CB / clock / ZWD collapsed before any block, a frozen
+   ignition-era level in the still-diagonal rx-CB carry.  Recipe: per-leg r(t) vs CRLB along the
+   arc for k = 0 vs mid-run legs (`r4resid/arms/*.npz` carry everything needed) — fixed at k ≤ 7
+   ⇒ a warmup / first-inject card; accruing ⇒ a carry-path card.  Never quote an ignition-epoch
+   ratio as a B test.
+9. **Gap re-births** (one effective prior row at the first re-inject, ratio 0.72–0.75, 429 arcs)
+   — DEPRIORITIZED: under F3 rows with a re-birth leg sit BELOW the population bound (0.78 /
+   0.66), so the edge is not measurable above the CRLB on this window.  The harvest / prune
+   ordering read (`NetworkRunContext.cpp:3476-3486`, `NetworkSlipQc` post-gap) stays a code question.
+10. ~~**F1's L1C first-inject 0.588 vs 0.707**~~ **CLOSED (§6.8.1)** — F3 reads 0.720 / 0.722 /
+    0.728 / 0.722 on L1C / L2W / L5Q / L7Q (predicted ≈ 0.707): the share IS station-local.
 11. **vf005 < vf001 in the iono part (1.48 vs 1.81 cyc)** — non-monotone in v_f, contrary to
     any smoother model; not pursued (the knob is falsified as a fix), recorded so nobody
     re-derives the floor.
-12. **Do `carry_zwd` and the rx-CB carry share the defect when armed** — any two correlated
-    local columns of one station re-injected as independent rows?  F3 is the general fix; the
-    ZWD instrument of §3.1b is the grade.
+12. ~~**Do `carry_zwd` and the rx-CB carry share the defect**~~ **RE-CUT into item 17.**  The
+    ZWD is not carried on this posture (carried flag 0 / 21,600 rows), so F3's marginal ambiguity
+    block is exact for it — measured honest (|err|/σ 0.94, §6.8.4); the rx-CB carry IS separate
+    and diagonal — item 17.
 13. **SPEC_synthetic §13.7's settled float 8–9.4 cyc (WORSE than single-epoch, K_eff < 1)** vs
     today's 2.7–3.8: did that arm run without `carry_coupling_time_update` (the SPEC_card1 §3
     poisoned-row signature)?  Unverified.
-14. **Wire grade of F1** — `scripts/simnet_grade.py` / `simnet_seam_tools.py` on
-    `nonint_los3h` vs `nonint_base3h` not yet in the tree (a separate agent's card); the
-    ledger row says "see wire grade" until it lands.
+14. ~~**Wire grade of F1**~~ **CLOSED (§6.8.4)** — F1 and F3 wire + consumer grades landed on all
+    five arms; the ledger rows carry the verdicts.
+15. **The handover ceiling must be re-expressed on the honest-σ scale before F1 or F3 is armed
+    on ANY lineage** (§6.8.3).  `network.phase_datum_handover_max_var_m2` = 1e-4 m² was sized to
+    the over-counted σ: under any honest-σ carry 0/93 successors are continuous, 7 settled 4–15 m
+    PB frame steps land on the wire, 1653 leveling carries are erased.  **Measured at 1e-2 m²:**
+    F3 70/93 (all 23 refusals are arcs ≤ 52 min old in h0/h1; settled window 21/21 continuous,
+    0 settled steps > 1 m, 408 erased), F1 67/93 (per-BAND refusals — L5Q 12 / L2W 7 / L7Q 4 /
+    L1C 3 on arcs up to 3 h old, 9 mixed families, 4 settled > 1 m steps, consumer +0.43 m up
+    bias — an INVALID pairing); neither reaches ≥ 90/93.  Candidates: a relative form
+    (var ≤ k²·var_at_first_inject) or an age gate; either must keep the 378-σ unvalidated-target
+    guard (SPEC_pivot_visibility_gauge_defect §5.0) demonstrably armed (inject an unvalidated
+    target on the sim bed).  Prerequisite: trace the successor's conditional var and age per
+    handover — `network_events.csv` carries the target only.  Interim: 1e-2 is the WORKING value
+    for F3 arms, not a promotion.
+16. **F3 telemetry gaps** (§6.8.5): no per-epoch breakdown of the marginalized-at-inject columns
+    by reason (departed / skipped / freed / pinned — 8,534 lumped in the run-end line); the
+    within-epoch RAIM refloat re-whiten path never exercised (T2 354 opportunities / 0 flags,
+    uncertified on data); add both to `network_epoch_status.csv` before the field arm.
+17. **rx-CB direction 2× over-count** (r3_5 design flag, now the named residue): the F3 block
+    covers the ambiguity columns only while the rx-CB keeps its own diagonal carry, so the DCB
+    direction is asserted twice (2×, not 25×).  DD-invisible above the bound at 3 h (mid-run rows
+    AT the CRLB) and hinted only by the rx-DCB formal 0.089 (F1) → 0.067 (F3) = base's 0.066 m;
+    the DCB truth join is definition-limited (0.85 m rms on every arm, corr 0.30–0.36 GPS, ~0
+    Galileo) — a state-definition-aware grade is needed before calling it inert.  Fix = block ALL
+    carried local columns of the station.
+18. **F3's satellite clock lags F1** (settled rms 1.583 vs 1.437 m, p50 1.011 vs 0.832; G16 4.23 vs
+    3.49, G09 2.78 vs 2.10, G18 1.88 vs 1.35) with a base-like URA (0.005 m, vf 1.1e5; F1 0.017 m)
+    while every station-common channel is equal or better.  HYPOTHESIS: the exact stiff block
+    re-asserts the carried ambiguities' retired-frame memory through the coupling rows that F1's
+    blunt 3× loosening released.  Test: a3 / a5 + a per-satellite clock re-realization census keyed
+    on the eclipse-readmission seam, on `nonint_losblock3h_hv`.
+19. **Consumer east walk from the G12 re-emission epoch** (~267930): blk_hv E −0.15 → −0.32 m over
+    the last 40 min with ZERO settled cold handovers, wire flat, n_sats constant — the round-3
+    cold-handover explanation is FALSIFIED, the G12 half untested.  Test: replay from 267330 with and
+    without G12, or a ≥ 6 h arm; grade the WIRE first.  Also open: los3h_hv's +0.43 m up bias (F1 +
+    1e-2 only; the same families are cold on los3h with no bias); the consumer emits no reset /
+    discontinuity counters on these arms.
+20. **24 h F3 + hv arm owed** — pre-registered §6.8.6 (settled L1C 0.14–0.15 cyc / 84–86 %, WL
+    ≥ 99 %, EWL 100 %, ZWD |err|/σ ~1; falsifiers > 0.20 cyc or < 80 %, |e| rising with age
+    beyond 360, ZWD |err|/σ > 1.5); grade with `simnet_amb_integer.py` + `r4resid/crlb_pop.py` on
+    the last 25 %, where 99.5 % of rows are mid-run-born.
+21. **Field arm owed (FLD63 / FT63 lineage) with the same instruments** — F3 is sim-validated only.
+    No truth there: grade on DD-fractional circR / med|f|, ZWD vs an independent ZTD, the PB-gauge
+    census + seam-tools steps, the prires / block-Baarda / congruence σ̂0 families and
+    `trace_prefit_census` (arm them on the next `_nonint` arms too — UNAVAILABLE on all five), and a
+    consumer replay.  Fresh convergence (fingerprinted), wu93 side of the wind-up fix, item 15 first.
 
 ---
 
