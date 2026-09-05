@@ -815,6 +815,7 @@ public:
     struct StationRegression {
         Eigen::VectorXd row;   ///< @f$M_r^\top = N_{sr}N_{rr}^{-1}e_r@f$ (length @c n_shared): row @c r of @f$N_{rr}^{-1}N_{rs}@f$, i.e. the coefficients of the local's linear regression on the shared border.  Empty when @c n_shared is 0.
         double cond_var{0.0};  ///< @f$(N_{rr}^{-1})_{rr}=\mathrm{Var}(x_r\mid x_s)@f$: the local's variance CONDITIONAL on the whole shared border (NOT the marginal @ref reconstructStationCovarianceDiag returns).
+        Eigen::VectorXd cross; ///< F3 (network.phase_leveling_local_block): @f$(N_{rr}^{-1})_{r c_j}@f$ for each requested @c cross_cols[j] — the SAME solve @f$n_c@f$ read at the station's other carried columns (a gather, not a second solve).  Empty unless @c cross_cols was passed; NaN for an out-of-range column.  Filled on the plain-normals path only (see @ref stationRegression).
     };
 
     /**
@@ -848,12 +849,23 @@ public:
      *                    @c cond_var is REFUSED (both outputs fall back together, so the
      *                    pseudo-observation row and its variance always describe the same
      *                    model).
+     * @param cross_cols  F3 (network.phase_leveling_local_block): when non-null, the
+     *                    station's local columns at which the same solve
+     *                    @f$n_c=N_{rr}^{-1}e_r@f$ is also read — @c cross(j) = @f$n_c(c_j)@f$
+     *                    = @f$(N_{rr}^{-1})_{r c_j}@f$, the conditional CROSS covariance
+     *                    of the local with column @f$c_j@f$ (its own entry is @c cond_var).
+     *                    Gathered on the plain-normals path only: the carry-aware
+     *                    @f$\tilde A^{-1}@f$ correction below is computed for THIS column
+     *                    alone, so corrected diagonals with uncorrected cross terms would
+     *                    describe two models — @c cross stays EMPTY when the correction is
+     *                    live, and the block caller degrades (counted) rather than mix them.
      * @return @ref StationRegression (empty @c row when @c n_shared is 0).
      * @throws std::out_of_range / std::invalid_argument on a bad index or column.
      */
     StationRegression stationRegression(std::size_t station,
                                         Eigen::Index local_col,
-                                        bool carry_aware = false) const;
+                                        bool carry_aware = false,
+                                        const std::vector<Eigen::Index>* cross_cols = nullptr) const;
 
     /**
      * @brief Joint conditional covariance of an arbitrary set of local parameters

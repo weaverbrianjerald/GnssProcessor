@@ -51,6 +51,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_warmup = config_.networkPhaseLevelingWarmupEpochs();
     k.pl_max_gap_s = config_.networkPhaseLevelingMaxGapS();
     k.pl_var_floor = config_.networkPhaseLevelingVarFloorM2();
+    k.pl_los_scale = config_.networkPhaseLevelingLosScale();
+    k.pl_local_block = config_.networkPhaseLevelingLocalBlock();
     k.pl_warmup_on_conv = config_.networkPhaseLevelingWarmupOnConvergence();
     k.pl_refloat_on_conv = config_.networkPhaseLevelingRefloatAtConvergence();
     k.pl_conv_rms_thresh = config_.networkPhaseLevelingConvRmsThreshTecu();
@@ -536,6 +538,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     const int    pl_warmup = ctx.knobs.pl_warmup;
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor = ctx.knobs.pl_var_floor;
+    const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // F1: per-LOS B_eff scale at inject
+    const bool   pl_local_block = ctx.knobs.pl_local_block; // F3: station-wide whitened local block at inject
     const double pb_var_floor = ctx.knobs.pb_var_floor;
     const double cb_var_floor = ctx.knobs.cb_var_floor;
     const bool   zwd_on = ctx.knobs.zwd_on;
@@ -632,6 +636,17 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // variance), THAT knob is a different knob and it MUST be fingerprinted.
         add(fmt::format("{}", pl_on));           add(fmt::format("{}", pl_q_amb));
         add(fmt::format("{}", pl_warmup));       add(fmt::format("{}", pl_max_gap_s));
+        // F1 (network.phase_leveling_los_scale): the stash is unchanged but the
+        // inject-side WEIGHTING of the same stashed variances differs across the
+        // flip (the carried level was accumulated under a different recursion),
+        // so a resume across it must cold-start — the pl_var_floor rule.  Appended
+        // ONLY when armed, so every pre-F1 snapshot fingerprint is unchanged.
+        if (pl_los_scale) add("pl:losscale");
+        // F3 (network.phase_leveling_local_block): same rule, stronger reason — the
+        // carried LEVELS were accumulated under a different prior (joint vs
+        // independent rows), and the harvest block itself is not in the snapshot.
+        // Armed-only, beside the F1 tag.
+        if (pl_local_block) add("pl:losblock");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));
@@ -2752,6 +2767,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
     const double pl_q_amb = ctx.knobs.pl_q_amb;
     const double pl_var_floor = ctx.knobs.pl_var_floor;
+    const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // F1: mirror the injector's per-LOS B_eff in the fold-variance readback
+    const bool   pl_local_block = ctx.knobs.pl_local_block; // F3: stash the harvest cross-covariance block beside the per-column carry
     const bool   zwd_on = ctx.knobs.zwd_on;
     const bool   iono_on = ctx.knobs.iono_on;             // QUEUE 8b
     const double iono_q = ctx.knobs.iono_q;
@@ -2896,11 +2913,18 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         // Card 1: harvest one carried column's PURE conditional variance (N_rr⁻¹)_cc
         // + its regression on the free shared border (identity-keyed, sparsified).
         // Returns {cond_var, coupling}; cond_var ≤ 0 on failure → the caller skips.
-        auto harvestCoupling = [&](std::size_t est_idx, Eigen::Index col)
+        // F3 (network.phase_leveling_local_block): `cross_cols` / `cross` — when
+        // non-null, the SAME per-column solve is also read at the station's other
+        // carried columns and handed back as (N_rr⁻¹)_{c c_j} (a gather, no second
+        // solve); null on every other call (byte-identical).
+        auto harvestCoupling = [&](std::size_t est_idx, Eigen::Index col,
+                                   const std::vector<Eigen::Index>* cross_cols,
+                                   Eigen::VectorXd* cross)
                 -> std::pair<double, std::vector<CoupledShared>> {
             NetworkNormalEquations::StationRegression reg;
-            try { reg = est.stationRegression(est_idx, col); }
+            try { reg = est.stationRegression(est_idx, col, /*carry_aware=*/false, cross_cols); }
             catch (...) { return {-1.0, {}}; }
+            if (cross) *cross = std::move(reg.cross);
             std::vector<CoupledShared> cpl;
             const Eigen::Index ns = reg.row.size();
             if (ns > 0) {
@@ -2999,6 +3023,21 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (!carry_cpl_cond)   // Card 1 uses the PURE conditional (N_rr⁻¹)_cc, not this MARGINAL
                     vard = est.conditionalLocalVarianceDiag(est_idx, cols, plan.shared_datum);
             } catch (...) { continue; }
+            // F3 (network.phase_leveling_local_block): this station-epoch's harvest
+            // CROSS-covariance block C(a,b) = (N_rr⁻¹)_{c_a c_b} over R.pl_amb's columns
+            // — one shared_ptr per station-epoch, filled row by row below from each
+            // column's own n_c solve (the gather stationRegression already pays for),
+            // and pointed at by every entry stashed at THIS harvest.  Re-stashed WHOLE
+            // every epoch from the posterior, so Σ never drifts across epochs; the
+            // previous block is released as its last referencing entry is replaced.
+            // Null when the knob is off ⇒ nothing below allocates or writes.
+            std::shared_ptr<PlHarvestBlock> hblk;
+            if (pl_local_block && carry_cpl_cond) {
+                hblk = std::make_shared<PlHarvestBlock>();
+                const Eigen::Index nb = static_cast<Eigen::Index>(cols.size());
+                hblk->C = Eigen::MatrixXd::Constant(nb, nb, std::numeric_limits<double>::quiet_NaN());
+                hblk->stamp_s = pl_now_s;
+            }
             for (size_t a = 0; a < R.pl_amb.size(); ++a) {
                 const PlAmb& pa = R.pl_amb[a];
                 if (pa.col < 0 || pa.col >= xr.size()) continue;
@@ -3006,8 +3045,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (!std::isfinite(value_abs)) continue;
                 double var;
                 std::vector<CoupledShared> coupling;
+                Eigen::VectorXd cross;   // F3: (N_rr⁻¹)_{c_a c_b} over the station's carried columns (empty OFF)
                 if (carry_cpl_cond) {
-                    auto hc = harvestCoupling(est_idx, pa.col);
+                    auto hc = harvestCoupling(est_idx, pa.col, hblk ? &cols : nullptr,
+                                              hblk ? &cross : nullptr);
                     var = hc.first; coupling = std::move(hc.second);
                     // Card 1/1d observability: a failed harvest drops the carry entirely;
                     // an EMPTY regression silently degrades the row to a plain diagonal.
@@ -3073,6 +3114,28 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             const double fold_var_hand =
                                 [&] {
                                     double v = oc->second.var + pl_q_amb * std::max(0.0, gapv);
+                                    // F1 mirror: the injector multiplied THIS column's
+                                    // variance by its LOS B_eff (before the floor).  Keyed
+                                    // by the injected (sat, signal), so a sibling band the
+                                    // inject skipped (freed / stale / reseed) is NOT scaled
+                                    // here either — the mirror reports the weight the fold
+                                    // ACTUALLY used, or the hand value when it did not fold.
+                                    // F3 (phase_leveling_local_block): a column carried in
+                                    // a whitened block folded with the block's JOINT Σ,
+                                    // whose diagonal for this column is exactly this hand
+                                    // value (+ the Card-1d / departed terms neither path
+                                    // mirrors) — so the mirror reports Σ's DIAGONAL, the
+                                    // column's MARGINAL prior variance, unscaled.  That is
+                                    // a decision, not an omission: the census standardizes
+                                    // e by the marginal prior σ the column actually carried,
+                                    // and pl_los_beff is filled ONLY on the F1 route (under
+                                    // F3, a factorization fallback), so the ×B_eff below is
+                                    // automatically absent for block columns.
+                                    if (pl_los_scale) {
+                                        const auto bf = R.pl_los_beff.find({pa.sat, pa.signal});
+                                        if (bf != R.pl_los_beff.end() && bf->second > 1)
+                                            v *= static_cast<double>(bf->second);
+                                    }
                                     if (pl_var_floor > 0.0) v = std::max(v, pl_var_floor);
                                     return v;
                                 }();
@@ -3172,6 +3235,16 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
                 local_carry[std::make_tuple(static_cast<int>(i), pa.sat, pa.signal)] =
                     LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
+                if (hblk && cross.size() == hblk->C.rows()) {
+                    // F3: row a of the station's harvest block = this column's n_c read
+                    // at every carried column (its own entry equals `var`); the entry
+                    // points at the block + its index so the next inject can pair it
+                    // with any sibling stashed at THIS harvest — and with nothing else.
+                    hblk->C.row(static_cast<Eigen::Index>(a)) = cross.transpose();
+                    auto& ent = local_carry[std::make_tuple(static_cast<int>(i), pa.sat, pa.signal)];
+                    ent.blk = hblk;
+                    ent.blk_idx = static_cast<int>(a);
+                }
                 // One-shot IF-phase refloat: the fresh post-slip value is now
                 // stashed, so drop any pending-reseed mark and let the next epoch
                 // resume normal carry on the new arc.  Cleared only after a
@@ -3532,7 +3605,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 double var;
                 std::vector<CoupledShared> coupling;
                 if (carry_cpl_cond) {
-                    auto hc = harvestCoupling(est_idx, R.pl_zwd.col);
+                    auto hc = harvestCoupling(est_idx, R.pl_zwd.col, nullptr, nullptr);   // ZWD: no F3 block
                     var = hc.first; coupling = std::move(hc.second);
                 } else {
                     var = (vard.size() > 0) ? vard(0) : -1.0;

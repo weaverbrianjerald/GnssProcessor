@@ -20,6 +20,7 @@
 #include <fmt/format.h>                  // Card-1d dump gauge-sum formatting
 
 #include <cmath>
+#include <limits>            // F3 buildLocalBlock: NaN sentinel for a missing harvest pair
 #include <map>
 #include <memory>
 #include <numeric>
@@ -230,8 +231,19 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
         craw.push_back(std::move(raw));
         return;
     }
-    // Card 1 scalar path (unchanged — byte-identical when carry_cpl_joint off).
+    // Card 1 scalar path (unchanged — byte-identical when carry_cpl_joint off).  The
+    // loop body lives in scalarRowIngredients so the F3 block path shares it
+    // verbatim; the operations and their order are the pre-F3 inline sequence.
     PendCplRow row;
+    double sigma2 = 0.0;
+    if (!scalarRowIngredients(col, x_lin_val, lc, var_eff, gap, row, sigma2)) return;
+    row.w = 1.0 / sigma2;
+    crows.push_back(std::move(row));
+}
+
+bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val,
+                                              const LocalCarry& lc, double var_eff,
+                                              double gap, PendCplRow& row, double& sigma2) {
     row.local_col = col;
     double rhs = lc.value_abs - x_lin_val;   // (r̂_prev − r_lin)
     double dep_var = 0.0;                    // Σ_departed M_rj²·P_prev,jj
@@ -300,11 +312,116 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
             rhs += e.m_shr * e.s_prev;
         }
     }
-    const double sigma2 = var_eff + dep_var + tu_var;
-    if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return;  // never poison the row
+    sigma2 = var_eff + dep_var + tu_var;
+    if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return false;  // never poison the row
     row.y = rhs;
-    row.w = 1.0 / sigma2;
-    crows.push_back(std::move(row));
+    return true;
+}
+
+bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols) {
+    // F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount).
+    //
+    // (1) Per column, the SCALAR-path ingredients — exactly the row buildCplRow
+    //     would have emitted for it: +1/local, the present shared terms (Card-1d
+    //     κ-shrunk, Card-1f gauge-restored), the RHS, and
+    //     σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt.  The departed
+    //     terms stay per-row (Σ's diagonal) — the scalar-path treatment; the joint
+    //     departed marginalization is Card 1b's and is mutually exclusive with this
+    //     block (the caller's predicate).  A column the scalar screen refuses is
+    //     dropped from the block and counted, never poisoned.
+    struct Ing { PendCplRow row; double sigma2{0.0}; const LocalBlockCol* c{nullptr}; };
+    std::vector<Ing> ing;
+    ing.reserve(cols.size());
+    for (const LocalBlockCol& c : cols) {
+        Ing g;
+        g.c = &c;
+        if (!scalarRowIngredients(c.col, c.x_lin, *c.lc, c.var_eff, c.gap, g.row, g.sigma2)) {
+            ++R.pl_blk_col_refused;
+            continue;
+        }
+        ing.push_back(std::move(g));
+    }
+    const Eigen::Index n = static_cast<Eigen::Index>(ing.size());
+    if (n == 0) return true;   // nothing to emit — the per-column route would emit nothing either
+    // (2) Σ: the diagonal from (1); the off-diagonals the HARVESTED conditional
+    //     cross covariances (N_rr⁻¹)_{c_i c_j}, valid only when BOTH entries were
+    //     stashed at the same harvest (pointer-equal PlHarvestBlock — the same
+    //     posterior, the same epoch).  Otherwise the pair is ZEROED and counted:
+    //     that makes Σ block-diagonal by harvest stamp, each block a principal
+    //     sub-matrix of one posterior, so PD is preserved by construction rather
+    //     than by luck.  The M2 v2 VCE factor α² is already in var_eff (the
+    //     diagonal), so the cross term scales by √(α_i²·α_j²) — a congruence with a
+    //     diagonal matrix, PD-preserving; the var floor was applied to the diagonal
+    //     only (raising a diagonal is PD-preserving too).  The q·gap term is on the
+    //     diagonal only (a per-column random walk has no cross term).
+    PlBlockRaw blk;
+    blk.rows.reserve(static_cast<std::size_t>(n));
+    blk.Sigma = Eigen::MatrixXd::Zero(n, n);
+    for (Eigen::Index i = 0; i < n; ++i) {
+        const Ing& g = ing[static_cast<std::size_t>(i)];
+        CplRowRaw r;
+        r.local_col = g.row.local_col;
+        r.shared    = g.row.shared;
+        r.rhs       = g.row.y;
+        r.var_eff   = g.sigma2;
+        blk.rows.push_back(std::move(r));
+        blk.Sigma(i, i) = g.sigma2;
+    }
+    for (Eigen::Index i = 0; i < n; ++i) {
+        const LocalBlockCol& ci = *ing[static_cast<std::size_t>(i)].c;
+        const LocalCarry& li = *ci.lc;
+        for (Eigen::Index j = i + 1; j < n; ++j) {
+            const LocalBlockCol& cj = *ing[static_cast<std::size_t>(j)].c;
+            const LocalCarry& lj = *cj.lc;
+            double v = std::numeric_limits<double>::quiet_NaN();
+            if (li.blk && li.blk == lj.blk && li.blk_idx >= 0 && lj.blk_idx >= 0
+                && li.blk_idx < li.blk->C.rows() && lj.blk_idx < li.blk->C.cols()) {
+                v = li.blk->C(li.blk_idx, lj.blk_idx);          // n_{c_i}(c_j)
+                if (!std::isfinite(v)) v = li.blk->C(lj.blk_idx, li.blk_idx);   // n_{c_j}(c_i) — the transpose read
+            }
+            if (!std::isfinite(v)) { ++R.pl_blk_pair_missing; continue; }
+            if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);
+            blk.Sigma(i, j) = v;
+            blk.Sigma(j, i) = v;
+        }
+    }
+    // (3) Whiten: Σ = LLᵀ (ridge retry inside), rows L⁻¹·[I | M | y] at unit weight.
+    //     A non-SPD factor after the retry buffers NOTHING — the caller emits the
+    //     per-column rows instead and counts the fallback (invariant #4).
+    Eigen::MatrixXd Hr, Hs;
+    Eigen::VectorXd z;
+    std::vector<Eigen::Index> kept;
+    if (!whitenLocalBlock(blk, /*skip=*/{}, R.A_r.cols(), R.A_s.cols(), Hr, Hs, z, kept)
+        || static_cast<Eigen::Index>(kept.size()) != n)
+        return false;
+    // (4) Buffer the n whitened rows as multi-local PendCplRow entries.  L⁻¹ is lower
+    //     triangular, so row k has local entries on block columns 0..k (all pushed —
+    //     the diagonal 1/L_kk > 0 guarantees a non-empty `local`, which is what
+    //     distinguishes a block row from a scalar +1 row at append).  local_col names
+    //     the row's PRIMARY column (block column k) for cpl_row_local_cols.
+    blk.row0 = static_cast<Eigen::Index>(crows.size());
+    for (Eigen::Index k = 0; k < n; ++k) {
+        PendCplRow row;
+        row.local_col = blk.rows[static_cast<std::size_t>(k)].local_col;
+        row.local.reserve(static_cast<std::size_t>(k + 1));
+        for (Eigen::Index j = 0; j <= k; ++j) {
+            const Eigen::Index c = blk.rows[static_cast<std::size_t>(j)].local_col;
+            row.local.emplace_back(c, Hr(k, c));
+        }
+        for (Eigen::Index s = 0; s < Hs.cols(); ++s) {
+            const double v = Hs(k, s);
+            if (v != 0.0) row.shared.emplace_back(s, v);
+        }
+        row.y = z(k);
+        row.w = 1.0;                                     // unit-information whitened row
+        crows.push_back(std::move(row));
+    }
+    R.pl_blk = std::move(blk);
+    ++R.pl_blk_blocks;
+    R.pl_blk_rows += n;
+    ++R.pl_blk_hist[n < 10 ? 0 : n < 25 ? 1 : n < 50 ? 2 : n < 75 ? 3 : 4];
+    if (n > R.pl_blk_max_dim) R.pl_blk_max_dim = n;
+    return true;
 }
 
 void CouplingRowBuilder::appendCouplingRows() {
@@ -378,7 +495,11 @@ void CouplingRowBuilder::appendCouplingRows() {
             R.cpl_row_local_cols.resize(static_cast<size_t>(add));
             for (Eigen::Index k = 0; k < add; ++k) {
                 const PendCplRow& row = crows[static_cast<size_t>(k)];
-                R.A_r(m0 + k, row.local_col) = 1.0;
+                if (row.local.empty())
+                    R.A_r(m0 + k, row.local_col) = 1.0;
+                else   // F3 whitened block row: one row of L⁻¹ over the block's local columns
+                    for (const auto& lcoef : row.local)
+                        R.A_r(m0 + k, lcoef.first) = lcoef.second;
                 for (const auto& sc : row.shared)
                     R.A_s(m0 + k, sc.first) = sc.second;
                 R.w(m0 + k) = row.w;

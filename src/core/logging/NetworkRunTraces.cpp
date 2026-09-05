@@ -1260,6 +1260,8 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
     const double pl_q_amb = knobs.pl_q_amb;
     const double pl_max_gap_s = knobs.pl_max_gap_s;
     const double pl_var_floor = knobs.pl_var_floor;
+    const bool   pl_los_scale = knobs.pl_los_scale;   // F1: per-LOS B_eff scale at inject
+    const bool   pl_local_block = knobs.pl_local_block; // F3: station-wide whitened local block at inject
     const double pb_var_floor = knobs.pb_var_floor;
     const double cb_var_floor = knobs.cb_var_floor;
     const double zwd_q = knobs.zwd_q;
@@ -1480,6 +1482,8 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"phase_leveling_warmup_epochs\":" << pl_warmup << ','
                << fmt::format("\"phase_leveling_max_gap_s\":{},", pl_max_gap_s)
                << fmt::format("\"phase_leveling_var_floor_m2\":{},", pl_var_floor)
+               << "\"phase_leveling_los_scale\":" << (pl_los_scale ? "true" : "false") << ','
+               << "\"phase_leveling_local_block\":" << (pl_local_block ? "true" : "false") << ','
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
                // M2 (LS-VCE) monitor + v2 apply.  The apply knobs are in the manifest

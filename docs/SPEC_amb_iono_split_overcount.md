@@ -1,0 +1,745 @@
+# SPEC — the AMBIGUITY / IONO SPLIT OVER-COUNT
+### (why the network producer never reaches per-band integers on the QUIET simulated bed: B independent per-band carry rows re-assert ONE iono-direction datum B times per epoch — p_k = B·p_{k−1} + p_code, K_eff = (B+1)/(B−1) = 2)
+
+2026-09-04.  Companions: `docs/SPEC_synthetic_minimum_network.md` (§13.8 the 1 h rule for the
+integer question; §18 the stability campaign whose flagship `runs/camp60wu_quiet24h_sticky` is
+this bed), `docs/SPEC_card1_coupling_carry.md` (Card 1 — the local↔SHARED half of the same
+defect, fixed), `docs/SPEC_slip_relevel_walk.md` / `docs/SPEC_lane_slip_response.md` (the
+response edges §5 must honour), `docs/SPEC_redundancy_census.md` §D1 (the field's
+`K_eff(30) ≈ 2`, which §3 closes in form), `docs/CONFIG_promotion_ledger.md` Tier 3 (the two
+rows this card adds).
+
+---
+
+## §0 READ THIS FIRST — status, and the verdict
+
+| section | status |
+|---|---|
+| §1–§4 | **live** — round-1 measurements on the 24 h bed, five independent lenses (theory, carry code-read, event-conditioning, time-structure, truth-iono), 2026-09-04 |
+| §2.7 / §3.1 | **round-2 amendments** (2026-09-04, two adversarial lenses): B_fit = 3.00 ± 0.03; three round-1 datapoints RETRACTED; puzzles (a),(b) CLOSED; the station-common channel MEASURED (ZWD + birth-frame inheritance) |
+| §5 fix ladder | live — F1 `network.phase_leveling_los_scale` BUILT + **VALIDATED sim 3 h** (`runs/nonint_los3h`, §6.7); F2 RETIRED (adds nothing over F1 along the iono direction); **F3 `network.phase_leveling_local_block` = the next build** (spec §5.1; BUILD in progress round 3) |
+| **§6.3 predictions** | **PRE-REGISTERED** — written 2026-09-04 BEFORE any round-2 arm result was read (`runs/nonint_*/ambint.txt` deliberately not opened).  The prediction rows are never edited |
+| **§6.7 results** | **round-2 amendment** — every §6.3 row graded CONFIRMED / FALSIFIED / MIXED against `runs/nonint_*`; three point predictions were WRONG for one reason (§6.7.2) |
+| §7 open | live — re-cut in round 2 |
+
+**Provenance.**  Round-1 scripts live under the session scratchpad
+`C:/Users/weaverb/AppData/Local/Temp/claude/C--GnssProcessor/4d31ca6a-c7d9-4b89-895c-055dcfa292a7/scratchpad/{theory,lens_memory,evt,lensT,iono,record}/`
+— **session-scoped**; the numbers below are the record, the scripts are the recipe.  Every
+input is a repo artifact (§1 traces, §8 commands), so any figure can be re-derived.
+
+**The question the user asked: why does simulated data — zero true slips, known truth,
+24 h — never give integers?**
+
+**The answer (DERIVED §3, MEASURED §2).**  The per-band DD ambiguity error IS the DD of the
+per-LOS slant-iono error (identity slope 1.00–1.03, r² ≥ 0.97 settled): the ambiguity/iono
+SPLIT of every LOS is frozen at a code-level value within ~3 epochs of the arc's first warm
+inject and never averages down.  The phase-leveling `LocalCarry` stashes ONE scalar variance
+per (station, sat, signal) column — the Card-1 pure conditional on the SHARED border,
+MARGINAL over the LOS's own free iono and its sibling bands — and injects every column as its
+OWN row.  Because the B band ambiguities of one LOS are affine in the epoch's single free
+iono I (λ_b N_b = c_b + μ_b I), the B rows re-assert the same iono-direction datum B times per
+epoch: p_k = B·p_{k−1} + p_code instead of p_{k−1} + p_code.  The formal σ collapses
+geometrically to the phase floor (0.009 cyc DD at 24 h, 3–5× below the CRLB of a perfect
+batch), the VALUE freezes at a (1−1/B)(1/B)^j-weighted average of the first ~3 warm epochs'
+code solutions, K_eff = (B+1)/(B−1) = 2 (measured 2.9), and med|e| sits at ≈ 0.48·σ₁ ≈ 2.9 cyc
+L1C for the arc's life.  Card 1 fixed local↔shared; this is the local↔LOCAL instance of the
+standing "independence-assuming diagonal carry = the lock-in" defect.  Not the iono model
+(no constraint exists on this posture), not the responses (virgin chords carry the full
+error), not the grader, not multipath.  Exact along the iono direction in ~15 LOC (F1, §5).
+
+**Round-2 addendum (2026-09-04, §6.7).**  Two adversarial lenses CONFIRMED the mechanism with
+**B_fit = 3.00 ± 0.03** on 9,507 mid-run newborn chords (§2.7).  F1 took the settled L1C error
+**2.72 → 1.28 cyc**, WL round0 36.5 → 87.4 %, EWL → 100 %, |e|/σ 83 → 1.9 and T4 attribution
+erases 288 → 0, and landed in §6.4's pre-registered **"intermediate"** row: the remainder is the
+STATION-COMMON over-count (§3.1) — half iono-direction, half geometric in the DD identity —
+which F3 (§5.1) is built to remove.  The var-floor point predictions (0.27 / 0.134 cyc) were
+WRONG: both floor arms got WORSE in total (3.46 / 3.64) because a floor releases the
+geometric/station-common share the stiff carry had pinned (§6.7.2).  OFF byte-identity of the
+F1 build is MEASURED (sha256-identical products across the two exes).
+
+---
+
+## §1 The bed and the fresh 24 h grade
+
+| item | value |
+|---|---|
+| producer run | `runs/camp60wu_quiet24h_sticky` — 2879 epochs @ 30 s, tow 259230 → 345570, 60 sta, GPS L1C/L2W/L5Q + Galileo L1C/L5Q/L7Q, FLOAT only (`ambiguity_resolution.mode 0`), zero true slips |
+| fixture | `runs/simnet60_quiet_wu93_24h` (per-station `truth_ambiguities.csv`, `truth_atmo.csv` with `I_L1_m` per LOS-epoch, `truth_bias.csv`) |
+| config | `config/test_suite/_camp60wu_quiet24h_sticky.json`: `phase_leveling` ON (`q_amb` 0, `var_floor_m2` 0, `warmup_epochs` 6 RUN-level), `carry_invariant` OFF, `carry_conditional_coupling` ON (Card 1), `shared_carry_full_cov` ON, `carry_coupling_time_update` ON (1d), `carry_iono` OFF, `estimate_iono_sh` OFF, `ionosphere_weighting.enable` false ⇒ free per-LOS slant iono, NO iono constraint of any kind; `code_bias_gf_datum` ON; `relevel_free_epoch` ON; `raim_attribution` ON; `if_phase_td` ON; `mw_detect` ON; `sticky_pivot` ON |
+| traces | `logs/network_dd_fractional.csv` (7,851,033 rows), `network_ionosphere.csv` (`iono_total_m = x_lin + x_r`, L1 m, delay-positive — gradable on this posture), `network_events.csv`, `network_if_slip.csv`, `network_raim_attrib.csv`, `main_log.log` (run-end counters :4645-4675) |
+| grader | `scripts/simnet_amb_integer.py` — e = dd_cyc − DD_true (full cycles); lanes e_WL = e_L1C − e_L2W, e_EWL = e_L2W − e_L5Q |
+
+**Fresh 24 h grade** (MEASURED, `scripts/simnet_amb_integer.py`; lens re-grades agree to 0.02 cyc):
+
+| band / lane | med\|e\| cyc | round(e)=0 | last 25 % med\|e\| | ratio to L1C |
+|---|---|---|---|---|
+| L1C | 2.87 | 10.0 % | 2.67 | 1 |
+| L2W | 3.58 | 7–10 % | 3.43 | 1.25–1.28 |
+| L5Q | 3.79 | 7–10 % | 3.53 | 1.32 |
+| L7Q | 3.77 | 7–10 % | 3.40 | 1.31 |
+| WL(1,2) GPS | 0.763 | 35.3 % | 35.8 % | — |
+| EWL(2,5) GPS | 0.152 | 95.1 % | — | — |
+| EWL(5,7) Gal | 0.096 | 99.9 % | — | — |
+
+The band ratio 1 : 1.25–1.28 : 1.32 is the IONO direction (1, 1.2833, 1.3391), not geometry
+(1, 0.779, 0.747).  Flat over 24 h; hourly med|e| L1C oscillates 2.27–3.74 with no decay.
+
+---
+
+## §2 The five measurements
+
+### 2.1 The DD error IS the per-LOS ambiguity/iono split (MEASURED)
+
+`scratchpad/iono/dd_identity.py` (120 s stride, 653k L1C DD rows) and
+`scratchpad/lensT/pass4_iono_split.py` (full rate, GPS triples):
+
+| test | value |
+|---|---|
+| e_b regressed on μ_b·DD(δI)/λ_b, 24 h slope / r² | L1C 1.120 / 0.875 (hour 0 = 2.14, ignition); L2W 1.075 / 0.943; L5Q 1.067 / 0.951; L7Q 1.067 / 0.946 |
+| same, settled hours ≥ 5 | slope 0.99–1.03, r² 0.97–0.999 (every band) |
+| residual e − μ·DD(δI)/λ (unit slope) | med −0.006, med\|.\| 0.113 cyc, p90 1.08; round0 70 % |
+| iono coefficient b·λ₁ vs DD(I_est − I_true) | corr +0.9989, LS slope +0.9992, med\|diff\| 0.0121 m (settled 0.0099) |
+| LS split of (e_L1C, e_L2W, e_L5Q) on geo / iono | med\|geo\| 0.100, med\|iono\| 2.740, **off-plane residual 0.0123 cyc = 2.3 mm** (phase residuals are mm) |
+| per-epoch two-way decomposition of δI = I_est − I_true (`decompose2.py`, 690k LOS-epochs) | network-common +1.490 m (increment 0.013 m/epoch, a frozen frame); station×system rms 1.545 m; satellite rms 1.763 m; **per-LOS residual r rms 0.398 m, med 0.240, p90 0.634** — DD(δI) med\|.\| 0.525 m = 2.76 cyc L1 |
+| r rms by hour | 0.618 (h0), 0.479, 0.448, 0.417, then flat 0.354–0.390 for h4–h23 — no decline over 20 h |
+| r vs TEC / elevation / seeds | corr(r, I_true) 0.0095; med\|r\| 0.260/0.239/0.236/0.230 m for 10–20/20–30/30–50/>50°; corr with Klobuchar 0.011, with x_lin seed 0.09–0.14, with previous arc of the same (sta,sat) 0.02 |
+
+The frame terms (station×system, satellite) are large but DD-invariant; the DD ambiguity
+error is entirely the per-LOS residual r.
+
+### 2.2 Time structure: a level frozen at birth, not noise, not a walk (MEASURED)
+
+`scratchpad/lensT/pass2_timestruct.py`, `pass3_birth_steps.py` (L1C unless noted):
+
+| statistic | value |
+|---|---|
+| between-chord share of variance (runs ≥ 200 ep) | 0.883 / 0.909 / 0.931 / 0.953 (L1C/L2W/L5Q/L7Q) |
+| corr(e_0, e_100) step-free runs ≥ 101 (n=2863) | +0.9926; med\|e_0 − e_100\| 0.198, \|e_3 − e_100\| 0.082, \|e_10 − e_100\| 0.061 cyc; med\|e_100\| 3.078 |
+| within-run SD (step-free) | 0.045 cyc; lag-1 autocorr 0.946; D(1)/(√2·SD) = 0.006–0.009 (white would be 1) |
+| structure function D(τ) = med\|e(t+τ) − e(t)\| | τ = 1/10/100/500: 0.0013 / 0.0078 / 0.0415 / 0.0962 cyc (slope +0.76: a 2 cm drift at 4 h, not a walk) |
+| \|e\| vs chord age, bins 1–10/10–30/30–100/100–300/300–1000 | 3.127 / 3.006 / 2.853 / 2.757 / 2.652 → log-log slope **−0.033**; iono coefficient b slope −0.030 |
+| GEO coefficient a, same bins | 0.289 / 0.177 / 0.115 / 0.061 / 0.052 → slope **−0.357** (geometry/clock/tropo information DOES accumulate through the border) |
+| per-leg level r by age (`iono/level_seed_test2.py`, 332 arcs) — ⚠ **RETRACTED in round 2 (§2.7)**: tail-dominated rms on a 6-station subset; all-station mid-run profile is rms 0.586 → 0.434 m, corr(r0, settled) 0.902 | rms 1.49 / 1.12 / 0.90 / 0.68 / 0.59 / 0.54 / 0.44 m at ages 0–6, then 0.42–0.44 to age 50; corr(r(q), settled) 0.58 (age 0) → 0.94 (age 6) → 0.99 (age 20) |
+| lanes | EWL within-run SD 0.026, WL 0.034 cyc; EWL projection −0.056·b (2.74·0.056 = 0.153 ≈ med\|e_EWL\| 0.152), WL −0.283·b (0.78 ≈ 0.763) — the lanes inherit the same scalar |
+
+### 2.3 Responses are exonerated (MEASURED)
+
+`scratchpad/evt/{build_events,age_grade,paired_delta,ifslip_count,mw_steps,t4_cluster}.py`:
+
+| class | count / 24 h | paired same-quadruple \|Δe\| across the event | age imprint |
+|---|---|---|---|
+| **VIRGIN chords** (no in-arc IFTD/MW/T4/ANCHOR on any of 4 legs) | 97,942 L1C rows (15 %) | — | **L1C 2.72 / L2W 3.36 / L5Q 3.52 / L7Q 3.69 cyc; WL 38.9 %, EWL 94.8 %** — the population value |
+| IF-TD `refsat_reset` (legacy per-station reference gate, `IfPhaseSlipDetector.cpp:617-620`, `ref_gate_.floor_frac` 0.5·λ_IF ≈ 5.35 cm, Card-R gate POSTURE OFF) | 2482 = 1917 acting + 565 diagnostic; pool arm **0 / 2,754,791**; 1.33 per station-hour at the highest-elevation reference (el p50 57°) | touched L1C 0.06 / 0.04 / 0.03 cyc at 0 / +30 / +150 s; L2W 0.02; untouched third band 0.00–0.01 | none (2.887 vs never 2.891) |
+| MW warm refloat | 44 (of 186 detections) | 0.02–0.03 | none |
+| **T4 attribution ARC** (all-band erase, `NetworkRaim.cpp:632` criterion, erase :785-825) | 447 events → 1341 carries; 377 in h0–7, 68 in the last 5 epochs | **3.23 / 3.74 / 3.90 / 3.76 cyc at +30 s** on arcs already at 6.30 / 7.22 / 7.42 / 6.72 before; step 68 % iono-direction | 2.0–2.6 % of rows, 3.3–3.8 % of Σ\|e\|; excess over virgin ≈ 1–2 % of mass |
+| PB-gauge anchor handovers (1035; 1(d) erased 93) | ~43/h | — | none (2.77 / 2.72 / 2.88 at 0–5 / 5–20 / 60–200 ep) |
+
+Acting responses run at 0.105 per LOS-hour; the only level-changing class (T4) at 0.019.
+**≥ 96 % of rows sit on chords whose level no response ever changed.**  The IF-TD refloat is
+band-scoped (`NetworkSlipQc.cpp:909-918` refloats only sig1/sig2), so the third band + the
+Card-1 regressors pin the LOS and the SPEC_slip_relevel_walk "one epoch of code" cost does
+not actuate here (it WOULD on a dual-frequency lineage — open, §7).
+
+### 2.4 The formal σ collapses geometrically while the value is frozen (MEASURED)
+
+`scratchpad/lens_memory/ddfrac_sigma_vs_age.py` (median `dd_sigma_cyc`, L1C, by run epoch k;
+med|e| truth-joined at the same epochs):
+
+| k | 6 (last cold) | **7 (first warm inject)** | 8 | 9 | 10 | 20 | 60 | 120 | 1080 | 2870 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dd_sigma_cyc | 5.694 | **2.817 (ratio 0.495)** | 1.734 | 1.139 | 0.803 | 0.214 | 0.074 | 0.036 | 0.012 | 0.009 |
+| med\|e\| | 8.8 | 8.0 | 7.6 | 7.3 | 7.2 | 6.6 | 3.40 | 2.52 | 3.14 | 3.16 |
+| ratio σ_k/σ_{k−1} | — | 0.495 | 0.616 | 0.657 | 0.705 | | | | | |
+
+Per-arc (`lensT/pass3`, runs ≥ 31, n=15,816 per age): σ at ages 0..10 = 3.414, 1.703, 0.946,
+0.543, 0.319, 0.195, 0.127, 0.092, 0.073, 0.061, 0.053 cyc (×0.55/epoch for 5 epochs) while
+med|e| = 3.59, 3.30, 3.21, 3.17, 3.15, 3.15, …, 3.03 — flat.  Calibrated only at age 0
+(ratio 1.27); settled **|e|/σ = 158 / 202 / 204 / 205** (p90 632–941); |e| < 3σ on 3 % of rows.
+A code-only 1/√K recursion would give 1.08 cyc at K = 10; observed 0.053.  The first-inject
+ratio 0.495 is the cleanest single number: a correct recursion gives 1/√2 = 0.707.
+⚠ **Round 2 (§2.7):** the ALL-ROWS k=6→7 figure is a population-mix coincidence of the
+ignition cohort (0.39–0.84 by elevation); the clean statistic is the mid-run newborn ladder
+0.499/0.555/0.574 (B_fit 3.00), which says the same thing for the right reason.
+
+### 2.5 CRLB vs measured: K_eff ≈ 2–3 epochs (MEASURED / DERIVED)
+
+`scratchpad/theory/crlb_amb.py` — per-epoch Schur elimination of the free I, 10 → 60 → 10°
+pass, σ_P = 0.3 / sin el, σ_φ = 0.003 / sin el (the producer's and the sim's IDENTICAL
+elevation laws, `StochasticModel.cpp:124-139`, `src/sim/main.cpp:2428-2430`):
+
+| K epochs | 1 | 3 | 10 | 30 | 100 | 300 | 720 | 2000 |
+|---|---|---|---|---|---|---|---|---|
+| ZD σ(N1) cyc, white code | 3.45 | 1.95 | 0.99 | 0.48 | 0.164 | 0.055 | 0.033 | 0.019 |
+| DD (4 legs) = 2× | 6.90 | 3.90 | 1.98 | 0.96 | 0.33 | 0.11 | 0.066 | 0.038 |
+
+Gauss-Markov multipath (τ 300 s, 2–3 cm) adds ≤ +9 % at K=1, ≤ +6 % settled (MC 200).  Lanes
+ZD K=1 → 720: WL 0.984 → 0.009, EWL 0.216 → 0.002 cyc.  Settled correct-estimator
+expectation (uniform ages 1..720, 4 legs): **L1C med|e| 0.120 cyc, p90 0.58, round0 88 %;
+WL 0.034 / 98.3 %; EWL 0.007 / 100 %**.
+
+Measured: the record is ONE zero-mean Gaussian per LOS-pair (σ from med|e| 4.26 cyc vs from
+round0 3.98 — 7 % apart; it predicts the lanes: WL 0.814 / 32 % vs measured 0.763 / 35 %,
+EWL 0.158 / 97 % vs 0.152 / 95 %).  Against the run's OWN epoch-1 formal DD σ (7.203 cyc,
+n=1008, no carry yet): **K_eff = (7.2/4.26)² = 2.9** (3.3 by the round0 route).  The formal
+σ at 12–24 h (0.013 cyc) is 3–5× BELOW the CRLB of a perfect 24 h batch (0.039–0.066).
+⚠ **Round 2 (§2.7):** 2.9 used the cold epoch-1 DD σ as σ₁; the mid-run per-leg settled/birth
+ratio 0.69 gives **K_eff = 2.1** = (B+1)/(B−1) at B = 3.
+
+### 2.6 The truth-iono channel: the LOS's own code never reaches the level (MEASURED)
+
+`scratchpad/iono/level_seed_test3.py` (proxy g = single-epoch GF-code iono error from
+L1 − C1 + 2·I_true and MW; proxies validated: GF-phase vs truth-I increments slope 0.6466 vs
+expected 0.6469, resid 1.45 cm; C1 noise white, lag-1 of differences −0.495):
+
+| age q | 1 | 2 | 3–6 | 7 | ≥ 8 | settled |
+|---|---|---|---|---|---|---|
+| gain slope(Δr, Δg) | +0.014 | +0.005 | +0.003 | +0.0009 | ≤ +0.0003 | −0.00003 |
+
+A free single-epoch LOS would give 1; a correct running mean 1/q.  corr(r(0), g(0)) = 0.10;
+no lag structure (|corr| ≤ 0.12, lags −3..+3).
+⚠ **RETRACTED as a datapoint in round 2 (§2.7):** g was the GEOMETRY-FREE combination
+(e1−e2)/(1−μ₂), whose expected correlation with the absolute-code solution is 0.17 even under
+the mechanism.  With the absolute-code proxy: corr(r(0), g(0)) = +0.62, increment gain
+0.145/0.044/0.014/0.007 at ages 1..4 (geometric 1/3 = 1/B decay), corr(r(20), mean g(0..19))
+= +0.06.  The CONCLUSION (no running-mean accumulation) stands on the replacement instrument.  30 s increments: δI 0.048 m rms vs truth
+0.040; I_est increments track truth with slope 1.0014, corr 0.95 — the TEMPORAL motion is
+phase-tracked exactly; only the LEVEL is wrong.  `filter.process_noise.ionosphere_q` is
+INERT on the network path (parsed `GnssConfigLoad.cpp:1684`, consumed only by
+`KalmanFilter::predict`; zero call sites in `ApplicationNetwork*.cpp` / `Network*.cpp`).
+
+### 2.7 Round-2 amendments to §2 (adversarial verification, 2026-09-04)
+
+Two independent lenses attacked claim (6) on the 24 h bed: theory/code
+(`scratchpad/adv/{sigma_ratio_head,age_profile_all,recursion_exact,zwd_freeze}.py`) and data
+(`scratchpad/verify/{build_los,bfit,puzzles,refute,rebirth_bands}.py`, 2,762,871 joined
+LOS-epochs, all 60 stations at 30 s).  Session-scoped scripts; the numbers are the record.
+
+| item | round-1 reading | round-2 measurement | verdict |
+|---|---|---|---|
+| **B, the count** | inferred from one ratio | **B_fit = 3.00 ± 0.03**: model-free implied B_a = (p_a−1)/p_{a−1} at ages 1/2/3 = 3.02/2.99/2.95 (L1C, n = 9,507 mid-run single-newborn chords), 3.02/3.01/2.98 (L2W), 3.02/3.00/2.97 (L5Q, L7Q); GPS = Galileo ± 0.01; **2.95–3.01 again on 656 T4-erase re-births at 10–90°**.  Exact numerical B=3 recursion with the run's own weights reproduces the 10-epoch ladder 0.499/0.555/0.574/0.588/0.610/0.655/0.721/0.788/0.837/0.872 (model 0.497/0.554/0.572/0.584/0.601/0.636/0.695/0.760/0.814/0.852, incl. the phase-noise saturation); B=2 (0.573/0.651/0.681) and B=1 (0.698/0.807/0.856) excluded by the first three steps.  Per-chord (event-free, n=1794): 0.527 pooled, p25–p75 0.409–0.716 | **CONFIRMED** |
+| value weights (1−1/B)(1/B)^j | derived | measured c_a = 0.224/0.059/0.026/0.010 (model 0.250/0.077/0.025/0.008); settled/birth 0.69 (model 0.707); corr(r0, r100) 0.854 | CONFIRMED |
+| §2.4 "0.495 at k=6→7" | the cleanest number | a population-mix coincidence: the IGNITION cohort (all four legs born cold) reads 0.394 / 0.559 / 0.841 by min-leg elevation 10–20 / 20–40 / 40–90° (implied B 5.5 / 2.2 / 0.41 — Card-1d tu_var-inflated cold rows at 1.0–7.5 m²), and its VALUE does not step at k = 6..9 (1−slope −0.10/−0.05/0.00); only mid-run births carry the clean 0.499 | RE-ATTRIBUTED — never quote an ignition-epoch ratio as a B test |
+| §2.5 K_eff 2.9 | (7.2/4.26)² | σ₁ = 7.2 is the cold epoch-1 DD σ; per-leg settled/birth 0.69 on mid-run arcs ⇒ **K_eff 2.1** | AMENDED |
+| §2.2 per-leg r by age 1.49 → 0.44 m, corr 0.58 | lens 5, 332 arcs, 6 stations | tail-dominated rms (r(0) rms 1.49 vs med 0.65 there); all 60 stations, 4302 mid-run arcs ≥ 91 ep: rms 0.586 → 0.490 → 0.464 → 0.456 → settled 0.434 m, corr(r0, settled) 0.902, ratio 0.74 (model 0.94 / 0.71); ignition arcs (829) 3.22 → 0.84 (k5) → **1.24 (k9)** → 0.37 (k60) — a cold-border leak, the other population | **RETRACTED — puzzle (a) CLOSED**: age 0 IS the LOS's single-epoch absolute-code solve at its birth elevation — med\|r0\| 0.382/0.184/0.137/0.122 m at 10–12/20–30/30–45/45–90° vs 0.440/0.181/0.129/0.091 expected; x_r non-zero at age 0 (med 2.87 m), birth = first truth epoch ≥ 10° for 4105/4115 births |
+| §2.6 code gain ≤ 1.4 %, corr(r0, g0) 0.10 | GF-combination proxy | expected corr 0.17 under the mechanism (see the §2.6 marker); absolute-code proxy gives 0.62 / gain 0.145/0.044/0.014 | RETRACTED as a datapoint; conclusion stands |
+| lens-4 "elevation-FLAT settled level 0.47 m at 10° births vs 0.37 at 45–90°" (`lensT/pass7`) | evidence against a birth-code origin | `pass7_leg_birth_elev.py:30-31` demeaned by STATION only, so the GPS-vs-Galileo rx-DCB difference (station×system term, rms 1.5 m) leaked into r and flattened it; under station×system + satellite demeaning the settled level is elevation-dependent 0.267 → 0.107–0.119 m = 0.7× the birth-epoch single-epoch code σ | **RETRACTED** |
+| §3 (e) "formal σ saturates at the phase floor" | floor ~0.01 cyc | NO floor: geometric collapse until λ²v ~ σ_φ² (k ≈ 60–120), then σ ∝ σ_φ/(λ√k) with no fixed point for B ≥ 2 (stationarity pV+B = 1 has no positive root); the 24 h value 0.009 cyc is a ~1e-6 m²/epoch Card-1d inflation (P_prev inferred, not traced — §7) | AMENDED: regime change, not a floor |
+| puzzle (b) birth-spread dependence | open | birth-frame INHERITANCE — §3.1 | **CLOSED** |
+| gap re-births at el ≥ 20° (429 arcs) | — | first re-inject ratio 0.734/0.745/0.734/0.721 on all four bands (the B=1 signature 0.707), then 0.562 (B=3), all bands present from age 0, no event logged: ONE effective prior row acts at the first re-inject | NEW — §7 |
+| band-scoped responses | level-inert (§2.3) | refsat refloats: touched L1C/L2W σ ×1.64/×1.71 at the free epoch (the phase class 0.03 cyc), untouched L5Q ×0.994, \|Δe\| 0.063/0.025 cyc — the third band's carried row pins the LOS iono at phase precision; Galileo touched L5Q only ×1.007 (asymmetry open) | CONFIRMED |
+
+The code lens's T4 hypothesis (§6.3 secondary) now has an ON-path instrument: T4 attribution
+erases 288 (`nonint_base3h`) → **0 under F1** and 0 under both var floors (§6.7) — the
+coupling row's own standardized residual was the flag (§7 item 4).
+
+---
+
+## §3 The mechanism (DERIVED; READ citations from the code lens)
+
+**Model, one LOS (station r, sat s), B bands, phase exact** (σ_φ 3 mm ≪ code):
+
+    L_b = ρ' − μ_b·I + λ_b·N_b        P_b = ρ' + μ_b·I        b = 1..B,  μ_b = (f₁/f_b)²
+
+Given the shared border (ρ' incl. clocks and biases), the B phase rows fix the B−1 LANE
+directions exactly and leave ONE free direction per LOS — the iono:
+
+    λ_b·N_b = (L_b − ρ') + μ_b·I  ≡  c_b + μ_b·I                                    (3.1)
+
+The only information on I — hence on the ambiguity LEVEL — is the code:
+p_code = Σ_b μ_b²/σ_P,b² per epoch (≈ 77·sin²el m⁻² in I-metres for σ_P = 0.3/sin el, GPS;
+Σμ² = 1 + 1.6469² + 1.7933² = 6.93).
+
+**What the carry stores and injects (READ):**
+
+| step | code | what it does |
+|---|---|---|
+| harvest | `NetworkRunContext.cpp:2899-2939` `harvestCoupling` → `est.stationRegression(est_idx, col)` per SINGLE column; `:3005` `value_abs = pa.x_lin + xr(col)`; `:3010-3016` `var = hc.first`; `:3173-3174` `LocalCarry{value_abs, var, pl_now_s, coupling}` | one scalar var per (station, sat, signal) + a regression on the SHARED border only |
+| cond_var | `NetworkNormalEquations.cpp:1552-1574`: `n_c = Nrr_ldlt.solve(e_c)`, `cond_var = n_c(local_col)` (:1571) = (N_rr⁻¹)_cc | the PURE conditional on the border, **MARGINAL over every other local column** (I, sibling bands, rx clock, ZWD, rx-DCB) |
+| struct | `include/filter/NetworkRunTypes.hpp:342-347` | `double var` — no local-local cross term exists to store |
+| inject | `ApplicationNetworkAssembly.cpp:2884-2924`: no carry → free (:2884); gap > 120 s skip (:2890); `var_eff = var + pl_q_amb·gap` (:2909), floored by `pl_var_floor` when > 0 (:2910), × vce factor; `cb.buildCplRow(col, x_lin, carry, var_eff, gap)` (:2922) | one row per column, weight 1/var_eff |
+| row | `NetworkCoupling.cpp:381-388`: `R.A_r(m0+k, local_col) = 1.0`, `A_s` shared entries only; `row.w = 1/σ²` (:298-299) | **exactly ONE local entry; no sibling-band or iono entry** |
+| warm gate | `ApplicationNetwork.cpp:1450-1452` `carry_warm = pl_on && n_emitted ≥ pl_warmup` (6) | RUN-level, not per arc (§7) |
+| loader | `GnssConfigLoadNetwork.cpp:2963-2973` (`phase_leveling`, `q_amb`, `warmup_epochs` 6, `max_gap_s` 120, `var_floor_m2` 0) | no cap on the carried weight on this posture |
+
+**The over-count.**  If the column's uncertainty is iono-dominated, var_b = μ_b²·v_I with v_I
+the posterior variance of I.  Row b, weight 1/var_b, +1 on λ_b N_b, projected on I by (3.1)
+has precision μ_b²/var_b = 1/v_I.  The B rows are INDEPENDENT in the normals, so they SUM:
+
+    p_I,k = B·p_I,k−1 + p_code            (correct recursion: p_I,k = p_I,k−1 + p_code)   (3.2)
+
+**Consequences, each measured:**
+
+| consequence | derived | measured |
+|---|---|---|
+| (a) first inject k=6→7: p₇ = (B+1)·p₆ (cold epochs carry nothing, p₆ = p_code) ⇒ σ ratio 1/√(B+1) | 0.500 (B=3); 0.577 (B=2); correct 0.707 | **0.495** (§2.4) |
+| (b) asymptotic per-epoch ratio 1/√B | 0.577 | 0.616 / 0.657 / 0.705 at k=8/9/10 (slower: p_code adds; Card-1d κ·q·Δt inflation on present border terms adds a floor) |
+| (c) value: x_k = (B·p_{k−1}·x_{k−1} + p_code·x_code,k)/p_k with p_k ≈ B^k p₀ ⇒ weight of epoch j's code solution w_j = (1−1/B)(1/B)^j = 0.667, 0.222, 0.074, 0.025, … ⇒ **frozen after ~3 warm epochs** | K_eff = 1/Σw_j² = **(B+1)/(B−1) = 2** (B=3), 3 (B=2), ∞ (B=1) | K_eff 2.9 (§2.5); level fixed by age 3–6 (§2.2); code gain ≤ 1.4 % (§2.6) |
+| (d) settled error | med\|e\| = 0.674·σ₁/√K_eff = 0.48·σ₁ = 2.7–3.1 cyc for σ₁ 5.7–6.5 (cold DD) | 2.87 L1C |
+| (e) formal σ saturates only at the phase floor: var_b collapses until the lane (phase-limited) variance dominates, σ_φ ≈ 3 mm ≈ 0.016 cyc ZD — ⚠ AMENDED round 2 (§2.7): not a floor but a regime change to σ ∝ σ_φ/(λ√k); the 24 h value is Card-1d inflation | DD floor ~0.01 cyc | 0.009–0.013 cyc at 12–24 h; per-leg ~1.5e-6 m² |
+| (f) direction: the lanes are re-fixed by phase every epoch, the geo direction accumulates through the densely-carried border; ONLY the iono direction is over-counted | error → (1, 1.283, 1.339) | ratios 1 : 1.25–1.28 : 1.32; geo slope −0.36 vs iono −0.03 |
+
+**Closed forms behind two standing findings.**  (i) The field's D1 (`docs/SPEC_redundancy_census.md`
+§D1 / memory `project_why_non_integer_rootcause` D1, 2026-07-30): fitted σ² = σ₁²/(1+β(K−1)),
+β = 0.0348, **K_eff(30) = 2.01** on a triple-frequency per-band field lineage — that is
+(B+1)/(B−1) at B = 3, not a 30-epoch coincidence.  (ii) The S-system/DIA assessment
+(memory `project_network_ssystem_dia_assessment`, deviation 1): "diagonal-only,
+independence-assuming carry — information accumulates ~n against a time-correlated error
+floor, formal variance → 0 — the mechanism behind the ep42 and G15 lock-ins".  Card 1
+addressed the local↔SHARED cross-covariance; this card names the surviving local↔LOCAL
+instance inside one LOS.
+
+**The station-common residue (DERIVED, not DD-graded).**  rx clock, ZWD and the
+per-constellation rx-DCB are shared by ALL n_sat·B ≈ 75 ambiguity columns of a station; the
+same argument over-counts those directions ≈ 75× per epoch.  DD-invisible (cancels in the
+grade) but consumer-visible: it is the natural owner of §2.1's 1.545 m station×system
+level term and of the rx-CB "rolling common-mode memory" the level-budget card measured.
+F1 does not touch it (§5).  ⚠ **"DD-invisible" was WRONG on this bed as it stands — §3.1.**
+
+### 3.1 The station-common channel (round 2, MEASURED) — the residue F1 leaves
+
+Same argument, station scale (theory skeptic, DERIVED): along a common direction d with joint
+posterior C = diag(v_ind) + var_common·ddᵀ the correct prior precision is
+(Σ1/v_ind)/(1 + var_common·Σ1/v_ind) → 1/var_common; the diagonal carry asserts
+75/(v_ind + var_common), F1 25/(v_ind + var_common) — below 1 at the first inject (v_ind ~0.3 m²
+≫ var_common ~0.004) and rising to ~14× by k ≈ 100 as v_ind → 0.3/k.  So under F1 the rx
+clock (1,…,1), ZWD (mf_i) and rx-DCB_GF directions still freeze about an hour in.  The
+station-common IONO shift is NOT in this class (it is the sum of per-LOS iono directions and
+C5Q pins it: residual μ₅·δI = 1.79·δI per row) — F1 fixes that one exactly.
+
+**(a) Birth-frame inheritance — DD-VISIBLE** (data skeptic, `verify/puzzles.py` (b),
+`refute.py` §C).  The station×system frame term s(t) drifts: rms 0.032/0.067/0.150/0.221/
+0.293/0.367 m at τ = 1/10/100/300/600/1200 epochs (satellite term 0.020 … 0.786, tails =
+re-anchoring; common 0.007–0.086).  Inside a settled arc the ABSOLUTE per-leg level δI is frozen
+— med|Δ δI| 0.47/0.68/1.65/3.6/5.8 cm at τ = 1/10/100/300/600 — while the demeaned r moves WITH
+the frame (corr(Δr, −Δframe) +0.52 … +0.67).  Each leg therefore freezes the station-common
+per-epoch error AT ITS BIRTH, and a DD of legs born at different epochs sees the difference.
+Direct test on 56,991 settled L1C rows: e·λ₁ regressed on the signed 4-leg sum of the frame at
+each leg's birth — **station term slope +1.18** (Huber +1.24), satellite +0.62, common +0.80;
+rms(P_s) grows with birth spread 0.147/0.209/0.308/0.368/0.505 m for spreads
+[30,120)/[120,300)/[300,600)/[600,1200)/[1200,3000) epochs while med|y| grows
+0.368/0.526/0.558/0.609/0.595 m (slope(y ~ P_s) 3.0 at the shortest spread → 0.93: the 25-leg
+consensus s(t) UNDERSTATES what a newborn inherits, so the share is a lower bound).  Only ~60 %
+of the frozen level's regression weight is the LOS's own code; the rest is this inherited
+station-common error.  Puzzle (b) closed.
+
+**(b) The ZWD freeze** (theory skeptic `adv/zwd_freeze.py` on the 24 h bed; this card's
+`record/zwd_freeze_arms.py` on the 3 h arms — `network_zwd.csv` vs `truth_tropo.csv`, 60 sta):
+
+| arm | formal std_m: k=6 → k=7 → settled | rms err at k=7..10 | hour-2 rms / med\|err\| / std_m | last 25 %: per-station-mean rms / within-sta std | D(τ=200) med |
+|---|---|---|---|---|---|
+| 24 h bed | 0.48 → 0.159 → 0.0053 | 2.87–3.05 m | 0.40 / — / 0.0055; 0.008–0.011 by h11–23 | 0.038 / 0.013 (h2–24) | 0.017 (τ 2000) |
+| base3h | 0.484 → 0.159 → 0.0054 | 2.87–3.05 | 0.401 / 0.027 / 0.0055 | 0.411 / 0.0084 (between-share 0.98) | 0.037 |
+| **los3h (F1)** | 0.484 → 0.210 → **0.050** | 2.88–3.05 | **0.202 / 0.127 / 0.051** | 0.183 / 0.052 (0.92) | 0.100 |
+| vf005 | 0.484 → 0.159 → 0.054 | 2.87–3.05 | 0.455 / 0.289 / 0.054 | 0.436 / 0.069 (0.96) | 0.176 |
+| ploff (1 h) | 0.484 → 0.482 → 0.475 | 2.90–3.11 | h1: 0.516 / 0.347 / 0.475 | — | — |
+
+Reading.  Under the diagonal carry the ZWD formal σ collapses 90× in 24 epochs while the actual
+error balloons to 3 m at the first injects (the coupling rows drag ~75 frozen locals against a
+still-converging border) and then relaxes over hours BY GEOMETRY — the mapping function
+re-observes ZWD from phase — not by the carry: a correct estimator with 75 code rows/epoch would
+sit at 0.05 m by k = 100 (measured 0.38) and 0.02 by k = 480 (0.13).  At 3 h base3h shows a
+MEDIAN ZWD error of 2.7 cm but an rms of 0.40–0.47 m (per-station-mean share 0.98 — a few
+stations frozen far off; |err|/σ 4.9 at the median).  This slow relaxation is round-1 lens-4's
+decaying DD "geo" component (0.29 → 0.05 cyc) = DD(mf)·δZWD — the station-common channel is
+DD-visible by a SECOND route.  Under F1 the ZWD is 2.5–3× better in rms (0.163 vs 0.474 at
+k = 359; per-station-mean rms 0.18 vs 0.41) and its σ 10× more honest (0.050 m), but the residue
+is real: med|err| 0.10–0.14 m against σ 0.05 (|err|/σ 2.1–2.8 settled) and D(200) ≈ the level
+— no longer frozen, still over-weighted 2–3× in σ.  The var floor LOOSENS the ZWD prior to the
+same 0.054 m but leaves the error at 0.26–0.30 m median — it removes the pin without adding the
+information (§6.7.2).  From the DD side the same residue is the los3h identity split (§6.7):
+iono-direction part 0.64 cyc, non-iono 0.77 cyc.  Both halves are F3's target (§5.1).
+
+---
+
+## §4 Falsified — do not retry (each with the closing measurement)
+
+| candidate | closed by |
+|---|---|
+| multipath (GM τ 300 s, 2–3 cm code / 2 mm phase) | ≤ 0.02 cyc settled, 0.3 at K=1 (MC) — 100× short (§2.5) |
+| receiver PCO/PCV per-signal mismatch (incl. E5b→G02 fallback) | sim and producer call the same `Antenna::getAntennaCorrection` (`EphemerisProvider.cpp:344-372`) — cancels by construction |
+| grader λ / DD sign / truth join | trace λ = truth λ to 1e-6 (0.190294/0.244210/0.254828/0.248349); sign matches `NetworkDdFrac.cpp:196-200`; lane/round0 Gaussian consistency 6–15 % (the grader's own frac check is a tautology — the consistency IS the validation) |
+| stale x_lin | never written back, but graded/carried quantity is x_lin + x_r (exact); an x_lin shift is a solve no-op |
+| iono seeds — 0, Klobuchar, x_lin GF seed | \|corr\| < 0.1 at birth and settled (§2.1) |
+| rx/sat GF code-bias wander sampled at the legs' births | corr −0.02 (rx, SD 0.18 m), sat GF pinned at 0.005 m |
+| `ionosphere_q` / any temporal iono constraint | INERT on the network path (no `getProcessNoiseMatrix` call site); increments phase-tracked (§2.6) |
+| responses as the cause (IF-TD, MW, T4, anchors) | virgin chords 2.72 vs 2.87; paired \|Δe\| ≤ 0.06 except T4 (2 % of rows) (§2.3) |
+| IF-TD POOL false positives | 0 / 2,754,791; every flag is the legacy reference gate |
+| MW catching integer WL jumps | \|ΔMW\| p50 0.65 cyc, fractional part p50 0.35 vs local scatter 0.59 — noise |
+| white / random-walk / 1/√K time structure | lag-1 0.946; D(1) 0.0013 cyc; age slope −0.033 (§2.2) |
+| TEC- or elevation-proportional scale error | corr(r, I_true) 0.0095; rms flat across quintiles; el dependence +18 % |
+| field-N regime (SPEC_synthetic §15.1 "field-N grades worse") | moot here: EWL 95.1 % over 24 h equals the legacy-regime 94.1 % |
+| "code information does not reach the ambiguities" | it reaches them every epoch (the first inject halves σ); it is OVER-COUNTED, not blocked |
+| a fixed / floored / q-inflated carry variance ("M2") | `pl_var_floor` 0, `pl_q_amb` 0, vce factor 1; the stash is the honest single-epoch conditional (1.0–7.5 m² at TOW 259440) and then collapses |
+| departed-column marginalization / Card 1b joint whitening | departed terms 0.018 % of 1.43e9 |
+| `NetworkRelevel.cpp` as an ambiguity re-level | it is the brdc_rts clock re-base, INERT on SP3 |
+
+---
+
+## §5 The fix ladder, with the invariant #1 / #7 edges
+
+| rung | what | exact along | cost | edges |
+|---|---|---|---|---|
+| **F1** `network.phase_leveling_los_scale` (**BUILT + VALIDATED sim 3 h**, default OFF) | at inject, multiply each carried ambiguity row's `var_eff` by **B_eff = the number of ambiguity columns of the SAME (station, sat) injected with a carry THIS epoch** | the iono direction: Σ_b μ_b²/(B·var_b) = 1/v_I ⇒ p_k = p_{k−1} + p_code | as built (2026-09-04, pre-F3 line numbers): `ApplicationNetworkAssembly.cpp:2846-2998` (pl_finish_var / pl_emit_row lambdas, `PlPend` pre-pass, per-station B_eff map, scale ×B_eff after var + q·gap and BEFORE the floor and the VCE factor), loader `GnssConfigLoadNetwork.cpp:2976-2977` (+ ARMED info :8160, INERT warn :8181 when phase_leveling off / carry_invariant on), `NetworkKnobs.pl_los_scale` (`NetworkRunContext.hpp:94`), counters `n_pl_los_scale_rows` / `n_pl_los_scale_hist[4]` (`NetworkRunContext.hpp:2128-2134`), run-end line `NetworkTeardown.cpp:1885-1902`, armed-only fingerprint tag `pl:losscale` (`NetworkRunContext.cpp:637-642`), harvest mirror ×B_eff (:3091-3093), manifest key (`NetworkRunTraces.cpp:1484`).  Lane priors B× looser, but the phase rows re-fix the lanes every epoch at σ_φ — measured: WL round0 36.5 → 87.4 %, EWL → 100 % (§6.7) | **B_eff counts INJECTED rows only**: a band skipped at this epoch (`relevel_free_epoch` latch, pending-reseed, gap > `max_gap_s`, non-finite x_lin, no carry yet) must NOT count.  B_eff = 1 ⇒ factor 1 ⇒ byte-identical for single-band arcs and OFF (MEASURED: sha256-identical `products.txt` across the pre-F1 and F1 exes, §6.7).  T4 erase / 1(d) erase remove every band (arc solves free, B_eff = 0).  **Residue F1 leaves and every report must name:** the station-common ~n_sat× over-count (rx clock / ZWD / rx-DCB) — ⚠ NOT DD-invisible: DD-visible through birth-frame inheritance and DD(mf)·δZWD (§3.1); measured on los3h as 0.64 cyc iono-direction + 0.77 cyc non-iono residual |
+| ~~**F2** per-LOS block~~ **RETIRED 2026-09-04** | stash the B×B conditional block; inject a whitened B-row block | the whole LOS: iono AND lanes | — | Adds nothing over F1 along the iono direction (F1 is already exact there — r2_4 simulation: F1 tracks the full-covariance recursion to 1 % in value, K_eff 48.8 vs 47.3 at k=59) and the lanes are re-fixed by phase each epoch (measured WL 87 % / EWL 100 % under F1).  The residue is STATION-common, which a per-LOS block cannot see.  Do not build for that purpose; the F1 `pl_pend` grouping is the seam if a per-LOS block is ever wanted for a lane reason |
+| **F3** `network.phase_leveling_local_block` — station-wide jointly-whitened local block (**the next build; spec §5.1**) | joint local block over all carried ambiguity columns of a station (~75×75), Card 1b's joint whitening (`NetworkCoupling.cpp:144-231`, `carry_coupling_joint_whiten`) extended from departed-shared to local-local | all local↔local incl. the station-common residue — exact for every local-local direction given the border | O(75³) per station-epoch — trivial vs the Card-1 border solve; the cross terms are FREE at harvest (the `n_c = N_rr⁻¹e_c` solve already computed per column is its whole column) | same marginalize-never-condition rule per departed column; the block is the marginal over the epoch's free nuisances, i.e. the correct posterior; the remaining approximation is Card 1's border regression |
+
+### 5.1 F3 specification — `network.phase_leveling_local_block` (bool, default false)
+
+Carry each station's carried ambiguity set as ONE jointly-whitened local block instead of
+independent rows.
+
+- **Harvest** (`harvestCoupling`, `NetworkRunContext.cpp:2899-2934`): for the station's carried
+  ambiguity columns c_1..c_n, stash the conditional covariance sub-block
+  Σ = [(N_rr⁻¹)_{c_i c_j}] (conditional on the shared border) — the `n_c = N_rr⁻¹e_c` solve at
+  `NetworkNormalEquations.cpp:1565-1571` already yields the whole column, so stash n_c(c_j) for
+  the other carried columns j at zero extra solve cost — plus, per column, the existing
+  shared-border regression row (`out.row = N_sr·n_c`).  Re-stash the FULL block every epoch
+  from the posterior (no cross-epoch drift of Σ).
+- **Inject** (next epoch, at the `do_amb_carry` site): take the sub-block over the columns that
+  are injectable THIS epoch under the UNCHANGED admission predicates; departed / skipped /
+  freed / pinned columns are **MARGINALIZED** (drop their rows and columns from Σ before
+  whitening — never condition).  Factor Σ_inj = L·Lᵀ (LDLᵀ / Cholesky with a PD guard; on
+  failure fall back to the F1 diagonal rows and COUNT it).  Emit n_inj rows
+  L⁻¹·[(value_abs − x_lin) + Σ_j M_j ŝ_prev,j] with A_r = L⁻¹ (dense over the block's local
+  columns) and A_s = L⁻¹ · (per-column regressor rows), unit weight.
+- **Edges (invariants #1 / #7)**: a band-scoped free-epoch latch or pending reseed on one column
+  marginalizes that column; T4 erase / gap prune remove it; a column's RETURN is a re-coupling
+  edge (its fresh single-epoch value re-enters the block at its harvested variance) — count it.
+- **Counters (invariant #4)**: blocks whitened, rows emitted, columns marginalized at inject,
+  factorization fallbacks, block-dimension histogram; run-end line printed only when armed.
+- **Precedence**: supersedes F1 when both are armed — apply the F1 ×B_eff scaling only in the
+  fallback path.  Fingerprinted (touches the carried prior): fresh convergence only.
+- **Cost**: n ≈ 75 per station → 75×75 block per station-epoch.
+- **Validation arm** (staged): `config/test_suite/_nonint_losblock3h.json` →
+  `runs/nonint_losblock3h` (3 h, same bed) against `nonint_base3h` / `nonint_los3h`; OFF twin
+  `runs/nonint_base3h_f3exe` (sha256 of `products.txt` vs `nonint_base3h`).  Pre-registered
+  expectation from §6.7: the los3h non-iono residual 0.77 cyc and iono part 0.64 cyc both fall
+  toward the 3 h CRLB reference (0.134 cyc / 87 %); the ZWD |err|/σ 2.1–2.8 → ~1; the
+  birth-spread slope of the DD level → flat; L1C first-inject ratio 0.588 → ≈ 0.707.
+
+**Invariant #1 (stiff time-linked quantity needs a wired response).**  Unchanged by F1: the
+existing responses (IF-TD refloat, MW, T4 erase, gap prune, 1(d) reref) all act BEFORE the
+inject site, so a skipped band simply drops out of B_eff.  Under F2/F3 every response must
+be re-pointed at the block (erase = drop the whole block; band refloat = marginalize the
+band) before an ON arm.
+
+**Invariant #4 counters (F1, run-end line "Network (leveling LOS-scale F1)"):** rows scaled;
+B_eff histogram (1 / 2 / 3 / 4+); OFF ⇒ line not printed and byte-identical products.
+**MEASURED on `runs/nonint_los3h` (`main_log.log:801`):** `950064 row(s) scaled over 317175
+LOS group(s); B_eff histogram 1:487 2:0 3:316688 4+:0` — 99.85 % of LOS groups at B_eff = 3,
+487 single-band groups (a band skipped or not yet carried), no 2s: the scaling reached the
+rows.  Not built: the sibling-skipped counter and mean/max factor (the histogram carries the
+same information on a triple bed).
+
+**Invariant #7 (event at both edges):** a band's return after a skip is a RE-COUPLING edge —
+under F1 its row re-enters with its own harvested var (fresh single-epoch value if it solved
+free) and the sibling factors change from B−1 to B that epoch; log the B_eff transition per
+LOS with `trace_events` so the edge is countable.
+
+---
+
+## §6 PRE-REGISTERED predictions (written 2026-09-04 BEFORE any round-2 result was read)
+
+**Arms** (Release, same successor exe, sequential; result `runs/<arm>/ambint.txt`):
+`nonint_base3h` (control, 3 h prefix), `nonint_vf005_3h` (`network.phase_leveling_var_floor_m2`
+0.05 m²), `nonint_vf001_3h` (0.01 m²), `nonint_ploff_1h` (`phase_leveling` OFF, 1 h),
+`nonint_dual_1h` (GPS C1C/L1C/C2W/L2W + Gal C1C/L1C/C5Q/L5Q, `frequency_mode` dual, 1 h),
+and the F1 arm to follow, `nonint_los3h` (`network.phase_leveling_los_scale` ON, 3 h).
+
+### 6.1 The window expectation must come from the CRLB curve, not the 24 h mixture
+
+`scratchpad/record/predict_windows.py` (uniform steady-state arc ages 1..A over the §2.5 DD
+curve, log-log interpolated; 4e5 draws):
+
+| window | ages | L1C med\|e\| | round0 | WL round0 | EWL round0 |
+|---|---|---|---|---|---|
+| 1 h | 1..120 | 0.373 | 61 % | 96 % | 99.7 % |
+| **3 h** | 1..360 | **0.134** | **87 %** | 98.5 % | 99.9 % |
+| 24 h (check vs agent1's 0.120 / 88 %) | 1..720 | 0.079 | 93 % | 99 % | 100 % |
+
+(The 24 h row is optimistic vs agent1's 0.120 because it lacks his elevation-weighted
+age mixture; the 3 h row is the reference for the 3 h arms, the 1 h row for the 1 h arms.
+Full-window grades include the ignition hour — grade the LAST 25 %.)
+
+### 6.2 The var-floor arithmetic (M6 with a cap)
+
+Once the floor binds, every row injects at weight 1/v_f, so the prior on I is stationary,
+Σμ²/v_f, and the recursion becomes an exponential smoother with forgetting
+a = (Σμ²/v_f)/(Σμ²/v_f + p_code):
+
+    K_eff = 1/Σw² = (1+a)/(1−a) = 1 + 2·Σμ²/(v_f·p_code)        τ = 1 + Σμ²/(v_f·p_code)
+
+p_code(I) is bracketed: the DD-visible cold value from the trace's own k=1..6 DD σ
+(7.2 → 5.7 cyc L1C ⇒ v_I = (σ/2·λ₁)² = 0.47 → 0.29 m² ⇒ **2.1–3.4 m⁻²**) and the CRLB at
+30° (19 m⁻²); the column-marginal row weights the code lens dumped (0.13–0.99 m⁻², var
+1.0–7.5 m²) include the DD-invisible station-common share and UNDER-state it.  Point
+estimate p_code ≈ 3 m⁻².
+
+| v_f | p_code m⁻² | K_eff | τ ep | 3 h mixture L1C med\|e\| / round0 | formal DD σ floor 2√(v_f/Σμ²)/λ₁ |
+|---|---|---|---|---|---|
+| 0.05 | 1 / **3** / 10 | 278 / **93** / 29 | 140 / **47** / 15 | 0.138 / **0.274** / 0.691 cyc; 87 / **76** / 38 % | **0.89 cyc** |
+| 0.01 | 1 / **3** / 10 | 1387 / **463** / 140 | 694 / **232** / 70 | 0.134 / **0.134** / 0.201; 87 / **87** / 85 % | **0.40 cyc** |
+
+The floor does NOT bind at k = 7 (harvested var at k = 6 is 0.3–7.5 m² ≫ 0.05), so the
+first-inject ratio is unchanged; it binds from k ≈ 8–10.
+
+### 6.3 The prediction table (L1C unless stated; "settled" = last 25 % of the window)
+
+| arm | med\|e\| settled | round0 | WL / EWL round0 | k=6→7 σ ratio | dd_sigma_cyc at k=10 / settled | \|e\|/σ settled | \|e\| vs age slope |
+|---|---|---|---|---|---|---|---|
+| **base3h** | 2.6–2.9 (24 h trace h1–h2: 2.55 / 2.70); full window 2.9–3.2 (h0 = 3.74) | 8–11 % | 30–40 % / 93–97 % | **0.49–0.51** | 0.80 / 0.02–0.04 | > 50 (trace h1: 73) | −0.05…0 |
+| **vf005_3h** | **0.15–0.7, point 0.27** | 40–87 %, point 76 % | > 95 % / > 99 % | **0.49–0.51 (unchanged)** | ≥ 1.0 / **flat ≈ 0.9** | **0.2–0.8 — the formal σ turns CONSERVATIVE** | −0.4…−0.5 to age ≈ 2τ ≈ 100, then flat |
+| **vf001_3h** | **0.13–0.20, point 0.134** (age-limited: behaves as the correct estimator over 3 h) | 85–87 % | 98 % / 99.9 % | 0.49–0.51 | ≥ 1.0 / **flat ≈ 0.4** | 0.3–0.5 | ≈ −0.5 |
+| **ploff_1h** | **1.2–2.2, point 1.49** (single-epoch at the CURRENT elevation — BETTER than base, whose frozen level carries the 10° birth code) | 15–25 % | 50–60 % / 95–98 % | **≈ 1.0 (no inject; 0.9–1.0 from border convergence)** | ≈ σ₁(el) ≈ 2–3 / same | **0.6–0.8 (calibrated)** | 0 |
+| **dual_1h** | 2.6–3.6, point 3.2 (σ₁ larger by √(6.93/3.71) = 1.37 with two codes; K_eff 3 not 2) | 7–11 % | 25–40 % / n.a. | **0.577 (±0.03)** | per-epoch ratio k=7..10 ≈ 0.71–0.80 | ≫ 10 (collapse persists at 1/√2 per epoch) | −0.05…0 |
+| **los3h (F1)** | **0.13–0.25, point 0.134** | 75–87 % | 95–99 % / ≥ 99.5 % | **0.707 (±0.03)** | ≈ 2–3 (CRLB at 4–5 accumulated epochs) / tracks 0.11–0.33 | **0.7–1.5** | −0.4…−0.5 |
+
+Secondary (from the code lens's T4-pool HYPOTHESIS: `NetworkRaim.cpp:236` admits any row with
+|A_r| > 0.5 as "a phase row of this ambiguity" and the coupling row carries exactly 1.0, so
+T4 ARC flags are the over-confident prior's OWN standardized residual): base3h T4 ARC ≈ 290
+(24 h trace h0–h2: 63 + 122 + 103); **vf005 / vf001 / los3h < 100**; ploff ≈ data-side only,
+≪ 290.  `refsat_reset` unchanged in every arm (≈ 486 in h0 then 55–65/h — it is a detector
+rule, not a level effect).
+
+### 6.4 Falsifiers — what refutes the mechanism
+
+| observation | verdict |
+|---|---|
+| base3h differs from the 24 h trace's first 3 h by > 0.3 cyc med\|e\| or the k=6→7 ratio leaves 0.49–0.51 | the successor build changed the mechanism; every other arm is uninterpretable until re-based |
+| vf005 or vf001 leave settled med\|e\| > 2 cyc WITH dd_sigma_cyc floored at 0.9 / 0.4 | the level is not the injected prior weight — **M6 refuted** |
+| vf arms' dd_sigma_cyc keeps collapsing to 0.02 | the floor knob is inert on this path (check the manifest's `phase_leveling_var_floor_m2` and `Assembly:2910`) — arm uninterpretable, not a refutation |
+| vf005 better than vf001 (non-monotone) | the floor-smoother model is wrong (K_eff is monotone in v_f for any p_code) |
+| ploff shows a FROZEN level (lag-1 > 0.9, D(1) < 0.1 cyc, \|e\|/σ > 10) | the freezer is NOT the leveling carry — look at the S-basis / anchor structure; M6 refuted |
+| ploff med\|e\| WORSE than base (> 3 cyc settled) | the carry adds real information beyond 2 epochs — K_eff derivation wrong |
+| dual first-inject ratio 0.50 or K_eff ≈ 2 (from its own σ₁) | the over-count is B-independent ⇒ station-common, not per-band ⇒ M6 as written refuted |
+| dual ratio 0.577 AND K_eff ≈ 3 | the B-dependence is confirmed — the strongest single confirmation available |
+| los3h med\|e\| > 1.5 cyc or first-inject ratio < 0.6 | the scaling is not reaching the rows (check the B_eff histogram counter — invariant #4) or the mechanism is elsewhere |
+| los3h intermediate (0.5–1.5) with ratio ≈ 0.7 | the station-common residue matters more than DD-invisibility allows, or B_eff mis-counts skipped siblings — F2/F3 owed |
+| within one LOS-pair corr(e_L1C, e_L2W) < 0.95 on any arm still at ~3 cyc | the error is not one iono-direction scalar — M6 refuted (24 h bed: off-plane residual 2.3 mm says > 0.99) |
+
+### 6.5 What the arms cannot decide
+
+A 1 h arm cannot settle the LEVEL channel (SPEC_synthetic §13.8.1 makes 1 h legal for the
+INTEGER question only); `ploff_1h` and `dual_1h` are graded on the first-inject ratio,
+K_eff and time structure, not on absolute med|e|.  None of the arms grades the
+station-common residue (§3) — that needs `network_ionosphere.csv` station-mean δI vs
+`truth_atmo`, consumer-side.
+
+### 6.6 Provenance of the numbers above
+
+CRLB table and mixtures: `scratchpad/theory/crlb_amb.py` (agent1) and
+`scratchpad/record/predict_windows.py` (this card).  Floor arithmetic: §6.2, closed form.
+Trace anchors: §2.4 (k table), §2.2 (hourly med|e|), §2.3 (T4 hourly counts).
+
+### 6.7 Results — AMENDMENT (2026-09-04, round 2; §6.3 untouched)
+
+Arms as run: Release, `config/test_suite/_nonint_*.json`, 60 sta, tow 259230 + 360 epochs
+(3 h) or 121 (1 h).  `nonint_base3h` on the 2026-09-03 exe; `nonint_los3h` and
+`nonint_base3h_f1exe` on the F1 exe (2026-09-04 20:08).  **The GF-datum dual arm
+(`nonint_dual_1h`) could not run**: exit 1, `NetworkSbasis` null-space gate 43–48 near-zero
+eigenvalues against a declared S-basis dimension of 2, every epoch withheld, ZERO solution
+epochs — two bands + `code_bias_gf_datum` is structurally under-specified (the loader interlocks
+it; with triple mode + trimmed signals the run withheld every epoch).  The B = 2 reading comes
+from `nonint_dual_v1_1h` — the **V1 posture** (`estimate_sat_code_bias` false, .BIA applied): a
+DIFFERENT datum, the same carry path; graded on the first-inject ratio only.
+
+#### 6.7.1 The results table (same columns as §6.3; "settled" = last 25 %; L1C unless stated)
+
+| arm | med\|e\| settled | round0 | WL / EWL round0 | k=6→7 σ ratio L1C (L2W / L5Q / L7Q) | dd_sigma_cyc at k=10 / settled | \|e\|/σ settled (p90) | \|e\| vs age slope (runs ≥ 60) | T4 attrib_arc / refsat_reset |
+|---|---|---|---|---|---|---|---|---|
+| **base3h** | **2.720** (full 2.928) | 10.2 % | 36.5 / 97.9 % | **0.494** (0.548 / 0.561 / 0.570) | 0.804 / 0.024 | 83 (275) | −0.24 | 288 / 1170 |
+| **vf005_3h** | **3.457** (WORSE) | 9.0 % | 72.5 / 99.8 % | 0.494 (unchanged) | 1.001 / **0.859** (floor binds from k ≈ 9) | 4.0 (14) | −0.28 | 0 / 1170 |
+| **vf001_3h** | **3.635** (WORSE) | 9.6 % | 52.5 / 96.2 % | 0.494 | 0.812 / **0.424** | 8.3 (30) | −0.32 | 0 / 1170 |
+| **ploff_1h** | **4.445** (1 h; WORSE than base) | 6.8 % | 49.3 / 98.6 % | **0.970** (0.985 / 0.992 / 0.993) | 5.50 / 6.45 | **0.8** (2) | −0.29 | 0 / 1051 |
+| **dual_v1_1h** | 5.205 (1 h, V1 datum; L2W 5.459, L5Q 5.708) | 6.5 % | 31.5 / n.a. | **0.565** (0.604 / 0.636 Gal-L5Q) | 1.43 / 0.022 | 134 (782) | −0.32 | 94 / 1051 |
+| **los3h (F1)** | **1.276** (full 2.374; L2W 1.133, L5Q 1.293, L7Q 1.517) | **23.1 %** | **87.4 / 100.0 %** | **0.588** (0.650 / 0.660 / 0.665) | 1.767 / 0.717 | **1.9** (6) | −0.36 (L2W −0.39, L5Q −0.38) | **0** / 1170 |
+
+DD identity on the settled window (`--iono-join --stride 4`; e_b vs μ_b·DD(δI)/λ_b, L1C):
+
+| arm | med\|pred\| (iono direction) | resid med\|.\| (non-iono) | slope / r² | reading |
+|---|---|---|---|---|
+| base3h | 2.659 | 0.258 | 1.01 / 0.94 | pure iono-direction, the 24 h bed reproduced |
+| vf005_3h | 1.477 | **2.073** | 2.22 / 0.89 | iono part halved, a GEOMETRIC error appeared |
+| vf001_3h | 1.809 | **2.182** | 1.76 / 0.78 | same, non-monotone vs vf005 |
+| ploff_1h | 2.530 | 2.299 | 1.99 / 0.88 | single-epoch in EVERY direction |
+| dual_v1_1h | 3.330 | 2.258 | 1.51 / 0.83 | different datum; not graded on level |
+| **los3h (F1)** | **0.636** | **0.768** | 1.99 / 0.82 | 76 % of the iono-direction error removed; remainder ≈ half iono, half geometric / station-common |
+
+Also measured: MW refloats 143 and PB-gauge anchor handovers 102 identical across every 3 h arm
+(0 / 33 and 93 / 22 on the two 1 h arms); the σ schedule at k ≥ 60 is a population median over
+mixed ages (los3h 0.71–0.74 flat, base3h still collapsing 0.074 → 0.024), so read the k ≤ 20
+ladder for the recursion and |e|/σ for calibration.
+
+#### 6.7.2 Verdict per pre-registered row
+
+- **base3h — CONFIRMED** (7 of 8 columns inside the band; the successor build did not change
+  the mechanism: 24 h trace h1–h2 2.55/2.70 vs 2.72, ratio 0.494 = 0.494, so §6.4 row 1 did
+  not fire).  Age slope −0.24 vs the predicted −0.05…0 is MIXED: on a 3 h window the age bins
+  alias elevation gain — `ploff`, K_eff = 1 by construction, shows the same −0.29 — so the
+  24 h minlen-200 slope −0.033 stays the frozen-level instrument.
+- **vf005 — FALSIFIED as written** (predicted 0.15–0.7, point 0.27; measured 3.46, WORSE than
+  base by 0.74 cyc).  Confirmed sub-rows: σ floor 0.86 (predicted 0.89), first-inject unchanged
+  0.494, T4 < 100 (0).  Failed: |e|/σ 4.0 (predicted 0.2–0.8 — σ still 4× optimistic), WL
+  72.5 % (predicted > 95 %).
+- **vf001 — FALSIFIED** (predicted 0.13–0.20; measured 3.64); σ floor 0.42 (predicted 0.40);
+  NON-MONOTONE vs vf005 (3.64 > 3.46 in total AND 1.81 > 1.48 in the iono part) — §6.4's
+  "vf005 better than vf001" falsifier fired too.
+- **Why the var-floor predictions were wrong — plainly.**  §6.2 projected every row onto the
+  iono direction and treated the floor as a cap on the iono-direction prior weight only.  A
+  floor applies to the WHOLE row: it also releases the row's geometric / station-common share,
+  which the stiff diagonal carry had — wrongly weighted but effectively — PINNED through the
+  densely-carried border (the direction §3(f) said accumulates).  The identity split shows it:
+  the iono part fell 2.66 → 1.48 / 1.81 cyc (the floor DID act on the iono direction, at 5–13×
+  the predicted magnitude) while a NON-iono residual of 2.07 / 2.18 cyc appeared (base 0.26),
+  slope 1.7–2.2, band ratios ≈ equal in cycles — the geometric signature, not (1, 1.28, 1.34).
+  The theory skeptic's own floor model (r2_4: 0.43 / 0.19 cyc, |e|/σ ~0.7) was wrong for the
+  same reason — both derivations omitted the station-common / geo coupling the skeptic himself
+  measured on the ZWD (§3.1), and the ZWD under vf005 shows it directly: prior loosened to
+  0.054 m, error 0.26–0.30 m median (base 0.027).  §6.4's "M6 refuted" reading of the > 2 cyc
+  floor falsifier does NOT follow: that falsifier was written for a one-direction model; the
+  direction-resolved instrument shows the iono direction behaved as the mechanism says and the
+  total got worse for a reason outside that model.  B_fit = 3.00 (§2.7) and the F1 arm stand
+  on their own instruments.  **Verdict on the knob: FALSIFIED as a fix — worse total, releases
+  the geo direction; stays the emergency lock-in guard only.**  Open: why vf005 < vf001 in the
+  iono part (§7).
+- **ploff — MIXED.**  Ratio ≈ 1.0 CONFIRMED (0.970–0.993); |e|/σ 0.8 CONFIRMED (calibrated);
+  WL 49 % and EWL 98.6 % inside; T4 0.  med|e| 4.45 **FALSIFIED** (predicted 1.2–2.2, BETTER
+  than base; the theory skeptic's 4.0–4.7 was right).  §6.4's "ploff WORSE than base ⇒ the carry
+  adds real information beyond 2 epochs ⇒ K_eff derivation wrong" fired as written, and the
+  resolution is again directional: base's K_eff ≈ 2 holds in the IONO direction (data skeptic
+  2.1) while its GEO direction accumulates through the border (§3(f)); a no-carry LOS is
+  single-epoch in EVERY direction — identity split resid 2.30 (geo) + pred 2.53 (iono).  The
+  prediction's "single-epoch at the current elevation" reasoning forgot the second direction.
+- **dual — CONFIRMED on the ratio, level NOT GRADABLE.**  L1C 0.565 (predicted 0.577 ± 0.03;
+  skeptic's per-signal 0.55 ± 0.02), L2W 0.604 (0.61 ± 0.02), Galileo L5Q 0.636; every band
+  shifted +0.056 … +0.075 from triple (predicted +0.077); second step 0.678/0.696/0.705 vs
+  triple 0.616–0.628 (B=2 model 0.655, B=3 0.556 — both arms sit 0.03–0.06 above their model,
+  the excess the theory skeptic left open).  The settled 5.2 cyc is 1 h on a different datum
+  (predicted 2.6–3.6 for the GF posture) — not a level test.  §6.4's strongest row ("0.577 AND
+  K_eff ≈ 3") is half-taken: the ratio, yes; K_eff not measured on this posture.
+- **los3h (F1) — MIXED, in the pre-registered "intermediate" row.**  med|e| 1.276 (predicted
+  0.13–0.25 — FALSIFIED as a point; inside §6.4's 0.5–1.5 band); round0 23.1 % (75–87 %); WL
+  87.4 % (95–99 %, just below), EWL 100 % ✓; first-inject 0.588 L1C / 0.650–0.665 others
+  (predicted 0.707 ± 0.03 — FALSIFIED for L1C, marginal for the rest; the per-band ORDER is the
+  station-common share collapsing at the station-wide rate — the same reason base L1C read
+  0.473 < 0.500 per chord; the skeptic pre-predicted L1C ~0.68 and got 0.588, i.e. the share is
+  larger than his estimate); |e|/σ 1.9 (p90 6) vs 0.7–1.5 — nearly honest, the p90 tail is the
+  frozen residue; age slope −0.36 … −0.40 ✓ (with the ploff caveat: the extra −0.12 over base is
+  the accumulation signal; the k ≤ 20 σ ladder 3.35 → 0.95 is the cleaner one); T4 288 → 0 ✓;
+  run-end counter §5.  §6.4's row "los3h intermediate (0.5–1.5) with ratio ≈ 0.6–0.7 ⇒ the
+  station-common residue matters more than DD-invisibility allows — F2/F3 owed" is the one
+  that fired.  Identity split: iono part 0.64 (from 2.66), non-iono 0.77 (from 0.26).  **Verdict
+  on the knob: VALIDATED on the sim bed as the per-LOS fix; not the whole fix.**
+- **Byte identity (invariant #6) — PASS, MEASURED.**  sha256(`runs/nonint_base3h/products.txt`)
+  = sha256(`runs/nonint_base3h_f1exe/products.txt`) =
+  `1c1b60c7792e5f91ef6e4e2f659883603a9fc0ae8112d3a26f86c3355029229d` (8,601,257 bytes) — the
+  2026-09-03 exe vs the F1 exe with the knob OFF, i.e. cross-build identical; `ambint.txt`
+  identical to the printed digit; manifests differ by the one added key.
+- **Secondary predictions**: T4 base ≈ 290 → 288 ✓; vf / los < 100 → 0 ✓ (stronger than
+  predicted); ploff ≪ 290 → 0 ✓; `refsat_reset` unchanged → 1170 in every 3 h arm and 1051 in
+  both 1 h arms (a detector rule) ✓.
+- **§6.1 window rule**: no arm reaches the 3 h CRLB reference (0.134 cyc / 87 %); los3h's 1.28
+  is 10× above it — the station-common channel, not the window.
+
+#### 6.7.3 Provenance
+
+`scripts/simnet_amb_integer.py <fixture> --run runs/<arm> --sigma-ratio --by-age --by-age-minlen 60
+--iono-join --stride 4 --gal-lanes --check-lambda` (default output byte-identical to the round-1
+grader; λ PASS ≤ 3.7e-7 on every arm; Gaussian consistency 3–16 % per band on the carried arms,
+8–10 % on los3h settled).  Outputs: `scratchpad/arms/flags_grade_r2.txt` (five arms),
+`scratchpad/record/los3h_flags.txt`, `scratchpad/record/sigma_ratio_r3.txt` (head-only
+ladders, all six arms), `scratchpad/record/zwd_freeze_arms.out`; event counts by
+`grep -c <class> runs/<arm>/logs/network_events.csv`.
+
+---
+
+## §7 Open questions (re-cut 2026-09-04, round 2)
+
+1. ~~**The birth value.**~~ **CLOSED (§2.7)** — age 0 IS the free single-epoch absolute-code
+   solve at the birth elevation (med|r0| tracks 0.6745·σ_P/(sin el·√Σμ²) within 15 % in every
+   elevation bin; corr with the absolute-code proxy 0.62); the round-1 1.49 m / corr 0.58 was a
+   tail-dominated 6-station rms.  Residual sub-item: ~30–40 % of the age-0 level not explained
+   by the LOS's own 2-band proxy — station-common per-epoch rx-DCB code noise vs proxy
+   attenuation (a 3-band proxy needs the L1C/L5Q pair rows, absent from `network_slip_raw.csv`).
+2. ~~**Birth-spread dependence.**~~ **CLOSED (§3.1a)** — birth-frame inheritance (station-term
+   slope 1.18).  Its F1 validation criterion (the DD level vs birth-spread slope 0.37 → 0.61 m
+   must go flat) was NOT measured on `nonint_los3h` — owed with the F3 arm.
+3. **L7Q med(e)** — still open.  24 h bed +0.79; `base3h` settled +1.01 (full-window +1.67);
+   `los3h` settled **−0.115** (full −0.239, and every band's full-window median is −0.235 …
+   −0.239 under F1 — a common offset, not E5b-specific).  F1 removed most of it, so the
+   candidate is now a station-common frozen term rather than an E5b model term; re-bin under
+   F3.
+4. **T4 pools the coupling row** (`NetworkRaim.cpp:236`, no `cpl_row_start` exclusion) — now
+   SUPPORTED by an ON-path counter: attribution erases 288 (base3h) → **0** under F1 (the row's
+   standardized residual shrinks by 1/√B_eff) and 0 under both var floors (looser rows).  The
+   fix is still owed: exclude `[cpl_row_start, end)` from the pool or grade the prior residual
+   as its own tier — a coupling-row false alarm re-draws the level, it does not correct it.
+5. **IF-TD reference gate: 1917 false refloats/day** (1170 per 3 h arm, IDENTICAL across
+   base / vf005 / vf001 / los3h; 1051 per 1 h) — a detector rule, level-inert here (§2.7:
+   touched σ ×1.6–1.7 at the phase class, |Δe| ≤ 0.06 cyc).  Card R
+   (`network.cycle_slip.if_phase_td_ref_gate`, POSTURE OFF) — one 2 h arm owed; the
+   SPEC_slip_relevel_walk cost WOULD actuate on a dual-frequency lineage.
+6. **Run-level warmup** (`carry_warm = n_emitted ≥ 6`, `ApplicationNetwork.cpp:1450-1452`) —
+   moot under F1 as predicted; the ignition cohort remains its own regime (item 8).
+7. **What bounds the formal σ at 0.009–0.013 cyc?**  Round 2: the collapse has no fixed point
+   for B ≥ 2; the 24 h value needs an additive ~1.5e-6 m²/epoch, i.e. the Card-1d
+   `tu_var = M²·κ·q·Δt` with P_prev ~1e-6 m² (inferred — `cov_df(j,j)` is not traced).  A
+   one-station dump of (M_clk, κ, tu_var) per row would pin it.
+8. **Ignition cohort.**  First-inject ratio 0.39 / 0.56 / 0.84 by elevation, cold rows at
+   1.0–7.5 m² (3–30× the honest conditional), VALUE not stepping at k = 6..9 yet the error
+   RISING 0.98 → 1.24 m over k = 6..9 before decaying by k = 60: Card-1d tu_var/dep_var
+   inflation against a still-converging border, or the hour-0 refsat_reset storm (486 + 1051)?
+   Repeat the TOW 259440 `cplrow` weight dump for one station over k = 6..15.  Never quote an
+   ignition-epoch ratio as a B test.
+9. **Gap re-births carry ONE effective prior row at the first re-inject** (ratio 0.72–0.75 on
+   all four bands, then B = 3; 429 arcs at el ≥ 20°, no event logged).  Candidate: the
+   detector-pair bands are not harvested / are free-latched for the re-birth epoch after the
+   120 s prune (`NetworkRunContext.cpp:3476-3486`, `NetworkSlipQc` post-gap state) — a second,
+   band-scoped invariant-#7 edge if so.  Not observable from the traces.
+10. **F1's L1C first-inject 0.588 vs 0.707** — the station-common share of the cold DD
+    variance still collapses at the station-wide rate under F1 (§6.7.2); F3's pre-registered
+    reading is ≈ 0.707 on every band.  If it stays below 0.65 under F3 the share is not
+    station-local.
+11. **vf005 < vf001 in the iono part (1.48 vs 1.81 cyc)** — non-monotone in v_f, contrary to
+    any smoother model; not pursued (the knob is falsified as a fix), recorded so nobody
+    re-derives the floor.
+12. **Do `carry_zwd` and the rx-CB carry share the defect when armed** — any two correlated
+    local columns of one station re-injected as independent rows?  F3 is the general fix; the
+    ZWD instrument of §3.1b is the grade.
+13. **SPEC_synthetic §13.7's settled float 8–9.4 cyc (WORSE than single-epoch, K_eff < 1)** vs
+    today's 2.7–3.8: did that arm run without `carry_coupling_time_update` (the SPEC_card1 §3
+    poisoned-row signature)?  Unverified.
+14. **Wire grade of F1** — `scripts/simnet_grade.py` / `simnet_seam_tools.py` on
+    `nonint_los3h` vs `nonint_base3h` not yet in the tree (a separate agent's card); the
+    ledger row says "see wire grade" until it lands.
+
+---
+
+## §8 Reproduction
+
+```powershell
+# grade (quiet fixture: n_at reduces to N_int; last-frac = settled window)
+python scripts/simnet_amb_integer.py runs/simnet60_quiet_wu93_24h --run runs/camp60wu_quiet24h_sticky --last-frac 0.25
+python scripts/simnet_amb_integer.py runs/simnet60_quiet_wu93_24h --run runs/nonint_base3h   --last-frac 0.25   # each round-2 arm
+# pre-registration arithmetic (no run data read)
+python "<scratchpad>/record/predict_windows.py"
+# round-1 recipes (session-scoped scratchpad; re-derive from the traces if gone)
+python "<scratchpad>/theory/crlb_amb.py"                         # §2.5 CRLB + M6 recursion model
+python "<scratchpad>/lens_memory/ddfrac_sigma_vs_age.py"         # §2.4 k table (streams the 729 MB trace)
+python "<scratchpad>/lensT/pass2_timestruct.py"                  # §2.2 structure function / age slope
+python "<scratchpad>/evt/age_grade.py"                           # §2.3 virgin / last-toucher attribution
+python "<scratchpad>/iono/dd_identity.py"; python "<scratchpad>/iono/decompose2.py --tag _sys"   # §2.1
+# run-end counters (invariant #4): main_log.log :4645-4675 — Card 1/1d stashes, free-epoch latches, T4 erases, gap prunes
+# round 2 (2026-09-04): mechanism-signature flags on every arm (§6.7; ~2.5 min per 3 h arm)
+python scripts/simnet_amb_integer.py runs/simnet60_quiet_wu93_24h --run runs/nonint_los3h --sigma-ratio --by-age --by-age-minlen 60 --iono-join --stride 4 --gal-lanes --check-lambda
+python "<scratchpad>/arms/sigma_ratio.py" nonint_base3h nonint_los3h nonint_dual_v1_1h   # head-only k=1..14 ladders per band
+python "<scratchpad>/record/zwd_freeze_arms.py" nonint_base3h nonint_los3h nonint_vf005_3h  # §3.1b station-common ZWD channel
+python "<scratchpad>/verify/bfit.py"; python "<scratchpad>/adv/zwd_freeze.py"             # §2.7 B_fit / §3.1 (24 h bed)
+sha256sum runs/nonint_base3h/products.txt runs/nonint_base3h_f1exe/products.txt          # invariant #6 (identical)
+grep "leveling LOS-scale F1" runs/nonint_los3h/logs/main_log.log                          # invariant #4 (950064 rows, hist 3:316688)
+```
+
+The F1 arm: derive from `config/test_suite/_camp60wu_quiet24h_sticky.json` with
+`processing.max_duration_s` 10800 and `network.phase_leveling_los_scale: true` — single
+knob, fresh convergence (the knob touches the carried prior, so treat it as fingerprinted:
+never flip it on a warm resume).  Release only; renamed exe when another session may build.

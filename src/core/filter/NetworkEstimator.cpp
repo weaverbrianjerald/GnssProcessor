@@ -447,12 +447,13 @@ Eigen::VectorXd NetworkEstimator::pureConditionalLocalVarianceDiag(
 }
 
 NetworkNormalEquations::StationRegression NetworkEstimator::stationRegression(
-    std::size_t station, Eigen::Index local_col, bool carry_aware) const {
+    std::size_t station, Eigen::Index local_col, bool carry_aware,
+    const std::vector<Eigen::Index>* cross_cols) const {
     CovTimer _t(neq_);  // D0 (cov consumer)
     // Pure normals — no datum frame (M_r and (N_rr⁻¹)_{rr} are datum-independent).
     // The carry-aware form is datum-independent too: Ã⁻¹ = N_rr⁻¹ − Σ_b Y_b M_b Y_bᵀ is
     // built from the accumulated normals and the fold's own factors, not from Σ_ss.
-    return neq_.stationRegression(station, local_col, carry_aware);
+    return neq_.stationRegression(station, local_col, carry_aware, cross_cols);
 }
 
 Eigen::VectorXd NetworkEstimator::rowRedundancy(

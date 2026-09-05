@@ -406,11 +406,16 @@ public:
      *
      * @param station   Index from @ref addStation.
      * @param local_col Local column within that station's @c A_r block.
+     * @param cross_cols F3 (network.phase_leveling_local_block): optional local columns at
+     *                  which the same @f$N_{rr}^{-1}e_r@f$ solve is also read (the
+     *                  conditional CROSS covariances) — forwarded verbatim; see
+     *                  @ref NetworkNormalEquations::stationRegression.
      * @return @ref NetworkNormalEquations::StationRegression.
      */
     NetworkNormalEquations::StationRegression stationRegression(
         std::size_t station, Eigen::Index local_col,
-        bool carry_aware = false) const;
+        bool carry_aware = false,
+        const std::vector<Eigen::Index>* cross_cols = nullptr) const;
 
     /**
      * @brief Baarda per-row redundancy numbers for one station's measurement rows

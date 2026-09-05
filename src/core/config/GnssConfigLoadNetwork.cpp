@@ -2971,6 +2971,14 @@ namespace GnssProcessor {
             jval<double>(json, "network.phase_leveling_max_gap_s", "phase_leveling_max_gap_s", 120.0);
         network_phase_leveling_var_floor_m2_ =
             jval<double>(json, "network.phase_leveling_var_floor_m2", "phase_leveling_var_floor_m2", 0.0);
+        // F1 (SPEC_amb_iono_split_overcount): per-LOS B_eff scale of the carried
+        // ambiguity row variance at inject.  Default OFF = byte-identical.
+        network_phase_leveling_los_scale_ =
+            jval<bool>(json, "network.phase_leveling_los_scale", "phase_leveling_los_scale", false);
+        // F3 (SPEC_amb_iono_split_overcount): station-wide jointly-whitened local block
+        // on the carried ambiguity inject.  Default OFF = byte-identical.
+        network_phase_leveling_local_block_ =
+            jval<bool>(json, "network.phase_leveling_local_block", "phase_leveling_local_block", false);
         network_shared_carry_var_floor_pb_m2_ =
             jval<double>(json, "network.shared_carry_var_floor_pb_m2", "shared_carry_var_floor_pb_m2", 0.0);
         // T1d: convergence-gated leveling-carry warmup (default OFF = fixed epoch count).
@@ -8153,11 +8161,73 @@ namespace GnssProcessor {
                           "sat phase-bias {:.2e} m², sat code-bias {:.2e} m² (caps Λ so a stiff zero-q "
                           "carry cannot lock a biased product in; 0 = off).",
                           network_shared_carry_var_floor_pb_m2_, network_shared_carry_var_floor_cb_m2_);
+            if (network_phase_leveling_los_scale_)
+                log->info("Network producer (phase-leveling F1): per-LOS variance scale ARMED — at "
+                          "inject every carried ambiguity row's variance is multiplied by B_eff, the "
+                          "number of carried ambiguity columns injected on the same (station, "
+                          "satellite) line of sight this epoch (after q·gap, before the var floor "
+                          "and the VCE factor), so the B rows of one LOS sum to ONE unit of "
+                          "iono-direction precision instead of B — undoing the per-LOS B-fold "
+                          "over-count of the iono-direction carry precision "
+                          "(SPEC_amb_iono_split_overcount: p_k = B·p_k-1 + p_code froze the level "
+                          "at K_eff = (B+1)/(B-1) epochs).  B_eff = 1 ⇒ unchanged; loosens only.  "
+                          "Run-end line 'Network (leveling LOS-scale F1)' is the ON-path telemetry.");
+            if (network_phase_leveling_local_block_)
+                log->info("Network producer (phase-leveling F3): station-wide jointly-whitened "
+                          "local block ARMED — each station's injectable carried ambiguity "
+                          "columns are carried as ONE block: the harvest stashes the conditional "
+                          "CROSS covariances (N_rr^-1)_(ci,cj) beside each column's variance "
+                          "(same per-column solve, no extra cost), the inject marginalizes "
+                          "every non-admitted column (departed / stale / freed / reseed / "
+                          "pinned) out of Sigma, factors Sigma = L L^T and emits n unit-weight "
+                          "rows L^-1 [I | M | y] — exact for EVERY local-local direction given "
+                          "the border, i.e. the per-LOS iono direction AND the station-common "
+                          "rx clock / ZWD / rx-DCB directions F1 leaves over-counted "
+                          "(SPEC_amb_iono_split_overcount).  A non-SPD factor falls back to the "
+                          "per-column rows for that station-epoch and is counted.  Run-end line "
+                          "'Network (leveling local-block F3)' is the ON-path telemetry.{}",
+                          network_phase_leveling_los_scale_
+                              ? "  phase_leveling_los_scale is ALSO armed: F3 supersedes it on "
+                                "every whitened block; the F1 scale applies only on a "
+                                "factorization fallback."
+                              : "");
         } else if (network_cycle_slip_turbo_edit_) {
             log->warn("Network: network.cycle_slip.turbo_edit is on but network.phase_leveling is "
                       "off — T0 slip repair acts on the carried ambiguities, so it is INERT "
                       "without phase-leveling.  Enable network.phase_leveling too.");
         }
+        // F1 INERT guard: the scale acts on the phase-leveling carry rows at their
+        // inject site, which exists only when the carry is the live vehicle
+        // (phase_leveling on AND not carry_invariant — Card 4's DD carry supersedes
+        // it and `do_amb_carry` skips the inject outright).  network_carry_invariant_
+        // is populated by this point (the M2 v2 guard below relies on the same).
+        if (network_phase_leveling_los_scale_
+            && (!network_phase_leveling_ || network_carry_invariant_))
+            log->warn("Network: network.phase_leveling_los_scale is on but the phase-leveling "
+                      "ambiguity carry is NOT folded on this lineage (phase_leveling={}, "
+                      "carry_invariant={}) — F1 scales those carry rows at inject, so there is "
+                      "nothing to scale: this knob is INERT on this posture (standing invariant "
+                      "#4).  Arm it on a phase_leveling, non-carry_invariant lineage.",
+                      network_phase_leveling_, network_carry_invariant_);
+        // F3 INERT guard: the block is built at the same inject site as F1 (so the
+        // same phase_leveling / carry_invariant conditions apply) AND its rows live in
+        // A_s/A_r as Card-1 coupling rows, so it needs carry_conditional_coupling; the
+        // Card-1b joint departed-column whitening owns that station's row block in
+        // this build (mutually exclusive — the block path is predicated on
+        // !carry_cpl_joint at the inject).  All four members are populated by here.
+        if (network_phase_leveling_local_block_
+            && (!network_phase_leveling_ || network_carry_invariant_
+                || !network_carry_conditional_coupling_ || network_carry_coupling_joint_whiten_))
+            log->warn("Network: network.phase_leveling_local_block is on but the station-wide "
+                      "whitened block cannot be built on this lineage (phase_leveling={}, "
+                      "carry_invariant={}, carry_conditional_coupling={}, "
+                      "carry_coupling_joint_whiten={}) — it needs the phase-leveling carry "
+                      "folded as Card-1 coupling rows (phase_leveling on, carry_invariant "
+                      "off, carry_conditional_coupling on) and is mutually exclusive with "
+                      "the Card-1b joint departed-column whitening: this knob is INERT on "
+                      "this posture (standing invariant #4).",
+                      network_phase_leveling_, network_carry_invariant_,
+                      network_carry_conditional_coupling_, network_carry_coupling_joint_whiten_);
         // M2 v2 (docs/SPEC_carry_vce_apply.md): post-parse INERT guard for the `pl`
         // apply family — network_carry_invariant_ is only populated by this point.
         //

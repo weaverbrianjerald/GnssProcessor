@@ -2039,12 +2039,19 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double pl_q_amb      = ctx.knobs.pl_q_amb;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
+    const bool   pl_los_scale  = ctx.knobs.pl_los_scale;  // F1: per-LOS B_eff variance scale at inject (SPEC_amb_iono_split_overcount); OFF = byte-identical
+    const bool   pl_local_block = ctx.knobs.pl_local_block; // F3: station-wide jointly-whitened local block at inject (SPEC_amb_iono_split_overcount); OFF = byte-identical
     // SPEC_slip_relevel_walk: read-only parallel consult of the latched
     // free-epoch set (filled serially in PASS-A; const for the whole produce).
     const bool   relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
     const auto&  vce_apply     = ctx.carry.vce_apply;     // M2 v2: carry variance factor α² (unity when off)
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // Card 1: conditional local carry (coupling rows) — requires fullcov_on (enforced at load)
     const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // Card 1b: JOINTLY whiten the coupling rows (departed cols → M_w) — requires carry_cpl_cond (enforced at load)
+    // F3 live predicate: the block's rows are Card-1 coupling rows (A_s/A_r), and the
+    // Card-1b joint path owns that row block when armed — mutually exclusive here
+    // (the loader warns INERT on either miss).  A single const bool, so OFF never
+    // reaches a block branch.
+    const bool   pl_blk_on = pl_local_block && carry_cpl_cond && !carry_cpl_joint;
     const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // Card 1d: border time update of the coupling rows at injection (κ shrink + M²κq inflation) — requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_shmarg = ctx.knobs.carry_cpl_shmarg; // Card 1d-SH: fully marginalize VtecSh coupling terms (GM border ≠ RW κ model — severs the amb↔SH carry feedback) — requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // Card 1g: widen the reinit feed to the realization-step sources and honour it with κ off — requires carry_cpl_cond (enforced at load)
@@ -2842,7 +2849,62 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                 // double-counting.  Its harvest still feeds the VCE monitor + sticky tree.
                 const bool do_amb_carry =
                     (phase_datum_prioritized || !st.is_pivot) && !carry_invariant;
-                if (do_amb_carry)
+                // F1 (network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount).
+                // Each carried ambiguity row's variance is the per-column conditional on
+                // the shared border, MARGINAL over the LOS's own free slant iono — so with
+                // phase ≈ exact (N_b = c_b + (μ_b/λ_b)·I) the B rows of ONE (station,
+                // satellite) LOS assert the SAME iono-direction datum B times per epoch
+                // and the carry recursion runs p_k = B·p_{k−1} + p_code instead of
+                // p_{k−1} + p_code (formal σ collapses geometrically, the level freezes at
+                // K_eff = (B+1)/(B−1) epochs).  Multiplying each row's variance by B_eff
+                // (the carried columns injected on that LOS THIS epoch) makes the B rows
+                // sum to ONE unit of iono-direction precision — exact along that
+                // direction; along the B−1 lane directions the prior is B× looser, which
+                // the phase rows re-fix every epoch at σ_φ.  Station-common directions
+                // (rx clock / ZWD / rx-DCB, shared by every LOS of the station) stay
+                // over-counted ~n_sat× — named, not fixed, by F1.  Loosens only.
+                //
+                // Structure: the variance TAIL (var floor, then the M2 v2 VCE factor) and
+                // the ROW BUILD are one lambda each, shared by the inline (OFF) route and
+                // the deferred (ON) route so the two cannot drift.  OFF: the loop body is
+                // the original inline sequence with the tail/build behind the lambdas —
+                // the same operations in the same order, byte-identical.  ON: B_eff is a
+                // property of the whole LOS, so injectable columns are collected first
+                // and then scaled + built in the same visiting order.
+                //
+                // M2 v2 (docs/SPEC_carry_vce_apply.md §2): the LASER 5-95 variance
+                // FACTOR, applied last — "the hand model evaluated as today, then
+                // × α²".  Read-only O(1) array lookup, safe in this parallel produce
+                // phase; the table is refreshed once per epoch by the serial step at
+                // the end of SB_STASH_STATUS, so every station in this pass and the
+                // serial harvest that mirrors it read ONE value.  Exactly 1.0 when the
+                // apply path is off or `pl` is unarmed ⇒ byte-identical.
+                const auto pl_finish_var = [&](double var_eff, const std::string& sat) {
+                    if (pl_var_floor > 0.0) var_eff = std::max(var_eff, pl_var_floor);
+                    var_eff *= vce_apply.factor(NetworkCarryVceApply::kPl, sat);
+                    return var_eff;
+                };
+                const auto pl_emit_row = [&](Eigen::Index col, int amb_idx,
+                                             const LocalCarry& lc, double var_eff,
+                                             double gap_clamped) {
+                    if (!(var_eff > 0.0)) return;
+                    if (carry_cpl_cond) {
+                        cb.buildCplRow(col, x_lin(amb_idx), lc, var_eff, gap_clamped);
+                        return;
+                    }
+                    const double lambda = 1.0 / var_eff;
+                    const double eta = lambda * (lc.value_abs - x_lin(amb_idx));
+                    if (!std::isfinite(eta)) return;            // belt-and-suspenders: never poison u_r
+                    inj.emplace_back(col, lambda, eta);
+                };
+                struct PlPend {   // F1 ON route: an injectable column awaiting its LOS B_eff
+                    Eigen::Index col; int amb_idx; const LocalCarry* lc;
+                    double var_eff;   // var + q·gap — BEFORE the tail
+                    double gap;       // clamped
+                    std::string sat, signal;
+                };
+                std::vector<PlPend> pl_pend;   // stays empty OFF
+                if (do_amb_carry) {
                 for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
                     const auto parts = StateKeys::parseAmbiguityKey(key);
                     if (!parts) continue;
@@ -2907,26 +2969,84 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // column PD-held by the prior alone — the §3.4 floor is not
                     // load-bearing here; this guards the OPPOSITE (lock-in) direction.
                     double var_eff = cit->second.var + pl_q_amb * std::max(0.0, gap);
-                    if (pl_var_floor > 0.0) var_eff = std::max(var_eff, pl_var_floor);
-                    // M2 v2 (docs/SPEC_carry_vce_apply.md §2): the LASER 5-95 variance
-                    // FACTOR, applied last — "the hand model evaluated as today, then
-                    // × α²".  Read-only O(1) array lookup, safe in this parallel produce
-                    // phase; the table is refreshed once per epoch by the serial step at
-                    // the end of SB_STASH_STATUS, so every station in this pass and the
-                    // serial harvest that mirrors it read ONE value.  Exactly 1.0 when the
-                    // apply path is off or `pl` is unarmed ⇒ byte-identical.
-                    var_eff *= vce_apply.factor(NetworkCarryVceApply::kPl, parts->satellite);
-                    if (!(var_eff > 0.0)) continue;
-                    if (carry_cpl_cond) {
-                        cb.buildCplRow(col, x_lin(amb_idx), cit->second, var_eff,
-                                    std::max(0.0, gap));
+                    if (pl_los_scale || pl_blk_on) {
+                        // F1 / F3: defer — membership uses the SAME positivity predicate the
+                        // inline route applies to the (unscaled) tail; ×B_eff, a finite
+                        // integer ≥ 1, cannot flip it, so the injected set is identical.
+                        // (F3 reads the same finished tail as its Σ diagonal, and its
+                        // scalar screen is the row build's own.)
+                        if (!(pl_finish_var(var_eff, parts->satellite) > 0.0)) continue;
+                        pl_pend.push_back(PlPend{col, amb_idx, &cit->second, var_eff,
+                                                 std::max(0.0, gap), parts->satellite,
+                                                 parts->signal});
                         continue;
                     }
-                    const double lambda = 1.0 / var_eff;
-                    const double eta = lambda * (cit->second.value_abs - x_lin(amb_idx));
-                    if (!std::isfinite(eta)) continue;            // belt-and-suspenders: never poison u_r
-                    inj.emplace_back(col, lambda, eta);
+                    var_eff = pl_finish_var(var_eff, parts->satellite);
+                    pl_emit_row(col, amb_idx, cit->second, var_eff, std::max(0.0, gap));
                 }
+                if (!pl_pend.empty()) {   // non-empty only under F1 / F3 (both OFF ⇒ nothing deferred)
+                    bool blk_done = false;
+                    if (pl_blk_on) {
+                        // F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_
+                        // overcount): the station's ADMITTED columns as ONE jointly-
+                        // whitened block.  The tail (var floor, VCE factor) is applied per
+                        // column exactly as the per-row routes apply it — on the DIAGONAL
+                        // only — and the builder reads the harvested conditional cross
+                        // covariances for the off-diagonals (see buildLocalBlock).  Every
+                        // carried entry of this station that is NOT in pl_pend (departed /
+                        // stale / freed / reseed / non-finite x_lin) is thereby
+                        // MARGINALIZED out of the block — invariant #7's decoupling edge,
+                        // counted here, never conditioned on.  A non-SPD factor falls
+                        // through to the per-column route below (F1-scaled if armed) and
+                        // is counted; F1's pl_los_beff mirror stays empty on a whitened
+                        // block, which is how the harvest mirror knows nothing was scaled.
+                        std::vector<LocalBlockCol> bc;
+                        bc.reserve(pl_pend.size());
+                        for (const PlPend& p : pl_pend)
+                            bc.push_back(LocalBlockCol{
+                                p.col, x_lin(p.amb_idx), p.lc,
+                                pl_finish_var(p.var_eff, p.sat), p.gap,
+                                vce_apply.factor(NetworkCarryVceApply::kPl, p.sat)});
+                        long long n_sta_carry = 0;   // read-only walk of this station's entries
+                        for (auto it = local_carry.lower_bound(std::make_tuple(
+                                 static_cast<int>(i), std::string{}, std::string{}));
+                             it != local_carry.end()
+                                 && std::get<0>(it->first) == static_cast<int>(i);
+                             ++it)
+                            ++n_sta_carry;
+                        R.pl_blk_marg_cols += std::max<long long>(
+                            0, n_sta_carry - static_cast<long long>(pl_pend.size()));
+                        blk_done = cb.buildLocalBlock(bc);
+                        if (!blk_done) ++R.pl_blk_fallback;
+                    }
+                    if (!blk_done) {
+                        // F1 (or the F3 fallback): B_eff per (station, satellite) LOS =
+                        // injectable columns on it, then the tail + build in the original
+                        // visiting order.  Telemetry is per-station here (parallel produce)
+                        // and folded serially below.  With F1 off (F3 fallback only) this is
+                        // the plain per-column route: tail + build, unscaled.
+                        std::map<std::string, int> beff;
+                        if (pl_los_scale) {
+                            for (const PlPend& p : pl_pend) ++beff[p.sat];
+                            for (const auto& [sat, b] : beff)
+                                ++R.pl_los_scale_hist[std::min(b, 4) - 1];
+                        }
+                        for (const PlPend& p : pl_pend) {
+                            double var_eff = p.var_eff;
+                            if (pl_los_scale) {
+                                const int b = beff[p.sat];
+                                if (b > 1) {
+                                    var_eff *= static_cast<double>(b);
+                                    ++R.pl_los_scale_rows;
+                                }
+                                R.pl_los_beff[{p.sat, p.signal}] = b;
+                            }
+                            var_eff = pl_finish_var(var_eff, p.sat);
+                            pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap);
+                        }
+                    }
+                }
+                }  // do_amb_carry
                 // --- ZWD carry (B9): treat the tropo ZWD column like one more carried
                 //     local state (random WALK, not random constant → positive q).  The
                 //     prior tuple joins `inj` so it is ordered by the same ascending sort
@@ -3277,6 +3397,30 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         for (const StationAssembly& Rc : asm_res) {
             ctx.counters.n_iono_carry_injected += Rc.iono_carry_injected;
             ctx.counters.n_iono_carry_floor_hits += Rc.iono_carry_floor_hits;
+        }
+    // F1 (network.phase_leveling_los_scale): fold the per-station LOS-scale telemetry
+    // (same discipline — counted in the parallel produce, reduced serially here).
+    if (pl_los_scale)
+        for (const StationAssembly& Rc : asm_res) {
+            ctx.counters.n_pl_los_scale_rows += Rc.pl_los_scale_rows;
+            for (int b = 0; b < 4; ++b)
+                ctx.counters.n_pl_los_scale_hist[b] += Rc.pl_los_scale_hist[b];
+        }
+    // F3 (network.phase_leveling_local_block): fold the per-station block telemetry
+    // (same discipline).  Keyed on the KNOB, not the live predicate, so an armed-but-
+    // inert posture still prints its zeros at run end (invariant #4).
+    if (pl_local_block)
+        for (const StationAssembly& Rc : asm_res) {
+            ctx.counters.n_pl_blk_blocks       += Rc.pl_blk_blocks;
+            ctx.counters.n_pl_blk_rows         += Rc.pl_blk_rows;
+            ctx.counters.n_pl_blk_marg_cols    += Rc.pl_blk_marg_cols;
+            ctx.counters.n_pl_blk_pair_missing += Rc.pl_blk_pair_missing;
+            ctx.counters.n_pl_blk_col_refused  += Rc.pl_blk_col_refused;
+            ctx.counters.n_pl_blk_fallback     += Rc.pl_blk_fallback;
+            for (int b = 0; b < 5; ++b)
+                ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
+            if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)
+                ctx.counters.n_pl_blk_max_dim = Rc.pl_blk_max_dim;
         }
     // §18.12: latch the FIRST warm epoch's present/departed split across this fold.  A
     // restore that reads 2871 rows and then MARGINALIZES most of their terms has SOFTENED

@@ -65,6 +65,29 @@ struct PendCplRow {
     std::vector<std::pair<Eigen::Index, double>> shared;  ///< (present free shared col, M_rj)
     double y{0.0};
     double w{0.0};
+    /// F3 (network.phase_leveling_local_block): when NON-EMPTY, the row's local
+    /// coefficients — (A_r column, coefficient) — REPLACE the scalar path's single
+    /// +1 at @c local_col, which then names the row's PRIMARY column for the refloat
+    /// bookkeeping (@c StationAssembly::cpl_row_local_cols).  A whitened block row
+    /// is one row of L⁻¹, dense (lower-triangular) over the block's local columns.
+    /// Empty on every scalar-path row, so the append writes exactly the +1 it
+    /// always did (OFF = byte-identical).
+    std::vector<std::pair<Eigen::Index, double>> local{};
+};
+
+/// F3 (network.phase_leveling_local_block): one injectable carried ambiguity
+/// column of a station as the PASS-B inject pre-pass collected it — the input of
+/// @ref CouplingRowBuilder::buildLocalBlock.  Every admission predicate (gauge pin,
+/// pending reseed, relevel free-epoch latch, finite x_lin, live carry, gap ≤ max)
+/// has already run: a column absent from this list is MARGINALIZED out of the
+/// block by construction.
+struct LocalBlockCol {
+    Eigen::Index      col;      ///< A_r column of the carried ambiguity
+    double            x_lin;    ///< this epoch's linearization point of that state (m)
+    const LocalCarry* lc;       ///< the carry entry (value_abs, regression, harvest block + index)
+    double            var_eff;  ///< FINISHED per-column prior variance: var + q·gap, floored, ×VCE factor (m²)
+    double            gap;      ///< clamped inter-epoch gap (s) — the Card-1d κ time update's Δt
+    double            vce_fac;  ///< the M2 v2 VCE factor α² already in @c var_eff (1 when off): the cross terms scale by √(α_i²·α_j²)
 };
 
 /// Card 1d: one buffered PRESENT-column term of a coupling row under the
@@ -157,6 +180,36 @@ struct CouplingRowBuilder {
     /// Build ONE coupling row for carried local column @p col (buffered, not yet appended).
     void buildCplRow(Eigen::Index col, double x_lin_val,
                      const LocalCarry& lc, double var_eff, double gap);
+    /// Card 1 scalar-path INGREDIENTS of one coupling row — the loop body of
+    /// @ref buildCplRow's scalar path, factored out so the F3 block path shares it
+    /// verbatim (one predicate chain, no drift): fills @p row's @c local_col /
+    /// @c shared / @c y and returns through @p sigma2 the row's
+    /// σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt.  Returns false on the
+    /// scalar path's own "never poison" screen (σ² ≤ 0 or non-finite RHS).  @c row.w
+    /// is NOT set: the scalar caller writes 1/σ², the block caller puts σ² on Σ's
+    /// diagonal.  Increments the same @c R.cpl_terms_* counters either way.
+    bool scalarRowIngredients(Eigen::Index col, double x_lin_val,
+                              const LocalCarry& lc, double var_eff, double gap,
+                              PendCplRow& row, double& sigma2);
+    /// F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount): build
+    /// this station's injectable carried ambiguity set as ONE jointly-whitened local
+    /// block instead of independent rows.  Per column the scalar-path ingredients
+    /// (@ref scalarRowIngredients) supply +1/local, the present-shared regressor row,
+    /// the RHS and σ² (Σ's diagonal); the off-diagonals are the HARVESTED conditional
+    /// cross covariances (N_rr⁻¹)_{c_i c_j} read from the two entries' shared
+    /// @ref PlHarvestBlock (VCE-factor scaled; 0 + counted when the two columns were
+    /// harvested at different epochs).  Σ = LLᵀ, and the n rows L⁻¹·[I | M | y] are
+    /// buffered as unit-weight multi-local @ref PendCplRow entries (appended by the
+    /// scalar branch of @ref appendCouplingRows), with the pre-whitening ingredients
+    /// retained in @c R.pl_blk for the within-epoch RAIM refloat re-whiten.  Exact
+    /// for EVERY local-local direction given the border — the per-LOS iono direction
+    /// F1 corrects AND the station-common rx clock / ZWD / rx-DCB directions it
+    /// leaves over-counted.  Returns false when the factor is non-SPD after the
+    /// ridge retry: nothing is buffered and the caller falls back to per-column rows
+    /// (F1-scaled if that knob is also armed) and COUNTS it.  Columns refused by the
+    /// scalar screen are dropped from the block and counted.  Not valid under
+    /// @c carry_cpl_joint (the caller's predicate excludes it).
+    bool buildLocalBlock(const std::vector<LocalBlockCol>& cols);
     /// Batch-append the buffered rows into @c R (joint-whitened, or scalar per-row).
     void appendCouplingRows();
 };

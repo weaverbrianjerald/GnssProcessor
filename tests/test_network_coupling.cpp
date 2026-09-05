@@ -591,3 +591,77 @@ TEST(NetworkCouplingTest, Eq34RebaseSkipsZeroAndNonFiniteShifts) {
     EXPECT_EQ(rebaseCouplingPhaseBiasSprev(cpl, empty_shift), 0);
     EXPECT_DOUBLE_EQ(cpl[2].s_prev, 1.0);    // second call touched nothing
 }
+
+// --- F1 (network.phase_leveling_los_scale): the reachable half of the inject ---
+//
+// F1's B_eff grouping — the PlPend pre-pass and the per-satellite `beff` map — is
+// inline in ApplicationNetworkAssembly.cpp (the leveling inject inside the PASS-B
+// produce loop) and is NOT reachable from a unit seam; its ON-path proof is the
+// run-end 'Network (leveling LOS-scale F1)' counter line (invariant #4) and its
+// OFF-path proof is the products.txt byte-identity twin.  What IS reachable is
+// the row build F1 hands the scaled variance to: pl_emit_row → buildCplRow(col,
+// x_lin, lc, var_eff × B_eff, gap) under carry_coupling.  This pins the arithmetic
+// at that boundary for one (station, satellite) LOS carrying three bands:
+//   OFF — w = 1/var_eff, EXACTLY the legacy expression (bitwise, EXPECT_EQ);
+//   ON  — F1 passes var_eff × 3, so each band's w = 1/(3·var) and the three rows
+//         sum to one third of the OFF precision (ONE unit of iono-direction
+//         precision instead of three); y (the RHS) and the border coefficients
+//         are untouched — the scale moves weight only.
+// The scale is applied to the LOCAL conditional variance BEFORE the builder adds a
+// departed border term's coeff²·P_prev, so a departed row reads 1/(3·var + c²P),
+// not 1/(3·(var + c²P)) — the ordering F1's pre-tail placement implies.
+TEST(NetworkCouplingTest, LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyExact) {
+    const double var[3]  = {0.04, 0.03, 0.05};   // per-band conditional variances (m²)
+    const double xlin[3] = {0.5, -0.25, 1.0};
+    const int    B = 3;                          // B_eff on the GPS triple bed
+
+    BuilderFixture off_f, on_f;
+    auto off = off_f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false);
+    auto on  = on_f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false);
+    for (int k = 0; k < 3; ++k) {
+        LocalCarry lc;                            // band k of the G01 LOS
+        lc.value_abs = 2.0 + k;
+        lc.last_seen_s = 0.0;
+        lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C',
+                                      /*sh_layer=*/0, /*coeff=*/0.8, /*s_prev=*/1.5,
+                                      /*p_prev=*/0.2} };
+        off.buildCplRow(/*col=*/k, xlin[k], lc, var[k], /*gap=*/30.0);
+        on.buildCplRow(/*col=*/k, xlin[k], lc, var[k] * static_cast<double>(B), 30.0);
+    }
+    ASSERT_EQ(off.crows.size(), 3u);
+    ASSERT_EQ(on.crows.size(), 3u);
+    double sum_w_off = 0.0, sum_w_on = 0.0;
+    for (int k = 0; k < 3; ++k) {
+        const PendCplRow& ro = off.crows[static_cast<size_t>(k)];
+        const PendCplRow& rn = on.crows[static_cast<size_t>(k)];
+        EXPECT_EQ(ro.w, 1.0 / var[k]);            // OFF: the legacy expression, bitwise
+        EXPECT_EQ(rn.w, 1.0 / (var[k] * static_cast<double>(B)));
+        EXPECT_DOUBLE_EQ(rn.w * B, ro.w);         // each band carries one third
+        EXPECT_DOUBLE_EQ(rn.y, ro.y);             // RHS untouched
+        EXPECT_EQ(rn.local_col, ro.local_col);
+        ASSERT_EQ(ro.shared.size(), 1u);
+        ASSERT_EQ(rn.shared.size(), 1u);
+        EXPECT_EQ(rn.shared[0].first, ro.shared[0].first);
+        EXPECT_DOUBLE_EQ(rn.shared[0].second, ro.shared[0].second);  // M_r untouched
+        sum_w_off += ro.w;
+        sum_w_on  += rn.w;
+    }
+    EXPECT_NEAR(sum_w_on, sum_w_off / B, 1e-12 * sum_w_off);
+    EXPECT_EQ(off_f.R.cpl_terms_present, 3);
+    EXPECT_EQ(on_f.R.cpl_terms_present, 3);
+
+    // Departed border column (G99 not registered): the marginal inflation is added
+    // by the builder AFTER F1's pre-tail scale of the local variance.
+    BuilderFixture dep_f;
+    auto dep = dep_f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false);
+    LocalCarry ld;
+    ld.value_abs = 0.0;
+    ld.last_seen_s = 0.0;
+    ld.coupling = { CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0,
+                                  /*coeff=*/0.5, /*s_prev=*/3.0, /*p_prev=*/9.0} };
+    dep.buildCplRow(/*col=*/0, /*x_lin_val=*/0.0, ld, 0.01 * static_cast<double>(B), 30.0);
+    ASSERT_EQ(dep.crows.size(), 1u);
+    EXPECT_TRUE(dep.crows[0].shared.empty());
+    EXPECT_DOUBLE_EQ(dep.crows[0].w, 1.0 / (0.01 * B + 0.5 * 0.5 * 9.0));
+    EXPECT_EQ(dep_f.R.cpl_terms_departed, 1);
+}

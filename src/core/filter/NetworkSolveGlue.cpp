@@ -1457,6 +1457,48 @@ if (within_epoch_armed && carry_warm) {
             } else if (carry_cpl_cond && !refloat_cols.empty() && R.cpl_row_start >= 0) {
                 Eigen::MatrixXd As = R.A_s, Ar = R.A_r;
                 Eigen::VectorXd rw = *wr, ry = R.y;
+                // F3 (network.phase_leveling_local_block): the whitening MIXES the
+                // block's rows (each output row is a row of L⁻¹ over ALL block columns),
+                // so a refloated column cannot be withheld by zeroing its own row — the
+                // refloated columns are MARGINALIZED (dropped from Σ) and the SURVIVORS
+                // re-whitened: the Card-1b re-whiten above, on the local block.
+                // Survivors land in their own row slots; the dropped columns' slots stay
+                // zero (the scalar loop below zeroes them again — consistent, since
+                // cpl_row_local_cols carries each block row's PRIMARY column).  A
+                // non-SPD re-whiten drops the whole block for this re-solve (safe
+                // degrade: the refloated arcs re-float from data anyway).  Both outcomes
+                // are counted: this IS invariant #7's re-coupling edge for the block.
+                // Empty pl_blk (knob off / no block) ⇒ untouched, byte-identical.
+                if (!R.pl_blk.rows.empty()) {
+                    bool hit = false;
+                    for (const CplRowRaw& br : R.pl_blk.rows)
+                        if (refloat_cols.count(br.local_col)) { hit = true; break; }
+                    const Eigen::Index b0 = R.cpl_row_start + R.pl_blk.row0;
+                    const Eigen::Index nb = static_cast<Eigen::Index>(R.pl_blk.rows.size());
+                    if (hit && b0 >= 0 && b0 + nb <= As.rows()) {
+                        for (Eigen::Index k = 0; k < nb; ++k) {
+                            As.row(b0 + k).setZero(); Ar.row(b0 + k).setZero();
+                            rw(b0 + k) = 0.0; ry(b0 + k) = 0.0;
+                        }
+                        Eigen::MatrixXd Hr, Hs;
+                        Eigen::VectorXd z;
+                        std::vector<Eigen::Index> kept;
+                        if (whitenLocalBlock(R.pl_blk, refloat_cols, R.A_r.cols(),
+                                             R.A_s.cols(), Hr, Hs, z, kept)) {
+                            for (std::size_t k = 0; k < kept.size(); ++k) {
+                                const Eigen::Index slot = b0 + kept[k];
+                                const Eigen::Index kk = static_cast<Eigen::Index>(k);
+                                As.row(slot) = Hs.row(kk);
+                                Ar.row(slot) = Hr.row(kk);
+                                rw(slot) = 1.0;
+                                ry(slot) = z(kk);
+                            }
+                            ++ctx.counters.n_pl_blk_refloat_rewhiten;
+                        } else {
+                            ++ctx.counters.n_pl_blk_refloat_fail;
+                        }
+                    }
+                }
                 for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
                     if (refloat_cols.count(R.cpl_row_local_cols[rr])) {
                         const Eigen::Index row =

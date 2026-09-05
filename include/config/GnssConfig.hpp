@@ -1805,6 +1805,80 @@ namespace GnssProcessor {
          */
         double networkPhaseLevelingVarFloorM2() const { return network_phase_leveling_var_floor_m2_; }
 
+        /**
+         * @brief F1 per-LOS variance scale on the phase-leveling carry inject
+         *        (@c network.phase_leveling_los_scale, default OFF).
+         *
+         * The leveling carry stashes ONE scalar variance per (station, satellite,
+         * signal) ambiguity column — the Card-1 pure conditional on the shared
+         * border, MARGINAL over the LOS's own free slant iono — and injects each
+         * column as its own row.  With phase ≈ exact the B band ambiguities of one
+         * LOS are affine in that single free iono (N_b = c_b + (μ_b/λ_b)·I), so the
+         * B rows assert the SAME iono-direction datum B times per epoch and the
+         * carried precision compounds as p_k = B·p_{k−1} + p_code instead of
+         * p_{k−1} + p_code: the formal σ collapses geometrically while the value
+         * freezes at K_eff = (B+1)/(B−1) epochs (the per-LOS B-fold over-count of
+         * the iono-direction carry precision, SPEC_amb_iono_split_overcount).
+         *
+         * When armed, every carried ambiguity row's effective variance is
+         * multiplied — after the q·gap term, before the var floor and the VCE
+         * factor — by B_eff, the number of carried ambiguity columns injected on
+         * the same (station, satellite) LOS this epoch.  Along the iono direction
+         * the B rows then sum to exactly 1/var(I_prev) (correct recursion); along
+         * the B−1 lane directions the prior is B× looser, which the phase rows
+         * re-fix every epoch at σ_φ.  B_eff = 1 ⇒ unchanged.  The knob only
+         * LOOSENS priors.  Station-common directions (rx clock / ZWD / rx-DCB)
+         * remain over-counted ~n_sat× — named, not fixed, here.  OFF =
+         * byte-identical.
+         */
+        bool networkPhaseLevelingLosScale() const { return network_phase_leveling_los_scale_; }
+
+        /**
+         * @brief F3 station-wide jointly-whitened local block on the phase-leveling
+         *        carry inject (@c network.phase_leveling_local_block, default OFF).
+         *
+         * F1 (@ref networkPhaseLevelingLosScale) is exact along each LOS's iono
+         * direction but leaves the STATION-COMMON local directions — receiver clock,
+         * ZWD, receiver DCB — over-counted ~n_LOS×: every carried ambiguity row of a
+         * station asserts the same station-common datum once more (measured on the
+         * quiet bed: ZWD formal 0.005 m vs 0.35 m actual at hour 2; the F1 arm's
+         * residual DD error is ~half iono, ~half geometric/station-common —
+         * SPEC_amb_iono_split_overcount §6.4's "F2/F3 owed" row).
+         *
+         * When armed, each station's injectable carried ambiguity columns c_1..c_n
+         * are carried as ONE block: the harvest stashes, beside each column's pure
+         * conditional variance (N_rr⁻¹)_cc, the conditional CROSS covariances
+         * (N_rr⁻¹)_{c_i c_j} read from the same per-column solve (no extra solve);
+         * the inject assembles Σ over the columns admitted THIS epoch under the
+         * unchanged predicates (departed / stale / freed / reseed / pinned columns
+         * are MARGINALIZED — dropped from Σ, never conditioned on), adds q·gap and
+         * the var floor on the diagonal only, factors Σ = LLᵀ (LLT with a ridge
+         * retry; on failure it falls back to the per-column rows, F1-scaled if that
+         * knob is armed, and counts it), and emits n unit-weight rows
+         * L⁻¹·[(value_abs − x_lin) + Σ_j M_j ŝ_prev,j] with A_r = L⁻¹ over the
+         * block's local columns and A_s = L⁻¹·(per-column regressor rows).  This is
+         * exact for EVERY local-local direction given the border — the per-LOS iono
+         * direction AND the station-common ones — so it SUPERSEDES F1 wherever a
+         * block whitens.  The harvest re-stashes the whole block every epoch from
+         * the posterior, so Σ never drifts across epochs.  Requires
+         * @c network.carry_conditional_coupling (the rows live in A_s/A_r) and is
+         * mutually exclusive with @c carry_coupling_joint_whiten in this build
+         * (INERT with a loader warning otherwise; INERT under carry_invariant).
+         * Cost: one n×n LLT per station-epoch (n ≈ 75).  Run-end line 'Network
+         * (leveling local-block F3)' is the ON-path telemetry.  OFF =
+         * byte-identical.
+         *
+         * Invariant #1/#7 reading: whitening makes the LANE directions (band
+         * differences of one LOS) phase-tight across epochs, so an undetected
+         * single-band slip would propagate into its sibling bands' priors; the
+         * covering response is the existing band-scoped free-epoch latch (the
+         * detector-marked column is marginalized out of the block that epoch) and
+         * the T3/T4 RAIM pool refloat (a refloated column's block is re-whitened
+         * over the survivors) — read the run-end marginalized-column and refloat
+         * re-whiten counters, not the absence of a warning.
+         */
+        bool networkPhaseLevelingLocalBlock() const { return network_phase_leveling_local_block_; }
+
         /// @brief Floor (m²) on the D2 satellite-PHASE-bias carried prior variance
         ///        (@c network.shared_carry_var_floor_pb_m2, B4).  Caps the carry's
         ///        information so a stiff zero-q phase-bias carry cannot lock a biased
@@ -6572,6 +6646,8 @@ namespace GnssProcessor {
         int    network_phase_leveling_warmup_epochs_{6};  ///< Emitted-epoch count before a carried ambiguity is trusted (cold-start convergence guard).
         double network_phase_leveling_max_gap_s_{120.0};  ///< Max unseen gap (s) a carried ambiguity survives before it is dropped (stale-carry / map-growth guard).
         double network_phase_leveling_var_floor_m2_{0.0}; ///< Floor (m²) on the carried prior variance (caps Λ — lock-in guard); 0 = off (no cap).
+        bool   network_phase_leveling_los_scale_{false};  ///< F1: multiply each carried ambiguity row's variance by B_eff (carried columns injected on the same station-satellite LOS this epoch) at inject — undoes the per-LOS B-fold over-count of the iono-direction carry precision (SPEC_amb_iono_split_overcount).  OFF = byte-identical.
+        bool   network_phase_leveling_local_block_{false}; ///< F3: carry each station's injectable ambiguity set as ONE jointly-whitened local block (harvested conditional cross covariances on Σ's off-diagonals; departed columns marginalized) — exact for every local-local direction incl. the station-common ones F1 leaves over-counted (SPEC_amb_iono_split_overcount).  Supersedes F1 on whitened blocks.  OFF = byte-identical.
         double network_shared_carry_var_floor_pb_m2_{0.0}; ///< B4: floor (m²) on the D2 sat-PHASE-bias carried prior variance (caps Λ — bounds the zero-q lock-in while preserving Ge-2008 FCB averaging); 0 = off.
         double network_shared_carry_var_floor_cb_m2_{0.0}; ///< B4: floor (m²) on the D2 sat-CODE-bias carried prior variance (caps Λ); 0 = off.
         bool   network_phase_leveling_warmup_on_convergence_{false}; ///< T1d: gate the leveling-carry warmup on SH-field convergence (epoch-over-epoch coeff RMS Δ < thresh AND a₀₀ in physical band) instead of the fixed emitted-epoch count — avoids locking the wrong iono/ambiguity split while a₀₀ is still diverging.  Falls back to the epoch count when no SH field is active.  OFF = byte-identical.

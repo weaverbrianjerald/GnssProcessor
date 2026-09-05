@@ -85,6 +85,24 @@ namespace GnssProcessor {
         int pl_warmup{};
         double pl_max_gap_s{};
         double pl_var_floor{};
+        /// network.phase_leveling_los_scale — F1 (SPEC_amb_iono_split_overcount): at the
+        /// leveling-carry inject, multiply each carried ambiguity row's variance by B_eff =
+        /// the number of carried ambiguity columns injected on the same (station, satellite)
+        /// LOS this epoch, so the B rows assert ONE unit of iono-direction precision instead
+        /// of B (the over-count that froze the level at K_eff = (B+1)/(B−1) epochs).  Applied
+        /// after q·gap, before the var floor and the VCE factor.  Default OFF = byte-identical.
+        bool pl_los_scale{};
+        /// network.phase_leveling_local_block — F3 (SPEC_amb_iono_split_overcount): carry
+        /// each station's injectable carried ambiguity set as ONE jointly-whitened local
+        /// block (the harvested conditional cross covariances (N_rr⁻¹)_{c_i c_j} on Σ's
+        /// off-diagonals; non-admitted columns MARGINALIZED) instead of independent
+        /// per-column rows — exact for EVERY local-local direction given the border: the
+        /// per-LOS iono direction F1 fixes AND the station-common rx clock / ZWD / rx-DCB
+        /// directions it leaves over-counted.  Supersedes pl_los_scale on whitened blocks
+        /// (F1 applies only on a factorization fallback).  Live only with carry_cpl_cond
+        /// and NOT carry_cpl_joint (loader warns INERT otherwise).  Default OFF =
+        /// byte-identical.
+        bool pl_local_block{};
         bool pl_warmup_on_conv{};
         bool pl_refloat_on_conv{};
         double pl_conv_rms_thresh{};
@@ -2117,6 +2135,39 @@ namespace GnssProcessor {
         long long n_cr_inject_stale_max_week = 0; ///< GPS week of that epoch
         double    cr_inject_stale_max_tow = 0.0;  ///< TOW (s) of that epoch — THE attribution handle for a cliff
         long long n_cr_inject_stale_max_sta  = 0; ///< distinct stations in that epoch's stale set (separates a fleet-wide era from one station dropping out)
+
+        // F1 (network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount) — the
+        //     inject-side per-LOS variance scale's ON-path telemetry (invariant #4).
+        //     Counted per station in the PARALLEL produce phase (StationAssembly) and
+        //     folded here SERIALLY.  Armed on a multi-band posture with rows = 0 means
+        //     the inject never saw two carried bands on one LOS — a MISWIRE, not quiet.
+        long long n_pl_los_scale_rows    = 0;             ///< carried ambiguity rows whose variance was multiplied by a B_eff > 1
+        long long n_pl_los_scale_hist[4] = {0, 0, 0, 0};  ///< LOS groups (station, sat, epoch) by B_eff = 1 / 2 / 3 / ≥4 injected columns
+
+        // F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount) — the
+        //     station-wide jointly-whitened leveling-carry block's ON-path telemetry
+        //     (invariant #4).  Counted per station in the PARALLEL produce phase
+        //     (StationAssembly) and folded here SERIALLY; the two refloat counters are
+        //     written by the SERIAL within-epoch RAIM re-solve directly.  Armed with
+        //     blocks = 0 means the inject never built one — a MISWIRE (carry_cpl_cond
+        //     off, carry_cpl_joint on, or no station with an injectable carried
+        //     column), not a quiet run.  pair_missing ≈ Σ n(n−1)/2 over the stations
+        //     on the first post-resume epoch is the EXPECTED one-epoch degrade (the
+        //     harvest block is not snapshotted); a steady non-zero rate afterwards is
+        //     columns re-harvested at different epochs (blinking satellites).
+        //     marg_cols is invariant #7's decoupling edge: every carried entry NOT
+        //     admitted to its station's block this epoch (departed / stale / freed /
+        //     reseed) — the block simply omits it, never conditions on it.
+        long long n_pl_blk_blocks       = 0;             ///< blocks whitened (station-epochs)
+        long long n_pl_blk_rows         = 0;             ///< whitened rows emitted
+        long long n_pl_blk_marg_cols    = 0;             ///< carried entries NOT injected (marginalized out of their station's block)
+        long long n_pl_blk_pair_missing = 0;             ///< (i,j) pairs zeroed: harvested at different epochs / no harvest block
+        long long n_pl_blk_col_refused  = 0;             ///< block columns dropped by the scalar-row "never poison" screen
+        long long n_pl_blk_fallback     = 0;             ///< station-epochs whose block factorization failed → F1/diagonal rows
+        long long n_pl_blk_hist[5]      = {0, 0, 0, 0, 0}; ///< block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75
+        long long n_pl_blk_max_dim      = 0;             ///< largest block dimension over the run
+        long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (invariant #7's re-coupling edge, counted)
+        long long n_pl_blk_refloat_fail = 0;             ///< … whose re-whiten was non-SPD: the block's rows were dropped for that re-solve (safe degrade — the refloated arcs re-float from data)
 
         // (C) ONE-SOLVE REFLOATS — the entry is erased AFTER the harvest, so the
         //     arc refloats on the NEXT epoch.  Quality-selected.

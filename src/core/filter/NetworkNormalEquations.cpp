@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>          // F3 stationRegression cross gather: NaN for an out-of-range column
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -1551,7 +1552,8 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
 NetworkNormalEquations::StationRegression
 NetworkNormalEquations::stationRegression(std::size_t station,
                                           Eigen::Index local_col,
-                                          bool carry_aware) const {
+                                          bool carry_aware,
+                                          const std::vector<Eigen::Index>* cross_cols) const {
     if (station >= n_active_) {
         throw std::out_of_range("NetworkNormalEquations::stationRegression: "
                                 "station index out of range");
@@ -1572,6 +1574,20 @@ NetworkNormalEquations::stationRegression(std::size_t station,
     out.row = (n_shared_ > 0) ? Eigen::VectorXd(st.N_sr * n_c)   // N_sr N_rr⁻¹ e_r (n_shared)
                               : Eigen::VectorXd();
     if (!carry_aware || dd_priors_.empty()) {
+        // F3 (network.phase_leveling_local_block): the same n_c read at the station's
+        // other carried columns — (N_rr⁻¹)_{r c_j}, the conditional CROSS covariance.
+        // Plain-normals path only (the carry-aware correction below is per-column and
+        // would leave these uncorrected; the header says why that must not be mixed).
+        if (cross_cols) {
+            const Eigen::Index k = static_cast<Eigen::Index>(cross_cols->size());
+            out.cross.resize(k);
+            for (Eigen::Index j = 0; j < k; ++j) {
+                const Eigen::Index c = (*cross_cols)[static_cast<std::size_t>(j)];
+                out.cross(j) = (c >= 0 && c < st.n_local)
+                                   ? n_c(c)
+                                   : std::numeric_limits<double>::quiet_NaN();
+            }
+        }
         return out;
     }
     // Armed: both outputs move to Ã⁻¹ TOGETHER — a pseudo-observation row whose

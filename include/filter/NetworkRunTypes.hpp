@@ -334,6 +334,53 @@ struct CplRowRaw {
     double var_eff{0.0};                                  ///< pure conditional variance (+ process noise) — this row's own diagonal.
 };
 
+/// F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount): ONE
+/// station's jointly-whitened phase-leveling carry block — the pre-whitening
+/// ingredients retained per station so the block can be whitened at build time
+/// AND re-whitened by the within-epoch RAIM refloat with the refloated columns
+/// MARGINALIZED (their rows/cols deleted from Σ before the factor — never
+/// conditioned on; standing invariant #7's decoupling edge).  @c rows are the
+/// per-column SCALAR-path ingredients: the same +1/local, PRESENT shared terms
+/// (Card-1d κ-shrunk, Card-1f gauge-restored), RHS and
+/// σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt the Card-1 scalar row
+/// would have carried — @c var_eff here IS that σ², i.e. Σ's diagonal (the
+/// departed-column marginalization stays per-row/diagonal, the scalar-path
+/// treatment; Card 1b's joint departed marginalization is mutually exclusive
+/// with this block in the present build).  @c Sigma is the n×n joint prior
+/// covariance over those columns: that diagonal, and on the off-diagonals the
+/// HARVESTED conditional cross covariances (N_rr⁻¹)_{c_i c_j} (VCE-factor
+/// scaled), 0 where the pair was harvested at different epochs — Σ is then
+/// block-diagonal by harvest stamp, each block a principal sub-matrix of one
+/// posterior, so PD is preserved by construction.  @c row0 = the block's first
+/// row index within the station's coupling block (block row k sits at A_s/A_r
+/// row @c cpl_row_start + row0 + k).  Empty unless the knob built a block for
+/// this station this epoch.
+struct PlBlockRaw {
+    std::vector<CplRowRaw> rows;    ///< per-column ingredients (@c departed unused — already folded into @c var_eff)
+    Eigen::MatrixXd        Sigma;   ///< n×n joint prior covariance (m²)
+    Eigen::Index           row0{0}; ///< offset of the block's first row within the coupling block
+};
+
+/// F3 (network.phase_leveling_local_block): ONE station-epoch's harvested
+/// conditional cross-covariance block over its carried ambiguity columns —
+/// C(a,b) = (N_rr⁻¹)_{c_a c_b} = n_{c_a}(c_b), column a's N_rr⁻¹e_c solve read
+/// at column b.  That solve is the one @ref NetworkNormalEquations::stationRegression
+/// already pays per column for @c cond_var and @c row, so the cross terms are a
+/// GATHER, not a second solve (LocalCarry::var is C's diagonal).  Row a is NaN
+/// when column a's harvest failed.  Shared BY POINTER among the station's
+/// @ref LocalCarry entries stashed at that harvest, each holding its own index:
+/// "same harvest" is pointer equality, so a pair whose two entries point at
+/// different blocks (one column re-harvested later than the other, or a
+/// warm-resume-restored entry with no block at all) has NO valid cross term and
+/// is zeroed + counted at inject.  Released when the last entry referencing it
+/// is re-stashed or pruned.  Deliberately NOT snapshotted: the first post-resume
+/// inject degrades to the diagonal block for exactly one epoch (read as
+/// pair-miss counts), then the first post-resume harvest rebuilds it.
+struct PlHarvestBlock {
+    Eigen::MatrixXd C;        ///< n×n conditional cross covariance (m²); NaN rows = failed harvests
+    double          stamp_s{0.0}; ///< continuous-GPS seconds of the harvest (diagnostic)
+};
+
 /// One carried-forward ambiguity (phase-leveling, Increment 1): the float
 /// ambiguity's ABSOLUTE value, its posterior variance, and the continuous-GPS-
 /// second time it was last seen (for the inter-epoch gap inflation / stale-carry
@@ -344,6 +391,8 @@ struct LocalCarry {
     double var;           ///< Last-solve posterior variance (m²): the MARGINAL (conditionalLocalVarianceDiag) on the legacy diagonal carry, or — under network.carry_conditional_coupling — the PURE CONDITIONAL @f$(N_{rr}^{-1})_{rr}@f$.
     double last_seen_s;   ///< Continuous-GPS seconds when last stashed (gap inflation).
     std::vector<CoupledShared> coupling{};  ///< Card 1: the regression on the FREE shared border.  Empty on the legacy diagonal path, and for a warm-resume-restored entry unless network.resume_coupling_restore rebuilt it from a v3 snapshot's QL/QZ record (§18.12); empty on a v1/v2 file or with the knob off — an empty coupling injects as a plain diagonal row (graceful one-epoch degrade).
+    std::shared_ptr<const PlHarvestBlock> blk{};  ///< F3 (network.phase_leveling_local_block): the harvest cross-covariance block this entry's off-diagonals live in — null when the knob is off, on the ZWD carry, and for a warm-resume-restored entry (no block ⇒ every pair with it is zeroed + counted at inject).
+    int blk_idx{-1};                              ///< F3: this entry's row/column in @c blk->C (−1 = none).
 };
 
 /// SPEC_slip_relevel_walk §6 — the slip re-level response's per-epoch state
@@ -670,6 +719,32 @@ struct StationAssembly {
     /// and folded into the run counters SERIALLY afterwards, exactly as
     /// @c relevel_free_skips is.
     long long                 inject_stale_skips{0};
+    /// F1 (network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount): per
+    /// INJECTED (sat, signal) ambiguity column, the B_eff the inject multiplied its
+    /// carried variance by — the count of carried ambiguity columns injected on that
+    /// (station, satellite) LOS this epoch.  Filled only when the knob is armed
+    /// (empty OFF); read by the serial harvest so its fold-variance mirror (carry-VCE
+    /// / prires standardization) reports the weight the fold ACTUALLY used.
+    std::map<std::pair<std::string, std::string>, int> pl_los_beff;
+    long long                 pl_los_scale_rows{0};            ///< F1: rows whose variance was multiplied by a B_eff > 1 (produce-phase local; summed serially).
+    long long                 pl_los_scale_hist[4]{0, 0, 0, 0}; ///< F1: LOS groups by B_eff = 1 / 2 / 3 / ≥4 (produce-phase local; summed serially).
+    /// F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount): this
+    /// station-epoch's jointly-whitened leveling-carry block ingredients — empty when
+    /// the knob is off, the station had no injectable carried column, or the block's
+    /// factorization fell back to per-column rows.  Read by the within-epoch RAIM
+    /// refloat, which re-whitens the SURVIVING columns (the whitening mixes the
+    /// block's rows, so a refloat cannot zero one output row) — the same contract
+    /// as @c cpl_raw for Card 1b.  All F3 counts below are produce-phase local and
+    /// summed serially, the pl_los_scale discipline.
+    PlBlockRaw                pl_blk;
+    long long                 pl_blk_blocks{0};        ///< F3: blocks whitened (0 or 1 per station-epoch).
+    long long                 pl_blk_rows{0};          ///< F3: whitened rows emitted.
+    long long                 pl_blk_marg_cols{0};     ///< F3: carried entries of this station NOT injected this epoch (departed / stale / freed / reseed / non-finite) — marginalized out of the block.
+    long long                 pl_blk_pair_missing{0};  ///< F3: (i,j) pairs zeroed because the two columns were harvested at different epochs (or one carries no harvest block).
+    long long                 pl_blk_col_refused{0};   ///< F3: block columns dropped by the scalar-row "never poison" screen (non-finite RHS / σ² ≤ 0).
+    long long                 pl_blk_fallback{0};      ///< F3: block factorization failed after the ridge retry → this station-epoch emitted F1/diagonal rows instead.
+    long long                 pl_blk_hist[5]{0, 0, 0, 0, 0}; ///< F3: block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75.
+    long long                 pl_blk_max_dim{0};       ///< F3: largest block dimension this station-epoch.
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  CARRY-ELIGIBLE SUBSET: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must NOT key on it — see `qc_amb`.
     /// POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): the CARRY-VEHICLE-NEUTRAL census of
     /// ambiguity columns that are present, unpinned and therefore CHECKABLE this epoch —
@@ -847,6 +922,66 @@ inline bool whitenCouplingRows(const std::vector<CplRowRaw>& rows,
         Rr.diagonal().array() += (dmax > 0.0 ? 1e-12 * dmax : 1e-12);
         llt.compute(Rr);
         if (llt.info() != Eigen::Success) return false;   // caller falls back to scalar
+    }
+    Hr = llt.matrixL().solve(Hr);
+    Hs = llt.matrixL().solve(Hs);
+    z  = llt.matrixL().solve(z);
+    return true;
+}
+
+/// F3 (network.phase_leveling_local_block): whiten ONE station's phase-leveling
+/// carry block over its KEPT columns — those whose @c local_col is not in @p skip
+/// (the within-epoch RAIM refloat drop-set; empty for the primary build).  The
+/// dropped columns are MARGINALIZED — their rows/cols are deleted from Σ before
+/// the factor, never conditioned on — which is exact: the kept columns' joint
+/// prior is the corresponding principal sub-block of Σ.  Factor Σ_kept = LLᵀ
+/// (one ridge retry at 1e-12·max|diag|, as @ref whitenCouplingRows), then emit
+/// the UNIT-information rows L⁻¹·[I | M | y]: @p Hr (m×ncol_r — the dense
+/// lower-triangular L⁻¹ placed on the block's local columns), @p Hs (m×nshared —
+/// L⁻¹ times the per-column present-shared regressor rows), @p z (L⁻¹y).
+/// @p kept receives the indices into @c blk.rows of the surviving rows, in order
+/// (output row k belongs to @c blk.rows[kept[k]]).  Returns false when the factor
+/// is non-SPD after the retry (the caller falls back to per-column rows, or drops
+/// the block for a refloat re-solve); m = 0 returns true with empty outputs.
+/// Header-inline for the same reason as @ref whitenCouplingRows: its two callers
+/// (the builder's primary build and the run-TU refloat re-whiten) must share one
+/// codegen so the re-whitened survivors are the rows the primary build would
+/// have emitted for that column set.
+inline bool whitenLocalBlock(const PlBlockRaw& blk,
+                             const std::set<Eigen::Index>& skip,
+                             Eigen::Index ncol_r, Eigen::Index nshared,
+                             Eigen::MatrixXd& Hr, Eigen::MatrixXd& Hs,
+                             Eigen::VectorXd& z, std::vector<Eigen::Index>& kept) {
+    kept.clear();
+    const Eigen::Index n = static_cast<Eigen::Index>(blk.rows.size());
+    for (Eigen::Index k = 0; k < n; ++k)
+        if (skip.find(blk.rows[static_cast<std::size_t>(k)].local_col) == skip.end())
+            kept.push_back(k);
+    const Eigen::Index m = static_cast<Eigen::Index>(kept.size());
+    Hr = Eigen::MatrixXd::Zero(m, ncol_r);
+    Hs = Eigen::MatrixXd::Zero(m, nshared);
+    z.resize(m);
+    if (m == 0) return true;
+    if (blk.Sigma.rows() != n || blk.Sigma.cols() != n) return false;
+    Eigen::MatrixXd S(m, m);
+    for (Eigen::Index a = 0; a < m; ++a)
+        for (Eigen::Index b = 0; b < m; ++b)
+            S(a, b) = blk.Sigma(kept[static_cast<std::size_t>(a)],
+                                kept[static_cast<std::size_t>(b)]);
+    for (Eigen::Index k = 0; k < m; ++k) {
+        const CplRowRaw& r = blk.rows[static_cast<std::size_t>(kept[static_cast<std::size_t>(k)])];
+        if (r.local_col >= 0 && r.local_col < ncol_r) Hr(k, r.local_col) = 1.0;
+        for (const auto& sc : r.shared)
+            if (sc.first >= 0 && sc.first < nshared) Hs(k, sc.first) = sc.second;
+        z(k) = r.rhs;
+    }
+    S = (0.5 * (S + S.transpose())).eval();   // clean numerical asymmetry before LLT
+    Eigen::LLT<Eigen::MatrixXd> llt(S);
+    if (llt.info() != Eigen::Success) {
+        const double dmax = S.diagonal().cwiseAbs().maxCoeff();
+        S.diagonal().array() += (dmax > 0.0 ? 1e-12 * dmax : 1e-12);
+        llt.compute(S);
+        if (llt.info() != Eigen::Success) return false;   // caller falls back / drops
     }
     Hr = llt.matrixL().solve(Hr);
     Hs = llt.matrixL().solve(Hs);

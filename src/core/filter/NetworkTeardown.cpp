@@ -1882,6 +1882,50 @@ int networkTeardown(
                       : 0.0,
                   C.n_cr_gap_prune_max_week, C.cr_gap_prune_max_tow,
                   C.n_cr_zwd_gap_prune, C.n_cr_rpb_gap_prune);
+        // F1 (network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount) — the
+        // inject-side per-LOS variance scale's ON-path telemetry (invariant #4).
+        // Printed ONLY when armed, so an OFF log is byte-identical.  Armed on a
+        // multi-band posture with 0 rows scaled means the inject never saw two
+        // carried bands on one LOS — a MISWIRE, not a quiet run; a histogram
+        // concentrated at B_eff = 1 on a triple-frequency bed says the sibling
+        // bands were being skipped (freed / stale / reseed), not carried.
+        if (ctx.knobs.pl_los_scale)
+            log->info("Network (leveling LOS-scale F1){}: {} row(s) scaled over {} LOS "
+                      "group(s); B_eff histogram 1:{} 2:{} 3:{} 4+:{}",
+                      cliff_live ? "" : " ⚠ CHANNEL NOT ARMED on this posture "
+                                        "(phase_leveling off or carry_invariant on) — a 0 "
+                                        "here means UNWIRED, not clean",
+                      C.n_pl_los_scale_rows,
+                      C.n_pl_los_scale_hist[0] + C.n_pl_los_scale_hist[1]
+                          + C.n_pl_los_scale_hist[2] + C.n_pl_los_scale_hist[3],
+                      C.n_pl_los_scale_hist[0], C.n_pl_los_scale_hist[1],
+                      C.n_pl_los_scale_hist[2], C.n_pl_los_scale_hist[3]);
+        // F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount) — the
+        // station-wide jointly-whitened leveling-carry block's ON-path telemetry
+        // (invariant #4).  Printed ONLY when armed, so an OFF log is byte-identical.
+        // Armed with 0 blocks means the inject never built one — a MISWIRE
+        // (carry_conditional_coupling off, carry_coupling_joint_whiten on, or the
+        // carry never warmed), not a quiet run; a histogram sitting below the
+        // station's carried-column count says the sibling columns were being
+        // marginalized out (freed / stale / reseed), not carried; fallbacks are the
+        // station-epochs that got F1/diagonal rows instead of the block.
+        if (ctx.knobs.pl_local_block)
+            log->info("Network (leveling local-block F3){}: {} block(s) whitened, {} row(s) "
+                      "emitted, {} column(s) marginalized at inject, {} pair(s) zeroed "
+                      "(harvest-stamp mismatch), {} column(s) refused, {} factorization "
+                      "fallback(s); block dim histogram <10:{} 10-24:{} 25-49:{} 50-74:{} "
+                      "75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed",
+                      (cliff_live && config_.networkCarryConditionalCoupling()
+                       && !config_.networkCarryCouplingJointWhiten())
+                          ? "" : " ⚠ CHANNEL NOT ARMED on this posture (phase_leveling "
+                                 "off, carry_invariant on, carry_conditional_coupling "
+                                 "off, or carry_coupling_joint_whiten on) — a 0 here "
+                                 "means UNWIRED, not clean",
+                      C.n_pl_blk_blocks, C.n_pl_blk_rows, C.n_pl_blk_marg_cols,
+                      C.n_pl_blk_pair_missing, C.n_pl_blk_col_refused, C.n_pl_blk_fallback,
+                      C.n_pl_blk_hist[0], C.n_pl_blk_hist[1], C.n_pl_blk_hist[2],
+                      C.n_pl_blk_hist[3], C.n_pl_blk_hist[4], C.n_pl_blk_max_dim,
+                      C.n_pl_blk_refloat_rewhiten, C.n_pl_blk_refloat_fail);
         // Seam-scoped ZWD re-seed (network.zwd_seam_reseed) — the ON-path telemetry
         // (standing invariant #4): an armed knob with 0 folds means the window never
         // armed (no warm resume, or the snapshot carried no Z rows) or every fold

@@ -2478,3 +2478,141 @@ TEST(CodeBiasNetworkConfig, CarryInvariantTurboEditAloneStillWarns) {
         << r.text;
     std::error_code ec; fs::remove(p, ec);
 }
+
+// ---------------------------------------------------------------------------
+// F1 — network.phase_leveling_los_scale (docs/SPEC_amb_iono_split_overcount.md).
+//
+// The knob multiplies each carried leveling-ambiguity row's variance by B_eff (the
+// carried columns injected on the same station-satellite LOS this epoch) so the
+// B rows of one LOS assert ONE unit of iono-direction precision instead of B.
+// Solve-affecting ON, byte-identical OFF.  The loader's whole contract is three
+// things, and every one of them is only visible through the "gnss_config" log:
+//   1. the default is OFF, and an OFF lineage prints NEITHER line;
+//   2. ON under a live leveling carry announces itself (the ARMED info line);
+//   3. ON with no leveling carry to scale — leveling off, or carry_invariant
+//      superseding the leveling ambiguity carry (`do_amb_carry` is false) —
+//      WARNS as INERT and does NOT silently disarm (standing invariant #4: the
+//      run-end 'Network (leveling LOS-scale F1)' counter line is the ON-path
+//      telemetry; this warn is its pre-run twin).
+// The B_eff arithmetic itself is pinned at the row-build seam in
+// test_network_coupling.cpp (LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyExact).
+// ---------------------------------------------------------------------------
+namespace {
+
+/// Stable phrase of the ARMED info line (GnssConfigLoadNetwork.cpp, emitted inside
+/// the `if (network_phase_leveling_)` post-parse block).
+constexpr const char* kLosScaleArmed = "per-LOS variance scale ARMED";
+/// Stable phrase of the INERT warn (the post-parse guard that needs
+/// network_carry_invariant_ populated; fires on !phase_leveling || carry_invariant).
+constexpr const char* kLosScaleInert =
+    "network.phase_leveling_los_scale is on but the phase-leveling";
+
+} // namespace
+
+// Default OFF, and silent — on a bare network block AND on a leveling lineage that
+// never wrote the key (the byte-identity posture of every pre-F1 leveling run).
+TEST(NetworkPhaseLevelingConfig, LosScaleDefaultsOffAndIsSilent) {
+    std::error_code ec;
+    {
+        const fs::path p = writeTempConfig("pl_los_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_los_default");
+        ASSERT_TRUE(r.ok);
+        EXPECT_FALSE(r.cfg.networkPhaseLeveling());
+        EXPECT_FALSE(r.cfg.networkPhaseLevelingLosScale());
+        EXPECT_EQ(r.text.find(kLosScaleArmed), std::string::npos) << r.text;
+        EXPECT_EQ(r.text.find(kLosScaleInert), std::string::npos) << r.text;
+        fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("pl_los_default_pl",
+            networkConfig(kGpsGal, kPriosGps, "    \"phase_leveling\": true,\n"));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_los_default_pl");
+        ASSERT_TRUE(r.ok);
+        ASSERT_TRUE(r.cfg.networkPhaseLeveling());
+        EXPECT_FALSE(r.cfg.networkPhaseLevelingLosScale())
+            << "leveling ON must not imply the scale — F1 is an explicit arm.";
+        EXPECT_EQ(r.text.find(kLosScaleArmed), std::string::npos) << r.text;
+        EXPECT_EQ(r.text.find(kLosScaleInert), std::string::npos) << r.text;
+        fs::remove(p, ec);
+    }
+}
+
+// ON under a live leveling carry: parses true, announces ARMED, no INERT warn, and
+// moves no sibling leveling knob (the scale is applied at inject, "loosens only").
+TEST(NetworkPhaseLevelingConfig, LosScaleParsesTrueAndAnnouncesArmedUnderLeveling) {
+    std::error_code ec;
+    const fs::path p_off = writeTempConfig("pl_los_armed_ref",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_leveling\": true,\n"));
+    const fs::path p_on = writeTempConfig("pl_los_armed",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_leveling\": true,\n"
+            "    \"phase_leveling_los_scale\": true,\n"));
+    CapturedLoad ref = loadCapturingConfigLog(p_off, "pl_los_armed_ref");
+    CapturedLoad r   = loadCapturingConfigLog(p_on,  "pl_los_armed");
+    ASSERT_TRUE(ref.ok);
+    ASSERT_TRUE(r.ok);
+    ASSERT_TRUE(r.cfg.networkPhaseLeveling());
+    EXPECT_TRUE(r.cfg.networkPhaseLevelingLosScale());
+    EXPECT_NE(r.text.find(kLosScaleArmed), std::string::npos)
+        << "an armed F1 must announce itself on the config log.\n" << r.text;
+    EXPECT_EQ(r.text.find(kLosScaleInert), std::string::npos)
+        << "phase_leveling ON without carry_invariant is the live posture — not INERT.\n"
+        << r.text;
+    // Sibling leveling state is untouched by the arm (compare against the same
+    // lineage with the key absent rather than against a hard-coded default).
+    EXPECT_DOUBLE_EQ(r.cfg.networkPhaseLevelingQAmb(), ref.cfg.networkPhaseLevelingQAmb());
+    EXPECT_EQ(r.cfg.networkCarryInvariant(), ref.cfg.networkCarryInvariant());
+    EXPECT_EQ(r.cfg.networkCycleSlipMwDetect(), ref.cfg.networkCycleSlipMwDetect());
+    fs::remove(p_off, ec);
+    fs::remove(p_on, ec);
+}
+
+// ON with leveling OFF: the inject site the scale acts on does not exist, so the
+// guard WARNS (naming both predicates) and the ARMED line — which lives inside the
+// phase_leveling block — must not print.  The parsed value is kept as written:
+// the warn is the whole mechanism (no silent "fix", which would be a state change
+// the byte-identity story cannot see).
+TEST(NetworkPhaseLevelingConfig, LosScaleWithoutLevelingWarnsInertAndIsNotSilentlyDisarmed) {
+    const fs::path p = writeTempConfig("pl_los_nopl",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_leveling_los_scale\": true,\n"));
+    CapturedLoad r = loadCapturingConfigLog(p, "pl_los_nopl");
+    ASSERT_TRUE(r.ok) << "the guard is advisory — it must not fail the load.";
+    EXPECT_FALSE(r.cfg.networkPhaseLeveling());
+    EXPECT_TRUE(r.cfg.networkPhaseLevelingLosScale())
+        << "the loader keeps the value as written; the warn is the mechanism.";
+    EXPECT_NE(r.text.find(kLosScaleInert), std::string::npos)
+        << "F1 with phase_leveling off scales nothing — it must warn INERT.\n" << r.text;
+    EXPECT_NE(r.text.find("phase_leveling=false"), std::string::npos)
+        << "the warn must name the predicate that made it inert.\n" << r.text;
+    EXPECT_EQ(r.text.find(kLosScaleArmed), std::string::npos)
+        << "the ARMED line lives inside the phase_leveling block; it must not print.\n"
+        << r.text;
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// ON with leveling ON but carry_invariant superseding the leveling ambiguity carry
+// as a solve input (Card 4's DD carry; `do_amb_carry` is false, the inject is
+// skipped outright): the same INERT warn, naming carry_invariant.  carry_invariant
+// is legal only on the eq34 chain datum, so the posture carries phase_datum_eq34.
+TEST(NetworkPhaseLevelingConfig, LosScaleUnderCarryInvariantWarnsInert) {
+    const fs::path p = writeTempConfig("pl_los_cinv",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_leveling\": true,\n"
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"carry_invariant\": true,\n"
+            "    \"phase_leveling_los_scale\": true,\n"));
+    CapturedLoad r = loadCapturingConfigLog(p, "pl_los_cinv");
+    ASSERT_TRUE(r.ok);
+    ASSERT_TRUE(r.cfg.networkPhaseLeveling());
+    ASSERT_TRUE(r.cfg.networkCarryInvariant()) << "fixture must actually arm carry_invariant.";
+    EXPECT_TRUE(r.cfg.networkPhaseLevelingLosScale());
+    EXPECT_NE(r.text.find(kLosScaleInert), std::string::npos)
+        << "under carry_invariant the leveling carry is not the solve vehicle — INERT.\n"
+        << r.text;
+    EXPECT_NE(r.text.find("carry_invariant=true"), std::string::npos)
+        << "the warn must name the predicate that made it inert.\n" << r.text;
+    std::error_code ec; fs::remove(p, ec);
+}
