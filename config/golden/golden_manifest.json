@@ -32,7 +32,8 @@
         "network.cycle_slip.if_phase_td_ref_gate": true,
         "network.exclude_unmodeled_antenna_stations": true,
         "network.parallel_max_threads": 20,
-        "network.trace_phase_anchor": true
+        "network.trace_phase_anchor": true,
+        "network.readmit_seed_horizon_s": 3900.0
       },
       "unset": [],
       "exceptions": {
@@ -62,7 +63,8 @@
         "network.emit_pb_filter_meas_sigma_m"
       ],
       "exceptions": {
-        "network.clock_datum_sum_to_zero": "does NOT graduate (ledger row); the pin datum stays the default"
+        "network.clock_datum_sum_to_zero": "does NOT graduate (ledger row); the pin datum stays the default",
+        "network.resume_frame_restore": "sim-validated only (SPEC_synthetic §18.14 leg E, 60-sta sim, 2026-09-06): the warm-resume frame + coupling restore has no FIELD arm yet, and this lineage runs carry_invariant (the coupling restore is out of regime without phase_leveling); arm both on the first field warm-resume validation, writer side first (state_snapshot_frame_capture + _coupling_capture)"
       }
     }
   ]

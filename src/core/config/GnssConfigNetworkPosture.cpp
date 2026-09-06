@@ -611,12 +611,50 @@ namespace GnssProcessor {
               "under F1/F3's honest sigma the lineage's 1e-4 m^2 PB-gauge handover ceiling refuses "
               "93/93 successors (cold handovers, 4-14 m PB frame steps); 1e-2 restores 70/93 and "
               "the settled window — set >= 1e-2 (a working value, not a promotion)" },
-            // (2026-09-05: the re-admission edge cards — network.readmit_seed_horizon_s,
-            //  network.readmit_coupling_marg_ep, network.phase_datum_handover_max_var_ratio —
-            //  are BUILT and ledger-listed as UNVALIDATED; their posture rows join this table at
-            //  promotion, because config_posture_check.py --verify-loader requires every posture
-            //  row to map to a RECOMMEND_* ledger row.  Until then the loader's ARMED info lines
-            //  are their startup readout.)
+            // E2 seed-first re-admission (SPEC_synthetic_minimum_network §18.13/§18.14,
+            // SPEC_amb_iono_split_overcount §6.10/§6.11, 2026-09-05): a departing satellite's D2
+            // clock + code-bias carry is PARKED and seeds its re-registered columns, so the Q3
+            // anchor folds over the true gap instead of tripping `gap` and freezing a code-level
+            // re-draw into a metre-class tail.  Validated on the 24 h sim bed (T3 tails G25 6.27
+            // -> 1.69 m, G12 5.38 -> 2.71, G26 6.51 -> 4.34; consumer post-eclipse excursion 2-3x
+            // smaller; DD unchanged); the clock-only variant (readmit_seed_code_bias false) is
+            // FALSIFIED (the tails return), so both kinds seed.  Q3-anchored lineages without
+            // clock_model.  Not fingerprinted.  (readmit_coupling_marg_ep and
+            // phase_datum_handover_max_var_ratio stay KEEP_OFF and have no posture row.)
+            // Resume FRAME + COUPLING-REGRESSOR restore (SPEC_synthetic_minimum_network
+            // §18.10–§18.14, 2026-09-06): on a warm resume, restore the phase-anchor incumbents +
+            // sticky targets, the Q3 per-sat anchor state, the CLK-R held frame, every restored
+            // leveling row's Card-1 regression AND the dense D2 border covariance (QK/QP), so the
+            // first warm fold is conditional and dense.  Leg E: consumer h12 0.62 m rms (p50 0.10)
+            // vs 2.05 with the frame + regressors alone and 0.52 for a cold consumer on the
+            // continuous wire; first-fold clock trips 33 → 1.  Warm-resume lineages only (a
+            // writer armed with state_snapshot_frame_capture + state_snapshot_coupling_capture).
+            // Forward-only resume policies, not fingerprinted.
+            { warm,
+              network_resume_frame_restore_,
+              Tier::SCOPED, false, "network.resume_frame_restore",
+              "warm resume restores the realization FRAME (anchor incumbents + sticky targets, Q3 "
+              "per-sat anchor state, CLK-R held frame): PB sigma 1.11 -> 0.008 m at the first warm "
+              "epoch, 2862 -> 54 carries erased; pair with resume_coupling_restore" },
+            { warm && network_resume_frame_restore_,
+              network_resume_coupling_restore_,
+              Tier::SCOPED, false, "network.resume_coupling_restore",
+              "warm resume rebuilds the Card-1 regressors + the dense border from a v3 (QK/QP) "
+              "snapshot: first-fold clock trips 33 -> 1, consumer h12 2.05 -> 0.62 m rms (a cold "
+              "consumer on the wire converges like on the continuous run)" },
+            { network_clock_temporal_anchor_ && !network_clock_model_,
+              network_readmit_seed_horizon_s_ > 0.0,
+              Tier::SCOPED, false, "network.readmit_seed_horizon_s",
+              "E2 seed-first re-admission: parks the departed satellite's D2 clock + code-bias carry "
+              "and seeds the return (T3 clock tails 2-4x smaller, consumer post-eclipse excursion "
+              "2-3x smaller on the 24 h sim bed); Q3-anchored lineages, 3900 s covers the eclipse "
+              "exclusions" },
+            { network_readmit_seed_horizon_s_ > 0.0,
+              network_readmit_seed_code_bias_,
+              Tier::SCOPED, false, "network.readmit_seed_code_bias",
+              "readmit seeds cover the code-bias columns too (default true): the clock-only variant "
+              "is FALSIFIED — the IF-pair code-bias seeds anchor the clock-vs-code-bias split at the "
+              "return, without them the T3 clock tails come back (runs/readmit24h_e2clk)" },
             // Card 1f/1g — only meaningful where the Card-1 coupling rows actually EXIST:
             // the conditional carry armed and NOT superseded by the Card-4 invariant carry
             // (under carry_invariant the whole coupling trio is structurally inert, which is

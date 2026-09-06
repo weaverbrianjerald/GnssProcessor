@@ -520,6 +520,21 @@ not zero the defect, it trades ~306 fractional wraps/day for ~120 UNCOMPENSATED
 restarts/day — a ~2.5× reduction that moves the problem to an uninstrumented
 channel.  Build the response, not the flip.
 
+**5. THE RE-ADMISSION EDGE (2026-09-05/06, SPEC_amb_iono §6.10/§6.11, SPEC_synthetic
+§18.13/§18.14).**  A satellite's eclipse return was one edge behind three open items.
+`network.readmit_seed_horizon_s: 3900` (clock AND code-bias seeds — the clock-only
+variant is FALSIFIED, the tails return) is VALIDATED and pinned on the sim golden: T3
+clock tails 2–4× smaller, consumer post-eclipse excursion 2–3× smaller, DD unchanged.
+`readmit_coupling_marg_ep`, `phase_datum_handover_max_var_ratio` and BOTH F3 age-gate
+responses are KEEP OFF (the post-eclipse DD episodes are NEITHER the returned columns
+NOR the newborn legs; the ratio's first-stash denominator is biased by pin tenure; ANY
+diagonal leveling row for a subset of legs re-poisons the station).  The warm-restart
+consumer residual was the one-epoch DIAGONAL border fold at the seam: `resume_frame_
+restore` + `resume_coupling_restore` on a QK/QP-bearing snapshot (leg E) gives a warm
+restart whose consumer converges like a cold consumer on the continuous wire — ⚠ grade
+every seam card with a COLD-CONSUMER REPLAY (`_seamctl_replay_*`, `splice_wire.py`),
+never the seam-epoch diff alone: it cannot see an integrated, unsignalled drift.
+
 **4. `network.trace_station_residuals` writes ZERO rows on `carry_invariant`
 chains** — the writer rides the leveling RAIM pool, structurally empty there
 (the known pool re-host gap).  Use the prires / block-Baarda / congruence

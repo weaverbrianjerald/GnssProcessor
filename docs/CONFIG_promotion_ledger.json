@@ -1751,64 +1751,90 @@
    "interlock": "Loader POSTURE row existed since Aug-2026 with no ledger row (config_posture_check --verify-loader 'MISSING from ledger') — synced 2026-09-05."
   },
   {
+   "knob": "network.resume_frame_restore",
+   "default_at": "false (src/core/config/GnssConfigLoadNetwork.cpp loadNetworkCarries_; restore block src/core/app/NetworkRunContext.cpp networkTryWarmResume)",
+   "verdict": "RECOMMEND_SCOPED",
+   "regime": "val(\"network.state_snapshot_path\", \"\") != \"\"",
+   "scope": "warm resume only; forward-only resume response policy, NOT fingerprinted",
+   "armed_when": "val(\"network.resume_frame_restore\", False)",
+   "evidence": "SPEC_synthetic_minimum_network §18.9-§18.11 (mechanism) + §18.14 (verdict, 2026-09-06): restores the phase-anchor incumbents + sticky targets, the Q3 per-sat anchor state and the CLK-R held frame at a warm resume; PB sigma 1.11 -> 0.008 m at the first warm epoch, 2862 -> 54 restored carries erased. With resume_coupling_restore on a QK/QP snapshot (leg E, runs/cplreg_q12warm_e) the warm restart's consumer converges like a cold consumer on the continuous wire (h12 0.62 m rms vs 2.05 with the regressors alone).",
+   "interlock": "INERT (logged) on a v1 snapshot; pair with resume_coupling_restore; loader refuses amb_seam_reinflate_var_m2 > 0 with the coupling restore.",
+   "regime_prose": "warm-resume lineages (network.state_snapshot_path set) whose writer armed state_snapshot_frame_capture (format v2+)"
+  },
+  {
+   "knob": "network.resume_coupling_restore",
+   "default_at": "false (src/core/config/GnssConfigLoadNetwork.cpp loadNetworkCarries_, after resume_slip_warmup_ep; restore block NetworkRunContext.cpp networkTryWarmResume after the frame block)",
+   "verdict": "RECOMMEND_SCOPED",
+   "regime": "val(\"network.state_snapshot_path\", \"\") != \"\" and on(\"network.resume_frame_restore\")",
+   "scope": "warm resume only; requires carry_conditional_coupling + carry_coupling_gauge_project (Card 1f); NOT fingerprinted",
+   "armed_when": "val(\"network.resume_coupling_restore\", False)",
+   "evidence": "SPEC_synthetic_minimum_network §18.12-§18.14 (2026-09-05/06). Rebuilds every restored leveling row's Card-1 regressors AND the dense D2 border (prev_carry_cov from QK/QP) so the first warm fold is conditional and dense: n_resume_cpl_diag_border 376 -> 0, first-fold clock nis trips 33 (plain rows) -> 1, wire at the seam P(L1C) SD 0.002 m (E) / 0.005 (G) vs 9.1 / 8.0 without the restore. Consumer h12 0.62 m rms / p50 0.10 (arm C = regressors without the dense border 2.05 / 1.97; cold consumer on the continuous wire 0.52 / 0.12); a cold consumer replayed on the warm wire converges like on the continuous wire. The arm-C harm was the one-epoch DIAGONAL border fold at the seam (coherent unsignalled PB re-realization), removed by the dense border.",
+   "interlock": "Loader HARD-REQUIRES resume_frame_restore, carry_conditional_coupling, carry_coupling_gauge_project; REFUSES amb_seam_reinflate_var_m2 > 0 (RestoreRefusesSeamReinflate). Writer must arm state_snapshot_frame_capture + state_snapshot_coupling_capture (a v2 snapshot restores the rows but folds the border DIAGONALLY for one epoch = arm C).",
+   "regime_prose": "warm-resume lineages with resume_frame_restore whose writer armed state_snapshot_coupling_capture (format v3: QL/QS/QZ/QR + QK/QP)"
+  },
+  {
    "knob": "network.readmit_seed_horizon_s",
    "family": "Card-4 invariant DD carry, its carry couplings",
-   "verdict": "UNVALIDATED",
+   "verdict": "RECOMMEND_SCOPED",
    "scope": "READMIT continuity, E2 seed-first re-admission (SPEC_synthetic_minimum_network §18.4 built 2026-09-05; SPEC_amb_iono_split_overcount §7 FIRST). Q3-anchored lineages WITHOUT clock_model. A departed satellite's D2 clock + code-bias carry is PARKED for this many seconds and seeds its re-registered columns at var + q*gap; the Q3 anchor folds ANCHORED over the true gap (bounded by this horizon instead of clock_anchor_max_gap_s) and its NIS guard is the mark-if-moved. Phase bias is NOT seeded (its frame is re-realized at the cold re-pin). Validation arms: runs/readmit24h_e2 (24 h F3 bed) + runs/cplreg_q12warm_d (seam leg).",
    "regime": "on(\"network.clock_temporal_anchor\") and not on(\"network.clock_model\")",
    "posture_why": "E2 seed-first re-admission: parks the departed satellite's D2 clock + code-bias carry and seeds the return, so the Q3 anchor folds over the true gap instead of tripping `gap` and freezing a code-level re-draw into a metre-class tail (T3)",
    "default_at": "include/config/GnssConfig.hpp (network_readmit_seed_horizon_s_{0.0}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside resume_coupling_restore; park at the stash tail (NetworkRunContext.cpp networkStashCarry), seed at the D2 install (networkInjectD2CarryPrior), guard attribution in NetworkClockAnchor.cpp decouple()",
    "fingerprinted": false,
    "interlock": "0 = OFF (byte-identical: nothing is ever parked). NOT fingerprinted (parking adds entries, changes no carried value's meaning; a snapshot never carries a parked entry — a seam inside an absence is today's cold return). Parked entries of a constellation are DROPPED at its clock-datum change. Under clock_model only code-bias columns can be seeded (loader-warned).",
-   "evidence": "BUILT 2026-09-05 (unit: ClockAnchorFold.SeededReturnFoldsAnchoredOverTheTrueGap, ReadmitContinuityConfig.*). Arms owed: runs/readmit24h_e2, runs/cplreg_q12warm_d."
+   "evidence": "BUILT 2026-09-05; runs/readmit24h_e2 (3900 s): 28 re-admissions, 26 clock + 84 code-bias seeds, `gap` trips 26 → 0. WIRE (settled-half per-sat clock, truth): G25 6.27 → 1.69 m, G12 5.38 → 2.71, G26 6.51 → 4.34 (the T3 tails), others ±0.2. CONSUMER post-eclipse excursion 2–3× smaller (h3–h8 0.90/0.54/0.54/0.50/0.32/0.15 vs 1.81/1.10/1.19/1.40/1.11/0.47 m). DD unchanged. 21/26 clock seeds held, 5 rejected in-epoch by the guard on the T3 sats (e 0.18–0.37 m); IF-pair CB seeds 44/44 held, third-frequency C5Q/C7Q 28/40 rejected → readmit_seed_code_bias. Seam leg D: inert on the seam consumer (SPEC_synthetic §18.14). Clock-only arm: FALSIFIED as an improvement (23:55 PDT).  26 clock seeds, 0 code-bias seeds; seed checks 20 held / 6 moved; 7 seed-attributed Q3 trips (arm 2: 8).  WIRE (settled-half per-sat clock): G12 6.26 m (arm 2 2.71, base 5.38), G26 6.15 (4.34, 6.51), G25 5.63 (1.69, 6.27) — the T3 tails RETURN.  CONSUMER h3–h8 1.76 / 0.71 / 0.66 / 0.78 / 0.34 / 0.13 m (arm 2 0.90 / 0.54 / 0.54 / 0.50 / 0.32 / 0.15).  DD unchanged (0.287 / 64.0 %, settled 0.430 / 53.0 %).  The IF-pair code-bias seeds anchor the clock-vs-code-bias SPLIT at the return, so the clock lands near the pre-gap realization even when its own seed is rejected; without them the cold third-frequency misrealization relocates into the clock — §18.1's T3 mechanism.  The third-frequency seed rejections are the stash-side check working, not harm.  `readmit_seed_code_bias` stays TRUE (default); `readmit_seed_horizon_s` 3900 s (both kinds) is the validated T3 fix → PROMOTED: ledger RECOMMEND_SCOPED (Q3-anchored lineages without clock_model, armed_when > 0), posture row, sim golden pin 3900 (manifest, regenerated golden, verify PASS, 20/20 smoke).",
+   "armed_when": "val(\"network.readmit_seed_horizon_s\", 0.0) > 0.0",
+   "armed_when_why": "0 = OFF; any positive horizon arms the park + seed; 3900 s covers the ~55 min eclipse exclusions of the sim bed with margin."
   },
   {
    "knob": "network.readmit_coupling_marg_ep",
    "family": "Card-4 invariant DD carry, its carry couplings",
-   "verdict": "UNVALIDATED",
+   "verdict": "KEEP_OFF",
    "scope": "READMIT re-coupling edge (SPEC_amb_iono_split_overcount §7 FIRST, built 2026-09-05): for K epochs after a satellite's clock column returns from a >= 3-loop-epoch absence, every Card-1 coupling term on its shared columns takes the DEPARTED route in every station's rows and F3 block. Lineages with the Card-1 coupling rows (carry_conditional_coupling, not carry_invariant).",
    "regime": "on(\"network.carry_conditional_coupling\") and not on(\"network.carry_invariant\")",
    "posture_why": "block/row RE-COUPLING edge at satellite re-admission: the returned satellite's columns take the departed route for K epochs — the named fix for the F3 24 h post-eclipse DD episodes",
    "default_at": "include/config/GnssConfig.hpp (network_readmit_coupling_marg_ep_{0}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside readmit_seed_horizon_s; window opened at the stash tail (networkStashCarry), consumed by CouplingRowBuilder::readmitDiverted (NetworkCoupling.cpp)",
    "fingerprinted": false,
    "interlock": "0 = OFF (byte-identical). INERT without carry_conditional_coupling (loader-warned); run-end 'READMIT continuity' line's diverted-term count is the denominator (invariant #4). Both edges evented (READMIT readmit / marg_expired).",
-   "evidence": "BUILT 2026-09-05 (unit: NetworkCouplingTest.ReadmitWindowDivertsThePresentColumnAndExpires). Arm owed: runs/readmit24h_e2."
+   "evidence": "BUILT 2026-09-05; runs/readmit24h_e2 (K 20): 28 windows, 2.98 M terms diverted, DD IDENTICAL to the base (settled 0.420 / 53.4 % vs 0.425 / 53.2 %) — INERT on its target (the post-eclipse DD episodes are NOT the shared border; SPEC_amb_iono §6.11 item 2). No harm measured. KEEP OFF pending a target."
   },
   {
    "knob": "network.phase_datum_handover_max_var_ratio",
    "family": "COLD-START, DATUM and CLOCK knobs (network.cold_clock_seed, clock_datum_*, code_datum_time_linked, phase_datum_*, s2z/brdc-anchored clock realization, apriori_source / apriori_clock_anchor_sigma_m, clock_model_*, emit_clock_rate, sticky_pivot, scoped_handover_response, estimate_sat_code_bias, estimate_glonass, estimate_ifb)",
-   "verdict": "UNVALIDATED",
+   "verdict": "KEEP_OFF",
    "scope": "The honest-sigma-scale PB-gauge handover ceiling (SPEC_amb_iono_split_overcount §6.8.3 / §7 item 15, built 2026-09-05): a ledger value is usable only if var <= ratio x its arc's FIRST-STASH conditional variance (LocalCarry::var_first; unknown = refused); the absolute phase_datum_handover_max_var_m2 stays a rail. F1/F3 lineages under the continuous handover.",
    "regime": "on(\"network.phase_datum_handover_continuous\") and (on(\"network.phase_leveling_local_block\") or on(\"network.phase_leveling_los_scale\"))",
    "posture_why": "honest-sigma-scale PB-gauge handover ceiling: var <= ratio x the arc's first-stash conditional variance (posture-invariant; the absolute max_var_m2 stays a rail)",
    "default_at": "include/config/GnssConfig.hpp (network_phase_datum_handover_max_var_ratio_{0.0}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside phase_datum_handover_max_var_m2; test in NetworkPhaseDatum.cpp networkElectPhaseAnchors (ratio_ok); var_first kept at the leveling stash (NetworkRunContext.cpp) and harvested into the handover ledger",
    "fingerprinted": false,
    "interlock": "0 = OFF (absolute ceiling alone, byte-identical). INERT without phase_datum_handover_continuous (loader-warned). Refusals counted on handover_refused_ratio (disjoint from handover_refused_var); PBGAUGE handover rows carry var / var_first when armed; the L snapshot row gains an optional trailing var_first field only when armed.",
-   "evidence": "BUILT 2026-09-05 (unit: PhaseDatumHandover.RatioCeilingRefusesUnconvergedAndUnknownArcs, PhaseDatumHandoverLoader.RatioCeilingDefaultsOffParsesAndRejectsNegative). Arm owed: runs/ratio3h vs runs/nonint_losblock3h_hv."
+   "evidence": "BUILT 2026-09-05; runs/ratio3h (ratio 0.01, rail 1.0) vs runs/nonint_losblock3h_hv: refusals are exactly the r > 0.01 population, but the one settled refusal (E25 @ S09000SIM, r 0.038, var_first 0.075 m² — an arc that spent time PINNED, so its first stash was already converged) put a 7.6 m PB frame step on the wire where the absolute 1e-2 had accepted it harmlessly. Value 0.01 FALSIFIED; the first-stash denominator is biased by pin tenure. KEEP OFF; the absolute 1e-2 stays the working value; a birth-variance-at-first-sighting denominator is the owed card (SPEC_amb_iono §6.11 item 3)."
   },
   {
    "knob": "network.phase_leveling_local_block_min_age_ep",
    "family": "Card-4 invariant DD carry, its carry couplings (C1/Card-1x), the LS-VCE monitor, and the RTB-7 warm-resume snapshot knobs",
-   "verdict": "UNVALIDATED",
+   "verdict": "KEEP_OFF",
    "scope": "F3 block ADMISSION age gate (SPEC_amb_iono_split_overcount §6.10 arm 5 / §6.12, built 2026-09-05): a carried leg younger than K loop epochs since its first stash (LocalCarry::birth_ep) is kept OUT of its station's jointly-whitened block and injected as a per-column row (F1-scaled over the young set when los_scale is armed). Target: the ~4 h network-wide DD episodes after each eclipse re-admission cluster, which §6.11 showed are NOT the shared border (seeding the returned satellite's clock + marginalizing its columns out of every block for 20 epochs left the settled-quarter DD unchanged) — by elimination the legs BORN at the re-admission carry their code-level birth error into the block. F3 lineages only.",
    "regime": "on(\"network.phase_leveling_local_block\")",
    "posture_why": "F3 block admission age gate: young legs (code-level birth error) are carried per-column until mature instead of being whitened into the station block — the named fix for the post-eclipse DD episodes",
    "default_at": "include/config/GnssConfig.hpp (network_phase_leveling_local_block_min_age_ep_{0}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside phase_leveling_local_block; split in ApplicationNetworkAssembly.cpp (pl_pend → bc / pl_young); birth_ep kept at the leveling stash (NetworkRunContext.cpp)",
    "fingerprinted": false,
    "interlock": "0 = OFF (byte-identical). INERT without phase_leveling_local_block (loader-warned). Counted per station-epoch (pl_blk_young_cols) and printed on the run-end 'Network (leveling local-block F3)' line. birth_ep is NOT snapshotted (a restored entry reads mature).",
-   "evidence": "BUILT 2026-09-05 (unit: NetworkPhaseLevelingConfig.BlockMinAgeDefaultsOffParsesAndWarnsInertWithoutTheBlock). Arm owed: runs/readmit8h_young (K = 30) vs the first 8 h of runs/nonint_losblock24h_hv."
+   "evidence": "BUILT 2026-09-05. Arm 5 (young legs as per-column DIAGONAL rows, K 30, 8 h): every hour back at the pre-F1 over-count (L1C 2.3–2.7 cyc, 10–16 % at the integer) — any diagonal leveling row re-asserts the station-common directions (SPEC_amb_iono §6.11 item 6); young_mode 'diagonal' is loader-warned. Arm 5b (young legs FREE): FAIL — the newborn-leg hypothesis is falsified too (23:05 PDT).  Hourly L1C (5b / base): h2 0.221 / 0.192, h3 0.214 / 0.198, h4 0.308 / 0.232, h5 0.350 / 0.271, h6 0.554 / 0.424, h7 0.588 / 0.485; WL 84–92 % (base 96–99 %); clean chords h6 0.761 / h7 0.616 (base 0.538 / 0.478) — the episode LARGER, not smaller; mature legs h2–h3 0.175 / 0.169 (base 0.160 / 0.167); free young legs 1.7–2.0 cyc (base carried young 0.74 / 0.64, the additional falsifier hit); 232,089 young columns kept out of 55,440 blocks.  Removing the newborn legs from the block does not protect the mature chords through the cluster.  With arm 2, the post-eclipse DD episodes are NEITHER the returned satellite's shared columns NOR the newborn legs' block membership; both age-gate responses fail → `phase_leveling_local_block_min_age_ep` KEEP OFF (free = harmless but useless, diagonal = harmful).  The base's event census through the h16–h21 episode shows no datum / era / withhold events (anchor handovers 12–33 and ~20 T1 refsat_resets per 20 min, 7-column col_added/removed per return) — the next card is a fresh investigation of what re-realizes NETWORK-WIDE at a re-admission cluster that the exactly-conditioned F3 block resists (prefit census / topology ledger / rhs_attrib), not another gate."
   },
   {
    "knob": "network.readmit_seed_code_bias",
    "family": "Card-4 invariant DD carry, its carry couplings",
-   "verdict": "UNVALIDATED",
+   "verdict": "RECOMMEND_SCOPED",
    "scope": "Sub-knob of network.readmit_seed_horizon_s (built 2026-09-05): true (default) parks + seeds the departing satellite's per-signal CODE-BIAS columns as well as its clock; false seeds the CLOCK alone. Measured on runs/readmit24h_e2: the IF-pair code-bias seeds held 44/44 but the THIRD-frequency seeds (C5Q, C7Q) were rejected by the data 28/40 (the §18.1 cold-start third-frequency misrealization carried into the return through a stiff σ 1.9 cm seed), and 5 of 26 anchored clock seeds were rejected in-epoch on the T3 satellites.",
-   "regime": "on(\"network.clock_temporal_anchor\") and not on(\"network.clock_model\") and val(\"network.readmit_seed_horizon_s\", 0.0) > 0.0",
+   "regime": "val(\"network.readmit_seed_horizon_s\", 0.0) > 0.0",
    "posture_why": "readmit seed scope: clock-only seeding keeps the T3 fix (the clock re-draw) and lets the weakly determined third-frequency code biases re-solve from data as today",
    "default_at": "include/config/GnssConfig.hpp (network_readmit_seed_code_bias_{true}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside readmit_coupling_marg_ep; parking filter in networkStashCarry (NetworkRunContext.cpp)",
    "fingerprinted": false,
    "interlock": "Inert without readmit_seed_horizon_s. Manifest key readmit_seed_code_bias.",
-   "evidence": "BUILT 2026-09-05 (unit: ReadmitContinuityConfig.DefaultsOffAndKnobsParse). Arm owed: runs/readmit24h_e2clk (false) vs runs/readmit24h_e2 (true)."
+   "evidence": "BUILT 2026-09-05 (unit: ReadmitContinuityConfig.DefaultsOffAndKnobsParse). runs/readmit24h_e2clk (false) vs runs/readmit24h_e2 (true): FALSIFIED as an improvement (23:55 PDT).  26 clock seeds, 0 code-bias seeds; seed checks 20 held / 6 moved; 7 seed-attributed Q3 trips (arm 2: 8).  WIRE (settled-half per-sat clock): G12 6.26 m (arm 2 2.71, base 5.38), G26 6.15 (4.34, 6.51), G25 5.63 (1.69, 6.27) — the T3 tails RETURN.  CONSUMER h3–h8 1.76 / 0.71 / 0.66 / 0.78 / 0.34 / 0.13 m (arm 2 0.90 / 0.54 / 0.54 / 0.50 / 0.32 / 0.15).  DD unchanged (0.287 / 64.0 %, settled 0.430 / 53.0 %).  The IF-pair code-bias seeds anchor the clock-vs-code-bias SPLIT at the return, so the clock lands near the pre-gap realization even when its own seed is rejected; without them the cold third-frequency misrealization relocates into the clock — §18.1's T3 mechanism.  The third-frequency seed rejections are the stash-side check working, not harm.  `readmit_seed_code_bias` stays TRUE (default); `readmit_seed_horizon_s` 3900 s (both kinds) is the validated T3 fix → PROMOTED: ledger RECOMMEND_SCOPED (Q3-anchored lineages without clock_model, armed_when > 0), posture row, sim golden pin 3900 (manifest, regenerated golden, verify PASS, 20/20 smoke).",
+   "armed_when": "val(\"network.readmit_seed_code_bias\", True)",
+   "regime_prose": "the seed scope sub-knob (default true); in regime whenever the seed horizon is armed"
   }
  ]
 }
