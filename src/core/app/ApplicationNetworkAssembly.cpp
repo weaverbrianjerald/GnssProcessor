@@ -3022,7 +3022,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         for (const PlPend& p : pl_pend) {
                             if (pl_min_age > 0 && p.lc->birth_ep > 0
                                 && loop_ep_now - p.lc->birth_ep < pl_min_age) {
-                                pl_young.push_back(p);
+                                // "free" (default): the young leg is NOT injected at all —
+                                // it re-solves from this epoch's data and carries no memory
+                                // until it matures.  "diagonal": deferred to the per-column
+                                // route below (measured harmful, kept for the record).
+                                if (!ctx.knobs.pl_blk_young_free) pl_young.push_back(p);
+                                else ++R.pl_blk_young_cols;
                                 continue;
                             }
                             bc.push_back(LocalBlockCol{
@@ -3031,6 +3036,20 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                 vce_apply.factor(NetworkCarryVceApply::kPl, p.sat)});
                         }
                         R.pl_blk_young_cols += static_cast<long long>(pl_young.size());
+                        // "free" young legs must not fall through to the per-column fallback
+                        // either: drop them from pl_pend so a factorization failure re-emits
+                        // only the mature set (and the marginalized count below reads them as
+                        // kept out of the block, which they are).
+                        if (ctx.knobs.pl_blk_young_free && pl_min_age > 0
+                            && bc.size() != pl_pend.size()) {
+                            std::vector<PlPend> mature;
+                            mature.reserve(bc.size());
+                            for (const PlPend& p : pl_pend)
+                                if (!(p.lc->birth_ep > 0
+                                      && loop_ep_now - p.lc->birth_ep < pl_min_age))
+                                    mature.push_back(p);
+                            pl_pend.swap(mature);
+                        }
                         long long n_sta_carry = 0;   // read-only walk of this station's entries
                         for (auto it = local_carry.lower_bound(std::make_tuple(
                                  static_cast<int>(i), std::string{}, std::string{}));

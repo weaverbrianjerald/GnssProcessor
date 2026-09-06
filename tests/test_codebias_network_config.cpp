@@ -2667,4 +2667,37 @@ TEST(NetworkPhaseLevelingConfig, BlockMinAgeDefaultsOffParsesAndWarnsInertWithou
         EXPECT_FALSE(r.ok) << "a negative gate must be refused";
         fs::remove(p, ec);
     }
+    // The gate's RESPONSE: "free" by default (young legs not injected), "diagonal" kept
+    // for the record and warned as measured-harmful, anything else refused.
+    {
+        const fs::path p = writeTempConfig("pl_blk_age_mode_default",
+            networkConfig(kGpsGal, kPriosGps, "    \"phase_leveling\": true,\n"));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_mode_default");
+        ASSERT_TRUE(r.ok);
+        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockYoungMode(), "free");
+        fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("pl_blk_age_mode_diag",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_leveling\": true,\n"
+                "    \"shared_carry_full_cov\": true,\n"
+                "    \"carry_conditional_coupling\": true,\n"
+                "    \"phase_leveling_local_block\": true,\n"
+                "    \"phase_leveling_local_block_min_age_ep\": 30,\n"
+                "    \"phase_leveling_local_block_young_mode\": \"diagonal\",\n"));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_mode_diag");
+        ASSERT_TRUE(r.ok);
+        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockYoungMode(), "diagonal");
+        EXPECT_NE(r.text.find("MEASURED HARMFUL"), std::string::npos) << r.text;
+        fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("pl_blk_age_mode_bad",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_leveling_local_block_young_mode\": \"sideways\",\n"));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_mode_bad");
+        EXPECT_FALSE(r.ok) << "an unknown mode must be refused";
+        fs::remove(p, ec);
+    }
 }

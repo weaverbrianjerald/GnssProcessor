@@ -1485,6 +1485,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"phase_leveling_los_scale\":" << (pl_los_scale ? "true" : "false") << ','
                << "\"phase_leveling_local_block\":" << (pl_local_block ? "true" : "false") << ','
                << fmt::format("\"phase_leveling_local_block_min_age_ep\":{},", config_.networkPhaseLevelingLocalBlockMinAgeEp())
+               << "\"phase_leveling_local_block_young_mode\":\"" << config_.networkPhaseLevelingLocalBlockYoungMode() << "\","
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
                // M2 (LS-VCE) monitor + v2 apply.  The apply knobs are in the manifest

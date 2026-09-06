@@ -991,6 +991,29 @@ and rising at each return.  Falsifiers: h6–h7 > 0.35 cyc (the young legs are n
 or h2–h3 worse than 0.25 (the gate costs the quiet state).  A partial (h6–h7 0.25–0.35) gets one
 K-sweep arm, not a verdict.
 
+**Arm 5 RESULT + arm 5b pre-registration (written 2026-09-05 22:45 PDT, after arm 5 was read and BEFORE arm 5b
+was run).**  Arm 5 (`readmit8h_young`, young legs routed as per-column DIAGONAL rows) drove EVERY hour of the 8 h
+window back to the pre-F1 over-count — L1C med|e| 3.78 / 2.58 / 2.58 / 2.70 / 2.31 / 2.27 / 1.99 / 2.35 cyc, 10–16 %
+at the integer, WL 40–51 % (base F3 0.19–0.49 / 74–82 % / 96–99 %), quiet hours included, clean and touched chords
+alike (228,423 young columns routed per-column over 55,440 blocks).  The falsified premise is "a diagonal row for a
+SUBSET of a station's legs is harmless": it is not — §3.1's station-common over-count (rx clock / ZWD / rx-DCB
+asserted ~n·B-fold by diagonal rows) re-enters through the ~15 % young rows and freezes the station level for
+mature and young legs alike.  Corollary, recorded: the F3 factorization FALLBACK (F1/diagonal rows for that
+station-epoch) is harmful for the same reason (0 fallbacks on every arm so far — latent).
+Built: `network.phase_leveling_local_block_young_mode` = "free" (default; a young leg is NOT injected until it
+matures — no memory, re-solved from its own epoch's data, joins the block at age K with its then-current
+conditional variance) | "diagonal" (arm 5's route, kept for the record, loader-warned as measured harmful).
+
+| arm | config | single change vs its base |
+|---|---|---|
+| `readmit8h_youngfree` | `_readmit8h_youngfree.json` | arm 5 + `phase_leveling_local_block_young_mode "free"` (K = 30, 8 h); control = the first 8 h of `runs/nonint_losblock24h_hv` |
+
+PRE-REGISTERED (arm 5b): the arm-5 criterion verbatim — clean-chord L1C med|e| in h6–h7 ≤ 0.25 cyc (base 0.54 / 0.48
+clean; 0.42 / 0.49 all), h2–h3 unchanged within ±0.03 (base 0.19 / 0.20), lanes unchanged, `young column(s) kept
+out of the block` > 0.  Additional falsifier specific to "free": the young-leg population's own med|e| (the
+mature/young table) must not exceed 1.0 cyc at h2–h3 (base young 0.74 / 0.64) — a free young leg has one epoch of
+data, and if that reads worse than the diagonal-carried young leg the trade is a loss even if the mature chords win.
+
 ## §6.11 Results of the §6.10 arms (filled as they land; nothing in §6.10 is edited)
 
 1. **`readmit_off3h` — invariant #6 PASS (2026-09-05 19:22 PDT).**  New exe `gnss_processor_readmit.exe`

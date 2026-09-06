@@ -1922,7 +1922,7 @@ int networkTeardown(
                       "(harvest-stamp mismatch), {} column(s) refused, {} factorization "
                       "fallback(s); block dim histogram <10:{} 10-24:{} 25-49:{} 50-74:{} "
                       "75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed; "
-                      "age gate {} ep: {} young column(s) routed per-column",
+                      "age gate {} ep ({}): {} young column(s) kept out of the block",
                       (cliff_live && config_.networkCarryConditionalCoupling()
                        && !config_.networkCarryCouplingJointWhiten())
                           ? "" : " ⚠ CHANNEL NOT ARMED on this posture (phase_leveling "
@@ -1934,7 +1934,8 @@ int networkTeardown(
                       C.n_pl_blk_hist[0], C.n_pl_blk_hist[1], C.n_pl_blk_hist[2],
                       C.n_pl_blk_hist[3], C.n_pl_blk_hist[4], C.n_pl_blk_max_dim,
                       C.n_pl_blk_refloat_rewhiten, C.n_pl_blk_refloat_fail,
-                      config_.networkPhaseLevelingLocalBlockMinAgeEp(), C.n_pl_blk_young_cols);
+                      config_.networkPhaseLevelingLocalBlockMinAgeEp(),
+                      config_.networkPhaseLevelingLocalBlockYoungMode(), C.n_pl_blk_young_cols);
         // Seam-scoped ZWD re-seed (network.zwd_seam_reseed) — the ON-path telemetry
         // (standing invariant #4): an armed knob with 0 folds means the window never
         // armed (no warm resume, or the snapshot carried no Z rows) or every fold

@@ -2986,6 +2986,19 @@ namespace GnssProcessor {
                       "phase_leveling_local_block_min_age_ep", 0);
         if (network_phase_leveling_local_block_min_age_ep_ < 0)
             throw std::runtime_error("network.phase_leveling_local_block_min_age_ep must be >= 0");
+        network_phase_leveling_local_block_young_mode_ =
+            jval<std::string>(json, "network.phase_leveling_local_block_young_mode",
+                              "phase_leveling_local_block_young_mode", "free");
+        if (network_phase_leveling_local_block_young_mode_ != "free"
+            && network_phase_leveling_local_block_young_mode_ != "diagonal")
+            throw std::runtime_error("network.phase_leveling_local_block_young_mode must be "
+                                     "\"free\" or \"diagonal\"");
+        if (network_phase_leveling_local_block_min_age_ep_ > 0
+            && network_phase_leveling_local_block_young_mode_ == "diagonal")
+            log->warn("Network (F3 age gate): young_mode \"diagonal\" is MEASURED HARMFUL (runs/"
+                      "readmit8h_young: every hour back at the pre-F1 over-count — any diagonal "
+                      "leveling row re-asserts the station-common directions ~n*B-fold); armed "
+                      "for the record only.");
         if (network_phase_leveling_local_block_min_age_ep_ > 0 && !network_phase_leveling_local_block_)
             log->warn("Network (F3 age gate): network.phase_leveling_local_block_min_age_ep is set "
                       "but network.phase_leveling_local_block is OFF — there is no block to keep a "

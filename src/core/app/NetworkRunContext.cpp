@@ -54,6 +54,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_los_scale = config_.networkPhaseLevelingLosScale();
     k.pl_local_block = config_.networkPhaseLevelingLocalBlock();
     k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // F3 block admission age gate
+    k.pl_blk_young_free = config_.networkPhaseLevelingLocalBlockYoungMode() == "free";
     k.pl_warmup_on_conv = config_.networkPhaseLevelingWarmupOnConvergence();
     k.pl_refloat_on_conv = config_.networkPhaseLevelingRefloatAtConvergence();
     k.pl_conv_rms_thresh = config_.networkPhaseLevelingConvRmsThreshTecu();

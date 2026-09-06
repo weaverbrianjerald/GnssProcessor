@@ -111,6 +111,10 @@ namespace GnssProcessor {
         /// the post-eclipse DD episodes SPEC_amb_iono_split_overcount §6.9 measured (and
         /// §6.11 showed are NOT the shared border).  0 = OFF (byte-identical).
         int  pl_blk_min_age_ep{};
+        /// network.phase_leveling_local_block_young_mode == "free": a young leg is NOT injected
+        /// (no memory until it matures).  false = "diagonal" (per-column rows — measured
+        /// harmful, SPEC_amb_iono §6.11 arm 5).
+        bool pl_blk_young_free{};
         bool pl_warmup_on_conv{};
         bool pl_refloat_on_conv{};
         double pl_conv_rms_thresh{};
