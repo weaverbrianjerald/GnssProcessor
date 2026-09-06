@@ -2042,8 +2042,10 @@ excluded for eclipse and returns, the whole trace reads its newborn legs as a ne
 `scripts/simnet_dd_reref.py <fixture> <run>` (hourly, per constellation, with the leg-age curve) or
 `simnet_amb_integer.py --ref-free` (summary block).  Every DD number in §13–§18 quoted before 2026-09-06 is
 as-traced; the settled-quarter figures in particular (0.42 / 53 %) are the reference's post-return
-convergence, not the network's.  A producer-side reference policy (`trace_dd_fractional_ref: "oldest"`) is
-owed — the ref-free grader stays the reference-independent instrument regardless.
+convergence, not the network's.  A producer-side reference policy (`network.trace_dd_fractional_ref: "oldest"`) is
+now BUILT and A/B'd (§6.13.3, ledger RECOMMEND_SCOPED): it improves the AS-TRACED grade 25-42 % at a
+returned-reference hour but lands 2-3x ABOVE the ref-free grade, so the ref-free grader stays the
+reference-independent instrument regardless and the goldens keep `"lowest"` for continuity.
 
 **Rule 13.8.y — the TRUTH-FREE version of that check, and why the FIELD is a different story
 (added 2026-09-06, SPEC_amb_iono §6.13).**  On a trace with no truth the reference's share can still be
