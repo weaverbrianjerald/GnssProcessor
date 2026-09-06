@@ -1240,6 +1240,29 @@ namespace GnssProcessor {
         if (network_config_.trace_dd_fractional_epoch_stride < 1)
             network_config_.trace_dd_fractional_epoch_stride = 1;
 
+        // §6.12.5 — WHICH satellite the DD trace differences against.  An unrecognised name
+        // is reported and falls back to the default: unlike the Q3 denominator this knob
+        // cannot corrupt a solve (trace-only), so a warn-and-default keeps a typo from
+        // killing a long run, but it must never pass silently — the whole point of the knob
+        // is that the reference identity is now a stated choice rather than an accident of
+        // lexical ordering.
+        {
+            const std::string s = jval<std::string>(json, "network.trace_dd_fractional_ref",
+                                                    "trace_dd_fractional_ref",
+                                                    std::string{"lowest"});
+            if (s.empty() || s == "lowest")
+                network_config_.trace_dd_fractional_ref = NetworkDdFracRef::Lowest;
+            else if (s == "oldest")
+                network_config_.trace_dd_fractional_ref = NetworkDdFracRef::Oldest;
+            else {
+                network_config_.trace_dd_fractional_ref = NetworkDdFracRef::Lowest;
+                log->error("Network (§6.12.5): network.trace_dd_fractional_ref = '{}' is not one of "
+                           "lowest|oldest — falling back to 'lowest'.  Every chord in "
+                           "network_dd_fractional.csv carries the reference satellite's own error, so "
+                           "the grade depends on which one this is.", s);
+            }
+        }
+
         // S1 (docs/SPEC_lane_spectrometer.md §3.3): the per-(cons,signal,sat) -> anchor
         // STATION map, for the spectrometer's anchor partition.  Trace-only, no stride —
         // the row count scales with gauge freedoms (sats x signals), not station pairs.

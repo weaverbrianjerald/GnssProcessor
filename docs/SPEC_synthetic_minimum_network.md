@@ -2045,6 +2045,37 @@ as-traced; the settled-quarter figures in particular (0.42 / 53 %) are the refer
 convergence, not the network's.  A producer-side reference policy (`trace_dd_fractional_ref: "oldest"`) is
 owed — the ref-free grader stays the reference-independent instrument regardless.
 
+**Rule 13.8.y — the TRUTH-FREE version of that check, and why the FIELD is a different story
+(added 2026-09-06, SPEC_amb_iono §6.13).**  On a trace with no truth the reference's share can still be
+removed: within a group it is COMMON, so a circular median estimates it (`scripts/dd_frac_reref.py`).  Three
+traps, each of which produced a wrong reading here before it was caught.
+
+1. **The estimator shrinks residuals by itself.**  Subtracting a group's own circular median cuts med|f|
+   from 0.251 to 0.145 on PURE UNIFORM NOISE — a 42 % "improvement" that is nothing.  Quote the GAP to a
+   size-matched Monte-Carlo null, never the raw reduction.
+2. **A triangle-closure structure test is confounded.**  A DD is per-station additive BY CONSTRUCTION, so
+   triangles close for any fixed satellite whether or not the reference matters, and a circular median IS
+   one of those data points.  Its null must therefore carry the DD structure with no reference term; the
+   DOY-129 closure reads as real structure against an independent-uniform null (0.182 vs 0.250) and as
+   NOTHING against the correct one (0.182 vs 0.172).
+3. **⚠ A wrapped grade is only meaningful where the underlying errors are SUB-CYCLE** — which is exactly
+   §13.8.2's distinction, and it is what separates this fixture from the field.  Two arms picked as
+   "controls" (`camp60wu_f3`, `camp60wu_quiet24h_sticky`) have 2–20-CYCLE DD errors; wrapped, their
+   fractions are uniform for reasons that have nothing to do with the reference, and they looked like a
+   clean refutation of §6.12.  Check the truth-graded magnitude before reading a wrapped file, and pick a
+   control arm by NAME from the document that made the claim.
+
+Result on the field (`runs/fld63_stk_on`, DOY-129, 63 sta, 12 h): **no detectable common component on any
+signal** — L1C resultant R 0.468 vs null 0.473 and ref-free gap +0.008, L2W 0.447/0.452/+0.010, L1W
+0.441/0.438/+0.006 — while the SAME tool fires hard on the §6.12 base (`nonint_losblock24h_hv`: R 0.610 vs
+0.430, gap −0.047) and its truth-free 0.079 reproduces that run's truth-graded 0.089.  The field reference
+also rotates on its own (8–11 switches over 3–9 satellites) with no post-switch degradation.  So the field's
+uniform-0.25 histogram is NOT the reference artifact — consistent with §13.8.2's finding that the field DDs
+are ~5 cycles off with a ±20-cycle p90 tail, i.e. the "off by 47.3" class, where a wrapped fraction cannot
+carry a common component in the first place.  What the field DOES inherit from §6.12 is the COVERAGE half:
+a chord exists only for pairs that both see the elected reference, so per-station and per-region field splits
+off this trace still compare rotating populations.
+
 ### (absorbed 2026-08-15 from `docs/HANDOFF_slant_triple_next.md`, now attic'd)
 
 That handoff was the work order for §13.6 and §13.4 ("§3 + §4 EXECUTED 2026-08-12 — the

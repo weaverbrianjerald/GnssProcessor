@@ -2069,6 +2069,28 @@ int networkTeardown(
                           ? "  ⚠ entries were parked but NONE seeded — every return expired or "
                             "was dropped; the horizon is shorter than this bed's absences."
                           : "");
+        // §6.12.5 — the DD trace's REFERENCE identity, on both policies.  Printed whenever the
+        // trace ran, including under the `lowest` default: the switch rate was always there and
+        // always silent, and a grade built on a single reference element has to state that
+        // element's behaviour (SPEC_synthetic §13.8).  `age_win` is the invariant-#4 denominator
+        // for `oldest` — 0 means the policy never elected anything `lowest` would not have, so the
+        // arm is INERT and its A/B proves nothing no matter how clean the file looks.
+        if (nc.trace_dd_fractional && C.n_ddfrac_ref_epochs > 0) {
+            const bool oldest = nc.trace_dd_fractional_ref == NetworkDdFracRef::Oldest;
+            log->info("Network (DD-frac reference, §6.12.5): policy '{}' — {} election(s) over the "
+                      "traced epochs, {} reference switch(es){}.  Every chord in "
+                      "network_dd_fractional.csv carries the elected satellite's own between-station "
+                      "error; grade ref-free (scripts/simnet_dd_reref.py, "
+                      "simnet_amb_integer.py --ref-free) whichever policy ran.{}",
+                      oldest ? "oldest" : "lowest", C.n_ddfrac_ref_epochs, C.n_ddfrac_ref_switch,
+                      oldest ? fmt::format(", {} election(s) differed from 'lowest'",
+                                           C.n_ddfrac_ref_age_win)
+                             : std::string(),
+                      (oldest && C.n_ddfrac_ref_age_win == 0)
+                          ? "  ⚠ INERT: 'oldest' never elected a satellite 'lowest' would not have, "
+                            "so this run is byte-identical to the default and cannot A/B the policy."
+                          : "");
+        }
         if (config_.networkZwdSeamReseed())
             log->info("Network (ZWD seam re-seed): {} station-fold(s) over {} epoch(s) of the "
                       "post-resume window (horizon {} epochs).{}",

@@ -542,8 +542,26 @@ between-station error is common to every chord, and its eclipse return re-refere
 whole trace to newborn legs — the "post-eclipse network-wide DD episode" (as-traced 0.52–0.59
 cyc) was that; ref-free the DD is flat 0.07–0.11 cyc all day.  ⚠ Every DD-integer number
 quoted before 2026-09-06 is as-traced.  Grade with `scripts/simnet_dd_reref.py` or
-`simnet_amb_integer.py --ref-free`; the producer-side reference policy is owed.  Rule: any
-grade built on a single reference element reports that element's share or differences it away.
+`simnet_amb_integer.py --ref-free`.  Rule: any grade built on a single reference element
+reports that element's share or differences it away.
+⚠ **UPDATE 2026-09-06 (§6.13): the FIELD is NOT this artifact — the DOY-129 uniform-0.25
+histogram stands on its own.**  Truth-free instrument `scripts/dd_frac_reref.py` (the field has
+no truth, so it grades `frac_cyc` on the circle against a Monte-Carlo null).  It FIRES on the sim
+base — R 0.610 vs null 0.430, ref-free gap −0.047, and its 0.079 reproduces the truth-graded
+0.089 — and is SILENT on `fld63_stk_on`: R 0.468 vs null 0.473, gap +0.008 on every signal.  The
+field reference also rotates on its own (8–11 switches, 3–9 satellites) with no post-switch
+degradation.  What the field DOES inherit is the COVERAGE half (chords exist only for pairs that
+both see the reference), so per-station field splits off this trace still compare rotating
+populations.  `network.trace_dd_fractional_ref` = `lowest` (default) | `oldest` is BUILT and
+UNVALIDATED — goldens stay on `lowest`; an `oldest` trace is quieter, never reference-FREE.
+⚠ **TWO NULL TRAPS in any wrapped-fraction grade** (both cost a false finding here before they
+were caught): subtracting a group's own circular median shrinks |residual| ~42 % on pure uniform
+noise, so quote the GAP to a size-matched null, never the raw value; and a triangle-closure test
+is confounded because a DD is per-station additive BY CONSTRUCTION — its null must carry the DD
+structure with no reference term (field closure 0.182 reads as structure against 0.250 and as
+NOTHING against the correct 0.172).  ⚠ A truth-free wrapped grade is only meaningful where the
+underlying errors are SUB-CYCLE: two arms picked as controls had 2–20-cycle DD errors, wrapped to
+uniform, and looked like a clean refutation of §6.12.
 
 **4. `network.trace_station_residuals` writes ZERO rows on `carry_invariant`
 chains** — the writer rides the leveling RAIM pool, structurally empty there

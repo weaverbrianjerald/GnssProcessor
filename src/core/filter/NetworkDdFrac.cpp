@@ -178,11 +178,49 @@ void networkDdFrac(
             int rq[4]{ -1, -1, -1, -1 };                  // request indices, filled post-subsample
         };
         std::vector<DdOut> dds;
+        // §6.12.5: advance the per-(cons,signal) reference AGE map before electing.  Age is
+        // consecutive TRACED epochs at >= 2 stations; a satellite absent this epoch is ERASED, so a
+        // returning satellite re-enters at age 1 and cannot inherit its pre-gap seniority — which is
+        // the whole point, since it is exactly a returned reference's newborn legs that re-referenced
+        // the trace and read as a network-wide episode.  Maintained unconditionally (both policies)
+        // so the `lowest` default reports its own switch rate; it touches no solve input.
+        for (auto& [cs, satmap] : pool) {
+            auto& age = ctx.carry.ddfrac_ref_age[cs];
+            for (auto it = age.begin(); it != age.end();) {
+                const auto hit = satmap.find(it->first);
+                if (hit == satmap.end() || hit->second.size() < 2) it = age.erase(it);
+                else { ++it->second; ++it; }
+            }
+            for (const auto& [sat, stamap] : satmap)
+                if (stamap.size() >= 2 && age.find(sat) == age.end()) age[sat] = 1;
+        }
         for (auto& [cs, satmap] : pool) {
             std::string ref;   // reference sat = lexically-lowest sat present at ≥2 stations
             for (const auto& [sat, stamap] : satmap)
                 if (stamap.size() >= 2) { ref = sat; break; }
             if (ref.empty()) continue;
+            // `oldest`: longest continuous presence, ties -> lexically lowest.  `satmap` is a
+            // std::map so the scan is already in lexical order and a STRICT > keeps the first
+            // (lowest) satellite of a tied age — so `oldest` degenerates to `lowest` exactly when
+            // every candidate is the same age, which is what makes the age_win counter meaningful.
+            const std::string ref_lowest = ref;
+            if (nc.trace_dd_fractional_ref == NetworkDdFracRef::Oldest) {
+                const auto& age = ctx.carry.ddfrac_ref_age[cs];
+                long long best = -1;
+                for (const auto& [sat, stamap] : satmap) {
+                    if (stamap.size() < 2) continue;
+                    const auto ait = age.find(sat);
+                    const long long a = (ait == age.end()) ? 0 : ait->second;
+                    if (a > best) { best = a; ref = sat; }
+                }
+            }
+            ++ctx.counters.n_ddfrac_ref_epochs;
+            if (ref != ref_lowest) ++ctx.counters.n_ddfrac_ref_age_win;
+            {
+                auto& prev = ctx.carry.ddfrac_ref_prev[cs];
+                if (!prev.empty() && prev != ref) ++ctx.counters.n_ddfrac_ref_switch;
+                prev = ref;
+            }
             // λ for this (const,signal).  GLONASS is already excluded, so the nominal
             // per-band wavelength is satellite-independent; 0 (unknown signal) leaves the
             // cycle columns 0 so the reader falls back to the metre column.

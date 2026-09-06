@@ -577,6 +577,15 @@ namespace GnssProcessor {
         std::map<std::string, double>    readmit_seeded_s;      ///< sat → continuous-GPS s of its last clock seed (the guard's "moved" attribution window)
         struct ReadmitSeed { SharedParamKind kind; std::string sat, signal; double value, var_eff; };
         std::vector<ReadmitSeed> readmit_seed_check;            ///< this epoch's seeds, checked against the solve at the stash (mark-if-moved telemetry for every seeded kind)
+        // §6.12.5 DD-trace reference age.  (cons,signal) -> sat -> consecutive TRACED epochs the
+        // satellite has been present at >= 2 stations; an absence erases the entry, so the count is
+        // a CONTINUOUS run, not a lifetime total.  Advanced and read only inside the stride-gated
+        // dd-frac emit, so both maps stay empty on any run that does not trace.  NOT snapshotted:
+        // the trace is a diagnostic and a warm resume legitimately restarts its ages from zero —
+        // the first traced epoch after a seam then re-elects by the tie-break, which the run-end
+        // switch count makes visible rather than silent.
+        std::map<std::pair<std::string, std::string>, std::map<std::string, long long>> ddfrac_ref_age;
+        std::map<std::pair<std::string, std::string>, std::string> ddfrac_ref_prev;  ///< last reference elected per (cons,signal) — the switch detector
         std::map<std::string, std::string> prev_pivot;      // constellation -> pivot sat (handover detect)
         std::set<std::string> c1_zoh_active;                 // L2/T5: sats currently emitting c1=0 (ZOH) — edge-trigger for the R6 event
         // A1: persistent last-EVER pivot per constellation; MERGE-updated (never
@@ -2280,6 +2289,13 @@ namespace GnssProcessor {
         long long n_readmit_expired       = 0;  ///< parked entries dropped: the gap exceeded the horizon
         long long n_readmit_dropped_datum = 0;  ///< parked entries dropped: a clock-datum change retired their frame
         long long n_readmit_dropped_stale = 0;  ///< parked entries dropped: the column returned but the entry was not consumed (skip-stash / pinned)
+        // §6.12.5: the DD trace's reference identity, made visible.  Standing invariant #4 — a
+        // reference policy that never changes the elected satellite is INERT, and the only way to
+        // know is to count.  Both counters are written on every traced epoch regardless of policy,
+        // so the `lowest` default reports its own (previously silent) switch rate too.
+        long long n_ddfrac_ref_switch     = 0;  ///< (cons,signal) reference changes across traced epochs
+        long long n_ddfrac_ref_epochs     = 0;  ///< (cons,signal) reference elections performed (denominator)
+        long long n_ddfrac_ref_age_win    = 0;  ///< elections where `oldest` chose a DIFFERENT satellite than `lowest` would have (0 => the policy is inert on this run)
         long long n_readmit_events        = 0;  ///< re-admissions detected (clock column back after >= kReadmitMinGapEp loop epochs)
         long long n_readmit_seed_moved    = 0;  ///< Q3 nis/abs trips within kReadmitVerifyWindowS of a clock seed — the data REJECTED the seed
         long long n_readmit_seed_check    = 0;  ///< stash-side seed-vs-solve checks run (all seeded kinds)

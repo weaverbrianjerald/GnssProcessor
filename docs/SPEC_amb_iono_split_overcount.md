@@ -1184,6 +1184,109 @@ re-references; each reports the reference's fraction folded into every chord.
 Result: the card's target does not exist; the re-admission edge card's remaining DD item is closed as an
 instrument artifact and the young-leg convergence rate (6.12.2's curve) is the only per-satellite residual.
 
+### 6.13 The FIELD re-grade, and the producer knob (2026-09-06)
+
+§6.12.4 left the DOY-129 fractional histogram owed a re-read: it rides the same trace and the same
+reference rule, so "one satellite's fraction is in all of them" applies there too.  It is now measured, and
+**the answer is that the field's uniform-0.25 histogram is NOT this artifact.**
+
+#### 6.13.1 A truth-free instrument, and why it needs a null
+
+The field has no `truth_ambiguities.csv`, so `simnet_dd_reref.py` does not apply.  The only observable is the
+trace's own `frac_cyc`, which lives on the unit circle.  That is enough: within one
+(epoch, cons, signal, sta_a, sta_b) group the reference's share is COMMON, so a circular median estimates it
+and the residual is per-satellite.  `scripts/dd_frac_reref.py` (selftest `--selftest`, two beds - one
+reference-dominated, one pure uniform noise) reports four readouts per hour and constellation.
+
+⚠ **Every one of them needs a null, and two of the four nulls are counter-intuitive.**
+
+1. **The ref-free residual shrinks by chance.**  Subtracting a group's OWN circular median from its members
+   reduces |residual| even for independent uniform fractions - a group of 4 has four chances to sit near its
+   own median.  Measured on the uniform bed: as-traced 0.251 -> ref-free **0.145**, a 42 % "improvement" that
+   is pure estimator artifact.  The tool therefore prints a size-matched Monte-Carlo null beside every
+   ref-free number and the verdict is the **GAP**, never the raw value.
+2. **The triangle-closure null is NOT independent-uniform.**  A DD is per-station additive by construction
+   - f_i(a,b) = [s_i(a) - s_i(b)] - [s_ref(a) - s_ref(b)] - so for a FIXED satellite the triangle closes
+   exactly, reference or no reference; and because c-hat is a circular median it IS one of those data points,
+   so a triangle closes whenever the median lands on the same satellite in all three pairs.  Against an
+   independent-uniform null the field "closed" at 0.182 vs 0.250 and read as real structure.  Against the
+   correct null - the DD structure with NO reference term - it is 0.182 vs **0.172**, i.e. exactly at the
+   null.  The first null would have manufactured a finding.
+
+The resultant length R = |mean exp(2*pi*i*f)| is the readout with no estimator in it at all, and it carries
+the verdict.
+
+#### 6.13.2 The instrument fires on the sim and is silent on the field
+
+Same tool, same settings; the sim row is the §6.12 base arm, where the artifact is independently known from
+the truth grade.
+
+| | sim base `nonint_losblock24h_hv` (G) | field `fld63_stk_on` L1C | L2W | L1W |
+|---|---|---|---|---|
+| as-traced med\|f\| (uniform null) | **0.168** (0.248) | 0.251 (0.246) | 0.251 (0.247) | 0.248 (0.251) |
+| near-integer share (\|f\| <= 0.1) | **32.3 %** | 19.5 % | 20.0 % | 20.0 % |
+| resultant R (null) | **0.610** (0.430) | 0.468 (0.473) | 0.447 (0.452) | 0.441 (0.438) |
+| ref-free med\|u\| (null), GAP | 0.079 (0.126) **-0.047** | 0.117 (0.109) +0.008 | 0.127 (0.117) +0.010 | 0.130 (0.123) +0.006 |
+| triangle closure (DD-structure null) | **0.088** (0.184) | 0.182 (0.172) | 0.182 (0.174) | 0.175 (0.171) |
+
+The truth-free ref-free number on the sim (**0.079**) reproduces the truth-graded one (**0.089**, §6.12.2), so
+the instrument is validated on real data and not merely on its own bed.  On the field **every readout sits at
+its null**: the wrapped fractions are uniform WITHIN each group, so there is no common component to remove,
+and no reference policy - `lowest`, `oldest`, or an oracle - can improve the field histogram.
+
+Two supporting facts, both from the same run.  The field reference **already rotates on its own**: 8-11
+switches over 12 h across 3-9 distinct satellites (G01 dominant, G03 / G06 substituting), against the sim's
+G01/E02 all day.  And the as-traced grade does **not** degrade after a switch - med|f| 0.246 in the 20 epochs
+following a switch vs 0.251 settled - which is the field analogue of the sim's episode signature, absent.
+
+**Verdict: the DOY-129 "no integer structure" reading stands on its own evidence.**  It was never resting on
+the reference.  §6.12.4's caution was right to raise the question and is now answered: field DD fractions are
+uniform per-satellite, not uniform-because-smeared-by-one-satellite.  What the field DOES inherit from §6.12
+is the COVERAGE half - a chord exists only for pairs that both see the elected reference - so per-station and
+per-region field splits off this trace still compare rotating populations.
+
+⚠ **A run-selection lesson, paid for in this session.**  The first two "sim controls" chosen (`camp60wu_f3`,
+`camp60wu_quiet24h_sticky`) showed field-like uniformity and appeared to contradict §6.12 outright.  They are
+different arms whose DD errors are 2-20 CYCLES, so their fractions wrap into uniformity and the reference's
+share is unrecoverable from the wrapped file.  **A truth-free instrument is only meaningful where the
+underlying errors are sub-cycle**; check the truth-graded magnitude before reading a wrapped grade, and pick
+the control arm by name from the document that made the claim, not by resemblance.
+
+#### 6.13.3 The producer knob - BUILT, not yet validated
+
+`network.trace_dd_fractional_ref` = `"lowest"` (default) | `"oldest"`, per §6.12.5's design.
+
+- `include/config/GnssConfigTypes.hpp` - `enum class NetworkDdFracRef` + the `NetworkConfig` field.
+- `src/core/config/GnssConfigLoadNetwork.cpp` - parse; an unrecognised name warns and falls back (trace-only,
+  so a typo must not kill a long run, but it must never pass silently).
+- `include/app/NetworkRunContext.hpp` - `ddfrac_ref_age` / `ddfrac_ref_prev` in `NetworkCarryState`, and the
+  three counters.  Age = consecutive TRACED epochs at >= 2 stations; **an absence ERASES the entry**, so a
+  returning satellite re-enters at age 1 and cannot inherit its pre-gap seniority - which is the point, since
+  a returned reference's newborn legs are exactly what re-referenced the trace.  Not snapshotted: a warm
+  resume restarts ages at zero and re-elects by the tie-break, and the run-end switch count makes that visible.
+- `src/core/filter/NetworkDdFrac.cpp` - the election.  `satmap` is a `std::map`, so the scan is already
+  lexical and a STRICT `>` keeps the lowest of a tied age: **`oldest` degenerates to `lowest` exactly when
+  every candidate is the same age**, which is what makes the age_win counter meaningful.
+- `src/core/filter/NetworkTeardown.cpp` - run-end readout on BOTH policies.  The switch rate was always there
+  and always silent; a grade built on a single reference element has to state that element's behaviour
+  (SPEC_synthetic §13.8).
+
+**Status: UNVALIDATED in the ledger, and the goldens stay on `lowest`.**  A 40-epoch same-build A/B
+(`_ddref_smoke_low` / `_ddref_smoke_old`) is byte-identical on `products.txt` and on every trace INCLUDING
+`network_dd_fractional.csv` - but that arm reports `0 election(s) differed from 'lowest'` and prints its own
+`⚠ INERT` line, because early in a run every satellite has the same age and the tie-break returns the
+lexically lowest.  **Invariant #4: a byte-identical A/B here proves nothing about the policy** - it proves the
+OFF path is clean, which is a different claim.  The settling run is the 6 h arm pair (`_ddref6h_low` /
+`_ddref6h_old`) that crosses G01's h4-5 exclusion, where the ages must diverge; PASS needs
+`n_ddfrac_ref_age_win > 0` first, then the `oldest` arm's AS-TRACED hourly grade matching the base's REF-FREE
+grade within the leg-age noise.
+
+Even on a PASS the scope stays narrow, and this is the part the knob's name invites getting wrong: **an
+`oldest` trace is quieter, never reference-FREE.**  The elected satellite still carries its own slip and
+re-level history into every chord.  For any GRADE the fix is `simnet_dd_reref.py` / `--ref-free`; the knob is
+for the case where the as-traced CSV must stand alone - a viewer, an archived file, a consumer script that
+does not re-reference.
+
 ## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
 
 **⚠ FIRST (2026-09-05, §6.9): the RE-COUPLING EDGE on the F3 block at satellite re-admission — BUILT the same day as `network.readmit_seed_horizon_s` + `network.readmit_coupling_marg_ep` (§6.10, pre-registered; arms running)** — the 24 h arm shows two ~4 h NETWORK-WIDE degradation episodes after the eclipse re-admission clusters (clean chords 0.19 → 0.58–0.68 cyc), absent from the quiet hours where F3 sits at the CRLB.  Build: at a satellite's re-admission (col_added after a gap ≥ N epochs / CTA first sighting), marginalize its shared terms out of every station's block regressors for K epochs (or register the re-admission as a Card-1g reinit source); counters at both edges; pre-registered PASS = no clean-chord degradation after the h16.6–18.9 cluster on `_nonint_losblock24h_hv`, settled quarter ≤ 0.2 cyc / ≥ 80 %.

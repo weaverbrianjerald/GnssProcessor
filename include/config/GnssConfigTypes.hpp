@@ -590,6 +590,24 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Which satellite @c network_dd_fractional.csv differences every chord against.
+     *
+     * The DD trace forms, per (constellation, signal), one between-satellite SD against a SINGLE
+     * reference satellite, so EVERY graded chord inherits that satellite's own between-station
+     * ambiguity error (SPEC_amb_iono_split_overcount §6.12).  On the wu93 24 h fixture the
+     * lexically-lowest rule pins G01 / E02 for the whole day and their eclipse returns re-reference
+     * the entire trace to legs that were just reborn at every station — which is what the
+     * "post-eclipse network-wide DD episode" of §6.11 turned out to be.
+     *
+     * TRACE-ONLY: this changes which chords appear in one diagnostic CSV and nothing else.  No solve
+     * input, no state, no product — so it is fingerprint-SAFE and legal on a warm resume.
+     */
+    enum class NetworkDdFracRef {
+        Lowest, ///< (default) the lexically-lowest satellite present at >= 2 stations — the pre-knob rule, byte-identical.
+        Oldest  ///< The satellite with the longest CONTINUOUS presence at >= 2 stations (ties -> lexically lowest).  A settled leg makes a quieter reference, and its returns no longer re-reference the trace; it does NOT make the trace reference-free, so keep grading with `scripts/simnet_dd_reref.py` / `--ref-free` (the chosen reference still carries its own slip and re-level history).
+    };
+
+    /**
      * @brief The network producer's time-linked parameter classes — the key
      *        space of the @c network.process_noise table.
      *
@@ -1042,6 +1060,13 @@ namespace GnssProcessor {
         bool trace_anchor_info{ false };  ///< B7: emit @c network_anchor_info.csv — per-satellite a-priori-clock-anchor information fraction (anchor_info / reduced-normals total_info) each emitted epoch, so validation runs can CERTIFY the estimable clock is data-dominated over the a-priori CODE-product anchor.  Pure diagnostic (anchor fold unchanged); off by default.  O(clock_sats x epochs).
         bool trace_dd_fractional{ false };///< B5: emit @c network_dd_fractional.csv — per-epoch cross-station between-satellite double-differenced float ambiguity (from reconstructStation), keyed (constellation,signal), with its fractional-cycle residual: a sign-convention self-check + empirical <0.1-cycle-support evidence for user AR.  O(stations x sats x epochs); off by default.  Pure additional CSV, no state mutation.
         int    trace_dd_fractional_max_pairs{ 0 };  ///< T2b: cap on the DD pairs emitted (and covariance-propagated) per epoch across the whole @c network_dd_fractional.csv write — a deterministic seeded subsample keyed on the epoch (week,tow).  0 = unlimited (current full-pair behaviour, reproduces the benchmark).  Bounds the O(pairs) emit AND the T2a @c jointConditionalCovariance request count (the dominant 305-station tracer cost).  Inert unless @ref trace_dd_fractional; diagnostic file only, no state change.
+        /// §6.12.5: WHICH satellite every chord of @c network_dd_fractional.csv is differenced
+        /// against.  @c Lowest reproduces the pre-knob trace byte for byte; @c Oldest ranks by
+        /// continuous presence (see @ref NetworkDdFracRef).  Age is counted in TRACED epochs — the
+        /// map advances inside the stride-gated emit block, so it costs nothing when the trace is
+        /// off and is self-consistent with what the file actually contains.  Inert unless
+        /// @ref trace_dd_fractional.  TRACE-ONLY: never folded into the warm-resume fingerprint.
+        NetworkDdFracRef trace_dd_fractional_ref{ NetworkDdFracRef::Lowest };
         int    trace_dd_fractional_epoch_stride{ 1 };  ///< T2e: write @c network_dd_fractional.csv only every Nth PROCESSED epoch (1 = every epoch = current).  Fraction statistics don't need every epoch; combines with @ref trace_dd_fractional_max_pairs to make a traced convergence run affordable.  TRACE-ONLY (never folded into the warm-resume fingerprint).  Inert unless @ref trace_dd_fractional.
         /// S1: emit @c network_phase_anchor.csv — per PROCESSED epoch, one row per
         /// GAUGE-PINNED ambiguity as (week,tow,cons,signal,sat,anchor_sta), i.e. WHICH
