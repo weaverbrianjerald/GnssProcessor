@@ -169,6 +169,9 @@ namespace GnssProcessor {
         /// >= kReadmitMinGapEp absence, every coupling term on its shared columns takes the
         /// departed route.  0 = OFF.  Requires the Card-1 coupling rows (loader-checked).
         int    readmit_marg_ep{};
+        /// network.readmit_seed_code_bias — park + seed the per-signal CODE-BIAS columns too
+        /// (true, the default) or the clock alone (false).  Inert without readmit_seed_horizon_s.
+        bool   readmit_seed_cb{};
         int    resume_slip_warmup_ep{};   ///< network.resume_slip_warmup_ep: epochs after a warm resume during which the MW/LLI (T0) drain is DIAGNOSTIC-ONLY — its cold Welford reference (2 samples at the second warm epoch) declared 146 false WL slips on the §18.9 bed and re-leveled 5 % of the restored arcs; IF-TD (T1) and wind-up drains stay live, so an in-gap slip keeps a detector.  0 = OFF.  NOT fingerprinted.
         bool carry_vce{};
         bool vce_apply_on{};   ///< M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor apply. SOLVE-AFFECTING; loader guarantees carry_vce.

@@ -1522,6 +1522,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // run-end 'READMIT continuity' / 'ratio ceiling' lines are the counters.
                << fmt::format("\"readmit_seed_horizon_s\":{},", config_.networkReadmitSeedHorizonS())
                << fmt::format("\"readmit_coupling_marg_ep\":{},", config_.networkReadmitCouplingMargEp())
+               << "\"readmit_seed_code_bias\":" << (config_.networkReadmitSeedCodeBias() ? "true" : "false") << ','
                << fmt::format("\"phase_datum_handover_max_var_ratio\":{},", config_.networkPhaseDatumHandoverMaxVarRatio())
                << "\"raim\":" << (raim_on ? "true" : "false") << ','
                << fmt::format("\"raim_k_sigma\":{},", raim_k)

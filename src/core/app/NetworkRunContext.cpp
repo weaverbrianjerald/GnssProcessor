@@ -75,6 +75,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // E2 seed-first re-admission
     k.readmit_marg_ep        = config_.networkReadmitCouplingMargEp();   // block/row re-coupling edge
+    k.readmit_seed_cb        = config_.networkReadmitSeedCodeBias();     // seed the code biases too (or clock only)
     // Unconditional Z-row capture (SPEC_synthetic_minimum_network §17 finding 3):
     // any snapshot-armed run records + harvests the per-station ZWD posterior so
     // EVERY snapshot carries Z rows — read-only w.r.t. the solve, no inject.
@@ -4863,7 +4864,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 // The phase-bias frame is re-realized at the cold re-pin (the leveling
                 // carries do not survive a 55 min absence at the 120 s leveling gap), and
                 // a stiff PB seed would fight that pin — so only Clock + CodeBias park.
-                if (oc.kind != SharedParamKind::Clock && oc.kind != SharedParamKind::CodeBias)
+                if (oc.kind != SharedParamKind::Clock
+                    && !(oc.kind == SharedParamKind::CodeBias && ctx.knobs.readmit_seed_cb))
                     continue;
                 if (live.count({static_cast<int>(oc.kind), oc.sat, oc.signal})) continue;
                 const bool present = readmitColumnPresent(est, oc);

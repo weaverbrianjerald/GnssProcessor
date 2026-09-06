@@ -372,6 +372,13 @@ TEST(ReadmitContinuityConfig, DefaultsOffAndKnobsParse) {
                       "    \"readmit_coupling_marg_ep\": 20,\n"), on));
     EXPECT_DOUBLE_EQ(on.networkReadmitSeedHorizonS(), 3600.0);
     EXPECT_EQ(on.networkReadmitCouplingMargEp(), 20);
+    EXPECT_TRUE(on.networkReadmitSeedCodeBias()) << "code-bias seeding is the default under the horizon";
+    GnssConfig clk;
+    ASSERT_TRUE(loadInto("readmit_clk",
+        networkConfig("    \"clock_temporal_anchor\": true,\n"
+                      "    \"readmit_seed_horizon_s\": 3600.0,\n"
+                      "    \"readmit_seed_code_bias\": false,\n"), clk));
+    EXPECT_FALSE(clk.networkReadmitSeedCodeBias());
 }
 
 TEST(ReadmitContinuityConfig, NegativeValuesAreRejected) {

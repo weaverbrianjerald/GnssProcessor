@@ -2366,6 +2366,22 @@ namespace GnssProcessor {
          */
         int networkReadmitCouplingMargEp() const { return network_readmit_coupling_marg_ep_; }
         /**
+         * @brief READMIT continuity — also park and seed the CODE-BIAS columns
+         *        (@c network.readmit_seed_code_bias; sub-knob of
+         *        @ref networkReadmitSeedHorizonS, inert without it).
+         *
+         * Default true (the clock AND the per-signal code biases of a departing satellite
+         * are parked and seeded).  false = the CLOCK alone: measured on the first seeded
+         * return of `runs/readmit24h_e2` (G20 at 262920, 24-epoch gap), the IF-pair code
+         * biases held (|e|/√S 0.7 / 1.0) but the THIRD-frequency C5Q seed was rejected by
+         * the data at 42 cm (43 σ) and the anchored clock seed tripped `nis` one epoch
+         * later at 4.8 cm — the §18.1 cold-start C5Q misrealization carried into the
+         * return through a stiff (σ 1.9 cm) seed.  Clock-only seeding keeps the target
+         * (the clock re-draw) and lets the weakly determined third-frequency bias
+         * re-solve from data as it does today.
+         */
+        bool networkReadmitSeedCodeBias() const { return network_readmit_seed_code_bias_; }
+        /**
          * @brief Post-resume MW/LLI slip-drain warm-up (@c network.resume_slip_warmup_ep,
          *        epochs, SPEC_synthetic_minimum_network §18.10).
          *
@@ -6741,6 +6757,7 @@ namespace GnssProcessor {
         bool   network_resume_coupling_restore_{false};    ///< §18.12 resume COUPLING-REGRESSOR restore: at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order — never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING (LOOSE CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain DIAGONAL prior asserted AT that conditional variance which out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project (Card 1f), and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only — var is never modified).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.
+        bool   network_readmit_seed_code_bias_{true};      ///< READMIT seed sub-knob: also park + seed the departing satellite's per-signal CODE-BIAS columns (true) or the clock alone (false).  Inert without readmit_seed_horizon_s.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires en masse at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = OFF.  NOT fingerprinted.
         bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).
         double network_iono_carry_q_{1e-4};               ///< QUEUE 8b: slant-iono carry random-walk process noise (m²/s); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.

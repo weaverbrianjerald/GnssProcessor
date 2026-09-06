@@ -3262,6 +3262,11 @@ namespace GnssProcessor {
             jval<int>(json, "network.readmit_coupling_marg_ep", "readmit_coupling_marg_ep", 0);
         if (network_readmit_coupling_marg_ep_ < 0)
             throw std::runtime_error("network.readmit_coupling_marg_ep must be >= 0");
+        // Sub-knob of the seed horizon: park + seed the code-bias columns too (default), or
+        // the clock alone (the first seeded return of runs/readmit24h_e2 rejected the
+        // third-frequency C5Q seed at 43 σ while the IF-pair seeds held).
+        network_readmit_seed_code_bias_ =
+            jval<bool>(json, "network.readmit_seed_code_bias", "readmit_seed_code_bias", true);
         if (network_resume_frame_restore_ || network_resume_slip_warmup_ep_ > 0) {
             if (network_config_.state_snapshot_path.empty())
                 log->warn("Network (resume frame restore): resume_frame_restore / "
