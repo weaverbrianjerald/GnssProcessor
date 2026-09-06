@@ -457,6 +457,15 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.trace_dd_fractional_max_pairs",
               "unbounded dd-frac cost 20-40 min/epoch at 305 sta (10-ep run died at ep 4); set "
               "500, or 2000 decimated" },
+            { nc.trace_dd_fractional,
+              nc.trace_dd_fractional_ref != NetworkDdFracRef::Lowest,
+              Tier::SCOPED, false, "network.trace_dd_fractional_ref",
+              "every chord carries the ONE elected satellite's own between-station error; 'lowest' "
+              "pinned G01/E02 all day on the sim and their eclipse returns read as a network-wide DD "
+              "episode.  'oldest' improves the AS-TRACED grade 25-42 % at a returned-reference hour "
+              "(E h5 0.334 -> 0.195 cyc) but lands 2-3x ABOVE the ref-free grade - quieter, never "
+              "reference-FREE.  Arm it only when the as-traced CSV must stand alone; for a GRADE use "
+              "simnet_dd_reref.py / --ref-free instead, and keep goldens on 'lowest' for continuity" },
             { nc.trace_dd_fractional && network_phase_datum_prioritized_,
               nc.trace_phase_anchor,
               Tier::SCOPED, false, "network.trace_phase_anchor",

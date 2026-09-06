@@ -1271,21 +1271,79 @@ the control arm by name from the document that made the claim, not by resemblanc
   and always silent; a grade built on a single reference element has to state that element's behaviour
   (SPEC_synthetic §13.8).
 
-**Status: UNVALIDATED in the ledger, and the goldens stay on `lowest`.**  A 40-epoch same-build A/B
-(`_ddref_smoke_low` / `_ddref_smoke_old`) is byte-identical on `products.txt` and on every trace INCLUDING
-`network_dd_fractional.csv` - but that arm reports `0 election(s) differed from 'lowest'` and prints its own
-`⚠ INERT` line, because early in a run every satellite has the same age and the tie-break returns the
-lexically lowest.  **Invariant #4: a byte-identical A/B here proves nothing about the policy** - it proves the
-OFF path is clean, which is a different claim.  The settling run is the 6 h arm pair (`_ddref6h_low` /
-`_ddref6h_old`) that crosses G01's h4-5 exclusion, where the ages must diverge; PASS needs
-`n_ddfrac_ref_age_win > 0` first, then the `oldest` arm's AS-TRACED hourly grade matching the base's REF-FREE
-grade within the leg-age noise.
+**Status: A/B RUN 2026-09-06 — the mechanism WORKS, the pre-registered PASS criterion FAILS, and the
+goldens still stay on `lowest`.**
 
-Even on a PASS the scope stays narrow, and this is the part the knob's name invites getting wrong: **an
-`oldest` trace is quieter, never reference-FREE.**  The elected satellite still carries its own slip and
-re-level history into every chord.  For any GRADE the fix is `simnet_dd_reref.py` / `--ref-free`; the knob is
-for the case where the as-traced CSV must stand alone - a viewer, an archived file, a consumer script that
-does not re-reference.
+6 h same-build arms `_ddref6h_low` / `_ddref6h_old` on the F3 base lineage, single knob, crossing G01's h4-5
+and E02's h4.3 exclusions.
+
+*Structural half — PASS.*  `products.txt` byte-identical (and the `lowest` arm was re-run from scratch and
+reproduced its own hash, so the pipeline is deterministic); `network_solution`, `network_events`,
+`network_epoch_status`, `network_stations` byte-identical; `network_dd_fractional.csv` differs, as it must.
+NOT inert: 4320 elections each, **765 elections differed from `lowest`**, reference switches **12 -> 6**, and
+the reference census shifts hard toward the settled satellite (E03 36,381 -> 112,394 L1C rows;
+G02 56,050 -> 81,542).
+
+*Grade half.*  h0-h3 and GPS h4 are IDENTICAL arms — early in a run every satellite has the same age, so the
+tie-break returns the lexically lowest, and h0 is ignition (as-traced 1.25-1.32 cyc in both) and not gradeable
+at all.  The divergent hours, truth-graded L1C, stride 4:
+
+| | `lowest` as-traced | `oldest` as-traced | base REF-FREE |
+|---|---|---|---|
+| E h4 | 0.280 cyc / 69.8 % (E02+E03) | **0.227 / 73.6 %** (E03) | 0.068 / 89.0 % |
+| E h5 | 0.334 / 58.9 % (E02) | **0.195 / 70.3 %** (E03) | 0.058 / 87.5 % |
+| G h5 | 0.236 / 74.6 % (G02+G01) | **0.170 / 84.6 %** (G02) | 0.081 / 91.6 % |
+
+So `oldest` does exactly what it was built to do: at the hours where the lexically-lowest reference has just
+returned from eclipse, it elects the satellite that stayed up and the as-traced grade improves 25-42 % (E h5
+0.334 -> 0.195, and 58.9 -> 70.3 % at the integer).  **But it does NOT reach the ref-free grade — it lands
+2.1-3.4x above it** — so §6.12.5's pre-registered PASS ("the `oldest` arm's as-traced grade matches the base's
+ref-free grade within the leg-age noise") is **FAILED**, and it was the wrong bar: it assumed a settled
+reference contributes negligibly, and the measurement says a settled reference still contributes 2-3x the
+ref-free residual.  That is the theory working, not a defect — a single reference of ANY age is still one
+satellite's error in every chord.
+
+Two second-order readings, both coverage effects rather than quality regressions.  The `oldest` arm's own
+REF-FREE grade is slightly worse at the divergent hours (E h4/h5 0.095 / 0.111 vs the base's 0.068 / 0.058)
+and its leg-age curve starts higher (0.355 vs 0.267 cyc at 1-10 epochs), because electing a different
+reference changes WHICH station pairs have chords at all (E h4: 7,307 graded vs 8,388) and E03's footprint
+skews younger.  **A policy A/B moves the covered population, so never compare the two arms' ref-free numbers
+as if they were the same chords** — the as-traced column is the one the knob is about.
+
+Ledger verdict: **RECOMMEND_SCOPED**, narrowly.  The goldens keep `lowest` under a documented manifest
+exception, for a reason that outranks the diagnostic gain: the goldens are the comparison baseline, and
+changing which satellite their dd-frac trace references breaks continuity with the entire existing record of
+dd-frac grades.  There is no loader posture row — this is an option, not a recommendation the loader should
+push.
+
+And the caveat the knob's name invites getting wrong, now measured rather than argued: **an `oldest` trace is
+quieter, never reference-FREE.**  For any GRADE the fix is `simnet_dd_reref.py` / `--ref-free`; the knob is for
+the case where the as-traced CSV must stand alone — a viewer, an archived file, a consumer script that does
+not re-reference.
+
+#### 6.13.4 ⚠ A/B HYGIENE — the stale-trace trap that faked byte-identity here
+
+The first pass of this A/B reported "byte-identical on every trace including `network_dd_fractional.csv`".
+**That was wrong, and the way it was wrong is worth more than the result.**  The network traces are written
+CWD-relative to `./logs/`, but the capture script (adapted from `scripts/_arm_run.sh`) copied from
+`build/x64-Release/logs/`, which held a **stale 10-epoch file from 2026-08-13**.  Both arms copied the same
+old file, so the comparison was stale-vs-stale and returned IDENTICAL for every trace — the single most
+reassuring possible answer, produced by reading nothing.  It survived a smoke A/B and was only caught because
+the run-end counter said 765 elections differed while the files said none did.
+
+Three rules, now enforced in the capture script:
+
+1. **Assert the captured file is NEWER than the run's start time.**  Presence is not freshness; a copy's own
+   mtime is always new, so `stat` the SOURCE, not the destination.
+2. **Capture from `./logs/` and verify the path on a file whose content you can date** (a row count, an epoch
+   span).  A trace that is the wrong size by two orders of magnitude is the cheapest possible check.
+3. **A trace-only A/B must be cross-checked against a run-end COUNTER.**  Byte-identity is the expected result
+   of a correct OFF path AND of a broken capture; only a counter distinguishes them (standing invariant #4
+   applied to the instrument itself).
+
+The second arm also OVERWROTE the first arm's `./logs/` trace before it was captured — the concurrent-run log
+collision, hit sequentially — so the `lowest` arm had to be re-run.  `scripts/_arm_run.sh` carries the same
+wrong source path and is fixed in the same commit.
 
 ## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
 
