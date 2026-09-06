@@ -2325,8 +2325,10 @@ namespace GnssProcessor {
         // Card PA2 — the SAME quantities counted on EVERY fired heal, recovered or not.
         // The pair above is success-only, which makes a heal that fires every epoch and
         // never rescues the gate read as "0 healed" — measured on the 305 co-gated arm,
-        // which logged "drop-and-heal failed" on all 6 epochs while reporting
-        // n_healed_epochs = 0.  That is precisely the inert-looking-but-live wiring
+        // which logged a heal-failure withhold on all 6 epochs while reporting
+        // n_healed_epochs = 0.  (That measurement predates the unified withhold WARN
+        // in NetworkSolveGlue; the log text it quoted, "drop-and-heal failed", is now
+        // a trailing clause of that one line rather than a message of its own.)  That is precisely the inert-looking-but-live wiring
         // standing invariant #4 exists to catch, so the attempt is counted separately:
         // attempts > 0 with recoveries == 0 is the signature of a heal that is aiming at
         // the right columns but cannot resolve the residual alone (Card PA's own

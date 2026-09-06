@@ -802,6 +802,13 @@ try {
     // rescue the epoch is exactly the case worth seeing.
     std::vector<PhaseHealEvent> heal_events;
     int healed_n = 0;   // >0 only once the heal RETURNED (its priors are folded)
+    // DG6 observability: the heal / re-gate failure text, CAPTURED rather than
+    // logged in place, so the single withhold WARN below owns the whole
+    // user-visible report.  Stays empty when the inner try returns without
+    // throwing — which includes the case that used to be logged nowhere at all:
+    // healed == 0 skips the re-gate, so nothing in the block can throw and the
+    // epoch reaches the withhold carrying no exception of its own.
+    std::string heal_fail_what;
     try {
         const int healed = healNearNullPhaseBias(
             est, shared_phase_keys, phase_datum_prioritized,
@@ -828,9 +835,11 @@ try {
         }
     } catch (const std::exception& ex2) {
         // The heal (eigensolve / addSharedPrior) or the re-gate reported a
-        // deficiency it could not resolve — withhold rather than crash.
-        log->warn("Network: TOW {:.1f} drop-and-heal failed ({}); withholding.",
-                  se.time.tow, ex2.what());
+        // deficiency it could not resolve — withhold rather than crash.  The
+        // report is deferred to the unified WARN on the !recovered path: this
+        // catch is NOT the only route to a withhold, and when it used to own
+        // the only warn the other routes were invisible above debug level.
+        heal_fail_what = ex2.what();
     }
     // PA2: one row per soft-anchored column (station-less by nature — the
     // heal acts on a SHARED column).  statistic = the eigenvalue of the
@@ -861,8 +870,36 @@ try {
             ++ctx.counters.n_gate_withheld_over;
         else
             ++ctx.counters.n_gate_withheld_under;
-        log->debug("Network: observability gate at TOW {:.1f} withheld product ({})",
-                   se.time.tow, ex.what());
+        // DG6 observability: ONE warn-level line on EVERY withhold, whatever
+        // route reached it, reporting BOTH gate evaluations.  It replaces a
+        // debug-only line and a warn that only the inner catch could emit —
+        // two defects measured on the DOY-129 GPS+Gal cluster at TOW
+        // 263250/263280/263310/263340/263370:
+        //   (1) INVISIBLE WITHHOLDS.  A heal that anchors 0 columns (a
+        //       machine-zero orphan direction with no phase-bias span, smallest
+        //       ev -6.36e-12) never re-gates, so the inner catch never ran and
+        //       the epoch was withheld with nothing above debug.  The run-end
+        //       counter said 5, the log showed 4, and TOW 263250 appeared only
+        //       in network_events.csv.
+        //   (2) WRONG COUNT.  The old warn printed the RE-GATE text, i.e. the
+        //       deficiency remaining AFTER the heal folded its soft anchors —
+        //       "observed 4" in the log against "observed 5" in the CSV, the
+        //       heal having collapsed exactly one of three extra directions.
+        //       A log-only reader under-counted the deficiency by one.
+        // gate_first_observed and gate_observed are latched for precisely this
+        // purpose; ex.what() is the FIRST evaluation, so this line and the
+        // gate_withheld CSV row below now tell the same story.
+        const std::string regate_part =
+            (healed_n > 0) ? fmt::format(", re-gate observed {}", gate_observed)
+                           : std::string(" (no re-gate ran)");
+        log->warn("Network: observability gate at TOW {:.1f} withheld product — "
+                  "first gate observed {}, declared {}; heal anchored {} column(s){}."
+                  "  First gate: {}{}",
+                  se.time.tow, gate_first_observed, plan.declared_dimension,
+                  healed_n, regate_part, ex.what(),
+                  heal_fail_what.empty()
+                      ? std::string{}
+                      : fmt::format("  drop-and-heal failed: {}", heal_fail_what));
         emitEvent("GATE", "gate_withheld", "", "", std::nullopt, std::nullopt,
                   "skip_epoch", ex.what());
     }
