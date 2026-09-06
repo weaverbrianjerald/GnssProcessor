@@ -1016,6 +1016,9 @@ data, and if that reads worse than the diagonal-carried young leg the trade is a
 
 ## §6.11 Results of the §6.10 arms (filled as they land; nothing in §6.10 is edited)
 
+> ⚠ **Read with §6.12 (2026-09-06):** every DD number below is AS-TRACED against the trace's lexically-lowest reference satellite; the "post-eclipse network-wide DD episode" that items 2, 6 and 7 chase is that reference (G01 / E02) returning from eclipse.  The ref-free re-grades are in §6.12.3.
+
+
 1. **`readmit_off3h` — invariant #6 PASS (2026-09-05 19:22 PDT).**  New exe `gnss_processor_readmit.exe`
    (sha256 808a0f91…), every new knob at its default: `products.txt` sha256 **b7cea2adc8fc6fb6…**, 8,593,106
    bytes — identical to `runs/nonint_losblock3h_hv/products.txt`.  The OFF path of all four increments is
@@ -1072,6 +1075,114 @@ data, and if that reads worse than the diagonal-carried young leg the trade is a
 7. **`readmit8h_youngfree` (arm 5b: young legs FREE until age 30).**  FAIL — the newborn-leg hypothesis is falsified too (23:05 PDT).  Hourly L1C (5b / base): h2 0.221 / 0.192, h3 0.214 / 0.198, h4 0.308 / 0.232, h5 0.350 / 0.271, h6 0.554 / 0.424, h7 0.588 / 0.485; WL 84–92 % (base 96–99 %); clean chords h6 0.761 / h7 0.616 (base 0.538 / 0.478) — the episode LARGER, not smaller; mature legs h2–h3 0.175 / 0.169 (base 0.160 / 0.167); free young legs 1.7–2.0 cyc (base carried young 0.74 / 0.64, the additional falsifier hit); 232,089 young columns kept out of 55,440 blocks.  Removing the newborn legs from the block does not protect the mature chords through the cluster.  With arm 2, the post-eclipse DD episodes are NEITHER the returned satellite's shared columns NOR the newborn legs' block membership; both age-gate responses fail → `phase_leveling_local_block_min_age_ep` KEEP OFF (free = harmless but useless, diagonal = harmful).  The base's event census through the h16–h21 episode shows no datum / era / withhold events (anchor handovers 12–33 and ~20 T1 refsat_resets per 20 min, 7-column col_added/removed per return) — the next card is a fresh investigation of what re-realizes NETWORK-WIDE at a re-admission cluster that the exactly-conditioned F3 block resists (prefit census / topology ledger / rhs_attrib), not another gate.
 
 8. **`readmit24h_e2clk` (clock-only seed).**  FALSIFIED as an improvement (23:55 PDT).  26 clock seeds, 0 code-bias seeds; seed checks 20 held / 6 moved; 7 seed-attributed Q3 trips (arm 2: 8).  WIRE (settled-half per-sat clock): G12 6.26 m (arm 2 2.71, base 5.38), G26 6.15 (4.34, 6.51), G25 5.63 (1.69, 6.27) — the T3 tails RETURN.  CONSUMER h3–h8 1.76 / 0.71 / 0.66 / 0.78 / 0.34 / 0.13 m (arm 2 0.90 / 0.54 / 0.54 / 0.50 / 0.32 / 0.15).  DD unchanged (0.287 / 64.0 %, settled 0.430 / 53.0 %).  The IF-pair code-bias seeds anchor the clock-vs-code-bias SPLIT at the return, so the clock lands near the pre-gap realization even when its own seed is rejected; without them the cold third-frequency misrealization relocates into the clock — §18.1's T3 mechanism.  The third-frequency seed rejections are the stash-side check working, not harm.  `readmit_seed_code_bias` stays TRUE (default); `readmit_seed_horizon_s` 3900 s (both kinds) is the validated T3 fix → PROMOTED: ledger RECOMMEND_SCOPED (Q3-anchored lineages without clock_model, armed_when > 0), posture row, sim golden pin 3900 (manifest, regenerated golden, verify PASS, 20/20 smoke).
+
+## §6.12 The "post-eclipse network-wide DD episode" was the INSTRUMENT'S REFERENCE SATELLITE (2026-09-06)
+
+Opened as the investigation card §6.11 items 2/6/7 pointed at ("what re-realizes NETWORK-WIDE at a
+re-admission cluster that the exactly-conditioned F3 block resists").  Closed on the existing 24 h arm's
+own trace without a new run: nothing re-realizes in the estimator — the DD trace's reference satellite does.
+
+### 6.12.1 The instrument
+
+`network_dd_fractional.csv` (filter/NetworkDdFrac.cpp) forms, per (constellation, signal), the
+between-satellite SD of every graded satellite against ONE reference — "the lexically-lowest satellite
+present at ≥ 2 stations" — and then the between-station DD of that SD over every station pair that sees
+both.  On the wu93 24 h fixture that reference is **G01 and E02 for the entire day** (the coverage audit,
+`scratchpad/ddep/dd_coverage.py`: G01 on 22 of 24 hours, G02 substituting only while G01 is excluded at
+h4–5 and h16–17; E02 on 22 of 24 hours, E03 at h3–4 and h17–18).  Two consequences the graders never
+controlled for:
+
+1. **Coverage rotates with the reference's footprint.**  A chord exists only for station pairs that both see
+   G01 (E02), so the trace covers 21–41 of the 60 stations at any hour (196–437 pairs) and the covered set
+   is a different region hour by hour (S02–S36 at h15, S20–S60 at h19).  Every hourly, clean/touched,
+   mature/young and per-station split of §6.11 compared DIFFERENT station populations.
+2. **Every chord inherits the reference's own error.**  With s the between-station SD ambiguity error of a
+   satellite at a pair, the graded quantity is e_i = s_i − s_ref: the reference's error is COMMON to all
+   chords of a (ref, sta_a, sta_b, signal) group.  When G01 / E02 return from eclipse exclusion (G01 at
+   h5.6 and h17.6, E02 at h4.3 and h18.4 — the GPS and Galileo orbital periods), the whole trace is
+   re-referenced to a satellite whose legs were just reborn at every station, and the trace reads that
+   satellite's per-station convergence as a network-wide episode.  The "episodes" at h6–h9 and h18–h22 are
+   the hours after those four returns, and h14–h15, where G12 (14.3) and E25 (16.6) returned but the
+   references did not, show none — the cluster hypothesis never fit that.
+
+### 6.12.2 The decisive test — re-referencing in post-processing
+
+Because the reference's share is common to the group it cancels in any between-satellite difference.
+`scripts/simnet_dd_reref.py` (selftest `--selftest`) streams the trace and reports, per hour and
+constellation, the as-traced grade med|e_i|, the group's COMMON component c = median_i e_i (≈ −s_ref when
+most legs are good), the REF-FREE residual med|e_i − c| with its round-to-zero share (groups of ≥ 3 sats),
+and an oldest-reference variant e_i − e_j with j the longest-present satellite.  Base F3 arm
+`runs/nonint_losblock24h_hv`, L1C, stride 4:
+
+| hour | ref | as-traced med\|e\| (round0 %) | common med\|c\| | ref-free med\|u\| (round0 %) |
+|---|---|---|---|---|
+| 2 (quiet) | G01 | 0.173 (83.8) | 0.128 | 0.094 (91.8) |
+| 7 (episode 1) | G01 | **0.523 (48.9)** | **0.515** | 0.110 (83.3) |
+| 13 (quiet) | G01 | 0.166 (86.7) | 0.119 | 0.078 (93.6) |
+| 19 (episode 2) | G01 | **0.592 (46.9)** | **0.593** | 0.105 (85.4) |
+| 20 | G01 | 0.485 (50.4) | 0.505 | 0.087 (86.5) |
+| Galileo 2 / 6 / 20 | E02 | 0.217 / **0.486** / **0.659** | 0.176 / 0.526 / 0.602 | 0.087 / 0.084 / 0.108 |
+
+The common component tracks the as-traced number to the digit through both episodes; the ref-free residual
+is **flat all day at 0.07–0.11 cyc L1C (83–94 % at the integer)**, WL(1,2) 98.6–99.6 % and EWL(2,5) 99.7–100 %
+ref-free in every hour.  Split by the graded satellite's OWN leg age (epochs of continuous presence at the
+pair; `dd_reref_split.py`): young (< 120 ep) 0.08–0.17 with a mild rise in the episode hours (the
+returning satellites' own legs), mid (120–360) 0.045–0.085 and mature (≥ 360) 0.015–0.079 with NO episode.
+The ref-free convergence curve of a leg is 0.270 / 0.170 / 0.114 / 0.066 / 0.046 cyc at 1–10 / 10–30 /
+30–100 / 100–300 / 300–1000 epochs.
+
+### 6.12.3 Corrected readings of the §6.11 arms (ref-free, `simnet_dd_reref.py`, stride 8)
+
+- **Arm 2 (`readmit24h_e2`)**: identical to the base in BOTH frames (ref-free h7 0.105 / h19 0.102 vs base
+  0.110 / 0.105) — the coupling window and the seeds never had a DD target.  `readmit_coupling_marg_ep`
+  KEEP OFF stands, for the corrected reason.
+- **Arm 5 (`readmit8h_young`, diagonal young rows)**: ref-free 1.14–2.66 cyc every hour — the harm was
+  REAL in every frame (§3.1's station-common over-count re-entering through the diagonal rows).  Verdict
+  unchanged.
+- **Arm 5b (`readmit8h_youngfree`)**: ref-free h2–h7 0.113 / 0.093 / 0.084 / 0.086 / 0.122 / 0.119 vs base
+  0.088 / 0.089 / 0.076 / 0.074 / 0.088 / 0.094 — a small COST (the free young legs at 1.7–2.0 cyc pull the
+  group medians), no benefit.  KEEP OFF stands.
+- **The 24 h "settled quarter 0.420 cyc / 53 %" (§6.11 item 1 and every place it is quoted)** is the
+  reference's convergence after its h17.6 / h18.4 returns.  Full-trace `--ref-free` summary (1,523,679 groups of
+  ≥ 3 sats graded, 741,312 pairs with < 3 sats skipped): L1C med|u| **0.089 cyc / 86.8 % at the integer** over
+  the day and **0.095 / 85.9 %** over the last quarter (as-traced 0.283 / 64.2 % and 0.425 / 53.2 %); L2W
+  0.120 / 84.7 %, L5Q 0.117 / 83.5 %, L7Q 0.100 / 82.7 %; EWL(2,5) 0.012 cyc / 100 %, WL(1,2) 0.029 / 98.8 %
+  (last quarter 99.1 %).  The by-age slopes (−0.46) are also contaminated: a chord's "age" restarts when the
+  reference returns while its own leg is old.
+
+### 6.12.4 What the field inherits
+
+The DOY-129 fractional histogram (`med|frac_cyc|` uniform 0.25, SPEC_pivot / ledger §A2) rides the same
+trace and the same reference rule; a young or slipping G01 smears every fraction of the constellation.
+That verdict's CONCLUSION (no integer structure) does not rest on the reference alone, but every fractional
+number from that trace must be re-read knowing that one satellite's fraction is in all of them.
+Consumers of the trace that inherit the rule: `scripts/grade_ddfrac.py`, `grade_ddfrac_perhour.py`,
+`grade_churn_arms.py`, `field_lane_frac.py` and the pyviz viewer `network_dd_fractional.py` — none of them
+re-references; each reports the reference's fraction folded into every chord.
+
+### 6.12.5 Fixes
+
+1. **Grader — DONE.**  `scripts/simnet_amb_integer.py --ref-free` adds a REF-FREE block (per band + lanes,
+   all / last-window; default output byte-identical; selftest extended with a bed whose reference carries a
+   known error) and `scripts/simnet_dd_reref.py` is the hourly per-constellation instrument with the
+   leg-age curve.  Quote DD grades ref-free from now on.
+2. **Producer — OWED (design; blocked 2026-09-06 only because the concurrent session holds uncommitted edits
+   in `GnssConfig.hpp`, `GnssConfigTypes.hpp` and `NetworkRunContext.*`).**  `network.trace_dd_fractional_ref`
+   = `"lowest"` (default, byte-identical) | `"oldest"`: per (constellation, signal) keep in `NetworkCarryState`
+   an age map (epochs of continuous presence at ≥ 2 stations, reset on absence); pick the satellite with the
+   largest age, ties → lexically lowest; count reference switches and print them at run end; manifest key;
+   posture row SCOPED under `trace_dd_fractional`.  Trace-class, fingerprint-SAFE.  Validation = an 8 h
+   same-build A/B (`lowest` vs `oldest`): products byte-identical, and the `oldest` arm's AS-TRACED hourly
+   grade must match the base's REF-FREE grade within the leg-age noise.  The ref-free grader remains the
+   reference-independent instrument even after the knob lands (a single old reference still carries its own
+   slip / re-level history).
+3. **Method rule (also SPEC_synthetic §13.8):** a grade built on a SINGLE reference element must report that
+   element's share separately or difference it away; "the whole network moved at once" is the signature of a
+   moved reference, and the first check on any network-wide episode is which reference the instrument used
+   and what happened to it at the onset.
+
+Result: the card's target does not exist; the re-admission edge card's remaining DD item is closed as an
+instrument artifact and the young-leg convergence rate (6.12.2's curve) is the only per-satellite residual.
 
 ## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
 

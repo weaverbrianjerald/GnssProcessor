@@ -43,6 +43,16 @@ compact per-chord run buffer when --by-age is on.
 MECHANISM SIGNATURES (round-2 tooling, 2026-09-04) — all default-OFF flags, the
 default output is unchanged byte-for-byte (docs quote it):
 
+  --ref-free      per (epoch, ref_sat, sta_a, sta_b, signal) group with >= 3 graded
+                  satellites, u_i = e_i - median_j e_j: the trace's REFERENCE satellite
+                  (the lexically-lowest one present at >= 2 stations, G01/E02 all day)
+                  carries its own between-station SD error into EVERY chord, e_i = s_i -
+                  s_ref, and the "post-eclipse network-wide DD episode" of SPEC_amb_iono
+                  §6.11 was exactly that satellite returning from eclipse with newborn
+                  legs at every station (§6.12, 2026-09-06).  The ref-free block
+                  reports per band + lanes over all / last-window epochs; groups with
+                  < 3 satellites are skipped and counted.  scripts/simnet_dd_reref.py
+                  is the hourly, per-constellation form of the same test.
   --sigma-ratio   per band, median formal dd_sigma_cyc at emitted-epoch index
                   k = 0..12, 20, 60, 120, last (k is 0-BASED: k=0 is the first
                   emitted epoch, the pure single-epoch solve), the FIRST-INJECT
@@ -88,6 +98,7 @@ Usage:
 """
 
 import argparse
+import statistics
 import bisect
 import csv
 import json
@@ -475,6 +486,7 @@ def grade(args, out=None):
     want_iono = bool(getattr(args, "iono_join", False))
     want_gal = bool(getattr(args, "gal_lanes", False))
     want_lam = bool(getattr(args, "check_lambda", False))
+    want_rf = bool(getattr(args, "ref_free", False))
     stride = max(1, int(getattr(args, "stride", 4) or 4))
     minlen = max(2, int(getattr(args, "by_age_minlen", 200) or 200))
 
@@ -551,8 +563,39 @@ def grade(args, out=None):
     n_tow_revisit = 0
     flushed = set()
     qbuf = {}                                              # (sat, ref, sa, sb) -> {sig: e}
+    rf_all = defaultdict(list)                             # sig -> [u]   (ref-free)
+    rf_last = defaultdict(list)
+    rf_lane_all = defaultdict(list)                        # lane -> [u1 - u2]
+    rf_lane_last = defaultdict(list)
+    rf_groups = 0                                          # groups graded (>= 3 sats)
+    rf_skipped = 0                                         # groups with < 3 sats
 
     def flush_epoch(k, is_last):
+        nonlocal rf_groups, rf_skipped
+        if want_rf and qbuf:
+            groups = defaultdict(dict)                     # (ref, sa, sb, sig) -> {sat: e}
+            for (sat, ref, sa, sb), sigs in qbuf.items():
+                for sig, e in sigs.items():
+                    groups[(ref, sa, sb, sig)][sat] = e
+            ubuf = defaultdict(dict)                       # (sat, ref, sa, sb) -> {sig: u}
+            for (ref, sa, sb, sig), d in groups.items():
+                if len(d) < 3:
+                    rf_skipped += 1
+                    continue
+                rf_groups += 1
+                c = statistics.median(d.values())
+                for sat, e in d.items():
+                    u = e - c
+                    rf_all[sig].append(u)
+                    if is_last:
+                        rf_last[sig].append(u)
+                    ubuf[(sat, ref, sa, sb)][sig] = u
+            for key_, usig in ubuf.items():
+                for lane, (s1, s2) in lanes.items():
+                    if s1 in usig and s2 in usig:
+                        rf_lane_all[lane].append(usig[s1] - usig[s2])
+                        if is_last:
+                            rf_lane_last[lane].append(usig[s1] - usig[s2])
         for (sat, ref, sa, sb), sigs in qbuf.items():
             for lane, (s1, s2) in lanes.items():
                 if s1 in sigs and s2 in sigs:
@@ -726,6 +769,34 @@ def grade(args, out=None):
         st = stats(lane_last[lane])
         res["lane_last"][lane] = st
         P(fmt_row(lane, st))
+
+    # --- ref-free (§6.12): the trace's reference satellite differenced away ----
+    if want_rf:
+        res["rf_all"], res["rf_last"], res["rf_lane_all"], res["rf_lane_last"] = {}, {}, {}, {}
+        res["rf_groups"], res["rf_skipped"] = rf_groups, rf_skipped
+        P()
+        P("-- REF-FREE (SPEC_amb_iono §6.12): u = e - median over the graded sats of the same "
+          "(ref_sat, sta_a, sta_b, signal) group; the trace's reference satellite cancels --")
+        P(f"   groups graded {rf_groups} (>= 3 sats), skipped {rf_skipped} (< 3 sats)")
+        for sig in sorted(rf_all):
+            st = stats(rf_all[sig])
+            res["rf_all"][sig] = st
+            P(fmt_row(sig, st))
+        P(f"-- same, LAST {args.last_frac:.0%} of epochs only --")
+        for sig in sorted(rf_last):
+            st = stats(rf_last[sig])
+            res["rf_last"][sig] = st
+            P(fmt_row(sig, st))
+        P("-- ref-free lanes --")
+        for lane in lanes:
+            st = stats(rf_lane_all[lane])
+            res["rf_lane_all"][lane] = st
+            P(fmt_row(lane, st))
+        P(f"-- same, LAST {args.last_frac:.0%} of epochs only --")
+        for lane in lanes:
+            st = stats(rf_lane_last[lane])
+            res["rf_lane_last"][lane] = st
+            P(fmt_row(lane, st))
 
     # --- (d) Galileo lanes ----------------------------------------------------
     if want_gal and any(len(v) for v in gal_all.values()):
@@ -904,6 +975,8 @@ def build_parser():
                     help="DD identity e_b vs mu_b*DD(dI)/lambda_b from network_ionosphere.csv + truth_atmo.csv")
     ap.add_argument("--stride", type=int, default=4, help="--iono-join epoch stride (default 4)")
     ap.add_argument("--gal-lanes", action="store_true", help="Galileo lanes EWL(5,7) and WL(1,5)")
+    ap.add_argument("--ref-free", action="store_true",
+                    help="difference the trace's reference satellite away per (ref, sta_a, sta_b, signal) group (§6.12)")
     ap.add_argument("--check-lambda", action="store_true",
                     help="assert trace lambda_m == truth wavelength_m (1e-6) + Gaussian-consistency check")
     return ap
@@ -927,6 +1000,43 @@ def main():
 # selftest
 # --------------------------------------------------------------------------
 _WL = {"L1C": 0.190293672798, "L2W": 0.244210213425, "L5Q": 0.254828048790, "L7Q": 0.248349369584}
+
+
+def _write_reffree_bed(td):
+    """A 2-station GPS bed whose REFERENCE (G01) carries a between-station SD ambiguity error of +0.70 cyc
+    on every band, three graded satellites (G02 / G03 exact, G04 at +0.30 cyc on L1C only), 12 epochs.
+    As-traced every chord reads the reference's 0.70; ref-free the group median is 0 (two exact sats out of
+    three) so u = 0 for G02/G03 and 0.30 for G04 on L1C.  Returns the expectations."""
+    fx = os.path.join(td, "fixture")
+    run = os.path.join(td, "run")
+    os.makedirs(os.path.join(run, "logs"))
+    sats = {"G01": 0, "G02": 7, "G03": 13, "G04": 21}
+    boff = {"L1C": 0, "L2W": 3, "L5Q": 5}
+    s_err = {"G01": 0.70, "G02": 0.0, "G03": 0.0, "G04": 0.30}      # between-station SD error (cycles)
+    for sta, base in (("SAAA", 100000), ("SBBB", 200000)):
+        os.makedirs(os.path.join(fx, sta))
+        with open(os.path.join(fx, sta, "truth_ambiguities.csv"), "w") as f:
+            f.write("satellite,signal,N_int,wavelength_m\n")
+            for sat, off in sats.items():
+                for sig in ("L1C", "L2W", "L5Q"):
+                    f.write(f"{sat},{sig},{base + off + boff[sig]},{_WL[sig]:.12f}\n")
+        with open(os.path.join(fx, sta, "truth_slips.csv"), "w") as f:
+            f.write("week,tow_s,satellite,signal,delta_cycles,flagged,elev_deg\n")
+    n_rows = 0
+    with open(os.path.join(run, "logs", "network_dd_fractional.csv"), "w") as fd:
+        fd.write("week,tow,cons,signal,sat_i,ref_sat,sta_a,sta_b,dd_m,lambda_m,dd_cyc,frac_cyc,dd_sigma_cyc,sigma_carry_aware\n")
+        for k in range(12):
+            tow = 30.0 * k
+            for sat in ("G02", "G03", "G04"):
+                for sig in ("L1C", "L2W", "L5Q"):
+                    dd_true = 0                     # identical per-sat offsets at both stations: the DD of truth is 0
+                    e = (s_err[sat] if sig == "L1C" else 0.0) - s_err["G01"]
+                    dd = dd_true + e
+                    lam = _WL[sig]
+                    fd.write(f"2313,{tow:.3f},G,{sig},{sat},G01,SAAA,SBBB,{dd * lam:.6f},{lam:.12f},"
+                             f"{dd:.6f},{e - round(e):.6f},0.01,0\n")
+                    n_rows += 1
+    return {"fixture": fx, "run": run, "n_rows": n_rows}
 
 
 def _write_mini_bed(td, warmup=2, bad_lambda=False, with_manifest=True):
@@ -1181,6 +1291,39 @@ def selftest():
         check(res1["sigma"]["w"] == 3 and res1["sigma"]["w_src"] == "--warmup", "warmup fallback")
         check(_close(res1["sigma"]["ratio"]["L1C"], 0.5, 1e-6), "ratio at w+1=4 over w=3 (0.5 by construction)")
 
+
+    # --- the ref-free bed (SPEC_amb_iono §6.12): the reference's share must cancel -------
+    with tempfile.TemporaryDirectory() as td:
+        exp = _write_reffree_bed(td)
+        args = build_parser().parse_args([exp["fixture"], "--run", exp["run"], "--ref-free"])
+        buf = io.StringIO()
+        res = grade(args, buf)
+        text = buf.getvalue()
+        check(res["n_rows"] == exp["n_rows"] and res["n_unmatched"] == 0, "reffree rows")
+        # as-traced: every chord carries the reference's 0.70 (L2W/L5Q exactly, L1C 0.70 or 0.40)
+        check(_close(res["band_all"]["L2W"][2], 0.70, 1e-6) and res["band_all"]["L2W"][6] == 0.0, "reffree as-traced L2W")
+        check(_close(res["band_all"]["L1C"][2], 0.70, 1e-6), "reffree as-traced L1C med|e|")
+        # ref-free: L2W / L5Q exact (u = 0), L1C median 0 with G04's 0.30 the only non-zero -> med|u| 0, round0 100 %
+        check(_close(res["rf_all"]["L2W"][2], 0.0, 1e-6) and res["rf_all"]["L2W"][6] == 100.0, "reffree L2W cancels")
+        check(_close(res["rf_all"]["L5Q"][2], 0.0, 1e-6) and res["rf_all"]["L5Q"][6] == 100.0, "reffree L5Q cancels")
+        check(_close(res["rf_all"]["L1C"][2], 0.0, 1e-6) and res["rf_all"]["L1C"][6] == 100.0
+              and res["rf_all"]["L1C"][0] == 36, "reffree L1C: G04's 0.30 survives, the 0.70 does not")
+        check(res["rf_groups"] == 36 and res["rf_skipped"] == 0, "reffree groups (12 epochs x 3 signals)")
+        # lanes in the ref-free frame: WL(1,2) = u_L1C - u_L2W -> 0.30 on G04 only; EWL exact
+        check(_close(res["rf_lane_all"]["EWL(2,5)"][2], 0.0, 1e-6) and res["rf_lane_all"]["EWL(2,5)"][6] == 100.0, "reffree EWL")
+        check(res["rf_lane_all"]["WL(1,2)"][6] == 100.0, "reffree WL round0")
+        check("REF-FREE" in text and "groups graded 36" in text, "reffree report block")
+        # default path: no ref-free block, identical core
+        args0 = build_parser().parse_args([exp["fixture"], "--run", exp["run"]])
+        buf0 = io.StringIO()
+        res0 = grade(args0, buf0)
+        check("REF-FREE" not in buf0.getvalue() and "rf_all" not in res0, "default output has no ref-free block")
+        check(res0["band_all"] == res["band_all"] and res0["lane_all"] == res["lane_all"], "default == ref-free core")
+        # the mini bed (2 sats per constellation) has no group of >= 3: everything skipped, nothing graded
+        exp2 = _write_mini_bed(os.path.join(td, "mini"), warmup=2)
+        args2 = build_parser().parse_args([exp2["fixture"], "--run", exp2["run"], "--ref-free"])
+        res2 = grade(args2, io.StringIO())
+        check(res2["rf_groups"] == 0 and res2["rf_skipped"] > 0 and not res2["rf_all"], "reffree skips 2-sat groups")
     # a wrong truth wavelength must FAIL the lambda check
     with tempfile.TemporaryDirectory() as td:
         exp = _write_mini_bed(td, warmup=2, bad_lambda=True)

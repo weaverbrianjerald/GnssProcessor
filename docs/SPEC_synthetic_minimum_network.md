@@ -2033,6 +2033,18 @@ gate.  Note also that arming D5 here would have looked like a large win to anyon
 the grade without the counters.
 
 ### 13.8 GRADING RULES AND TRAPS for the triple/slant posture
+**Rule 13.8.x — the DD trace has ONE reference satellite per (constellation, signal), and it is in every
+chord (added 2026-09-06, SPEC_amb_iono §6.12).**  `NetworkDdFrac.cpp` picks the lexically-lowest satellite
+present at ≥ 2 stations (G01 / E02 all day on this fixture); coverage follows its footprint (21–41 of 60
+stations per hour) and every graded e_i = s_i − s_ref carries its between-station SD error.  When it is
+excluded for eclipse and returns, the whole trace reads its newborn legs as a network-wide episode
+(as-traced L1C 0.52–0.59 cyc at h7 / h19 vs a ref-free 0.08–0.11 that is flat all day).  Grade ref-free:
+`scripts/simnet_dd_reref.py <fixture> <run>` (hourly, per constellation, with the leg-age curve) or
+`simnet_amb_integer.py --ref-free` (summary block).  Every DD number in §13–§18 quoted before 2026-09-06 is
+as-traced; the settled-quarter figures in particular (0.42 / 53 %) are the reference's post-return
+convergence, not the network's.  A producer-side reference policy (`trace_dd_fractional_ref: "oldest"`) is
+owed — the ref-free grader stays the reference-independent instrument regardless.
+
 ### (absorbed 2026-08-15 from `docs/HANDOFF_slant_triple_next.md`, now attic'd)
 
 That handoff was the work order for §13.6 and §13.4 ("§3 + §4 EXECUTED 2026-08-12 — the

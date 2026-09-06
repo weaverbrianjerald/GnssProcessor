@@ -535,6 +535,16 @@ restart whose consumer converges like a cold consumer on the continuous wire —
 every seam card with a COLD-CONSUMER REPLAY (`_seamctl_replay_*`, `splice_wire.py`),
 never the seam-epoch diff alone: it cannot see an integrated, unsignalled drift.
 
+**6. THE DD TRACE HAS ONE REFERENCE SATELLITE, AND IT IS IN EVERY CHORD (2026-09-06,
+SPEC_amb_iono §6.12).**  `network_dd_fractional.csv` differences every satellite against the
+lexically-lowest one present at ≥ 2 stations (G01 / E02 all day on the sim); its own
+between-station error is common to every chord, and its eclipse return re-references the
+whole trace to newborn legs — the "post-eclipse network-wide DD episode" (as-traced 0.52–0.59
+cyc) was that; ref-free the DD is flat 0.07–0.11 cyc all day.  ⚠ Every DD-integer number
+quoted before 2026-09-06 is as-traced.  Grade with `scripts/simnet_dd_reref.py` or
+`simnet_amb_integer.py --ref-free`; the producer-side reference policy is owed.  Rule: any
+grade built on a single reference element reports that element's share or differences it away.
+
 **4. `network.trace_station_residuals` writes ZERO rows on `carry_invariant`
 chains** — the writer rides the leveling RAIM pool, structurally empty there
 (the known pool re-host gap).  Use the prires / block-Baarda / congruence
