@@ -53,6 +53,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_var_floor = config_.networkPhaseLevelingVarFloorM2();
     k.pl_los_scale = config_.networkPhaseLevelingLosScale();
     k.pl_local_block = config_.networkPhaseLevelingLocalBlock();
+    k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // F3 block admission age gate
     k.pl_warmup_on_conv = config_.networkPhaseLevelingWarmupOnConvergence();
     k.pl_refloat_on_conv = config_.networkPhaseLevelingRefloatAtConvergence();
     k.pl_conv_rms_thresh = config_.networkPhaseLevelingConvRmsThreshTecu();
@@ -3452,8 +3453,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     const double var_first =
                         (oldc != local_carry.end() && oldc->second.var_first > 0.0)
                             ? oldc->second.var_first : var;
+                    // Birth epoch (the F3 block admission age gate's clock): first stash
+                    // wins, kept across re-stashes, restarted by an erase-and-rebirth.
+                    const long long birth_ep =
+                        (oldc != local_carry.end() && oldc->second.birth_ep > 0)
+                            ? oldc->second.birth_ep
+                            : static_cast<long long>(ctx.counters.n_loop_epochs);
                     LocalCarry nlc{value_abs, var, pl_now_s, std::move(coupling)};
                     nlc.var_first = var_first;
+                    nlc.birth_ep  = birth_ep;
                     local_carry[lkey] = std::move(nlc);
                 }
                 if (hblk && cross.size() == hblk->C.rows()) {

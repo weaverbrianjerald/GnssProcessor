@@ -2979,6 +2979,17 @@ namespace GnssProcessor {
         // on the carried ambiguity inject.  Default OFF = byte-identical.
         network_phase_leveling_local_block_ =
             jval<bool>(json, "network.phase_leveling_local_block", "phase_leveling_local_block", false);
+        // F3 block ADMISSION age gate (SPEC_amb_iono_split_overcount §6.12): legs younger than
+        // this many loop epochs are injected per-column, not in the block.  0 = OFF.
+        network_phase_leveling_local_block_min_age_ep_ =
+            jval<int>(json, "network.phase_leveling_local_block_min_age_ep",
+                      "phase_leveling_local_block_min_age_ep", 0);
+        if (network_phase_leveling_local_block_min_age_ep_ < 0)
+            throw std::runtime_error("network.phase_leveling_local_block_min_age_ep must be >= 0");
+        if (network_phase_leveling_local_block_min_age_ep_ > 0 && !network_phase_leveling_local_block_)
+            log->warn("Network (F3 age gate): network.phase_leveling_local_block_min_age_ep is set "
+                      "but network.phase_leveling_local_block is OFF — there is no block to keep a "
+                      "young leg out of, so the gate is INERT this run.");
         network_shared_carry_var_floor_pb_m2_ =
             jval<double>(json, "network.shared_carry_var_floor_pb_m2", "shared_carry_var_floor_pb_m2", 0.0);
         // T1d: convergence-gated leveling-carry warmup (default OFF = fixed epoch count).

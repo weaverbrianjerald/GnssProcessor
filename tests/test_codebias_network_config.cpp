@@ -2616,3 +2616,55 @@ TEST(NetworkPhaseLevelingConfig, LosScaleUnderCarryInvariantWarnsInert) {
         << "the warn must name the predicate that made it inert.\n" << r.text;
     std::error_code ec; fs::remove(p, ec);
 }
+
+// F3 block ADMISSION age gate (network.phase_leveling_local_block_min_age_ep,
+// SPEC_amb_iono_split_overcount §6.12): default 0 = OFF (byte-identical), parses,
+// a negative value is refused, and setting it without the block WARNS as INERT
+// (there is no block to keep a young leg out of) rather than silently disarming.
+TEST(NetworkPhaseLevelingConfig, BlockMinAgeDefaultsOffParsesAndWarnsInertWithoutTheBlock) {
+    std::error_code ec;
+    {
+        const fs::path p = writeTempConfig("pl_blk_age_default",
+            networkConfig(kGpsGal, kPriosGps, "    \"phase_leveling\": true,\n"));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_default");
+        ASSERT_TRUE(r.ok);
+        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 0);
+        EXPECT_EQ(r.text.find("F3 age gate"), std::string::npos) << r.text;
+        fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("pl_blk_age_on",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_leveling\": true,\n"
+                "    \"shared_carry_full_cov\": true,\n"
+                "    \"carry_conditional_coupling\": true,\n"
+                "    \"phase_leveling_local_block\": true,\n"
+                "    \"phase_leveling_local_block_min_age_ep\": 30,\n"));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_on");
+        ASSERT_TRUE(r.ok);
+        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 30);
+        EXPECT_EQ(r.text.find("F3 age gate"), std::string::npos)
+            << "armed under the block: no INERT warn.\n" << r.text;
+        fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("pl_blk_age_noblock",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_leveling\": true,\n"
+                "    \"phase_leveling_local_block_min_age_ep\": 30,\n"));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_noblock");
+        ASSERT_TRUE(r.ok);
+        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 30)
+            << "not silently disarmed — the warn is the contract";
+        EXPECT_NE(r.text.find("F3 age gate"), std::string::npos) << r.text;
+        fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("pl_blk_age_neg",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_leveling_local_block_min_age_ep\": -1,\n"));
+        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_neg");
+        EXPECT_FALSE(r.ok) << "a negative gate must be refused";
+        fs::remove(p, ec);
+    }
+}

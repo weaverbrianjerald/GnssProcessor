@@ -1785,6 +1785,30 @@
    "fingerprinted": false,
    "interlock": "0 = OFF (absolute ceiling alone, byte-identical). INERT without phase_datum_handover_continuous (loader-warned). Refusals counted on handover_refused_ratio (disjoint from handover_refused_var); PBGAUGE handover rows carry var / var_first when armed; the L snapshot row gains an optional trailing var_first field only when armed.",
    "evidence": "BUILT 2026-09-05 (unit: PhaseDatumHandover.RatioCeilingRefusesUnconvergedAndUnknownArcs, PhaseDatumHandoverLoader.RatioCeilingDefaultsOffParsesAndRejectsNegative). Arm owed: runs/ratio3h vs runs/nonint_losblock3h_hv."
+  },
+  {
+   "knob": "network.phase_leveling_local_block_min_age_ep",
+   "family": "Card-4 invariant DD carry, its carry couplings (C1/Card-1x), the LS-VCE monitor, and the RTB-7 warm-resume snapshot knobs",
+   "verdict": "UNVALIDATED",
+   "scope": "F3 block ADMISSION age gate (SPEC_amb_iono_split_overcount §6.10 arm 5 / §6.12, built 2026-09-05): a carried leg younger than K loop epochs since its first stash (LocalCarry::birth_ep) is kept OUT of its station's jointly-whitened block and injected as a per-column row (F1-scaled over the young set when los_scale is armed). Target: the ~4 h network-wide DD episodes after each eclipse re-admission cluster, which §6.11 showed are NOT the shared border (seeding the returned satellite's clock + marginalizing its columns out of every block for 20 epochs left the settled-quarter DD unchanged) — by elimination the legs BORN at the re-admission carry their code-level birth error into the block. F3 lineages only.",
+   "regime": "on(\"network.phase_leveling_local_block\")",
+   "posture_why": "F3 block admission age gate: young legs (code-level birth error) are carried per-column until mature instead of being whitened into the station block — the named fix for the post-eclipse DD episodes",
+   "default_at": "include/config/GnssConfig.hpp (network_phase_leveling_local_block_min_age_ep_{0}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside phase_leveling_local_block; split in ApplicationNetworkAssembly.cpp (pl_pend → bc / pl_young); birth_ep kept at the leveling stash (NetworkRunContext.cpp)",
+   "fingerprinted": false,
+   "interlock": "0 = OFF (byte-identical). INERT without phase_leveling_local_block (loader-warned). Counted per station-epoch (pl_blk_young_cols) and printed on the run-end 'Network (leveling local-block F3)' line. birth_ep is NOT snapshotted (a restored entry reads mature).",
+   "evidence": "BUILT 2026-09-05 (unit: NetworkPhaseLevelingConfig.BlockMinAgeDefaultsOffParsesAndWarnsInertWithoutTheBlock). Arm owed: runs/readmit8h_young (K = 30) vs the first 8 h of runs/nonint_losblock24h_hv."
+  },
+  {
+   "knob": "network.readmit_seed_code_bias",
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "verdict": "UNVALIDATED",
+   "scope": "Sub-knob of network.readmit_seed_horizon_s (built 2026-09-05): true (default) parks + seeds the departing satellite's per-signal CODE-BIAS columns as well as its clock; false seeds the CLOCK alone. Measured on runs/readmit24h_e2: the IF-pair code-bias seeds held 44/44 but the THIRD-frequency seeds (C5Q, C7Q) were rejected by the data 28/40 (the §18.1 cold-start third-frequency misrealization carried into the return through a stiff σ 1.9 cm seed), and 5 of 26 anchored clock seeds were rejected in-epoch on the T3 satellites.",
+   "regime": "on(\"network.clock_temporal_anchor\") and not on(\"network.clock_model\") and val(\"network.readmit_seed_horizon_s\", 0.0) > 0.0",
+   "posture_why": "readmit seed scope: clock-only seeding keeps the T3 fix (the clock re-draw) and lets the weakly determined third-frequency code biases re-solve from data as today",
+   "default_at": "include/config/GnssConfig.hpp (network_readmit_seed_code_bias_{true}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside readmit_coupling_marg_ep; parking filter in networkStashCarry (NetworkRunContext.cpp)",
+   "fingerprinted": false,
+   "interlock": "Inert without readmit_seed_horizon_s. Manifest key readmit_seed_code_bias.",
+   "evidence": "BUILT 2026-09-05 (unit: ReadmitContinuityConfig.DefaultsOffAndKnobsParse). Arm owed: runs/readmit24h_e2clk (false) vs runs/readmit24h_e2 (true)."
   }
  ]
 }

@@ -103,6 +103,14 @@ namespace GnssProcessor {
         /// and NOT carry_cpl_joint (loader warns INERT otherwise).  Default OFF =
         /// byte-identical.
         bool pl_local_block{};
+        /// network.phase_leveling_local_block_min_age_ep — F3 block ADMISSION age gate: a
+        /// carried leg younger than this many loop epochs (since its first stash) is kept
+        /// OUT of the station block and emitted as a per-column row (F1-scaled if armed).
+        /// A leg born at a satellite's re-admission carries its code-level birth error;
+        /// the block's joint whitening spreads that into the station's mature columns —
+        /// the post-eclipse DD episodes SPEC_amb_iono_split_overcount §6.9 measured (and
+        /// §6.11 showed are NOT the shared border).  0 = OFF (byte-identical).
+        int  pl_blk_min_age_ep{};
         bool pl_warmup_on_conv{};
         bool pl_refloat_on_conv{};
         double pl_conv_rms_thresh{};
@@ -2198,6 +2206,7 @@ namespace GnssProcessor {
         long long n_pl_blk_pair_missing = 0;             ///< (i,j) pairs zeroed: harvested at different epochs / no harvest block
         long long n_pl_blk_col_refused  = 0;             ///< block columns dropped by the scalar-row "never poison" screen
         long long n_pl_blk_fallback     = 0;             ///< station-epochs whose block factorization failed → F1/diagonal rows
+        long long n_pl_blk_young_cols   = 0;             ///< F3 age gate: injectable columns kept OUT of their block (too young) and emitted per-column
         long long n_pl_blk_hist[5]      = {0, 0, 0, 0, 0}; ///< block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75
         long long n_pl_blk_max_dim      = 0;             ///< largest block dimension over the run
         long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (invariant #7's re-coupling edge, counted)

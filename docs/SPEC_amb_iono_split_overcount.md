@@ -967,6 +967,30 @@ SCOPED; neither knob fingerprinted (documented reasons in the loader/ledger).
 
 Results go in §6.11 as they land; nothing above is edited after the fact.
 
+**Addendum, arm 5 (written 2026-09-05 21:05 PDT, after arm 2's DD grade and BEFORE arm 5 was run).**
+Arm 2 (`readmit24h_e2`) returned the base's DD to the digit (full 0.281 / 64.3 %, settled 0.420 /
+53.4 % vs 0.283 / 64.2 % and 0.425 / 53.2 %) with the returned satellite's clock seeded AND its
+columns marginalized out of every block for 20 epochs (2.98 M terms diverted) — so the post-eclipse
+episodes are NOT the shared border.  By elimination the path is LOCAL: the legs BORN at a satellite's
+re-admission (every station sees the returning satellite at once: ~20 stations × B bands of fresh
+legs per return) carry their code-level birth error into the block, and the joint whitening L⁻¹
+spreads it into the station's mature columns at their tight variance — §3.1's birth-frame
+inheritance, amplified by F3 (which is why F1's diagonal control showed a smaller bump, §6.9).
+Built: `network.phase_leveling_local_block_min_age_ep` — a leg younger than K loop epochs since its
+first stash (`LocalCarry::birth_ep`) is kept OUT of the block and emitted as a per-column row
+(F1-scaled over the young set when los_scale is armed); counted (`pl_blk_young_cols`).
+
+| arm | config | single change vs its base |
+|---|---|---|
+| `readmit8h_young` | `_readmit8h_young.json` | the 24 h F3 posture (`_nonint_losblock24h_hv`) cut to 8 h + `phase_leveling_local_block_min_age_ep 30`; control = the first 8 h of `runs/nonint_losblock24h_hv` |
+
+PRE-REGISTERED: after the h3.3–6.9 re-admission cluster the clean-chord L1C med|e| in h6–h7 stays
+≤ 0.25 cyc (base 0.42 / 0.49) and the h6–h7 all-chord med|e| ≤ 0.30 (base 0.42 / 0.49); the quiet
+hours h2–h3 unchanged within ±0.03 cyc (base 0.19 / 0.20); lanes unchanged; `pl_blk_young_cols` > 0
+and rising at each return.  Falsifiers: h6–h7 > 0.35 cyc (the young legs are not the path either),
+or h2–h3 worse than 0.25 (the gate costs the quiet state).  A partial (h6–h7 0.25–0.35) gets one
+K-sweep arm, not a verdict.
+
 ## §6.11 Results of the §6.10 arms (filled as they land; nothing in §6.10 is edited)
 
 1. **`readmit_off3h` — invariant #6 PASS (2026-09-05 19:22 PDT).**  New exe `gnss_processor_readmit.exe`

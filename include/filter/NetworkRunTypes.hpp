@@ -414,6 +414,7 @@ struct LocalCarry {
     std::shared_ptr<const PlHarvestBlock> blk{};  ///< F3 (network.phase_leveling_local_block): the harvest cross-covariance block this entry's off-diagonals live in — null when the knob is off, on the ZWD carry, and for a warm-resume-restored entry (no block ⇒ every pair with it is zeroed + counted at inject).
     int blk_idx{-1};                              ///< F3: this entry's row/column in @c blk->C (−1 = none).
     double var_first{0.0};                        ///< The arc's FIRST-STASH conditional variance (m²; 0 = unknown): set once at birth, kept across re-stashes (an erase-and-rebirth starts it over, a re-level keeps it).  The honest-σ-scale denominator of network.phase_datum_handover_max_var_ratio; snapshotted only when that knob is armed.
+    long long birth_ep{0};                        ///< Loop-epoch index (n_loop_epochs) of the arc's FIRST stash (0 = unknown ⇒ mature): set once at birth, kept across re-stashes, restarted by an erase-and-rebirth.  network.phase_leveling_local_block_min_age_ep keeps a leg OUT of the F3 block (per-column row instead) until n_loop_epochs − birth_ep ≥ the gate — a leg born at a satellite's re-admission carries its code-level birth error, and the block's joint whitening would spread it into the station's mature columns.  Not snapshotted (a restored entry reads mature).
 };
 
 /// SPEC_slip_relevel_walk §6 — the slip re-level response's per-epoch state
@@ -771,6 +772,7 @@ struct StationAssembly {
     long long                 pl_blk_pair_missing{0};  ///< F3: (i,j) pairs zeroed because the two columns were harvested at different epochs (or one carries no harvest block).
     long long                 pl_blk_col_refused{0};   ///< F3: block columns dropped by the scalar-row "never poison" screen (non-finite RHS / σ² ≤ 0).
     long long                 pl_blk_fallback{0};      ///< F3: block factorization failed after the ridge retry → this station-epoch emitted F1/diagonal rows instead.
+    long long                 pl_blk_young_cols{0};    ///< F3 age gate (network.phase_leveling_local_block_min_age_ep): injectable columns YOUNGER than the gate this station-epoch — kept OUT of the block and emitted as per-column rows (F1-scaled if armed).
     long long                 pl_blk_hist[5]{0, 0, 0, 0, 0}; ///< F3: block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75.
     long long                 pl_blk_max_dim{0};       ///< F3: largest block dimension this station-epoch.
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  CARRY-ELIGIBLE SUBSET: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must NOT key on it — see `qc_amb`.

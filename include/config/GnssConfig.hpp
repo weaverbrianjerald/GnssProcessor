@@ -1878,6 +1878,27 @@ namespace GnssProcessor {
          * re-whiten counters, not the absence of a warning.
          */
         bool networkPhaseLevelingLocalBlock() const { return network_phase_leveling_local_block_; }
+        /**
+         * @brief F3 block ADMISSION age gate (@c network.phase_leveling_local_block_min_age_ep,
+         *        loop epochs; sub-knob of @ref networkPhaseLevelingLocalBlock).
+         *
+         * A carried leg younger than this many loop epochs since its first stash is kept
+         * OUT of its station's jointly-whitened block and injected as a per-column row
+         * (F1-scaled when @ref networkPhaseLevelingLosScale is armed, else the plain
+         * diagonal row).  Why: a leg born at a satellite's re-admission carries the
+         * station-common code-level error of its birth epoch (SPEC_amb_iono_split_overcount
+         * §3.1, birth-frame inheritance); inside the block, the joint whitening L⁻¹ spreads
+         * that error into the station's MATURE columns at their tight variance — the
+         * ~4 h network-wide DD episodes after each eclipse re-admission cluster (§6.9),
+         * which §6.11 showed are NOT the shared border (seeding the returned satellite's
+         * clock and marginalizing its columns out of every block for 20 epochs left the
+         * settled-quarter DD unchanged).  Once mature the leg joins the block as before.
+         * Counted per station-epoch (`pl_blk_young_cols`).  0 (default) = OFF,
+         * byte-identical.  Not fingerprinted; INERT without the block.
+         */
+        int networkPhaseLevelingLocalBlockMinAgeEp() const {
+            return network_phase_leveling_local_block_min_age_ep_;
+        }
 
         /// @brief Floor (m²) on the D2 satellite-PHASE-bias carried prior variance
         ///        (@c network.shared_carry_var_floor_pb_m2, B4).  Caps the carry's
@@ -6734,6 +6755,7 @@ namespace GnssProcessor {
         double network_phase_leveling_max_gap_s_{120.0};  ///< Max unseen gap (s) a carried ambiguity survives before it is dropped (stale-carry / map-growth guard).
         double network_phase_leveling_var_floor_m2_{0.0}; ///< Floor (m²) on the carried prior variance (caps Λ — lock-in guard); 0 = off (no cap).
         bool   network_phase_leveling_los_scale_{false};  ///< F1: multiply each carried ambiguity row's variance by B_eff (carried columns injected on the same station-satellite LOS this epoch) at inject — undoes the per-LOS B-fold over-count of the iono-direction carry precision (SPEC_amb_iono_split_overcount).  OFF = byte-identical.
+        int    network_phase_leveling_local_block_min_age_ep_{0}; ///< F3 block admission age gate (loop epochs since a leg's first stash): younger legs are injected per-column, not in the block.  0 = OFF.
         bool   network_phase_leveling_local_block_{false}; ///< F3: carry each station's injectable ambiguity set as ONE jointly-whitened local block (harvested conditional cross covariances on Σ's off-diagonals; departed columns marginalized) — exact for every local-local direction incl. the station-common ones F1 leaves over-counted (SPEC_amb_iono_split_overcount).  Supersedes F1 on whitened blocks.  OFF = byte-identical.
         double network_shared_carry_var_floor_pb_m2_{0.0}; ///< B4: floor (m²) on the D2 sat-PHASE-bias carried prior variance (caps Λ — bounds the zero-q lock-in while preserving Ge-2008 FCB averaging); 0 = off.
         double network_shared_carry_var_floor_cb_m2_{0.0}; ///< B4: floor (m²) on the D2 sat-CODE-bias carried prior variance (caps Λ); 0 = off.

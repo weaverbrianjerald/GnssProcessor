@@ -3006,13 +3006,31 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         // through to the per-column route below (F1-scaled if armed) and
                         // is counted; F1's pl_los_beff mirror stays empty on a whitened
                         // block, which is how the harvest mirror knows nothing was scaled.
+                        // F3 block ADMISSION age gate (network.phase_leveling_local_block_
+                        // min_age_ep, SPEC_amb_iono §6.12): a leg younger than the gate
+                        // (loop epochs since its first stash) stays OUT of the block — it
+                        // carries its code-level birth error, and the joint whitening would
+                        // spread that into the station's mature columns — and is emitted
+                        // below as a per-column row instead (F1-scaled over the young set
+                        // when los_scale is armed).  0 = OFF: every pending column enters.
+                        const int  pl_min_age = ctx.knobs.pl_blk_min_age_ep;
+                        const long long loop_ep_now =
+                            static_cast<long long>(ctx.counters.n_loop_epochs);
+                        std::vector<PlPend> pl_young;
                         std::vector<LocalBlockCol> bc;
                         bc.reserve(pl_pend.size());
-                        for (const PlPend& p : pl_pend)
+                        for (const PlPend& p : pl_pend) {
+                            if (pl_min_age > 0 && p.lc->birth_ep > 0
+                                && loop_ep_now - p.lc->birth_ep < pl_min_age) {
+                                pl_young.push_back(p);
+                                continue;
+                            }
                             bc.push_back(LocalBlockCol{
                                 p.col, x_lin(p.amb_idx), p.lc,
                                 pl_finish_var(p.var_eff, p.sat), p.gap,
                                 vce_apply.factor(NetworkCarryVceApply::kPl, p.sat)});
+                        }
+                        R.pl_blk_young_cols += static_cast<long long>(pl_young.size());
                         long long n_sta_carry = 0;   // read-only walk of this station's entries
                         for (auto it = local_carry.lower_bound(std::make_tuple(
                                  static_cast<int>(i), std::string{}, std::string{}));
@@ -3022,8 +3040,32 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             ++n_sta_carry;
                         R.pl_blk_marg_cols += std::max<long long>(
                             0, n_sta_carry - static_cast<long long>(pl_pend.size()));
-                        blk_done = cb.buildLocalBlock(bc);
+                        blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
                         if (!blk_done) ++R.pl_blk_fallback;
+                        // The young legs take the per-column route whether or not the block
+                        // factorized (on a fallback the loop below re-emits EVERY pending
+                        // column, young ones included, so emit them here only on success).
+                        if (blk_done && !pl_young.empty()) {
+                            std::map<std::string, int> beff_y;
+                            if (pl_los_scale) {
+                                for (const PlPend& p : pl_young) ++beff_y[p.sat];
+                                for (const auto& [sat, b] : beff_y)
+                                    ++R.pl_los_scale_hist[std::min(b, 4) - 1];
+                            }
+                            for (const PlPend& p : pl_young) {
+                                double var_eff = p.var_eff;
+                                if (pl_los_scale) {
+                                    const int b = beff_y[p.sat];
+                                    if (b > 1) {
+                                        var_eff *= static_cast<double>(b);
+                                        ++R.pl_los_scale_rows;
+                                    }
+                                    R.pl_los_beff[{p.sat, p.signal}] = b;
+                                }
+                                var_eff = pl_finish_var(var_eff, p.sat);
+                                pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap);
+                            }
+                        }
                     }
                     if (!blk_done) {
                         // F1 (or the F3 fallback): B_eff per (station, satellite) LOS =
@@ -3423,6 +3465,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             ctx.counters.n_pl_blk_pair_missing += Rc.pl_blk_pair_missing;
             ctx.counters.n_pl_blk_col_refused  += Rc.pl_blk_col_refused;
             ctx.counters.n_pl_blk_fallback     += Rc.pl_blk_fallback;
+            ctx.counters.n_pl_blk_young_cols   += Rc.pl_blk_young_cols;
             for (int b = 0; b < 5; ++b)
                 ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
             if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)
