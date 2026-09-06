@@ -2,20 +2,19 @@
  * \file PppModel.cpp
  * \brief Implementation of PppModel: PPP/PPP-RTK observation modelling and corrections.
  *
- * This file implements the PppModel methods responsible for initializing PPP state,
- * computing satellite/receiver geometry, applying corrections (orbits, clocks, tides,
- * troposphere, ionosphere, antenna) and forming ionosphere-free combinations used by
- * downstream measurement/estimation components.
+ * Initializes PPP state, computes satellite/receiver geometry, applies corrections
+ * (orbits, clocks, tides, troposphere, ionosphere, antenna) and forms the
+ * iono-free combinations the estimator consumes.
  *
- * The implementation is decomposed into focused helpers:
+ * Decomposed into focused helpers:
  *  - Signal selection:   buildFrequencyBandMap, selectUncombinedSignals,
  *                        selectIonoFreePairs, selectSingleSignalFallback.
  *  - Shared corrections: computeBaseModeledValue, computePoleTideProjection.
  *  - Observation paths:  processIonoFreeObservation / processIonoFreePair,
  *                        processUncombinedObservation.
  *
- * Logging is performed via the provided LogManager instance and the model relies on
- * ProductParser, RinexParser and StateManager for external data and state bookkeeping.
+ * External data and state bookkeeping come from ProductParser, RinexParser and
+ * StateManager.
  */
 
 #include "config/GnssConfig.hpp"
@@ -194,14 +193,13 @@ std::vector<std::string> activeFrequencyBands(
     /**
      * @brief Construct a PppModel instance.
      *
-     * Initializes internal helpers (geometry, ionosphere, antenna, corrections) and
-     * captures references to configuration, product parser, rinex parser and state manager.
+     * Builds the internal geometry, ionosphere, antenna and corrections helpers.
      *
-     * @param config Read-only configuration object.
-     * @param product_parser Product parser providing external products (SP3/CLK/...).
-     * @param log_manager Logging manager used for informational and diagnostic output.
-     * @param rinex_parser RINEX parser providing observation metadata and receiver info.
-     * @param state_manager StateManager used for ambiguity bookkeeping and state access.
+     * @param config Read-only configuration.
+     * @param product_parser External products (SP3/CLK/...).
+     * @param log_manager Diagnostic output.
+     * @param rinex_parser Observation metadata and receiver info.
+     * @param state_manager Ambiguity bookkeeping and state access.
      */
     PppModel::PppModel(const GnssConfig& config, ProductParser& product_parser,
         LogManager& log_manager, const RinexParser& rinex_parser,
@@ -413,18 +411,6 @@ std::vector<std::string> activeFrequencyBands(
         }
     }
 
-    /**
-     * @brief Compute modeled PPP observations for a set of RINEX observations.
-     *
-     * For each input observation this routine computes satellite geometry and applies
-     * corrections, selects usable signals and builds ionosphere-free (or uncombined)
-     * modeled observables. Outputs are appended to \p modeled_obs.
-     *
-     * @param observations Vector of RinexObservation records for the epoch.
-     * @param state Current PppState used for modelling (read-only).
-     * @param modeled_obs Output vector filled with PppObservation entries for processed observations.
-     * @return true if at least one observation was successfully modeled, false otherwise.
-     */
     void PppModel::decideConstellationCanonicals(const std::vector<RinexObservation>& observations) {
         // Group observations by constellation so per-constellation tallies
         // only consider that constellation's satellites.
@@ -689,15 +675,12 @@ std::vector<std::string> activeFrequencyBands(
             }
 
             // --- Broadcast-grade gate: code-only ---
-            // When the satellite's range model is metre-level — a broadcast
-            // clock with no precise CLK and no SSR clock — carrier phase is
-            // meaningless: at mm precision the float ambiguity cannot be
-            // separated from the metre-level clock/orbit error, so phase cannot
-            // improve the position and modelling it at phase noise corrupts the
-            // float filter.  Drop every phase observable (raw "L1C" and IF
-            // "L1C_L2W") so the KF sees code only and no phase ambiguity states
-            // are created (ensureRequiredStates and isUsableMeasurement both
-            // iterate observed).  raw_observed is left intact for the MW slip
+            // With a metre-level range model (broadcast clock, no precise CLK, no
+            // SSR clock) the float ambiguity cannot be separated from the clock /
+            // orbit error, so phase cannot improve the position and modelling it
+            // at phase noise corrupts the filter.  Drop every phase observable —
+            // raw "L1C" and IF "L1C_L2W" — so the KF sees code only and creates no
+            // ambiguity states.  raw_observed stays intact for the MW slip
             // detector's bookkeeping.
             ppp_obs.broadcast_only = geom.broadcast_only;
             // Ephemeris freshness for the real-time BSSD pivot selector (inert /
@@ -722,11 +705,11 @@ std::vector<std::string> activeFrequencyBands(
                         "broadcast products)", obs.satellite);
                 }
             } else if (geom.broadcast_only && broadcast_phase_gate_suppressed_) {
-                // Card 5 (RTF-1 / plan D1): brdc_rts network producer.  The satellite's
-                // a-priori clock is broadcast-grade, but the network ESTIMATES the clock
-                // (Δδtˢ vs that a-priori), so carrier phase is informative and is RETAINED
-                // — the code-only erase above is skipped.  One-shot per satellite so the
-                // operator sees the mode without per-epoch spam.
+                // brdc_rts network producer.  The satellite's a-priori clock is
+                // broadcast-grade, but the network ESTIMATES the clock (Δδtˢ vs
+                // that a-priori), so carrier phase is informative and RETAINED —
+                // the code-only erase above is skipped.  One-shot per satellite so
+                // the operator sees the mode without per-epoch spam.
                 if (sats_phase_retained_.insert(obs.satellite).second) {
                     log_manager_.getLogger("ppp_model")->info(
                         "Broadcast-grade clock for {} — carrier phase RETAINED (brdc_rts "
@@ -738,17 +721,13 @@ std::vector<std::string> activeFrequencyBands(
             if (!ppp_obs.modeled.empty()) {
                 modeled_obs.push_back(ppp_obs);
             } else {
-                // Silent-drop hole closer.  Reached when selectSignals
-                // returned true but neither uncombined nor iono-free
-                // processing populated ppp_obs.modeled.  The dominant
-                // case is PPP-mode single-signal fallback: when
-                // selectIonoFreePairs fails for a sat, selectSignals
-                // sets is_iono_free=false and selects single signals --
-                // but there's no processSingleSignalObservation, so
-                // the sat falls through with empty modeled.  Surface
-                // as NoModel with diagnostic context instead of
-                // silently dropping and letting the sat-status trace
-                // fall back to a guess.
+                // Reached when selectSignals succeeded but neither the uncombined
+                // nor the iono-free path populated ppp_obs.modeled.  Dominant case
+                // is the PPP single-signal fallback: selectIonoFreePairs fails,
+                // selectSignals picks single signals, and with no
+                // processSingleSignalObservation the sat falls through empty.
+                // Report NoModel with context rather than dropping silently and
+                // leaving the sat-status trace to guess.
                 note_drop(obs.satellite, DropReason::NoModel);
                 log_manager_.getLogger("ppp_model")->debug(
                     "Sat {} {} dropped with empty modeled set: "
@@ -771,21 +750,20 @@ std::vector<std::string> activeFrequencyBands(
     }
 
     /**
-     * @brief Selects candidate signal pairs for processing for a single observation.
+     * @brief Select candidate signal pairs for one observation.
      *
-     * Uses configured signal priority lists and band mappings to choose code/phase
-     * pairs suitable for ionosphere-free combinations or single/uncombined processing.
+     * Uses the configured priority lists and band mappings to choose code/phase
+     * pairs for iono-free combination or single/uncombined processing.
      *
-     * @param obs Input RinexObservation record.
-     * @param system_str Human-readable GNSS system string (e.g., "GPS").
-     * @param selected_signals Output vector populated with (signal1, signal2) pairs. For single/uncombined selections one member may be empty.
-     * @param is_iono_free Output flag set to true when an iono-free combination (dual or triple) is available.
-     * @param comb_type Output string describing the combination type ("single","dual","triple","uncombined").
-     * @return true if useful signals were selected; false otherwise.
+     * @param obs Input observation record.
+     * @param system_str GNSS system string (e.g. "GPS").
+     * @param selected_signals Output (signal1, signal2) pairs; one member may be
+     *        empty for single/uncombined selections.
+     * @param is_iono_free Output; true when a dual or triple IF combination exists.
+     * @param comb_type Output: "single", "dual", "triple" or "uncombined".
+     * @return true if useful signals were selected.
      */
-    // ===================================================================
-    // Signal selection — decomposed helpers
-    // ===================================================================
+    // --- Signal selection: decomposed helpers ---
 
     bool PppModel::buildFrequencyBandMap(
         const ObsValueMap<double>& measurements,
@@ -804,17 +782,14 @@ std::vector<std::string> activeFrequencyBands(
         const auto& band_map = getBandMap();
         if (band_map.find(system_str) == band_map.end()) return false;
 
-        // Determine which frequency bands are allowed for this system.
+        // Which frequency bands this system may use.
         //
-        // In uncombined PPP-RTK mode with lock_signals_to_clock_ref enabled
-        // (the default), only the two bands that match the BIA satellite-clock
-        // reference observables are permitted.  This avoids extra IFB states
-        // for non-reference bands and keeps the measurement model strictly
-        // consistent with the clock/bias products.
-        //
-        // When the lock is disabled, or no clock-ref info is available for
-        // this system, we fall back to the previous behaviour (FrequencyMode::All
-        // for uncombined, or the configured signal_mode for combined).
+        // Uncombined PPP-RTK with lock_signals_to_clock_ref (the default) admits
+        // only the two bands matching the BIA satellite-clock reference
+        // observables, avoiding extra IFB states and keeping the measurement model
+        // consistent with the clock/bias products.  Without the lock, or with no
+        // clock-ref info for this system, fall back to FrequencyMode::All for
+        // uncombined or the configured signal_mode for combined.
         std::vector<std::string> clock_ref_bands;  // populated only when lock is active
         const std::vector<std::string>* allowed_bands_ptr = nullptr;
         // When the clock-ref lock is active, maps each RINEX band digit
@@ -892,17 +867,15 @@ std::vector<std::string> activeFrequencyBands(
 
         const auto& allowed_bands = *allowed_bands_ptr;
 
-        // Scans the priority-ordered signal list and populates
-        // freq_band_to_signal / freq_bands for every signal that passes
-        // the band and (optionally) attribute filters.
-        // If the constellation's canonical signal map was decided at the
-        // first epoch (the common case), use it directly: it accounts for
-        // what the receiver actually tracks AND keeps the canonical stable
-        // across epochs, so a brief primary dropout at low elevation does
-        // NOT switch the KF to a different tracking attribute (which would
-        // seed an inter-channel-bias-contaminated ambiguity that persists).
-        // When the canonical is not observed this epoch, selectUncombinedSignals
-        // simply skips the band for this sat this epoch.
+        // Populate freq_band_to_signal / freq_bands from the priority-ordered
+        // signal list, for every signal passing the band and attribute filters.
+        //
+        // Where the constellation's canonical map was decided at the first epoch
+        // (the common case) use it directly: it reflects what the receiver
+        // actually tracks and stays stable, so a brief low-elevation dropout does
+        // not switch the KF to another tracking attribute and seed a persistent
+        // inter-channel-bias-contaminated ambiguity.  A canonical unobserved this
+        // epoch simply means selectUncombinedSignals skips the band for this sat.
         auto cit = constellation_canonical_.find(system_str);
         if (cit != constellation_canonical_.end() && !cit->second.empty()) {
             auto applyCached = [&](const std::map<char, char>& attr_filter) {
@@ -1145,21 +1118,15 @@ std::vector<std::string> activeFrequencyBands(
                     }
                 }
 
-                // Per-satellite measurement availability check.  The
-                // canonical map @c freq_band_to_signal is constellation-
-                // wide (decided once on the first epoch from the highest-
-                // count signal per (band, type)).  When a constellation
-                // has mixed L5 capability -- e.g., 4 of 11 GPS sats
-                // tracking L5Q -- the canonical locks in L5Q anyway, and
-                // every (L1, L5) candidate references signals that
-                // non-L5 sats simply do not measure.  Downstream
-                // processIonoFreeObservation used to abort the whole
-                // sat on the first such missing-pair hit, so a sat with
-                // a perfectly good (C1W, C2W) pair would still drop
-                // because its (C1W, C5Q) pair lacked C5Q.  Guard the
-                // pair construction against the per-sat measurement set
-                // so non-L5 sats only get (L1, L2) candidates and
-                // L5-capable sats get both (L1, L2) and (L1, L5).
+                // Per-satellite availability check.  freq_band_to_signal is
+                // constellation-wide, so under mixed L5 capability (say 4 of 11
+                // GPS sats tracking L5Q) the canonical locks in L5Q and every
+                // (L1, L5) candidate names a signal the other sats never measure.
+                // processIonoFreeObservation aborts the whole sat on the first
+                // missing-pair hit, so a sat with a good (C1W, C2W) pair would
+                // drop merely because (C1W, C5Q) lacked C5Q.  Guarding pair
+                // construction against the per-sat measurement set gives non-L5
+                // sats only (L1, L2) and L5-capable sats both.
                 const bool code_ok  = !s1.first.empty()  && !s2.first.empty()
                                    && obs.measurements.count(s1.first)
                                    && obs.measurements.count(s2.first);
@@ -1313,14 +1280,11 @@ std::vector<std::string> activeFrequencyBands(
             comb_type = "uncombined";
         } else if (is_iono_free) {
             if (!selectIonoFreePairs(obs, system_str, signals, freq_band_to_signal, freq_bands, selected_signals)) {
-                // This is the silent-fallback gate.  selectIonoFreePairs
-                // failed (no candidate (band1, band2) pair survived the
-                // freq_band_to_signal + noise-factor + code/phase
-                // availability checks), so we fall through to the
-                // single-signal path.  In PPP mode there is no
-                // processSingleSignalObservation, so the sat ultimately
-                // drops with empty modeled and the satellite-status
-                // trace surfaces it as "NoModel".  Promote to info so
+                // Silent-fallback gate.  No candidate (band1, band2) pair survived
+                // the freq_band_to_signal, noise-factor and code/phase
+                // availability checks, so this falls through to the single-signal
+                // path.  PPP mode has no processSingleSignalObservation, so the
+                // sat drops with empty modeled and shows as "NoModel".  Log at info so
                 // the user can see this fired without enabling
                 // ppp_model debug logging.  The per-pair rejection
                 // reasons (missing band, noise-K cap, etc.) are
@@ -1371,41 +1335,7 @@ std::vector<std::string> activeFrequencyBands(
         return true;
     }
 
-    /**
-     * @brief Process ionosphere-free or combined observation pairs and populate a PppObservation.
-     *
-     * Builds ionosphere-free combinations (code and/or phase) from selected signal pairs,
-     * computes modeled values, variances and writes them into ppp_obs.modeled / observed / variances.
-     *
-     * @param obs Input RinexObservation record.
-     * @param state Current PPP state used for geometry and corrections.
-     * @param ppp_obs Output PppObservation structure to populate.
-     * @param system_str GNSS system string (e.g., "GPS").
-     * @param selected_signals Vector of (signal1, signal2) pairs chosen for processing.
-     * @param comb_type Combination type string ("single","dual","triple","uncombined").
-     * @param rx_pos Receiver ECEF position.
-     * @param sat_pos Satellite ECEF position.
-     * @param sat_vel Satellite ECEF velocity.
-     * @param elevation Satellite elevation in degrees.
-     * @param azimuth Satellite azimuth in degrees.
-     * @param rx_antenna_type Receiver antenna type string for corrections.
-     * @param range Geometric range (meters).
-     * @param tropo_zhd Zenith hydrostatic delay (meters).
-     * @param sat_clock Satellite clock (seconds or converted to meters in code).
-     * @param shapiro_delay Shapiro delay (meters).
-     * @param sagnac_corr Sagnac correction (meters).
-     * @param otl_corr Ocean tidal loading site-displacement projection (meters).
-     * @param apl_corr Atmospheric pressure loading (S1/S2 thermal tide) site-displacement projection (meters).
-     * @param relativistic_corr Relativistic periodic correction -2(r·v)/c² (seconds). Must be
-     *        subtracted from the modeled observable (converted to meters via multiplication
-     *        by SPEED_OF_LIGHT) to account for the eccentricity-dependent clock variation
-     *        that is not captured by the interpolated CLK product values.
-     * @param solid_tide Solid Earth tide correction (meters).
-     * @return true if at least one combined observable was successfully formed; false otherwise.
-     */
-    // ===================================================================
-    // Shared correction helpers
-    // ===================================================================
+    // --- Shared correction helpers ---
 
     double PppModel::computePoleTideProjection(const Eigen::Vector3d& rx_pos,
         const GnssTime& time,
@@ -1673,18 +1603,12 @@ std::vector<std::string> activeFrequencyBands(
         return success;
     }
 
-    /**
-     * @brief Process uncombined observations for PPP-RTK: individual signals without iono-free combination.
-     *
-     * Each individual code/phase signal is modeled with the same corrections as the iono-free path
-     * (range, satellite clock, tropo, antenna, bias, shapiro, solid tide, pole tide, relativistic,
-     * atmospheric loading) but without forming dual-frequency combinations. The ionospheric delay
-     * is NOT applied here — it becomes an estimated state in the Kalman filter.
-     *
-     * The modeled value for each signal represents the geometric + correction terms only.
-     * The MeasurementModel will add the ionosphere contribution via the per-satellite
-     * slant iono state scaled by the frequency-dependent coefficient.
-     */
+    // Each signal gets the same corrections as the iono-free path (range, sat
+    // clock, tropo, antenna, bias, Shapiro, solid/pole tide, relativistic,
+    // atmospheric loading) but forms no dual-frequency combination.  The
+    // ionosphere is deliberately NOT applied: the modeled value is geometry plus
+    // corrections only, and MeasurementModel adds the per-satellite slant iono
+    // state scaled by the frequency coefficient.
     bool PppModel::processUncombinedObservation(const RinexObservation& obs, PppState& state,
         PppObservation& ppp_obs, const std::string& system_str,
         const std::vector<std::pair<std::string, std::string>>& selected_signals,
@@ -1832,21 +1756,9 @@ std::vector<std::string> activeFrequencyBands(
             q.stec_tecu, frequency_hz, meas_type);
     }
 
-    /**
-     * @brief Compute slant ionospheric delay for a single measurement path.
-     *
-     * When dual- or triple-frequency iono-free combinations are available the
-     * ionospheric delay is effectively removed and this function returns 0.0.
-     * Otherwise Klobuchar or the internal ionosphere model is used when available.
-     *
-     * @param time GNSS time of the observation.
-     * @param rx_pos Receiver ECEF position (meters).
-     * @param sat_pos Satellite ECEF position (meters).
-     * @param freq_type Signal/frequency type string (e.g. "L1").
-     * @param system GNSS system enum.
-     * @param measurements Map of measurement values by key (used to detect available bands).
-     * @return Estimated slant ionospheric delay in meters, or 0.0 if iono-free combination applies or unavailable.
-     */
+    // Returns 0 when a dual- or triple-frequency iono-free combination is
+    // available (the delay is already removed); otherwise falls back to
+    // Klobuchar or the internal ionosphere model.
     double PppModel::computeIonosphericDelay(const GnssTime& time,
         const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos,
@@ -1891,17 +1803,8 @@ std::vector<std::string> activeFrequencyBands(
         return delay;
     }
 
-    /**
-     * @brief Compute the standard ionosphere-free linear combination of two signals.
-     *
-     * Uses frequency-dependent coefficients to form the LC combination from two measurements.
-     *
-     * @param measurements Map of measurement key -> value (meters).
-     * @param system GNSS system enum.
-     * @param signal1 First signal key in measurements.
-     * @param signal2 Second signal key in measurements.
-     * @return Combined ionosphere-free observable in meters, or 0.0 on error.
-     */
+    // Forms the LC combination from two measurements with frequency-dependent
+    // coefficients; returns 0.0 on error.
     double PppModel::computeIonoFreeCombination(const std::map<std::string, double>& measurements,
         System system,
         const std::string& signal1,
@@ -1940,18 +1843,9 @@ std::vector<std::string> activeFrequencyBands(
         return combination;
     }
 
-    /**
-     * @brief Rescale GLONASS observation cycles to a reference frequency.
-     *
-     * GLONASS uses frequency-division multiple access; measured cycles must often
-     * be scaled to a reference frequency to be comparable across satellites.
-     *
-     * @param observed_data Measured quantity in cycles or meters (depending on caller).
-     * @param freq_type Frequency/signal type string.
-     * @param system GNSS system enum.
-     * @param satellite Satellite identifier string (e.g., "R01").
-     * @return Rescaled observation value; returns input if inputs are invalid or system is not GLONASS.
-     */
+    // GLONASS is FDMA, so measured cycles are scaled to a reference frequency to
+    // be comparable across satellites.  Returns the input unchanged for non-GLONASS
+    // or invalid frequencies.
     double PppModel::rescaleGlonassObservation(double observed_data, const std::string& freq_type,
         System system, const std::string& satellite) const {
         if (system != System::GLONASS) {
@@ -1978,17 +1872,8 @@ std::vector<std::string> activeFrequencyBands(
         return scaled_data;
     }
 
-    /**
-     * @brief Select a list of observation keys available in the provided measurements.
-     *
-     * This helper consults the configured signal priorities and returns a prioritized
-     * list of measurement keys (including GLONASS channel-specific keys when applicable).
-     *
-     * @param measurements Map of measurement key -> value.
-     * @param system GNSS system enum.
-     * @param system_str System string used to lookup priorities.
-     * @return Vector of selected measurement keys in priority order (may be empty).
-     */
+    // Returns the available measurement keys in configured-priority order,
+    // including GLONASS channel-specific keys where applicable.  May be empty.
     std::vector<std::string> PppModel::selectObservationTypes(const ObsValueMap<double>& measurements,
         System system,
         const std::string& system_str) const {

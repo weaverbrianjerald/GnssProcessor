@@ -108,7 +108,7 @@ namespace GnssProcessor {
         /// JSON coordinates always win, so this is false whenever the user supplied
         /// them.  Logged per station at roster build.
         bool position_from_sif{ false };
-        /// RTF-3: live transport for the streaming front-end (default: none).
+        /// Live transport for the streaming front-end (default: none).
         /// Ignored entirely under batch processing (network.streaming off).
         StationTransportConfig transport;
     };
@@ -229,7 +229,7 @@ namespace GnssProcessor {
         double fix_frac_cyc{ 0.15 };          ///< Phase-B FFR gate: and |frac| < this.
         double fix_weight_sigma_cyc{ 0.01 };  ///< Phase-B fixed-row σ (soft-hard; rollback-able).  REUSED by WL-2 as the hold-row σ (SPEC_ewl_wl_cascade_card.md §3.3).
         // ============================================================================
-        // M5 card WL-2: EWL-first tri-frequency cascade (docs/SPEC_ewl_wl_cascade_card.md).
+        // M5 card WL-2: EWL-first tri-frequency cascade.
         // Supersedes the WL-1 float layer (@c enable becomes diagnostic-only) with an
         // EWL statistic lane (uncarried third band ⇒ rows win with no fight) that fixes
         // by ep ~3, a phase bridge to a fast WL integer, and the NL-preserving inject
@@ -253,7 +253,7 @@ namespace GnssProcessor {
         double debug_r_scale{ 1.0 };          ///< DIAGNOSTIC ONLY: multiply every WL row's Pz by this (1.0 = honest default).  <<1 lets the WL rows dominate the stiff carry — the F6 probe for "is separate-Woodbury composition fatal or is authority enough?".  Changes the solve; NOT a production knob.
         bool   ewl_fold_rows{ false };        ///< F-A RESOLUTION (measured, Jul-16 15-ep A/B): folding the EWL integer rows into the solve is PURE COST — the WL cascade reads the DETECTOR statistic (never the posterior), and 147 σ0.01 rows perturb the shared clock/PB border enough to elevate D5 network-wide ~2× (679 vs control 342; 24% of flags on secondary-channel groups the EWL never touches).  Default FALSE = decide/FFR-fix/expose the integers, fold nothing (D5 348-358 ≈ control).  true = the study shape that re-creates the elevation; NOT a production knob.
         // ============================================================================
-        // M5 card UWL-1: per-constellation ultra-wide-lane top tier (docs/SPEC_uwl_card.md).
+        // M5 card UWL-1: per-constellation ultra-wide-lane top tier.
         // Generalizes the cascade's hardcoded GPS band digits to the per-constellation
         // lane-tier table (include/slip/MwLaneTiers.hpp) and adds the single-epoch cold
         // fix the UWL wavelength earns.  Default OFF ⇒ byte-identical, including under
@@ -276,7 +276,7 @@ namespace GnssProcessor {
         bool   lane_trace{ false };           ///< F-B INSTRUMENT (log-only): per-epoch CSV of EVERY primary cycle's POST-install carried WL lane value + fractional (both the held/injected population and the untouched control population in one run) — to logs/network_wl_lane_trace.csv; graded by scripts/grade_lane_trace.py (the injected-cycle circR the star dd-frac trace cannot resolve).  Requires @c wl_inject_enable OR @c lane_carry.enable (WL-3 acceptance instrument).  Does NOT change the solve.
     };
 
-    /// M5 card WL-3 — lane-coordinate carry (docs/SPEC_lane_carry_card.md).  Carry each
+    /// M5 card WL-3 — lane-coordinate carry.  Carry each
     /// primary-pair chord's two band DDs as ONE jointly-covarianced block: stiff along the
     /// phase-determined NL direction, honestly loose along the WL lane, with per-epoch MW /
     /// bridge lane INCREMENTS as measurements (the estimator owns the code-coherence
@@ -285,7 +285,7 @@ namespace GnssProcessor {
     /// equivalence shape, lane prior/q + per-epoch MW lane rows, bridge rows +
     /// fold-on-change FFR fixing.  Supersedes mw_wl.wl_inject_enable at runtime (warned);
     /// the inject primitive remains as the pair-block fallback.
-    /// SD PRE-REDUCE EWL constraint (docs/SPEC_sd_ewl_prereduce.md).  The
+    /// SD PRE-REDUCE EWL constraint.  The
     /// between-satellite single-differenced extra-wide-lane MW statistic folded as a
     /// pseudo-observation row in each station's OWN pre-reduce block, so it reaches the
     /// shared satellite PHASE and CODE bias columns directly instead of a DD chord that
@@ -428,25 +428,23 @@ namespace GnssProcessor {
      *
      * ## The epistemics
      *
-     * Across any loss of lock the slip magnitude is **unbounded and unknowable** —
+     * Across any loss of lock the slip magnitude is **unbounded and unknowable**:
      * the phase counter is arbitrary at re-acquisition, and a proportional L1/L2
-     * counter reset is invisible to BOTH the geometry-free and the
-     * Melbourne-Wübbena combinations.  Recovery is therefore safe only if every
-     * path treats re-entry as code-anchored-fresh, and if the first post-recovery
-     * epochs — where no time-difference detector can operate at all — never carry
-     * full phase weight.  The blind window is STRUCTURAL, not a tuning miss: MW
-     * needs Welford history, IF-TD needs three consecutive epochs, LLI is
-     * receiver-discretionary, and GF is doctrine-barred at 30 s
-     * (`feedback_slip_detectors_by_rate`).
+     * counter reset is invisible to BOTH the geometry-free and Melbourne-Wübbena
+     * combinations.  Recovery is safe only if every path treats re-entry as
+     * code-anchored-fresh, and the first post-recovery epochs — where no
+     * time-difference detector can operate at all — never carry full phase weight.
+     * That blind window is STRUCTURAL, not a tuning miss: MW needs Welford
+     * history, IF-TD needs three consecutive epochs, LLI is receiver-discretionary,
+     * and GF is doctrine-barred at 30 s.
      *
-     * Measured case — G21 @ MBAR00UGA (JAVAD TRE_3 DELTA), DOY-129 19:21-19:31,
-     * raw RINEX: a mid-arc −1.42 m GF step (≈ −6 L2W cycles) with **no receiver
-     * flag**; L2W then missing for one epoch; re-entry at 19:25:30 with LLI=1 on
-     * BOTH bands; and a further unflagged −0.99 m step (≈ +4 L2W cycles) at
-     * 19:26:00.  Both unflagged slips fell in windows where MW and IF-TD were
-     * structurally blind (arc 0-1 epochs old).  Class scale: 2482 (station,
-     * satellite) re-entries in ONE 24 h at 63 stations (~1.7 per epoch) — constant
-     * weather, not a corner case.
+     * Measured case — G21 at a JAVAD TRE_3 DELTA station, over ten minutes of raw
+     * RINEX: a mid-arc −1.42 m GF step (≈ −6 L2W cycles) with **no receiver flag**;
+     * L2W missing for one epoch; re-entry with LLI=1 on BOTH bands; then a further
+     * unflagged −0.99 m step (≈ +4 L2W cycles).  Both unflagged slips fell in
+     * windows where MW and IF-TD were structurally blind (arc 0-1 epochs old).
+     * Scale: 2482 (station, satellite) re-entries in one 24 h at 63 stations, about
+     * 1.7 per epoch — constant weather, not a corner case.
      *
      * ## What the block does (four increments, one master arm)
      *
@@ -480,7 +478,7 @@ namespace GnssProcessor {
         /// loader warns and disarms them otherwise) — you cannot act on a band
         /// state you are not tracking.
         bool   census{ false };
-        /// INC-2: σ multiplier on the PHASE rows of a LOS that is not STABLE
+        /// σ multiplier on the PHASE rows of a LOS that is not STABLE
         /// (weight /= scale²).  <= 1 disables the demotion, which is how the
         /// spec's §6C CENSUS-ONLY leg is expressed (`census: true`,
         /// `unvetted_sigma_scale: 1.0`, `refloat_on_regain: false`).  <= 0 is the
@@ -492,7 +490,7 @@ namespace GnssProcessor {
         /// least one epoch before the vet ends — the vet ends exactly when
         /// monitoring begins.
         int    revet_ep{ 3 };
-        /// INC-1: a reference band absent for at most this many consecutive epochs
+        /// A reference band absent for at most this many consecutive epochs
         /// while the LOS itself stayed present is a FLICKER; its return is a
         /// FLICKER-REGAIN (refloat).  Beyond it the band is treated as genuinely
         /// gone and the LOS re-vets on the REDUCED reference set, so a permanently
@@ -556,7 +554,7 @@ namespace GnssProcessor {
      * Selects what the network producer's per-satellite a-priori clock (and the
      * orbit its geometry uses) is referenced to; the estimable satellite-clock
      * state then absorbs the error of that a-priori.  Frozen conventions:
-     * @c docs/rt_service_conventions.md §1 (RTF-1) and the card decomposition in
+     * @c docs/rt_service_conventions.md §1 and the card decomposition in
      * @c docs/rt_service_conventions.md §6 (D1–D10) / §7 (Cards 1–8).
      */
     enum class NetworkAprioriSource {
@@ -672,51 +670,44 @@ namespace GnssProcessor {
      * @brief Resolved per-class process-noise rates for the network producer
      *        (@c network.process_noise).
      *
-     * A scoped authoring surface over q's that were previously spelled eleven
-     * different ways across five config sections.  The table is **always live**
-     * — there is no master enable — because it changes nothing on its own: each
-     * class defaults to its legacy key's own default (see
-     * @ref kNetworkQClassTable), so an unmodified config resolves to today's
-     * numbers exactly.
+     * A scoped authoring surface over q's previously spelled eleven different ways
+     * across five config sections.  Always live — there is no master enable —
+     * because it changes nothing on its own: each class defaults to its legacy
+     * key's own default (@ref kNetworkQClassTable), so an unmodified config
+     * resolves to today's numbers exactly.
      *
-     * **Precedence** (highest first), per class:
-     *  1. the legacy key, when the config sets it EXPLICITLY — existing configs,
-     *     including every archived campaign config and the golden-0729 posture
-     *     set, therefore behave identically and a delta config can still
-     *     override one class without restating the table;
+     * **Precedence** per class, highest first:
+     *  1. the legacy key when set EXPLICITLY, so existing configs behave
+     *     identically and a delta config can override one class without
+     *     restating the table;
      *  2. @c network.process_noise.<name>;
      *  3. @ref NetworkQDesc::fallback.
      *
-     * Setting both is legal and logged at WARN so the shadowed value is never
-     * silent.  @ref source records which rung won, and the run manifest emits
-     * it per class — a q that reads as @c Default when the operator believed
-     * they had set it is exactly the "wiring is inert" failure that run-end
-     * telemetry exists to catch.
+     * Setting both is legal and logged at WARN, so a shadowed value is never
+     * silent.  @ref source records which rung won and the run manifest emits it
+     * per class — a q reading as @c Default when the operator believed they set it
+     * is exactly the inert-wiring failure run-end telemetry exists to catch.
      *
-     * Resolution happens ONCE, in the network section loader, writing through
-     * to the canonical config members the estimator already reads
-     * (@c process_noise_.sat_clock, @c network_zwd_carry_q_, …).  No apply site,
-     * no @c NetworkKnobs field and no fingerprint input changes; this struct is
-     * an authoring and provenance surface, not a second source of truth.
+     * Resolution happens ONCE, in the network section loader, writing through to
+     * the canonical config members the estimator already reads.  No apply site, no
+     * @c NetworkKnobs field and no fingerprint input changes: this is an authoring
+     * and provenance surface, not a second source of truth.
      *
-     * **Deliberately NOT in the table.**  Three network mechanisms are genuine
-     * covariance-growth rates but are not process noise on a network state, and
-     * folding them in would blur a distinction that was expensive to establish:
-     *  - @c network.emit_pb_filter_q — the emitted phase-bias smoother.  It lives
-     *    in the EMISSION frame, never the estimator; the PB-gate card exists
-     *    precisely because a low-q PB in the estimator and a low-q PB on the wire
-     *    are different things, and one table listing them side by side invites
-     *    exactly the confusion that card ruled out.
+     * **Deliberately NOT in the table** — three mechanisms are genuine
+     * covariance-growth rates but not process noise on a network state:
+     *  - @c network.emit_pb_filter_q — the emitted phase-bias smoother, which
+     *    lives in the EMISSION frame, never the estimator.  A low-q PB in the
+     *    estimator and one on the wire are different things.
      *  - @c estimation.global_vtec_sh.rep_error_tau_s — a Gauss-Markov TIME
-     *    CONSTANT (seconds), not a rate; its covariance growth is set jointly with
-     *    @c representation_sigma_tecu, so a q-keyed table cannot express it.
+     *    CONSTANT in seconds, not a rate; its covariance growth is set jointly
+     *    with @c representation_sigma_tecu, which a q-keyed table cannot express.
      *  - @c network.lane_carry.q_wl_scale — a dimensionless ANISOTROPY multiplier
-     *    that shapes @ref NetworkQClass::DdCarry into the (NL, WL) lane basis
-     *    (q_wl = q_wl_scale x qz).  It selects a direction, not a magnitude.
+     *    shaping @ref NetworkQClass::DdCarry into the (NL, WL) lane basis.  It
+     *    selects a direction, not a magnitude.
      *
-     * The per-STATION classes are absent for the scope reason given on
-     * @ref NetworkQClass: they are propagated by @c StateManager, shared with the
-     * PPP and real-time estimators, and stay on @c filter.process_noise.*.
+     * Per-STATION classes are absent for the scope reason on @ref NetworkQClass:
+     * @c StateManager propagates them, they are shared with the PPP and real-time
+     * estimators, and they stay on @c filter.process_noise.*.
      *
      * @warning A process-noise rate is the ONLY thing that keeps a time-linked
      *          state from carrying a stale value across an event.  Lowering a
@@ -770,7 +761,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief FC-1 split-cadence clocks-only fast pass (docs/SPEC_fast_clock_split_cadence.md).
+     * @brief FC-1 split-cadence clocks-only fast pass.
      *
      * The full pipeline (solve + carry + QC + emit) keeps running at its own cadence;
      * epochs decimated out by @c network.epoch_decimation_n — today a bare @c continue at
@@ -808,7 +799,7 @@ namespace GnssProcessor {
         /// run for free, the same "instrument, never feedback" shape as the M2 LS-VCE
         /// carry-variance monitor.  Requires @ref enable.
         bool   shadow{ false };
-        /// Emit the fast clocks as product records (INC-3).  OFF => the tick runs and
+        /// Emit the fast clocks as product records.  OFF => the tick runs and
         /// traces but writes nothing to the product wire, which is the INC-2 posture.
         /// Requires @ref enable.
         bool   emit{ false };
@@ -916,7 +907,7 @@ namespace GnssProcessor {
         NetworkStreamingConfig streaming;     ///< RTF-3 multi-station streaming front-end (network.streaming.*; default OFF => batch epoch source, byte-identical).
         NetworkProcessNoise process_noise;    ///< Scoped per-parameter-class process-noise table (network.process_noise). Always live; every class defaults to its legacy key's default => byte-identical unless a value is edited.
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
-        /// RTA-6: flush the product file once per emitted epoch (after the epoch
+        /// Flush the product file once per emitted epoch (after the epoch
         /// block, incl. any RTA-5 S re-broadcast preceding it) so a LIVE tail
         /// consumer (@c NetworkProductTail via realtime.network_products_path)
         /// sees each epoch as soon as it is written instead of at
@@ -950,7 +941,7 @@ namespace GnssProcessor {
         bool parallel_reduce{ false };    ///< Parallelize the Schur reduce loop (opt-in; trades serial≡parallel byte-identity for speed).
         bool adaptive_iono_q{ false };    ///< Network storm response: per-station GF-TD2 variability monitors (IonoVariabilityMonitor) scale the T5v2 GM deviation innovation per (station,satellite); tuning from estimation.adaptive_iono_process_noise (whose .enable stays user-path-only). Requires the deviation channel (estimate_iono_sh + rep_error_tau_s > 0) — validated at load. Deliberately NOT in the warm-resume fingerprint (forward-only Q modifier).
 
-        // --- eq34 REATTACH HYGIENE (docs/SPEC_eq34_reattach_hygiene.md) ---------
+        // --- eq34 REATTACH HYGIENE ---------
         // The phase datum may only be RE-HOSTED onto an arc whose ambiguity has
         // actually converged.  A one-epoch-old arc's float is code-seeded (± metres),
         // so realizing the gauge on it re-levels the whole component by an arbitrary
@@ -970,7 +961,7 @@ namespace GnssProcessor {
         double eq34_fresh_pin_sigma_scale{ 1.0 };   ///< INC-3: σ multiplier applied to a datum row that had to be pinned on a host younger than eq34_anchor_min_arc_ep + eq34_fresh_pin_ramp_ep, decaying linearly over the ramp.  1.0 = off (the exact 1e10 hard pin, byte-identical).
         int  eq34_fresh_pin_ramp_ep{ 0 };        ///< INC-3: length (epochs) of the fresh-pin deweight ramp above.  0 = off.
 
-        // --- IONO-DEWEIGHT RELEASE HYGIENE (docs/SPEC_deweight_release_hygiene.md) ---
+        // --- IONO-DEWEIGHT RELEASE HYGIENE ---
         // A station held at w_s = 0 by the adaptive SH-constraint deweight gate has NO
         // tie rows folded, so its per-LOS slant-iono states spend the era unconstrained
         // by the field — and because the network producer's per-station StateManager is
@@ -1030,8 +1021,8 @@ namespace GnssProcessor {
         // passed for that config; every graded conclusion comes from an OFF (byte-identical)
         // run.  And this is a WALL-CLOCK MITIGATION, not the structural fix — the fold is
         // still O(K³) in the DD-chord count.  The factored-Pᶻ restructure that INC-C2 asked
-        // for (docs/SPEC_carry_factored_pz_C2.md §7.4) was PROVEN IMPOSSIBLE for a dense
-        // Σ_ss (§2 there), and INC-C0's census closed as case (a) (§6) — so there is no
+        // for was PROVEN IMPOSSIBLE for a dense
+        // Σ_ss (§2 there), and INC-C0's census closed as case (a) — so there is no
         // pending O(K·n_s²+n_s³) cut behind this knob.
         //
         // Not combinable with @ref parallel_reduce on the same solve — the config loader forces
@@ -1055,8 +1046,8 @@ namespace GnssProcessor {
         /// S1: emit @c network_phase_anchor.csv — per PROCESSED epoch, one row per
         /// GAUGE-PINNED ambiguity as (week,tow,cons,signal,sat,anchor_sta), i.e. WHICH
         /// STATION realizes the phase datum for each (constellation, signal, satellite)
-        /// freedom.  This is the ANCHOR PARTITION input of the lane-ladder spectrometer
-        /// (docs/SPEC_lane_spectrometer.md §3.3): the open datum blocker predicts that
+        /// freedom.  This is the ANCHOR PARTITION input of the lane-ladder
+        /// spectrometer: the open datum blocker predicts that
         /// DD satellite pairs pinned at DIFFERENT stations are non-integer while
         /// same-anchor pairs stay clean, and that split cannot be tested without the
         /// map.  It is not recoverable from any other artifact —
@@ -1213,7 +1204,7 @@ namespace GnssProcessor {
         int    prior_residual_event_holdoff_ep{ 20 };///< Per-(family, station, satellite, signal) PRIORRES event rate limit in census epochs — rate-limited like the PREFIT events, so a persistently stale prior logs its identity persistently rather than 120x/hour.  The LADDER is never rate-limited; only the individual identities are.
         bool   prior_residual_corroborate{ false };///< INC-3: join every row to the raw-observable verdict the slip-QC pass already computes and emit the per-family contingency table.  Auto-arms @c network.cycle_slip.gap_instrument (instrumentation-only, verified byte-identical) with a WARN — deliberately NOT @c mw_lli_corroborate, which is a DECISION card and would perturb what is being measured.  Requires @ref prior_residual_census (hard error otherwise).
         // --- BlockFormal: (station, satellite) LOS block outlier census
-        //     (docs/SPEC_redundancy_census.md) — a RIDER on the redundancy census's
+        //     — a RIDER on the redundancy census's
         //     swept stations ---------------------------------------------------
         // The MIDDLE tier.  A per-row w-test sits below the unit a physical fault
         // actually occupies and station-level median polish sits above it, so ONE
@@ -1230,7 +1221,7 @@ namespace GnssProcessor {
         int    block_baarda_event_holdoff_ep{ 20 };///< Per-(station, satellite) BLOCKBAARDA event rate limit in census epochs, so a persistently loud LOS logs its identity persistently rather than 120x/hour.  The LADDER is never rate-limited; only the individual identities are.
         bool   block_baarda_corroborate{ false };///< INC-2: join every reported block to the raw-observable verdict the slip-QC pass already computes, and emit the per-family contingency table whose b-cell (loud AND raw-flat) is the number SPEC 8.3 grades.  Auto-arms @c network.cycle_slip.gap_instrument with a WARN, exactly as @ref prior_residual_corroborate does.  Requires @ref block_baarda (hard error otherwise).
         // --- Station congruence screen: coordinate-fault detection in POSITION
-        //     space (docs/SPEC_redundancy_census.md) — a second RIDER on the
+        //     space — a second RIDER on the
         //     redundancy census's swept stations -------------------------------
         // The tier ABOVE the block census, and the one fault class no armed tier
         // can see.  Station coordinates are HELD; a wrong held coordinate (survey
@@ -1250,7 +1241,7 @@ namespace GnssProcessor {
         double congruence_report_sigma{ 4.0 };   ///< Trace/event threshold on @f$t_i@f$.  REPORTING ONLY — nothing in the solve reads it back.  NOTE the unit: @f$T_i@f$ carries the @f$1/q@f$, so it is a VARIANCE RATIO with @f$E=1@f$ under @f$H_0@f$ for every observable dimension; 4.0 means "four times the coordinate tension the model allows", NOT four sigma.  The per-station ladder and the MDB table, not this knob, are the deliverable.
         int    congruence_event_holdoff_ep{ 20 };///< Per-station CONGRUENCE event rate limit in census epochs, so a persistently offset station logs its identity persistently rather than 120x/hour.  The per-station TRACE row is never rate-limited; only the individual events are.
         // --- Constraint-aware global variance component
-        //     (docs/SPEC_prior_residual_census.md §14) — a RIDER on the census
+        //     — a RIDER on the census
         //     accumulator above ------------------------------------------------
         // The network's within-epoch sigma0 is a ROBUST MEDIAN of standardized
         // DATA-row residuals.  That is the right statistic for RAIM attribution
@@ -1289,13 +1280,13 @@ namespace GnssProcessor {
         int    adm_heal_ep{ 5 };         ///< Consecutive in-bound epochs a REJECTED channel must show before it is readmitted.  A rejected band re-tests every epoch; a heal readmits through the normal funnel with a FRESH seed and never restores the old states.
         double adm_max_frac{ 0.5 };      ///< Station guard: if MORE than this fraction of a station's screened channels fail in one epoch, the MEDIAN itself is untrusted (bad a-priori coordinates, a product outage, a receiver-wide fault) and no per-channel verdict derived from it means anything.  The response mirrors the IF-TD reference gate's incoherent-station precedent — act at the STATION's scope (hold its screened bands for the epoch, refloat the arcs behind the holes) and REFUSE every per-channel claim, leaving the admission records untouched so the next epoch re-tests from evidence.
         bool   adm_trace{ false };       ///< INC-3 absolute-residual census: two per-epoch |z| columns into @c network_epoch_status.csv (the median over stations of each station's worst, and the network maximum) plus ADMISSION-tier events naming every over-bound channel, rate-limited per cell.  MEASURE-ONLY and armable WITHOUT @ref adm_screen — this is the scan modality whose absence let "raw RINEX verified clean" be honestly wrong for a month of sessions.
-        // --- INC-4: the ARC RE-ENTRY vet (docs/SPEC_measurement_admission.md §10)
+        // --- INC-4: the ARC RE-ENTRY vet
         //
         // The admission record is keyed per (station, satellite, band) and is kept
         // for a full day, so a channel that LEAVES the model set and comes back
         // hours later is still carrying `admitted = true` from before the gap.  The
         // seam therefore dispatched it down the ESTABLISHED-arc path (INC-2 onset)
-        // instead of the birth path (INC-1) — a verdict inherited from a channel
+        // instead of the birth path — a verdict inherited from a channel
         // that is not necessarily the one that just returned.
         //
         // Measured on runs/ft63_24h_conv (63 stations, 24 h, 2880/2880 emitted):
@@ -1625,7 +1616,7 @@ namespace GnssProcessor {
         /// L14: emit @c network_sat_bias_states.csv — per emitted (satellite, code signal)
         /// each epoch, the emitted satellite code bias and its σ̂0-scaled formal σ from the
         /// shared posterior covariance.  Closes the ONE export gap of the truth-graded
-        /// fixture (docs/SPEC_synthetic_minimum_network.md §4.8): the B product record has
+        /// fixture: the B product record has
         /// NO σ field in any configuration, so the code-bias VARIANCE FACTOR — the field
         /// "cb vf ≈ 10" question — is otherwise structurally unobtainable.  Deliberately a
         /// trace rather than a `sigma=` token on the B record: a wire token would move the
@@ -1698,14 +1689,14 @@ namespace GnssProcessor {
         std::string output_type{ "console" };     ///< Output destination: "console", "file", "nmea".
         std::string output_path;                  ///< Path for file-based output.
         size_t      max_epoch_buffer{ 100 };      ///< Max epochs to buffer before dropping oldest.
-        /// RTB-4: pin PRECISE (e.g. ultra-rapid SP3) orbits while satellite CLOCKS
+        /// Pin PRECISE (e.g. ultra-rapid SP3) orbits while satellite CLOCKS
         /// still arrive from the live/network stream ("ULT orbits + network clocks").
         /// Default false ⇒ the orbit source follows the clock source exactly as
         /// before (@ref GnssConfig::realtimeUsesLiveOrbitClockSource), byte-identical.
         /// When true (real-time only) the engine loads/resolves precise SP3 and
         /// skips only the precise CLK; the file-boundary switchover between
         /// consecutive ultra-rapid orbit files is a datum event the producer and
-        /// consumer must cross at the SAME epoch (see RTF-1).
+        /// consumer must cross at the SAME epoch.
         bool        use_precise_orbits{ false };
 
         /**
@@ -1972,7 +1963,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief First-class NETWORK-CONSUMER profile for a standalone user (RTA-7).
+     * @brief First-class NETWORK-CONSUMER profile for a standalone user.
      *
      * The closed-loop harness inside @c Application::runNetwork derives its
      * consumer config from the producer config
@@ -2002,7 +1993,7 @@ namespace GnssProcessor {
      * nothing): held clocks stay applied with honest R inflation instead of
      * falling off the broadcast-grade cliff.
      *
-     * Card 7 — the AGE-SKEW rung of the same ladder: beyond each product's OWN
+     * The AGE-SKEW rung of the same ladder: beyond each product's OWN
      * age, the ORBIT and CLOCK products must agree with each other.  A brdc_rts
      * clock echoes the RTS orbit it was estimated against;
      * @c orbit_clock_max_skew_s (below) withholds the clock when the applied
@@ -2042,7 +2033,7 @@ namespace GnssProcessor {
         /// datum, so the derived value is true for the undifferenced consumer.
         int  ar_ignore_mw_wl{ -1 };
         /**
-         * @brief Card 7 (RTF-2): orbit/clock coherence age-skew budget (s)
+         * @brief Card 7: orbit/clock coherence age-skew budget (s)
          *        (@c processing.network_consumer.orbit_clock_max_skew_s).
          *
          * A @c brdc_rts network clock record echoes the RTS orbit update it was

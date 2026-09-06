@@ -1,18 +1,11 @@
 /*!
-/*!
  * \file StateManager.cpp
- * \brief Implementation of StateManager: manages Kalman filter state, covariance and ambiguities.
+ * \brief Kalman filter state, covariance and ambiguity bookkeeping.
  *
- * The implementation is organized as:
- *  - Internal helpers:    appendState(), removeStateAtIndex()
- *  - Construction
- *  - Core accessors/mutators
- *  - Process noise / transition
- *  - Index getters
- *  - Ambiguity management
- *  - PppState sync
- *  - Ionosphere state management
- *  - Code bias state management
+ * Organized as: internal helpers (appendState, removeStateAtIndex),
+ * construction, core accessors/mutators, process noise / transition, index
+ * getters, ambiguity management, PppState sync, then the ionosphere and
+ * code-bias state management.
  */
 
 #include "filter/StateManager.hpp"
@@ -237,17 +230,15 @@ namespace GnssProcessor {
         // Core PPP / PPP-RTK layout:
         //   position(3) → [optional clock(1)] → tropo(1) → ...
         //
-        // The receiver clock-bias state is gated on non-BSSD mode.  Under BSSD
-        // same-system SD cancels the receiver clock identically, so the bias
-        // is unobservable from code/phase measurements; allocating it would
-        // only let it drift on process noise without ever receiving a
-        // measurement update.  Skipping allocation keeps the BSSD philosophy
-        // intact — no receiver-side state survives the SD transform — and
-        // shrinks the state vector + covariance by one row/col.
+        // The receiver clock-bias state is gated on non-BSSD mode: same-system SD
+        // cancels the receiver clock identically, so under BSSD the bias is
+        // unobservable and would only drift on process noise, never receiving an
+        // update.  Skipping it keeps the BSSD philosophy intact — no receiver-side
+        // state survives the SD transform — and saves a row/col.
         //
-        // The caller-supplied @c core_state_size assumes pos + clk + tropo
-        // (=5); we drop one slot when the clock is gated off so the index
-        // accounting (velocity, ISBs, etc.) stays self-consistent.
+        // The caller's @c core_state_size assumes pos + clk + tropo (=5), so drop
+        // one slot when the clock is gated off to keep the index accounting
+        // (velocity, ISBs) self-consistent.
         base_core_size_ = 3;                            // position
         if (!config_.enableBetweenSatelliteSd()) {
             clock_idx_ = base_core_size_;
@@ -519,7 +510,7 @@ namespace GnssProcessor {
         Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(state_size, state_size);
 
         // Process noise: variance = spectral_density * dt
-        // Config stores spectral density in units of m�/s (variance rate)
+        // Config stores spectral density in units of m²/s (variance rate)
         const auto& pn = config_.getProcessNoise();
 
         size_t posIdx = getPositionIndex();
@@ -576,26 +567,22 @@ namespace GnssProcessor {
         size_t clockIdx = getClockIndex();
         size_t tropoIdx = getTropoIndex();
 
-        // Velocity noise (m�/s� per s)
+        // Velocity noise (m²/s² per s)
         // Velocity process noise is set above, in the CWNA position/velocity block.
 
-        // Clock noise.
+        // Clock noise, in two regimes:
+        //   (a) Clock-rate state active (Doppler processed) — continuous
+        //       white-noise acceleration with spectral density pn.clock_rate
+        //       (m²/s³): clock-bias picks up dt³/3, clock-rate dt, with dt²/2
+        //       cross-covariance.
+        //   (b) Clock-rate inactive — random-walk Q on clock-bias with spectral
+        //       density pn.clock (m²/s).
         //
-        // Two regimes:
-        //   (a) Clock-rate state active (Doppler being processed) — apply a
-        //       continuous white-noise acceleration (CWNA) model with spectral
-        //       density pn.clock_rate (m²/s³).  Clock-bias picks up dt³/3,
-        //       clock-rate picks up dt, with dt²/2 cross-covariance.
-        //   (b) Clock-rate state inactive — use the legacy random-walk Q on
-        //       clock-bias with spectral density pn.clock (m²/s).
-        //
-        // BSSD handling: when BSSD is active the clock-bias column of H is
-        // zeroed for code/phase measurements (clock cancels in SD), so the
-        // bias receives no measurement update — suppress its Q to prevent
-        // unbounded variance growth.  Doppler is BSSD-exempt, so the
-        // clock-rate state still gets a measurement update and must keep
-        // its Q regardless (otherwise its variance freezes at 0 and the
-        // filter rejects every Doppler).
+        // Under BSSD the clock-bias column of H is zeroed for code/phase (the
+        // clock cancels in SD), so the bias gets no update and its Q must be
+        // suppressed to stop unbounded variance growth.  Doppler is BSSD-exempt,
+        // so the clock-rate state still updates and keeps its Q regardless —
+        // otherwise its variance freezes at 0 and every Doppler is rejected.
         if (hasClockRate()) {
             const size_t crIdx = getClockRateIndex();
             const double q_cr  = pn.clock_rate;
@@ -634,7 +621,7 @@ namespace GnssProcessor {
         }
 
         // Per-satellite ionospheric noise (PPP-RTK uncombined)
-        // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sin�(el)
+        // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sin²(el)
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             const double q_zenith_default = pn.ionosphere;
             const bool   iono_cv          = config_.enableIonoRate();
@@ -709,7 +696,7 @@ namespace GnssProcessor {
 
         // Per-satellite signal bias noise (PPP-RTK uncombined).
         // These absorb uncorrected satellite hardware delays on signals
-        // without BIA coverage.  Nearly constant � very small random walk.
+        // without BIA coverage.  Nearly constant — very small random walk.
         // Suppressed for BSSD pivot satellites (absorbed into eliminated clock).
         if (!sat_bias_indices_.empty()) {
             const double sb_var = pn.sat_bias * dt;
@@ -1121,19 +1108,15 @@ namespace GnssProcessor {
         if (idx_i < 0) {
             // Refuse to auto-create the state for an unknown key.
             //
-            // Slip detectors iterate @c obs.raw_observed (which preserves
-            // every RINEX-tracked signal) but the state vector only holds
-            // ambiguities that pass the @c signal_mode band filter
-            // (typically L1/L2 for Dual, +L5 for Triple, etc.).  Without
-            // this guard, a slip detector reporting a reset for L5X on a
-            // Dual-mode run would have @c addAmbiguity called here,
-            // sneaking a band-filtered signal into the state vector.
+            // Slip detectors iterate @c obs.raw_observed, which keeps every
+            // RINEX-tracked signal, while the state vector holds only ambiguities
+            // passing the @c signal_mode band filter.  Without this guard a reset
+            // reported for L5X on a Dual-mode run would call @c addAmbiguity and
+            // sneak a band-filtered signal into the state vector.
             //
-            // The "create-on-reset" semantic was originally intended for
-            // first-epoch state creation, but @c ensureRequiredStates now
-            // owns that responsibility and seeds new ambiguities with a
-            // proper geometry-derived value.  Slip-detector reset keys
-            // for non-existent ambiguities are no-ops here.
+            // "Create-on-reset" was meant for first-epoch creation, but
+            // @c ensureRequiredStates now owns that and seeds new ambiguities from
+            // geometry, so reset keys for non-existent ambiguities are no-ops.
             logger->debug("resetAmbiguity ignoring unknown key {} "
                           "(slip detector referenced signal not in current state — "
                           "likely band-filtered out by signal_mode)", key);
@@ -1147,7 +1130,7 @@ namespace GnssProcessor {
             return false;
         }
 
-        // Keep the current value � it will be overwritten by a proper
+        // Keep the current value — it will be overwritten by a proper
         // geometry-based seed in ensureRequiredStates().
         covariance_.row(idx).setZero();
         covariance_.col(idx).setZero();
@@ -1304,7 +1287,7 @@ namespace GnssProcessor {
                 }
             }
 
-            // Per-satellite signal bias � code-only estimation.
+            // Per-satellite signal bias — code-only estimation.
             // Phase ambiguities absorb satellite phase biases, so no
             // sat-bias state exists for L signals and the term is zero.
             double sat_bias_term = 0.0;

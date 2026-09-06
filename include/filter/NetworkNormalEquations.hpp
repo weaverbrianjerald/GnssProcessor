@@ -1,15 +1,14 @@
 /**
  * @file NetworkNormalEquations.hpp
  * @brief Arrowhead normal-equation accumulator with exact Schur reduction for
- *        the joint multi-station PPP-RTK network estimator (W4-S1).
+ *        the joint multi-station PPP-RTK network estimator.
  *
- * This is the numerical core of the minimum-constraint S-system network
- * PRODUCER (`ProcessingMode::PPP_RTK_Network`).  It realizes the locked-decision
- * topology — *per-station local normals + exact Schur reduction onto a shared
- * satellite-parameter block* — without touching the single-receiver core: each
- * station keeps its own `MeasurementModel`/`StateManager` (single-receiver
- * invariants intact) and contributes pre-formed local normal-equation blocks
- * here, coupled only through the shared satellite border.
+ * The numerical core of the minimum-constraint S-system network PRODUCER
+ * (`ProcessingMode::PPP_RTK_Network`): per-station local normals reduced onto a
+ * shared satellite-parameter block, without touching the single-receiver core.
+ * Each station keeps its own `MeasurementModel`/`StateManager`, so the
+ * single-receiver invariants stay intact, and contributes pre-formed local
+ * normal-equation blocks here, coupled only through the shared satellite border.
  *
  * The network least-squares system has the bordered block-arrow ("arrowhead")
  * structure
@@ -39,36 +38,32 @@
  *
  *     x_r = (N_rr^r)^{-1} (u_r^r − N_rs^r x_s)
  *
- * reproduces the dense stacked normal-equation solve to machine precision (the
- * reduction is a *lossless* marginalization, not an approximation — cf. the
- * two-stage covariance-form alternative the design panel rejected).  Fill-in is
- * confined to the satellite border and each station's elimination is
- * independent (parallelizable).
+ * reproduces the dense stacked normal-equation solve to machine precision: the
+ * reduction is a *lossless* marginalization, not an approximation.  Fill-in stays
+ * confined to the satellite border and each station's elimination is independent,
+ * hence parallelizable.
  *
  * This mirrors NGS M-PAGES `NgsLsq::NormalEquations::reduce` /
- * `reconstructLocals` (reference at
- * `reference_software/mpages/M-PAGES/Lib/NgsLsq/NgsLsq.cpp:278,380`), specialized
- * to the network arrowhead (the GLOBAL block is the shared satellite border;
- * the per-epoch swept block becomes N independent station blocks).
+ * `reconstructLocals` (`reference_software/mpages/M-PAGES/Lib/NgsLsq/NgsLsq.cpp`),
+ * specialized to the network arrowhead: the GLOBAL block is the shared satellite
+ * border, and the per-epoch swept block becomes N independent station blocks.
  *
- * SCOPE (W4-S1): this kernel is pure linear algebra over abstract shared/local
- * blocks.  It owns no GNSS state, no `StateManager`, no epoch loop, and no
- * `StateKeySchema` keys — those land in W4-S2 (`NetworkEstimator`, the epoch
- * driver).  Deliberately deferred out of this slice:
- *   - W4-S2: the epoch loop, per-station block assembly from the single-receiver
- *     `MeasurementModel`/`StateManager`, time update, and covariance recovery /
- *     a-posteriori variance factor (the M-PAGES "basement window"); this kernel
- *     accumulates no goodness-of-fit and reports no error bars.
- *   - W5 (`NetworkSbasis`): the explicit minimum-constraint datum and the
- *     null-space rank gate (SVD the pre-constraint reduced normals, assert the
- *     small-singular-value count equals the declared S-basis dimension).  W5
- *     consumes this kernel through the seam: @ref reduce, then inspect/constrain
- *     a COPY of @ref reducedSharedNormals / @ref reducedSharedRhs (apply hard
- *     pins / a guarded S-transform), then @ref solveSharedConstrained, then
- *     @ref reconstructStation per station.
- * Soft physical priors and additive exact-gauge pins on the shared border can
- * also be applied pre-reduction via @ref addSharedInfo (they carry through the
- * Schur reduction unchanged).
+ * SCOPE: pure linear algebra over abstract shared/local blocks.  This kernel owns
+ * no GNSS state, no `StateManager`, no epoch loop and no `StateKeySchema` keys —
+ * and it accumulates no goodness-of-fit, so it reports no error bars.  Its two
+ * consumers supply all of that:
+ *   - `NetworkEstimator` — the epoch driver: per-station block assembly, time
+ *     update, covariance recovery and the a-posteriori variance factor.
+ *   - `NetworkSbasis` — the explicit minimum-constraint datum and the null-space
+ *     rank gate (SVD the pre-constraint reduced normals, assert the
+ *     small-singular-value count equals the declared S-basis dimension).
+ *
+ * NetworkSbasis drives this kernel through the seam: @ref reduce, then
+ * inspect/constrain a COPY of @ref reducedSharedNormals / @ref reducedSharedRhs
+ * (hard pins or a guarded S-transform), then @ref solveSharedConstrained, then
+ * @ref reconstructStation per station.  Soft physical priors and additive
+ * exact-gauge pins on the shared border can also be applied pre-reduction via
+ * @ref addSharedInfo — they carry through the Schur reduction unchanged.
  */
 
 #pragma once
@@ -342,11 +337,11 @@ public:
     /// phase C).  Each of the K rows is a DD ambiguity constraint
     /// @f$z_k=\sum(\text{coeff}\cdot x_{\text{local}})@f$ with signed coefficients on
     /// four (or, for higher-order fundamental cycles, more) LOCAL ambiguity columns
-    /// spanning up to four stations — a GAUGE-FREE quantity (the receiver + satellite
-    /// phase biases cancel, so it touches NO shared column).  The K carried DDs have
-    /// prior mean @c zhat and a DENSE prior covariance @c Pz (fundamental cycles share
-    /// tree edges ⇒ correlated ⇒ a JOINT rank-K fold, NOT K independent rank-1 folds —
-    /// the phase-A scout's adversarial correction).
+    /// spanning up to four stations — a GAUGE-FREE quantity: the receiver and
+    /// satellite phase biases cancel, so it touches NO shared column.  The K carried
+    /// DDs have prior mean @c zhat and a DENSE prior covariance @c Pz.  Fundamental
+    /// cycles share tree edges, so they are correlated and this must be a JOINT
+    /// rank-K fold, not K independent rank-1 folds.
     struct DdPriorBlock {
         struct Term {
             std::size_t   station;    ///< station index (from @ref addStation).
@@ -360,15 +355,14 @@ public:
 
     /**
      * @brief Fold rank-K double-difference priors onto the reduced shared system as
-     *        per-component JOINT Woodbury corrections — the ONE structural change of
-     *        Card 4 (M1 phase C, spec D3 option (i)).
+     *        per-component JOINT Woodbury corrections.
      *
      * A DD prior @f$z\sim N(\hat z,P^z),\ z=C_L x_L@f$ on LOCAL ambiguity columns
      * couples columns ACROSS stations, so it cannot be a per-station @c N_rr
-     * increment (that would break the block-diagonal arrowhead).  As the soft
-     * generalization of @ref foldReducedSumZeroGauges (which is exactly the hard-
-     * constraint @f$P^z\!\to\!0,\ K\!=\!1,\ \hat z\!=\!0@f$ limit of this), Woodbury
-     * through the block-diagonal local normals yields, per component,
+     * increment — that would break the block-diagonal arrowhead.  As the soft
+     * generalization of @ref foldReducedSumZeroGauges (exactly the hard-constraint
+     * @f$P^z\!\to\!0,\ K\!=\!1,\ \hat z\!=\!0@f$ limit of this), Woodbury through the
+     * block-diagonal local normals yields, per component,
      * @f[
      *   B=\sum_r C_{L,r}N_{rr}^{-1}C_{L,r}^\top,\quad
      *   G=\sum_r N_{sr}N_{rr}^{-1}C_{L,r}^\top,\quad
@@ -382,8 +376,8 @@ public:
      * @f$C_{L,r}@f$ is the block's @f$K\times n_r@f$ signed sub-matrix on station
      * @f$r@f$'s columns; @f$B,G,z_{\text{free}}@f$ accumulate from the CACHED
      * per-station LDLᵀ factors (no re-reduce, factors left pristine), and the
-     * @f$K\times K@f$ middle inverse @f$M@f$ is per-component and bounded (no
-     * @f$O(n^3)@f$ border blow-up — the rejected option (ii) cost).  The stored
+     * @f$K\times K@f$ middle inverse @f$M@f$ is per-component and bounded, so there
+     * is no @f$O(n^3)@f$ border blow-up.  The stored
      * @f$(G,M,z_{\text{free}},\hat z)@f$ drive the matching @ref reconstructStation
      * correction
      * @f$x_r\mathrel{-}=N_{rr}^{-1}C_{L,r}^\top M\,(z_{\text{free}}-G^\top x_s-\hat z)@f$,
@@ -399,10 +393,10 @@ public:
      * @f$C_L N_{rr}^{-1} C_{L,\text{gauge}}^\top@f$ of the joint middle inverse (each
      * fold sees the base @f$N_{rr}@f$, not the other's augmentation).  They are
      * therefore MUTUALLY EXCLUSIVE by design: under @c carry_invariant the DD priors
-     * SUPERSEDE the sum-to-zero phase-bias ensemble datum (spec D6), and the Card-4
-     * per-epoch phase datum is instead the PRE-REDUCE tree pins (@ref addStationPrior),
-     * which fold into @f$N_{rr}@f$ BEFORE the reduce and so compose EXACTLY with this
-     * post-reduce DD fold (it reads the already-pinned factor).
+     * SUPERSEDE the sum-to-zero phase-bias ensemble datum, and the per-epoch phase
+     * datum is instead the PRE-REDUCE tree pins (@ref addStationPrior), which fold
+     * into @f$N_{rr}@f$ BEFORE the reduce and so compose EXACTLY with this
+     * post-reduce fold, since it reads the already-pinned factor.
      * @ref NetworkEstimator::solve throws if both are set.  A block whose
      * @f$P^z+B@f$ is not positive-definite folds INERTLY (@f$M=0@f$, an index-stable
      * no-op) rather than being dropped, so @ref ddPriorPosteriorMean / @ref numDdPriorBlocks
@@ -459,8 +453,7 @@ public:
 
     /**
      * @brief Posterior COVARIANCE of a folded block's K double differences — the
-     *        @f$P^z@f$ the z-store carries forward (the Card-4 phase-C posterior
-     *        readout the kernel's mean-only fold left open).
+     *        @f$P^z@f$ the z-store carries forward.
      *
      * The block's DD @f$z=C_L x_L@f$ is a gauge-free function of the local
      * ambiguities, whose full posterior covariance (prior + all network data,
@@ -496,7 +489,7 @@ public:
     /**
      * @brief Innovation (measurement-minus-prediction) of a folded block's K double
      *        differences and its exact H0 covariance — the estimation-side fine-slip
-     *        test the Card-4 D5 gate standardizes (spec D5 Def-1).
+     *        test the innovation gate standardizes.
      *
      * The DD carry's coarse slip layer (MW / LLI / IF-TD) is deliberately relaxed; the
      * finer slips the estimator must catch show up as an inflated innovation on the
@@ -533,7 +526,7 @@ public:
     ///         @ref foldReducedDdPriors; degenerate/chordless blocks are inert slots).
     std::size_t numDdPriorBlocks() const { return dd_priors_.size(); }
 
-    // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) ----------------
+    // --- PD-safe invariant-DD fold ----------------
 
     /**
      * @brief INC-0 diagnostics of the LAST @ref foldReducedDdPriors PD screen.
@@ -571,7 +564,7 @@ public:
     const DdFoldStats& ddFoldStats() const { return dd_fold_stats_; }
     /// @return Whether DD-prior block @p b folded INERTLY (its @f$P^z+B@f$ failed the PD
     ///         screen ⇒ @f$M=0@f$ ⇒ posterior == prior).  False for a chordless K=0 slot.
-    ///         The install-side rebirth (INC-2a) keys on this.
+    ///         The install-side rebirth keys on this.
     /// @throws std::out_of_range on a bad index.
     bool ddPriorBlockDegenerate(std::size_t b) const;
     /// @return DD-prior block @p b's relative pivot @f$d_{\min}/d_{\max}@f$ at the fold
@@ -585,7 +578,7 @@ public:
      * OFF (default) is the pre-card path, BYTE-IDENTICAL (standing invariant #6): the
      * plain @f$P^z+B@f$ LDLᵀ, the absolute @c minCoeff()<=0 screen, and the subtractive
      * posterior @f$P^z-P^zMP^z@f$.  ON replaces all three with algebraically identical
-     * but differently-rounding forms (SPEC §4):
+     * but differently-rounding forms:
      *  - (a) PRODUCT-form posterior @f$\mathrm{sym}(P^zMB)+(P^zMG^\top)\Sigma(P^zMG^\top)^\top@f$,
      *        which follows the scale of the ANSWER instead of subtracting two 1e6-scale
      *        operands to reach 1e-4 (@f$B@f$ is cached per block for this, +K² doubles);
@@ -613,7 +606,7 @@ public:
      * is exact only when no station is touched by two blocks — and a block is one connected
      * component of ONE (const,signal) group, so two groups routinely share a station.  The
      * summed rank-K downdate can therefore over-subtract.  Nothing in the producer has ever
-     * screened that; these counters are its first measurement (SPEC §3).
+     * screened that; these counters are its first measurement.
      */
     struct CarryCovStats {
         long long calls{0};          ///< carry-aware readback calls that reached the correction.
@@ -1058,7 +1051,7 @@ public:
 
     /**
      * @brief Station @p station's cached LDLᵀ PIVOTS @f$D@f$, permuted back into
-     *        ORIGINAL local-column order (docs/SPEC_redundancy_census.md INC-2).
+     *        ORIGINAL local-column order.
      *
      * @c Eigen::LDLT pivots symmetrically — it factorizes @f$P N_{rr} P^\top =
      * L D L^\top@f$ — so @c vectorD() is indexed in the PERMUTED frame and is

@@ -12,7 +12,7 @@
  * `auto& X = ctx.carry.X;` / `const T X = ctx.knobs.X;` aliases under the
  * former local names, so every downstream use-site is textually unchanged.
  *
- * Three-place rule (RTB-7): a NetworkCarryState field marked snapshot-member
+ * Three-place rule: a NetworkCarryState field marked snapshot-member
  * must be added to the fingerprint + restore + snapshot write — all three
  * live in src/core/app/NetworkRunContext.cpp.  Any NEW cross-epoch field
  * defaults into NetworkCarryState under that rule unless explicitly exempted
@@ -74,8 +74,7 @@ namespace GnssProcessor {
     /// @internal Const snapshot of every run-loop config knob (decomposition
     /// INC-4).  snapshot() preserves the original getter READ ORDER exactly;
     /// members are value copies with the original local names/types.  The
-    /// WL/UWL-zone knob consts stay in the run TU with their machinery
-    /// (INC-9b).
+    /// WL/UWL-zone knob consts stay in the run TU with their machinery.
     struct NetworkKnobs {
         double q_clock{};
         double q_pb{};
@@ -85,14 +84,14 @@ namespace GnssProcessor {
         int pl_warmup{};
         double pl_max_gap_s{};
         double pl_var_floor{};
-        /// network.phase_leveling_los_scale — F1 (SPEC_amb_iono_split_overcount): at the
+        /// network.phase_leveling_los_scale — F1: at the
         /// leveling-carry inject, multiply each carried ambiguity row's variance by B_eff =
         /// the number of carried ambiguity columns injected on the same (station, satellite)
         /// LOS this epoch, so the B rows assert ONE unit of iono-direction precision instead
         /// of B (the over-count that froze the level at K_eff = (B+1)/(B−1) epochs).  Applied
         /// after q·gap, before the var floor and the VCE factor.  Default OFF = byte-identical.
         bool pl_los_scale{};
-        /// network.phase_leveling_local_block — F3 (SPEC_amb_iono_split_overcount): carry
+        /// network.phase_leveling_local_block — F3: carry
         /// each station's injectable carried ambiguity set as ONE jointly-whitened local
         /// block (the harvested conditional cross covariances (N_rr⁻¹)_{c_i c_j} on Σ's
         /// off-diagonals; non-admitted columns MARGINALIZED) instead of independent
@@ -201,7 +200,7 @@ namespace GnssProcessor {
         bool raim_maturity_gate{};
         int raim_maturity_epochs{};
         double raim_withhold{};
-        /// Withhold-era release (SPEC_withhold_era_release §3a): escalated within-epoch
+        /// Withhold-era release: escalated within-epoch
         /// adaptation budget on epochs whose predecessor was A4-withheld; 0 = off
         /// (stock budget everywhere).  Loader guarantees 0 or > 5, and 0 without an
         /// armed A4 ceiling.
@@ -219,7 +218,7 @@ namespace GnssProcessor {
         /// is whether r_i is signal-dependent: the RAIM cell is a max OVER signals, so
         /// no trace on disk can currently separate L1C from L2W/L5Q.
         bool raim_redun_trace{};
-        /// POOL RE-HOST, RESOLVED for the run (docs/SPEC_raim_pool_rehost.md): the
+        /// POOL RE-HOST, RESOLVED for the run: the
         /// post-fit RAIM screen runs on the Card-4 invariant-carry lineage against the
         /// carry-neutral `qc_amb` census.  Already ANDed with `raim_on` and
         /// `carry_invariant`, so the driver, the assembly and the seam all read ONE bool
@@ -236,7 +235,7 @@ namespace GnssProcessor {
         double staf_ratio{};
         /// QUEUE item 4 R4: T3/T3c opportunity-accounting hygiene (telemetry only).
         bool rate_hygiene{};
-        /// LV-6 (SPEC_level_authority_internal): the per-epoch fleet CS-GF level
+        /// The per-epoch fleet CS-GF level
         /// census — measure-only.
         bool lvlauth_on{};
         int  lvlauth_min_n{};
@@ -269,7 +268,7 @@ namespace GnssProcessor {
         bool emit_epoch_status{};
         bool clk_frame_hold{};  ///< Card CLK-R stage 1 (network.emit_clock_frame_hold): emit satellite clocks in the per-constellation HELD frame.  Engine = run-TU local (banner rule), like NetworkPbEmitFilter.
         bool clk_jump_test{};   ///< Card CLK-R stage 2 (network.clock_disc_jump_test): mark per-sat common-removed clock steps via the R-record retro-bump.
-        // --- Card Q3, the guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md) ---
+        // --- Card Q3, the guarded temporal clock anchor ---
         // SOLVE-AFFECTING and FINGERPRINTED.  `cta_on` is the single "does this run
         // touch the clock carry at all" predicate every site reads, so an OFF run
         // never allocates the per-sat state and never diverges from the legacy fold.
@@ -342,14 +341,14 @@ namespace GnssProcessor {
         double phase_hold_sigma{};
         bool phase_hold_on{};
         double phase_hold_var{};
-        // --- eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md) ---
+        // --- eq34 reattach hygiene ---
         // All four RESOLVED against the datum mode: the loader already disarms them
         // outside an anchored election, and `anchor_hygiene_on` is the single "does
         // this run allocate the arc-age map at all" predicate every site reads, so an
         // OFF run never touches the new state.
         bool   anchor_hygiene_on{};   ///< Any increment armed on an anchored (non-ensemble) phase datum — the master gate for the arc-age map and the hygiene seam.
-        /// TWO-EDGE CONTINUOUS HANDOVER, RESOLVED for the run
-        /// (docs/SPEC_pivot_visibility_gauge_defect.md): an anchor handover pins the
+        /// TWO-EDGE CONTINUOUS HANDOVER, RESOLVED for the run: an anchor handover
+        /// pins the
         /// INCOMING anchor at its own absolute ambiguity estimate in the OUTGOING
         /// frame instead of at 0, making the gauge change an S-transform.  Already
         /// ANDed with `anchored && !phase_datum_eq34`, so the census fill, the
@@ -391,7 +390,7 @@ namespace GnssProcessor {
         // same alternate source the bridge did).
         bool   sbasis_complete_on{};  ///< SBC armed: constrain realized extra null directions instead of withholding.
         int    sbasis_complete_max{}; ///< SBC per-epoch direction cap (beyond ⇒ refuse + withhold); ≤0 = uncapped.
-        // --- flicker/gap signal integrity (docs/SPEC_flicker_gap_integrity.md) ---
+        // --- flicker/gap signal integrity ---
         // All RESOLVED against the master arm: the loader has already disarmed every
         // action when `census` is off, and `sig_integrity_on` is the single "does this
         // run allocate the band-state map at all" predicate every site reads, so an
@@ -403,7 +402,7 @@ namespace GnssProcessor {
         int    sig_flicker_max_ep{};  ///< INC-1 maximum band outage (epochs) still classed as a FLICKER.
         bool   sig_refloat_regain{};  ///< INC-3(a) refloat the LOS's ambiguities on ALL bands when a flickered band returns.
         bool   sig_resume_warmup{};   ///< ADDENDUM: vet EVERY arc for sig_revet_ep epochs after a warm resume (tight carries restored, detector state not).
-        // --- iono-deweight RELEASE hygiene (docs/SPEC_deweight_release_hygiene.md) ---
+        // --- iono-deweight RELEASE hygiene ---
         // RESOLVED against the SH field and the gate: the loader has already disarmed
         // every increment without estimate_iono_sh (and INC-1 without the adaptive
         // gate), and `dw_hygiene_on` is the single "does this run sweep at all"
@@ -414,14 +413,14 @@ namespace GnssProcessor {
         double dw_park_bound_tecu{};     ///< INC-2 while-decoupled park bound in SLANT TECU (0 = off).
         double dw_release_validate_k{};  ///< INC-3 standardized deviation screen on a re-engaged tie row (0 = off).
         double dw_admit_validate_k{};    ///< INC-3b the same screen at a LOS's FIRST tie row — the admission gate that was the measured valve (0 = off).
-        // --- redundancy / testability census (docs/SPEC_redundancy_census.md) ---
+        // --- redundancy / testability census ---
         // `redun_census_on` is the single "does this run enter the census seam at
         // all" predicate the driver reads, so an OFF run never calls into the
         // translation unit and pays nothing beyond this bool test.  The census is
         // MEASURE-ONLY, so there is no estimation precondition to resolve against
         // — only the two arming knobs.
         bool   redun_census_on{};     ///< Master: the stride OR the escalation trigger is armed.
-        // --- Baarda reliability numbers / MDB (docs/SPEC_redundancy_census.md) ---
+        // --- Baarda reliability numbers / MDB ---
         // `mdb_on` is the single "does this run compute an MDB at all" predicate
         // that BOTH feed sites and the flush read, so an OFF run pays one bool
         // test per site and nothing else.  The two source flags are resolved here
@@ -434,7 +433,7 @@ namespace GnssProcessor {
         bool   mdb_from_census{};     ///< The redundancy-census feed site is armed (mirrors @ref redun_census_on).
         double mdb_event_m{};         ///< REPORTING threshold, metres (0 = no events).  Nothing acts on it.
         long long mdb_event_holdoff{};///< Per-cell MDB event rate limit, in flush passes.
-        // --- prior-residual census (docs/SPEC_prior_residual_census.md) -------
+        // --- prior-residual census -------
         // `prires_on` is the single "does this run touch the census at all"
         // predicate every feed site reads, so an OFF run pays one bool test per
         // site and nothing else.  The five per-family arms are RESOLVED here (the
@@ -451,10 +450,10 @@ namespace GnssProcessor {
         bool   prires_corrob{};       ///< INC-3 raw-observable corroboration join armed.
         double prires_report_sigma{}; ///< Per-row TRACE threshold in σ̂₀ units (nothing acts on it).
         int    prires_event_holdoff{};///< Per-cell PRIORRES event rate limit, in census epochs.
-        // --- constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14)
+        // --- constraint-aware global σ̂₀
         bool   prires_s0g{};          ///< The global variance-component rider is armed (implies @ref prires_on).
         bool   prires_s0g_redun{};    ///< A per-row Baarda r_i actually exists for the data side (`raim` AND `raim_redundancy_normalize`).  FALSE ⇒ the r ≡ 1 fallback, flagged per epoch.
-        // --- BlockFormal LOS block census (docs/SPEC_redundancy_census.md) ---------
+        // --- BlockFormal LOS block census ---------
         // `bb_on` is the single "does this run sweep blocks at all" predicate,
         // read at ONE site (inside the redundancy census's swept branch) and by
         // the emission seam.  It is the AND of the master arm and a LIVE HOST:
@@ -467,7 +466,7 @@ namespace GnssProcessor {
         bool   bb_corrob{};           ///< INC-2 raw-observable corroboration join armed (implies @ref bb_on).
         double bb_report_sigma{};     ///< TRACE/event threshold on t_B.  A VARIANCE RATIO (E = 1 under H0), NOT σ units — see NetworkBlockBaarda.hpp.
         long long bb_event_holdoff{}; ///< Per-(station, satellite) BLOCKBAARDA event rate limit, in census epochs.
-        // --- Station congruence screen (docs/SPEC_redundancy_census.md) -------
+        // --- Station congruence screen -------
         // `cg_on` is the single "does this run screen coordinates at all"
         // predicate.  It is read at THREE sites — the assembly's INC-0 geometry
         // retention, the redundancy census's swept branch, and the emission seam —
@@ -480,7 +479,7 @@ namespace GnssProcessor {
         double cg_report_sigma{};     ///< TRACE/event threshold on t_i.  A VARIANCE RATIO (E = 1 under H0 for every observable dimension), NOT σ units — see NetworkCongruence.hpp.
         long long cg_event_holdoff{}; ///< Per-station CONGRUENCE event rate limit, in census epochs.
         // --- prefit census / fuse / birth check / topology / flight recorder ---
-        // (docs/SPEC_prefit_census_observability.md).  `pc_walk_on` is the single
+        // `pc_walk_on` is the single
         // "does this run walk the row stacks at all" predicate the driver reads, so
         // an OFF run never enters the seam.  It is deliberately the UNION of the
         // census, the birth check and the topology ledger: INC-3 and INC-4 ride the
@@ -499,7 +498,7 @@ namespace GnssProcessor {
         bool   rec_on{};              ///< INC-5 flight recorder armed (trip latch + retention).
         bool   h_sigma0_census{};     ///< H-rider: feed the H heartbeat's sigma0 from the pooled census σ̂₀ (network.h_sigma0_prefit_census).  Loader guarantees trace_prefit_census + emit_epoch_status_record.
         unsigned h_sigma0_class_mask{};  ///< H-rider: DATA classes pooled into the H σ̂₀ (network.h_sigma0_classes; default code+sh+other — phase excluded per census deviation 2c).
-        // --- datum graph census (docs/SPEC_datum_graph_census.md) ------------
+        // --- datum graph census ------------
         // `dg_on` is the single "does this run predict the S-basis dimension at
         // all" predicate, read at THREE sites: the driver's census call, the
         // top-of-epoch clear of the spectral hand-off, and the solve glue's
@@ -508,8 +507,8 @@ namespace GnssProcessor {
         // knob and not three independent config reads.
         bool      dg_on{};            ///< Master: network.datum_graph_census.
         long long dg_event_holdoff{}; ///< Per-identity DATUMGRAPH event rate limit, in processed epochs.
-        // --- product-referenced measurement admission
-        //     (docs/SPEC_measurement_admission.md).  Nothing to resolve against the
+        // --- product-referenced measurement admission ---
+        //     Nothing to resolve against the
         //     estimation configuration: the screen reads `observed` / `modeled` and
         //     removes observables, so the two arming knobs ARE the predicate and the
         //     loader has already clamped the thresholds.  `adm_on` is the single
@@ -524,7 +523,7 @@ namespace GnssProcessor {
         int    adm_min_sats{};        ///< median-validity floor in DISTINCT satellites.
         int    adm_heal_ep{};         ///< consecutive in-bound epochs before a rejected channel is readmitted.
         double adm_max_frac{};        ///< station-guard fraction on the median's trustworthiness.
-        // INC-4 re-entry vet (card §10).  `adm_revet` is already AND-ed with
+        // INC-4 re-entry vet.  `adm_revet` is already AND-ed with
         // `adm_screen` by the loader's INERT-guard, but it is re-imposed here so the
         // seam's predicate cannot depend on load order.
         bool   adm_revet{};           ///< INC-4: re-screen an arc RE-ENTRY as a birth rather than inheriting its pre-gap verdict.
@@ -539,20 +538,20 @@ namespace GnssProcessor {
         static NetworkKnobs snapshot(const GnssConfig& config_, const NetworkConfig& nc);
     };
 
-    /// @internal Tier-1 cross-epoch carry/run state (decomposition INC-4) —
+    /// @internal Tier-1 cross-epoch carry/run state —
     /// the former runNetwork() persistent declaration stretch, verbatim
     /// (comments included; they are the authoritative per-field docs and the
     /// snapshot-exemption record).
     struct NetworkCarryState {
         std::vector<CarryPrior> prev_carry;                 // D2 stash from the last solve
-        // Card Q3 (docs/SPEC_clock_temporal_anchor.md): per-satellite guarded
+        // Per-satellite guarded
         // temporal clock anchor.  Empty and untouched unless network.clock_temporal_anchor.
         // NOT snapshotted (three-place-rule exemption, deliberate): a warm resume is an
         // invariant-#1 event, so every satellite re-earns the anchor from LOOSE — the
         // stiffness must not outlive the evidence that justified it.  The knob is in the
         // resume fingerprint, so a toggle change cold-starts anyway.
         ClockAnchorState clk_anchor;
-        // Card Q3: satellites whose anchor DECOUPLED and whose per-sat wire mark has not
+        // Satellites whose anchor DECOUPLED and whose per-sat wire mark has not
         // yet landed in an emitted product.  Drained by networkSolPrep with the same
         // present/pending split every other forced-bump queue uses (mark == land), so a
         // replay reproduces the marks from the serialized R records.
@@ -643,7 +642,7 @@ namespace GnssProcessor {
         // frequency pin gets neither row).  Empty whenever the GF datum is off ⇒ no
         // gfpin= token ⇒ byte-identical S line.  Cleared each epoch.
         std::set<std::string> this_epoch_gf_pin_real;
-        // FAMILY-GF (docs/SPEC_family_gf_datum.md §3.2): the RUN-LATCHED family census.
+        // FAMILY-GF: the RUN-LATCHED family census.
         // Odijk rd 3b re-derives PER RECEIVER CHANNEL FAMILY when the station population
         // partitions (the Galileo C/Q-vs-X tracking split), because the primary pin is
         // built on the satellite's lowest-ordered signals and therefore never touches an
@@ -652,7 +651,7 @@ namespace GnssProcessor {
         // first epoch with a usable station set — and held for the run: re-deciding it
         // per epoch would make the datum topology follow coverage churn, which is the
         // anti-flap failure the CB-ADM census was built to end.  Mid-run bridge
-        // appearance/loss is deliberately NOT re-detected in v1 (§7); the null-space gate
+        // appearance/loss is deliberately NOT re-detected in v1; the null-space gate
         // is the backstop and the latched census line makes any such withhold
         // self-attributing.  Empty `partitioned` => zero extra rows => byte-identical,
         // which is the state of every single-family posture validated to date.
@@ -675,10 +674,10 @@ namespace GnssProcessor {
         //    first sighting, not a fault — matches the last_pivot never-erase policy).
         std::map<std::string, std::string> anchor_incumbent;
         std::map<std::string, std::string> this_epoch_anchor;
-        /// R2 STICKY CONTINUOUS TARGET (SPEC_pivot_visibility_gauge_defect §5.09):
+        /// R2 STICKY CONTINUOUS TARGET:
         /// the pin target each incumbent anchor is currently realized at, per
         /// (sat,signal) "sat_signal" key.  Without it the continuous handover is a
-        /// one-epoch deferral — the ledger pin reverts to 0 at T+1 (§5.07.3) and
+        /// one-epoch deferral — the ledger pin reverts to 0 at T+1 and
         /// the frame steps anyway, which is why §5.0 measured it null.  Entries
         /// exist only for keys whose LAST handover was continuous (a cold pin or a
         /// first sighting realizes the 0-frame and stores nothing); rebuilt
@@ -687,7 +686,7 @@ namespace GnssProcessor {
         /// `knobs.pd_handover_continuous`; deliberately NOT snapshotted, exactly
         /// like the ledger below (a resume's first handover is honestly cold).
         std::map<std::string, double> anchor_pin_target;
-        /// TWO-EDGE CONTINUOUS HANDOVER ledger (docs/SPEC_pivot_visibility_gauge_defect.md):
+        /// TWO-EDGE CONTINUOUS HANDOVER ledger:
         /// each anchor-candidate station's ABSOLUTE ambiguity estimate from the
         /// PREVIOUS epoch's solve, so a handover can re-pin the successor in the
         /// outgoing frame rather than re-zeroing it.  Rebuilt wholesale by the
@@ -732,16 +731,16 @@ namespace GnssProcessor {
         std::map<std::string, std::string> eq34_datum_rx;
         std::map<std::string, std::string> eq34_rx_parent;
         std::map<std::string, std::string> eq34_sat_root;
-        // Card 3 (I4 longevity election): last epoch's per-(station idx, sat) arc
+        // Last epoch's per-(station idx, sat) arc
         // elevation, for the rising-vs-setting test that ranks NEW spanning-tree edges
         // by how long they will survive.  Rebuilt each epoch from sat_el; empty and
         // unread unless network.phase_datum_eq34_longevity_election.
         std::map<std::pair<size_t, std::string>, double> eq34_prev_el;
-        // Card 3: the datum receiver r1 (pdr=) of the LAST EMITTED contract, so a root
+        // The datum receiver r1 (pdr=) of the LAST EMITTED contract, so a root
         // handover triggers an S-line re-broadcast (advanced only at emit, like the
         // pivot baselines).  Empty on every non-eq34 run.
         std::string eq34_emitted_pdr;
-        // Card 3: wavelength provider for the pin-to-round re-pin target (λ·round(float/λ));
+        // Wavelength provider for the pin-to-round re-pin target (λ·round(float/λ));
         // built lazily on first eq34 use.  Null on every non-eq34 run.
         std::unique_ptr<PppUtils> eq34_ppp_utils;
         // Card 3 run-scope observability counters, logged once in the run-end producer
@@ -765,7 +764,7 @@ namespace GnssProcessor {
         // invariant #4 warns about.
         std::map<std::string, int> eq34_epoch_declared;
         std::map<std::string, int> eq34_epoch_bridged;
-        // Card 3 (I2 extend-only): tree edges retained across the current gap because
+        // Tree edges retained across the current gap because
         // their local_carry is still alive — {receiver index, "sat_signal"}.  Rebuilt at
         // each election's sticky-map update; read at the next election's recordEdge to
         // count a gap re-pin.  Empty unless network.phase_datum_eq34_extend_only.
@@ -802,14 +801,14 @@ namespace GnssProcessor {
         // marginalized and phase-leveling local carries erased over the run.
         long long pa_reref_total = 0, pa_reref_erase_total = 0;
 
-        // --- eq34 REATTACH HYGIENE (docs/SPEC_eq34_reattach_hygiene.md) --------
+        // --- eq34 REATTACH HYGIENE --------
         // Every member below stays EMPTY unless ctx.knobs.anchor_hygiene_on, so an
         // OFF run allocates nothing and the election is structurally unchanged.
         // None of it is serialized: the warm-resume rule is a SEED (see
         // anchor_age_resume_seed), not a restore — adding an age map to the snapshot
         // would change the format for every run, armed or not (the sd_ewl exemption
         // precedent), and sub-min_arc_ep fidelity across a resume is explicitly
-        // deferred (spec §7).
+        // deferred.
         //
         // Arc age per (STATION index, "sat_signal"): CONSECUTIVE epochs this arc has
         // been present with an anchorable phase-bias state.  Rebuilt wholesale each
@@ -871,7 +870,7 @@ namespace GnssProcessor {
         // in usable_keys), so the hold self-clears after at most
         // eq34_anchor_min_arc_ep epochs of continuous presence.
         std::set<std::string> anchor_blocked;
-        // --- FLICKER/GAP SIGNAL INTEGRITY (docs/SPEC_flicker_gap_integrity.md) ---
+        // --- FLICKER/GAP SIGNAL INTEGRITY ---
         // Per-(STATION index, SATELLITE) band-state history: the vetted reference
         // phase-signal set, which reference bands are currently missing and since
         // when, the last epoch the line of sight was present, and the re-vet counter.
@@ -901,8 +900,7 @@ namespace GnssProcessor {
         // 0 on every cold start, so cold starts stay exempt by principle.
         int si_resume_warmup_ep = 0;
 
-        // --- PRODUCT-REFERENCED MEASUREMENT ADMISSION
-        //     (docs/SPEC_measurement_admission.md) ---
+        // --- PRODUCT-REFERENCED MEASUREMENT ADMISSION ---
         // [snapshot: EXEMPT] Per-(STATION index, "SATELLITE|<band digit>") admission
         // record: is the channel currently in the model set, and how many
         // consecutive in-bound epochs has a rejected one accumulated toward its
@@ -980,7 +978,7 @@ namespace GnssProcessor {
         // that is the isolation contract that keeps full epochs byte-identical whether or
         // not ticks ran.
         FastClockCarry fast_clock;
-        // Card 6 (RTF-2, network.apriori_source = brdc_rts): the broadcast-ephemeris IODE
+        // The broadcast-ephemeris IODE
         // that each satellite's CARRIED clock state (clock_osc.x0 / the D2 clock carry /
         // the clock-monitor jump baseline) is currently referenced to.  Advanced at the
         // eph-cutover RE-LEVEL (before the solve), NOT deferred to the emit site like
@@ -991,7 +989,7 @@ namespace GnssProcessor {
         // this last_emitted_iode_; "referenced-to" is the honest name since it advances on
         // withheld epochs too.)
         std::map<std::string, int> relevel_iode;
-        // Card 6: sats whose eph rolled but whose PRIOR version was already evicted from
+        // Sats whose eph rolled but whose PRIOR version was already evicted from
         // the store, so Δ_eph is incomputable — a forced per-sat discontinuity is queued
         // and lands at the sat's next actual emit (present/pending split like
         // ura_retro_sats).  Effectively unreachable in steady state (per-epoch checking
@@ -1005,26 +1003,26 @@ namespace GnssProcessor {
         // (The hold-OFF deterministic re-selection uses the emit-only this_epoch_if_pin_sel /
         // last_if_pin_sel path, NOT this queue — see that comment near held_clock_ref.)
         std::set<std::string> basis_relatch_disc_pending;
-        // Card 2 (network.code_datum_time_linked): the code-bias datum's previous-epoch
+        // The code-bias datum's previous-epoch
         // solved values, keyed "<constellation>|<signal>" -> satellite -> value.  The
         // veteran-referenced sum-to-zero RHS and the IF-pin RHS read this at gauge
         // construction; it is cleared + rebuilt from the solved shared vector at the D2
         // harvest (kept epochs only — so a departed satellite is dropped and its return
         // re-seeds IT alone).  NOT snapshotted (a warm resume re-seeds, signalled).
         std::map<std::string, std::map<std::string, double>> code_bias_prev_;
-        // Card 2: the IF-pin reference pair (sat -> {sig1,sig2}) that produced the values
+        // The IF-pin reference pair (sat -> {sig1,sig2}) that produced the values
         // in code_bias_prev_ — the SAME kept-epoch lifecycle (rebuilt at the D2 harvest
         // from the scratch below).  A pair CHANGE between kept epochs re-references the
         // emitted clock↔code split by the satellite's inter-channel bias (the band-1
         // C1C↔C1W flip), so the IF-pin RHS re-seeds and the disc bumps even when the new
         // pair's signals both have previous values.  NOT snapshotted.
         std::map<std::string, std::pair<std::string, std::string>> code_bias_ifpin_pair_;
-        // Card 2: this epoch's selected IF-pin pair per satellite (valid pairs only),
+        // This epoch's selected IF-pin pair per satellite (valid pairs only),
         // captured in the main pass and copied into code_bias_ifpin_pair_ at the harvest
         // (kept epochs only — mirrors code_bias_prev_, so a pair recorded on a withheld
         // epoch never advances the comparison baseline).  Cleared each epoch.
         std::map<std::string, std::pair<std::string, std::string>> this_epoch_cb_ifpin;
-        // Card 2: satellites that RE-SEED this epoch (IF-pin split or a cold sum-to-zero
+        // Satellites that RE-SEED this epoch (IF-pin split or a cold sum-to-zero
         // channel).  A per-epoch scratch (cleared each epoch) populated in the main pass and
         // MERGED into cb_reseed_disc_pending only at the emit site — which every whole-epoch
         // withhold path `continue`s before reaching.  So a transient re-seed on a since-
@@ -1033,17 +1031,17 @@ namespace GnssProcessor {
         // this_epoch_if_pin_sel / last_if_pin_sel use), WITHOUT an erase that would destroy a
         // bump legitimately deferred for a satellite re-seeded while pruned from the emission.
         std::set<std::string> this_epoch_cb_reseed;
-        // Card 2: satellites whose code-bias split has EVER been harvested — a later
+        // Satellites whose code-bias split has EVER been harvested — a later
         // re-seed of one of these is a RETURN (disc-bump), not a genuine first appearance
         // (seed silently).  Accumulates for the whole process; NOT snapshotted.
         std::set<std::string> code_bias_sat_seen_;
-        // Card 2: a warm resume starts code_bias_prev_/seen EMPTY, but the pre-snapshot
+        // A warm resume starts code_bias_prev_/seen EMPTY, but the pre-snapshot
         // product was emitted, so every first post-resume re-seed IS a re-reference the
         // consumer must be told about.  Set true in the resume block; makes re-seeds bump
         // regardless of code_bias_sat_seen_ for the rest of a resumed run (conservative —
         // harmless on a genuinely-new satellite's first emit).  NOT snapshotted.
         bool code_bias_datum_resumed_ = false;
-        // Card 2: satellites to disc-bump for a time-linked datum RE-SEED (a no-veteran
+        // Satellites to disc-bump for a time-linked datum RE-SEED (a no-veteran
         // sum-to-zero channel or an IF-pin split forced to the 0 seed → the emitted value
         // stepped).  Fed at the emit site from this_epoch_cb_reseed (kept epochs only), then
         // flushed with the same present/pending split as eph_cutover_disc_pending so the bump
@@ -1129,7 +1127,7 @@ namespace GnssProcessor {
         // chain frame stepped) and pruned on gap like local_carry.  Inert unless
         // network.phase_datum_eq34 with phase_datum_eq34_rpb_q_m2s > 0.
         std::map<std::pair<int, std::string>, LocalCarry> rpb_carry;
-        /// rx-CB carry (docs/SPEC_rx_cb_carry.md): carried receiver code-bias
+        /// rx-CB carry: carried receiver code-bias
         /// posteriors, keyed (station index, CB state key).  Harvested OUTSIDE
         /// the carry_warm bracket (own gate — must work on the
         /// carry_invariant/no-leveling lineage).  Inert unless
@@ -1138,7 +1136,7 @@ namespace GnssProcessor {
         // rx-CB carry run counters (armed-only run-end line).
         long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
                   rx_cb_harvested_total = 0;
-        /// Card LV-2 (docs/SPEC_level_information_budget.md): the information-
+        /// Card LV-2: the information-
         /// weighted MEAN carry innovation, μ = Σλ·innov / Σλ, keyed by receiver
         /// code-bias STATE KEY ("GPS_DCB", "GPS_IFB5", …) — the constellation is in
         /// the key, and the DCB/IFB families are kept apart because their
@@ -1149,7 +1147,7 @@ namespace GnssProcessor {
         /// first harvest ⇒ epoch 1 injects un-demeaned (μ = 0), one epoch of legacy
         /// behaviour.
         std::map<std::string, double> rx_cb_demean_mu;
-        /// LV-2: THIS epoch's reduction per family, retained only so the caller can
+        /// THIS epoch's reduction per family, retained only so the caller can
         /// trace it (one `lv2_mu` row per family in network_events.csv — the spec's
         /// "do not create a new stream for one scalar").  Rebuilt every armed epoch.
         struct RxCbDemeanEpoch {
@@ -1180,8 +1178,7 @@ namespace GnssProcessor {
         double    lv5_resid_sum = 0.0, lv5_max_abs_resid_m = 0.0;
         double    lv2_last_mu_m = 0.0;   ///< most recent μ (any constellation) for the run-end line.
         double    lv2_max_abs_mu_m = 0.0;
-        /// Card S2H (docs/SPEC_level_information_budget.md §17 item 3): THIS
-        /// epoch's S-consistent-harvest reduction per family, retained so the
+        /// THIS epoch's S-consistent-harvest reduction per family, retained so the
         /// caller can trace it (one `s2h_mu` row per family in
         /// network_events.csv, the LV-2 pattern).  Rebuilt every armed epoch.
         struct RxCbHarvestEpoch {
@@ -1332,14 +1329,14 @@ namespace GnssProcessor {
         long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
                   carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
                   carry_zdim_last = 0, carry_slipkills_total = 0, carry_dropped_total = 0;
-        // Card 4 (M1) D5: arcs the innovation gate flagged in the PREVIOUS epoch, to be
+        // Arcs the innovation gate flagged in the PREVIOUS epoch, to be
         // treated as slipped THIS epoch (the estimation-side fine-slip re-tap runs a post-solve
         // detection ⇒ it feeds the NEXT epoch's slip funnel).  Persists across epochs (the
         // per-epoch carry_slipped_ambs is rebuilt each epoch).  Empty unless carry_innov_gate.
         std::set<std::pair<int, std::string>> carry_innov_pending;
         long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;
         long long carry_innov_map_miss = 0;   // D5 flag→ambiguity reverse-map misses (should stay 0)
-        // Card 4 (M1) D5 v4 (network.carry_invariant_innov_retap_only): the subset of
+        // Card 4 D5 v4 (network.carry_invariant_innov_retap_only): the subset of
         // carry_innov_pending whose arc the RAW observables MEASURED as continuous at flag
         // time.  Same tri-state as the v3 corroboration gate and the network_d5_flags.csv
         // `raw_stepped` column — stepped and unmeasurable arcs are deliberately absent, so
@@ -1374,7 +1371,7 @@ namespace GnssProcessor {
                   carry_prev_innov_flags = 0, carry_prev_innov_retaps = 0;
         long long ep_chord_births = 0, ep_slip_refloats = 0,
                   ep_d5_flags = 0, ep_d5_retaps = 0;
-        // R0 (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5): the within-epoch
+        // R0: the within-epoch
         // RAIM tier's per-epoch observability, parked here between the solve glue
         // (writer) and the epoch-status emit (reader).  σ̂₀_first previously existed
         // ONLY inside a trip event's detail span, so there was no null sample on
@@ -1388,7 +1385,7 @@ namespace GnssProcessor {
         double      ep_we_clk_move_max = -1.0; ///< max |final − primary| clock move (m)
         std::string ep_we_clk_move_sat;        ///< identity of that max (invariant #7)
 
-        // --- A4 withhold-era continuity (SPEC_withhold_era_release §3).  Advanced
+        // --- A4 withhold-era continuity.  Advanced
         // ONLY at epochs that reach the A4 decision; continuity is the census
         // freshness idiom (`wh_last_loop_ep == n_loop_epochs − 1`), so ANY
         // intervening bypass epoch — datum_failed, gate_withheld, solve_failed,
@@ -1410,7 +1407,7 @@ namespace GnssProcessor {
         std::set<int>            staf_departed; ///< stations currently past the depart edge
         double                   staf_prev_tow = -1.0; ///< dt source for the EWMA alpha
 
-        // --- PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md) INC-0 cross-epoch state.
+        // --- PD-safe DD fold INC-0 cross-epoch state.
         //
         // There is DELIBERATELY no `ddfold_ep_tow` stamp here, unlike the redundancy and
         // admission censuses.  Those seams run pre-assembly, so their numbers must be
@@ -1462,8 +1459,8 @@ namespace GnssProcessor {
         long long pf_epochs_total    = 0;   ///< run-end counter (invariant #4: 0 ⇒ inert)
         bool      pf_empty_logged    = false;  ///< one-shot "armed but pooled nothing" warn latch
 
-        // --- INC-1 PREFIT census, per-epoch scalars ---------------------------
-        // (docs/SPEC_prefit_census_observability.md).  Filled by
+        // --- PREFIT census, per-epoch scalars ---------------------------------
+        // Filled by
         // networkPrefitCensus under network.trace_prefit_census, copied into the
         // epoch-status row by NetworkStashStatus.  ep_pc_rows == 0 means "not
         // computed this epoch" and the census columns stay BLANK — the same
@@ -1535,7 +1532,7 @@ namespace GnssProcessor {
         // resets, and no-information harvest skips (V̂ ≥ P_pred + f²).
         long long shdev_warm_total = 0, shdev_cold_total = 0,
                   shdev_slip_resets_total = 0, shdev_nodata_total = 0;
-        // Iono-2 v3 de-mean (SPEC_iono2_mechB_v3): epochs the global de-mean
+        // Iono-2 v3 de-mean: epochs the global de-mean
         // applied, station-mean removals, and Σ|g| for the run-end mean |g|.
         long long shdev_demean_epochs_total = 0, shdev_demean_sta_total = 0;
         double    shdev_demean_abs_g_sum = 0.0;
@@ -1543,7 +1540,7 @@ namespace GnssProcessor {
         // of erasing.  shdev_slip_resets_total then counts actual erases only.
         long long shdev_d5_keeps_total = 0;
 
-        // --- IONO-DEWEIGHT RELEASE HYGIENE (docs/SPEC_deweight_release_hygiene.md) ---
+        // --- IONO-DEWEIGHT RELEASE HYGIENE ---
         // Every member below stays EMPTY / at its sentinel unless
         // ctx.knobs.dw_hygiene_on, so an OFF run allocates nothing.  None of it is
         // serialized: the gate itself is not snapshotted either (a resumed leg starts
@@ -1560,32 +1557,30 @@ namespace GnssProcessor {
         // own post-solve detections through carry_innov_pending.
         std::set<std::pair<int, std::string>> dw_release_pending;
 
-        // --- RAIM POOL RE-HOST (docs/SPEC_raim_pool_rehost.md) ---------------------
-        // (station index, ambiguity key) flagged by the re-hosted post-fit RAIM screen at
-        // SB_RAIM, queued for the NEXT epoch's slip funnel.  THIRD instance of the
-        // deferral pattern documented for `dw_release_pending` directly above, and it is
-        // deferred for the same structural reason: the funnel `carry_slipped_ambs` is a
+        // --- RAIM POOL RE-HOST ---------------------
+        // (station index, ambiguity key) flagged by the re-hosted post-fit RAIM screen
+        // at SB_RAIM, queued for the NEXT epoch's slip funnel — the same deferral as
+        // `dw_release_pending` above, for the same reason: `carry_slipped_ambs` is a
         // per-epoch driver local whose load-bearing consumer (buildCarryDdPriors, at
-        // SB_DDBUILD) has already run by the time RAIM detects post-solve at SB_RAIM.
+        // SB_DDBUILD) has already run by the time RAIM detects post-solve.
         //
-        // WHY A QUEUE AND NOT THE SEAM'S EXISTING ACTIONS.  Neither of the two mutations
-        // networkPostFitRaim already performs can move the Card-4 solve:
-        //   - `local_carry.erase` drops a phase-leveling carry entry whose only solve-side
-        //     consumer is the PASS-B inject, itself under `!carry_invariant` — and on this
-        //     lineage the map it erases from is empty anyway.
-        //   - `markAmbiguityPendingReseed` DOES reach a live, ungated reader (the PASS-B
-        //     state seed), but rewriting x_lin is BOOKKEEPING for the network: the kernel
-        //     solves corrections about the linearization point with no write-back, so
-        //     b_red = u_s − N_sr N_rr⁻¹ u_r is algebraically unchanged.  That identity is
-        //     proved for the sibling mechanism in SPEC_deweight_release_hygiene §7.2.
-        // The funnel is the only path that actuates: it membership-excludes the arc from
-        // A_old so its chord is re-tapped from a diffuse prior.
+        // A queue rather than the seam's own actions, because neither mutation
+        // networkPostFitRaim performs can move the solve:
+        //   - `local_carry.erase` drops a phase-leveling carry entry whose only
+        //     solve-side consumer is the PASS-B inject, itself under
+        //     `!carry_invariant` — and on this lineage that map is empty anyway.
+        //   - `markAmbiguityPendingReseed` does reach a live reader (the PASS-B state
+        //     seed), but rewriting x_lin is BOOKKEEPING here: the kernel solves
+        //     corrections about the linearization point with no write-back, so
+        //     b_red = u_s − N_sr N_rr⁻¹ u_r is algebraically unchanged.
+        // Only the funnel actuates — it membership-excludes the arc from A_old so its
+        // chord re-taps from a diffuse prior.
         //
-        // Drained into `carry_slipped_ambs` and deliberately NOT into `carry_slipped_raw`:
-        // raw means a RAW-OBSERVABLE step, which the Iono-2 v3k d5_keep erase classifier
-        // and the WL-3 MW-row slip-skip both read.  A post-fit residual consensus is
-        // estimation-side evidence — exactly like the D5 innovation gate, which also
-        // drains into the funnel only.
+        // Drained into `carry_slipped_ambs`, deliberately NOT `carry_slipped_raw`:
+        // raw means a RAW-OBSERVABLE step, which the deviation-erase classifier and
+        // the MW-row slip-skip both read.  A post-fit residual consensus is
+        // estimation-side evidence, like the D5 innovation gate, which also drains
+        // into the funnel only.
         //
         // Lifetime is bounded to EXACTLY one epoch by an unconditional drain-and-clear at
         // the driver head (standing invariant #1); the drain must stay unconditional even
@@ -1616,7 +1611,7 @@ namespace GnssProcessor {
         /// assembly keeps the admission check inert until it is set.  The eq34 card's
         /// `anchor_age_resume_seed` precedent, same reasoning.
         bool dw_tie_seeded = false;
-        /// INC-3b: consecutive epochs a quarantined LOS has gone with NO harvested
+        /// Consecutive epochs a quarantined LOS has gone with NO harvested
         /// deviation, keyed "STATION|SAT".  `networkShDevVtec` skips its harvest for a
         /// station at weight <= 0 and for a LOS with no local column, so such a LOS can
         /// NEVER produce the statistic the screen needs — and a screen that holds on
@@ -1698,7 +1693,7 @@ namespace GnssProcessor {
         std::vector<double> resume_cpl_census_rel;    // §18.12: per-row max|M − M_d| / max|M_d| at the first harvest
         std::vector<double> resume_cpl_census_rhs;    // §18.12: per-row |Δ Σ M·ŝ_prev| (m) at the first harvest
 
-        // --- redundancy / testability census (docs/SPEC_redundancy_census.md) ---
+        // --- redundancy / testability census ---
         // [snapshot: EXEMPT] Every field here is diagnostic state of a MEASURE-ONLY
         // instrument.  Restoring it would make a resumed leg's stride phase, event
         // rate-limit memory and unobservable-column edges depend on the writer's
@@ -1721,7 +1716,7 @@ namespace GnssProcessor {
         bool      redun_cov_warned    = false; ///< one-shot: armed with no solved covariance to read.
         bool      redun_closure_warned = false;///< one-shot: trace(H) exceeded the free-parameter bound.
 
-        // --- Baarda MDB (docs/SPEC_redundancy_census.md) ----------------
+        // --- Baarda MDB ----------------
         // [snapshot: EXEMPT] — observer state of a MEASURE-ONLY, forward-only
         // instrument, same class as the two censuses above.  Snapshotting an
         // event-holdoff clock would make a diagnostic fingerprint-relevant, which
@@ -1738,7 +1733,7 @@ namespace GnssProcessor {
         std::map<std::string, long long> mdb_event_last;  ///< "station\x1fsat\x1fclass" -> mdb_seq of its last emitted MDB event.
         bool      mdb_join_warned = false;     ///< one-shot: the uncheckable join disagreed with the census.
 
-        // --- M2 v2 carry variance FACTOR (docs/SPEC_carry_vce_apply.md) -------
+        // --- M2 v2 carry variance FACTOR -------
         // [snapshot: EXEMPT, and this one is BLOCKING rather than free] — α² is
         // genuine cross-epoch state that CHANGES THE SOLVE, so leaving it out of
         // the snapshot is not the harmless observer exemption the two censuses
@@ -1756,7 +1751,7 @@ namespace GnssProcessor {
         std::vector<NetworkCarryVceApply::Edge> vce_apply_edges;  ///< the last step's clamp/freeze edges, drained by the emitting seam.
         int  vce_apply_trace_hour = -1;         ///< content-hour bucket of the last apply-trace flush (durability).
 
-        // --- PRIOR-RESIDUAL census (docs/SPEC_prior_residual_census.md) --------
+        // --- PRIOR-RESIDUAL census --------
         // [snapshot: EXEMPT] — observer state of a MEASURE-ONLY, forward-only
         // instrument.  Restoring an event-holdoff clock would make a diagnostic
         // fingerprint-relevant, which is exactly what keeps this card A/B-legal on
@@ -1778,7 +1773,7 @@ namespace GnssProcessor {
         double    ep_prires_max_t    = 0.0; ///< the worst |t| this epoch, over every family and label.
         bool      prires_trunc_warned = false; ///< one-shot: the per-epoch identity buffer overflowed (ladders unaffected; the event stream became a sample).
         int       prires_last_flush_hour = -1; ///< content-hour bucket of the last ladder flush (durability: only health_trace flushes on its own).
-        /// Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14) —
+        /// Constraint-aware global σ̂₀ —
         /// the three epoch-status scalars, stamped by the same emission seam and
         /// gated by the same @ref prires_ep_tow stamp, so an epoch the rider did
         /// not drain leaves them BLANK rather than repeating stale numbers.
@@ -1788,7 +1783,7 @@ namespace GnssProcessor {
         double    ep_s0g_tension = 0.0; ///< Σw·ê² / Σw·v² — THE HEADLINE column.
         int       ep_s0g_flags   = 0;   ///< @c NetworkPriorResidual::GlobalFlag bitmask: in-band degradation, never silent.
 
-        // --- BLOCKFORMAL LOS block census (docs/SPEC_redundancy_census.md) ---------
+        // --- BLOCKFORMAL LOS block census ---------
         // [snapshot: EXEMPT] — observer state of a MEASURE-ONLY, forward-only
         // instrument, the same class as the three censuses above.  Restoring the
         // σ̂₀ accumulator or the event-holdoff clock would make a diagnostic
@@ -1815,7 +1810,7 @@ namespace GnssProcessor {
         // "live counter over dead wiring" failure the blocks above exist to
         // prevent, so those scalars are not carried at all.
 
-        // --- STATION CONGRUENCE screen (docs/SPEC_redundancy_census.md) -------
+        // --- STATION CONGRUENCE screen -------
         // [snapshot: EXEMPT] — same class and same reasoning as the block census
         // above: observer state of a MEASURE-ONLY, forward-only instrument.  A
         // resumed leg restarts the σ̂₀ calibration empty and reports RAW FORMAL for
@@ -1839,7 +1834,7 @@ namespace GnssProcessor {
         bool      s0g_nodata_warned = false;  ///< one-shot: an epoch formed the number with NO data rows at all.
 
         // --- PREFIT census / fuse / birth check / topology / flight recorder ----
-        // (docs/SPEC_prefit_census_observability.md).  [snapshot: EXEMPT] — every
+        // [snapshot: EXEMPT] — every
         // member is observer state of a forward-only instrument (the fuse aside,
         // which reads none of it across epochs).  Restoring a presence map, a
         // topology baseline or an event-holdoff clock would make a diagnostic
@@ -1863,18 +1858,17 @@ namespace GnssProcessor {
         /// NEXT epoch (`network.adm_revet_census`).  Card §1 always named the census
         /// as the detection net; this is the wire from it to the response.
         ///
-        /// Written from the EXCEEDANCE, deliberately upstream of the event-class
-        /// mask and the per-cell holdoff: the census card's own principle is that
-        /// detection must not depend on whether anyone is listening on the other
-        /// side, and a trigger throttled by a diagnostic rate limiter would go
+        /// Written from the EXCEEDANCE, deliberately upstream of the event-class mask
+        /// and the per-cell holdoff: detection must not depend on whether anyone is
+        /// listening, and a trigger throttled by a diagnostic rate limiter would go
         /// quiet exactly when a cell is persistently bad.
         ///
         /// CODE rows only.  A phase row's prefit innovation is arc-specific (it
-        /// carries that arc's ambiguity linearization point) and its station median
-        /// is not a common mode at all — the census card measured 608 of 665 phase
-        /// events on one leg as non-findings — so a phase-driven trigger would be a
-        /// false-positive generator wired to an admission verdict.  It is also the
-        /// same CODE-only-by-principle rule the admission statistic itself obeys.
+        /// carries that arc's ambiguity linearization point) and its station median is
+        /// not a common mode at all — 608 of 665 phase events on one leg measured as
+        /// non-findings — so a phase-driven trigger would wire a false-positive
+        /// generator to an admission verdict.  It is the same CODE-only rule the
+        /// admission statistic itself obeys.
         ///
         /// Per LINE OF SIGHT, not per band: the census's worst is taken over a
         /// satellite's code rows and there is no row -> band map to resolve it
@@ -1909,7 +1903,7 @@ namespace GnssProcessor {
         std::unique_ptr<NetworkAttribFrame> rhs_prev_frame;  ///< the RETAINED previous epoch (null unless retention is on and sized in).
         bool rhs_prev_oversize_logged = false; ///< one-shot: retention disabled for network size.
 
-        // --- datum graph census (docs/SPEC_datum_graph_census.md) -------------
+        // --- datum graph census -------------
         // NOT restored from a state snapshot, deliberately and for the same
         // reason the prefit census's observer state is not: this is forward-only
         // observer state of a MEASURE-ONLY instrument, and persisting it would
@@ -1934,9 +1928,9 @@ namespace GnssProcessor {
     };
 
     /// @internal Service counters, health-window anchors, and B8 flag-rate
-    /// tallies (decomposition INC-4) — verbatim relocation.
+    /// tallies — verbatim relocation.
     struct NetworkServiceCounters {
-        // --- Card Q3, the guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md).
+        // --- Card Q3, the guarded temporal clock anchor.
         // Standing invariant #4: `cta_folded_anchored == 0` on an armed run means the
         // mechanism is INERT no matter how clean the log reads, so every disposition is
         // counted against a denominator.  Trips are split by REASON because the reasons
@@ -2050,7 +2044,7 @@ namespace GnssProcessor {
             std::map<std::string, int>       worst_short;      ///< max per-epoch shortfall
             int epochs = 0;                                    ///< audited (consumed, non-aborted) epochs
         } eq34_pin_audit;
-        // Card 3 SEED-ROUND run tallies (docs/SPEC_eq34_seed_round.md §5).  The
+        // Card 3 SEED-ROUND run tallies.  The
         // card's health assertion is |pin innovation| ≤ λ/2 ALWAYS — max_abs_y
         // above λ_max/2 is a logic error, full stop.  `pins` counts election-side
         // targets (the state existed at election time); `deferred` counts
@@ -2063,7 +2057,7 @@ namespace GnssProcessor {
         long long seed_round_frozen       = 0;   ///< INC-1: targets reused verbatim from eq34_prev_target (frame realized once)
         long long seed_round_target_steps = 0;
         double    seed_round_max_abs_y_m  = 0.0;
-        // INC-2 (§8.5) re-host tallies.  `framed` = re-hosts whose frame step was
+        // INC-2 re-host tallies.  `framed` = re-hosts whose frame step was
         // computed from the new host's own state and therefore stayed SHIFTABLE (the
         // carried PB prior is S-transformed, not marginalized); `cold` = re-hosts
         // INC-2 could not frame (no allocated state — the fold-deferred path), which
@@ -2075,29 +2069,29 @@ namespace GnssProcessor {
         long long seed_round_rehost_framed  = 0;
         long long seed_round_rehost_cold    = 0;
         double    seed_round_rehost_max_step_m = 0.0;
-        // eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md) run tallies —
+        // eq34 reattach hygiene run tallies —
         // every field documented on the struct.  Bumped only when
         // ctx.knobs.anchor_hygiene_on, and reported by the run-end block in
         // filter/NetworkTeardown.cpp.
         NetworkAnchorTallies hyg;
-        // Flicker/gap signal integrity (docs/SPEC_flicker_gap_integrity.md) run
+        // Flicker/gap signal integrity run
         // tallies — every field documented on the struct.  Bumped only when
         // ctx.knobs.sig_integrity_on, and reported by the run-end block in
         // filter/NetworkTeardown.cpp.  `demoted_rows` is summed there from the
         // per-station NetStation::si_rows_demoted counters (the fold runs inside the
         // parallel produce, so the ROW tally cannot live here).
         NetworkSignalIntegrityTallies sig;
-        // Iono-deweight release hygiene (docs/SPEC_deweight_release_hygiene.md) run
+        // Iono-deweight release hygiene run
         // tallies — every field documented on the struct.  Bumped only when
         // ctx.knobs.dw_hygiene_on, and reported by the run-end block in
         // filter/NetworkTeardown.cpp.
         NetworkIonoDwReleaseTallies dwr;
-        /// RAIM pool re-host run-end telemetry (docs/SPEC_raim_pool_rehost.md).  All-zero
+        /// RAIM pool re-host run-end telemetry.  All-zero
         /// unless ctx.knobs.raim_ci_on; the denominators separate "seam never ran" from
         /// "census empty" from "nothing flagged" (standing invariant #4).
         NetworkRaimCiTallies raim_ci;
         // Product-referenced measurement admission
-        // (docs/SPEC_measurement_admission.md) run tallies — every field documented
+        // run tallies — every field documented
         // on the struct.  Bumped only when ctx.knobs.adm_on, and reported by the
         // run-end block in filter/NetworkTeardown.cpp.  Deliberately named `adm` and
         // NOT reachable as `ctx.admission`: that name is already the CB-ADM W6
@@ -2112,15 +2106,15 @@ namespace GnssProcessor {
         double prev_tow = -1.0;
         int    prev_week = -1;
         int    iod = 0;
-        // RTA-3: per-run solution-generation id, minted at the FIRST emit from that
+        // Per-run solution-generation id, minted at the FIRST emit from that
         // epoch's GPS time (deterministic under replay — the id is serialized per
         // epoch; different across live restarts, which first-emit later).  0 = unset.
         uint32_t generation_id = 0;
-        // RTA-5: product-time (s) of the last written S contract line (the deferred v2
+        // Product-time (s) of the last written S contract line (the deferred v2
         // header counts as the first); -1 until the contract writer opens.
         double last_contract_emit_s = -1.0;
         size_t n_emitted = 0, n_skipped = 0, n_gate_withheld = 0, n_runaway_epochs = 0;
-        // RTB-6: operator health-record state (network.health_interval_s > 0).
+        // Operator health-record state (network.health_interval_s > 0).
         double last_health_write_s = -1.0;   // content time of the last health row (s)
         double last_emit_content_s = -1.0;   // content time of the last EMITTED epoch (s)
         int    last_n_present      = 0;      // stations present in the most recent processed epoch
@@ -2132,7 +2126,7 @@ namespace GnssProcessor {
         double health_win_ms_anchor     = 0.0;
         size_t health_win_epochs_anchor = 0;
         size_t n_sigma0_withheld = 0;   // A4/R8: epochs skipped specifically by the σ̂0 withhold ceiling (subset of n_skipped)
-        // Withhold-era release policy (SPEC_withhold_era_release §3) — both-edge era
+        // Withhold-era release policy — both-edge era
         // telemetry per invariant #7.  All zero unless one of the two knobs is armed
         // (the era bookkeeping itself is knob-gated to keep the events CSV
         // byte-identical on OFF paths).
@@ -2145,7 +2139,7 @@ namespace GnssProcessor {
         long long n_wh_free_erases        = 0;  ///< §3b carry entries erased at the withhold branch
         long long n_wh_perconst_exits     = 0;  ///< declared limitation: eras ended by the RTA-10 carve-out publishing (no escalation ran)
 
-        // --- Leveling-carry RETIREMENT census (SPEC_withhold_era_release §8) ---
+        // --- Leveling-carry RETIREMENT census ---
         // Every path that removes a phase-leveling carry entry, counted at its
         // own site, so a run can ATTRIBUTE a fleet-scale carry loss instead of
         // inferring one.  Motivation: §7's promotion refusal rests on the claim
@@ -2294,20 +2288,19 @@ namespace GnssProcessor {
         long long n_cpl_readmit_diverted  = 0;  ///< coupling terms diverted to the departed route by a re-admission window
         long long n_snap_parked_excluded  = 0;  ///< parked entries excluded from written snapshots
 
-        // --- Rung 3 v3: the CARRY-DOMAIN lane observatory ----------------------
-        // (SPEC_lane_slip_response §7.3.)  Measure-only: it computes the lane
-        // response of the free re-level and histograms it.  Nothing is written
-        // back, so an armed run is byte-identical on every solve artifact — that
-        // is deliberate, because the three preceding iterations all died on
-        // unreconciled counters and the |delta| DISTRIBUTION is the number that
+        // --- The CARRY-DOMAIN lane observatory --------------------------------
+        // Measure-only: it computes the lane response of the free re-level and
+        // histograms it, writing nothing back, so an armed run is byte-identical on
+        // every solve artifact.  That is deliberate — the three preceding iterations
+        // all died on unreconciled counters, and the |delta| DISTRIBUTION is what
         // decides whether an apply leg is worth building at all.
         //
         // delta = [C_a(t+)/lam_a - C_b(t+)/lam_b] - [C_a(t-)/lam_a - C_b(t-)/lam_b] - dM
-        // Residual is eps_L(t+) - eps_L(t-) - eps_MW, with eps_MW = 0.351 cyc on
-        // GPS L1/L2 and 0.051 cyc on L2/L5 EWL at sigma_P = 0.3 m.  The carry
-        // frame hypothesis PREDICTS the bulk of |delta| below ~2 cyc; the seed
-        // site's own counters showed 97 % above 25 cyc, which is what a frame
-        // mismatch looks like and is the falsifier to watch for.
+        // Residual is eps_L(t+) - eps_L(t-) - eps_MW, with eps_MW = 0.351 cyc on GPS
+        // L1/L2 and 0.051 cyc on L2/L5 EWL at sigma_P = 0.3 m.  The carry-frame
+        // hypothesis predicts the bulk of |delta| below ~2 cyc; the seed site's own
+        // counters showed 97 % above 25 cyc, which is what a frame mismatch looks
+        // like and is the falsifier to watch for.
         //
         // CLOSURE IDENTITY (invariant #4 — a channel that does not close is a
         // miswire, not a null):
@@ -2337,7 +2330,7 @@ namespace GnssProcessor {
         double    lane_abs_delta_max_cyc = 0.0;///< max |delta| (cycles).
         /// |delta| histogram, bins < 0.1 / 0.25 / 0.5 / 1 / 2 / 5 / 10 / 25 / >= 25 cyc.
         long long n_lane_hist[9]         = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-        // --- §7.6 instrument additions (SPEC_lane_slip_response §7.6) --------
+        // --- §7.6 instrument additions --------
         // (b) band-scoped-only histogram: the one_freed subset of n_lane_hist,
         //     so the vertex-wide distribution is the bin-wise difference and the
         //     two responses (rung-2 contrast) separate.  Closure:
@@ -2369,14 +2362,14 @@ namespace GnssProcessor {
         double    lane_t4_abs_delta_sum_cyc = 0.0;
         double    lane_t4_abs_delta_max_cyc = 0.0;
         long long n_lane_t4_hist[9]      = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-        // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6) — both-edge declaration
+        // QUEUE item 4 R2/R4 — both-edge declaration
         // telemetry (invariant #7) + hygiene accounting.
         long long n_staf_departs          = 0;  ///< R2 depart events (EWMA ratio > threshold)
         long long n_staf_returns          = 0;  ///< R2 return events (hysteresis 0.8×)
         double    staf_max_ratio          = 0.0;///< run-max EWMA ratio to the network median
         long long n_staf_epochs           = 0;  ///< epochs the factor was computed on
         long long n_t3_untestable_cells   = 0;  ///< R4: s_raw==0 cells excluded from T3 opp
-        // LV-6 census (SPEC_level_authority_internal §3) — invariant #4 counters.
+        // LV-6 census — invariant #4 counters.
         long long n_lvlauth_epochs   = 0;       ///< epochs with a FLEET row
         long long n_lvlauth_immature = 0;       ///< LOS skipped at the min_n screen
         double    lvlauth_sum = 0.0;            ///< Σ L_cs (teardown mean)
@@ -2390,7 +2383,7 @@ namespace GnssProcessor {
         // near-null phase-bias soft-anchor recovered it, and total columns anchored.  A run
         // that heals every epoch "succeeds" silently otherwise (the heal-success log is debug).
         size_t n_healed_epochs = 0, n_healed_cols = 0;
-        // Card PA2 — the SAME quantities counted on EVERY fired heal, recovered or not.
+        // The SAME quantities counted on EVERY fired heal, recovered or not.
         // The pair above is success-only, which makes a heal that fires every epoch and
         // never rescues the gate read as "0 healed" — measured on the 305 co-gated arm,
         // which logged a heal-failure withhold on all 6 epochs while reporting
@@ -2402,14 +2395,14 @@ namespace GnssProcessor {
         // the right columns but cannot resolve the residual alone (Card PA's own
         // insufficiency criterion, PA5).
         size_t n_heal_attempt_epochs = 0, n_heal_attempt_cols = 0;
-        // Card KP (network.cb_kaula_prior): epochs on which the admitted-OSB
+        // Epochs on which the admitted-OSB
         // physical-bound prior was folded, and the cumulative column count.
         // Standing invariant #4 — an armed KP run with n_kp_epochs == 0 means the
         // prior never reached a solve (no registered code columns, or the W6 block
         // never ran), which no amount of clean-looking log output would reveal.
         size_t n_kp_epochs = 0, n_kp_cols = 0;
         bool   kp_margin_logged = false;   ///< one-shot latch for the K2 margin check
-        // Card 1b (network.carry_coupling_joint_whiten): #station-epochs whose joint
+        // #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.
         // RXCB-DATUM: zero-mean receiver code-bias prior rows folded over the run
@@ -2425,7 +2418,7 @@ namespace GnssProcessor {
         // byte-identical-A/B trap.  Logged once at run end when the card is armed.
         size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
         long long n_cpl_terms_present = 0, n_cpl_terms_departed = 0, n_cpl_terms_shrunk = 0;
-        // Card 1f (network.carry_coupling_gauge_project) — the ON-path telemetry for the
+        // The ON-path telemetry for the
         // departed-column gauge defect.  `held` counts (constellation,kind) families whose
         // coefficient sum was restored to its HARVEST value against a truncated column;
         // `orphan` counts families whose truncated mass had no present recipient, i.e. the
@@ -2451,7 +2444,7 @@ namespace GnssProcessor {
         /// streak ESCALATIONS to the erase, and flagged arcs with no live carry.
         long long n_relevel_retap_kept = 0, n_relevel_retap_escalated = 0,
                   n_relevel_retap_miss = 0;
-        /// Corroborated retap (SPEC_lane_slip_response §3): keeps that carried
+        /// Corroborated retap: keeps that carried
         /// positive raw-observable continuity evidence / refusals because the
         /// raw level STEPPED / refusals because the arc was UNMEASURED (no
         /// predecessor or the qualification pass did not run).  Both refusal
@@ -2506,7 +2499,7 @@ namespace GnssProcessor {
         // the registration site AFTER the census window (implicitly quarantined).
         std::size_t n_cb_admitted = 0, n_cb_quarantined_census = 0, n_cb_late_quarantined = 0;
 
-        // Card H2 (docs/SPEC_beidou_w6_datum.md §5) — the measurable cost of the
+        // The measurable cost of the
         // deliberate CB-ADM granularity seam.  The phase co-gate lives at STATE
         // ALLOCATION and keys off the run-latched CENSUS-admitted set, while the
         // CODE column follows PER-EPOCH >=2-station coverage; per-epoch phase-state
@@ -2520,7 +2513,7 @@ namespace GnssProcessor {
         // revisit the seam — with data, not by re-litigating the ruling.
         std::size_t n_cbadm_phase_orphan_key_epochs = 0;
 
-        // Card DG6 (docs/SPEC_beidou_w6_datum.md §2) — rank-gate calibration
+        // Rank-gate calibration
         // telemetry.  The gate is an EXACT-equality test that throws in BOTH
         // directions, so "withheld" alone hides which failure happened:
         // UNDER-specified (observed > declared — a missing datum constraint, the
@@ -2581,7 +2574,7 @@ namespace GnssProcessor {
         double we_ci_s0_code_max = 0.0;     ///< max code-pool σ̂0 observed (trigger-calibration telemetry)
         double we_ci_s0_iono_max = 0.0;     ///< max iono-pool σ̂0 observed (trigger-calibration telemetry)
 
-        // R0 (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5): run-end counters
+        // R0: run-end counters
         // for the within-epoch tier's three response classes.  Before this, only
         // the WITHHOLD had a first-class run counter (n_sigma0_withheld); the
         // refloats and exclusions existed solely as per-epoch T2 event rows, so a
@@ -2617,7 +2610,7 @@ namespace GnssProcessor {
         double fc_wall_ms = 0.0;            ///< run-total wall inside the tick body (perf budget: §7.3 ≤ 50 ms/tick @305)
         double fc_wall_ms_max = 0.0;        ///< slowest single tick (the budget is a MAX bound, not a mean)
 
-        // --- redundancy / testability census (docs/SPEC_redundancy_census.md) ---
+        // --- redundancy / testability census ---
         // Standing invariant #4 in its statistical form.  The failure mode this
         // card must be able to disprove is "the sweep ran and found nothing",
         // which is indistinguishable from "the sweep never ran" without
@@ -2656,13 +2649,13 @@ namespace GnssProcessor {
         std::string redun_max_cold_id;          ///< its (station/sat/class @tow) identity.
         double    redun_wall_ms = 0.0;          ///< run-total wall inside the census seam (the cost claim).
 
-        /// Baarda reliability / MDB tallies (docs/SPEC_redundancy_census.md).
+        /// Baarda reliability / MDB tallies.
         /// Every field documented on the struct; reported by @c networkMdbReport,
         /// which lives next to the aggregation that produced the numbers so the
         /// counters and the sentences interpreting them cannot drift apart.
         NetworkMdbTallies mdb;
 
-        /// BlockFormal LOS block census tallies (docs/SPEC_redundancy_census.md).
+        /// BlockFormal LOS block census tallies.
         /// Named `bb`, NOT `block`: `ctx.counters.bb` is the run-total POD and
         /// `ctx.carry.bb` is the accumulator that produced it — two different
         /// objects with one short name each, deliberately spelled the same so a
@@ -2671,7 +2664,7 @@ namespace GnssProcessor {
         /// one counts BLOCKS, and their denominators are not interchangeable.
         NetworkBlockBaardaTallies bb;
 
-        /// Station congruence screen tallies (docs/SPEC_redundancy_census.md).
+        /// Station congruence screen tallies.
         /// Named `cg` on the same convention as `bb`: `ctx.counters.cg` is the
         /// run-total POD and `ctx.carry.cg` is the accumulator that produced it.
         /// It counts STATION-EPOCHS, where `bb` counts BLOCKS and the redundancy
@@ -2679,7 +2672,7 @@ namespace GnssProcessor {
         /// interchangeable and must never be divided into one another.
         NetworkCongruenceTallies cg;
 
-        // --- PRIOR-RESIDUAL census (docs/SPEC_prior_residual_census.md) --------
+        // --- PRIOR-RESIDUAL census --------
         // Standing invariant #4: THE LADDER IS THE TELEMETRY.  The per-family
         // ladders live in the accumulator (NetworkPriorResidual) and are read
         // straight out of it at run end; these are the seam-level counters that
@@ -2698,7 +2691,7 @@ namespace GnssProcessor {
         std::string prires_max_id;              ///< its (family/label/station/sat/signal @tow) identity.
         double    prires_wall_ms = 0.0;         ///< run-total wall inside the emission seam (the §5 cost claim; the per-row addRow cost rides the carry harvests and is not separable).
 
-        // --- CONSTRAINT-AWARE GLOBAL σ̂₀ (docs/SPEC_prior_residual_census.md §14) -
+        // --- CONSTRAINT-AWARE GLOBAL σ̂₀ -
         // Standing invariant #4 for the rider.  The four SUMS live in the
         // accumulator (they are the statistic); these are the seam-level
         // counters that say whether the wiring executed and in which DEGRADED
@@ -2717,8 +2710,7 @@ namespace GnssProcessor {
         double    s0g_max_tension_tow = -1.0;   ///< its GPS TOW (the cliff's timestamp, for §6 gate 3).
 
         /// Prefit census / structural fuse / seed-birth tripwire / topology
-        /// ledger / flight-recorder tallies
-        /// (docs/SPEC_prefit_census_observability.md).  Every field documented on
+        /// ledger / flight-recorder tallies.  Every field documented on
         /// the struct; reported by the run-end block in filter/NetworkTeardown.cpp.
         /// Standing invariant #4 in its sharpest form for this card: the census
         /// is a TRIPWIRE, and a tripwire that never fires looks exactly like a
@@ -2726,7 +2718,7 @@ namespace GnssProcessor {
         /// `rec_consults` separate them.
         NetworkPrefitCensusTallies pc;
 
-        /// Datum graph census run tallies (docs/SPEC_datum_graph_census.md).
+        /// Datum graph census run tallies.
         /// Standing invariant #4 with an extra twist this card owns: the EXPECTED
         /// reading of tier 1 on a healthy global roster is k = 1 everywhere with
         /// zero predictions, which is byte-for-byte what a seam that never ran
@@ -2734,7 +2726,7 @@ namespace GnssProcessor {
         /// teardown line prints both.
         NetworkDatumGraphTallies dg;
 
-        // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) run tallies.
+        // --- PD-safe invariant-DD fold run tallies.
         // INC-0 is ALWAYS-ON and solve-neutral: the counters are pure reads of a
         // factorization the fold already computed.  They exist because the branch
         // they observe — `M := 0` on a non-PD Pᶻ+B — had NO counter, NO log and NO
@@ -2795,7 +2787,7 @@ namespace GnssProcessor {
                                     const std::vector<NetStation>& stations);
 
     class NetworkClockEmitRebase;   // fwd: include/products/NetworkClockEmitRebase.hpp
-    // Resume FRAME restore (§18.10): both seams take the CLK-R held-frame engine
+    // Resume FRAME restore: both seams take the CLK-R held-frame engine
     // (a runNetwork local) so its A_c / per-sat baselines travel with the snapshot.
     // nullptr ⇒ the engine's frame is neither captured nor restored.
     void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
@@ -2861,8 +2853,7 @@ namespace GnssProcessor {
                                     double pl_now_s, double dt, bool within_epoch_armed);
 
     /**
-     * @brief Card LV-5 — reduce the rx-CB de-mean μ WITHIN the epoch
-     *        (docs/SPEC_level_information_budget.md §12).
+     * @brief Card LV-5 — reduce the rx-CB de-mean μ WITHIN the epoch.
      *
      * Runs SERIALLY between PASS A and PASS B.  Both terms of every carry
      * innovation are already known at that point — the carried absolute posterior

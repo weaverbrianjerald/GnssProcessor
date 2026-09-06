@@ -122,19 +122,15 @@ bool Application::initLoggingAndConfig() {
             log_manager_.setLoggerLevels(lc.per_logger_levels);
 
             // ENABLED-BUT-SILENCED census.  `enable_<logger>` and
-            // `levels.<logger>` are independent, and on an inherited config
-            // chain they routinely come from DIFFERENT files: a child that
-            // flips `enable_ambiguity_resolver: true` inherits a
-            // `levels.ambiguity_resolver: "warn"` from a base it never reads,
-            // and the run produces a 0-BYTE log file with no diagnostic.  The
-            // author's stated intent ("give me this logger") is silently
-            // defeated by a level they did not set.
-            //
-            // Measured cost of the silence: an ungated-AR investigation
-            // (docs/SPEC_clock_temporal_anchor.md §8.11) burned a 7-minute
-            // producer arm on exactly this, concluded from the empty file that
-            // the logger was BROKEN, and wrote that wrong conclusion into a
-            // SPEC.  One line at startup makes it self-diagnosing.
+            // `levels.<logger>` are independent, and on an inherited config chain
+            // they routinely come from DIFFERENT files: a child flipping
+            // `enable_ambiguity_resolver: true` inherits a
+            // `levels.ambiguity_resolver: "warn"` from a base it never reads, and
+            // the run produces a 0-byte log with no diagnostic.  The author's
+            // intent ("give me this logger") is defeated by a level they did not
+            // set.  That silence has already cost a 7-minute producer arm, which
+            // read the empty file as a BROKEN logger.  One line at startup makes
+            // it self-diagnosing.
             const auto level_name = [](LogLevel l) -> const char* {
                 switch (l) {
                     case LogLevel::Trace: return "trace";

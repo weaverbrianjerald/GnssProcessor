@@ -5,10 +5,9 @@
  * @file PppModel.hpp
  * @brief PPP/PPP-RTK measurement modelling and correction utilities.
  *
- * The PppModel encapsulates geometry, atmospheric models and GNSS corrections
- * required to form modeled observations (code and carrier phase) used by the
- * estimator. It depends on configuration, product data, a RINEX parser and the
- * StateManager for retrieving/setting state-related information.
+ * Bundles the geometry, atmospheric models and GNSS corrections needed to form
+ * modeled code and carrier-phase observations for the estimator, over config,
+ * product data, a RINEX parser and the StateManager.
  */
 
 #include "config/GnssConfig.hpp"
@@ -35,17 +34,11 @@
 
 namespace GnssProcessor {
 
-    // -----------------------------------------------------------------------
-    // Satellite geometry result bundle
-    // -----------------------------------------------------------------------
-
     /**
-     * @brief Groups all output values produced by a single call to
-     *        Model::Geometry::computeSatelliteGeometry().
+     * @brief Every output of one Model::Geometry::computeSatelliteGeometry() call.
      *
-     * Avoids passing 15+ individual references/values through the processing
-     * pipeline and makes the interface between computeModels() and the
-     * observation-processing helpers self-documenting.
+     * Keeps 15+ separate references out of the pipeline and makes the
+     * computeModels() / observation-helper interface self-documenting.
      */
     struct SatGeometry {
         Eigen::Vector3d sat_pos  = Eigen::Vector3d::Zero();
@@ -68,22 +61,15 @@ namespace GnssProcessor {
         bool   broadcast_only    = false;   ///< Clock is broadcast-grade (metre level) → code-only (phase dropped).
     };
 
-    // -----------------------------------------------------------------------
-    // PppModel
-    // -----------------------------------------------------------------------
-
     /**
      * @class PppModel
-     * @brief High-level PPP model that computes corrected observations and delays.
+     * @brief Computes corrected observations and delays for PPP.
      *
-     * Responsibilities:
-     *  - Combine geometry and correction models (satellite orbits/clocks, tides, loading).
-     *  - Apply troposphere and ionosphere models and compute iono-free combinations.
-     *  - Provide helpers for GLONASS frequency rescaling and signal selection.
-     *
-     * PppModel is intended to be used by measurement processing code which
-     * supplies RINEX observations and a current PPP state; the model returns
-     * per-observation modeled values and ancillary diagnostics.
+     * Combines geometry and correction models (orbits/clocks, tides, loading),
+     * applies troposphere and ionosphere models with their iono-free
+     * combinations, and provides GLONASS rescaling and signal-selection helpers.
+     * Callers supply RINEX observations plus the current PPP state and get back
+     * per-observation modeled values and diagnostics.
      */
     class PppModel {
     public:
@@ -100,10 +86,10 @@ namespace GnssProcessor {
             const RinexParser& rinex_parser, StateManager& state_manager);
 
         /**
-         * @brief Initialize a fresh PPP state structure from configuration defaults.
+         * @brief Seed a fresh PppState from configuration defaults.
          *
-         * Sets initial position, clock, troposphere and ionosphere entries in \p state
-         * to suitable defaults (and initializes ambiguity container if required).
+         * Sets position, clock, troposphere and ionosphere entries, and the
+         * ambiguity container where required.
          *
          * @param state Output PppState to initialize.
          */
@@ -112,22 +98,18 @@ namespace GnssProcessor {
         /**
          * @brief Compute modeled observations for a set of RINEX observations.
          *
-         * For each input observation this routine computes satellite geometry,
-         * applies clock/orbit/bias/troposphere/ionosphere corrections and fills
-         * the output vector \p modeled_obs with modeled observables ready for
-         * residual formation against measured values.
+         * Computes satellite geometry and applies clock, orbit, bias,
+         * troposphere and ionosphere corrections, filling @p modeled_obs with
+         * observables ready for residual formation.
          *
-         * @param observations Vector of RINEX observation records for the epoch.
-         * @param state Current PPP state used for geometry and corrections (will not be modified).
-         * @param modeled_obs Output vector filled with modeled observations (one entry per processed observable).
-         * @param drop_reasons Optional per-satellite drop-reason map.  When
-         *        non-null, every satellite that fails to make it into
-         *        @p modeled_obs gets an entry naming the reason
-         *        (BelowMask / NoProduct / NoModel) so callers (notably the
-         *        satellite-status trace logger) can surface actionable
-         *        failure modes instead of lumping every drop into a single
-         *        bucket.  Pass @c nullptr if drop tracking isn't needed.
-         * @return true if computation succeeded for at least one observation; false on catastrophic failure.
+         * @param observations RINEX observation records for the epoch.
+         * @param state Current PPP state (not modified).
+         * @param modeled_obs Output, one entry per processed observable.
+         * @param drop_reasons Optional map naming why each dropped satellite
+         *        failed (BelowMask / NoProduct / NoModel), so callers such as the
+         *        satellite-status trace can distinguish failure modes instead of
+         *        one undifferentiated bucket.  nullptr disables tracking.
+         * @return true if at least one observation succeeded.
          */
         bool computeModels(const std::vector<RinexObservation>& observations,
                            PppState& state,
@@ -137,17 +119,15 @@ namespace GnssProcessor {
         /**
          * @brief Compute ionospheric delay for a single observation path.
          *
-         * Uses the internal Ionosphere model (or Klobuchar fallback) to estimate
-         * the slant ionospheric delay (meters) for the specified satellite/receiver geometry
-         * and signal frequency type.
+         * Uses the internal Ionosphere model, or the Klobuchar fallback.
          *
          * @param time GNSS time of the observation.
-         * @param rx_pos Receiver ECEF position (meters).
-         * @param sat_pos Satellite ECEF position (meters).
-         * @param freq_type Frequency or signal identifier string (e.g., "L1", "C1C").
-         * @param system GNSS system enumeration (GPS, GLONASS, Galileo, etc.).
-         * @param measurements Map of measurement code/phase values (if model requires observed values).
-         * @return Estimated ionospheric delay along the ray path in meters.
+         * @param rx_pos Receiver ECEF position (m).
+         * @param sat_pos Satellite ECEF position (m).
+         * @param freq_type Frequency or signal identifier (e.g. "L1", "C1C").
+         * @param system GNSS system.
+         * @param measurements Observed code/phase values, if the model needs them.
+         * @return Slant ionospheric delay along the ray path (m).
          */
         double computeIonosphericDelay(const GnssTime& time, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos, const std::string& freq_type,
@@ -156,15 +136,14 @@ namespace GnssProcessor {
         /**
          * @brief Rescale GLONASS observation values to a common frequency reference.
          *
-         * GLONASS uses frequency-division multiple access; this helper rescales
-         * the raw measurement to the nominal frequency reference expected by the
-         * rest of the processing chain.
+         * GLONASS is FDMA, so raw measurements are rescaled to the nominal
+         * frequency reference the rest of the chain expects.
          *
-         * @param observed_data Raw observed value (meters for code/phase) to rescale.
-         * @param freq_type Frequency identifier string (e.g., "L1", "L2").
-         * @param system GNSS system (should be GLONASS for valid rescaling).
-         * @param satellite Satellite identifier string (e.g., "R01").
-         * @return Rescaled measurement in meters.
+         * @param observed_data Raw observed value (m).
+         * @param freq_type Frequency identifier (e.g. "L1", "L2").
+         * @param system GNSS system; must be GLONASS to rescale.
+         * @param satellite Satellite identifier (e.g. "R01").
+         * @return Rescaled measurement (m).
          */
         double rescaleGlonassObservation(double observed_data, const std::string& freq_type,
             System system, const std::string& satellite) const;
@@ -178,14 +157,14 @@ namespace GnssProcessor {
         /**
          * @brief Compute ionosphere-free (LC) combination from two signals.
          *
-         * Produces the standard ionosphere-free linear combination of two frequency
-         * observations (e.g., L1/L2 or C1C/C2W), returning the combined observable in meters.
+         * The standard iono-free linear combination of two frequencies
+         * (e.g. L1/L2 or C1C/C2W).
          *
-         * @param measurements Map of measurement name -> value (meters).
-         * @param system GNSS system of the satellite producing the measurements.
-         * @param signal1 First signal identifier (string key present in \p measurements).
-         * @param signal2 Second signal identifier (string key present in \p measurements).
-         * @return Ionosphere-free combined observable value in meters.
+         * @param measurements Measurement name -> value (m).
+         * @param system GNSS system of the satellite.
+         * @param signal1 First signal identifier, a key in @p measurements.
+         * @param signal2 Second signal identifier, a key in @p measurements.
+         * @return Combined observable (m).
          */
         double computeIonoFreeCombination(const std::map<std::string, double>& measurements,
             System system, const std::string& signal1, const std::string& signal2) const;
@@ -205,19 +184,17 @@ namespace GnssProcessor {
         /**
          * @brief Enable the phase wind-up diagnostic CSV trace.
          *
-         * Convenience method that delegates to the internal Antenna /
-         * GnssCorrections instance.  Call once at startup when
-         * logging.enable_windup_trace is set.
+         * Call once at startup when logging.enable_windup_trace is set.
          *
          * @param log_dir Directory where windup_trace.csv will be created.
-         * @return True if the trace file was opened successfully.
+         * @return True if the trace file opened successfully.
          */
         bool enableWindUpTracing(const std::filesystem::path& log_dir) {
             return antenna_.enableWindUpTracing(log_dir);
         }
 
         /// @brief Arm the per-receiver phase wind-up census.  Telemetry only —
-        ///        arming it cannot move a byte of the solve.
+        ///        it cannot move a byte of the solve.
         void enableWindUpCensus(double wu_gap_s, double carry_gap_s) {
             antenna_.enableWindUpCensus(wu_gap_s, carry_gap_s);
         }
@@ -225,7 +202,7 @@ namespace GnssProcessor {
         const GnssCorrections::WindUpCensus& windUpCensus() const {
             return antenna_.windUpCensus();
         }
-        /// @brief The accumulator-restart ledger (§10.4 response drain).
+        /// @brief The accumulator-restart ledger.
         const std::map<std::string, GnssCorrections::WuRestart>& wuRestarts() const {
             return antenna_.wuRestarts();
         }
@@ -233,13 +210,11 @@ namespace GnssProcessor {
         void clearWuRestarts() { antenna_.clearWuRestarts(); }
 
         /**
-         * @brief Check whether the BIA product has an entry for a satellite+signal pair.
-         *
-         * Delegates to GnssCorrections::hasBiasEntry().
+         * @brief Whether the BIA product covers this satellite+signal pair.
          *
          * @param satellite Satellite identifier (e.g. "G01").
          * @param signal    RINEX observation code (e.g. "C7Q").
-         * @return True if BIA coverage exists for the pair.
+         * @return True if BIA coverage exists.
          */
         bool hasBiasEntry(const std::string& satellite, const std::string& signal) const {
             return gnss_corrections_.hasBiasEntry(satellite, signal);
@@ -254,14 +229,13 @@ namespace GnssProcessor {
         /**
          * @brief Update the GLONASS FDMA frequency-slot map (satellite → channel k).
          *
-         * Mirrors the constructor's one-shot seed from the RINEX "GLONASS SLOT /
-         * FRQ #" header, but for the real-time path where slot assignments arrive
-         * incrementally from the broadcast stream (RTCM 1020 DF039 / SBF GLONav).
-         * Forwards to @c PppUtils so per-satellite GLONASS wavelengths resolve
-         * from the live channel assignments instead of the hard-coded default
-         * table.  Idempotent; safe to call whenever fresh ephemeris arrives.
+         * The real-time counterpart of the constructor's one-shot seed from the
+         * RINEX "GLONASS SLOT / FRQ #" header, for slots arriving incrementally
+         * from the broadcast stream (RTCM 1020 DF039 / SBF GLONav).  Lets
+         * per-satellite wavelengths resolve from live assignments rather than the
+         * hard-coded default table.  Idempotent.
          *
-         * @param slots Map of GLONASS satellite id ("R01") to FDMA channel k (-7..+6).
+         * @param slots GLONASS satellite id ("R01") -> FDMA channel k (-7..+6).
          */
         void setGlonassSlots(const std::map<std::string, int>& slots) {
             ppp_utils_.setGlonassSlots(slots);
@@ -270,10 +244,9 @@ namespace GnssProcessor {
         /**
          * @brief GLONASS FDMA channel k for a satellite, from the SEEDED slot map.
          *
-         * Delegates to the model's own @c PppUtils, which @c setGlonassSlots has
-         * populated from the RINEX header / live broadcast — so callers that hold
-         * only a @c const @c PppModel& (e.g. StateInitializer) resolve the true
-         * current channel rather than their own un-seeded default table.
+         * Reads the map @ref setGlonassSlots populated, so callers holding only a
+         * const PppModel& (e.g. StateInitializer) get the true current channel
+         * instead of their own un-seeded default table.
          *
          * @param satellite GLONASS satellite id ("R07").
          * @return Channel k in [-7,+6], or -999 if the slot is unknown.
@@ -283,13 +256,11 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Check whether the receiver antenna has ATX coverage for a signal.
-         *
-         * Delegates to Antenna::hasReceiverAtxEntry().
+         * @brief Whether the receiver antenna has ATX coverage for a signal.
          *
          * @param signal RINEX observation code (e.g. "L5Q").
          * @param system GNSS system of the observation.
-         * @return True if the receiver antenna model has PCO data for this signal.
+         * @return True if the antenna model has PCO data for this signal.
          */
         bool hasReceiverAtxEntry(const std::string& signal, System system) const {
             return antenna_.hasReceiverAtxEntry(signal, system);
@@ -298,11 +269,10 @@ namespace GnssProcessor {
         /**
          * @brief Whether the RINEX receiver antenna type matched an ATX model entry.
          *
-         * Delegates to @c Antenna::hasReceiverAntennaMatch().  False means every
-         * receiver PCO/PCV correction is silently zero for this station's carrier
-         * phase; the network driver surfaces this as a startup warning and can
+         * False means every receiver PCO/PCV correction is silently zero for this
+         * station's carrier phase.  The network driver warns at startup and can
          * withhold the station from phase-bias emission
-         * (@c network.phase_bias_exclude_unmatched_antenna).
+         * (network.phase_bias_exclude_unmatched_antenna).
          *
          * @return True iff an ATX entry matches the receiver antenna type.
          */
@@ -314,14 +284,13 @@ namespace GnssProcessor {
          * @brief Whether the receiver antenna resolved only via the always-on
          *        type-preserving radome→NONE fallback (Tier 1).
          *
-         * Delegates to @c Antenna::receiverAntennaViaRadomeFallback().  True
-         * means the station's receiver PCO/PCV comes from the radome-agnostic
-         * "NONE" calibration of the same physical antenna because its specific
-         * radome code is uncalibrated (standard IGS/EPN practice, mm-level) —
-         * the network driver surfaces this as a single startup diagnostic.
+         * True means the PCO/PCV comes from the radome-agnostic "NONE"
+         * calibration of the same physical antenna because the specific radome
+         * code is uncalibrated — standard IGS/EPN practice, mm-level.  The
+         * network driver reports it as a startup diagnostic.
          *
-         * @param out_detail [out,optional] Human-readable substitution detail; may be nullptr.
-         * @return True iff the receiver antenna matched only through radome→NONE.
+         * @param out_detail [out,optional] Human-readable substitution detail.
+         * @return True iff the antenna matched only through radome→NONE.
          */
         bool receiverAntennaViaRadomeFallback(std::string* out_detail = nullptr) const {
             return antenna_.receiverAntennaViaRadomeFallback(out_detail);
@@ -331,14 +300,12 @@ namespace GnssProcessor {
          * @brief Check whether both satellite and receiver ATX entries
          *        are fully populated for a (sat, signal) pair.
          *
-         * Forwards to @c Antenna::hasFullAtxCoverage.  Used by the AR
-         * pipeline to gate WL/NL constraints on signals lacking strict
-         * ATX coverage when the user enables
-         * @c require_atx_coverage_for_ar.
+         * The AR pipeline uses this to gate WL/NL constraints on signals lacking
+         * strict ATX coverage when require_atx_coverage_for_ar is set.
          *
          * @param satellite Satellite identifier (e.g. "G05").
          * @param signal    RINEX-3 observation code (e.g. "L5Q").
-         * @param system    GNSS system enum.
+         * @param system    GNSS system.
          * @return True iff both sat and rx have finite PCO and PCV.
          */
         bool hasFullAtxCoverage(const std::string& satellite,
@@ -348,13 +315,11 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Check whether the ATX correction for a (sat, signal) is
-         *        being computed via the frequency-fallback substitution
-         *        chain rather than from an exact entry on both sides.
+         * @brief Whether a (sat, signal) ATX correction comes from the
+         *        frequency-fallback chain rather than exact entries on both sides.
          *
-         * Forwards to @c Antenna::wasAtxSubstituted.  Used by the AR-side
-         * gate (@c restrict_ar_for_substituted_atx) and the per-ambiguity
-         * process noise loosening logic (@c loosen_amb_q_for_substituted_atx).
+         * Read by the AR gate (restrict_ar_for_substituted_atx) and the
+         * per-ambiguity process-noise loosening (loosen_amb_q_for_substituted_atx).
          */
         bool wasAtxSubstituted(const std::string& satellite,
                                 const std::string& signal,
@@ -373,17 +338,13 @@ namespace GnssProcessor {
         /**
          * @brief Inject the GIM used for the higher-order ionosphere correction.
          *
-         * The pointer is held non-owning; the @c GlobalIonosphereMap
-         * lifetime is managed by @c Application (post-processing) or by
-         * the baseline / real-time drivers.  Pass @c nullptr to disable
-         * the correction (returns 0 m from
-         * @c computeHigherOrderIonoCorrection regardless of the config
-         * toggle).
+         * Non-owning; the GlobalIonosphereMap lifetime belongs to Application or
+         * the baseline / real-time drivers.  nullptr disables the correction, so
+         * computeHigherOrderIonoCorrection returns 0 m whatever the config says.
+         * Idempotent, and inert unless
+         * model_corrections.enable_higher_order_ionosphere is true.
          *
-         * Safe to call multiple times.  Idempotent.  Has no effect unless
-         * @c model_corrections.enable_higher_order_ionosphere is true.
-         *
-         * @param gim Pointer to a loaded GIM, or @c nullptr.
+         * @param gim Loaded GIM, or nullptr.
          */
         void setGim(const GlobalIonosphereMap* gim) { gim_ = gim; }
 
@@ -391,20 +352,15 @@ namespace GnssProcessor {
          * @brief Inject a non-owning SSR-correction store override (DI seam for
          *        the PPP-RTK closed-loop harness).
          *
-         * Forwards to the internal @c Model::Geometry (SSR clock + orbit overlay)
-         * and the model's own @c GnssCorrections.  Pass @c nullptr (the default
-         * state) to use the process-wide singleton — every non-harness caller is
-         * byte-identical.  The network closed-loop consumer points this at the
-         * producer's OWNED store so a held-out station consumes the network's
-         * freshly-emitted satellite clock without polluting global state.
+         * Routes both the orbit and clock overlays, via @ref setSsrOrbitStore and
+         * @ref setSsrClockStore.  nullptr (the default) uses the process-wide
+         * singleton, so every non-harness caller is byte-identical.  The network
+         * closed-loop consumer points this at the producer's OWNED store, letting
+         * a held-out station consume freshly-emitted satellite clocks without
+         * polluting global state.
          *
-         * Delegates to @ref setSsrOrbitStore + @ref setSsrClockStore (RTA-8:
-         * the two overlays are independently routable); this coupled form is
-         * retained for every pre-split caller — notably the closed-loop
-         * harness — and behaves exactly as before.
-         *
-         * @param store Non-owning store pointer (must outlive this model) or
-         *        @c nullptr for the singleton.
+         * @param store Non-owning store pointer (must outlive this model), or
+         *        nullptr for the singleton.
          */
         void setSsrStore(const SsrCorrectionStore* store) {
             setSsrOrbitStore(store);
@@ -412,40 +368,34 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief RTA-8: route ONLY the SSR ORBIT overlay at @p store.
+         * @brief Route ONLY the SSR ORBIT overlay at @p store.
          *
-         * Forwards to @c Model::Geometry::setSsrOrbitStore (the RAC-delta
-         * application in @c getSatellitePV).  The clock path — geometry's
-         * internal @c GnssCorrections and the model's own @c gnss_corrections_
-         * — keeps its current routing.  This is how the standalone
-         * network-consumer wiring keeps orbit corrections on the external RTS
-         * stream (singleton) while clocks come from the injected
-         * network-product store
-         * (@c processing.network_consumer.orbit_source = "external").
+         * Hits the RAC-delta application in Geometry::getSatellitePV; the clock
+         * path keeps its current routing.  This is how the standalone
+         * network-consumer wiring keeps orbits on the external RTS stream
+         * (singleton) while clocks come from the injected network-product store
+         * (processing.network_consumer.orbit_source = "external").
          *
-         * @param store Non-owning store pointer (must outlive this model) or
-         *        @c nullptr for the singleton.
+         * @param store Non-owning store pointer (must outlive this model), or
+         *        nullptr for the singleton.
          */
         void setSsrOrbitStore(const SsrCorrectionStore* store) {
             geometry_.setSsrOrbitStore(store);
-            // Card 7: the model's OWN GnssCorrections applies clocks too
-            // (computeModels) — its orbit-coherence echo check must compare
-            // against the same store the geometry orbit overlay reads from
-            // (geometry's internal corrections is forwarded by geometry itself).
+            // The model's own GnssCorrections applies clocks too, so its
+            // orbit-coherence echo check must read the same store as the geometry
+            // orbit overlay.  Geometry forwards to its own internal corrections.
             gnss_corrections_.setOrbitEchoStore(store);
         }
 
         /**
-         * @brief RTA-8: route ONLY the SSR CLOCK overlay at @p store.
+         * @brief Route ONLY the SSR CLOCK overlay at @p store.
          *
-         * Covers BOTH satellite-clock consumers behind this model: geometry's
-         * internal @c GnssCorrections (emission-time refinement) and the
-         * model's own @c gnss_corrections_ (the per-observation clock in
-         * @c computeModels) — the identical pair the coupled @ref setSsrStore
-         * always routed together, minus the orbit overlay.
+         * Covers both satellite-clock consumers behind this model: geometry's
+         * internal GnssCorrections (emission-time refinement) and the model's own
+         * (the per-observation clock in computeModels).
          *
-         * @param store Non-owning store pointer (must outlive this model) or
-         *        @c nullptr for the singleton.
+         * @param store Non-owning store pointer (must outlive this model), or
+         *        nullptr for the singleton.
          */
         void setSsrClockStore(const SsrCorrectionStore* store) {
             geometry_.setSsrClockStore(store);
@@ -453,27 +403,25 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Card 5 (RTF-1 / plan D1): keep carrier phase on broadcast-grade
-         *        satellites instead of gating them to code-only.
+         * @brief Keep carrier phase on broadcast-grade satellites instead of
+         *        gating them to code-only.
          *
-         * @c computeModels drops every phase observable for a satellite whose range
-         * model is only metre-level — a broadcast clock with no precise CLK and no
-         * SSR clock (@c broadcast_only).  At mm phase precision the float ambiguity
-         * is inseparable from the metre-level clock error, so for a single-receiver
-         * PPP user phase cannot improve the position.  The @c brdc_rts NETWORK
-         * PRODUCER is the deliberate exception: it ESTIMATES the satellite clock
-         * (its per-sat state is Δδtˢ relative to the broadcast a-priori), so its
-         * stations' carrier phase carries the information the estimator needs — the
-         * gate must be lifted.
+         * computeModels normally drops every phase observable for a satellite
+         * whose range model is metre-level (broadcast clock, no precise CLK, no
+         * SSR clock — the broadcast_only flag): at mm phase precision the float
+         * ambiguity is inseparable from the clock error, so phase cannot help a
+         * single-receiver PPP user.  The brdc_rts NETWORK PRODUCER is the
+         * exception — it ESTIMATES the satellite clock (per-sat state Δδtˢ against
+         * the broadcast a-priori), so its stations' phase carries exactly the
+         * information the estimator needs.
          *
-         * ApplicationNetwork sets this @c true on PRODUCER station models only, when
-         * @c network.apriori_source == brdc_rts.  It MUST NOT be set on the
-         * closed-loop CONSUMER's model: a consumer's broadcast-grade sats genuinely
-         * cannot use phase (no network clock was applied to them), and sats that DID
-         * receive a network clock are not @c broadcast_only in the first place.
+         * ApplicationNetwork sets this on PRODUCER station models only, when
+         * network.apriori_source == brdc_rts.  It MUST NOT be set on the
+         * closed-loop CONSUMER: its broadcast-grade sats genuinely cannot use
+         * phase, and sats that did get a network clock are not broadcast_only.
          *
-         * @param suppressed @c true keeps phase on broadcast-grade sats; @c false
-         *        (the default) restores the code-only gate — byte-identical.
+         * @param suppressed true keeps phase; false (default) restores the
+         *        code-only gate, byte-identical.
          */
         void setBroadcastPhaseGateSuppressed(bool suppressed) {
             broadcast_phase_gate_suppressed_ = suppressed;
@@ -482,15 +430,14 @@ namespace GnssProcessor {
         /**
          * @brief Install a network-wide signal allowlist (coverage gate).
          *
-         * Keyed by system display name (e.g. "GPS") → the set of RINEX codes
-         * (e.g. {"C1C","L1C","C2W","L2W","C5Q","L5Q"}) admitted to the solve.
-         * A constellation absent from the map, or an empty map, admits every
-         * tracked code (default — byte-identical).  When a constellation IS
-         * present, only its listed codes are used: the canonical per-band pick
-         * (@ref decideConstellationCanonicals) and the @c channel_mode="all"
-         * augmentation both skip non-admitted codes, so the canonical falls
-         * through to the best admitted channel.  Populated by the network
-         * producer from per-station coverage (@c network.signal_min_station_fraction).
+         * System display name (e.g. "GPS") -> the RINEX codes admitted to the
+         * solve (e.g. {"C1C","L1C","C2W","L2W"}).  An absent constellation or an
+         * empty map admits every tracked code (the byte-identical default).  Where
+         * a constellation is listed, both the canonical per-band pick
+         * (@ref decideConstellationCanonicals) and the channel_mode="all"
+         * augmentation skip non-admitted codes, so the canonical falls through to
+         * the best admitted channel.  The network producer populates this from
+         * per-station coverage (network.signal_min_station_fraction).
          */
         void setSignalAllowlist(std::map<std::string, std::set<std::string>> allowlist) {
             signal_allowlist_ = std::move(allowlist);
@@ -500,21 +447,17 @@ namespace GnssProcessor {
          * @brief Compute the per-signal I₂ + I₃ correction (m) to add
          *        to the modeled observable.
          *
-         * Returns 0 in any of:
-         *   - @c model_corrections.enable_higher_order_ionosphere is false;
-         *   - no GIM has been injected (or the GIM failed to load);
-         *   - the GIM has no usable VTEC for this line of sight (below
-         *     horizon, sentinel cell, etc.).
+         * Returns 0 when the correction is disabled in config, no GIM was
+         * injected, or the GIM has no usable VTEC for this line of sight (below
+         * horizon, sentinel cell).
          *
          * @param time         Epoch time of the observation.
          * @param rx_pos       Receiver ECEF position (m).
          * @param sat_pos      Satellite ECEF position (m).
-         * @param frequency_hz Carrier frequency of the signal (Hz).
-         * @param meas_type    @c 'C' for code (positive group delay) or
-         *                     @c 'L' for phase (negative, scaled by 1/2
-         *                     for I₂ and 1/3 for I₃).
-         * @return Signed correction in metres.  Add directly to the
-         *         per-signal modeled value.
+         * @param frequency_hz Carrier frequency (Hz).
+         * @param meas_type    'C' for code (positive group delay) or 'L' for
+         *                     phase (negative, scaled 1/2 for I₂, 1/3 for I₃).
+         * @return Signed correction (m), added directly to the modeled value.
          */
         double computeHigherOrderIonoCorrection(const GnssTime& time,
                                                 const Eigen::Vector3d& rx_pos,
@@ -566,15 +509,13 @@ namespace GnssProcessor {
         /**
          * @brief Per-constellation canonical signal cache.
          *
-         * Keyed by constellation name ("GPS", "Galileo", ...) →
-         * (band name, observation-type char {'C','L'}) → canonical signal
-         * code (e.g. "C1W", "L5Q").  Populated by @c decideConstellationCanonicals
-         * on the first epoch that the constellation has observations, then
-         * locked for the rest of the run.  Used by @c buildFrequencyBandMap to
-         * keep the canonical pick stable across epochs — so a brief dropout
-         * of the priority canonical at low elevation doesn't switch the KF to
-         * a different tracking attribute (e.g. L1W → L1C) and leak an
-         * inter-channel-bias-contaminated ambiguity state.
+         * Constellation -> (band, obs-type char {'C','L'}) -> canonical signal
+         * code (e.g. "C1W", "L5Q").  decideConstellationCanonicals fills it on
+         * the constellation's first observed epoch and it is then locked for the
+         * run.  The stability matters: without it a brief low-elevation dropout of
+         * the priority canonical would switch the KF to another tracking
+         * attribute (L1W → L1C) and leak an inter-channel-bias-contaminated
+         * ambiguity state.
          */
         std::map<std::string,
                  std::map<std::pair<std::string, char>, std::string>>
@@ -603,25 +544,19 @@ namespace GnssProcessor {
          * @brief Decide the per-constellation canonical signal set from
          *        the first epoch's observations.
          *
-         * For each constellation present in @p observations that hasn't
-         * been decided yet, counts how many satellites observe each
-         * priority-list signal at this epoch.  For each (band, obs_type)
-         * the signal with the highest observation count wins; ties are
-         * broken by priority order in @c signal_priorities_.  The
-         * result is cached in @c constellation_canonical_ and the
-         * constellation is marked decided so subsequent epochs are
-         * no-ops.
+         * For each not-yet-decided constellation, counts how many satellites
+         * observe each priority-list signal this epoch.  Per (band, obs_type) the
+         * highest count wins, ties broken by signal_priorities_ order.  The
+         * constellation is then marked decided, so later epochs are no-ops.
          *
          * @param observations Observations for the current epoch.
          */
         void decideConstellationCanonicals(const std::vector<RinexObservation>& observations);
 
-        // -------------------------------------------------------------------
-        // Signal selection helpers (decomposed from selectSignals)
-        // -------------------------------------------------------------------
+        // --- Signal selection helpers (decomposed from selectSignals) ---
 
         /**
-         * @brief Top-level signal selection: chooses observation pairs or singles.
+         * @brief Top-level signal selection: observation pairs or singles.
          *
          * Delegates to buildFrequencyBandMap(), selectUncombinedSignals(),
          * selectIonoFreePairs() and selectSingleSignalFallback() as needed.
@@ -633,8 +568,8 @@ namespace GnssProcessor {
         /**
          * @brief Map available RINEX measurements to frequency bands.
          *
-         * For each configured signal priority that is present in \p measurements,
-         * records the best code and best phase signal per frequency band.
+         * Records the best code and best phase signal per band, over the
+         * configured priorities present in @p measurements.
          *
          * @param measurements Available measurements.
          * @param system_str   GNSS system name (e.g. "GPS").
@@ -679,18 +614,16 @@ namespace GnssProcessor {
         std::vector<std::string> selectObservationTypes(const ObsValueMap<double>& measurements,
             System system, const std::string& system_str) const;
 
-        // -------------------------------------------------------------------
-        // Observation processing helpers
-        // -------------------------------------------------------------------
+        // --- Observation processing helpers ---
 
         /**
-         * @brief Compute the base modeled range value shared by iono-free and uncombined paths.
+         * @brief Base modeled range shared by the iono-free and uncombined paths.
          *
-         * Includes geometric range, satellite clock, relativistic correction,
-         * dry troposphere, antenna PCO/PCV, code/phase bias, Shapiro delay,
-         * atmospheric loading, solid tide, and pole tide.
+         * Covers geometric range, satellite clock, relativistic correction, dry
+         * troposphere, antenna PCO/PCV, code/phase bias, Shapiro delay,
+         * atmospheric loading, solid tide and pole tide.
          *
-         * @param obs           RINEX observation (for satellite ID, system, time).
+         * @param obs           RINEX observation (satellite ID, system, time).
          * @param ppp_obs       PppObservation with LOS vector and mapping factors.
          * @param geom          Pre-computed satellite geometry.
          * @param signal_type   Signal key (e.g. "C1W", "L1C") for antenna/bias lookup.
@@ -706,22 +639,17 @@ namespace GnssProcessor {
          *        whose receiver ATX correction was frequency-fallback-
          *        substituted.
          *
-         * Returns 0 for code rows ('C…'), for non-substituted signals,
-         * or when the feature is disabled
-         * (@c model_corrections.atx_substitution_phase_std_m ≤ 0, the
-         * default).  Otherwise returns @f$(\sigma_\mathrm{atx}/
-         * \sin\,\mathrm{el})^2@f$ — a variance addend (independent error
-         * sources add in variance) summed onto the stochastic-model
-         * phase variance *before* any iono-free combination, so the IF
-         * coefficients propagate it automatically.
+         * Returns 0 for code rows, non-substituted signals, or when
+         * model_corrections.atx_substitution_phase_std_m ≤ 0 (the default).
+         * Otherwise @f$(\sigma_\mathrm{atx}/\sin\,\mathrm{el})^2@f$, added to the
+         * stochastic-model phase variance BEFORE any iono-free combination so the
+         * IF coefficients propagate it automatically.
          *
-         * Targets the azimuthally-symmetric, elevation-dependent
-         * receiver-PCV residual left by a substituted antenna pattern:
-         * it is common across satellites and aliases into ZWD / station
-         * height, and is *not* the per-satellite slowly-varying bias the
-         * @c ambiguity_q_substituted_atx random walk already absorbs.
-         * See that field's and @c atx_substitution_phase_std_m's
-         * documentation for the full code-vs-ambiguity rationale.
+         * This targets the azimuthally-symmetric, elevation-dependent receiver-PCV
+         * residual a substituted antenna pattern leaves behind — common across
+         * satellites and aliasing into ZWD / station height.  It is NOT the
+         * per-satellite slowly-varying bias that the ambiguity_q_substituted_atx
+         * random walk already absorbs.
          *
          * @param signal        RINEX-3 code (e.g. "L8X"); 'C…' rows return 0.
          * @param satellite     Satellite identifier (e.g. "E18").
@@ -781,12 +709,10 @@ namespace GnssProcessor {
     /**
      * @brief RINEX band digits activated by a @c FrequencyMode for a constellation.
      *
-     * Free function exposed for use by signal-selection logic outside of
-     * @c PppModel (most prominently @c MwSlipDetector when filtering raw
-     * observations by frequency band).  Returns the set of digits that
-     * appear in the second character of RINEX-3 observation codes — e.g.
-     * GPS Dual → {'1', '2'}; Galileo Dual → {'1', '5'} (E1 + E5a); GPS
-     * Triple → {'1', '2', '5'}.
+     * Free so signal-selection logic outside PppModel can use it, most notably
+     * MwSlipDetector filtering raw observations by band.  Returns the digits
+     * appearing as the second character of RINEX-3 codes: GPS Dual → {'1','2'},
+     * Galileo Dual → {'1','5'} (E1 + E5a), GPS Triple → {'1','2','5'}.
      *
      * @param constellation Constellation name ("GPS", "Galileo", ...).
      * @param mode          Frequency mode (Dual / Triple / All).
