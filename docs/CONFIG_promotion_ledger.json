@@ -1749,6 +1749,42 @@
    "default_at": "src/core/config/GnssConfigLoadNetwork.cpp (network_config_.trace_phase_anchor, default false; grep the symbol)",
    "fingerprinted": false,
    "interlock": "Loader POSTURE row existed since Aug-2026 with no ledger row (config_posture_check --verify-loader 'MISSING from ledger') — synced 2026-09-05."
+  },
+  {
+   "knob": "network.readmit_seed_horizon_s",
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "verdict": "UNVALIDATED",
+   "scope": "READMIT continuity, E2 seed-first re-admission (SPEC_synthetic_minimum_network §18.4 built 2026-09-05; SPEC_amb_iono_split_overcount §7 FIRST). Q3-anchored lineages WITHOUT clock_model. A departed satellite's D2 clock + code-bias carry is PARKED for this many seconds and seeds its re-registered columns at var + q*gap; the Q3 anchor folds ANCHORED over the true gap (bounded by this horizon instead of clock_anchor_max_gap_s) and its NIS guard is the mark-if-moved. Phase bias is NOT seeded (its frame is re-realized at the cold re-pin). Validation arms: runs/readmit24h_e2 (24 h F3 bed) + runs/cplreg_q12warm_d (seam leg).",
+   "regime": "on(\"network.clock_temporal_anchor\") and not on(\"network.clock_model\")",
+   "posture_why": "E2 seed-first re-admission: parks the departed satellite's D2 clock + code-bias carry and seeds the return, so the Q3 anchor folds over the true gap instead of tripping `gap` and freezing a code-level re-draw into a metre-class tail (T3)",
+   "default_at": "include/config/GnssConfig.hpp (network_readmit_seed_horizon_s_{0.0}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside resume_coupling_restore; park at the stash tail (NetworkRunContext.cpp networkStashCarry), seed at the D2 install (networkInjectD2CarryPrior), guard attribution in NetworkClockAnchor.cpp decouple()",
+   "fingerprinted": false,
+   "interlock": "0 = OFF (byte-identical: nothing is ever parked). NOT fingerprinted (parking adds entries, changes no carried value's meaning; a snapshot never carries a parked entry — a seam inside an absence is today's cold return). Parked entries of a constellation are DROPPED at its clock-datum change. Under clock_model only code-bias columns can be seeded (loader-warned).",
+   "evidence": "BUILT 2026-09-05 (unit: ClockAnchorFold.SeededReturnFoldsAnchoredOverTheTrueGap, ReadmitContinuityConfig.*). Arms owed: runs/readmit24h_e2, runs/cplreg_q12warm_d."
+  },
+  {
+   "knob": "network.readmit_coupling_marg_ep",
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "verdict": "UNVALIDATED",
+   "scope": "READMIT re-coupling edge (SPEC_amb_iono_split_overcount §7 FIRST, built 2026-09-05): for K epochs after a satellite's clock column returns from a >= 3-loop-epoch absence, every Card-1 coupling term on its shared columns takes the DEPARTED route in every station's rows and F3 block. Lineages with the Card-1 coupling rows (carry_conditional_coupling, not carry_invariant).",
+   "regime": "on(\"network.carry_conditional_coupling\") and not on(\"network.carry_invariant\")",
+   "posture_why": "block/row RE-COUPLING edge at satellite re-admission: the returned satellite's columns take the departed route for K epochs — the named fix for the F3 24 h post-eclipse DD episodes",
+   "default_at": "include/config/GnssConfig.hpp (network_readmit_coupling_marg_ep_{0}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside readmit_seed_horizon_s; window opened at the stash tail (networkStashCarry), consumed by CouplingRowBuilder::readmitDiverted (NetworkCoupling.cpp)",
+   "fingerprinted": false,
+   "interlock": "0 = OFF (byte-identical). INERT without carry_conditional_coupling (loader-warned); run-end 'READMIT continuity' line's diverted-term count is the denominator (invariant #4). Both edges evented (READMIT readmit / marg_expired).",
+   "evidence": "BUILT 2026-09-05 (unit: NetworkCouplingTest.ReadmitWindowDivertsThePresentColumnAndExpires). Arm owed: runs/readmit24h_e2."
+  },
+  {
+   "knob": "network.phase_datum_handover_max_var_ratio",
+   "family": "COLD-START, DATUM and CLOCK knobs (network.cold_clock_seed, clock_datum_*, code_datum_time_linked, phase_datum_*, s2z/brdc-anchored clock realization, apriori_source / apriori_clock_anchor_sigma_m, clock_model_*, emit_clock_rate, sticky_pivot, scoped_handover_response, estimate_sat_code_bias, estimate_glonass, estimate_ifb)",
+   "verdict": "UNVALIDATED",
+   "scope": "The honest-sigma-scale PB-gauge handover ceiling (SPEC_amb_iono_split_overcount §6.8.3 / §7 item 15, built 2026-09-05): a ledger value is usable only if var <= ratio x its arc's FIRST-STASH conditional variance (LocalCarry::var_first; unknown = refused); the absolute phase_datum_handover_max_var_m2 stays a rail. F1/F3 lineages under the continuous handover.",
+   "regime": "on(\"network.phase_datum_handover_continuous\") and (on(\"network.phase_leveling_local_block\") or on(\"network.phase_leveling_los_scale\"))",
+   "posture_why": "honest-sigma-scale PB-gauge handover ceiling: var <= ratio x the arc's first-stash conditional variance (posture-invariant; the absolute max_var_m2 stays a rail)",
+   "default_at": "include/config/GnssConfig.hpp (network_phase_datum_handover_max_var_ratio_{0.0}); parsed src/core/config/GnssConfigLoadNetwork.cpp beside phase_datum_handover_max_var_m2; test in NetworkPhaseDatum.cpp networkElectPhaseAnchors (ratio_ok); var_first kept at the leveling stash (NetworkRunContext.cpp) and harvested into the handover ledger",
+   "fingerprinted": false,
+   "interlock": "0 = OFF (absolute ceiling alone, byte-identical). INERT without phase_datum_handover_continuous (loader-warned). Refusals counted on handover_refused_ratio (disjoint from handover_refused_var); PBGAUGE handover rows carry var / var_first when armed; the L snapshot row gains an optional trailing var_first field only when armed.",
+   "evidence": "BUILT 2026-09-05 (unit: PhaseDatumHandover.RatioCeilingRefusesUnconvergedAndUnknownArcs, PhaseDatumHandoverLoader.RatioCeilingDefaultsOffParsesAndRejectsNegative). Arm owed: runs/ratio3h vs runs/nonint_losblock3h_hv."
   }
  ]
 }

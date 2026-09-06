@@ -73,6 +73,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
+    k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // E2 seed-first re-admission
+    k.readmit_marg_ep        = config_.networkReadmitCouplingMargEp();   // block/row re-coupling edge
     // Unconditional Z-row capture (SPEC_synthetic_minimum_network §17 finding 3):
     // any snapshot-armed run records + harvests the per-station ZWD posterior so
     // EVERY snapshot carries Z rows — read-only w.r.t. the solve, no inject.
@@ -292,6 +294,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                    && config_.networkPhaseDatumHandoverContinuous();
         k.pd_handover_max_var = k.pd_handover_continuous
                                 ? config_.networkPhaseDatumHandoverMaxVarM2() : 0.0;
+        k.pd_handover_max_var_ratio = k.pd_handover_continuous
+                                ? config_.networkPhaseDatumHandoverMaxVarRatio() : 0.0;
         // QUEUE item 1(d): the PHASE_ANCHOR carry re-reference — same placement
         // and the same belt-and-braces as the handover knob directly above (it
         // is meaningful only where an anchor pin exists to hand over, and the
@@ -1231,8 +1235,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         clock_rate_est[sat] = c;
                     }
                     local_carry.clear();
-                    for (const auto& [key, l] : snap.local_carry)
-                        local_carry[key] = LocalCarry{l.value_abs, l.var, l.last_seen_s};
+                    for (const auto& [key, l] : snap.local_carry) {
+                        LocalCarry lc{l.value_abs, l.var, l.last_seen_s};
+                        lc.var_first = l.var_first;   // 0 on a pre-ratio file: the ratio ceiling then refuses the arc until it re-converges
+                        local_carry[key] = lc;
+                    }
                     // STABILITY target 2 leg C: seam-scoped soft refloat of the
                     // restored leveling carries.  The h-vintage zero-q levels were
                     // leveled under the OLD run's ZWD realization; against the
@@ -1334,6 +1341,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                     AnchorHandoverLedger::Entry e;
                                     e.value = lc.value_abs;
                                     e.var   = lc.var;
+                                    e.var_first = lc.var_first;
                                     ctx.carry.handover.value_abs[{std::get<0>(key),
                                         std::get<1>(key) + "_" + std::get<2>(key)}] = e;
                                     ++n_ledger_primed;
@@ -1542,6 +1550,58 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       n_miss, n_seed, n_loose,
                                       snap.eph_cutover_disc_pending.size(),
                                       snap.clock_refloat_sats.size());
+                        }
+                    }
+                    // §18.12 (2a): the dense D2 covariance side-car.  Restored behind the
+                    // SAME read knob — it is the other half of the coupling seam: the
+                    // coupling rows are conditional from the first warm fold, so the border
+                    // they condition on must fold DENSE from the first fold too, or the
+                    // 376-key diagonal asymmetry §18.12 measured stays.  Keys with no
+                    // restored D row are dropped (row AND column) and counted; the fold
+                    // still degrades per-key as before.
+                    if (ctx.knobs.resume_coupling_restore && fullcov_on
+                        && !snap.carry_cov_keys.empty()
+                        && snap.carry_cov_rows.size() == snap.carry_cov_keys.size()) {
+                        std::set<std::string> live_keys;
+                        for (const CarryPrior& cp : prev_carry)
+                            if (cp.kind != SharedParamKind::VtecSh)
+                                live_keys.insert(sharedCarryKey(cp.kind, cp.sat, cp.signal));
+                        std::vector<std::size_t> keep;   // snapshot row index of each kept key
+                        keep.reserve(snap.carry_cov_keys.size());
+                        long long n_drop_cov = 0;
+                        for (std::size_t i = 0; i < snap.carry_cov_keys.size(); ++i) {
+                            if (live_keys.count(snap.carry_cov_keys[i])) keep.push_back(i);
+                            else ++n_drop_cov;
+                        }
+                        const Eigen::Index nk = static_cast<Eigen::Index>(keep.size());
+                        SharedCarryCov cov;
+                        cov.P = Eigen::MatrixXd::Zero(nk, nk);
+                        bool finite = true;
+                        for (Eigen::Index a = 0; a < nk; ++a) {
+                            const std::size_t ia = keep[static_cast<std::size_t>(a)];
+                            cov.row.emplace(snap.carry_cov_keys[ia], static_cast<std::size_t>(a));
+                            for (Eigen::Index b = 0; b <= a; ++b) {
+                                const std::size_t ib = keep[static_cast<std::size_t>(b)];
+                                const double v = snap.carry_cov_rows[ia][ib];   // ib <= ia: lower triangle
+                                if (!std::isfinite(v)) finite = false;
+                                cov.P(a, b) = v;
+                                cov.P(b, a) = v;
+                            }
+                        }
+                        if (nk > 0 && finite) {
+                            ctx.carry.prev_carry_cov = std::move(cov);
+                            ctx.counters.n_resume_cpl_cov_keys    = static_cast<long long>(nk);
+                            ctx.counters.n_resume_cpl_cov_dropped = n_drop_cov;
+                            log->info("Network (resume coupling restore, dense border): {} "
+                                      "dense-carry key(s) restored from the snapshot's QK/QP "
+                                      "records ({} dropped: no restored D row) — the first warm "
+                                      "fold runs the C1 DENSE path instead of the diagonal "
+                                      "asymmetry.", nk, n_drop_cov);
+                        } else {
+                            log->warn("Network (resume coupling restore, dense border): QK/QP "
+                                      "records present but unusable ({} usable key(s), "
+                                      "finite={}) — the first warm fold degrades to the "
+                                      "diagonal path.", nk, finite);
                         }
                     }
                     // Resume slip warm-up (network.resume_slip_warmup_ep, §18.10): the
@@ -1835,6 +1895,11 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
         snap.first_emit_content_s = first_emit_content_s;
         snap.shared_carry.reserve(prev_carry.size());
         for (const CarryPrior& cp : prev_carry) {
+            // READMIT: a PARKED entry (a departed satellite's pre-gap realization) is NOT
+            // serialized — the D record has no park stamp, so a restored copy would fold as
+            // a fresh live carry with epoch-dt inflation (forward-only response policy: a
+            // seam inside a satellite's absence loses its seed, i.e. today's cold return).
+            if (cp.t_park_s > 0.0) { ++ctx.counters.n_snap_parked_excluded; continue; }
             NetworkStateSnapshot::SharedCarry sc;
             sc.kind      = static_cast<int>(cp.kind);
             sc.sat       = cp.sat;
@@ -1869,9 +1934,15 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             so.t_last = o.t_last; so.init = o.init;
             snap.clock_rate_est[sat] = so;
         }
-        for (const auto& [key, lc] : local_carry)
-            snap.local_carry[key] =
-                NetworkStateSnapshot::Local{lc.value_abs, lc.var, lc.last_seen_s};
+        // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance rides
+        // an OPTIONAL trailing L field — filled only when the ratio ceiling is armed, so a
+        // default snapshot's L rows stay byte-identical.
+        const bool l_var_first = ctx.knobs.pd_handover_max_var_ratio > 0.0;
+        for (const auto& [key, lc] : local_carry) {
+            NetworkStateSnapshot::Local L{lc.value_abs, lc.var, lc.last_seen_s};
+            if (l_var_first) L.var_first = lc.var_first;
+            snap.local_carry[key] = L;
+        }
         for (const auto& [idx, lc] : zwd_carry)
             snap.zwd_carry[idx] =
                 NetworkStateSnapshot::Local{lc.value_abs, lc.var, lc.last_seen_s};
@@ -1998,6 +2069,33 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             ctx.carry.snap_cpl_zrows_last   = static_cast<long long>(snap.coupling_zrows.size());
             ctx.carry.snap_cpl_terms_last   = n_terms;
             ctx.carry.snap_cpl_rows_dropped += n_drop;
+            // §18.12 (2a): the C1 dense D2 covariance side-car — the other half of the
+            // seam.  Keys in row order (QK), lower triangle per row (QP); the whole block
+            // is omitted (never truncated) when any entry is non-finite or a row has no
+            // key.  Parked entries never have a row, so nothing here references them.
+            {
+                const SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
+                const Eigen::Index n = pcc.P.rows();
+                if (ctx.knobs.fullcov_on && n > 0 && pcc.P.cols() == n && pcc.P.allFinite()
+                    && static_cast<Eigen::Index>(pcc.row.size()) == n) {
+                    std::vector<std::string> keys(static_cast<std::size_t>(n));
+                    bool ok = true;
+                    for (const auto& [k, r] : pcc.row) {
+                        if (r >= keys.size() || !keys[r].empty()) { ok = false; break; }
+                        keys[r] = k;
+                    }
+                    for (const auto& k : keys) if (k.empty()) ok = false;
+                    if (ok) {
+                        snap.carry_cov_keys = std::move(keys);
+                        snap.carry_cov_rows.assign(static_cast<std::size_t>(n), {});
+                        for (Eigen::Index i = 0; i < n; ++i) {
+                            auto& row = snap.carry_cov_rows[static_cast<std::size_t>(i)];
+                            row.reserve(static_cast<std::size_t>(i) + 1);
+                            for (Eigen::Index j = 0; j <= i; ++j) row.push_back(pcc.P(i, j));
+                        }
+                    }
+                }
+            }
         }   // state_snapshot_coupling_capture
         // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
         // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
@@ -2259,6 +2357,46 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     }
 }
 
+namespace {
+
+/// READMIT continuity: is @p cp's shared column registered in THIS epoch's layout?
+/// (The estimator's lookups throw on an unknown key — the contract resolveSharedCol wraps.)
+bool readmitColumnPresent(const NetworkEstimator& est, const CarryPrior& cp) {
+    try {
+        switch (cp.kind) {
+            case SharedParamKind::Clock:     return est.clockColumn(cp.sat) >= 0;
+            case SharedParamKind::CodeBias:  return est.codeBiasColumn(cp.sat, cp.signal) >= 0;
+            case SharedParamKind::PhaseBias: return est.phaseBiasColumn(cp.sat, cp.signal) >= 0;
+            default:                         return false;
+        }
+    } catch (...) {
+        return false;
+    }
+}
+
+/// READMIT continuity: bookkeeping + the RE-COUPLING-edge event for one column seeded
+/// from a parked pre-gap realization at the D2 install (standing invariant #7: the edge
+/// has an identity, its evidence gap, and the variance it re-coupled at).
+void readmitNoteSeed(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& t,
+                     const CarryPrior& cp, double seed_gap, double horizon_s,
+                     double var_eff, bool anchored) {
+    const bool clk = cp.kind == SharedParamKind::Clock;
+    if (clk) {
+        ++ctx.counters.n_readmit_seeded_clk;
+        if (anchored) ++ctx.counters.n_readmit_seeded_anch;
+        ctx.carry.readmit_seeded_s[cp.sat] = ctx.carry.readmit_now_s;
+    } else {
+        ++ctx.counters.n_readmit_seeded_cb;
+    }
+    ctx.carry.readmit_seed_check.push_back({cp.kind, cp.sat, cp.signal, cp.value, var_eff});
+    traces.emitEvent(t, "READMIT", clk ? "seed_clock" : "seed_code_bias", cp.sat, cp.signal,
+                     seed_gap, horizon_s, "seed",
+                     fmt::format("value={:.4f};var_eff={:.3e};anchored={}", cp.value, var_eff,
+                                 anchored ? 1 : 0));
+}
+
+}  // namespace
+
 void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                NetworkRunTraces& traces, const GnssTime& t,
                                NetworkEstimator& est, bool datum_changed,
@@ -2327,6 +2465,29 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         return datum_changed
             && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
     };
+    // READMIT continuity (E2 seed-first re-admission, network.readmit_seed_horizon_s).
+    // The epoch clock the stash (which has none of its own) and the guard read; the
+    // seed check list for this epoch; and the frame drop: a clock-datum change retires a
+    // parked entry's frame exactly as it skips the live carry of the changed
+    // constellation(s) — but a parked entry cannot be re-stashed fresh next epoch, so it
+    // is DROPPED (counted), not skipped.
+    const double readmit_h = ctx.knobs.readmit_seed_horizon_s;
+    const double now_s = (readmit_h > 0.0) ? TimeUtils::continuousGpsSeconds(t) : 0.0;
+    if (readmit_h > 0.0) {
+        ctx.carry.readmit_now_s = now_s;
+        ctx.carry.readmit_seed_check.clear();
+        if (datum_changed) {
+            const auto before = prev_carry.size();
+            prev_carry.erase(std::remove_if(prev_carry.begin(), prev_carry.end(),
+                                            [&](const CarryPrior& cp) {
+                                                return cp.t_park_s > 0.0
+                                                    && handover_affects(cp.sat);
+                                            }),
+                             prev_carry.end());
+            ctx.counters.n_readmit_dropped_datum +=
+                static_cast<long long>(before - prev_carry.size());
+        }
+    }
 
     // --- D2 carry-forward prior (diagonal, inflated over the gap) -------
     // Applied AFTER the gate (which must see the DATA-only gauge structure)
@@ -2370,21 +2531,41 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             const double q = (cp.kind == SharedParamKind::Clock)    ? q_clock
                            : (cp.kind == SharedParamKind::CodeBias) ? q_cb
                                                                     : q_pb;
+            // READMIT (E2 seed-first re-admission): a PARKED entry is a departed satellite's
+            // pre-gap realization.  Column still absent ⇒ nothing to fold (skipped BEFORE
+            // the anchor fold, which would otherwise stamp the satellite); column
+            // re-registered ⇒ this is the RE-COUPLING edge — the entry seeds it at
+            // var + q·gap, the Q3 anchor folds over its own per-satellite elapsed time
+            // bounded by the seed horizon, and the guard re-validates; expired ⇒ skipped
+            // here, dropped at the stash.  seed_gap == 0 leaves every expression below the
+            // legacy one, character for character.
+            double seed_gap = 0.0;
+            if (cp.t_park_s > 0.0) {
+                if (!(readmit_h > 0.0) || !readmitColumnPresent(est, cp)) continue;
+                seed_gap = now_s - cp.t_park_s;
+                if (!(seed_gap > 0.0) || seed_gap > readmit_h) continue;
+            }
             // A clock-monitor-flagged satellite folds with the large REINIT variance (a soft
             // large-q reinitialization): the weak prior still anchors the parameter at its
             // previous value — curbing the collective datum drift a hard refloat causes — but
             // is loose enough for the data to walk a frozen clock back toward truth.
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
-                                          : cp.var + q * std::max(0.0, dt);
+                                          : cp.var + q * (seed_gap > 0.0 ? seed_gap
+                                                                         : std::max(0.0, dt));
             // Card Q3 (docs/SPEC_clock_temporal_anchor.md): the satellite clock's
             // temporal constraint.  An inflate_q key is deliberately EXCLUDED — that
             // is a monitor-driven soft refloat, not the hand carry model, and
             // overriding it with a stiff anchor would re-freeze exactly what the
             // monitor just loosened.  OFF ⇒ the returned var_eff is the expression
             // above, character for character.
-            if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q)
-                var_eff = clockAnchorFoldVariance(ctx, cp.sat, cp.var, dt,
-                                                  cta_now_s, cp.value).var_eff;
+            bool seed_anchored = false;
+            if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q) {
+                const ClockAnchorFold cf = clockAnchorFoldVariance(
+                    ctx, cp.sat, cp.var, dt, cta_now_s, cp.value,
+                    seed_gap > 0.0 ? readmit_h : 0.0);
+                var_eff       = cf.var_eff;
+                seed_anchored = cf.anchored;
+            }
             // B4: floor the D2 phase-bias / code-bias carry variance (caps Λ so a stiff
             // zero-q carry cannot lock a biased product in), mirroring the ambiguity-carry
             // floor.  Only on the non-refloat path (a clk-monitor refloat is deliberately
@@ -2403,6 +2584,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             if (anchor_info_trace.is_open() && cp.kind == SharedParamKind::Clock)
                 clk_prior_info[cp.sat] = p.info;   // B7: scalar clock carry info on this column
             priors.push_back(p);
+            if (seed_gap > 0.0)
+                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored);
         }
         est.attribTag("d2_carry");
         // Card Q3 §2.1: with the gauge-free fold armed, the CLOCK entries are
@@ -2459,8 +2642,18 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             const double q = (cp.kind == SharedParamKind::Clock)    ? q_clock
                            : (cp.kind == SharedParamKind::CodeBias) ? q_cb
                                                                     : q_pb;
+            // READMIT (E2): the SAME parked-entry disposition as the diagonal branch above
+            // (a parked entry has no dense row — it was never in the stashed block — so a
+            // seed always folds through the diagonal leftovers below).
+            double seed_gap = 0.0;
+            if (cp.t_park_s > 0.0) {
+                if (!(readmit_h > 0.0) || !readmitColumnPresent(est, cp)) continue;
+                seed_gap = now_s - cp.t_park_s;
+                if (!(seed_gap > 0.0) || seed_gap > readmit_h) continue;
+            }
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
-                                          : cp.var + q * std::max(0.0, dt);
+                                          : cp.var + q * (seed_gap > 0.0 ? seed_gap
+                                                                         : std::max(0.0, dt));
             // Card Q3: the SAME clock-anchor decision as the diagonal branch above.
             // It must be the same, and it must be on the DIAGONAL of cov_eff: the
             // marginal prior on any one state has to be identical on both branches
@@ -2468,9 +2661,14 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // the dense fold's off-diagonals are retained deliberately — the anchor
             // does not re-create the independence assumption C1 removed on the very
             // state it makes stiffest (SPEC §2.1, assessment deviation #1).
-            if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q)
-                var_eff = clockAnchorFoldVariance(ctx, cp.sat, cp.var, dt,
-                                                  cta_now_s, cp.value).var_eff;
+            bool seed_anchored = false;
+            if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q) {
+                const ClockAnchorFold cf = clockAnchorFoldVariance(
+                    ctx, cp.sat, cp.var, dt, cta_now_s, cp.value,
+                    seed_gap > 0.0 ? readmit_h : 0.0);
+                var_eff       = cf.var_eff;
+                seed_anchored = cf.anchored;
+            }
             if (!cp.inflate_q) {
                 const double floor = (cp.kind == SharedParamKind::PhaseBias) ? pb_var_floor
                                    : (cp.kind == SharedParamKind::CodeBias)  ? cb_var_floor
@@ -2482,6 +2680,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             NetworkEstimator::SharedPrior p;
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
             p.value = cp.value; p.info = 1.0 / var_eff;  // used on the diagonal paths only
+            if (seed_gap > 0.0)
+                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored);
             const auto rit = prev_carry_cov.row.find(sharedCarryKey(cp.kind, cp.sat, cp.signal));
             if (rit == prev_carry_cov.row.end()) {
                 if (anchor_info_trace.is_open() && cp.kind == SharedParamKind::Clock)
@@ -2846,9 +3046,17 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                        ? vhv(static_cast<Eigen::Index>(a)) : -1.0;
                 // Key on "sat_signal" — byte-identical to the election's `amb`
                 // (kAmbiguityDelimiter is '_'), so the lookup needs no translation.
+                AnchorHandoverLedger::Entry hv_e{value_abs, var};
+                // network.phase_datum_handover_max_var_ratio: the arc's first-stash
+                // conditional variance (0 = never carried ⇒ the ratio test refuses it).
+                // Read off LAST epoch's carry (this harvest precedes the leveling harvest).
+                {
+                    const auto lcit = local_carry.find(
+                        std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
+                    if (lcit != local_carry.end()) hv_e.var_first = lcit->second.var_first;
+                }
                 ctx.carry.handover.value_abs[{static_cast<int>(i),
-                                              pa.sat + "_" + pa.signal}] =
-                        AnchorHandoverLedger::Entry{value_abs, var};
+                                              pa.sat + "_" + pa.signal}] = hv_e;
             }
         }
         ctx.carry.handover.primed = true;
@@ -3233,8 +3441,20 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             std::abs(rhs_new - rhs_old));
                     }
                 }
-                local_carry[std::make_tuple(static_cast<int>(i), pa.sat, pa.signal)] =
-                    LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
+                {
+                    // First-stash conditional variance: set once at the arc's birth, kept
+                    // across re-stashes (the honest-σ-scale denominator of the handover
+                    // ratio ceiling; an erase-and-rebirth starts it over, a re-level keeps
+                    // it so a refloated arc reads unconverged until it re-earns the level).
+                    const auto lkey = std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
+                    const auto oldc = local_carry.find(lkey);
+                    const double var_first =
+                        (oldc != local_carry.end() && oldc->second.var_first > 0.0)
+                            ? oldc->second.var_first : var;
+                    LocalCarry nlc{value_abs, var, pl_now_s, std::move(coupling)};
+                    nlc.var_first = var_first;
+                    local_carry[lkey] = std::move(nlc);
+                }
                 if (hblk && cross.size() == hblk->C.rows()) {
                     // F3: row a of the station's harvest block = this column's n_c read
                     // at every carried column (its own entry equals `var`); the entry
@@ -4306,6 +4526,7 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
 }
 
 void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
+                       NetworkRunTraces& traces, const GnssTime& t,
                        NetworkEstimator& est, const Eigen::VectorXd& x_s,
                        const NetworkSbasis::Plan& plan,
                        const SphericalHarmonicIonosphere* sh_model,
@@ -4334,6 +4555,10 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     const bool   fullcov_on = ctx.knobs.fullcov_on;
 
     // --- D2 stash for the next epoch ------------------------------------
+    // READMIT (E2): keep the outgoing stash so departures can be PARKED after the rebuild.
+    const double readmit_h = ctx.knobs.readmit_seed_horizon_s;
+    std::vector<CarryPrior> old_carry;
+    if (readmit_h > 0.0) old_carry = prev_carry;
     prev_carry.clear();
     prev_carry_cov.clear();   // C1: rebuilt below when the dense carry is on
     std::vector<Eigen::Index> fc_cols;  // C1: shared-border column per dense row
@@ -4585,6 +4810,112 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 cp.value = val; cp.var = var;
                 prev_carry.push_back(cp);
             }
+        }
+    }
+
+    // ---- READMIT continuity (E2 seed-first re-admission + the block re-coupling edge) ----
+    // (SPEC_synthetic_minimum_network §18.4; SPEC_amb_iono_split_overcount §7 FIRST.)  Runs
+    // AFTER the wholesale rebuild above, so "absent from the new stash" is exact, and on
+    // KEPT epochs only — a withheld epoch never reaches here, which is why the detector
+    // needs >= kReadmitMinGapEp loop epochs of absence rather than one.
+    if (readmit_h > 0.0 || ctx.knobs.readmit_marg_ep > 0) {
+        const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+        // (1) The re-admission detector + the coupling marginalization window (the block's
+        //     DECOUPLING edge, standing invariant #7): a satellite whose clock column is
+        //     registered now but was last stashed >= kReadmitMinGapEp loop epochs ago.
+        for (const std::string& sat : registered_clock_sats) {
+            long long& last = ctx.carry.readmit_last_seen_ep[sat];   // 0 on first sight
+            const long long gap_ep = (last > 0) ? ep - last : 0;
+            const bool readmitted = last > 0 && gap_ep >= kReadmitMinGapEp;
+            last = ep;
+            if (!readmitted) continue;
+            ++ctx.counters.n_readmit_events;
+            std::string marg;
+            if (ctx.knobs.readmit_marg_ep > 0) {
+                ctx.carry.readmit_marg[sat] = ep + ctx.knobs.readmit_marg_ep;
+                ++ctx.counters.n_readmit_marg_windows;
+                marg = fmt::format(";marg_until_ep={}", ep + ctx.knobs.readmit_marg_ep);
+            }
+            traces.emitEvent(t, "READMIT", "readmit", sat, "", static_cast<double>(gap_ep),
+                             static_cast<double>(kReadmitMinGapEp), "readmit",
+                             fmt::format("gap_ep={}{}", gap_ep, marg));
+        }
+        // Expired windows: the block's RE-COUPLING edge (the returned satellite's columns
+        // fold as PRESENT terms again) — traced per satellite.
+        for (auto it = ctx.carry.readmit_marg.begin(); it != ctx.carry.readmit_marg.end();) {
+            if (ep >= it->second) {
+                traces.emitEvent(t, "READMIT", "marg_expired", it->first, "",
+                                 static_cast<double>(it->second), std::nullopt, "recouple",
+                                 "coupling terms on this satellite fold as PRESENT again");
+                it = ctx.carry.readmit_marg.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        // (2) Park departures; retire consumed or expired parks (the seed knob only).
+        if (readmit_h > 0.0) {
+            const double now_s = ctx.carry.readmit_now_s;
+            std::set<std::tuple<int, std::string, std::string>> live;
+            for (const CarryPrior& cp : prev_carry)
+                live.emplace(static_cast<int>(cp.kind), cp.sat, cp.signal);
+            std::map<std::string, int> parked_now;
+            for (const CarryPrior& oc : old_carry) {
+                // The phase-bias frame is re-realized at the cold re-pin (the leveling
+                // carries do not survive a 55 min absence at the 120 s leveling gap), and
+                // a stiff PB seed would fight that pin — so only Clock + CodeBias park.
+                if (oc.kind != SharedParamKind::Clock && oc.kind != SharedParamKind::CodeBias)
+                    continue;
+                if (live.count({static_cast<int>(oc.kind), oc.sat, oc.signal})) continue;
+                const bool present = readmitColumnPresent(est, oc);
+                if (oc.t_park_s > 0.0) {
+                    // Already parked.  Column back but NOT re-stashed (skip-stash, pinned,
+                    // non-finite) ⇒ the memory dies with the skip; past the horizon ⇒ drop.
+                    if (present) { ++ctx.counters.n_readmit_dropped_stale; continue; }
+                    if (now_s - oc.t_park_s > readmit_h) { ++ctx.counters.n_readmit_expired; continue; }
+                    prev_carry.push_back(oc);
+                    continue;
+                }
+                // Live last epoch, absent now: a DEPARTURE only if the column itself left
+                // the layout (a skip-stash / pinned / non-finite key is not a departure).
+                if (present) continue;
+                CarryPrior cp = oc;
+                cp.t_park_s  = (ctx.carry.readmit_prev_stash_s > 0.0)
+                                   ? ctx.carry.readmit_prev_stash_s : now_s;
+                cp.inflate_q = false;
+                prev_carry.push_back(std::move(cp));
+                ++ctx.counters.n_readmit_parked;
+                ++parked_now[oc.sat];
+            }
+            for (const auto& [sat, n] : parked_now)
+                traces.emitEvent(t, "READMIT", "park", sat, "", static_cast<double>(n),
+                                 readmit_h, "park",
+                                 "D2 clock + code-bias carry parked at departure");
+            // (3) Seed-vs-solve check: mark-if-moved telemetry for every seeded kind (the
+            //     clock's authoritative mark is the Q3 guard's own trip, counted separately).
+            for (const auto& sd : ctx.carry.readmit_seed_check) {
+                Eigen::Index col = -1;
+                try {
+                    col = (sd.kind == SharedParamKind::Clock)
+                              ? est.clockColumn(sd.sat)
+                              : est.codeBiasColumn(sd.sat, sd.signal);
+                } catch (...) { continue; }
+                if (col < 0 || col >= x_s.size() || col >= cov.rows()) continue;
+                const double e = x_s(col) - sd.value;
+                const double S = std::max(1e-12, sd.var_eff - cov(col, col));
+                const double w = std::abs(e) / std::sqrt(S);
+                if (!std::isfinite(w)) continue;
+                ++ctx.counters.n_readmit_seed_check;
+                const bool out = w > kReadmitSeedK;
+                if (out) ++ctx.counters.n_readmit_seed_outlier;
+                traces.emitEvent(t, "READMIT", out ? "seed_moved" : "seed_held", sd.sat,
+                                 sd.signal, w, kReadmitSeedK, out ? "telemetry" : "ok",
+                                 fmt::format("kind={};e={:.4f};sqrtS={:.4f}",
+                                             sd.kind == SharedParamKind::Clock ? "clock"
+                                                                               : "code_bias",
+                                             e, std::sqrt(S)));
+            }
+            ctx.carry.readmit_seed_check.clear();
+            ctx.carry.readmit_prev_stash_s = now_s;
         }
     }
 }

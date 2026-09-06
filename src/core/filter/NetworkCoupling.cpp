@@ -139,6 +139,21 @@ bool CouplingRowBuilder::tuReinitSince(const CoupledShared& cs, double since_s) 
     return hit(cs.signal) || (!cs.signal.empty() && hit(std::string{}));
 }
 
+bool CouplingRowBuilder::readmitDiverted(const CoupledShared& cs) {
+    // READMIT re-coupling edge: a satellite-side column inside its post-re-admission
+    // window takes the departed (q=∞) route regardless of the row's harvest time — the
+    // column exists and is bound, but its realization is still settling from the cold
+    // seed, so conditioning a stiff carried row on it injects that settling as row bias
+    // (F3's dense L⁻¹ then mixes it into every ambiguity of the station block).
+    if (!readmit_marg || readmit_marg->empty() || cs.kind == SharedParamKind::VtecSh
+        || cs.sat.empty())
+        return false;
+    const auto it = readmit_marg->find(cs.sat);
+    if (it == readmit_marg->end() || loop_ep >= it->second) return false;
+    ++R.cpl_readmit_diverted;
+    return true;
+}
+
 void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                                      const LocalCarry& lc, double var_eff,
                                      double gap) {
@@ -168,6 +183,9 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                            || (carry_cpl_shmarg
                                && cs.kind == SharedParamKind::VtecSh)))
                 c = -1;
+            // READMIT re-coupling edge (network.readmit_coupling_marg_ep): a column
+            // re-registered after a gap is still settling for K epochs — same route.
+            if (c >= 0 && readmitDiverted(cs)) c = -1;
             if (c < 0) {                          // DEPARTED → M_w column
                 const std::string id = couplingId(cs);
                 auto it = white_map.find(id);
@@ -261,6 +279,14 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
     for (const CoupledShared& cs : lc.coupling) {
         const Eigen::Index c = resolveSharedCol(cs);
         if (c < 0) {                          // DEPARTED → marginalize into σ²
+            dep_var += cs.coeff * cs.coeff * cs.p_prev;
+            ++R.cpl_terms_departed;
+            note_trunc(cs);
+            continue;
+        }
+        // READMIT re-coupling edge (network.readmit_coupling_marg_ep): the returned
+        // satellite's columns take the departed route for K epochs (see the joint path).
+        if (readmitDiverted(cs)) {
             dep_var += cs.coeff * cs.coeff * cs.p_prev;
             ++R.cpl_terms_departed;
             note_trunc(cs);
@@ -524,6 +550,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                             long long& n_cpl_gauge_held,
                             long long& n_cpl_gauge_orphan,
                             long long& n_cpl_reinit_diverted,
+                            long long& n_cpl_readmit_diverted,
                             int& n_cpl_row_dump,
                             std::map<std::pair<char,int>, std::pair<long long,double>>*
                                 cpl_orphan_fam_total) {
@@ -538,6 +565,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
             n_cpl_gauge_held     += Rc.cpl_gauge_held;
             n_cpl_gauge_orphan   += Rc.cpl_gauge_orphan;
             n_cpl_reinit_diverted += Rc.cpl_reinit_diverted;
+            n_cpl_readmit_diverted += Rc.cpl_readmit_diverted;
             for (const auto& [fam, o] : Rc.cpl_orphan_fam) {
                 auto& e = ep_orphans[fam];
                 e.first  += o.first;

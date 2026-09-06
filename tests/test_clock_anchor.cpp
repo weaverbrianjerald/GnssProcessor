@@ -249,6 +249,46 @@ TEST(ClockAnchorFold, VarianceFloorBinds) {
     EXPECT_EQ(ctx.counters.cta_floor_hits, 1);
 }
 
+/// READMIT continuity (network.readmit_seed_horizon_s): a PARKED pre-gap realization
+/// seeding a re-registered column is stale only beyond the SEED horizon.  A 3300 s
+/// eclipse gap — 27× the 120 s staleness bound — folds ANCHORED over the true gap
+/// (prev_var + cta_q·gap), flags no edge, and leaves the guard to re-validate it;
+/// the unseeded call at the same gap is the stale/decouple path (the case above), so
+/// the two folds differ ONLY through the bound.  Beyond the horizon a seed is stale
+/// like any other carry, and a LOOSE seed inflates over the TRUE gap, not the dt.
+TEST(ClockAnchorFold, SeededReturnFoldsAnchoredOverTheTrueGap) {
+    Loaded L("seed", kArmed);
+    NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
+    clockAnchorBeginEpoch(ctx);
+    clockAnchorFoldVariance(ctx, "G01", 1e-3, 30.0, 1000.0, 0.0);
+    ctx.carry.clk_anchor.sat["G01"].anchored = true;
+
+    clockAnchorBeginEpoch(ctx);
+    const auto f = clockAnchorFoldVariance(ctx, "G01", 1e-3, 30.0, 4300.0, 0.0,
+                                           /*seed_horizon_s=*/3600.0);
+    EXPECT_TRUE(f.anchored);
+    EXPECT_FALSE(f.decoupled);
+    EXPECT_FALSE(ctx.carry.clk_anchor.sat.at("G01").stale_pending);
+    EXPECT_DOUBLE_EQ(f.var_eff, 1e-3 + ctx.knobs.cta_q * 3300.0);
+    EXPECT_EQ(ctx.counters.cta_folded_anchored, 1);
+
+    // Beyond the seed horizon (3700 s since the fold above): stale like any carry.
+    clockAnchorBeginEpoch(ctx);
+    const auto g = clockAnchorFoldVariance(ctx, "G01", 1e-3, 30.0, 8000.0, 0.0, 3600.0);
+    EXPECT_FALSE(g.anchored);
+    EXPECT_TRUE(g.decoupled);
+    EXPECT_TRUE(ctx.carry.clk_anchor.sat.at("G01").stale_pending);
+
+    // A LOOSE seed inflates over the TRUE gap, not the driver's dt.
+    ctx.carry.clk_anchor.sat["G02"].t_last   = 1000.0;
+    ctx.carry.clk_anchor.sat["G02"].anchored = false;
+    clockAnchorBeginEpoch(ctx);
+    const auto h = clockAnchorFoldVariance(ctx, "G02", 1e-3, 30.0, 4300.0, 0.0, 3600.0);
+    EXPECT_FALSE(h.anchored);
+    EXPECT_FALSE(h.decoupled);
+    EXPECT_DOUBLE_EQ(h.var_eff, 1e-3 + ctx.knobs.q_clock * 3300.0);
+}
+
 TEST(ClockAnchorFold, BeginEpochClearsTheFoldFlagsButKeepsTheState) {
     Loaded L("begin", kArmed);
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());

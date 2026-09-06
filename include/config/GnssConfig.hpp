@@ -2320,6 +2320,52 @@ namespace GnssProcessor {
          */
         bool networkResumeCouplingRestore() const { return network_resume_coupling_restore_; }
         /**
+         * @brief READMIT continuity — seed-first satellite re-admission
+         *        (@c network.readmit_seed_horizon_s, seconds; the STABILITY campaign's E2,
+         *        SPEC_synthetic_minimum_network §18.4 / SPEC_amb_iono_split_overcount §7 FIRST).
+         *
+         * The re-admission edge, measured three ways on the 60-station sim bed: a
+         * satellite excluded for eclipse (~55 min) returns with its clock / code-bias
+         * columns re-registered COLD, the first solve realizes them from code, and the
+         * Q3 anchor — whose per-satellite carry is older than @c clock_anchor_max_gap_s —
+         * trips `gap`, re-draws the clock LOOSE on a code-only border and re-couples on
+         * that re-draw three epochs later, freezing a metre-class tail for hours (T3,
+         * §18.1); the same cold seed drives the F3 block's ~4 h post-eclipse DD episodes
+         * (§6.9) and the consumer walk at G12's re-emission.
+         *
+         * With this knob armed a departing satellite's D2 Clock + CodeBias carry is
+         * PARKED (@c CarryPrior::t_park_s) for up to this many seconds — walked by every
+         * frame re-base that walks @c prev_carry, dropped at a clock-datum change of its
+         * constellation, never serialized — and on re-registration inside the horizon it
+         * SEEDS the column at @c var + q·gap: the Q3 anchor folds ANCHORED over its true
+         * per-satellite gap (bounded by this horizon instead of the staleness bound) and
+         * its NIS guard is the mark-if-moved (a trip within @c kReadmitVerifyWindowS of
+         * the seed is counted as the data rejecting it).  The PHASE-BIAS family is
+         * deliberately NOT seeded: its frame is re-realized at the incumbent-less cold
+         * re-pin (the leveling carries do not survive a 55 min absence at the 120 s
+         * leveling gap), and a stiff seed would fight the pin.
+         *
+         * Default 0 = OFF, byte-identical (nothing is ever parked).  NOT fingerprinted:
+         * parking adds entries and changes no carried value's meaning; a snapshot never
+         * carries a parked entry (a seam inside an absence is today's cold return).
+         */
+        double networkReadmitSeedHorizonS() const { return network_readmit_seed_horizon_s_; }
+        /**
+         * @brief READMIT continuity — the block/row RE-COUPLING edge
+         *        (@c network.readmit_coupling_marg_ep, epochs).
+         *
+         * For this many epochs after a satellite's clock column returns from an absence
+         * of >= 3 loop epochs, every Card-1 coupling term on its shared columns takes the
+         * DEPARTED route (σ² += M²·P_prev, coefficient dropped) in every station's rows
+         * and F3 block: no carried ambiguity is conditioned on a column whose realization
+         * is still settling from its cold re-registration — the invariant-#7
+         * re-coupling edge SPEC_amb_iono_split_overcount §7 names FIRST.  Both edges are
+         * evented (`READMIT readmit` / `marg_expired`) and the diverted-term count is the
+         * run-end denominator.  Requires the Card-1 coupling rows (INERT otherwise,
+         * loader-warned).  Default 0 = OFF, byte-identical.
+         */
+        int networkReadmitCouplingMargEp() const { return network_readmit_coupling_marg_ep_; }
+        /**
          * @brief Post-resume MW/LLI slip-drain warm-up (@c network.resume_slip_warmup_ep,
          *        epochs, SPEC_synthetic_minimum_network §18.10).
          *
@@ -4025,6 +4071,31 @@ namespace GnssProcessor {
          */
         double networkPhaseDatumHandoverMaxVarM2() const {
             return network_phase_datum_handover_max_var_m2_;
+        }
+
+        /**
+         * @brief The HONEST-σ-SCALE handover ceiling
+         *        (@c network.phase_datum_handover_max_var_ratio).
+         *
+         * @ref networkPhaseDatumHandoverMaxVarM2 is an ABSOLUTE variance, and its
+         * field value (1e-4 m²) was sized to the over-counted σ of the diagonal
+         * phase-leveling carry: under F1/F3's honest σ it refuses 93/93 successors
+         * (SPEC_amb_iono_split_overcount §6.8.3), and the 1e-2 m² that restores
+         * continuity is a hand value.  This knob asks the posture-invariant
+         * question instead — has THIS arc converged since its birth: a ledger value
+         * is usable only if its conditional variance is <= ratio × the arc's
+         * FIRST-STASH conditional variance (@c LocalCarry::var_first, kept across
+         * re-stashes; an erase-and-rebirth starts it over, a re-level keeps it so a
+         * refloated arc reads unconverged until it re-earns the level).  An unknown
+         * first-stash variance (a never-carried fresh arc) is refused.  The absolute
+         * ceiling stays as a rail; both refusals are counted separately and every
+         * PBGAUGE handover row then carries the successor's var / var_first.
+         *
+         * INERT unless @ref networkPhaseDatumHandoverContinuous.  0 (default) = OFF:
+         * the absolute ceiling alone, byte-identical.
+         */
+        double networkPhaseDatumHandoverMaxVarRatio() const {
+            return network_phase_datum_handover_max_var_ratio_;
         }
 
         /**
@@ -6668,6 +6739,8 @@ namespace GnssProcessor {
         double network_amb_seam_reinflate_var_m2_{0.0};   ///< Seam-scoped one-shot variance ADD (m²) on every restored phase-leveling local ambiguity carry at a warm resume — a soft refloat that keeps the carried value as prior mean (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF, byte-identical.
         bool   network_resume_frame_restore_{false};       ///< Resume FRAME restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the snapshot's phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-satellite state and the CLK-R held frame, so the first post-resume election / clock fold / emit continue the pre-seam realization.  Capture rides its OWN write knob, network.state_snapshot_frame_capture (format v2, knob-gated by 90718c3); this knob only decides whether a resume USES the rows.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_coupling_restore_{false};    ///< §18.12 resume COUPLING-REGRESSOR restore: at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order — never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING (LOOSE CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain DIAGONAL prior asserted AT that conditional variance which out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project (Card 1f), and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only — var is never modified).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
+        int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires en masse at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = OFF.  NOT fingerprinted.
         bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).
         double network_iono_carry_q_{1e-4};               ///< QUEUE 8b: slant-iono carry random-walk process noise (m²/s); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.
@@ -6837,6 +6910,7 @@ namespace GnssProcessor {
         bool   network_clock_anchor_resolve_{true};        ///< Card Q3: adapt-and-EMIT. On a trip, withdraw the offending clock prior from the shared system and RE-SOLVE the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Placed BEFORE the within-epoch RAIM adaptation deliberately — a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's DATA. OFF degrades to detect+mark+decouple-next-epoch. INERT unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
+        double network_phase_datum_handover_max_var_ratio_{0.0}; ///< Honest-σ-scale handover ceiling: a ledger value is usable only if var <= ratio × the arc's first-stash conditional variance (unknown ⇒ refused); the absolute ceiling stays a rail.  0 = OFF.  INERT unless network_phase_datum_handover_continuous_.
         double network_phase_datum_handover_max_var_m2_{1.0}; ///< Conditional-variance ceiling (m^2) a handover ledger value must beat to be pinned; above it the handover falls through to the COLD path. INERT unless network_phase_datum_handover_continuous_.
         bool   network_phase_datum_handover_continuous_{false}; ///< Hand an anchor handover over at the successor's own outgoing-frame ambiguity value instead of re-pinning at 0, so the gauge change is an S-transform and the emitted family does not step. Both edges counted + traced. INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (no ledger allocated).
         bool   network_phase_anchor_carry_reref_{false};   ///< QUEUE item 1(d) (SPEC_pivot_visibility_gauge_defect §5.07.5 R1): at a PHASE_ANCHOR handover, marginalize the (sat,signal) family's shared PB carry for ONE epoch (the eq34_reref treatment) and erase its phase-leveling local carries at every station — the retired-frame prior is not folded against the re-realized design matrix, so the frame step lands on the FREE phase bias instead of being absorbed by the satellite clock (measured 41 sigma on G21). INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (the set is never populated).

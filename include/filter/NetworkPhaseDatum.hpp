@@ -268,7 +268,8 @@ void networkElectPhaseAnchors(
         const AnchorHandoverLedger* handover = nullptr,
         std::vector<AnchorHandoverEvent>* handovers_out = nullptr,
         double max_var = 0.0,
-        std::set<std::pair<std::string, std::string>>* reref_out = nullptr);
+        std::set<std::pair<std::string, std::string>>* reref_out = nullptr,
+        double max_var_ratio = 0.0);
 
 /**
  * @brief QUEUE item 1(d): erase the phase-leveling local ambiguity carries of

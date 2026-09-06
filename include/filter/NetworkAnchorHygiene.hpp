@@ -133,6 +133,7 @@ struct NetworkAnchorTallies {
     long long handover_cold = 0;         ///< No ledger entry for the successor (fresh arc / first epoch): pinned at 0, frame DOES step.
     double    handover_max_abs_m = 0.0;  ///< Largest |target| applied — the size of the step that was AVOIDED.
     long long handover_refused_var = 0;  ///< Ledger value REFUSED as too ill-determined to serve as a datum (subset of handover_cold) — invariant #7's re-coupling re-validation.
+    long long handover_refused_ratio = 0; ///< Ledger value REFUSED by the honest-σ-scale test var <= ratio × var_first (network.phase_datum_handover_max_var_ratio; subset of handover_cold, disjoint from handover_refused_var; an unknown var_first counts here).
     double bridge_margin_decades = 0.0;  ///< K2-style margin of the bridge information over the rank-gate cutoff.
     bool   bridge_margin_logged = false; ///< one-shot latch for that check.
 };

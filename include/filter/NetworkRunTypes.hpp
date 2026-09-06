@@ -251,7 +251,27 @@ struct CarryPrior {
     double          value;
     double          var;
     bool            inflate_q{false};  ///< Clock-monitor flagged this satellite: fold NEXT epoch with the large reinit variance (a soft large-q reinitialization that lets a frozen clock walk toward truth while retaining a weak anchor) instead of the stiff process noise.
+    /// READMIT continuity (E2 seed-first re-admission, network.readmit_seed_horizon_s;
+    /// SPEC_synthetic_minimum_network §18.4 / SPEC_amb_iono_split_overcount §7 FIRST):
+    /// continuous-GPS seconds at which this entry's shared column LEFT the layout
+    /// (0 = live).  A PARKED entry is the satellite's pre-gap realization held for the
+    /// seed horizon: it is never folded while its column is absent, it is walked by
+    /// every frame re-base that walks @c prev_carry, it is excluded from the snapshot,
+    /// and on re-registration it seeds the column's D2 prior at @c var + q·gap (the Q3
+    /// anchor folds ANCHORED over the true gap instead of tripping `gap` onto a
+    /// code-only LOOSE re-draw that its own re-couple then freezes into a tail).
+    double          t_park_s{0.0};
 };
+
+/// READMIT continuity constants.  @c kReadmitMinGapEp: the re-admission detector's
+/// minimum absence in loop epochs (a single withheld epoch skips the stash for EVERY
+/// satellite and must not read as a fleet-wide re-admission).  @c kReadmitVerifyWindowS:
+/// a Q3 nis/abs trip this soon after a clock seed is attributed to the seed (the data
+/// REJECTED it — invariant #7's mark-if-moved).  @c kReadmitSeedK: the stash-side
+/// seed-vs-solve check's standardized-residual threshold (telemetry).
+inline constexpr long long kReadmitMinGapEp      = 3;
+inline constexpr double    kReadmitVerifyWindowS = 300.0;
+inline constexpr double    kReadmitSeedK         = 6.0;
 
 /// Identity key of a dense-carried shared parameter (C1) — mirrors
 /// NetworkEstimator's internal key construction so the stash and fold agree.
@@ -393,6 +413,7 @@ struct LocalCarry {
     std::vector<CoupledShared> coupling{};  ///< Card 1: the regression on the FREE shared border.  Empty on the legacy diagonal path, and for a warm-resume-restored entry unless network.resume_coupling_restore rebuilt it from a v3 snapshot's QL/QZ record (§18.12); empty on a v1/v2 file or with the knob off — an empty coupling injects as a plain diagonal row (graceful one-epoch degrade).
     std::shared_ptr<const PlHarvestBlock> blk{};  ///< F3 (network.phase_leveling_local_block): the harvest cross-covariance block this entry's off-diagonals live in — null when the knob is off, on the ZWD carry, and for a warm-resume-restored entry (no block ⇒ every pair with it is zeroed + counted at inject).
     int blk_idx{-1};                              ///< F3: this entry's row/column in @c blk->C (−1 = none).
+    double var_first{0.0};                        ///< The arc's FIRST-STASH conditional variance (m²; 0 = unknown): set once at birth, kept across re-stashes (an erase-and-rebirth starts it over, a re-level keeps it).  The honest-σ-scale denominator of network.phase_datum_handover_max_var_ratio; snapshotted only when that knob is armed.
 };
 
 /// SPEC_slip_relevel_walk §6 — the slip re-level response's per-epoch state
@@ -617,6 +638,7 @@ struct AnchorHandoverLedger {
     struct Entry {
         double value{0.0};
         double var{-1.0};   ///< < 0 = unavailable, treated as unusable.
+        double var_first{0.0};  ///< the arc's FIRST-STASH conditional variance (m²; 0 = unknown ⇒ the ratio ceiling refuses it) — network.phase_datum_handover_max_var_ratio's denominator.
     };
     std::map<std::pair<int, std::string>, Entry> value_abs;
     /// True once a harvest has run, so the election can tell "armed but the
@@ -635,6 +657,8 @@ struct AnchorHandoverEvent {
     std::string to;             ///< Incoming anchor station.
     double      target_m{0.0};  ///< Pin target applied to the incoming anchor (m).
     bool        continuous{false}; ///< true = frame preserved; false = COLD re-realization.
+    double      var{-1.0};        ///< the successor's ledger conditional variance (m²; < 0 = no ledger entry) — traced when the ratio ceiling is armed.
+    double      var_first{0.0};   ///< the successor arc's first-stash variance (m²; 0 = unknown).
 };
 
 /// One present station ZWD column this epoch (B9): its A_r column and the ZWD
@@ -708,6 +732,10 @@ struct StationAssembly {
     /// denominator: the run-total departed count moves for many reasons and cannot
     /// distinguish armed-and-working from armed-and-inert.
     long long                 cpl_reinit_diverted{0};
+    /// READMIT re-coupling edge (network.readmit_coupling_marg_ep): coupling terms diverted
+    /// to the departed route because their satellite is inside its post-re-admission
+    /// marginalization window — this station-epoch.
+    long long                 cpl_readmit_diverted{0};
     /// SPEC_slip_relevel_walk: inject-site free-epoch skips actually taken this
     /// station-epoch (the arc had a live carry the latched set suppressed).
     long long                 relevel_free_skips{0};

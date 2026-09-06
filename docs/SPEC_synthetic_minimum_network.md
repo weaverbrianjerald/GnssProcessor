@@ -4133,13 +4133,63 @@ window returns "common epochs 0".
    refreshing the restored anchor's staleness basis, or re-tapping at the
    `anchor_handover` edge (invariant #7 — a handover is an EVENT and the clock
    anchor's staleness test fires one epoch later with both edges silent).
+   **RESOLVED 2026-09-05 (§18.13): the event ledger shows it is the RE-ADMISSION
+   edge, not the handover — `col_removed` 305220 → `col_added` 306210 → `gap` trip
+   306240 → re-couple on the re-draw; built as E2 (`network.readmit_seed_horizon_s`),
+   leg D pre-registered.**
 2. `prev_carry_cov` is still not serialized: 376 border keys fold DIAGONALLY at
    the first warm epoch while the restored coupling rows are already conditional.
    Constant across arms, so not an A/B confounder, but it is the other half of
-   this seam.
+   this seam.  **BUILT 2026-09-05 (§18.13 (b): snapshot QK/QP records under the same
+   capture / restore knobs); writer re-run + leg E pre-registered.**
 3. Census `rel p90` 1.05e-2 against a pre-registered <1e-3 (p50 5.28e-4).  The
    median row is frame-valid; the tail is not.
 4. The 2 residual `nis` trips are on E02/G01 — the FORMER pivots (realized pivots
    at the branch epoch are E03/G02, which were the two LOOSE anchors, since a
    pivot's clock is datum-pinned).  They are NOT the two bad-clock satellites; do
    not assume one defect.
+
+### 18.13 E2 + THE DENSE BORDER ACROSS THE SEAM — BUILT 2026-09-05, PRE-REGISTERED
+
+**Two increments in one build, both default-OFF and byte-identical OFF.**
+
+**(a) E2, seed-first re-admission (§18.4's sketch, resolved).**  The §18.12 residual settled what
+the card is: G20's shared columns were `col_removed` at 305220 (eclipse exclusion), `col_added` at
+306210 with an INCUMBENT-LESS cold re-pin of its phase-bias family at a new anchor station, and the
+Q3 anchor — whose per-satellite carry was 33 epochs old — tripped `gap` at 306240, re-drew the clock
+LOOSE on a code-only border and re-coupled on that re-draw at 306330 (`reseed_var` 2.7e-4).  That IS
+the T3 mechanism of §18.1 and the F3 episode mechanism of SPEC_amb_iono §6.9; it is not a property of
+the restored anchor.  The §18.4 "hard part" (the stored realization lives in the emitted frame)
+dissolves once the seed source is the INTERNAL-frame D2 carry itself: `network.readmit_seed_horizon_s`
+PARKS a departing satellite's clock + code-bias `CarryPrior` (stamp `t_park_s`; walked by the
+eq34/relevel re-bases that walk `prev_carry`; dropped at a clock-datum change of its constellation;
+never serialized — a seam inside an absence is today's cold return) and on re-registration inside
+the horizon folds it as the column's prior at `var + q·gap`, with the Q3 fold's staleness bound
+raised to the horizon for that seed (`clockAnchorFoldVariance(…, seed_horizon_s)`) so an ANCHORED
+satellite folds anchored over its true gap and a LOOSE one inflates over the true gap.  The guard is
+unchanged and is the mark-if-moved: a `nis`/`abs` trip within 300 s of a seed is attributed
+(`;readmit_seed_moved`) and counted.  The phase-bias family is NOT seeded (its frame is re-realized
+at the cold re-pin; the leveling carries do not survive the absence at the 120 s leveling gap) — the
+incumbent/pin-target parking that would make the PB frame continuous is deferred, with data: on this
+posture no arc survives a 55 min absence, so it could not act.  Companion knob
+`network.readmit_coupling_marg_ep`: the block/row re-coupling edge (SPEC_amb_iono §6.10).
+
+**(b) §18.12 open item 2 — `prev_carry_cov` across the seam.**  Snapshot format v3 gains `QK`
+(dense-carry identity keys in row order) and `QP` (lower triangle per row, explicit length) records,
+written under the SAME write knob (`state_snapshot_coupling_capture`) whenever the C1 block is finite
+and complete, restored behind the SAME read knob (`resume_coupling_restore`): keys with no restored D
+row are dropped (row and column), the block is symmetrized, and the first warm fold runs the DENSE
+path.  Counters `n_resume_cpl_cov_keys` / `_dropped`; the existing `n_resume_cpl_diag_border` is the
+readout (376 on arm C).  A partial block is a hard parse failure (the QL rule).  Also in the L row:
+an OPTIONAL trailing `var_first` field, written only when the handover ratio ceiling is armed.
+
+**Legs (same v3 `.ep1440` of `runs/camp60wu_quiet12h_frwriter_sticky` for D; a re-run writer for E):**
+
+| leg | knobs | pre-registered |
+|---|---|---|
+| `cplreg_q12warm_d` | arm C + `readmit_seed_horizon_s 3900` + `readmit_coupling_marg_ep 20` | G20/E31 `gap` trips at 306240/306450 do not fire; their per-sat clock error at 309630 ≤ 0.3 m (C: −2.25 / −1.12); consumer h12 rms ≤ 1.0 m (C 2.05); seam SD unchanged vs C (0.025 G / 0.030 E); `cta_decouple reason=gap` over the leg 15 → ≤ 2 |
+| `frwriter_sticky_v3c` | the §18.12 writer on the new build (capture ON, knobs OFF) | products a byte-identical prefix of `runs/camp60wu_quiet24h_sticky/products.txt`; `.ep1440` carries ~376 QK + QP rows |
+| `cplreg_q12warm_e` | leg D's knobs on the NEW `.ep1440` | `n_resume_cpl_diag_border` 376 → ≤ 20 at the first fold; first-fold `nis` trips ≤ arm C's 2; seam SD ≤ C; consumer h12 ≤ leg D |
+
+Verdicts land in §18.14 as the legs finish; the predictions above are not edited afterwards.
+

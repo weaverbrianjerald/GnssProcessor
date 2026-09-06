@@ -109,6 +109,7 @@ void networkStashStatus(
     if (carry_vce && (vce_wants_pb || vce_wants_cb)) {
         for (const CarryPrior& cp : prev_carry) {
             if (cp.inflate_q) continue;                       // clock-monitor reinit, not an ordinary carry
+            if (cp.t_park_s > 0.0) continue;                  // READMIT: a parked entry folded nothing (its column is absent)
             if (cp.kind == SharedParamKind::PhaseBias) {
                 if (!vce_wants_pb || phase_hold_on) continue;                 // hold path ≠ a q-carry
                 if (eq34_reref.count({cp.sat, cp.signal})) continue;         // Card 3 D4: marginalized
@@ -174,6 +175,7 @@ void networkStashStatus(
         const bool outer_gate = (!datum_changed || scoped_handover_k)
                              && !prev_carry.empty();
         for (const CarryPrior& cp : prev_carry) {
+            if (cp.t_park_s > 0.0) continue;   // READMIT: a parked entry folded nothing (its column is absent)
             const bool is_pb  = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
             const bool is_cb  = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
             const bool is_clk = (cp.kind == SharedParamKind::Clock)     && prires_clk;
@@ -269,7 +271,7 @@ void networkStashStatus(
         }
     }
 
-    networkStashCarry(ctx, config_, est, x_s, plan, sh_model.get(), sh_model2.get(),
+    networkStashCarry(ctx, config_, traces, se.time, est, x_s, plan, sh_model.get(), sh_model2.get(),
                       clock_refloat_sats, registered_clock_sats,
                       shared_phase_keys, registered_code_keys, log);
 

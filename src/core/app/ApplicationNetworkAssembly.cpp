@@ -2835,6 +2835,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                       carry_cpl_joint, carry_cpl_tu, carry_cpl_shmarg,
                                       ctx.knobs.carry_cpl_gauge, ctx.knobs.carry_cpl_reinit,
                                       tu_reinit_hist, R};
+                // READMIT re-coupling edge (network.readmit_coupling_marg_ep): the open
+                // marginalization windows (written SERIALLY at the stash, read-only here).
+                if (ctx.knobs.readmit_marg_ep > 0 && !ctx.carry.readmit_marg.empty()) {
+                    cb.readmit_marg = &ctx.carry.readmit_marg;
+                    cb.loop_ep      = static_cast<long long>(ctx.counters.n_loop_epochs);
+                }
                 if (legacy_local_inject) {
                 // Ambiguity carry.  Legacy: the whole pivot station is skipped (all
                 // its ambiguities are gauge pins).  Prioritized: every station
@@ -3435,6 +3441,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
                             ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan,
                             ctx.counters.n_cpl_reinit_diverted,
+                            ctx.counters.n_cpl_readmit_diverted,
                             n_cpl_row_dump,
                             &ctx.counters.cpl_orphan_fam_total);
     if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond) {

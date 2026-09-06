@@ -635,6 +635,13 @@ int networkTeardown(
                   h.reattaches, h.handover_continuous, h.handover_max_abs_m,
                   h.handover_cold, h.handover_refused_var,
                   ctx.knobs.pd_handover_max_var);
+        if (ctx.knobs.pd_handover_max_var_ratio > 0.0)
+            log->info("Network (PB-GAUGE HANDOVER, ratio ceiling): {} ledger value(s) REFUSED by "
+                      "the honest-sigma-scale test var <= {} x var_first (a subset of the cold "
+                      "count, disjoint from the {} absolute-ceiling refusals; an unknown "
+                      "var_first counts here).",
+                      h.handover_refused_ratio, ctx.knobs.pd_handover_max_var_ratio,
+                      h.handover_refused_var);
         if (h.reattaches > 0 && total == 0)
             log->warn("Network (PB-GAUGE HANDOVER): DEAD WIRING — {} handover(s) were "
                       "elected but NONE reached the retarget block.  The knob reports "
@@ -2025,6 +2032,39 @@ int networkTeardown(
                             "at the first warm epoch — the rows were SOFTENED by "
                             "Sum M^2*P_prev, which is rung 3's mechanism by another route; "
                             "grade the h12 consumer before trusting the clock result."
+                          : "");
+        if (config_.networkResumeCouplingRestore())
+            log->info("Network (resume coupling restore, dense border): {} dense-carry key(s) "
+                      "restored from the snapshot's QK/QP records ({} dropped: no restored D "
+                      "row); {} border key(s) folded DIAGONALLY at the first warm fold.",
+                      C.n_resume_cpl_cov_keys, C.n_resume_cpl_cov_dropped,
+                      C.n_resume_cpl_diag_border);
+        // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge) —
+        // BOTH edges printed (standing invariant #7): parked = what left; seeded = what came
+        // back; moved / outlier = what the data rejected; the coupling window's diverted-term
+        // count is the block edge's own denominator.  0 seeds under an armed horizon with
+        // parks > 0 reads as INERT-on-this-bed (invariant #4), and says so.
+        if (config_.networkReadmitSeedHorizonS() > 0.0
+            || config_.networkReadmitCouplingMargEp() > 0)
+            log->info("Network (READMIT continuity): {} re-admission(s) detected; seed horizon {} "
+                      "s — {} entr(ies) parked at departures, {} clock + {} code-bias column(s) "
+                      "seeded on return ({} clock seed(s) folded ANCHORED), {} parked entr(ies) "
+                      "expired, {} dropped at a datum change, {} dropped unconsumed; Q3 trips "
+                      "within {} s of a clock seed: {}; stash-side seed checks {} ({} over "
+                      "k={}); coupling windows {} epoch(s): {} opened, {} term(s) diverted; {} "
+                      "parked entr(ies) excluded from snapshots.{}",
+                      C.n_readmit_events, config_.networkReadmitSeedHorizonS(),
+                      C.n_readmit_parked, C.n_readmit_seeded_clk, C.n_readmit_seeded_cb,
+                      C.n_readmit_seeded_anch, C.n_readmit_expired, C.n_readmit_dropped_datum,
+                      C.n_readmit_dropped_stale, kReadmitVerifyWindowS,
+                      C.n_readmit_seed_moved, C.n_readmit_seed_check,
+                      C.n_readmit_seed_outlier, kReadmitSeedK,
+                      config_.networkReadmitCouplingMargEp(), C.n_readmit_marg_windows,
+                      C.n_cpl_readmit_diverted, C.n_snap_parked_excluded,
+                      (config_.networkReadmitSeedHorizonS() > 0.0 && C.n_readmit_parked > 0
+                       && C.n_readmit_seeded_clk + C.n_readmit_seeded_cb == 0)
+                          ? "  ⚠ entries were parked but NONE seeded — every return expired or "
+                            "was dropped; the horizon is shorter than this bed's absences."
                           : "");
         if (config_.networkZwdSeamReseed())
             log->info("Network (ZWD seam re-seed): {} station-fold(s) over {} epoch(s) of the "

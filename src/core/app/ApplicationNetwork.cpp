@@ -1722,7 +1722,8 @@ int Application::runNetwork() {
                                          &handovers,
                                          ctx.knobs.pd_handover_max_var,
                                          ctx.knobs.pa_carry_reref ? &pa_reref
-                                                                  : nullptr);
+                                                                  : nullptr,
+                                         ctx.knobs.pd_handover_max_var_ratio);
                 // BOTH EDGES in one row (invariant #7): who released the gauge, who
                 // took it, and whether the frame was preserved.  A handover logged
                 // only on its incoming half is exactly the silent re-referencing the
@@ -1734,7 +1735,15 @@ int Application::runNetwork() {
                                      h.amb, h.to, h.target_m, std::nullopt,
                                      h.continuous ? "s_transform" : "re_realize",
                                      "from=" + (h.from.empty() ? std::string("(none)")
-                                                               : h.from));
+                                                               : h.from)
+                                     // Ratio ceiling armed: the successor's ledger var and
+                                     // first-stash var ride the row (the prerequisite
+                                     // SPEC_amb_iono §7 item 15 named — trace the successor's
+                                     // conditional var per handover, not only the target).
+                                     + (ctx.knobs.pd_handover_max_var_ratio > 0.0
+                                            ? fmt::format(";var={:.3e};var_first={:.3e}",
+                                                          h.var, h.var_first)
+                                            : std::string{}));
                 // 1(d) local-carry hygiene: erase the marked families'
                 // phase-leveling carries at EVERY station, before PASS B consumes
                 // the carry (the eq34 D4 placement).  Counted for the run-end

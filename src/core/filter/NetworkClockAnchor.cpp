@@ -104,7 +104,8 @@ void clockAnchorBeginEpoch(NetworkRunContext& ctx) {
 ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         const std::string& sat,
                                         double prev_var, double dt_epoch,
-                                        double pl_now_s, double value) {
+                                        double pl_now_s, double value,
+                                        double seed_horizon_s) {
     ClockAnchorFold out;
     const double dt_leg = std::max(0.0, dt_epoch);
     // OFF path: the legacy expression, character for character, so an unarmed run
@@ -119,8 +120,17 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
     // carry's age without bound (DOY-129 withheld 278 consecutive epochs).  A
     // first sighting has no elapsed time — and is LOOSE anyway.
     const double dt_sat = (st.t_last > 0.0) ? (pl_now_s - st.t_last) : dt_leg;
+    // READMIT continuity: a PARKED pre-gap realization seeding a re-registered column
+    // is stale only beyond the seed horizon — the gap it spans is exactly the evidence
+    // gap the park holds, and the guard (not the staleness bound) re-validates it.
+    const double gap_bound = (seed_horizon_s > ctx.knobs.cta_max_gap_s)
+                                 ? seed_horizon_s : ctx.knobs.cta_max_gap_s;
     const bool stale = !(dt_sat > 0.0)
-                    || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > ctx.knobs.cta_max_gap_s);
+                    || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > gap_bound);
+    // A LOOSE seed inflates over the TRUE gap, never the driver's dt (the legacy loose
+    // expression is kept character-for-character when nothing is seeding).
+    if (seed_horizon_s > 0.0 && dt_sat > 0.0)
+        out.var_eff = prev_var + ctx.knobs.q_clock * dt_sat;
     if (stale && st.anchored) {
         // Detected here because it decides the variance; the STATE TRANSITION,
         // the event and the wire mark are the guard's, so every decoupling edge
@@ -172,8 +182,19 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     st.in_band  = 0;
     if (!was_anchored) return false;   // already LOOSE: not an edge, nothing to mark
     ctx.carry.clk_anchor.tripped.insert(sat);
+    // READMIT continuity: a trip this soon after a clock SEED is the data rejecting the
+    // seeded pre-gap realization — invariant #7's mark-if-moved, attributed and counted.
+    std::string seed_tag;
+    if (!ctx.carry.readmit_seeded_s.empty()) {
+        const auto rs = ctx.carry.readmit_seeded_s.find(sat);
+        if (rs != ctx.carry.readmit_seeded_s.end()
+            && ctx.carry.readmit_now_s - rs->second <= kReadmitVerifyWindowS) {
+            ++ctx.counters.n_readmit_seed_moved;
+            seed_tag = ";readmit_seed_moved";
+        }
+    }
     traces.emitEvent(t, "CLK_ANCHOR", "cta_decouple", sat, "", statistic, threshold,
-                     "refloat", fmt::format("reason={};{}", reason, detail));
+                     "refloat", fmt::format("reason={};{}{}", reason, detail, seed_tag));
     if (ctx.knobs.cta_mark) {
         ctx.carry.clk_anchor_disc_pending.insert(sat);
         ++ctx.counters.cta_marks;

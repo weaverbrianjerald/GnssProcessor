@@ -84,6 +84,11 @@ clock trips with `awk -F, 'NR>1 && $2==302430 && $4=="cta_decouple"' runs/<leg>/
 h12).  Fold every result into SPEC §18.11 and the `network.resume_frame_restore`
 ledger row; quote settled p50 beside rms and name the h16.7-h18.3 eclipse cluster.
 
+> **2026-09-05 UPDATE:** §3 below LANDED as `network.resume_coupling_restore` (SPEC §18.12: wire
+> 10× better, one residual).  That residual (G20/E31) turned out to be the satellite
+> RE-ADMISSION edge, built the same day as E2 (`network.readmit_seed_horizon_s`) together
+> with `prev_carry_cov` across the seam (QK/QP records) — SPEC §18.13, legs D/E pre-registered.
+
 ## 3. Second increment (the fix): serialize the coupling regressors
 
 Why: a restored `LocalCarry` injects as a plain diagonal row

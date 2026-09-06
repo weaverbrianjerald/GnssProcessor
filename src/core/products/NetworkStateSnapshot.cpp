@@ -153,8 +153,13 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, vp] : snap.prev_clk)
         put(fmt::format("J,{},{},{}", sat, vp.first, vp.second));
     for (const auto& [key, l] : snap.local_carry)
-        put(fmt::format("L,{},{},{},{},{},{}", std::get<0>(key), std::get<1>(key),
-                        std::get<2>(key), l.value_abs, l.var, l.last_seen_s));
+        put(fmt::format("L,{},{},{},{},{},{}{}", std::get<0>(key), std::get<1>(key),
+                        std::get<2>(key), l.value_abs, l.var, l.last_seen_s,
+                        // network.phase_datum_handover_max_var_ratio: the arc's first-stash
+                        // variance rides an OPTIONAL 7th field (absent ⇒ the L row is
+                        // byte-identical to every earlier format).
+                        l.var_first != 0.0 ? fmt::format(",{}", l.var_first)
+                                           : std::string{}));
     for (const auto& [idx, l] : snap.zwd_carry)
         put(fmt::format("Z,{},{},{},{}", idx, l.value_abs, l.var, l.last_seen_s));
     // Resume FRAME records (format v2, §18.10) — absent on a run without them.
@@ -193,6 +198,15 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         put(ln);
     }
     for (const std::string& s : snap.clock_refloat_sats) put(fmt::format("QR,{}", s));
+    // §18.12 (2a): the dense D2 covariance side-car — keys in row order, then the lower
+    // triangle per row with an explicit length (the truncation guard the QL rows use).
+    for (std::size_t i = 0; i < snap.carry_cov_keys.size(); ++i)
+        put(fmt::format("QK,{},{}", i, snap.carry_cov_keys[i]));
+    for (std::size_t i = 0; i < snap.carry_cov_rows.size(); ++i) {
+        std::string ln = fmt::format("QP,{},{}", i, snap.carry_cov_rows[i].size());
+        for (double v : snap.carry_cov_rows[i]) ln += fmt::format(",{}", v);
+        put(ln);
+    }
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -384,12 +398,17 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed J fields");
             s.prev_clk[f[1]] = {d1, d2};
         } else if (tag == "L") {
-            if (f.size() != 7) return fail("malformed L line");
+            if (f.size() != 7 && f.size() != 8) return fail("malformed L line");
             if (!parseI(f[1], i1)) return fail("malformed L station index");
             if (!parseD(f[4], d1) || !parseD(f[5], d2) || !parseD(f[6], d3))
                 return fail("malformed L fields");
-            s.local_carry[{static_cast<int>(i1), f[2], f[3]}] =
-                NetworkStateSnapshot::Local{d1, d2, d3};
+            NetworkStateSnapshot::Local L{d1, d2, d3};
+            if (f.size() == 8) {   // optional first-stash variance (handover ratio ceiling)
+                if (!parseD(f[7], L.var_first) || !std::isfinite(L.var_first)
+                    || L.var_first < 0.0)
+                    return fail("malformed L var_first");
+            }
+            s.local_carry[{static_cast<int>(i1), f[2], f[3]}] = L;
         } else if (tag == "Z") {
             if (f.size() != 5) return fail("malformed Z line");
             if (!parseI(f[1], i1)) return fail("malformed Z station index");
@@ -513,6 +532,28 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
         } else if (tag == "QR") {   // §18.12: write-epoch clock-monitor refloat set
             if (f.size() != 2) return fail("malformed QR line");
             s.clock_refloat_sats.insert(f[1]);
+        } else if (tag == "QK") {   // §18.12 (2a): dense-carry key, row order
+            if (f.size() != 3) return fail("malformed QK line");
+            long long id = 0;
+            if (!parseI(f[1], id) || id != static_cast<long long>(s.carry_cov_keys.size()))
+                return fail("QK ids must be dense and ascending");
+            if (f[2].empty()) return fail("empty QK key");
+            s.carry_cov_keys.push_back(f[2]);
+        } else if (tag == "QP") {   // §18.12 (2a): dense-carry covariance row (lower triangle)
+            if (f.size() < 3) return fail("malformed QP line");
+            long long id = 0, n = 0;
+            if (!parseI(f[1], id) || id != static_cast<long long>(s.carry_cov_rows.size()))
+                return fail("QP ids must be dense and ascending");
+            if (!parseI(f[2], n) || n != id + 1
+                || f.size() != 3u + static_cast<std::size_t>(n))
+                return fail("QP row length mismatch");
+            std::vector<double> row(static_cast<std::size_t>(n));
+            for (long long e = 0; e < n; ++e) {
+                if (!parseD(f[3u + static_cast<std::size_t>(e)], d1) || !std::isfinite(d1))
+                    return fail("QP entry not finite");
+                row[static_cast<std::size_t>(e)] = d1;
+            }
+            s.carry_cov_rows.push_back(std::move(row));
         } else {
             return fail("unknown record tag '" + tag + "'");
         }
@@ -560,6 +601,11 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             return fail(fmt::format("QZ,{} has no matching Z row", idx));
         s.coupling_zrows[idx] = std::move(ents);
     }
+    // §18.12 (2a): the dense-carry side-car must be WHOLE — n keys and n rows (row i's
+    // length i+1 is checked per row above) — or absent.  A partial block is a hard failure.
+    if (s.carry_cov_rows.size() != s.carry_cov_keys.size())
+        return fail(fmt::format("QK/QP count mismatch ({} key(s), {} row(s))",
+                                s.carry_cov_keys.size(), s.carry_cov_rows.size()));
 
     out = std::move(s);
     return true;

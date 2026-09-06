@@ -1517,6 +1517,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // run-end log line is this group's invariant-#4 counter instrument.
                << "\"state_snapshot_coupling_capture\":" << (nc.state_snapshot_coupling_capture ? "true" : "false") << ','
                << "\"resume_coupling_restore\":" << (config_.networkResumeCouplingRestore() ? "true" : "false") << ','
+               // READMIT continuity (E2 seed-first re-admission + the block re-coupling
+               // edge) and the honest-sigma-scale handover ceiling — startup record; the
+               // run-end 'READMIT continuity' / 'ratio ceiling' lines are the counters.
+               << fmt::format("\"readmit_seed_horizon_s\":{},", config_.networkReadmitSeedHorizonS())
+               << fmt::format("\"readmit_coupling_marg_ep\":{},", config_.networkReadmitCouplingMargEp())
+               << fmt::format("\"phase_datum_handover_max_var_ratio\":{},", config_.networkPhaseDatumHandoverMaxVarRatio())
                << "\"raim\":" << (raim_on ? "true" : "false") << ','
                << fmt::format("\"raim_k_sigma\":{},", raim_k)
                << "\"raim_min_stations\":" << raim_min_sta << ','

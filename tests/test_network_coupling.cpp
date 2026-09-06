@@ -665,3 +665,94 @@ TEST(NetworkCouplingTest, LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyEx
     EXPECT_DOUBLE_EQ(dep.crows[0].w, 1.0 / (0.01 * B + 0.5 * 0.5 * 9.0));
     EXPECT_EQ(dep_f.R.cpl_terms_departed, 1);
 }
+
+// --- READMIT re-coupling edge (network.readmit_coupling_marg_ep) -------------------
+//
+// A satellite inside its post-re-admission window takes the DEPARTED route even
+// though its column is PRESENT and bound: the row drops the coefficient and adds
+// M²·P_prev to σ² (the q=∞ marginalization), so no carried row conditions on a
+// column whose realization is still settling from its cold re-registration.
+// Outside the window (expired, another satellite, null map) the row is the legacy
+// present-term row bit-for-bit, and an SH column (no satellite) is never diverted.
+// The joint (Card 1b) path routes the same term to an M_w departed column.
+TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
+    LocalCarry lc;
+    lc.value_abs = 2.0;
+    lc.last_seen_s = 0.0;
+    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0,
+                                  /*coeff=*/0.8, /*s_prev=*/1.5, /*p_prev=*/0.2} };
+    const double var = 0.01;
+
+    BuilderFixture off_f;
+    auto off = off_f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false);
+    off.buildCplRow(/*col=*/0, /*x_lin_val=*/0.5, lc, var, 30.0);
+    ASSERT_EQ(off.crows.size(), 1u);
+    ASSERT_EQ(off.crows[0].shared.size(), 1u);
+    EXPECT_EQ(off.crows[0].w, 1.0 / var);
+    EXPECT_EQ(off_f.R.cpl_readmit_diverted, 0);
+
+    // Inside the window: loop epoch 10 < expiry 12.
+    std::map<std::string, long long> marg{{"G01", 12}};
+    BuilderFixture in_f;
+    auto in = in_f.make(false, false, false);
+    in.readmit_marg = &marg;
+    in.loop_ep      = 10;
+    in.buildCplRow(0, 0.5, lc, var, 30.0);
+    ASSERT_EQ(in.crows.size(), 1u);
+    EXPECT_TRUE(in.crows[0].shared.empty()) << "the present column must be dropped";
+    EXPECT_DOUBLE_EQ(in.crows[0].w, 1.0 / (var + 0.8 * 0.8 * 0.2));
+    EXPECT_DOUBLE_EQ(in.crows[0].y, 2.0 - 0.5) << "no s_prev term without the coefficient";
+    EXPECT_EQ(in_f.R.cpl_readmit_diverted, 1);
+    EXPECT_EQ(in_f.R.cpl_terms_departed, 1);
+    EXPECT_EQ(in_f.R.cpl_terms_present, 0);
+
+    // Expired (loop epoch == expiry): the legacy row again.
+    BuilderFixture ex_f;
+    auto ex = ex_f.make(false, false, false);
+    ex.readmit_marg = &marg;
+    ex.loop_ep      = 12;
+    ex.buildCplRow(0, 0.5, lc, var, 30.0);
+    ASSERT_EQ(ex.crows.size(), 1u);
+    EXPECT_EQ(ex.crows[0].w, off.crows[0].w);
+    EXPECT_EQ(ex.crows[0].y, off.crows[0].y);
+    ASSERT_EQ(ex.crows[0].shared.size(), 1u);
+    EXPECT_EQ(ex_f.R.cpl_readmit_diverted, 0);
+
+    // Another satellite's window: untouched.
+    std::map<std::string, long long> other{{"G02", 100}};
+    BuilderFixture ot_f;
+    auto ot = ot_f.make(false, false, false);
+    ot.readmit_marg = &other;
+    ot.loop_ep      = 10;
+    ot.buildCplRow(0, 0.5, lc, var, 30.0);
+    ASSERT_EQ(ot.crows.size(), 1u);
+    EXPECT_EQ(ot.crows[0].w, off.crows[0].w);
+    EXPECT_EQ(ot_f.R.cpl_readmit_diverted, 0);
+
+    // An SH column has no satellite: never diverted, even by an empty-sat entry.
+    LocalCarry lsh;
+    lsh.value_abs = 1.0;
+    lsh.last_seen_s = 0.0;
+    lsh.coupling = { CoupledShared{SharedParamKind::VtecSh, "", "", 1, 0, 'C', 0,
+                                   /*coeff=*/0.3, /*s_prev=*/2.0, /*p_prev=*/0.05} };
+    std::map<std::string, long long> empty_sat{{"", 100}};
+    BuilderFixture sh_f;
+    auto sh = sh_f.make(false, false, false);
+    sh.readmit_marg = &empty_sat;
+    sh.loop_ep      = 1;
+    sh.buildCplRow(0, 0.0, lsh, var, 30.0);
+    ASSERT_EQ(sh.crows.size(), 1u);
+    EXPECT_EQ(sh.crows[0].shared.size(), 1u);
+    EXPECT_EQ(sh_f.R.cpl_readmit_diverted, 0);
+
+    // Joint path (Card 1b): the diverted term becomes an M_w departed column.
+    BuilderFixture jf;
+    auto jb = jf.make(/*joint=*/true, false, false);
+    jb.readmit_marg = &marg;
+    jb.loop_ep      = 10;
+    jb.buildCplRow(0, 0.5, lc, var, 30.0);
+    ASSERT_EQ(jb.craw.size(), 1u);
+    EXPECT_TRUE(jb.craw[0].shared.empty());
+    ASSERT_EQ(jb.craw[0].departed.size(), 1u);
+    EXPECT_EQ(jf.R.cpl_readmit_diverted, 1);
+}

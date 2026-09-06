@@ -611,6 +611,12 @@ namespace GnssProcessor {
               "under F1/F3's honest sigma the lineage's 1e-4 m^2 PB-gauge handover ceiling refuses "
               "93/93 successors (cold handovers, 4-14 m PB frame steps); 1e-2 restores 70/93 and "
               "the settled window — set >= 1e-2 (a working value, not a promotion)" },
+            // (2026-09-05: the re-admission edge cards — network.readmit_seed_horizon_s,
+            //  network.readmit_coupling_marg_ep, network.phase_datum_handover_max_var_ratio —
+            //  are BUILT and ledger-listed as UNVALIDATED; their posture rows join this table at
+            //  promotion, because config_posture_check.py --verify-loader requires every posture
+            //  row to map to a RECOMMEND_* ledger row.  Until then the loader's ARMED info lines
+            //  are their startup readout.)
             // Card 1f/1g — only meaningful where the Card-1 coupling rows actually EXIST:
             // the conditional carry armed and NOT superseded by the Card-4 invariant carry
             // (under carry_invariant the whole coupling trio is structurally inert, which is

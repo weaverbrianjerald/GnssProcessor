@@ -3249,6 +3249,19 @@ namespace GnssProcessor {
                     "alone at a 5.13 m consumer walk in h12.  Set "
                     "amb_seam_reinflate_var_m2 to 0.");
         }
+        // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge;
+        // SPEC_synthetic_minimum_network §18.4, SPEC_amb_iono_split_overcount §7 FIRST).
+        // Both default OFF = byte-identical; neither is fingerprinted (parking adds
+        // entries and changes no carried value's meaning; the windows restart empty).
+        // Cross-knob checks live in the ARMED summary below, after every knob is parsed.
+        network_readmit_seed_horizon_s_ =
+            jval<double>(json, "network.readmit_seed_horizon_s", "readmit_seed_horizon_s", 0.0);
+        if (!(network_readmit_seed_horizon_s_ >= 0.0))
+            throw std::runtime_error("network.readmit_seed_horizon_s must be >= 0");
+        network_readmit_coupling_marg_ep_ =
+            jval<int>(json, "network.readmit_coupling_marg_ep", "readmit_coupling_marg_ep", 0);
+        if (network_readmit_coupling_marg_ep_ < 0)
+            throw std::runtime_error("network.readmit_coupling_marg_ep must be >= 0");
         if (network_resume_frame_restore_ || network_resume_slip_warmup_ep_ > 0) {
             if (network_config_.state_snapshot_path.empty())
                 log->warn("Network (resume frame restore): resume_frame_restore / "
@@ -6461,6 +6474,18 @@ namespace GnssProcessor {
                        network_phase_datum_handover_max_var_m2_);
             return false;
         }
+        // The HONEST-σ-SCALE ceiling (SPEC_amb_iono_split_overcount §6.8.3 / §7 item 15):
+        // a ledger value is usable only if var <= ratio × its arc's first-stash
+        // conditional variance.  0 = OFF (the absolute ceiling above alone).
+        network_phase_datum_handover_max_var_ratio_ =
+            jval<double>(json, "network.phase_datum_handover_max_var_ratio",
+                         "network_phase_datum_handover_max_var_ratio", 0.0);
+        if (!(network_phase_datum_handover_max_var_ratio_ >= 0.0)) {
+            log->error("Network: network.phase_datum_handover_max_var_ratio must be >= 0 "
+                       "(got {}); 0 disables the ratio test.",
+                       network_phase_datum_handover_max_var_ratio_);
+            return false;
+        }
         // QUEUE item 1(d) — the PHASE_ANCHOR carry re-reference
         // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  The handover
         // knob above acts on the DESIGN-MATRIX side of the edge (what target the
@@ -7686,6 +7711,47 @@ namespace GnssProcessor {
                       "re-realization the consumer is TOLD about.  Ledger is harvested "
                       "post-solve and consumed one epoch later.",
                       network_phase_datum_handover_max_var_m2_);
+        // The honest-σ-scale ceiling rides the same mechanism, so it inherits the same
+        // INERT ladder: no continuous handover ⇒ no ledger value is ever tested.
+        if (network_phase_datum_handover_max_var_ratio_ > 0.0) {
+            if (!network_phase_datum_handover_continuous_)
+                log->warn("Network (PB-GAUGE HANDOVER ratio ceiling): "
+                          "network.phase_datum_handover_max_var_ratio is set but "
+                          "network.phase_datum_handover_continuous is OFF (or was disarmed above) "
+                          "— no ledger value is ever tested, so the ratio is INERT.");
+            else
+                log->info("Network producer (PB-GAUGE HANDOVER, honest-sigma-scale ceiling): a "
+                          "ledger value is pinned only if its conditional variance is <= {} x the "
+                          "arc's FIRST-STASH conditional variance (an unknown first-stash variance "
+                          "is refused); the absolute {} m^2 ceiling stays as a rail.  Both refusals "
+                          "are counted separately and every PBGAUGE handover row carries "
+                          "var / var_first.",
+                          network_phase_datum_handover_max_var_ratio_,
+                          network_phase_datum_handover_max_var_m2_);
+        }
+        // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge).
+        if (network_readmit_seed_horizon_s_ > 0.0)
+            log->info("Network producer (READMIT seed-first re-admission, E2): a departed "
+                      "satellite's D2 clock + code-bias carry is PARKED for up to {} s and seeds "
+                      "its re-registered columns at var + q*gap — the Q3 anchor folds ANCHORED "
+                      "over the true gap up to that bound and its NIS guard is the "
+                      "mark-if-moved.  The phase-bias family is NOT seeded (its frame is "
+                      "re-realized at the cold re-pin).{}",
+                      network_readmit_seed_horizon_s_,
+                      network_clock_model_
+                          ? "  ⚠ clock_model is ON: the clock rides the oscillator, not the D2 "
+                            "carry, so only code-bias columns can be seeded."
+                          : "");
+        if (network_readmit_coupling_marg_ep_ > 0)
+            log->info("Network producer (READMIT re-coupling edge): for {} epoch(s) after a "
+                      "satellite's clock column returns from a >= 3-epoch absence, every Card-1 "
+                      "coupling term on its shared columns takes the DEPARTED route (block/row "
+                      "re-coupling edge).{}",
+                      network_readmit_coupling_marg_ep_,
+                      network_carry_conditional_coupling_
+                          ? ""
+                          : "  ⚠ carry_conditional_coupling is OFF: no coupling rows exist, the "
+                            "knob is INERT (invariant #4: read the run-end 'diverted' counter).");
         // QUEUE item 1(d) — same INERT-guard ladder as the handover knob above,
         // for the same reasons: no anchors ⇒ no anchor handovers ⇒ nothing to
         // re-reference.  The eq34 guard is FIRST, deliberately unlike the ladder

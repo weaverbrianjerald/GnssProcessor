@@ -143,7 +143,18 @@ struct CouplingRowBuilder {
     std::vector<CplRowRaw>     craw{};     ///< Card 1b joint-path pre-whitening ingredients
     std::vector<double>        white_pw{}; ///< P_w per M_w column (departed marginal var)
     std::map<std::string, int> white_map{};///< departed identity → M_w column
+    /// READMIT re-coupling edge (network.readmit_coupling_marg_ep): satellite → loop-epoch
+    /// index at which its post-re-admission marginalization EXPIRES.  While
+    /// @c loop_ep < expiry every coupling term on that satellite's shared columns takes the
+    /// DEPARTED route (σ² += M²·P_prev, coefficient dropped): no station block or row
+    /// conditions on a column whose realization is still settling from its cold
+    /// re-registration — the edge SPEC_amb_iono_split_overcount §6.9 measured as two ~4 h
+    /// network-wide DD episodes after each eclipse re-admission cluster.  Null = off.
+    const std::map<std::string, long long>* readmit_marg{nullptr};
+    long long                                loop_ep{0};   ///< this epoch's n_loop_epochs (the expiry basis)
 
+    /// True (and counted) when @p cs sits on a satellite inside its re-admission window.
+    bool readmitDiverted(const CoupledShared& cs);
     /// Resolve @p cs to its shared-border column this epoch, or −1 if it has DEPARTED.
     Eigen::Index resolveSharedCol(const CoupledShared& cs) const;
     /// Stable identity key of a departed shared column (rows share one M_w column).
@@ -235,6 +246,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                              long long& n_cpl_gauge_held,
                              long long& n_cpl_gauge_orphan,
                              long long& n_cpl_reinit_diverted,
+                             long long& n_cpl_readmit_diverted,
                              int& n_cpl_row_dump,
                              std::map<std::pair<char,int>, std::pair<long long,double>>*
                                  cpl_orphan_fam_total = nullptr);

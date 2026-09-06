@@ -245,7 +245,8 @@ void networkElectPhaseAnchors(
         const AnchorHandoverLedger* handover,
         std::vector<AnchorHandoverEvent>* handovers_out,
         double max_var,
-        std::set<std::pair<std::string, std::string>>* reref_out) {
+        std::set<std::pair<std::string, std::string>>* reref_out,
+        double max_var_ratio) {
     const auto& usable_keys = cnd.usable_keys;
     const auto& cand_set    = cnd.cand_set;
     const auto& union_keys  = cnd.union_keys;
@@ -347,6 +348,7 @@ void networkElectPhaseAnchors(
                                   && inc->second != stations[anchor].name;
         double target = 0.0;
         bool   continuous = false;
+        double ev_var = -1.0, ev_var_first = 0.0;   // the successor's ledger entry, for the event row
         // R2 (§5.09): a RETAINED incumbent keeps realizing the frame it inherited.
         // Without this the ledger pin is a one-epoch deferral — the very next
         // election re-pins the same anchor at 0 and the family steps at T+1
@@ -373,12 +375,31 @@ void networkElectPhaseAnchors(
             // value is usable only when its conditional variance is finite,
             // positive and below the caller's ceiling; everything else falls
             // through to the honest COLD path.
+            // network.phase_datum_handover_max_var_ratio — the HONEST-σ-SCALE ceiling.
+            // The absolute ceiling was sized to the over-counted σ of the diagonal
+            // leveling carry (SPEC_amb_iono_split_overcount §6.8.3: 1e-4 m² refuses
+            // 93/93 successors under F1/F3's honest σ; 1e-2 is a hand value).  The ratio
+            // asks the posture-invariant question instead: has THIS arc converged since
+            // its birth — var <= ratio × its first-stash conditional variance.  An
+            // unknown var_first (a fresh arc that was never carried) is refused.  The
+            // absolute ceiling stays as a rail; both are counted separately.
+            const bool ratio_on = max_var_ratio > 0.0;
+            const bool ratio_ok = !ratio_on
+                    || (hit != handover->value_abs.end()
+                        && hit->second.var_first > 0.0
+                        && std::isfinite(hit->second.var_first)
+                        && hit->second.var <= max_var_ratio * hit->second.var_first);
             const bool usable =
                     hit != handover->value_abs.end()
                     && std::isfinite(hit->second.value)
                     && hit->second.var > 0.0
                     && std::isfinite(hit->second.var)
-                    && hit->second.var <= max_var;
+                    && hit->second.var <= max_var
+                    && ratio_ok;
+            if (hit != handover->value_abs.end()) {
+                ev_var       = hit->second.var;
+                ev_var_first = hit->second.var_first;
+            }
             if (usable) {
                 target     = hit->second.value;
                 continuous = true;
@@ -400,12 +421,17 @@ void networkElectPhaseAnchors(
                 ++tally.handover_cold;
                 if (hit != handover->value_abs.end() && hit->second.var > max_var)
                     ++tally.handover_refused_var;
+                else if (hit != handover->value_abs.end() && ratio_on && !ratio_ok)
+                    ++tally.handover_refused_ratio;
             }
         }
         stations[anchor].pinned_amb_targets[amb] = target;
-        if (is_handover && handovers_out)
-            handovers_out->push_back(AnchorHandoverEvent{
-                    amb, inc->second, stations[anchor].name, target, continuous});
+        if (is_handover && handovers_out) {
+            AnchorHandoverEvent ev{amb, inc->second, stations[anchor].name, target, continuous};
+            ev.var       = ev_var;
+            ev.var_first = ev_var_first;
+            handovers_out->push_back(std::move(ev));
+        }
         // QUEUE item 1(d) (SPEC_pivot_visibility_gauge_defect §5.07.5 R1): mark
         // every pin realized in a frame NOT continuously inherited from an
         // incumbent — a HANDOVER (the datum re-realizes on a new host), and an

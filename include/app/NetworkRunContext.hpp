@@ -155,6 +155,20 @@ namespace GnssProcessor {
         double amb_seam_reinflate_var{};  ///< network.amb_seam_reinflate_var_m2: one-shot variance ADD (m²) on every restored leveling carry at a warm resume (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF.
         bool   resume_frame_restore{};    ///< network.resume_frame_restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the serialized FRAME state — phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-sat state, the CLK-R held frame — so the first post-resume election/fold/emit continue the pre-seam realization instead of re-pinning at cold seeds.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into maps nothing reads).
         bool   resume_coupling_restore{}; ///< network.resume_coupling_restore (SPEC_synthetic_minimum_network §18.12): at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, in harvest order) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING, so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, shared-neutral) instead of the plain DIAGONAL prior asserted at the PURE CONDITIONAL variance that out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (LocalCarry::coupling stays empty exactly as the aggregate init leaves it).
+        /// network.readmit_seed_horizon_s — READMIT continuity (E2 seed-first re-admission,
+        /// SPEC_synthetic_minimum_network §18.4 / SPEC_amb_iono_split_overcount §7 FIRST):
+        /// a departed satellite's D2 Clock + CodeBias carry is PARKED for this many seconds
+        /// and seeds its re-registered columns at var + q·gap; the Q3 anchor folds ANCHORED
+        /// over the true gap (bounded by this horizon instead of clock_anchor_max_gap_s)
+        /// and its NIS guard is the mark-if-moved.  0 = OFF (byte-identical: nothing is
+        /// ever parked).  NOT fingerprinted: parking adds entries, it changes no carried
+        /// value's meaning, and the snapshot never carries a parked entry.
+        double readmit_seed_horizon_s{};
+        /// network.readmit_coupling_marg_ep — the block/row RE-COUPLING edge at satellite
+        /// re-admission: for this many epochs after a satellite's clock column returns from a
+        /// >= kReadmitMinGapEp absence, every coupling term on its shared columns takes the
+        /// departed route.  0 = OFF.  Requires the Card-1 coupling rows (loader-checked).
+        int    readmit_marg_ep{};
         int    resume_slip_warmup_ep{};   ///< network.resume_slip_warmup_ep: epochs after a warm resume during which the MW/LLI (T0) drain is DIAGNOSTIC-ONLY — its cold Welford reference (2 samples at the second warm epoch) declared 146 false WL slips on the §18.9 bed and re-leveled 5 % of the restored arcs; IF-TD (T1) and wind-up drains stay live, so an in-gap slip keeps a detector.  0 = OFF.  NOT fingerprinted.
         bool carry_vce{};
         bool vce_apply_on{};   ///< M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor apply. SOLVE-AFFECTING; loader guarantees carry_vce.
@@ -331,6 +345,11 @@ namespace GnssProcessor {
         /// before it may be pinned — invariant #7's re-coupling re-validation.
         /// 0.0 when the mechanism is off.
         double pd_handover_max_var{};
+        /// network.phase_datum_handover_max_var_ratio — the honest-σ-scale ceiling: a ledger
+        /// value is usable only if var <= ratio × its arc's FIRST-STASH conditional variance
+        /// (unknown var_first ⇒ refused).  The absolute pd_handover_max_var stays a rail.
+        /// 0.0 = OFF (absolute ceiling only); resolved with pd_handover_continuous.
+        double pd_handover_max_var_ratio{};
         /// QUEUE item 1(d): PHASE_ANCHOR carry re-reference, RESOLVED for the run
         /// (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  On an anchor
         /// handover the (sat,signal) family's shared PB carry is MARGINALIZED for
@@ -532,6 +551,18 @@ namespace GnssProcessor {
         // re-referenced.  buildCplRow probes the exact key and then the wildcard.
         std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
         SharedCarryCov prev_carry_cov;                      // C1: dense covariance side-car of prev_carry (empty when OFF)
+        // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge;
+        // network.readmit_seed_horizon_s / readmit_coupling_marg_ep).  NOT snapshotted
+        // (forward-only response policy): a seam during a satellite's absence simply
+        // loses its seed — today's cold return — and the marginalization windows restart
+        // empty.  All empty / zero and unread when both knobs are off.
+        double readmit_now_s{0.0};          ///< continuous-GPS s of the current epoch, stamped at the D2 install (the stash has no clock of its own)
+        double readmit_prev_stash_s{0.0};   ///< continuous-GPS s of the previous KEPT stash — the park stamp a departing entry receives
+        std::map<std::string, long long> readmit_last_seen_ep;  ///< sat → n_loop_epochs of its last stash with a registered clock column (the re-admission detector)
+        std::map<std::string, long long> readmit_marg;          ///< sat → loop epoch at which its post-re-admission coupling marginalization EXPIRES
+        std::map<std::string, double>    readmit_seeded_s;      ///< sat → continuous-GPS s of its last clock seed (the guard's "moved" attribution window)
+        struct ReadmitSeed { SharedParamKind kind; std::string sat, signal; double value, var_eff; };
+        std::vector<ReadmitSeed> readmit_seed_check;            ///< this epoch's seeds, checked against the solve at the stash (mark-if-moved telemetry for every seeded kind)
         std::map<std::string, std::string> prev_pivot;      // constellation -> pivot sat (handover detect)
         std::set<std::string> c1_zoh_active;                 // L2/T5: sats currently emitting c1=0 (ZOH) — edge-trigger for the R6 event
         // A1: persistent last-EVER pivot per constellation; MERGE-updated (never
@@ -2225,6 +2256,27 @@ namespace GnssProcessor {
         long long n_resume_cpl_census_rows      = 0;  ///< rows compared against their own fresh harvest
         long long n_resume_cpl_census_terms     = 0;  ///< identities matched in both vectors
         long long n_resume_cpl_census_unmatched = 0;  ///< restored identities the fresh harvest did not produce
+        // §18.12 (2a): the dense D2 covariance side-car across the resume seam.
+        long long n_resume_cpl_cov_keys    = 0;  ///< dense-carry keys restored from the snapshot's QK/QP records
+        long long n_resume_cpl_cov_dropped = 0;  ///< QK keys with no restored D row (row + column dropped)
+        // READMIT continuity (E2) — BOTH edges (standing invariant #7): parked = the
+        // DECOUPLING edge (what left, and when); seeded = the RE-COUPLING edge (what came
+        // back and was re-validated — by the Q3 guard for the clock, by the stash-side
+        // seed check for every kind); expired / dropped = what was NOT reconnected, and why.
+        long long n_readmit_parked        = 0;  ///< D2 Clock/CodeBias entries parked at a satellite's departure
+        long long n_readmit_seeded_clk    = 0;  ///< clock columns seeded from a parked entry on re-registration
+        long long n_readmit_seeded_cb     = 0;  ///< code-bias columns seeded
+        long long n_readmit_seeded_anch   = 0;  ///< ...of the clock seeds, folded ANCHORED over the gap (vs LOOSE)
+        long long n_readmit_expired       = 0;  ///< parked entries dropped: the gap exceeded the horizon
+        long long n_readmit_dropped_datum = 0;  ///< parked entries dropped: a clock-datum change retired their frame
+        long long n_readmit_dropped_stale = 0;  ///< parked entries dropped: the column returned but the entry was not consumed (skip-stash / pinned)
+        long long n_readmit_events        = 0;  ///< re-admissions detected (clock column back after >= kReadmitMinGapEp loop epochs)
+        long long n_readmit_seed_moved    = 0;  ///< Q3 nis/abs trips within kReadmitVerifyWindowS of a clock seed — the data REJECTED the seed
+        long long n_readmit_seed_check    = 0;  ///< stash-side seed-vs-solve checks run (all seeded kinds)
+        long long n_readmit_seed_outlier  = 0;  ///< ...of which |e|/sqrt(S) > kReadmitSeedK
+        long long n_readmit_marg_windows  = 0;  ///< coupling marginalization windows opened
+        long long n_cpl_readmit_diverted  = 0;  ///< coupling terms diverted to the departed route by a re-admission window
+        long long n_snap_parked_excluded  = 0;  ///< parked entries excluded from written snapshots
 
         // --- Rung 3 v3: the CARRY-DOMAIN lane observatory ----------------------
         // (SPEC_lane_slip_response §7.3.)  Measure-only: it computes the lane
@@ -2841,6 +2893,7 @@ namespace GnssProcessor {
                                     bool retro_feed);
 
     void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
+                           NetworkRunTraces& traces, const GnssTime& t,
                            NetworkEstimator& est, const Eigen::VectorXd& x_s,
                            const NetworkSbasis::Plan& plan,
                            const SphericalHarmonicIonosphere* sh_model,

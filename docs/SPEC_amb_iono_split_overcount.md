@@ -907,9 +907,76 @@ Mechanism signatures hold all day: first-inject σ ratio 0.720/0.722/0.728/0.722
 
 Pre-registration audit: §6.8's "24 h F3+hv 0.14–0.15 / 84–86 %" was derived from the 3 h settled window, which contains no eclipse re-admission cluster; the 24 h bed has two.  The quiet-hour mature-chord reading (0.160 / 89 %) is the number the prediction actually described.
 
+## §6.10 The RE-ADMISSION EDGE card — BUILT 2026-09-05 (E2 seed-first re-admission + the block re-coupling window + the honest-σ-scale handover ceiling); PRE-REGISTERED, arms running
+
+**What §6.9 named as the next card is built, default-OFF, byte-identical OFF, counted at both edges.**
+Three knobs, one mechanism family (the satellite re-admission edge — the invariant-#7 edge that
+§18.1 (T3 clock tails), §6.9 (the F3 24 h post-eclipse DD episodes) and §18.12 (the G20/E31 seam
+residual) each measured from a different instrument):
+
+| knob | what | where |
+|---|---|---|
+| `network.readmit_seed_horizon_s` (s, 0 = OFF) | E2 seed-first re-admission: a departing satellite's D2 **clock + code-bias** carry is PARKED (`CarryPrior::t_park_s`, walked by every frame re-base that walks `prev_carry`, dropped at a clock-datum change of its constellation, never serialized) and on re-registration inside the horizon SEEDS the fresh column at `var + q·gap`; the Q3 anchor folds ANCHORED over its true per-satellite gap (bounded by the horizon instead of `clock_anchor_max_gap_s`) and its NIS guard is the mark-if-moved (a trip within 300 s of the seed is counted as the data rejecting it).  The phase-bias family is deliberately NOT seeded — its frame is re-realized at the incumbent-less cold re-pin (the leveling carries do not survive a 55 min absence at the 120 s leveling gap) and a stiff seed would fight the pin. | park: `networkStashCarry` tail; seed: `networkInjectD2CarryPrior` (both D2 branches); fold bound: `clockAnchorFoldVariance(…, seed_horizon_s)`; attribution: `NetworkClockAnchor.cpp decouple()`; seed-vs-solve check at the stash (`READMIT seed_held/seed_moved`) |
+| `network.readmit_coupling_marg_ep` (epochs, 0 = OFF) | the block/row RE-COUPLING edge: for K epochs after a satellite's clock column returns from a ≥ 3-loop-epoch absence, every Card-1 coupling term on its shared columns takes the DEPARTED route (σ² += M²·P_prev, coefficient dropped) in every station's rows and F3 block.  Both edges evented (`READMIT readmit` / `marg_expired`); the diverted-term count is the run-end denominator. | detector + window: `networkStashCarry` tail; consumer: `CouplingRowBuilder::readmitDiverted` (scalar, F3 block and the Card-1b joint path) |
+| `network.phase_datum_handover_max_var_ratio` (0 = OFF) | item 15: a ledger value is usable only if `var ≤ ratio × var_first` — the arc's FIRST-STASH conditional variance (`LocalCarry::var_first`: set at birth, kept across re-stashes, restarted by an erase-and-rebirth, kept by a re-level); unknown ⇒ refused (the 378-σ guard stays armed); the absolute ceiling stays a rail; refusals counted on `handover_refused_ratio`; every PBGAUGE handover row carries `var`/`var_first` when armed (the item-15 prerequisite). | `networkElectPhaseAnchors` (`ratio_ok`); `var_first` at the leveling stash + the handover-ledger harvest; optional trailing L-row field in the snapshot (armed only) |
+
+Unit contract: `NetworkCouplingTest.ReadmitWindowDivertsThePresentColumnAndExpires`,
+`ClockAnchorFold.SeededReturnFoldsAnchoredOverTheTrueGap`,
+`PhaseDatumHandover.RatioCeilingRefusesUnconvergedAndUnknownArcs`,
+`PhaseDatumHandoverLoader.RatioCeilingDefaultsOffParsesAndRejectsNegative`,
+`ReadmitContinuityConfig.*`, `ResumeFrameRestoreTest.DenseCarryCovAndVarFirstRoundTripUnderV3`
+(the §18.12 (2a) half, see SPEC_synthetic §18.13).  Ledger rows added as UNVALIDATED; posture rows
+SCOPED; neither knob fingerprinted (documented reasons in the loader/ledger).
+
+**Arms (Release, `gnss_processor_readmit.exe` sha256 808a0f91addee887…, sequential, own CWD):**
+
+| arm | config | single change vs its base |
+|---|---|---|
+| `readmit_off3h` | `_readmit_off3h.json` | the F3 3 h base (`_nonint_losblock3h_hv`) on the NEW exe, every new knob OFF |
+| `ratio3h` | `_ratio3h.json` | + `phase_datum_handover_max_var_ratio 0.01`, absolute ceiling widened to a 1 m² rail |
+| `readmit24h_e2` | `_readmit24h_e2.json` | the 24 h F3 arm (`_nonint_losblock24h_hv`) + `readmit_seed_horizon_s 3900` + `readmit_coupling_marg_ep 20` |
+| `cplreg_q12warm_d` | `_cplreg_q12warm_d.json` | §18.12 arm C (frame + coupling restore, same v3 `.ep1440`) + the two readmit knobs |
+
+**PRE-REGISTERED (written 2026-09-05 19:15 PDT, before any arm was read):**
+
+1. `readmit_off3h`: `products.txt` sha256 **identical** to `runs/nonint_losblock3h_hv/products.txt`
+   (invariant #6).  Falsifier: any byte differs — then nothing below is interpretable until the
+   OFF path is repaired.
+2. `readmit24h_e2` (the §7 FIRST criterion, verbatim): **no clean-chord degradation after the
+   h16.6–18.9 re-admission cluster** — `readmit_grade.py` clean-chord L1C med|e| in h18–h21 ≤ 0.25
+   cyc (base F3: 0.45–0.58); **settled quarter L1C ≤ 0.2 cyc / ≥ 80 %** (base 0.425 / 53 %); the
+   quiet hours unchanged (h13–16 mature 0.16 / 89 %); lanes unchanged (WL ≥ 98 %, EWL 100 %).
+   Counters (invariant #4): `n_readmit_events` ≈ the eclipse-return count (order 50–60 over 24 h
+   for ~30 exclusion edges / 12 h), clock seeds > 0 with `n_readmit_seeded_anch` > 0,
+   `n_readmit_seed_moved` < 10 % of clock seeds, `n_cpl_readmit_diverted` > 0.  Consumer h3–h7 ≤ 0.5
+   m (base F3 1.1–1.8 m; the pre-F3 base 0.12–0.48).  Falsifiers: settled quarter > 0.3 cyc;
+   `seed_moved` > 50 % of seeds (the parked realization is wrong more often than right); a
+   degradation episode NOT present in the base.  A settled quarter between 0.2 and 0.3 cyc with the
+   episodes visibly shortened is a PARTIAL (the edge is the right target, the seed/window sizing is
+   not) and gets one follow-up arm, not a verdict.
+3. `ratio3h`: settled window (last 25 %) handovers fully continuous (the 1e-2 arm: 21/21), **0
+   settled PB frame steps > 1 m**, every refusal on an arc with `var/var_first > 0.01` (by
+   construction — read the PBGAUGE rows), DD grade within noise of the 1e-2 arm (0.187 cyc / 83.1
+   %), consumer settled 3D rms within 10 % of 0.245 m.  Falsifier: the settled window loses
+   continuity (refusals on settled arcs) or the consumer walks.
+4. `cplreg_q12warm_d`: the G20 (306240) and E31 (306450) `gap` trips do NOT fire (both seeded;
+   `cta_decouple reason=gap` count over the leg 15 → ≤ 2), G20/E31 per-sat clock error at 309630 ≤
+   0.3 m (arm C −2.25 / −1.12), **consumer h12 rms ≤ 1.0 m** (arm C 2.05, B 0.67, A 0.77 — the
+   §18.12 stop rule 1 satisfied), wire between-sat SD at the seam unchanged vs C (0.025 G / 0.030
+   E).  Falsifier: a seeded satellite trips `nis` within 300 s of its seed on ≥ half the returns.
+
+Results go in §6.11 as they land; nothing above is edited after the fact.
+
+## §6.11 Results of the §6.10 arms (filled as they land; nothing in §6.10 is edited)
+
+1. **`readmit_off3h` — invariant #6 PASS (2026-09-05 19:22 PDT).**  New exe `gnss_processor_readmit.exe`
+   (sha256 808a0f91…), every new knob at its default: `products.txt` sha256 **b7cea2adc8fc6fb6…**, 8,593,106
+   bytes — identical to `runs/nonint_losblock3h_hv/products.txt`.  The OFF path of all four increments is
+   byte-inert on the F3 3 h lineage; the arms below are single-family A/Bs against that base.
+
 ## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
 
-**⚠ FIRST (2026-09-05, §6.9): the RE-COUPLING EDGE on the F3 block at satellite re-admission** — the 24 h arm shows two ~4 h NETWORK-WIDE degradation episodes after the eclipse re-admission clusters (clean chords 0.19 → 0.58–0.68 cyc), absent from the quiet hours where F3 sits at the CRLB.  Build: at a satellite's re-admission (col_added after a gap ≥ N epochs / CTA first sighting), marginalize its shared terms out of every station's block regressors for K epochs (or register the re-admission as a Card-1g reinit source); counters at both edges; pre-registered PASS = no clean-chord degradation after the h16.6–18.9 cluster on `_nonint_losblock24h_hv`, settled quarter ≤ 0.2 cyc / ≥ 80 %.
+**⚠ FIRST (2026-09-05, §6.9): the RE-COUPLING EDGE on the F3 block at satellite re-admission — BUILT the same day as `network.readmit_seed_horizon_s` + `network.readmit_coupling_marg_ep` (§6.10, pre-registered; arms running)** — the 24 h arm shows two ~4 h NETWORK-WIDE degradation episodes after the eclipse re-admission clusters (clean chords 0.19 → 0.58–0.68 cyc), absent from the quiet hours where F3 sits at the CRLB.  Build: at a satellite's re-admission (col_added after a gap ≥ N epochs / CTA first sighting), marginalize its shared terms out of every station's block regressors for K epochs (or register the re-admission as a Card-1g reinit source); counters at both edges; pre-registered PASS = no clean-chord degradation after the h16.6–18.9 cluster on `_nonint_losblock24h_hv`, settled quarter ≤ 0.2 cyc / ≥ 80 %.
 
 1. ~~**The birth value.**~~ **CLOSED (§2.7)** — age 0 IS the free single-epoch absolute-code
    solve at the birth elevation (med|r0| tracks 0.6745·σ_P/(sin el·√Σμ²) within 15 % in every
@@ -975,7 +1042,7 @@ Pre-registration audit: §6.8's "24 h F3+hv 0.14–0.15 / 84–86 %" was derived
 14. ~~**Wire grade of F1**~~ **CLOSED (§6.8.4)** — F1 and F3 wire + consumer grades landed on all
     five arms; the ledger rows carry the verdicts.
 15. **The handover ceiling must be re-expressed on the honest-σ scale before F1 or F3 is armed
-    on ANY lineage** (§6.8.3).  `network.phase_datum_handover_max_var_m2` = 1e-4 m² was sized to
+    on ANY lineage** (§6.8.3).  **BUILT 2026-09-05 as `network.phase_datum_handover_max_var_ratio` (§6.10, `runs/ratio3h` pre-registered).**  `network.phase_datum_handover_max_var_m2` = 1e-4 m² was sized to
     the over-counted σ: under any honest-σ carry 0/93 successors are continuous, 7 settled 4–15 m
     PB frame steps land on the wire, 1653 leveling carries are erased.  **Measured at 1e-2 m²:**
     F3 70/93 (all 23 refusals are arcs ≤ 52 min old in h0/h1; settled window 21/21 continuous,

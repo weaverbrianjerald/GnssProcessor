@@ -194,10 +194,17 @@ struct ClockAnchorFold {
 /// @return the fold decision.  With the anchor disarmed this returns exactly
 ///         `{prev_var + q_clock·dt_epoch, false, false, false}` — the legacy
 ///         expression, byte-identical.
+/// @param seed_horizon_s READMIT continuity (network.readmit_seed_horizon_s): > 0 when
+///        the carry being folded is a PARKED pre-gap realization seeding a re-registered
+///        column.  The staleness bound becomes max(clock_anchor_max_gap_s, this) — an
+///        ANCHORED satellite folds anchored over its true per-satellite gap instead of
+///        decoupling to a code-only LOOSE re-draw, and a LOOSE one inflates over the true
+///        gap rather than the driver's dt.  0 (default) = the unchanged Q3 rule.
 ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         const std::string& sat,
                                         double prev_var, double dt_epoch,
-                                        double pl_now_s, double value);
+                                        double pl_now_s, double value,
+                                        double seed_horizon_s = 0.0);
 
 /// @brief Card Q3 — mark every satellite as un-folded for a new epoch.
 ///

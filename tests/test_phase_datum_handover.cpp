@@ -201,6 +201,79 @@ TEST(PhaseDatumHandover, HandoverPinsSuccessorAtItsOutgoingFrameValue) {
     EXPECT_TRUE(e2.events[0].continuous);
 }
 
+/// The HONEST-σ-SCALE ceiling (network.phase_datum_handover_max_var_ratio): with the
+/// ratio armed a ledger value is usable only if var <= ratio × the arc's FIRST-STASH
+/// conditional variance.  A converged arc (1e-3 vs 1.0 at ratio 0.01) is pinned
+/// continuously and its var / var_first ride the event; an arc that has not converged
+/// by the factor is refused as COLD and counted on the RATIO counter, not the absolute
+/// one; an arc with an UNKNOWN first-stash variance is refused — the 378-σ
+/// unvalidated-target guard has to stay demonstrably armed under the new test; the
+/// absolute ceiling stays a rail and keeps its own counter; ratio 0 is the old test.
+TEST(PhaseDatumHandover, RatioCeilingRefusesUnconvergedAndUnknownArcs) {
+    auto seed = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
+    Elected e;
+    AnchorHandoverLedger led;
+    led.primed = true;
+    elect(seed, e, &led);
+    ASSERT_EQ(e.this_epoch["G01_L1C"], "STA_A");
+
+    struct Out { double pin; NetworkAnchorTallies t; std::vector<AnchorHandoverEvent> ev; };
+    const auto run = [&](AnchorHandoverLedger::Entry entry, double ratio) {
+        auto c2 = makeCensus({{"STA_B", {"G01"}, 5}});
+        Elected e2;
+        e2.incumbent = e.this_epoch;
+        AnchorHandoverLedger l2;
+        l2.primed = true;
+        l2.value_abs[{0, "G01_L1C"}] = entry;
+        AnchorHygiene hyg;
+        networkElectPhaseAnchors(true, c2.stations, c2.present, c2.cnd, hyg, e2.tally,
+                                 e2.incumbent, e2.pin_target, e2.this_epoch, e2.shared,
+                                 &l2, &e2.events, kMaxVar, nullptr, ratio);
+        return Out{pinOf(c2, "STA_B", "G01_L1C"), e2.tally, e2.events};
+    };
+
+    AnchorHandoverLedger::Entry conv;
+    conv.value = -12.0554; conv.var = 1e-3; conv.var_first = 1.0;
+    const Out a = run(conv, 0.01);             // converged: 1e-3 <= 0.01 x 1.0
+    EXPECT_DOUBLE_EQ(a.pin, -12.0554);
+    EXPECT_EQ(a.t.handover_continuous, 1);
+    EXPECT_EQ(a.t.handover_refused_ratio, 0);
+    ASSERT_EQ(a.ev.size(), 1u);
+    EXPECT_TRUE(a.ev[0].continuous);
+    EXPECT_DOUBLE_EQ(a.ev[0].var, 1e-3);
+    EXPECT_DOUBLE_EQ(a.ev[0].var_first, 1.0);
+
+    AnchorHandoverLedger::Entry young = conv;
+    young.var = 0.05;                          // 0.05 > 0.01 x 1.0: not converged by the factor
+    const Out b = run(young, 0.01);
+    EXPECT_EQ(b.pin, 0.0);
+    EXPECT_EQ(b.t.handover_cold, 1);
+    EXPECT_EQ(b.t.handover_refused_ratio, 1);
+    EXPECT_EQ(b.t.handover_refused_var, 0) << "0.05 m^2 is under the 1 m^2 absolute rail";
+    ASSERT_EQ(b.ev.size(), 1u);
+    EXPECT_FALSE(b.ev[0].continuous);
+    EXPECT_DOUBLE_EQ(b.ev[0].var, 0.05);
+
+    AnchorHandoverLedger::Entry unknown = conv;
+    unknown.var_first = 0.0;                   // never carried: the unvalidated-target guard
+    const Out u = run(unknown, 0.01);
+    EXPECT_EQ(u.pin, 0.0);
+    EXPECT_EQ(u.t.handover_cold, 1);
+    EXPECT_EQ(u.t.handover_refused_ratio, 1);
+
+    const Out off = run(unknown, 0.0);         // ratio OFF: the absolute test alone
+    EXPECT_DOUBLE_EQ(off.pin, -12.0554);
+    EXPECT_EQ(off.t.handover_continuous, 1);
+    EXPECT_EQ(off.t.handover_refused_ratio, 0);
+
+    AnchorHandoverLedger::Entry huge = conv;
+    huge.var = kMaxVar * 10.0; huge.var_first = 1e6;   // passes the ratio, fails the rail
+    const Out h = run(huge, 0.01);
+    EXPECT_EQ(h.pin, 0.0);
+    EXPECT_EQ(h.t.handover_refused_var, 1);
+    EXPECT_EQ(h.t.handover_refused_ratio, 0);
+}
+
 /// SILENT FAILURE this guards: a successor with no ledger entry (a genuinely fresh
 /// arc, or the run's first epoch) CANNOT be made continuous.  It must pin at 0 —
 /// and be COUNTED, because that is a real frame step the consumer has to be told
@@ -714,4 +787,23 @@ TEST(PhaseDatumHandoverLoader, CarryRerefComposesWithTheContinuousPairing) {
     EXPECT_TRUE(cfg.networkPhaseDatumHandoverContinuous())
         << "R2: the continuous handover survives the pairing (the T+1 revert is "
            "gone, so the mark-timing conflict no longer exists)";
+}
+
+/// The honest-σ-scale ceiling: default OFF (0 — the absolute ceiling alone, byte-
+/// identical), parses beside the absolute ceiling, and a negative ratio is refused.
+TEST(PhaseDatumHandoverLoader, RatioCeilingDefaultsOffParsesAndRejectsNegative) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadNet("ratio_default", "    \"phase_datum_prioritized\": true,\n", cfg));
+    EXPECT_EQ(cfg.networkPhaseDatumHandoverMaxVarRatio(), 0.0);
+    GnssConfig on;
+    ASSERT_TRUE(loadNet("ratio_on",
+                        "    \"phase_datum_prioritized\": true,\n"
+                        "    \"phase_datum_handover_continuous\": true,\n"
+                        "    \"phase_datum_handover_max_var_ratio\": 0.01,\n", on));
+    EXPECT_DOUBLE_EQ(on.networkPhaseDatumHandoverMaxVarRatio(), 0.01);
+    EXPECT_TRUE(on.networkPhaseDatumHandoverContinuous());
+    GnssConfig neg;
+    EXPECT_FALSE(loadNet("ratio_neg",
+                         "    \"phase_datum_prioritized\": true,\n"
+                         "    \"phase_datum_handover_max_var_ratio\": -0.5,\n", neg));
 }

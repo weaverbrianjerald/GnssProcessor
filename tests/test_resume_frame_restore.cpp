@@ -142,6 +142,56 @@ TEST(ResumeFrameRestoreTest, FrameRecordsRoundTripUnderV2Header) {
     EXPECT_TRUE(r.hasFrameState());
 }
 
+/// §18.12 (2a): the dense D2 covariance side-car (QK keys + QP lower-triangle rows)
+/// and the OPTIONAL L var_first field round-trip exactly and put the file under the
+/// v3 header on their own; an L row without the field parses with var_first = 0 (a
+/// pre-ratio file); a block missing a row is a HARD parse failure, never a partial
+/// restore.
+TEST(ResumeFrameRestoreTest, DenseCarryCovAndVarFirstRoundTripUnderV3) {
+    NetworkStateSnapshot s = baseSnapshot();
+    s.local_carry[{3, "G01", "L1C"}] = NetworkStateSnapshot::Local{12.5, 2.2e-3, 302400.0, 0.81};
+    s.local_carry[{4, "E02", "L5Q"}] = NetworkStateSnapshot::Local{-3.0, 1.0e-2, 302370.0};
+    s.carry_cov_keys = {"G01|CLK", "G01|CB|C1C", "E02|PB|L5Q"};
+    s.carry_cov_rows = {{1.0e-4}, {2.0e-5, 3.0e-4}, {-1.0e-6, 4.0e-6, 5.0e-4}};
+    ASSERT_TRUE(s.hasCouplingState());
+    ASSERT_FALSE(s.hasFrameState());
+    std::ostringstream os;
+    NetworkStateSnapshotIO::serialize(os, s);
+    const std::string text = os.str();
+    EXPECT_EQ(text.rfind("# gnss_network_state_snapshot v3\n", 0), 0u) << text.substr(0, 60);
+    EXPECT_NE(text.find("L,3,G01,L1C,12.5,0.0022,302400,0.81\n"), std::string::npos) << text;
+    EXPECT_NE(text.find("L,4,E02,L5Q,-3,0.01,302370\n"), std::string::npos)
+        << "an unknown var_first writes the legacy 6-value L row";
+    EXPECT_NE(text.find("QK,0,G01|CLK\n"), std::string::npos);
+    EXPECT_NE(text.find("QK,2,E02|PB|L5Q\n"), std::string::npos);
+    EXPECT_NE(text.find("QP,0,1,0.0001\n"), std::string::npos);
+    EXPECT_NE(text.find("QP,2,3,-1e-06,4e-06,0.0005\n"), std::string::npos) << text;
+
+    NetworkStateSnapshot r;
+    std::string err;
+    std::istringstream is(text);
+    ASSERT_TRUE(NetworkStateSnapshotIO::parse(is, r, &err)) << err;
+    EXPECT_EQ(r.carry_cov_keys, s.carry_cov_keys);
+    ASSERT_EQ(r.carry_cov_rows.size(), 3u);
+    ASSERT_EQ(r.carry_cov_rows[1].size(), 2u);
+    EXPECT_DOUBLE_EQ(r.carry_cov_rows[1][0], 2.0e-5);
+    EXPECT_DOUBLE_EQ(r.carry_cov_rows[2][2], 5.0e-4);
+    EXPECT_DOUBLE_EQ(r.local_carry.at({3, "G01", "L1C"}).var_first, 0.81);
+    EXPECT_DOUBLE_EQ(r.local_carry.at({3, "G01", "L1C"}).var, 2.2e-3);
+    EXPECT_DOUBLE_EQ(r.local_carry.at({4, "E02", "L5Q"}).var_first, 0.0);
+    EXPECT_TRUE(r.hasCouplingState());
+
+    // A block missing one row is refused WHOLE.
+    NetworkStateSnapshot bad = s;
+    bad.carry_cov_rows.pop_back();
+    std::ostringstream ob;
+    NetworkStateSnapshotIO::serialize(ob, bad);
+    NetworkStateSnapshot rb;
+    std::istringstream ib(ob.str());
+    EXPECT_FALSE(NetworkStateSnapshotIO::parse(ib, rb, &err));
+    EXPECT_NE(err.find("QK/QP"), std::string::npos) << err;
+}
+
 TEST(ResumeFrameRestoreTest, NoFrameStateWritesV1HeaderByteIdentical) {
     // The unconditional capture must not change a snapshot that has nothing to
     // capture: same header, same bytes as the pre-card writer.
@@ -302,4 +352,33 @@ TEST(ResumeFrameRestoreConfig, ArmedWithoutSnapshotPathIsWarnInert) {
                       "    \"resume_slip_warmup_ep\": 3,\n"), cfg));
     EXPECT_TRUE(cfg.networkResumeFrameRestore());
     EXPECT_EQ(cfg.networkResumeSlipWarmupEp(), 3);
+}
+
+// --- READMIT continuity (E2 seed-first re-admission + the block re-coupling edge) ---
+// The loader side of the two knobs: default OFF / 0 (the byte-identity contract),
+// both parse, negative values are refused.  The seam mechanics (parking at a
+// departure, the seed at re-registration, the coupling window) are graded on the
+// sim bed's eclipse schedule, not here.
+
+TEST(ReadmitContinuityConfig, DefaultsOffAndKnobsParse) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadInto("readmit_default", networkConfig(), cfg));
+    EXPECT_EQ(cfg.networkReadmitSeedHorizonS(), 0.0);
+    EXPECT_EQ(cfg.networkReadmitCouplingMargEp(), 0);
+    GnssConfig on;
+    ASSERT_TRUE(loadInto("readmit_on",
+        networkConfig("    \"clock_temporal_anchor\": true,\n"
+                      "    \"readmit_seed_horizon_s\": 3600.0,\n"
+                      "    \"readmit_coupling_marg_ep\": 20,\n"), on));
+    EXPECT_DOUBLE_EQ(on.networkReadmitSeedHorizonS(), 3600.0);
+    EXPECT_EQ(on.networkReadmitCouplingMargEp(), 20);
+}
+
+TEST(ReadmitContinuityConfig, NegativeValuesAreRejected) {
+    GnssConfig a;
+    EXPECT_FALSE(loadInto("readmit_neg_ep",
+        networkConfig("    \"readmit_coupling_marg_ep\": -1,\n"), a));
+    GnssConfig b;
+    EXPECT_FALSE(loadInto("readmit_neg_h",
+        networkConfig("    \"readmit_seed_horizon_s\": -5.0,\n"), b));
 }

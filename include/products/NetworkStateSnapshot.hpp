@@ -183,6 +183,7 @@ struct NetworkStateSnapshot {
         double value_abs{0.0};   ///< Carried absolute estimate (m).
         double var{0.0};         ///< Posterior conditional variance (m²).
         double last_seen_s{0.0}; ///< Continuous-GPS s when last stashed.
+        double var_first{0.0};   ///< First-stash conditional variance (m²) — an OPTIONAL trailing L field written only when network.phase_datum_handover_max_var_ratio is armed (0 = absent; a pre-ratio file restores 0 and the ratio test refuses the arc until it re-converges).
     };
     /// (station roster index, sat, signal) -> ambiguity carry.  Index validity
     /// is guaranteed by the roster fields inside the config fingerprint.
@@ -321,6 +322,15 @@ struct NetworkStateSnapshot {
     /// (ApplicationNetworkAssembly.cpp:2320-2326) writes no @c tu_reinit_hist mark for it
     /// and every restored term on that satellite folds at FULL weight onto a re-drawn column.
     std::set<std::string> clock_refloat_sats;
+    /// §18.12 (2a): the C1 dense D2 covariance side-car (@c SharedCarryCov) — identity keys
+    /// in row order (@c QK records) and the lower triangle of P per row (@c QP records:
+    /// row i holds P(i,0..i)).  The OTHER half of the coupling seam: with the coupling rows
+    /// conditional from the first warm fold, the border they condition on must fold DENSE
+    /// from the first fold too, or the measured 376-key diagonal asymmetry stays.  Written
+    /// only under state_snapshot_coupling_capture on a shared_carry_full_cov posture;
+    /// restored behind resume_coupling_restore.  Empty on every other file.
+    std::vector<std::string> carry_cov_keys;
+    std::vector<std::vector<double>> carry_cov_rows;
     /// True when any coupling record is present (the writer then emits the v3 header).
     ///
     /// @warning Deliberately SEPARATE from @ref hasFrameState.  That predicate ALSO gates
@@ -331,7 +341,8 @@ struct NetworkStateSnapshot {
     ///          would silently defeat itself.
     bool hasCouplingState() const {
         return !coupling_dict.empty() || !coupling_rows.empty()
-            || !coupling_zrows.empty() || !clock_refloat_sats.empty();
+            || !coupling_zrows.empty() || !clock_refloat_sats.empty()
+            || !carry_cov_keys.empty();
     }
     /// True when any frame record is present (the writer then emits the v2 header).
     bool hasFrameState() const {
