@@ -1342,8 +1342,19 @@ Three rules, now enforced in the capture script:
    applied to the instrument itself).
 
 The second arm also OVERWROTE the first arm's `./logs/` trace before it was captured — the concurrent-run log
-collision, hit sequentially — so the `lowest` arm had to be re-run.  `scripts/_arm_run.sh` carries the same
-wrong source path and is fixed in the same commit.
+collision, hit sequentially — so the `lowest` arm had to be re-run.  `scripts/_arm_run.sh` carried the same
+wrong source path and is fixed: it reads `./logs/` and asserts the SOURCE mtime is newer than the run's start.
+
+**The smoke A/B was then re-run through the fixed capture (2026-09-06, Release rebuilt from committed source,
+sha256 `fe907a95…`), and it IS byte-identical — genuinely this time.**  `products.txt` and every trace
+(`network_dd_fractional`, `_solution`, `_events`, `_epoch_status`, `_estimability`) match, with no `STALE`
+warning on either arm.  The two cheap checks that would have caught the original failure both fire correctly
+now: the captured trace is **111,139 rows over 40 epochs** where the stale file was 20,001 rows over 10 — a
+5.5x size and 4x epoch-span discrepancy visible without opening it — and the counter cross-check AGREES with
+the files (`0 election(s) differed from 'lowest'`, 240 elections per arm, 0 switches).  That agreement is the
+whole point: byte-identity plus a zero counter is a consistent, explained result, whereas byte-identity plus
+`765 elections differed` was the contradiction that exposed the broken capture.  A trace-only A/B is only
+believable when both readings are quoted together.
 
 ## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
 
