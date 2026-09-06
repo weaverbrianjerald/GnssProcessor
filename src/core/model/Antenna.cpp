@@ -349,7 +349,7 @@ namespace GnssProcessor {
         rinex_parser_(rinex_parser),
         product_parser_(product_parser),
         ppp_utils_(log_mgr),
-        planetary_(log_mgr, config.enableCioFrame()),
+        planetary_(log_mgr, config.enableCioFrame(), config.enableSunFrameCorrection()),
         // Initialize reference from cache - NO COPY
         antennas_(ProductCache::getInstance().getAntennas())
     {
@@ -618,7 +618,8 @@ namespace GnssProcessor {
 
         const SatAttitude::Frame att = SatAttitude::compute(
             system, sat_prn, sat_pos, sat_vel, sun_pos,
-            config_.enableOrbitNormalAttitude());
+            config_.enableOrbitNormalAttitude(),
+            config_.enableSunFrameCorrection());
         // att is a function-scope local that outlives every consumer below; the
         // const-ref bindings are zero-cost and bit-identical (deterministic axes).
         const Eigen::Vector3d& k_s = att.k_s;  // +Z axis: toward Earth (nadir/boresight)
@@ -975,7 +976,7 @@ namespace GnssProcessor {
 
         double wind_up_corr = 0.0;
         if (config_.getModelCorrections().enable_phase_windup && is_phase && wavelength > 0.0) {
-            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel, config_.accumulatePhaseWindUp(), config_.phaseWindUpMaxGapS());
+            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel, config_.accumulatePhaseWindUp(), config_.phaseWindUpMaxGapS(), config_.enableSunFrameCorrection());
             if (std::isfinite(wind_up)) {
                 wind_up_corr = wind_up;
                 correction += wind_up_corr;

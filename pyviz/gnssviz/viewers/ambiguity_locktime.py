@@ -20,22 +20,44 @@ An ambiguity is reinitialized by TWO independent code paths:
       (``KalmanFilter::handlePhaseOutlier``), which fires with no slip flag.
 
 Reconstructing resets from ``mwwl_trace`` / ``turbo_edit_trace`` alone would
-SILENTLY MISS every KF-driven reset.  The robust observable is the state
-itself: BOTH paths do the identical covariance surgery
-``P.row(i)=0; P.col(i)=0; P(i,i)=reset_std^2`` so a reset ALWAYS shows up in
-``ambiguity_trace.csv`` as a sharp UP-STEP (reinflation) in ``std_m``.  Within
-an arc the ambiguity variance is monotonically non-increasing (ambiguities
-carry ~no process noise), so any meaningful std up-step is unambiguously a
-reinitialization, regardless of which path triggered it.  (A covariance-
-preserving cycle-slip REPAIR shifts ``value_m`` but NOT ``std_m`` -- correctly
-NOT counted as a locktime reset, because arc continuity is preserved.)
+SILENTLY MISS every KF-driven reset.  BOTH paths do the identical covariance
+surgery ``P.row(i)=0; P.col(i)=0; P(i,i)=reset_std^2``, so within an arc
+(ambiguities carry ~no process noise, variance monotonically non-increasing)
+a meaningful ``std_m`` up-step is unambiguously a reinitialization.  But the
+converse is FALSE (measured on the exam hero run, 2026-08-31):
+``logAmbiguities`` writes the POST-update state, and in a converged filter
+(position/clock/tropo already cm-tight) the same epoch's phase re-pins a
+freshly reset ambiguity to ~cm, so the surgery often never surfaces in the
+logged sigma at all -- 38 of that run's 43 injected slips left no up-step,
+and the 5 that did log the raw reset sigma collapsed back within an epoch,
+which is exactly the bridge hold-and-restore signature (below) and was
+mis-held as "lock continuous".  Resets are therefore reconstructed from the
+UNION of two sources:
+
+  (a) the ``std_m`` reinflation heuristic -- still the only witness of
+      KF post-fit resets, and of everything in logs that predate the slip
+      traces; and
+  (b) slip / LLI flags gathered by ``_load_slip_events``.  A detector slip
+      (``is_slip`` / TurboEdit flag) is HARD evidence: the slip pipeline
+      resets, so the epoch forces an in-arc reset on every ambiguity of that
+      satellite and is never eligible for the bridge classification.  A
+      receiver LLI flag (``is_lli``) is SOFT: it forces a reset only when no
+      hold-and-restore signature is present, so a ``turbo_edit_bridge_lli``
+      hold that genuinely restores its snapshot still renders as type 3.
+      Consecutive flagged epochs collapse to ONE reset (MW flags persist for
+      several epochs after a hit).
+
+(A covariance-preserving cycle-slip REPAIR shifts ``value_m`` but NOT
+``std_m`` and raises no detector flag -- correctly NOT counted as a locktime
+reset, because arc continuity is preserved.)
 
 Reset taxonomy reconstructed per (satellite, signal) series:
 
 * **arc-start** (type 1) : first appearance, or reacquisition after a time gap
   (a rising/setting satellite -- expected, not pathological).
-* **in-arc reset** (type 2) : a std reinflation mid-arc -- the diagnostic of
-  interest.  Optionally classified by source:
+* **in-arc reset** (type 2) : a std reinflation mid-arc, or a detector slip /
+  LLI flag at this epoch (union rule above) -- the diagnostic of interest.
+  Optionally classified by source:
 
     - ``slip`` -- a slip flag exists for this sat near this epoch in
       ``mwwl_trace`` / ``turbo_edit_trace``,
@@ -98,16 +120,27 @@ def _system_of(sat: str) -> str:
     }.get(sat[0], "Unknown")
 
 
-def _reconstruct_locktime(tsec: np.ndarray, stdv: np.ndarray):
+def _reconstruct_locktime(tsec: np.ndarray, stdv: np.ndarray,
+                          slip_mask: np.ndarray | None = None,
+                          lli_mask: np.ndarray | None = None):
     """Per (satellite, signal) arc -> (lockSec, resetType).
 
     Derives seconds-since-reinit and a reset taxonomy from the ambiguity std
-    series.  ``resetType``: 0 continuing, 1 arc-start (init/reacquire),
-    2 in-arc reset, 3 bridge-held span (soft-LLI hold restored by a snapshot +
-    dN*lambda repair -- locktime CONTINUES across it).  ``tsec`` must be
-    ascending (seconds, arc-relative); ``stdv`` the matching std (m).
+    series plus the detector flags (module docstring, union rule).
+    ``resetType``: 0 continuing, 1 arc-start (init/reacquire), 2 in-arc reset,
+    3 bridge-held span (soft-LLI hold restored by a snapshot + dN*lambda
+    repair -- locktime CONTINUES across it).  ``tsec`` must be ascending
+    (seconds, arc-relative); ``stdv`` the matching std (m).
 
-    Direct port of the MATLAB ``reconstructLocktime`` local function.
+    ``slip_mask`` / ``lli_mask`` (optional bool arrays, same length): True
+    where a detector slip / receiver LLI flag coincides with this sample.  A
+    slip sample forces a type-2 reset regardless of the sigma series and is
+    never bridge-eligible; an LLI sample forces one only when the sigma shows
+    no hold-and-restore signature.  Consecutive flagged samples collapse to
+    one reset at the run's first sample.
+
+    Port of the MATLAB ``reconstructLocktime`` local function, extended with
+    the flag union (the MATLAB tool predates the exam slip traces).
     """
     n = tsec.size
     lock_sec = np.zeros(n)
@@ -115,6 +148,17 @@ def _reconstruct_locktime(tsec: np.ndarray, stdv: np.ndarray):
     if n == 0:
         return lock_sec, reset_type
     reset_type[0] = 1                       # first appearance = arc start
+
+    slip_mask = (np.zeros(n, bool) if slip_mask is None
+                 else np.asarray(slip_mask, bool))
+    lli_mask = (np.zeros(n, bool) if lli_mask is None
+                else np.asarray(lli_mask, bool))
+    # One physical event = one reset: only the FIRST sample of a consecutive
+    # flagged run fires (MW keeps flagging for several epochs after a hit).
+    any_mask = slip_mask | lli_mask
+    new_event = any_mask & ~np.concatenate(([False], any_mask[:-1]))
+    force_hard = new_event & slip_mask       # detector slip: never a bridge
+    force_soft = new_event & ~slip_mask      # LLI only: bridge-eligible
 
     dt = np.diff(tsec)
     pos = dt[dt > 0]
@@ -147,14 +191,17 @@ def _reconstruct_locktime(tsec: np.ndarray, stdv: np.ndarray):
             reset_type[i] = 1
             lock_sec[i] = 0.0
             i += 1
-        elif reinfl or former_pivot:
+        elif reinfl or former_pivot or force_hard[i] or force_soft[i]:
             # Reinflation: bridged hold-and-restore, or a true reset?  A
             # soft-LLI bridge repair RESTORES the pre-hold sigma in one step
             # within the hold cap; scan ahead for that signature.  (formerPivot
             # spans are excluded -- a pivot's pre-event sigma is 0, so "restore
-            # to pre-hold sigma" is undefined.)
+            # to pre-hold sigma" is undefined.  A detector-slip sample is
+            # excluded too: the slip pipeline reset the state, and a fresh
+            # ambiguity's one-epoch re-pin in a converged filter is sigma-
+            # indistinguishable from a snapshot restore.)
             j = 0
-            if reinfl and s0 > _PIVOT_STD:
+            if reinfl and s0 > _PIVOT_STD and not force_hard[i]:
                 k = i + 1
                 while k < n and (tsec[k] - tsec[i - 1]) <= _HOLD_CAP_S:
                     if (stdv[k] <= _RESTORE_FACTOR * s0
@@ -181,10 +228,14 @@ def _reconstruct_locktime(tsec: np.ndarray, stdv: np.ndarray):
 
 
 def _load_slip_events(ctx) -> pd.DataFrame:
-    """Gather (satellite, utc) slip flags from MW + TurboEdit traces.
+    """Gather (satellite, utc, kind) slip flags from MW + TurboEdit traces.
 
-    Returns an empty frame (columns ``satellite``, ``utc``) if neither trace is
-    present.  Port of the MATLAB ``loadSlipEvents``.
+    ``kind`` is ``"slip"`` for detector slips (``is_slip`` / TurboEdit
+    ``mw_flagged``/``gf_flagged``) and ``"lli"`` for receiver LLI flags
+    (``is_lli``) -- the hard/soft split the reconstruction needs (module
+    docstring).  Returns an empty frame (columns ``satellite``, ``utc``,
+    ``kind``) if neither trace is present.  Port of the MATLAB
+    ``loadSlipEvents`` extended with the LLI channel.
     """
     frames = []
 
@@ -193,14 +244,18 @@ def _load_slip_events(ctx) -> pd.DataFrame:
         m = load_trace(mw_path)
         if {"satellite", "week", "tow_s", "is_slip"}.issubset(m.columns):
             is_slip = pd.to_numeric(m["is_slip"], errors="coerce").fillna(0.0)
-            sel = is_slip.to_numpy() == 1
-            if sel.any():
-                utc = GPS_EPOCH + pd.to_timedelta(
-                    m["week"].to_numpy(float)[sel] * 7 * 86400.0
-                    + m["tow_s"].to_numpy(float)[sel], unit="s")
-                frames.append(pd.DataFrame(
-                    {"satellite": m["satellite"].astype(str).to_numpy()[sel],
-                     "utc": utc}))
+            kinds = ((is_slip.to_numpy() == 1, "slip"),)
+            if "is_lli" in m.columns:
+                is_lli = pd.to_numeric(m["is_lli"], errors="coerce").fillna(0.0)
+                kinds += ((is_lli.to_numpy() == 1, "lli"),)
+            for sel, kind in kinds:
+                if sel.any():
+                    utc = GPS_EPOCH + pd.to_timedelta(
+                        m["week"].to_numpy(float)[sel] * 7 * 86400.0
+                        + m["tow_s"].to_numpy(float)[sel], unit="s")
+                    frames.append(pd.DataFrame(
+                        {"satellite": m["satellite"].astype(str).to_numpy()[sel],
+                         "utc": utc, "kind": kind}))
     except (OSError, ValueError):
         pass
 
@@ -222,14 +277,17 @@ def _load_slip_events(ctx) -> pd.DataFrame:
                     + e["tow_s"].to_numpy(float)[flagged], unit="s")
                 frames.append(pd.DataFrame(
                     {"satellite": e["satellite"].astype(str).to_numpy()[flagged],
-                     "utc": utc}))
+                     "utc": utc, "kind": "slip"}))
     except (OSError, ValueError):
         pass
 
     if not frames:
         return pd.DataFrame({"satellite": pd.Series(dtype=str),
-                             "utc": pd.Series(dtype="datetime64[ns]")})
+                             "utc": pd.Series(dtype="datetime64[ns]"),
+                             "kind": pd.Series(dtype=str)})
     ev = pd.concat(frames, ignore_index=True)
+    # A row flagged both ways keeps the HARD kind ("lli" sorts after "slip").
+    ev = ev.sort_values(["satellite", "utc", "kind"], kind="mergesort")
     return ev.drop_duplicates(subset=["satellite", "utc"]).reset_index(drop=True)
 
 
@@ -278,6 +336,36 @@ def build_ambiguity_locktime(
     df = df.drop_duplicates(subset=["key", "utc"], keep="last").reset_index(drop=True)
     n_dropped = n_before - len(df)
 
+    # --- Slip / LLI events from the detector traces -----------------------
+    # These force resets during reconstruction (union rule, module docstring)
+    # AND classify reset sources further down -- loaded once for both.
+    slip_events = _load_slip_events(ctx)
+    win_ns = int(_CLASSIFY_WINDOW_S * 1e9)
+    ev_by_sat = {}
+    if not slip_events.empty:
+        for s, g in slip_events.groupby(slip_events["satellite"].astype(str)):
+            ts = g["utc"].to_numpy("datetime64[ns]").astype("int64")
+            order = np.argsort(ts)
+            ev_by_sat[str(s)] = (
+                ts[order],
+                (g["kind"].astype(str).to_numpy() == "slip")[order])
+
+    def _event_masks(sat: str, utc_ns: np.ndarray):
+        """(slip_mask, lli_mask) for one key's sample times, or (None, None)."""
+        ev = ev_by_sat.get(sat)
+        if ev is None:
+            return None, None
+        ts, hard = ev
+        pos = np.searchsorted(ts, utc_ns)
+        lo = np.clip(pos - 1, 0, ts.size - 1)
+        hi = np.clip(pos, 0, ts.size - 1)
+        d_lo = np.abs(utc_ns - ts[lo])
+        d_hi = np.abs(ts[hi] - utc_ns)
+        nearest = np.where(d_lo <= d_hi, lo, hi)
+        within = np.minimum(d_lo, d_hi) <= win_ns
+        is_hard = hard[nearest] & within
+        return is_hard, within & ~is_hard
+
     # --- Reconstruct locktime + reset taxonomy per key ---
     df["lockMin"] = np.nan
     df["resetType"] = 0
@@ -288,7 +376,10 @@ def build_ambiguity_locktime(
         t0 = df["utc"].iloc[ridx[0]]
         tsec = (df["utc"].iloc[ridx] - t0).dt.total_seconds().to_numpy()
         stdv = df["std_m"].iloc[ridx].to_numpy(dtype=float)
-        ls, rt = _reconstruct_locktime(tsec, stdv)
+        utc_ns = (df["utc"].iloc[ridx].to_numpy("datetime64[ns]")
+                  .astype("int64"))
+        sm, lm = _event_masks(str(df["satellite"].iloc[ridx[0]]), utc_ns)
+        ls, rt = _reconstruct_locktime(tsec, stdv, slip_mask=sm, lli_mask=lm)
         lock_min[ridx] = ls / 60.0
         reset_type[ridx] = rt
     df["lockMin"] = lock_min
@@ -311,25 +402,19 @@ def build_ambiguity_locktime(
     df["heldStart"] = (rt_arr == 3) & (prev_diff_key | prev_not_held)
 
     # --- Optional: classify each in-arc reset as slip- vs KF-driven ---
+    # (Reuses the events loaded for the reconstruction masks above.)
     df["resetSrc"] = ""
-    do_classify = classify_reset_source
-    slip_events = pd.DataFrame()
+    do_classify = classify_reset_source and not slip_events.empty
     if do_classify:
-        slip_events = _load_slip_events(ctx)
-        if slip_events.empty:
-            do_classify = False
-    if do_classify:
-        win = pd.Timedelta(seconds=_CLASSIFY_WINDOW_S)
         src = df["resetSrc"].to_numpy(copy=True).astype(object)
-        # group slip times by satellite for fast lookup
-        ev_by_sat = {s: g["utc"].to_numpy("datetime64[ns]")
-                     for s, g in slip_events.groupby(slip_events["satellite"].astype(str))}
-        win_ns = np.timedelta64(int(_CLASSIFY_WINDOW_S * 1e9), "ns")
+        # Force ns here as well: ev_by_sat's times are ns, while the frame's own
+        # datetime64 resolution is whatever pandas inferred (us on pandas 3.x), so
+        # a raw .astype("int64") on a scalar would compare us against ns.
+        utc_ns_all = df["utc"].to_numpy("datetime64[ns]").astype("int64")
         for ii in reset_pos:
-            sat_i = str(df["satellite"].iloc[ii])
-            t0 = df["utc"].iloc[ii].to_datetime64()
-            ts = ev_by_sat.get(sat_i)
-            if ts is not None and ts.size and np.any(np.abs(ts - t0) <= win_ns):
+            ev = ev_by_sat.get(str(df["satellite"].iloc[ii]))
+            t0 = int(utc_ns_all[ii])
+            if ev is not None and np.any(np.abs(ev[0] - t0) <= win_ns):
                 src[ii] = "slip"
             else:
                 src[ii] = "kf"
@@ -401,6 +486,9 @@ def build_ambiguity_locktime(
         sys_order=_SYS_ORDER,
         markers=markers,
         marker_styles=marker_styles,
+        # One facet per constellation but ~a couple dozen satellite ROWS in it:
+        # the multi-facet default (1.75) crushes the strip to ~3 in.
+        facet_height=7.0,
     )
 
     summary = _summary(df, n_dropped, do_classify)

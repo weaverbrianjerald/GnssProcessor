@@ -21,6 +21,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/LiveEphemerisStore.hpp"
+#include "model/SatAttitude.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1868,7 +1869,8 @@ namespace GnssProcessor {
         const Eigen::Vector3d& sun_pos,
         const Eigen::Vector3d& sat_vel,
         bool accumulate,
-        double max_gap_s) const {
+        double max_gap_s,
+        bool correct_velocity_frame) const {
 
         // Wu et al. (1993), stated in THIS function's variables.  k = sat->rx.
         //
@@ -1911,7 +1913,11 @@ namespace GnssProcessor {
         }
 
         if (use_orbit_normal) {
-            Eigen::Vector3d orbit_normal = sat_pos.cross(sat_vel);
+            // Inertial velocity -- r x v_ecef is not the orbit normal; see
+            // SatAttitude::inertialVelocity.  Mirrors the SatAttitude ON frame.
+            Eigen::Vector3d orbit_normal = sat_pos.cross(
+                correct_velocity_frame ? SatAttitude::inertialVelocity(sat_pos, sat_vel)
+                                       : sat_vel);
             if (orbit_normal.norm() < 1e-8) orbit_normal = Eigen::Vector3d::UnitY();
             y_s = orbit_normal.normalized();
             x_s = y_s.cross(ez);

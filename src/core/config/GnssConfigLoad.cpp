@@ -1176,6 +1176,15 @@ namespace GnssProcessor {
         enable_cio_frame_            = jval<bool>(json, "estimation.enable_cio_frame",
                                                    "enable_cio_frame", false);
 
+        // Cancel the inherited RTKLIB precession double-count in the Sun/Moon ECI
+        // vectors (sunMoonPosEci returns mean-of-date; both ECI→ECEF chains then
+        // apply precession again).  Off by default → every existing lineage,
+        // product and sim fixture stays byte-identical; arming it is a migration
+        // because it moves solid tides, satellite attitude/PCO, phase wind-up and
+        // the eclipse-gate edges together.
+        enable_sun_frame_correction_ = jval<bool>(json, "estimation.enable_sun_frame_correction",
+                                                   "enable_sun_frame_correction", false);
+
         // Statistical QC layer (item #9 / M-PAGES NgsLsq variance factor +
         // Baarda data-snooping).  All three default false → the post-fit
         // residual / outlier path is byte-identical.
@@ -3218,7 +3227,7 @@ namespace GnssProcessor {
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 
-        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
+        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
@@ -3242,6 +3251,7 @@ namespace GnssProcessor {
             adaptive_iono_q_.enabled ? "on" : "off",
             exclude_eclipsing_satellites_ ? "on" : "off",
             enable_cio_frame_ ? "on" : "off",
+            enable_sun_frame_correction_ ? "on" : "off",
             enable_auto_report_ ? "on" : "off",
             enable_noncausal_slip_bridge_ ? "on" : "off",
             enable_variance_factor_ ? "on" : "off",

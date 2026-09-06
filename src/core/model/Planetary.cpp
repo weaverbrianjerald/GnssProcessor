@@ -24,11 +24,14 @@ namespace GnssProcessor {
     /**
      * @brief Construct a Planetary helper.
      */
-    Planetary::Planetary(LogManager& log_mgr, bool enable_cio_frame)
-        : log_manager_(log_mgr), enable_cio_frame_(enable_cio_frame) {
+    Planetary::Planetary(LogManager& log_mgr, bool enable_cio_frame,
+                         bool correct_sun_frame)
+        : log_manager_(log_mgr), enable_cio_frame_(enable_cio_frame),
+          correct_sun_frame_(correct_sun_frame) {
         log_manager_.getLogger("planetary_model")->info(
-            "Planetary model initialized (CIO frame: {})",
-            enable_cio_frame_ ? "on" : "off");
+            "Planetary model initialized (CIO frame: {}, sun-frame correction: {})",
+            enable_cio_frame_ ? "on" : "off",
+            correct_sun_frame_ ? "on" : "off");
     }
 
     /**
@@ -354,6 +357,26 @@ namespace GnssProcessor {
     }
 
     /**
+     * @brief IAU 1976 precession matrix P (J2000 → mean equinox/equator of date).
+     *
+     * Verbatim extraction of the block that previously lived inline in
+     * eci2ecef(), kept as a single definition so the rotation chain and the
+     * of-date→J2000 de-precession cannot drift apart.
+     */
+    Eigen::Matrix3d Planetary::precessionIau1976(double t_tt)
+    {
+        constexpr double AS2R = Constants::PI / 180.0 / 3600.0;
+
+        const double t2 = t_tt * t_tt;
+        const double t3 = t2 * t_tt;
+
+        double ze = (2306.2181 * t_tt + 0.30188 * t2 + 0.017998 * t3) * AS2R;
+        double th = (2004.3109 * t_tt - 0.42665 * t2 - 0.041833 * t3) * AS2R;
+        double z  = (2306.2181 * t_tt + 1.09468 * t2 + 0.018203 * t3) * AS2R;
+        return Rxyz(-z, 3) * Rxyz(th, 2) * Rxyz(-ze, 3);
+    }
+
+    /**
      * @brief Compute the ECI→ECEF transformation matrix (RTKLIB eci2ecef).
      *
      * Applies: U = W · R3(GAST) · N · P
@@ -371,12 +394,9 @@ namespace GnssProcessor {
         const double t2 = t_tt * t_tt;
         const double t3 = t2 * t_tt;
 
-        // --- IAU 1976 precession ---
-        double ze = (2306.2181 * t_tt + 0.30188 * t2 + 0.017998 * t3) * AS2R;
-        double th = (2004.3109 * t_tt - 0.42665 * t2 - 0.041833 * t3) * AS2R;
-        double z  = (2306.2181 * t_tt + 1.09468 * t2 + 0.018203 * t3) * AS2R;
+        // --- IAU 1976 precession (shared with computeSunMoonPosition's de-precession) ---
         double eps = (84381.448 - 46.8150 * t_tt - 0.00059 * t2 + 0.001813 * t3) * AS2R;
-        Eigen::Matrix3d P = Rxyz(-z, 3) * Rxyz(th, 2) * Rxyz(-ze, 3);
+        Eigen::Matrix3d P = precessionIau1976(t_tt);
 
         // --- IAU 1980 nutation ---
         double dpsi = 0.0, deps = 0.0;
@@ -570,6 +590,33 @@ namespace GnssProcessor {
         // The ECI positions use UT1 time for the series evaluation
         Eigen::Vector3d rsun_eci, rmoon_eci;
         sunMoonPosEci(t_ut1, f, rsun_eci, rmoon_eci);
+
+        // Step 4b: FRAME REPAIR (default OFF -- estimation.enable_sun_frame_correction).
+        //
+        // sunMoonPosEci evaluates its series with TROPICAL mean-longitude rates
+        // (Sun 36000.770 deg/cy, Moon 481267.883 deg/cy -- the sidereal rates are
+        // 35999.373 and 481266.494) and rotates ecliptic->equatorial with the
+        // OF-DATE mean obliquity, so rsun_eci / rmoon_eci are in the mean equinox
+        // and equator OF DATE, not J2000.  Both ECI->ECEF chains below then apply
+        // precession a SECOND time -- eci2ecef through its IAU-1976 P, and
+        // celestialToTerrestrial through the SOFA bias-precession-nutation matrix.
+        // The delivered ECEF directions therefore carry a spurious rotation about
+        // the ecliptic pole growing at 50.3"/yr from J2000: 1224.7" = 20.41' at
+        // 2024-05-08.  (Nutation and GAST are NOT double-counted -- the series
+        // carries no nutation term and uses the MEAN obliquity -- so N and the
+        // equation of the equinoxes are correct and are left alone.)
+        //
+        // Applying P^T here returns the vectors to J2000, after which the existing
+        // chain is exactly right.  Doing the repair on the VECTOR rather than in
+        // the matrix keeps one code path for both the legacy and CIO transforms.
+        // Residual for the CIO arm: the J2000 mean equinox differs from GCRS by
+        // the 23 mas frame bias, which is 5e-5 of the 1224.7" being removed and
+        // well under the Sun series' own 18.6" mean truncation error.
+        if (correct_sun_frame_) {
+            const Eigen::Matrix3d Pt = precessionIau1976(t_tt).transpose();
+            rsun_eci  = Pt * rsun_eci;
+            rmoon_eci = Pt * rmoon_eci;
+        }
 
         // Step 5: Compute GMST
         double gmst = utc2gmst(t_ut1, ut1_d);

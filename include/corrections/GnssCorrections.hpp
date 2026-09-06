@@ -425,7 +425,8 @@ namespace GnssProcessor {
             const Eigen::Vector3d& sun_pos = Eigen::Vector3d::Zero(),
             const Eigen::Vector3d& sat_vel = Eigen::Vector3d::Zero(),
             bool accumulate = false,
-            double max_gap_s = 300.0) const;
+            double max_gap_s = 300.0,
+            bool correct_velocity_frame = false) const;
 
         /**
          * @brief Enable CSV tracing of per-satellite phase wind-up diagnostics.

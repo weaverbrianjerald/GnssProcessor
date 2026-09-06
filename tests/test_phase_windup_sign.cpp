@@ -119,6 +119,7 @@
 #include "common/Constants.hpp"
 #include "common/GnssTypes.hpp"
 #include "corrections/GnssCorrections.hpp"
+#include "model/SatAttitude.hpp"
 #include "logging/LogManager.hpp"
 #include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"
@@ -715,7 +716,11 @@ TEST(PhaseWindUpSignTest, OrbitNormalBranchSharesTheNadirHandedness) {
     // through the y-free closed form.  Orbit-normal: y_s = unit(r x v), then
     // x_s = y_s x ez and y_s = ez x x_s -- so x_s x y_s == ez by construction.
     const Vector3d ez = -sat_pos.normalized();
-    Vector3d ys = sat_pos.cross(sat_vel).normalized();
+    // The branch converts the incoming ECEF velocity to inertial before forming
+    // the orbit normal (SatAttitude::inertialVelocity); the oracle must match its
+    // INPUT triad, so it applies the same conversion.  What this test pins is the
+    // dipole handedness, which is independent of the velocity frame.
+    Vector3d ys = sat_pos.cross(SatAttitude::inertialVelocity(sat_pos, sat_vel)).normalized();
     Vector3d xs = ys.cross(ez).normalized();
     ys = ez.cross(xs).normalized();
     ASSERT_NEAR(xs.cross(ys).dot(ez), 1.0, 1e-12) << "orbit-normal triad is not +ez right-handed";
@@ -735,7 +740,8 @@ TEST(PhaseWindUpSignTest, OrbitNormalBranchSharesTheNadirHandedness) {
     // "C01" selects the orbit-normal branch; the Sun is supplied but ignored there.
     const double got = gc.computePhaseWindUp("C01", System::BeiDou, rx_pos, sat_pos,
                                              kLambda, GnssTime{ 2300, 100000.0 },
-                                             sunAt(sat_pos, 0.4, 0.5, 0.77), sat_vel, false);
+                                             sunAt(sat_pos, 0.4, 0.5, 0.77), sat_vel, false,
+                                             /*max_gap_s=*/300.0, /*correct_velocity_frame=*/true);
     EXPECT_NEAR(got, expect_m, kMetreTol);
 
     // A non-GEO BeiDou PRN must take the yaw-steering branch instead, and must

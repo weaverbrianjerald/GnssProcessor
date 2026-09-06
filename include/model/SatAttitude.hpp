@@ -85,7 +85,8 @@ public:
         const Eigen::Vector3d& sat_pos,
         const Eigen::Vector3d& sat_vel,
         const Eigen::Vector3d& sun_pos,
-        bool enable_orbit_normal);
+        bool enable_orbit_normal,
+        bool correct_velocity_frame = false);
 
     /**
      * @brief Sun elevation above the orbital plane (beta angle), in degrees.
@@ -105,9 +106,37 @@ public:
      * @param[in] sun_pos Sun ECEF position (meters).
      * @return Beta angle in degrees (0 if geometry is degenerate).
      */
+    /**
+     * @brief Convert an ECEF (Earth-relative) satellite velocity to inertial.
+     *
+     * @c Geometry::getSatellitePV deliberately returns ECEF velocity
+     * (v_ecef = v_inertial - omega x r, ModelGeometry.cpp) because its primary
+     * consumers -- Doppler line-of-sight rate and the relativistic r.v term --
+     * want Earth-relative motion.  Attitude does NOT: the orbit plane, and hence
+     * the orbit normal h = r x v and the Sun elevation beta above it, are defined
+     * in an INERTIAL frame.  Forming r x v_ecef instead yields
+     * h_ecef = h_inertial - r x (omega x r), and since |r x (omega x r)| =
+     * omega*r^2*cos(lat) is 29-50% of |h| at MEO the resulting normal is wrong by
+     * a large angle -- measured on real CODE MGX orbits for 2024-129: 2.2-30.3 deg
+     * for GPS, 1.6-36.0 deg for Galileo, 18.0-65.1 deg for BeiDou IGSO.  For a true
+     * GEO v_ecef -> 0, so r x v_ecef degenerates entirely to station-keeping drift.
+     *
+     * Callers holding a @c getSatellitePV velocity must pass it through this
+     * helper before any cross-product attitude use.  Note r.v is invariant under
+     * the conversion (r . (omega x r) = 0), so the relativistic path is unaffected
+     * either way.
+     *
+     * @param sat_pos   Satellite ECEF position (meters).
+     * @param sat_vel   Satellite ECEF velocity (m/s), as returned by getSatellitePV.
+     * @return Inertial velocity expressed in ECEF axes (m/s): v_ecef + omega x r.
+     */
+    static Eigen::Vector3d inertialVelocity(const Eigen::Vector3d& sat_pos,
+        const Eigen::Vector3d& sat_vel);
+
     static double computeBeta(const Eigen::Vector3d& sat_pos,
         const Eigen::Vector3d& sat_vel,
-        const Eigen::Vector3d& sun_pos);
+        const Eigen::Vector3d& sun_pos,
+        bool correct_velocity_frame = false);
 
     /**
      * @brief Select the attitude mode from system + beta (M-PAGES table).

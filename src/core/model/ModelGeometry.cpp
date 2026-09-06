@@ -45,7 +45,7 @@ namespace GnssProcessor {
             const RinexParser& rinex, LogManager& log_mgr)
             : corrections_(log_mgr, config, cache.getClocksShared(), cache.getErpsShared(), cache.getBiasesShared(), rinex),
             config_(config),
-            planetary_(log_mgr, config.enableCioFrame()),
+            planetary_(log_mgr, config.enableCioFrame(), config.enableSunFrameCorrection()),
             troposphere_(config, log_mgr),
             product_cache_(cache),
             log_manager_(log_mgr),

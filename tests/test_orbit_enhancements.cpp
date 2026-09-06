@@ -218,20 +218,41 @@ TEST(SatAttitude, YawSteerMatchesLegacyEngineBitForBit) {
     EXPECT_EQ(att.mode, SatAttitude::Mode::YawSteering);
 }
 
-TEST(SatAttitude, GeoOrbitNormalMatchesLegacyEngineBitForBit) {
+TEST(SatAttitude, GeoOrbitNormalMatchesLegacyEngineOnInertialVelocity) {
     // A BeiDou GEO PRN (C01) on the legacy path uses orbit-normal.
+    //
+    // This was originally a bit-for-bit pin against the inline Antenna.cpp block,
+    // proving the SatAttitude extraction changed nothing.  The extraction is still
+    // exact -- but the orbit-normal branch now converts the incoming ECEF velocity
+    // to inertial first, because the orbit plane is an inertial construct and
+    // r x v_ecef = h - r x (omega x r) is not the orbit normal (see
+    // SatAttitude::inertialVelocity; measured 2.2-30.3 deg for GPS, up to 65 deg
+    // for BeiDou IGSO on real CODE MGX orbits).  So the pin is against the same
+    // legacy construction fed the CORRECTED velocity.
+    //
+    // The branch is dormant on current lineages: it is reachable only for the
+    // BeiDou-2 GEO PRNs C01-C05/C59/C60, which are absent from the CODE MGX
+    // products this repo consumes.
     const Eigen::Vector3d pos(-30000e3, 28000e3, 1500e3);   // near-GEO geometry
-    const Eigen::Vector3d vel(-2000.0, -2100.0, 50.0);
+    const Eigen::Vector3d vel(-2000.0, -2100.0, 50.0);      // ECEF, as getSatellitePV returns
     const Eigen::Vector3d sun(1.40e11, 0.40e11, 0.10e11);
 
     Eigen::Vector3d ie, je, ke;
-    legacyOrbitNormal(pos, vel, ie, je, ke);
+    legacyOrbitNormal(pos, SatAttitude::inertialVelocity(pos, vel), ie, je, ke);
 
-    auto att = SatAttitude::compute(System::BeiDou, 1, pos, vel, sun, /*enable_on=*/false);
+    auto att = SatAttitude::compute(System::BeiDou, 1, pos, vel, sun, /*enable_on=*/false,
+                                   /*correct_velocity_frame=*/true);
     EXPECT_LT((att.i_s - ie).norm(), 1e-12);
     EXPECT_LT((att.j_s - je).norm(), 1e-12);
     EXPECT_LT((att.k_s - ke).norm(), 1e-12);
     EXPECT_EQ(att.mode, SatAttitude::Mode::OrbitNormalPositive);
+
+    // Pin the repair as ACTIVE: the raw-ECEF-velocity frame is measurably different,
+    // so this test fails if the conversion is ever dropped.
+    Eigen::Vector3d ir, jr, kr;
+    legacyOrbitNormal(pos, vel, ir, jr, kr);
+    EXPECT_GT((att.i_s - ir).norm(), 1e-6);
+    EXPECT_GT((att.j_s - jr).norm(), 1e-6);
 }
 
 TEST(SatAttitude, NonGeoBeiDouLegacyPathIsYawSteering) {

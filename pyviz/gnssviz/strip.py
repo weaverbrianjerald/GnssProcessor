@@ -94,8 +94,17 @@ def build_sat_epoch_strip(
     markers: Optional[pd.DataFrame] = None,
     marker_styles: Optional[dict] = None,
     facet_label_fallback: str = "",
+    facet_height: float = 1.75,
+    height_cap: float = 9.5,
 ) -> list:
-    """Return a list of :class:`Figure` (one per present constellation)."""
+    """Return a list of :class:`Figure` (one per present constellation).
+
+    ``facet_height`` / ``height_cap`` size each figure as
+    ``min(height_cap, facet_height * n_facets + 1.5)`` inches.  The defaults
+    suit multi-facet strips (one tile per signal); a single-facet strip with
+    many satellite rows (e.g. the locktime strip) should pass a larger
+    ``facet_height`` so the rows are not crushed.
+    """
     if D is None or len(D) == 0:
         return []
 
@@ -200,7 +209,7 @@ def build_sat_epoch_strip(
         elif ref_ticks is not None:
             cbar.ticks = list(ref_ticks)
 
-        fig_height = min(9.5, 1.75 * n_f + 1.5)
+        fig_height = min(height_cap, facet_height * n_f + 1.5)
         figures.append(Figure(
             name=f"{fig_tag} -- {sys_name}",
             title=(f"{fig_title} -- {sys_name}" if fig_title else sys_name),

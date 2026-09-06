@@ -329,8 +329,41 @@ def test_static_window_separates_bias_from_noise(exam_fixture):
     # The PPP row must carry its caveat: it is a kinematic mean, not a static solve.
     # (Match a fragment that cannot straddle the read-out's line wrapping.)
     assert "KINEMATIC filter's window mean" in res.summary
-    # Per-epoch panel is log-scaled (three solutions spanning decades).
+    # Per-epoch panel is log-scaled (three solutions spanning decades)...
     assert res.figures[0].axes[0].yscale == "log"
+    # ...with a linear companion so the window's convergence is not
+    # log-compressed; leg 1 (decades above the rest) is dropped from it.
+    axl = res.figures[0].axes[1]
+    assert axl.yscale == "linear"
+    labels = [t.label for t in axl.traces if getattr(t, "label", None)]
+    assert any("PPP" in lbl for lbl in labels)
+    assert not any("leg 1" in lbl for lbl in labels)
+    # The dotted static-fix overlays are GONE (2026-08-31 professor review:
+    # they read as data series and confused); static values live in the
+    # read-out box, the summary table, and the scatter-panel stars.
+    from gnssviz.figures import HLine
+    for ax in (res.figures[0].axes[0], axl):
+        assert not any(isinstance(t, HLine) for t in ax.traces)
+    # The linear panel is scaled near the static fixes, not the first
+    # convergence epochs.
+    import math
+    assert axl.ylim is not None and math.isfinite(axl.ylim[1])
+
+
+def test_static_window_truly_static_ppp_row(exam_fixture):
+    # A state_trace_static.csv beside the main trace (the window rerun with
+    # filter.process_noise.position_q = 0) becomes a fourth solution whose fix
+    # is the FINAL epoch's error -- a true fixed point, not a window mean.
+    import os
+    import shutil
+    truth, logs = exam_fixture()
+    shutil.copyfile(os.path.join(logs, "state_trace.csv"),
+                    os.path.join(logs, "state_trace_static.csv"))
+    res = _build("exam_static_window", TraceContext(logs, truth_dir=truth))
+    assert "PPP-static" in res.summary and "FINAL epoch" in res.summary
+    labels = [t.label for f in res.figures for ax in f.axes
+              for t in ax.traces if getattr(t, "label", None)]
+    assert any("PPP-static (true fixed point) per epoch" in lbl for lbl in labels)
 
 
 def test_spp_reference_sigma_panel_is_a_correlated_scatter(exam_fixture):

@@ -7,11 +7,17 @@ this window.  This viewer is the author-side answer to those items: it takes the
 three solutions the dashboard already shows per-epoch and collapses each one over the
 window the way a student would, then draws what averaging did and did not fix.
 
-  (a) per-epoch 3D error across the window on a log axis, with each solution's
-      **static** (window-mean) 3D error as a dotted line.  A solution whose dotted
-      line sits well below its own scatter was noise-limited and averaging paid;
-      one whose line lands in the middle of its scatter was bias-limited and
-      averaging bought nothing;
+  (a) per-epoch 3D error across the window on a log axis.  Each solution's
+      **static** fix value lives in the read-out box (and as the stars in the
+      scatter panels) -- the dotted overlay lines were REMOVED 2026-08-31 on
+      professor review: they read as data series and confused more than they
+      explained.  A solution whose static value sits well below its per-epoch
+      curve was noise-limited and averaging paid; one whose value lands in the
+      middle of its curve was bias-limited and averaging bought nothing.
+      A linear companion panel repeats the precise solutions (leg 1 dropped,
+      same rule as the scatter zoom) with the y-range scaled to the static-fix
+      errors, so the convergence tail reads at true scale instead of being
+      compressed by the log axis or squashed by the first convergence epochs;
   (b) the same result decomposed into horizontal scatter about truth, at leg-1
       scale and again zoomed to the precise solutions, with the static fix marked.
 
@@ -24,13 +30,23 @@ confidently small formal sigma -- Part D's covariance lesson from the other side
 Truth-only inputs plus the processor trace; auto-skips without ``--truth-dir``, and
 without a ``static_segment`` (an instance with no station-keeping prefix has nothing
 to draw).
+
+OPTIONAL fourth solution -- a TRULY STATIC PPP: when the log dir also carries
+``state_trace_static.csv`` (a separate gnss_processor run over the window's
+trimmed RINEX with ``filter.process_noise.position_q = 0``), it is drawn as
+"PPP-static".  Its per-epoch curve is the static filter converging, and its fix
+is the LAST epoch's state -- the fixed-point solution with every window epoch
+assimilated into one constant position (the window mean would re-pollute it
+with the convergence transient).  This is the honest PPP counterpart to the
+legs' averaged fixes; the kinematic run's window mean stays as the upper-bound
+caveat row.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from ..figures import Axes, Figure, HLine, Legend, Line, Scatter, TextBox
+from ..figures import Axes, Figure, Legend, Line, Scatter, TextBox
 from ..io import first_col, gps_to_datetime, load_trace
 from .base import Viewer, ViewerResult, ViewerSkip
 from . import exam_common as ec
@@ -40,6 +56,7 @@ from . import exam_common as ec
 _C_L1 = (0.80, 0.25, 0.12)
 _C_IF = (0.10, 0.35, 0.75)
 _C_PPP = (0.10, 0.55, 0.25)
+_C_PPPS = (0.55, 0.20, 0.70)      # the truly static PPP run (optional trace)
 _C_REF = (0.45, 0.45, 0.45)
 _C_TRUTH = (0.0, 0.0, 0.0)
 
@@ -77,13 +94,13 @@ def _collapse(name, e, n, u, color):
                 scatter=float(np.sqrt((resid ** 2).mean())))
 
 
-def _ppp_errors(ctx, tow0, tow1):
+def _ppp_errors(ctx, tow0, tow1, trace_name: str = "state_trace.csv"):
     """PPP per-epoch ENU errors inside the window (None when the trace is absent)."""
     truth = ec.truth_frame(ctx, "truth_position.csv")
     if truth is None:
         return None
     try:
-        state = load_trace(ctx.path("state_trace.csv"))
+        state = load_trace(ctx.path(trace_name))
     except (OSError, ValueError):
         return None
     if state is None or state.empty:
@@ -119,9 +136,10 @@ def _scatter_axes(sols, *, title, lim, note=None):
                                  alpha=0.35, label=f"{s['name']} epochs"))
     for s in sols:
         # The static fix: a big ringed marker so it reads over its own cloud.
+        short = s["name"].split(" (")[0]
         ax.traces.append(Scatter(x=[s["bias_e"]], y=[s["bias_n"]], color=s["color"],
                                  size=110, marker="*", edgecolor=(0, 0, 0), linewidth=0.8,
-                                 label=f"{s['name']} static fix"))
+                                 label=f"{short} {s.get('fix_short', 'static fix')}"))
     ax.traces.append(Scatter(x=[0.0], y=[0.0], color=_C_TRUTH, size=70, marker="+",
                              label="truth"))
     if note:
@@ -140,26 +158,52 @@ def build_exam_static_window(ctx) -> ViewerResult:
         if sel.any():
             w = spp[sel]
             t_axis = gps_to_datetime(w["week"], w["tow_s"]) if "week" in w.columns else None
-            for pre, name, color in (("l1", "leg 1 (L1 + brdc + Klob)", _C_L1),
-                                     ("if", "leg 2 (IF + precise)", _C_IF)):
+            for pre, name, color in (
+                    ("l1", "leg 1 (L1 code, brdc+Klob)", _C_L1),
+                    ("if", "leg 2 (code-only IF, precise)", _C_IF)):
                 cols = [f"{pre}_e_m", f"{pre}_n_m", f"{pre}_u_m"]
                 if all(c in w.columns for c in cols):
                     s = _collapse(name, w[cols[0]], w[cols[1]], w[cols[2]], color)
                     if s:
                         s["t"] = t_axis
+                        s["fix_lbl"] = "static fix (window mean)"
+                        s["fix_short"] = "static fix"
                         sols.append(s)
 
     ppp = _ppp_errors(ctx, tow0, tow1)
     if ppp is not None:
         e, n, u, t = ppp
-        # Labelled "kinematic, mean" on purpose: the processor estimates a NEW position
-        # every epoch, so its window mean is not the static solve the exam asks for --
-        # a true fixed point carries one position instead of 21 and is better
-        # determined.  Read this series as an upper bound on the static item, and note
-        # that over the FIRST 21 epochs it is dominated by filter convergence, not noise.
-        s = _collapse("PPP (kinematic, mean)", e, n, u, _C_PPP)
+        # Labelled "kinematic float" on purpose: the processor estimates a NEW position
+        # every epoch (carrier-phase float PPP), so its window mean is not the static
+        # solve the exam asks for -- a true fixed point carries one position instead of
+        # 21 and is better determined.  Read this series as an upper bound on the
+        # static item, and note that over the FIRST 21 epochs it is dominated by
+        # filter convergence, not noise.
+        s = _collapse("PPP (kinematic float)", e, n, u, _C_PPP)
         if s:
             s["t"] = t
+            s["fix_lbl"] = "window mean (still converging -- NOT a static solve)"
+            s["fix_short"] = "window mean"
+            sols.append(s)
+            t_axis = t_axis if t_axis is not None else t
+
+    # The truly static PPP (optional second trace -- module docstring).
+    ppps = _ppp_errors(ctx, tow0, tow1, trace_name="state_trace_static.csv")
+    if ppps is not None:
+        e, n, u, t = ppps
+        s = _collapse("PPP-static (true fixed point)", e, n, u, _C_PPPS)
+        if s:
+            # The static filter's LAST epoch IS the fixed-point solution (all
+            # window epochs assimilated into one constant position); the mean
+            # would re-pollute it with the convergence transient.
+            s["bias_e"] = float(s["e"][-1])
+            s["bias_n"] = float(s["n_"][-1])
+            s["bias_u"] = float(s["u"][-1])
+            s["bias"] = float(np.sqrt(s["bias_e"] ** 2 + s["bias_n"] ** 2
+                                      + s["bias_u"] ** 2))
+            s["t"] = t
+            s["fix_lbl"] = "fix (final epoch of the static filter)"
+            s["fix_short"] = "fix (final epoch)"
             sols.append(s)
             t_axis = t_axis if t_axis is not None else t
 
@@ -178,8 +222,8 @@ def build_exam_static_window(ctx) -> ViewerResult:
     ylim = ((0.6 * float(allv.min()), 3.5 * float(allv.max()))
             if allv.size else None)
     axa = Axes(title=f"Station-keeping window ({n_disclosed} epochs, tow {tow0:.0f}"
-                     f" to {tow1:.0f} s GPS): per-epoch 3D error, and the static fix "
-                     f"(dotted) each one collapses to",
+                     f" to {tow1:.0f} s GPS): per-epoch 3D error (each solution's "
+                     f"static-fix value is in the box)",
                xlabel="GPS Time", ylabel="3D error (m, log)", yscale="log", ylim=ylim,
                legend=Legend(loc="best"))
     axa.traces = []
@@ -188,16 +232,42 @@ def build_exam_static_window(ctx) -> ViewerResult:
         x = s["t"] if s.get("t") is not None else np.arange(s["n"])
         axa.traces.append(Line(x=x, y=y, color=s["color"], width=1.2,
                                label=f"{s['name']} per epoch"))
-        if s["bias"] > 0:
-            axa.traces.append(HLine(y=s["bias"], color=s["color"], style=":"))
     axa.traces.append(TextBox(
         x=0.02, y=0.97, mono=True, boxed=True,
         text="\n".join(
-            f"{s['name'][:22]:<22} epoch {s['med']:8.3f}  static {s['bias']:8.3f} m"
+            f"{s['name'][:30]:<30} epoch {s['med']:8.3f}  static {s['bias']:8.3f} m"
             for s in sols)
         + f"\naveraging {sols[0]['n']} epochs: noise /{np.sqrt(sols[0]['n']):.1f}, bias /1"))
+
+    # Linear companion: the log axis is the honest cross-leg comparison, but it
+    # compresses the very thing the window is watched for -- the filter walking
+    # down to its static fix.  Re-draw only the precise solutions (leg 1 dropped
+    # when anything else is present, the scatter zoom's rule) on a linear axis,
+    # with the y-range scaled to the static-fix errors rather than the first
+    # convergence epochs (which would otherwise own 90% of the panel and squash
+    # the fixes onto the x-axis; the clipped early epochs are on the log panel
+    # above).
+    precise_ts = [s for s in sols if s is not sols[0]] or sols
+    vmax = max(float(np.nanmax(s["per_epoch"])) for s in precise_ts)
+    fixes = [s["bias"] for s in precise_ts if np.isfinite(s["bias"]) and s["bias"] > 0]
+    meds = [s["med"] for s in precise_ts if np.isfinite(s["med"]) and s["med"] > 0]
+    if fixes:
+        y_top = max(2.5 * max(fixes), 1.2 * (min(meds) if meds else 0.0))
+    else:
+        y_top = 1.15 * vmax if np.isfinite(vmax) and vmax > 0 else None
+    axl = Axes(title="Zoom to the precise solutions, linear scale, y scaled to "
+                     "the static-fix errors (early convergence epochs clip; see "
+                     "the log panel for those)",
+               xlabel="GPS Time", ylabel="3D error (m)",
+               ylim=(0.0, y_top) if y_top else None,
+               legend=Legend(loc="best"))
+    axl.traces = []
+    for s in precise_ts:
+        x = s["t"] if s.get("t") is not None else np.arange(s["n"])
+        axl.traces.append(Line(x=x, y=s["per_epoch"], color=s["color"], width=1.2,
+                               label=f"{s['name']} per epoch"))
     figures.append(Figure(name="Static window: per-epoch vs static fix",
-                          axes=[axa], width=13, height=4.6))
+                          axes=[axa, axl], width=13, height=9.2))
 
     # ------------------------------------------------------- (b) E/N scatter
     # Two panels because the solutions differ by ~3 decades: one at leg-1 scale so
@@ -211,7 +281,7 @@ def build_exam_static_window(ctx) -> ViewerResult:
     # E/N/U in the box so the plane cannot be read as the whole story.
     note = ("star = the static (window-mean) fix, + = truth\n"
             "static fix E / N / U (m):\n"
-            + "\n".join(f"  {s['name'][:22]:<22}{s['bias_e']:+7.2f}{s['bias_n']:+7.2f}"
+            + "\n".join(f"  {s['name'][:30]:<30}{s['bias_e']:+7.2f}{s['bias_n']:+7.2f}"
                         f"{s['bias_u']:+7.2f}" for s in sols)
             + "\n(plan view only: the Up column is where leg 1's error lives)")
     axes_b = [_scatter_axes(sols, title="Horizontal scatter about truth, full scale",
@@ -234,11 +304,11 @@ def _summary(sols, tow0, tow1, n_disclosed) -> str:
            "positions and its error is the mean of the per-epoch errors. Splitting that mean",
            "from the spread about it separates what averaging fixes from what it cannot:",
            "",
-           f"  {'solution':<26}{'epoch med':>11}{'static 3D':>11}{'scatter':>10}"
+           f"  {'solution':<30}{'epoch med':>11}{'static 3D':>11}{'scatter':>10}"
            f"{'bias U':>10}{'gain':>8}"]
     for s in sols:
         gain = (s["med"] / s["bias"]) if s["bias"] > 0 else float("inf")
-        out.append(f"  {s['name']:<26}{s['med']:>11.3f}{s['bias']:>11.3f}"
+        out.append(f"  {s['name']:<30}{s['med']:>11.3f}{s['bias']:>11.3f}"
                    f"{s['scatter']:>10.3f}{s['bias_u']:>+10.3f}{gain:>8.1f}x")
     n = sols[0]["n"]
     out += ["",
@@ -257,7 +327,23 @@ def _summary(sols, tow0, tow1, n_disclosed) -> str:
             "gain can fall BELOW 1 (the mean is dragged by the early epochs, so it is worse",
             "than the per-epoch median).  A student's true fixed point carries ONE position",
             "instead of 21 and should beat this; read the row as an upper bound on the",
-            "Part-C item, and do not grade a student against it as if it were the key."]
+            "Part-C item, and do not grade a student against it as if it were the key.",
+            "",
+            "That caveat is also why the code-only IF static fix can sit BELOW the",
+            "kinematic PPP's window mean: the code solution has no convergence process --",
+            "every epoch is equally good (noise-limited), so averaging pays in full --",
+            "while the phase filter spent most of the window still walking in, and that",
+            "transient is baked into its window mean.  Steady-state (past the window) the",
+            "kinematic PPP is cm-level, two decades below every line on this panel."]
+    if any(str(s["name"]).startswith("PPP-static") for s in sols):
+        out += ["",
+                "PPP-static row: a SEPARATE gnss_processor run over the window's trimmed",
+                "RINEX with filter.process_noise.position_q = 0 -- ONE constant position,",
+                "carrier phase and all.  Its 'static 3D' is the FINAL epoch's error (the",
+                "fixed-point solution with every window epoch assimilated), NOT a window",
+                "mean, so it is directly comparable to the legs' averaged fixes and is the",
+                "number a student's batch solve should be judged against.  Its per-epoch",
+                "curve on the panel is the static filter converging toward that fix."]
     return "\n".join(out)
 
 

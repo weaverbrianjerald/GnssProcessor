@@ -1,5 +1,7 @@
 #include "model/SatAttitude.hpp"
 
+#include "common/Constants.hpp"
+
 #include <algorithm>   // std::clamp
 #include <cmath>
 
@@ -9,11 +11,25 @@ namespace {
     constexpr double kPi = 3.14159265358979;
 }
 
+Eigen::Vector3d SatAttitude::inertialVelocity(const Eigen::Vector3d& sat_pos,
+    const Eigen::Vector3d& sat_vel)
+{
+    // omega x r for omega = (0, 0, omega_E).
+    const double w = Constants::EARTH_ANGULAR_VELOCITY;
+    return Eigen::Vector3d(sat_vel.x() - w * sat_pos.y(),
+                           sat_vel.y() + w * sat_pos.x(),
+                           sat_vel.z());
+}
+
 double SatAttitude::computeBeta(const Eigen::Vector3d& sat_pos,
     const Eigen::Vector3d& sat_vel,
-    const Eigen::Vector3d& sun_pos)
+    const Eigen::Vector3d& sun_pos,
+    bool correct_velocity_frame)
 {
-    const Eigen::Vector3d h = sat_pos.cross(sat_vel);   // orbit angular momentum, +(r x v)
+    // sat_vel arrives ECEF from getSatellitePV; the orbit plane is inertial.
+    const Eigen::Vector3d v_in = correct_velocity_frame
+        ? inertialVelocity(sat_pos, sat_vel) : sat_vel;
+    const Eigen::Vector3d h = sat_pos.cross(v_in);      // orbit angular momentum, +(r x v)
     if (h.norm() < 1e-8) return 0.0;
     const Eigen::Vector3d n = h.normalized();           // orbit normal
     const Eigen::Vector3d s = (sun_pos - sat_pos);
@@ -51,7 +67,8 @@ SatAttitude::Frame SatAttitude::compute(System system,
     const Eigen::Vector3d& sat_pos,
     const Eigen::Vector3d& sat_vel,
     const Eigen::Vector3d& sun_pos,
-    bool enable_orbit_normal)
+    bool enable_orbit_normal,
+    bool correct_velocity_frame)
 {
     Frame fr;
 
@@ -73,7 +90,7 @@ SatAttitude::Frame SatAttitude::compute(System system,
         use_orbit_normal = legacy_geo;
         mode = legacy_geo ? Mode::OrbitNormalPositive : Mode::YawSteering;
     } else {
-        beta = computeBeta(sat_pos, sat_vel, sun_pos);
+        beta = computeBeta(sat_pos, sat_vel, sun_pos, correct_velocity_frame);
         mode = determineMode(system, beta);
         // Keep the legacy hard-coded GEO override on top of the table: those PRNs
         // are always orbit-normal regardless of beta.
@@ -92,7 +109,13 @@ SatAttitude::Frame SatAttitude::compute(System system,
         // ON- axes (no validated consumer).  The degenerate-normal warn is emitted
         // by the caller (Antenna) on the flag-off GEO path; this helper is stateless.
         // FRAME DUPLICATION: mirror of the GnssCorrections.cpp wind-up ON frame.
-        Eigen::Vector3d orbit_normal = sat_pos.cross(sat_vel);
+        // r x v_ecef is not the orbit normal (see SatAttitude::inertialVelocity).
+        // Gated: OFF reproduces the legacy engine block bit-for-bit.  This branch
+        // is dormant in post-processing (its BeiDou-2 GEO PRNs have no SP3 entry
+        // in the CODE MGX products, so they drop as NoProduct before geometry) but
+        // is LIVE in real-time, where LiveEphemerisStore supplies their orbits.
+        Eigen::Vector3d orbit_normal = sat_pos.cross(
+            correct_velocity_frame ? inertialVelocity(sat_pos, sat_vel) : sat_vel);
         if (orbit_normal.norm() < 1e-8) {
             orbit_normal = Eigen::Vector3d::UnitY();
         }

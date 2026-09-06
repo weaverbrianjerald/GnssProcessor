@@ -407,6 +407,7 @@ add_executable(gnss_tests
     tests/test_relevel_bridge_v3.cpp
     tests/test_relevel_delta_bridge.cpp
     tests/test_planetary_cio.cpp
+    tests/test_planetary_sun_frame.cpp
     tests/test_orbit_enhancements.cpp
     tests/test_neq_accumulator.cpp
     tests/test_station_info.cpp

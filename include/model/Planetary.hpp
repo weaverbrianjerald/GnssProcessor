@@ -38,8 +38,13 @@ namespace GnssProcessor {
          *        equinox chain to the CIO-based IAU 2000A/2006 transform
          *        (Planetary::celestialToTerrestrial, via SOFA).  Defaults to
          *        false so the legacy path is byte-identical.
+         * @param correct_sun_frame When true, de-precess the of-date Sun/Moon
+         *        ECI vectors to J2000 before the ECI→ECEF rotation, cancelling
+         *        the inherited RTKLIB precession double-count.  Defaults to
+         *        false so the legacy (defective) path is byte-identical.
          */
-        explicit Planetary(LogManager& log_mgr, bool enable_cio_frame = false);
+        explicit Planetary(LogManager& log_mgr, bool enable_cio_frame = false,
+                           bool correct_sun_frame = false);
 
         /**
          * @brief Convert a GnssTime to Modified Julian Date (GPS time scale).
@@ -136,10 +141,39 @@ namespace GnssProcessor {
         static Eigen::Matrix3d celestialToTerrestrial(double tt_jd, double ut1_jd,
             double xp_rad, double yp_rad, double dX_rad, double dY_rad);
 
+        /**
+         * @brief IAU 1976 precession matrix P (J2000 → mean equinox/equator of date).
+         *
+         * Extracted verbatim from @c eci2ecef so that both the rotation chain and
+         * the of-date→J2000 de-precession in @c computeSunMoonPosition evaluate the
+         * SAME expression in the same operand order.  @c eci2ecef delegates here, so
+         * the legacy path remains bit-identical (MSVC builds at /fp:precise with no
+         * /arch: flag, hence no reassociation and no FMA contraction).
+         *
+         * Pᵀ maps a mean-of-date vector back to J2000 — which is exactly what
+         * @c sunMoonPosEci's output needs before either ECI→ECEF chain is applied,
+         * since that routine's TROPICAL mean-longitude rates and of-date mean
+         * obliquity already place its result in the mean equinox and equator of date.
+         *
+         * @param t_tt Julian centuries of TT from J2000.0.
+         * @return 3×3 precession matrix P = R3(−z)·R2(θ)·R3(−ζ).
+         */
+        static Eigen::Matrix3d precessionIau1976(double t_tt);
+
+        /**
+         * @brief Build a 3×3 rotation matrix about a principal axis.
+         *
+         * @param angle Rotation angle (radians).
+         * @param axis  Axis index: 1 = X, 2 = Y, 3 = Z.
+         * @return 3×3 rotation matrix.
+         */
+        static Eigen::Matrix3d Rxyz(double angle, int axis);
+
     private:
         LogManager& log_manager_;                         /**< Logger for debugging and info. */
         bool enable_cio_frame_ = false;                   /**< Use the CIO IAU 2000A/2006 ECI→ECEF transform (SOFA) for Sun/Moon. */
         mutable bool cio_diag_logged_ = false;            /**< One-shot guard for the startup CIO-vs-legacy Sun-direction diagnostic. */
+        bool correct_sun_frame_ = false;                  /**< De-precess the of-date Sun/Moon ECI vectors to J2000 before the ECI→ECEF rotation (cancels the precession double-count). */
 
         /**
          * @brief Compute Sun and Moon positions in the ECI (J2000) frame.
@@ -174,6 +208,7 @@ namespace GnssProcessor {
         static Eigen::Matrix3d eci2ecef(double t_tt,
             const std::array<double, 5>& f, double gmst,
             double xp, double yp);
+
 
         /**
          * @brief Compute IAU 1980 nutation (dpsi, deps) using the 106-term series.
@@ -227,14 +262,6 @@ namespace GnssProcessor {
             double& xp, double& yp, double& ut1_utc,
             double& dX, double& dY);
 
-        /**
-         * @brief Build a 3×3 rotation matrix about a principal axis.
-         *
-         * @param angle Rotation angle (radians).
-         * @param axis  Axis index: 1 = X, 2 = Y, 3 = Z.
-         * @return 3×3 rotation matrix.
-         */
-        static Eigen::Matrix3d Rxyz(double angle, int axis);
     };
 
 }
