@@ -1922,7 +1922,7 @@ rung breaks* — which no field arm can do.
 | 1 | **The EWL is at its own TRUE integer 98.2 % of the time** (med\|e\| 0.081 cyc).  Not "near an integer" — near the *right* integer, verified against truth.  The lane cascade's first rung exists on this fixture |
 | 2 | **The field's fractional instrument was hiding the error scale.**  The raw per-band DDs are not "0.25 cyc off" — they are **~5 cycles off with a ±20-cycle p90 tail**, and only ~8 % sit at their true integer.  med\|frac\| 0.25 uniform (the field reads a uniform **0.248**) was the "off by 47.3" class, not the "off by 0.3" class — the distinction §13.8.2 names, measured for the first time |
 | 3 | **The WL:EWL ratio is pure DD-iono arithmetic**: measured med\|e\| ratio 4.8× vs 5.1× predicted from the iono coefficients (WL 1.49 vs EWL 0.29 cyc per metre of L1 DD-iono).  The two lanes share one driver and it is the ionosphere, quantitatively |
-| 4 | **The per-band bands carry an EXTRA error component equal-in-cycles across bands** — per-band:WL measured 12.8× vs 3.5× iono-predicted, and all three bands sit at the same ~5.0 cyc med\|e\|, i.e. it cancels EXACTLY in every between-band difference.  Leading candidate (open, not asserted): residual carrier **phase-windup** content — identical in cycles on every band, non-cancelling in global-baseline DDs, and capable of full-turn integer wraps, which would also explain the low per-band round(e)=0 share.  The discriminator would regress e against the modeled windup DD; owed |
+| 4 | **The per-band bands carry an EXTRA error component equal-in-cycles across bands** — per-band:WL measured 12.8× vs 3.5× iono-predicted, and all three bands sit at the same ~5.0 cyc med\|e\|, i.e. it cancels EXACTLY in every between-band difference.  Leading candidate was residual carrier **phase-windup** — band-common in cycles by construction.  **⚠ FALSIFIED 2026-09-08 by the owed regression (§13.8.6): wind-up explains 0.08 % of the cycle-common variance and is ~144x too small in magnitude.**  The mechanism is OPEN again — see §13.8.6 for what the successor must satisfy |
 
 Sweep items (the absorbed handoff's §4 sweep, 1-h-legal parts — anchor map §13.8): datum
 inventory 67 = 32 IF + 3 STZ + 32 GF with `n_gf_only_pair` 0; `declared_dim = n_below = 1`;
@@ -2197,6 +2197,72 @@ python scripts/simnet_exchange.py runs/simnet60_tri \
 `product_output_path` and its own CWD**, and add the `trace_dd_fractional` block — the real
 stride knob is `trace_dd_fractional_epoch_stride`.  Then grade in CYCLES with
 `scripts/simnet_amb_integer.py` (§13.6), and obey §13.8.1.
+
+#### 13.8.6 THE WIND-UP DISCRIMINATOR — RUN 2026-09-08, and the candidate is FALSIFIED
+
+`scripts/windup_dd_regress.py` (selftest `--selftest`: one bed where e IS the wind-up DD, one where it is
+independent).  The regressor is **truth, not a model** — the simulator injects wind-up per (station,
+satellite, epoch) through `EphemerisProvider::phaseWindupMetres(sat, r_rx, ...)` and writes the accumulated
+band-common cycle count to `<fixture>/<station>/truth_windup.csv`, so
+
+    wu_dd = [wu(a,sat) - wu(a,ref)] - [wu(b,sat) - wu(b,ref)]      (cycles, exact)
+
+is differenced the same way the graded `e` is.  Two arms, both with **0 rows dropped** for missing wind-up
+or ambiguity truth (116,453 and 213,150 rows), which is also the fixture-pairing check.
+
+**The cheap test first.**  A range-domain error (orbit, clock, tropo, antenna) is common in METRES, so in
+cycles it scales as 1/lambda and L5 would read **25 % SMALLER** than L1.  Measured: 4.956 / 5.034 / 5.076 —
+a 2.4 % spread with L5 slightly LARGER.  So the term is a CYCLE-domain quantity and wind-up is the only
+standard candidate.  That is what made the regression worth running.
+
+**The magnitude gate vetoes it before any fit.**  The injected wind-up accumulates to at most ~1 cycle over
+24 h (measured range [-0.93, +0.98]), and a double difference cancels most of that because wind-up varies
+smoothly with geometry: **med|wu_dd| = 0.030 cyc** (posture C) and **0.060 cyc** (24 h arm), against a
+per-band med|e| of 6.0 and 2.9.  Wind-up is 0.4-2 % of the error it was proposed to explain.
+
+**The sharpest form of the test.**  A power-law fit gives med|e| ~ lambda^**+0.39** — between pure
+cycle-common (p = 0) and iono (p = +1), and decisively not range-like (p = -1) — so the per-band error is a
+MIXTURE and testing wind-up against raw `e` dilutes it.  Decompose each chord's three bands into
+
+    e_i = A + B * (lambda_i / lambda_1)
+
+with **A** the cycle-common part (exactly what wind-up would be) and **B** the part proportional to lambda
+(iono enters as -dI1 * lambda_i / lambda_1^2 cycles).  Then regress the EXTRACTED A against wu_dd: if
+wind-up hides anywhere, it is in A.
+
+| | posture C `simnet60_tri_slant_480_ddint` | 24 h `camp60wu_quiet24h_sticky` |
+|---|---|---|
+| med\|A\| (cycle-common) | **4.330 cyc** (sd 21.26) | **0.181 cyc** (sd 10.61) |
+| med\|B\| (iono-shaped) | 2.823 cyc (sd 7.14) | 2.689 cyc (sd 4.44) |
+| med\|wu_dd\| | 0.030 cyc | 0.060 cyc |
+| A vs wu_dd: slope, r, R^2 | -2.223, **-0.029**, **0.00083** | +0.495, **+0.027**, **0.00072** |
+| wind-up share of cycle-common variance | **0.083 %** | **0.072 %** |
+| sd(A) - sd(A - wu_dd) | 21.257 -> 21.267 (WORSE) | 10.605 -> 10.606 (WORSE) |
+
+**FALSIFIED, four independent ways.**  (1) Magnitude: 144x too small in the posture-C arm.  (2) Correlation:
+R^2 = 0.0008 and 0.0007 — wind-up accounts for under a tenth of a percent of the variance it was nominated
+to explain.  (3) Subtracting it makes the residual WORSE on every band in both arms, the signature of an
+uncorrelated regressor (variances add).  (4) The (meaningless) slope **flips sign between arms**, -2.22 vs
++0.50 — a real physical coupling does not change sign with the posture.
+
+⚠ The conclusion is robust to whether the PRODUCER models wind-up.  If it models it correctly the injected
+signal cancels and never reaches `e`; if it does not, the full wu_dd would appear with slope 1.  Neither
+branch can make a 0.03 cyc quantity into a 4.3 cyc error, so wind-up is out as the CAUSE either way.
+
+**⚠ MECHANISM OPEN — do not guess it into the record.**  What the successor candidate must satisfy, now
+quantified:
+
+1. **Cycle-domain**, not metre-domain: it lives in A, whose lambda exponent is ~0, and the total fit is
+   lambda^+0.39 only because B is mixed in.
+2. **~4.3 cyc median with sd ~21** in the posture-C arm — large, heavy-tailed, and NOT a small bias.
+3. **Posture-dependent**: A is ~24x smaller in the 24 h quiet/sticky arm (0.181 vs 4.330) while B is
+   essentially unchanged (2.69 vs 2.82).  So the band-common term of finding 4 is **not a universal feature
+   of the estimator** — it is specific to the posture-C arm.  ⚠ That contrast is NOT a controlled A/B: the
+   two arms differ in fixture, duration, datum and posture at once, so the next step is a single-knob ladder
+   over the posture-C differences (free slant iono, GF code-bias datum, triple frequency) measuring med|A|
+   at each rung.  `windup_dd_regress.py` reports med|A| directly, so that ladder is now cheap.
+4. It must NOT be wind-up, and it must NOT be iono (that is B, already accounted and matching finding 3's
+   DD-iono arithmetic).
 
 ## §10 Verification status
 
