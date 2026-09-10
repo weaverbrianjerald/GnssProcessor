@@ -2561,16 +2561,22 @@ int networkTeardown(
             rg.suppressed_persistence += c.suppressed_persistence;
             rg.fires_station_event    += c.fires_station_event;
             rg.reselects              += c.reselects;
+            rg.suppressed_warmup      += c.suppressed_warmup;
         }
         log->info("Network (slip-QC card R / IF-TD reference gate): {} legacy candidate(s) "
                   "(|median| > {:.2f}·λ_IF with n≥2) → {} fired ({} of them as an incoherent "
                   "multi-satellite STATION EVENT — reference arc reset, median NOT rebased).  "
                   "Suppressed: {} by the empirical scale / coherence test, {} thin-family "
-                  "deferral(s) (< {} DDs), {} by the consecutive-fire cap; {} forced reference "
-                  "re-selection(s).  [candidates − fires is exactly what the hardening removed.]",
+                  "deferral(s) (< {} DDs), {} by the consecutive-fire cap, {} while the "
+                  "empirical scale was still COLD (§6.14.6 item 1 — 0 unless "
+                  "if_phase_td_ref_warmup_abstain is armed, in which case it is the "
+                  "cold-start burst that no longer reaches the legacy floor); {} forced "
+                  "reference re-selection(s).  [candidates − fires is exactly what the "
+                  "hardening removed.]",
                   rg.legacy_candidates, nc.slip_qc.ref_floor_frac, rg.fires,
                   rg.fires_station_event, rg.suppressed_scale, rg.suppressed_thin,
-                  nc.slip_qc.ref_min_n, rg.suppressed_persistence, rg.reselects);
+                  nc.slip_qc.ref_min_n, rg.suppressed_persistence, rg.suppressed_warmup,
+                  rg.reselects);
     }
     if (config_.networkPhaseDatumEq34())
         log->info("Network (Card 3/eq34): {} (sat,σ) re-reference(s), {} local carry "

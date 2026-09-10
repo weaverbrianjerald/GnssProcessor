@@ -350,7 +350,7 @@ namespace GnssProcessor {
 
     double IfPhaseSlipDetector::updateRefDispersion(ConstellationState& cs,
         const std::vector<double>& non_ref_dds,
-        double median_dd, double cold_prior, double& disp_out) {
+        double median_dd, double cold_prior, double sin_bar, double& disp_out) {
 
         // --- Dispersion of the family about its own median (raw m) ---------
         // The step-vs-drift discriminator.  A genuine reference slip is a
@@ -388,10 +388,20 @@ namespace GnssProcessor {
         // Folding is safe on a real slip too: a COMMON step leaves the
         // dispersion at the noise level, so the scale can never be inflated by
         // the event it must catch — the opposite of folding the median would be.
+        //
+        // §6.14.6 item 2: under elev_norm the quantity folded is the
+        // ZENITH-EQUIVALENT dispersion disp·⟨sin el⟩.  `disp` itself is the
+        // family's scatter at whatever elevations happened to be up this epoch,
+        // so folding it raw makes the EWMA a running mixture over a changing
+        // geometry — and the state it lives in (ConstellationState) outlives
+        // both the geometry and the reference satellite it is meant to describe.
+        // Normalized, it is a stationary per-station receiver-noise scale, and
+        // evaluateRefGate re-inflates it to the elevations that actually matter.
+        const double fold = ref_gate_.elev_norm ? (disp * sin_bar) : disp;
         cs.ref_scale_ewma = (cs.ref_scale_count == 0)
-            ? disp
+            ? fold
             : (1.0 - ref_gate_.ewma_alpha) * cs.ref_scale_ewma
-                  + ref_gate_.ewma_alpha * disp;
+                  + ref_gate_.ewma_alpha * fold;
         cs.ref_scale_count += static_cast<long>(non_ref_dds.size());
         return s_eff;
     }
@@ -400,24 +410,71 @@ namespace GnssProcessor {
         ConstellationState& cs,
         const std::vector<double>& non_ref_dds, double disp, double s_eff,
         double median_dd, double lambda_if,
-        const std::string& sys_str) {
+        const std::string& sys_str, double sin_bar, double sin_ref) {
 
         auto logger = log_manager_.getLogger("if_slip_detector");
         const std::size_t n    = non_ref_dds.size();
         const double      amed = std::abs(median_dd);
         const double      phys = ref_gate_.floor_frac * lambda_if;
 
+        // --- (0) Warm-up abstention (§6.14.6 item 1) ------------------------
+        // Below shrink_kappa samples the empirical-Bayes weight w is under ½ and
+        // s_eff is still mostly the cold prior floor_frac·λ_IF/k, which makes
+        // k·s_eff collapse onto phys — i.e. the hardened gate silently reverts to
+        // the legacy 3σ fixed bar for exactly the epochs where it has no basis to
+        // decide.  Those are also the epochs where carry_warm is false, so a fire
+        // can only ever be logged as `diagnostic`: it cannot refloat anything.
+        // Abstaining asserts nothing about the scale (contrast the falsified
+        // "shrink toward this epoch's dispersion", which asserts a great deal and
+        // swallowed the OWMG00NZL/G31 re-lock); it declines to decide until the
+        // empirical arm means something.  MW/LLI still screens the window.
+        if (ref_gate_.warmup_abstain
+            && static_cast<double>(cs.ref_scale_count) < ref_gate_.shrink_kappa) {
+            ++ref_gate_counters_.suppressed_warmup;
+            cs.ref_consec_fires = 0;
+            logger->debug("{}: ref-gate ABSTAIN (warm-up) {} |med|={:.4f} m — "
+                          "{} of {:.0f} scale sample(s); the empirical arm is not "
+                          "yet informative and a cold detection cannot act",
+                          sys_str, cs.ref_satellite, amed,
+                          cs.ref_scale_count, ref_gate_.shrink_kappa);
+            return RefGateVerdict::Suppress;
+        }
+
         // --- (1) Thin-family honesty (R3) ----------------------------------
+        // §6.14.6 item 2: under elev_norm, s_eff is a ZENITH-equivalent scale and
+        // the bar is rebuilt as the sigma of the statistic actually under test —
+        // the MEDIAN of the family — rather than as k× the family's raw scatter:
+        //
+        //   σ_ref = s_z / sin(el_ref)                 the common term.  It is in
+        //           EVERY member (dd = ΔOMC(sat) − ΔOMC(ref)) so no family size
+        //           averages it away — measured, σ(median) is flat 17.3–18.4 mm
+        //           for n = 3…10, and 88 % of its variance is this term.
+        //   σ_fam = 1.2533 · s_raw / √n               the part that DOES average
+        //           down: the asymptotic SD of a median of n iid samples.
+        //
+        // Validated on the 24 h bed: s_z ≈ 12.8 mm at el_ref ≈ 62° gives σ_ref
+        // 14.5 mm against a measured station-local common of 14.83, σ_fam
+        // 10.1 mm, hypot 17.7 mm against a measured σ(median) of 17.70 mm.  The
+        // flat k·s_eff form is blind to both el_ref and n; this tracks them.
         const bool   thin = (static_cast<int>(n) < ref_gate_.min_n);
-        const double thr  = thin ? std::max(ref_gate_.thin_widen * phys, ref_gate_.k * s_eff)
-                                 : std::max(phys, ref_gate_.k * s_eff);
+        double scale = s_eff;
+        if (ref_gate_.elev_norm) {
+            const double s_raw   = (sin_bar > 0.0) ? (s_eff / sin_bar) : s_eff;
+            const double sig_ref = (sin_ref > 0.0) ? (s_eff / sin_ref) : s_eff;
+            const double sig_fam = 1.2533 * s_raw / std::sqrt(static_cast<double>(n));
+            scale = std::hypot(sig_ref, sig_fam);
+        }
+        // The physical floor stays RAW in both modes: a slip is a slip at any
+        // elevation (slip-QC lesson 7).  Only the empirical arm is normalized.
+        const double thr  = thin ? std::max(ref_gate_.thin_widen * phys, ref_gate_.k * scale)
+                                 : std::max(phys, ref_gate_.k * scale);
         if (!(amed > thr)) {
             if (thin) ++ref_gate_counters_.suppressed_thin;
             else      ++ref_gate_counters_.suppressed_scale;
             cs.ref_consec_fires = 0;
             logger->debug("{}: ref-gate DEFER {} |med|={:.4f} m <= thr={:.4f} "
-                          "(n={}, disp={:.4f}, s_eff={:.4f}, {})",
-                          sys_str, cs.ref_satellite, amed, thr, n, disp, s_eff,
+                          "(n={}, disp={:.4f}, s_eff={:.4f}, sigma_med={:.4f}, {})",
+                          sys_str, cs.ref_satellite, amed, thr, n, disp, s_eff, scale,
                           thin ? "THIN family" : "scale");
             return RefGateVerdict::Suppress;
         }
@@ -533,7 +590,10 @@ namespace GnssProcessor {
         std::vector<std::string>& reset_keys) {
 
         auto logger = log_manager_.getLogger("if_slip_detector");
-        const bool pos_gated = (position_sigma_3d > kPositionSigmaThresholdM);
+        // ONE definition, set by detect() — position uncertainty OR model nuisance.
+        // Re-deriving it from position_sigma_3d here would silently exclude the
+        // §6.14.6 item 3 arm and leave the reference gate firing through a closed gate.
+        const bool pos_gated = epoch_gated_;
 
         // Build sat lookup
         std::map<std::string, const SatData*> sat_map;
@@ -602,9 +662,29 @@ namespace GnssProcessor {
         // common-mode reference slip is removed first.
         {
             std::vector<double> non_ref_dds;
+            // §6.14.6 item 2 geometry: the mean sin(elevation) of the family that
+            // forms the median, and sin(el) of the reference whose own noise is
+            // the median's dominant term.  Both clamped so a horizon arc cannot
+            // explode 1/sin(el).  Computed unconditionally (a few flops) but READ
+            // only under ref_gate_.elev_norm, so the OFF path stays byte-identical.
+            constexpr double kDegToRad = 0.017453292519943295;
+            double sin_sum = 0.0;
+            int    sin_n   = 0;
+            const double sin_clamp =
+                std::sin(std::max(ref_gate_.elev_clamp_deg, 0.0) * kDegToRad);
             for (const auto& [sat, dd] : delta_grad)
-                if (sat != cs.ref_satellite && std::isfinite(dd))
+                if (sat != cs.ref_satellite && std::isfinite(dd)) {
                     non_ref_dds.push_back(dd);
+                    auto sit = sat_map.find(sat);
+                    if (sit != sat_map.end()) {
+                        sin_sum += std::max(std::sin(sit->second->elevation * kDegToRad),
+                                            sin_clamp);
+                        ++sin_n;
+                    }
+                }
+            const double sin_bar = (sin_n > 0) ? (sin_sum / sin_n) : 1.0;
+            const double sin_ref =
+                std::max(std::sin(ref_data->elevation * kDegToRad), sin_clamp);
 
             if (non_ref_dds.size() >= 2) {
                 // Tier T1r opportunity (invariant #4): a usable family existed, so
@@ -633,11 +713,12 @@ namespace GnssProcessor {
                         (ref_gate_.k > 0.0)
                             ? (ref_gate_.floor_frac * lambda_if / ref_gate_.k)
                             : (ref_gate_.floor_frac * lambda_if),
-                        disp);
+                        sin_bar, disp);
                     if (verdict != RefGateVerdict::Suppress) {
                         ++ref_gate_counters_.legacy_candidates;
                         verdict = evaluateRefGate(cs, non_ref_dds, disp, s_eff,
-                                                  median_dd, lambda_if, sys_str);
+                                                  median_dd, lambda_if, sys_str,
+                                                  sin_bar, sin_ref);
                     } else {
                         // A quiet epoch breaks any consecutive-fire run.
                         cs.ref_consec_fires = 0;
@@ -751,7 +832,8 @@ namespace GnssProcessor {
     std::vector<std::string> IfPhaseSlipDetector::detect(
         const std::vector<PppObservation>& observations,
         double position_sigma_3d,
-        const Eigen::Vector3d& receiver_position) {
+        const Eigen::Vector3d& receiver_position,
+        double model_nuisance_m) {
 
         std::vector<std::string> reset_keys;
         auto logger = log_manager_.getLogger("if_slip_detector");
@@ -765,10 +847,20 @@ namespace GnssProcessor {
         for (const auto& obs : observations)
             if (!obs.satellite.empty()) { current_epoch_ = obs.time; break; }
 
-        const bool pos_gated = (position_sigma_3d > kPositionSigmaThresholdM);
+        // §6.14.6 item 3: the model-nuisance gate is the SIBLING of the position
+        // gate, for the term that actually survives on the network path.  Both
+        // land in the same `pos_gated` flag because the response is identical —
+        // keep differencing and keep the gradient chain warm, but do not flag on
+        // a statistic whose null is invalid this epoch.
+        const bool nuisance_gated =
+            (nuisance_max_m_ > 0.0) && (model_nuisance_m > nuisance_max_m_);
+        const bool pos_gated = (position_sigma_3d > kPositionSigmaThresholdM) || nuisance_gated;
+        epoch_gated_ = pos_gated;   // the single definition processDoubleDifferences reads
         if (pos_gated)
-            logger->debug("IF slip detection gated: position_sigma_3d={:.3f} m > threshold={:.2f} m",
-                position_sigma_3d, kPositionSigmaThresholdM);
+            logger->debug("IF slip detection gated: position_sigma_3d={:.3f} m (thr {:.2f}), "
+                "model_nuisance={:.4f} m (thr {:.4f}, 0 = off)",
+                position_sigma_3d, kPositionSigmaThresholdM,
+                model_nuisance_m, nuisance_max_m_);
 
         auto by_constellation = groupByConstellation(observations);
 
@@ -854,7 +946,15 @@ namespace GnssProcessor {
                 } else {
                     info.lambda_if_m = lambda_if;                   // fallback: constellation median
                 }
-                info.valid        = std::isfinite(dd);
+                // §6.14.6 item 3, the GATING LEAK.  A gated epoch suppressed this
+                // detector's own flagging but still published its jumps as VALID,
+                // and the network pool arm admits any sample with `jp.valid` — so
+                // the pool kept thresholding double differences the detector had
+                // just declared untrustworthy.  The gate has to mean the same thing
+                // to both arms or it protects neither.  The jumps are still cached
+                // (a downstream consumer may want the number) and the gradient
+                // chain still advances, so detection resumes seamlessly.
+                info.valid        = std::isfinite(dd) && !pos_gated;
                 info.is_reference = (sat == cs.ref_satellite);
                 last_if_jumps_[sat] = info;
             }

@@ -3992,6 +3992,15 @@ namespace GnssProcessor {
             sq.ref_floor_frac =
                 jval<double>(json, "network.cycle_slip.if_phase_td_ref_floor_frac",
                              "network_cycle_slip_if_phase_td_ref_floor_frac", 0.5);
+            sq.ref_warmup_abstain =
+                jval<bool>(json, "network.cycle_slip.if_phase_td_ref_warmup_abstain",
+                           "network_cycle_slip_if_phase_td_ref_warmup_abstain", false);
+            sq.ref_elev_norm =
+                jval<bool>(json, "network.cycle_slip.if_phase_td_ref_elev_norm",
+                           "network_cycle_slip_if_phase_td_ref_elev_norm", false);
+            sq.ref_elev_clamp_deg =
+                jval<double>(json, "network.cycle_slip.if_phase_td_ref_elev_clamp_deg",
+                             "network_cycle_slip_if_phase_td_ref_elev_clamp_deg", 5.0);
             // Card L — LLI corroboration in the MW drain.
             sq.lli_corroborate = jval<bool>(json, "network.cycle_slip.mw_lli_corroborate",
                                             "network_cycle_slip_mw_lli_corroborate", false);
@@ -4029,6 +4038,22 @@ namespace GnssProcessor {
                           "the hardened reference gate is INERT this run.");
                 sq.ref_gate = false;
             }
+            // §6.14.6 items 1 and 2 are ADJUDICATION refinements INSIDE the
+            // hardened gate — evaluateRefGate is the only thing that reads them,
+            // and it is only reached when ref_gate is armed.  Left set with the
+            // host arm off they would read as posture in a config that cannot
+            // act on them.
+            if ((sq.ref_warmup_abstain || sq.ref_elev_norm) && !sq.ref_gate) {
+                log->warn("Network (slip-QC card R): if_phase_td_ref_{}{}{} set but "
+                          ".if_phase_td_ref_gate is OFF — the legacy fixed floor IS the "
+                          "decision, so the warm-up abstention and the elevation-normalized "
+                          "scale are both INERT this run.",
+                          sq.ref_warmup_abstain ? "warmup_abstain" : "",
+                          (sq.ref_warmup_abstain && sq.ref_elev_norm) ? " / " : "",
+                          sq.ref_elev_norm ? "elev_norm" : "");
+                sq.ref_warmup_abstain = false;
+                sq.ref_elev_norm      = false;
+            }
             if (sq.lli_corroborate && !network_cycle_slip_mw_detect_) {
                 log->warn("Network (slip-QC card L): network.cycle_slip.mw_lli_corroborate is "
                           "set but .mw_detect is OFF — the LLI arm it qualifies never runs, so "
@@ -4051,6 +4076,24 @@ namespace GnssProcessor {
                           sq.ref_k, sq.ref_floor_frac,
                           sq.ref_coherence, sq.ref_min_n, sq.ref_thin_widen,
                           sq.ref_max_consecutive);
+            if (sq.ref_gate && (sq.ref_warmup_abstain || sq.ref_elev_norm))
+                log->info("Network (slip-QC card R, §6.14.6): {}{}{} — the reference arm's "
+                          "own noise is {:.0f}% of the tested median and no family size "
+                          "averages it away, so the bar is rebuilt from the elevation it "
+                          "actually depends on rather than from the family's raw scatter.",
+                          sq.ref_warmup_abstain
+                              ? fmt::format("ABSTAIN until the empirical scale holds {:.0f} "
+                                            "sample(s) (no legacy-floor fallback while cold)",
+                                            sq.ref_shrink_kappa)
+                              : std::string{},
+                          (sq.ref_warmup_abstain && sq.ref_elev_norm) ? "; " : "",
+                          sq.ref_elev_norm
+                              ? fmt::format("ELEVATION-NORMALIZED scale (EWMA stores "
+                                            "disp·⟨sin el⟩, bar = {:.1f}·hypot(s_z/sin el_ref, "
+                                            "1.2533·s_raw/√n), elevation clamped at {:.1f}°)",
+                                            sq.ref_k, sq.ref_elev_clamp_deg)
+                              : std::string{},
+                          88.0);
             if (sq.lli_corroborate)
                 log->info("Network (slip-QC card L): LLI corroboration ON — an assertion acts "
                           "when an empirical MW step (> max({:.1f}·σ̂, {:.2f} WL cyc)) or GF step "

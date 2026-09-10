@@ -100,7 +100,8 @@ def station_signals(fixture_dir, station):
 
 
 def plan_events(fixture_dir, stations, n_epochs, ladder, repeat_per_rung, seed,
-                signal_mode, epoch_lo_frac, epoch_hi_frac, constellations=None):
+                signal_mode, epoch_lo_frac, epoch_hi_frac, constellations=None,
+                elev_window=None):
     """Deterministically choose (station, sat, signal, epoch, delta) tuples.
 
     Constraints enforced here rather than discovered at synthesis time:
@@ -161,6 +162,16 @@ def plan_events(fixture_dir, stations, n_epochs, ladder, repeat_per_rung, seed,
             events.append({"station": sta, "sat": sat, "signals": chosen,
                            "epoch": epoch, "delta_cycles": delta,
                            "mode": signal_mode})
+            # elev_window: the planner still picks a (station, sat, signal) it has
+            # verified the station TRACKS, but hands the firing decision to the
+            # simulator's own Form-B elevation trigger instead of pinning an epoch.
+            # The chosen epoch becomes not_before_epoch, so the event still lands
+            # inside the requested arc window.
+            if elev_window:
+                ev = events[-1]
+                ev["elev_lo_deg"], ev["elev_hi_deg"] = elev_window
+                ev["not_before_epoch"] = epoch
+                ev.pop("epoch")
             placed = True
         if not placed:
             print(f"  ! could not place a delta={delta:+d} event "
@@ -190,6 +201,18 @@ def main():
                          "the first bench run.  Check the producer's POSTURE line "
                          "(\"N constellation(s)\") or its products.txt before planning.")
     ap.add_argument("--signal-mode", choices=["per-band", "mw-blind"], default="per-band")
+    ap.add_argument("--elev-window", type=float, nargs=2, metavar=("LO", "HI"),
+                    default=None,
+                    help="emit form-B (elevation-window) events instead of form-A "
+                         "exact-epoch ones: the slip fires the first time the "
+                         "satellite is inside [LO,HI) at that station, at or after "
+                         "the planned epoch.  REQUIRED to exercise the IF-TD "
+                         "REFERENCE gate, which screens the highest-elevation "
+                         "satellite per constellation (measured p50 61.7 deg) while "
+                         "the random slip model is capped at max_elev_deg=45 — zero "
+                         "overlap, so a reference-satellite slip is otherwise "
+                         "unreachable on this bench by construction "
+                         "(SPEC_amb_iono_split_overcount SS6.14.5).  Try 60 90.")
     ap.add_argument("--epoch-lo-frac", type=float, default=0.35,
                     help="earliest injection as a fraction of the arc (default 0.35 — "
                          "past ignition; a slip inside convergence grades the transient)")
@@ -211,7 +234,8 @@ def main():
     events = plan_events(args.null_fixture, stations, n_epochs, args.ladder,
                          args.repeat_per_rung, args.seed, args.signal_mode,
                          args.epoch_lo_frac, args.epoch_hi_frac,
-                         set(args.constellations) if args.constellations else None)
+                         set(args.constellations) if args.constellations else None,
+                         tuple(args.elev_window) if args.elev_window else None)
     if not events:
         raise SystemExit("planned zero events — nothing to inject")
 
@@ -221,9 +245,15 @@ def main():
     by_station = {}
     for ev in events:
         for sig in ev["signals"]:
-            by_station.setdefault(ev["station"], []).append(
-                {"sat": ev["sat"], "signal": sig, "epoch": ev["epoch"],
-                 "delta_cycles": ev["delta_cycles"], "flag_lli": bool(args.flag_lli)})
+            entry = {"sat": ev["sat"], "signal": sig,
+                     "delta_cycles": ev["delta_cycles"], "flag_lli": bool(args.flag_lli)}
+            if "epoch" in ev:                       # form A: an exact epoch
+                entry["epoch"] = ev["epoch"]
+            else:                                   # form B: an elevation window
+                entry["elev_lo_deg"]     = ev["elev_lo_deg"]
+                entry["elev_hi_deg"]     = ev["elev_hi_deg"]
+                entry["not_before_epoch"] = ev["not_before_epoch"]
+            by_station.setdefault(ev["station"], []).append(entry)
     n_attached = 0
     for st in sim.get("network_stations", []):
         if st["name"] in by_station:
@@ -259,8 +289,16 @@ def main():
     for e in events:
         hist[abs(e["delta_cycles"])] = hist.get(abs(e["delta_cycles"]), 0) + 1
     print(f"  ladder: " + "  ".join(f"|{k}|x{v}" for k, v in sorted(hist.items())))
-    ep = sorted(e["epoch"] for e in events)
-    print(f"  epochs {ep[0]}..{ep[-1]} of {n_epochs}")
+    ep = sorted(e.get("epoch", e.get("not_before_epoch")) for e in events)
+    if args.elev_window:
+        print(f"  form B: elevation window [{args.elev_window[0]:.0f},"
+              f"{args.elev_window[1]:.0f}) deg, not before epochs {ep[0]}..{ep[-1]} "
+              f"of {n_epochs}")
+        print("  ! form B fires on the FIRST visit to the window — verify every event "
+              "actually fired (the simulator treats an unfired scripted slip as a "
+              "run-end failure) and that the fixture's arcs REACH that elevation")
+    else:
+        print(f"  epochs {ep[0]}..{ep[-1]} of {n_epochs}")
     import collections as _c
     print(f"  constellations: "
           + "  ".join(f"{k}x{v}" for k, v in

@@ -116,9 +116,34 @@ namespace GnssProcessor {
          *        Pass 0.0 or omit to always run full detection (backward compatible).
          * @return std::vector<std::string> Vector of ambiguity keys to reset.
          */
+        /// @param model_nuisance_m Magnitude (m) of the epoch-to-epoch change in
+        ///        the MODELLED part of the OMC that does NOT cancel in the
+        ///        between-satellite / between-epoch differencing — in practice
+        ///        |ΔZWD|, the one filter state that survives both (§6.14.6 item 3).
+        ///        Compared against the threshold set by @ref setNuisanceGate; 0
+        ///        (the default) with a 0 threshold leaves the gate disabled, so
+        ///        every existing caller is unchanged.
         std::vector<std::string> detect(const std::vector<PppObservation>& observations,
             double position_sigma_3d = 0.0,
-            const Eigen::Vector3d& receiver_position = Eigen::Vector3d::Zero());
+            const Eigen::Vector3d& receiver_position = Eigen::Vector3d::Zero(),
+            double model_nuisance_m = 0.0);
+
+        /**
+         * @brief Arm the model-nuisance gate (§6.14.6 item 3).
+         *
+         * The sibling of the position-uncertainty gate, for the nuisance that
+         * actually survives on the NETWORK path.  Position is pinned there, so
+         * `position_sigma_3d` is passed 0.0 and that gate has never once fired;
+         * the term that does survive is Δ(ZWD)·(mf_sat − mf_ref), and it is
+         * measurable: median |ΔZWD| collapses 539 → 62 mm over the first twelve
+         * epochs of a cold run while the reference gate's fires decay 116 → 0 in
+         * lockstep, and in the settled era the top |ΔZWD| decile still carries
+         * 2.05× the baseline fire rate.
+         *
+         * @param max_m Suppress flagging when @c model_nuisance_m exceeds this.
+         *        0 (default) disables the gate — byte-identical.
+         */
+        void setNuisanceGate(double max_m) { nuisance_max_m_ = max_m; }
 
         /**
          * @brief Clear IF phase history for a specific satellite.
@@ -249,6 +274,66 @@ namespace GnssProcessor {
             double ewma_alpha{0.15};       ///< EWMA weight for the dispersion scale.
             double shrink_kappa{20.0};     ///< Empirical-Bayes shrinkage constant (samples).
             double floor_frac{0.5};        ///< Physical floor in units of λ_IF (0.5 = the legacy value).
+
+            /// **ABSTAIN while the empirical arm has no samples** (§6.14.6 item 1).
+            ///
+            /// With zero empirical information the cold prior
+            /// `floor_frac·λ_IF/k` makes `k·s_eff` collapse onto `phys`, so the
+            /// hardened gate degenerates to *exactly* the legacy fixed floor for
+            /// its first few epochs.  That is deliberate — it is what stops the
+            /// scale from being self-contaminated by this epoch's own dispersion
+            /// (see @ref updateRefDispersion) — but it means every cold run still
+            /// opens on the 3σ bar the card exists to remove.  Measured on the
+            /// 2 h golden A/B: all 118 surviving fires were at epochs 1 and 3,
+            /// and every one of them was `action=diagnostic`, because `carry_warm`
+            /// (n_emitted ≥ 6) is false there and a detection therefore CANNOT
+            /// act.  Firing on a bar we cannot justify, to raise an event that
+            /// cannot act, is pure event-stream pollution.
+            ///
+            /// When set, the gate returns @ref RefGateVerdict::Suppress until
+            /// @c ConstellationState::ref_scale_count reaches @ref shrink_kappa
+            /// — the same sample count at which the shrinkage weight reaches ½
+            /// and the empirical arm starts to mean anything.  This is NOT the
+            /// falsified "shrink toward this epoch's dispersion": abstention
+            /// asserts nothing about the scale, it declines to decide.  Cost: a
+            /// genuine reference slip inside the warm-up is not caught by THIS
+            /// arm — it was already unactionable there, and MW/LLI still covers
+            /// the window.  Default false ⇒ byte-identical.
+            bool   warmup_abstain{false};
+
+            /// **Elevation-normalize the empirical scale** (§6.14.6 item 2).
+            ///
+            /// The quantity this gate tests is the median of the non-reference
+            /// DDs, and 88 % of its variance is the REFERENCE satellite's own
+            /// noise divided by sin(el_ref) — a common term no family size can
+            /// average away (measured: σ(median) is flat 17.3–18.4 mm for
+            /// n = 3…10).  But the scale it is judged against, @c disp, is the
+            /// family's scatter about that median, i.e. the per-SATELLITE noise
+            /// at the family's own elevations.  Unlike the pool arm the gate
+            /// applies no elevation map at all, so `k·s_eff` is a raw mixture
+            /// over whatever elevations happened to be up, keyed to a
+            /// (station, constellation) that outlives the reference it describes.
+            ///
+            /// When set, the EWMA stores the ZENITH-equivalent scale
+            /// `disp·⟨sin el⟩_family` (a stationary station property that
+            /// survives a reference handover) and the test rebuilds the
+            /// statistic's own sigma from it:
+            /// @code
+            ///   σ_ref = s_z / sin(el_ref)                  // the common term
+            ///   σ_fam = 1.2533 · (s_z / ⟨sin el⟩) / √n     // median of n iid
+            ///   thr   = max(phys, k · hypot(σ_ref, σ_fam))
+            /// @endcode
+            /// Validated against the 24 h bed: s_z ≈ 12.8 mm and el_ref ≈ 62°
+            /// give σ_ref 14.5 mm (measured station-local common 14.83) and
+            /// σ_fam 10.1 mm, hypot 17.7 mm — the measured σ(median) of 17.70 mm.
+            /// The threshold now tracks el_ref and n, which the flat `k·disp`
+            /// form cannot.  The physical FLOOR stays raw: a slip is a slip at
+            /// any elevation (slip-QC lesson 7).  Default false ⇒ byte-identical.
+            bool   elev_norm{false};
+
+            /// Elevation clamp for @ref elev_norm, degrees.  Matches the pool
+            /// arm's own clamp so a horizon arc cannot explode 1/sin(el).
+            double elev_clamp_deg{5.0};
         };
 
         /**
@@ -278,6 +363,12 @@ namespace GnssProcessor {
             long long suppressed_thin{0};        ///< Deferred: family below @ref RefGateParams::min_n.
             long long suppressed_persistence{0}; ///< Rejected by the consecutive-fire cap (escalated instead).
             long long reselects{0};              ///< Forced reference re-selections.
+            /// Declined while the empirical arm was still cold
+            /// (@ref RefGateParams::warmup_abstain).  Permanently 0 when that
+            /// knob is off — which is the honest reading, not a dead counter:
+            /// with it off the gate does not abstain, it falls back to the
+            /// legacy floor, and those fires are counted by @ref fires.
+            long long suppressed_warmup{0};
         };
 
         /// Card R verdict: what the hardened gate decided about a candidate.
@@ -496,9 +587,13 @@ namespace GnssProcessor {
          * @param[out] disp_out This epoch's dispersion, 1.4826·MAD (raw m).
          * @return The empirical-Bayes effective scale s_eff BEFORE this fold (m).
          */
+        /// @param sin_bar Mean sin(elevation) over the non-reference family,
+        ///        elevations clamped at @ref RefGateParams::elev_clamp_deg.
+        ///        Used only when @ref RefGateParams::elev_norm is set, to store
+        ///        the ZENITH-equivalent dispersion in the EWMA; ignored otherwise.
         double updateRefDispersion(ConstellationState& cs,
             const std::vector<double>& non_ref_dds,
-            double median_dd, double cold_prior, double& disp_out);
+            double median_dd, double cold_prior, double sin_bar, double& disp_out);
 
         /**
          * @brief Card R: adjudicate a candidate reference-satellite slip.
@@ -515,12 +610,18 @@ namespace GnssProcessor {
          * @param median_dd     Median of the non-reference DDs (raw m).
          * @param lambda_if     Constellation median IF wavelength (m).
          * @param sys_str       System string (logging).
+         * @param sin_bar       Mean sin(el) over the family (clamped); the scale
+         *                      the EWMA was normalized BY.
+         * @param sin_ref       sin(el) of the REFERENCE satellite (clamped); the
+         *                      elevation the common term is divided by.
+         *                      Both are used only when
+         *                      @ref RefGateParams::elev_norm is set.
          * @return The verdict; see @ref RefGateVerdict.
          */
         RefGateVerdict evaluateRefGate(ConstellationState& cs,
             const std::vector<double>& non_ref_dds, double disp, double s_eff,
             double median_dd, double lambda_if,
-            const std::string& sys_str);
+            const std::string& sys_str, double sin_bar, double sin_ref);
 
         /**
          * @brief Write a single trace CSV record.
@@ -537,6 +638,17 @@ namespace GnssProcessor {
 
         /** Current epoch time for tracing. */
         mutable GnssTime current_epoch_;
+
+        /** Model-nuisance gate threshold, m; 0 ⇒ disabled (§6.14.6 item 3). */
+        double nuisance_max_m_{ 0.0 };
+
+        /// This epoch's combined gating verdict (position OR model nuisance),
+        /// computed once in @ref detect.  @ref processDoubleDifferences reads it
+        /// rather than re-deriving the predicate from `position_sigma_3d`, which
+        /// is how the two definitions silently drifted apart when the nuisance
+        /// arm was added — the reference gate would have kept firing through a
+        /// gate the caller believed was closed.
+        bool epoch_gated_{ false };
 
         /** Card R: gate parameters (default-constructed ⇒ legacy behaviour). */
         RefGateParams ref_gate_{};

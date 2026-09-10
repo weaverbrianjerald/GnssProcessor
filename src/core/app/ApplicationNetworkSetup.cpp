@@ -783,6 +783,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 rg.ewma_alpha      = sq.ref_ewma_alpha;
                 rg.shrink_kappa    = sq.ref_shrink_kappa;
                 rg.floor_frac      = sq.ref_floor_frac;
+                rg.warmup_abstain  = sq.ref_warmup_abstain;   // §6.14.6 item 1
+                rg.elev_norm       = sq.ref_elev_norm;        // §6.14.6 item 2
+                rg.elev_clamp_deg  = sq.ref_elev_clamp_deg;
                 st.if_slip->setRefGate(rg);
             }
         }

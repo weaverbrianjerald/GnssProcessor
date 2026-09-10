@@ -405,6 +405,20 @@ namespace GnssProcessor {
         double ref_ewma_alpha{ 0.15 };       ///< EWMA weight for the dispersion scale.
         double ref_shrink_kappa{ 20.0 };     ///< Empirical-Bayes shrinkage constant (samples).
         double ref_floor_frac{ 0.5 };        ///< Physical floor in units of λ_IF (0.5 = the legacy fixed gate).
+        /// Abstain while the empirical scale holds < @ref ref_shrink_kappa samples
+        /// (network.cycle_slip.if_phase_td_ref_warmup_abstain).  Without it the cold
+        /// prior makes the hardened gate revert to the legacy fixed bar for its first
+        /// few epochs — measured 118 fires at epochs 1 and 3 of the 2 h golden arm,
+        /// every one of them `diagnostic` because carry_warm is false and a cold
+        /// detection cannot act.  §6.14.6 item 1.
+        bool   ref_warmup_abstain{ false };
+        /// Elevation-normalize the empirical scale and rebuild the bar as the sigma of
+        /// the MEDIAN (network.cycle_slip.if_phase_td_ref_elev_norm): the EWMA stores
+        /// disp·⟨sin el⟩ and the test forms hypot(s_z/sin(el_ref), 1.2533·s_raw/√n).
+        /// The flat k·s_eff form is blind to both el_ref and n, and its state outlives
+        /// the reference satellite it describes.  §6.14.6 item 2.
+        bool   ref_elev_norm{ false };
+        double ref_elev_clamp_deg{ 5.0 };    ///< Elevation clamp for @ref ref_elev_norm (matches the pool arm's).
 
         // --- Card L: LLI corroboration in the MW drain ---------------------
         bool   lli_corroborate{ false };     ///< Master arm (network.cycle_slip.mw_lli_corroborate).

@@ -145,6 +145,14 @@ struct IfHarness {
         return det.detect(makeEpoch(30.0 * static_cast<double>(epoch_idx),
                                     epoch_idx, omc, elev));
     }
+
+    /// As @ref step, but declaring a model-nuisance magnitude (§6.14.6 item 3).
+    std::vector<std::string> stepNuisance(std::size_t epoch_idx, const OmcState& omc,
+                                          const ElevState& elev, double nuisance_m) {
+        return det.detect(makeEpoch(30.0 * static_cast<double>(epoch_idx),
+                                    epoch_idx, omc, elev),
+                          0.0, Eigen::Vector3d::Zero(), nuisance_m);
+    }
 };
 
 /// A six-satellite GPS family: G01 is the only satellite above the detector's
@@ -721,6 +729,195 @@ TEST(IfPhaseSlipRefGate, IncoherentMultiSatelliteStationEventStillResetsTheRefer
     ASSERT_EQ(jumps.count("G04"), 1u);
     EXPECT_NEAR(jumps.at("G04").delta_grad_m, 1.60, 0.02)
         << "the median rebase must NOT have been applied";
+}
+
+// ---------------------------------------------------------------------------
+// §6.14.6 item 1 — abstain while the empirical arm is cold
+// ---------------------------------------------------------------------------
+
+// With zero empirical information s_eff IS the cold prior floor_frac*lambda_IF/k,
+// so k*s_eff collapses onto phys and the ARMED gate silently reverts to the
+// legacy 3-sigma fixed bar for its first few epochs.  Measured on the 2 h golden
+// arm that is where all 118 surviving fires were (epochs 1 and 3) — and every one
+// was action=diagnostic, because carry_warm is false there and a cold detection
+// cannot refloat anything.  warmup_abstain declines to decide until the scale has
+// shrink_kappa samples.  The family here contributes 5 DDs per epoch, so the
+// scale reaches kappa=20 after four epochs.
+TEST(IfPhaseSlipRefGate, WarmupAbstainDeclinesUntilTheScaleHasSamples) {
+    IfHarness h;
+    auto rg = armedGate();
+    rg.warmup_abstain = true;
+    h.det.setRefGate(rg);
+    const ElevState elev = sixSatElevations();
+    OmcState omc = sixSatOmc();
+
+    EXPECT_TRUE(h.step(0, omc, elev).empty());   // no previous gradients yet
+
+    // A genuine, unambiguous reference step inside the warm-up: DECLINED.
+    omc["G01"] -= 0.30;
+    EXPECT_TRUE(h.step(1, omc, elev).empty());
+    EXPECT_EQ(h.det.refGateCounters().suppressed_warmup, 1);
+    // It was a legacy candidate — the abstention is a REFUSAL TO DECIDE on a
+    // real candidate, not a failure to see one.  That distinction is the whole
+    // point: the counter says what was given up.
+    EXPECT_EQ(h.det.refGateCounters().legacy_candidates, 1);
+    EXPECT_EQ(h.det.refGateCounters().fires, 0);
+
+    // Quiet epochs 2 and 3 accumulate scale samples (5 per epoch).
+    EXPECT_TRUE(h.step(2, omc, elev).empty());
+    EXPECT_TRUE(h.step(3, omc, elev).empty());
+
+    // Epoch 4: the scale now holds 20 samples, so the gate is live again and the
+    // same step size fires normally.
+    omc["G01"] -= 0.30;
+    const auto keys = h.step(4, omc, elev);
+    ASSERT_EQ(keys.size(), 1u);
+    EXPECT_EQ(keys.front(), refKey("G01"));
+    EXPECT_EQ(h.det.refGateCounters().fires, 1);
+    EXPECT_EQ(h.det.refGateCounters().suppressed_warmup, 1);   // no further abstention
+}
+
+// The contrast that shows what is being fixed: WITHOUT the knob, the identical
+// cold step fires — through the legacy floor, on a bar the gate has no empirical
+// basis for.  This is the documented cold-prior fallback, not a regression, and
+// pinning it here stops a future "simplification" from removing the fallback for
+// everyone instead of behind the knob.
+TEST(IfPhaseSlipRefGate, WarmupAbstainOffKeepsTheColdLegacyFloorFallback) {
+    IfHarness h;
+    h.det.setRefGate(armedGate());               // warmup_abstain defaults false
+    const ElevState elev = sixSatElevations();
+    OmcState omc = sixSatOmc();
+
+    EXPECT_TRUE(h.step(0, omc, elev).empty());
+    omc["G01"] -= 0.30;
+    EXPECT_EQ(h.step(1, omc, elev).size(), 1u);  // fires while stone cold
+    EXPECT_EQ(h.det.refGateCounters().suppressed_warmup, 0);
+    EXPECT_EQ(h.det.refGateCounters().fires, 1);
+}
+
+// ---------------------------------------------------------------------------
+// §6.14.6 item 2 — the bar must track the REFERENCE's elevation
+// ---------------------------------------------------------------------------
+
+// 88 % of the tested median's variance is the reference satellite's own noise
+// divided by sin(el_ref) — a term in every family member that no family size
+// averages away.  The flat k*s_eff form cannot see el_ref at all, so the SAME
+// step gets the SAME verdict whether the reference is overhead or low.  Under
+// elev_norm the bar is rebuilt as hypot(s_z/sin(el_ref), 1.2533*s_raw/sqrt(n)),
+// so a lower reference — whose common term is larger — demands a larger step.
+//
+// Single-variable contrast: the SAME stream and geometry, elev_norm the only
+// thing that differs.  The geometry is chosen to make the difference large and
+// signed — a reference overhead (its common term barely inflated by 1/sin el)
+// over a family down at 14-22 deg (whose scatter is what `disp` measures).  The
+// raw form charges 6*disp for that scatter; the normalized form recognises that
+// most of it averages down as 1.2533/sqrt(n) and only the reference's own share
+// does not, so its bar is materially LOWER and it catches steps the raw form
+// misses.  Asserted as a DIRECTION over a band of step sizes rather than a
+// knife-edge verdict, so the test pins the mechanism and not one arithmetic path.
+TEST(IfPhaseSlipRefGate, ElevationNormalizedBarIsLowerWhenTheReferenceIsOverhead) {
+    const ElevState elev = { { "G01", 80.0 }, { "G02", 22.0 }, { "G03", 20.0 },
+                             { "G04", 18.0 }, { "G05", 16.0 }, { "G06", 14.0 } };
+    // Per-satellite offsets applied with alternating sign, so every epoch's
+    // double difference is +-2j: a stable, level-free dispersion (the empirical
+    // arm, not the physical floor, ends up binding) with a median of zero (no
+    // spurious candidate during the warm-up).
+    const std::map<std::string, double> j = {
+        { "G02", 0.010 }, { "G03", -0.008 }, { "G04", 0.007 },
+        { "G05", -0.011 }, { "G06", 0.000 } };
+
+    auto run = [&](bool elev_norm, double step_m) {
+        IfHarness h;
+        auto rg = armedGate();
+        rg.elev_norm = elev_norm;
+        h.det.setRefGate(rg);
+        const OmcState base = sixSatOmc();
+        auto epochOmc = [&](std::size_t e, double ref_extra) {
+            OmcState s = base;
+            const double sgn = (e % 2 == 0) ? 1.0 : -1.0;
+            for (const auto& [sat, v] : j) s[sat] += sgn * v;
+            s["G01"] += ref_extra;
+            return s;
+        };
+        for (std::size_t e = 0; e < 30; ++e) h.step(e, epochOmc(e, 0.0), elev);
+        return h.step(30, epochOmc(30, -step_m), elev).size();
+    };
+
+    // Neither form fires on a step buried in the noise ...
+    EXPECT_EQ(run(true,  0.02), 0u);
+    EXPECT_EQ(run(false, 0.02), 0u);
+    // ... both fire on one far above either bar (it is a threshold, not a
+    // preference) ...
+    EXPECT_EQ(run(true,  0.60), 1u);
+    EXPECT_EQ(run(false, 0.60), 1u);
+
+    // ... and in between there is a band this geometry gives to the normalized
+    // form alone.  Strict inequality is the claim: the bars are not the same bar.
+    int on = 0, off = 0;
+    for (const double s : { 0.09, 0.10, 0.11, 0.12, 0.13 }) {
+        on  += static_cast<int>(run(true,  s));
+        off += static_cast<int>(run(false, s));
+    }
+    EXPECT_GT(on, off) << "elev_norm caught " << on << " of 5 mid-band steps, raw "
+                       << off << " — the normalized bar should be the lower one "
+                          "for an overhead reference over a low family";
+}
+
+// ---------------------------------------------------------------------------
+// §6.14.6 item 3 — the gate has to mean the same thing to both arms
+// ---------------------------------------------------------------------------
+
+// THE LEAK.  A gated epoch suppressed this detector's own flagging but still
+// published its jumps as valid, and the network pool arm admits any sample with
+// jp.valid — so the pool went on thresholding double differences the detector had
+// just declared untrustworthy.  Gating has to reach both arms or it protects
+// neither.  The jumps stay CACHED (a caller may still want the number) and the
+// gradient chain still advances, so detection resumes seamlessly afterwards.
+TEST(IfPhaseSlipRefGate, NuisanceGateSuppressesBothArmsAndResumesCleanly) {
+    IfHarness h;
+    h.det.setRefGate(armedGate());
+    h.det.setNuisanceGate(0.05);                 // suppress above 5 cm of |dZWD|
+    const ElevState elev = sixSatElevations();
+    OmcState omc = sixSatOmc();
+
+    EXPECT_TRUE(h.stepNuisance(0, omc, elev, 0.0).empty());
+    EXPECT_TRUE(h.stepNuisance(1, omc, elev, 0.0).empty());
+
+    // A reference step DURING a high-nuisance epoch: no reset key (this arm) ...
+    omc["G01"] -= 0.30;
+    EXPECT_TRUE(h.stepNuisance(2, omc, elev, 0.20).empty());
+    // ... and nothing published as valid for the POOL arm either.
+    ASSERT_FALSE(h.det.getLastIfJumps().empty());
+    for (const auto& [sat, jp] : h.det.getLastIfJumps())
+        EXPECT_FALSE(jp.valid) << sat << " leaked a valid jump through a closed gate";
+    // The opportunity is not counted: flagging was suppressed, so the tier-T1r
+    // denominator must not credit an epoch it never screened.
+    EXPECT_EQ(h.det.refGateCounters().gate_flags, 0);
+
+    // Nuisance clears.  The chain resumed seamlessly, so the step that was
+    // masked is still in the level and the family is quiet again.
+    EXPECT_TRUE(h.stepNuisance(3, omc, elev, 0.0).empty());
+    bool any_valid = false;
+    for (const auto& [sat, jp] : h.det.getLastIfJumps()) if (jp.valid) any_valid = true;
+    EXPECT_TRUE(any_valid) << "detection did not resume after the gate reopened";
+}
+
+// A nuisance BELOW the threshold changes nothing — the gate is a threshold, not
+// a mere presence test, and a 0 threshold (the default) disables it outright.
+TEST(IfPhaseSlipRefGate, NuisanceBelowThresholdAndDisabledGateBothPassThrough) {
+    for (const double thr : { 0.0, 0.50 }) {     // 0 = disabled, 0.50 = not reached
+        IfHarness h;
+        h.det.setRefGate(armedGate());
+        h.det.setNuisanceGate(thr);
+        const ElevState elev = sixSatElevations();
+        OmcState omc = sixSatOmc();
+
+        EXPECT_TRUE(h.stepNuisance(0, omc, elev, 0.20).empty());
+        EXPECT_TRUE(h.stepNuisance(1, omc, elev, 0.20).empty());
+        omc["G01"] -= 0.30;
+        EXPECT_EQ(h.stepNuisance(2, omc, elev, 0.20).size(), 1u)
+            << "threshold " << thr << " should not have gated";
+    }
 }
 
 // ---------------------------------------------------------------------------
