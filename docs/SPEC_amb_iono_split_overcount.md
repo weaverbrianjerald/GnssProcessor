@@ -1942,6 +1942,19 @@ genuinely a weakly-determined metre-class state (not carried, not emitted; it wa
 leveling vehicle's over-confidence (§3's station-common over-count) in its rawest form; the sim F3 arm reads
 0.12 m ± 0.007 (honest).  A shared-`h2local` mapping miss is therefore NOT supported for the ZWD column;
 the ambiguity column's split remains untested (the DD-trace column addition).
+**The fourth member, PRE-REGISTERED (18:30, before running; peer derivation):** the control's per-epoch ZWD is
+a metre-class sink, so DD troposphere on this posture is METRE-scale and band-common in metres — the shape of
+the leftover.  With a band-common term T beside ΔI and a cycle-common A, the two-band system λ₁A − ΔI + T = 0,
+λ₂A − 1.6469·ΔI + T = 0 closes EXACTLY at A = 2.283·ΔI_cyc, T = −1.283·ΔI (at the control's ΔI MAD 1.25 m that
+is 1.6 m of DD tropo per arc, reachable from a 1.3 m per-station |zwd| through four mapping terms).  The
+"no physical DD term closes it" premise is RETRACTED (it assumed a centimetre tropo).  Predictions, testable on
+disk (`tropo_arc_wander.py`: DD_T = Z_a(mf_a^i − mf_a^ref) − Z_b(mf_b^i − mf_b^ref), mf = 1/sin el, ZWD and
+elevations from the run's own traces): (i) the DD-ZWD deviation regressed on the DD-iono deviation has slope
+≈ −1.28 with high |corr|; (ii) the joint fit e₁ = a·ΔI_cyc + t·ΔT_cyc raises a from the attenuated 1.7 toward
+2.28 and puts t near −1.  If both hold, §6.15.3a's cycle-common channel is the PROJECTION onto the ambiguity
+block of (I, N, ZWD) moving together along a weakly-determined direction of this posture — consistent with a
+1.6 cm fit, i.e. the estimability reading with its fourth member; and independently of F3, the shipped field
+posture's tropo state is a metre-class per-epoch sink with a σ that does not know it.
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
