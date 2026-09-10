@@ -1843,6 +1843,25 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    `network_pf_keyed.csv` is per-key aggregates), so the check runs fully only on the pl arm (pool live), i.e.
    it validates the traces on a different vehicle than the one the 0.75 m was measured on; on ci it needs a
    per-row residual dump first.
+   **The last unverified step is closed too (peer source read, 18:12, two tools):** the only writer of a
+   station's state vector on the network path is `NetworkIonoDwRelease.cpp:438`, invoked at
+   `ApplicationNetwork.cpp:2150` — AFTER both sweeps — and the four seams between install-carry and the sweeps
+   (producerAr, solPrep, emitStore, fastClockHarvest) contain no mutating `sm->` call; `NetworkInstallCarry.cpp`
+   `:422-423` / `:460-461` form absolute WL values with the same `x_lin + x_r` idiom (the wu93 lane observatory was
+   validated on it).  **And NO coefficient closes the budget, so (a) does not rescue it either:** zero phase
+   residual needs A = 1.000·ΔI on band 1 but 1.2833·A = 1.6469·ΔI ⇒ A = 1.283·ΔI on band 2 — a cycle-common
+   channel scales 1.283 between the bands, an iono change 1.647, so a cycle-common channel STRUCTURALLY cannot
+   absorb an iono deviation; the best-balanced A still leaves ±0.18·ΔI ≈ 0.22 m band-DIFFERENTIAL residual
+   against 1.6 cm measured (A = 1.7 leaves +0.70/+0.54·ΔI).  Attenuation cannot produce an over-estimate.
+   **Reconstruction outcome PRE-REGISTERED (18:13, before it runs and before the leveling arms were read):**
+   if the traced `x_lin + x_r` pairs are what the phase rows were fit with, the reconstruction MUST show
+   decimetre-to-metre residuals the run does not have; either that gap appears (the estimability reading gets
+   its evidence, and the run's residual bookkeeping is then the question) or it does not — and then the traced
+   pairs are NOT the fitted quantities despite clean staging, which sends the search to the DD CONSTRUCTION
+   itself (column mapping `asm_res[i].h2local`, state units cycles-vs-metres, per-station re-estimation of
+   ambiguities under the invariant carry making `x_r` large on the field where the sim's frozen carries keep
+   it near zero).  Both outcomes are informative; the assumption both the budget and the check share is that
+   the DD of states maps linearly onto the DD of modelled phase with no other state moving.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
