@@ -6,6 +6,7 @@
  *        alias preamble that byte-copies the run-TU ctx/config/setup/traces aliases.
  */
 
+#include "filter/NetworkInject.hpp"
 #include "filter/NetworkTeardown.hpp"
 
 #include "app/NetworkRunContext.hpp"
@@ -4326,6 +4327,11 @@ int networkTeardown(
                   (log_dir_ / "closed_loop_trace.csv").string());
         log->info("==============================================================");
     }
+    // EVENT HARNESS run-end (filter/NetworkInject.cpp): the clause, and the
+    // never-fired HARD error.  Read BEFORE the zero-emit guard so an armed-but-
+    // silent schedule is reported even on a run that also produced nothing.
+    const int inject_rc = networkInjectRunEnd(ctx, log);
+
     if (n_emitted == 0) {
         log->error("Network: produced ZERO solution epochs. Common causes: stations "
                    "do not overlap in time; the local nuisance block is rank-"
@@ -4338,7 +4344,7 @@ int networkTeardown(
                    "pairs stay station-local sponges, and confirm >= 2 overlapping stations.");
         return 1;
     }
-    return 0;
+    return inject_rc;
 }
 
 } // namespace GnssProcessor
