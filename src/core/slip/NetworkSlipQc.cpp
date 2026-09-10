@@ -1548,6 +1548,108 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                   carry_warm ? "" : " (carry cold; diagnostic)", detail);
 }
 
+// ---------------------------------------------------------------------------
+// EVENT HARNESS Study 1: the injected free_epoch arc response (SS9).
+// Mirrors refloat_signal's freeing actions for a scripted (station, satellite),
+// with no LocalCarry erase, no iono co-erase and no RAIM funnel queue.
+// ---------------------------------------------------------------------------
+void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
+                                  std::vector<NetStation>& stations,
+                                  const std::vector<bool>& present,
+                                  int n_sta_total,
+                                  bool carry_invariant, bool carry_warm,
+                                  std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                                  NetworkInjectState& inject,
+                                  const SyncedEpoch& se, NetworkRunTraces& traces,
+                                  const std::shared_ptr<spdlog::logger>& log,
+                                  RelevelEpochState* relevel,
+                                  std::map<std::tuple<int, std::string, std::string>,
+                                           RelevelPend>* relevel_pend) {
+    if (arc_free.empty()) return;
+    for (const auto& d : arc_free) {
+        if (d.isErase()) continue;              // the T4 block's directive
+        int matched = 0;
+        bool station_seen = false;
+        for (int i = 0; i < n_sta_total && i < static_cast<int>(stations.size()); ++i) {
+            if (stations[static_cast<std::size_t>(i)].name != d.station) continue;
+            station_seen = true;
+            if (i < static_cast<int>(present.size()) && !present[i]) continue;
+            StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
+            for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
+                (void)sidx;
+                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
+                if (!parts || parts->satellite != d.sat) continue;
+                if (!d.coversSignal(parts->signal)) continue;   // band scope
+                ++matched;
+                // Card 4 C3c: the DD invariant carry owns its own funnel and is
+                // live from epoch 1 (refloat_signal's contract, verbatim).
+                if (carry_invariant) carry_slipped_ambs.insert({ i, amb_key });
+                if (carry_warm) {
+                    sm.markAmbiguityPendingReseed(amb_key);
+                    if (relevel) {
+                        relevel->free_ambs.insert({ i, amb_key });
+                        // No detector saw anything - the cause bits describe the
+                        // TIER that freed the arc, and this one is the harness.
+                        // T4Attrib is the closest true statement (it is the tier
+                        // whose decision is being emulated) and keeps the lane
+                        // observatory's cause histogram readable.
+                        relevel->free_cause[{ i, amb_key }] |=
+                            RelevelEpochState::kCauseT4Attrib;
+                    }
+                }
+            }
+            // A fresh mark makes any outstanding pend's pre-slip capture stale.
+            if (carry_warm && relevel_pend && matched > 0)
+                for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();)
+                    if (std::get<0>(pit->first) == i && std::get<1>(pit->first) == d.sat)
+                        pit = relevel_pend->erase(pit);
+                    else
+                        ++pit;
+        }
+        if (matched > 0) {
+            traces.emitEvent(se.time, "INJECT", "arc_erase", d.sat, d.station,
+                             std::nullopt, std::nullopt, "injected",
+                             fmt::format("detector_path;mode={};bands={};ambs={};latch={}",
+                                         d.mode,
+                                         [&] {
+                                             if (d.signals.empty()) return std::string("all");
+                                             std::string o;
+                                             for (const auto& x : d.signals)
+                                                 o += (o.empty() ? "" : ";") + x;
+                                             return o;
+                                         }(),
+                                         matched,
+                                         (carry_warm && relevel) ? "free_ambs"
+                                                                 : "none"));
+            inject.arc_erase_mode_acted[d.mode] += matched;
+            inject.n_arc_erase_acted += matched;
+            const std::size_t k = d.ev_index;
+            if (k < inject.events.size() && !inject.onset_logged[k]) {
+                ++inject.n_applied[k];
+                inject.onset_logged[k] = true;
+                ++inject.fired_by_kind["arc_erase"];
+            }
+            log->warn("Network (fault inject): TOW {:.1f} injected arc_erase "
+                      "[mode={}] freed {} ambiguity(ies) of {}/{} through the "
+                      "DETECTOR path - carry entry KEPT, no iono co-erase, no "
+                      "funnel queue.{}",
+                      se.time.tow, d.mode, matched, d.station, d.sat,
+                      (carry_warm && relevel)
+                          ? ""
+                          : "  WARNING: the free-epoch latch is absent (carry "
+                            "cold, or cycle_slip.relevel_free_epoch off) - the "
+                            "mark alone does NOT deliver a free epoch.");
+        } else {
+            log->error("Network (fault inject): TOW {:.1f} arc_erase [mode={}] "
+                       "matched no live ambiguity for {}/{} ({}).  The event will "
+                       "be reported as NEVER FIRED at run-end.",
+                       se.time.tow, d.mode, d.station, d.sat,
+                       station_seen ? "station present, satellite not tracked"
+                                    : "station not on the roster");
+        }
+    }
+}
+
 void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 const std::vector<bool>& present,
                                 int i_lo, int n_sta_total,

@@ -1599,6 +1599,21 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                relevel_ptr,
                                relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
 
+    // ---- EVENT HARNESS Study 1: the injected free_epoch arc response -------
+    // (docs/SPEC_event_harness.md §9.)  An `arc_erase` event carrying
+    // "mode": "free_epoch" is answered HERE, as a DETECTOR refloat, instead of
+    // by the T4 attribution block — the A/B that prices the erase path's four
+    // extra actions.  Sited with the other PASS-A drains so the free-epoch latch
+    // it fills is read by this epoch's PASS-B leveling inject (post-fit RAIM is
+    // too late — relevel.clear() above would already have run next epoch).
+    // Unreachable unless the injector staged a free_epoch directive.
+    if (ctx.inject.armed && !ctx.inject.arc_erase_now.empty())
+        networkSlipDrainInjectedFree(ctx.inject.arc_erase_now, stations, present,
+                                     n_sta_total, carry_invariant, carry_warm,
+                                     carry_slipped_ambs, ctx.inject, se, traces, log,
+                                     relevel_ptr,
+                                     relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
+
     // ---- Rung 3 v3: the carry-domain lane observatory, PASS-A half ----------
     // (SPEC_lane_slip_response §7.3.)  Sited AFTER both slip drains so this
     // epoch's freed set is complete.  It carries ONLY the raw-MW observable

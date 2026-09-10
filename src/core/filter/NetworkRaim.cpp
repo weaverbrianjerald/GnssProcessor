@@ -724,16 +724,36 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // is marked as injected only in its event row.  It also OPENS the block on
         // an epoch whose σ̂₀ never tripped: that is the point of the harness.
         bool inject_arc_act = false;
+        auto joinSet = [](const std::set<std::string>& v) {
+            std::string o;
+            for (const auto& x : v) o += (o.empty() ? "" : ";") + x;
+            return o;
+        };
+        // Study-1 DIAGNOSTIC sub-knob (docs/SPEC_event_harness.md SS9):
+        // (station idx, sat) -> the injected mode.  Consulted ONLY for arcs this
+        // injector staged; a real attribution's arcs are absent from the map and
+        // take the production path unchanged.
+        std::map<std::pair<int, std::string>, std::string> inject_arc_mode;
+        /// Band scope per injected arc (empty set => every signal, production).
+        std::map<std::pair<int, std::string>, std::set<std::string>> inject_arc_sigs;
+        std::vector<const InjectArcErase*> inject_arc_staged;
         if (ctx.inject.armed && !ctx.inject.arc_erase_now.empty()) {
-            for (const auto& [sta_name, sat] : ctx.inject.arc_erase_now)
+            bool any_erase_mode = false;
+            for (const auto& d : ctx.inject.arc_erase_now) {
+                if (!d.isErase()) continue;   // free_epoch is the PASS-A drain's
+                any_erase_mode = true;
                 for (size_t i = 0; i < stations.size(); ++i)
-                    if (stations[i].name == sta_name && present[i]
+                    if (stations[i].name == d.station && present[i]
                         && est_index_of[i] >= 0
                         && (phase_datum_prioritized || !stations[i].is_pivot)) {
-                        bad_arcs.emplace_back(static_cast<int>(i), sat);
+                        bad_arcs.emplace_back(static_cast<int>(i), d.sat);
+                        inject_arc_mode[{ static_cast<int>(i), d.sat }] = d.mode;
+                        inject_arc_sigs[{ static_cast<int>(i), d.sat }] = d.signals;
+                        inject_arc_staged.push_back(&d);
                         inject_arc_act = true;
                     }
-            if (!inject_arc_act)
+            }
+            if (any_erase_mode && !inject_arc_act)
                 log->error("Network (fault inject): TOW {:.1f} arc_erase found no "
                            "eligible (station, satellite) — the station is absent, "
                            "un-indexed, or the legacy pivot.  The event will be "
@@ -773,8 +793,26 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             auto refloat_sat_at = [&](int i, const std::string& sat,
                                       bool statistical_arc) -> int {
                 int n = 0;
+                // Study-1 sub-knob: production defaults unless THIS arc was
+                // staged by the injector with a diagnostic mode.  Every flag
+                // below is `true` on the production path, so an unarmed run's
+                // instruction stream is the pre-card one.
+                bool inj_iono = true, inj_reseed = true, inj_funnel = true;
+                const std::set<std::string>* inj_sigs = nullptr;
+                if (!inject_arc_mode.empty()) {
+                    const auto mit = inject_arc_mode.find({ i, sat });
+                    if (mit != inject_arc_mode.end()) {
+                        inj_iono   = (mit->second != "erase_keep_iono");
+                        inj_reseed = (mit->second != "erase_no_reseed");
+                        inj_funnel = (mit->second != "erase_no_funnel");
+                        const auto sit = inject_arc_sigs.find({ i, sat });
+                        if (sit != inject_arc_sigs.end() && !sit->second.empty())
+                            inj_sigs = &sit->second;
+                    }
+                }
                 for (const auto& pa : ambPool(asm_res[i]))
-                    if (pa.sat == sat) {
+                    if (pa.sat == sat
+                        && !(inj_sigs && inj_sigs->count(pa.signal) == 0)) {
                         // SPEC_slip_relevel_walk §6, retap piece: an ISOLATED-ARC
                         // refloat carries NO measured delta and its population is
                         // FA-dominated (21114 arc refloats vs ~4500 slip-driven on
@@ -853,7 +891,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         // the LOS's iono carry with it so the re-level re-draws both.
                         // Idempotent across the per-signal loop; a retap-KEPT arc above
                         // never reaches this line (kept level ⇒ kept iono carry).
-                        if (ctx.knobs.iono_on &&
+                        if (inj_iono && ctx.knobs.iono_on &&
                             ctx.carry.iono_carry.erase({i, pa.sat}))
                             ++ctx.counters.n_iono_carry_erased_t4;
                         // BOOKKEEPING, not the actuator on the Card-4 path: the producer
@@ -862,12 +900,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         // shared RHS b_red = u_s − N_sr N_rr⁻¹ u_r algebraically unchanged
                         // (SPEC_deweight_release_hygiene §7.2).  Kept because it IS the
                         // actuator on the phase-leveling lineage.
-                        stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+                        if (inj_reseed)
+                            stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
                         // THE actuator under carry_invariant: queue for the next epoch's
                         // C3c funnel, which membership-excludes the arc from A_old so its
                         // chord is re-tapped from a diffuse prior.  Deferred because the
                         // funnel was consumed at SB_DDBUILD, long before SB_RAIM.
-                        if (raim_ci_refloat) {
+                        if (inj_funnel && raim_ci_refloat) {
                             raim_refloat_pending.insert({i, pa.amb_key});
                             ++raim_ci_tallies.refloats_queued;
                         }
@@ -888,23 +927,30 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 n_ref += refloat_sat_at(sta, sat, /*statistical_arc=*/true);
             if (inject_arc_act) {
                 // The injected pairs are the TAIL of bad_arcs (appended above).
-                const std::size_t n_inj = ctx.inject.arc_erase_now.size();
-                for (const auto& [sta_name, sat] : ctx.inject.arc_erase_now)
-                    traces.emitEvent(se.time, "INJECT", "arc_erase", sat, sta_name,
+                const std::size_t n_inj = inject_arc_staged.size();
+                std::string modes;
+                for (const InjectArcErase* d : inject_arc_staged) {
+                    traces.emitEvent(se.time, "INJECT", "arc_erase", d->sat, d->station,
                                      std::nullopt, std::nullopt, "injected",
-                                     fmt::format("t4_path;sigma0={:.3f};chords={}",
+                                     fmt::format("t4_path;mode={};bands={};sigma0={:.3f};chords={}",
+                                                 d->mode,
+                                                 d->signals.empty() ? std::string("all")
+                                                                    : joinSet(d->signals),
                                                  sigma0, n_ref));
-                ctx.inject.n_arc_erase_acted += n_ref;
-                for (std::size_t k = 0; k < ctx.inject.events.size(); ++k)
-                    if (ctx.inject.events[k].kind == "arc_erase"
-                        && !ctx.inject.onset_logged[k]) {
+                    ctx.inject.arc_erase_mode_acted[d->mode] += n_ref;
+                    modes += (modes.empty() ? "" : ",") + d->mode;
+                    const std::size_t k = d->ev_index;
+                    if (k < ctx.inject.events.size() && !ctx.inject.onset_logged[k]) {
                         ++ctx.inject.n_applied[k];
                         ctx.inject.onset_logged[k] = true;
                         ++ctx.inject.fired_by_kind["arc_erase"];
                     }
+                }
+                ctx.inject.n_arc_erase_acted += n_ref;
                 log->warn("Network (fault inject): TOW {:.1f} injected T4 erase on {} "
-                          "arc(s) refloated {} carried chord(s) through the ATTRIBUTION "
-                          "path (sigma0={:.3f}).", se.time.tow, n_inj, n_ref, sigma0);
+                          "arc(s) [mode={}] refloated {} carried chord(s) through the "
+                          "ATTRIBUTION path (sigma0={:.3f}).",
+                          se.time.tow, n_inj, modes, n_ref, sigma0);
             }
             attrib_acted = true;
             if (raim_ci_on) raim_ci_tallies.arcs_flagged += static_cast<long long>(bad_arcs.size());

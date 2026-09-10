@@ -22,6 +22,7 @@
 
 #include "common/Constants.hpp"
 #include "filter/NetworkRunTypes.hpp"   // NetStation, LocalCarry, TurboEditResolver::SignalRepair, PppObservation (transitive)
+#include "filter/NetworkInject.hpp"     // InjectArcErase / NetworkInjectState (EVENT HARNESS Study 1)
 #include "logging/NetworkRunTraces.hpp" // NetworkRunTraces (emitEvent, if_slip_trace), FlagRate
 #include "slip/NetworkRawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters (Cards E/L/G)
 #include "slip/NetworkSlipOracle.hpp"   // NetworkSlipOracle (sim-only oracle slip response)
@@ -656,5 +657,63 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            const RawSlipEpoch* raw_epoch = nullptr,
                            const std::vector<RawSlipHistory>* raw_hist = nullptr,
                            NetworkSlipOracle* oracle = nullptr);
+
+/**
+ * @brief EVENT HARNESS Study 1 - the injected @c free_epoch arc response.
+ *
+ * (docs/SPEC_event_harness.md SS9.)  The T4 attribution erase and a detector
+ * refloat are two different answers to "this arc's level is not trusted", and
+ * the harness measured them 11x apart on the same healthy arc.  This drain is
+ * the DETECTOR half made injectable: an @c arc_erase event carrying
+ * @c "mode": "free_epoch" is routed HERE instead of to the T4 block, and does
+ * exactly what @c refloat_signal does for a detected slip - C3c funnel insert
+ * under @p carry_invariant, pending-reseed mark + free-epoch latch + cause tag
+ * under @p carry_warm, and the bridge-pend void that a fresh mark implies.
+ * It does NOT erase the @c LocalCarry entry, does NOT co-erase the LOS iono
+ * carry and does NOT queue the RAIM funnel, which is the whole contrast.
+ *
+ * Sited with the other PASS-A drains (and after them) so the free-epoch latch
+ * it fills is read by the SAME PASS-B leveling inject in the SAME epoch.  The
+ * T4 block could not host it: post-fit RAIM runs after that inject, so a
+ * free_ambs insert there would be cleared before any site read it.
+ *
+ * Harness-only and unreachable unless @c network.inject staged a @c free_epoch
+ * directive this epoch (@p arc_free empty on every other run) - byte-identical
+ * by construction, invariant #6.
+ *
+ * @param arc_free           This epoch's staged directives (every mode; the
+ *                           non-@c free_epoch ones are skipped here and taken
+ *                           by the T4 block).
+ * @param stations           Station roster - @c sm is MUTATED (pending-reseed).
+ * @param present            Per-station PASS-A presence.
+ * @param n_sta_total        Station count.
+ * @param carry_invariant    Card-4 DD invariant carry vehicle armed.
+ * @param carry_warm         The legacy phase-leveling carry is warm.
+ * @param carry_slipped_ambs C3c funnel - inserted into under @p carry_invariant.
+ * @param inject             Injector ledger - @c n_applied / @c fired_by_kind /
+ *                           @c arc_erase_mode_acted are closed here for the
+ *                           directives this drain consumes (the never-fired
+ *                           hard error is the other consumer's otherwise).
+ * @param se                 This epoch (event rows).
+ * @param traces             Trace bundle - one INJECT row per acted arc.
+ * @param log                Logger.
+ * @param relevel            Free-epoch latch, or nullptr when
+ *                           @c cycle_slip.relevel_free_epoch is off (then the
+ *                           mark alone cannot deliver the free epoch and the
+ *                           event row says so).
+ * @param relevel_pend       Bridge-v2 pend map, or nullptr.
+ */
+void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
+                                  std::vector<NetStation>& stations,
+                                  const std::vector<bool>& present,
+                                  int n_sta_total,
+                                  bool carry_invariant, bool carry_warm,
+                                  std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                                  NetworkInjectState& inject,
+                                  const SyncedEpoch& se, NetworkRunTraces& traces,
+                                  const std::shared_ptr<spdlog::logger>& log,
+                                  RelevelEpochState* relevel = nullptr,
+                                  std::map<std::tuple<int, std::string, std::string>,
+                                           RelevelPend>* relevel_pend = nullptr);
 
 } // namespace GnssProcessor

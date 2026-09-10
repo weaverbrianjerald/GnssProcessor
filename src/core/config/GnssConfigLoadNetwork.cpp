@@ -9637,6 +9637,25 @@ namespace GnssProcessor {
                 } else if (ev.kind == "arc_erase") {
                     if (!need(!ev.station.empty(), "a station")) return false;
                     if (!need(!ev.sat.empty(), "a sat")) return false;
+                    // DIAGNOSTIC sub-knob (docs/SPEC_event_harness.md §9): which
+                    // of the erase path's four extra actions the injected event
+                    // performs.  Default = the PRODUCTION path, so an event that
+                    // does not name a mode is exactly what it was before.
+                    if (ev.mode.empty()) ev.mode = "erase";
+                    // Optional BAND SCOPE: "" / "all" => every signal of the
+                    // satellite (both production paths' scope); otherwise a
+                    // ";"-separated list of RINEX-3 PHASE codes.
+                    if (!ev.signal.empty() && ev.signal != "all"
+                        && !need(ev.signal[0] == 'L',
+                                 "a PHASE signal scope (leading L), 'all', or none"))
+                        return false;
+                    if (!need(ev.mode == "erase" || ev.mode == "free_epoch"
+                              || ev.mode == "erase_keep_iono"
+                              || ev.mode == "erase_no_reseed"
+                              || ev.mode == "erase_no_funnel",
+                              "mode 'erase' (default) | 'free_epoch' | "
+                              "'erase_keep_iono' | 'erase_no_reseed' | "
+                              "'erase_no_funnel'")) return false;
                 } else {   // sat_clock_step
                     if (!need(!ev.sat.empty(), "a sat")) return false;
                     if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;

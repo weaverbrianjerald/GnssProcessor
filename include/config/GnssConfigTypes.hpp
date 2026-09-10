@@ -1101,7 +1101,16 @@ namespace GnssProcessor {
         double      delta_cycles{ 0.0 };  ///< slip: cycles added to the phase observable.
         bool        flag_lli{ false };    ///< slip: also raise LLI bit 0x1 on the onset epoch.
         double      duration_s{ 0.0 };    ///< outage: window length; the return is a natural re-admission.
-        std::string mode;                 ///< anchor_handover: "cold" | "continuous".
+        /// @c anchor_handover: "cold" | "continuous".
+        ///
+        /// @c arc_erase: the DIAGNOSTIC sub-knob (§9 Study 1) — "erase" (the
+        /// default and the PRODUCTION T4 path) | "free_epoch" (act as a DETECTOR
+        /// refloat instead: keep the @c LocalCarry entry, latch the free-epoch
+        /// set, no iono co-erase, no C3c queue) | "erase_keep_iono" |
+        /// "erase_no_reseed" | "erase_no_funnel" (the production erase MINUS the
+        /// one named action).  Harness-only: it changes what the INJECTED event
+        /// does, never what a real attribution does.
+        std::string mode;
         double      step_m{ 0.0 };        ///< sat_clock_step: metres added to the a-priori satellite clock.
     };
 

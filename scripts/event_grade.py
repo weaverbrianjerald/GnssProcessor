@@ -437,9 +437,17 @@ def main():
     sig = ev.get("signal") or "L1C"
     if sig == "all":
         sig = "L1C"
+    # An arc_erase BAND SCOPE is a ";"-separated list (Study 1 rung 2); the lvl
+    # channel is per-signal, so grade the FIRST band of the scope and say so.
+    if ";" in sig or "," in sig:
+        scope = [t for t in sig.replace(",", ";").split(";") if t]
+        sig = scope[0]
     inj = ev.get("delta_cycles", 0.0) if kind == "slip" else 0.0
 
     notes = []
+    if ";" in (ev.get("signal") or "") or "," in (ev.get("signal") or ""):
+        notes = [f"band scope {ev['signal']} — lvl graded on {sig} "
+                 f"(the other bands need a separate pass)"]
     res = {"leg": os.path.abspath(args.legdir), "null": os.path.abspath(args.null),
            "event": ev, "t0": t0, "window": [lo, hi]}
 
