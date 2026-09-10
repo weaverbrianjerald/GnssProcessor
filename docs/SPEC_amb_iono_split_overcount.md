@@ -2002,7 +2002,11 @@ the direction, it moves the tension onto the other members and closes the declar
 gate the leveling arms trip); and a diagonal ZWD carry is §3's over-count in its purest form (a station-common
 direction asserted n_LOS-fold per epoch, σ collapsing onto a metre-class first estimate — the sim's "ZWD
 formal 0.005 m vs 0.35 m actual" of §6.8.4, on real data).  Standing invariant #1 applies as the peer warned:
-a stiff time-linked ZWD with no wired response.  **`network.carry_zwd` on the shipped field vehicle: KEEP OFF
+a stiff time-linked ZWD with no wired response.  And it closes the loop with probe 4: the ledger's
+`carry_conditional_coupling` row records that the Card-1 coupling rows fold NOTHING under carry_invariant unless
+`carry_zwd` is on — arming the ZWD carry made those rows LIVE on the shipped vehicle, and the S-basis gate
+tripped 118 times on a vehicle that never trips it: the conditional coupling rows are what close the declared
+null direction on this chain, on both vehicles.  **`network.carry_zwd` on the shipped field vehicle: KEEP OFF
 (12 h: divergence).**  The fourth member is real; the fix for it is not a carry, it is whatever makes the
 (I, N, ZWD) direction observable per epoch (F3-class whitening of the station block INCLUDING the ZWD column,
 or an honest external ZTD) — a design card, not a knob.
