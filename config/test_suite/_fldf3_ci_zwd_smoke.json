@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "SMOKE (40 epochs) of _fldf3_ci_zwd.json: does the ZWD carry inject on the carry_invariant vehicle (carried=1)?"
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_ci_zwd_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_ci_zwd_smoke/state_snapshot.bin",
+    "carry_zwd": true
+  },
+  "processing": {
+    "max_duration_s": 1200.0
+  }
+}

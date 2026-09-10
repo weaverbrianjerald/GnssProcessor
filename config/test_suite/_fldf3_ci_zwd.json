@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "ARM 0z / ZWD CARRY on the SHIPPED vehicle (SPEC_amb_iono s6.15.4, the fourth member): the control (_fldf3_ci) + network.carry_zwd:true (B9 per-station ZWD random-walk carry, default q).  Single knob, F3-independent.",
+    "PRE-REGISTERED (2026-09-09 18:38, before the smoke): the field control's per-epoch ZWD is a metre-class sink (per-station span 21 m median, sigma 0.57 m) that co-moves with the per-LOS iono and the per-station ambiguities along a weakly-determined direction (DD-tropo vs DD-iono slope -0.87, joint e1 = +0.73*dI -1.17*dT).  Pinning it predicts: ZWD per-station settled span < 0.5 m and sigma honest (>= 1 cm); DD-ambiguity arc wander e1 MAD from 10.2 cyc to <= 2; the A-on-iono co-motion slope from +1.7 toward 0; DD fractions NOT predicted to leave the null (the wander is not the only field error); post-fit phase sigma0 unchanged (~1.6 cm).  Smoke gate: network_zwd.csv carried=1 on the warm epochs, else the carry is INERT on this vehicle and the arm is not run."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_ci_zwd/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_ci_zwd/state_snapshot.bin",
+    "carry_zwd": true
+  }
+}
