@@ -2048,6 +2048,23 @@ carries information — so getting the DOY-129 field wire to sub-decimetre (the 
 leveling-vehicle datum are the two named levers) is UPSTREAM of every integer claim, and outranks the F3
 question that started this section.
 
+**Divergence probes (3 h, same exe; pre-registered; grading: S-basis withhold count, h1–h3 ZWD span, prires
+|t|, T2/T3/T4 rates, arc stability at settle 1 h).**  Probe 1 `_fldf3_pl_pdp3h` — the sim golden's phase-datum
+FAMILY (prioritized pivot datum + continuous handover + anchor carry re-ref + min_stations 2) instead of the
+chain's eq34: **still withholds — 84 of 360 epochs, same onset TOW 262230 ("observed 0 (near-)zero" ×68,
+"observed 2" ×16), prires |t| 1.5e8**, h1–h3 ZWD span p50 1.7 m (σ 0.010).  The phase-datum family is
+EXONERATED; the eq34 chain datum is not the cause.  Probe 2 `_fldf3_pl_nosbc3h` (`sbasis_complete` off):
+pending.  Queued (18:50, pre-registered the same way, one family each): probe 3 `_fldf3_pl_nosh3h` —
+`estimate_iono_sh: false`, a FREE per-LOS iono as on the sim (the leveling vehicle was only ever validated
+with free iono; the SH pin plus absolute leveling priors may close the declared null direction); probe 4
+`_fldf3_pl_nocpl3h` — the Card-1 conditional coupling rows off (leveling rows as plain diagonal priors);
+probe 5 `_fldf3_pl_vf3h` — `phase_leveling_var_floor_m2: 0.01` (a GAUGE probe: if over-stiff absolute
+ambiguity priors are what pins the declared null direction, loosening them should let the gate see it).
+Working hypothesis being tested, not asserted: the leveling carry injects ABSOLUTE per-station ambiguity
+priors, which are not datum-invariant, so with the chain's declared null-space dimension of 1 they can pin
+the last gauge direction (observed 0 ⇒ withhold) — a declaration defect of the leveling posture on this
+chain rather than a numerical one.  The ZWD-carry arm (`_fldf3_ci_zwd`) is re-queued behind these probes.
+
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
 (harvest-stamp mismatch), 0 refused, 0 factorization fallbacks, block-dim histogram <10: 136 / 10–24: 643

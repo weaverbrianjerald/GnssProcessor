@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "ARM 1c / CONDITIONAL COUPLING OFF: the pl arm with the Card-1 coupling rows off (leveling rows become plain diagonal priors, no border regressors; time_update needs cond so it goes too).  One family.",
+    "PROBE of the leveling-vehicle DIVERGENCE on the field chain (SPEC_amb_iono s6.15.4): 3 h, same exe, own CWD.  Pre-registered: the S-basis null-space withholds (observed 0 vs declared 1, onset epoch ~101 on every leveling arm so far, INCLUDING the phase-datum family swap) STOP and the h1-h3 ZWD span falls below 1 m if the named family is the cause; unchanged withholds = not the cause."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "processing": {
+    "max_duration_s": 10800.0
+  },
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "carry_invariant": false,
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "mw_wl": {
+      "ewl_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "wl_inject_enable": false
+    },
+    "cycle_slip": {
+      "relevel_free_epoch": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_pl_nocpl3h/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_pl_nocpl3h/state_snapshot.bin",
+    "carry_conditional_coupling": false,
+    "carry_coupling_time_update": false
+  }
+}
