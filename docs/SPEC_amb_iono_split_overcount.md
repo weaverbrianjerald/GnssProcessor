@@ -2123,6 +2123,49 @@ leveling posture is the sim golden's: `carry_coupling_gauge_project` + the prior
 19:08, before probe 7 was read): `_fldf3_pl2` (that posture, F3 off) and `_fldf3_on2` (+ F3), 12 h fresh,
 same exe, float replays of both wires; §6.15.3 P1–P7 apply unchanged with on2 ↔ pl2 as the graded delta.**
 
+**SECOND ROUND — landed 19:20 (both arms 1,440/1,440 solved, 0 withholds, 0 unsolved; ~8 min wall each).**
+
+| | pl2 (converging vehicle) | on2 (+ F3) | control ci (shipped) |
+|---|---|---|---|
+| ZWD per-station span p50 (σ) | 0.80 m (8 mm) | 1.20 m (9 mm) | 21 m (0.57 m) |
+| DD-tropo arc MAD | **0.07 m** | 0.08 m | 1.22 m |
+| DD-iono arc MAD | 0.56 m | 0.45 m | 1.25 m |
+| e₁ on DD-iono slope (corr) | **+0.03 (0.49)**, A −0.000 | +0.09 (0.46), A +0.001 | +1.72 (0.93) |
+| DD arc wander e₁ MAD / WL | **0.12 / 0.12 cyc** (ref-free 0.065) | 0.71 / 0.19 (ref-free 0.35) | 10.2 / 0.56 |
+| cross-band slope | 1.07 (p10 −1.27, p90 1.37) | 1.17 (0.86–1.34), iono-shaped | 1.004 |
+| DD fractions L1C: R (null), gap | 0.454 (0.449), −0.000 | 0.468 (0.449), −0.000 | 0.464 (0.472), +0.012 |
+| L2W: R (null) | 0.430 (0.433) | 0.444 (0.433) | — |
+| **WL12: R (null), near, ref-free gap** | 0.468 (0.450), 22.8 %, +0.004 | **0.562 (0.450), 24.3 %, −0.028** | 0.487 (0.482), 21.4 %, +0.006 |
+| prires worst \|t\| / T3 / T4a | 2.5e8 / 3.4 % / 0.31 % | 2.9e8 / 2.3 % / 0.18 % | 178 / inert / inert |
+| block-Baarda block-only | 0.8 % | 5.4 % | 2.4 % |
+| float cold consumer, settled 3D rms / p50 | 3.77 / 3.18 m | 3.99 / 3.22 m | 6.56 / 5.83 m |
+| D0 median | 265 ms | 268 ms | 1,072 ms |
+
+**Readings.**  (1) *The converging posture closes the weakly-determined direction on the field.*  On pl2 the
+DD-tropo wander is 0.07 m (control 1.22), the ambiguity↔iono co-motion is gone (slope +0.03, A −0.000 — the sim
+F3 arm's signature), and the per-band DD wander is 0.12 cyc (control 10.2) — the (I, N, ZWD) trade of
+§6.15.3a is a property of the SHIPPED posture (eq34 datum, no coupling gauge projection, per-epoch ZWD as a
+sink, invariant carry), not of the field data.  Its float consumer is 3.8 m against the shipped wire's 6.6 m
+— better, and still metre-class.  (2) *F3 on it — PARTIAL, the pre-registered intermediate branch.*  P1 passes
+(87,140 blocks, 0 fallbacks, 0 refused; +1.4 % D0, P7 passes).  **WL12 leaves the uniform null for the first
+time on the field** — R 0.562 vs 0.450 (+0.112), near-integer 24.3 %, ref-free gap −0.028, closure 0.143 vs
+0.174 — while L1C and L2W stay at it (R − null +0.019 / +0.011, below the pre-registered +0.05): the L1 errors
+are multi-cycle-but-bounded and F3's effect is read on the WL, as §6.15.2 said it would be.  The residual
+per-band wander under F3 is LARGER than pl2's (0.71 vs 0.12 cyc) but iono-shaped (cross-band 1.17, the sim
+F3 arm's 1.26) — the honest per-LOS floor family, not the frozen-level family.  Consumer flat (3.99 vs 3.77,
+P5 not met), T3/T4a lower, block-Baarda block-only higher (5.4 %).  (3) *Verdict, revised.*  The F3 knob is
+SOUND on real data and gives the first non-uniform WL fractions the field has produced, but it does not
+change the wire (metre-class on every arm) and does not lift L1/L2; ledger stays KEEP OFF on field lineages
+as a promotion decision (no consumer win, prires |t| ~1e8 on both arms of the converging posture), with the
+field regime now DEFINED: the converging leveling posture = `carry_coupling_gauge_project` + the prioritized
+phase-datum family.  **The field lever this ladder actually found is that posture, not F3:** it retires the
+shipped posture's (I, N, ZWD) trade and halves the float-consumer error (6.6 → 3.8 m) with the invariant carry
+replaced by the leveling carry — a vehicle question for the field goldens, owed its own card (the invariant
+carry's RAIM pool re-host, the lanes and the E2/E3 machinery all assume the shipped vehicle).  What is still
+open on the converging posture: the prires |t| 1e8 rows (over-confident priors on both arms), the 23 % of arcs
+with > 1 cyc wander on pl2 (a tail population), the block-Baarda rise under F3, and the metre-class wire itself
+(§6.15.4's scoping note stands: sub-decimetre first, integers after).
+
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
 (harvest-stamp mismatch), 0 refused, 0 factorization fallbacks, block-dim histogram <10: 136 / 10–24: 643
