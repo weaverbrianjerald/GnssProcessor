@@ -1972,6 +1972,16 @@ tropo–iono trade riding through it.  On the sim golden the ZWD is CARRIED (hon
 not follow I (slope 0.001) — the same estimator with the fourth member pinned.  Fix direction (not built
 here): pin the fourth member — carry the ZWD on the field vehicle (B9 `zwd` carry with a physical q) — and
 re-read the DD wander; a single-knob arm on the SHIPPED vehicle, independent of F3.
+**Arm 0z `fldf3_ci_zwd` — PRE-REGISTERED 18:40 (queued behind the probes; smoke first):** the control +
+`network.carry_zwd: true` (B9 per-station ZWD random-walk carry at its default q; the chain never set it —
+`carried` = 0 on every row of every arm so far, and the sim golden does not carry it either but has a FREE
+per-LOS iono and F3, which is why its per-epoch ZWD is honest at 9 mm).  Smoke gate: `network_zwd.csv`
+`carried` = 1 on warm epochs, else the carry is inert on this vehicle (the inject sits under `carry_warm`)
+and the arm is not run.  Predictions if it injects: ZWD per-station settled span < 0.5 m with an honest σ
+(≥ 1 cm); DD-ambiguity arc wander e₁ MAD from 10.2 cyc to ≤ 2; the A-on-iono co-motion slope from +1.7 toward
+0 (the tropo–iono trade loses its free member); DD fractions NOT predicted to leave the null; post-fit phase
+σ̂₀ unchanged (~1.6 cm).  Falsifier: ZWD pinned but the DD wander and the co-motion unchanged ⇒ the ZWD was
+a passenger, not the free member, and the weakly-determined direction has another member.
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
