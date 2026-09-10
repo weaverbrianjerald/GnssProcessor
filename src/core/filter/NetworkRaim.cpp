@@ -231,11 +231,32 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // Largest measurement-standardized post-fit phase residual PER SATELLITE at this
         // station (a carried ambiguity's phase rows carry +1 on its A_r column; uncombined).
         std::map<std::string, double> sat_rmax;
+        // B9-in-block (network.carry_zwd_in_block) — SPEC_amb_iono_split_overcount §7 item 4,
+        // MEASURED not guessed.  The pool admits a row by |A_r(row, amb_col)| > 0.5, a test
+        // written for DATA phase rows (which carry exactly +1 on their ambiguity column).
+        // A whitened block row is one row of L⁻¹, so the ZWD's block row carries non-zero
+        // coefficients on the ambiguity columns below it and CAN clear that bar — i.e. a
+        // carried-prior row can enter a post-fit fault pool built for observations.  This
+        // card does NOT change the rule; it counts the interaction so the next card decides
+        // on data.  The ZWD's row is the coupling row whose primary local column is the
+        // station's ZWD column (cpl_row_local_cols is in append order from cpl_row_start).
+        Eigen::Index zwd_blk_row = -1;
+        if (R.pl_zwd_in_block && R.cpl_row_start >= 0 && R.pl_zwd.col >= 0)
+            for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
+                if (R.cpl_row_local_cols[rr] == R.pl_zwd.col) {
+                    zwd_blk_row = R.cpl_row_start + static_cast<Eigen::Index>(rr);
+                    break;
+                }
+        bool zwd_row_pooled = false;   // once per station-epoch (the column-keyed loop can revisit it)
         for (const auto& pa : pool) {
             if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
             double r_max = 0.0;
             for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
                 if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;  // not a phase row of this ambiguity
+                if (row == zwd_blk_row && !zwd_row_pooled) {
+                    zwd_row_pooled = true;
+                    ++ctx.counters.n_raim_pool_zwd_rows;
+                }
                 const double w = (row < R.w.size()) ? R.w(row) : 1.0;
                 // MDB is fed HERE, ahead of the uncheckable `continue` below: a row
                 // RAIM drops from its σ̂0 pool because r_i ≤ 1e-6 is precisely the

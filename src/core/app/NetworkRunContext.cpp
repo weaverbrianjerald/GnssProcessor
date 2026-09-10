@@ -68,6 +68,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_gauge  = config_.networkCarryCouplingGaugeProject();
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
     k.zwd_on = config_.networkCarryZwd();
+    k.zwd_in_block = config_.networkCarryZwdInBlock();  // B9-in-block; loader guarantees zwd_on + pl_local_block
     k.zwd_q = config_.networkZwdCarryQ();
     k.zwd_seam_on = config_.networkZwdSeamReseed();
     k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
@@ -653,6 +654,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // independent rows), and the harvest block itself is not in the snapshot.
         // Armed-only, beside the F1 tag.
         if (pl_local_block) add("pl:losblock");
+        // B9-in-block (network.carry_zwd_in_block): solve-affecting for the same reason
+        // F3 itself is — the carried ZWD *and* the carried levels were accumulated under a
+        // different prior geometry (one joint Σ over {ambiguities, ZWD} vs a block plus an
+        // independent diagonal row), so a warm resume must not cross the flip.  The
+        // harvest block is not snapshotted either way.  Armed-only append, beside the F1/F3
+        // tags, so every pre-card snapshot fingerprint is unchanged.
+        if (config_.networkCarryZwdInBlock()) add("zwd:blk");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));
@@ -2887,6 +2895,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const bool   prires_iono = ctx.knobs.prires_iono;   // QUEUE 8b
     const bool   prires_rxcb = ctx.knobs.prires_rxcb;
     const double zwd_q       = ctx.knobs.zwd_q;
+    // B9-in-block (network.carry_zwd_in_block): the ZWD column joins the F3 harvest
+    // block.  Conjoined with the SAME live predicate the block itself carries
+    // (pl_local_block && carry_cpl_cond) so the harvest and the inject agree on which
+    // station-epochs have a block at all; carry_cpl_joint is the injector's mutex and
+    // never reaches the block path there either.  OFF ⇒ `cols` is untouched and
+    // PlHarvestBlock::C keeps its exact pre-card dimension (byte-identical).
+    const bool   zwd_blk_on  = ctx.knobs.zwd_in_block && pl_local_block && carry_cpl_cond;
     // Seam-scoped ZWD re-seed + unconditional Z-row capture (§17 finding 3).
     const bool   zwd_capture   = ctx.knobs.zwd_capture;
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
@@ -3115,6 +3130,17 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             }
         }
 
+        // B9-in-block (network.carry_zwd_in_block): the ZWD harvest is a SEPARATE loop
+        // further down (it must run for stations with no carried ambiguities at all), so
+        // the block this loop allocates — and the exact `cols` order its rows are indexed
+        // by — are handed forward per station.  Empty vectors when the knob is off, and
+        // nothing below touches them.
+        std::vector<std::shared_ptr<PlHarvestBlock>> zblk_of_sta;
+        std::vector<std::vector<Eigen::Index>>       zblk_cols_of_sta;
+        if (zwd_blk_on) {
+            zblk_of_sta.resize(stations.size());
+            zblk_cols_of_sta.resize(stations.size());
+        }
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
             // Prioritized: harvest the former pivot too — its non-anchored arcs
@@ -3125,8 +3151,18 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             if (R.pl_amb.empty()) continue;
             const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
             std::vector<Eigen::Index> cols;
-            cols.reserve(R.pl_amb.size());
+            cols.reserve(R.pl_amb.size() + 1);
             for (const auto& a : R.pl_amb) cols.push_back(a.col);
+            // B9-in-block: the station's ZWD column becomes block index n (the LAST
+            // entry), so every per-column solve below gathers its (N_rr⁻¹)_{c_a, zcol}
+            // cross term for free — the same gather that already pays for the
+            // ambiguity-ambiguity terms.  Appended AFTER the ambiguity columns so the
+            // pl rows keep their exact indices `a`; the ZWD's own row n is written by
+            // the ZWD loop below.  R.pl_zwd_present is PASS B's record, so a station
+            // whose tropo column was absent this epoch simply keeps the pre-card `cols`.
+            const bool zwd_in_cols = zwd_blk_on && R.pl_zwd_present
+                                     && R.pl_zwd.col >= 0;
+            if (zwd_in_cols) cols.push_back(R.pl_zwd.col);
             Eigen::VectorXd xr, vard;
             try {
                 xr = est.reconstructStation(est_idx, x_s);
@@ -3147,6 +3183,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 const Eigen::Index nb = static_cast<Eigen::Index>(cols.size());
                 hblk->C = Eigen::MatrixXd::Constant(nb, nb, std::numeric_limits<double>::quiet_NaN());
                 hblk->stamp_s = pl_now_s;
+                // B9-in-block: hand the block + its column order to the ZWD loop below,
+                // which owns row n.  Handed over ONLY when the ZWD is actually in `cols`
+                // — otherwise the ZWD loop must not write a row that does not exist.
+                if (zwd_in_cols) {
+                    zblk_of_sta[i]      = hblk;
+                    zblk_cols_of_sta[i] = cols;
+                }
             }
             for (size_t a = 0; a < R.pl_amb.size(); ++a) {
                 const PlAmb& pa = R.pl_amb[a];
@@ -3729,8 +3772,20 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (!std::isfinite(value_abs)) continue;
                 double var;
                 std::vector<CoupledShared> coupling;
+                // B9-in-block (network.carry_zwd_in_block): when this station's pl harvest
+                // above put the ZWD column in `cols` (and only then), the ZWD is harvested
+                // through the SAME cross-gather every ambiguity column used — one call,
+                // one solve — and its row is written at block index n = cols.size()−1.
+                // zblk is null on every other station-epoch and OFF ⇒ nullptr/nullptr,
+                // i.e. the exact pre-card call (byte-identical).
+                const std::shared_ptr<PlHarvestBlock> zblk =
+                    zwd_blk_on ? zblk_of_sta[i] : nullptr;
+                const std::vector<Eigen::Index>* zcross_cols =
+                    zblk ? &zblk_cols_of_sta[i] : nullptr;
+                Eigen::VectorXd zcross;
                 if (carry_cpl_cond) {
-                    auto hc = harvestCoupling(est_idx, R.pl_zwd.col, nullptr, nullptr);   // ZWD: no F3 block
+                    auto hc = harvestCoupling(est_idx, R.pl_zwd.col, zcross_cols,
+                                              zblk ? &zcross : nullptr);
                     var = hc.first; coupling = std::move(hc.second);
                 } else {
                     var = (vard.size() > 0) ? vard(0) : -1.0;
@@ -3812,6 +3867,21 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
                 zwd_carry[static_cast<int>(i)] =
                     LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
+                // B9-in-block: row n of the station's harvest block = the ZWD column's own
+                // n_c read at every carried column (its last entry equals `var`, the pure
+                // conditional).  The entry then points at the SAME PlHarvestBlock the
+                // ambiguity entries point at, so next epoch's inject pairs ZWD↔ambiguity by
+                // pointer equality exactly as it pairs ambiguity↔ambiguity — and with
+                // nothing stashed at a different harvest.  A ZWD whose harvest failed above
+                // never reaches here: its entry keeps blk = nullptr and every pair with it
+                // is zeroed + counted (pl_blk_zwd_missing_cross), which is the safe degrade.
+                if (zblk && zcross.size() == zblk->C.rows()) {
+                    const Eigen::Index zrow = zblk->C.rows() - 1;   // the appended column
+                    zblk->C.row(zrow) = zcross.transpose();
+                    auto& zent = zwd_carry[static_cast<int>(i)];
+                    zent.blk     = zblk;
+                    zent.blk_idx = static_cast<int>(zrow);
+                }
             }
             for (auto it = zwd_carry.begin(); it != zwd_carry.end();) {
                 if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) {

@@ -160,6 +160,16 @@ namespace GnssProcessor {
         bool lv1_seed_frame{};       ///< Card LV-1 (SPEC_level_information_budget): reframe per-LOS iono seeds into the field's frame at allocation; loader guarantees estimate_iono_sh.
         int lv1_min_sats{};          ///< Card LV-1: minimum raw seeds for the per-station median offset.
         double zwd_q{};
+        /// network.carry_zwd_in_block — B9-in-block: the carried ZWD column joins its
+        /// station's F3 whitened local block (harvest appends it to `cols` so `PlHarvestBlock::C`
+        /// is (n+1)², the entry stashes with the same `blk`/`blk_idx`, and PASS B pushes it as
+        /// one more `LocalBlockCol`) instead of folding as a diagonal coupling row OUTSIDE the
+        /// block.  A diagonal ZWD row asserts a station-COMMON direction that every carried
+        /// ambiguity row already asserts — the ~n_LOS over-count SPEC_amb_iono_split_overcount
+        /// §7 item 17 names, and the reason B9 was falsified on the quiet bed.  Exempt from the
+        /// F3 young-column age gate (a ZWD is not an arc).  Loader guarantees zwd_on AND
+        /// pl_local_block (it disables the knob otherwise).  OFF = byte-identical.
+        bool zwd_in_block{};
         bool zwd_seam_on{};    ///< network.zwd_seam_reseed: post-resume ZWD re-seed window (SPEC_synthetic_minimum_network §17 finding 3).  NOT fingerprinted (forward-only resume response policy).
         int  zwd_seam_epochs{};   ///< network.zwd_seam_reseed_epochs: seam-window horizon in emitted epochs.
         bool zwd_capture{};    ///< Snapshot-armed run (state_snapshot_path non-empty): record + harvest the per-station ZWD posterior every processed epoch so EVERY snapshot carries Z rows — read-only w.r.t. the solve (no inject; capture only).
@@ -2216,6 +2226,14 @@ namespace GnssProcessor {
         long long n_pl_blk_young_cols   = 0;             ///< F3 age gate: injectable columns kept OUT of their block (too young) and emitted per-column
         long long n_pl_blk_hist[5]      = {0, 0, 0, 0, 0}; ///< block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75
         long long n_pl_blk_max_dim      = 0;             ///< largest block dimension over the run
+        // B9-in-block (network.carry_zwd_in_block) — invariant #4/#7 telemetry.  A run with
+        // the knob armed and n_pl_blk_zwd_cols == 0 is UNWIRED, not clean; a large
+        // n_pl_blk_zwd_fallback_diag says most station-epochs silently degraded to the
+        // diagonal B9 row this card exists to replace.
+        long long n_pl_blk_zwd_cols     = 0;             ///< ZWD columns ADMITTED into a block build (station-epochs; a block that then failed to factorize still counts — n_pl_blk_zwd_fallback_diag says how many of those ended up on the diagonal row instead)
+        long long n_pl_blk_zwd_fallback_diag = 0;        ///< station-epochs whose ZWD fell back to the B9 DIAGONAL row (no block for the station this epoch, or the block's factorization failed)
+        long long n_pl_blk_zwd_missing_cross = 0;        ///< (ambiguity, ZWD) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / ZWD stashed without a block) — a subset of n_pl_blk_pair_missing
+        long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row IS the ZWD's whitened block row — the §7 item 4 interaction, MEASURED (the pool admits by |A_r(row, amb_col)| > 0.5 and a ZWD block row mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged by this card.
         long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (invariant #7's re-coupling edge, counted)
         long long n_pl_blk_refloat_fail = 0;             ///< … whose re-whiten was non-SPD: the block's rows were dropped for that re-solve (safe degrade — the refloated arcs re-float from data)
 

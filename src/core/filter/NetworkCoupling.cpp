@@ -365,6 +365,10 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             ++R.pl_blk_col_refused;
             continue;
         }
+        // B9-in-block: the ZWD column is counted only once it has SURVIVED the scalar
+        // screen, i.e. once it is really a row of this block — the caller cannot know
+        // that, and a column counted at push time would report a refused ZWD as carried.
+        if (c.is_zwd) ++R.pl_blk_zwd_cols;
         ing.push_back(std::move(g));
     }
     const Eigen::Index n = static_cast<Eigen::Index>(ing.size());
@@ -405,7 +409,16 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 v = li.blk->C(li.blk_idx, lj.blk_idx);          // n_{c_i}(c_j)
                 if (!std::isfinite(v)) v = li.blk->C(lj.blk_idx, li.blk_idx);   // n_{c_j}(c_i) — the transpose read
             }
-            if (!std::isfinite(v)) { ++R.pl_blk_pair_missing; continue; }
+            if (!std::isfinite(v)) {
+                ++R.pl_blk_pair_missing;
+                // B9-in-block: split the ZWD's own missing pairs out of the aggregate.
+                // A ZWD stashed WITHOUT a harvest block (its harvest threw, or the pl
+                // loop never built one for this station) makes EVERY pair with it miss —
+                // that is exactly the shape a "carried ZWD that is not really coupled"
+                // has, and it is invisible inside pl_blk_pair_missing.
+                if (ci.is_zwd || cj.is_zwd) ++R.pl_blk_zwd_missing_cross;
+                continue;
+            }
             if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);
             blk.Sigma(i, j) = v;
             blk.Sigma(j, i) = v;

@@ -2064,6 +2064,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // serially at the post-solve harvest).
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
     const bool   zwd_capture   = ctx.knobs.zwd_capture;
+    // B9-in-block live predicate (network.carry_zwd_in_block): the carried ZWD column
+    // joins the F3 whitened block instead of folding as a diagonal coupling row outside
+    // it.  Conjoined with pl_blk_on, so a station-epoch that takes the F1 / per-column
+    // route (F3 off, joint whitening on, coupling rows off) is never touched — there the
+    // ZWD keeps its existing B9 row.  The loader already refuses the arm without
+    // carry_zwd + phase_leveling_local_block; this is the LIVE half of the same gate.
+    const bool   zwd_blk_on    = ctx.knobs.zwd_in_block && pl_blk_on;
     const bool   iono_on       = ctx.knobs.iono_on;              // QUEUE 8b: slant-iono carry
     const bool   iono_scope_always = ctx.knobs.iono_scope_always; // QUEUE 8b: inject every epoch (vs re-leveling LOS only)
     const double iono_q        = ctx.knobs.iono_q;               // QUEUE 8b: iono carry RW process noise (m²/s)
@@ -3059,8 +3066,76 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             ++n_sta_carry;
                         R.pl_blk_marg_cols += std::max<long long>(
                             0, n_sta_carry - static_cast<long long>(pl_pend.size()));
+                        // B9-in-block (network.carry_zwd_in_block): the station's carried
+                        // ZWD as ONE MORE column of this same block.  Rationale: a diagonal
+                        // B9 row asserts the ZWD direction OUTSIDE the block, while every
+                        // ambiguity row inside it asserts that same station-COMMON direction
+                        // implicitly — the ~n_LOS over-count of SPEC_amb_iono_split_overcount
+                        // §7 item 17 ("block ALL carried local columns"), and the structural
+                        // reason the diagonal carry was falsified on the quiet bed.  Inside
+                        // the block the joint Σ carries the harvested (N_rr⁻¹) cross terms,
+                        // so the ZWD's overlap with the ambiguities is subtracted exactly.
+                        //
+                        // The predicates are the B9 injector's own, re-read here (NOT
+                        // duplicated behaviour: the diagonal route below is skipped for
+                        // exactly the station-epochs this pushes).  Three deliberate
+                        // asymmetries against an ambiguity column:
+                        //   * NO young-column age gate — a ZWD is not an arc, it has no
+                        //     code-level birth error to quarantine, and its state exists
+                        //     from the station's first epoch.
+                        //   * NO pl_finish_var tail — the var floor and the M2 VCE factor
+                        //     are keyed to the phase-leveling ambiguity family (α² is a
+                        //     per-SATELLITE lookup), so the block's ZWD diagonal is the
+                        //     SAME zvar_eff the B9 row would have used; vce_fac 1.0 leaves
+                        //     the cross terms unscaled.
+                        //   * It is recorded (R.pl_zwd / R.pl_zwd_present) here as well as
+                        //     in the B9 block below — the values are identical, and the
+                        //     harvest needs the record whichever route folded.
+                        bool zwd_pushed = false;
+                        if (zwd_blk_on) {
+                            const size_t ztidx_sz = st.sm->getTropoIndex();
+                            if (ztidx_sz != std::numeric_limits<size_t>::max()) {
+                                const int ztidx = static_cast<int>(ztidx_sz);
+                                if (ztidx >= 0 && ztidx < x_lin.size()
+                                    && std::isfinite(x_lin(ztidx))) {
+                                    const auto zhit = h2local.find(ztidx);
+                                    if (zhit != h2local.end()) {
+                                        const Eigen::Index zcol =
+                                            static_cast<Eigen::Index>(zhit->second);
+                                        R.pl_zwd_present = true;   // record for the post-solve stash
+                                        R.pl_zwd = PlZwd{zcol, x_lin(ztidx)};
+                                        const auto zit = zwd_carry.find(static_cast<int>(i));
+                                        if (zit != zwd_carry.end()) {
+                                            const double zgap = pl_now_s - zit->second.last_seen_s;
+                                            if (zgap <= pl_max_gap_s) {
+                                                const double zvar_eff =
+                                                    zit->second.var
+                                                    + zwd_q * std::max(0.0, zgap);
+                                                if (zvar_eff > 0.0) {
+                                                    bc.push_back(LocalBlockCol{
+                                                        zcol, x_lin(ztidx), &zit->second,
+                                                        zvar_eff, std::max(0.0, zgap),
+                                                        /*vce_fac=*/1.0, /*is_zwd=*/true});
+                                                    zwd_pushed = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
                         if (!blk_done) ++R.pl_blk_fallback;
+                        // B9-in-block: the ZWD folded through the block ⇒ the diagonal B9
+                        // row below must NOT also fire (that would be the double count this
+                        // card removes), and network_zwd.csv's `carried` flag stays truthful.
+                        // On a non-SPD block the flag stays false and the diagonal row runs,
+                        // counted as pl_blk_zwd_fallback_diag at that site — degrading to
+                        // exactly today's B9 behaviour, never to "no ZWD memory".
+                        if (zwd_pushed && blk_done) {
+                            R.pl_zwd_in_block = true;
+                            R.pl_zwd_injected = true;   // L7: a carry was actually folded
+                        }
                         // The young legs take the per-column route whether or not the block
                         // factorized (on a fallback the loop below re-emits EVERY pending
                         // column, young ones included, so emit them here only on success).
@@ -3133,7 +3208,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                 R.pl_zwd_present = true;   // record for the post-solve stash
                                 R.pl_zwd = PlZwd{zcol, x_lin(tropo_idx)};
                                 const auto zit = zwd_carry.find(static_cast<int>(i));
-                                if (zit != zwd_carry.end()) {
+                                // B9-in-block: this station-epoch's ZWD already folded as a
+                                // column of the F3 whitened block above — the diagonal row
+                                // here would be the SECOND assertion of the same direction
+                                // (the double count the card removes), so it is skipped.
+                                if (zit != zwd_carry.end() && !R.pl_zwd_in_block) {
                                     const double zgap = pl_now_s - zit->second.last_seen_s;
                                     if (zgap <= pl_max_gap_s) {
                                         const double zvar_eff =
@@ -3153,6 +3232,18 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                                     R.pl_zwd_injected = true;   // L7: a carry was actually folded
                                                 }
                                             }
+                                            // B9-in-block DEGRADE edge (invariant #4/#7): a
+                                            // diagonal ZWD row emitted while the block route
+                                            // is ARMED is a fallback — the station had no
+                                            // block this epoch (no carried ambiguities, or
+                                            // the carry is not warm for the ambiguity half),
+                                            // or the block's factorization failed after the
+                                            // ridge retry (n_pl_blk_fallback attributes
+                                            // which).  Behaviour degrades to exactly today's
+                                            // B9, never to "no ZWD memory" — but it is NOT
+                                            // the mechanism under test, so it is counted.
+                                            if (zwd_blk_on && R.pl_zwd_injected)
+                                                ++R.pl_blk_zwd_fallback_diag;
                                         }
                                     }
                                 }
@@ -3485,6 +3576,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             ctx.counters.n_pl_blk_col_refused  += Rc.pl_blk_col_refused;
             ctx.counters.n_pl_blk_fallback     += Rc.pl_blk_fallback;
             ctx.counters.n_pl_blk_young_cols   += Rc.pl_blk_young_cols;
+            // B9-in-block: same discipline (counted in the parallel produce, reduced here).
+            ctx.counters.n_pl_blk_zwd_cols          += Rc.pl_blk_zwd_cols;
+            ctx.counters.n_pl_blk_zwd_fallback_diag += Rc.pl_blk_zwd_fallback_diag;
+            ctx.counters.n_pl_blk_zwd_missing_cross += Rc.pl_blk_zwd_missing_cross;
             for (int b = 0; b < 5; ++b)
                 ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
             if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)

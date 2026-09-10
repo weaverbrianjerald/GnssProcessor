@@ -3236,6 +3236,12 @@ namespace GnssProcessor {
         network_zwd_carry_q_ =
             jval<double>(json, "network.zwd_carry_q", "zwd_carry_q",
                          network_config_.process_noise.get(NetworkQClass::StationZwd));
+        // B9-in-block: fold that same carried ZWD as one more column of the station's F3
+        // whitened block instead of as a diagonal row outside it (the §7 item 17 "block ALL
+        // carried local columns" rule — a diagonal ZWD row double-counts the station-common
+        // direction the ambiguity rows already assert).  Validated below.
+        network_carry_zwd_in_block_ =
+            jval<bool>(json, "network.carry_zwd_in_block", "carry_zwd_in_block", false);
         // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17, carry_zwd
         // re-base arms finding 3): the resume-path-only successor to the continuous
         // B9 carry.  Injection window + horizon; the WRITE side (Z rows in every
@@ -8693,6 +8699,53 @@ namespace GnssProcessor {
                 log->warn("Network: network.carry_zwd is on but network.phase_leveling is off — the "
                           "ZWD carry reuses the phase-leveling warmup gate, so it is INERT without "
                           "phase-leveling.  Enable network.phase_leveling too.");
+        }
+        // B9-in-block interlocks.  Armed-and-inert is forbidden (invariant #4: a run-end
+        // "0 ZWD columns" must mean the mechanism found nothing, never that the knob could
+        // not act), so a miswired arm is DISABLED here rather than left silently dead.
+        if (network_carry_zwd_in_block_) {
+            if (!network_carry_zwd_) {
+                log->warn("Network: network.carry_zwd_in_block is on but network.carry_zwd is OFF — "
+                          "there is no carried ZWD to put in the block (the sub-knob only changes "
+                          "the VEHICLE the B9 carry folds through, it never creates one).  "
+                          "DISABLING carry_zwd_in_block; arm network.carry_zwd too.");
+                network_carry_zwd_in_block_ = false;
+            } else if (!network_phase_leveling_local_block_) {
+                log->warn("Network: network.carry_zwd_in_block is on but "
+                          "network.phase_leveling_local_block (F3) is OFF — there is no station "
+                          "block to put the ZWD column into, so the knob could only ever fall back "
+                          "to the diagonal B9 row it exists to replace.  DISABLING "
+                          "carry_zwd_in_block; arm network.phase_leveling_local_block too.");
+                network_carry_zwd_in_block_ = false;
+            } else if (!network_phase_leveling_ || network_carry_invariant_
+                       || !network_carry_conditional_coupling_
+                       || network_carry_coupling_joint_whiten_) {
+                // F3 is ARMED but structurally cannot build a block on this posture (the
+                // guard above already warned about F3 itself).  Riding an inert vehicle is
+                // the same armed-and-inert failure, so this dies with it rather than
+                // reporting 0 columns from a knob that never had a block to join.
+                log->warn("Network: network.carry_zwd_in_block is on and "
+                          "network.phase_leveling_local_block is armed, but F3 cannot build a "
+                          "block on this lineage (phase_leveling={}, carry_invariant={}, "
+                          "carry_conditional_coupling={}, carry_coupling_joint_whiten={}) — the "
+                          "ZWD column would have no block to join.  DISABLING "
+                          "carry_zwd_in_block (see the phase_leveling_local_block INERT warning "
+                          "above for the fix).",
+                          network_phase_leveling_, network_carry_invariant_,
+                          network_carry_conditional_coupling_,
+                          network_carry_coupling_joint_whiten_);
+                network_carry_zwd_in_block_ = false;
+            } else {
+                log->info("Network producer (ZWD carry IN BLOCK): the carried ZWD column joins the "
+                          "station's F3 whitened local block (harvested (N_rr^-1) cross terms "
+                          "against every carried ambiguity column, one Cholesky for the whole "
+                          "station) instead of folding as a diagonal coupling row outside it — the "
+                          "station-common ZWD direction is then asserted ONCE per epoch, not once "
+                          "per carried row.  Exempt from the F3 young-column age gate ({} ep): a "
+                          "ZWD is not an arc.  A non-SPD block degrades this station-epoch to the "
+                          "B9 diagonal row (counted).  RW q {:.3e} m²/s.",
+                          network_phase_leveling_local_block_min_age_ep_, network_zwd_carry_q_);
+            }
         }
         if (network_zwd_seam_reseed_) {
             if (network_zwd_seam_reseed_epochs_ <= 0) {

@@ -88,6 +88,13 @@ struct LocalBlockCol {
     double            var_eff;  ///< FINISHED per-column prior variance: var + q·gap, floored, ×VCE factor (m²)
     double            gap;      ///< clamped inter-epoch gap (s) — the Card-1d κ time update's Δt
     double            vce_fac;  ///< the M2 v2 VCE factor α² already in @c var_eff (1 when off): the cross terms scale by √(α_i²·α_j²)
+    /// B9-in-block (@c network.carry_zwd_in_block): this entry is the station's carried
+    /// TROPOSPHERIC ZWD column, not an ambiguity.  Algebraically it is just another
+    /// carried local column — the builder treats it identically — so this flag exists
+    /// ONLY to split its telemetry out (@c pl_blk_zwd_cols, @c pl_blk_zwd_missing_cross)
+    /// from the ambiguity population.  Default false: every pre-existing 6-element
+    /// brace-init keeps its exact meaning.
+    bool              is_zwd{false};
 };
 
 /// Card 1d: one buffered PRESENT-column term of a coupling row under the

@@ -2207,6 +2207,39 @@ namespace GnssProcessor {
         bool networkCarryZwd() const { return network_carry_zwd_; }
 
         /**
+         * @brief Carry the station ZWD column INSIDE the F3 jointly-whitened local block
+         *        rather than as a separate diagonal row
+         *        (@c network.carry_zwd_in_block, sub-knob of @ref networkCarryZwd).
+         *
+         * @ref networkCarryZwd (B9) folds the carried ZWD as a *diagonal* coupling row
+         * OUTSIDE the station's F3 block, so the ZWD direction is asserted TWICE per
+         * epoch — once by that row and once, implicitly, by every carried ambiguity row
+         * of the same station (a station-common direction the diagonal carry over-counts
+         * ~n_LOS×; SPEC_amb_iono_split_overcount §7 item 17, "block ALL carried local
+         * columns").  That double count is why B9 was FALSIFIED on the quiet 60-sta
+         * truth bed (consumer 3D rms 0.204 → 0.723 m).
+         *
+         * When on, the ZWD column joins the station's harvest block: its
+         * @f$(N_{rr}^{-1})_{c\,c_j}@f$ cross terms against every carried ambiguity column
+         * are gathered by the SAME per-column solve at harvest (row @c n of
+         * @c PlHarvestBlock::C), the entry is stashed with @c blk / @c blk_idx exactly
+         * like an ambiguity, and at inject it is pushed as one more @c LocalBlockCol so
+         * the whole station folds through ONE Cholesky.  The prior is then EXACT along
+         * every local-local direction including the station-common ones, which is what
+         * makes carrying the ZWD legitimate at all.
+         *
+         * Interlocks (loader-enforced, WARN + disable): requires @ref networkCarryZwd
+         * AND @ref networkPhaseLevelingLocalBlock — armed-and-inert is forbidden.  The
+         * ZWD column is deliberately NOT subject to the F3 young-column age gate
+         * (@ref networkPhaseLevelingLocalBlockMinAgeEp): a ZWD is not an arc and has no
+         * code-level birth error to quarantine.  When the block does not factorize the
+         * ZWD degrades to the existing B9 diagonal row (counted,
+         * @c pl_blk_zwd_fallback_diag).  Default false = byte-identical (the harvest
+         * @c cols set, and therefore @c C's dimension, is unchanged).
+         */
+        bool networkCarryZwdInBlock() const { return network_carry_zwd_in_block_; }
+
+        /**
          * @brief ZWD carry random-walk process noise (m²/s) inflating the carried ZWD
          *        variance over the inter-epoch gap (@c network.zwd_carry_q, B9).
          *
@@ -6752,6 +6785,7 @@ namespace GnssProcessor {
         bool   network_carry_coupling_reinit_sources_{false};  ///< Card 1g: key the coupling reinit history (kind,sat,signal) with an empty-signal sat-wide wildcard, feed it from the phase-anchor / eq34 / datum-slip re-reference sets, and honour it independently of carry_coupling_time_update — so a RE-REALIZED column takes the departed route instead of folding a retired-frame ŝ_prev at full weight; REQUIRES carry_conditional_coupling. OFF = byte-identical.
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).  ⚠ FALSIFIED for continuous runs of the standard posture (2026-09-01, consumer 0.204 → 0.723 m rms — information double-count against the station filter's own persistence); its seam value is delivered by network.zwd_seam_reseed instead.
+        bool   network_carry_zwd_in_block_{false};         ///< B9-in-block: carry the station ZWD column INSIDE the F3 jointly-whitened local block (harvested (N_rr⁻¹) cross terms against every carried ambiguity column) instead of as a separate diagonal coupling row — makes the ZWD carry EXACT along the station-common directions the diagonal row over-counts (SPEC_amb_iono_split_overcount §7 item 17).  Requires network.carry_zwd AND network.phase_leveling_local_block (loader WARNs + disables otherwise).  OFF = byte-identical.
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Used by network.carry_zwd and by the network.zwd_seam_reseed post-resume window.
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.
