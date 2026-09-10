@@ -1989,6 +1989,23 @@ and the arm is not run.  Predictions if it injects: ZWD per-station settled span
 0 (the tropo–iono trade loses its free member); DD fractions NOT predicted to leave the null; post-fit phase
 σ̂₀ unchanged (~1.6 cm).  Falsifier: ZWD pinned but the DD wander and the co-motion unchanged ⇒ the ZWD was
 a passenger, not the free member, and the weakly-determined direction has another member.
+**RESULT (19:00, `runs/fldf3_ci_zwd`, 12 h, exit 0):** the smoke gate PASSED — the B9 carry injects on the
+shipped vehicle (`carried` = 1 on 2,012 of 2,439 smoke rows; the peer's "inert" reading was wrong, as the
+golden's `phase_leveling: true` predicted) — and the 12 h arm DIVERGED, a third outcome neither branch
+named: 1,322 solved of 1,440 with **118 S-basis withholds on the SHIPPED vehicle** (the control had 0),
+ZWD per-station span **54 m** (control 21 — pinning made the sink worse, σ 0.057), prires worst |t| 2.7e7 on
+the ZWD prior itself, DD wander e1 MAD **39 cyc** (control 10), DD-iono MAD 3.8 m (control 1.25), and an
+in-process consumer that left the building (h4 220 m).  The joint fit still reads the band-1 equation
+(a +1.00, t −0.99) — the traces stay faithful while the solution goes off the rails.  Reading: the ZWD IS a
+member of the weakly-determined direction — constraining it with a diagonal random-walk prior does not pin
+the direction, it moves the tension onto the other members and closes the declared null direction (the same
+gate the leveling arms trip); and a diagonal ZWD carry is §3's over-count in its purest form (a station-common
+direction asserted n_LOS-fold per epoch, σ collapsing onto a metre-class first estimate — the sim's "ZWD
+formal 0.005 m vs 0.35 m actual" of §6.8.4, on real data).  Standing invariant #1 applies as the peer warned:
+a stiff time-linked ZWD with no wired response.  **`network.carry_zwd` on the shipped field vehicle: KEEP OFF
+(12 h: divergence).**  The fourth member is real; the fix for it is not a carry, it is whatever makes the
+(I, N, ZWD) direction observable per epoch (F3-class whitening of the station block INCLUDING the ZWD column,
+or an honest external ZTD) — a design card, not a knob.
 
 **Arm 2 `fldf3_on` — landed 18:25 (exit 0; 956 solved epochs of 1,440: 223 `gate_withheld` by the same S-basis
 null-space gate from the SAME onset epoch 101, plus 261 gate-ok-but-unsolved; withholds persist all day, h4–h11
