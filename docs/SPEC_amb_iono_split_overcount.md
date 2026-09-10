@@ -1774,7 +1774,21 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    deviation reads slope **+0.001** (p10 −0.055, p90 +0.111), corr +0.075: on a healthy arm the iono state
    tracks the real ionosphere and the ambiguity does not move with it.  So the field's iono-state wander is
    physical-scale and not itself the anomaly; the anomaly is the ambiguities' cycle-common co-motion with it.
-   (A/B split on the sim arm: pending.)
+   **How this is argued (peer review, 18:10, before the sim A/B split was read):** (i) A ≈ e₁ by algebra —
+   with e₁ = A + B and e₂ = A + 1.283·B, B = −3.53·WL, so with WL MAD 0.57 the B channel holds only ~2 cyc
+   against e₁'s 10.4 and A's +1.68 restates the raw +1.72, not a second measurement.  (ii) The load-bearing
+   statement is a MAGNITUDE one, convention-free: an ambiguity absorbing the iono-state wander does so
+   iono-shaped by construction, i.e. entirely in B, so a 6.6-cycle DD-iono wander would put ~6.6 cyc of MAD into
+   B; B carries ~2 — 3.3× too small — and its regression on the iono deviation is +0.09.  (iii) B is
+   noise-amplified (a 0.999-correlated difference × 3.53), so "B ≈ 0" needs a power check.  ⚠ The state-total
+   regression is NOT that check: on the sim F3 arm the ambiguity error is iono-shaped (cross-band 1.262) yet e₁
+   does not follow the iono STATE's total (slope +0.001), because the state total is dominated by the real
+   ionosphere the state tracks and the absorbed quantity is the state's ERROR — so the pending sim A/B split is
+   pre-registered to read A ≈ 0 AND B ≈ 0 on the state total, and that is expected, not a failure of B.  The
+   power check that exists is the cross-band STRUCTURE itself: on the sim F3 arm the error is B-dominant
+   (§13.8.6: med|B| 0.206 vs med|A| 0.108, ratio ≈ 2) — the B channel demonstrably carries an iono-shaped error
+   when one exists — while the field control is A-dominant (10.4 vs ~2, ratio ≈ 0.2).  A truth-iono join
+   (regress B on the state ERROR, sim only) would make the positive control explicit; not run here.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
