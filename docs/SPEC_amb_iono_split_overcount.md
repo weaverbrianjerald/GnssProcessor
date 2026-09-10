@@ -1751,6 +1751,20 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    direction; recorded as a measurement, mechanism still not guessed.  (Real ionospheric change on DOY-129 is
    metres per hour at low elevation, so the iono states' own wander is not by itself anomalous; the coherent
    cycle-common ambiguity motion riding on it is the anomaly.)
+   Sharper form (peer review): if the ambiguities were absorbing an iono-state error δI, the cross-band ratio
+   would be δN₂/δN₁ = (f₁²/f₂²)(λ₁/λ₂) = f₁/f₂ = 1.283 — convention-free, identical to the iono fingerprint
+   — and 1.004 was measured; so the +0.93 coherence is NOT the ambiguity eating an iono-state error.  The +1.72
+   is regressed on the raw per-band e₁, which the wind-up card warns DILUTES a cycle-domain quantity (§13.8.6:
+   regress the extracted A).  **Pre-registered before running (18:00):** decompose each chord-epoch exactly
+   into e_i = A + B·(λ_i/λ₁) (two bands ⇒ B = (e₂−e₁)/0.2833 = −WL/0.2833, A = e₁ − B) and regress the arc
+   deviations of A and of B separately on the DD-iono deviation (L1 cycles).  Prediction: B carries whatever
+   iono relation exists (|slope| of order 1, the sign fixing the convention) and A does not (slope ≈ 0); an A
+   that still regresses near +1 on the iono deviation is the finding, since a cycle-common channel tracking
+   the iono states 1:1 is nothing the measurement model can produce.  Same test on the sim F3 arm as the
+   semantic control.  ⚠ Wind-up is the one physical term that is band-common in cycles (ΔWL = 0, MW-blind) and
+   it is ALREADY FALSIFIED as the band-common DD error at 0.08 % of the variance, 144× too small
+   (SPEC_synthetic §13.8.6, 2026-09-08) — do not re-derive it; the open question is what else is
+   cycle-common at a TEN-cycle amplitude, two orders above wind-up.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
