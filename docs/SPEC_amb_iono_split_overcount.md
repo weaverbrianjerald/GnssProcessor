@@ -1707,10 +1707,18 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    slope of the deviations (1.283 iono-driven, 0.779 range-common, 1.000 cycle-common), and a REF-FREE pass
    (group median over satellites of the arc-relative deviation removed) quoted beside a size-matched
    iid-Gaussian null of the same subtraction (the estimator shrinks the statistic by itself — the wrapped
-   grade's trap 1 transposed).  It cannot see a constant bias (a frozen wrong level is perfectly stable); with
-   the fraction test it splits a multi-cycle DD error into BIAS vs WANDER.  Semantics on the sim (v1 form): the
-   F3 24 h arm reads MAD p50 0.174 cyc L1C, the diagonal-carry sticky arm 0.023 (frozen-but-biased: its DD
-   errors are 2–20 cycles, §6.13.2) — stable levels read stable, as required.
+   grade's trap 1 transposed).  ⚠ STABILITY IS NOT QUALITY: it cannot see a constant bias (a frozen wrong level
+   is perfectly stable — the diagonal-carry sim arm is the MOST stable thing measured here and carries 1.3–2.7 cyc
+   of real ref-free error), so an arc-stability number is never quoted alone; every one is paired with an
+   accuracy readout (truth-graded DD on the sim; the wrapped fraction and the σ̂₀ families on the field), and
+   arms are never ranked by stability.  With the fraction test it splits a multi-cycle DD error into BIAS vs
+   WANDER.  Semantics on the sim: the F3 24 h arm reads raw MAD p50 0.174 cyc L1C / 0.222 L2W / 0.054 WL
+   (ref-free 0.071 / 0.092 / 0.024) with cross-band slope 1.271 — its residual wander is IONO-SHAPED, the honest
+   per-LOS accumulation floor; the diagonal-carry sticky arm 0.020 / 0.018 / 0.020 (frozen-but-biased: its DD
+   errors are 2–20 cycles, §6.13.2), slope uninformative (noise, corr 0.39).  Validation criterion (amended
+   17:55, before any field arm was graded — an absolute "≪ 0.1" gate first stated in review was mis-specified,
+   since the F3 arm's honest iono-shaped wander is itself 0.1–0.2 cyc): the instrument must show SEPARATION,
+   and it does — the sim F3 arm sits ~60× below the field control and the frozen diagonal arm ~8× below F3.
    **Field control (`runs/fld63_stk_on`, L1C+L1W / L2W, 361 chords, 372 arcs):** raw MAD p50 e1 **10.4** / e2
    **10.4** / wl **0.57** cyc (p90 36 / 36 / 1.6), drift p50 25 / 26 / 0.8 cyc per ~65-min arc, 100 % of
    per-band arcs with MAD > 1 cyc; cross-band slope p50 **1.004** (p10 0.962, p90 1.048; corr 0.999); ref-free
