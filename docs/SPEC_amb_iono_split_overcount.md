@@ -2030,6 +2030,24 @@ help the field" to "make the leveling vehicle converge on the field (datum decla
 pre-registered probes `_fldf3_pl_pdp3h` (sim golden's phase-datum family) and `_fldf3_pl_nosbc3h` (SBC off) and
 the shipped-vehicle arm `_fldf3_ci_zwd` (pin the fourth member) are queued behind this ladder.
 
+**Two record notes (peer review, 18:45).**  (1) *The tension in the KEEP OFF.*  The F3 arm gave the BEST
+consumer wire of the three (float cold consumer 2.9 m vs the shipped control's 6.6 m) and the row still says
+KEEP OFF: the verdict is decided on PRODUCER-INTERNAL convergence — 223 withheld epochs, a 55 m ZWD sink,
+prires |t| 1.5e8, a 20 % T3 rate — because a producer that withholds a sixth of its epochs is not shippable
+whatever its emitted epochs do for a consumer; the consumer replay moves the other way and both facts are
+real.  (2) *"Every field wire metre-class" retires the DD-uniformity question as an independent mystery.*
+6.6 m of float-consumer rms is ~35 L1 cycles, and the producer's own DD arc wander is ~10 cycles (1.9 m) per
+hour; DD errors at that scale wrap to uniform NECESSARILY, so the at-null L1C/L2W/WL12 fractions on every arm
+are what a wire of that quality must produce, not a separate fact about integer content.  Three numbers, one
+story: wire 6.6 m, DD wander 10 cyc, fractions at the null.  It also validates the on-the-fly WL instrument:
+its truth-free lower bound (|e₁| ≳ 3.5 cyc from the WL null) sits below the ~10–35 the other instruments
+read — consistent and conservative, as a lower bound should be.  **Scoping consequence for whatever follows
+item 21:** the integer question cannot be answered on this bed while the wire is metre-class — no refinement
+of a wrapped-fraction instrument reaches it, the errors are two orders above the regime where the statistic
+carries information — so getting the DOY-129 field wire to sub-decimetre (the (I, N, ZWD) trade and the
+leveling-vehicle datum are the two named levers) is UPSTREAM of every integer claim, and outranks the F3
+question that started this section.
+
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
 (harvest-stamp mismatch), 0 refused, 0 factorization fallbacks, block-dim histogram <10: 136 / 10–24: 643
