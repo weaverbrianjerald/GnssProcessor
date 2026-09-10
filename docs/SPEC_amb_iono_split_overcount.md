@@ -1728,8 +1728,12 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    while the WL DD is ~20× stiffer; about a third of it is the reference satellite's own wander, the rest
    per-satellite.  ⚠ The mechanism is NOT guessed into the record (candidates, unranked: a cycle-domain model
    term; an estimator constraint holding N₁−N₂ stiff on this posture, e.g. the armed EWL/UWL lanes; a trace
-   artifact).  The discriminators are already in the ladder: the leveling arms carry no lanes and no invariant
-   carry, and the sim arms' v3 slopes say what the estimator does without field effects.
+   artifact).  One structural DEDUCTION from the slope alone (not a mechanism claim): a wander that is 1:1 in
+   CYCLES across two bands cannot originate in a metric quantity — range-like and iono errors each impose a
+   wavelength ratio (0.779 / 1.283) and neither is measured — so it lives in a channel COUNTED IN CYCLES, i.e.
+   the ambiguity/level side of the estimator or a cycle-domain model term.  The discriminators are already in
+   the ladder: the leveling arms carry no lanes and no invariant carry, and the sim arms' slopes say what the
+   estimator does without field effects (F3 1.271 = iono-shaped; diagonal carry: noise).
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
