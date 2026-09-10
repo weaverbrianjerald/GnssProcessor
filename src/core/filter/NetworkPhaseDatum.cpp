@@ -7,6 +7,7 @@
  * (capture→param map in the INC-8 cut spec).
  */
 
+#include "filter/NetworkInject.hpp"
 #include "filter/NetworkPhaseDatum.hpp"
 
 #include "filter/StateKeySchema.hpp"    // StateKeys::parseSatPhaseBiasKey
@@ -246,7 +247,8 @@ void networkElectPhaseAnchors(
         std::vector<AnchorHandoverEvent>* handovers_out,
         double max_var,
         std::set<std::pair<std::string, std::string>>* reref_out,
-        double max_var_ratio) {
+        double max_var_ratio,
+        const NetworkInjectState* inject) {
     const auto& usable_keys = cnd.usable_keys;
     const auto& cand_set    = cnd.cand_set;
     const auto& union_keys  = cnd.union_keys;
@@ -299,13 +301,27 @@ void networkElectPhaseAnchors(
             shared_phase_keys.insert(pbkey);
             continue;
         }
+        // EVENT HARNESS: a staged anchor_handover retires this family's incumbent
+        // for THIS epoch only.  It is expressed as a candidacy ban rather than a
+        // direct assignment so the successor is chosen by the production rules
+        // (coverage rank, hygiene eligibility, cold fallback) — the harness forces
+        // the EVENT, never the outcome.
+        const InjectAnchorDirective* dir = inject ? inject->anchorFor(amb) : nullptr;
+        std::string banned;
+        if (dir) {
+            const auto bit = anchor_incumbent.find(amb);
+            if (bit != anchor_incumbent.end()) banned = bit->second;
+        }
+        auto banned_sta = [&](size_t i) {
+            return !banned.empty() && stations[i].name == banned;
+        };
         size_t anchor = static_cast<size_t>(-1);
         if (sticky) {
             auto it = anchor_incumbent.find(amb);
             if (it != anchor_incumbent.end())
                 for (size_t i = 0; i < stations.size(); ++i)
                     if (present[i] && stations[i].name == it->second
-                        && usable_keys[i].count(amb)) { anchor = i; break; }
+                        && usable_keys[i].count(amb) && !banned_sta(i)) { anchor = i; break; }
         }
         // INC-1: on a REATTACH prefer, in the existing coverage rank order, a
         // candidate whose arc has actually converged; only if none has does the
@@ -316,13 +332,14 @@ void networkElectPhaseAnchors(
             auto cit = cand.find(c);
             if (cit != cand.end()) {
                 for (size_t i : cit->second)
-                    if (usable_keys[i].count(amb) && hyg.eligibleHost(i, amb)) {
+                    if (usable_keys[i].count(amb) && hyg.eligibleHost(i, amb)
+                        && !banned_sta(i)) {
                         anchor = i;
                         break;
                     }
                 if (anchor == static_cast<size_t>(-1))
                     for (size_t i : cit->second)
-                        if (usable_keys[i].count(amb)) {
+                        if (usable_keys[i].count(amb) && !banned_sta(i)) {
                             anchor = i;
                             ++tally.cold_fallback_pins;
                             break;
@@ -390,7 +407,8 @@ void networkElectPhaseAnchors(
                         && std::isfinite(hit->second.var_first)
                         && hit->second.var <= max_var_ratio * hit->second.var_first);
             const bool usable =
-                    hit != handover->value_abs.end()
+                    !(dir && dir->cold)          // EVENT HARNESS: forced COLD handover
+                    && hit != handover->value_abs.end()
                     && std::isfinite(hit->second.value)
                     && hit->second.var > 0.0
                     && std::isfinite(hit->second.var)
@@ -424,6 +442,12 @@ void networkElectPhaseAnchors(
                 else if (hit != handover->value_abs.end() && ratio_on && !ratio_ok)
                     ++tally.handover_refused_ratio;
             }
+        }
+        if (dir) {
+            ++dir->n_families;
+            if (dir->cold) ++dir->n_forced_cold;
+            if (!banned.empty()) dir->retired.push_back(banned);
+            dir->elected.push_back(stations[anchor].name);
         }
         stations[anchor].pinned_amb_targets[amb] = target;
         if (is_handover && handovers_out) {

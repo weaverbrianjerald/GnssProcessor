@@ -718,7 +718,29 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // Execute the attribution-driven refloat (surgical: whole sat / whole station /
         // single arc, per the decomposition).  Erasing local_carry + pending-reseed is
         // the same one-shot refloat the consensus path uses.
-        if (attrib_act && (!bad_sats.empty() || !bad_stations.empty() || !bad_arcs.empty())) {
+        // EVENT HARNESS: a staged arc_erase runs THE T4 path — it is appended to
+        // bad_arcs so the injected erase and a real attribution execute the same
+        // code (carry erase + iono-carry erase + pending-reseed + C3c queue), and
+        // is marked as injected only in its event row.  It also OPENS the block on
+        // an epoch whose σ̂₀ never tripped: that is the point of the harness.
+        bool inject_arc_act = false;
+        if (ctx.inject.armed && !ctx.inject.arc_erase_now.empty()) {
+            for (const auto& [sta_name, sat] : ctx.inject.arc_erase_now)
+                for (size_t i = 0; i < stations.size(); ++i)
+                    if (stations[i].name == sta_name && present[i]
+                        && est_index_of[i] >= 0
+                        && (phase_datum_prioritized || !stations[i].is_pivot)) {
+                        bad_arcs.emplace_back(static_cast<int>(i), sat);
+                        inject_arc_act = true;
+                    }
+            if (!inject_arc_act)
+                log->error("Network (fault inject): TOW {:.1f} arc_erase found no "
+                           "eligible (station, satellite) — the station is absent, "
+                           "un-indexed, or the legacy pivot.  The event will be "
+                           "reported as NEVER FIRED at run-end.", se.time.tow);
+        }
+        if ((attrib_act || inject_arc_act)
+            && (!bad_sats.empty() || !bad_stations.empty() || !bad_arcs.empty())) {
             const bool retap_on =
                 config_.networkCycleSlipRelevelRetapStatistical();
             const double retap_var = config_.networkCycleSlipRelevelRetapVarM2();
@@ -864,6 +886,26 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             //  disabled to avoid the regional mis-attribution mass-refloat.)
             for (const auto& [sta, sat] : bad_arcs)
                 n_ref += refloat_sat_at(sta, sat, /*statistical_arc=*/true);
+            if (inject_arc_act) {
+                // The injected pairs are the TAIL of bad_arcs (appended above).
+                const std::size_t n_inj = ctx.inject.arc_erase_now.size();
+                for (const auto& [sta_name, sat] : ctx.inject.arc_erase_now)
+                    traces.emitEvent(se.time, "INJECT", "arc_erase", sat, sta_name,
+                                     std::nullopt, std::nullopt, "injected",
+                                     fmt::format("t4_path;sigma0={:.3f};chords={}",
+                                                 sigma0, n_ref));
+                ctx.inject.n_arc_erase_acted += n_ref;
+                for (std::size_t k = 0; k < ctx.inject.events.size(); ++k)
+                    if (ctx.inject.events[k].kind == "arc_erase"
+                        && !ctx.inject.onset_logged[k]) {
+                        ++ctx.inject.n_applied[k];
+                        ctx.inject.onset_logged[k] = true;
+                        ++ctx.inject.fired_by_kind["arc_erase"];
+                    }
+                log->warn("Network (fault inject): TOW {:.1f} injected T4 erase on {} "
+                          "arc(s) refloated {} carried chord(s) through the ATTRIBUTION "
+                          "path (sigma0={:.3f}).", se.time.tow, n_inj, n_ref, sigma0);
+            }
             attrib_acted = true;
             if (raim_ci_on) raim_ci_tallies.arcs_flagged += static_cast<long long>(bad_arcs.size());
 

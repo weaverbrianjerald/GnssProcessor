@@ -1073,8 +1073,54 @@ namespace GnssProcessor {
         double log_interval_s{ 30.0 };
     };
 
+    /**
+     * @brief One scripted producer-side fault, from @c network.inject.events[].
+     *
+     * The EVENT HARNESS (docs/SPEC_event_harness.md): converge once into a state
+     * snapshot, then resume for a few tens of epochs with exactly ONE of these
+     * armed, so a single event's response can be read against a null leg in
+     * minutes instead of a day-long run.  Fields not used by a @c kind are
+     * ignored (and rejected at load if they are the REQUIRED field of another
+     * kind, so a typo cannot silently arm a different event).
+     *
+     * Every event is a deliberate corruption of the producer's own input or of a
+     * decision it would otherwise make on the data.  Nothing here is a modelling
+     * option: with @c network.inject absent (the default) not one branch of the
+     * seam is reachable and the run is byte-identical.
+     */
+    struct NetworkInjectEvent {
+        /// @c slip | @c outage | @c anchor_handover | @c arc_erase | @c sat_clock_step.
+        std::string kind;
+        /// GPS seconds-of-week at which the event STARTS.  The run's week is implied
+        /// (a leg never spans a rollover); matched with a +/-0.25 s half-epoch guard.
+        double      tow{ -1.0 };
+        std::string station;        ///< Station name (slip, outage, arc_erase).
+        std::string sat;            ///< Satellite id, e.g. "G05" (every kind but a station-wide one).
+        /// RINEX-3 phase code, e.g. "L1C" (slip); "all" or a code (anchor_handover).
+        std::string signal;
+        double      delta_cycles{ 0.0 };  ///< slip: cycles added to the phase observable.
+        bool        flag_lli{ false };    ///< slip: also raise LLI bit 0x1 on the onset epoch.
+        double      duration_s{ 0.0 };    ///< outage: window length; the return is a natural re-admission.
+        std::string mode;                 ///< anchor_handover: "cold" | "continuous".
+        double      step_m{ 0.0 };        ///< sat_clock_step: metres added to the a-priori satellite clock.
+    };
+
+    /**
+     * @brief @c network.inject — the producer-side fault injector (default OFF).
+     *
+     * @c enable defaults to true when an @c events array is present, so the
+     * common case is one key.  An ARMED event that never fires is a HARD run-end
+     * error (the simulator's scripted-schedule rule): an exam fixture must never
+     * silently not exist.
+     */
+    struct NetworkInjectConfig {
+        bool enable{ false };                    ///< Master switch; false => the seam is unreachable.
+        std::vector<NetworkInjectEvent> events;  ///< Scripted events (cap 64 — paste-accident guard).
+    };
+
     struct NetworkConfig {
         std::vector<StationConfig> stations;  ///< Peer stations (>=2); each needs a known ECEF (held fixed).
+        NetworkInjectConfig inject;           ///< EVENT HARNESS fault injector (network.inject.*; absent => OFF => byte-identical; docs/SPEC_event_harness.md).
         std::string clock_datum_station;      ///< Pivot receiver whose clock defines network time ("" => first station).
         std::string clock_datum_satellite;    ///< Optional reference satellite pinned for the clock gauge ("" => auto: highest-elevation tracked, per constellation).
         double epoch_sync_tolerance_s{ 0.01 };///< Max time-tag difference when matching epochs across stations.

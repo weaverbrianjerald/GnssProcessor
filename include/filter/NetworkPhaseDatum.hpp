@@ -49,6 +49,9 @@
 
 namespace GnssProcessor {
 
+    struct NetworkInjectState;   // filter/NetworkInject.hpp — the EVENT HARNESS directive set
+
+
 class GnssConfig;
 struct PppObservation;
 
@@ -253,6 +256,14 @@ void networkElectEnsembleDatum(
  *                          nothing is populated and nothing downstream fires.
  *                          Unlike @p handovers_out this is NOT purely
  *                          observational — its consumers change which priors fold.
+ * @param inject        EVENT HARNESS directive set (filter/NetworkInject.hpp), or
+ *                      @c nullptr — which is the normal path AND every unarmed
+ *                      run.  When a staged @c anchor_handover covers a family,
+ *                      the incumbent is excluded from candidacy for THIS epoch
+ *                      only (forcing a successor), and in @c cold mode the
+ *                      continuous-handover branch is refused so the family takes
+ *                      the honest re-realize + re-reference path.  The directive
+ *                      records which station it retired and which was elected.
  */
 void networkElectPhaseAnchors(
         bool sticky,
@@ -269,7 +280,8 @@ void networkElectPhaseAnchors(
         std::vector<AnchorHandoverEvent>* handovers_out = nullptr,
         double max_var = 0.0,
         std::set<std::pair<std::string, std::string>>* reref_out = nullptr,
-        double max_var_ratio = 0.0);
+        double max_var_ratio = 0.0,
+        const NetworkInjectState* inject = nullptr);
 
 /**
  * @brief QUEUE item 1(d): erase the phase-leveling local ambiguity carries of

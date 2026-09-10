@@ -42,6 +42,7 @@
 #include "slip/NetworkSlipOracle.hpp"  // NetworkSlipOracle (sim-only oracle slip response)
 #include "filter/NetworkSbasis.hpp"     // NetworkSbasis::Plan (lifecycle-fn params)
 #include "filter/NetworkBiasAdmission.hpp" // CB-ADM: latched W6 code-bias admission census (ctx.admission)
+#include "filter/NetworkInject.hpp"        // NetworkInjectState — the EVENT HARNESS schedule + ledger
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
 #include "common/PppUtils.hpp"          // eq34_ppp_utils
 
@@ -2847,6 +2848,13 @@ namespace GnssProcessor {
         NetworkCarryState      carry;
         NetworkServiceCounters counters;
         NetworkBiasAdmission   admission;   // CB-ADM: latched census result (active=false ⇒ legacy path)
+        /// EVENT HARNESS scripted-fault schedule + ledger (filter/NetworkInject.hpp).
+        /// Deliberately OUTSIDE the warm-resume fingerprint and the snapshot: a leg
+        /// resumes a converged state and then applies its OWN schedule — that two
+        /// legs off one snapshot differ ONLY here is the whole design.
+        /// armed == false (the default, network.inject absent) ⇒ every consumer of
+        /// this object short-circuits and the run is byte-identical.
+        NetworkInjectState     inject;
     };
 
     // ------------------------------------------------------------------

@@ -6557,6 +6557,11 @@ namespace GnssProcessor {
                                           const std::shared_ptr<spdlog::logger>& log);
         void loadNetworkClosedLoop_(const nlohmann::json& nw,
                                     const std::shared_ptr<spdlog::logger>& log);
+        /// EVENT HARNESS: parse @c network.inject (scripted producer-side faults).
+        /// Strict — a malformed event is a loud load failure, never a silent drop
+        /// (an exam fixture that quietly does not exist is graded as a null).
+        bool loadNetworkInject_(const nlohmann::json& nw,
+                                const std::shared_ptr<spdlog::logger>& log);
         void logNetworkSummary_(const std::shared_ptr<spdlog::logger>& log) const;
         void finalizeNetworkProcessNoise_(const nlohmann::json& json,
                                           const std::shared_ptr<spdlog::logger>& log);

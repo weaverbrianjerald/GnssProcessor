@@ -213,6 +213,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkRelevel.cpp
     src/core/filter/NetworkFastClock.cpp
     src/core/filter/NetworkTeardown.cpp
+    src/core/filter/NetworkInject.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkBiasAdmission.cpp
     src/core/filter/NeqAccumulator.cpp
@@ -427,6 +428,7 @@ add_executable(gnss_tests
     tests/test_resume_frame_restore.cpp
     tests/test_resume_coupling_restore.cpp
     tests/test_rt_state_snapshot.cpp
+    tests/test_network_inject.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

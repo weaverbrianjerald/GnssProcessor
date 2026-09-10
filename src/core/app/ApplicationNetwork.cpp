@@ -113,6 +113,7 @@
 #include "filter/NetworkFastClock.hpp"    // FC-1: split-cadence clocks-only fast pass
 #include "filter/NetworkTeardown.hpp"
 #include "filter/NetworkProducerAr.hpp" // INC-9b: log-only producer-AR + NEQ export
+#include "filter/NetworkInject.hpp"
 #include "filter/NetworkInstallCarry.hpp" // INC-9b: installPosterior + WL zone-4 fold/inject
 #include "filter/NetworkDdPriorBuild.hpp" // INC-9b: buildEnsembleGauges/buildCarryDdPriors free fns
 #include "filter/NetworkSolveGlue.hpp" // INC-9b: datum/solve/within-epoch RAIM
@@ -1173,6 +1174,11 @@ int Application::runNetwork() {
     networkSnapshotFingerprint(ctx, config_, stations);
     networkTryWarmResume(ctx, config_, sync, emitter, carry_driver, log,
                          &clk_rebase_engine);   // §18.10: the CLK-R held frame travels too
+    // EVENT HARNESS (docs/SPEC_event_harness.md): arm the scripted-fault schedule.
+    // AFTER the warm resume on purpose — the injector is deliberately outside the
+    // resume fingerprint, so its ARMED banner must not be mistaken for restored
+    // state.  Unarmed (network.inject absent) leaves every seam below untouched.
+    networkInjectArm(ctx, config_, log_manager_, log);
 
     // Resolve the a-priori satellite-clock anchor σ once — it is loop-invariant and
     // config-only — so the anchor fold and its information-fraction diagnostic
@@ -1284,7 +1290,7 @@ int Application::runNetwork() {
     // multi-station front-end) can drive the identical per-epoch body without a
     // pre-built synced vector.
     enum class LoopSignal { Next, Stop };
-    auto processSyncedEpoch = [&](const SyncedEpoch& se) -> LoopSignal {
+    auto processSyncedEpoch = [&](const SyncedEpoch& se_raw) -> LoopSignal {
         // Decomposition INC-4: per-epoch workspace (the RAIM-replay capture
         // channel + the clock-model prediction maps) — constructed FRESH every
         // iteration (fresh construction IS the per-epoch reset semantics); see
@@ -1296,11 +1302,26 @@ int Application::runNetwork() {
         // carry begins empty at the offset — reproduces an externally-driven late-hour event
         // (e.g. the ~4.3 h lock-in) after a fresh warm-up, not the exact accumulated history.
         if (start_offset_s > 0.0) {
-            const double now_s = TimeUtils::continuousGpsSeconds(se.time);
+            const double now_s = TimeUtils::continuousGpsSeconds(se_raw.time);
             if (start_anchor_s < 0.0) start_anchor_s = now_s;
             if (now_s - start_anchor_s < start_offset_s) return LoopSignal::Next;
         }
-        LogManager::setCurrentEpochTime(se.time);
+        // Bind the log prefix BEFORE the injector so its own warnings carry THIS
+        // epoch's bracket, not the previous one.  se.time == se_raw.time always
+        // (the injector never touches the time tag), so moving this call across
+        // the seam changes log text only.
+        LogManager::setCurrentEpochTime(se_raw.time);
+        // EVENT HARNESS seam (filter/NetworkInject.cpp).  THE single observation
+        // injection site: upstream of networkFastClockTick, of computeModels, of
+        // every T0 detector, of networkComputeRawObservables and of assembly, so a
+        // one-scalar write on the RinexObservation (phase in CYCLES) moves the
+        // metre-valued design row and the cycle-valued MW/GF/IF-TD feed together.
+        // Placed AFTER the start-offset gate so a fast-forwarded epoch cannot
+        // consume an event.  UNARMED: returns se_raw itself — no copy, no branch,
+        // byte-identical.  `se` shadows nothing; the whole body below reads it.
+        SyncedEpoch se_inject_scratch;
+        const SyncedEpoch& se = networkInjectEpoch(ctx, log, traces, se_raw,
+                                                   se_inject_scratch);
 
         // Reduced-RHS class attribution: arm the estimator's shared-info capture
         // recorder BEFORE any prior-inject site runs this epoch (the post-solve
@@ -1709,7 +1730,43 @@ int Application::runNetwork() {
                                          ctx.knobs.pd_handover_max_var,
                                          ctx.knobs.pa_carry_reref ? &pa_reref
                                                                   : nullptr,
-                                         ctx.knobs.pd_handover_max_var_ratio);
+                                         ctx.knobs.pd_handover_max_var_ratio,
+                                         // EVENT HARNESS: this epoch's forced
+                                         // retirement, or nullptr (the normal path).
+                                         ctx.inject.armed && !ctx.inject.anchor_now.empty()
+                                             ? &ctx.inject : nullptr);
+                // EVENT HARNESS readback: the election filled the directive in with
+                // the stations it retired and elected.  One row per directive, and
+                // the firing ledger is closed HERE — an anchor_handover that named a
+                // satellite no family used never fires, and run-end says so.
+                for (const auto& d : ctx.inject.anchor_now) {
+                    if (d.n_families == 0) continue;
+                    std::string ret, ele;
+                    for (const auto& r : d.retired) ret += (ret.empty() ? "" : "|") + r;
+                    for (const auto& e2 : d.elected) ele += (ele.empty() ? "" : "|") + e2;
+                    traces.emitEvent(se.time, "INJECT", "anchor_handover", d.sat, "",
+                                     static_cast<double>(d.n_families), std::nullopt,
+                                     "injected",
+                                     fmt::format("mode={};families={};forced_cold={};"
+                                                 "retired={};elected={}",
+                                                 d.cold ? "cold" : "continuous",
+                                                 d.n_families, d.n_forced_cold,
+                                                 ret.empty() ? "-" : ret,
+                                                 ele.empty() ? "-" : ele));
+                    log->warn("Network (fault inject): TOW {:.1f} anchor_handover on {} "
+                              "({}) forced {} family(ies): retired [{}] -> elected [{}].",
+                              se.time.tow, d.sat, d.cold ? "cold" : "continuous",
+                              d.n_families, ret.empty() ? "-" : ret,
+                              ele.empty() ? "-" : ele);
+                    for (std::size_t k = 0; k < ctx.inject.events.size(); ++k)
+                        if (ctx.inject.events[k].kind == "anchor_handover"
+                            && ctx.inject.events[k].sat == d.sat
+                            && !ctx.inject.onset_logged[k]) {
+                            ++ctx.inject.n_applied[k];
+                            ctx.inject.onset_logged[k] = true;
+                            ++ctx.inject.fired_by_kind["anchor_handover"];
+                        }
+                }
                 // BOTH EDGES in one row (invariant #7): who released the gauge, who
                 // took it, and whether the frame was preserved.  A handover logged
                 // only on its incoming half is exactly the silent re-referencing the

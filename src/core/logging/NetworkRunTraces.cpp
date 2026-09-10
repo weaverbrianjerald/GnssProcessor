@@ -1453,6 +1453,20 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // the config.  Emitted ONLY when armed, so an unarmed run's manifest
                // bytes are unchanged (the adm_screen precedent; the decomposition
                // golden hashes this file).
+               // EVENT HARNESS: emitted ONLY when armed, so an unarmed run's
+               // manifest bytes are unchanged (the mdb / adm_screen precedent —
+               // the decomposition golden hashes this file).
+               << (nc.inject.enable
+                       ? fmt::format("\"inject\":true,\"inject_events\":{},"
+                                     "\"inject_kinds\":\"{}\",",
+                                     nc.inject.events.size(),
+                                     [&] {
+                                         std::string k;
+                                         for (const auto& e : nc.inject.events)
+                                             k += (k.empty() ? "" : "|") + e.kind;
+                                         return k;
+                                     }())
+                       : std::string())
                << (nc.mdb
                        ? fmt::format("\"mdb\":true,\"mdb_event_m\":{},"
                                      "\"mdb_event_holdoff_ep\":{},",

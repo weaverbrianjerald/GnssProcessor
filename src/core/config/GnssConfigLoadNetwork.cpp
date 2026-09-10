@@ -168,6 +168,9 @@ namespace GnssProcessor {
         applyNetworkServiceProfile_(json, log);
         if (!validateNetworkCarryPosture_(json, log)) return false;
         loadNetworkClosedLoop_(nw, log);
+        // EVENT HARNESS: last, so its cross-knob warnings read FINAL values (the
+        // file banner's rule — a check beside its own parse reads code defaults).
+        if (!loadNetworkInject_(nw, log)) return false;
         logNetworkSummary_(log);
         finalizeNetworkProcessNoise_(json, log);
 
@@ -9516,6 +9519,154 @@ namespace GnssProcessor {
                   ar_wl_only_ ? "on" : "off",
                   networkConsumerArIgnoreMwWl() ? "true" : "false",
                   enable_ssr_bias_max_age_ ? "on" : "off");
+    }
+
+
+    /**
+     * @brief EVENT HARNESS — parse @c network.inject into @c NetworkConfig::inject.
+     *
+     * @param nw   The resolved @c network section.
+     * @param log  Logger; every rejection is an error line naming the element index.
+     * @return @c false on ANY malformed element (the load fails and the run aborts).
+     *
+     * Absent @c network.inject leaves the struct default-constructed
+     * (@c enable=false, no events) and nothing in the injector is reachable, so the
+     * run is byte-identical.  @c enable defaults to TRUE when a non-empty
+     * @c events array is present — arming the harness should be one key, and an
+     * events list that silently did nothing is exactly the failure this card is
+     * built to remove.  Set @c "enable": false to park a schedule without deleting
+     * it (and get a warning saying the events are parked).
+     *
+     * Strictness follows the simulator's scripted-slip loader (@c SimConfig.cpp):
+     * a paste-accident cap, per-index error context, and REQUIRED-field checks per
+     * @c kind.  A typo in a kind's required field must not fall through to a
+     * different kind's defaults.
+     */
+    bool GnssConfig::loadNetworkInject_(const nlohmann::json& nw,
+                                        const std::shared_ptr<spdlog::logger>& log) {
+        auto& ic = network_config_.inject;
+        ic = NetworkInjectConfig{};                     // absent => OFF, byte-identical
+
+        if (!nw.contains("inject")) return true;
+        const auto& ij = nw["inject"];
+        if (!ij.is_object()) {
+            log->error("Config: network.inject must be a JSON object with an "
+                       "'events' array.");
+            return false;
+        }
+
+        bool have_events = false;
+        if (ij.contains("events")) {
+            const auto& arr = ij["events"];
+            if (!arr.is_array()) {
+                log->error("Config: network.inject.events must be an array of event "
+                           "objects.");
+                return false;
+            }
+            if (arr.size() > 64) {
+                log->error("Config: network.inject.events has {} entries (> 64; "
+                           "paste-accident guard).  The harness is a ONE-EVENT "
+                           "instrument by design.", arr.size());
+                return false;
+            }
+            have_events = !arr.empty();
+
+            int idx = 0;
+            for (const auto& el : arr) {
+                const std::string where =
+                        "network.inject.events[" + std::to_string(idx++) + "]";
+                if (!el.is_object()) {
+                    log->error("Config: {} must be a JSON object.", where);
+                    return false;
+                }
+                NetworkInjectEvent ev;
+                ev.kind = el.value("kind", std::string{});
+                if (ev.kind != "slip" && ev.kind != "outage"
+                    && ev.kind != "anchor_handover" && ev.kind != "arc_erase"
+                    && ev.kind != "sat_clock_step") {
+                    log->error("Config: {}.kind '{}' is not one of slip | outage | "
+                               "anchor_handover | arc_erase | sat_clock_step.",
+                               where, ev.kind);
+                    return false;
+                }
+                if (!el.contains("tow") || !el["tow"].is_number()) {
+                    log->error("Config: {}.tow is required (GPS seconds of week at "
+                               "which the event starts).", where);
+                    return false;
+                }
+                ev.tow = el["tow"].get<double>();
+                if (!(ev.tow >= 0.0) || ev.tow >= 604800.0) {
+                    log->error("Config: {}.tow {} is outside [0, 604800).",
+                               where, ev.tow);
+                    return false;
+                }
+                ev.station      = el.value("station", std::string{});
+                ev.sat          = el.value("sat", std::string{});
+                ev.signal       = el.value("signal", std::string{});
+                ev.mode         = el.value("mode", std::string{});
+                ev.delta_cycles = el.value("delta_cycles", 0.0);
+                ev.flag_lli     = el.value("flag_lli", false);
+                ev.duration_s   = el.value("duration_s", 0.0);
+                ev.step_m       = el.value("step_m", 0.0);
+
+                auto need = [&](bool ok, const char* what) {
+                    if (!ok) log->error("Config: {} (kind '{}') requires {}.",
+                                        where, ev.kind, what);
+                    return ok;
+                };
+                if (ev.kind == "slip") {
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                    if (!need(!ev.signal.empty(),
+                              "a signal (RINEX-3 phase code, e.g. L1C)")) return false;
+                    if (!need(ev.signal[0] == 'L',
+                              "a PHASE signal code (leading L)")) return false;
+                    if (!need(ev.delta_cycles != 0.0,
+                              "a non-zero delta_cycles")) return false;
+                } else if (ev.kind == "outage") {
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                    if (!need(ev.duration_s > 0.0,
+                              "a positive duration_s")) return false;
+                } else if (ev.kind == "anchor_handover") {
+                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                    if (ev.signal.empty()) ev.signal = "all";
+                    if (ev.mode.empty())   ev.mode   = "continuous";
+                    if (!need(ev.mode == "cold" || ev.mode == "continuous",
+                              "mode 'cold' or 'continuous'")) return false;
+                } else if (ev.kind == "arc_erase") {
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                } else {   // sat_clock_step
+                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                    if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
+                }
+                ic.events.push_back(std::move(ev));
+            }
+        }
+
+        ic.enable = ij.value("enable", have_events);
+        if (ic.enable && ic.events.empty()) {
+            log->warn("Config: network.inject.enable is true but no events are listed "
+                      "— the injector is INERT (and the run is byte-identical).");
+            ic.enable = false;
+        }
+        if (!ic.enable && have_events)
+            log->warn("Config: network.inject has {} event(s) but enable is false — "
+                      "the schedule is PARKED and nothing will be injected.",
+                      ic.events.size());
+        if (ic.enable) {
+            log->warn("Config: network.inject is ARMED ({} event(s)).  This run's input "
+                      "is deliberately corrupted; its products are an EVENT HARNESS "
+                      "fixture, never a solution.  An armed event that never fires is a "
+                      "HARD run-end error.  docs/SPEC_event_harness.md",
+                      ic.events.size());
+            if (!network_config_.trace_events)
+                log->warn("Config: network.inject is armed but network.trace_events is "
+                          "OFF — the INJECT rows in network_events.csv (the harness's "
+                          "own attribution channel) will not be written.");
+        }
+        return true;
     }
 
 } // namespace GnssProcessor
