@@ -1955,6 +1955,23 @@ elevations from the run's own traces): (i) the DD-ZWD deviation regressed on the
 block of (I, N, ZWD) moving together along a weakly-determined direction of this posture — consistent with a
 1.6 cm fit, i.e. the estimability reading with its fourth member; and independently of F3, the shipped field
 posture's tropo state is a metre-class per-epoch sink with a σ that does not know it.
+**RESULT (18:33, field control, 584 arcs, `tropo_arc_wander.py`):** DD-tropo arc MAD **1.22 m** — the same
+scale as the DD-iono's 1.25 m.  (i) DD-tropo deviation on DD-iono deviation: slope p50 **−0.87** (p10 −1.49,
+p90 0.00), corr **−0.85** — the predicted anti-correlation, at ~70 % of the exact −1.283 with a crude 1/sin el
+mapping and attenuation.  (ii) joint fit e₁ = a·ΔI_cyc + t·ΔT_cyc: **a = +0.73** (p10 +0.08, p90 +1.09),
+**t = −1.17** (p10 −1.68, p90 −0.89) — i.e. ≈ (+1, −1), which is the band-1 phase equation itself
+(λ₁ΔN₁ = ΔI − ΔT).  ⚠ Prediction (ii)'s "a → 2.28" was mis-stated: 2.28 is the SINGLE-regressor coefficient
+when T is exactly −1.283·ΔI (the measured single-regressor 1.72 is its attenuated version); in the joint fit
+the structural coefficients are (+1, −1), and that is what was measured.  So the band-1 budget CLOSES with
+the ZWD as the fourth member: the "impossible" cycle-common channel is the projection onto the ambiguity
+block of **(I, N₁, N₂, ZWD) moving together along a weakly-determined direction of the shipped field
+posture** — per-LOS iono (SH-pinned), per-epoch un-carried ZWD (a metre-class sink), and per-station
+ambiguities trade against each other while the phase fit stays at 1.6 cm.  The DD "ambiguity" of this
+posture is therefore not an estimable-invariant quantity in practice; its 10-cycle-per-hour wander is the
+tropo–iono trade riding through it.  On the sim golden the ZWD is CARRIED (honest σ, F3-whitened) and e₁ does
+not follow I (slope 0.001) — the same estimator with the fourth member pinned.  Fix direction (not built
+here): pin the fourth member — carry the ZWD on the field vehicle (B9 `zwd` carry with a physical q) — and
+re-read the DD wander; a single-knob arm on the SHIPPED vehicle, independent of F3.
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
