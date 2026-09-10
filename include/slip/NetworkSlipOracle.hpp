@@ -98,12 +98,35 @@
  * A window that holds no truth slip is a genuine FALSE ALARM — the detector
  * fired on an arc that did not jump within the latency it is capable of seeing —
  * and is answered by @ref NetworkSlipOracle::false_alarm.
+ *
+ * ## The two policies are independent, and that is what makes the census additive
+ *
+ * @ref NetworkSlipOracle::true_slip answers the OTHER half — an actuation whose
+ * window DOES hold a truth slip.  `repair` is the ceiling this card was built
+ * for; `free` declines the arc so the caller runs today's ordinary response for
+ * it.  The pair spans the 2x2 the census needs:
+ *
+ * | `true_slip` | `false_alarm` | what the arm measures |
+ * |---|---|---|
+ * | `repair` | `keep`   | THE CEILING — perfect repair, no false-alarm cost |
+ * | `repair` | `free`   | the repair alone, false-alarm cost KEPT |
+ * | `free`   | `keep`   | the FALSE ALARMS alone — real slips pay today's response |
+ * | `free`   | `free`   | a pure NO-OP (both halves decline): a byte-identity control |
+ *
+ * The third row is the isolation arm: if the ZWD sink and the consumer move on
+ * it, the detector's false alarms are a material injection source in their own
+ * right and the detector thresholds become a card; if they do not, the
+ * true-slip re-level is the whole lever and the engineering build (EWL / WL-MW
+ * integer estimation) is the only way to buy it.  ⚠ On `free` the run-end
+ * `applied` count is 0 BY CONSTRUCTION — the armed-and-inert check reads
+ * @ref NetworkSlipOracle::fa_kept there instead.
  */
 
 #include "filter/NetworkRunTypes.hpp"   // NetStation, LocalCarry (PppUtils fwd via PppModel)
 
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
@@ -149,10 +172,18 @@ struct NetworkSlipOracle {
     /// the arm measures repair-only and keeps the false-alarm cost.
     enum class FalseAlarm { Keep, Free };
 
+    /// What to do when the window DOES hold a truth slip.  `Repair` is the
+    /// ceiling (shift the level by the true sum d*lambda); `Free` declines the
+    /// arc so the caller runs TODAY's ordinary free/re-level response for it —
+    /// which, paired with @ref FalseAlarm::Keep, isolates the false-alarm cost
+    /// on its own.  See the header banner's 2x2.
+    enum class TrueSlip { Repair, Free };
+
     // ---- knobs (snapshot taken at construction) ----------------------------
     std::string truth_root;              ///< `network.cycle_slip.oracle_truth_root`.
     double      noise_cyc{0.0};          ///< `network.cycle_slip.oracle_noise_cyc` — 1-sigma of the deterministic Gaussian added to each applied sum d (cycles).
     FalseAlarm  false_alarm{FalseAlarm::Keep}; ///< `network.cycle_slip.oracle_false_alarm`.
+    TrueSlip    true_slip{TrueSlip::Repair};   ///< `network.cycle_slip.oracle_true_slip`.
     double      window_s{90.0};          ///< `network.cycle_slip.oracle_window_s` — detector-latency bound (s) on how far back a truth slip may be repaired; see the header banner.  0 = same-epoch only.
 
     /// One truth jump: continuous-GPS seconds and the integer jump in THAT
@@ -182,16 +213,32 @@ struct NetworkSlipOracle {
     std::unique_ptr<PppUtils> utils;
 
     // ---- run-end counters (standing invariant #4) --------------------------
-    /// Closure: `seen == applied + fa_kept + fa_freed + no_carry + no_lambda`.
+    /// Closure:
+    /// `seen == applied + true_slip_freed + fa_kept + fa_freed + no_carry + no_lambda`.
     long long seen{0};          ///< (station, sat, signal) actuations offered to the hook.
     long long applied{0};       ///< Arcs REPAIRED (carry shifted by the true sum d*lambda).
     long long multi{0};         ///< …of which the window held >= 2 truth jumps.
+    long long true_slip_freed{0}; ///< Truth slip IN window, policy `free` — declined, so the caller ran today's response (the false-alarm-isolation arm).
     long long fa_kept{0};       ///< No truth slip in window, policy `keep` — carry untouched, arc NOT freed.
     long long fa_freed{0};      ///< No truth slip in window, policy `free` — fell through to today's response.
     long long no_carry{0};      ///< No leveling carry entry for the arc — nothing to preserve, fell through.
     long long no_lambda{0};     ///< Wavelength unavailable for the signal — fell through (never silently skipped).
     double    sum_abs_cyc{0.0}; ///< Sum over applied arcs of |sum d| (cycles).
     double    max_abs_cyc{0.0}; ///< Max over applied arcs of |sum d| (cycles).
+
+    /// Per-DETECTOR-TIER split of @ref fa_kept, keyed on the `kCause*` bit the
+    /// calling site already carries.  Without it a false-alarm-isolation arm
+    /// reports one lump number and cannot say WHICH detector's thresholds to
+    /// look at — the four sites have four different statistics (an MW window
+    /// integer, the receiver's own LLI bit, an IF triple difference, a wind-up
+    /// accumulator restart) and only a per-tier attribution turns "false alarms
+    /// cost X" into a card.  Closure: `fa_kept == mw + lli + iftd + wusat + other`;
+    /// `other` must be 0 (an unrecognised cause bit is a mis-wired call site).
+    long long fa_kept_mw{0};    ///< …from the MW confident-wide-lane drain (`kCauseMw`).
+    long long fa_kept_lli{0};   ///< …from the RINEX-LLI loss-of-lock drain (`kCauseLli`).
+    long long fa_kept_iftd{0};  ///< …from the IF-phase triple-difference driver (`kCauseIfTd`).
+    long long fa_kept_wusat{0}; ///< …from the whole-satellite wind-up restart (`kCauseWindup`).
+    long long fa_kept_other{0}; ///< …from a cause bit this split does not name — MUST be 0.
 
     /// Which of the three lower-bound terms was BINDING, over every actuation
     /// that reached the window scan (i.e. `seen - no_carry`).  Without this the
@@ -241,6 +288,11 @@ std::unique_ptr<NetworkSlipOracle> networkSlipOracleLoad(
  * @param sat        Satellite id.
  * @param signal     RINEX signal code of the arc (e.g. "L1C").
  * @param now_s      This epoch's continuous-GPS seconds (`week*604800 + tow`).
+ * @param cause      The calling site's `RelevelEpochState::kCause*` bit — the
+ *                   DETECTOR TIER, used only to attribute a false-alarm KEEP
+ *                   (@ref NetworkSlipOracle::fa_kept_mw and friends).  It never
+ *                   changes a decision; an unrecognised bit lands in
+ *                   @ref NetworkSlipOracle::fa_kept_other, which must be 0.
  * @param[out] detail  Filled with `delta=<sum d>;n=<slips>;noise=<x>` when handled
  *                     (the caller puts it in the event row's detail column); left
  *                     untouched otherwise.
@@ -248,12 +300,14 @@ std::unique_ptr<NetworkSlipOracle> networkSlipOracleLoad(
  * @return true when the oracle HANDLED the arc — the caller must skip EVERY
  *         freeing action for it (no free_ambs, no carry_slipped_ambs, no
  *         pending-reseed, no pend void, no erase) and emit its event with
- *         `oracle_repair` / `oracle_keep`.  false ⇒ proceed exactly as today.
+ *         `oracle_repair` / `oracle_keep`.  false ⇒ proceed exactly as today
+ *         (a false alarm under policy `free`, a truth slip under `true_slip`
+ *         `free`, or an arc the oracle could not measure at all).
  */
 bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
                              const std::string& sat, const std::string& signal,
-                             double now_s, std::string& detail,
-                             OracleOutcome& outcome);
+                             double now_s, std::uint8_t cause,
+                             std::string& detail, OracleOutcome& outcome);
 
 /// Deterministic zero-mean Gaussian in CYCLES, seeded from
 /// (station, satellite, signal, epoch) so two calls with the same key in the

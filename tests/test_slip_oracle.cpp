@@ -153,9 +153,14 @@ struct Harness {
     LocalCarry& c(const std::string& sig) {
         return carry.at(std::make_tuple(0, std::string(kSat), sig));
     }
+    /// @p cause is the calling DETECTOR's tier bit — it steers only the
+    /// false-alarm KEEP attribution, never a decision, so cases that are not
+    /// about the tier split leave it at the MW drain's.
     bool run(const std::string& sig, double tow_s, std::string& detail,
-             OracleOutcome& oc) {
-        return networkSlipOracleHandle(oracle, 0, kSat, sig, kW + tow_s, detail, oc);
+             OracleOutcome& oc,
+             std::uint8_t cause = RelevelEpochState::kCauseMw) {
+        return networkSlipOracleHandle(oracle, 0, kSat, sig, kW + tow_s, cause,
+                                       detail, oc);
     }
     /// The production wavelength, so a case can predict the shift without
     /// hard-coding a constant a signal-table change would silently invalidate.
@@ -491,7 +496,8 @@ TEST(SlipOracleActuate, UnknownSignalIsCountedSeparatelyAndFallsThrough) {
     EXPECT_EQ(h.oracle.applied, 0);
     EXPECT_EQ(h.oracle.fa_kept, 0);
     // Closure (the run-end line's identity).
-    EXPECT_EQ(h.oracle.seen, h.oracle.applied + h.oracle.fa_kept + h.oracle.fa_freed
+    EXPECT_EQ(h.oracle.seen, h.oracle.applied + h.oracle.true_slip_freed
+                             + h.oracle.fa_kept + h.oracle.fa_freed
                              + h.oracle.no_carry + h.oracle.no_lambda);
     // …and the binding census's own: every actuation that got past the carry
     // lookup is attributed to exactly one lower-bound term, including this one
@@ -533,6 +539,174 @@ TEST(SlipOracleFalseAlarm, KeepTouchesNothingAndFreeFallsThrough) {
         EXPECT_DOUBLE_EQ(fr.c(kSig1).value_abs, v0);          // the oracle wrote nothing
         EXPECT_EQ(fr.oracle.fa_freed, 1);
         EXPECT_EQ(fr.oracle.fa_kept, 0);
+    }
+}
+
+// ===========================================================================
+// The true-slip policy — the FALSE-ALARM ISOLATION arm
+// ===========================================================================
+
+// The isolation arm's whole contract, both halves in one case because they are
+// one decision: with `true_slip = Free` a REAL slip is declined (the caller runs
+// today's ordinary free/re-level for it, exactly as on the base arm) while a
+// FALSE ALARM is still kept.  The only thing that differs from the base arm is
+// therefore the false alarms — which is what makes their cost separable from the
+// true-slip re-level's.  ⚠ `applied` is 0 by construction here, so a run-end
+// inertness check that keys on it would fire on a correctly working arm; the
+// KEEP count is this policy's actuation counter.
+TEST(SlipOracleTrueSlip, FreeDeclinesARealSlipAndStillKeepsTheFalseAlarm) {
+    Harness h;
+    h.oracle.true_slip = NetworkSlipOracle::TrueSlip::Free;
+    ASSERT_EQ(h.oracle.false_alarm, NetworkSlipOracle::FalseAlarm::Keep);
+    h.addTruth(kSig1, 302850.0, 7);          // a REAL slip on band 1
+    const double v1 = h.c(kSig1).value_abs;
+    const double v2 = h.c(kSig2).value_abs;  // band 2 never jumped
+
+    {   // true slip -> DECLINED: the caller frees, the oracle wrote nothing
+        std::string detail; OracleOutcome oc{};
+        EXPECT_FALSE(h.run(kSig1, 302850.0, detail, oc));
+        EXPECT_EQ(oc, OracleOutcome::NotHandled);
+        EXPECT_DOUBLE_EQ(h.c(kSig1).value_abs, v1);
+        EXPECT_EQ(h.oracle.true_slip_freed, 1);
+        EXPECT_EQ(h.oracle.applied, 0);
+        EXPECT_EQ(h.oracle.fa_kept, 0);      // ⚠ NOT a false alarm — truth says it jumped
+        // The ledger must NOT advance: nothing was applied, so a second detector
+        // on this arc has to see the same window (and decline again).
+        EXPECT_DOUBLE_EQ(h.oracle.arcs.at(std::make_tuple(0, std::string(kSat), kSig1))
+                             .last_applied_s, -1.0e18);
+    }
+    {   // false alarm -> KEPT, exactly as on the ceiling arm
+        std::string detail; OracleOutcome oc{};
+        EXPECT_TRUE(h.run(kSig2, 302850.0, detail, oc));
+        EXPECT_EQ(oc, OracleOutcome::Kept);
+        EXPECT_DOUBLE_EQ(h.c(kSig2).value_abs, v2);
+        EXPECT_EQ(h.oracle.fa_kept, 1);
+        EXPECT_EQ(h.oracle.fa_freed, 0);
+    }
+    EXPECT_EQ(h.oracle.seen, h.oracle.applied + h.oracle.true_slip_freed
+                             + h.oracle.fa_kept + h.oracle.fa_freed
+                             + h.oracle.no_carry + h.oracle.no_lambda);
+}
+
+// `repair` is the DEFAULT and must be bit-for-bit today's behaviour — the knob
+// exists to add a second arm, not to change the one already measured.  Pinned on
+// the same slip the isolation case declines, so the two read as a pair.
+TEST(SlipOracleTrueSlip, RepairIsTheDefaultAndKeepsTodaysBehaviour) {
+    Harness h;
+    ASSERT_EQ(h.oracle.true_slip, NetworkSlipOracle::TrueSlip::Repair);
+    h.addTruth(kSig1, 302850.0, 7);
+    std::string detail; OracleOutcome oc{};
+    ASSERT_TRUE(h.run(kSig1, 302850.0, detail, oc));
+    EXPECT_EQ(oc, OracleOutcome::Repaired);
+    EXPECT_NEAR(h.c(kSig1).value_abs, 100.0 + 7.0 * h.lambda(kSig1), 1e-9);
+    EXPECT_EQ(h.oracle.applied, 1);
+    EXPECT_EQ(h.oracle.true_slip_freed, 0);
+}
+
+// The fourth corner of the 2x2: both halves decline, so the oracle actuates on
+// NOTHING.  It is a legitimate byte-identity control for the hook itself, and it
+// must be a clean no-op rather than an accidental half-response.
+TEST(SlipOracleTrueSlip, BothPoliciesFreeIsAPureNoOp) {
+    Harness h;
+    h.oracle.true_slip   = NetworkSlipOracle::TrueSlip::Free;
+    h.oracle.false_alarm = NetworkSlipOracle::FalseAlarm::Free;
+    h.addTruth(kSig1, 302850.0, 7);
+    const double v1 = h.c(kSig1).value_abs, v2 = h.c(kSig2).value_abs;
+
+    std::string d1, d2; OracleOutcome o1{}, o2{};
+    EXPECT_FALSE(h.run(kSig1, 302850.0, d1, o1));   // true slip
+    EXPECT_FALSE(h.run(kSig2, 302850.0, d2, o2));   // false alarm
+    EXPECT_DOUBLE_EQ(h.c(kSig1).value_abs, v1);
+    EXPECT_DOUBLE_EQ(h.c(kSig2).value_abs, v2);
+    EXPECT_EQ(h.oracle.true_slip_freed, 1);
+    EXPECT_EQ(h.oracle.fa_freed, 1);
+    EXPECT_EQ(h.oracle.applied, 0);
+    EXPECT_EQ(h.oracle.fa_kept, 0);
+}
+
+// A signal with no wavelength AND a truth slip lands in `true_slip_freed`, not
+// `no_lambda`: on this policy no shift is ever formed, so the wavelength is never
+// consulted and counting it as an unmeasurable arc would double-book the same
+// decline and break the closure.  The decision is identical either way — decline
+// — so the only thing at stake is which bucket the census reads.
+TEST(SlipOracleTrueSlip, FreeDeclinesBeforeTheWavelengthLookup) {
+    Harness h;
+    h.oracle.true_slip = NetworkSlipOracle::TrueSlip::Free;
+    h.addCarry("LZZ");
+    h.oracle.truth[std::make_tuple(0, std::string(kSat), std::string("LZZ"))]
+        .push_back({kW + 302850.0, 5});
+
+    std::string detail; OracleOutcome oc{};
+    EXPECT_FALSE(h.run("LZZ", 302850.0, detail, oc));
+    EXPECT_EQ(h.oracle.true_slip_freed, 1);
+    EXPECT_EQ(h.oracle.no_lambda, 0);
+    EXPECT_EQ(h.oracle.seen, h.oracle.applied + h.oracle.true_slip_freed
+                             + h.oracle.fa_kept + h.oracle.fa_freed
+                             + h.oracle.no_carry + h.oracle.no_lambda);
+}
+
+// ===========================================================================
+// The false-alarm TIER split
+// ===========================================================================
+
+// A false-alarm-isolation arm that reports one lump number cannot say WHICH
+// detector's thresholds to look at, and the four sites have four unrelated
+// statistics.  The tier bit is the site's own `kCause*`, it steers ONLY the
+// attribution (never a decision), and the split must close on `fa_kept` with an
+// empty `other` — a nonzero `other` is a call site passing a bit this split does
+// not name, i.e. a detector whose false alarms are attributed to nothing.
+TEST(SlipOracleTier, FalseAlarmKeepsAttributeToTheCallingDetectorAndClose) {
+    Harness h;
+    std::string detail; OracleOutcome oc{};
+    // Four actuations on four distinct arcs (one per tier), none with truth.
+    h.addCarry("L5Q");
+    h.addCarry("L1W");
+    ASSERT_TRUE(h.run(kSig1, 302850.0, detail, oc, RelevelEpochState::kCauseMw));
+    ASSERT_TRUE(h.run(kSig2, 302850.0, detail, oc, RelevelEpochState::kCauseLli));
+    ASSERT_TRUE(h.run("L5Q",  302850.0, detail, oc, RelevelEpochState::kCauseIfTd));
+    ASSERT_TRUE(h.run("L1W",  302850.0, detail, oc, RelevelEpochState::kCauseWindup));
+
+    EXPECT_EQ(h.oracle.fa_kept, 4);
+    EXPECT_EQ(h.oracle.fa_kept_mw, 1);
+    EXPECT_EQ(h.oracle.fa_kept_lli, 1);
+    EXPECT_EQ(h.oracle.fa_kept_iftd, 1);
+    EXPECT_EQ(h.oracle.fa_kept_wusat, 1);
+    EXPECT_EQ(h.oracle.fa_kept_other, 0);
+    EXPECT_EQ(h.oracle.fa_kept, h.oracle.fa_kept_mw + h.oracle.fa_kept_lli
+                                + h.oracle.fa_kept_iftd + h.oracle.fa_kept_wusat
+                                + h.oracle.fa_kept_other);
+}
+
+// The tier must not reach any DECISION: a REPAIRED arc and a `free`-policy
+// decline are attributed to nothing at all, so the split counts keeps and only
+// keeps.  (An unrecognised bit is the mis-wiring case, and it must be visible
+// rather than folded into one of the four.)
+TEST(SlipOracleTier, OnlyKeepsAreAttributedAndAnUnknownBitIsVisible) {
+    {
+        Harness h;
+        h.addTruth(kSig1, 302850.0, 3);
+        std::string detail; OracleOutcome oc{};
+        ASSERT_TRUE(h.run(kSig1, 302850.0, detail, oc, RelevelEpochState::kCauseIfTd));
+        EXPECT_EQ(oc, OracleOutcome::Repaired);
+        EXPECT_EQ(h.oracle.fa_kept_iftd, 0);       // a repair is not a keep
+    }
+    {
+        Harness h;
+        h.oracle.false_alarm = NetworkSlipOracle::FalseAlarm::Free;
+        std::string detail; OracleOutcome oc{};
+        EXPECT_FALSE(h.run(kSig1, 302850.0, detail, oc, RelevelEpochState::kCauseMw));
+        EXPECT_EQ(h.oracle.fa_freed, 1);
+        EXPECT_EQ(h.oracle.fa_kept_mw, 0);         // a freed false alarm is not a keep
+    }
+    {
+        Harness h;
+        std::string detail; OracleOutcome oc{};
+        ASSERT_TRUE(h.run(kSig1, 302850.0, detail, oc,
+                          RelevelEpochState::kCauseT4Attrib));   // no call site passes this
+        EXPECT_EQ(h.oracle.fa_kept, 1);
+        EXPECT_EQ(h.oracle.fa_kept_other, 1);
+        EXPECT_EQ(h.oracle.fa_kept_mw + h.oracle.fa_kept_lli
+                  + h.oracle.fa_kept_iftd + h.oracle.fa_kept_wusat, 0);
     }
 }
 
@@ -657,6 +831,7 @@ TEST(SlipOracleLoad, MissingStationTruthFileIsAHardErrorAndTheRosterIndexesTheTa
     EXPECT_EQ(v[0].delta_cyc, 48);
     EXPECT_DOUBLE_EQ(v[0].s, kW + 302820.0);
     EXPECT_EQ(oracle->false_alarm, NetworkSlipOracle::FalseAlarm::Keep);
+    EXPECT_EQ(oracle->true_slip, NetworkSlipOracle::TrueSlip::Repair);
     EXPECT_DOUBLE_EQ(oracle->noise_cyc, 0.0);
     EXPECT_DOUBLE_EQ(oracle->window_s, 90.0);   // the knob reaches the run object
 }
@@ -740,6 +915,32 @@ TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
                              cfg));
         EXPECT_EQ(cfg.getNetworkConfig().slip_qc.oracle_false_alarm, "free");
     }
+    // …and the same contract on the OTHER half of the 2x2.  A typo here would
+    // silently fall back to `repair` and the arm would report the CEILING while
+    // its author read it as the false-alarm isolation — the two verdicts point at
+    // different cards, so the mislabel is not survivable.
+    {
+        GnssConfig cfg;
+        EXPECT_FALSE(loadInto("err_ts",
+                              oracleArm(root, "      \"oracle_true_slip\": \"keep\"\n"),
+                              cfg));
+    }
+    {
+        GnssConfig cfg;
+        ASSERT_TRUE(loadInto("ok_ts_free",
+                             oracleArm(root, "      \"oracle_true_slip\": \"free\"\n"),
+                             cfg));
+        EXPECT_EQ(cfg.getNetworkConfig().slip_qc.oracle_true_slip, "free");
+    }
+    {   // the isolation arm's exact spelling, and the NO-OP corner: both legal
+        GnssConfig cfg;
+        ASSERT_TRUE(loadInto("ok_noop",
+                             oracleArm(root, "      \"oracle_true_slip\": \"free\",\n"
+                                             "      \"oracle_false_alarm\": \"free\"\n"),
+                             cfg));
+        EXPECT_EQ(cfg.getNetworkConfig().slip_qc.oracle_true_slip, "free");
+        EXPECT_EQ(cfg.getNetworkConfig().slip_qc.oracle_false_alarm, "free");
+    }
     // Default OFF: the knob absent leaves it off with no root required at all —
     // the byte-identity precondition (standing invariant #6).
     {
@@ -749,8 +950,40 @@ TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
         EXPECT_FALSE(sq.oracle_relevel);
         EXPECT_TRUE(sq.oracle_truth_root.empty());
         EXPECT_EQ(sq.oracle_false_alarm, "keep");
+        EXPECT_EQ(sq.oracle_true_slip, "repair");
         EXPECT_DOUBLE_EQ(sq.oracle_noise_cyc, 0.0);
         EXPECT_DOUBLE_EQ(sq.oracle_window_s, 90.0);
+    }
+}
+
+// …and the knob must REACH the run object, not just survive the load: the
+// policy is read once at construction, so a loader that parses it into the
+// config and never hands it over would run the CEILING while the manifest,
+// the summary line and the run-end clause all said `free`.
+TEST(SlipOracleTrueSlip, TheKnobReachesTheRunObject) {
+    TempTree t("ts_run");
+    t.writeStation("S01000SIM", "2313,302820.000,G19,L1C,48,1,11.50\n");
+    const std::string root = jsonPath(t.root);
+
+    LogManager lm;
+    auto log = nullLogger();
+    std::vector<NetStation> stations(1);
+    stations[0].name = "S01000SIM";
+    {
+        GnssConfig cfg;
+        ASSERT_TRUE(loadInto("ts_run_free",
+                             oracleArm(root, "      \"oracle_true_slip\": \"free\"\n"), cfg));
+        auto oracle = networkSlipOracleLoad(cfg, stations, lm, log);
+        ASSERT_TRUE(oracle);
+        EXPECT_EQ(oracle->true_slip, NetworkSlipOracle::TrueSlip::Free);
+        EXPECT_EQ(oracle->false_alarm, NetworkSlipOracle::FalseAlarm::Keep);  // the isolation pair
+    }
+    {   // the knob absent -> the shipped ceiling, unchanged
+        GnssConfig cfg;
+        ASSERT_TRUE(loadInto("ts_run_def", oracleArm(root), cfg));
+        auto oracle = networkSlipOracleLoad(cfg, stations, lm, log);
+        ASSERT_TRUE(oracle);
+        EXPECT_EQ(oracle->true_slip, NetworkSlipOracle::TrueSlip::Repair);
     }
 }
 

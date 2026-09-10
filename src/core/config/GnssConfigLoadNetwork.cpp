@@ -288,12 +288,12 @@ namespace GnssProcessor {
                       "(LocalCarry::value_abs).  DISABLED.");
             network_config_.slip_qc.oracle_relevel = false;
         }
-        if (network_config_.slip_qc.oracle_relevel)
+        if (network_config_.slip_qc.oracle_relevel) {
             log->warn("Network (slip ORACLE): oracle_relevel ON — SIM-ONLY DIAGNOSTIC, "
                       "SOLVE-AFFECTING.  Every detector refloat (MW wide-lane, RINEX LLI, "
-                      "IF-phase TD, wind-up restart) on a CARRIED arc is answered by shifting "
-                      "the carried level by the TRUE integer jump read from '{}' instead of "
-                      "freeing the arc; false alarms are '{}'; injected noise sigma {:.4f} cyc; "
+                      "IF-phase TD, wind-up restart) on a CARRIED arc is answered from the "
+                      "truth table at '{}'.  POLICY PAIR: a truth slip in the window is "
+                      "'{}', an actuation with none is '{}'; injected noise sigma {:.4f} cyc; "
                       "detector-latency window {:.0f} s (a slip is repairable up to that far "
                       "back, bounded below by the carry's own BIRTH second so an erased-and-"
                       "reborn level is never re-shifted). "
@@ -302,9 +302,31 @@ namespace GnssProcessor {
                       "everything else held fixed).  This measures the CEILING of a "
                       "level-preserving re-level — never promote it, never put it in a golden.",
                       network_config_.slip_qc.oracle_truth_root,
+                      network_config_.slip_qc.oracle_true_slip,
                       network_config_.slip_qc.oracle_false_alarm,
                       network_config_.slip_qc.oracle_noise_cyc,
                       network_config_.slip_qc.oracle_window_s);
+            // The two policies are independent, so the 2x2 has a corner in which
+            // BOTH halves decline and the oracle actuates on nothing at all.  That
+            // is a legitimate byte-identity control, not a typo — warn rather than
+            // refuse, but say it out loud: a reader who expects a ceiling from this
+            // arm would otherwise read a null result as a falsification (the
+            // armed-and-inert failure standing invariant #4 names).
+            if (network_config_.slip_qc.oracle_true_slip == "free"
+                && network_config_.slip_qc.oracle_false_alarm == "free")
+                log->warn("Network (slip ORACLE): true_slip 'free' + false_alarm 'free' is a "
+                          "pure NO-OP arm — BOTH halves decline, so every actuation runs "
+                          "today's ordinary response and the oracle writes nothing.  Legal "
+                          "(it is the byte-identity control for the hook itself), but it "
+                          "measures no ceiling: do not read its ZWD as a result.");
+            else if (network_config_.slip_qc.oracle_true_slip == "free")
+                log->warn("Network (slip ORACLE): true_slip 'free' — this is the FALSE-ALARM "
+                          "ISOLATION arm, not the ceiling.  Real slips take today's ordinary "
+                          "free/re-level response and only actuations with NO truth slip in "
+                          "the window keep their level, so the run-end 'applied' count is 0 "
+                          "BY CONSTRUCTION and the arm's actuation counter is "
+                          "'false-alarm kept'.");
+        }
         if (network_cycle_slip_relevel_retap_statistical_ && network_carry_invariant_) {
             log->warn("Network: network.cycle_slip.relevel_retap_statistical is inert "
                       "under network.carry_invariant (the leveling local carry is "
@@ -4174,6 +4196,14 @@ namespace GnssProcessor {
                 jval<std::string>(json, "network.cycle_slip.oracle_false_alarm",
                                   "network_cycle_slip_oracle_false_alarm",
                                   std::string("keep"));
+            // The OTHER half of the 2x2: what to do when truth DOES put a slip in
+            // the window.  "repair" (default) is the shipped ceiling; "free"
+            // declines so the caller runs today's ordinary response, which paired
+            // with false_alarm "keep" isolates the FALSE-ALARM cost on its own.
+            sq.oracle_true_slip =
+                jval<std::string>(json, "network.cycle_slip.oracle_true_slip",
+                                  "network_cycle_slip_oracle_true_slip",
+                                  std::string("repair"));
             // Detector-LATENCY window (seconds).  The truth-slip window's lower
             // bound is max(last_applied_s, carry.birth_s, now_s - this), so it is
             // what makes a detector that fires 1-3 epochs LATE repairable instead
@@ -4207,6 +4237,9 @@ namespace GnssProcessor {
                 if (sq.oracle_false_alarm != "keep" && sq.oracle_false_alarm != "free")
                     throw std::runtime_error(
                         "network.cycle_slip.oracle_false_alarm must be \"keep\" or \"free\"");
+                if (sq.oracle_true_slip != "repair" && sq.oracle_true_slip != "free")
+                    throw std::runtime_error(
+                        "network.cycle_slip.oracle_true_slip must be \"repair\" or \"free\"");
                 if (sq.oracle_noise_cyc < 0.0)
                     throw std::runtime_error(
                         "network.cycle_slip.oracle_noise_cyc must be >= 0");

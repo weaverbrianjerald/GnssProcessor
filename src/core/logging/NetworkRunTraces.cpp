@@ -1568,10 +1568,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      "\"oracle_truth_root\":\"{}\","
                                      "\"oracle_noise_cyc\":{},"
                                      "\"oracle_false_alarm\":\"{}\","
+                                     "\"oracle_true_slip\":\"{}\","
                                      "\"oracle_window_s\":{},",
                                      jesc(nc.slip_qc.oracle_truth_root),
                                      nc.slip_qc.oracle_noise_cyc,
                                      nc.slip_qc.oracle_false_alarm,
+                                     nc.slip_qc.oracle_true_slip,
                                      nc.slip_qc.oracle_window_s)
                        : std::string())
                // §18.12 Card-1 coupling regressors, both halves of the frame restore:

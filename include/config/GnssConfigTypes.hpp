@@ -523,6 +523,26 @@ namespace GnssProcessor {
         /// response, so the arm measures the repair alone and keeps the
         /// false-alarm cost.  Any other value is a loader hard error.
         std::string oracle_false_alarm{ "keep" };
+        /// What to do when a detector fires on a carried arc and truth DOES put
+        /// a slip in the window (@c network.cycle_slip.oracle_true_slip):
+        /// `"repair"` (default) is the shipped ceiling — shift the carried level
+        /// by the true sum d*lambda; `"free"` declines the arc so the caller
+        /// runs today's ORDINARY free/re-level response for it.
+        ///
+        /// `"free"` exists to isolate the FALSE-ALARM cost on its own.  Paired
+        /// with @ref oracle_false_alarm `"keep"` the only thing that differs
+        /// from the base arm is that actuations with NO truth slip in the window
+        /// keep their level, while every real slip still pays today's response —
+        /// so the arm answers "are the detector's false alarms a material
+        /// injection source, or is the true-slip re-level the whole lever?"
+        /// without confounding the two.  Any other value is a loader hard error.
+        ///
+        /// ⚠ `"free"` makes @c applied 0 BY CONSTRUCTION, so the run-end
+        /// armed-and-inert check reads @c fa_kept instead on that policy; and
+        /// `"free"` + @ref oracle_false_alarm `"free"` is a pure NO-OP arm (both
+        /// halves decline) that the loader warns about rather than refuses — it
+        /// is a legitimate byte-identity control.
+        std::string oracle_true_slip{ "repair" };
         /**
          * @brief Detector-LATENCY window, seconds
          *        (@c network.cycle_slip.oracle_window_s, default 90 = three 30 s

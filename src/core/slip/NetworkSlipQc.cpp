@@ -430,8 +430,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                     if (oracle) {
                         OracleOutcome oc = OracleOutcome::NotHandled;
                         std::string det;
+                        // `cause` is this site's own tier bit (kCauseMw for the
+                        // wide-lane drain, kCauseLli for the receiver's LLI) —
+                        // it steers only the false-alarm KEEP attribution.
                         if (networkSlipOracleHandle(*oracle, i, sat, signal,
-                                                    oracle_now_s, det, oc)) {
+                                                    oracle_now_s, cause, det, oc)) {
                             act.oracle_handled  = true;
                             act.oracle_repaired = (oc == OracleOutcome::Repaired);
                             act.oracle_detail   = det;
@@ -996,7 +999,9 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                         OracleOutcome oc = OracleOutcome::NotHandled;
                         std::string det;
                         if (networkSlipOracleHandle(*oracle, i, sat, parts->signal,
-                                                    oracle_now_s, det, oc)) {
+                                                    oracle_now_s,
+                                                    RelevelEpochState::kCauseIfTd,
+                                                    det, oc)) {
                             pact.handled = true;
                             // The event names ONE action for the pair, so its
                             // detail must be the band that action describes: the
@@ -1465,7 +1470,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                     OracleOutcome oc = OracleOutcome::NotHandled;
                     std::string det;
                     if (networkSlipOracleHandle(*oracle, i, sat, parts->signal,
-                                                now_s, det, oc)) {
+                                                now_s, RelevelEpochState::kCauseWindup,
+                                                det, oc)) {
                         orc_h = true;
                         // One row per (station, satellite): the detail is the
                         // band the ACTION names — first repaired, else first

@@ -2602,33 +2602,66 @@ int networkTeardown(
     // a ceiling, it has measured nothing, and the line says so in-band.
     if (ctx.carry.slip_oracle) {
         const auto& o = *ctx.carry.slip_oracle;
+        const bool ts_free = (o.true_slip == NetworkSlipOracle::TrueSlip::Free);
+        const bool fa_free = (o.false_alarm == NetworkSlipOracle::FalseAlarm::Free);
+        // The ACTUATION counter depends on the policy pair: with true_slip 'free'
+        // nothing is ever repaired BY CONSTRUCTION, so keying inertness on
+        // `applied` there would fire the dead-wiring warning on a correctly
+        // working false-alarm-isolation arm — the mirror of the failure that
+        // warning exists to catch.  The arm's own actuation is the KEEP.
+        const long long acted = ts_free ? o.fa_kept : o.applied;
         log->warn("Network (slip ORACLE): {} detector actuation(s) on carried arcs, {} "
                   "repaired (sum |delta| {:.1f} cyc, max |delta| {:.1f}, {} multi-slip), {} "
-                  "false-alarm kept, {} false-alarm freed, {} fell through with no carry, {} "
-                  "with no wavelength; noise sigma {:.4f} cyc; policy {}; detector-latency "
-                  "window {:.0f} s (floored at each carry's BIRTH second, so a level erased "
-                  "and re-created by T4 is never re-shifted) — lower bound set by the window "
-                  "on {}, by the carry's birth on {}, by an earlier repair on {}; truth root "
-                  "'{}'.  SIM-ONLY DIAGNOSTIC — this run's products carry a truth-fed repair "
-                  "and are NOT a shippable posture.{}",
+                  "true-slip freed, {} false-alarm kept [MW {} | LLI {} | IF-TD {} | "
+                  "whole-sat {} | other {}], {} false-alarm freed, {} fell through with no "
+                  "carry, {} with no wavelength; noise sigma {:.4f} cyc; POLICY true_slip "
+                  "{} / false_alarm {}; detector-latency window {:.0f} s (floored at each "
+                  "carry's BIRTH second, so a level erased and re-created by T4 is never "
+                  "re-shifted) — lower bound set by the window on {}, by the carry's birth "
+                  "on {}, by an earlier repair on {}; truth root '{}'.  SIM-ONLY DIAGNOSTIC "
+                  "— this run's products carry a truth-fed response and are NOT a shippable "
+                  "posture.{}",
                   o.seen, o.applied, o.sum_abs_cyc, o.max_abs_cyc, o.multi,
-                  o.fa_kept, o.fa_freed, o.no_carry, o.no_lambda, o.noise_cyc,
-                  o.false_alarm == NetworkSlipOracle::FalseAlarm::Free ? "free" : "keep",
+                  o.true_slip_freed, o.fa_kept, o.fa_kept_mw, o.fa_kept_lli,
+                  o.fa_kept_iftd, o.fa_kept_wusat, o.fa_kept_other,
+                  o.fa_freed, o.no_carry, o.no_lambda, o.noise_cyc,
+                  ts_free ? "free" : "repair", fa_free ? "free" : "keep",
                   o.window_s, o.bound_window, o.bound_birth, o.bound_applied, o.truth_root,
-                  (o.applied == 0)
-                      ? "  ⚠ ARMED AND INERT: ZERO arcs were repaired — this is dead wiring, "
-                        "not a quiet run, and the arm measures NOTHING.  Do not read its ZWD "
-                        "as a falsification of level preservation."
-                      : "");
+                  (acted != 0)
+                      ? ""
+                  : (ts_free && fa_free)
+                      ? "  ⚠ NO-OP ARM BY CONFIGURATION: both policies are 'free', so the "
+                        "oracle declined every actuation and wrote nothing.  This is the "
+                        "byte-identity control, not a measurement."
+                  : ts_free
+                      ? "  ⚠ ARMED AND INERT: ZERO false alarms were kept — on this policy "
+                        "pair (true_slip 'free') the KEEP is the arm's only actuation, so "
+                        "this is dead wiring, not a quiet run.  Do not read its ZWD as a "
+                        "falsification of the false-alarm channel."
+                      : "  ⚠ ARMED AND INERT: ZERO arcs were repaired — this is dead "
+                        "wiring, not a quiet run, and the arm measures NOTHING.  Do not "
+                        "read its ZWD as a falsification of level preservation.");
         // Closure (the gap_reentry precedent): every offered arc lands in exactly
         // one bucket, so a reader never has to infer a missing cell.
-        const long long closure = o.applied + o.fa_kept + o.fa_freed + o.no_carry
-                                + o.no_lambda;
+        const long long closure = o.applied + o.true_slip_freed + o.fa_kept + o.fa_freed
+                                + o.no_carry + o.no_lambda;
         if (closure != o.seen)
             log->error("Network (slip ORACLE): counter closure BROKEN — {} seen vs {} bucketed "
-                       "(applied {} + fa_kept {} + fa_freed {} + no_carry {} + no_lambda {}).",
-                       o.seen, closure, o.applied, o.fa_kept, o.fa_freed, o.no_carry,
-                       o.no_lambda);
+                       "(applied {} + true_slip_freed {} + fa_kept {} + fa_freed {} + "
+                       "no_carry {} + no_lambda {}).",
+                       o.seen, closure, o.applied, o.true_slip_freed, o.fa_kept, o.fa_freed,
+                       o.no_carry, o.no_lambda);
+        // …and the tier split's own closure: an `other` bucket that is nonzero
+        // means a call site passed a cause bit this split does not name, i.e. a
+        // detector whose false alarms are attributed to nothing.
+        const long long tier_sum = o.fa_kept_mw + o.fa_kept_lli + o.fa_kept_iftd
+                                 + o.fa_kept_wusat + o.fa_kept_other;
+        if (tier_sum != o.fa_kept || o.fa_kept_other != 0)
+            log->error("Network (slip ORACLE): false-alarm TIER split BROKEN — {} kept vs {} "
+                       "attributed (MW {} + LLI {} + IF-TD {} + whole-sat {} + other {}); a "
+                       "nonzero 'other' is a call site passing an unrecognised cause bit.",
+                       o.fa_kept, tier_sum, o.fa_kept_mw, o.fa_kept_lli, o.fa_kept_iftd,
+                       o.fa_kept_wusat, o.fa_kept_other);
     }
     if (nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry) {
         const auto& qcc = slip_qc.counters;

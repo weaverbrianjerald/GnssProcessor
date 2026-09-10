@@ -156,6 +156,9 @@ std::unique_ptr<NetworkSlipOracle> networkSlipOracleLoad(
     oracle->false_alarm = (sq.oracle_false_alarm == "free")
                               ? NetworkSlipOracle::FalseAlarm::Free
                               : NetworkSlipOracle::FalseAlarm::Keep;
+    oracle->true_slip   = (sq.oracle_true_slip == "free")
+                              ? NetworkSlipOracle::TrueSlip::Free
+                              : NetworkSlipOracle::TrueSlip::Repair;
     // The loader already clamped this to >= 0; re-clamped because this function is
     // also the unit suite's entry point (a hand-built config never passed through
     // loadFromJson).  A negative window would make EVERY actuation a false alarm.
@@ -191,15 +194,15 @@ std::unique_ptr<NetworkSlipOracle> networkSlipOracleLoad(
     }
 
     log->warn("Network (slip ORACLE): network.cycle_slip.oracle_relevel is ON — a SIM-ONLY "
-              "DIAGNOSTIC.  Every detector refloat on a CARRIED arc is answered by shifting "
-              "the carried level by the TRUE integer jump from '{}' instead of freeing the "
-              "arc: {} truth slip(s) across {} (station, satellite, signal) arc(s) at {} "
-              "roster station(s).  False-alarm policy '{}'; injected noise sigma {:.4f} cyc; "
-              "detector-latency window {:.0f} s, floored at each carry's own BIRTH second.  "
-              "This measures the CEILING of a level-preserving re-level "
-              "(SPEC_lane_slip_response) — it is NOT a shippable response and must never be "
-              "promoted or land in a golden.",
+              "DIAGNOSTIC.  Every detector refloat on a CARRIED arc is answered from the "
+              "truth table at '{}': {} truth slip(s) across {} (station, satellite, signal) "
+              "arc(s) at {} roster station(s).  POLICY PAIR true_slip '{}' / false_alarm "
+              "'{}'; injected noise sigma {:.4f} cyc; detector-latency window {:.0f} s, "
+              "floored at each carry's own BIRTH second.  This measures the CEILING of a "
+              "level-preserving re-level (SPEC_lane_slip_response) — it is NOT a shippable "
+              "response and must never be promoted or land in a golden.",
               oracle->truth_root, n_rows, n_arcs, stations.size(),
+              oracle->true_slip == NetworkSlipOracle::TrueSlip::Free ? "free" : "repair",
               oracle->false_alarm == NetworkSlipOracle::FalseAlarm::Free ? "free" : "keep",
               oracle->noise_cyc, oracle->window_s);
     return oracle;
@@ -234,8 +237,8 @@ double networkSlipOracleNoise(double sigma_cyc, int sta, const std::string& sat,
 
 bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
                              const std::string& sat, const std::string& signal,
-                             double now_s, std::string& detail,
-                             OracleOutcome& outcome) {
+                             double now_s, std::uint8_t cause,
+                             std::string& detail, OracleOutcome& outcome) {
     outcome = OracleOutcome::NotHandled;
     ++oracle.seen;
     const auto key = std::make_tuple(sta, sat, signal);
@@ -284,9 +287,34 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
             return false;
         }
         ++oracle.fa_kept;
+        // Per-TIER attribution of the keeps (invariant #4).  The decision is
+        // already made — the tier only says WHICH detector's thresholds a
+        // false-alarm-isolation arm should be read against.  An unrecognised bit
+        // is a mis-wired call site, not a fifth detector, so it gets its own
+        // bucket rather than being folded into one of the four.
+        switch (cause) {
+            case RelevelEpochState::kCauseMw:     ++oracle.fa_kept_mw;    break;
+            case RelevelEpochState::kCauseLli:    ++oracle.fa_kept_lli;   break;
+            case RelevelEpochState::kCauseIfTd:   ++oracle.fa_kept_iftd;  break;
+            case RelevelEpochState::kCauseWindup: ++oracle.fa_kept_wusat; break;
+            default:                              ++oracle.fa_kept_other; break;
+        }
         detail  = "delta=0;n=0;noise=0";
         outcome = OracleOutcome::Kept;
         return true;
+    }
+
+    // (3b) TRUE SLIP, policy `free` — the FALSE-ALARM ISOLATION arm.  Truth says
+    //      this arc really jumped, so it gets today's ORDINARY response: decline,
+    //      and the caller frees / re-levels exactly as it would on the base arm.
+    //      Deliberately BEFORE the wavelength lookup — no shift is formed, so a
+    //      signal with no wavelength is not a `no_lambda` fall-through here, it
+    //      is the same decline for the same reason (and counting it twice would
+    //      break the closure).  `last_applied_s` is NOT advanced: nothing was
+    //      applied, and the next detector on this arc must see the same window.
+    if (oracle.true_slip == NetworkSlipOracle::TrueSlip::Free) {
+        ++oracle.true_slip_freed;
+        return false;
     }
 
     // (4) REPAIR.  Wavelength in the signal's OWN band (delta_cycles is in that
