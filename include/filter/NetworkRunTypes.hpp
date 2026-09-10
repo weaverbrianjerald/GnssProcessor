@@ -416,6 +416,27 @@ struct LocalCarry {
     double var_first{0.0};                        ///< The arc's FIRST-STASH conditional variance (m²; 0 = unknown): set once at birth, kept across re-stashes (an erase-and-rebirth starts it over, a re-level keeps it).  The honest-σ-scale denominator of network.phase_datum_handover_max_var_ratio; snapshotted only when that knob is armed.
     long long birth_ep{0};                        ///< Loop-epoch index (n_loop_epochs) of the arc's FIRST stash (0 = unknown ⇒ mature): set once at birth, kept across re-stashes, restarted by an erase-and-rebirth.  network.phase_leveling_local_block_min_age_ep keeps a leg OUT of the F3 block (per-column row instead) until n_loop_epochs − birth_ep ≥ the gate — a leg born at a satellite's re-admission carries its code-level birth error, and the block's joint whitening would spread it into the station's mature columns.  Not snapshotted (a restored entry reads mature).
     double birth_s{0.0};                          ///< Continuous-GPS seconds (week*604800 + tow) of the arc's FIRST stash — the seconds twin of @c birth_ep, set once at birth from the harvest's @c pl_now_s, kept across re-stashes, restarted by an erase-and-rebirth (a T4 attribution erase deletes the entry and the next harvest re-creates it with a level that ALREADY contains any earlier slip).  Read by the SIM-ONLY slip oracle (@c network.cycle_slip.oracle_relevel) as the hard lower edge of its truth-slip window, so a repair can never re-apply a jump the re-created level already absorbed.  NOT snapshotted (like @c birth_ep): a warm-resume-restored entry reads 0, which only widens the oracle window to its @c oracle_window_s bound — acceptable for a sim-only diagnostic and the conservative direction.
+    /// Continuous-GPS seconds of the arc's LAST RE-LEVEL — the age clock of the
+    /// AGE-AWARE young-arc variance inflation
+    /// (@c network.phase_leveling_young_inflate_var_m2,
+    /// SPEC_amb_iono_split_overcount §6.17–§6.18).  Set to the harvest's @c pl_now_s
+    /// on exactly two events, both of which produce a level whose VALUE is
+    /// CODE-QUALITY while its harvested VARIANCE is phase-stiff (conditioned on the
+    /// station's mature arcs):
+    ///   * the entry is CREATED (no previous entry) — a first stash, or the re-stash
+    ///     after a T4 attribution erase / gap prune deleted the entry, and
+    ///   * the arc was FREED this epoch by the slip response
+    ///     (@c network.cycle_slip.relevel_free_epoch's latched @c free_ambs set, the
+    ///     SAME set the PASS-B inject consulted), so this harvest re-levelled it from
+    ///     one epoch of code.
+    /// PRESERVED across every ordinary re-stash, so the age keeps growing while the
+    /// arc matures.  The inject inflates the column's prior variance by
+    /// V0·exp(−age/τ) until @c phase_leveling_young_inflate_max_age_ep, which is what
+    /// stops the T4 tier erasing an arc that is merely UNREFINED rather than wrong
+    /// (the erase–re-level treadmill, 21 erases/station-hour).  NOT snapshotted (like
+    /// @c birth_s / @c birth_ep): a warm-resume-restored entry reads 0, which this
+    /// card treats as UNSTAMPED ⇒ MATURE ⇒ no inflation — the conservative direction.
+    double relevel_s{0.0};
 };
 
 /// SPEC_slip_relevel_walk §6 — the slip re-level response's per-epoch state
@@ -775,6 +796,16 @@ struct StationAssembly {
     long long                 pl_blk_col_refused{0};   ///< F3: block columns dropped by the scalar-row "never poison" screen (non-finite RHS / σ² ≤ 0).
     long long                 pl_blk_fallback{0};      ///< F3: block factorization failed after the ridge retry → this station-epoch emitted F1/diagonal rows instead.
     long long                 pl_blk_young_cols{0};    ///< F3 age gate (network.phase_leveling_local_block_min_age_ep): injectable columns YOUNGER than the gate this station-epoch — kept OUT of the block and emitted as per-column rows (F1-scaled if armed).
+    long long                 pl_blk_yng_scaled{0};    ///< AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2): block columns whose row/column of Σ was CONGRUENCE-scaled this station-epoch.  Read against @c yng_cols below: a gap means columns were computed young but their block never reached the scaling (refused by the scalar screen, or the station took the per-column route).
+    // AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,
+    // SPEC_amb_iono_split_overcount §6.17–§6.18) — per-station telemetry, folded
+    // serially like every other block counter.  Counted at the COMPUTE site (once per
+    // carried ambiguity column, whichever route then folds it), so it is the population
+    // the card acted on, not a per-route split.
+    long long                 yng_cols{0};             ///< column-epochs handed a strictly positive var_add this station-epoch.
+    long long                 yng_skip_age{0};         ///< STAMPED column-epochs refused for age > max_age_ep (an UNSTAMPED entry — relevel_s == 0 — is treated as mature and counted in neither).
+    double                    yng_var_add_sum{0.0};    ///< Σ of those var_add values (m²).
+    double                    yng_age_sum{0.0};        ///< Σ of their ages (loop epochs); ÷ yng_cols = this station-epoch's mean inflated age.
     long long                 pl_blk_hist[5]{0, 0, 0, 0, 0}; ///< F3: block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75.
     long long                 pl_blk_max_dim{0};       ///< F3: largest block dimension this station-epoch.
     // B9-in-block (network.carry_zwd_in_block): the ZWD column carried INSIDE the F3 block.

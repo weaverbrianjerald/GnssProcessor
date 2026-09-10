@@ -11,6 +11,7 @@
  */
 
 #include "filter/NetworkCoupling.hpp"
+#include "filter/NetworkYoungInflate.hpp"
 
 #include "filter/NetworkEstimator.hpp"   // est.clockColumn / phaseBiasColumn / codeBiasColumn / vtecCoeffColumn
 #include "config/GnssConfigTypes.hpp"    // GlobalVtecShConfig::q_per_degree (couplingQ)
@@ -434,6 +435,34 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             blk.Sigma(i, j) = v;
             blk.Sigma(j, i) = v;
         }
+    }
+    // (2b) AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,
+    //      SPEC_amb_iono_split_overcount §6.17–§6.18): a column whose LAST RE-LEVEL is
+    //      recent holds a CODE-quality level at the PHASE-stiff variance the conditional
+    //      hands back (it is conditioned on the station's MATURE arcs), so the T4 tier
+    //      erases an arc that is merely UNREFINED and the erase–re-level treadmill runs.
+    //      The correction is a CONGRUENCE Σ ← DΣD with D = diag(f_j),
+    //      f_j = √((Σ_jj + var_add_j)/Σ_jj) ≥ 1 — applied HERE, after the diagonal and
+    //      the harvested cross terms are both in place and BEFORE the whitening, which
+    //      is the only point at which "this column's row and column" is a well-defined
+    //      object.  Three properties, and the reason it is a congruence and not a
+    //      diagonal addition: the target diagonal is inflated EXACTLY (f_j²Σ_jj =
+    //      Σ_jj + a_j); PD is preserved by Sylvester's law of inertia (D is diagonal,
+    //      strictly positive — the scalar screen above already guaranteed Σ_jj > 0); and
+    //      every correlation coefficient is UNCHANGED, because f_jf_kΣ_jk divided by
+    //      √(f_j²Σ_jj·f_k²Σ_kk) is ρ_jk.  A freshly re-levelled arc is not LESS coupled
+    //      to its station's other columns — it is worth less on its own.  OFF (every
+    //      var_add 0) writes nothing to Σ, so the block is byte-identical.
+    {
+        std::vector<double> yng_add(static_cast<std::size_t>(n), 0.0);
+        bool any_yng = false;
+        for (Eigen::Index i = 0; i < n; ++i) {
+            const double a = ing[static_cast<std::size_t>(i)].c->var_add;
+            if (a > 0.0) { yng_add[static_cast<std::size_t>(i)] = a; any_yng = true; }
+        }
+        if (any_yng)
+            R.pl_blk_yng_scaled += static_cast<long long>(
+                NetworkYoungInflate::congruence(blk.Sigma, yng_add));
     }
     // (3) Whiten: Σ = LLᵀ (ridge retry inside), rows L⁻¹·[I | M | y] at unit weight.
     //     A non-SPD factor after the retry buffers NOTHING — the caller emits the

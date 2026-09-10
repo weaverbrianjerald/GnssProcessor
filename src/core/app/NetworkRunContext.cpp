@@ -55,6 +55,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_local_block = config_.networkPhaseLevelingLocalBlock();
     k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // F3 block admission age gate
     k.pl_blk_young_free = config_.networkPhaseLevelingLocalBlockYoungMode() == "free";
+    // AGE-AWARE young-arc inflate (SPEC_amb_iono_split_overcount §6.17–§6.18).  The
+    // loader has already disabled it (V0 -> 0) off the leveling vehicle, so the live
+    // predicate is Knobs::on() alone.
+    k.yng.var_m2     = config_.networkPhaseLevelingYoungInflateVarM2();
+    k.yng.tau_ep     = config_.networkPhaseLevelingYoungInflateTauEp();
+    k.yng.max_age_ep = config_.networkPhaseLevelingYoungInflateMaxAgeEp();
     k.pl_warmup_on_conv = config_.networkPhaseLevelingWarmupOnConvergence();
     k.pl_refloat_on_conv = config_.networkPhaseLevelingRefloatAtConvergence();
     k.pl_conv_rms_thresh = config_.networkPhaseLevelingConvRmsThreshTecu();
@@ -3486,10 +3492,36 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     const double birth_s =
                         (oldc != local_carry.end() && oldc->second.birth_s > 0.0)
                             ? oldc->second.birth_s : pl_now_s;
+                    // AGE-AWARE young-arc inflate stamp (SPEC_amb_iono_split_overcount
+                    // §6.17–§6.18).  Two events, and ONLY two, produce a level whose
+                    // VALUE is code-quality while its harvested VARIANCE is phase-stiff:
+                    //   * the entry is CREATED — a first stash, or the re-stash after a
+                    //     T4 attribution erase / gap prune DELETED the entry (the erase
+                    //     path needs no separate clause precisely because it deletes);
+                    //   * the arc was FREED this epoch, so THIS harvest re-levelled it
+                    //     from one epoch of code.
+                    // The freed predicate is the harvest's own `relevel_freed` above,
+                    // re-read here because that one lives inside the VCE/census scope:
+                    // `relevel.free_ambs` is the LATCHED set the PASS-B inject consulted
+                    // (empty when network.cycle_slip.relevel_free_epoch is off, which is
+                    // why no knob guard is needed — the same rule the census uses).
+                    // Every OTHER re-stash PRESERVES the stamp, so the age keeps growing
+                    // while the arc matures.  Deliberately NOT birth_s: a re-level keeps
+                    // birth_s (by design — the slip oracle's floor), and it is exactly
+                    // the re-level, not the birth, that resets what the level is worth.
+                    const bool yng_created = (oldc == local_carry.end());
+                    const bool yng_freed =
+                        ctx.carry.relevel.free_ambs.count(
+                            {static_cast<int>(i), pa.amb_key}) > 0;
                     LocalCarry nlc{value_abs, var, pl_now_s, std::move(coupling)};
                     nlc.var_first = var_first;
                     nlc.birth_ep  = birth_ep;
                     nlc.birth_s   = birth_s;
+                    nlc.relevel_s = NetworkYoungInflate::stamp(
+                        yng_created ? 0.0 : oldc->second.relevel_s,
+                        yng_created, yng_freed, pl_now_s);
+                    if (yng_created)     ++ctx.counters.n_yng_stamp_create;
+                    else if (yng_freed)  ++ctx.counters.n_yng_stamp_free;
                     local_carry[lkey] = std::move(nlc);
                 }
                 if (hblk && cross.size() == hblk->C.rows()) {

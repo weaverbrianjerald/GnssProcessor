@@ -102,6 +102,18 @@ struct LocalBlockCol {
     /// ambiguity population.  Default false: every pre-existing brace-init (6- or
     /// 7-element) keeps its exact meaning.
     bool              is_iono{false};
+    /// AGE-AWARE young-arc inflate (@c network.phase_leveling_young_inflate_var_m2,
+    /// SPEC_amb_iono_split_overcount §6.17–§6.18): the variance @f$V_0e^{-age/	au}@f$
+    /// this column's freshly RE-LEVELLED level is worth LESS than its phase-stiff
+    /// harvested variance says.  Applied by @ref CouplingRowBuilder::buildLocalBlock as
+    /// a CONGRUENCE scaling of this column's row/column of Σ (f = √((Σ_jj+var_add)/Σ_jj)
+    /// on the row and the column) rather than an addition to the diagonal, so Σ stays PD
+    /// and every correlation coefficient is EXACTLY unchanged — only this column's own
+    /// marginal loosens.  0 (default) = no scaling and not one write to Σ, so every
+    /// pre-existing brace-init keeps its exact meaning and the OFF path is
+    /// byte-identical.  Never set on a ZWD or iono column: the card is about an ARC's
+    /// re-level, and neither of those is an arc.
+    double            var_add{0.0};
 };
 
 /// Card 1d: one buffered PRESENT-column term of a coupling row under the

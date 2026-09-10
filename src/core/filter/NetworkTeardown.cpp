@@ -2043,6 +2043,40 @@ int networkTeardown(
                                    "MISWIRE, not a quiet run."
                                  : "")
                           : " (knob OFF — these are structurally 0)");
+        // AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,
+        // SPEC_amb_iono_split_overcount §6.17–§6.18) — the ON-path telemetry
+        // (invariant #4).  Printed ONLY when armed, so an OFF log is byte-identical.
+        // What to read: 0 inflated column-epochs under an armed knob is ARMED AND
+        // INERT — the stamps never reached an inject, not a quiet run; a mean age near
+        // the ceiling says the population being inflated is nearly mature and the knob
+        // is buying almost nothing; and the stamp split (created vs freed) says which
+        // event is actually producing the code-quality levels on this bed.  The
+        // block-scaled count read against the inflated count separates "computed" from
+        // "actually applied inside Σ" — a gap is columns that took the per-column route
+        // (F3 off, factorization fallback, young-leg gate) or were refused by the
+        // block's scalar screen.
+        if (config_.networkPhaseLevelingYoungInflateVarM2() > 0.0)
+            log->info("Network (young-arc inflate): {} column-epoch(s) inflated (V0 {:.4g} m², "
+                      "tau {:.4g} ep, max age {} ep), mean age {:.2f} ep, Σ var_add {:.4g} m²; "
+                      "{} of them congruence-scaled inside an F3 block; {} stamped "
+                      "column-epoch(s) skipped for age > max; {} re-level stamp(s) set "
+                      "(created {} / freed {}).{}",
+                      C.n_yng_cols,
+                      config_.networkPhaseLevelingYoungInflateVarM2(),
+                      config_.networkPhaseLevelingYoungInflateTauEp(),
+                      config_.networkPhaseLevelingYoungInflateMaxAgeEp(),
+                      C.n_yng_cols > 0
+                          ? C.yng_age_sum / static_cast<double>(C.n_yng_cols) : 0.0,
+                      C.yng_var_add_sum, C.n_pl_blk_yng_scaled, C.n_yng_skip_age,
+                      C.n_yng_stamp_create + C.n_yng_stamp_free,
+                      C.n_yng_stamp_create, C.n_yng_stamp_free,
+                      C.n_yng_cols == 0
+                          ? "  ⚠ ARMED AND INERT: 0 column-epochs inflated under an ARMED "
+                            "phase_leveling_young_inflate_var_m2 — no carried column ever "
+                            "reached an inject inside its age window, which is a MISWIRE "
+                            "(no stamps, no leveling inject, or an epoch spacing the run "
+                            "never resolved), not a quiet run."
+                          : "");
         // Seam-scoped ZWD re-seed (network.zwd_seam_reseed) — the ON-path telemetry
         // (standing invariant #4): an armed knob with 0 folds means the window never
         // armed (no warm resume, or the snapshot carried no Z rows) or every fold
