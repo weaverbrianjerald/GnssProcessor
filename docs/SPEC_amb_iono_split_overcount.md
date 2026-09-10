@@ -1862,6 +1862,17 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    ambiguities under the invariant carry making `x_r` large on the field where the sim's frozen carries keep
    it near zero).  Both outcomes are informative; the assumption both the budget and the check share is that
    the DD of states maps linearly onto the DD of modelled phase with no other state moving.
+   **Five-minute check of the mis-pairing candidate on data already on disk (18:16):** `network_ionosphere.csv`
+   emits `x_lin_m` and `iono_m` (= x_r) separately.  On BOTH beds the iono `x_lin` is a constant seed within
+   every arc (arc MAD 0.000) and x_r carries the entire time variation — field control |x_r| p50 11.0 m, arc
+   MAD 3.9 m; sim F3 arm |x_r| p50 5.9 m, arc MAD 1.5 m.  So the premise "x_r ≈ 0 on the sim" is FALSE for
+   the iono state: the sim's x_r wanders metres per arc, and the sim's DD-ambiguity trace nevertheless reads
+   clean (MAD 0.15 cyc).  An ambiguity↔iono column mis-pairing in the DD trace is therefore FALSIFIED as a
+   universal bug (it would print the sim's 1.5 m iono x_r into the sim's ambiguities); what survives of that
+   candidate is only a vehicle-specific mapping difference (carry_invariant field vs leveling sim), which the
+   leveling arms test directly.  The ambiguity states' own x_lin/x_r split is not traced (only the sum) — the
+   one-line `x_lin_m`/`x_r_m` column addition to `NetworkDdFrac.cpp:318-327` (trace-only, byte-identical) is
+   the follow-up instrument for the reconstruction.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
@@ -1882,6 +1893,22 @@ marginalizations 18,456 vs 18,535, T1 flags 322 vs 343, consumer path differs) �
 Run-end: prires worst |t| 178 (rxcb), block-Baarda 34/1441 (2.4 %), rx-CB 46,426 folded / 41,297 withheld;
 T3/T4 0 / 0 (post-fit RAIM inert on this vehicle, as pre-registered).  In-process AR consumer settled (≥ h6)
 3D rms 9.6 m / p50 8.6 — the documented pathology, reported not leaned on.  D0 median 1,072 ms (overlapped).
+
+**Arm 1 `fldf3_pl` — landed 18:13 (exit 0; only 1,122 D0 epochs of 1,440 — 209 `gate_withheld`, 165
+`phase_heal`, sbc engage/refuse/release 15/10/13; D0 median 289 ms):** the phase-leveling vehicle WITHOUT
+F3 is numerically sick on the field.  ZWD (settled, 61 stations): per-station span median **120 m**, max
+1,305 m, |rate| p50 8.8 m/h, formal σ 0.019 m — the station-common over-count of §3 at a scale the sim never
+showed (sim F1 rms 0.19 m).  Prior-residual worst |t| 1.2e8 (pl/CLEAN), block-Baarda 5,877 flags, T2
+within-epoch trigger 259/974 (27 %), T3 43,714/481,017 (9.1 %), T3c 5,087, T4a 10,601 — the live pool
+refloating continuously.  DD instruments: at the null on every signal (L1C R 0.465 vs 0.468, gap +0.008;
+L2W 0.449 vs 0.450; WL12 0.478 vs 0.480, 28,304 paired chords).  Arc stability WORSE than the control: e1/e2
+MAD **24.2 / 24.8 cyc** (p90 141), drift 63 / 67, WL 4.8 cyc (vs 0.56), cross-band slope 1.080 (p10 0.85,
+p90 1.28, corr 0.994) — between cycle-common and iono; ref-free/raw 0.38 vs null 0.70 (the reference carries
+a third of it).  Iono leg: DD-iono MAD **3.7 m** (3× the control), and the ambiguity↔iono coupling has MOVED
+INTO THE IONO-SHAPED CHANNEL — B MAD 16.8 cyc, B on DD-iono slope +0.78 (corr 0.88), A +0.31 (corr 0.44):
+on this vehicle the ambiguities absorb iono error the way the model does it (band-shaped), at ~17 cycles.
+In-process AR consumer settled 9.9 m (pathology).  Verdict on the vehicle switch: the diagonal leveling
+carry is NOT field-viable on this posture; whether F3's whitened block rescues it is arm 2's question.
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
