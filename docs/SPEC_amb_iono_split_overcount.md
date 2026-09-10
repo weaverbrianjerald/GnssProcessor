@@ -2113,6 +2113,15 @@ withholds ≤ 5/360 with ≤ 10 unsolved, h1–h3 ZWD span p50 < 2 m with σ ≥
 on ≥ 40 arcs ⇒ the converging field leveling posture exists and the F3 12 h arm is re-run on it (with its
 own no-F3 control); FAIL on any leg ⇒ the two defects are not additive and the leveling vehicle needs a
 design card before F3 can be read on the field.**
+**Probe 7 read (19:10): PASS on every gate — 360/360 solved, 0 withholds, 0 unsolved; h1–h3 ZWD span p50 0.49 m
+(p90 3.5, max 9.1) with σ 8 mm; DD arc wander e1 MAD 0.255 cyc on 59 arcs (54 % < 0.3, a 30 % tail > 1 cyc;
+cross-band slope −0.87, corr −0.91 — band-ANTI-correlated sub-cycle wander, i.e. a GF-shaped residual, noted not
+read); prires worst |t| still 2.5e8; DD fractions at the null as expected without F3.  So the converging field
+leveling posture is the sim golden's: `carry_coupling_gauge_project` + the prioritized phase-datum family
+(`phase_datum_eq34: false`, `phase_datum_prioritized`, `phase_datum_handover_continuous`,
+`phase_anchor_carry_reref`, `phase_datum_min_stations: 2`).  **Second round PRE-REGISTERED (configs written
+19:08, before probe 7 was read): `_fldf3_pl2` (that posture, F3 off) and `_fldf3_on2` (+ F3), 12 h fresh,
+same exe, float replays of both wires; §6.15.3 P1–P7 apply unchanged with on2 ↔ pl2 as the graded delta.**
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
