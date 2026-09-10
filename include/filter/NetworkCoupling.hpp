@@ -114,6 +114,22 @@ struct LocalBlockCol {
     /// byte-identical.  Never set on a ZWD or iono column: the card is about an ARC's
     /// re-level, and neither of those is an arc.
     double            var_add{0.0};
+    /// RX-CLK-in-block (@c network.carry_rx_clock_in_block): this entry is one of the
+    /// station's carried RECEIVER-CLOCK-family columns (the primary clock, or an ISB
+    /// under @c network.carry_rx_clock_isb).  Exactly like @c is_zwd / @c is_iono it is
+    /// TELEMETRY ONLY — the builder's algebra never reads it — so that
+    /// @c pl_blk_rxclk_cols / @c pl_blk_rxclk_missing_cross can be split out of the
+    /// ambiguity population.  ⚠ The clock's carried MEAN is the drift-extrapolated
+    /// prediction, which the injector supplies by pointing @c lc at a predicted COPY of
+    /// the carry entry; the builder therefore needs no special case for it.  Default
+    /// false: every pre-existing brace-init keeps its exact meaning.
+    bool              is_rx_clk{false};
+    /// RX-CLK-in-block: …and this clock-family entry is one of the station's per-system
+    /// ISB columns rather than its primary receiver clock.  TELEMETRY ONLY (only
+    /// @c pl_blk_rxclk_isb_cols reads it), and meaningful only with @c is_rx_clk set.
+    /// The algebraic difference between the two lives at the INJECTOR — an ISB is
+    /// carried as a pure random walk, the clock about a carried drift — not here.
+    bool              is_rx_isb{false};
 };
 
 /// Card 1d: one buffered PRESENT-column term of a coupling row under the

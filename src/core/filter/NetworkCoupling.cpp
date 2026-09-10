@@ -373,6 +373,12 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         // I-in-block: same rule, same reason — a per-LOS iono column counts once it is
         // really a row of this block, never at push time.
         if (c.is_iono) ++R.pl_blk_iono_cols;
+        // RX-CLK-in-block: same rule, same reason.  The ISB split is a sub-count, not a
+        // partition — an ISB column increments both.
+        if (c.is_rx_clk) {
+            ++R.pl_blk_rxclk_cols;
+            if (c.is_rx_isb) ++R.pl_blk_rxclk_isb_cols;
+        }
         ing.push_back(std::move(g));
     }
     const Eigen::Index n = static_cast<Eigen::Index>(ing.size());
@@ -429,6 +435,14 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 // (iono, zwd) counts in both splits by design: neither counter claims to
                 // partition pl_blk_pair_missing.
                 if (ci.is_iono || cj.is_iono) ++R.pl_blk_iono_missing_cross;
+                // RX-CLK-in-block: the clock family's own share, split out for the same
+                // reason.  A clock entry stashed WITHOUT a harvest block makes EVERY pair
+                // with it miss — the shape a "carried clock that is not actually coupled
+                // to anything" has, i.e. a silently DIAGONAL prior on the most
+                // station-common direction of all, invisible inside the aggregate.  A pair
+                // that is both (clock, zwd) or (clock, iono) counts in both splits by
+                // design: no counter here claims to partition pl_blk_pair_missing.
+                if (ci.is_rx_clk || cj.is_rx_clk) ++R.pl_blk_rxclk_missing_cross;
                 continue;
             }
             if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);

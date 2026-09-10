@@ -1996,7 +1996,13 @@ int networkTeardown(
                       "Iono in block: {} col(s), {} fallback(s) (block non-SPD ⇒ NOT "
                       "folded; this card has no diagonal iono row by design), {} missing "
                       "cross term(s), {} RAIM-pool admission(s), {} erased by T4, {} "
-                      "dropped at gaps; q {:.3e} m² per epoch at L1, gap bound {:.0f} s{}",
+                      "dropped at gaps; q {:.3e} m² per epoch at L1, gap bound {:.0f} s{}.  "
+                      "Rx clock in block: {} col(s) ({} ISB), {} not folded (block non-SPD "
+                      "⇒ carried nothing; this card has no diagonal clock row by design), "
+                      "{} missing cross term(s), {} RAIM-pool admission(s), {} refused "
+                      "(innovation: a clock JUMP at >{:.1f} sigma, carry erased), {} dropped "
+                      "at gaps; bias q {:.3e} m² per epoch, drift q {:.3e} m²/s² per epoch "
+                      "from {:.3e}, gap bound {:.0f} s{}",
                       (cliff_live && config_.networkCarryConditionalCoupling()
                        && !config_.networkCarryCouplingJointWhiten())
                           ? "" : " ⚠ CHANNEL NOT ARMED on this posture (phase_leveling "
@@ -2041,6 +2047,29 @@ int networkTeardown(
                                    "carry_iono_in_block — no station-epoch reached the "
                                    "block with a live per-LOS iono carry, which is a "
                                    "MISWIRE, not a quiet run."
+                                 : "")
+                          : " (knob OFF — these are structurally 0)",
+                      // RX-CLK-in-block (network.carry_rx_clock_in_block) — invariant #4,
+                      // on the F3 line because the block IS the vehicle.  0 columns under
+                      // an armed knob is UNWIRED, not clean.  ⚠ Read `refused` as the
+                      // clock-JUMP census: it is the ONLY jump detector the network's
+                      // receiver clock has, so a field lineage with 0 refusals over a day
+                      // is either a very well behaved receiver fleet or a gate set too
+                      // loose — and a large count means the carry is being rebuilt
+                      // constantly, i.e. the drift model is not tracking.
+                      C.n_pl_blk_rxclk_cols, C.n_pl_blk_rxclk_isb_cols,
+                      C.n_pl_blk_rxclk_not_folded, C.n_pl_blk_rxclk_missing_cross,
+                      C.n_raim_pool_rxclk_rows, C.n_rxclk_carry_refused,
+                      config_.networkCarryRxClockJumpK(), C.n_rxclk_carry_gap_drop,
+                      config_.networkCarryRxClockQM2(), config_.networkCarryRxClockRateQ(),
+                      config_.networkCarryRxClockRateVar0(),
+                      config_.networkCarryRxClockMaxGapS(),
+                      config_.networkCarryRxClockInBlock()
+                          ? (C.n_pl_blk_rxclk_cols == 0
+                                 ? "  ⚠ ARMED AND INERT: 0 receiver-clock columns under an "
+                                   "ARMED carry_rx_clock_in_block — no station-epoch reached "
+                                   "the block with a live clock carry, which is a MISWIRE, "
+                                   "not a quiet run."
                                  : "")
                           : " (knob OFF — these are structurally 0)");
         // AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,

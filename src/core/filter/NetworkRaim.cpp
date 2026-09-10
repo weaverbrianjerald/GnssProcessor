@@ -265,6 +265,24 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     iono_blk_rows.insert(R.cpl_row_start + static_cast<Eigen::Index>(rr));
         }
         std::set<Eigen::Index> iono_rows_pooled;   // once per row per station-epoch
+        // RX-CLK-in-block (network.carry_rx_clock_in_block) — the SAME §7 item 4
+        // interaction for the rho half.  Each carried clock-family column contributes one
+        // whitened block row (a row of L⁻¹) carrying non-zero coefficients on the
+        // ambiguity columns below it, which can therefore clear the pool's
+        // |A_r(row, amb_col)| > 0.5 admission test that was written for DATA phase rows.
+        // ⚠ Expect this one to be LARGE where the ZWD's is: the receiver clock is the
+        // most station-common direction there is, so its whitened row touches every
+        // ambiguity column of the station.  This card does NOT change the rule; it counts
+        // the admissions so the next card decides on data.
+        std::set<Eigen::Index> rxclk_blk_rows;
+        if (!R.pl_rxclk_blk_cols.empty() && R.cpl_row_start >= 0) {
+            const std::set<Eigen::Index> rcols(R.pl_rxclk_blk_cols.begin(),
+                                               R.pl_rxclk_blk_cols.end());
+            for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
+                if (rcols.count(R.cpl_row_local_cols[rr]))
+                    rxclk_blk_rows.insert(R.cpl_row_start + static_cast<Eigen::Index>(rr));
+        }
+        std::set<Eigen::Index> rxclk_rows_pooled;   // once per row per station-epoch
         for (const auto& pa : pool) {
             if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
             double r_max = 0.0;
@@ -278,6 +296,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 if (!iono_blk_rows.empty() && iono_blk_rows.count(row)
                     && iono_rows_pooled.insert(row).second)
                     ++ctx.counters.n_raim_pool_iono_rows;
+                // RX-CLK-in-block: the same census, per clock-family block row.
+                if (!rxclk_blk_rows.empty() && rxclk_blk_rows.count(row)
+                    && rxclk_rows_pooled.insert(row).second)
+                    ++ctx.counters.n_raim_pool_rxclk_rows;
                 const double w = (row < R.w.size()) ? R.w(row) : 1.0;
                 // MDB is fed HERE, ahead of the uncheckable `continue` below: a row
                 // RAIM drops from its σ̂0 pool because r_i ≤ 1e-6 is precisely the
@@ -889,6 +911,19 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         if (ctx.knobs.iono_blk &&
                             ctx.carry.iono_blk_carry.erase({i, pa.sat}))
                             ++ctx.counters.n_iono_blk_erased_t4;
+                        // RX-CLK-in-block DELIBERATELY has no T4 edge here, and that is a
+                        // triaged decision rather than an omission (invariant #1: every
+                        // stiff time-linked quantity needs a WIRED event response — this
+                        // one's is the jump gate at the harvest, not the arc refloat).  A
+                        // T4 refloat is a per-(station, satellite) ARC event; the receiver
+                        // clock is a station-wide quantity re-determined every epoch by
+                        // every code and phase row of the station, so erasing it on any one
+                        // arc's refloat would erase the carry on most station-epochs of a
+                        // slipped bed (9,871 T4 events on the 6 h campaign) and leave the
+                        // channel effectively unarmed.  Any real clock displacement a
+                        // refloat causes shows up as a one-step prediction innovation and
+                        // is caught by network.carry_rx_clock_jump_k, which is the
+                        // response that CAN see it.
                         // BOOKKEEPING, not the actuator on the Card-4 path: the producer
                         // forms every innovation against the linearization point and never
                         // writes the solution back, so moving x_lin leaves the reduced

@@ -2138,6 +2138,18 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     }();
     const double iono_blk_q    = ctx.knobs.iono_blk_q_m2;      // m² at L1, PER EPOCH
     const double iono_blk_gap_s = ctx.knobs.iono_blk_max_gap_s;
+    // RX-CLK-in-block live predicate (network.carry_rx_clock_in_block): the station's
+    // RECEIVER CLOCK column (and its ISBs) join the F3 whitened block.  Conjoined with
+    // pl_blk_on and load-bearing for the same reason the iono card's is: this card has NO
+    // diagonal fallback row (a diagonal prior on the most station-COMMON direction of all
+    // is the n_LOS over-count that falsified the diagonal ZWD carry), so off the block
+    // path there is simply nothing to do.  The loader already refuses the arm without
+    // phase_leveling + phase_leveling_local_block; this is the LIVE half of that gate.
+    const bool   rxclk_blk_on  = ctx.knobs.rxclk_blk && pl_blk_on;
+    const double rxclk_q       = ctx.knobs.rxclk_q_m2;       // m², PER EPOCH
+    const double rxclk_gap_s   = ctx.knobs.rxclk_max_gap_s;
+    const double rxclk_rate_var0 = ctx.knobs.rxclk_rate_var0; // m²/s², the unknown-drift prior
+    const bool   rxclk_isb     = ctx.knobs.rxclk_isb;
     const bool   iono_on       = ctx.knobs.iono_on;              // QUEUE 8b: slant-iono carry
     const bool   iono_scope_always = ctx.knobs.iono_scope_always; // QUEUE 8b: inject every epoch (vs re-leveling LOS only)
     const double iono_q        = ctx.knobs.iono_q;               // QUEUE 8b: iono carry RW process noise (m²/s)
@@ -2190,6 +2202,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     auto& zwd_carry = ctx.carry.zwd_carry;
     auto& iono_carry = ctx.carry.iono_carry;     // QUEUE 8b: produce phase READS only
     auto& iono_blk_carry = ctx.carry.iono_blk_carry;  // I-in-block: produce phase READS only
+    auto& rx_clk_carry = ctx.carry.rx_clk_carry;      // RX-CLK-in-block: produce phase READS only
+    auto& rx_clk_rate  = ctx.carry.rx_clk_rate;       // …and its DRIFT half (read-only here; std::map::find is concurrency-safe, operator[] would not be)
     auto& rpb_carry = ctx.carry.rpb_carry;
     auto& sh_dev_carry = ctx.carry.sh_dev_carry;
     auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // rx-CB carry: produce phase READS only
@@ -3154,13 +3168,128 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             /*is_zwd=*/false, /*is_iono=*/true});
                     }
                 }
-                // OFF ⇒ iono_bc is always empty, so this predicate is exactly the pre-card
-                // `if (!pl_pend.empty())` (byte-identical).  ON it also admits a station
-                // whose ambiguity set is entirely young/stale/absent but whose iono carry
-                // is live: those columns still whiten jointly among themselves, which is
-                // the correct prior, and the pl_pend-driven code below all no-ops on an
-                // empty pl_pend.
-                if (!pl_pend.empty() || !iono_bc.empty()) {
+                // --- RX-CLK-in-block (network.carry_rx_clock_in_block): collect this
+                //     station's carried RECEIVER-CLOCK-family columns — the primary clock
+                //     and, under network.carry_rx_clock_isb, its per-system ISBs — for the
+                //     SAME block.  Walked HERE, before the block build, because the
+                //     harvest reads R.pl_rxclk to decide which columns joined `cols`, and
+                //     R.pl_rxclk is recorded for EVERY present column, folded or not, so
+                //     the carry keeps tracking the solution through epochs it cannot act
+                //     on (the pl_zwd_present pattern).
+                //
+                //     WHY THE CLOCK BELONGS IN THE BLOCK.  The receiver clock is the most
+                //     station-COMMON direction there is: every carried ambiguity row of
+                //     the station already asserts it implicitly, so an independent
+                //     diagonal prior would assert it a further n_LOS times — the over-count
+                //     of SPEC_amb_iono_split_overcount §7 item 17 that falsified the
+                //     DIAGONAL ZWD carry.  Inside the block the harvested (N_rr⁻¹) cross
+                //     terms subtract the overlap exactly.  There is deliberately no
+                //     diagonal fallback row.
+                //
+                //     ⚠ WHY THE MEAN IS A PREDICTION, NOT THE LAST VALUE.  The producer
+                //     never writes its solution back into the station StateManager, so
+                //     x_lin(clock) is a RUN-CONSTANT and x_r carries the whole clock —
+                //     including a ~0.3 m/s drift, i.e. 9 m per 30 s epoch (measured
+                //     0.29994 m/s on the sim truth bed, against 0.299 m of RW jitter).  A
+                //     bias-only carry would inject a ~30 σ wrong mean every epoch.  The
+                //     carried pair is therefore (bias, drift): the injected mean is
+                //     value_abs + rate·gap and the injected variance carries the drift's
+                //     own uncertainty over the gap, rate_var·gap².  Until the harvest has
+                //     folded one increment, rate_var is the deliberately huge
+                //     carry_rx_clock_rate_var0 (σ 1 m/s ⇒ σ_prior ≈ 30 m at 30 s), so a
+                //     station whose drift is unknown injects a near-FREE prior rather than
+                //     a stiff wrong one.  An ISB has no drift by construction (a
+                //     near-constant bias; the sim injects a fixed 8.000 m) and takes a
+                //     pure random walk.
+                //
+                //     Asymmetries against an ambiguity column, same as the ZWD's: NO F3
+                //     young-column age gate (a clock is not an arc and has no code-level
+                //     birth error to quarantine — its uninformative first prior is the
+                //     quarantine), NO pl_finish_var tail (the var floor and the M2 VCE
+                //     factor are keyed to the phase-leveling ambiguity family, α² being a
+                //     per-SATELLITE lookup), vce_fac 1.0 so the cross terms are unscaled.
+                std::vector<LocalBlockCol> rxclk_bc;
+                // The drift-predicted COPIES the pushed columns point at.  A copy rather
+                // than a mutation of the carry map because PASS B's contract is
+                // READ-ONLY on the carry (it runs inside the parallel station produce);
+                // the copy keeps blk / blk_idx / coupling, so pairing by harvest-block
+                // pointer is unaffected.  ⚠ RESERVED to its maximum size before the first
+                // push: a reallocation here would dangle every LocalBlockCol::lc already
+                // in rxclk_bc.
+                std::vector<LocalCarry> rxclk_pred;
+                if (rxclk_blk_on) {
+                    // q is PER EPOCH, so the gap needs an epoch length; take it from the
+                    // run itself exactly as the iono card does.
+                    double dt_ep = pl_now_s - ctx.carry.pl_prev_now_s;
+                    if (!std::isfinite(dt_ep) || dt_ep <= 0.0 || dt_ep > pl_max_gap_s)
+                        dt_ep = 0.0;   // first epoch / implausible spacing ⇒ gap_ep = 1
+                    struct RxCand { std::string kind; int sidx; };
+                    std::vector<RxCand> rx_cand;
+                    const size_t clk_sz = st.sm->getClockIndex();
+                    if (clk_sz != std::numeric_limits<size_t>::max())
+                        rx_cand.push_back(RxCand{std::string{}, static_cast<int>(clk_sz)});
+                    if (rxclk_isb)
+                        for (const auto& [sys, sidx] : st.sm->getSystemTimeOffsetStates())
+                            if (sidx != std::numeric_limits<size_t>::max())
+                                rx_cand.push_back(RxCand{sys, static_cast<int>(sidx)});
+                    rxclk_pred.reserve(rx_cand.size());
+                    for (const RxCand& rc : rx_cand) {
+                        if (rc.sidx < 0 || rc.sidx >= x_lin.size()) continue;
+                        if (!std::isfinite(x_lin(rc.sidx))) continue;
+                        const auto rhit = h2local.find(rc.sidx);
+                        if (rhit == h2local.end()) continue;  // column not in A_r this epoch
+                        const Eigen::Index rcol =
+                            static_cast<Eigen::Index>(rhit->second);
+                        R.pl_rxclk.push_back(PlRxClk{rcol, x_lin(rc.sidx), rc.kind});
+                        const auto rkey = std::make_pair(static_cast<int>(i), rc.kind);
+                        const auto rit = rx_clk_carry.find(rkey);
+                        if (rit == rx_clk_carry.end()) continue;  // first sighting / post-jump — COLD by design
+                        const double rgap = pl_now_s - rit->second.last_seen_s;
+                        if (rgap > rxclk_gap_s) {
+                            // Invariant #1's absent-station edge: a stale carry is refused,
+                            // never aged into a fold.  The harvest prune erases it.
+                            ++R.pl_blk_rxclk_gap_drop;
+                            continue;
+                        }
+                        const double gap_ep =
+                            (dt_ep > 0.0) ? std::max(1.0, rgap / dt_ep) : 1.0;
+                        double rate = 0.0, rate_var = 0.0;
+                        if (rc.kind.empty()) {   // the PRIMARY clock: the drift half
+                            const auto rtit = rx_clk_rate.find(rkey);
+                            rate_var = rxclk_rate_var0;
+                            if (rtit != rx_clk_rate.end()) {
+                                rate = rtit->second.rate;
+                                if (rtit->second.rate_var >= 0.0)
+                                    rate_var = rtit->second.rate_var;
+                            }
+                        }
+                        // The SHARED (bias, drift) kernel — the harvest's jump gate
+                        // forms its innovation against this very prediction, so the two
+                        // edges can never drift apart (filter/NetworkRunTypes.hpp).
+                        const RxClkPred rp = rxClockPredict(
+                            rit->second.value_abs, rit->second.var, rate, rate_var,
+                            std::max(0.0, rgap), gap_ep, rxclk_q);
+                        const double mean_pred = rp.mean;
+                        const double rvar_eff  = rp.var;
+                        if (!(rvar_eff > 0.0) || !std::isfinite(rvar_eff)
+                            || !std::isfinite(mean_pred))
+                            continue;
+                        rxclk_pred.push_back(rit->second);        // COPY of the carry …
+                        rxclk_pred.back().value_abs = mean_pred;  // … with the PREDICTED mean
+                        rxclk_bc.push_back(LocalBlockCol{
+                            rcol, x_lin(rc.sidx), &rxclk_pred.back(), rvar_eff,
+                            std::max(0.0, rgap), /*vce_fac=*/1.0, /*is_zwd=*/false,
+                            /*is_iono=*/false, /*var_add=*/0.0, /*is_rx_clk=*/true,
+                            /*is_rx_isb=*/!rc.kind.empty()});
+                    }
+                }
+                // OFF ⇒ iono_bc and rxclk_bc are always empty, so this predicate is
+                // exactly the pre-card `if (!pl_pend.empty())` (byte-identical).  ON it
+                // also admits a station whose ambiguity set is entirely young/stale/absent
+                // but whose iono or receiver-clock carry is live: those columns still
+                // whiten jointly among themselves, which is the correct prior, and the
+                // pl_pend-driven code below all no-ops on an empty pl_pend.
+                if (!pl_pend.empty() || !iono_bc.empty() || !rxclk_bc.empty()) {
                     bool blk_done = false;
                     if (pl_blk_on) {
                         // F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_
@@ -3301,6 +3430,18 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             bc.push_back(ic);
                             R.pl_iono_blk_cols.push_back(ic.col);
                         }
+                        // RX-CLK-in-block: the station's receiver-clock family as the
+                        // last columns of this SAME block, so the whole station —
+                        // ambiguities, ZWD, iono, clock — folds through ONE Cholesky and
+                        // every local-local overlap is subtracted by the harvested cross
+                        // terms rather than asserted twice.  Push order does not matter to
+                        // the algebra (Σ is symmetric and the pairing is by harvest-block
+                        // pointer, not by position); it is fixed only so
+                        // pl_rxclk_blk_cols is deterministic for the RAIM census.
+                        for (const LocalBlockCol& rc : rxclk_bc) {
+                            bc.push_back(rc);
+                            R.pl_rxclk_blk_cols.push_back(rc.col);
+                        }
                         blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
                         if (!blk_done) ++R.pl_blk_fallback;
                         // I-in-block degrade edge (invariant #4/#7): a non-SPD block means
@@ -3313,6 +3454,17 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             R.pl_blk_iono_not_folded +=
                                 static_cast<long long>(iono_bc.size());
                             R.pl_iono_blk_cols.clear();
+                        }
+                        // RX-CLK-in-block degrade edge (invariant #4/#7): identical
+                        // reading — a non-SPD block means the clock carries did NOT act
+                        // this station-epoch.  There is deliberately no diagonal row to
+                        // fall back to, so this is a true "carried nothing", and
+                        // pl_rxclk_blk_cols is cleared because no whitened clock row
+                        // exists for the RAIM census to recognise.
+                        if (!blk_done && !rxclk_bc.empty()) {
+                            R.pl_blk_rxclk_not_folded +=
+                                static_cast<long long>(rxclk_bc.size());
+                            R.pl_rxclk_blk_cols.clear();
                         }
                         // B9-in-block: the ZWD folded through the block ⇒ the diagonal B9
                         // row below must NOT also fire (that would be the double count this
@@ -3776,6 +3928,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             ctx.counters.n_pl_blk_iono_not_folded    += Rc.pl_blk_iono_not_folded;
             ctx.counters.n_pl_blk_iono_missing_cross += Rc.pl_blk_iono_missing_cross;
             ctx.counters.n_iono_blk_gap_drop         += Rc.pl_blk_iono_gap_drop;
+            // RX-CLK-in-block: same discipline (counted in the parallel produce,
+            // reduced here).  n_rxclk_carry_refused is NOT here: the jump response fires
+            // at the serial HARVEST, where the one-step prediction innovation exists.
+            ctx.counters.n_pl_blk_rxclk_cols          += Rc.pl_blk_rxclk_cols;
+            ctx.counters.n_pl_blk_rxclk_isb_cols      += Rc.pl_blk_rxclk_isb_cols;
+            ctx.counters.n_pl_blk_rxclk_not_folded    += Rc.pl_blk_rxclk_not_folded;
+            ctx.counters.n_pl_blk_rxclk_missing_cross += Rc.pl_blk_rxclk_missing_cross;
+            ctx.counters.n_rxclk_carry_gap_drop       += Rc.pl_blk_rxclk_gap_drop;
             for (int b = 0; b < 5; ++b)
                 ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
             if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)

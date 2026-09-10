@@ -1569,6 +1569,26 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      config_.networkCarryIonoInBlockQM2(),
                                      config_.networkCarryIonoInBlockMaxGapS())
                        : std::string{})
+               // RX-CLK-in-block: armed-only, same rule (an unarmed run's manifest bytes
+               // are unchanged).  The whole variance ladder rides along because a grader
+               // reading an archived logs/ folder cannot recover the prior's weight
+               // without it — and because the DRIFT half is what makes this carry
+               // defensible at all, so a run that does not record it cannot be re-read.
+               << (config_.networkCarryRxClockInBlock()
+                       ? fmt::format("\"carry_rx_clock_in_block\":true,"
+                                     "\"carry_rx_clock_q_m2\":{},"
+                                     "\"carry_rx_clock_max_gap_s\":{},"
+                                     "\"carry_rx_clock_rate_var0_m2ps2\":{},"
+                                     "\"carry_rx_clock_rate_q_m2ps2\":{},"
+                                     "\"carry_rx_clock_jump_k\":{},"
+                                     "\"carry_rx_clock_isb\":{},",
+                                     config_.networkCarryRxClockQM2(),
+                                     config_.networkCarryRxClockMaxGapS(),
+                                     config_.networkCarryRxClockRateVar0(),
+                                     config_.networkCarryRxClockRateQ(),
+                                     config_.networkCarryRxClockJumpK(),
+                                     config_.networkCarryRxClockIsb() ? "true" : "false")
+                       : std::string{})
                << fmt::format("\"zwd_carry_q\":{},", zwd_q)
                // Seam-scoped ZWD re-seed (§17 finding 3).  In the manifest so an
                // archived logs/ folder can say whether a resumed leg's first hours

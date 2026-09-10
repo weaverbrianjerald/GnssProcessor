@@ -173,6 +173,23 @@ namespace GnssProcessor {
         bool iono_blk{};
         double iono_blk_q_m2{};      ///< I-in-block RW process noise, m² of L1 slant delay PER EPOCH (⚠ not per second — see GnssConfig::networkCarryIonoInBlockQM2).
         double iono_blk_max_gap_s{}; ///< I-in-block staleness bound (s); the loader has already resolved the "= phase_leveling_max_gap_s" sentinel.
+        /// network.carry_rx_clock_in_block — RX-CLK-in-block: the station's RECEIVER
+        /// CLOCK column (and, under @c rxclk_isb, its per-system ISB columns) join its F3
+        /// whitened local block.  The clock is otherwise a FREE per-epoch local column
+        /// with no temporal prior on this path — the rho-direction sink the ZWD and iono
+        /// cards push their residual error into.  ⚠ Carried as a random walk about a
+        /// CARRIED DRIFT, because @c x_lin(clock) is a run-constant here (the producer
+        /// never writes its solution back), so the whole ~0.3 m/s clock ramp lives in
+        /// x_r and a bare RW prior would be ~30 sigma wrong every epoch.  Loader
+        /// guarantees phase_leveling + pl_local_block + carry_cpl_cond and
+        /// !carry_invariant.  OFF = byte-identical.
+        bool rxclk_blk{};
+        double rxclk_q_m2{};        ///< Carried clock BIAS random-walk variance, m^2 PER EPOCH (⚠ not per second — see GnssConfig::networkCarryRxClockQM2).
+        double rxclk_max_gap_s{};   ///< Staleness bound (s); the loader has already resolved the "= phase_leveling_max_gap_s" sentinel.
+        double rxclk_rate_var0{};   ///< Initial variance of the carried DRIFT state, m^2/s^2 (deliberately large: an unknown drift must inject a near-free prior).
+        double rxclk_rate_q{};      ///< Carried DRIFT random-walk variance, m^2/s^2 PER EPOCH.
+        double rxclk_jump_k{};      ///< Clock-JUMP gate (sigma) on the one-step prediction innovation at harvest; exceeding it erases the carry (invariant #1's wired response).
+        bool rxclk_isb{};           ///< Carry the per-system ISB columns too (pure RW, no drift state).
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
         bool rx_cb_datum{};   ///< RXCB-DATUM: zero-mean-over-receivers DCB datum (network.rx_code_bias_datum).
         double rx_cb_datum_sigma{};  ///< RXCB-DATUM loose physical-bound sigma in m (network.rx_code_bias_datum_sigma_m).
@@ -1107,6 +1124,11 @@ namespace GnssProcessor {
         /// exactly one epoch old, so a stale level is never differenced against a
         /// one-epoch ΔMW.
         double pl_prev_now_s{-1.0};
+        /// RX-CLK-in-block: the previous RX-CLOCK HARVEST's stamp (s).  Deliberately a
+        /// second field rather than a read of @c pl_prev_now_s, which has already been
+        /// advanced to this epoch by the time the clock harvest runs.  Its only use is
+        /// converting a sighting gap into EPOCHS for the per-epoch q.
+        double rxclk_prev_now_s{-1.0};
         /// §7.6(d) lane observatory T4-side pre-erase capture: the
         /// about-to-be-erased @c LocalCarry::value_abs (+ its @c last_seen_s
         /// stamp + the erase-cause bit) at the RAIM attribution / consensus
@@ -1175,6 +1197,36 @@ namespace GnssProcessor {
         /// which is one epoch of today's white-iono behaviour (the @c iono_carry
         /// precedent), and a restored entry would carry no block anyway.
         std::map<std::pair<int, std::string>, LocalCarry> iono_blk_carry;
+        /// RX-CLK-in-block (@c network.carry_rx_clock_in_block): the carried
+        /// receiver-clock-family local columns, keyed (station index, kind) with kind ""
+        /// for the PRIMARY receiver clock and the system name for each ISB.  Value is the
+        /// ABSOLUTE clock/ISB in metres (x_lin + x_r) as of @c last_seen_s, with the F3
+        /// bookkeeping (@c blk / @c blk_idx / @c coupling) every in-block column carries.
+        /// NOT snapshotted — a warm resume cold-starts it, which is one epoch of today's
+        /// white-clock behaviour, and a restored entry would carry no block anyway.
+        std::map<std::pair<int, std::string>, LocalCarry> rx_clk_carry;
+        /// RX-CLK-in-block: the DRIFT half of the carried (bias, drift) pair, keyed like
+        /// @c rx_clk_carry but populated ONLY for the primary clock (kind "") — an ISB is
+        /// a near-constant bias and takes a pure random walk.  Kept in its own map rather
+        /// than bolted onto @c LocalCarry because @c LocalCarry is shared machinery used
+        /// by five other carries, none of which has a rate.
+        ///
+        /// ⚠ This state exists because the network producer NEVER writes its solution back
+        /// into the station StateManager: @c x_lin(clock) is set once (0, or the latched
+        /// cold_clock_seed median) and is constant for the run, so @c x_r carries the
+        /// whole clock including its ~0.3 m/s ramp — 9 m per 30 s epoch, ~30 sigma against
+        /// a bias-only prior.  The rate is a scalar Kalman state driven by the harvested
+        /// increments; it also supplies the one-step PREDICTION whose innovation is the
+        /// clock-jump detector.
+        struct RxClkRate {
+            double rate{0.0};          ///< Estimated drift, m/s (GPS-referenced, same frame as the clock state).
+            double rate_var{-1.0};     ///< Its variance, m^2/s^2.  < 0 = never updated ⇒ the injector uses network.carry_rx_clock_rate_var0_m2ps2.
+            double prev_abs{0.0};      ///< Previous harvested ABSOLUTE clock (m) — the increment's left end.
+            double prev_s{-1.0};       ///< Its time (s).  < 0 = no previous sighting.
+            double prev_var{0.0};      ///< Its harvested variance (m^2), for the increment's measurement noise.
+            long long n_incr{0};       ///< Increments folded.  0 ⇒ no rate yet ⇒ the jump gate cannot fire (there is no prediction to test).
+        };
+        std::map<std::pair<int, std::string>, RxClkRate> rx_clk_rate;
         /// CS-GF authority states (QUEUE 8b successor, iono_carry_source =
         /// smoothed_gf): per (station index, sat) carrier-smoothed GF-code
         /// slant-iono, advanced serially in the PASS-A slip scan from the
@@ -2307,6 +2359,20 @@ namespace GnssProcessor {
         long long n_iono_blk_erased_t4  = 0;             ///< in-block iono carries erased by a T4/consensus arc refloat (invariant #1: the T4 statistic reads level+iono error as a sum, so the LOS re-draws both)
         long long n_iono_blk_gap_drop   = 0;             ///< in-block iono carries dropped at the harvest prune for exceeding carry_iono_in_block_max_gap_s without a sighting (the absent-satellite / eclipse edge)
         long long n_raim_pool_iono_rows = 0;             ///< post-fit RAIM pool admissions (station-epochs × rows) whose admitted row IS one of the iono columns' whitened block rows — the §7 item 4 interaction MEASURED for the I half, exactly as n_raim_pool_zwd_rows measures it for the ρ half.  Counted only; the pool rule is unchanged by this card.
+        // RX-CLK-in-block (network.carry_rx_clock_in_block) — invariant #4/#7 telemetry,
+        // the same discipline as the ZWD and iono splits.  An armed run with
+        // n_pl_blk_rxclk_cols == 0 is UNWIRED, not clean.  ⚠ n_pl_blk_rxclk_not_folded is
+        // NOT a "degraded to the old row" count: this card has no diagonal clock row (a
+        // diagonal prior on the most station-COMMON direction of all is exactly the
+        // over-count that falsified the diagonal ZWD carry), so those columns carried
+        // NOTHING that station-epoch.
+        long long n_pl_blk_rxclk_cols   = 0;             ///< receiver-clock-family columns ADMITTED into a block build (a block that then failed to factorize still counts — n_pl_blk_rxclk_not_folded says how many did not act)
+        long long n_pl_blk_rxclk_isb_cols = 0;           ///< …of which are ISB columns.  0 is NOT an alarm (a GPS-only / BSSD posture allocates no per-system time-offset state).
+        long long n_pl_blk_rxclk_not_folded = 0;         ///< clock-family columns pushed but NOT folded (non-SPD block): their carry did not act, and there is deliberately no diagonal fallback
+        long long n_pl_blk_rxclk_missing_cross = 0;      ///< (clock-family, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block) — a subset of n_pl_blk_pair_missing
+        long long n_rxclk_carry_refused = 0;             ///< clock carries ERASED by the jump gate (network.carry_rx_clock_jump_k) at harvest: |one-step prediction innovation| > k*sigma ⇒ the receiver (or the solve) stepped, so both the bias and the drift are dropped and re-born cold.  Invariant #1's wired response for a quantity that has no other jump detector anywhere on the network path.
+        long long n_rxclk_carry_gap_drop = 0;            ///< clock-family carries dropped at the harvest prune for exceeding carry_rx_clock_max_gap_s without a sighting (the absent-station edge)
+        long long n_raim_pool_rxclk_rows = 0;            ///< post-fit RAIM pool admissions (station-epochs x rows) whose admitted row IS one of the clock-family columns' whitened block rows — the SPEC_amb_iono_split_overcount §7 item 4 interaction MEASURED for the rho half, exactly as n_raim_pool_zwd_rows / n_raim_pool_iono_rows measure it for theirs.  Counted only; the pool rule is unchanged by this card.
         long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row IS the ZWD's whitened block row — the §7 item 4 interaction, MEASURED (the pool admits by |A_r(row, amb_col)| > 0.5 and a ZWD block row mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged by this card.
         long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (invariant #7's re-coupling edge, counted)
         long long n_pl_blk_refloat_fail = 0;             ///< … whose re-whiten was non-SPD: the block's rows were dropped for that re-solve (safe degrade — the refloated arcs re-float from data)

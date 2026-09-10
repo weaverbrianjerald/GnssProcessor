@@ -2403,6 +2403,164 @@ namespace GnssProcessor {
         double networkCarryIonoInBlockMaxGapS() const { return network_carry_iono_in_block_max_gap_s_; }
 
         /**
+         * @brief Carry the station's RECEIVER CLOCK column inside the F3 jointly-whitened
+         *        local block as an HONEST random walk about a carried drift
+         *        (@c network.carry_rx_clock_in_block) — the @f$\rho@f$-direction sibling of
+         *        @ref networkCarryZwdInBlock and @ref networkCarryIonoInBlock.
+         *
+         * MOTIVE.  On the network producer the per-station receiver clock is a purely
+         * PER-EPOCH local parameter: it is a column of @f$A_r@f$ (see
+         * @c Application::networkSplitStation_'s linearity invariant — "rx clock, tropo
+         * ZWD, per-sat slant iono, ambiguities, code/phase biases, ISBs"), it is
+         * eliminated by the Schur reduction every epoch, and it has NO temporal prior at
+         * all — @c filter.process_noise.clock_bias_q is inert on this path (measured: an
+         * arm with q 1000 → 0.09 produced a byte-identical @c products.txt).  On the
+         * slipped bed that free per-epoch column is the @f$\rho@f$-direction SINK: it
+         * absorbs, instantly and without cost, whatever station-common error the levels
+         * and the ZWD could not (rx-clock contrast vs truth rms 8.3 m).  Carrying it
+         * gives that direction a price.
+         *
+         * WHY IN THE BLOCK AND NOT AS A DIAGONAL ROW.  Identical to the ZWD's argument
+         * (SPEC_amb_iono_split_overcount §7 item 17, "block ALL carried local columns"):
+         * the receiver clock is the most station-COMMON direction there is — every
+         * carried ambiguity row of the station asserts it implicitly — so an independent
+         * diagonal prior would assert it a further @f$n_{LOS}@f$ times.  That over-count
+         * is exactly what falsified the diagonal ZWD carry (consumer 3D rms 0.204 →
+         * 0.723 m quiet bed, vs 0.088 m in-block).  Inside the block the harvested
+         * @f$(N_{rr}^{-1})_{c\,c_j}@f$ cross terms subtract the overlap exactly.
+         *
+         * ⚠ THE DRIFT, and why this card is NOT a bare random walk.  The producer never
+         * writes its solution back into the station @c StateManager, so
+         * @c x_lin(clock) is set ONCE (0, or the latched @ref networkColdClockSeed median)
+         * and is CONSTANT for the whole run: the entire time-varying receiver clock —
+         * offset, drift and jitter — lives in @f$x_r@f$ every epoch.  A real receiver
+         * clock is @f$c(t)=c_0+d\,t+\mathrm{RW}@f$ with a drift @f$d@f$ of order 1e-9 s/s
+         * (0.3 m/s ⇒ 9 m per 30 s epoch; measured exactly that on the sim truth bed,
+         * 0.29994 m/s with 0.299 m RW increments), so a pure RW prior would be wrong by
+         * ~30σ EVERY epoch.  This card therefore carries the honest @b (bias, drift) pair:
+         * the block column holds the bias, and the drift is a per-station scalar Kalman
+         * state (its own @ref networkCarryRxClockRateQ) updated from the harvested
+         * increments, whose contribution @f$\sigma_d^2\,\Delta t^2@f$ joins the injected
+         * variance.  The injected prior mean is @f$\hat c_{prev} + \hat d\,\Delta t@f$,
+         * not @f$\hat c_{prev}@f$.  With an uninformative first rate variance
+         * (@ref networkCarryRxClockRateVar0) the first-sighting prior is deliberately
+         * near-useless (σ ≈ 30 m) and tightens to σ ≈ 0.3 m after ONE increment —
+         * self-limiting, never a stiff wrong prior.
+         *
+         * Interlocks (loader-enforced): requires @ref networkPhaseLeveling AND
+         * @ref networkPhaseLevelingLocalBlock AND a structurally buildable F3 block
+         * (@ref networkCarryConditionalCoupling on, @ref networkCarryCouplingJointWhiten
+         * off) — WARN + disable, because armed-and-inert is forbidden (invariant #4);
+         * disabled with a WARN under @ref networkCarryInvariant (F3 is structurally inert
+         * there); HARD ERROR on a negative q / gap / rate variance.  Default false =
+         * byte-identical (the harvest @c cols set, and therefore @c C's dimension, is
+         * unchanged).
+         */
+        bool networkCarryRxClockInBlock() const { return network_carry_rx_clock_in_block_; }
+
+        /**
+         * @brief Per-EPOCH random-walk process variance of the carried receiver-clock BIAS,
+         *        m² (@c network.carry_rx_clock_q_m2).
+         *
+         * ⚠ PER EPOCH, not per second (@ref networkZwdCarryQ and @ref networkIonoCarryQ
+         * are m²/s), matching @ref networkCarryIonoInBlockQM2: the gap is converted to
+         * epochs with the run's OWN observed inter-epoch spacing (the current PASS-B time
+         * minus the previous harvest stamp), floored at one epoch, so the knob means the
+         * same thing at 1 s and at 30 s cadence and no nominal-rate config is invented.
+         * The inflation @f$var + q\cdot gap_{ep} + \sigma_d^2\Delta t^2@f$ lands on the
+         * block's DIAGONAL for the clock column only (Σ's off-diagonals are the harvested
+         * cross terms), i.e. @f$C' = C + \mathrm{diag}(\cdot)@f$ — PD-preserving by
+         * construction.
+         *
+         * Default 0.09 m² ⇒ σ = 0.30 m of clock jitter per 30 s epoch, which is EXACTLY
+         * the sim truth bed's detrended increment std (measured 0.2988 m, lag-1
+         * correlation −0.004: a clean white random walk about the drift line).  A field
+         * receiver's short-term Allan deviation sets the field value; do not assume 0.09
+         * transfers.
+         */
+        double networkCarryRxClockQM2() const { return network_carry_rx_clock_q_m2_; }
+
+        /**
+         * @brief Staleness bound of the receiver-clock carry, seconds
+         *        (@c network.carry_rx_clock_max_gap_s).
+         *
+         * A station unseen for longer than this has its clock carry DROPPED (counted,
+         * @c n_rxclk_carry_gap_drop) rather than folded — invariant #1's absent-station
+         * edge and invariant #7's decoupling edge.  Defaults to
+         * @ref networkPhaseLevelingMaxGapS via a 0 sentinel resolved at load: the clock
+         * carry rides the SAME block the leveling carry does, so a longer horizon would
+         * keep an entry alive with no block to join.  It is also the horizon over which
+         * the extrapolated drift term @f$\hat d\,\Delta t@f$ is trusted at all.
+         */
+        double networkCarryRxClockMaxGapS() const { return network_carry_rx_clock_max_gap_s_; }
+
+        /**
+         * @brief Initial variance of the carried receiver-clock DRIFT state, m²/s²
+         *        (@c network.carry_rx_clock_rate_var0_m2ps2).
+         *
+         * The drift is unknown at a station's first sighting, so its prior starts here and
+         * the scalar rate filter collapses it after ONE harvested increment
+         * (@f$R_{rate}\approx(2\,var+q)/\Delta t^2@f$, tiny against this).  It is
+         * deliberately LARGE (default 1.0 m²/s² ⇒ σ 1 m/s, three times any plausible
+         * receiver drift): the resulting first-epoch injected variance
+         * @f$\sigma_d^2\Delta t^2 = 900@f$ m² makes the pre-rate prior near-uninformative
+         * ON PURPOSE, so a station whose drift is not yet known is never given a stiff
+         * wrong clock.  Lower it only with evidence; raising it costs nothing but one more
+         * near-free epoch.
+         */
+        double networkCarryRxClockRateVar0() const { return network_carry_rx_clock_rate_var0_; }
+
+        /**
+         * @brief Per-EPOCH random-walk process variance of the carried receiver-clock DRIFT
+         *        state, m²/s² (@c network.carry_rx_clock_rate_q_m2ps2).
+         *
+         * The drift itself wanders (temperature, ageing).  Default 1e-10 m²/s² per epoch
+         * ⇒ σ 1e-5 m/s per epoch, ~1.1e-4 m/s over an hour at 30 s: three orders under a
+         * typical receiver drift, so the rate filter tracks slow drift changes without
+         * ever chasing the bias jitter.  Set to 0 for a strictly constant-drift model
+         * (valid on the sim bed, whose drift is exactly linear).
+         */
+        double networkCarryRxClockRateQ() const { return network_carry_rx_clock_rate_q_; }
+
+        /**
+         * @brief Innovation gate (in σ) on the carried receiver clock's one-step prediction
+         *        (@c network.carry_rx_clock_jump_k).
+         *
+         * Invariant #1's wired event response.  Field receivers STEP their clocks (a
+         * millisecond = 3e5 m is routine), and there is no receiver-clock jump detector
+         * anywhere on the network path.  At each harvest the newly solved absolute clock
+         * is compared with the prediction the previous epoch would have injected;
+         * @f$|v| > k\sqrt{var_{pred}}@f$ means the receiver jumped (or the solve did), and
+         * the response is an ERASE-and-rebirth of both the bias and the drift state —
+         * counted as @c n_rxclk_carry_refused.  Both edges are explicit (invariant #7):
+         * the DECOUPLING edge bounds the damage (nothing is carried across the jump), and
+         * the RE-COUPLING edge re-seeds cold from data with the uninformative rate prior,
+         * so the two epochs after a jump inject a near-free prior rather than a stale one.
+         * Default 10.0 σ — loose enough that ordinary RW jitter never trips it (a 10σ
+         * event on a Gaussian is ~1e-23), tight enough that a 1 ms step (1e6 σ) always does.
+         */
+        double networkCarryRxClockJumpK() const { return network_carry_rx_clock_jump_k_; }
+
+        /**
+         * @brief Also carry the station's INTER-SYSTEM BIAS (ISB) columns in the same block
+         *        (@c network.carry_rx_clock_isb, sub-knob of
+         *        @ref networkCarryRxClockInBlock).
+         *
+         * The per-system time-offset states (@c StateManager::getSystemTimeOffsetStates)
+         * are local @f$A_r@f$ columns exactly like the clock, and physically they are
+         * near-CONSTANT biases (the sim truth injects a fixed 8.000 m GPS→Galileo offset),
+         * so they take a PURE random walk — no drift state, since a drifting ISB would be
+         * a receiver defect rather than a model.  They share
+         * @ref networkCarryRxClockQM2, which is conservative for them by a wide margin.
+         * Counted separately (@c n_pl_blk_rxclk_isb_cols) so an arm can read the two
+         * families apart; 0 there is NOT an alarm (a BSSD or GPS-only posture allocates no
+         * ISB state at all).  Default true — the ISB is a local column of the same block,
+         * and leaving it white while pricing the clock would just move the sink one
+         * column over.
+         */
+        bool networkCarryRxClockIsb() const { return network_carry_rx_clock_isb_; }
+
+        /**
          * @brief ZWD carry random-walk process noise (m²/s) inflating the carried ZWD
          *        variance over the inter-epoch gap (@c network.zwd_carry_q, B9).
          *
@@ -6960,6 +7118,13 @@ namespace GnssProcessor {
         bool   network_carry_iono_in_block_{false};        ///< I-in-block: carry the per-LOS slant-iono columns INSIDE the F3 jointly-whitened local block (harvested (N_rr⁻¹) cross terms against every other carried column of the station) — the I half of the ZWD-in-block card (SPEC_amb_iono_split_overcount §7 item 17, §6.16.7d).  MUTUALLY EXCLUSIVE with the legacy DIAGONAL network.carry_iono (QUEUE 8b, falsified ×4): a diagonal row re-asserts the per-LOS iono direction the B band priors already assert.  Requires network.phase_leveling + network.phase_leveling_local_block; disabled under carry_invariant.  OFF = byte-identical.
         double network_carry_iono_in_block_q_m2_{2.5e-3}; ///< I-in-block: PER-EPOCH random-walk process noise, m² of slant delay AT L1 (the per-LOS iono state's own unit).  ⚠ per EPOCH, not per second (zwd_carry_q / iono_carry_q are m²/s); the gap is converted with the run's observed inter-epoch spacing.  var_eff = var + q·gap_ep on the block DIAGONAL only.
         double network_carry_iono_in_block_max_gap_s_{0.0}; ///< I-in-block: staleness bound (s) past which a LOS's carry is dropped (counted).  0 = the sentinel meaning "use network.phase_leveling_max_gap_s"; the loader resolves it to that value at load, so the getter always reports the effective seconds.
+        bool   network_carry_rx_clock_in_block_{false};    ///< RX-CLK-in-block: carry the station RECEIVER CLOCK column INSIDE the F3 jointly-whitened local block as a random walk about a CARRIED DRIFT (the producer never writes its solution back, so x_lin(clock) is a run-constant and the whole clock — offset + ~0.3 m/s drift + jitter — lives in x_r).  The rho-direction sibling of carry_zwd_in_block / carry_iono_in_block: the per-epoch clock column is the free sink those two cards push their residual error into.  Requires network.phase_leveling + network.phase_leveling_local_block; disabled under carry_invariant.  OFF = byte-identical.
+        double network_carry_rx_clock_q_m2_{0.09};         ///< RX-CLK-in-block: PER-EPOCH random-walk process variance of the carried clock BIAS, m^2.  (⚠ per EPOCH, not per second — zwd_carry_q / iono_carry_q are m^2/s; the gap is converted with the run's observed inter-epoch spacing.)  Default 0.09 = sigma 0.30 m per 30 s, the sim truth bed's measured detrended increment std.
+        double network_carry_rx_clock_max_gap_s_{0.0};     ///< RX-CLK-in-block: staleness bound (s) past which a station's clock carry is dropped (counted).  0 = the sentinel meaning "use network.phase_leveling_max_gap_s"; the loader resolves it at load, so the getter always reports effective seconds.
+        double network_carry_rx_clock_rate_var0_{1.0};     ///< RX-CLK-in-block: initial variance of the carried DRIFT state, m^2/s^2.  Deliberately large (sigma 1 m/s) so a station whose drift is not yet estimated injects a near-uninformative prior (sigma ~30 m at 30 s) instead of a stiff wrong one; collapses after ONE harvested increment.
+        double network_carry_rx_clock_rate_q_{1e-10};      ///< RX-CLK-in-block: PER-EPOCH random-walk process variance of the carried DRIFT state, m^2/s^2.  Default 1e-10 (sigma 1e-5 m/s per epoch) tracks slow drift wander without chasing the bias jitter; 0 = strictly constant drift.
+        double network_carry_rx_clock_jump_k_{10.0};       ///< RX-CLK-in-block: innovation gate (sigma) on the one-step clock prediction at harvest.  A receiver clock STEP (1 ms = 3e5 m) has no detector anywhere on the network path; exceeding this erases both the bias and the drift carry (counted, cold rebirth) so the jump never enters the block.
+        bool   network_carry_rx_clock_isb_{true};          ///< RX-CLK-in-block: also carry the per-system INTER-SYSTEM BIAS (ISB) columns in the same block, as a PURE random walk (no drift state — an ISB is a near-constant bias; the sim truth injects a fixed 8.000 m GPS->Galileo offset).  Counted separately; 0 ISB columns is NOT an alarm (a GPS-only or BSSD posture allocates none).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Used by network.carry_zwd and by the network.zwd_seam_reseed post-resume window.
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.

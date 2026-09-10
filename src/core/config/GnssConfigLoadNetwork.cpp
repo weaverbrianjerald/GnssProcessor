@@ -3416,6 +3416,34 @@ namespace GnssProcessor {
         network_carry_iono_in_block_max_gap_s_ =
             jval<double>(json, "network.carry_iono_in_block_max_gap_s",
                          "carry_iono_in_block_max_gap_s", 0.0);
+        // RX-CLK-in-block: the same "block ALL carried local columns" rule applied to the
+        // station's RECEIVER CLOCK (and, under the sub-knob, its ISB columns).  The clock
+        // is a LOCAL A_r column with NO temporal prior at all on this path
+        // (filter.process_noise.clock_bias_q is inert here — measured byte-identical), so
+        // it is the free per-epoch sink the ZWD and iono cards push their residual
+        // rho-direction error into.  q is PER EPOCH, m^2; the drift is a carried state
+        // with its own variance ladder (see the getters).  Validated below.
+        network_carry_rx_clock_in_block_ =
+            jval<bool>(json, "network.carry_rx_clock_in_block", "carry_rx_clock_in_block",
+                       false);
+        network_carry_rx_clock_q_m2_ =
+            jval<double>(json, "network.carry_rx_clock_q_m2", "carry_rx_clock_q_m2", 0.09);
+        // 0 (the default) is the "= the leveling max gap" sentinel; resolved below so the
+        // getter always reports effective seconds and no consumer has to re-derive it.
+        network_carry_rx_clock_max_gap_s_ =
+            jval<double>(json, "network.carry_rx_clock_max_gap_s",
+                         "carry_rx_clock_max_gap_s", 0.0);
+        network_carry_rx_clock_rate_var0_ =
+            jval<double>(json, "network.carry_rx_clock_rate_var0_m2ps2",
+                         "carry_rx_clock_rate_var0_m2ps2", 1.0);
+        network_carry_rx_clock_rate_q_ =
+            jval<double>(json, "network.carry_rx_clock_rate_q_m2ps2",
+                         "carry_rx_clock_rate_q_m2ps2", 1e-10);
+        network_carry_rx_clock_jump_k_ =
+            jval<double>(json, "network.carry_rx_clock_jump_k", "carry_rx_clock_jump_k",
+                         10.0);
+        network_carry_rx_clock_isb_ =
+            jval<bool>(json, "network.carry_rx_clock_isb", "carry_rx_clock_isb", true);
         // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17, carry_zwd
         // re-base arms finding 3): the resume-path-only successor to the continuous
         // B9 carry.  Injection window + horizon; the WRITE side (Z rows in every
@@ -9156,6 +9184,97 @@ namespace GnssProcessor {
                                 "-- only the arc's own marginal loosens."
                               : "OUT OF BLOCK (phase_leveling_local_block off): applied "
                                 "as var_eff += var_add on the per-column diagonal row.");
+            }
+        }
+        // RX-CLK-in-block interlocks (network.carry_rx_clock_in_block).  The ZWD card's
+        // rules, plus hard errors on the variance ladder: every one of q, rate_var0 and
+        // rate_q lands on a Cholesky diagonal, and a negative one would make a non-SPD
+        // block look like a data problem several seams away from the typo that caused it.
+        if (network_carry_rx_clock_q_m2_ < 0.0)
+            throw std::runtime_error("network.carry_rx_clock_q_m2 must be >= 0");
+        if (network_carry_rx_clock_max_gap_s_ < 0.0)
+            throw std::runtime_error("network.carry_rx_clock_max_gap_s must be >= 0 "
+                                     "(0 = use network.phase_leveling_max_gap_s)");
+        if (network_carry_rx_clock_rate_var0_ < 0.0)
+            throw std::runtime_error("network.carry_rx_clock_rate_var0_m2ps2 must be >= 0");
+        if (network_carry_rx_clock_rate_q_ < 0.0)
+            throw std::runtime_error("network.carry_rx_clock_rate_q_m2ps2 must be >= 0");
+        if (!(network_carry_rx_clock_jump_k_ > 0.0))
+            throw std::runtime_error("network.carry_rx_clock_jump_k must be > 0 (it is the "
+                                     "sigma multiplier of the clock-jump response; 0 would "
+                                     "erase the carry every epoch)");
+        // Resolve the max-gap sentinel BEFORE the disable branches, so the value the
+        // getter reports is always effective seconds even on a disabled arm.
+        if (network_carry_rx_clock_max_gap_s_ <= 0.0)
+            network_carry_rx_clock_max_gap_s_ = network_phase_leveling_max_gap_s_;
+        if (network_carry_rx_clock_in_block_) {
+            if (!network_phase_leveling_) {
+                log->warn("Network: network.carry_rx_clock_in_block is on but "
+                          "network.phase_leveling is OFF — the in-block clock carry rides "
+                          "the phase-leveling carry's harvest/inject seam, so it would "
+                          "never see a block.  DISABLING carry_rx_clock_in_block; arm "
+                          "network.phase_leveling too.");
+                network_carry_rx_clock_in_block_ = false;
+            } else if (network_carry_invariant_) {
+                log->warn("Network: network.carry_rx_clock_in_block is on but "
+                          "network.carry_invariant is ON — the Card-4 invariant DD carry "
+                          "is a different VEHICLE and makes F3 structurally inert (no "
+                          "ambiguity carry, no local block), so the clock column would "
+                          "have nothing to join.  DISABLING carry_rx_clock_in_block.");
+                network_carry_rx_clock_in_block_ = false;
+            } else if (!network_phase_leveling_local_block_) {
+                log->warn("Network: network.carry_rx_clock_in_block is on but "
+                          "network.phase_leveling_local_block (F3) is OFF — there is no "
+                          "station block to put the receiver-clock column into, and this "
+                          "card deliberately has NO diagonal fallback row (a diagonal "
+                          "prior on the most station-COMMON direction there is would be "
+                          "the n_LOS over-count that falsified the diagonal ZWD carry).  "
+                          "DISABLING carry_rx_clock_in_block; arm "
+                          "network.phase_leveling_local_block too.");
+                network_carry_rx_clock_in_block_ = false;
+            } else if (!network_carry_conditional_coupling_
+                       || network_carry_coupling_joint_whiten_) {
+                // F3 is ARMED but structurally cannot build a block on this posture.
+                // Riding an inert vehicle is the same armed-and-inert failure the ZWD and
+                // iono cards refuse (invariant #4), so this dies with them.
+                log->warn("Network: network.carry_rx_clock_in_block is on and "
+                          "network.phase_leveling_local_block is armed, but F3 cannot "
+                          "build a block on this lineage (carry_conditional_coupling={}, "
+                          "carry_coupling_joint_whiten={}) — the receiver-clock column "
+                          "would have no block to join.  DISABLING "
+                          "carry_rx_clock_in_block (see the phase_leveling_local_block "
+                          "INERT warning above for the fix).",
+                          network_carry_conditional_coupling_,
+                          network_carry_coupling_joint_whiten_);
+                network_carry_rx_clock_in_block_ = false;
+            } else {
+                log->info("Network producer (receiver CLOCK carry IN BLOCK): each station's "
+                          "receiver-clock column{} joins its F3 whitened local block "
+                          "(harvested (N_rr^-1) cross terms against every other carried "
+                          "column of the station, one Cholesky for the whole station) — "
+                          "the per-epoch clock is otherwise a FREE local column with no "
+                          "temporal prior (filter.process_noise.clock_bias_q is inert on "
+                          "this path), i.e. the rho-direction sink.  ⚠ x_lin(clock) is a "
+                          "run-constant here (the producer never writes its solution back), "
+                          "so the carry is a random walk about a CARRIED DRIFT, not a bare "
+                          "RW: bias q {:.3e} m^2 PER EPOCH (⚠ per epoch, not per second), "
+                          "drift q {:.3e} m^2/s^2 per epoch from an initial {:.3e} m^2/s^2 "
+                          "(one increment collapses it), injected mean = value_abs + "
+                          "rate*gap, injected var = var + q*gap_ep + rate_var*gap^2.  "
+                          "Stale drop at {:.0f} s{}; clock-JUMP response at {:.1f} sigma on "
+                          "the one-step prediction (erase + cold rebirth, counted).  A "
+                          "non-SPD block folds NO clock this station-epoch (counted) — "
+                          "there is deliberately no diagonal fallback row.",
+                          network_carry_rx_clock_isb_
+                              ? " and every per-system ISB column (pure RW, no drift state)"
+                              : " (ISB columns NOT carried: network.carry_rx_clock_isb off)",
+                          network_carry_rx_clock_q_m2_, network_carry_rx_clock_rate_q_,
+                          network_carry_rx_clock_rate_var0_,
+                          network_carry_rx_clock_max_gap_s_,
+                          network_carry_rx_clock_max_gap_s_
+                                  == network_phase_leveling_max_gap_s_
+                              ? " (= phase_leveling_max_gap_s)" : "",
+                          network_carry_rx_clock_jump_k_);
             }
         }
         if (network_zwd_seam_reseed_) {
