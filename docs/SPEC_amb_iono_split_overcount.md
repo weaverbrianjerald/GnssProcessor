@@ -1723,7 +1723,10 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    **Field control (`runs/fld63_stk_on`, L1C+L1W / L2W, 361 chords, 372 arcs):** raw MAD p50 e1 **10.4** / e2
    **10.4** / wl **0.57** cyc (p90 36 / 36 / 1.6), drift p50 25 / 26 / 0.8 cyc per ~65-min arc, 100 % of
    per-band arcs with MAD > 1 cyc; cross-band slope p50 **1.004** (p10 0.962, p90 1.048; corr 0.999); ref-free
-   MAD ratio REAL 0.65 vs NULL 0.77 (gap −0.12 on e1, −0.15 on wl).  So on the shipped field posture the
+   MAD ratio REAL 0.65 vs NULL 0.77 (gap −0.12 on e1, −0.15 on wl).  (The equal MADs, the slope and the small
+   WL are ONE measurement — the joint (σ₁, σ₂, ρ) = (10.4, 10.4, 0.999) structure — presented three ways: the
+   OLS slope is ρσ₂/σ₁ and the difference's spread σ√(2(1−ρ)) ≈ 0.47, not three independent agreements.)
+   So on the shipped field posture the
    per-band DD ambiguity ESTIMATES are not frozen biases: they WANDER by ~10 cycles (MAD) / ~25 cycles per hour,
    in lock-step across L1 and L2 — 1:1 in CYCLES, which is neither the iono direction nor a range-like error —
    while the WL DD is ~20× stiffer; about a third of it is the reference satellite's own wander, the rest
@@ -1735,6 +1738,19 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    the ambiguity/level side of the estimator or a cycle-domain model term.  The discriminators are already in
    the ladder: the leveling arms carry no lanes and no invariant carry, and the sim arms' slopes say what the
    estimator does without field effects (F3 1.271 = iono-shaped; diagonal carry: noise).
+5. **Independent leg — the estimated slant-iono states of the same chords** (`scripts/iono_arc_wander.py`,
+   `network_ionosphere.csv` `iono_total_m` = x_lin + x_r, the full state, so the x_r-only frame caveat does not
+   apply).  Field control, settled ≥ h6, same arc rules: single-LOS iono_total_m arc MAD p50 **3.9 m** (p90 13.3),
+   drift 8.7 m (p90 29.7); the DD of the iono states over the DD trace's chords (646 chords, 584 arcs) MAD p50
+   **1.25 m = 6.6 L1 cycles** (p90 5.4 m), drift 3.5 m = 18 cyc.  So the iono states wander by metres per arc
+   too.  Joint per-arc regression of the DD-ambiguity deviation e1 (cycles) on the DD-iono deviation (L1 cycles):
+   slope p50 **+1.72** (p10 +0.32, p90 +2.50), corr **+0.93**.  The two wanders are COHERENT and co-directed —
+   not the compensation an iono-state error would produce (slope −1 at L1) and not independence (slope 0) —
+   yet the ambiguity part is cycle-common across bands (item 3), which the model's iono direction is not.  So
+   the (I, N₁, N₂) triple of a field chord moves together along a direction that is NOT the estimator's iono
+   direction; recorded as a measurement, mechanism still not guessed.  (Real ionospheric change on DOY-129 is
+   metres per hour at low elevation, so the iono states' own wander is not by itself anomalous; the coherent
+   cycle-common ambiguity motion riding on it is the anomaly.)
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
