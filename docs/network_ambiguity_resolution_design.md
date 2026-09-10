@@ -423,3 +423,78 @@ Smoke (60 epochs, 60 stations, quiet bed): 12 426 rows, clause present, OFF path
 and the 200-dim MLAMBDA, not the CSV), so a 24 h arm carries roughly +2 h of wall. Nothing about
 accuracy can be read off the smoke: at epoch 60 `med_DD_sigma` is 1.23 cyc, the search fixes nothing,
 and the ceiling sits at the 51 % a uniform fraction gives you. The graded 24 h run is the deliverable.
+
+
+### 2026-09-10 (end of day) — the Phase-2 grade: **NO-GO for Phase 3**, and the blocker is named
+
+The instrument built earlier the same day was run and graded.  This section is the *reading*; the full
+record is `docs/SPEC_amb_iono_split_overcount.md` §6.19e and §7 item 44.
+
+**Arm.** `runs/golden_sim_netar` = `config/golden/golden_sim_tri_w6.json` VERBATIM plus
+`network.ambiguity_resolution.{enable, trace, ils_max_dim 200, min_epochs 10, enable_partial_ar,
+min_success_rate 0.9999, ratio_threshold 3.0, nl_max_per_pair_frac 0.10}` and the run paths.  Quiet
+60-station truth bed `runs/simnet60_quiet_wu93_24h`, 24 h, 2 879 epochs, exit 0.  Read-only, so the
+product is the golden's.
+
+```
+Network (producer AR, Phase 2 log-only): 2869 epochs searched, 298 DD p50 / 200 searched p50,
+fixed epochs 2238 (78.0%), DD fixed total 29828, ratio p50 12.60, p_succ p50 1.0000,
+med_DD_sigma p50 0.3170 cyc; carry-blind; trace on
+```
+
+**Grade** (`scripts/simnet_producer_ar_grade.py … --settle-h 12`; 852 260 rows joined, 0 unjoinable),
+against the arm's own pre-registration:
+
+| gate | measured (settled h12–24) | |
+|---|---|---|
+| searched-subset \|e\| p50 ≤ 0.10 cyc | 0.198 cyc | **FAIL** |
+| fixed epochs > 50 % | 86.8 % | PASS |
+| CORRECT-fix rate among kept ≥ 99 % | **85.52 %** (13 328 / 15 585) | **FAIL** |
+| wrong fixes reported with \|e\| | 2 257 | reported |
+| P1 rows > 0 | 852 260 / 0 unjoinable | PASS |
+
+**Verdict: NO-GO for Phase 3.**  §5's own rule was "a wrong fix accepted at `p_succ ≥ 0.9999`
+falsifies the carry-blind covariance as a gate input, and no amount of fix rate compensates for it."
+The measured wrong-fix rate is **14.48 %** — fourteen times the 1 % threshold — and the failures are
+not marginal: **every one of the 200 largest-\|e\| wrong fixes is off by exactly ±1 cycle** (\|e\|
+0.90–1.10 cyc) at a formal σ whose median is **0.091 cyc**, i.e. a median **\|e\|/σ of 10.4**, accepted
+at ratio 14.0 and `p_succ` **1.0000**.  The battery's inputs are the covariance's own ratio and success
+probability; the covariance does not know what it does not carry, and the run-end clause names it:
+`carry-blind`.
+
+**The tell that makes this a diagnosis rather than a disappointment.**  Correctness gets *worse* as
+the run settles — 93.28 % over h0–12 against 85.52 % over h12–24 — while the gate's confidence *rises*
+(ratio p50 11.31 → 14.01).  A covariance shrinking faster than the error it describes is precisely what
+a carry-blind conditional block does on the phase-leveling vehicle: the filter accumulates and the
+formal σ contracts, but the DD float carries an error inherited through the carry that the conditional
+covariance never sees.  Consistent with the same day's producer finding that the station frame itself
+walks (SPEC §7 item 40) — the float is chasing a moving frame while its σ says it has arrived.
+
+**The float is also not ready on its own terms.**  The fixability ceiling — searched DDs within
+0.25 cyc of truth, i.e. what plain rounding would get right — is **72.4 %** settled, so more than a
+quarter of the *tightest* DDs the `ils_max_dim` cap could find are further than half a cycle from a
+correct fix.  Per band (settled subset \|frac\| p50 / ceiling): E:L1C 0.128 / 78.1 %, E:L5Q 0.151 /
+73.0 %, G:L1C 0.151 / 70.2 %, G:L2W 0.161 / 68.9 %; correct-fix rate GPS 90.4 / 90.3 % vs Galileo
+79.6 / 81.7 %.
+
+⚠ **Rotating reference population.**  The star topology's reference satellite switched 213 (Galileo) /
+261 (GPS) times and the reference station 242 / 313 times across 52 / 46 distinct stations over the
+2 869 epochs.  Every DD inherits its reference pair's error (SPEC §6.12), so quote whole-population
+rates from this trace, never a per-band or per-station split.
+
+**Cost, for budgeting the re-grade.**  `netar` is **2 152 ms of a 3 984 ms epoch (54 %)** at 60
+stations, median over the settled half — the joint conditional covariance and the 200-dim MLAMBDA, not
+the CSV.  A 24 h arm is ~1.7 h of extra wall.
+
+**Sequencing, updated.**  Phase 3 (integer pins) is **blocked** on:
+
+1. **`network.carry_aware_covariance` applied to the Phase-2 DD block**, re-graded with this same
+   instrument.  The gate must become a discriminator before it can be trusted to choose pins.  This is
+   a prerequisite, not an option.
+2. Only then a Phase-3 build, and only if the re-graded correct-fix rate clears 99 % with a
+   searched-subset \|e\| p50 that justifies fixing at all.
+
+The DO-NOT-BUILD verdict on producer DD-*fixing* (M5) is untouched: Phase 2 remains a diagnostic search
+plus its grader, log-only, and this grade is the reason it stays that way for now.  The consumer-side
+cascade (§ the 2026-09-10 wire note, item 3) is unaffected — it was already blocked on the wire's SD
+integer consistency, and a producer that fixes 14.5 % of its integers wrong would not have helped it.

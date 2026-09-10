@@ -1127,3 +1127,62 @@ worse — grade a consumer-facing slip response on the per-satellite PHASE-clock
 on a slipped bed (2 486 slip rows touching 32.3 % of the keys) its integer-dependent steps were
 contaminated; it now accumulates the truth slips through `simnet_amb_integer.load_truth` / `n_at`.
 Everything quoted from that grader in §13.5 and here is integer-free.
+
+### 13.7 The FALSE-ALARM-ONLY corner — `oracle_true_slip`, and what it proves (2026-09-10 evening)
+
+§13.5 measured the ceiling of a level-preserving response to a TRUE slip.  It left the other half of
+the 2×2 unmeasured: what the detectors' FALSE alarms are costing.  On this bed that population is not
+a rounding error.
+
+**The measurement first (`scripts/simnet_slip_census.py`, in-block arm, post-Card-R goldens).**  Of the
+bed's 2 486 truth slips, **2 337 (94.0 %) are DETECTED** — MW 2 006, IF-TD 331, T4 59, raim 16 — and
+**74 (3.0 %) are SILENT**, mostly ≥ 90-cycle jumps at el ≈ 10°.  But of **4 708 slip-tier events,
+2 371 (50 %) have NO truth slip anywhere in the window: MW 1 132, IF-TD 1 239** (ignition candidates
+and two refsat resets included).  That is ≈ **6.4 false re-levels per station-hour against 6.8 true
+slips per station-hour**.  After Card R fixed the IF-TD reference gate on the QUIET bed (§11 / SPEC_amb_iono
+§6.14.6), BOTH detectors still fire as often on nothing as on something on the SLIPPED bed — consistent
+with the fixture's phase noise being ~5× the field's while the MW thresholds are field-empirical
+(`feedback_mw_thresholds_empirical`; a fixed PHYSICAL threshold does not port between beds).
+
+⚠ **Two counting bases, never to be mixed in a rate.**  The census counts EVENTS per
+(station, satellite) — ~2 300 false per 6 h on this bed.  The oracle's counters below count per-signal
+ACTUATIONS — 6 804.  The earlier "13 485 actuations" figure was the per-signal OFFER count, a third
+basis again.
+
+**The knob (commit `3dd1284`).**  `network.cycle_slip.oracle_true_slip` = `"repair"` (default —
+§13.5's ceiling, shift the level by the true Σδ·λ) | `"free"` (decline; the caller runs today's
+ordinary free/re-level for that arc).  It is independent of the existing
+`network.cycle_slip.oracle_false_alarm` = `"keep"` | `"free"`, so the two span a 2×2 whose fourth
+corner (both `"free"`) is a pure no-op — the loader WARNs rather than refuses, because that corner is
+the byte-identity control for the hook itself.  The false-alarm keeps are now also split **per tier**
+in the run-end counters (invariant #4), which is what makes the arm below attributable.
+
+**The arm — `runs/golden_sim_campaign_zwdblk_orafa`** (`true_slip: free` + `false_alarm: keep` on the
+in-block posture).  The ONLY difference from the control is that actuations with no truth slip in the
+window keep their level; every real slip pays the shipped response.  **6 804 false alarms kept**
+(MW 4 156 / IF-TD 2 131 / LLI 517), 3 409 true slips freed as today.
+
+| | in-block control | false alarms KEPT |
+|---|---|---|
+| ZWD truth rms | 1.188 m | 1.066 (−10 %) |
+| ZWD truth p50 | 0.048 | **0.104** |
+| consumer settled p50 | 1.085 m | **2.92** |
+| consumer settled rms | 2.389 | **4.46 (2.7×)** |
+| T4 arc erases | 29 613 | **48 078 (+62 %)** |
+
+**FAIL — and decisive in the direction opposite to the one it was built to test.**  NOT re-levelling an
+arc that had no slip makes the consumer 2.7× worse and forces 62 % more T4 erases.  ⇒ **the
+false-alarm re-levels are a RESYNC mechanism**: on this bed their function is not slip repair, it is
+dragging a drifting arc back into its station's current (walking) frame, and the detectors' 50 %
+false-alarm rate is doing useful work by accident.
+
+**What this closes.**  "Tighten the detector thresholds on this bed" is dead as a card — a better
+detector would remove the resyncs and leave the walk.  Taken with §13.6's two ladders and
+SPEC_amb_iono §6.17b (T4 mostly re-erases the damage its own previous re-level created), all three
+accuracy-of-response levers are now measured and none of them is what the consumer is buying: the
+response's ACCURACY is not the lever, the frame's OBSERVABILITY is (SPEC_amb_iono §6.19a / §7 item 40,
+and the receiver-clock card of §7 item 42).
+
+`oracle_true_slip` is a **sim-only diagnostic** — it reads `truth_slips.csv` — and carries a KEEP_OFF
+ledger row for the same reason `oracle_relevel` does.  ⚠ It is also the reason §13.5's "26 % detected
+but KEPT" class must be re-read: some of that class is this one.
