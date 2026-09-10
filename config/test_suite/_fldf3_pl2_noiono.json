@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "FIELD F3 ladder, SECOND ROUND on the CONVERGING leveling posture (SPEC_amb_iono s6.15.4, probe 7 = carry_coupling_gauge_project + the sim golden's phase-datum family transplanted onto the FLD63 chain).  12 h, DOY-129 00-12 UT, fresh, same exe, own CWD.",
+    "PRE-REGISTERED before probe 7 was read (2026-09-09 19:08); these arms run ONLY if probe 7 passes its gates (withholds <= 5/360, ZWD span < 2 m, DD wander < 1 cyc).  pl2 = the converging vehicle without F3 (control); on2 = + phase_leveling_local_block.  Graded delta on2 <-> pl2 with the s6.15.2 instrument set; the s6.15.3 predictions P1-P7 apply unchanged, P2 (DD fractions off the uniform null on L1C/L2W/WL12) being the headline.",
+    "ARM pl2: converging leveling vehicle, F3 OFF.",
+    "ARM noiono (2026-09-10, Fable manager, CONSUMER-side probe): pl2 CONTROL + network.closed_loop.consume_network_iono: false — the field consumer applies the network's SH-VTEC slant iono (TECU-grade, 1 TECU = 0.16 m at L1; the sim golden's consumer has no such feed and sits at 5 cm). Producer identical (products.txt must equal runs/fldf3_pl2_ctl_new/products.txt). Graded on the consumer only: settled >= h6 3D rms/p50 (ctl 3.178/2.418), UP rms (ctl 2.854), hourly h0..h11, resets (log-only knob not armed here). Pre-registered: if the SH feed is the vertical sink, UP rms 2.85 -> < 1.0 m."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "carry_invariant": false,
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "mw_wl": {
+      "ewl_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "wl_inject_enable": false
+    },
+    "cycle_slip": {
+      "relevel_free_epoch": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_pl2_noiono/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_pl2_noiono/state_snapshot.bin",
+    "carry_coupling_gauge_project": true,
+    "phase_datum_eq34": false,
+    "phase_datum_prioritized": true,
+    "phase_datum_handover_continuous": true,
+    "phase_anchor_carry_reref": true,
+    "phase_datum_min_stations": 2,
+    "closed_loop": {
+      "consume_network_iono": false
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "FIELD DOY-129, 61 sta GPS L1W/L2W, held-out consumer WTZZ00DEU, 12 h fresh.  Base = _fldf3_pl2_ctl_new.json (the converging leveling posture, SPEC_amb_iono s6.15.4 probe 7) with ONE knob added: network.readmit_seed_horizon_s = 3900.  Everything else, including the extends chain, is character-identical to the control, so `git diff` of this file against _fldf3_pl2_ctl_new.json is the knob plus the two run paths.",
+    "WHY THIS IS A PRE-REGISTERED NULL, NOT A FIX ATTEMPT (measured on runs/fldf3_pl2_ctl_new + runs/fldf3_pl2_rtlog, 2026-09-10).  The consumer's 665 resets in 12 h are 100 % SSR PHASE-BIAS discontinuity resets (rt_engine.log; 357 L1W + 308 L2W, zero on any other channel).  networkStashCarry parks only SharedParamKind::Clock and ::CodeBias - PhaseBias is excluded by construction (NetworkRunContext.cpp:4785-4791, 'a stiff PB seed would fight that pin'), and the ledger scope says the same ('Phase bias is NOT seeded').  So the seed cannot touch the channel that produces every reset.",
+    "TARGET POPULATION, counted before arming (standing invariant #3/#4).  (a) CODE BIAS: network.estimate_sat_code_bias is OFF on this chain - every emit line reads '0 code biases', products.txt carries zero B records, and no TOPOLOGY col_removed/col_added label is a CB.  So readmit_seed_code_bias reads true and will seed ZERO columns: armed here the card degenerates exactly to the clock-only variant the ledger records as FALSIFIED ('the T3 tails RETURN', runs/readmit24h_e2clk).  (b) CLOCK: 8 clock-column departures in 12 h (G01 G12 G14 G16 G20 G22 G25 G26), all returning inside 3900 s (690-3300 s), against 70 PB-column departures.  (c) REGIME: the ledger regime is on(clock_temporal_anchor) and not on(clock_model); clock_temporal_anchor is absent from the whole pl2 chain (loader default false), so the Q3 anchored fold never runs and the seed lands at var + q*gap with filter.process_noise.sat_clock_q = 0.001 m^2/s, i.e. sigma = sqrt(0.001*3200) = 1.79 m - a prior that cannot bind against a 61-station clock re-solve.  The sim golden's clock_anchor_q = 3e-6 gives 0.098 m, 18x tighter; that difference is the card's validated mechanism and it is not present here.",
+    "NO COMPANION KNOB IS ADDED.  Arming clock_temporal_anchor would put the card in regime but is a SECOND knob family, FINGERPRINTED and SOLVE-AFFECTING, so this run would no longer isolate readmit and would need its own pl2+Q3 control - two more 12 h arms.  Arming estimate_sat_code_bias would give the seed its CB half but is a THIRD family, fingerprinted, and its own ledger row says grade BIAS-ONLY.  Both violate 'an arm = a golden plus ONLY the knob under test'.",
+    "PRE-REGISTERED PREDICTION (recorded before the run; 2026-09-10).  P1 consumer settled rms (>= h6) 3.178 m -> 3.178 m, |delta| < 0.05 m; p50 2.418 -> 2.418.  P2 consumer resets G12 191 / G25 82 / G24 76 -> unchanged +-2 (G24 and G06 never lose a clock column at all, so they cannot be touched even in principle).  P3 the h4-h7 hourly rms block 2.352 / 3.638 / 5.091 / 4.280 m -> unchanged +-0.1 m.  P4 producer wire churn 5025 adjacent-epoch |dPB| > 0.05 m bumps / 4839 disc-counter bumps on 114 keys -> unchanged +-2 %.  P5 THE COUNTERS THAT MAKE THIS FALSIFIABLE (invariant #4 - read these, not the absence of a crash): n_readmit_parked ~ 8 and ALL of kind clock, n_readmit_seeded_clk <= 8, n_readmit_seeded_cb = 0 EXACTLY, n_readmit_expired = 0, n_readmit_dropped_datum ~ 0, and READMIT park / seed_clock / seed_held / seed_moved events on G01 G12 G14 G16 G20 G22 G25 G26 only.  If n_readmit_seeded_cb > 0 or the consumer moves by more than P1's band, the structural argument above is wrong and the reading must be redone.",
+    "WHAT THIS RUN BUYS EVEN IF THE NULL HOLDS: it converts a source-read structural argument into measured counters on the field bed, and it is the first field exercise of the READMIT park/seed path (validated only on the sim golden, runs/readmit24h_e2).  It does NOT test the re-admission hypothesis for the field consumer - that hypothesis is already falsified on the control: 3 of 665 resets (0.5 %) fall within +-10 min of a return of their own satellite, and consumer rms in the 30 min after a return is 3.176 m vs 3.287 m elsewhere."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "carry_invariant": false,
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "mw_wl": {
+      "ewl_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "wl_inject_enable": false
+    },
+    "cycle_slip": {
+      "relevel_free_epoch": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_pl2_readmit/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_pl2_readmit/state_snapshot.bin",
+    "carry_coupling_gauge_project": true,
+    "phase_datum_eq34": false,
+    "phase_datum_prioritized": true,
+    "phase_datum_handover_continuous": true,
+    "phase_anchor_carry_reref": true,
+    "phase_datum_min_stations": 2,
+    "readmit_seed_horizon_s": 3900
+  }
+}
