@@ -364,9 +364,14 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::map<std::tuple<int, std::string, std::string>,
                                         RelevelPend>* relevel_pend,
                                std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>* bridge_local_carry) {
+                                        LocalCarry>* bridge_local_carry,
+                               NetworkSlipOracle* oracle) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_mw_refloat = pa.sta_mw_refloat;
+    // SIM-ONLY ORACLE: this epoch's continuous-GPS seconds, the frame the truth
+    // table is indexed in (same expression as the wind-up drain's now_s).
+    const double oracle_now_s =
+        static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
     // Thin event forwarder — textual copy of the run-TU lambda, so the moved
     // emitEvent call sites are unchanged (same rows, same order).
     auto emitEvent = [&](const char* tier, const char* event,
@@ -394,7 +399,15 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
         // (the warm carry was actually reset) are separate facts.  Conflating
         // them is exactly what made every cold run report zero MW/LLI events
         // while still feeding the C3c funnel (limitation L3).
-        struct SignalAction { bool matched{false}; bool refloated{false}; };
+        struct SignalAction { bool matched{false}; bool refloated{false};
+            // SIM-ONLY ORACLE (network.cycle_slip.oracle_relevel): the arc was
+            // ANSWERED by a truth-fed level repair (or a truth-fed false-alarm
+            // keep) instead of being freed.  `refloated` stays FALSE — nothing
+            // was refloated — so every downstream gate that keys on it (the
+            // bridge candidate push, the refloat counters) is correctly bypassed;
+            // the event row's action is overridden from these instead.
+            bool oracle_handled{false}; bool oracle_repaired{false};
+            std::string oracle_detail; };
         // §7.6(c): `cause` is the lane observatory's freeing-cause bit
         // (RelevelEpochState::kCauseMw / kCauseLli) — measure-only tag, OR-merged
         // so a doubly-freed key keeps both bits.
@@ -408,6 +421,23 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 if (!parts || parts->satellite != sat) continue;
                 if (parts->signal == signal) {
                     act.matched = true;
+                    // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp):
+                    // a perfect repair REPLACES the free.  When it handles the arc,
+                    // EVERY freeing action below is skipped — C3c funnel insert,
+                    // pending-reseed mark, free_ambs latch, bridge-pend void —
+                    // and only the event row survives, with an oracle action.
+                    // Null (and unreachable) unless the sim-only knob is armed.
+                    if (oracle) {
+                        OracleOutcome oc = OracleOutcome::NotHandled;
+                        std::string det;
+                        if (networkSlipOracleHandle(*oracle, i, sat, signal,
+                                                    oracle_now_s, det, oc)) {
+                            act.oracle_handled  = true;
+                            act.oracle_repaired = (oc == OracleOutcome::Repaired);
+                            act.oracle_detail   = det;
+                            continue;
+                        }
+                    }
                     // Card 4 C3c: feed the DD invariant carry from epoch 1,
                     // independent of the legacy carry's warm gate (the DD carry is
                     // live throughout; pending-reseed cannot serve it — PASS-B
@@ -700,10 +730,26 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         cand.lambda_wl});
                 const bool matched   = a.matched   || b.matched;
                 const bool refloated = a.refloated || b.refloated;
+                // SIM-ONLY ORACLE: the detection is unchanged (same population,
+                // same row), only the ACTION and the detail differ — so the arm
+                // and its control are directly comparable in network_events.csv.
+                const bool orc_h = a.oracle_handled || b.oracle_handled;
+                const bool orc_r = a.oracle_repaired || b.oracle_repaired;
+                // The event is one row per SATELLITE but the oracle decides per
+                // BAND, so the detail must come from the band the ACTION names —
+                // a "oracle_repair" row carrying the other band's "delta=0;n=0"
+                // would make the trace disagree with itself.
+                const std::string orc_detail =
+                    a.oracle_repaired ? a.oracle_detail
+                  : b.oracle_repaired ? b.oracle_detail
+                  : a.oracle_handled  ? a.oracle_detail : b.oracle_detail;
                 if (matched && mw_done.insert(sat).second) {
                     emitEvent("T0_mw_detect", "mw_wl_slip", sat, stations[i].name,
                               std::nullopt, std::nullopt,
-                              refloated ? "refloat" : "diagnostic", sig1 + ";" + sig2);
+                              orc_h ? (orc_r ? "oracle_repair" : "oracle_keep")
+                                    : (refloated ? "refloat" : "diagnostic"),
+                              orc_h ? (sig1 + ";" + sig2 + ";" + orc_detail)
+                                    : (sig1 + ";" + sig2));
                     ++qc_cnt.mw_detections;
                     if (refloated) ++qc_cnt.mw_refloats;
                     if (++n_mw <= 12)
@@ -803,19 +849,38 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 }
 
                 bool matched = false, refloated = false;
+                bool orc_h = false, orc_r = false;
+                std::string orc_detail;
                 for (const auto& [code, lli] : obs.lli_flags) {
                     if (code.empty() || code[0] != 'L' || !(lli & 1)) continue;
                     const auto sa = refloat_signal(i, obs.satellite, code,
                                                    RelevelEpochState::kCauseLli);
                     if (sa.matched)   matched   = true;
                     if (sa.refloated) refloated = true;
+                    // SIM-ONLY ORACLE: an LLI can be asserted on several bands of
+                    // one satellite and each is handled INDEPENDENTLY (a slip on
+                    // L1C only shifts L1C).  The event stays one-per-satellite,
+                    // so it carries the detail of the band its ACTION names — the
+                    // first REPAIRED band, else the first handled one.
+                    if (sa.oracle_handled) {
+                        orc_h = true;
+                        if (sa.oracle_repaired && !orc_r) {
+                            orc_r = true;
+                            orc_detail = sa.oracle_detail;   // the repair wins
+                        } else if (orc_detail.empty()) {
+                            orc_detail = sa.oracle_detail;
+                        }
+                    }
                 }
                 if (matched) {
                     emitEvent("T0_mw_detect", "lli_slip", obs.satellite,
                               stations[i].name, std::nullopt, std::nullopt,
-                              refloated ? "refloat" : "diagnostic",
-                              corr_mw ? "LLI;mw_step"
-                                      : (corr_gf ? "LLI;gf_step" : "LLI"));
+                              orc_h ? (orc_r ? "oracle_repair" : "oracle_keep")
+                                    : (refloated ? "refloat" : "diagnostic"),
+                              (corr_mw ? std::string("LLI;mw_step")
+                                       : (corr_gf ? std::string("LLI;gf_step")
+                                                  : std::string("LLI")))
+                                  + (orc_h ? (";" + orc_detail) : std::string{}));
                     ++n_lli;
                     ++qc_cnt.lli_detections;
                     if (refloated) ++qc_cnt.lli_refloats;
@@ -852,7 +917,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::map<std::tuple<int, std::string, std::string>,
                                     RelevelPend>* relevel_pend,
                            const RawSlipEpoch* raw_epoch,
-                           const std::vector<RawSlipHistory>* raw_hist) {
+                           const std::vector<RawSlipHistory>* raw_hist,
+                           NetworkSlipOracle* oracle) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -904,18 +970,50 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         const double ewma_alpha   = config_.networkCycleSlipIfPhaseTdEwmaAlpha();
         const double shrink_kappa = config_.networkCycleSlipIfPhaseTdShrinkKappa();
 
+        // SIM-ONLY ORACLE outcome for one flagged IF pair — see refloat_signal's
+        // SignalAction.  `handled` is ANY band; the pend gate below uses it,
+        // because a bridge replace that re-bases one band while the other was
+        // truth-repaired would overwrite the repair with a pre-slip level.
+        struct PairAction { bool handled{false}; bool repaired{false};
+                            bool freed{false}; std::string detail; };
+        const double oracle_now_s =
+            static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
         // Refloat both band ambiguities of (sat, sig1, sig2) at station i (only
         // when the carry is active; cold, the detection is diagnostic only).
         auto refloat_pair = [&](int i, const std::string& sat,
-                                const std::string& sig1, const std::string& sig2) {
+                                const std::string& sig1,
+                                const std::string& sig2) -> PairAction {
+            PairAction pact;
             StateManager& sm = *stations[i].sm;
             for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                 if (!parts || parts->satellite != sat) continue;
                 if (parts->signal == sig1 || parts->signal == sig2) {
+                    // SIM-ONLY ORACLE: each BAND is handled independently (the
+                    // IF combination cannot localize the slip, but truth can) —
+                    // handled ⇒ skip every freeing action for this band.
+                    if (oracle) {
+                        OracleOutcome oc = OracleOutcome::NotHandled;
+                        std::string det;
+                        if (networkSlipOracleHandle(*oracle, i, sat, parts->signal,
+                                                    oracle_now_s, det, oc)) {
+                            pact.handled = true;
+                            // The event names ONE action for the pair, so its
+                            // detail must be the band that action describes: the
+                            // first REPAIRED band, else the first handled one.
+                            if (oc == OracleOutcome::Repaired && !pact.repaired) {
+                                pact.repaired = true;
+                                pact.detail   = det;
+                            } else if (pact.detail.empty()) {
+                                pact.detail = det;
+                            }
+                            continue;
+                        }
+                    }
                     // Card 4 C3c: feed the DD carry from epoch 1 (see refloat_signal).
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     if (carry_warm) {
+                        pact.freed = true;
                         sm.markAmbiguityPendingReseed(amb_key);
                         // SPEC_slip_relevel_walk: latch the free epoch the consumed
                         // mark never delivered (see refloat_signal).
@@ -939,6 +1037,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     }
                 }
             }
+            return pact;
         };
 
         // Pool this epoch's ΔΔφ_IF by signal pair across present non-pivot stations.
@@ -1060,17 +1159,25 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     if (trace_flag_rates) { ++fr_if_slip.opp; if (flagged) ++fr_if_slip.flag; }  // B8/T1
                     if (flagged) {
                         stations[sp->sta].if_slip->resetSatellite(sp->sat);  // restart arc
-                        refloat_pair(sp->sta, sp->sat, sp->sig1, sp->sig2);
+                        const auto pact =
+                            refloat_pair(sp->sta, sp->sat, sp->sig1, sp->sig2);
                         emitEvent("T1_if_slip", "if_slip", sp->sat,
                                   stations[sp->sta].name, abs_dev, thr,
-                                  carry_warm ? "refloat" : "diagnostic",
-                                  sp->sig1 + ";" + sp->sig2);
+                                  pact.handled
+                                      ? (pact.repaired ? "oracle_repair" : "oracle_keep")
+                                      : (carry_warm ? "refloat" : "diagnostic"),
+                                  pact.handled
+                                      ? (sp->sig1 + ";" + sp->sig2 + ";" + pact.detail)
+                                      : (sp->sig1 + ";" + sp->sig2));
                         // Bridge v2, flagged path: CREATE (or refresh — the
                         // refloat_pair above just voided any stale one) the pend
                         // with the pre-slip capture + this δIF.  A station whose
                         // IF-TD refsat rebased this epoch is frame-invalid — no
                         // pend, the arc keeps the plain free epoch.
-                        if (bridge_on) {
+                        // SIM-ONLY ORACLE: with the level truth-repaired there is
+                        // nothing to bridge, and a later replace would overwrite
+                        // the repair with `pre_slip + shift` — no pend.
+                        if (bridge_on && !pact.handled) {
                             if (!sta_if_resets[sp->sta].empty()) {
                                 ++bridge_cnt->bridge_fallback_refsat;
                             } else {
@@ -1253,10 +1360,14 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             for (const auto& rkey : sta_if_resets[i]) {
                 std::string sat, sig1, sig2;
                 if (!parseIfPairResetKey(rkey, sat, sig1, sig2)) continue;
-                refloat_pair(i, sat, sig1, sig2);
+                const auto pact = refloat_pair(i, sat, sig1, sig2);
                 emitEvent("T1_if_slip", "refsat_reset", sat, stations[i].name,
                           std::nullopt, std::nullopt,
-                          carry_warm ? "refloat" : "diagnostic", sig1 + ";" + sig2);
+                          pact.handled
+                              ? (pact.repaired ? "oracle_repair" : "oracle_keep")
+                              : (carry_warm ? "refloat" : "diagnostic"),
+                          pact.handled ? (sig1 + ";" + sig2 + ";" + pact.detail)
+                                       : (sig1 + ";" + sig2));
                 // Edge-1 piece 2 (network.mark_refsat_reset_disc; nullptr ⇒ OFF ⇒
                 // byte-identical).  Queue the satellite for a per-sat discontinuity
                 // mark at its next actual emit.  Gated on carry_warm for the same
@@ -1264,7 +1375,12 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 // detection is DIAGNOSTIC — no refloat happened, so there is no
                 // datum re-reference for a consumer to react to, and marking one
                 // would be a fabricated event.
-                if (refsat_mark_sats && carry_warm) refsat_mark_sats->insert(sat);
+                // SIM-ONLY ORACLE: an arc answered by a truth repair was NOT
+                // re-referenced, so a disc mark here would be a fabricated event
+                // (the same argument the carry_warm gate makes).  A pair where
+                // one band was still freed keeps its mark.
+                if (refsat_mark_sats && carry_warm && (pact.freed || !pact.handled))
+                    refsat_mark_sats->insert(sat);
                 ++n_if_arcs;
                 if (n_if_arcs <= 12)
                     if_detail += fmt::format("{}{}/{} (refsat)", if_detail.empty() ? "" : ", ",
@@ -1295,7 +1411,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    const std::shared_ptr<spdlog::logger>& log,
                                    RelevelEpochState* relevel,
                                    std::map<std::tuple<int, std::string, std::string>,
-                                            RelevelPend>* relevel_pend) {
+                                            RelevelPend>* relevel_pend,
+                                   NetworkSlipOracle* oracle) {
     if (!config_.networkCycleSlipWindupRestartRefloat()) return;
     const double now_s = static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
     const double carry_gap_s = config_.networkPhaseLevelingMaxGapS();
@@ -1333,14 +1450,40 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             }
             StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
             int matched = 0;
+            // SIM-ONLY ORACLE: this is the WHOLE-SATELLITE site — a restart steps
+            // every signal of the satellite — so each SIGNAL is offered to the
+            // oracle independently (truth localizes what the band-common model
+            // step cannot).  A signal with no truth jump in the window follows the
+            // false-alarm policy; the rest fall through to today's refloat.
+            bool orc_h = false, orc_r = false, orc_freed = false;
+            std::string orc_detail;
             for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                 if (!parts || parts->satellite != sat) continue;
                 ++matched;
+                if (oracle) {
+                    OracleOutcome oc = OracleOutcome::NotHandled;
+                    std::string det;
+                    if (networkSlipOracleHandle(*oracle, i, sat, parts->signal,
+                                                now_s, det, oc)) {
+                        orc_h = true;
+                        // One row per (station, satellite): the detail is the
+                        // band the ACTION names — first repaired, else first
+                        // handled (see the MW site).
+                        if (oc == OracleOutcome::Repaired && !orc_r) {
+                            orc_r = true;
+                            orc_detail = det;
+                        } else if (orc_detail.empty()) {
+                            orc_detail = det;
+                        }
+                        continue;
+                    }
+                }
                 // Card 4 C3c: the DD invariant carry owns its own funnel and is
                 // live from epoch 1 (see refloat_signal).
                 if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                 if (carry_warm) {
+                    orc_freed = true;
                     sm.markAmbiguityPendingReseed(amb_key);
                     if (relevel) {
                         relevel->free_ambs.insert({i, amb_key});
@@ -1354,7 +1497,10 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             // pend's pre-slip capture predates the step and its replace would
             // re-inject a pre-restart-frame value — void it (the same rule the
             // raw-slip drains apply on a fresh mark).
-            if (carry_warm && relevel_pend)
+            // SIM-ONLY ORACLE: with every signal truth-repaired nothing was
+            // marked, so there is no stale capture to void (voiding one would
+            // discard a pend the arc still needs).
+            if (carry_warm && relevel_pend && (orc_freed || !orc_h))
                 for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();)
                     if (std::get<0>(pit->first) == i && std::get<1>(pit->first) == sat) {
                         ++qc_cnt.bridge_pend_voided;
@@ -1377,9 +1523,13 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
                              stations[static_cast<std::size_t>(i)].name,
                              rec.gap_s, carry_gap_s,
-                             carry_warm ? (matched > 0 ? "refloat" : "no_arc")
-                                        : "diagnostic",
-                             fmt::format("accumulator restart; {} arc(s) marked", matched));
+                             orc_h ? (orc_r ? "oracle_repair" : "oracle_keep")
+                                   : (carry_warm ? (matched > 0 ? "refloat" : "no_arc")
+                                                 : "diagnostic"),
+                             orc_h ? fmt::format("accumulator restart; {} arc(s); {}",
+                                                 matched, orc_detail)
+                                   : fmt::format("accumulator restart; {} arc(s) marked",
+                                                 matched));
         }
         stations[static_cast<std::size_t>(i)].model->clearWuRestarts();
     }

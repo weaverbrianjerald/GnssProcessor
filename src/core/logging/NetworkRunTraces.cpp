@@ -1530,6 +1530,23 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.slip_qc.gap_reentry_lli ? "true" : "false",
                                      nc.slip_qc.gap_reentry_unmeasurable ? "true" : "false")
                        : std::string())
+               // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp).
+               // SOLVE-AFFECTING and truth-fed, so an archived logs/ folder MUST be
+               // able to say that its products are a diagnostic ceiling rather than a
+               // real posture — and which fixture fed them.  Emitted ONLY when armed
+               // (the gap_reentry precedent), so an unarmed run's manifest bytes are
+               // unchanged.
+               << (nc.slip_qc.oracle_relevel
+                       ? fmt::format("\"oracle_relevel\":true,"
+                                     "\"oracle_truth_root\":\"{}\","
+                                     "\"oracle_noise_cyc\":{},"
+                                     "\"oracle_false_alarm\":\"{}\","
+                                     "\"oracle_window_s\":{},",
+                                     jesc(nc.slip_qc.oracle_truth_root),
+                                     nc.slip_qc.oracle_noise_cyc,
+                                     nc.slip_qc.oracle_false_alarm,
+                                     nc.slip_qc.oracle_window_s)
+                       : std::string())
                // §18.12 Card-1 coupling regressors, both halves of the frame restore:
                // the WRITE knob says whether this run's snapshots carry QS/QL/QZ/QR
                // records (format v3), the READ knob whether a resumed leg rebuilt

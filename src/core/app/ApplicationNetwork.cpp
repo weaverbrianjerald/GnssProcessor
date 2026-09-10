@@ -134,6 +134,7 @@
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
 #include "slip/NetworkSlipQc.hpp"       // INC-2: slip-QC pure helpers (ifElevMap / parseIfPairResetKey)
+#include "slip/NetworkSlipOracle.hpp"   // SIM-ONLY oracle slip response (level-preserving ceiling)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"        // B5: signal wavelengths for the DD fractional-cycle diagnostic
@@ -321,6 +322,19 @@ int Application::runNetwork() {
         // failure when it armed only the former.
         sp.lane_snap           = config_.networkCycleSlipRelevelLaneSnap();
         slip_qc.hist.resize(stations.size());
+    }
+    // SIM-ONLY ORACLE slip response (network.cycle_slip.oracle_relevel,
+    // include/slip/NetworkSlipOracle.hpp): the level-preserving re-level CEILING.
+    // Constructed ONLY when armed — every drain takes a NetworkSlipOracle* that
+    // stays null otherwise, so the OFF path is structurally byte-identical.  The
+    // load THROWS on a missing/mis-pointed fixture (that is the field-inertness
+    // mechanism); the throw propagates to runNetwork's caller like any other
+    // fatal setup error rather than degrading to a silent zero-repair run, which
+    // would be read as a falsification of the mechanism under test.
+    if (nc.slip_qc.oracle_relevel) {
+        ctx.carry.slip_oracle =
+            networkSlipOracleLoad(config_, stations, log_manager_, log);
+        ctx.carry.slip_oracle->carry = &ctx.carry.local_carry;
     }
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
     // B5/raw-slip wavelength providers — gated on the streams openAll just

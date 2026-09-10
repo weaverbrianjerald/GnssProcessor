@@ -1527,7 +1527,12 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               datum_detect_on ? &local_carry : nullptr,
                               relevel_ptr,
                               relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
-                              relevel_ptr ? &local_carry : nullptr);
+                              relevel_ptr ? &local_carry : nullptr,
+                              // SIM-ONLY ORACLE slip response: null unless
+                              // network.cycle_slip.oracle_relevel armed the run,
+                              // so the OFF path never reaches a hook call
+                              // (structurally byte-identical, invariant #6).
+                              ctx.carry.slip_oracle.get());
 
     // Edge-1 piece 2: pass the mark sink ONLY when armed, so the OFF path passes
     // nullptr and the driver's insert is not even reached (byte-identical).
@@ -1544,7 +1549,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                           // per-station empirical step scales, only when the
                           // GF row is armed (nullptr keeps the OFF path inert).
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.epoch : nullptr,
-                          config_.networkCycleSlipRelevelBridgeGf() ? &qc.hist : nullptr);
+                          config_.networkCycleSlipRelevelBridgeGf() ? &qc.hist : nullptr,
+                          ctx.carry.slip_oracle.get());   // SIM-ONLY ORACLE
 
     // ---- §10.4: wind-up accumulator-restart response ------------------------
     // (SPEC_phase_windup_sign §10.4.)  Drains the per-station restart ledgers
@@ -1558,7 +1564,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     networkSlipDrainWindupRestart(config_, stations, present, i_lo, n_sta_total,
                                   carry_invariant, carry_warm,
                                   carry_slipped_ambs, qc.counters, se, traces,
-                                  log, relevel_ptr, &ctx.carry.relevel_pend);
+                                  log, relevel_ptr, &ctx.carry.relevel_pend,
+                                  ctx.carry.slip_oracle.get());   // SIM-ONLY ORACLE
 
     // ---- Card G RESPONSE: the gap RE-ENTRY refloat --------------------------
     // (docs/SPEC_slip_qc_hardening.md §G3/W1.)  An arc that re-appears inside

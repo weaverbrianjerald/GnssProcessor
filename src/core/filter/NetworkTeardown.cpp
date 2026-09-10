@@ -2528,6 +2528,41 @@ int networkTeardown(
                       offenders.size(), top);
         }
     }
+    // ---- SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp) ----
+    // Standing invariant #4: the ONLY way to tell a working oracle from dead
+    // wiring is the applied count.  The pre-registered P1 for this card is
+    // applied > 1500 on a 6 h campaign arm; a run that reports 0 has not measured
+    // a ceiling, it has measured nothing, and the line says so in-band.
+    if (ctx.carry.slip_oracle) {
+        const auto& o = *ctx.carry.slip_oracle;
+        log->warn("Network (slip ORACLE): {} detector actuation(s) on carried arcs, {} "
+                  "repaired (sum |delta| {:.1f} cyc, max |delta| {:.1f}, {} multi-slip), {} "
+                  "false-alarm kept, {} false-alarm freed, {} fell through with no carry, {} "
+                  "with no wavelength; noise sigma {:.4f} cyc; policy {}; detector-latency "
+                  "window {:.0f} s (floored at each carry's BIRTH second, so a level erased "
+                  "and re-created by T4 is never re-shifted) — lower bound set by the window "
+                  "on {}, by the carry's birth on {}, by an earlier repair on {}; truth root "
+                  "'{}'.  SIM-ONLY DIAGNOSTIC — this run's products carry a truth-fed repair "
+                  "and are NOT a shippable posture.{}",
+                  o.seen, o.applied, o.sum_abs_cyc, o.max_abs_cyc, o.multi,
+                  o.fa_kept, o.fa_freed, o.no_carry, o.no_lambda, o.noise_cyc,
+                  o.false_alarm == NetworkSlipOracle::FalseAlarm::Free ? "free" : "keep",
+                  o.window_s, o.bound_window, o.bound_birth, o.bound_applied, o.truth_root,
+                  (o.applied == 0)
+                      ? "  ⚠ ARMED AND INERT: ZERO arcs were repaired — this is dead wiring, "
+                        "not a quiet run, and the arm measures NOTHING.  Do not read its ZWD "
+                        "as a falsification of level preservation."
+                      : "");
+        // Closure (the gap_reentry precedent): every offered arc lands in exactly
+        // one bucket, so a reader never has to infer a missing cell.
+        const long long closure = o.applied + o.fa_kept + o.fa_freed + o.no_carry
+                                + o.no_lambda;
+        if (closure != o.seen)
+            log->error("Network (slip ORACLE): counter closure BROKEN — {} seen vs {} bucketed "
+                       "(applied {} + fa_kept {} + fa_freed {} + no_carry {} + no_lambda {}).",
+                       o.seen, closure, o.applied, o.fa_kept, o.fa_freed, o.no_carry,
+                       o.no_lambda);
+    }
     if (nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry) {
         const auto& qcc = slip_qc.counters;
         // ---- the RESPONSE clause (network.cycle_slip.gap_reentry_relevel) ----

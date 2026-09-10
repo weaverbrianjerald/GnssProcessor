@@ -39,6 +39,7 @@
 #include "filter/NetworkRhsAttrib.hpp"       // NetworkAttribFrame (INC-5 flight-recorder retention slot)
 #include "filter/NetworkZStore.hpp"     // ArcKey (D5 inject/hold tag sets)
 #include "slip/NetworkRawObservables.hpp" // IonoCsState (CS-GF authority, QUEUE 8b successor)
+#include "slip/NetworkSlipOracle.hpp"  // NetworkSlipOracle (sim-only oracle slip response)
 #include "filter/NetworkSbasis.hpp"     // NetworkSbasis::Plan (lifecycle-fn params)
 #include "filter/NetworkBiasAdmission.hpp" // CB-ADM: latched W6 code-bias admission census (ctx.admission)
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
@@ -1099,6 +1100,16 @@ namespace GnssProcessor {
             std::uint8_t cause{0};   ///< RelevelEpochState::kCauseT4Attrib / kCauseT4Consens.
         };
         std::map<std::tuple<int, std::string, std::string>, LaneT4Pre> lane_t4_pre;
+        /// SIM-ONLY ORACLE slip response (network.cycle_slip.oracle_relevel,
+        /// include/slip/NetworkSlipOracle.hpp): the run-scope truth table, the
+        /// per-arc application ledger and the run-end counters.  NULL on every
+        /// run where the knob is off — the four detector actuation sites take a
+        /// `NetworkSlipOracle*` and never reach a call, so the OFF path is
+        /// structurally byte-identical (standing invariant #6).  Owns a raw
+        /// pointer back to @c local_carry (a sibling member of this struct, so
+        /// it outlives the oracle); set at construction.  NOT snapshotted — a
+        /// diagnostic, and a resumed leg re-reads the fixture anyway.
+        std::unique_ptr<NetworkSlipOracle> slip_oracle;
         // Per-station ZWD carry (B9): persistent across epochs, keyed by station index
         // (ZWD is one-per-station).  Solve-inert unless network.carry_zwd (every-epoch
         // inject) or a live zwd_seam_ep_left window (post-resume inject); ALSO kept

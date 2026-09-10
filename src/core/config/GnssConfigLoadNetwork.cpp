@@ -60,10 +60,12 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <spdlog/spdlog.h>
+#include <stdexcept>
 
 
 namespace GnssProcessor {
@@ -261,6 +263,48 @@ namespace GnssProcessor {
                           ? ", or no pre-gap dual-band level existed to check (conservative "
                             "reset)"
                           : "");
+        // SIM-ONLY ORACLE slip response interlocks (include/slip/NetworkSlipOracle.hpp),
+        // HERE for the same load-order reason as the two blocks above: carry_invariant
+        // and phase_leveling both parse well after the cycle_slip block.
+        //
+        // Warn-and-DISARM (not the Card-G warn-only shape): the oracle's whole
+        // output is a ceiling number, and a ceiling measured on a vehicle it
+        // cannot actuate is a wrong verdict, not a partial one.  It writes
+        // LocalCarry::value_abs, so with no phase_leveling there is no carry to
+        // write and under carry_invariant the leveling carry is structurally
+        // empty (that vehicle owns its own C3c funnel).
+        if (network_config_.slip_qc.oracle_relevel && network_carry_invariant_) {
+            log->warn("Network (slip ORACLE): network.cycle_slip.oracle_relevel is INERT under "
+                      "network.carry_invariant — the oracle shifts LocalCarry::value_abs, and "
+                      "the leveling local carry is superseded and structurally EMPTY there "
+                      "(the DD invariant carry owns its own slip funnel).  DISABLED: a ceiling "
+                      "measured on a vehicle the mechanism cannot actuate would read as a "
+                      "falsification of level preservation.");
+            network_config_.slip_qc.oracle_relevel = false;
+        }
+        if (network_config_.slip_qc.oracle_relevel && !network_phase_leveling_) {
+            log->warn("Network (slip ORACLE): network.cycle_slip.oracle_relevel needs "
+                      "network.phase_leveling — that carry IS the vehicle it repairs "
+                      "(LocalCarry::value_abs).  DISABLED.");
+            network_config_.slip_qc.oracle_relevel = false;
+        }
+        if (network_config_.slip_qc.oracle_relevel)
+            log->warn("Network (slip ORACLE): oracle_relevel ON — SIM-ONLY DIAGNOSTIC, "
+                      "SOLVE-AFFECTING.  Every detector refloat (MW wide-lane, RINEX LLI, "
+                      "IF-phase TD, wind-up restart) on a CARRIED arc is answered by shifting "
+                      "the carried level by the TRUE integer jump read from '{}' instead of "
+                      "freeing the arc; false alarms are '{}'; injected noise sigma {:.4f} cyc; "
+                      "detector-latency window {:.0f} s (a slip is repairable up to that far "
+                      "back, bounded below by the carry's own BIRTH second so an erased-and-"
+                      "reborn level is never re-shifted). "
+                      " The gap-re-entry drain and the T4 attribution erase are deliberately "
+                      "UNCHANGED (the question is what a perfect DETECTOR response buys with "
+                      "everything else held fixed).  This measures the CEILING of a "
+                      "level-preserving re-level — never promote it, never put it in a golden.",
+                      network_config_.slip_qc.oracle_truth_root,
+                      network_config_.slip_qc.oracle_false_alarm,
+                      network_config_.slip_qc.oracle_noise_cyc,
+                      network_config_.slip_qc.oracle_window_s);
         if (network_cycle_slip_relevel_retap_statistical_ && network_carry_invariant_) {
             log->warn("Network: network.cycle_slip.relevel_retap_statistical is inert "
                       "under network.carry_invariant (the leveling local carry is "
@@ -4099,6 +4143,69 @@ namespace GnssProcessor {
             sq.gap_reentry_unmeasurable =
                 jval<bool>(json, "network.cycle_slip.gap_reentry_relevel_unmeasurable",
                            "network_cycle_slip_gap_reentry_relevel_unmeasurable", false);
+            // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp):
+            // shift the carried level by the TRUE integer jump instead of freeing
+            // the arc, to measure the CEILING of a level-preserving re-level.
+            // SOLVE-AFFECTING; default OFF ⇒ byte-identical.  The truth-root
+            // existence check below is what makes it FIELD-INERT by construction.
+            sq.oracle_relevel =
+                jval<bool>(json, "network.cycle_slip.oracle_relevel",
+                           "network_cycle_slip_oracle_relevel", false);
+            sq.oracle_truth_root =
+                jval<std::string>(json, "network.cycle_slip.oracle_truth_root",
+                                  "network_cycle_slip_oracle_truth_root", std::string{});
+            sq.oracle_noise_cyc =
+                jval<double>(json, "network.cycle_slip.oracle_noise_cyc",
+                             "network_cycle_slip_oracle_noise_cyc", 0.0);
+            sq.oracle_false_alarm =
+                jval<std::string>(json, "network.cycle_slip.oracle_false_alarm",
+                                  "network_cycle_slip_oracle_false_alarm",
+                                  std::string("keep"));
+            // Detector-LATENCY window (seconds).  The truth-slip window's lower
+            // bound is max(last_applied_s, carry.birth_s, now_s - this), so it is
+            // what makes a detector that fires 1-3 epochs LATE repairable instead
+            // of mis-counted as a false alarm: a zero-q carried level is not
+            // re-set by the intervening solves, so the jump is still un-absorbed
+            // even though LocalCarry::last_seen_s has advanced past it.  CLAMPED
+            // rather than refused: 0 (same-epoch only) is a legitimate pessimistic
+            // rung of the ladder (WARNING - a degenerate one: the lower bound is
+            // exclusive, so window 0 admits nothing and the run-end line fires its
+            // ARMED-AND-INERT warning), and a negative value is a typo whose only
+            // sensible reading is that rung.
+            sq.oracle_window_s =
+                jval<double>(json, "network.cycle_slip.oracle_window_s",
+                             "network_cycle_slip_oracle_window_s", 90.0);
+            if (!(sq.oracle_window_s >= 0.0) || !std::isfinite(sq.oracle_window_s)) {
+                if (sq.oracle_relevel)
+                    log->warn("Network (slip ORACLE): network.cycle_slip.oracle_window_s "
+                              "({}) is negative or non-finite — CLAMPED to 0 s, which is the "
+                              "DEGENERATE rung: the lower bound is exclusive, so the window "
+                              "admits nothing and every actuation will report a false alarm.",
+                              sq.oracle_window_s);
+                sq.oracle_window_s = 0.0;
+            }
+            if (sq.oracle_relevel) {
+                // HARD errors, not warn-and-disarm: an oracle that silently
+                // degrades to "no repair" would report a ceiling of zero and be
+                // read as a falsification of the mechanism (the exact
+                // armed-and-inert failure standing invariant #4 names — except
+                // here the inert arm produces a WRONG SCIENTIFIC VERDICT, so it
+                // must not be survivable).
+                if (sq.oracle_false_alarm != "keep" && sq.oracle_false_alarm != "free")
+                    throw std::runtime_error(
+                        "network.cycle_slip.oracle_false_alarm must be \"keep\" or \"free\"");
+                if (sq.oracle_noise_cyc < 0.0)
+                    throw std::runtime_error(
+                        "network.cycle_slip.oracle_noise_cyc must be >= 0");
+                if (sq.oracle_truth_root.empty()
+                    || !std::filesystem::exists(sq.oracle_truth_root))
+                    throw std::runtime_error(
+                        "network.cycle_slip.oracle_relevel is ON but "
+                        "network.cycle_slip.oracle_truth_root ('" + sq.oracle_truth_root
+                        + "') does not exist.  This is a SIM-ONLY DIAGNOSTIC that reads a "
+                          "simulator fixture's truth_slips.csv; it is field-inert by "
+                          "construction and this error is that mechanism.");
+            }
 
             // Arming diagnostics: a card whose host arm is off is INERT, and a
             // silent inert card is exactly the "clean log, dead wiring" failure

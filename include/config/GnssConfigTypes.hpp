@@ -478,6 +478,77 @@ namespace GnssProcessor {
         /// evidence of a slip; on, it is the conservative-reset posture (the
         /// unmeasurable-bridged population measured 24 arcs against 88 shifted).
         bool   gap_reentry_unmeasurable{ false };
+
+        // --- SIM-ONLY ORACLE slip response (the level-preserving ceiling) ----
+        /**
+         * @brief Master arm (@c network.cycle_slip.oracle_relevel) for the
+         *        truth-fed ORACLE slip response — include/slip/NetworkSlipOracle.hpp.
+         *
+         * When a detector actuates a refloat on a CARRIED arc, look the TRUE
+         * integer jump(s) up in the fixture's `truth_slips.csv` and SHIFT the
+         * carried level by exactly the sum d*lambda instead of freeing the arc.
+         * It measures the CEILING of a level-preserving re-level before the
+         * engineering build (EWL / WL-MW integer estimation) is paid for: the
+         * truth-graded census on `runs/golden_sim_campaign` showed the CURRENT
+         * response injects ~2.5x the bed's ambient DD error, takes ~20 min to
+         * walk back, and feeds the metre-class ZWD plateau.
+         *
+         * SOLVE-AFFECTING, default OFF ⇒ byte-identical.  SIM-ONLY and
+         * FIELD-INERT BY CONSTRUCTION: without a readable
+         * @ref oracle_truth_root the loader HARD-ERRORS, and setup hard-errors
+         * on any roster station missing its truth file.  A DIAGNOSTIC — never
+         * promote it, never put it in a golden.
+         *
+         * Interlocks: requires @c network.phase_leveling (the carry vehicle it
+         * actuates on is @c LocalCarry::value_abs), and is disabled under
+         * @c network.carry_invariant (that vehicle has no LocalCarry at all).
+         */
+        bool        oracle_relevel{ false };
+        /// Fixture root (@c network.cycle_slip.oracle_truth_root): the directory
+        /// holding `<STATION>/truth_slips.csv` for every roster station, e.g.
+        /// `C:/GnssProcessor/runs/simnet60_campaign_wu93`.  A hard error when
+        /// @ref oracle_relevel is on and it does not exist — that error IS the
+        /// field-inertness mechanism.
+        std::string oracle_truth_root{};
+        /// 1-sigma of a deterministic zero-mean Gaussian (CYCLES) added to each
+        /// applied sum d (@c network.cycle_slip.oracle_noise_cyc, default 0 =
+        /// the exact ceiling).  Seeded from (station, satellite, signal, epoch)
+        /// so a re-run reproduces every draw — this is the later PRECISION
+        /// LADDER's knob (how good does the integer estimate have to be?).
+        double      oracle_noise_cyc{ 0.0 };
+        /// What to do when a detector fires on a carried arc with NO truth slip
+        /// in the window (@c network.cycle_slip.oracle_false_alarm):
+        /// `"keep"` (default) leaves the carry untouched — THE CEILING, an
+        /// oracle knows it was a false alarm; `"free"` falls through to today's
+        /// response, so the arm measures the repair alone and keeps the
+        /// false-alarm cost.  Any other value is a loader hard error.
+        std::string oracle_false_alarm{ "keep" };
+        /**
+         * @brief Detector-LATENCY window, seconds
+         *        (@c network.cycle_slip.oracle_window_s, default 90 = three 30 s
+         *        epochs — the same latency the truth census calls DETECTED).
+         *
+         * The oracle's truth-slip window is
+         * `(max(last_applied_s, carry.birth_s, now_s − oracle_window_s), now_s]`.
+         * This term is what makes a LATE detector repairable: a detector normally
+         * fires 1–3 epochs after the slip, and a zero-q carried level is NOT
+         * re-set by the intervening solves (the stiff prior barely moves), so the
+         * jump is still un-absorbed even though @c LocalCarry::last_seen_s has
+         * advanced past it.  Bounding the window at the latency — rather than at
+         * the carry's last stash — is what separates a late DETECTION from a real
+         * FALSE ALARM; without it the census mis-labels the normal population
+         * (measured: 701 "false-alarm kept" against 88 repaired on a 60-epoch
+         * smoke) and the ceiling it reports is a badly biased lower bound.
+         *
+         * Clamped to >= 0 by the loader.  ⚠ 0 is the DEGENERATE rung, not
+         * "same-epoch only": the lower bound is EXCLUSIVE, so a window of 0
+         * collapses to `(now_s, now_s]` and admits nothing at all — every
+         * actuation reports a false alarm and the run-end line fires its
+         * ARMED-AND-INERT warning.  A same-epoch-only arm needs any value in
+         * (0, one epoch]; the default 90 s admits the three 30 s stamps
+         * `now`, `now − 30` and `now − 60`.
+         */
+        double      oracle_window_s{ 90.0 };
     };
 
     /**

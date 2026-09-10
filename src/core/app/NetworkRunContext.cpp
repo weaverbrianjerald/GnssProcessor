@@ -3416,9 +3416,19 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         (oldc != local_carry.end() && oldc->second.birth_ep > 0)
                             ? oldc->second.birth_ep
                             : static_cast<long long>(ctx.counters.n_loop_epochs);
+                    // …and its SECONDS twin, on exactly the same first-stash-wins rule.
+                    // The sim-only slip oracle (network.cycle_slip.oracle_relevel) uses it
+                    // as the HARD lower edge of its truth-slip window: a T4 attribution
+                    // erase drops the entry, and the level the next harvest CREATES already
+                    // contains every earlier jump, so a truth slip stamped at or before
+                    // this second is absorbed and must never be re-applied.
+                    const double birth_s =
+                        (oldc != local_carry.end() && oldc->second.birth_s > 0.0)
+                            ? oldc->second.birth_s : pl_now_s;
                     LocalCarry nlc{value_abs, var, pl_now_s, std::move(coupling)};
                     nlc.var_first = var_first;
                     nlc.birth_ep  = birth_ep;
+                    nlc.birth_s   = birth_s;
                     local_carry[lkey] = std::move(nlc);
                 }
                 if (hblk && cross.size() == hblk->C.rows()) {

@@ -24,6 +24,7 @@
 #include "filter/NetworkRunTypes.hpp"   // NetStation, LocalCarry, TurboEditResolver::SignalRepair, PppObservation (transitive)
 #include "logging/NetworkRunTraces.hpp" // NetworkRunTraces (emitEvent, if_slip_trace), FlagRate
 #include "slip/NetworkRawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters (Cards E/L/G)
+#include "slip/NetworkSlipOracle.hpp"   // NetworkSlipOracle (sim-only oracle slip response)
 
 #include <algorithm>
 #include <cmath>
@@ -262,7 +263,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::map<std::tuple<int, std::string, std::string>,
                                         RelevelPend>* relevel_pend = nullptr,
                                std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>* bridge_local_carry = nullptr);
+                                        LocalCarry>* bridge_local_carry = nullptr,
+                               NetworkSlipOracle* oracle = nullptr);
 
 /**
  * @brief SPEC_phase_windup_sign §10.4 — drain the accumulator-RESTART ledgers
@@ -295,7 +297,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    const std::shared_ptr<spdlog::logger>& log,
                                    RelevelEpochState* relevel = nullptr,
                                    std::map<std::tuple<int, std::string, std::string>,
-                                            RelevelPend>* relevel_pend = nullptr);
+                                            RelevelPend>* relevel_pend = nullptr,
+                                   NetworkSlipOracle* oracle = nullptr);
 
 /**
  * @brief Card G RESPONSE (docs/SPEC_slip_qc_hardening.md §G3/W1) — mark the
@@ -651,6 +654,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::map<std::tuple<int, std::string, std::string>,
                                     RelevelPend>* relevel_pend = nullptr,
                            const RawSlipEpoch* raw_epoch = nullptr,
-                           const std::vector<RawSlipHistory>* raw_hist = nullptr);
+                           const std::vector<RawSlipHistory>* raw_hist = nullptr,
+                           NetworkSlipOracle* oracle = nullptr);
 
 } // namespace GnssProcessor
