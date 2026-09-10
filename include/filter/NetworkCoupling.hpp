@@ -95,6 +95,13 @@ struct LocalBlockCol {
     /// from the ambiguity population.  Default false: every pre-existing 6-element
     /// brace-init keeps its exact meaning.
     bool              is_zwd{false};
+    /// I-in-block (@c network.carry_iono_in_block): this entry is one of the station's
+    /// carried per-LOS SLANT-IONO columns, not an ambiguity.  Exactly like @c is_zwd it
+    /// is TELEMETRY ONLY — the builder's algebra never reads it — so that
+    /// @c pl_blk_iono_cols / @c pl_blk_iono_missing_cross can be split out of the
+    /// ambiguity population.  Default false: every pre-existing brace-init (6- or
+    /// 7-element) keeps its exact meaning.
+    bool              is_iono{false};
 };
 
 /// Card 1d: one buffered PRESENT-column term of a coupling row under the

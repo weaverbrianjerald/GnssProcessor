@@ -248,6 +248,23 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     break;
                 }
         bool zwd_row_pooled = false;   // once per station-epoch (the column-keyed loop can revisit it)
+        // I-in-block (network.carry_iono_in_block) — the SAME §7 item 4 interaction for the
+        // I half, MEASURED not guessed.  Each carried iono column contributes one whitened
+        // block row (a row of L⁻¹), which carries non-zero coefficients on the ambiguity
+        // columns below it and can therefore clear the pool's |A_r(row, amb_col)| > 0.5
+        // admission test that was written for DATA phase rows.  This card does NOT change
+        // the rule; it counts the admissions so the next card decides on data.  The rows
+        // are the coupling rows whose primary local column is one of pl_iono_blk_cols
+        // (cpl_row_local_cols is in append order from cpl_row_start).
+        std::set<Eigen::Index> iono_blk_rows;
+        if (!R.pl_iono_blk_cols.empty() && R.cpl_row_start >= 0) {
+            const std::set<Eigen::Index> icols(R.pl_iono_blk_cols.begin(),
+                                               R.pl_iono_blk_cols.end());
+            for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
+                if (icols.count(R.cpl_row_local_cols[rr]))
+                    iono_blk_rows.insert(R.cpl_row_start + static_cast<Eigen::Index>(rr));
+        }
+        std::set<Eigen::Index> iono_rows_pooled;   // once per row per station-epoch
         for (const auto& pa : pool) {
             if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
             double r_max = 0.0;
@@ -257,6 +274,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     zwd_row_pooled = true;
                     ++ctx.counters.n_raim_pool_zwd_rows;
                 }
+                // I-in-block: the same census, per iono block row.
+                if (!iono_blk_rows.empty() && iono_blk_rows.count(row)
+                    && iono_rows_pooled.insert(row).second)
+                    ++ctx.counters.n_raim_pool_iono_rows;
                 const double w = (row < R.w.size()) ? R.w(row) : 1.0;
                 // MDB is fed HERE, ahead of the uncheckable `continue` below: a row
                 // RAIM drops from its σ̂0 pool because r_i ≤ 1e-6 is precisely the
@@ -856,6 +877,18 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         if (ctx.knobs.iono_on &&
                             ctx.carry.iono_carry.erase({i, pa.sat}))
                             ++ctx.counters.n_iono_carry_erased_t4;
+                        // I-in-block (network.carry_iono_in_block): the SAME edge for the
+                        // in-block vehicle, and it is invariant #1's wired response for it
+                        // — the T4 statistic reads level error and carried-iono error as a
+                        // SUM, so an arc whose level is no longer trusted cannot vouch for
+                        // the iono that was estimated jointly with it.  Erasing here makes
+                        // the LOS re-draw BOTH from data (its next harvest re-creates the
+                        // entry with a fresh birth_s).  Separate map, separate counter: the
+                        // two carries are mutually exclusive vehicles, so a run's erase
+                        // count is never split across them.
+                        if (ctx.knobs.iono_blk &&
+                            ctx.carry.iono_blk_carry.erase({i, pa.sat}))
+                            ++ctx.counters.n_iono_blk_erased_t4;
                         // BOOKKEEPING, not the actuator on the Card-4 path: the producer
                         // forms every innovation against the linearization point and never
                         // writes the solution back, so moving x_lin leaves the reduced

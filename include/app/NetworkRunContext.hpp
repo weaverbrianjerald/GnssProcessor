@@ -148,6 +148,20 @@ namespace GnssProcessor {
         double iono_q{};       ///< Slant-iono carry RW process noise (m²/s).
         double iono_var_floor{};   ///< Inject-side variance floor (m²) — the wrong-carry healing bound.
         double iono_max_gap_s{};   ///< Carry eviction gap (s); deliberately longer than pl_max_gap_s.
+        /// network.carry_iono_in_block — I-in-block: the station's present per-LOS iono
+        /// columns join its F3 whitened local block (harvest appends them to `cols` between
+        /// the ambiguities and the ZWD so `PlHarvestBlock::C` is (n_amb+n_iono+[1])², each
+        /// entry stashes with the same `blk`/`blk_idx` as an ambiguity, and PASS B pushes
+        /// one more `LocalBlockCol` per LOS) instead of the FALSIFIED diagonal
+        /// network.carry_iono row.  A diagonal per-LOS row asserts the iono direction the
+        /// station's B carried band priors already assert — the B-fold over-count of
+        /// SPEC_amb_iono_split_overcount §7 item 17; inside the block the harvested cross
+        /// terms subtract it exactly.  Loader guarantees phase_leveling + pl_local_block +
+        /// carry_cpl_cond + !carry_invariant, and HARD-ERRORS on a carry_iono co-arm.
+        /// OFF = byte-identical.
+        bool iono_blk{};
+        double iono_blk_q_m2{};      ///< I-in-block RW process noise, m² of L1 slant delay PER EPOCH (⚠ not per second — see GnssConfig::networkCarryIonoInBlockQM2).
+        double iono_blk_max_gap_s{}; ///< I-in-block staleness bound (s); the loader has already resolved the "= phase_leveling_max_gap_s" sentinel.
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
         bool rx_cb_datum{};   ///< RXCB-DATUM: zero-mean-over-receivers DCB datum (network.rx_code_bias_datum).
         double rx_cb_datum_sigma{};  ///< RXCB-DATUM loose physical-bound sigma in m (network.rx_code_bias_datum_sigma_m).
@@ -1138,6 +1152,18 @@ namespace GnssProcessor {
         /// conditionally fingerprinted (solve-affecting; never flip mid-chain).  Inert
         /// unless network.carry_iono.
         std::map<std::pair<int, std::string>, LocalCarry> iono_carry;
+        /// I-in-block per-LOS slant-iono carry (@c network.carry_iono_in_block): the same
+        /// (station index, sat) key as @c iono_carry above, and DELIBERATELY a separate
+        /// map — the two are mutually exclusive vehicles (the loader hard-errors on a
+        /// co-arm), and sharing one map would let the QUEUE-8(b) prune / prires / CS-GF
+        /// paths, all gated on @c knobs.iono_on, silently act on in-block entries.  Unlike
+        /// @c iono_carry these entries carry the F3 bookkeeping (@c blk / @c blk_idx /
+        /// @c coupling / @c birth_s), because they are folded as columns of the station's
+        /// whitened block exactly like a carried ambiguity.  Value is ABSOLUTE slant delay
+        /// in metres at L1 (x_lin + x_r).  NOT snapshotted — a warm resume cold-starts it,
+        /// which is one epoch of today's white-iono behaviour (the @c iono_carry
+        /// precedent), and a restored entry would carry no block anyway.
+        std::map<std::pair<int, std::string>, LocalCarry> iono_blk_carry;
         /// CS-GF authority states (QUEUE 8b successor, iono_carry_source =
         /// smoothed_gf): per (station index, sat) carrier-smoothed GF-code
         /// slant-iono, advanced serially in the PASS-A slip scan from the
@@ -2245,6 +2271,17 @@ namespace GnssProcessor {
         long long n_pl_blk_zwd_cols     = 0;             ///< ZWD columns ADMITTED into a block build (station-epochs; a block that then failed to factorize still counts — n_pl_blk_zwd_fallback_diag says how many of those ended up on the diagonal row instead)
         long long n_pl_blk_zwd_fallback_diag = 0;        ///< station-epochs whose ZWD fell back to the B9 DIAGONAL row (no block for the station this epoch, or the block's factorization failed)
         long long n_pl_blk_zwd_missing_cross = 0;        ///< (ambiguity, ZWD) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / ZWD stashed without a block) — a subset of n_pl_blk_pair_missing
+        // I-in-block (network.carry_iono_in_block) — invariant #4/#7 telemetry, the same
+        // discipline as the ZWD split above.  An armed run with n_pl_blk_iono_cols == 0 is
+        // UNWIRED, not clean.  ⚠ n_pl_blk_iono_not_folded is NOT a "degraded to the old
+        // row" count: this card has no diagonal iono row (that IS the falsified QUEUE-8(b)
+        // vehicle), so those columns carried NOTHING that station-epoch.
+        long long n_pl_blk_iono_cols    = 0;             ///< per-LOS iono columns ADMITTED into a block build (a block that then failed to factorize still counts — n_pl_blk_iono_not_folded says how many of those did not act)
+        long long n_pl_blk_iono_not_folded = 0;          ///< iono columns pushed but NOT folded (non-SPD block / no block): their carry did not act this station-epoch, and there is deliberately no diagonal fallback
+        long long n_pl_blk_iono_missing_cross = 0;       ///< (iono, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block) — a subset of n_pl_blk_pair_missing
+        long long n_iono_blk_erased_t4  = 0;             ///< in-block iono carries erased by a T4/consensus arc refloat (invariant #1: the T4 statistic reads level+iono error as a sum, so the LOS re-draws both)
+        long long n_iono_blk_gap_drop   = 0;             ///< in-block iono carries dropped at the harvest prune for exceeding carry_iono_in_block_max_gap_s without a sighting (the absent-satellite / eclipse edge)
+        long long n_raim_pool_iono_rows = 0;             ///< post-fit RAIM pool admissions (station-epochs × rows) whose admitted row IS one of the iono columns' whitened block rows — the §7 item 4 interaction MEASURED for the I half, exactly as n_raim_pool_zwd_rows measures it for the ρ half.  Counted only; the pool rule is unchanged by this card.
         long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row IS the ZWD's whitened block row — the §7 item 4 interaction, MEASURED (the pool admits by |A_r(row, amb_col)| > 0.5 and a ZWD block row mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged by this card.
         long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (invariant #7's re-coupling edge, counted)
         long long n_pl_blk_refloat_fail = 0;             ///< … whose re-whiten was non-SPD: the block's rows were dropped for that re-solve (safe degrade — the refloated arcs re-float from data)

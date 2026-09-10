@@ -1544,6 +1544,17 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // this file).  A grader reading an archived logs/ folder needs to know which
                // VEHICLE the carried ZWD folded through, because it changes the solve.
                << (config_.networkCarryZwdInBlock() ? "\"carry_zwd_in_block\":true," : "")
+               // I-in-block: armed-only, same rule (an unarmed run's manifest bytes are
+               // unchanged).  q and the gap ride along because a grader reading an
+               // archived logs/ folder cannot recover the prior's weight without them —
+               // and the q unit here is m² PER EPOCH at L1, not m²/s like zwd_carry_q.
+               << (config_.networkCarryIonoInBlock()
+                       ? fmt::format("\"carry_iono_in_block\":true,"
+                                     "\"carry_iono_in_block_q_m2\":{},"
+                                     "\"carry_iono_in_block_max_gap_s\":{},",
+                                     config_.networkCarryIonoInBlockQM2(),
+                                     config_.networkCarryIonoInBlockMaxGapS())
+                       : std::string{})
                << fmt::format("\"zwd_carry_q\":{},", zwd_q)
                // Seam-scoped ZWD re-seed (§17 finding 3).  In the manifest so an
                // archived logs/ folder can say whether a resumed leg's first hours

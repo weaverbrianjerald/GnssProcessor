@@ -1992,7 +1992,11 @@ int networkTeardown(
                       "75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed; "
                       "age gate {} ep ({}): {} young column(s) kept out of the block.  "
                       "ZWD in block: {} col(s), {} diagonal fallback(s), {} missing cross "
-                      "term(s), {} RAIM-pool admission(s) of the ZWD row{}",
+                      "term(s), {} RAIM-pool admission(s) of the ZWD row{}.  "
+                      "Iono in block: {} col(s), {} fallback(s) (block non-SPD ⇒ NOT "
+                      "folded; this card has no diagonal iono row by design), {} missing "
+                      "cross term(s), {} RAIM-pool admission(s), {} erased by T4, {} "
+                      "dropped at gaps; q {:.3e} m² per epoch at L1, gap bound {:.0f} s{}",
                       (cliff_live && config_.networkCarryConditionalCoupling()
                        && !config_.networkCarryCouplingJointWhiten())
                           ? "" : " ⚠ CHANNEL NOT ARMED on this posture (phase_leveling "
@@ -2019,6 +2023,24 @@ int networkTeardown(
                                  ? "  ⚠ 0 ZWD columns under an ARMED carry_zwd_in_block — "
                                    "the channel is UNWIRED (no station-epoch reached the "
                                    "block with a live ZWD carry), not quiet."
+                                 : "")
+                          : " (knob OFF — these are structurally 0)",
+                      // I-in-block (network.carry_iono_in_block) — invariant #4, on the F3
+                      // line because the block IS the vehicle.  0 columns under an armed
+                      // knob is UNWIRED, not clean; a large not-folded count says the
+                      // station blocks kept failing to factorize, and since this card has
+                      // no diagonal row that means the iono carry did NOTHING there.
+                      C.n_pl_blk_iono_cols, C.n_pl_blk_iono_not_folded,
+                      C.n_pl_blk_iono_missing_cross, C.n_raim_pool_iono_rows,
+                      C.n_iono_blk_erased_t4, C.n_iono_blk_gap_drop,
+                      config_.networkCarryIonoInBlockQM2(),
+                      config_.networkCarryIonoInBlockMaxGapS(),
+                      config_.networkCarryIonoInBlock()
+                          ? (C.n_pl_blk_iono_cols == 0
+                                 ? "  ⚠ ARMED AND INERT: 0 iono columns under an ARMED "
+                                   "carry_iono_in_block — no station-epoch reached the "
+                                   "block with a live per-LOS iono carry, which is a "
+                                   "MISWIRE, not a quiet run."
                                  : "")
                           : " (knob OFF — these are structurally 0)");
         // Seam-scoped ZWD re-seed (network.zwd_seam_reseed) — the ON-path telemetry

@@ -369,6 +369,9 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         // screen, i.e. once it is really a row of this block — the caller cannot know
         // that, and a column counted at push time would report a refused ZWD as carried.
         if (c.is_zwd) ++R.pl_blk_zwd_cols;
+        // I-in-block: same rule, same reason — a per-LOS iono column counts once it is
+        // really a row of this block, never at push time.
+        if (c.is_iono) ++R.pl_blk_iono_cols;
         ing.push_back(std::move(g));
     }
     const Eigen::Index n = static_cast<Eigen::Index>(ing.size());
@@ -417,6 +420,14 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 // that is exactly the shape a "carried ZWD that is not really coupled"
                 // has, and it is invisible inside pl_blk_pair_missing.
                 if (ci.is_zwd || cj.is_zwd) ++R.pl_blk_zwd_missing_cross;
+                // I-in-block: the iono columns' own share, split out for the same reason.
+                // An iono entry stashed WITHOUT a harvest block (its per-column harvest
+                // threw, or the station built no block that epoch) makes EVERY pair with
+                // it miss — the shape a "carried iono that is not actually coupled to
+                // anything" has, invisible inside the aggregate.  A pair that is BOTH
+                // (iono, zwd) counts in both splits by design: neither counter claims to
+                // partition pl_blk_pair_missing.
+                if (ci.is_iono || cj.is_iono) ++R.pl_blk_iono_missing_cross;
                 continue;
             }
             if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);

@@ -786,6 +786,20 @@ struct StationAssembly {
     /// @c cpl_row_local_cols entry equals it IS the ZWD row).  The post-fit RAIM pool
     /// reads this to count how many pool-admitted rows are that row.
     bool                      pl_zwd_in_block{false};
+    // I-in-block (network.carry_iono_in_block): the station's per-LOS slant-iono columns
+    // carried INSIDE the same F3 block.  There is deliberately NO diagonal fallback row
+    // for these — a diagonal per-LOS iono prior IS the falsified QUEUE-8(b) vehicle — so
+    // `pl_blk_iono_not_folded` is a true "carried nothing this station-epoch" count, not
+    // a "degraded to the old row" count.
+    long long                 pl_blk_iono_cols{0};          ///< Per-LOS iono columns ADMITTED into the block build this station-epoch (survived the scalar "never poison" screen and became rows of Σ).  A block that then failed to factorize still counts here — read it against @c pl_blk_iono_not_folded.
+    long long                 pl_blk_iono_not_folded{0};    ///< Iono columns PUSHED but not folded: the block was non-SPD (or was never built) this station-epoch, and this card has no diagonal row to fall back to, so their carry simply did not act.  The ZWD card's @c pl_blk_zwd_fallback_diag slot, with the honest name.
+    long long                 pl_blk_iono_missing_cross{0}; ///< (iono, other) pairs zeroed for a missing harvest cross term — a SUBSET of @c pl_blk_pair_missing, split out so the iono carry's own coupling can be read separately.
+    long long                 pl_blk_iono_gap_drop{0};      ///< Carried LOS entries refused at inject because the sighting gap exceeded network.carry_iono_in_block_max_gap_s (invariant #1's absent-satellite edge; the harvest prune then erases them).
+    /// I-in-block: the A_r columns of the iono entries that were PUSHED into this
+    /// station-epoch's block, in push order.  Read by the post-fit RAIM pool census to
+    /// recognise the whitened iono block rows (@c n_raim_pool_iono_rows); empty OFF and
+    /// on every station-epoch that pushed none.
+    std::vector<Eigen::Index> pl_iono_blk_cols;
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  CARRY-ELIGIBLE SUBSET: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must NOT key on it — see `qc_amb`.
     /// POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): the CARRY-VEHICLE-NEUTRAL census of
     /// ambiguity columns that are present, unpinned and therefore CHECKABLE this epoch —

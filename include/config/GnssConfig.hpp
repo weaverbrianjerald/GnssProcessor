@@ -2240,6 +2240,100 @@ namespace GnssProcessor {
         bool networkCarryZwdInBlock() const { return network_carry_zwd_in_block_; }
 
         /**
+         * @brief Carry the per-LOS slant-ionosphere columns INSIDE the F3 jointly-whitened
+         *        local block (@c network.carry_iono_in_block) — the I half of the
+         *        ZWD-in-block card.
+         *
+         * Motive (SPEC_amb_iono_split_overcount §7 item 17, "block ALL carried local
+         * columns"; §6.16.7d for the ρ half): on the slipped 60-station bed the
+         * producer's per-band DD errors sit at ~1.7 cycles with the WL intact — a
+         * station-wide @f$(\rho, I)@f$ SPLIT error frozen into the zero-q levels at every
+         * re-level (§6.17e).  Carrying the ZWD (the @f$\rho@f$ half) inside the block took
+         * the ZWD truth rms 2.10 → 1.19 m and the consumer 1.75 → 1.09 m.  This knob is
+         * the @f$I@f$ half.
+         *
+         * Why it is NOT @ref networkCarryIono (QUEUE 8(b), commit 803c58a, FALSIFIED ×4):
+         * that carry folds each LOS as an INDEPENDENT DIAGONAL prior row, which asserts
+         * the per-LOS iono direction a second time on top of the assertion the station's
+         * B carried band priors already make implicitly — the B-fold over-count of §7
+         * item 17, the same structural defect that falsified the diagonal ZWD carry
+         * (consumer 3D rms 0.204 → 0.723 m on the quiet bed, vs 0.088 m in-block).
+         * Inside the jointly-whitened block the harvested
+         * @f$(N_{rr}^{-1})_{c\,c_j}@f$ cross terms subtract that overlap EXACTLY.  The
+         * two are therefore mutually exclusive: arming both is a hard loader error, not
+         * a warning.
+         *
+         * Wiring: at the harvest the station's present per-LOS iono columns are appended
+         * to the block's @c cols (between the ambiguities and the ZWD, so the ZWD keeps
+         * its last-row slot) and each is harvested with the SAME per-column solve the
+         * ambiguities use, so @c PlHarvestBlock::C becomes
+         * @f$(n_{amb} + n_{iono} + [1\ \mathrm{ZWD}])^2@f$; the entry stashes with the
+         * same @c blk / @c blk_idx bookkeeping, and PASS B pushes one more
+         * @c LocalBlockCol per carried LOS so the whole station folds through ONE
+         * Cholesky.  The carried value is ABSOLUTE (@c x_lin + @c x_r, mirroring
+         * @c LocalCarry::value_abs) — @c network_ionosphere.csv writes @c x_r alone and
+         * is frame-broken, and a carry must be frame-complete.
+         *
+         * Deliberate asymmetries against the QUEUE-8(b) diagonal carry: NO inject-side
+         * variance floor (the floor existed to bound how badly a DOUBLE-COUNTED prior
+         * could out-stiffen the code channel; the block's exactness is the replacement),
+         * NO @ref networkPhaseLevelingLosScale scaling (F1 exists to repair the same
+         * over-count the block already handles — applying it here would UNDER-weight),
+         * and NO F3 young-column age gate (the "first sighting ⇒ no carry" rule already
+         * gives every newborn LOS a one-epoch cold start).
+         *
+         * Interlocks (loader-enforced): requires @ref networkPhaseLeveling AND
+         * @ref networkPhaseLevelingLocalBlock (WARN + disable — armed-and-inert is
+         * forbidden, invariant #4); disabled with a WARN under
+         * @ref networkCarryInvariant (F3 is structurally inert there); HARD ERROR when
+         * @ref networkCarryIono is also on.  Default false = byte-identical (the harvest
+         * @c cols set, and therefore @c C's dimension, is unchanged).
+         */
+        bool networkCarryIonoInBlock() const { return network_carry_iono_in_block_; }
+
+        /**
+         * @brief Per-EPOCH random-walk process noise of the in-block iono carry, m² of
+         *        slant delay at the GPS L1 frequency (@c network.carry_iono_in_block_q_m2).
+         *
+         * UNIT / FRAME, stated explicitly because it differs from every other carry q in
+         * this config: the per-LOS iono state is METRES OF SLANT DELAY AT L1
+         * (@c StateManager::addIonosphereState takes "initial slant ionosphere delay in
+         * meters"; @c MeasurementModel scales it per signal by
+         * @f$\alpha = f_{L1}^2/f_i^2@f$).  This knob is therefore m² at L1, and it is
+         * PER EPOCH, not per second — @ref networkZwdCarryQ and
+         * @ref networkIonoCarryQ are m²/s.  The gap is converted to epochs with the
+         * run's own observed inter-epoch spacing (the current PASS-B time minus the
+         * previous harvest stamp), floored at one epoch, so the knob means the same
+         * thing at 1 s and at 30 s cadence and needs no nominal-rate config.
+         *
+         * The inflated variance @f$var + q \cdot gap_{ep}@f$ goes on the block's DIAGONAL
+         * for the iono columns only (Σ's off-diagonals are the harvested cross terms),
+         * which is @f$C' = C + \mathrm{diag}(q\,gap)@f$ restricted to those rows/columns —
+         * PD-preserving by construction (raising a diagonal of a PD matrix).
+         *
+         * Default 2.5e-3 m² ⇒ σ ≈ 5 cm of L1 slant delay per 30 s epoch: loose enough
+         * that a real ionospheric gradient is never fought by the carry, tight enough
+         * that the carry still supplies the between-epoch continuity a per-epoch white
+         * iono column has none of.
+         */
+        double networkCarryIonoInBlockQM2() const { return network_carry_iono_in_block_q_m2_; }
+
+        /**
+         * @brief Staleness bound of the in-block iono carry, seconds
+         *        (@c network.carry_iono_in_block_max_gap_s).
+         *
+         * A LOS not seen for longer than this is DROPPED (counted,
+         * @c n_iono_blk_gap_drop) rather than folded — invariant #1's event response for
+         * the absent-satellite edge, and invariant #7's decoupling edge.  Defaults to
+         * @ref networkPhaseLevelingMaxGapS: the iono carry rides the SAME block the
+         * leveling carry does, so a horizon longer than the block's own would keep an
+         * entry alive with no block to join (the QUEUE-8(b) knob deliberately ran LONGER
+         * than the leveling gap because its diagonal row needed no block).  A JSON value
+         * ≤ 0 is the "use the leveling gap" sentinel; a positive value overrides.
+         */
+        double networkCarryIonoInBlockMaxGapS() const { return network_carry_iono_in_block_max_gap_s_; }
+
+        /**
          * @brief ZWD carry random-walk process noise (m²/s) inflating the carried ZWD
          *        variance over the inter-epoch gap (@c network.zwd_carry_q, B9).
          *
@@ -6791,6 +6885,9 @@ namespace GnssProcessor {
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).  ⚠ FALSIFIED for continuous runs of the standard posture (2026-09-01, consumer 0.204 → 0.723 m rms — information double-count against the station filter's own persistence); its seam value is delivered by network.zwd_seam_reseed instead.
         bool   network_carry_zwd_in_block_{false};         ///< B9-in-block: carry the station ZWD column INSIDE the F3 jointly-whitened local block (harvested (N_rr⁻¹) cross terms against every carried ambiguity column) instead of as a separate diagonal coupling row — makes the ZWD carry EXACT along the station-common directions the diagonal row over-counts (SPEC_amb_iono_split_overcount §7 item 17).  Requires network.carry_zwd AND network.phase_leveling_local_block (loader WARNs + disables otherwise).  OFF = byte-identical.
+        bool   network_carry_iono_in_block_{false};        ///< I-in-block: carry the per-LOS slant-iono columns INSIDE the F3 jointly-whitened local block (harvested (N_rr⁻¹) cross terms against every other carried column of the station) — the I half of the ZWD-in-block card (SPEC_amb_iono_split_overcount §7 item 17, §6.16.7d).  MUTUALLY EXCLUSIVE with the legacy DIAGONAL network.carry_iono (QUEUE 8b, falsified ×4): a diagonal row re-asserts the per-LOS iono direction the B band priors already assert.  Requires network.phase_leveling + network.phase_leveling_local_block; disabled under carry_invariant.  OFF = byte-identical.
+        double network_carry_iono_in_block_q_m2_{2.5e-3}; ///< I-in-block: PER-EPOCH random-walk process noise, m² of slant delay AT L1 (the per-LOS iono state's own unit).  ⚠ per EPOCH, not per second (zwd_carry_q / iono_carry_q are m²/s); the gap is converted with the run's observed inter-epoch spacing.  var_eff = var + q·gap_ep on the block DIAGONAL only.
+        double network_carry_iono_in_block_max_gap_s_{0.0}; ///< I-in-block: staleness bound (s) past which a LOS's carry is dropped (counted).  0 = the sentinel meaning "use network.phase_leveling_max_gap_s"; the loader resolves it to that value at load, so the getter always reports the effective seconds.
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Used by network.carry_zwd and by the network.zwd_seam_reseed post-resume window.
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.

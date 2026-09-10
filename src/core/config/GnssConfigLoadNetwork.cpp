@@ -3377,6 +3377,20 @@ namespace GnssProcessor {
         // direction the ambiguity rows already assert).  Validated below.
         network_carry_zwd_in_block_ =
             jval<bool>(json, "network.carry_zwd_in_block", "carry_zwd_in_block", false);
+        // I-in-block: the same rule applied to the per-LOS slant-iono columns (SPEC_amb_
+        // iono_split_overcount §7 item 17).  Deliberately NOT a sub-knob of the legacy
+        // network.carry_iono — that one is the DIAGONAL vehicle this replaces, and the
+        // two are mutually exclusive (validated below).  q is PER EPOCH, m² at L1.
+        network_carry_iono_in_block_ =
+            jval<bool>(json, "network.carry_iono_in_block", "carry_iono_in_block", false);
+        network_carry_iono_in_block_q_m2_ =
+            jval<double>(json, "network.carry_iono_in_block_q_m2",
+                         "carry_iono_in_block_q_m2", 2.5e-3);
+        // 0 (the default) is the "= the leveling max gap" sentinel; resolved here so the
+        // getter always reports effective seconds and no consumer has to re-derive it.
+        network_carry_iono_in_block_max_gap_s_ =
+            jval<double>(json, "network.carry_iono_in_block_max_gap_s",
+                         "carry_iono_in_block_max_gap_s", 0.0);
         // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17, carry_zwd
         // re-base arms finding 3): the resume-path-only successor to the continuous
         // B9 carry.  Injection window + horizon; the WRITE side (Z rows in every
@@ -8980,6 +8994,89 @@ namespace GnssProcessor {
                       "it ~n_LOS times over: quiet-sim consumer 3D rms 0.723 m diagonal vs "
                       "0.0877 m in-block, field T3c consensus 7619 flags vs 849 (SPEC_amb_iono_"
                       "split_overcount §6.16.7d, arms Q/Z/F/F2).");
+        }
+        // I-in-block interlocks (network.carry_iono_in_block) — the ZWD card's rules with
+        // one addition that is a HARD ERROR rather than a warn: the legacy DIAGONAL
+        // network.carry_iono is not a different setting of the same mechanism, it is the
+        // very over-count this card removes (QUEUE 8b, falsified ×4).  Running both would
+        // assert each LOS's iono direction THREE times per epoch (B band priors + the
+        // diagonal row + the block row) and no run-end counter could tell the two vehicles
+        // apart, so it is refused at load rather than logged.
+        if (network_carry_iono_in_block_q_m2_ < 0.0)
+            throw std::runtime_error("network.carry_iono_in_block_q_m2 must be >= 0");
+        if (network_carry_iono_in_block_max_gap_s_ < 0.0)
+            throw std::runtime_error("network.carry_iono_in_block_max_gap_s must be >= 0 "
+                                     "(0 = use network.phase_leveling_max_gap_s)");
+        if (network_carry_iono_in_block_ && network_carry_iono_)
+            throw std::runtime_error(
+                "network.carry_iono_in_block and network.carry_iono are MUTUALLY "
+                "EXCLUSIVE vehicles for the same carried quantity: carry_iono folds each "
+                "LOS as an independent DIAGONAL prior row (the B-fold over-count of "
+                "SPEC_amb_iono_split_overcount §7 item 17, FALSIFIED ×4 in QUEUE 8(b)), "
+                "while carry_iono_in_block folds the same columns inside the F3 "
+                "jointly-whitened block where the harvested cross terms subtract that "
+                "overlap exactly.  Arm exactly one.");
+        // Resolve the max-gap sentinel BEFORE the disable branches, so the value the
+        // getter reports is always effective seconds even on a disabled arm.
+        if (network_carry_iono_in_block_max_gap_s_ <= 0.0)
+            network_carry_iono_in_block_max_gap_s_ = network_phase_leveling_max_gap_s_;
+        if (network_carry_iono_in_block_) {
+            if (!network_phase_leveling_) {
+                log->warn("Network: network.carry_iono_in_block is on but "
+                          "network.phase_leveling is OFF — the in-block iono carry rides "
+                          "the phase-leveling carry's harvest/inject seam, so it would "
+                          "never see a block.  DISABLING carry_iono_in_block; arm "
+                          "network.phase_leveling too.");
+                network_carry_iono_in_block_ = false;
+            } else if (network_carry_invariant_) {
+                log->warn("Network: network.carry_iono_in_block is on but "
+                          "network.carry_invariant is ON — the Card-4 invariant DD carry "
+                          "is a different VEHICLE and makes F3 structurally inert (no "
+                          "ambiguity carry, no local block), so the iono columns would "
+                          "have nothing to join.  DISABLING carry_iono_in_block.");
+                network_carry_iono_in_block_ = false;
+            } else if (!network_phase_leveling_local_block_) {
+                log->warn("Network: network.carry_iono_in_block is on but "
+                          "network.phase_leveling_local_block (F3) is OFF — there is no "
+                          "station block to put the iono columns into, and this card "
+                          "deliberately has NO diagonal fallback row (a diagonal iono "
+                          "prior IS the falsified network.carry_iono vehicle).  DISABLING "
+                          "carry_iono_in_block; arm network.phase_leveling_local_block too.");
+                network_carry_iono_in_block_ = false;
+            } else if (!network_carry_conditional_coupling_
+                       || network_carry_coupling_joint_whiten_) {
+                // F3 is ARMED but structurally cannot build a block on this posture.
+                // Riding an inert vehicle is the same armed-and-inert failure the ZWD
+                // card refuses (invariant #4), so this dies with it.
+                log->warn("Network: network.carry_iono_in_block is on and "
+                          "network.phase_leveling_local_block is armed, but F3 cannot "
+                          "build a block on this lineage (carry_conditional_coupling={}, "
+                          "carry_coupling_joint_whiten={}) — the iono columns would have "
+                          "no block to join.  DISABLING carry_iono_in_block (see the "
+                          "phase_leveling_local_block INERT warning above for the fix).",
+                          network_carry_conditional_coupling_,
+                          network_carry_coupling_joint_whiten_);
+                network_carry_iono_in_block_ = false;
+            } else {
+                log->info("Network producer (slant-iono carry IN BLOCK): each station's "
+                          "present per-LOS iono columns join its F3 whitened local block "
+                          "(harvested (N_rr^-1) cross terms against every other carried "
+                          "column of the station, one Cholesky for the whole station) "
+                          "instead of the FALSIFIED diagonal network.carry_iono row — the "
+                          "per-LOS iono direction is then asserted ONCE per epoch on top "
+                          "of the B band priors, not twice.  ABSOLUTE value carried "
+                          "(x_lin + x_r).  RW q {:.3e} m² PER EPOCH at L1 (⚠ per epoch, "
+                          "not per second), stale drop at {:.0f} s{}.  No var floor, no "
+                          "F1 los_scale, no F3 young-column age gate (first sighting "
+                          "already carries nothing).  A non-SPD block folds NO iono this "
+                          "station-epoch (counted) — there is deliberately no diagonal "
+                          "fallback row.",
+                          network_carry_iono_in_block_q_m2_,
+                          network_carry_iono_in_block_max_gap_s_,
+                          network_carry_iono_in_block_max_gap_s_
+                                  == network_phase_leveling_max_gap_s_
+                              ? " (= phase_leveling_max_gap_s)" : "");
+            }
         }
         if (network_zwd_seam_reseed_) {
             if (network_zwd_seam_reseed_epochs_ <= 0) {

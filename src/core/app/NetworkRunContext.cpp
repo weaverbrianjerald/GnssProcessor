@@ -84,6 +84,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // EVERY snapshot carries Z rows — read-only w.r.t. the solve, no inject.
     k.zwd_capture = !nc.state_snapshot_path.empty();
     k.iono_on = config_.networkCarryIono();  // loader guarantees phase_leveling + relevel_free_epoch (scope=relevel) + the SH/mech-B/carry_invariant mutexes
+    // I-in-block; loader guarantees phase_leveling + pl_local_block + carry_cpl_cond,
+    // !carry_invariant, and hard-errors on a network.carry_iono co-arm.
+    k.iono_blk = config_.networkCarryIonoInBlock();
+    k.iono_blk_q_m2 = config_.networkCarryIonoInBlockQM2();
+    k.iono_blk_max_gap_s = config_.networkCarryIonoInBlockMaxGapS();
     k.iono_scope_always = (config_.networkIonoCarryScope() == "always");
     k.iono_source_smoothed = (config_.networkIonoCarrySource() == "smoothed_gf");
     k.iono_q = config_.networkIonoCarryQ();
@@ -661,6 +666,18 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // harvest block is not snapshotted either way.  Armed-only append, beside the F1/F3
         // tags, so every pre-card snapshot fingerprint is unchanged.
         if (config_.networkCarryZwdInBlock()) add("zwd:blk");
+        // I-in-block (network.carry_iono_in_block): solve-affecting for the same reason —
+        // the carried levels were accumulated against a prior geometry that either did or
+        // did not include the station's iono columns in the joint Σ, so a warm resume must
+        // not cross the flip.  The in-block iono carry itself is not snapshotted (it
+        // cold-starts), but the LEVELS that resume are the ones its presence shaped.
+        // Armed-only append, beside the F1/F3/ZWD tags, so every pre-card fingerprint is
+        // unchanged.  q and the gap join it because both change the prior's weight.
+        if (config_.networkCarryIonoInBlock()) {
+            add("iono:blk");
+            add(fmt::format("{}", config_.networkCarryIonoInBlockQM2()));
+            add(fmt::format("{}", config_.networkCarryIonoInBlockMaxGapS()));
+        }
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));
@@ -2902,6 +2919,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // never reaches the block path there either.  OFF ⇒ `cols` is untouched and
     // PlHarvestBlock::C keeps its exact pre-card dimension (byte-identical).
     const bool   zwd_blk_on  = ctx.knobs.zwd_in_block && pl_local_block && carry_cpl_cond;
+    // I-in-block (network.carry_iono_in_block): the per-LOS iono columns join the SAME
+    // harvest block, on the SAME live predicate, for the same reason — so the harvest and
+    // the inject agree on which station-epochs have a block at all.  OFF ⇒ `cols` is
+    // untouched and PlHarvestBlock::C keeps its exact pre-card dimension (byte-identical).
+    const bool   iono_blk_on = ctx.knobs.iono_blk && pl_local_block && carry_cpl_cond;
+    const double iono_blk_gap_s = ctx.knobs.iono_blk_max_gap_s;
     // Seam-scoped ZWD re-seed + unconditional Z-row capture (§17 finding 3).
     const bool   zwd_capture   = ctx.knobs.zwd_capture;
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
@@ -3141,6 +3164,19 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             zblk_of_sta.resize(stations.size());
             zblk_cols_of_sta.resize(stations.size());
         }
+        // I-in-block: the same hand-forward for the per-LOS iono harvest loop below.
+        // `iblk_row0_of_sta` is the block index of this station's FIRST iono column —
+        // the iono columns are appended immediately after the ambiguities and BEFORE the
+        // ZWD, so the ZWD keeps the last-row slot its own (validated) card computes as
+        // C.rows()−1.  Empty vectors when the knob is off; nothing below touches them.
+        std::vector<std::shared_ptr<PlHarvestBlock>> iblk_of_sta;
+        std::vector<std::vector<Eigen::Index>>       iblk_cols_of_sta;
+        std::vector<Eigen::Index>                    iblk_row0_of_sta;
+        if (iono_blk_on) {
+            iblk_of_sta.resize(stations.size());
+            iblk_cols_of_sta.resize(stations.size());
+            iblk_row0_of_sta.assign(stations.size(), -1);
+        }
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
             // Prioritized: harvest the former pivot too — its non-anchored arcs
@@ -3148,11 +3184,30 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // inject and harvest partition on the SAME per-(sat,signal) predicate.
             if (!phase_datum_prioritized && stations[i].is_pivot) continue;  // legacy: pivot gauge-pinned, never carried
             const StationAssembly& R = asm_res[i];
-            if (R.pl_amb.empty()) continue;
+            // I-in-block: a station with NO carry-eligible ambiguities can still have
+            // live per-LOS iono columns, and PASS B builds a block for exactly that case
+            // (its `if (!pl_pend.empty() || !iono_bc.empty())` gate).  Skipping it here
+            // would leave those entries stashed WITHOUT a block, so every pair with them
+            // would be zeroed next epoch — a silently diagonal iono prior, i.e. the very
+            // vehicle this card replaces.  Harvest and inject must agree on which
+            // station-epochs have a block.  OFF ⇒ iono_blk_on is false and this is
+            // exactly the pre-card `if (R.pl_amb.empty()) continue;` (byte-identical).
+            if (R.pl_amb.empty() && !(iono_blk_on && !R.pl_iono.empty())) continue;
             const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
             std::vector<Eigen::Index> cols;
-            cols.reserve(R.pl_amb.size() + 1);
+            cols.reserve(R.pl_amb.size() + 1 + R.pl_iono.size());
             for (const auto& a : R.pl_amb) cols.push_back(a.col);
+            // I-in-block: the station's present per-LOS iono columns become block indices
+            // n_amb … n_amb+k−1, appended BEFORE the ZWD so the ZWD's own card keeps its
+            // "the appended column is the LAST row" invariant.  Every per-column solve
+            // below then gathers (N_rr⁻¹)_{c_a, icol} for free, the same gather that
+            // already pays for the ambiguity–ambiguity terms.  R.pl_iono is PASS B's
+            // record of what it pushed, so a station whose block was never built keeps
+            // the pre-card `cols`.
+            const Eigen::Index iono_row0 = static_cast<Eigen::Index>(cols.size());
+            const bool iono_in_cols = iono_blk_on && !R.pl_iono.empty();
+            if (iono_in_cols)
+                for (const auto& t : R.pl_iono) cols.push_back(std::get<1>(t));
             // B9-in-block: the station's ZWD column becomes block index n (the LAST
             // entry), so every per-column solve below gathers its (N_rr⁻¹)_{c_a, zcol}
             // cross term for free — the same gather that already pays for the
@@ -3189,6 +3244,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (zwd_in_cols) {
                     zblk_of_sta[i]      = hblk;
                     zblk_cols_of_sta[i] = cols;
+                }
+                // I-in-block: same hand-forward, plus the row offset the iono loop needs.
+                if (iono_in_cols) {
+                    iblk_of_sta[i]      = hblk;
+                    iblk_cols_of_sta[i] = cols;
+                    iblk_row0_of_sta[i] = iono_row0;
                 }
             }
             for (size_t a = 0; a < R.pl_amb.size(); ++a) {
@@ -3773,6 +3834,104 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         // Retap statistics-guard set: one RAIM-to-harvest lifetime, consumed by
         // the labeling above — cleared here so next epoch's RAIM refills it.
         ctx.carry.relevel_retapped_prev.clear();
+        // --- I-in-block slant-iono carry (network.carry_iono_in_block): harvest each
+        //     station's per-LOS iono posteriors THROUGH THE SAME per-column solve the
+        //     ambiguities used, write their rows of the station's harvest block, stash the
+        //     ABSOLUTE value, and prune the stale entries.
+        //
+        //     Independent loop (the ZWD pattern) so it runs for stations whose ambiguity
+        //     harvest produced nothing.  Three deliberate differences from the QUEUE-8(b)
+        //     diagonal carry's harvest, all of them the point of the card:
+        //       * the CROSS terms are gathered (this is what subtracts the B-fold
+        //         over-count at inject); QUEUE 8(b) took the diagonal alone,
+        //       * the coupling row IS harvested — an in-block column is folded exactly
+        //         like an ambiguity, border regression included, which is what makes the
+        //         prior exact GIVEN the border (the rx-CB "no shared footprint" rationale
+        //         is what the diagonal vehicle needed; it is not what this one needs),
+        //       * ABSOLUTE value (x_lin + x_r).  network_ionosphere.csv writes x_r alone
+        //         and is frame-broken; a carry that is not frame-complete would re-inject
+        //         a correction against a moved linearization point.
+        //     A LOS whose harvest fails keeps blk = nullptr, so every pair with it is
+        //     zeroed and counted (n_pl_blk_iono_missing_cross) — the safe degrade.
+        if (iono_blk_on) {
+            auto& iono_blk_carry = ctx.carry.iono_blk_carry;
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (est_index_of[i] < 0) continue;
+                const StationAssembly& R = asm_res[i];
+                if (R.pl_iono.empty()) continue;
+                const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
+                const std::shared_ptr<PlHarvestBlock> iblk = iblk_of_sta[i];
+                const std::vector<Eigen::Index>* icross_cols =
+                    iblk ? &iblk_cols_of_sta[i] : nullptr;
+                const Eigen::Index irow0 = iblk ? iblk_row0_of_sta[i] : Eigen::Index{-1};
+                std::vector<Eigen::Index> icols;
+                icols.reserve(R.pl_iono.size());
+                for (const auto& t : R.pl_iono) icols.push_back(std::get<1>(t));
+                Eigen::VectorXd xr, vard;
+                try {
+                    xr = est.reconstructStation(est_idx, x_s);
+                    if (!carry_cpl_cond)   // Card 1 uses the PURE conditional (N_rr⁻¹)_cc
+                        vard = est.conditionalLocalVarianceDiag(est_idx, icols,
+                                                                plan.shared_datum);
+                } catch (...) { continue; }
+                for (std::size_t a = 0; a < R.pl_iono.size(); ++a) {
+                    const auto& [isat, icol, ix_lin] = R.pl_iono[a];
+                    if (icol < 0 || icol >= xr.size()) continue;
+                    const double value_abs = ix_lin + xr(icol);
+                    if (!std::isfinite(value_abs)) continue;
+                    double var;
+                    std::vector<CoupledShared> coupling;
+                    Eigen::VectorXd icross;
+                    if (carry_cpl_cond) {
+                        auto hc = harvestCoupling(est_idx, icol, icross_cols,
+                                                  iblk ? &icross : nullptr);
+                        var = hc.first; coupling = std::move(hc.second);
+                    } else {
+                        var = (a < static_cast<std::size_t>(vard.size())) ? vard(a) : -1.0;
+                    }
+                    if (!(var > 0.0) || !std::isfinite(var)) continue;
+                    const auto key = std::make_pair(static_cast<int>(i), isat);
+                    LocalCarry ent{value_abs, var, pl_now_s, std::move(coupling)};
+                    // birth_ep / birth_s / var_first survive a re-stash and restart only
+                    // on an erase-and-rebirth (a T4 erase, or a gap prune) — the ambiguity
+                    // carry's rule, so the age of an iono carry means the same thing.
+                    const auto oit = iono_blk_carry.find(key);
+                    if (oit != iono_blk_carry.end()) {
+                        ent.var_first = oit->second.var_first;
+                        ent.birth_ep  = oit->second.birth_ep;
+                        ent.birth_s   = oit->second.birth_s;
+                    } else {
+                        ent.var_first = var;
+                        ent.birth_ep  = static_cast<long long>(ctx.counters.n_loop_epochs);
+                        ent.birth_s   = pl_now_s;
+                    }
+                    // Row irow0 + a of the station's harvest block = this iono column's
+                    // n_c read at every carried column of the station (its own entry
+                    // equals `var`, the pure conditional).  The entry then points at the
+                    // SAME PlHarvestBlock the ambiguity and ZWD entries point at, so next
+                    // epoch's inject pairs iono↔ambiguity, iono↔ZWD and iono↔iono by
+                    // pointer equality exactly as it pairs ambiguity↔ambiguity.
+                    if (iblk && irow0 >= 0 && icross.size() == iblk->C.rows()) {
+                        const Eigen::Index irow = irow0 + static_cast<Eigen::Index>(a);
+                        if (irow < iblk->C.rows()) {
+                            iblk->C.row(irow) = icross.transpose();
+                            ent.blk     = iblk;
+                            ent.blk_idx = static_cast<int>(irow);
+                        }
+                    }
+                    iono_blk_carry[key] = std::move(ent);
+                }
+            }
+            // Invariant #1/#7 decoupling edge: a LOS unseen past the horizon is DROPPED,
+            // never aged into a fold.  Counted — this is the eclipse / set edge, and a run
+            // whose count is 0 over a full day did not exercise it.
+            for (auto it = iono_blk_carry.begin(); it != iono_blk_carry.end();) {
+                if (pl_now_s - it->second.last_seen_s > iono_blk_gap_s) {
+                    it = iono_blk_carry.erase(it);
+                    ++ctx.counters.n_iono_blk_gap_drop;
+                } else ++it;
+            }
+        }
         // --- ZWD carry (B9): harvest posterior ZWD + stash (mirrors the ambiguity
         //     harvest; independent loop so it works regardless of ambiguity presence).
         //     Runs for B9 proper, for a live post-resume seam window (rolling B9),
