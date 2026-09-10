@@ -1768,7 +1768,13 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    **Result (18:05, field control, 372 paired arcs):** A (cycle-common) on the DD-iono deviation: slope p50
    **+1.68** (p10 +0.26, p90 +2.68), corr **+0.90**; B (iono-shaped): slope **+0.09** (p10 −0.14, p90 +0.42),
    corr +0.33.  The pre-registered "finding" branch: the cycle-common channel co-moves with the iono states
-   ~1.7:1 and the iono-shaped channel does not.  Sim F3 arm on the same test: pending (semantic control).
+   ~1.7:1 and the iono-shaped channel does not.  **Semantic control, sim F3 arm** (`nonint_losblock24h_hv`,
+   6,893 arcs): its DD iono states wander by a comparable amount — MAD p50 0.88 m = 4.6 L1 cyc per arc (the
+   simulated ionosphere's real change; single-LOS 1.5 m) — and the joint regression of e₁ on the DD-iono
+   deviation reads slope **+0.001** (p10 −0.055, p90 +0.111), corr +0.075: on a healthy arm the iono state
+   tracks the real ionosphere and the ambiguity does not move with it.  So the field's iono-state wander is
+   physical-scale and not itself the anomaly; the anomaly is the ambiguities' cycle-common co-motion with it.
+   (A/B split on the sim arm: pending.)
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
