@@ -1511,6 +1511,20 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"state_snapshot_frame_capture\":" << (nc.state_snapshot_frame_capture ? "true" : "false") << ','
                << "\"resume_frame_restore\":" << (config_.networkResumeFrameRestore() ? "true" : "false") << ','
                << "\"resume_slip_warmup_ep\":" << config_.networkResumeSlipWarmupEp() << ','
+               // Card G RESPONSE (docs/SPEC_slip_qc_hardening.md §G3/W1).  It is
+               // SOLVE-AFFECTING, so an archived logs/ folder has to be able to say
+               // which side of the response its products came from.  Emitted ONLY
+               // when armed — the adm_screen / mdb precedent — so an unarmed run's
+               // manifest bytes are unchanged (the decomposition golden hashes this
+               // file).  Both sub-gates travel with the master: `_lli` defaults ON,
+               // so its value is not inferable from the master alone.
+               << (nc.slip_qc.gap_reentry
+                       ? fmt::format("\"gap_reentry_relevel\":true,"
+                                     "\"gap_reentry_relevel_lli\":{},"
+                                     "\"gap_reentry_relevel_unmeasurable\":{},",
+                                     nc.slip_qc.gap_reentry_lli ? "true" : "false",
+                                     nc.slip_qc.gap_reentry_unmeasurable ? "true" : "false")
+                       : std::string())
                // §18.12 Card-1 coupling regressors, both halves of the frame restore:
                // the WRITE knob says whether this run's snapshots carry QS/QL/QZ/QR
                // records (format v3), the READ knob whether a resumed leg rebuilt

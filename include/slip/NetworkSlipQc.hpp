@@ -298,6 +298,144 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                             RelevelPend>* relevel_pend = nullptr);
 
 /**
+ * @brief Card G RESPONSE (docs/SPEC_slip_qc_hardening.md §G3/W1) — mark the
+ *        arcs that re-entered across a tracking break SLIPPED, in the SAME
+ *        epoch, so the PASS-B leveling inject sees a free arc instead of
+ *        bridging a stale zero-q level across the break.
+ *
+ * ## The defect this closes
+ *
+ * An arc that re-appears within @c network.phase_leveling_max_gap_s (900 s on
+ * the FLD63 chain; the loader default is 120 s) has its PRE-GAP leveling carry
+ * re-injected at converged weight — no time-difference detector can run on a
+ * return epoch (MW needs an adjacent predecessor, IF-TD needs three consecutive
+ * epochs), so the break is never marked and the carry bridges it.  Measured on
+ * `runs/fldf3_pl2` (12 h, 63 field stations, the converging leveling posture):
+ * 364 of 453 resumptions returned with the raw MW/GF level SHIFTED, and 88 arcs
+ * of those re-entered BRIDGED — Card G's own G3 rule ("nonzero ⇒ spec the
+ * follow-up card that marks such arcs slipped at re-entry via the C3c funnel").
+ * One of them, BSHM00ISR/G22 at TOW 271200, injected a ~1e-5 m² carry against a
+ * phase that had moved ~1451 wide-lane cycles; the solve absorbed it along the
+ * wet-mapping null line (ΔCLK/ΔZWD = −1.35, R² 0.9996) and that station's ZWD
+ * went to −2446 m.  Standing invariant #1: a stiff zero-q quantity crossing a
+ * jump with NO wired response does not degrade gracefully.
+ *
+ * ## The verdict (three gates, evaluated per RESUMPTION)
+ *
+ *  - `shifted`      — the raw MW/GF level moved across the break beyond the
+ *                     empirical gate.  Always slipped.
+ *  - LLI on return  — the receiver asserted loss of lock on either band of the
+ *                     primary pair at the return epoch
+ *                     (@c SlipQcParams::gap_reentry_lli, default ON).  This is
+ *                     the receiver's own verdict about the break, and it is the
+ *                     only evidence an UNMEASURABLE resumption can carry.
+ *  - `!measurable`  — no pre-gap dual-band level existed, so nothing could be
+ *                     checked (@c gap_reentry_unmeasurable, default OFF: absence
+ *                     of evidence is not evidence of a slip).
+ *
+ * ## The response is the DETECTOR response, verbatim
+ *
+ * Both bands' ambiguities are treated exactly as a detected slip — C3c funnel
+ * insert under @p carry_invariant; pending-reseed plus a @c free_ambs latch
+ * (cause @c RelevelEpochState::kCauseGap, so the lane observatory grades this
+ * response like any other) under a warm leveling carry.  Nothing is repaired
+ * and no integer is applied: across a loss of lock the slip magnitude is
+ * unbounded and unknowable, so re-entry is treated as code-anchored-fresh.
+ *
+ * ## ⚠ The key is SYNTHESISED, and the target is the CARRY, not the state
+ *
+ * (The wiring defect fixed 2026-09-09; read this before "simplifying" the drain
+ * back into the shape of its siblings.)  The MW/LLI drain's @c refloat_signal
+ * walks the station's LIVE ambiguity map and matches (satellite, signal),
+ * because a detected slip happens on an arc that is BEING MEASURED this epoch.
+ * A RE-ENTRY is the opposite case by definition: the arc left the model set, so
+ * its ambiguity column was pruned with the gap and PASS B's measurement pre-pass
+ * (@c MeasurementModel::ensureRequiredStates) re-creates it only AFTER every
+ * PASS-A slip drain has run.  Mirroring the sibling drain therefore matched
+ * nothing — measured on a 12 h / 63-station field arm: 396 re-entries judged
+ * SLIPPED, 775 signals reported "no live ambiguity", ZERO arcs freed, and the
+ * whole run came back BYTE-IDENTICAL to its OFF control.
+ *
+ * So the key is built with @c StateKeys::makeAmbiguityKey — the exact format the
+ * PASS-B inject site reads (@c relevel.free_ambs.count({i, key}) over
+ * @c StateManager::getAmbiguities() keys) and the exact format the Card-G arc
+ * classification synthesises, so a freed arc reads @c shifted_fresh there by
+ * construction — and the "is there anything to protect?" question is asked of
+ * the CARRY: a @ref LocalCarry entry for (station, satellite, signal) whose
+ * @c last_seen_s is still inside @p pl_max_gap_s is precisely what the inject
+ * would fold across the break.  An arc with no such entry (or one already past
+ * the window) is counted @c gap_reentry_no_carry and left alone: the inject
+ * would not have bridged it either.  Under @p carry_invariant every re-entry is
+ * treated as protectable — the DD chord test needs
+ * @c NetworkInvariantCarryDriver, which is a @c runNetwork local and does not
+ * reach this seam; the funnel insert is idempotent and an arc with no carried
+ * chord simply re-taps fresh, so that is the conservative direction.
+ *
+ * Limitation, stated rather than discovered: under an IF-COMBO ambiguity basis
+ * the live key is @c "<sat>_<sigA>_<sigB>" and this per-band key would not match
+ * it.  The network producer is uncombined (per-band) and the Card-G
+ * classification carries the identical exposure, so both instruments agree; a
+ * combined basis has to widen BOTH sites together.
+ *
+ * Runs SERIAL, station-ordered → deterministic.  Sited in the slip-drain band
+ * of PASS A (after the wind-up restart drain, before the lane observatory's
+ * PASS-A half) so the freed set is complete for the observatory and visible to
+ * the PASS-B inject in the SAME epoch — a response that landed one epoch late
+ * would have let the stale level fold once, which is the whole defect.
+ *
+ * Stations below @p i_lo (the gauge-pinned legacy pivot) are SKIPPED and
+ * counted: their ambiguities are pinned, so a local refloat is meaningless
+ * there — the datum-station analogue is the MW drain's network re-reference.
+ *
+ * No-op unless @c SlipQcParams::gap_reentry.  Every counter it touches is in
+ * @ref SlipQcCounters and closes (see the block comment there).
+ *
+ * @param stations             Station roster — @c sm is MUTATED (pending-reseed marks).
+ * @param present              Per-station PASS-A presence (absent stations produce no resumptions anyway).
+ * @param i_lo                 First non-pivot station index (0 under the prioritized datum).
+ * @param n_sta_total          Station count.
+ * @param carry_invariant      Card-4 DD invariant carry vehicle armed.
+ * @param carry_warm           The legacy phase-leveling carry is warm (a stale value can
+ *                             exist).  Implies @c network.phase_leveling by
+ *                             construction (ApplicationNetwork.cpp: `carry_warm = pl_on
+ *                             && ...`), which is why a null @p relevel under a warm carry
+ *                             is unambiguously a MISSING free-epoch latch
+ *                             (@c gap_reentry_no_relevel) and not "some other vehicle".
+ * @param carry_slipped_ambs   C3c funnel — INSERTED into under @p carry_invariant.
+ * @param raw                  THIS epoch's raw-observable evidence (reads @c resumptions).
+ * @param qc                   Knob snapshot (the three @c gap_reentry_* fields).
+ * @param local_carry          The leveling carry map, READ-ONLY — the thing a
+ *                             re-entry actually threatens, and the drain's
+ *                             "anything to protect?" oracle (see the banner above).
+ * @param pl_now_s             This epoch's continuous-GPS seconds (the inject site's
+ *                             @c pl_now_s, so the gap arithmetic is identical).
+ * @param pl_max_gap_s         @c network.phase_leveling_max_gap_s — beyond it the
+ *                             PASS-B inject skips the entry anyway (THE CLIFF), so
+ *                             there is nothing for this response to prevent.
+ * @param qc_cnt               Run-end counters — accumulated into.
+ * @param relevel              Free-epoch latch, or nullptr when
+ *                             @c cycle_slip.relevel_free_epoch is off.
+ * @param relevel_pend         Bridge-v2 pend map, or nullptr — a fresh mark voids
+ *                             any outstanding pend on the same (station, satellite),
+ *                             exactly as the raw-slip drains do.
+ */
+void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
+                                const std::vector<bool>& present,
+                                int i_lo, int n_sta_total,
+                                bool carry_invariant, bool carry_warm,
+                                std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                                const RawSlipEpoch& raw, const SlipQcParams& qc,
+                                const std::map<std::tuple<int, std::string, std::string>,
+                                               LocalCarry>& local_carry,
+                                double pl_now_s, double pl_max_gap_s,
+                                SlipQcCounters& qc_cnt,
+                                const SyncedEpoch& se, NetworkRunTraces& traces,
+                                const std::shared_ptr<spdlog::logger>& log,
+                                RelevelEpochState* relevel = nullptr,
+                                std::map<std::tuple<int, std::string, std::string>,
+                                         RelevelPend>* relevel_pend = nullptr);
+
+/**
  * @brief SPEC_slip_relevel_walk §6 — float 2×2 delta-bridge solve for one
  *        (MW, IF-TD) detector pair.
  *

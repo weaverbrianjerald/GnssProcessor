@@ -515,6 +515,7 @@ struct RelevelEpochState {
         kCauseT4Attrib  = 8,   ///< RAIM prominence-ATTRIBUTION erase (T4).
         kCauseT4Consens = 16,  ///< RAIM per-satellite CONSENSUS erase (T3).
         kCauseWindup    = 32,  ///< Wind-up accumulator RESTART response (§10.4).
+        kCauseGap       = 64,  ///< Gap RE-ENTRY response (Card G / §G3-W1): the arc came back across a tracking break the raw level, or the receiver's LLI, says it did not survive.
     };
     /// (station idx, amb key) marked pending-reseed by a detector this epoch —
     /// the inject site skips these (the free epoch the mark always promised).

@@ -2429,6 +2429,211 @@ re-derives the 25× as evidence FOR this knob.
 level channel's convergence budget and so supports counting fires but no wire-quality
 claim; and the nuisance gate has no feed (§6.14.6.3).
 
+## §6.16 The ZWD sink census, the slipped-bed golden, and where the integer information is (2026-09-09)
+
+Four measurements from one day, in the order they constrain each other: a truth-free instrument that
+reads the same defect on every bed; the one station that looked like the cause and is not; the golden
+posture failing on a slipped truth bed (so the sim now reproduces the field's metre-class wire); and
+the first honest look at whether the EMITTED wire carries integer information at all.
+
+### 6.16.1 The instrument — settled per-station ZWD span
+
+`logs/network_zwd.csv` (`week,tow,station,zwd_m,std_m,carried`); per-station **span = max − min over a
+SETTLED window** (field ≥ h6; sim last 50 %). Physical ZWD varies < 0.5 m / 12 h, so any span above
+~1 m is a sink, not weather — the estimator is parking something in the wet delay.
+
+⚠ **Never quote a whole-run span.** Ignition dominates it on every bed: `runs/golden_sim_tri_w6`
+reads whole-run p50 **2.011 m / max 17.23 m** and settled (h12+) p50 **0.0632 m / max 0.0797 m, 0 of
+60 above 0.10 m** (`runs/golden_sim_tri_w6/BASELINE.md` §2).
+
+**It is truth-validated on the sim**: quiet golden span 0.076 m ↔ ZWD truth rms 0.009 m; slipped
+`camp60wu_f5c` span 2.29 m ↔ truth rms 2.85 m. That licenses it as a FIELD proxy, where no truth
+exists.
+
+| bed / vehicle | settled span p50 | n > 1 m / > 10 m | top stations |
+|---|---|---|---|
+| FIELD shipped control `runs/fldf3_ci` (carry_invariant + eq34 + SH, DOY-129, 63 sta) | **21.4 m** | 61 / 50 | BSHM 94, HKSL 67, KRGG 55, GAMB 51 |
+| FIELD converging `runs/fldf3_pl2` (leveling vehicle, gauge projection + prioritized family) | **0.797 m** | 24 / 3 | **BSHM 368.9**, CUSV 12.8, COCO 12.7 |
+| FIELD `runs/fldf3_on2` (the same + F3) | 1.20 m | 39 / 4 | INEG 492, BSHM 35 |
+| SIM golden lineage, quiet 24 h (`readmit24h_e2`, `camp60wu_quiet24h_sticky`, `nonint_losblock24h_hv`) | **0.076 m** | 0 / 0 | S06 0.20 |
+| SIM slipped campaign, pre-F3 (`runs/camp60wu_f5c`, h3–h6) | 2.29 m | 52 / 4 | S45 28 |
+| SIM `carry_invariant` + eq34 arms, Aug code (`simnet60_ab_eci_eq34_ci`, `ab_d5_*`, `simnet60_tri_slant_trio_480`) | 389 – 34 083 m | 60 / 57–60 | km-class divergence |
+
+(Census of 2026-09-09; each figure recomputed from that run's own `network_zwd.csv`. The three
+`fldf3_pl2*` rows were re-derived for this section and reproduce to the printed digits — p50 0.797 /
+0.660 / 0.904 m on control / `gap_reentry_relevel` / bridge arms respectively.)
+
+**Reading.** The shipped field vehicle's per-epoch ZWD is a metre-to-decametre sink at EVERY station,
+and the same vehicle reproduces km-class on the sim. The converging leveling posture (§6.15.4) brings
+the fleet centre to sub-metre; the quiet sim golden at 7.6 cm is what "honest" looks like. **The
+sink, not the ambiguity level, is now the field's leading residual.**
+
+### 6.16.2 BSHM00ISR is a phase-side receiver fault — and roster edits are not the lever
+
+BSHM00ISR is broken from the FIRST epoch on every field arm: its ZWD is **−5.46 m at tow 259200**
+(`runs/fldf3_pl2/logs/network_zwd.csv`; a physical ZWD is 0–0.4 m), run min/max **−2445.97 / +359.43 m**,
+and the station-congruence rider flags it CLEAN-labelled with d = **(−417.82, −144.14, −770.88) m** ENU
+at t = **2.188e6** on `n_code 0 / n_phase 14` (`runs/fldf3_pl2/logs/network_congruence.csv`, tow
+271200, `reported=1`, measure-only). Code side admits it, phase side does not: the fault is on PHASE.
+Its roster ECEF is 17 cm from the RINEX APPROX POSITION, so this is not a coordinate blunder. (The
+−2446 m excursion at 271200 specifically is the gap-re-entry poison case —
+`docs/SPEC_slip_qc_hardening.md` §12.1 — not the baseline pathology.)
+
+**Footprint A/B (3 h, DOY-129, settled ≥ h1, 57 stations common to all three arms):**
+
+| arm | 57-sta Σ settled span | INEG00MEX | OAFA00ARG | consumer h2 rms |
+|---|---|---|---|---|
+| base `runs/fldf3_pl_gppdp3h` | **59.8 m** | **1.85 m** | 9.12 m | **2.02 m** |
+| `_nobshm` (BSHM dropped) | **61.5 m** | **26.32 m** | 8.21 m | **3.92 m** |
+| `_notop4` (BSHM/OAFA/INEG/CUSV dropped) | **53.8 m** | — | — | **1.53 m** |
+
+**Dropping the worst station does not shrink the sink — it relocates it.** INEG00MEX takes it
+(1.85 → 26.3 m) and the fleet sum goes UP. Dropping the top four improves most instruments but the
+consumer is non-monotone in roster (2.02 / 3.92 / 1.53 m). ⇒ **The residual null direction parks on
+whichever station is weakest; roster editing is not a fix, and a per-station ZWD excursion is not
+evidence about that station.** The shipped `carry_invariant` vehicle hides BSHM entirely because its
+free-ambiguity rows absorb the step (ZWD σ 0.85 m there vs 0.028 m on the leveling vehicle) — the
+sink is a property of the vehicle, not of the roster.
+
+### 6.16.3 The golden posture on the SLIPPED sim bed — FAIL on all three gates
+
+`runs/golden_sim_campaign` (= `config/golden/golden_sim_tri_w6.json` verbatim, 61 `rinex_path`
+re-pointed at `runs/simnet60_campaign_wu93`, duration and output paths only; exe
+`gnss_processor_golden0.exe` sha256 `04267126…` = HEAD `36ace5e`), 720/720 epochs, exit 0.
+Full card `runs/golden_sim_campaign/VERDICT.md`.
+
+| gate | pre-registered | golden-on-campaign | pre-F3 `camp60wu_f5c` | verdict |
+|---|---|---|---|---|
+| ZWD settled truth rms | ≤ 0.10 m | **2.098 m** | 2.742 | **FAIL** (21×) |
+| per-sta settled ZWD span p50 | ≤ 0.20 m | **1.590 m** | 2.292 | **FAIL** (8×) |
+| consumer settled h3–h6 p50 3D | ≤ 0.30 m | **1.752 m** | 1.614 | **FAIL** (6×, worse than pre-F3) |
+
+**The integer half, however, collapses in the good direction** (`simnet_amb_integer.py --ref-free`,
+"at own true integer", settled): EWL(2,5) **99.0 %** (f5c 79.1), WL(1,2) **81.5 %** (33.7), L1C
+**39.1 %** (18.6); as-traced EWL 98.7 / WL 70.5. ⇒ **F3 fixed the ambiguity over-count and left the
+station-level ZWD⇄iono exchange intact** (interaction 3.54 → 2.46; median exchange correlation
+−0.433 → −0.350; corr(log ZWD rms, event rate) 0.692 → **0.765**, i.e. the plateau is MORE tightly
+tied to the per-station event rate). **The sim truth bed now reproduces the field's metre-class wire
+under realistic slips** — which is the useful outcome of a FAIL.
+
+### 6.16.4 E1 / E2 — two separable halves, and neither knob is the fix
+
+Single-knob arms off the same file, same exe, same fixture, 720/720 each (VERDICT.md
+§"E1/E2 discriminators").
+
+⚠ **E1's knob is `network.raim_arc_persist_epochs: 1000000`, NOT `raim_attribution: false`** — the
+loader force-re-enables `raim` + `raim_attribution` whenever `raim_within_epoch` is armed, so that
+knob is a proven byte-identical no-op. The persistence gate is what starves the T4 isolated-arc
+ERASE while leaving both detection tiers armed (`NetworkRaim.cpp:608-649`).
+
+| row (settled) | **E0** golden | **E1** no arc-refloat | **E2** F3 off | `f5c` pre-F3 | quiet `readmit24h_e2` |
+|---|---|---|---|---|---|
+| ZWD truth rms (m) | 2.098 | **0.933** | **3.799** | 2.742 | 0.007 |
+| per-sta span p50 (m) | 1.590 | 1.312 | 3.227 | 2.292 | 0.053 |
+| consumer h3–h6 p50 (m) | 1.751 | **2.559** | 1.996 | 1.615 | 0.075 |
+| consumer last-30 median (m) | 1.423 | **0.686** | 2.808 | 1.720 | 0.068 |
+| iono⇄ZWD interaction rms (m) | 2.456 | 2.493 | 4.090 | 3.544 | — |
+| sat-clock contrast rms (m) | 8.050 | **2.761** | 13.307 | 13.001 | — |
+| sat code-bias residual rms (m) | 0.608 | **0.289** | 0.978 | 1.252 | — |
+| **T4 one-solve arc refloats** | 22 968 | **0** | **35 010** | — | 147 (24 h) |
+| post-fit σ̂₀(phase), last ep | 1.424 | **2.687** | 1.217 | 0.906 | 1.314 |
+| T3 cell rate | 1.561e-1 | **3.191e-1** | 8.350e-2 | 5.148e-2 | 3.919e-4 |
+| T3c consensus rate | 4.414e-1 | **8.159e-1** | 2.638e-1 | 2.024e-1 | 6.463e-1 |
+| WL(1,2) ref-free at own integer | **81.5 %** | 65.4 % | 37.6 % | 33.7 % | 99.1 % |
+| EWL(2,5) ref-free | **99.0 %** | 91.0 % | 84.6 % | 79.1 % | 100 % |
+| D3 arc-age interaction rms, 0–60 s → 1200+ s (m) | 4.264 → 1.974 | **3.114 → 2.932 (FLAT)** | 6.011 → 2.995 | 5.252 → 2.785 | — |
+| corr(log ZWD rms, log event rate) | 0.765 | **0.123** | 0.853 | 0.692 | — |
+
+**Reading — the halves separate, and each has a different agent.**
+
+**(a) The T4 erase channel is the dominant single contributor to the metre-class ZWD plateau.**
+Starving it: ZWD rms −56 %, sat-clock contrast −66 %, code-bias −52 %, the arc-age slope GONE, the
+plateau-to-event-rate correlation 0.765 → 0.123, while the iono⇄ZWD interaction is FLAT (2.456 →
+2.493). So the ZWD gain is not a change in the exchange — it is the removal of a repeated
+re-convergence forcing: **every erase is a code-level re-level, i.e. a young arc, i.e. a ZWD/clock
+sink** (invariant #1's re-coupling edge again).
+
+**(b) The carries T4 was catching are real.** Without erases the consumer settled p50 is 46 % worse,
+ref-free WL gives back a third of what F3 bought, σ̂₀(phase) 1.42 → 2.69, and T3c runs at 0.816 —
+nothing is being erased, so the post-fit pool is loud and un-screened. Slip response shifts tier, not
+size (`T4_attrib` 53 → 0 while `raim_refloat` 19 → 84; DETECTED flat at 94.0 %).
+⇒ **The fix is BOUNDED IDENTIFICATION (Tier-C3 solution-separation confirmation of the median-polish
+proposals), NOT switching T4 off.** `raim_arc_persist_epochs` stays a probe.
+
+**(c) F3 is load-bearing and stays armed.** E2 is worse on every channel (ZWD 3.80 m, WL 37.6 %,
+consumer rms 3.61) — and **T4 goes UP without F3 (35 010 vs 22 968)**, which falsifies the standing
+suspicion that F3's block rows are what drives the T4 storm (§7 item 4).
+
+Ordering on the wire: E1 (0.93) < E0 (2.10) < f5c (2.74) < E2 (3.80). On the integers:
+E0 > E1 > E2 > f5c. **Nothing on this bed is simultaneously best at both.**
+
+### 6.16.5 The HEAD baseline on the quiet bed (PARTIAL, 18.6 h) — the ~5 cm KPI holds
+
+`runs/golden_sim_tri_w6` = the golden verbatim on `runs/simnet60_quiet_wu93_24h`, HEAD exe. ⚠ The run
+was killed by a reaped shell at 2 230 epochs (18.6 h of 24 h): **no run-end telemetry, no
+`network_flag_rates.csv` / `network_run_summary.csv`, `network_raim.csv` 0 bytes ⇒ the QC tier table
+is NOT gradeable on it**; consumer "settled" is h12–18.6 (`BASELINE.md` header).
+
+| channel | `golden_sim_tri_w6` (18.6 h) | `readmit24h_e2`, matched window |
+|---|---|---|
+| consumer settled 3D rms / p50 (m) | **0.0823 / 0.0506** | 0.0882 / 0.0779 |
+| consumer last-30 median (m) | 0.0305 | 0.0294 |
+| ZWD residual rms / p50 / max (m) | **0.0070 / 0.0045 / 0.0374** | 0.0076 / 0.0047 / 0.1596 |
+| per-sta settled ZWD span p50 (m) | **0.0632** (0 of 60 > 0.10) | 0.0533 |
+| sat clock residual rms (m) | 1.5354 | 1.6285 |
+| sat code bias rms (m) | 0.1469 | 0.4435 |
+| DD ref-free settled at own integer | **EWL 100 %, WL 99.2 %, L1C 90.5 %**, L2W 88.1, L5Q 87.4, L7Q 87.3 | EWL 100, WL 99.1, L1C 90.0, L2W 86.9, L5Q 86.4, L7Q 87.1 |
+| DD ref-free settled med\|u\| (cyc) | L1C 0.068, WL 0.025, EWL 0.010 | L1C 0.079, WL 0.028, EWL 0.011 |
+
+At or slightly better than the 24 h reference on every like-for-like row despite 2.7 h less settling.
+**The ~5 cm consumer KPI and the sub-cm ZWD hold at HEAD** — so nothing in §6.16.3's failure is a
+regression of the code; it is what the SLIPPED bed does to this posture.
+
+### 6.16.6 Where the integer information is — the P records carry none, and that is gauge-ambiguous
+
+Measured on the quiet golden `runs/readmit24h_e2` (truth bed), 2026-09-09; session-scratchpad
+analysis recorded in the ZWD-sink census memory record, not re-derived here:
+
+* The ESTIMATOR's DD ambiguities are ~**87 %** at the true integer ref-free (per-band ref-free
+  87.1–90.5 %, §6.16.5).
+* The EMITTED P records carry **no fractional structure**: within one epoch the between-satellite SD
+  fractions of the phase biases are uniformly scattered — within-group concentration p50 **0.18**
+  against the uniform null ≈ **0.28** for n ≈ 10; per-satellite circR p50 **0.43** as-traced /
+  **0.52** ref-free.
+* **1 267** ref-free steps > 0.15 cyc in h12–24 across 156 (cst, sig, sat) series, and **NONE within
+  90 s of a PBGAUGE handover** (942 continuous + 93 cold on the run). So SPEC_amb_iono §6.8's
+  "P-record fractional uniform on every arm (open)" is a **high-frequency per-epoch wander, not
+  handover steps** — the handover card is not the explanation.
+
+**Reading (pre-registered, NOT proven).** On the free-slant-iono posture each satellite's per-band
+phase-bias pair carries an iono-direction gauge (δ, γδ) pinned only by code (σ 0.3 m zenith on this
+fixture). That direction is invisible to between-station DDs — hence the 87 % — and is EXACTLY
+absorbed by a consumer that estimates its own slant ionosphere. **⇒ the per-band SD-fraction grade
+(`simnet_grade.grade_phase`) is not the integer test that matters on this posture; it is
+gauge-ambiguous.** The test that matters is the closed-loop consumer fixing integers against
+`truth_ambiguities.csv`, and it has NEVER been run on the sim golden (`closed_loop.ar_mode: 0`).
+
+**Arms queued** (written 2026-09-09, not yet run): `config/test_suite/_golden_sim_consumer_ar_a.json`
+and `_b.json` — `golden_sim_tri_w6.json` verbatim on the quiet 24 h bed with the consumer's
+`closed_loop.ar_mode` 0 → 1, `ratio_threshold` 3.0, `enable_partial_ar`, `logging.enable_ambiguity_trace`,
+producer UNCHANGED (float); a/b differ ONLY in `estimation.ambiguity_resolution.hold_variance`
+(1e-3 vs 1e-5) and their own output paths.
+
+**AR sequencing decision (binding until the consumer test reports).**
+1. Run the consumer-AR truth test first. If integers recover, the wire already carries them and the
+   next question is robustness under slips (campaign bed) and then the field.
+2. Only if the consumer test says the WIRE loses integers does the network datum work come first
+   (emission chain / a phase GF datum / design-doc Phase 3 integer-leveled pins —
+   `docs/network_ambiguity_resolution_design.md` §2–§4: pivot pins are float-valued `w = 1e10`
+   targets, `ApplicationNetworkAssembly.cpp:2559`; anchor handovers pin at the successor's float
+   value, `NetworkPhaseDatum.cpp:335-428`).
+3. **Producer DD-fixing (M5) stays DO-NOT-BUILD** until the consumer test says the wire needs it; its
+   prerequisite (DD convergence) is met on the quiet bed only.
+⚠ The FIELD golden runs `ar_mode 1` on a metre-class wire — wrong fixes by construction; consider
+`ar_mode 0` there until the wire is sub-decimetre.
+
+---
+
 ## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
 
 **⚠ FIRST (2026-09-05, §6.9): the RE-COUPLING EDGE on the F3 block at satellite re-admission — BUILT the same day as `network.readmit_seed_horizon_s` + `network.readmit_coupling_marg_ep` (§6.10, pre-registered; arms running)** — the 24 h arm shows two ~4 h NETWORK-WIDE degradation episodes after the eclipse re-admission clusters (clean chords 0.19 → 0.58–0.68 cyc), absent from the quiet hours where F3 sits at the CRLB.  Build: at a satellite's re-admission (col_added after a gap ≥ N epochs / CTA first sighting), marginalize its shared terms out of every station's block regressors for K epochs (or register the re-admission as a Card-1g reinit source); counters at both edges; pre-registered PASS = no clean-chord degradation after the h16.6–18.9 cluster on `_nonint_losblock24h_hv`, settled quarter ≤ 0.2 cyc / ≥ 80 %.
@@ -2456,6 +2661,11 @@ claim; and the nuisance gate has no feed (§6.14.6.3).
    unit variance, admitted arbitrarily by the 0.5 test.  Still owed: tag block rows prior-class
    and exclude them (or grade the prior residual as its own tier), a per-column pool census so
    admission is READ not inferred, and the 4e9 denominator fix.
+   **⚠ AMENDED 2026-09-09 (§6.16.4): the block rows are NOT the T4 driver.** E2 (F3 off, single
+   knob, same bed) has T4 one-solve arc refloats **35 010 vs E0's 22 968** — turning the block rows
+   OFF makes the T4 storm 1.5× WORSE, so the "F3 creates T4 work" reading is falsified and the
+   admission item is now about pool HYGIENE (σ̂₀ / denominator / readability), not about the erase
+   rate.  The erase rate's own agent is E1's persistence gate (item 22).
 5. ~~**IF-TD reference gate: 1917 false refloats/day**~~ **CLOSED (§6.14, 2026-09-08)** —
    100 % false (the bed injects 0 slips), and the statistic is the reference satellite's own
    phase noise: σ 17.7 mm, FLAT in family size, 88 % station-local, against a fixed
@@ -2551,6 +2761,45 @@ claim; and the nuisance gate has no feed (§6.14.6.3).
     census + seam-tools steps, the prires / block-Baarda / congruence σ̂0 families and
     `trace_prefit_census` (arm them on the next `_nonint` arms too — UNAVAILABLE on all five), and a
     consumer replay.  Fresh convergence (fingerprinted), wu93 side of the wind-up fix, item 15 first.
+22. **BOUNDED T4 IDENTIFICATION — the dominant agent of the metre-class ZWD plateau (opened
+    2026-09-09, §6.16.4).**  Starving the T4 isolated-arc erase (`network.raim_arc_persist_epochs:
+    1000000`, E1) halves the ZWD truth rms (2.098 → 0.933 m), takes sat-clock contrast −66 % and
+    code-bias −52 %, and flattens the D3 arc-age slope — but costs the consumer 46 % (settled p50
+    1.751 → 2.559 m), a third of F3's integer gain (ref-free WL 81.5 → 65.4 %) and leaves the
+    post-fit pool un-screened (σ̂₀(phase) 1.42 → 2.69, T3c 0.816).  **The knob is a PROBE, not a
+    fix — ledger UNVALIDATED, do not arm.**  The build is Tier-C3 solution-separation confirmation
+    of the median-polish identification, i.e. a BOUNDED mass-refloat: erase only what a separability
+    test confirms.  Prerequisite named by `project_network_ssystem_dia_assessment`: median polish has
+    no separability analysis today.
+23. **A LEVEL-PRESERVING gap re-entry response is unbuilt, and the two obvious candidates are spent
+    (2026-09-09, `docs/SPEC_slip_qc_hardening.md` §12).**  The bare refloat
+    (`network.cycle_slip.gap_reentry_relevel`) closes the defect — 88 → 0 bridged arcs, 129 freed,
+    DD arc-wander tail 47 → 38 %, T4a −46 % — and still loses: float consumer +56 % settled rms,
+    WROC00POL settled ZWD span 3.6 → 15.6 m, because each freed arc re-levels from ONE epoch of code
+    (invariant #1's re-coupling edge, 129 re-seeds / 12 h).  Bridge v2 + v3 as built for detector
+    slips (`relevel_delta_bridge` + `relevel_bridge_gf`, `runs/fldf3_pl2_bridge`) are FLAT on the
+    same posture (52/282 pends replaced, 49 GF applies; consumer rms −1.5 % / p50 +17 %, ZWD span
+    p50 0.797 → 0.904), so extending them to re-entries is not justified.  Design constraint: carry
+    the level across the break at PHASE precision or do not act.  ⚠ The MW/LLI drain still has the
+    identical live-state hole (`SPEC_slip_qc_hardening` §11 item 4) — a detector assertion on a
+    not-yet-recreated ambiguity is silently inert there too.
+24. **The ZWD-in-block card (build in flight, 2026-09-09).**  The per-epoch ZWD has NO temporal prior
+    and `carry_zwd` is blocked by item 17's block-coverage gap, so every erase / re-level that makes
+    a young arc leaks into the wet delay: D3 interaction rms 4.264 m at arc age 0–60 s → 1.974 m at
+    1200 s+ (E0), and the leak vanishes when the erases do (E1 flat 3.114 → 2.932).  The card puts the
+    station's ZWD column INSIDE F3's marginal block, so the wet-delay direction is not left to absorb
+    what a freshly re-levelled arc cannot explain (item 17's "fix = block ALL carried local columns
+    of the station" is the same clause, one column wider).  Independent of items 22 and 23; grade it on the
+    settled ZWD span (§6.16.1), not on the consumer.
+25. **Tool debt / telemetry (2026-09-09).**  `scripts/simnet_plateau_decompose.py` raised inside
+    `np.percentile` on an arm with ZERO T4 events (exactly E1) — guarded 2026-09-10 at
+    `scripts/simnet_plateau_decompose.py:172-175` (empty jump population now prints `n=0` and skips
+    the summary); the E1 numbers in §6.16.4 were produced with a scratchpad copy carrying the same
+    two-line guard.  Also: E1's `network_flag_rates.csv` / `network_run_summary.csv` were lost to a
+    box reboot, so its T3 / T3c rates are RECONSTRUCTED from `logs/network_raim.csv`
+    (`count(spiked==1)` = T3 flags, distinct `(tow,sat)` = T3c opportunities, distinct with
+    `n_sta_spiked ≥ min_sta` = T3c flags — validated exactly on three runs where both sides exist),
+    and its T4a tier count is NOT recoverable.
 
 ---
 

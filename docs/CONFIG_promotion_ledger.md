@@ -1454,7 +1454,7 @@ fingerprint-migration card).
 | `cycle_slip.relevel_free_epoch` | **RECOMMEND_SCOPED: ARM on every sim posture, slipped AND quiet** (field arm still blocked on the withhold-era release policy). ⚠ Widened 2026-09-01 by the OFF-check: the win is NOT slip-confined — the latch guards EVERY arc re-latch against stale-carry injection (1608 marks vs only 159 MW detections on the ZERO-slip bed) | wu93 rerun `runs/camp60wu_f1`: walk dead (hourly ZWD 1.85–3.08 flat), 720/720, census 94.0 %; quiet twin ZWD rms 0.252 m / p50 2.5 cm. **OFF-check on the 12 h quiet flagship (`runs/camp60wu_quiet12h_r2q3rfoff`, single knob, 2026-09-01): OFF costs +29 % settled consumer (3D rms 0.204 → 0.263, p50 +30 %) and +17 % ZWD rms; detection layer identical both arms (159 MW / 16 refloats) — the delta is exactly the 1514 stale injections the ON arm's free-epoch latch SKIPPED (run-end: 1608 detector-marked latches, 1514 inject-site skips taken); clock channel + event census flat** |
 | `cycle_slip.relevel_retap_statistical` | **KEEP_OFF — FALSIFIED for lanes** (ZWD-neutral, lane-harmful) | F3: settled GPS EWL at-own-integer 70.2 → **54.0 %** (SPEC_lane_slip_response §3) |
 | `cycle_slip.relevel_retap_corroborate` | **KEEP_OFF — falsified AS ARMED** (raw MW/GF evidence lacks resolution; refuses 1.5 %) | F4C: 59.6 % (SPEC_lane_slip_response §5); knob stays built for a finer evidence source |
-| `cycle_slip.relevel_delta_bridge` | KEEP_OFF (research) | 33 applies / 720 ep — negligible yield, unchanged verdict |
+| `cycle_slip.relevel_delta_bridge` | KEEP_OFF (research) | 33 applies / 720 ep — negligible yield, unchanged verdict.  **Field number added 2026-09-09 — see §A5** (52 of 282 pends replaced over 12 h; consumer and ZWD sink flat-to-worse) |
 | wind-up `nominal-wu93` frame | **CODE — landed**, product token + fingerprint + all-consumer interlocks | SPEC_phase_windup_sign §9.7–9.10; pre-fix fixtures/products/snapshots are expected-fail baselines |
 | fixture discipline | **RULE: fixture and producer must sit on the same side of the wind-up fix** | §9.9: the mixed pairing is INVISIBLE to σ̂₀ (absorbed), enforce by provenance (`_wu93` fixtures) |
 | `estimation.accumulate_phase_windup` | OPEN CARD (queued): loader now WARNS on fractional mode; do not flip the default without the migration card | SPEC §7 + §9.5; warn verified live on the golden63 chain |
@@ -1522,3 +1522,26 @@ output keys (`product_output_path`, `state_snapshot_path`).  Rewriting every `ru
 pointed the sim golden's 60 station `rinex_path`s at `runs/<golden>/` and the smoke failed to
 parse any RINEX — `OUTPUT_PATH_KEYS` in `make_golden_config.py` is the fix, and the selftest
 pins it.
+
+## A5 — the 2026-09-09 field session: the gap re-entry response, bridge v3, and the E1 probe
+
+Four JSON rows moved or landed. All four are OFF; nothing was promoted. Full records:
+`docs/SPEC_slip_qc_hardening.md` §12 (the response), `docs/SPEC_amb_iono_split_overcount.md` §6.16
+(the sim discriminators and the ZWD sink census), `docs/SPEC_prior_residual_census.md` §17 (the RNEG
+re-partition that made the field prires readout usable again).
+
+| knob | verdict | evidence (measured, 12 h DOY-129 63-sta field bed unless noted) |
+|---|---|---|
+| `network.cycle_slip.gap_reentry_relevel` (+ `_lli`, `_unmeasurable`) | **UNVALIDATED → KEEP_OFF** (regime unchanged) | Round 1 INERT (live-state walk: 396 verdicts, "0 arc(s) reached with a live ambiguity (775 had none)", products byte-identical). Round 2 (`runs/fldf3_pl2_gapfree2`, single knob) proven live: **129 arcs freed**, SHIFTED→bridged **88 → 0**, unmeasurable-bridged 24 → 5, BSHM's 271200 step −2612 → −0.028 m, fleet ZWD span p50 0.797 → 0.660 m, DD arc-wander tail 47.0 → 38.2 %, T4a 2032 → 1092. **But the float consumer settled rms 3.178 → 4.946 m (+56 %)** and WROC00POL's ZWD span 3.6 → 15.6 m — a refloat re-levels from ONE epoch of code, and 129 re-seeds / 12 h cost more than the 88 poisons. Keep the instrument half. |
+| `network.cycle_slip.relevel_delta_bridge` | **KEEP_OFF** (verdict unchanged; first FIELD number) | `runs/fldf3_pl2_bridge` (= the same control + this knob + `relevel_bridge_gf`): 282 pends created / **52 replaced** (max \|ΔN\| 52.3 cyc), 43 corroboration-rejected, 109 expired unpaired. FLAT: consumer rms 3.178 → 3.131 (−1.5 %) but p50 2.418 → 2.823 (+17 %); ZWD span p50 0.797 → **0.904**, > 10 m 3 → **4**; T4a 2032 → 1801, T3c 1105 → 896. 18 % of pends replaced is too small a population to move the wire. |
+| `network.cycle_slip.relevel_bridge_gf` (+ `_sigma_floor_m`) | **KEEP_OFF** (new row) | Same arm: "GF rows captured 103 (E1+E4 float-plane applies 49, wrong-WL plane rejects 0); **EWL integers filled 0 same-epoch + 0 belated, band-3 replaces 0**". The v3 half never actuated, so that arm grades v2 only. |
+| `network.raim_arc_persist_epochs` | **UNVALIDATED — PROBE, do not arm** (new row) | SIM, E1 vs E0 on the slipped campaign bed (`runs/golden_sim_campaign_noarcrefloat`, single knob, 720/720): T4 one-solve arc refloats **22 968 → 0**, ZWD truth rms **2.098 → 0.933 m**, sat-clock contrast 8.05 → 2.76 m, D3 arc-age slope gone, corr(log ZWD, event rate) 0.765 → 0.123 — at the price of consumer p50 +46 %, ref-free WL 81.5 → 65.4 %, σ̂₀(phase) 1.42 → 2.69, T3c 0.816. The fix is bounded identification, not this gate. ⚠ `raim_attribution: false` is a byte-identical no-op under `raim_within_epoch` (loader force-re-arm) — its row now says so. |
+
+**Method notes worth carrying forward.** (1) A response acting at a gap re-entry, a re-admission or a
+first sighting must key on the CARRY and actuate by KEY — the ambiguity state is pruned with the gap
+and re-created only in PASS B, so a live-state walk is silently inert; pre-register the freed count
+and read it BEFORE any science number (it is what caught round 1). (2) Both bridge rows and the
+gap-re-entry row were graded against a control produced by a DIFFERENT exe — legal only because the
+OFF path was re-certified byte-identical on that build (`products.txt` sha256 `be523008…` reproduced
+by `runs/fldf3_pl2_ctl_new`, and a 20-epoch knob-OFF smoke reproducing `runs/fldf3_pl_smoke`'s
+`E06007B0…`).

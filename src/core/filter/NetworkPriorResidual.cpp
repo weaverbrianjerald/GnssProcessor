@@ -160,7 +160,13 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
             for (int li = 0; li < kPriorResidualLabels; ++li) {
                 const auto lab = static_cast<PriorResidualLabel>(li);
                 const NetworkPriorResidual::Ladder& L = prires.epochLadder(fi, lab);
-                if (L.n_rows == 0) continue;
+                // The RNEG class travels in the appended columns of the SAME row
+                // (existing readers keep parsing by position), so a (family,
+                // label) whose only rows this epoch were r_negative must still
+                // emit — otherwise the re-partition would DELETE those rows from
+                // the file rather than move them.
+                const NetworkPriorResidual::Ladder& N = prires.rnegEpochLadder(fi, lab);
+                if (L.n_rows == 0 && N.n_rows == 0) continue;
                 auto& o = traces.prior_residual_trace;
                 o << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                   << fams[f] << ',' << priorResidualLabelName(lab) << ','
@@ -183,7 +189,15 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                                               [static_cast<std::size_t>(c)];
                 o << ',' << fmt::format("{:.2f}", L.meanCorrobDomain())
                   << ',' << L.n_corrob_or_stepped << ',' << L.n_corrob_stepped
-                  << ',' << fmt::format("{:.4f}", L.max_corrob_frac)
+                  << ',' << fmt::format("{:.4f}", L.max_corrob_frac);
+                // --- the RNEG class, appended (see kPriorResidualHeader) ------
+                o << ',' << N.n_rows << ',' << N.n_raw_formal << ',' << N.n_no_sigma0
+                  << ',' << num(N.max_abs_e)
+                  << ',' << stationName(stations, N.max_station)
+                  << ',' << N.max_sat << ',' << N.max_signal << ',' << N.max_mech
+                  << ',' << num(N.max_abs_t)
+                  << ',' << num(N.max_fold_var) << ',' << num(N.max_post_var)
+                  << ',' << fmt::format("{:.1f}", N.max_gap_s)
                   << '\n';
             }
         }
@@ -212,15 +226,24 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
             /*action=*/"report",
             fmt::format("family={} label={} sig={} mech={} folded={} e={:.6e} "
                         "disp={:.6e} r={:.4e} s={:.4e} sigma0={:.4f} "
-                        "fold_var={:.6e} post_var={:.6e} gap_s={:.1f} corrob={}{}",
+                        "fold_var={:.6e} post_var={:.6e} gap_s={:.1f} corrob={}{}{}",
                         fam, priorResidualLabelName(h.label),
                         h.signal.empty() ? "-" : h.signal.c_str(),
                         (h.mech && *h.mech) ? h.mech : "-",
                         h.folded ? 1 : 0, h.e, h.disp, h.r, h.s, h.sigma0,
                         h.fold_var, h.post_var, h.gap_s,
                         priorResidualCorrobName(h.corrob),
+                        // `rneg=1` is a SEPARATE token from the existing
+                        // `r_negative=1` text on purpose: the row's ladder class
+                        // is now what that bit decides (the row is in the RNEG
+                        // class, out of every bin and out of the worst-|t|
+                        // line), and a grader filtering the event stream needs
+                        // one greppable field for it rather than a substring of
+                        // a conditional pair.  The pre-existing text is left
+                        // exactly as it was.
                         h.r_clamped ? (h.r_negative ? " r_clamped=1 r_negative=1"
-                                                    : " r_clamped=1") : ""));
+                                                    : " r_clamped=1") : "",
+                        h.r_negative ? " rneg=1" : ""));
         ++q.prires_events;
     }
     // Invariant #4: a truncated identity stream must not read as a quiet epoch.
@@ -235,9 +258,25 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     }
 
     // --- worst-of-run identity (run-end line) --------------------------------
+    // Two headlines, two classes.  The label ladders are ordered by |t| (the
+    // statistic); the RNEG class by |ê| in metres, because its |t| is an
+    // artifact of a dispersion that does not describe one fold.
+    q.prires_rneg_rows += prires.epochRowsRneg();
     for (std::size_t f = 0; f < prires.families().size(); ++f)
         for (int li = 0; li < kPriorResidualLabels; ++li) {
             const auto lab = static_cast<PriorResidualLabel>(li);
+            const auto& N = prires.rnegRunLadder(static_cast<int>(f), lab);
+            if (N.max_abs_e > q.prires_rneg_max_e) {
+                q.prires_rneg_max_e = N.max_abs_e;
+                q.prires_rneg_max_id = fmt::format(
+                    "{}/{} {}/{}/{} @{:.1f}", prires.families()[f],
+                    priorResidualLabelName(lab),
+                    stationName(stations, N.max_station).empty()
+                        ? std::string("-") : stationName(stations, N.max_station),
+                    N.max_sat.empty() ? std::string("-") : N.max_sat,
+                    N.max_signal.empty() ? std::string("-") : N.max_signal,
+                    N.max_tow);
+            }
             const auto& R = prires.runLadder(static_cast<int>(f), lab);
             if (R.max_abs_t > q.prires_max_t) {
                 q.prires_max_t = R.max_abs_t;
@@ -333,10 +372,41 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
         for (int li = 0; li < kPriorResidualLabels; ++li) {
             const auto lab = static_cast<PriorResidualLabel>(li);
             const auto& R = prires.runLadder(fi, lab);
+            // The RNEG class (post_var > fold_var) is reported for EVERY label,
+            // including one whose ordinary ladder is empty — a (family, label)
+            // whose rows were ALL r_negative did occur, and saying "never
+            // occurred" there would hide exactly the population this
+            // re-partition exists to surface.  Read on |ê| (metres): the class's
+            // |t| is an artifact of a dispersion that does not describe one fold
+            // (the σ̂₀_global rider drops these rows for the same reason,
+            // RNEG_DROP).
+            const auto& N = prires.rnegRunLadder(fi, lab);
+            if (N.n_rows > 0)
+                log->info("Network (prior-residual census) '{}'/{} RNEG: n = {} row(s) with "
+                          "post_var > fold_var (r < 0 — the coupling-carry case: the harvested "
+                          "posterior is a CONDITIONAL variance that can legitimately exceed the "
+                          "prior).  Worst |ê| = {:.6e} m at station {} sat '{}' sig '{}' mech "
+                          "'{}' @TOW {:.1f} (fold_var = {:.6e}, post_var = {:.6e}, gap = "
+                          "{:.1f} s; its |t| would have read {:.4e}, which is why these rows "
+                          "are NOT in the ladder, in sum_log_t2, or in the worst-|t| line).",
+                          fams[f], priorResidualLabelName(lab), N.n_rows, N.max_abs_e,
+                          N.max_station < 0
+                              ? std::string("(shared)")
+                              : (stationName(stations, N.max_station).empty()
+                                     ? fmt::format("#{}", N.max_station)
+                                     : stationName(stations, N.max_station)),
+                          N.max_sat.empty() ? "-" : N.max_sat,
+                          N.max_signal.empty() ? "-" : N.max_signal,
+                          (N.max_mech && *N.max_mech) ? N.max_mech : "-", N.max_tow,
+                          N.max_fold_var, N.max_post_var, N.max_gap_s, N.max_abs_t);
             if (R.n_rows == 0) {
-                log->info("Network (prior-residual census) '{}'/{}: 0 rows — this label never "
+                log->info("Network (prior-residual census) '{}'/{}: 0 rows{} — this label never "
                           "occurred on this family (ran, saw nothing).",
-                          fams[f], priorResidualLabelName(lab));
+                          fams[f], priorResidualLabelName(lab),
+                          N.n_rows > 0
+                              ? fmt::format(" outside the RNEG class ({} r-negative row(s) "
+                                            "above)", N.n_rows)
+                              : std::string());
                 continue;
             }
             std::string ladder_txt;
@@ -346,10 +416,12 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                                           R.bins[static_cast<std::size_t>(k)],
                                           100.0 * R.frac(k));
             log->info("Network (prior-residual census) '{}'/{}: n = {} ({} folded, {} raw-formal, "
-                      "{} r-floored of which {} had post_var > fold_var, {} withheld from "
-                      "σ̂₀), geo(t²) = {:.4f}.  LADDER  {}",
+                      "{} r-floored, {} withheld from σ̂₀; {} further row(s) were r-NEGATIVE and "
+                      "sit in the RNEG class below, NOT in these bins), geo(t²) = {:.4f}.  "
+                      "LADDER  {}",
                       fams[f], priorResidualLabelName(lab), R.n_rows, R.n_folded,
-                      R.n_raw_formal, R.n_r_clamped, R.n_r_negative, R.n_no_sigma0,
+                      R.n_raw_formal, R.n_r_clamped, R.n_no_sigma0,
+                      prires.rnegRunLadder(fi, lab).n_rows,
                       R.geoT2(), ladder_txt);
             if (R.max_abs_t > 0.0)
                 log->info("Network (prior-residual census) '{}'/{}: worst |t| = {:.4e} at "
@@ -494,8 +566,23 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
         }
     }
     if (q.prires_max_t > 0.0)
-        log->info("Network (prior-residual census): worst |t| of the run = {:.4e} at {}.",
+        log->info("Network (prior-residual census): worst |t| of the run = {:.4e} at {} "
+                  "(RNEG rows EXCLUDED — see the next line).",
                   q.prires_max_t, q.prires_max_id);
+    // The RNEG headline, deliberately in METRES and deliberately beside the |t|
+    // line: before the re-partition this population WAS the |t| headline (927 of
+    // the 957 rows above 1e4 on runs/fldf3_pl2, top row 2.5e8), and a reader who
+    // remembers that number needs to see where it went.
+    if (q.prires_rneg_rows > 0)
+        log->info("Network (prior-residual census) RNEG: {} row(s) of the run had post_var > "
+                  "fold_var (r < 0) and are excluded from every ladder bin, from sum_log_t2 "
+                  "and from the worst-|t| line above — their dispersion comes from a (prior, "
+                  "posterior) pair that does not describe ONE fold, so r hits the redundancy "
+                  "floor and |t| inflates by √((p+v)/(εp)).  Worst |ê| = {:.6e} m at {}.  "
+                  "(The constraint-aware σ̂₀_global rider drops the same rows — flag "
+                  "RNEG_DROP.)",
+                  q.prires_rneg_rows, q.prires_rneg_max_e,
+                  q.prires_rneg_max_id.empty() ? std::string("-") : q.prires_rneg_max_id);
 
     // --- the constraint-aware global variance component -----------------------
     // docs/SPEC_prior_residual_census.md §14.2/§14.6.  Invariant #4 first: the

@@ -2511,8 +2511,51 @@ int networkTeardown(
                       offenders.size(), top);
         }
     }
-    if (nc.slip_qc.gap_instrument) {
+    if (nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry) {
         const auto& qcc = slip_qc.counters;
+        // ---- the RESPONSE clause (network.cycle_slip.gap_reentry_relevel) ----
+        // Appended to the Card-G line rather than logged apart, because the G3
+        // rule is read off the SHIFTED→bridged number in the same sentence: with
+        // the response armed that number is the residual, and the reader needs
+        // to see immediately whether it is small because nothing re-entered or
+        // small because the response acted.  Invariant #4: an armed response
+        // whose freed counts are 0 on a run with resumptions is MISWIRED, not
+        // quiet, and the clause says so in-band.
+        const std::string response_clause =
+            !nc.slip_qc.gap_reentry
+                ? std::string("  RESPONSE: gap_reentry_relevel OFF (arcs re-enter with "
+                              "whatever carry state they had; the SHIFTED→bridged count "
+                              "above is the unmitigated poison population).")
+                : fmt::format(
+                      "  RESPONSE: gap_reentry_relevel ON — {} re-entry(ies) judged SLIPPED "
+                      "(gates: shifted | LLI-on-return {} | unmeasurable {}), {} skipped at a "
+                      "gauge-pinned station; {} arc(s) reached with a PROTECTABLE carry "
+                      "(a leveling entry still inside phase_leveling_max_gap_s, or the "
+                      "carry_invariant vehicle) — {} had NO carry to protect, so the inject "
+                      "would not have bridged them either, and {} of the {} reached had no "
+                      "ambiguity STATE yet (expected: the column is pruned with the gap and "
+                      "PASS B's pre-pass re-creates it after this drain, so the response "
+                      "frees on the synthesised key) = {} shifted + {} lli + {} unmeasurable "
+                      "arc(s) FREED, {} cold-skipped (carry not warm — nothing stale to "
+                      "refloat), {} NOT ACTED because cycle_slip.relevel_free_epoch is off "
+                      "(the pending-reseed mark alone is consumed by the PASS-B pre-pass and "
+                      "never delivers the free epoch), {} answered by the C3c funnel ALONE "
+                      "(carry_invariant: the leveling carry is structurally empty there, so "
+                      "nothing is missing); {} ambiguity(ies) fed that funnel.{}",
+                      qcc.gap_reentry_verdicts,
+                      nc.slip_qc.gap_reentry_lli ? "ON" : "OFF",
+                      nc.slip_qc.gap_reentry_unmeasurable ? "ON" : "OFF",
+                      qcc.gap_reentry_pivot_skipped, qcc.gap_reentry_arcs,
+                      qcc.gap_reentry_no_carry,
+                      qcc.gap_reentry_state_absent, qcc.gap_reentry_arcs,
+                      qcc.gap_reentry_freed_shifted, qcc.gap_reentry_freed_lli,
+                      qcc.gap_reentry_freed_unmeas, qcc.gap_reentry_cold_skipped,
+                      qcc.gap_reentry_no_relevel, qcc.gap_reentry_dd_only,
+                      qcc.gap_reentry_dd_marked,
+                      (qcc.gap_resumptions > 0 && qcc.gap_reentry_arcs == 0)
+                          ? "  ⚠ ARMED AND INERT: resumptions exist and ZERO arcs were "
+                            "reached — this is dead wiring, not a quiet run."
+                          : "");
         // H2 (spec-followups N3): the two counting levels are LABELLED at every
         // number.  RESUMPTIONS are per (station, satellite) re-entry; ARCS are per
         // (station, satellite, signal) — a dual-band satellite returning once is
@@ -2536,7 +2579,7 @@ int networkTeardown(
                   "rule: shifted-AND-bridged ≈ 0 on a warm graded run ⇒ the mechanism is "
                   "DEFERRED WITH DATA — record this number, and read it together with the "
                   "unmeasurable-bridged count; nonzero ⇒ spec the follow-up card that marks "
-                  "such arcs slipped at re-entry.]",
+                  "such arcs slipped at re-entry.]{}",
                   qcc.gap_resumptions, qcc.gap_shifted,
                   qcc.gap_resumptions - qcc.gap_shifted - qcc.gap_unmeasurable,
                   qcc.gap_unmeasurable,
@@ -2547,7 +2590,8 @@ int networkTeardown(
                   qcc.gap_unmeas_bridged, qcc.gap_unmeas_fresh,
                   qcc.gap_unmeas_bridged + qcc.gap_unmeas_fresh,
                   qcc.d5_retaps, qcc.d5_retaps_stepped,
-                  qcc.d5_retap_ambs, qcc.d5_retap_ambs_stepped);
+                  qcc.d5_retap_ambs, qcc.d5_retap_ambs_stepped,
+                  response_clause);
     }
     if (nc.slip_qc.ref_gate) {
         IfPhaseSlipDetector::RefGateCounters rg;

@@ -309,7 +309,12 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
         else                ++cnt.lli_demoted_epochs;
 
         // ---- (5) Card G: arcs resuming after a tracking break -------------
-        if (p.gap_instrument) {
+        // Armed by the INSTRUMENT (gap_instrument) or by the RESPONSE
+        // (gap_reentry, docs/SPEC_slip_qc_hardening §G3/W1) — they consume the
+        // same records, and gating the response on the diagnostic would make
+        // turning the diagnostic off silently disarm the fix.  With both off the
+        // block is unreached and every Card-G behaviour is byte-identical.
+        if (p.gap_instrument || p.gap_reentry) {
             for (const auto& r : rows) {
                 const auto pit = h.prev.find(r.satellite);
                 if (pit == h.prev.end()) continue;                       // first sighting
@@ -321,6 +326,11 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
                 g.sig2       = r.sig2;
                 g.gap_epochs = epoch_idx - pit->second.epoch_idx - 1;
                 g.measurable = pit->second.obs.dual && r.dual;
+                // The RETURN epoch's receiver verdict, carried alongside the
+                // level evidence: it is the only evidence an unmeasurable
+                // resumption has, and the response's second gate.
+                g.lli1       = r.lli1;
+                g.lli2       = r.lli2;
                 if (g.measurable) {
                     g.d_mw = r.mw_m - pit->second.obs.mw_m;
                     g.d_gf = r.gf_m - pit->second.obs.gf_m;

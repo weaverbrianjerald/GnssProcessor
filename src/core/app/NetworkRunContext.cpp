@@ -3258,6 +3258,24 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             const double fold_var =
                                 fold_var_hand * ctx.carry.vce_apply.factor(
                                                     NetworkCarryVceApply::kPl, pa.sat);
+                            // ⚠ THE CENSUS NUMERATOR IS A SEPARATE, OPEN CARD.
+                            // `innov` is the raw carried-minus-solved difference.
+                            // Under the Card-1 conditional coupling the carried
+                            // prior's RHS is not `value_abs` alone — the coupling
+                            // rows contribute Σ M_rj·ŝ_prev,j to it
+                            // (NetworkCoupling.cpp:238, the `rhs += cs.coeff *
+                            // cs.s_prev` accumulation) — so on a coupled posture
+                            // this ê and the ê the fold actually saw differ by the
+                            // regressor term.  The DENOMINATOR side of that same
+                            // mismatch is what produces the r_negative population
+                            // (post_var > fold_var: the harvested posterior is a
+                            // CONDITIONAL variance), which the census now
+                            // re-partitions into its own RNEG class rather than
+                            // letting it head the ladder.  Aligning the numerator
+                            // is deliberately NOT part of that change: it would
+                            // move every coupled family's ê and therefore its
+                            // σ̂₀, i.e. it is solve-adjacent measurement work with
+                            // its own A/B, not a readout re-partition.
                             const double innov = oc->second.value_abs - value_abs;
                             if (carry_vce && !reseed_pending && !reref
                                 && !relevel_freed && !relevel_bridged

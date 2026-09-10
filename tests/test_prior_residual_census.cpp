@@ -67,7 +67,9 @@
 
 #include "filter/NetworkPriorResidual.hpp"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <random>
 #include <string>
 #include <vector>
@@ -403,8 +405,15 @@ TEST(PriorResidualCensusTest, PostVarAboveFoldVarClampsInsteadOfGoingNegative) {
     EXPECT_TRUE(std::isfinite(st.s));
     EXPECT_NEAR(st.r, 1e-9, 1e-21);                     // the NUMERICAL [eps,1] floor
     EXPECT_NEAR(st.disp, 1e-9 * fold_var, 1e-24);
-    EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_r_clamped, 1);
-    EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_r_negative, 1);
+    // ⚠ SINCE THE RNEG RE-PARTITION (test 14) the row is counted in the RNEG
+    // class, not in the label ladder: its |t| is not a standardized residual,
+    // so it is out of every bin, out of sum_log_t2 and out of the worst-|t|
+    // line.  The clamp itself is unchanged — that is what this test pins.
+    EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_r_clamped, 0);
+    EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_r_negative, 0);
+    EXPECT_EQ(c.rnegEpochLadder(0, PriorResidualLabel::Clean).n_rows, 1);
+    EXPECT_EQ(c.rnegEpochLadder(0, PriorResidualLabel::Clean).n_r_clamped, 1);
+    EXPECT_EQ(c.rnegEpochLadder(0, PriorResidualLabel::Clean).n_r_negative, 1);
     // A genuinely STIFF prior (r = 1e-6, three decades under the VCE's old 1e-3
     // floor) must pass through UNCLAMPED — that is the whole point of the tighter
     // floor, and clamping it would hide a stale stiff carry.
@@ -729,10 +738,25 @@ TEST(PriorResidualCensusTest, UnfoldedAndUnusableRowsMoveNeitherGlobalSum) {
     // The LADDERS, by contrast, saw all four rows: the census tests every row and
     // the rider pools only the ones the identity admits.  That asymmetry is the
     // design, and it is the reason the two live in one class but two readouts.
-    long long ladder_rows = 0;
-    for (int li = 0; li < kPriorResidualLabels; ++li)
-        ladder_rows += c.epochLadder(0, static_cast<PriorResidualLabel>(li)).n_rows;
-    EXPECT_EQ(ladder_rows, 4);
+    //
+    // ⚠ SINCE THE RNEG RE-PARTITION (test 14) the two readouts agree on ONE more
+    // thing: row (c) — post_var > fold_var — is in the RNEG class on the ladder
+    // side too, exactly as the rider has always dropped it (kGlobalRnegDrop).
+    // Rows (a) unfolded and (b) var_nominal are still ordinary LABEL rows: the
+    // rider skips them because they are not stochastic constraints in THIS
+    // epoch's solve, which says nothing about whether their |t| is a valid
+    // statistic.  The total is what must stay at four.
+    long long label_rows = 0, rneg_rows = 0;
+    for (int li = 0; li < kPriorResidualLabels; ++li) {
+        const auto lab = static_cast<PriorResidualLabel>(li);
+        label_rows += c.epochLadder(0, lab).n_rows;
+        rneg_rows  += c.rnegEpochLadder(0, lab).n_rows;
+    }
+    EXPECT_EQ(label_rows, 3);
+    EXPECT_EQ(rneg_rows, 1);
+    EXPECT_EQ(label_rows + rneg_rows, 4);
+    EXPECT_EQ(c.epochRows(), 4) << "the epoch row count is the TOTAL, so it still closes";
+    EXPECT_EQ(c.epochRowsRneg(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -1034,4 +1058,141 @@ TEST(PriorResidualCensusTest, MaxCorroborationFractionMakesTheNullFalsifiable) {
     EXPECT_NEAR(L.max_corrob_frac, 0.9, 1e-12);
     EXPECT_EQ(L.n_corrob_stepped, 1) << "and exactly that one row clears the majority";
     EXPECT_DOUBLE_EQ(L.meanCorrobDomain(), 10.0);
+}
+
+// ---------------------------------------------------------------------------
+// 14. THE RNEG RE-PARTITION — a row whose posterior EXCEEDS its prior is not a
+//     standardized residual, and must not head the ladder.
+// ---------------------------------------------------------------------------
+// post_var > fold_var makes r < 0 before the numerical floor: the documented
+// coupling-carry case, where the harvested posterior is a CONDITIONAL variance
+// that can legitimately exceed the prior.  Its D{ê} is then not the dispersion
+// of ONE fold, so `r` slams into kRedundancyFloor and |t| inflates by
+// sqrt((p+v)/(eps*p)) — the same x3000 artifact the file banner names for the
+// wrong-branch case, arriving through a different door.  Measured on
+// runs/fldf3_pl2, 927 of the 957 rows above |t| = 1e4 were exactly this, and the
+// run-end "worst |t| of the run" headline read 2.5e8 off one of them.
+//
+// The sigma0_global rider has always dropped them (kGlobalRnegDrop).  This is
+// the ladder side of the same decision: they get their own class, keyed by the
+// same label, and touch NOTHING in the CLEAN/RESPONDED/FRAME bins.
+TEST(PriorResidualCensusTest, RNegativeRowsAreClassedApartAndMoveNoLadderStatistic) {
+    NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);   // raw-formal: t == s
+    c.beginEpoch(0.0, 0.0);
+
+    // A modest, perfectly ordinary population first.
+    const int kClean = 20;
+    for (int i = 0; i < kClean; ++i) c.addRow(row(0.05 * (i + 1), 2.0, 1.0));
+    const auto snapshot = c.epochLadder(0, PriorResidualLabel::Clean);
+    ASSERT_EQ(snapshot.n_rows, kClean);
+    ASSERT_GT(snapshot.max_abs_t, 0.0);
+    const double t_before   = snapshot.max_abs_t;
+    const double geo_before = snapshot.geoT2();
+    std::array<long long, NetworkPriorResidual::kLadderBins> bins_before{};
+    for (int k = 0; k < NetworkPriorResidual::kLadderBins; ++k)
+        bins_before[static_cast<std::size_t>(k)] = snapshot.bins[static_cast<std::size_t>(k)];
+
+    // Now the poison row: a stiff 1e-5 m^2 prior whose posterior came back at
+    // 1.0 m^2 (post_var > fold_var), carrying a 3 m residual.  Under the old
+    // pooling this row alone owned every ladder bin and the worst-|t| line.
+    const auto st = c.addRow(row(3.0, 1e-5, 1.0));
+    ASSERT_TRUE(st.accepted);
+    ASSERT_TRUE(st.r_negative) << "the fixture must actually build an r<0 row";
+    ASSERT_TRUE(st.r_clamped)  << "r<0 is below the floor by construction";
+    EXPECT_GT(std::abs(st.t), 1e3) << "and its |t| really is the artifact scale";
+
+    // --- the LABEL ladder is untouched, in every statistic --------------------
+    const auto& L = c.epochLadder(0, PriorResidualLabel::Clean);
+    EXPECT_EQ(L.n_rows, kClean)          << "the rneg row must not be counted here";
+    EXPECT_DOUBLE_EQ(L.max_abs_t, t_before);
+    EXPECT_DOUBLE_EQ(L.geoT2(), geo_before) << "sum_log_t2 must not have moved";
+    for (int k = 0; k < NetworkPriorResidual::kLadderBins; ++k)
+        EXPECT_EQ(L.bins[static_cast<std::size_t>(k)],
+                  bins_before[static_cast<std::size_t>(k)]) << "bin " << k;
+    // The legacy column is retained for reader compatibility and now reads 0:
+    // the population lives in the rneg class, not "of those" rows.
+    EXPECT_EQ(L.n_r_negative, 0);
+
+    // --- the RNEG class carries it, keyed on |e| in METRES --------------------
+    const auto& N = c.rnegEpochLadder(0, PriorResidualLabel::Clean);
+    EXPECT_EQ(N.n_rows, 1);
+    EXPECT_TRUE(N.keepsMaxByE) << "the class orders its identity by |e|, not |t|";
+    EXPECT_DOUBLE_EQ(N.max_abs_e, 3.0);
+    EXPECT_DOUBLE_EQ(N.max_e, 3.0);
+    EXPECT_DOUBLE_EQ(N.max_fold_var, 1e-5);
+    EXPECT_DOUBLE_EQ(N.max_post_var, 1.0);
+    EXPECT_DOUBLE_EQ(N.max_gap_s, 30.0);
+    EXPECT_EQ(N.max_sat, "G01");
+    EXPECT_EQ(N.max_station, 0);
+    // Its |t| is still recorded (the trace column exists so a reader can see the
+    // number that used to be the headline) — it is simply not the ordering key.
+    EXPECT_NEAR(N.max_abs_t, std::abs(st.t), 1e-6);
+
+    // --- the epoch-status scalars --------------------------------------------
+    // ep_rows_ stays the TOTAL so the row count still closes; the |t| scalar
+    // that feeds prires_max_t and the run-end line excludes the class.
+    EXPECT_EQ(c.epochRows(), kClean + 1);
+    EXPECT_EQ(c.epochRowsRneg(), 1);
+    EXPECT_DOUBLE_EQ(c.epochMaxAbsT(), t_before);
+    EXPECT_DOUBLE_EQ(c.epochRnegMaxAbsE(), 3.0);
+    // A family whose rows were ALL rneg still RAN — runRows must see them, or
+    // the run-end readout would send a reader to check the carry's arming knob.
+    EXPECT_EQ(c.runRows(0), kClean + 1);
+    EXPECT_EQ(c.rnegRunRows(0), 1);
+}
+
+// The class is ordered by |e|, not |t|, and that ordering is the whole reason it
+// is readable: within the class a LOUD residual on a stiff prior and a quiet one
+// on a loose prior can have their |t| ranking inverted by the floor.  A second
+// rneg row with a larger |e| but a smaller |t| must take the identity.
+TEST(PriorResidualCensusTest, RNegClassIdentityFollowsTheLargestResidualNotTheLargestT) {
+    NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);
+    c.beginEpoch(0.0, 0.0);
+
+    // Row A: small |e|, very stiff prior ⇒ enormous |t|.
+    auto a = row(0.5, 1e-8, 1.0);
+    a.sat = "GAA";
+    const auto sa = c.addRow(a);
+    ASSERT_TRUE(sa.r_negative);
+
+    // Row B: much larger |e|, looser prior ⇒ SMALLER |t| than A.
+    auto b = row(9.0, 1e-2, 1.0);
+    b.sat = "GBB";
+    const auto sb = c.addRow(b);
+    ASSERT_TRUE(sb.r_negative);
+    ASSERT_LT(std::abs(sb.t), std::abs(sa.t)) << "the fixture must invert the two orders";
+
+    const auto& N = c.rnegEpochLadder(0, PriorResidualLabel::Clean);
+    EXPECT_EQ(N.n_rows, 2);
+    EXPECT_DOUBLE_EQ(N.max_abs_e, 9.0);
+    EXPECT_EQ(N.max_sat, "GBB") << "the identity follows |e|, so B wins";
+    EXPECT_NEAR(N.max_abs_t, std::abs(sb.t), 1e-6) << "and its |t| is B's, not A's";
+
+    // The epoch scalar is the same extremum.
+    EXPECT_DOUBLE_EQ(c.epochRnegMaxAbsE(), 9.0);
+    // Nothing reached the label ladder at all.
+    EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_rows, 0);
+    EXPECT_DOUBLE_EQ(c.epochMaxAbsT(), 0.0);
+}
+
+// NEGATIVE CONTROL for the re-partition: an UNFOLDED row takes the `+` branch
+// (D = fold_var + post_var), where post_var > fold_var is perfectly ordinary and
+// r is never even formed.  Such a row must stay in its label ladder — diverting
+// it would silently empty the RESPONDED population, which is the positive
+// control the whole card is graded on (spec §9.3).
+TEST(PriorResidualCensusTest, UnfoldedRowsWithLargePosteriorsStayInTheirLabelLadder) {
+    NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);
+    c.beginEpoch(0.0, 0.0);
+    // Same variances as the poison row above, but UNFOLDED (a refloated prior
+    // that did not enter this epoch's solve).
+    const auto st = c.addRow(row(3.0, 1e-5, 1.0, /*folded=*/false,
+                                 PriorResidualLabel::Responded));
+    ASSERT_TRUE(st.accepted);
+    EXPECT_FALSE(st.r_negative) << "r is not formed on the unfolded branch";
+    EXPECT_NEAR(st.disp, 1e-5 + 1.0, 1e-15);
+
+    EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Responded).n_rows, 1);
+    EXPECT_EQ(c.rnegEpochLadder(0, PriorResidualLabel::Responded).n_rows, 0);
+    EXPECT_EQ(c.epochRowsRneg(), 0);
+    EXPECT_GT(c.epochMaxAbsT(), 0.0);
 }

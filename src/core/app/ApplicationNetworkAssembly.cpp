@@ -1560,6 +1560,38 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                   carry_slipped_ambs, qc.counters, se, traces,
                                   log, relevel_ptr, &ctx.carry.relevel_pend);
 
+    // ---- Card G RESPONSE: the gap RE-ENTRY refloat --------------------------
+    // (docs/SPEC_slip_qc_hardening.md §G3/W1.)  An arc that re-appears inside
+    // network.phase_leveling_max_gap_s has NO detector covering its return epoch
+    // — MW needs an adjacent predecessor and IF-TD three consecutive epochs — so
+    // its pre-gap zero-q leveling level is re-injected across a break the raw
+    // MW/GF evidence (or the receiver's own LLI) says it did not survive.  This
+    // drain is the wired invariant-#1 response to that: it marks BOTH bands of a
+    // SLIPPED re-entry exactly as a detected slip.
+    //
+    // Sited HERE for two reasons: it must run in the SAME epoch as the re-entry
+    // (the PASS-B leveling inject a few hundred lines below is what would fold
+    // the stale level, and it reads `relevel.free_ambs`), and it must precede
+    // the lane observatory's PASS-A half so a gap-freed pair enters this epoch's
+    // freed set and is measured under cause=GAP like every other response.
+    //
+    // ⚠ It is handed `local_carry` + (pl_now_s, pl_max_gap_s) and NOT just the
+    // StateManager, because at THIS point in the epoch a re-entering arc has no
+    // ambiguity column at all — PASS B's ensureRequiredStates re-creates it
+    // below.  The carry entry is what survives the gap and what the inject would
+    // bridge, so the carry is the drain's target and its oracle; the ambiguity
+    // key is synthesised in the inject site's own format.  (The first cut walked
+    // the live ambiguity map and was inert on every re-entry: 396 verdicts, 0
+    // freed, byte-identical 12 h field A/B.)
+    // No-op unless network.cycle_slip.gap_reentry_relevel.
+    networkSlipDrainGapReentry(stations, present, i_lo, n_sta_total,
+                               carry_invariant, carry_warm, carry_slipped_ambs,
+                               qc.epoch, qc.params,
+                               local_carry, pl_now_s, ctx.knobs.pl_max_gap_s,
+                               qc.counters, se, traces, log,
+                               relevel_ptr,
+                               relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
+
     // ---- Rung 3 v3: the carry-domain lane observatory, PASS-A half ----------
     // (SPEC_lane_slip_response §7.3.)  Sited AFTER both slip drains so this
     // epoch's freed set is complete.  It carries ONLY the raw-MW observable

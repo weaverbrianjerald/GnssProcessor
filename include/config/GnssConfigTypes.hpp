@@ -434,6 +434,50 @@ namespace GnssProcessor {
 
         // --- Card G: gap-coincident slip instrumentation -------------------
         bool   gap_instrument{ false };      ///< Master arm (network.cycle_slip.gap_instrument).  Counters + trace rows only.
+
+        // --- Card G RESPONSE: mark a slipped re-entry at the re-entry -------
+        /**
+         * @brief Master arm (@c network.cycle_slip.gap_reentry_relevel) for the
+         *        gap-RE-ENTRY slip response — docs/SPEC_slip_qc_hardening.md
+         *        §G3/W1, the follow-up card Card G's own decision rule named.
+         *
+         * SOLVE-AFFECTING (unlike the rest of this struct): it marks ambiguities
+         * slipped, which frees the zero-q phase-leveling level for one epoch.
+         * Default OFF ⇒ byte-identical.
+         *
+         * An arc that re-appears inside @c network.phase_leveling_max_gap_s has
+         * NO detector covering its return epoch (MW needs an immediately adjacent
+         * predecessor; IF-TD needs three consecutive epochs; the GF integer path
+         * is doctrine-barred at 30 s), so its pre-gap leveling carry is re-folded
+         * at converged weight across a break the raw MW/GF level — or the
+         * receiver's own LLI — says it did not survive.  Measured on
+         * `runs/fldf3_pl2` (12 h, 63 field stations): 364 of 453 resumptions came
+         * back SHIFTED and 88 arcs of those re-entered BRIDGED, one of them
+         * (BSHM00ISR/G22 @ TOW 271200) folding a ~1e-5 m² prior against a ~1451
+         * wide-lane-cycle jump and driving that station's ZWD to −2446 m.
+         * Standing invariant #1.
+         *
+         * Arms the arc-resumption collection on its own (it does NOT require
+         * @ref gap_instrument), and interlocks with
+         * @c cycle_slip.relevel_free_epoch on the leveling vehicle: without that
+         * latch the pending-reseed mark is consumed by the PASS-B pre-pass before
+         * the inject reads it, so the loader WARNS and the drain counts the
+         * would-have-freed arcs rather than silently no-op'ing.
+         */
+        bool   gap_reentry{ false };
+        /// Sub-gate (@c network.cycle_slip.gap_reentry_relevel_lli, default ON):
+        /// a RINEX LLI assertion on either band of the primary pair AT THE RETURN
+        /// EPOCH counts as slipped even when the raw level did not clear the
+        /// empirical gate.  It is the receiver's own loss-of-lock verdict, the
+        /// only evidence an unmeasurable re-entry can carry, and exactly what the
+        /// field's measured poison case asserts (both bands).
+        bool   gap_reentry_lli{ true };
+        /// Sub-gate (@c network.cycle_slip.gap_reentry_relevel_unmeasurable,
+        /// default OFF): treat a re-entry with NO pre-gap dual-band level and no
+        /// LLI as slipped.  Off by default because absence of evidence is not
+        /// evidence of a slip; on, it is the conservative-reset posture (the
+        /// unmeasurable-bridged population measured 24 arcs against 88 shifted).
+        bool   gap_reentry_unmeasurable{ false };
     };
 
     /**

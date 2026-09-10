@@ -133,6 +133,23 @@ namespace GnssProcessor {
     /// against the rule's strict-majority bar of 0.5.  A run whose maximum never
     /// approaches 0.5 has a consensus count that is UNINFORMATIVE — the bar was
     /// out of range of the data, not merely unmet.
+    /// ⚠ RNEG RE-PARTITION.  Rows whose POSTERIOR EXCEEDS THEIR PRIOR
+    /// (`post_var > fold_var`, i.e. r < 0 before the numerical floor — the
+    /// documented coupling-carry case, where the harvested posterior is a
+    /// CONDITIONAL variance) are NO LONGER in any column above.  Their |t| is
+    /// not a standardized residual: `r` slams into the redundancy floor and |t|
+    /// inflates by √((p+v)/(εp)), so pooling them put an artifact at the top of
+    /// every ladder (measured on `runs/fldf3_pl2`: 927 of the 957 rows above
+    /// |t| = 1e4, and a run-end headline of 2.5e8).  The σ̂₀_global rider has
+    /// always dropped them (RNEG_DROP); the ladder now does too.
+    ///
+    /// They are reported in the `rneg_*` columns APPENDED AT THE END of the row,
+    /// so every existing reader keeps parsing by position.  `n_r_negative` above
+    /// is therefore 0 by construction on a CLEAN/RESPONDED/FRAME row and is kept
+    /// only for that compatibility.  Read the rneg class on `rneg_max_abs_e_m`
+    /// (metres — the only quantity there that means anything); its identity
+    /// columns follow the |ê| winner, NOT the |t| winner.  A row exists for a
+    /// (family, label) whose ONLY rows this epoch were rneg.
     inline constexpr const char* kPriorResidualHeader =
         "week,tow,family,label,n_rows,n_folded,n_raw_formal,n_r_clamped,n_r_negative,"
         "n_no_sigma0,"
@@ -142,7 +159,10 @@ namespace GnssProcessor {
         "max_abs_t,max_station,max_sat,max_signal,max_mech,max_e_m,max_disp_m2,"
         "max_fold_var_m2,max_post_var_m2,max_gap_s,"
         "c_hi_noev,c_hi_flat,c_hi_step,c_lo_noev,c_lo_flat,c_lo_step,"
-        "corrob_domain,corrob_or_step,corrob_step,corrob_max_frac\n";
+        "corrob_domain,corrob_or_step,corrob_step,corrob_max_frac,"
+        "rneg_n_rows,rneg_n_raw_formal,rneg_n_no_sigma0,rneg_max_abs_e_m,"
+        "rneg_station,rneg_sat,rneg_signal,rneg_mech,rneg_max_abs_t,"
+        "rneg_fold_var_m2,rneg_post_var_m2,rneg_gap_s\n";
     /// network_block_baarda.csv header (docs/SPEC_redundancy_census.md BB-INC-1..3).
     /// One row per (constellation family x label) per epoch that swept a block.
     ///

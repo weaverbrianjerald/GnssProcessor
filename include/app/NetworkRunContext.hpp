@@ -2704,8 +2704,18 @@ namespace GnssProcessor {
         long long prires_reported = 0;          ///< of those, rows above the TRACE threshold (nothing acted on them).
         long long prires_events = 0;            ///< PRIORRES events actually emitted (post per-cell holdoff).
         long long prires_hits_dropped = 0;      ///< above-threshold rows whose INDIVIDUAL identity was dropped to the per-epoch buffer cap.  Never affects a ladder — but a nonzero value means the event stream is a SAMPLE, and a truncated stream must not read as a quiet run.
-        double    prires_max_t = 0.0;           ///< the worst |t| over the whole run, any family, any label.
+        double    prires_max_t = 0.0;           ///< the worst |t| over the whole run, any family, any label — EXCLUDING the RNEG class (see below).
         std::string prires_max_id;              ///< its (family/label/station/sat/signal @tow) identity.
+        // --- the RNEG class (post_var > fold_var), re-partitioned out of the
+        // ladders.  Its |t| is not a standardized residual — the dispersion is
+        // formed from a (prior, posterior) pair that does not describe one fold,
+        // so r hits the redundancy floor and |t| inflates by √((p+v)/(εp)).
+        // Measured on runs/fldf3_pl2: 927 of the 957 rows above |t| = 1e4 were
+        // r_negative and the run-end headline read 2.5e8 off one of them.  The
+        // readable extremum for this class is |ê| in METRES.
+        long long prires_rneg_rows = 0;         ///< RNEG rows over the run (a subset of prires_rows).
+        double    prires_rneg_max_e = 0.0;      ///< the worst |ê| (m) over the whole run's RNEG class.
+        std::string prires_rneg_max_id;         ///< its (family/label/station/sat/signal @tow) identity.
         double    prires_wall_ms = 0.0;         ///< run-total wall inside the emission seam (the §5 cost claim; the per-row addRow cost rides the carry harvests and is not separable).
 
         // --- CONSTRAINT-AWARE GLOBAL σ̂₀ -

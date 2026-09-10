@@ -170,6 +170,18 @@ struct GapResumption {
     bool        shifted{false};   ///< |ΔMW| or |ΔGF| across the break exceeded the empirical gate.
     double      d_mw{0.0};        ///< MW level change across the break (m).
     double      d_gf{0.0};        ///< GF level change across the break (m).
+    /// RINEX LLI byte for @ref sig1 ON THE RETURN EPOCH (bit 0 = loss of lock).
+    ///
+    /// The receiver's own verdict about the break, and the ONLY evidence a
+    /// resumption has when @ref measurable is false (no pre-gap dual-band level
+    /// to difference).  Carried here rather than re-derived at the response
+    /// site: the raw row it comes from is already the one this resumption was
+    /// built on, and re-looking it up in `modeled` would be a second definition
+    /// of "the LLI of this arc at re-entry".  Measured on the DOY-129 field
+    /// chain, the BSHM00ISR/G22 tow-271200 poison case carries LLI set on BOTH
+    /// bands while no MW/IF detector fires that epoch.
+    int         lli1{0};
+    int         lli2{0};          ///< …for @ref sig2 (0 when the return row is single-band).
 };
 
 /**
@@ -275,6 +287,31 @@ struct SlipQcParams {
     // --- Card G (network.cycle_slip.gap_instrument) ---
     bool   gap_instrument{false};   ///< Master arm for the arc-resumption instrument.
 
+    // --- Card G RESPONSE (network.cycle_slip.gap_reentry_relevel) ------------
+    /// Master arm for the gap-RE-ENTRY slip response (docs/SPEC_slip_qc_hardening
+    /// §G3/W1 — the follow-up card Card G's own decision rule named once
+    /// `gap_shifted_bridged` came back nonzero: 88 arcs on `runs/fldf3_pl2`).
+    ///
+    /// The instrument and the response consume the SAME @ref GapResumption
+    /// records, so this arms the resumption collection independently of
+    /// @ref gap_instrument — an operator who wants the fix must not have to arm
+    /// a diagnostic to get it, and the response must not silently become inert
+    /// if the diagnostic is turned off.  The drain itself lives in
+    /// `networkSlipDrainGapReentry` (slip/NetworkSlipQc.cpp).
+    bool   gap_reentry{false};
+    /// Sub-gate: a resumption whose RETURN epoch asserts RINEX LLI on either
+    /// band of the primary pair counts as SLIPPED even when the raw MW/GF level
+    /// did not clear the empirical gate.  DEFAULT ON — it is the receiver's own
+    /// loss-of-lock verdict, it is the only evidence an UNMEASURABLE resumption
+    /// can carry, and it is exactly what the field's poison case asserts.
+    bool   gap_reentry_lli{true};
+    /// Sub-gate: treat an UNMEASURABLE resumption (no pre-gap dual-band level,
+    /// so no level shift could be seen and no LLI was asserted) as slipped.
+    /// DEFAULT OFF — absence of evidence is not evidence of a slip, and the
+    /// unmeasurable-bridged population is the smaller one (24 arcs vs 88 on the
+    /// field chain).  Arming it is the conservative-reset posture.
+    bool   gap_reentry_unmeasurable{false};
+
     // --- Bridge v3 E4 (network.cycle_slip.relevel_bridge_gf) ---
     /// The GF-row capture consumes the qualified verdicts (d_gf + the empirical
     /// gf_step_scale), so it arms BOTH the compute and the qualify pass.
@@ -312,7 +349,7 @@ struct SlipQcParams {
     /// True when any consumer needs the raw observables computed this run.
     bool anyConsumer(bool trace_slip_raw) const {
         return trace_slip_raw || lli_corroborate || gap_instrument || bridge_gf
-            || iono_cs || retap_corr || lane_snap;
+            || iono_cs || retap_corr || lane_snap || gap_reentry;
     }
 };
 
@@ -383,6 +420,80 @@ struct SlipQcCounters {
     /// strong as this number is small.
     long long gap_unmeas_bridged{0};
     long long gap_unmeas_fresh{0};      ///< ARCS of an unmeasurable resumption that re-entered fresh (the safe case; closes the arc ledger).
+
+    // --- Card G RESPONSE: network.cycle_slip.gap_reentry_relevel -------------
+    //
+    // Invariant #7, both edges.  The DECOUPLING edge is the re-entry itself
+    // (already counted by the three RESUMPTION counters above); these count the
+    // RE-COUPLING edge — what the response actually did to the state the break
+    // was about to be bridged into.  Closure, in ARCS:
+    //
+    //   gap_reentry_arcs == gap_reentry_freed_shifted + gap_reentry_freed_lli
+    //                     + gap_reentry_freed_unmeas + gap_reentry_no_relevel
+    //                     + gap_reentry_dd_only + gap_reentry_cold_skipped
+    //
+    // ⚠ THE DENOMINATOR IS THE CARRY, NOT THE STATE (the wiring defect this
+    // partition was re-cut for, 2026-09-09).  The first cut counted arcs with a
+    // LIVE AMBIGUITY STATE, mirroring the MW/LLI drain.  For a RE-ENTRY that is
+    // structurally the wrong question: an arc that left the model set had its
+    // ambiguity pruned with the gap and PASS B's measurement pre-pass
+    // (MeasurementModel::ensureRequiredStates) re-creates it only AFTER the slip
+    // drains run — so on a 12 h field arm the drain saw 396 SLIPPED verdicts,
+    // 775 signals with "no live ambiguity", and freed ZERO (byte-identical to
+    // its control).  What actually survives the gap, and what the response
+    // exists to stop from being re-injected, is the leveling CARRY entry — so
+    // `gap_reentry_arcs` now counts arcs with something to PROTECT (a
+    // @c LocalCarry entry still inside @c phase_leveling_max_gap_s, or the
+    // carry_invariant DD vehicle) and @ref gap_reentry_no_carry counts the rest
+    // (the inject would not have bridged those anyway).
+    //
+    // @ref gap_reentry_state_absent and @ref gap_reentry_dd_marked are both
+    // ORTHOGONAL to the closure above — the first is a sub-count of
+    // `gap_reentry_arcs` (how many were freed via a synthesised key while the
+    // state was not yet re-created — the COMMON case by construction), the
+    // second a different vehicle that can fire on the same arc.
+    long long gap_reentry_verdicts{0};      ///< RESUMPTIONS the response judged SLIPPED (its population).
+    long long gap_reentry_pivot_skipped{0}; ///< RESUMPTIONS at a gauge-pinned station index < i_lo (never refloated locally).
+    long long gap_reentry_arcs{0};          ///< ARCS with a PROTECTABLE carry — a leveling entry inside the max-gap window, or the carry_invariant vehicle (the closure denominator).
+    /// ARCS with NO carry to protect: no @c LocalCarry entry for
+    /// (station, satellite, signal), or one whose gap already exceeds
+    /// @c phase_leveling_max_gap_s so the PASS-B inject would skip it anyway.
+    /// Deliberately OUTSIDE the closure: nothing was going to be bridged, so
+    /// there is no response to make and none to report as missing.
+    long long gap_reentry_no_carry{0};
+    /// ARCS reached whose ambiguity STATE did not exist at drain time — freed
+    /// via the synthesised @c StateKeys::makeAmbiguityKey the PASS-B inject
+    /// site will use once the pre-pass re-creates the column.  This is the
+    /// EXPECTED majority on a real re-entry (the state is pruned with the gap),
+    /// which is exactly why the first cut's live-state walk was inert.  A
+    /// pending-reseed mark is NOT set for these (a mark on an absent key would
+    /// linger and be consumed by a later epoch's pre-pass — a response acting on
+    /// history); the free-epoch latch is keyed on the string and needs no state.
+    long long gap_reentry_state_absent{0};
+    long long gap_reentry_freed_shifted{0}; ///< ARCS freed, primary cause = raw MW/GF level shift across the break.
+    long long gap_reentry_freed_lli{0};     ///< ARCS freed, primary cause = RINEX LLI on the return epoch (level unshifted or unmeasurable).
+    long long gap_reentry_freed_unmeas{0};  ///< ARCS freed, primary cause = UNMEASURABLE re-entry under the conservative sub-knob.
+    /// ARCS not freed because the leveling carry is COLD (no warm value to be
+    /// stale).  Diagnostic exactly as the MW/LLI and wind-up drains report it —
+    /// a cold detection cannot act, and reporting only actions made those arms
+    /// look dead (the Card-E L3 defect).
+    long long gap_reentry_cold_skipped{0};
+    /// ARCS that WOULD have been freed but @c cycle_slip.relevel_free_epoch is
+    /// off, so the pending-reseed mark is consumed by the PASS-B pre-pass before
+    /// the leveling inject reads it and the free epoch never lands
+    /// (SPEC_slip_relevel_walk §6's root defect).  Counted, never silently
+    /// no-op'd: this is the difference between "the response found nothing" and
+    /// "the response could not act".
+    long long gap_reentry_no_relevel{0};
+    /// ARCS whose ONLY vehicle is the Card-4 C3c funnel: under
+    /// @c network.carry_invariant the leveling local carry is superseded and
+    /// structurally empty (the loader disarms @c relevel_free_epoch there for
+    /// exactly that reason), so the funnel insert IS the whole response and
+    /// nothing is missing.  Deliberately separate from @ref
+    /// gap_reentry_no_relevel: one is by design, the other is a response that
+    /// could not land.
+    long long gap_reentry_dd_only{0};
+    long long gap_reentry_dd_marked{0};     ///< AMBIGUITIES inserted into the Card-4 C3c invariant-carry funnel (carry_invariant vehicle; orthogonal to the buckets above).
     /// D5 innovation FLAG ROWS seen at the attribution site, one per RESOLVED
     /// flag.  Two things make this NOT a chord count, both deliberate:
     ///   * under the WL-3 joint pair block the gate runs per band ROW (rows i and
@@ -480,7 +591,7 @@ struct SlipQcChannel {
     /// True when the raw observables must be computed this run.
     bool armed() const { return static_cast<bool>(utils); }
     /// True when a DECISION card (not merely the trace) is armed.
-    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.retap_corr || params.lane_snap; }
+    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.retap_corr || params.lane_snap || params.gap_reentry; }
 };
 
 /**

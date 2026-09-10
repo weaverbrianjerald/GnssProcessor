@@ -169,6 +169,10 @@ def main():
             if sta in zerr and t0 in zerr[sta]:
                 zwd_at.append((po - p, zerr[sta][t0]))
         d = np.array(deltas); pr = np.array(pres); po = np.array(posts)
+        if d.size == 0:   # e.g. raim_arc_persist_epochs starves T4 to zero events
+            res['jump_' + label] = {'n': 0}
+            print('D1 %-9s n=0 (empty population — nothing to summarise)' % label)
+            return
         stats = {
             'n': len(d),
             'delta_rms': round(float(np.sqrt(np.mean(d ** 2))), 4),

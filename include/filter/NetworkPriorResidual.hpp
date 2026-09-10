@@ -337,7 +337,18 @@ public:
         long long n_folded    = 0;   ///< of those, rows on the `r*fold_var` (folded) branch.
         long long n_raw_formal= 0;   ///< of those, rows reported RAW FORMAL (sigma0 below warm-up, or a non-reconstructible fold variance) — t == s, flagged.
         long long n_r_clamped = 0;   ///< folded rows whose partial redundancy hit the numerical [eps,1] floor — its |t| is TRUNCATED (read low), never inflated.
-        long long n_r_negative = 0;  ///< of those, rows with post_var > fold_var, i.e. r < 0: the documented coupling-carry case (NetworkCarryVce.hpp:245), where the harvested posterior is a CONDITIONAL variance that can legitimately exceed the prior.  Distinct from a merely stiff prior, and worth separating: one is a valid statistic with vanishing power, the other is a prior/posterior pair that does not describe one fold.
+        /// Rows with post_var > fold_var, i.e. r < 0 — the documented
+        /// coupling-carry case (NetworkCarryVce.hpp:245), where the harvested
+        /// posterior is a CONDITIONAL variance that can legitimately exceed the
+        /// prior.  A prior/posterior pair that does not describe ONE fold.
+        ///
+        /// ⚠ ALWAYS 0 on a CLEAN/RESPONDED/FRAME ladder since the rneg
+        /// RE-PARTITION: such rows no longer enter the label ladders at all
+        /// (see @ref rnegRunLadder).  The column is retained so existing
+        /// readers of network_prior_residual.csv keep parsing; the population
+        /// is in the `rneg_*` columns at the END of the row.  On an rneg
+        /// ladder it equals @ref n_rows by construction.
+        long long n_r_negative = 0;
         long long n_no_sigma0 = 0;   ///< rows deliberately withheld from the sigma0 calibration (null dispersion undefined — the ONE admissible censoring).
         std::array<long long, kLadderBins> bins{};  ///< CUMULATIVE exceedance: bins[k] = #rows with |t| > ladder()[k].
         double    sum_log_t2  = 0.0; ///< sum log(t^2) for the tail-robust geometric mean.
@@ -349,6 +360,15 @@ public:
         double      max_fold_var = 0.0;
         double      max_post_var = 0.0;
         double      max_gap_s = 0.0;
+        /// Largest |ê| (metres) seen by this ladder — the RNEG class's headline,
+        /// because |t| is exactly the quantity that is not meaningful there:
+        /// its dispersion is formed from a (prior, posterior) pair that does not
+        /// describe one fold, so `r` slams into @ref kRedundancyFloor and |t|
+        /// inflates by √((p+v)/(εp)).  Kept on every ladder (it costs one
+        /// compare) so the two classes are read the same way, but ONLY the rneg
+        /// readout quotes it.  The identity fields below follow the |ê| winner
+        /// on an rneg ladder and the |t| winner elsewhere — see @ref keepsMaxByE.
+        double      max_abs_e = 0.0;
         double      max_tow   = -1.0;///< its epoch (GPS TOW s); < 0 = never set.
         int         max_station = -1;///< its app station index (-1 = shared / none).
         std::string max_sat;         ///< its satellite id (empty = none).
@@ -376,6 +396,11 @@ public:
         /// above 0.5 says the bar sits inside the observed distribution and the
         /// count means what it appears to mean.
         double    max_corrob_frac     = 0.0;
+        /// True on the RNEG ladders: the identity fields track the largest |ê|
+        /// rather than the largest |t|.  Set once at construction of the family
+        /// state and never by a row, so the two classes cannot swap ordering
+        /// mid-run.
+        bool      keepsMaxByE = false;
 
         /// @return chi2-corrected geometric mean of t^2 (1.0 = the empirical
         /// scale calibration has converged).  Test 3's point: this can sit at 1
@@ -399,7 +424,11 @@ public:
             return static_cast<double>(bins[static_cast<std::size_t>(k)])
                  / static_cast<double>(n_rows);
         }
-        void reset() { *this = Ladder{}; }
+        /// Clear every accumulator.  @ref keepsMaxByE is CLASS IDENTITY, not
+        /// content, so it survives — an epoch reset that flipped an rneg ladder
+        /// back to |t| ordering would silently change what its identity columns
+        /// mean from epoch 2 onward.
+        void reset() { const bool by_e = keepsMaxByE; *this = Ladder{}; keepsMaxByE = by_e; }
     };
 
     /// What @ref addRow computed for one row (returned so the caller can trace
@@ -593,7 +622,14 @@ public:
           inflation_(families_, window_epochs, /*split_by_const=*/false,
                      /*seed_floor_m2=*/1.0, /*seed_rate_m2ps=*/0.0) {
         state_.resize(families_.size());
-        for (auto& st : state_) st.sigma0 = 1.0;
+        for (auto& st : state_) {
+            st.sigma0 = 1.0;
+            // The RNEG class orders its identity columns by |ê| (metres), not by
+            // |t| — see rnegRunLadder.  Stamped ONCE, here, and preserved by
+            // Ladder::reset(), so the ordering cannot change mid-run.
+            for (auto& l : st.rneg_epoch) l.keepsMaxByE = true;
+            for (auto& l : st.rneg_run)   l.keepsMaxByE = true;
+        }
     }
 
     /// @return true when at least one family is requested (the census is live).
@@ -673,14 +709,17 @@ public:
             // if it were calibrated, which is the measurement.
             st.n_eff  = e.n_eff;
             st.n_cal_rows = e.n_rows;
-            for (auto& l : st.epoch) l.reset();
+            for (auto& l : st.epoch)      l.reset();
+            for (auto& l : st.rneg_epoch) l.reset();
             st.g_epoch.reset();
         }
         global_epoch_.reset();
         hits_.clear();
         hits_dropped_ = 0;
         ep_rows_ = ep_rows_resp_ = ep_rows_frame_ = ep_reported_ = 0;
+        ep_rows_rneg_ = 0;
         ep_max_abs_t_ = 0.0;
+        ep_rneg_max_abs_e_ = 0.0;
         inflation_.beginEpoch(content_time_s, /*clean=*/true);
     }
 
@@ -728,15 +767,32 @@ public:
         const double t        = s / sigma0;
         const double at       = std::abs(t);
 
-        // --- the ladder (INC-1) ----------------------------------------------
-        Ladder& L = st.epoch[static_cast<std::size_t>(in.label)];
-        Ladder& R = st.run[static_cast<std::size_t>(in.label)];
+        // --- the ladder (INC-1), re-partitioned by r_negative -----------------
+        // An r_negative row's |t| is NOT a standardized residual: its dispersion
+        // came from a (prior, posterior) pair that does not describe one fold,
+        // so r hits kRedundancyFloor and |t| inflates by √((p+v)/(εp)) — the
+        // x3000 artifact the file banner already names for the wrong-branch
+        // case, arriving here through a different door.  Measured on
+        // runs/fldf3_pl2: 927 of the 957 rows above |t| = 1e4 are r_negative,
+        // and the run-end "worst |t| of the run" read 2.5e8 off one of them.
+        // The σ̂₀_global path has always dropped them (kGlobalRnegDrop); the
+        // ladder now does the same, into its OWN class rather than into the
+        // bin-counted CLEAN/RESPONDED/FRAME population, so both are readable.
+        const bool to_rneg = r_negative;
+        Ladder& L = to_rneg ? st.rneg_epoch[static_cast<std::size_t>(in.label)]
+                            : st.epoch[static_cast<std::size_t>(in.label)];
+        Ladder& R = to_rneg ? st.rneg_run[static_cast<std::size_t>(in.label)]
+                            : st.run[static_cast<std::size_t>(in.label)];
         const auto& lad = ladder();
         for (int k = 0; k < kLadderBins; ++k) {
             if (!(at > lad[static_cast<std::size_t>(k)])) break;   // ladder ascends: first miss ends it
             ++L.bins[static_cast<std::size_t>(k)];
             ++R.bins[static_cast<std::size_t>(k)];
         }
+        // sum_log_t2 / n_geo are the geometric mean of t² — the SCALE-calibration
+        // convergence readout.  An rneg row's t² is not on that scale, so it
+        // accumulates in the rneg class's own sums (where geoT2 is reported as a
+        // property of that class) and never in the label class's.
         const double t2 = t * t;
         const double lt = std::log(t2 > kTinyT2 ? t2 : kTinyT2);
         L.sum_log_t2 += lt; ++L.n_geo;
@@ -779,8 +835,16 @@ public:
             out.corrob_used = c;
         }
 
+        // The identity of the worst row.  The ORDERING key differs by class:
+        // |t| on a label ladder (the statistic), |ê| on an rneg ladder (metres —
+        // the only quantity there that means anything, since the dispersion is
+        // undefined).  Both extrema are tracked on both classes so the columns
+        // line up; only the ordering key differs, and it is fixed per ladder.
+        const double ae = std::abs(in.e);
         auto keepMax = [&](Ladder& lg) {
-            if (!(at > lg.max_abs_t)) return;
+            const bool win = lg.keepsMaxByE ? (ae > lg.max_abs_e) : (at > lg.max_abs_t);
+            if (ae > lg.max_abs_e) lg.max_abs_e = ae;   // the extremum, on both classes
+            if (!win) return;
             lg.max_abs_t = at;      lg.max_e = in.e;   lg.max_disp = disp;
             lg.max_fold_var = in.fold_var; lg.max_post_var = in.post_var;
             lg.max_gap_s = in.gap_s; lg.max_tow = last_tow_;
@@ -802,10 +866,19 @@ public:
         }
 
         // --- per-epoch aggregates + the bounded identity buffer ---------------
+        // ep_rows_ stays the TOTAL (label classes + rneg) so the epoch-status
+        // row still closes against the ladder counts; ep_max_abs_t_ — which the
+        // `prires_max_t` column and the run-end "worst |t|" line are built from
+        // — excludes the rneg class, for the reason at the ladder above.
         ++ep_rows_;
         if (in.label == PriorResidualLabel::Responded) ++ep_rows_resp_;
         if (in.label == PriorResidualLabel::Frame)     ++ep_rows_frame_;
-        if (at > ep_max_abs_t_) ep_max_abs_t_ = at;
+        if (to_rneg) {
+            ++ep_rows_rneg_;
+            if (ae > ep_rneg_max_abs_e_) ep_rneg_max_abs_e_ = ae;
+        } else if (at > ep_max_abs_t_) {
+            ep_max_abs_t_ = at;
+        }
         if (reported) {
             ++ep_reported_;
             ++n_reported_run_;
@@ -932,6 +1005,39 @@ public:
     const Ladder& runLadder(int f, PriorResidualLabel l) const {
         return state_[static_cast<std::size_t>(f)].run[static_cast<std::size_t>(l)];
     }
+    /// This epoch's RNEG ladder for one (family index, label).
+    const Ladder& rnegEpochLadder(int f, PriorResidualLabel l) const {
+        return state_[static_cast<std::size_t>(f)].rneg_epoch[static_cast<std::size_t>(l)];
+    }
+    /**
+     * @brief The run-cumulative RNEG ladder for one (family index, label).
+     *
+     * The rows whose POSTERIOR EXCEEDS THEIR PRIOR (post_var > fold_var, so
+     * r < 0 before the numerical floor).  They are a real population — the
+     * documented coupling-carry case, where the harvested posterior is a
+     * CONDITIONAL variance — but their |t| is not a standardized residual: the
+     * dispersion `r·fold_var` is formed from a (prior, posterior) pair that does
+     * not describe one fold, so `r` slams into @ref kRedundancyFloor and |t|
+     * inflates by @f$\sqrt{(p+v)/(\varepsilon p)}@f$.  Pooling them with the
+     * CLEAN/RESPONDED/FRAME rows put an artifact at the top of every ladder and
+     * of the run-end "worst |t|" line (measured on `runs/fldf3_pl2`: 927 of the
+     * 957 rows above |t| = 1e4, headline 2.5e8), which is why the σ̂₀_global
+     * rider has always dropped them (@ref kGlobalRnegDrop) and why the ladder
+     * now does too.
+     *
+     * Read this class on @ref Ladder::max_abs_e (metres), never on
+     * @ref Ladder::max_abs_t — its @ref Ladder::keepsMaxByE is set, so its
+     * identity columns follow the |ê| winner.
+     */
+    const Ladder& rnegRunLadder(int f, PriorResidualLabel l) const {
+        return state_[static_cast<std::size_t>(f)].rneg_run[static_cast<std::size_t>(l)];
+    }
+    /// RNEG rows of this family over the run, summed across labels.
+    long long rnegRunRows(int f) const {
+        long long n = 0;
+        for (const auto& l : state_[static_cast<std::size_t>(f)].rneg_run) n += l.n_rows;
+        return n;
+    }
     /// The sigma0 FROZEN for this epoch (1.0 while below warm-up).
     double sigma0(int f) const { return state_[static_cast<std::size_t>(f)].sigma0; }
     /// Is that sigma0 an actual calibration (true) or the warm-up fallback (false)?
@@ -942,10 +1048,14 @@ public:
     long long sigma0Rows(int f) const { return state_[static_cast<std::size_t>(f)].n_cal_rows; }
 
     /// Rows of this family over the run, summed across labels (invariant #4:
-    /// 0 must read as "ran, saw nothing", never as "never ran").
+    /// 0 must read as "ran, saw nothing", never as "never ran").  Includes the
+    /// RNEG class: a family whose rows were ALL r_negative still RAN, and
+    /// reporting it as "saw ZERO rows" would send a reader to check the carry's
+    /// arming knob for a condition that is about the covariance, not the wiring.
     long long runRows(int f) const {
         long long n = 0;
-        for (const auto& l : state_[static_cast<std::size_t>(f)].run) n += l.n_rows;
+        for (const auto& l : state_[static_cast<std::size_t>(f)].run)      n += l.n_rows;
+        for (const auto& l : state_[static_cast<std::size_t>(f)].rneg_run) n += l.n_rows;
         return n;
     }
     /// Rows of the whole census over the run.
@@ -964,7 +1074,12 @@ public:
     long long epochRowsResp()  const { return ep_rows_resp_; }
     long long epochRowsFrame() const { return ep_rows_frame_; }
     long long epochReported()  const { return ep_reported_; }
+    /// The worst |t| this epoch, EXCLUDING the RNEG class (see @ref rnegRunLadder).
     double    epochMaxAbsT()   const { return ep_max_abs_t_; }
+    /// This epoch's RNEG rows (already included in @ref epochRows).
+    long long epochRowsRneg()  const { return ep_rows_rneg_; }
+    /// The worst |ê| (m) among this epoch's RNEG rows — their readable extremum.
+    double    epochRnegMaxAbsE() const { return ep_rneg_max_abs_e_; }
 
     /// Above-threshold rows buffered this epoch (identities for the event tier).
     const std::vector<Hit>& hits() const { return hits_; }
@@ -1033,6 +1148,12 @@ private:
     struct FamilyState {
         std::array<Ladder, kPriorResidualLabels> epoch{};
         std::array<Ladder, kPriorResidualLabels> run{};
+        /// The RNEG class: rows whose posterior EXCEEDS their prior
+        /// (post_var > fold_var ⇒ r < 0 before the floor).  Parallel to
+        /// @ref epoch / @ref run and keyed by the same label, but kept OUT of
+        /// them — see @ref rnegRunLadder for why.
+        std::array<Ladder, kPriorResidualLabels> rneg_epoch{};
+        std::array<Ladder, kPriorResidualLabels> rneg_run{};
         double    sigma0 = 1.0;    ///< frozen at beginEpoch (through the PREVIOUS epoch).
         bool      warm   = false;  ///< the calibration cleared min_rows.
         double    n_eff  = 0.0;
@@ -1102,7 +1223,9 @@ private:
     long long n_epochs_     = 0;
     long long n_reported_run_ = 0;
     long long ep_rows_ = 0, ep_rows_resp_ = 0, ep_rows_frame_ = 0, ep_reported_ = 0;
-    double    ep_max_abs_t_ = 0.0;
+    long long ep_rows_rneg_ = 0;        ///< of ep_rows_, the RNEG class (post_var > fold_var).
+    double    ep_max_abs_t_ = 0.0;      ///< EXCLUDES the RNEG class.
+    double    ep_rneg_max_abs_e_ = 0.0; ///< worst |ê| (m) among this epoch's RNEG rows.
     double    last_tow_     = -1.0;
     // --- the constraint-aware global variance component ----------------------
     GlobalSums global_epoch_{};   ///< this epoch's four sums, both sides.

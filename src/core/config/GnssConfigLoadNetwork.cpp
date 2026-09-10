@@ -208,6 +208,59 @@ namespace GnssProcessor {
             // base (SPEC_lane_slip_response §7.3).
             network_cycle_slip_relevel_lane_snap_ = false;
         }
+        // Card G RESPONSE interlocks (docs/SPEC_slip_qc_hardening.md §G3/W1),
+        // deliberately HERE for the same load-order reason as the block above:
+        // network.carry_invariant parses ~1500 lines after the cycle_slip block,
+        // and the relevel_free_epoch disarm it drives has just run, so this is
+        // the first point where BOTH vehicles' flags are settled.
+        //
+        // WARN-ONLY, never warn-and-disarm — the opposite of the pattern
+        // everywhere else in this band, and deliberately so.  The response IS
+        // wired without the free-epoch latch (it marks pending-reseed and feeds
+        // the C3c funnel); what it loses is the ability to make the mark SURVIVE
+        // to the PASS-B leveling inject, which consumes it in its pre-pass
+        // (SPEC_slip_relevel_walk §6's root defect).  Disarming would hide the
+        // size of that loss; instead the drain counts every would-have-freed arc
+        // as `gap_reentry_no_relevel` and the run-end Card-G line reports it.
+        if (network_config_.slip_qc.gap_reentry
+            && !network_cycle_slip_relevel_free_epoch_
+            && !network_carry_invariant_ && network_phase_leveling_) {
+            log->warn("Network (slip-QC card G response): network.cycle_slip.gap_reentry_relevel "
+                      "is armed on a PHASE-LEVELING lineage with cycle_slip.relevel_free_epoch "
+                      "OFF.  The re-entry mark alone does NOT deliver the free epoch — PASS B's "
+                      "measurement pre-pass consumes the pending-reseed flag before the leveling "
+                      "inject reads it, so the stale pre-gap level still folds across the break "
+                      "(SPEC_slip_relevel_walk §6).  The response is NOT disabled: every arc it "
+                      "would have freed is counted as gap_reentry_no_relevel and reported in the "
+                      "run-end Card-G line, so the loss is measured rather than hidden.  Arm "
+                      "network.cycle_slip.relevel_free_epoch to make it act.");
+        }
+        if (network_config_.slip_qc.gap_reentry
+            && !network_phase_leveling_ && !network_carry_invariant_) {
+            log->warn("Network (slip-QC card G response): network.cycle_slip.gap_reentry_relevel "
+                      "is armed with NEITHER network.phase_leveling NOR network.carry_invariant — "
+                      "there is no stiff time-linked carry for a re-entry to bridge, so the "
+                      "response has nothing to protect and every arc will report as "
+                      "gap_reentry_cold_skipped.  Armed-and-inert (standing invariant #4); left "
+                      "on so the counters say so rather than being silently dropped.");
+        }
+        if (network_config_.slip_qc.gap_reentry)
+            log->info("Network (slip-QC card G response): gap RE-ENTRY refloat ON — an arc that "
+                      "re-appears after ≥1 missed processed epoch is marked SLIPPED in that same "
+                      "epoch when the raw MW/GF level shifted across the break{}{}.  No detector "
+                      "covers a return epoch (MW needs an adjacent predecessor, IF-TD three "
+                      "consecutive epochs), so this is the ONLY wired response between such a "
+                      "re-entry and the zero-q leveling carry bridging it (standing invariant "
+                      "#1).  SOLVE-AFFECTING; both bands of the primary pair are freed, never "
+                      "repaired — across a loss of lock the slip magnitude is unbounded and "
+                      "unknowable.",
+                      network_config_.slip_qc.gap_reentry_lli
+                          ? ", or the receiver asserted LLI on either band at the return epoch"
+                          : "",
+                      network_config_.slip_qc.gap_reentry_unmeasurable
+                          ? ", or no pre-gap dual-band level existed to check (conservative "
+                            "reset)"
+                          : "");
         if (network_cycle_slip_relevel_retap_statistical_ && network_carry_invariant_) {
             log->warn("Network: network.cycle_slip.relevel_retap_statistical is inert "
                       "under network.carry_invariant (the leveling local carry is "
@@ -4028,6 +4081,18 @@ namespace GnssProcessor {
             // Card G — gap-coincident instrumentation (counters + trace rows only).
             sq.gap_instrument = jval<bool>(json, "network.cycle_slip.gap_instrument",
                                            "network_cycle_slip_gap_instrument", false);
+            // Card G RESPONSE (§G3/W1) — the wired invariant-#1 answer to the
+            // bridged re-entry Card G measured.  SOLVE-AFFECTING, unlike every
+            // other knob in this struct: it marks ambiguities slipped.
+            sq.gap_reentry =
+                jval<bool>(json, "network.cycle_slip.gap_reentry_relevel",
+                           "network_cycle_slip_gap_reentry_relevel", false);
+            sq.gap_reentry_lli =
+                jval<bool>(json, "network.cycle_slip.gap_reentry_relevel_lli",
+                           "network_cycle_slip_gap_reentry_relevel_lli", true);
+            sq.gap_reentry_unmeasurable =
+                jval<bool>(json, "network.cycle_slip.gap_reentry_relevel_unmeasurable",
+                           "network_cycle_slip_gap_reentry_relevel_unmeasurable", false);
 
             // Arming diagnostics: a card whose host arm is off is INERT, and a
             // silent inert card is exactly the "clean log, dead wiring" failure

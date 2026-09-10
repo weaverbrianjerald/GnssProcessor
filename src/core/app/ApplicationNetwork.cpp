@@ -294,6 +294,13 @@ int Application::runNetwork() {
         sp.gf_floor_m          = sq.lli_gf_floor_m;
         sp.step_alpha          = sq.lli_step_alpha;
         sp.gap_instrument      = sq.gap_instrument;
+        // Card G RESPONSE (§G3/W1): the drain consumes the SAME GapResumption
+        // records as the instrument, so it arms the resumption collection on its
+        // own — an operator must not have to arm a diagnostic to get the fix,
+        // and turning the diagnostic off must not silently disarm it.
+        sp.gap_reentry             = sq.gap_reentry;
+        sp.gap_reentry_lli         = sq.gap_reentry_lli;
+        sp.gap_reentry_unmeasurable = sq.gap_reentry_unmeasurable;
         // Bridge v3 E4: the GF-row capture needs the qualified raw verdicts.
         sp.bridge_gf           = config_.networkCycleSlipRelevelBridgeGf();
         // CS-GF authority (iono_carry_source = smoothed_gf): same need.  The
@@ -1902,7 +1909,13 @@ int Application::runNetwork() {
         //     The unit is the (station, satellite, signal) ARC, not the resumption.
         //     Chords are per-arc, so a dual-band satellite returning once
         //     contributes two chords that can bridge independently.
-        if (nc.slip_qc.gap_instrument && !slip_qc.epoch.resumptions.empty()) {
+        //     The classification is armed by the instrument OR by the RESPONSE
+        //     (network.cycle_slip.gap_reentry_relevel): with only the response
+        //     armed the ledger is exactly the before/after measurement of what
+        //     the response did, and leaving it gated on the diagnostic would let
+        //     a response-only arm report its own effect as a structural zero.
+        if ((nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry)
+            && !slip_qc.epoch.resumptions.empty()) {
             // Does this carry_group_id key's signal component cover `sig`?  Under
             // the WL-3 lane shape a paired arc lives in a group keyed
             // "<sigA>+<sigB>", not in its per-band group — a per-band-only lookup
@@ -1928,7 +1941,18 @@ int Application::runNetwork() {
                 for (const std::string& sig : {g.sig1, g.sig2}) {
                     if (sig.empty()) continue;
                     const std::string amb_key = StateKeys::makeAmbiguityKey(g.satellite, sig);
-                    const bool slip_marked = carry_slipped_ambs.count({i, amb_key}) != 0;
+                    // "Marked slipped" spans BOTH vehicles.  carry_slipped_ambs
+                    // is the Card-4 C3c funnel — the only thing that forces a DD
+                    // CHORD to re-tap — but on the LEVELING vehicle the thing
+                    // that stops the stale value folding is the free-epoch latch
+                    // (`relevel.free_ambs`, read by the PASS-B inject site).  A
+                    // classification that read only the funnel reported a freed
+                    // leveling arc as `shifted_bridged`, i.e. it could not see
+                    // its own response — which would have made the §G3 response
+                    // card ungradable on the exact lineage it was built for.
+                    const bool slip_marked =
+                        carry_slipped_ambs.count({i, amb_key}) != 0
+                        || ctx.carry.relevel.free_ambs.count({i, amb_key}) != 0;
                     // (a) Legacy phase-leveling carry: a value inside the
                     //     max-gap window is exactly what the PASS-B injector
                     //     would fold across the break.
