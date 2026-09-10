@@ -1933,7 +1933,15 @@ vehicle where the ZWD is re-estimated per epoch (not carried).  Either the shipp
 ZWD really is a 10-m-class sink (a large finding about the field products; the E3 pair never traced ZWD) or
 the trace's local-column mapping differs by vehicle (the same `h2local` question as the DD trace; the sim F3
 arm's ZWD grade — 0.009 m rms, |err|/σ 0.94 — came through this trace, so the mapping is right on the
-leveling vehicle).  UNRESOLVED; do not quote a field ZWD number from this trace on carry_invariant until it is.
+leveling vehicle).  **Checked (18:25, on disk):** the ZWD values do NOT coincide with any of the same
+station-epoch's iono x_r values (0 of 20,000 rows beyond chance on ci, pl and the sim), so the ZWD column is
+not landing in the iono block; and the σ beside the value is scale-consistent on the control — `std_m` p50
+0.57 m (p10 0.11, p90 1.0) beside |zwd| p50 1.3 m — i.e. the shipped posture's per-epoch ZWD correction is
+genuinely a weakly-determined metre-class state (not carried, not emitted; it wanders ~40σ over 6 h, so the
+σ is not honest either), while on the diverged pl arm the σ is 0.016 m beside |zwd| 1.7 m — the diagonal
+leveling vehicle's over-confidence (§3's station-common over-count) in its rawest form; the sim F3 arm reads
+0.12 m ± 0.007 (honest).  A shared-`h2local` mapping miss is therefore NOT supported for the ZWD column;
+the ambiguity column's split remains untested (the DD-trace column addition).
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed

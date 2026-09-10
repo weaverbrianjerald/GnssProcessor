@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "ARM 1p / PHASE-DATUM FAMILY SWAP: the pl arm with the SIM GOLDEN's phase datum family (prioritized pivot datum + continuous handover + anchor carry re-ref + min_stations 2) instead of the chain's eq34 chain datum.  One family, the one the leveling vehicle was validated with on the sim.",
+    "PROBE of the leveling-vehicle DIVERGENCE on the field chain (SPEC_amb_iono s6.15.4 arm 1): 3 h, same exe, same CWD discipline.  Pre-registered: the S-basis null-space withholds (observed 0 vs declared 1, onset epoch ~101 on both leveling arms) STOP and the ZWD per-station span falls below 1 m if the named family is the cause; unchanged withholds = not the cause."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "processing": {
+    "max_duration_s": 10800.0
+  },
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "carry_invariant": false,
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "mw_wl": {
+      "ewl_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "wl_inject_enable": false
+    },
+    "cycle_slip": {
+      "relevel_free_epoch": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_pl_pdp3h/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_pl_pdp3h/state_snapshot.bin",
+    "phase_datum_eq34": false,
+    "phase_datum_prioritized": true,
+    "phase_datum_handover_continuous": true,
+    "phase_anchor_carry_reref": true,
+    "phase_datum_min_stations": 2
+  }
+}
