@@ -2799,7 +2799,7 @@ logger is armed. **Any consumer-churn claim must come from `rt_engine.log` with 
 never from the console.** The log-independent cross-check is the emitter's own PB-discontinuity
 counter in the state snapshot (4 839 bumps / 114 keys above).
 
-#### 6.16.7d The ZWD-in-block card (`network.carry_zwd_in_block`, merged 966d4fd + 7b32a74) — three arms
+#### 6.16.7d The ZWD-in-block card (`network.carry_zwd_in_block`, merged 966d4fd + 7b32a74) — four arms
 
 Built to remove §7 item 17's double count: a **diagonal** B9 row asserts the station-common ZWD
 direction a second time on top of the assertion every carried ambiguity row of that station already
@@ -2879,23 +2879,94 @@ card changes nothing about the pool; the number is published so the next card de
 | T4 ARC attribution flags | 2 032 | 2 723 | reported |
 | T4 one-solve arc refloats (run-end census) | 3 899 | 5 156 | reported |
 
-**Reading, one mechanism and one misattribution.**
-* **On its own channel the prior works, on both beds and both vehicles.** Quiet sim: ZWD truth
+**Arm F2 — FIELD IN-BLOCK on the F3 posture, 12 h (`runs/fldf3_on2_zwdblk` vs `runs/fldf3_on2`).**
+The arm Arm F said was still owed. Base = `_fldf3_on2`, the F3-armed converging field leveling posture (pl2 +
+`network.phase_leveling_local_block`, §6.15.4 second round); the arm adds `network.carry_zwd: true`
++ `network.carry_zwd_in_block: true` and **nothing else** — a flattened sorted-JSON diff of the two
+configs differs on exactly those two keys plus the two run paths and the header comment. DOY-129,
+63 stations, 12 h (tow 259 200–302 370), WTZZ closed-loop consumer, exit 0 both.
+
+| settled ≥ h6 | control `fldf3_on2` | **`fldf3_on2_zwdblk` (in-block)** | pre-registered |
+|---|---|---|---|
+| fleet settled ZWD span p50 | 1.195 m | **0.143 m** | p50 < 0.3 **PASS** |
+| fleet n > 2 m / n > 10 m | 19 / 4 | **3 / 0** | no station > 10 m **PASS** |
+| worst station span | 491.51 m (INEG00MEX) | **5.12 m** (BSHM00ISR) | — |
+| BSHM00ISR settled ZWD span | 34.85 m | **5.12 m** | — |
+| consumer UP mean / sd / rms | **+2.834** / 2.388 / 3.706 m | **+0.072** / 1.861 / **1.862** m | \|mean\| < 1.0 **PASS**; rms < 1.5 **FAIL** (1.86, close) |
+| consumer 3D rms / p50 | 4.034 / 3.058 m | **2.926 / 2.375 m** (−27 % / −22 %) | < 2.0 **FAIL** |
+| consumer E rms / N rms | 1.009 / 1.233 m | 1.364 / 1.798 m | — (**worse**, +35 % / +46 %) |
+| corr(UP, BSHM ZWD deviation) | −0.161 | **+0.058** | < 0.4 **PASS** |
+| vertical share of settled 3D SS | 84.4 % | **40.5 %** | — |
+| T3 post-fit cell flags | 15 435 / 663 738 (2.33e-2) | **10 717 / 665 335 (1.61e-2)** | reported |
+| **T3c consensus flags / opportunities** | 1 038 / 9 000 (1.15e-1) | **849 / 5 379** (1.58e-1) | reported |
+| T4 ARC attribution flags | 1 187 (1.79e-3) | **952** (1.43e-3) | reported |
+| T4 one-solve arc refloats (run-end census) | 2 159 | **1 750** | reported |
+| within-epoch trigger (T2) flags | 41 | **2** | reported |
+| consumer hourly rms h0..h11 | 3.83 1.63 1.90 3.17 4.06 2.33 2.98 **6.78** 3.67 3.59 2.39 3.28 | 5.34 2.49 1.27 1.55 2.52 3.23 4.78 2.25 1.95 2.83 2.12 2.67 | — |
+
+Wiring, verbatim from `runs/fldf3_on2_zwdblk/console.txt` — *"Network (leveling local-block F3):
+87313 block(s) whitened … **ZWD in block: 87313 col(s), 98 diagonal fallback(s), 297 missing cross
+term(s), 87274 RAIM-pool admission(s) of the ZWD row**"* — i.e. the vehicle actually ran this time:
+87 313/87 313 columns in the block, 0.11 % diagonal fallback, and the F3 interlock at
+`GnssConfigLoadNetwork.cpp:8778-8784` is **silent**. `network_zwd.csv carried` = 87 392/87 819 =
+99.5 % against the control's 0/87 608 (`carry_zwd` OFF there). Re-derived with
+`scripts/field_consumer_zwd_grade.py <run> --settle-h 6`; every headline number above is that
+script's output, not the console's.
+
+⚠ **Not a same-build A/B.** The control's exe is from the `00d5fdf` worktree, the arm's is the HEAD
+build after merge `7b32a74` (`gnss_processor_zwdblk_main.exe`, sha256 `319a6aed…`); the OFF-path
+differences between them are byte-certified by the merge smokes, not by this pair. A same-build
+control `runs/fldf3_on2_ctl_sb` is in flight and will be appended here.
+
+⚠ **The T3c count fell but its RATE rose** (1.15e-1 → 1.58e-1) because opportunities nearly halved
+(9 000 → 5 379). A T3c opportunity is a `(tow, satellite)` with at least one spiked cell, so the
+halving *is* the quieting — 31 % fewer spiked cells over the same cell population — and the higher
+rate says only that, conditional on a satellite spiking anywhere, more stations now agree. Both
+readings point the same way; quote the counts with the opportunities attached.
+
+**Reading, after four arms — one mechanism, and one inference that Arm F2 retracts.**
+* **On its own channel the prior works, on every bed and every vehicle.** Quiet sim: ZWD truth
   5.7 mm and the diagonal regression NOT reproduced. Slipped sim: span −87 %, truth −43 %, integers
-  up. Field: the sick station can no longer park corrupt phase in its own ZWD (368.87 → 0.87 m), the
-  fleet centre halves, and the consumer's **−2 m vertical DC bias goes** (UP mean −2.02 → −0.71).
-* **What it does not do is remove the (I, N, ZWD, clock) tension — it RELOCATES it.** With the ZWD
-  pinned, the young arcs' code-level birth error has to go somewhere: on the sim it lands in the
-  satellite clock (contrast 8.05 → 11.70 m) and the late hours' consumer; on the field it lands in
-  the post-fit residuals **as designed** — and is then **misattributed by the per-SATELLITE
-  consensus tier** (T3c 6.9×, T3 2.7×), which turns one station's fault into satellite faults and
-  refloats network-wide, which is what the h5 = 7.36 m and h7 = 5.14 m consumer excursions are.
-  Stated as the reading the data supports, not as a proof.
-* ⇒ **`carry_zwd_in_block` stays UNVALIDATED and is not promoted alone.** It is a SCOPED candidate
-  for `phase_leveling` + `phase_leveling_local_block` lineages once **bounded identification** lands
-  (§7 items 22 and 26) — the second half the consumer needs before the exposed residuals can be
-  acted on. Named next sim arm (not run): in-block **plus** a non-zero
-  `network.phase_leveling_local_block_min_age_ep`.
+  up. Field, diagonal (F): the sick station can no longer park corrupt phase in its own ZWD
+  (368.87 → 0.87 m). Field, in-block (F2): fleet span p50 1.195 → 0.143 m, the > 10 m tail empties
+  (4 → 0), and the worst station in the fleet goes 491.5 m → 5.1 m. Four arms, two beds, three
+  vehicles, same direction.
+* **The "it RELOCATES the tension into a per-SATELLITE misattribution storm" inference was drawn
+  from the DIAGONAL field arm, and Arm F2 does not reproduce it.** Arm F ran `carry_zwd` with the
+  in-block sub-knob loader-disabled, so its T3c 6.9× / T3 2.7× storm is the **diagonal** row's — the
+  double count of §7 item 17, asserting the station-common ZWD direction a second time on top of
+  every carried ambiguity row. On the in-block F3 vehicle every QC tier goes the other way: T3 cells
+  −31 %, T3c 1 038 → 849, T4a 1 187 → 952, T4 one-solve refloats 2 159 → 1 750, T2 41 → 2 — **quieter
+  on the same field data**, while the consumer improves 27 % on 3D rms and the vertical DC bias
+  (UP mean +2.83 m) goes to **+0.07 m**, with corr(UP, BSHM ZWD deviation) −0.16 → +0.06 and the
+  vertical share of the settled 3D sum-of-squares 84.4 % → 40.5 %. So on the field there is **no
+  storm to bound**: the in-block vehicle removes the vertical DC bias and quiets the QC at the same
+  time. What still stands, unretracted, is the SIM-BED cost — the slipped campaign bed relocates
+  into the satellite clock (contrast 8.05 → 11.70 m, iono⇄ZWD 2.46 → 3.03 m) — and that relocation
+  is bed-specific evidence, not a field prediction.
+* **What remains on the field is a 1.86 m UP wander plus ~1–1.8 m N/E, and it is unattributed.**
+  The vertical is now a zero-mean wander (sd 1.861 m ⇒ rms 1.862 m) rather than a bias, which is why
+  the pre-registered UP rms < 1.5 gate misses by 0.36 m and consumer 3D < 2.0 misses at 2.93 m.
+  ⚠ The horizontal got **worse**, not flat: E rms 1.009 → 1.364 m, N rms 1.233 → 1.798 m, with the
+  component means moving too (E −0.31 → −0.57, N +0.29 → +0.84). Pinning the wet delay took the
+  vertical's dominance away (84.4 % → 40.5 % of the settled SS) and left a residual that is no
+  longer mostly vertical — so the next lever must be graded on all three components, not on UP.
+  Candidate levers, in the order the evidence supports them: **bounded identification** with a
+  station-level quarantine response (§7 items 22/26 — still motivated, but by E1 and by the sim
+  clock relocation, not by a field misattribution storm); a **young-arc age gate inside the block**
+  (`network.phase_leveling_local_block_min_age_ep` > 0, the named-but-unrun sim arm); and a
+  **level-preserving re-level** so the erases that drive the leak stop creating fresh code-level
+  birth error in the first place.
+* ⇒ **`network.carry_zwd_in_block` is promoted to RECOMMEND_SCOPED in regime `carry_zwd` AND
+  `phase_leveling_local_block` (ledger, 2026-09-10):** whenever `carry_zwd` is armed on an F3
+  lineage the in-block vehicle is **mandatory**, because the diagonal row under F3 is the falsified
+  double count (quiet sim 0.723 m vs 0.0877 m; field diagonal T3c 7 619 vs in-block 849). The
+  **pair** (`carry_zwd` + `carry_zwd_in_block`) is a RECOMMEND_SCOPED **candidate** for
+  `phase_leveling` + F3 lineages — sim quiet consumer rms +7 % / p50 −13 % / ZWD −21 %, field F3
+  consumer −27 % with the vertical DC bias removed — whose **golden pin awaits the user's decision**;
+  the loader now emits a RECOMMEND line for the `carry_zwd` + F3 + in-block-OFF combination
+  (`GnssConfigLoadNetwork.cpp`, log-only). `carry_zwd` itself stays **KEEP_OFF for the DIAGONAL
+  vehicle** on every lineage.
 
 #### 6.16.7e `code_datum_time_linked` OFF — the co-armed "inconsistent gauge" pair costs nothing measurable, and time-linking is load-bearing
 
@@ -3079,14 +3150,28 @@ leveling horizon), which is why that card is field-only until the simulator gets
     the level across the break at PHASE precision or do not act.  ⚠ The MW/LLI drain still has the
     identical live-state hole (`SPEC_slip_qc_hardening` §11 item 4) — a detector assertion on a
     not-yet-recreated ambiguity is silently inert there too.
-24. **The ZWD-in-block card (build in flight, 2026-09-09).**  The per-epoch ZWD has NO temporal prior
+24. **The ZWD-in-block card — LANDED and SCOPED-PROMOTED 2026-09-10 (§6.16.7d, four arms).**  The per-epoch ZWD has NO temporal prior
     and `carry_zwd` is blocked by item 17's block-coverage gap, so every erase / re-level that makes
     a young arc leaks into the wet delay: D3 interaction rms 4.264 m at arc age 0–60 s → 1.974 m at
     1200 s+ (E0), and the leak vanishes when the erases do (E1 flat 3.114 → 2.932).  The card puts the
     station's ZWD column INSIDE F3's marginal block, so the wet-delay direction is not left to absorb
     what a freshly re-levelled arc cannot explain (item 17's "fix = block ALL carried local columns
     of the station" is the same clause, one column wider).  Independent of items 22 and 23; grade it on the
-    settled ZWD span (§6.16.1), not on the consumer.
+    settled ZWD span (§6.16.1), not on the consumer.  **Outcome:** four arms (quiet sim Q, slipped sim Z,
+    field-diagonal F, field-in-block F2).  The vehicle distinction is the whole card — the DIAGONAL
+    row is the falsified double count (quiet sim consumer 0.723 m vs in-block 0.0877 m; field
+    diagonal T3c 7 619 flags vs in-block 849 on the same data), so the in-block variant is not an
+    optimisation of `carry_zwd`, it is the only correct way to carry it under F3.  Graded on its own
+    channel as item 24 asked: fleet settled span p50 1.195 → 0.143 m on the field (F2), 1.590 →
+    0.207 m on the slipped sim (Z), max 491.5 → 5.1 m.  The consumer came along anyway on the field
+    (3D rms 4.034 → 2.926 m, −27 %; UP mean +2.834 → +0.072 m) and the QC tiers went QUIETER
+    (T3 cells −31 %, T3c −18 %, T4a −20 %).  ⇒ ledger `network.carry_zwd_in_block` =
+    **RECOMMEND_SCOPED** in regime `on("network.carry_zwd") and on("network.phase_leveling_local_block")`;
+    the PAIR is a RECOMMEND_SCOPED candidate for `phase_leveling` + F3 lineages whose golden pin
+    awaits the user's decision, and the loader now emits a log-only RECOMMEND for `carry_zwd` + F3 +
+    in-block-OFF.  Still open on the field: a 1.86 m zero-mean UP wander plus ~1–1.8 m N/E (the
+    horizontal got worse, +35 % / +46 %), unattributed.  Same-build control `runs/fldf3_on2_ctl_sb`
+    pending.
 25. **Tool debt / telemetry (2026-09-09).**  `scripts/simnet_plateau_decompose.py` raised inside
     `np.percentile` on an arm with ZERO T4 events (exactly E1) — guarded 2026-09-10 at
     `scripts/simnet_plateau_decompose.py:172-175` (empty jump population now prints `n=0` and skips
@@ -3096,22 +3181,31 @@ leveling horizon), which is why that card is field-only until the simulator gets
     (`count(spiked==1)` = T3 flags, distinct `(tow,sat)` = T3c opportunities, distinct with
     `n_sta_spiked ≥ min_sta` = T3c flags — validated exactly on three runs where both sides exist),
     and its T4a tier count is NOT recoverable.
-26. **BOUNDED IDENTIFICATION, SECOND HALF — the per-satellite consensus tier misattributes a STATION
-    fault, and there is no station-level response (opened 2026-09-10, §6.16.7d).**  Item 22 named the
+26. **BOUNDED IDENTIFICATION, SECOND HALF — a station-level response the network's own screens can
+    already drive (opened 2026-09-10, §6.16.7d; PREMISE AMENDED same day by Arm F2).**  Item 22 named the
     first half (Tier-C3 solution-separation confirmation of the median-polish proposals, so a
-    mass-refloat is bounded by a separability test rather than by a polish residual).  The field
-    ZWD arm measured the second half: with the station ZWD pinned, BSHM00ISR's corrupt phase lands
-    in the post-fit residuals **as designed**, and the per-SATELLITE consensus tier then reads one
-    station's fault as satellite faults — **T3c 1 105 → 7 619 flags (6.9×), T3 cells 22 713 →
-    60 222 (2.7×), T4 one-solve refloats 3 899 → 5 156** — and refloats network-wide, which is
-    where the h5 = 7.36 m / h7 = 5.14 m consumer excursions come from.  The station-congruence
+    mass-refloat is bounded by a separability test rather than by a polish residual).  ⚠ **The premise, stated honestly.**  The
+    misattribution storm this item was opened on — **T3c 1 105 → 7 619 flags (6.9×), T3 cells
+    22 713 → 60 222 (2.7×), T4 one-solve refloats 3 899 → 5 156**, with the h5 = 7.36 m / h7 =
+    5.14 m consumer excursions — was measured on Arm F, which the loader had silently reduced to the
+    **DIAGONAL** `carry_zwd` vehicle.  Arm F2 ran the real in-block vehicle on the F3 posture and
+    every one of those tiers went the OTHER way (T3c 1 038 → 849, T3 cells −31 %, T4a 1 187 → 952,
+    T4 refloats 2 159 → 1 750).  **So there is no field misattribution storm; that storm was the
+    diagonal row's double count.**  What still motivates this item is (a) **E1** — the T4-erase half
+    of the sim plateau, where removing the erases flattens the D3 interaction (3.114 → 2.932) and
+    accounts for half the ZWD sink — and (b) the **sim clock relocation** under in-block ZWD
+    (contrast 8.05 → 11.70 m, iono⇄ZWD 2.46 → 3.03 m on the slipped bed): the tension the pinned wet
+    delay no longer absorbs has to be identified and bounded somewhere, and on that bed it is not.  The station-congruence
     rider has been screaming about that station since §6.16.2 (**t = 2.2e6**, d = (−418, −144,
     −771) m ENU, `reported=1`) and is **measure-only**: there is no quarantine response, so the
     identification the network already has never acts.  Build, both edges (invariant #7): a
     station-level quarantine/deweight driven by the congruence screen, with a release policy, plus
     the Tier-C3 confirmation of item 22 — validated on BOTH beds with ZWD-in-block armed, since
-    that posture is what exposes the residuals in the first place.  **Prerequisite for promoting
-    `network.carry_zwd_in_block` anywhere.**
+    that posture is what exposes the residuals in the first place — and grade it on the SIM clock
+    contrast and on all three consumer components, not on the field's T3c count, which is already
+    quiet.  ⚠ **No longer a prerequisite for `network.carry_zwd_in_block`** — Arm F2 promoted that
+    knob to RECOMMEND_SCOPED in regime `carry_zwd` + F3 on 2026-09-10 without it.  It remains the
+    prerequisite for arming the **PAIR** as a golden default, and for the sim bed at all.
 27. **CONSUMER-SIDE WL/NL CASCADE ON THE UNDIFFERENCED MODEL — the AR track's step 1 (opened
     2026-09-10, §6.16.7b).**  The closed-loop consumer cannot fix per band and the blocker is its
     OWN float, not the wire: after 12+ h at a cm-level static position on the quiet truth bed the

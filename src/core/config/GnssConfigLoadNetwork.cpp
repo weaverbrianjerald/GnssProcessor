@@ -8811,6 +8811,19 @@ namespace GnssProcessor {
                           "B9 diagonal row (counted).  RW q {:.3e} m²/s.",
                           network_phase_leveling_local_block_min_age_ep_, network_zwd_carry_q_);
             }
+        } else if (network_carry_zwd_ && network_phase_leveling_local_block_) {
+            // The converse of the interlocks above, and the only combination the ledger calls a
+            // configuration error rather than a conservative choice: an F3 lineage that carries
+            // ZWD on the DIAGONAL vehicle.  Log-only — no behaviour change (a promotion of the
+            // default is a fingerprint-migration card, not a loader edit).
+            log->warn("Network: RECOMMEND network.carry_zwd_in_block = true with "
+                      "network.carry_zwd under network.phase_leveling_local_block (the diagonal "
+                      "ZWD row inside an F3 station is the falsified double count; ledger "
+                      "2026-09-10).  The station-common ZWD direction is already asserted by "
+                      "every carried ambiguity row of that station, so the diagonal row asserts "
+                      "it ~n_LOS times over: quiet-sim consumer 3D rms 0.723 m diagonal vs "
+                      "0.0877 m in-block, field T3c consensus 7619 flags vs 849 (SPEC_amb_iono_"
+                      "split_overcount §6.16.7d, arms Q/Z/F/F2).");
         }
         if (network_zwd_seam_reseed_) {
             if (network_zwd_seam_reseed_epochs_ <= 0) {

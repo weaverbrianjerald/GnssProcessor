@@ -608,6 +608,16 @@ namespace GnssProcessor {
               "~n_LOS-fold station-common over-count of the diagonal leveling carry — settled DD "
               "2.72 -> 0.22 cyc, WL 36 -> 99 % at the true integer (sim 3 h); pair with "
               "phase_datum_handover_max_var_m2 >= 1e-2" },
+            // 2026-09-10 (SPEC_amb_iono_split_overcount §6.16.7d, arms Q/Z/F/F2): reported ONLY
+            // where the ZWD carry is actually armed on an F3 lineage — off either half there is
+            // no diagonal row to replace, and the loader interlock has already spoken.
+            { network_carry_zwd_ && network_phase_leveling_local_block_,
+              network_carry_zwd_in_block_,
+              Tier::SCOPED, true , "network.carry_zwd_in_block",
+              "MANDATORY with carry_zwd under F3: the diagonal ZWD row is the same station-common "
+              "double count F3 exists to remove — quiet sim consumer 3D rms 0.723 m diagonal vs "
+              "0.0877 m in-block, field T3c 7619 vs 849 flags; field F3 consumer 3D -27 %, "
+              "vertical DC bias +2.83 -> +0.07 m" },
             { network_phase_leveling_ && !network_carry_invariant_
                   && !network_phase_leveling_local_block_,
               network_phase_leveling_los_scale_,

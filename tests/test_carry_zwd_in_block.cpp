@@ -488,3 +488,23 @@ TEST(CarryZwdInBlockTest, ArmedHappyPathSurvivesLoadAndLeavesQAtItsDefault) {
     // And it does NOT subject the ZWD to the F3 young-column age gate.
     EXPECT_EQ(cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 0);
 }
+
+// The RECOMMEND branch (ledger 2026-09-10, SPEC_amb_iono_split_overcount §6.16.7d arm F2):
+// carry_zwd ON + F3 ON + the sub-knob OFF is the one combination the ledger calls a
+// configuration error rather than a conservative choice — the diagonal ZWD row inside an
+// F3 station is the falsified double count (quiet sim consumer 0.723 vs 0.0877 m rms,
+// field T3c 7619 vs 849 flags).  The loader says so and does NOTHING else: this is the
+// guard that the advisory did not grow a side effect, i.e. that it stayed the mirror of
+// the DISABLING interlocks above rather than becoming a fourth one.
+TEST(CarryZwdInBlockTest, DiagonalVehicleUnderF3IsAdvisedAgainstButNotAltered) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadInto("recommend",
+                         networkConfig(std::string(kF3Posture)
+                                       + "    \"carry_zwd\": true,\n"
+                                         "    \"carry_zwd_in_block\": false,\n"),
+                         cfg));
+    EXPECT_TRUE(cfg.networkCarryZwd());                   // the diagonal B9 carry stands…
+    EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());    // …on an armed F3 vehicle…
+    EXPECT_FALSE(cfg.networkCarryZwdInBlock());           // …and nothing is auto-armed.
+    EXPECT_DOUBLE_EQ(cfg.networkZwdCarryQ(), 1e-9);
+}
