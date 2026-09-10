@@ -1830,6 +1830,19 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    run's own model terms and compare with the run's post-fit residual (cm) — metres of reconstructed residual
    ⇒ (b).  OWED, with the truth-join.  Until then the field co-motion is a measurement about the TRACES, and
    "the DD ambiguity is not estimable-invariant on this vehicle" is a candidate reading, not a finding.
+   **(b) as stated — a cross-sweep STAGE mismatch — is ELIMINATED by a source read (peer, 18:15):** the two
+   sweeps are back-to-back in the driver (`networkIonoDiag` at `ApplicationNetwork.cpp:2127`, `networkDdFrac`
+   at `:2131`, both after `networkSolveGlue` `:2041` / `networkInstallCarry` `:2075` and before
+   `networkLeveling` `:2154` / `networkPostFitRaim` `:2165`, same `est`/`x_s`/`plan`/`asm_res`), and both form
+   `x_lin + x_r` identically (`getStateVector()` + `asm_res[i].h2local`).  The traces are consistent with each
+   other; what is unverified is only that this `x_lin + x_r` is what the phase rows were fit with (a
+   re-linearization/relevel between the fit and the sweep would move both traces together).  Weight moves to
+   (a).  Reconstruction scoping: per chord-epoch the four LOS iono totals and four ambiguity totals form the
+   modelled band-1/band-2 phase to compare with the run's post-fit ROW residual — but on the ci arm the per-row
+   phase residual stream rides the inert RAIM pool (`trace_station_residuals` writes 0 rows on carry_invariant;
+   `network_pf_keyed.csv` is per-key aggregates), so the check runs fully only on the pl arm (pool live), i.e.
+   it validates the traces on a different vehicle than the one the 0.75 m was measured on; on ci it needs a
+   per-row residual dump first.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
