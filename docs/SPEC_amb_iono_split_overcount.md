@@ -2053,8 +2053,13 @@ question that started this section.
 FAMILY (prioritized pivot datum + continuous handover + anchor carry re-ref + min_stations 2) instead of the
 chain's eq34: **still withholds — 84 of 360 epochs, same onset TOW 262230 ("observed 0 (near-)zero" ×68,
 "observed 2" ×16), prires |t| 1.5e8**, h1–h3 ZWD span p50 1.7 m (σ 0.010).  The phase-datum family is
-EXONERATED; the eq34 chain datum is not the cause.  Probe 2 `_fldf3_pl_nosbc3h` (`sbasis_complete` off):
-pending.  Queued (18:50, pre-registered the same way, one family each): probe 3 `_fldf3_pl_nosh3h` —
+EXONERATED as the cause of the WITHHOLDS — but not of the wander: on the same 3 h window the phase-datum
+family swap takes the DD arc wander from arm 1's e1 MAD 24.2 cyc / WL 4.7 (491 arcs) to **0.068 / 0.138 cyc on
+the 45 arcs that survive** (a selection effect is possible — far fewer chords reach 30 epochs) and the h1–h3
+ZWD span from 14.4 m to 1.7 m, so the eq34 chain datum + leveling pairing owns most of arm 1's wander even
+though the withholds are unchanged.  Probe 2 `_fldf3_pl_nosbc3h` (`sbasis_complete` off): **identical to arm
+1's first 3 h to the printed digit** (82 withheld, ZWD span 14.425 m, σ 0.0153) — SBC never engaged in that
+window (arm 1 logged 15 engagements over 12 h) and is not the cause.  Queued (18:50, pre-registered the same way, one family each): probe 3 `_fldf3_pl_nosh3h` —
 `estimate_iono_sh: false`, a FREE per-LOS iono as on the sim (the leveling vehicle was only ever validated
 with free iono; the SH pin plus absolute leveling priors may close the declared null direction); probe 4
 `_fldf3_pl_nocpl3h` — the Card-1 conditional coupling rows off (leveling rows as plain diagonal priors);
