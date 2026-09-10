@@ -1086,3 +1086,44 @@ Unit contract `tests/test_slip_oracle.cpp` (19 cases): window arithmetic includi
 bounds, the birth floor, multi-slip summation, the unknown-signal fall-through, both false-alarm
 policies, the noise ladder's determinism, closure of the counters, and the loader's two
 warn-and-DISARM interlocks plus both hard errors.
+
+### 13.6 Addendum, 2026-09-10 afternoon — the two levers this card named, both measured
+
+§13.5's verdict ("a single-arc level preservation cannot undo a station-wide (ρ, I) mis-split")
+named two successors. Both ran the same afternoon, config-only, on the same bed; full record
+`docs/SPEC_amb_iono_split_overcount.md` §6.18a–§6.18c and §7 items 34 / 35 / 37.
+
+**1. The levels' MEMORY — FALSIFIED ×4.** `network.phase_leveling_q_amb` 1e-7 / 1e-6 m²/s
+(`runs/golden_sim_campaign_plq7` / `_plq6`) and `network.phase_leveling_var_floor_m2` 1e-4 / 1e-3 m²
+(`_plvf4` / `_plvf3`), each a single knob off E0. The q half HALVES the T4 churn (arc erases
+22 968 → 12 348 / 12 477, −46 % — so the erase tier *is* sensitive to level stiffness) and still
+leaves ZWD truth rms at 1.93 / 1.96 m against E0's 2.098, with the truth |residual| MEDIAN WORSE
+(p50 0.123 → 0.256 / 0.450 m) and the consumer +57 % (settled p50 1.751 → 2.76 / 2.75). The
+var-floor half is NEUTRAL on all four channels (ZWD 2.089 / 2.060, consumer 1.85 / 1.89, T4
+22 524 / 21 429). Both are non-monotone in their own value across a decade. ⇒ softening the level
+lets it MOVE but gives it nothing to move TOWARD while arcs keep restarting; the freeze is not the
+levels' stiffness. Both knobs now carry KEEP_OFF ledger rows.
+
+**2. Starving the erases — the other half of §13.5's "T4 was the only thing re-randomising the
+split", now graded ON THE WIRE.** The `network.raim_arc_persist_epochs` ladder K = 1 / 10 / 40 / 1e6
+on the in-block posture improves every producer channel monotonically (ZWD truth rms 1.188 → 0.818 m,
+satellite-clock datum-free contrast 11.79 → 2.66 m, −77 %) while the CONSUMER degrades monotonically
+(settled p50 1.085 → 2.296 → 2.727 m). The wire says why: within-tenure WANDER rises with K (Galileo
+L1C 0.249 → 0.793 cyc, GPS L1C 0.507 → 0.944) while per-epoch jitter is flat (~0.07 cyc), step size
+is flat and **handover counts are identical in every arm** — K changes the CORRELATION of the steps,
+not their number or size — and the motion is a 2-parameter (range, iono) walk at R² 0.993–0.996 whose
+SHAPE is invariant in K. Arc-level-removed, the clock channel is flat at 5–12 cm across the ladder
+(the 4.4× clock gain is ALL arc LEVEL) while the arc-removed PHASE-clock degrades on every Galileo
+band. Within each run the consumer's |error|-vs-arc-age correlation FLIPS sign (−0.335 at K = 1 to
++0.20…+0.42 at K ≥ 10). ⇒ **the T4 erases are the crude cure for the anchors' walk** — they chop a
+continuous walk into steps a consumer flushes by resetting — so neither a level-preserving response,
+nor T4-off, nor a K is the fix. The named build is now the (ρ, I) split's I half carried in-block
+(`network.carry_iono_in_block`, branch `worktree-ionoblk`), under the B9/Q1 quiet-bed protocol.
+
+⚠ **Two riders for anyone re-using §13.5's numbers.** (a) `sat-clock contrast` is not a
+consumer-relevant metric by itself: it improves 4.4× across the K ladder while the consumer gets 2.5×
+worse — grade a consumer-facing slip response on the per-satellite PHASE-clock (C + P). (b)
+`scripts/simnet_wire_integer_consistency.py` treated `truth_ambiguities.csv` as a STATIC integer, so
+on a slipped bed (2 486 slip rows touching 32.3 % of the keys) its integer-dependent steps were
+contaminated; it now accumulates the truth slips through `simnet_amb_integer.load_truth` / `n_at`.
+Everything quoted from that grader in §13.5 and here is integer-free.

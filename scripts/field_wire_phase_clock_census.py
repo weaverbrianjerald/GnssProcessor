@@ -56,6 +56,10 @@ CONVENTIONS RELIED ON (all read out of the source, not assumed)
   wander MAGNITUDES are sign-blind, only the closure SIGN depends on this.
 * IF combination: P_IF = (f1^2 P_L1C - f2^2 P_L2W)/(f1^2 - f2^2), f1 = 1575.42 MHz,
   f2 = 1227.60 MHz; the clock is band-independent so A_IF = P_IF - C0.
+* Consumer error sign: NetworkEmitStore.cpp:660 `d = pos - cl_truth`, so the trace's
+  east_m/north_m/up_m are (ESTIMATE - TRUTH).  dx above is the estimate's displacement
+  caused by the wire anomaly, so a real drive shows a POSITIVE correlation; a negative
+  one is not "the same effect with a sign slip", it is inconsistent with direct drive.
 * Elevation mask: taken from the run's own resolved config
   (`processing.elevation_mask_deg`), overridable with --elev-mask; printed.
 * The emitted C0 differs from the estimator's clock by a per-CONSTELLATION,
@@ -80,6 +84,7 @@ import math
 import os
 import re
 import sys
+import warnings
 
 import numpy as np
 
@@ -650,12 +655,14 @@ def datum_remove(M, mode="median"):
     re-absorbs any per-epoch constant.  Removing it here just makes the per-satellite
     contrast readable.
 
-    ⚠ MODE MATTERS FOR THE STEP CENSUS, and `mean` is a trap.  Measured on this bed:
-    at TOW 292740 exactly ONE satellite's IF phase-clock steps -189.7 m while the
-    other 31 move < 0.13 m; a MEAN datum spreads -5.94 m of that into every one of
-    them and the census then reads "32 satellites stepped simultaneously".  The
-    median datum is unmoved by a single outlier, so `median` is the default.  Use
-    --datum mean only to reproduce a mean-datum number.
+    ⚠ EVERY level datum has an inlier-set edge, and it stamps one satellite's jump
+    onto all the others.  Measured on this bed: at TOW 292740 exactly ONE satellite's
+    IF phase-clock steps -189.7 m while the other 31 move < 0.13 m, yet the datum
+    itself moves -5.94 m (mean) / -4.88 m (trim) / -1.22 m (median) because that
+    satellite crosses the estimator's inclusion boundary.  That is why nothing
+    downstream is thresholded on this series directly: the residual field is
+    post_center()-ed and the step census re-centres the one-epoch DIFFERENCES on
+    their own median.  With those two in place the report is datum-choice-robust.
     """
     ctr = epoch_center(M, mode)
     return M - ctr[None, :], ctr
@@ -757,7 +764,8 @@ def analyse_channel(w, sats, events, tows, tow_to_ep, kind, halfwin_s, settle_ep
         tids[s] = tid
         d1m[si, 1:] = np.where((tid[1:] >= 0) & (tid[1:] == tid[:-1]),
                                X[si, 1:] - X[si, :-1], np.nan)
-    with np.errstate(invalid="ignore"):
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
         d1c = np.nanmedian(d1m, axis=0)
     d1m = d1m - np.where(np.isfinite(d1c), d1c, 0.0)[None, :]
 
@@ -813,6 +821,7 @@ def analyse_channel(w, sats, events, tows, tow_to_ep, kind, halfwin_s, settle_ep
              if np.isfinite(r)], 50)),
         "per_sat": per_sat,
         "step_hist": step_hist.tolist(),
+        "step_count_per_epoch": np.nansum(np.abs(d1m) > 0.25, axis=0).astype(float),
         "step_epochs": {k: v for k, v in sorted(step_epochs.items(),
                                                 key=lambda kv: -len(kv[1]))[:10]},
         "n_step_25": int(step_hist[2]),
@@ -1166,7 +1175,8 @@ def main():
         r = chans[kind]
         result.setdefault("channels", {})[kind] = {
             k: v for k, v in r.items()
-            if k not in ("X", "D", "T", "P", "L", "epoch_mean")}
+            if k not in ("X", "D", "T", "P", "L", "epoch_mean",
+                         "step_count_per_epoch")}
 
     # ---- [2b] unmarked within-tenure steps + wander decomposition -------------
     say("-" * 96)
@@ -1203,6 +1213,33 @@ def main():
         say(f"       tow {t}  ep {ep}  {len(ss)} sats ({','.join(sorted(ss)[:8])}"
             f"{'...' if len(ss) > 8 else ''})   events: "
             f"{', '.join(others) if others else 'NONE'}")
+    say()
+    # Which event tier CO-OCCURS with the steps?  A per-epoch count-vs-count
+    # correlation, so it does not depend on getting the per-satellite attribution
+    # right -- only on "more of this tier this epoch => more steps this epoch".
+    nstep = chans["pc_IF"]["step_count_per_epoch"]
+    say("     which tier co-occurs?  corr( #events of tier at epoch , #pc_IF steps "
+        "> 0.25 m at epoch ):")
+    say(f"     {'tier':<16}{'events':>9}{'corr':>9}{'n_eff':>8}{'|z|':>7}")
+    assoc = {}
+    for tier in sorted(events, key=lambda k: -len(events[k])):
+        if len(events[tier]) < 20 or tier in ("PRIORRES", "MDB", "BLOCKBAARDA",
+                                              "CONGRUENCE", "TOPOLOGY", "REDUNDANCY"):
+            continue
+        cnt = np.zeros(n_ep)
+        for t, _k, _e in events[tier]:
+            i = tow_to_ep.get(t)
+            if i is not None:
+                cnt[i] += 1
+        rr, _b, _nn = _pearson(cnt[settle_ep:], nstep[settle_ep:])
+        ne = _neff(cnt[settle_ep:], nstep[settle_ep:])
+        z = _fisher_z(rr, ne)
+        assoc[tier] = {"n_events": len(events[tier]), "corr": rr, "n_eff": ne, "z": z}
+        say(f"     {tier:<16}{len(events[tier]):>9}{rr:>+9.3f}{ne:>8.0f}{z:>7.1f}")
+    result["step_event_association"] = assoc
+    say(f"     epochs with >=1 pc_IF step: {int((nstep[settle_ep:] > 0).sum())}"
+        f"/{n_ep - settle_ep}; mean {nstep[settle_ep:].mean():.2f}/epoch; "
+        f"max {int(nstep[settle_ep:].max())}")
     say()
     say("     wander DECOMPOSITION — same statistic with every >0.50 m within-tenure "
         "step also cut:")

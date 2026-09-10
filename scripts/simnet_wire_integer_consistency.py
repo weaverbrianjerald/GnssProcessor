@@ -101,6 +101,12 @@ if _SCRIPTS not in sys.path:
 import simnet_grade as SG                      # noqa: E402  product parser + truth semantics
 import consumer_float_truth_join as CJ         # noqa: E402  wrap/stat_block/lane algebra
 
+# The true integer is TIME-DEPENDENT on a slipped bed: N(t) = N_int + SUM of the
+# truth_slips.csv delta_cycles with tow_s <= t.  Reuse simnet_amb_integer's accumulator
+# rather than growing a second copy of it -- the same code path simnet_dd_reref and
+# simnet_t4_census already share.
+from simnet_amb_integer import load_truth as load_truth_amb, n_at   # noqa: E402
+
 C_LIGHT = CJ.C_LIGHT
 FREQ, BANDS, LANES, CONST_NAME = CJ.FREQ, CJ.BANDS, CJ.LANES, CJ.CONST_NAME
 wrap, stat_block, nl_from = CJ.wrap, CJ.stat_block, CJ.nl_from
@@ -163,26 +169,25 @@ def load_satclock_truth(stations):
     return series, disagree, files
 
 
-def load_truth_amb_all(stations):
-    """station -> {(sat, signal): N_int}.  Used by the anchor-gauge unwrap."""
-    out, slips = {}, 0
-    for name, d in stations:
-        p = os.path.join(d, "truth_ambiguities.csv")
-        if os.path.isfile(p):
-            m = {}
-            with open(p, encoding="utf-8") as fh:
-                fh.readline()
-                for line in fh:
-                    q = line.strip().split(",")
-                    if len(q) >= 4:
-                        m[(q[0], q[1])] = int(q[2])
-            out[name] = m
-        sp = os.path.join(d, "truth_slips.csv")
-        if os.path.isfile(sp):
-            with open(sp, encoding="utf-8") as fh:
-                fh.readline()
-                slips += sum(1 for ln in fh if ln.strip())
-    return out, slips
+def load_truth_amb_series(fixture, stations):
+    """(n_int, slips, n_stations) -- the SLIP-ACCUMULATED truth integer, not a static one.
+
+    ``n_int[(sta, sat, sig)]`` is the pre-slip base and ``slips[(sta, sat, sig)]`` the
+    sorted [(tow_s, delta_cycles)] list; the value at an epoch is
+    ``n_at(n_int, slips, sta, sat, sig, tow)``.  Both come straight from
+    ``simnet_amb_integer.load_truth`` so there is exactly ONE accumulator in the tree.
+
+    Two adaptations to that loader's contract: it takes bare station NAMES where this
+    script carries (name, dir) pairs, and it raises SystemExit on a missing truth file
+    where this script's older static loader silently OMITTED the station -- so only the
+    stations that actually have one are handed to it, preserving the old behaviour.
+    """
+    names = [name for name, d in stations
+             if os.path.isfile(os.path.join(d, "truth_ambiguities.csv"))]
+    if not names:
+        return {}, {}, 0
+    n_int, slips = load_truth_amb(fixture, names)
+    return n_int, slips, len(names)
 
 
 def load_phase_anchor(run):
@@ -551,7 +556,8 @@ def main():
     stations = station_dirs(fixture)
     osb, osb_disagree = load_osb_truth(stations)
     sc_truth, sc_disagree, sc_files = load_satclock_truth(stations)
-    truth_amb, n_slip = load_truth_amb_all(stations)
+    tn_int, tslips, n_amb_sta = load_truth_amb_series(fixture, stations)
+    n_slip = sum(len(v) for v in tslips.values())
     s_line, epochs, census = SG.parse_products(os.path.join(run, "products.txt"))
     lump = SG.if_lump_by_sat(osb, s_line.get("cbpin", {}))
     wire, n_no_osb = build_wire(epochs, osb, sc_truth, lump)
@@ -608,8 +614,18 @@ def main():
     P("  receiver PHASE bias   : truth_rx_bias.csv carries only kind=code rows on this")
     P("                          fixture, so rxb_phase == 0 and an anchor handover moves the")
     P("                          gauge by an INTEGER only (no receiver-bias step).")
-    P("  truth_slips rows      : %d over %d stations -> N_int is the true integer all day"
-      % (n_slip, len(truth_amb)))
+    P("  truth AMBIGUITY       : the true integer is TIME-DEPENDENT and is evaluated PER")
+    P("                          EPOCH -- N(sta,sat,sig,t) = N_int + SUM(delta_cycles :")
+    P("                          tow_s <= t) over truth_slips.csv, through")
+    P("                          simnet_amb_integer.n_at (the accumulator simnet_dd_reref")
+    P("                          and simnet_t4_census already use, not a second copy).")
+    P("  truth_slips rows      : %d over %d stations, touching %d of %d (sta,sat,signal)"
+      % (n_slip, n_amb_sta, len(tslips), len(tn_int)))
+    P("                          keys = %.1f%%.  A QUIET bed (0 rows) collapses N(t) back to"
+      % (100.0 * len(tslips) / max(len(tn_int), 1)))
+    P("                          the static N_int, so steps 4/4a/4b reproduce the old")
+    P("                          numbers there exactly; on a SLIPPED bed every one of them")
+    P("                          read a stale integer after the first slip of the key.")
     if n_no_osb:
         P("  *** %d (sat,signal) P records had NO injected OSB truth: %s"
           % (sum(n_no_osb.values()), sorted(n_no_osb)[:6]))
@@ -628,6 +644,10 @@ def main():
         "satclock_truth_files": sc_files, "satclock_zero": sc_files == 0,
         "osb_keys": len(osb), "osb_disagreements": osb_disagree,
         "truth_slip_rows": n_slip,
+        "truth_amb_stations": n_amb_sta,
+        "truth_amb_keys": len(tn_int),
+        "truth_amb_keys_with_slips": len(tslips),
+        "truth_integer": "N_int + sum(delta_cycles: tow_s <= t)  [simnet_amb_integer.n_at]",
         "primary": "W = dC - dP (dC = C - clk_true, dP = P - osb_phase_true)",
         "if_lump_n": len(lump),
         "if_lump_p50_abs": (float(np.median(np.abs(list(lump.values()))))
@@ -1083,9 +1103,9 @@ def main():
     P("  signal) directly (header week,tow,cons,signal,sat,anchor_sta -- one row per emitted")
     P("  P record).  If the producer's SD non-integer offset is exactly the anchor's own")
     P("  float error at pin time, then removing lambda_b*(N_anchor(s),s,b - N_anchor(ref),")
-    P("  ref,b) -- both integers read from those stations' truth_ambiguities.csv -- must")
-    P("  leave a SMALL residue.  The sign of the gauge in the emitted bias is not assumed:")
-    P("  both are evaluated and the one that collapses is reported.")
+    P("  ref,b) -- both integers taken from the slip-accumulated truth N(t) at THIS epoch --")
+    P("  must leave a SMALL residue.  The sign of the gauge in the emitted bias is not")
+    P("  assumed: both are evaluated and the one that collapses is reported.")
     P("=" * 128)
     anch_j = {}
     if anchors is None:
@@ -1105,13 +1125,13 @@ def main():
                             continue
                         ref = row[const]["ref"]
                         ar = anchors.get((t, ref, b))
-                        Nr = truth_amb.get(ar, {}).get((ref, b)) if ar else None
+                        Nr = n_at(tn_int, tslips, ar, ref, b, t) if ar else None
                         if Nr is None:
                             miss += len(row[const]["e"])
                             continue
                         for s, per_b in row[const]["e"].items():
                             a = anchors.get((t, s, b))
-                            Ns = truth_amb.get(a, {}).get((s, b)) if a else None
+                            Ns = n_at(tn_int, tslips, a, s, b, t) if a else None
                             if Ns is None:
                                 miss += 1
                                 continue
@@ -1167,13 +1187,24 @@ def main():
     P("  handover keeps the frame of an EARLIER anchor (953 continuous vs 82 cold handovers")
     P("  on this run), that is the wrong station.  So instead of assuming, INVERT: the")
     P("  implied gauge integer is n = round(-dP/lambda) (or +), and we ask which of the 61")
-    P("  stations' truth_ambiguities.csv actually holds that integer for this (sat, band).")
+    P("  stations' truth actually holds that integer for this (sat, band) AT THIS EPOCH.")
     P("  A gauge that is any receiver's integer ambiguity must hit one of them.")
+    P("  The N -> stations index is itself TIME-DEPENDENT -- a slip moves a station from")
+    P("  one N bucket to another -- so it is rebuilt per epoch and memoised by tow.  On a")
+    P("  quiet bed every epoch's index is the one the old static build produced.")
     P("=" * 128)
-    byN = defaultdict(lambda: defaultdict(list))       # (sat,sig) -> N -> [stations]
-    for st, m in truth_amb.items():
-        for k, N in m.items():
-            byN[k][N].append(st)
+    byN_cache = {}                                     # tow -> {(sat,sig): {N: [stations]}}
+
+    def byN_at(tow):
+        """(sat,sig) -> N -> [stations], every N the slip-accumulated truth at `tow`."""
+        idx = byN_cache.get(tow)
+        if idx is None:
+            idx = defaultdict(lambda: defaultdict(list))
+            for (st, sat, sig) in tn_int:
+                idx[(sat, sig)][n_at(tn_int, tslips, st, sat, sig, tow)].append(st)
+            byN_cache[tow] = idx
+        return idx
+
     gid = {}
     DEC = 20
     for const in ("G", "E"):
@@ -1185,6 +1216,7 @@ def main():
             for k, w in enumerate(wire):
                 if k % DEC or w["tow"] < lo_t:
                     continue
+                idx = byN_at(w["tow"])                 # the truth N buckets at THIS epoch
                 for (s, g), v in w["dP"].items():
                     if g != b or not s.startswith(const):
                         continue
@@ -1194,7 +1226,7 @@ def main():
                         near += 1
                     for sgn in (-1.0, +1.0):
                         n = int(round(sgn * q))
-                        sts = byN[(s, b)].get(n)
+                        sts = idx[(s, b)].get(n)
                         if sts:
                             hit_any += 1
                             who.update(sts)
@@ -1325,7 +1357,7 @@ def main():
                     ok = True
                     for b in BANDS[const]:
                         a = anchors.get((t, ref, b))
-                        N = truth_amb.get(a, {}).get((ref, b)) if a else None
+                        N = n_at(tn_int, tslips, a, ref, b, t) if a else None
                         if N is None:
                             ok = False
                             break
@@ -1336,7 +1368,7 @@ def main():
                         v, ok2 = [], True
                         for b in BANDS[const]:
                             a = anchors.get((t, s, b))
-                            N = truth_amb.get(a, {}).get((s, b)) if a else None
+                            N = n_at(tn_int, tslips, a, s, b, t) if a else None
                             if N is None:
                                 ok2 = False
                                 break
