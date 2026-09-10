@@ -1689,6 +1689,46 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
 - **Stop rules.** Any arm exit ≠ 0, an F3 fallback count > 0, or a withhold era > 60 min ends the ladder before
   grading; a smoke that shows loader warnings naming any ladder knob as INERT stops it before the 12 h arms.
 
+### 6.15.3a Pre-data amendments (2026-09-09 17:45–18:00, written while arm 0 was still running and before any 12 h arm was graded; on peer review)
+
+1. **L5 is absent on this chain** (`processing.frequency_mode: dual`; the control trace carries only G/L1C, L1W,
+   L2W, L2X), so the EWL(2,5) readout that would discriminate at the ~5-cycle scale (÷17.9 iono-driven) is
+   unavailable here.  The wrapped scale check on this ladder tops out at WL(1,2)'s ÷3.5.
+2. **The falsifier of P2 is sharpened.**  The WL(1,2) instrument is at the null on the CONTROL too, so an
+   at-null reading on arm 2 bounds the RESIDUAL DD error at ≳ 3 L1 cycles (a uniform WL fraction needs
+   |e_WL| ≳ ~1 cyc) and falsifies "F3 brings the field to the integer regime" — it is NOT by itself a proof
+   that the leveling over-count is absent (F3 may remove it while another multi-cycle error dominates).
+   Conversely the control's WL null is a FINDING, not a baseline: a truth-free lower bound of ≳ 3 cycles on
+   the field's DD error scale, corroborating the multi-cycle figure that only the truth side had before.
+3. **A third, UNWRAPPED scale readout — per-chord DD ARC STABILITY** (`dd_arc_stability.py`, v3; promoted to
+   `scripts/` with the results).  For the SAME chords on the SAME arcs in both bands (paired epochs, arcs keyed on
+   `ref_sat` so a reference switch starts a new arc, first 10 epochs of every arc dropped, ≥ 20 epochs, settled
+   ≥ h6): MAD of `dd_cyc` about the arc median, drift = |median(last 10) − median(first 10)|, the cross-band
+   slope of the deviations (1.283 iono-driven, 0.779 range-common, 1.000 cycle-common), and a REF-FREE pass
+   (group median over satellites of the arc-relative deviation removed) quoted beside a size-matched
+   iid-Gaussian null of the same subtraction (the estimator shrinks the statistic by itself — the wrapped
+   grade's trap 1 transposed).  It cannot see a constant bias (a frozen wrong level is perfectly stable); with
+   the fraction test it splits a multi-cycle DD error into BIAS vs WANDER.  Semantics on the sim (v1 form): the
+   F3 24 h arm reads MAD p50 0.174 cyc L1C, the diagonal-carry sticky arm 0.023 (frozen-but-biased: its DD
+   errors are 2–20 cycles, §6.13.2) — stable levels read stable, as required.
+   **Field control (`runs/fld63_stk_on`, L1C+L1W / L2W, 361 chords, 372 arcs):** raw MAD p50 e1 **10.4** / e2
+   **10.4** / wl **0.57** cyc (p90 36 / 36 / 1.6), drift p50 25 / 26 / 0.8 cyc per ~65-min arc, 100 % of
+   per-band arcs with MAD > 1 cyc; cross-band slope p50 **1.004** (p10 0.962, p90 1.048; corr 0.999); ref-free
+   MAD ratio REAL 0.65 vs NULL 0.77 (gap −0.12 on e1, −0.15 on wl).  So on the shipped field posture the
+   per-band DD ambiguity ESTIMATES are not frozen biases: they WANDER by ~10 cycles (MAD) / ~25 cycles per hour,
+   in lock-step across L1 and L2 — 1:1 in CYCLES, which is neither the iono direction nor a range-like error —
+   while the WL DD is ~20× stiffer; about a third of it is the reference satellite's own wander, the rest
+   per-satellite.  ⚠ The mechanism is NOT guessed into the record (candidates, unranked: a cycle-domain model
+   term; an estimator constraint holding N₁−N₂ stiff on this posture, e.g. the armed EWL/UWL lanes; a trace
+   artifact).  The discriminators are already in the ladder: the leveling arms carry no lanes and no invariant
+   carry, and the sim arms' v3 slopes say what the estimator does without field effects.
+4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
+   wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
+   a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
+   instrument (per-band MAD ≲ 0.3 cyc, as the sim F3 arm does); an arm 2 that reads at the fraction null but
+   with per-band MAD of cycles is a WANDER verdict (the field's DD problem is dynamic, upstream of the
+   ambiguity/iono split), not an over-count verdict.
+
 ### 6.15.4 Results — filled as they land (nothing above is edited)
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
