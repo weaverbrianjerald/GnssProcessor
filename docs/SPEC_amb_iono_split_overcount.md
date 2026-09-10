@@ -2632,6 +2632,302 @@ producer UNCHANGED (float); a/b differ ONLY in `estimation.ambiguity_resolution.
 ⚠ The FIELD golden runs `ar_mode 1` on a metre-class wire — wrong fixes by construction; consider
 `ar_mode 0` there until the wire is sub-decimetre.
 
+### §6.16.7 Late results (2026-09-10 00:00–02:30)
+
+Five results that landed after §6.16 was written: the full-length HEAD baseline that §6.16.5 could
+only sample; the consumer-AR test §6.16.6 pre-registered; a per-satellite accounting of the FIELD
+consumer's error; the ZWD-in-block card's three arms; and the `code_datum_time_linked` A/B that
+closes `docs/SPEC_family_gf_datum.md` §2.1's owed work. **Nothing above this line is edited.** Every
+figure below was recomputed for this section from the named run's own files.
+
+#### 6.16.7a The full 24 h HEAD baseline — §6.16.5's PARTIAL, replaced
+
+`runs/golden_sim_tri_w6_full` = `config/test_suite/_golden_sim_full.json`, which is
+`config/golden/golden_sim_tri_w6.json` **verbatim with `network.product_output_path` as the only
+differing key** (flattened config diff run for this section; its `_comment_arm` is the only other
+addition), exe `gnss_processor_golden0.exe` = HEAD
+`36ace5e`. 2 879/2 879 epochs emitted, 0 skipped, exit 0. Grade files under `grade/`
+(`simnet_grade.py --settle-frac 0.5`, `simnet_amb_integer.py --ref-free`).
+
+| channel (settled = last 50 %, h12–24) | **full 24 h** | §6.16.5 PARTIAL 18.6 h | quiet ref `readmit24h_e2` |
+|---|---|---|---|
+| consumer 3D rms / p50 / max (m) | **0.0762 / 0.0604 / 0.2073** | 0.0823 / 0.0506 / — | 0.0882 / 0.0779 |
+| consumer UP mean / rms / max (m) | **+0.0066 / 0.0644 / 0.1918** | — | — |
+| consumer last-30 median / final 3D (m) | 0.018 / 0.117 | 0.0305 | 0.0294 |
+| ZWD residual rms / p50 / max (m) | **0.0072 / 0.0046 / 0.1436** | 0.0070 / 0.0045 / 0.0374 | 0.0076 / 0.0047 / 0.1596 |
+| sat clock residual rms / contrast rms (m) | 1.5005 / 1.4563 | 1.5354 / — | 1.6285 |
+| sat code bias rms / p50 / max (m) | 0.1482 / 0.0961 / 0.5231 | 0.1469 | 0.4435 |
+| rx clock contrast rms (m) | 1.8730 | — | — |
+| DD ref-free, settled, at own true integer | **EWL 100.0 %, WL 99.1 %, L1C 86.4 %**, L2W 85.8, L5Q 83.5, L7Q 80.5 | EWL 100, WL 99.2, L1C 90.5 | EWL 100, WL 99.1, L1C 90.0 |
+| DD ref-free settled med\|u\| (cyc) | EWL 0.010, WL 0.025, L1C 0.078 | EWL 0.010, WL 0.025, L1C 0.068 | — |
+| DD **as-traced** settled at own integer | EWL 100.0 %, WL 97.9 %, **L1C 54.1 %** | — | — |
+| P-record between-sat SD fraction, rms / p50\|·\| (cyc) | 0.277–0.301 / 0.213–0.261 | — | — |
+
+Run-end, same console: **1 035 anchor handovers, 953 CONTINUOUS + 82 cold** (largest avoided
+`|target|` 27.94 m), 328 marked family-epochs marginalized, 1 463 leveling local carries erased;
+**28 re-admissions detected**, 110 entries parked, 26 clock + 84 code-bias columns seeded on return
+(all 26 clock seeds folded ANCHORED).
+
+**Readings.** (1) **The ~5 cm consumer KPI holds at HEAD over a full day** — 7.6 cm rms / 6.0 cm p50,
+and the UP channel is unbiased to 7 mm with 6.4 cm scatter. (2) The 18.6 h PARTIAL was not
+optimistic: every like-for-like row agrees within a few per cent, so §6.16.5's conclusion survives
+its own truncation. (3) The as-traced / ref-free split of §6.12 is reproduced verbatim on a
+full-length run — L1C reads **54.1 % as-traced and 86.4 % ref-free**, a 32-point instrument
+artifact, while the lanes (EWL/WL) barely move because the reference satellite's error is
+lane-suppressed. (4) The P-record fractions sit AT the uniform null on all six (cst, sig) channels
+(rms 0.277–0.301 cyc against 1/√12 = 0.289), i.e. §6.16.6's "the emitted wire carries no fractional
+structure" is confirmed on the full run — and §6.16.7b says what that does and does not mean.
+
+#### 6.16.7b Consumer AR on the quiet golden — 0 fixes in 2 879 attempts, and the blocker is the CONSUMER's own float
+
+Arm A ran: `runs/golden_sim_consumer_ar_a` (`_golden_sim_consumer_ar_a.json`, the golden with the
+consumer's `closed_loop.ar_mode` 0 → 1, `ratio_threshold` 3.0, partial AR, `hold_variance` 1e-3,
+`logging.enable_ambiguity_trace`; **producer untouched**), quiet 24 h bed, 2 879/2 879 epochs.
+
+| quantity | value | source |
+|---|---|---|
+| AR invoked / accepted | **2 879 / 0** (0.0 % fix rate), first fix NONE | console run-end block |
+| gate that refused | `ratio_battery` on **2 596** of 2 879, `min_epochs` 10, `sigma_gate` the rest | `logs/closed_loop_trace.csv` |
+| ILS ratio (rows that reached the battery) | p50 **1.01**, min 1.00, max **1.26**; hourly p50 **1.00–1.07 in all 24 hours** | same |
+| candidates per epoch | p50 **20** (range 0–30) | same |
+| position, settled h12–24 | 3D rms 0.0762 / p50 0.0604 m — **identical to the float baseline** | `grade/` of both runs |
+
+**Why it cannot fix, measured with truth.** Joining the consumer's own float ambiguities
+(`logs/ambiguity_trace.csv`: `week,tow_s,key,value_m,std_m`) to
+`runs/simnet60_quiet_wu93_24h/SZZ000SIM/truth_ambiguities.csv` (one `N_int` + wavelength per
+(sat, signal)) over the settled window h12–24:
+
+| band | n | float σ, p50 (cyc) | med\|frac(e)\| vs truth (cyc) |
+|---|---|---|---|
+| L1C | 22 292 | **0.321** | 0.244 |
+| L2W | 12 837 | **0.368** | 0.230 |
+| L5Q | 22 292 | **0.422** | 0.251 |
+| L7Q | 9 455 | **0.439** | 0.239 |
+
+(The session record's "0.29–0.45 cyc" is the same quantity over its own window; the p50s above are
+the recomputation.) **A per-band float σ of 0.32–0.44 cyc cannot produce a ratio > 3 no matter what
+the wire carries** — the ILS search is choosing between near-equiprobable candidates, which is
+exactly the observed ratio ≈ 1.0. The med|frac| column is at the uniform null (0.25) for the same
+reason: with a free per-LOS slant ionosphere at the consumer and **no WL/NL cascade** (the
+undifferenced consumer runs direct per-band LAMBDA; `ar_wl_only` is inert under
+`consumer_undifferenced`), the per-band ambiguities are **undetermined by construction**.
+
+**⇒ Two consequences, both binding.** (1) The 23:00 reading "the wire carries no integers" is **NOT
+established either way** — this test cannot see the wire through a float that weak, and neither can
+the P-record per-band SD-fraction grade (§6.16.6), which is confounded twice: the iono-direction
+gauge AND the consumer's float weakness. (2) **The AR sequencing of §6.16.6 is corrected**: step 1 is
+now the **consumer-side MW-WL → IF-NL cascade on the undifferenced model** (MW-WL is iono-free, σ ≈
+0.05 cyc over hours), step 2 an anchor-aware TRUTH grader on the WL/IF combinations of the P records,
+and only then network-side integer leveling (design-doc Phase 3). Producer DD-fixing (M5) stays
+DO-NOT-BUILD. Arm B (`hold_variance` 1e-5) was killed as moot — the gate never reaches the hold.
+Field note: `ar_mode 1` on the FLD63 chain also never fixes; the `_fldf3_pl2_arfloat` probe
+(`ar_mode 0`) is **byte-identical in position** to its control (settled 3.178 rms / 2.418 p50 on
+both, AR invoked 1 440 → 0), so the field consumer's AR is inert-in-effect, neither harm nor help.
+
+#### 6.16.7c The FIELD consumer's residual is a slowly-varying VERTICAL wander that rides the producer's ZWD
+
+All arms below share ONE wire (`runs/fldf3_pl2_ctl_new`, the converging leveling posture of §6.15.4,
+DOY-129 00–12 UT, 61 stations); the probes differ only in consumer-side or log-only keys and their
+`products.txt` is the control's.
+
+**(i) The error is vertical, and it is not the phase-bias churn.** Settled (≥ h6, n = 720):
+3D rms **3.178 m**, p50 2.418; E −0.28 ± 0.40, N +0.56 ± 1.18, **UP −2.018 ± 2.018 m** — the vertical
+carries **80.7 %** of the settled sum of squares. Per-satellite churn census (scratchpad
+`satchurn/`, runs `fldf3_pl2_ctl_new` + `_rtlog`):
+
+| finding | number |
+|---|---|
+| consumer resets / 12 h, distinct (sat,signal) keys | **665 on 52 keys**, all on L1W/L2W (the signals WTZZ00DEU tracks) |
+| wire PB bumps (adjacent-epoch \|ΔPB\| > 0.05 m in the P records) | 5 025 on 114 keys; **48.8 % (2 450) sit on L1C/L2X keys the consumer never sees** |
+| producer PB-discontinuity counter bumps | 4 839 on 114 keys, max 280/key (state-snapshot `ep,` lines) |
+| **eclipse re-admission link** | **3 of 665 resets (0.5 %)** within ±10 min of THAT satellite's own return; consumer error after returns 3.195 m vs 3.185 m elsewhere ⇒ **DEAD on the field** |
+| clock-column departures with a return inside 3 900 s | 8 of 8 — the only population `readmit_seed_horizon_s` could act on, and `estimate_sat_code_bias` is OFF on this chain (the FALSIFIED clock-only variant) |
+| coverage / elevation at bump epochs | median ratio (bump N)/(satellite median N) = **1.000**; 39 below / 23 equal / 52 above ⇒ no coverage signal |
+| reset concentration | **52.2 % of all resets in one hour** (04:30–05:30, 7 satellites) = the run's peak prior tension, 1.3–2.1 h AFTER the returns |
+| the counter-example | **h3: 1 reset (0.2 %) yet rms 4.325 m, mean UP −4.037 m** — the largest vertical hour has essentially no reset activity |
+
+Window-exclusion of the top-3 satellites' (G12/G25/G24) reset windows takes the settled rms
+3.178 → **1.496 m** on the 301 surviving epochs — but at **p(null ≤ obs) = 0.110** under a
+circular-shift null that preserves the burst structure and destroys only its phase (200 draws; null
+median Δ +0.154, 5–95 % [−1.739, +1.590]; scratchpad `satchurn/q5b.txt`). The same file's
+variance-share cut says where the error actually is: **h6/h7/h8 carry 42.8 / 30.2 / 19.2 % of the
+settled sum of squares** and h9–h11 carry 7.8 %; at h9–h11's level the settled rms would be 1.25 m.
+⇒ **PB churn is at most secondary; the residual is the long-open consumer
+vertical defect** (`project_closedloop_consumer_vertical_bug`).
+
+**(ii) It is not the consumer's ionosphere and not its AR.** Three consumer-only probes on the
+identical wire (settled ≥ h6): SH-VTEC slant feed OFF (`consume_network_iono: false`,
+`_fldf3_pl2_noiono`) → **3.771 m rms** (WORSE — the feed helps, as the 305-sta record said);
+iono-supply σ×3 (`estimation.ionosphere_weighting.std_scale` 1 → 3, `_fldf3_pl2_ionoscale3`) →
+**3.721 m**, UP mean −2.447 (also worse, ≈ feed OFF ⇒ the honest σ is near-optimal); AR off
+(`_fldf3_pl2_arfloat`) → **byte-identical** 3.178 / 2.418. The −2 m DC and the ±2 m wander survive
+all three.
+
+**(iii) It rides the producer's per-epoch ZWD.** From the consumer's own state series
+(`_fldf3_pl2_statetrace`, log-only, `logs/state_trace.csv`; products identical to the control):
+
+* the consumer's own ZWD state is **physical** — settled 0.414–0.572 m, sd **5.5 cm** —
+* yet its height error tracks that state at **dUP/dZWD = −28.9 m/m, corr −0.785**, an order of
+  magnitude above the classic ZWD⇄height trade ⇒ **a common EXTERNAL driver**, not the
+  consumer's own tropo estimation;
+* consumer UP vs the producer's **fleet-mean per-epoch ZWD deviation** (per-station deviation from
+  its own settled median, meaned over the 61 stations; sd 2.241 m): **corr +0.842, slope +0.758 m/m**.
+
+**(iv) Two leak regimes.** Per-station: **BSHM00ISR alone gives corr +0.850 at slope +0.0129 m/m**,
+against 1/61 = 0.0164 — i.e. a sick station's per-epoch ZWD excursion enters the shared satellite
+clocks/PBs at very nearly its weight in the solve and arrives at the consumer looking like tropo.
+On the arms where BSHM's excursion is gone (`gapfree2`, `nosh`, `on2`) the top correlations move to
+HEALTHY stations at slopes 10–60 m/m — a **network-wide common tropo-like wander** that every
+station's ZWD and the consumer's height ride together, i.e. a weakly-determined per-epoch common
+(ZWD ⇄ clock) direction with all ZWDs free every epoch. Same missing piece in both regimes: **a
+temporal prior on the producer's ZWD** (§6.16.7d), plus a station-level response to the congruence
+screen (§6.16.2's t = 2.2e6, measure-only today).
+
+> ⚠ **(unsourced) — one figure in the session record does not reproduce.** "healthy-57 median ZWD
+> wander sd 9 mm" could not be reproduced from `runs/fldf3_pl2_ctl_new/logs/network_zwd.csv` under
+> any of four definitions of "wander" over the settled window, excluding BSHM/CUSV/COCO/BOR1:
+> raw per-station sd of the deviation **71.4 mm** (p25 45 / p75 161), common-mode-removed sd
+> 78.0 mm, MAD 32.8 mm, adjacent-epoch-difference sd 29.7 mm. The nearest mm-scale number on that
+> file is the median per-station **formal σ, 7.7 mm**, which is a different quantity. Use 71 mm as
+> the healthy-fleet wander until someone re-derives the 9 mm.
+
+**(v) The logging trap that produced a false "0 consumer resets".** The FLD63 chain leaves
+`logging.enable_rt_engine` at its loader default FALSE while the sim golden sets it true, so a field
+console carries **no `[RT]` lines and `rt_engine.log` is 0 bytes** — measured: 0 bytes on
+`fldf3_pl2_ctl_new` and `fldf3_pl2_zwdblk`, 480 717 bytes / 665 reset lines on `_rtlog` where the
+logger is armed. **Any consumer-churn claim must come from `rt_engine.log` with the logger armed,
+never from the console.** The log-independent cross-check is the emitter's own PB-discontinuity
+counter in the state snapshot (4 839 bumps / 114 keys above).
+
+#### 6.16.7d The ZWD-in-block card (`network.carry_zwd_in_block`, merged 966d4fd + 7b32a74) — three arms
+
+Built to remove §7 item 17's double count: a **diagonal** B9 row asserts the station-common ZWD
+direction a second time on top of the assertion every carried ambiguity row of that station already
+makes implicitly; inside F3's jointly-whitened local block the harvested (N_rr⁻¹) cross terms
+subtract the overlap exactly. Default OFF, OFF twin byte-identical (`products.txt` sha256
+`47102044…` on both smoke arms), 10 unit tests. Full card:
+`runs/golden_sim_campaign_zwdblk/VERDICT.md`.
+
+**Arm Q — quiet 24 h (`runs/golden_sim_zwdblk_quiet`), the load-bearing negative control.**
+
+| settled h12–24 | gate | **in-block** | uncarried, full 24 h (§6.16.7a) | uncarried, PARTIAL 18.6 h | **DIAGONAL `carry_zwd`** |
+|---|---|---|---|---|---|
+| consumer 3D rms | ≤ 0.10 m | **0.0877** | 0.0762 | 0.082 | **0.723** |
+| consumer 3D p50 | ≤ 0.06 m | **0.0525** | 0.0604 | 0.051 | — |
+| ZWD truth rms | ≤ 0.02 m | **0.0057** | 0.0072 | 0.0069 | — |
+| per-sta settled ZWD span p50 / max | — | 0.032 / 0.054 m | — | 0.063 / 0.080 | — |
+
+(The card's own VERDICT graded arm Q against the PARTIAL control, which did not cover h12–24; the
+full 24 h baseline of §6.16.7a is the matched-window control and is added here. Against it the
+in-block carry is 15 % worse on consumer rms, 13 % better on p50, and **21 % better on the ZWD
+channel it targets** — the gate verdict is unchanged.)
+
+Wiring: 172 320 blocks whitened, **172 320 ZWD columns, 0 diagonal fallbacks, 0 missing cross
+terms**, 0 factorization fallbacks; `network_zwd.csv carried` = 172 320/172 740 = 99.8 % (the 420
+uncarried rows are exactly 60 stations × the 7-epoch leveling warm-up). **⇒ Q1 PASS, and it is the
+result that matters: what falsified B9 on the quiet bed was the DOUBLE COUNT, not the idea of
+carrying ZWD** (0.723 m diagonal vs 0.088 m in-block, same bed, same carry).
+
+**Arm Z — slipped campaign bed, 6 h (`runs/golden_sim_campaign_zwdblk`), single knob vs E0.**
+
+| channel (settled) | E0 golden | **in-block** | Δ |
+|---|---|---|---|
+| per-sta settled ZWD span p50 | 1.590 m | **0.207 m** | **−87 %** (Z2 PASS) |
+| ZWD settled truth rms | 2.098 m | **1.188 m** | −43 % (Z1 FAIL vs ≤ 0.5; falsifier 1.5 not reached) |
+| stations with span > 1 m | 39/60 | 15/60 | −62 % |
+| ZWD hourly rms h0..h5 | 2.10 1.37 1.84 1.95 2.12 2.21 | 1.98 1.31 0.96 0.58 1.05 1.67 | better in every hour |
+| WL(1,2) / EWL(2,5) ref-free at own integer | 81.5 / 99.0 % | **86.2 / 99.2 %** | Z4 PASS |
+| L1C ref-free at own integer | 39.1 % | 44.0 % | better |
+| **sat-clock contrast rms** | 8.050 m | **11.700 m** | **+45 % (worse)** |
+| iono⇄ZWD interaction rms | 2.456 m | 3.030 m | +23 % (worse) |
+| consumer settled h3–h6 p50 / rms | 1.752 / 1.799 m | **1.085** / **2.389** m | Z3 FAIL (p50 −38 %, rms +33 %) |
+| consumer hourly rms h0..h5 | 2.06 3.81 2.92 1.71 1.85 1.83 | 1.59 2.19 1.56 1.03 **2.55 3.09** | better h0–h3, worse h4–h5 |
+| T4 one-solve arc refloats | 22 968 | **29 613** | +29 % |
+| slip census DETECTED / RESPONDED / SILENT | 2337 / 72 / 77 | 2337 / 75 / 74 | flat (not a detection artifact) |
+
+`raim_pool_zwd_rows` = **42 682 of 42 780 (99.8 %)** — §7 item 4's interaction, now MEASURED rather
+than assumed: the post-fit RAIM pool admits a row by `|A_r(row, amb_col)| > 0.5`, a test written for
+data phase rows, and a whitened ZWD block row clears it on essentially every station-epoch. This
+card changes nothing about the pool; the number is published so the next card decides on data.
+
+**Arm F — FIELD, 12 h (`runs/fldf3_pl2_zwdblk` vs `_ctl_new`).**
+
+> ⚠ **THE FIELD ARM DID NOT MEASURE THE IN-BLOCK VEHICLE — the loader disabled the sub-knob and the
+> run carried the DIAGONAL B9 row instead.** `config/test_suite/_fldf3_pl2_zwdblk.json` arms
+> `carry_zwd` + `carry_zwd_in_block` on the **pl2** posture, which is the converging leveling vehicle
+> **with F3 OFF**; the interlock at `GnssConfigLoadNetwork.cpp:8778-8784` therefore fired —
+> *"carry_zwd_in_block is on but network.phase_leveling_local_block (F3) is OFF … DISABLING
+> carry_zwd_in_block"* (verbatim in `runs/fldf3_pl2_zwdblk/console.txt`) — and the run shows **no
+> "ZWD in block" run-end clause at all** while `network_zwd.csv carried` reads **87 392 / 87 819**.
+> The interlock behaved exactly as designed (armed-and-inert is forbidden, invariant #4). **So the
+> field numbers below grade `network.carry_zwd` (diagonal B9) on the converging leveling vehicle,
+> not the in-block variant.** They are still a first: the diagonal carry DIVERGED on the shipped
+> `carry_invariant` vehicle (§6.15.4 arm 0z) and does not diverge here. **The in-block field arm is
+> still OWED and must run on a posture that arms F3 (`_fldf3_on2`-class), not pl2.**
+
+| settled ≥ h6 | control `ctl_new` | **`zwdblk` (= diagonal `carry_zwd`)** | pre-registered |
+|---|---|---|---|
+| BSHM00ISR settled ZWD span | 368.87 m | **0.87 m** | < 5 m **PASS** |
+| fleet settled span p50 / n > 2 m / n > 10 m | 0.797 m / 14 / 3 | **0.275 m / 2 / 0** | p50 < 0.3 **PASS** |
+| consumer UP mean / sd / rms | −2.018 / 2.018 / **2.854** m | **−0.713** / 2.660 / 2.754 m | UP rms < 1.5 **FAIL** |
+| consumer 3D rms / p50 | 3.178 / 2.418 m | 3.322 / 2.316 m | < 2.0 **FAIL** |
+| corr(UP, BSHM ZWD deviation) | +0.850 | **−0.722** | < 0.4 **FAIL** (sign flipped, still coupled) |
+| vertical share of settled 3D SS | 80.7 % | 68.7 % | — |
+| consumer hourly rms h0..h11 | 3.78 2.31 2.02 4.33 2.35 3.64 5.09 4.28 3.42 0.79 1.24 1.59 | 2.96 1.48 1.17 2.43 2.61 **7.36** 4.75 **5.14** 2.48 0.62 1.61 2.84 | — |
+| **T3c consensus flags / opportunities** | 1 105 / 15 763 | **7 619 / 29 795** (6.9×) | reported |
+| T3 post-fit cell flags | 22 713 / 665 332 | **60 222 / 665 338** (2.7×) | reported |
+| T4 ARC attribution flags | 2 032 | 2 723 | reported |
+| T4 one-solve arc refloats (run-end census) | 3 899 | 5 156 | reported |
+
+**Reading, one mechanism and one misattribution.**
+* **On its own channel the prior works, on both beds and both vehicles.** Quiet sim: ZWD truth
+  5.7 mm and the diagonal regression NOT reproduced. Slipped sim: span −87 %, truth −43 %, integers
+  up. Field: the sick station can no longer park corrupt phase in its own ZWD (368.87 → 0.87 m), the
+  fleet centre halves, and the consumer's **−2 m vertical DC bias goes** (UP mean −2.02 → −0.71).
+* **What it does not do is remove the (I, N, ZWD, clock) tension — it RELOCATES it.** With the ZWD
+  pinned, the young arcs' code-level birth error has to go somewhere: on the sim it lands in the
+  satellite clock (contrast 8.05 → 11.70 m) and the late hours' consumer; on the field it lands in
+  the post-fit residuals **as designed** — and is then **misattributed by the per-SATELLITE
+  consensus tier** (T3c 6.9×, T3 2.7×), which turns one station's fault into satellite faults and
+  refloats network-wide, which is what the h5 = 7.36 m and h7 = 5.14 m consumer excursions are.
+  Stated as the reading the data supports, not as a proof.
+* ⇒ **`carry_zwd_in_block` stays UNVALIDATED and is not promoted alone.** It is a SCOPED candidate
+  for `phase_leveling` + `phase_leveling_local_block` lineages once **bounded identification** lands
+  (§7 items 22 and 26) — the second half the consumer needs before the exposed residuals can be
+  acted on. Named next sim arm (not run): in-block **plus** a non-zero
+  `network.phase_leveling_local_block_min_age_ep`.
+
+#### 6.16.7e `code_datum_time_linked` OFF — the co-armed "inconsistent gauge" pair costs nothing measurable, and time-linking is load-bearing
+
+`runs/golden_sim_tlink_off` = the sim golden with **`network.code_datum_time_linked: false`** plus
+the trace-only `network.cycle_slip.gap_instrument: true` (flattened config diff run for this section:
+those two keys, the output path and an `_comment_arm` are the only differences), same exe `gnss_processor_golden0.exe`, quiet 24 h
+bed, 2 879/2 879 epochs, exit 0. Control = `runs/golden_sim_tri_w6_full` (§6.16.7a).
+
+| settled h12–24 | ON (golden) | **OFF** | Δ |
+|---|---|---|---|
+| consumer 3D rms / p50 / max (m) | 0.0762 / 0.0604 / 0.2073 | **0.1013 / 0.0749 / 0.2708** | **+33 % rms (WORSE)** |
+| consumer UP rms (m) | 0.0644 | 0.0862 | +34 % |
+| sat code-bias residual rms / p50 / max (m) | 0.1482 / 0.0961 / 0.5231 | **0.4182** / 0.0146 / **3.7038** | rms 2.8× worse, p50 6.6× better |
+| … per signal, worst two | E:C7Q 0.1376, G:C5Q 0.1578 | **E:C7Q 0.3092, G:C5Q 0.9022** | the tail is two signals |
+| sum-to-zero datum check (emitted per-channel mean / rms) | +1.92e-2 / 6.23e-2 m | −2.59e-4 / 2.08e-2 m | OFF holds the datum tighter |
+| sat clock residual rms (m) | 1.5005 | 1.5100 | flat |
+| ZWD residual rms (m) | 0.0072 | 0.0073 | flat |
+
+**Reading.** The two arms split cleanly: **ON carries a bias-like offset** (per-channel mean +1.9 cm,
+p50 9.6 cm, max 0.52 m — a level the sum-to-zero datum does not hold at exactly), **OFF carries a
+heavy tail** (p50 1.5 cm but max 3.70 m, concentrated on E:C7Q and G:C5Q). The consumer prefers ON by
+a third on rms. **⇒ the §2.1 "inconsistent gauge" pair (time-linked s2z RHS + the primary GF code-bias
+pin) injects NO measurable tension on this bed, and time-linking is load-bearing for the consumer:
+keep it armed, and the loader WARN stays informational.** `SPEC_family_gf_datum` §2.1's "quantifying
+it on a real arm is owed work" is CLOSED by this arm (see that document's §2.1 addendum).
+
+**Rider, from the same arm's Card-G instrumentation.** The quiet bed reads **2 376 resumptions =
+2 308 SHIFTED + 68 unshifted + 0 unmeasurable**, and of the shifted arcs **0 re-entered bridged of
+4 616** — every one was fresh. ⇒ **the gap-poison class of `SPEC_slip_qc_hardening` §12 does not
+exist on the simulator** (its only gaps are eclipse returns, far beyond the 120 s loader-default
+leveling horizon), which is why that card is field-only until the simulator gets a dropout scenario.
+
 ---
 
 ## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
@@ -2800,6 +3096,47 @@ producer UNCHANGED (float); a/b differ ONLY in `estimation.ambiguity_resolution.
     (`count(spiked==1)` = T3 flags, distinct `(tow,sat)` = T3c opportunities, distinct with
     `n_sta_spiked ≥ min_sta` = T3c flags — validated exactly on three runs where both sides exist),
     and its T4a tier count is NOT recoverable.
+26. **BOUNDED IDENTIFICATION, SECOND HALF — the per-satellite consensus tier misattributes a STATION
+    fault, and there is no station-level response (opened 2026-09-10, §6.16.7d).**  Item 22 named the
+    first half (Tier-C3 solution-separation confirmation of the median-polish proposals, so a
+    mass-refloat is bounded by a separability test rather than by a polish residual).  The field
+    ZWD arm measured the second half: with the station ZWD pinned, BSHM00ISR's corrupt phase lands
+    in the post-fit residuals **as designed**, and the per-SATELLITE consensus tier then reads one
+    station's fault as satellite faults — **T3c 1 105 → 7 619 flags (6.9×), T3 cells 22 713 →
+    60 222 (2.7×), T4 one-solve refloats 3 899 → 5 156** — and refloats network-wide, which is
+    where the h5 = 7.36 m / h7 = 5.14 m consumer excursions come from.  The station-congruence
+    rider has been screaming about that station since §6.16.2 (**t = 2.2e6**, d = (−418, −144,
+    −771) m ENU, `reported=1`) and is **measure-only**: there is no quarantine response, so the
+    identification the network already has never acts.  Build, both edges (invariant #7): a
+    station-level quarantine/deweight driven by the congruence screen, with a release policy, plus
+    the Tier-C3 confirmation of item 22 — validated on BOTH beds with ZWD-in-block armed, since
+    that posture is what exposes the residuals in the first place.  **Prerequisite for promoting
+    `network.carry_zwd_in_block` anywhere.**
+27. **CONSUMER-SIDE WL/NL CASCADE ON THE UNDIFFERENCED MODEL — the AR track's step 1 (opened
+    2026-09-10, §6.16.7b).**  The closed-loop consumer cannot fix per band and the blocker is its
+    OWN float, not the wire: after 12+ h at a cm-level static position on the quiet truth bed the
+    per-band float σ is **0.321 / 0.368 / 0.422 / 0.439 cyc** (L1C / L2W / L5Q / L7Q, p50 over
+    h12–24 from `logs/ambiguity_trace.csv` joined to `truth_ambiguities.csv`), so ILS chooses
+    between near-equiprobable candidates — **2 879 attempts, 0 fixes, ratio p50 1.01 (max 1.26),
+    `ratio_battery` refusing 2 596 of them**.  With a free per-LOS slant ionosphere and no cascade,
+    per-band ambiguities are undetermined by construction; the GF direction is code-determined.
+    Build: MW-WL float (iono-free, σ ≈ 0.05 cyc over hours) → fix WL → NL from the IF float, on the
+    undifferenced consumer model.  The machinery exists for the BSSD/user paths but `ar_wl_only` is
+    INERT under `consumer_undifferenced`.  ⚠ Until this lands, **no per-band fractional grade is a
+    statement about the wire** — neither the consumer's fix rate nor `simnet_grade.grade_phase`'s
+    P-record SD fractions (confounded twice: the iono-direction gauge of §6.16.6 AND the float
+    weakness measured here).  Step 2 of the track is an anchor-aware TRUTH grader on the WL/IF
+    combinations of the P records; step 3 (network integer-leveled pins) stays behind both.
+28. ~~**Quantify the `code_datum_time_linked` + `code_bias_gf_datum` "inconsistent gauge" pair on a
+    real arm**~~ **CLOSED 2026-09-10 (§6.16.7e; `docs/SPEC_family_gf_datum.md` §2.1 addendum).**
+    Single-knob 24 h A/B on the quiet golden (`runs/golden_sim_tlink_off` vs
+    `runs/golden_sim_tri_w6_full`, same exe): OFF is **worse** — consumer settled rms 0.0762 →
+    0.1013 m (+33 %), code-bias truth rms 0.1482 → 0.4182 m (max 0.52 → 3.70 m, concentrated on
+    E:C7Q and G:C5Q), clocks and ZWD flat.  The pair injects no measurable tension on this bed and
+    time-linking is load-bearing for the consumer: **keep it armed; the loader WARN stays
+    informational.**  Not closed for the FIELD (no field A/B), and not a statement about a bed where
+    the veteran set and the pinned set diverge — §2.1's rank-1 dependency is exact only when they
+    match.
 
 ---
 

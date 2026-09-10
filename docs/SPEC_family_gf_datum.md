@@ -646,3 +646,45 @@ logic on synthetic support sets; the §1 count closure on a toy normal-equation 
 round-trip through the S-line writer/parser; the §D.5 `row_ok` asymmetry. Plus the V1 sim
 fixture pair, **the SBC contrast arm**, and the same-build V0 hashes, recorded in this file's
 status header when run.
+
+
+---
+
+## §2.1 addendum (2026-09-10) — measured on the quiet 24 h golden: the pair costs nothing, and time-linking is load-bearing
+
+§2.1's owed line — *"Quantifying it on a real arm is owed work, not a settled number"* — is now
+paid, on the SIM bed only.  `config/golden/golden_sim_tri_w6.json` co-arms exactly the pair the
+section warns about (`network.code_datum_time_linked: true` **and** `network.code_bias_gf_datum:
+true`, so its loader emits the WARN every run).  Single-knob 24 h A/B, same exe
+(`gnss_processor_golden0.exe` = HEAD `36ace5e`), same 60-station quiet `wu93` fixture, 2 879/2 879
+epochs on both, exit 0: **ARM** `runs/golden_sim_tlink_off` (`_golden_sim_tlink_off.json` =
+`code_datum_time_linked: false` plus the trace-only `cycle_slip.gap_instrument`; a config diff
+confirms those two keys and the output path are the only differences) vs **CONTROL**
+`runs/golden_sim_tri_w6_full` (the golden verbatim).  Settled = last 50 % (h12–24),
+`simnet_grade.py --settle-frac 0.5`, `grade/wire_settle50.txt` in each run.
+
+| settled h12–24 | ON (the warned pair) | **OFF** | Δ |
+|---|---|---|---|
+| consumer 3D rms / p50 / max (m) | **0.0762 / 0.0604 / 0.2073** | 0.1013 / 0.0749 / 0.2708 | **+33 % rms, OFF is worse** |
+| consumer UP rms (m) | **0.0644** | 0.0862 | +34 % |
+| sat code-bias residual rms / p50 / max (m) | 0.1482 / 0.0961 / 0.5231 | **0.4182** / 0.0146 / **3.7038** | rms 2.8× worse OFF, p50 6.6× better OFF |
+| … worst two signals | E:C7Q 0.1376, G:C5Q 0.1578 | **E:C7Q 0.3092, G:C5Q 0.9022** | the OFF tail is two signals |
+| emitted per-channel mean / rms (the s2z datum check) | +1.92e-2 / 6.23e-2 m | −2.59e-4 / 2.08e-2 m | OFF holds the datum tighter |
+| sat clock residual rms (m) | 1.5005 | 1.5100 | flat |
+| ZWD residual rms (m) | 0.0072 | 0.0073 | flat |
+
+**Reading.**  The two arms differ in the SHAPE of the code-bias error, not in its presence: ON
+carries a bias-like level the sum-to-zero datum does not hold at exactly (per-channel mean +1.9 cm,
+p50 9.6 cm, max 0.52 m), OFF carries a heavy tail on two signals (p50 1.5 cm but max 3.70 m).  The
+consumer — the only end-to-end judge here — prefers ON by a third on rms and by 34 % on the vertical.
+So the inconsistent-gauge tension §2.1 derives is **real in algebra and below the noise of this bed
+in effect**, while time-linking's own benefit (the Card-2 hysteretic OSB/clock wander) is visible.
+
+**Verdict: keep `code_datum_time_linked` armed alongside the GF pin; the loader WARN stays
+INFORMATIONAL** — do not escalate it to a hard error, and do not "fix" the pair by dropping the
+time link.  **Scope, stated as a limit:** SIM only (the field A/B is not run); one bed; and §2.1's
+rank-1 dependency is exact only where the s2z veteran set matches the pinned set
+(`NetworkSbasis::codeS2zTimeLink`), so a roster with heavy rise/set churn could still differ.  A
+field arm on the FLD63 chain remains the honest next step if the pair is ever suspected there.
+Cross-reference: `docs/SPEC_amb_iono_split_overcount.md` §6.16.7e (same arm, full table) and §7
+item 28 (the owed-work closure).

@@ -291,3 +291,28 @@ closed-loop A/B trace columns run against both the `IGS_Pasadena` and the intern
 step builds and is independently testable; **only Phase 2 onward changes output, and only when
 `network.ambiguity_resolution.enable` is on.** Step 1 (Phase 0, the `IlsCore` extraction) is independently
 mergeable with zero behaviour change and **has landed**; the rest is unspent under the DO-NOT-BUILD verdict.
+
+
+---
+
+## 2026-09-10 measurement — Phase 4's "the consumer's own AR absorbs the integer part" is not yet true
+
+Measured on the quiet 60-station truth bed (`runs/golden_sim_consumer_ar_a`: the sim golden with the
+held-out closed-loop consumer's `ar_mode` 0 → 1, ratio 3.0, partial AR, producer untouched; 24 h,
+2 879/2 879 epochs), the closed-loop consumer **cannot fix per band at all — 2 879 AR attempts, 0
+successes, ILS ratio p50 1.01 in every hour, `ratio_battery` refusing 2 596 of them**, and its
+position is identical to float (settled h12–24 rms 0.0762 m).  The reason is the consumer's own
+float, not the product: joining `logs/ambiguity_trace.csv` to `truth_ambiguities.csv` gives a
+settled per-band float σ of **0.32 / 0.37 / 0.42 / 0.44 cyc** (L1C / L2W / L5Q / L7Q) after 12+ h at
+a cm-level static position — an undifferenced model with a free per-LOS slant ionosphere and **no
+WL/NL cascade** leaves the per-band ambiguities undetermined by construction, so direct per-band
+LAMBDA is choosing between near-equiprobable candidates whatever the wire carries.  **Phase 4's
+recommendation therefore has an unbuilt prerequisite: the consumer-side MW-WL → IF-NL cascade on the
+undifferenced model** (MW-WL is iono-free at σ ≈ 0.05 cyc over hours) — the machinery exists for the
+BSSD/user paths, but `ar_wl_only` is INERT under `consumer_undifferenced`.  It also means the
+per-band SD-fraction grade of the emitted P records is **confounded twice** — by the iono-direction
+gauge (δ, γδ) that only code pins on a free-slant-iono posture, and by the float weakness measured
+here — so a uniform fractional histogram is **not** evidence that the wire lost its integers.  Until
+the cascade lands, neither the consumer fix rate nor `simnet_grade.grade_phase` is a test of Phase 2
+or Phase 3, and the DO-NOT-BUILD verdict on producer DD-fixing stands unchanged.  Full record:
+`docs/SPEC_amb_iono_split_overcount.md` §6.16.7b and §7 item 27.
