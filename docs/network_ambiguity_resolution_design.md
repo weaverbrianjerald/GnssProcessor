@@ -316,3 +316,72 @@ here — so a uniform fractional histogram is **not** evidence that the wire los
 the cascade lands, neither the consumer fix rate nor `simnet_grade.grade_phase` is a test of Phase 2
 or Phase 3, and the DO-NOT-BUILD verdict on producer DD-fixing stands unchanged.  Full record:
 `docs/SPEC_amb_iono_split_overcount.md` §6.16.7b and §7 item 27.
+
+
+## 2026-09-10 (later the same day) — the wire, joined to truth: the order of the phases is now MEASURED, and Phase 4's shortcut is falsified
+
+The morning's note above said the consumer cannot fix per band and blamed the consumer's own float.
+Three truth joins run later the same day say where the integers actually are, and they change the
+sequencing of this document. Full record: `docs/SPEC_amb_iono_split_overcount.md` §6.17c/§6.17d/§6.17f
+and §7 items 27 / 30.
+
+**1. The consumer's lanes are already PRECISE — the blocker is a BIAS, not noise.**
+Splitting the consumer's wrapped SD residue into within-arc scatter and per-arc offset
+(`scripts/consumer_float_truth_join.py`, quiet 24 h bed, settled h12–24): within an arc the lanes are
+tight — GPS EWL **0.026 cyc**, Galileo EWL 0.015, WL 0.05–0.08, NL 0.053 — but **every** channel's
+per-arc offset `|wrap(arc mean)|` sits at the uniform null (0.22–0.30; only GPS EWL is partly
+concentrated at 0.173, 44 % inside ±0.15). Averaging longer cannot help.
+
+**2. The WIRE's gauge is an arbitrary receiver's FLOAT ambiguity.**
+Grading the emitted product directly against truth (`scripts/simnet_wire_integer_consistency.py`,
+`E = [clk + P] − [clk_true + osb_true]`, between-satellite within a constellation):
+
+- every wire channel is at the uniform null (GPS L1C/L2W/L5Q 0.237/0.285/0.273, WL 0.251, EWL 0.238,
+  NL 0.271; Galileo the same), and undifferenced `dP/λ` is 0.227–0.271 — also the null;
+- the consumer **inherits the wire exactly**: unwrapped regression slope **+0.888**, Pearson **+0.936**
+  on `W = dC − dP`, against −0.859 on the plus convention, with residual sd 13.7 cyc = the consumer's
+  own float (which is why every WRAPPED per-epoch test reads as null on either side);
+- the offset is a **stable per-(satellite, band) gauge** — within-tenure circular std 0.024–0.036 cyc,
+  tenures ≈ 86 ep GPS / 148 ep Galileo, stepping 0.030–0.057 cyc p50 at handovers;
+- and inverting it, `round(−dP/λ)` matches **some** station's truth integer 50–75 % of the time and
+  the **current anchor's** 0.0–3.1 %. `|dP/λ|` itself is 16–28 cycles.
+- time-differenced, the wire's SD motion is a pure two-factor per-satellite range+iono offset
+  (R² 0.9999 GPS / 0.9996 Galileo, |dr| p50 4.1 mm / 30 s, |di| p50 0.15 mm) — no band-specific
+  content above 0.1 mm.
+
+⇒ **the non-integer budget of the emitted product is the ANCHOR's own float error**, which is exactly
+what §2 of this document says the pivot pins are: float-valued `w=1e10` targets
+(`ApplicationNetworkAssembly.cpp:2559`), re-pinned at the successor's float on every handover
+(`NetworkPhaseDatum.cpp:335-428`). Phase 3 is not an optimisation of the product — it is the only
+place the integers can enter it.
+
+**3. The emission-side shortcut is FALSIFIED.** Estimating the common fractional part per
+(satellite, signal) from the carried stations and adding it back at emission
+(`network.emit_pb_gauge_level`, branch `worktree-agent-a7e2586003a605548` commit `9b59a2c`, **not
+merged**) actuated on 76 % of P records with mean |δ| 0.65 cyc and FAILED: no wire channel moved, the
+float consumer went **+36 % worse**, and the wire got 1.1–1.9× NOISIER inside a tenure. Two reasons
+worth carrying: the carried per-station fractions are only weakly common (R p50 0.572 at n ≥ 5 vs
+≈ 0.41 for pure noise; the carry covers 6 of 61 stations), and an **unwrapped EWMA is an integrator**
+— half of all families walked more than a cycle in 24 h, one reaching −7.63 cyc = −1.45 m of injected
+bias under a single unbroken reference.
+
+**4. The corrected order.** Phase 4's "the consumer's own AR absorbs the integer part" cannot be made
+true from the consumer side, and the consumer-side WL→NL cascade is **dead on arrival as specified**:
+its WL would come from `computeSatMwBias`'s MW SD wide-lane, which subtracts the wire's own satellite
+MW biases — the same biases producing the uniform per-arc offsets — so it would lock onto wrong
+integers with a high ratio (the Jul-30 user-path failure, `project_pppar_user_control`). The order is:
+
+1. **Phase 2, re-run and GRADED.** `NetworkProducerAr` / `network.ambiguity_resolution.*` exists and
+   was falsified only on the pre-F3 bed (near_int 34 %); the quiet golden now carries **87 %** ref-free
+   DDs at the true integer, so the search has something to find. ⚠ **It is LOG-ONLY today.** Before
+   any Phase-3 build it needs a trace — `network_producer_ar.csv` with per-DD float value, fixed
+   value, ratio and the pair identity — and a truth grader against `truth_ambiguities.csv`. A fix
+   count is not a grade. Two known confounds to record with it: the float covariance handed to the
+   search is carry-blind on the leveling posture, and the DD construction is a star against its own
+   chosen reference (any grade built on one reference element must report that element's share or
+   difference it away — SPEC_amb_iono §6.12).
+2. **Phase 3 integer pins** replacing the float-valued pivot/handover pins.
+3. **Only then the consumer cascade**, which is what makes an integer-consistent wire fixable.
+
+The DO-NOT-BUILD verdict on producer DD-*fixing* (M5) is unchanged — this is the diagnostic search
+plus its grader, not a solve-affecting fix.
