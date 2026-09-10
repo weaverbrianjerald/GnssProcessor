@@ -1789,6 +1789,27 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    (§13.8.6: med|B| 0.206 vs med|A| 0.108, ratio ≈ 2) — the B channel demonstrably carries an iono-shaped error
    when one exists — while the field control is A-dominant (10.4 vs ~2, ratio ≈ 0.2).  A truth-iono join
    (regress B on the state ERROR, sim only) would make the positive control explicit; not run here.
+   **Sim A/B split (read 18:03, as pre-registered):** A slope −0.000 (corr −0.005), B +0.002 (corr +0.074) on
+   the state total — both ≈ 0, expected.  **Truth-join positive control (regress B on the sim state ERROR):
+   OWED**, and it is the leg that decides the load-bearing reading — the field's +1.68 is a regression on the
+   iono state TOTAL, which on a healthy arm is dominated by the real ionosphere the state tracks, so it says
+   "the cycle-common ambiguity channel co-moves with the estimated DD ionosphere", NOT "with the state's
+   error".  **Truth-free discriminator, baseline length** (real DD ionosphere grows with station separation;
+   `iono_arc_wander.py` split, field control): DD-iono MAD p50 0.74 m (< 500 km, 63 arcs) → 0.92 (500–1500,
+   16) → 1.56 (1500–4000, 88) → 1.57 m (> 4000 km, 205) — it grows like real ionosphere; A's MAD grows with it
+   (8.8 → 7.1 → 11.2 → 11.3 cyc) and the A-on-iono slope stays flat (+1.87 / +1.93 / +1.66 / +1.51).  So the
+   cycle-common ambiguity channel follows the ESTIMATED DD ionosphere proportionally at every baseline
+   length, i.e. it follows what the state tracks — the real ionosphere — not a baseline-independent error.
+   **Trace semantics verified in source:** `network_dd_fractional.csv` forms dd_m from the plain ambiguity
+   states, `x_lin + x_r` per (station, sat, signal) in metres, differenced between satellites then stations
+   (`NetworkDdFrac.cpp:143-158, 245-248`); `iono_total_m` is likewise the plain per-LOS iono state
+   `x_lin + x_r` (`NetworkIonoDiag.cpp:98-110`).  Neither is a derived quantity, so the (I, N₁, N₂) co-motion
+   is a motion of the ESTIMATED STATES.  ⚠ Consistency question this raises, to be read before any
+   mechanism: in metres the co-motion is ΔN₁ ≈ +1.7 ΔI, ΔN₂ ≈ +2.2 ΔI against phase iono terms of −ΔI / −1.65 ΔI,
+   leaving ~+0.6 ΔI of range-like model change on BOTH bands that no DD of clocks / geometry can absorb — so
+   either the phase post-fit σ̂₀ of the control carries it (check `network_epoch_status.csv`), or a fourth
+   per-LOS term of the field posture (the SH↔slant pin with its GM deviation is the candidate) closes the
+   budget and the co-motion is a legal, weakly-observed direction of THAT model.  Not resolved here.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this

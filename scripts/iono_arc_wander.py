@@ -116,6 +116,7 @@ def main():
     ratio = LAM2 / LAM1 - 1.0
     res = {'A': ([], []), 'B': ([], [])}
     magA, magB = [], []
+    arc_recs = []
     nA = 0
     for key, ser in chords.items():
         e1s = amb.get(key, {}); e2s = amb2.get(key, {})
@@ -126,17 +127,41 @@ def main():
             Bv = [(e2 - e1) / ratio for _, e1, e2 in pts]; Av = [e1 - b for (_, e1, _), b in zip(pts, Bv)]
             Iv = [pt[0] for pt in pts]
             magA.append(mad(Av)); magB.append(mad(Bv))
+            arc_recs.append((key[2], key[3], mad([x[1] for x in arc]), mad(Av), None))
             mI = st.median(Iv); dI = [x - mI for x in Iv]; sxx = sum(x * x for x in dI)
             for name, v in (('A', Av), ('B', Bv)):
                 mv = st.median(v); dv = [x - mv for x in v]
                 sxy = sum(x * y for x, y in zip(dI, dv)); syy = sum(y * y for y in dv)
                 if sxx > 1e-9 and syy > 1e-9:
                     res[name][0].append(sxy / sxx); res[name][1].append(sxy / (sxx * syy) ** 0.5)
+                    if name == 'A': arc_recs[-1] = arc_recs[-1][:4] + (sxy / sxx,)
     print(f'  A/B magnitudes (arc MAD, cycles): A p50 {q(sorted(magA),.5):.3f} p90 {q(sorted(magA),.9):.3f} | B p50 {q(sorted(magB),.5):.3f} p90 {q(sorted(magB),.9):.3f}   [an iono-absorbing ambiguity would put the FULL DD-iono wander (above, in L1 cyc) into B]')
     for name in ('A', 'B'):
         sl = sorted(res[name][0]); co = sorted(res[name][1])
         print(f'  A/B test: {name} (cycle-common) deviation on DD-iono(cyc): slope p50 {q(sl,.5):+.3f} (p10 {q(sl,.1):+.3f}, p90 {q(sl,.9):+.3f}), corr p50 {q(co,.5):+.3f} (n {len(sl)})' if name == 'A' else
               f'  A/B test: {name} (iono-shaped) deviation on DD-iono(cyc): slope p50 {q(sl,.5):+.3f} (p10 {q(sl,.1):+.3f}, p90 {q(sl,.9):+.3f}), corr p50 {q(co,.5):+.3f} (n {len(sl)})')
+
+    # baseline-length split (truth-free discriminator): real DD ionosphere grows with station separation.
+    pos = {}
+    try:
+        with io.open(os.path.join(a.run_dir, 'logs', 'network_stations.csv'), encoding='utf-8', errors='replace') as f:
+            for row in csv.DictReader(f):
+                try: pos[row['station']] = (float(row['ecef_x']), float(row['ecef_y']), float(row['ecef_z']))
+                except (KeyError, ValueError): pass
+    except FileNotFoundError: pass
+    if pos:
+        bins = [(0, 500), (500, 1500), (1500, 4000), (4000, 99999)]
+        rows = []
+        for sa, sb, mI, mA, slA in arc_recs:
+            if sa in pos and sb in pos:
+                d = sum((u - v) ** 2 for u, v in zip(pos[sa], pos[sb])) ** 0.5 / 1000.0
+                rows.append((d, mI, mA, slA))
+        print('  BASELINE split (km): n arcs | DD-iono MAD p50 (m) | A MAD p50 (cyc) | A-on-iono slope p50')
+        for lo_, hi_ in bins:
+            sel = [r for r in rows if lo_ <= r[0] < hi_]
+            if not sel: continue
+            mi = sorted(r[1] for r in sel); ma = sorted(r[2] for r in sel); sl = sorted(r[3] for r in sel if r[3] is not None)
+            print(f'    {lo_:>5}-{hi_:<5} {len(sel):5d} | {q(mi,.5):8.3f} | {q(ma,.5):8.3f} | {q(sl,.5):+.3f}' if sl else f'    {lo_:>5}-{hi_:<5} {len(sel):5d} | {q(mi,.5):8.3f} | {q(ma,.5):8.3f} | (n/a)')
 
 if __name__ == '__main__':
     sys.exit(main())
