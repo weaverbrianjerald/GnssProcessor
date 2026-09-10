@@ -1990,6 +1990,46 @@ and the arm is not run.  Predictions if it injects: ZWD per-station settled span
 σ̂₀ unchanged (~1.6 cm).  Falsifier: ZWD pinned but the DD wander and the co-motion unchanged ⇒ the ZWD was
 a passenger, not the free member, and the weakly-determined direction has another member.
 
+**Arm 2 `fldf3_on` — landed 18:25 (exit 0; 956 solved epochs of 1,440: 223 `gate_withheld` by the same S-basis
+null-space gate from the SAME onset epoch 101, plus 261 gate-ok-but-unsolved; withholds persist all day, h4–h11
+49–75/h; D0 median 388 ms vs arm 1's 289 = +34 %, overlapped).**  P1 PASSES — F3 fires and stays conditioned
+all day: 86,344 blocks whitened, 991,230 rows, 60,458 columns marginalized at inject, 2,813 pairs zeroed
+(harvest-stamp mismatch), **0 refused, 0 factorization fallbacks**, block dims 10–24 (max 21), within-epoch
+refloat re-whiten 9,924 ok / 0 failed.  But the vehicle does not converge under it either: ZWD per-station
+settled span median **55 m** (arm 1 120, control 21), σ 0.043 m (over-confident); prires worst |t| 1.5e8; the live
+pool refloats continuously — T2 646/950 (68 %), T3 **80,222/403,728 (19.9 %)**, T3c 12,935/24,832 (52 %) — worse
+than arm 1's 9 % (the §7 item 4 population: F3's dense L⁻¹ rows admitted to the pool at unit variance);
+T4a 10,601 → 3,618 (better).  **P2 FALSIFIED — at the null on every signal:** L1C as-traced med|f| 0.246
+(null 0.247), R 0.458 (0.466), gap +0.009; L2W R 0.442 (0.449); WL12 (24,269 paired chords) R 0.485 (0.476),
+near 19.8 %, gap +0.003 — the WL null bounds the residual at ≳ 3 L1 cycles, on a NON-converged arm (the
+pre-registered ambiguity).  Arc stability: e1/e2 MAD **6.95 / 6.97 cyc** (control 10.2, arm 1 24.2), WL 0.63,
+cross-band slope **1.003** (p10 0.83, p90 1.19, corr 0.998) — cycle-common again; ref-free 2.98 cyc (gap −0.19).
+Iono leg: DD-iono MAD **0.77 m** (control 1.25, arm 1 3.7), single-LOS 0.82; A on iono +1.40 (corr 0.83), B +0.20
+(corr 0.49), baseline split 0.35 → 0.87 m with A's slope flat +1.3…+1.7 — the same (I, N, ZWD) trade as the
+control, at ~60 % of its amplitude.  In-process AR consumer settled 7.9 m (pathology).
+
+**Float-only cold-consumer replays (WTZZ00DEU hold-out, truth position, settled ≥ h6, 3D rms / p50):**
+control wire **6.56 / 5.83 m**, arm 1 wire 4.37 / 2.13, arm 2 wire **2.90 / 1.62** — P5 PASSES (arm 2 ≤ arm 1)
+and the shipped control's wire is the WORST of the three for a float consumer, i.e. every field wire here is
+metre-class (the sim's cold-on-continuous floor is 0.06 m) and the (I, N, ZWD) trade is priced into the products.
+
+**VERDICT of the ladder (18:35).**  (1) The phase-leveling vehicle does NOT converge on the FLD63/EXT63 field
+chain: both leveling arms trip the NetworkSbasis null-space gate ("observed 0 (near-)zero eigenvalues" vs
+declared 1) from epoch 101 onward and carry a 10²-m ZWD sink — a datum/rank failure of a posture (eq34 chain
+datum + SBC + SH-pinned iono + leveling) that was never validated anywhere; the sim golden's leveling vehicle
+runs the prioritized pivot phase datum with continuous handover.  (2) F3 itself is sound on the field — fires,
+conditioned, 0 fallbacks — and MITIGATES the vehicle's divergence on every scale-bearing instrument (ZWD sink
+120 → 55 m, DD-iono 3.7 → 0.77 m, DD-ambiguity wander 24 → 7 cyc, T4a 10.6k → 3.6k, float consumer 4.4 → 2.9 m)
+but does not cure it, and its pre-registered headline — lifting the field DD fractions off uniform — is
+FALSIFIED on this chain (at the null on L1C, L2W and WL12), with the confound that the arm it was read on
+never converged.  (3) The field control's DD "ambiguities" are not estimable-invariant in practice: (I, N₁, N₂,
+ZWD) co-move along a weakly-determined direction of the shipped posture (§6.15.3a item 5), and that structure is
+present on all three arms.  Ledger: `phase_leveling_local_block` stays RECOMMEND_SCOPED on its sim regime, with
+a FIELD entry "KEEP OFF on the field until a leveling posture converges there" — item 21 is re-cut from "does F3
+help the field" to "make the leveling vehicle converge on the field (datum declaration), then re-run F3"; the
+pre-registered probes `_fldf3_pl_pdp3h` (sim golden's phase-datum family) and `_fldf3_pl_nosbc3h` (SBC off) and
+the shipped-vehicle arm `_fldf3_ci_zwd` (pin the fourth member) are queued behind this ladder.
+
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
 (harvest-stamp mismatch), 0 refused, 0 factorization fallbacks, block-dim histogram <10: 136 / 10–24: 643
