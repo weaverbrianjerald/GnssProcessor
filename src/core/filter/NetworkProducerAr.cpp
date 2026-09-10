@@ -5,10 +5,22 @@
  *        (dedent-4, zero substitution) out of Application::runNetwork at decomposition
  *        INC-9b (2026-07-22).
  *
- * The body below is a byte-copy of the former SB_NETAR block, dedented 4 spaces (the
+ * The body below was a byte-copy of the former SB_NETAR block, dedented 4 spaces (the
  * block sat at loop-body indent, no wrapping if).  The alias preamble reconstructs the
  * three run-TU aliases the body reads (nc / netar / n_emitted); every other name is a
  * parameter named exactly as the former run-TU local.  See NetworkProducerAr.hpp.
+ *
+ * ⚠ NO LONGER VERBATIM (2026-09-10, the trace card — docs/network_ambiguity_resolution_
+ * design.md's 2026-09-10 note §4.1, "a fix count is not a grade").  Three deliberate
+ * departures, all additive and all outside the arithmetic:
+ *   1. `DDrow` carries the six IDENTITY strings a truth join needs;
+ *   2. the cap's `order` is hoisted out of the branch into @ref netar::lowestSigmaOrder
+ *      so the trace can invert it (@ref netar::mapFixToBasis) — same sort, same
+ *      comparator, same subset, so the SEARCH is unchanged;
+ *   3. run-end tallies + the per-DD `network_producer_ar.csv` writer.
+ * The solve is still untouched and the block is still skipped entirely when
+ * `network.ambiguity_resolution.enable` is off, so the OFF product stays byte-identical
+ * (certified same-build on the 60-epoch golden twin, 2026-09-10).
  */
 
 #include "filter/NetworkProducerAr.hpp"
@@ -20,6 +32,7 @@
 #include "filter/IlsCore.hpp"            // ils::IlsGateConfig / IlsResult / ilsFix
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
 #include "filter/StateManager.hpp"       // stations[i].sm-> ...
+#include "logging/NetworkRunTraces.hpp"  // traces.producer_ar_trace
 
 #include <Eigen/Dense>
 
@@ -40,9 +53,51 @@
 
 namespace GnssProcessor {
 
+namespace netar {
+
+std::vector<int> lowestSigmaOrder(const Eigen::MatrixXd& Q_cyc, int cap) {
+    const int n = static_cast<int>(std::min(Q_cyc.rows(), Q_cyc.cols()));
+    std::vector<int> order(static_cast<std::size_t>(std::max(0, n)));
+    std::iota(order.begin(), order.end(), 0);
+    if (cap <= 0 || cap >= n) return order;   // uncapped: identity, un-sorted
+    std::sort(order.begin(), order.end(), [&](int a, int b) {
+        return Q_cyc(a, a) < Q_cyc(b, b);
+    });
+    order.resize(static_cast<std::size_t>(cap));
+    return order;
+}
+
+std::vector<DdFixLabel> mapFixToBasis(int n_dd,
+                                      const std::vector<int>& search_of,
+                                      const std::vector<int>& kept,
+                                      const Eigen::VectorXd& afix) {
+    std::vector<DdFixLabel> out(static_cast<std::size_t>(std::max(0, n_dd)));
+    for (int s : search_of)
+        if (s >= 0 && s < n_dd) out[static_cast<std::size_t>(s)].in_subset = true;
+    // `kept[m]` indexes the SEARCH vector; `afix(m)` is that entry's integer.  The
+    // double indirection kept -> search_of -> basis is the whole point of this
+    // function: skipping it silently attributes an integer to the DD that happens
+    // to sit at the same ORDINAL in the basis, which on a capped, sigma-sorted
+    // search is essentially a random satellite.
+    const int n_af = static_cast<int>(afix.size());
+    for (std::size_t m = 0; m < kept.size() && static_cast<int>(m) < n_af; ++m) {
+        const int s = kept[m];
+        if (s < 0 || static_cast<std::size_t>(s) >= search_of.size()) continue;
+        const int b = search_of[static_cast<std::size_t>(s)];
+        if (b < 0 || b >= n_dd) continue;
+        auto& lab = out[static_cast<std::size_t>(b)];
+        lab.kept      = true;
+        lab.fixed_int = afix(static_cast<Eigen::Index>(m));
+    }
+    return out;
+}
+
+} // namespace netar
+
 void networkProducerAr(NetworkRunContext& ctx,
                        const GnssConfig& config_,
                        const std::shared_ptr<spdlog::logger>& log,
+                       NetworkRunTraces& traces,
                        const SyncedEpoch& se,
                        const NetworkEstimator& est,
                        const Eigen::VectorXd& x_s,
@@ -111,7 +166,16 @@ void networkProducerAr(NetworkRunContext& ctx,
             const int idx = static_cast<int>(reqs.size());
             reqs.push_back(k); req_idx[k] = idx; return idx;
         };
-        struct DDrow { int i_rj, i_rp, i_fj, i_fp; double dd_m, lambda; };
+        // The IDENTITY fields are what turn a fix count into a grade: without
+        // (cons, signal, sat_j, ref_sat, sta_r, ref_sta) a traced DD cannot be joined
+        // to truth_ambiguities.csv, and the star reference cannot be differenced away
+        // (SPEC_amb_iono_split_overcount §6.12).  They are filled unconditionally —
+        // the whole block is already gated on `netar.enable`, and six short strings per
+        // DD is dust next to the joint conditional covariance below.
+        struct DDrow {
+            int i_rj, i_rp, i_fj, i_fp; double dd_m, lambda;
+            std::string cons, signal, sat_j, ref_sat, sta_r, ref_sta;
+        };
         std::vector<DDrow> dds;
         int n_const_signal = 0;
         for (auto& [cs, satmap] : ar_pool) {
@@ -143,7 +207,9 @@ void networkProducerAr(NetworkRunContext& ctx,
                     const double dd_m = (rj.value_m - rp_it->second.value_m)
                                       - (fj_it->second.value_m - fp.value_m);
                     dds.push_back(DDrow{ reqOf(rj), reqOf(rp_it->second),
-                                         reqOf(fj_it->second), reqOf(fp), dd_m, lambda });
+                                         reqOf(fj_it->second), reqOf(fp), dd_m, lambda,
+                                         cs.first, cs.second, sat, ref_sat,
+                                         stations[sta_i].name, stations[ref_i].name });
                 }
             }
         }
@@ -186,13 +252,12 @@ void networkProducerAr(NetworkRunContext& ctx,
                 Eigen::VectorXd y_fix = y_cyc;
                 Eigen::MatrixXd Q_fix = Q_cyc;
                 int nd_fix = nd;
+                // search row -> basis index.  HOISTED out of the cap branch (it used to
+                // be a block-local `order`) because the trace has to invert it: see
+                // netar::mapFixToBasis.
+                const std::vector<int> order = netar::lowestSigmaOrder(Q_cyc, netar.ils_max_dim);
                 if (netar.ils_max_dim > 0 && nd > netar.ils_max_dim) {
                     nd_fix = netar.ils_max_dim;
-                    std::vector<int> order(static_cast<std::size_t>(nd));
-                    std::iota(order.begin(), order.end(), 0);
-                    std::sort(order.begin(), order.end(), [&](int a, int b) {
-                        return Q_cyc(a, a) < Q_cyc(b, b);
-                    });
                     y_fix.resize(nd_fix);
                     Q_fix.resize(nd_fix, nd_fix);
                     for (int a = 0; a < nd_fix; ++a) {
@@ -244,6 +309,58 @@ void networkProducerAr(NetworkRunContext& ctx,
                           nd_fix < nd ? " (ILS-capped)" : "", fix.ratio, fix.p_succ,
                           med_sig, med_frac, n_near, nd,
                           ar_carry_aware ? "CARRY-AWARE" : "carry-blind");
+                // --- Run-end tallies (standing invariant #4: the log line above is
+                //     per-epoch, so without these a run has no denominator and an
+                //     ARMED-but-inert search reads exactly like a quiet one). --------
+                auto& c = ctx.counters;
+                ++c.netar_epochs;
+                c.netar_carry_aware = ar_carry_aware;
+                c.netar_n_dd.push_back(static_cast<double>(nd));
+                c.netar_n_search.push_back(static_cast<double>(nd_fix));
+                c.netar_med_sigma.push_back(med_sig);
+                const int n_fixed = fix.ok ? static_cast<int>(fix.kept.size()) : 0;
+                if (fix.ok) {
+                    ++c.netar_fix_epochs;
+                    c.netar_dd_fixed += n_fixed;
+                    // ratio / p_succ describe an ACCEPTED fix; on a rejected epoch they
+                    // are the failure diagnostics, and mixing the two populations into
+                    // one median is what makes a "ratio p50 1.01" unreadable.
+                    c.netar_ratio.push_back(fix.ratio);
+                    c.netar_p_succ.push_back(fix.p_succ);
+                }
+                // --- Per-DD trace (network.ambiguity_resolution.trace) --------------
+                // Every DD in the BASIS gets a row, not just the searched subset: the
+                // fixability ceiling the grader reports (share of DDs whose float is
+                // within 0.25 cyc of truth) is a statement about the population the cap
+                // chose FROM, and a trace that only carries the subset cannot make it.
+                if (traces.producer_ar_trace.is_open()) {
+                    const auto labels = netar::mapFixToBasis(nd, order, fix.kept, fix.afix);
+                    auto& os = traces.producer_ar_trace;
+                    // ratio / p_succ: the ACCEPTED fix's on a fixed epoch, the FULL-SET
+                    // attempt's otherwise.  IlsResult zeroes the accepted fields when
+                    // nothing was accepted, and a column of zeros on the majority of
+                    // epochs carries no information at all — the failure diagnostics do.
+                    // `n_fixed` is the discriminator and is on the same row, so the two
+                    // populations stay separable (the grader splits on it).
+                    const double ep_ratio  = fix.ok ? fix.ratio  : fix.full_ratio;
+                    const double ep_psucc  = fix.ok ? fix.p_succ : fix.full_p_succ;
+                    for (int a = 0; a < nd; ++a) {
+                        const DDrow& d = dds[static_cast<std::size_t>(a)];
+                        const auto& lb = labels[static_cast<std::size_t>(a)];
+                        const double sig = Q_cyc(a, a) > 0.0 ? std::sqrt(Q_cyc(a, a)) : -1.0;
+                        os << fmt::format("{},{:.1f},{},{},{},{},{},{},{:.9f},{:.6f},"
+                                          "{:.6f},{},{},{},{:.4f},{:.6f},{},{},{}\n",
+                                          se.time.week, se.time.tow,
+                                          d.cons, d.signal, d.sat_j, d.ref_sat,
+                                          d.sta_r, d.ref_sta, d.lambda,
+                                          y_cyc(a), sig,
+                                          lb.in_subset ? 1 : 0,
+                                          lb.kept ? static_cast<long long>(std::llround(lb.fixed_int)) : 0LL,
+                                          lb.kept ? 1 : 0,
+                                          ep_ratio, ep_psucc, nd, nd_fix, n_fixed);
+                    }
+                    c.netar_rows += nd;
+                }
             }
         }
     }

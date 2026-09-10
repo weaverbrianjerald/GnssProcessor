@@ -37,6 +37,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       clk_mon_trace_path(log_dir_ / "network_clock_monitor.csv"),
       anchor_info_trace_path(log_dir_ / "network_anchor_info.csv"),
       dd_frac_trace_path(log_dir_ / "network_dd_fractional.csv"),
+      producer_ar_trace_path(log_dir_ / "network_producer_ar.csv"),
       slip_raw_trace_path(log_dir_ / "network_slip_raw.csv"),
       epoch_status_trace_path(log_dir_ / "network_epoch_status.csv"),
       health_trace_path(log_dir_ / "network_service_health.csv"),
@@ -238,6 +239,18 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         } else {
             log->warn("Network: failed to open DD-fractional trace {}",
                       dd_frac_trace_path.string());
+        }
+    }
+    // Producer-AR Phase-2 per-DD trace.  Gated on BOTH knobs on purpose: the rows are
+    // a by-product of the search, so `trace` without `enable` could only ever produce a
+    // header-only file that reads like "the search found nothing" (the loader warns).
+    if (nc.ambiguity_resolution.trace && nc.ambiguity_resolution.enable) {
+        producer_ar_trace.open(producer_ar_trace_path);
+        if (producer_ar_trace) {
+            producer_ar_trace << kProducerArHeader;
+        } else {
+            log->warn("Network: failed to open producer-AR trace {}",
+                      producer_ar_trace_path.string());
         }
     }
     if (nc.trace_slip_raw) {
@@ -1381,6 +1394,20 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"trace_slip_events\":" << (nc.trace_slip_events ? "true" : "false") << ','
                << "\"trace_anchor_info\":" << (nc.trace_anchor_info ? "true" : "false") << ','
                << "\"trace_dd_fractional\":" << (nc.trace_dd_fractional ? "true" : "false") << ','
+               // Producer-AR Phase-2 provenance.  `ils_max_dim` rides with the two
+               // switches because it changes WHICH DDs the search saw — a grade of
+               // network_producer_ar.csv that does not know the cap is comparing
+               // different populations across runs.  Emitted ONLY when armed, so an
+               // unarmed run's manifest bytes are unchanged (same
+               // structural-byte-identity rule as the adm_* block below).
+               << ((nc.ambiguity_resolution.enable || nc.ambiguity_resolution.trace)
+                       ? fmt::format("\"ambiguity_resolution.enable\":{},"
+                                     "\"ambiguity_resolution.trace\":{},"
+                                     "\"ambiguity_resolution.ils_max_dim\":{},",
+                                     nc.ambiguity_resolution.enable ? "true" : "false",
+                                     nc.ambiguity_resolution.trace ? "true" : "false",
+                                     nc.ambiguity_resolution.ils_max_dim)
+                       : std::string())
                << "\"trace_flag_rates\":" << (nc.trace_flag_rates ? "true" : "false") << ','
                << "\"trace_epoch_status\":" << (nc.trace_epoch_status ? "true" : "false") << ','
                << "\"trace_events\":" << (nc.trace_events ? "true" : "false") << ','
@@ -1799,6 +1826,7 @@ void NetworkRunTraces::closeAll() {
     if (if_slip_trace.is_open()) if_slip_trace.close();
     if (raim_trace.is_open()) raim_trace.close();
     if (raim_attrib_trace.is_open()) raim_attrib_trace.close();
+    if (producer_ar_trace.is_open()) producer_ar_trace.close();
     if (epoch_status_trace.is_open()) epoch_status_trace.close();
     if (health_trace.is_open()) health_trace.close();
     // FC-1: closed explicitly (not left to the destructor) because it ROTATES — rotation

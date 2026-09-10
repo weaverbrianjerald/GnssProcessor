@@ -385,3 +385,41 @@ integers with a high ratio (the Jul-30 user-path failure, `project_pppar_user_co
 
 The DO-NOT-BUILD verdict on producer DD-*fixing* (M5) is unchanged — this is the diagnostic search
 plus its grader, not a solve-affecting fix.
+
+
+### 2026-09-10 (same day, later) — the Phase-2 instrument is BUILT (the grade is still owed)
+
+Item 1 below asked for "a trace … and a truth grader against `truth_ambiguities.csv`" before any Phase-3
+build. Both exist now; the *reading* does not.
+
+- **`network.ambiguity_resolution.trace`** (default OFF, requires `.enable`) writes
+  `logs/network_producer_ar.csv` — one row per DD **of the whole basis**, not just the searched subset,
+  carrying `cons,signal,sat_j,ref_sat,sta_r,ref_sta,lambda_m,float_cyc,sigma_cyc,in_subset,fixed_int,kept`
+  plus the epoch's `ratio,p_succ,n_dd,n_search,n_fixed`. The basis population is there on purpose: the
+  fixability ceiling is a statement about what the `ils_max_dim` cap chose *from*.
+  ⚠ `IlsResult::kept` indexes the **capped, σ-permuted** search vector and `afix` is in *kept* order — a
+  third indexing. `netar::mapFixToBasis` does the double indirection and is unit-tested
+  (`tests/test_producer_ar_trace.cpp`, `ProducerArTrace`) with the naive mapping as an explicit negative
+  control, because getting it wrong produces a well-formed CSV with the integers on the wrong satellites
+  and nothing downstream can tell.
+- **Run-end clause** `Network (producer AR, Phase 2 log-only): …` in `NetworkTeardown.cpp` (epochs
+  searched / DD p50 / searched p50 / fix-epoch share / DD fixed / ratio p50 / p_succ p50 / med_DD_sigma
+  p50 / carry-aware|blind / trace), with invariant-#4 branches for "armed but the ILS ran on zero
+  epochs" and "trace armed but zero rows", plus a warn whenever a fix was accepted on a carry-BLIND
+  covariance. Provenance keys (`ambiguity_resolution.{enable,trace,ils_max_dim}`) join the manifest,
+  emitted only when armed so an unarmed manifest's bytes are unchanged.
+- **`scripts/simnet_producer_ar_grade.py`** joins the trace to truth (`simnet_amb_integer.load_truth` /
+  `n_at`) and reports, settled and h0–12: float DD error `e = float_cyc − DD_true` (wrapped |frac| p50,
+  share < 0.15 / < 0.25, unwrapped std) for the basis and the subset separately and per band; the
+  CORRECT-fix rate among kept with every wrong fix's |e| by band and σ bin; the fixability ceiling; the
+  ratio/p_succ distributions; and the reference sat/station identity with its switch count. `--selftest`
+  grades a fabricated trace whose answer is known.
+- **Arms**: `config/test_suite/_golden_sim_netar.json` (the sim golden + the block, 24 h) and
+  `_golden_sim_netar_smoke.json`. Acceptance is pre-registered in the arm's `_comment_arm`.
+
+Smoke (60 epochs, 60 stations, quiet bed): 12 426 rows, clause present, OFF path byte-identical
+(same `products.txt` sha256 under the pre-change and post-change exes). **Cost: the diagnostic is
+~2.2–2.7 s/epoch at 60 stations — 50 % of the run's `other` block** (the joint conditional covariance
+and the 200-dim MLAMBDA, not the CSV), so a 24 h arm carries roughly +2 h of wall. Nothing about
+accuracy can be read off the smoke: at epoch 60 `med_DD_sigma` is 1.23 cyc, the search fixes nothing,
+and the ceiling sits at the 51 % a uniform fraction gives you. The graded 24 h run is the deliverable.

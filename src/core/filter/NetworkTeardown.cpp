@@ -1592,6 +1592,73 @@ int networkTeardown(
                   "is evidence about the card.");
     }
 
+    // --- Producer-AR Phase-2 diagnostic run-end readout ------------------------------
+    // docs/network_ambiguity_resolution_design.md, the 2026-09-10 note §4.1: "a fix
+    // count is not a grade".  This clause is the RUN-level half of that — the per-epoch
+    // spdlog line said what one epoch did, and nothing said what the run did, so the
+    // only way to read an armed run was to grep 2 879 lines.  Standing invariant #4:
+    // `netar_epochs == 0` on an ARMED run means the search NEVER REACHED the ILS and
+    // every number below is structurally empty; that case gets its own warn.
+    if (nc.ambiguity_resolution.enable) {
+        auto& c = ctx.counters;
+        auto p50 = [](std::vector<double> v) {
+            if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
+            std::sort(v.begin(), v.end());
+            return v[v.size() / 2];
+        };
+        // ratio / p_succ are collected on ACCEPTED-fix epochs only (a rejected epoch's
+        // IlsResult zeroes them), so on a run that never fixed the sample is EMPTY.
+        // "n/a" says that; a printed "nan" or "0.00" reads like a measured value.
+        auto p50s = [&](const std::vector<double>& v, int prec) {
+            return v.empty() ? std::string("n/a")
+                             : fmt::format("{:.{}f}", p50(v), prec);
+        };
+        if (c.netar_epochs > 0) {
+            const double fix_pct = 100.0 * static_cast<double>(c.netar_fix_epochs)
+                                          / static_cast<double>(c.netar_epochs);
+            log->info("Network (producer AR, Phase 2 log-only): {} epochs searched, "
+                      "{:.0f} DD p50 / {:.0f} searched p50, fixed epochs {} ({:.1f}%), "
+                      "DD fixed total {}, ratio p50 {}, p_succ p50 {}, "
+                      "med_DD_sigma p50 {:.4f} cyc; carry-{}; trace {}",
+                      c.netar_epochs, p50(c.netar_n_dd), p50(c.netar_n_search),
+                      c.netar_fix_epochs, fix_pct, c.netar_dd_fixed,
+                      p50s(c.netar_ratio, 2), p50s(c.netar_p_succ, 4), p50(c.netar_med_sigma),
+                      c.netar_carry_aware ? "aware" : "blind",
+                      nc.ambiguity_resolution.trace ? "on" : "off");
+            if (nc.ambiguity_resolution.trace) {
+                if (c.netar_rows > 0)
+                    log->info("Network (producer AR, Phase 2): {} per-DD trace row(s) "
+                              "written to {} — grade with "
+                              "scripts/simnet_producer_ar_grade.py (a fix count is not a "
+                              "grade; the DD basis is a STAR against one reference "
+                              "satellite and one reference station, so report or "
+                              "difference away that pair's share).",
+                              c.netar_rows, traces.producer_ar_trace_path.string());
+                else
+                    log->warn("Network (producer AR, Phase 2): the trace is ARMED and the "
+                              "search ran {} epoch(s), yet ZERO rows were written — the "
+                              "stream never opened (check the warning above) and this run "
+                              "carries NO gradeable AR evidence.", c.netar_epochs);
+            }
+            if (c.netar_fix_epochs > 0 && !c.netar_carry_aware)
+                log->warn("Network (producer AR, Phase 2): {} epoch(s) accepted a fix on a "
+                          "CARRY-BLIND covariance (network.carry_aware_covariance is OFF), "
+                          "so every gate the fix passed — FFR, ratio, the per-pair frac cap "
+                          "— was computed from a covariance the SOLVE never used "
+                          "(docs/SPEC_carry_aware_covariance.md §4).  A WRONG fix at "
+                          "p_succ >= min_success_rate falsifies that covariance as a gate "
+                          "input; grade the integers against truth before reading the fix "
+                          "rate as a success.", c.netar_fix_epochs);
+        } else {
+            log->warn("Network (producer AR, Phase 2 log-only): ARMED but the ILS search "
+                      "ran on ZERO epochs — min_epochs={} never cleared, the joint "
+                      "conditional covariance never returned, or the DD basis never had "
+                      "two undifferenced columns.  Every producer-AR number for this run "
+                      "is structurally empty (standing invariant #4); this run is evidence "
+                      "about NOTHING in the card.", nc.ambiguity_resolution.min_epochs);
+        }
+    }
+
     // --- Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §4) -----
     // ALWAYS on a carry_invariant run, armed or not: the whole point of the card is that a
     // σ published without its covariance mode is unreadable, and the run that most needs

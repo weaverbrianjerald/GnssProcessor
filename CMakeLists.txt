@@ -354,6 +354,7 @@ add_executable(gnss_tests
     tests/test_block_baarda.cpp
     tests/test_station_congruence.cpp
     tests/test_prior_residual_census.cpp
+    tests/test_producer_ar_trace.cpp
     tests/test_prefit_census.cpp
     tests/test_network_bias_admission.cpp
     tests/test_network_rank_gate.cpp

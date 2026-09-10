@@ -864,6 +864,18 @@ namespace GnssProcessor {
             // scale: an uncapped ~2500-dim basis at 305 stations does not return.
             ar.ils_max_dim = jval<int>(json, "network.ambiguity_resolution.ils_max_dim",
                                        "network_ar_ils_max_dim", 0);
+            // Per-DD trace of the search (logs/network_producer_ar.csv).  A fix COUNT
+            // is not a grade: without the per-DD identities the epoch log line cannot
+            // be joined to truth_ambiguities.csv, which is the whole point of re-running
+            // Phase 2 (docs/network_ambiguity_resolution_design.md, 2026-09-10 §4.1).
+            ar.trace = jval<bool>(json, "network.ambiguity_resolution.trace",
+                                  "network_ar_trace", false);
+            if (ar.trace && !ar.enable) {
+                log->warn("Network producer AR: ambiguity_resolution.trace is ON but "
+                          ".enable is OFF — the Phase-2 search never runs, so there is "
+                          "nothing to trace.  network_producer_ar.csv is NOT opened "
+                          "(no header-only file).  Arm .enable to get rows.");
+            }
             if (ar.enable) {
                 // RT0-2 (revised 2026-08-01).  The original warning said the section was
                 // "parsed but unused" with "inert gates".  That was true when RT0-2 was
@@ -887,13 +899,14 @@ namespace GnssProcessor {
                           "epoch min_epochs={}): it reports how many between-station DDs the "
                           "network COULD fix, and re-pin / re-solve is Phase 3 and unbuilt.  "
                           "Live gates: FFR>={:.4f}, ratio>={:.1f} (<{:.0e}), per-pair "
-                          "frac<={:.2f} cyc, partial_ar {}, ils_max_dim {}.  INERT: "
-                          "wl_cascade{}.  GPS+Galileo only; GLONASS stays float.",
+                          "frac<={:.2f} cyc, partial_ar {}, ils_max_dim {}, trace {}.  "
+                          "INERT: wl_cascade{}.  GPS+Galileo only; GLONASS stays float.",
                           ar.min_epochs, ar.min_success_rate, ar.ratio_threshold,
                           ar.ratio_upper_bound, ar.nl_max_per_pair_frac,
                           ar.enable_partial_ar ? "on" : "off",
                           ar.ils_max_dim > 0 ? std::to_string(ar.ils_max_dim)
                                              : std::string("uncapped"),
+                          ar.trace ? "ON (logs/network_producer_ar.csv)" : "off",
                           ar.wl_cascade ? " (set true, but no consumer reads it)"
                                         : "");
             }

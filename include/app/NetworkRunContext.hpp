@@ -2809,6 +2809,29 @@ namespace GnssProcessor {
         double    ddfold_min_pivot_rel = 1.0;///< worst relative pivot d_min/d_max seen all run (≤ 0 ⇒ indefinite).
         double    ddfold_repair_worst  = 0.0;///< worst clamped |λ| / λ_max seen all run.  Dust (≤1e-12) is hygiene; >1e-6 is a NEW bug and is WARNed.
         long long ddfold_repair_loud   = 0;  ///< FOLDS whose worst clamp exceeded 1e-6·λ_max — the "this is not dust" population.  Dust is hygiene; a large clamp is a NEW bug and must scream, not be laundered.
+
+        // --- Producer-AR Phase-2 (network.ambiguity_resolution) run tallies.
+        // The diagnostic had NO run-end clause at all: its only output was one spdlog
+        // line per epoch, so a run either had to be grepped or read as "AR did
+        // something".  Standing invariant #4 in its ordinary form — `netar_epochs == 0`
+        // on an ARMED run means the search never reached the ILS (min_epochs never
+        // cleared, the covariance request threw, or the basis never had two undiffed
+        // columns), and that is indistinguishable from a clean quiet run without a
+        // denominator.  The distributions are kept as raw per-epoch samples rather
+        // than running means because the reported statistic is a MEDIAN: ratio and
+        // p_succ are both heavy-tailed (a degenerate epoch's ratio is 1e4 by
+        // construction) and a mean of either is dominated by the epochs a grader
+        // would throw away.  One double per epoch per series is ~120 kB at 24 h.
+        long long netar_epochs     = 0;   ///< epochs the ILS search actually ran (denominator)
+        long long netar_fix_epochs = 0;   ///< …of those, epochs the acceptance battery passed (full OR partial)
+        long long netar_dd_fixed   = 0;   ///< Σ fixed DDs over the run (kept.size() summed)
+        long long netar_rows       = 0;   ///< trace rows written — P1 for the trace card (0 with the trace armed = dead wiring)
+        bool      netar_carry_aware = false; ///< covariance mode the search consumed (docs/SPEC_carry_aware_covariance.md §4) — part of the reading, not a footnote
+        std::vector<double> netar_n_dd;      ///< per-epoch full DD-basis size
+        std::vector<double> netar_n_search;  ///< per-epoch searched subset size (== n_dd when uncapped)
+        std::vector<double> netar_ratio;     ///< per-epoch accepted-fix ratio
+        std::vector<double> netar_p_succ;    ///< per-epoch accepted-fix bootstrap success rate
+        std::vector<double> netar_med_sigma; ///< per-epoch median DD formal σ (cycles) — the convergence gauge
     };
 
     /// @internal The run context: one instance per runNetwork() invocation,

@@ -2119,7 +2119,7 @@ int Application::runNetwork() {
         }
         subEnd(SB_INSTALL);     // D0b: close installPosterior (the Card-4 posterior readback)
         subBegin(SB_NETAR);     // D0b: producer-side network AR Phase-2 (log-only; OFF in tier)
-        networkProducerAr(ctx, config_, log, se, est, x_s, stations,
+        networkProducerAr(ctx, config_, log, traces, se, est, x_s, stations,
                           est_index_of, asm_res, plan, ar_ppp_utils, log_dir_);
         subEnd(SB_NETAR);      // D0b: close producer-AR / pre-emit tail
         subBegin(SB_SOLPREP);  // D0b: toSolutionEpoch + per-sat discontinuity signalling

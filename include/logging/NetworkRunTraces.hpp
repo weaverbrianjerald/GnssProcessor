@@ -163,6 +163,43 @@ namespace GnssProcessor {
         "rneg_n_rows,rneg_n_raw_formal,rneg_n_no_sigma0,rneg_max_abs_e_m,"
         "rneg_station,rneg_sat,rneg_signal,rneg_mech,rneg_max_abs_t,"
         "rneg_fold_var_m2,rneg_post_var_m2,rneg_gap_s\n";
+    /// network_producer_ar.csv header (docs/network_ambiguity_resolution_design.md,
+    /// the 2026-09-10 note §4.1 — "a fix count is not a grade").
+    ///
+    /// ONE row per DD in the Phase-2 basis per searched epoch, so the search can be
+    /// JOINED TO TRUTH offline (scripts/simnet_producer_ar_grade.py:
+    /// DD_true = [N(sta_r,sat_j) − N(sta_r,ref_sat)] − [N(ref_sta,sat_j) − N(ref_sta,ref_sat)]).
+    /// The epoch log line carries only counts; without the per-DD IDENTITY there is
+    /// nothing to join, which is why the identities are the load-bearing columns here.
+    ///
+    /// `float_cyc` is the DD float in cycles (dd_m/λ) and `sigma_cyc` = √Q_aa from the
+    /// SAME covariance the search consumed — carry-BLIND unless
+    /// `network.carry_aware_covariance` is armed (docs/SPEC_carry_aware_covariance.md
+    /// §4), which is one of the two confounds the design note tells a grader to record.
+    ///
+    /// `in_subset` = 1 when the DD entered the `ils_max_dim` lowest-σ search subset
+    /// (always 1 when uncapped); `kept` = 1 when the ILS actually returned it, and
+    /// `fixed_int` is its integer THEN AND ONLY THEN (0 otherwise — read it through
+    /// `kept`, never on its own).  ⚠ `fix.kept` indexes the CAPPED, σ-PERMUTED search
+    /// vector, not the basis; the mapping back is @ref netar::mapFixToBasis and is
+    /// unit-tested (tests/test_producer_ar_trace.cpp) because getting it wrong
+    /// silently mislabels which satellite was fixed.
+    ///
+    /// `ratio` / `p_succ` / `n_dd` / `n_search` / `n_fixed` are EPOCH scalars repeated
+    /// on every row of that epoch (a long-format join key, not per-DD values).
+    /// ⚠ `ratio` / `p_succ` are the ACCEPTED fix's when `n_fixed` > 0 and the FULL-SET
+    /// ATTEMPT's when it is 0 (IlsResult zeroes the accepted fields on a rejection, and
+    /// a column of zeros over the epochs that did not fix says nothing).  `n_fixed` is
+    /// the discriminator; never pool the two without splitting on it.
+    ///
+    /// ⚠ The DD basis is a STAR against ONE reference satellite and ONE reference
+    /// station per (constellation, signal), both re-elected every epoch: every row
+    /// inherits that pair's own error, so any grade off this file must report the
+    /// reference's share or difference it away (SPEC_amb_iono_split_overcount §6.12).
+    /// `ref_sat` / `ref_sta` are in every row precisely so a grader can.
+    inline constexpr const char* kProducerArHeader =
+        "week,tow,cons,signal,sat_j,ref_sat,sta_r,ref_sta,lambda_m,float_cyc,"
+        "sigma_cyc,in_subset,fixed_int,kept,ratio,p_succ,n_dd,n_search,n_fixed\n";
     /// network_block_baarda.csv header (docs/SPEC_redundancy_census.md BB-INC-1..3).
     /// One row per (constellation family x label) per epoch that swept a block.
     ///
@@ -378,6 +415,15 @@ namespace GnssProcessor {
         /// AR).  Pure diagnostic (network.trace_dd_fractional).
         std::ofstream dd_frac_trace;
         const std::filesystem::path dd_frac_trace_path;
+        /// Per-DD trace of the Phase-2 producer-AR search
+        /// (network.ambiguity_resolution.trace + .enable) — the searched DD basis with
+        /// its identities, float value, formal σ, subset membership and the integer the
+        /// ILS returned.  Written by filter/NetworkProducerAr.cpp; graded against
+        /// truth_ambiguities.csv by scripts/simnet_producer_ar_grade.py.  Columns:
+        /// @ref kProducerArHeader.  Pure diagnostic — the emitted product is
+        /// byte-identical whether it is on or off.
+        std::ofstream producer_ar_trace;
+        const std::filesystem::path producer_ar_trace_path;
         /// RAW cycle-slip observables per (station,sat) every epoch (network.trace_slip_raw):
         /// Melbourne-Wübbena, geometry-free L1−L2, first-signal phase-minus-code (all m) and the
         /// per-band RINEX LLI — computed from raw_observed, INDEPENDENT of any detector being on.

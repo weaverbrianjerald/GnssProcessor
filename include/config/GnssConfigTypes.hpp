@@ -674,6 +674,21 @@ namespace GnssProcessor {
                                               ///< rest stay float.  0 (default) = uncapped legacy behaviour.
                                               ///< REQUIRED at scale: the uncapped ~2500-dim basis at 305 stations
                                               ///< does not return (Jul-15); ~100 is a sane armed value.
+        /**
+         * @brief Per-DD trace of the Phase-2 search (@c logs/network_producer_ar.csv).
+         *
+         * The Phase-2 diagnostic's only output was ONE spdlog line per epoch — a fix
+         * COUNT, which is not a grade (docs/network_ambiguity_resolution_design.md,
+         * 2026-09-10 note §4.1).  With this on, every DD in the basis gets a row
+         * carrying its identity (constellation / signal / sat_j / ref_sat / sta_r /
+         * ref_sta), its float value and formal σ in cycles, whether it entered the
+         * ils_max_dim search subset, and — for the ones the ILS returned — its fixed
+         * integer, so the search can be JOINED TO TRUTH offline
+         * (scripts/simnet_producer_ar_grade.py).  Requires @ref enable (the search is
+         * what produces the rows); the file is not opened without it.  Read-only:
+         * the emitted product is byte-identical whether this is on or off.
+         */
+        bool   trace{ false };
     };
 
     /**
