@@ -2101,6 +2101,18 @@ which the field chain does not.  **Probe 6 `_fldf3_pl_gp3h` PRE-REGISTERED (18:5
 `carry_coupling_gauge_project: true` — withholds 82 → ~0 with the solve intact (no unsolved epochs beyond arm
 1's one), h1–h3 ZWD span below 14.4 m; persisting withholds ⇒ the rows pin the gauge through a channel the
 projection does not cover.**
+**Probe 6 read (19:03): the withholds are GONE — 0 of 360 (arm 1: 82), 350 solved + 10 unsolved — so the
+Card-1 coupling rows' datum-gauge projection (Card 1f, "each (constellation, kind) coefficient sum of a
+truncated row held at its harvest value") is exactly what keeps those rows off the declared null direction,
+as on the sim golden; but the vehicle still DIVERGES on this chain: h1–h3 ZWD span p50 21.6 m (arm 1 14.4),
+prires |t| 6e7, DD wander e1 MAD 50 cyc (14 arcs).  Probe 1 had the mirror image (wander 24 → 0.07 cyc and ZWD
+1.7 m with the withholds unchanged).  **Probe 7 `_fldf3_pl_gppdp3h` PRE-REGISTERED (19:05): both together —
+gauge projection + the sim golden's phase-datum family (prioritized pivot datum, continuous handover, anchor
+carry re-ref, min_stations 2) = the sim golden's leveling posture transplanted onto the field chain.  PASS =
+withholds ≤ 5/360 with ≤ 10 unsolved, h1–h3 ZWD span p50 < 2 m with σ ≥ 5 mm, DD arc wander e1 MAD < 1 cyc
+on ≥ 40 arcs ⇒ the converging field leveling posture exists and the F3 12 h arm is re-run on it (with its
+own no-F3 control); FAIL on any leg ⇒ the two defects are not additive and the leveling vehicle needs a
+design card before F3 can be read on the field.**
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed

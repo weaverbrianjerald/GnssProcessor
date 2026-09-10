@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "ARM 1gp / GAUGE-PROJECT + PHASE-DATUM FAMILY: probe 6 (carry_coupling_gauge_project) removed the S-basis withholds (82 -> 0) but not the divergence (ZWD span 22 m, DD wander 50 cyc); probe 1 (the sim golden's phase-datum family in place of eq34) removed the wander (24 -> 0.07 cyc on surviving arcs, ZWD 14 -> 1.7 m) but not the withholds.  Both together = the sim golden's leveling posture transplanted onto the field chain.",
+    "PRE-REGISTERED (2026-09-09 19:05): withholds ~0 (<= 5 of 360) with <= 10 unsolved epochs, h1-h3 ZWD span p50 < 2 m with sigma >= 5 mm, DD arc wander e1 MAD < 1 cyc on >= 40 arcs.  PASS => this is the converging leveling posture for the field and the F3 12 h arm is re-run on it; FAIL on any leg => the two defects are not additive and the leveling vehicle needs a design card."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "processing": {
+    "max_duration_s": 10800.0
+  },
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "carry_invariant": false,
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "mw_wl": {
+      "ewl_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "wl_inject_enable": false
+    },
+    "cycle_slip": {
+      "relevel_free_epoch": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_pl_gppdp3h/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_pl_gppdp3h/state_snapshot.bin",
+    "carry_coupling_gauge_project": true,
+    "phase_datum_eq34": false,
+    "phase_datum_prioritized": true,
+    "phase_datum_handover_continuous": true,
+    "phase_anchor_carry_reref": true,
+    "phase_datum_min_stations": 2
+  }
+}
