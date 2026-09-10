@@ -1870,7 +1870,9 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    clean (MAD 0.15 cyc).  An ambiguity↔iono column mis-pairing in the DD trace is therefore FALSIFIED as a
    universal bug (it would print the sim's 1.5 m iono x_r into the sim's ambiguities); what survives of that
    candidate is only a vehicle-specific mapping difference (carry_invariant field vs leveling sim), which the
-   leveling arms test directly.  The ambiguity states' own x_lin/x_r split is not traced (only the sum) — the
+   leveling arms test directly.  ⚠ Correction (peer): this check measured the IONO column's x_r, not the
+   AMBIGUITY column's — the original reason to expect a small sim x_r was frozen CARRIES, which govern
+   ambiguities — so the mis-pairing is NARROWED, not killed; the DD-trace column split stays the decisive test.  The ambiguity states' own x_lin/x_r split is not traced (only the sum) — the
    one-line `x_lin_m`/`x_r_m` column addition to `NetworkDdFrac.cpp:318-327` (trace-only, byte-identical) is
    the follow-up instrument for the reconstruction.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
@@ -1907,8 +1909,31 @@ p90 1.28, corr 0.994) — between cycle-common and iono; ref-free/raw 0.38 vs nu
 a third of it).  Iono leg: DD-iono MAD **3.7 m** (3× the control), and the ambiguity↔iono coupling has MOVED
 INTO THE IONO-SHAPED CHANNEL — B MAD 16.8 cyc, B on DD-iono slope +0.78 (corr 0.88), A +0.31 (corr 0.44):
 on this vehicle the ambiguities absorb iono error the way the model does it (band-shaped), at ~17 cycles.
-In-process AR consumer settled 9.9 m (pathology).  Verdict on the vehicle switch: the diagonal leveling
-carry is NOT field-viable on this posture; whether F3's whitened block rescues it is arm 2's question.
+In-process AR consumer settled 9.9 m (pathology).  **Reading (peer review, 18:18): arm 1 is not degraded, it
+is DIVERGED — and that is itself the result.**  The 199 `skip_epoch` withholds are the `NetworkSbasis`
+null-space gate reporting "observed 0 (near-)zero eigenvalues" against its declaration (a datum/rank
+mismatch: under the leveling vehicle the chain's `sbasis_complete` + eq34 datum pins MORE than it declares),
+i.e. a gauge failure, not a noise one; ZWD spans of 10² m are the same tell.  Consequences: (i) the card's
+graded delta (arm 2 ↔ arm 1) is F3 on a diverged baseline unless arm 2 itself converges, so arm 2 is read on
+its OWN convergence first (withholds, ZWD span, prires |t|, T3/T4 rates) and only then against arm 1;
+(ii) arm 1's B-channel reading (17 cyc, iono-shaped) is a property of a diverging solve and is kept OUT of
+the mechanism discussion until a converged leveling arm exists; (iii) the vehicle question underneath §6.15's
+opening — WHY every field lineage rides carry_invariant — now has a quantitative answer: on this lineage the
+diagonal leveling carry does not converge on real data, so item 21's "does F3 help the field" becomes "F3's
+vehicle is unreachable on the field until the leveling posture's datum declaration is fixed" — unless arm 2
+shows that the divergence WAS the over-count (F3's whitened block is precisely a conditioning fix for the
+diagonal rows' B×n_LOS assertion of the station-common directions, which on the sim took the ZWD from 0.42 m
+to 0.009 m), in which case F3 is the fix for the vehicle itself.  Structural next checks, not tuning: the two
+arms' declared dimension vs observed null-space census and datum-graph census; and whether the knobs the
+vehicle switch had to force off (carry_invariant sub-family, EWL/UWL lanes) removed something load-bearing.
+⚠ **ZWD trace caveat that also touches the CONTROL:** `network_zwd.csv` `zwd_m` = `x_lin + x_r(zcol)` in
+metres with `x_lin ≡ 0` (`NetworkIonoDiag.cpp:137-141`, zcol via `h2local[getTropoIndex()]`), and on the
+control arm it ALSO reads unphysically — per-station settled span median 21 m (BSHM00ISR −74 … +20 m) — on a
+vehicle where the ZWD is re-estimated per epoch (not carried).  Either the shipped field posture's per-epoch
+ZWD really is a 10-m-class sink (a large finding about the field products; the E3 pair never traced ZWD) or
+the trace's local-column mapping differs by vehicle (the same `h2local` question as the DD trace; the sim F3
+arm's ZWD grade — 0.009 m rms, |err|/σ 0.94 — came through this trace, so the mapping is right on the
+leveling vehicle).  UNRESOLVED; do not quote a field ZWD number from this trace on carry_invariant until it is.
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
