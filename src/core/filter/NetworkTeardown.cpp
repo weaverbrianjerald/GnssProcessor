@@ -1922,7 +1922,9 @@ int networkTeardown(
                       "(harvest-stamp mismatch), {} column(s) refused, {} factorization "
                       "fallback(s); block dim histogram <10:{} 10-24:{} 25-49:{} 50-74:{} "
                       "75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed; "
-                      "age gate {} ep ({}): {} young column(s) kept out of the block",
+                      "age gate {} ep ({}): {} young column(s) kept out of the block.  "
+                      "ZWD in block: {} col(s), {} diagonal fallback(s), {} missing cross "
+                      "term(s), {} RAIM-pool admission(s) of the ZWD row{}",
                       (cliff_live && config_.networkCarryConditionalCoupling()
                        && !config_.networkCarryCouplingJointWhiten())
                           ? "" : " ⚠ CHANNEL NOT ARMED on this posture (phase_leveling "
@@ -1935,7 +1937,22 @@ int networkTeardown(
                       C.n_pl_blk_hist[3], C.n_pl_blk_hist[4], C.n_pl_blk_max_dim,
                       C.n_pl_blk_refloat_rewhiten, C.n_pl_blk_refloat_fail,
                       config_.networkPhaseLevelingLocalBlockMinAgeEp(),
-                      config_.networkPhaseLevelingLocalBlockYoungMode(), C.n_pl_blk_young_cols);
+                      config_.networkPhaseLevelingLocalBlockYoungMode(), C.n_pl_blk_young_cols,
+                      // B9-in-block (network.carry_zwd_in_block) — invariant #4: printed on
+                      // the F3 line because the block IS the vehicle.  0 columns under an
+                      // armed knob is UNWIRED, not clean; a large fallback count says the
+                      // ZWD kept taking the diagonal B9 row this card exists to replace
+                      // (n_pl_blk_fallback above attributes how many of those were a
+                      // non-SPD block vs a station-epoch with no block at all).
+                      C.n_pl_blk_zwd_cols, C.n_pl_blk_zwd_fallback_diag,
+                      C.n_pl_blk_zwd_missing_cross, C.n_raim_pool_zwd_rows,
+                      config_.networkCarryZwdInBlock()
+                          ? (C.n_pl_blk_zwd_cols == 0
+                                 ? "  ⚠ 0 ZWD columns under an ARMED carry_zwd_in_block — "
+                                   "the channel is UNWIRED (no station-epoch reached the "
+                                   "block with a live ZWD carry), not quiet."
+                                 : "")
+                          : " (knob OFF — these are structurally 0)");
         // Seam-scoped ZWD re-seed (network.zwd_seam_reseed) — the ON-path telemetry
         // (standing invariant #4): an armed knob with 0 folds means the window never
         // armed (no warm resume, or the snapshot carried no Z rows) or every fold

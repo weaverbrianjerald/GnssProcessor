@@ -1498,6 +1498,11 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"carry_vce_apply_max\":{},", config_.networkCarryVceApplyMax())
                << "\"carry_vce_apply_min_rows\":" << config_.networkCarryVceApplyMinRows() << ','
                << "\"carry_zwd\":" << (zwd_on ? "true" : "false") << ','
+               // B9-in-block: emitted ONLY when armed, so an unarmed run's manifest bytes
+               // are unchanged (the adm_screen rule above — the decomposition golden hashes
+               // this file).  A grader reading an archived logs/ folder needs to know which
+               // VEHICLE the carried ZWD folded through, because it changes the solve.
+               << (config_.networkCarryZwdInBlock() ? "\"carry_zwd_in_block\":true," : "")
                << fmt::format("\"zwd_carry_q\":{},", zwd_q)
                // Seam-scoped ZWD re-seed (§17 finding 3).  In the manifest so an
                // archived logs/ folder can say whether a resumed leg's first hours

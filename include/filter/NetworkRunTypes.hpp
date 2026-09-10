@@ -776,6 +776,15 @@ struct StationAssembly {
     long long                 pl_blk_young_cols{0};    ///< F3 age gate (network.phase_leveling_local_block_min_age_ep): injectable columns YOUNGER than the gate this station-epoch — kept OUT of the block and emitted as per-column rows (F1-scaled if armed).
     long long                 pl_blk_hist[5]{0, 0, 0, 0, 0}; ///< F3: block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75.
     long long                 pl_blk_max_dim{0};       ///< F3: largest block dimension this station-epoch.
+    // B9-in-block (network.carry_zwd_in_block): the ZWD column carried INSIDE the F3 block.
+    long long                 pl_blk_zwd_cols{0};           ///< ZWD column ADMITTED into the block build this station-epoch (0 or 1): it survived the scalar "never poison" screen and became a row of Σ.  A block that then failed to factorize still counts here — read it against @c pl_blk_fallback and @c pl_blk_zwd_fallback_diag, which say how many of those admissions did not end up folded.
+    long long                 pl_blk_zwd_fallback_diag{0};  ///< ZWD fell back to the B9 DIAGONAL row this station-epoch (no block, or the block's factorization failed).
+    long long                 pl_blk_zwd_missing_cross{0};  ///< (ambiguity, ZWD) pairs zeroed for a missing harvest cross term — a SUBSET of pl_blk_pair_missing, split out so the ZWD's own coupling can be read separately.
+    /// B9-in-block: true when this station-epoch's ZWD folded through the whitened block
+    /// (so @c pl_zwd.col names one of the block's local columns and the block row whose
+    /// @c cpl_row_local_cols entry equals it IS the ZWD row).  The post-fit RAIM pool
+    /// reads this to count how many pool-admitted rows are that row.
+    bool                      pl_zwd_in_block{false};
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  CARRY-ELIGIBLE SUBSET: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must NOT key on it — see `qc_amb`.
     /// POOL RE-HOST (docs/SPEC_raim_pool_rehost.md): the CARRY-VEHICLE-NEUTRAL census of
     /// ambiguity columns that are present, unpinned and therefore CHECKABLE this epoch —
