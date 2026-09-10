@@ -35,7 +35,7 @@ def line(name, mads, drifts, unit):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('run_dir'); ap.add_argument('--cons', default='G'); ap.add_argument('--hi', default='L1C,L1W')
+    ap.add_argument('run_dir'); ap.add_argument('--cons', default='G'); ap.add_argument('--hi', default='L1C,L1W'); ap.add_argument('--lo', default='L2W')
     ap.add_argument('--settle-h', type=float, default=6.0); ap.add_argument('--min-arc', type=int, default=20)
     ap.add_argument('--gap-ep', type=int, default=2); ap.add_argument('--trim', type=int, default=10)
     a = ap.parse_args()
@@ -101,6 +101,39 @@ def main():
             if sxx > 1e-9 and syy > 1e-9: slopes.append(sxy / sxx); corrs.append(sxy / (sxx * syy) ** 0.5)
     ss = sorted(slopes); cc = sorted(corrs)
     print(f'  joint per-arc regression e1(cyc) on DD-iono(cyc): slope p50 {q(ss,.5):+.3f} (p10 {q(ss,.1):+.3f}, p90 {q(ss,.9):+.3f}), corr p50 {q(cc,.5):+.3f} (n {len(ss)})   [-1 = ambiguity compensating an iono-state error; 0 = unrelated]')
+
+    # A/B decomposition (pre-registered, SPEC s6.15.3a item 5): per chord-epoch with BOTH bands,
+    #   e_i = A + B*(lambda_i/lambda_1)  =>  B = (e2 - e1)/(lambda2/lambda1 - 1),  A = e1 - B
+    # then regress the arc deviations of A and of B separately on the DD-iono deviation (L1 cycles).
+    LAM2 = 0.244210
+    amb2 = defaultdict(dict)
+    with io.open(os.path.join(a.run_dir, 'logs', 'network_dd_fractional.csv'), encoding='utf-8', errors='replace') as f:
+        for row in csv.DictReader(f):
+            if row['cons'] != a.cons or row['signal'] != a.lo: continue
+            try: tow = float(row['tow']); dd = float(row['dd_cyc'])
+            except ValueError: continue
+            amb2[(row['sat_i'], row['ref_sat'], row['sta_a'], row['sta_b'])][tow] = dd
+    ratio = LAM2 / LAM1 - 1.0
+    res = {'A': ([], []), 'B': ([], [])}
+    nA = 0
+    for key, ser in chords.items():
+        e1s = amb.get(key, {}); e2s = amb2.get(key, {})
+        for arc in arcs_of(ser, 30.0 * a.gap_ep, a.min_arc, a.trim):
+            pts = [(x[1] / LAM1, e1s[x[0]], e2s[x[0]]) for x in arc if x[0] in e1s and x[0] in e2s]
+            if len(pts) < a.min_arc: continue
+            nA += 1
+            Bv = [(e2 - e1) / ratio for _, e1, e2 in pts]; Av = [e1 - b for (_, e1, _), b in zip(pts, Bv)]
+            Iv = [pt[0] for pt in pts]
+            mI = st.median(Iv); dI = [x - mI for x in Iv]; sxx = sum(x * x for x in dI)
+            for name, v in (('A', Av), ('B', Bv)):
+                mv = st.median(v); dv = [x - mv for x in v]
+                sxy = sum(x * y for x, y in zip(dI, dv)); syy = sum(y * y for y in dv)
+                if sxx > 1e-9 and syy > 1e-9:
+                    res[name][0].append(sxy / sxx); res[name][1].append(sxy / (sxx * syy) ** 0.5)
+    for name in ('A', 'B'):
+        sl = sorted(res[name][0]); co = sorted(res[name][1])
+        print(f'  A/B test: {name} (cycle-common) deviation on DD-iono(cyc): slope p50 {q(sl,.5):+.3f} (p10 {q(sl,.1):+.3f}, p90 {q(sl,.9):+.3f}), corr p50 {q(co,.5):+.3f} (n {len(sl)})' if name == 'A' else
+              f'  A/B test: {name} (iono-shaped) deviation on DD-iono(cyc): slope p50 {q(sl,.5):+.3f} (p10 {q(sl,.1):+.3f}, p90 {q(sl,.9):+.3f}), corr p50 {q(co,.5):+.3f} (n {len(sl)})')
 
 if __name__ == '__main__':
     sys.exit(main())
