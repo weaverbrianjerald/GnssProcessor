@@ -1810,6 +1810,14 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    either the phase post-fit σ̂₀ of the control carries it (check `network_epoch_status.csv`), or a fourth
    per-LOS term of the field posture (the SH↔slant pin with its GM deviation is the candidate) closes the
    budget and the co-motion is a legal, weakly-observed direction of THAT model.  Not resolved here.
+   **Read (18:05, the 09-02 control):** the model FITS — `network_epoch_status.csv` settled `sigma0_pf_phase`
+   median 0.0105 m (p90 0.012; `sigma0_pf_code` 0 = the code pool is empty on this vehicle, `sigma0_global`
+   3.1), and `network_pf_keyed.csv` per-station phase rms p50 1.6 cm (p90 5.4, p99 13 cm; max p50 4 cm) over
+   703k settled phase rows.  A 0.75 m range-like misfit per cycle of iono change is nowhere in the residuals,
+   so the co-motion is a LEGAL direction of the posture's model — a fourth per-LOS term closes the budget —
+   and the field's "DD ambiguity" on this vehicle is not an estimable-invariant quantity at all: it moves
+   with the ionosphere through that term.  Which term is not identified here (the SH↔slant pin with its
+   per-LOS GM deviation is the named candidate); the leveling arms say whether the vehicle owns it.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
@@ -1818,6 +1826,18 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    ambiguity/iono split), not an over-count verdict.
 
 ### 6.15.4 Results — filled as they land (nothing above is edited)
+
+**Arm 0 `fldf3_ci` — landed 18:03 (exit 0, 1440 epochs, 27 min wall under a third session's concurrent run):**
+the same-build control REPRODUCES the 09-02 control on every instrument: L1C as-traced med|f| 0.250 (null 0.246),
+R 0.464 (0.472), ref-free gap +0.012, near 19.6 %; WL12 (37,913 paired chords) R 0.487 (0.482), gap +0.006;
+arc stability e1/e2/wl MAD 10.24 / 10.26 / 0.56 cyc, cross-band slope 1.004 (p10 0.962, p90 1.048, corr 0.999),
+ref-free/raw 0.65 vs null 0.77; iono leg identical (DD-iono MAD 1.25 m, A on iono +1.66 corr 0.90, B +0.09,
+baseline split 0.74 → 1.58 m with a flat A slope).  Not byte-identical to the 09-02 run (carry census
+marginalizations 18,456 vs 18,535, T1 flags 322 vs 343, consumer path differs) — the IF-TD pool-scale unbias
+(§6.14.6) landed between the two builds, as expected; every graded reading is the same to the quoted digit.
+Run-end: prires worst |t| 178 (rxcb), block-Baarda 34/1441 (2.4 %), rx-CB 46,426 folded / 41,297 withheld;
+T3/T4 0 / 0 (post-fit RAIM inert on this vehicle, as pre-registered).  In-process AR consumer settled (≥ h6)
+3D rms 9.6 m / p50 8.6 — the documented pathology, reported not leaned on.  D0 median 1,072 ms (overlapped).
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
