@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "FIELD F3 ladder (2026-09-09, SPEC_amb_iono_split_overcount s6.15 / s7 item 21): DOY-129, 61 GPS dual stations + SH-VTEC iono, 00-12 UT, fresh cold starts (F3 is fingerprinted), sequential Release runs each from its own runs/<name> CWD under the hash-verified worktree exe (HEAD 00d5fdf, sha256 4c6aa137...).",
+    "Posture = _fld63_stk_on (this base + sticky_pivot:true), restated here rather than extended because the base chain is already at the loader's 8-level extends limit.",
+    "Grade truth-free: scripts/dd_frac_reref.py (R vs null, near-integer share, ref-free GAP; WL(1,2) synthesized), the sigma0 families + T3/T4 counts, the F3 run-end counters, PB-gauge handover + leveling retirement censuses, a float-only cold-consumer REPLAY on each wire (WTZZ00DEU hold-out), D0 ms/epoch.  Age-gate responses stay OFF (KEEP OFF, s6.11).",
+    "ARM 2 / F3: arm 1 + phase_leveling_local_block:true (the station-wide whitened local block at the leveling inject). Single mechanism: F3. Ceiling untouched (chain default phase_datum_handover_max_var_m2 1.0 m2, so the honest-sigma successor interlock of the 1e-4 lineages does not apply); phase_datum_handover_continuous stays at the chain default (false = cold PB-gauge handovers) in every arm."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "carry_invariant": false,
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "mw_wl": {
+      "ewl_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "wl_inject_enable": false
+    },
+    "cycle_slip": {
+      "relevel_free_epoch": true
+    },
+    "phase_leveling_local_block": true,
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_on/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_on/state_snapshot.bin"
+  }
+}

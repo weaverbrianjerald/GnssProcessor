@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "FIELD F3 ladder (2026-09-09, SPEC_amb_iono_split_overcount s6.15 / s7 item 21): DOY-129, 61 GPS dual stations + SH-VTEC iono, 00-12 UT, fresh cold starts (F3 is fingerprinted), sequential Release runs each from its own runs/<name> CWD under the hash-verified worktree exe (HEAD 00d5fdf, sha256 4c6aa137...).",
+    "Posture = _fld63_stk_on (this base + sticky_pivot:true), restated here rather than extended because the base chain is already at the loader's 8-level extends limit.",
+    "Grade truth-free: scripts/dd_frac_reref.py (R vs null, near-integer share, ref-free GAP; WL(1,2) synthesized), the sigma0 families + T3/T4 counts, the F3 run-end counters, PB-gauge handover + leveling retirement censuses, a float-only cold-consumer REPLAY on each wire (WTZZ00DEU hold-out), D0 ms/epoch.  Age-gate responses stay OFF (KEEP OFF, s6.11).",
+    "ARM 1 / VEHICLE SWITCH: control + carry_invariant:false -> the phase-leveling carry becomes the ambiguity vehicle (as on golden_sim_tri_w6), with its invariant-#1 slip response cycle_slip.relevel_free_epoch:true (the re-level walk fix, pinned on the sim golden; mw_detect already on the chain). Set false explicitly because they are structurally bound to the invariant carry (loader hard-errors): the carry_invariant sub-family (innov gate/calibrate/corroborate, honesty, pd_safe) and the EWL/UWL lane layer (mw_wl.ewl_enable/uwl_enable/uwl_cold_fix/wl_inject_enable ride the invariant carry chord basis). Expected to carry the B=2 per-LOS + station-common over-count (s3; field K_eff(30)=2.01)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "carry_invariant": false,
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "mw_wl": {
+      "ewl_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "wl_inject_enable": false
+    },
+    "cycle_slip": {
+      "relevel_free_epoch": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_pl/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_pl/state_snapshot.bin"
+  }
+}

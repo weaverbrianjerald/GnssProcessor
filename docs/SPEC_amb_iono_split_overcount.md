@@ -1559,6 +1559,153 @@ Still open (unchanged by either fix): the floor sits ON the (1,1) boundary, so I
 is still (n,n) with n ≥ 2 and elevation ≳ 30°, and the sim bench still cannot test a
 reference-satellite slip (zero elevation overlap, §6.14.5).
 
+## §6.15 The FIELD F3 arm — PRE-REGISTERED 2026-09-09 (§7 item 21; campaign queue item 3's lineage question deferred to a triple-frequency chain)
+
+F3 (`network.phase_leveling_local_block`) is sim-validated only: 3 h (§6.8), 24 h (§6.9, ref-free re-grade §6.12
+— L1C 0.089 cyc / 86.8 % at the true integer over the day), and it is the vehicle of `golden_sim_tri_w6`.  The
+field has never run it: every field lineage (golden_field_gps_dual, FT63/EXT63/FLD63) carries ambiguities on the
+Card-4 `carry_invariant` vehicle, under which the phase-leveling inject is skipped outright
+(`ApplicationNetworkAssembly.cpp` `do_amb_carry = (…) && !carry_invariant`), so F3 is structurally inert there.
+A field F3 arm is therefore a VEHICLE SWITCH first and F3 second, and the ladder is built that way.
+
+### 6.15.1 Bed, arms, provenance
+
+Bed: DOY-129 (2024-05-08) 00–12 UT, the E3 field posture `_fld63_stk_on` = `_ext63_12h_evt_pl_clkpin` (61 real
+GPS L1/L2 stations, SH-VTEC deg-8 co-estimated iono, external COD orbit/code-bias, precise-clock soft hold,
+pivot clock datum MBAR00UGA, `phase_leveling: true`, `carry_invariant: true`, `carry_conditional_coupling: true`,
+`phase_leveling_max_gap_s` 900, Card R armed, `emit_clock_disc`, the standard QC/observability set) +
+`sticky_pivot: true`.  WTZZ00DEU is the colocated hold-out consumer.  The chain sits at the loader's 8-level
+`extends` limit, so the arms restate the posture on `_ext63_12h_evt_pl_clkpin` rather than extending
+`_fld63_stk_on`; smokes and replays are siblings, not children.
+
+| arm | config | knobs beyond the posture | single mechanism |
+|---|---|---|---|
+| 0 `fldf3_ci` | `_fldf3_ci.json` | `trace_rx_states`, `trace_zwd` (trace-class) | the shipped posture, same-build control |
+| 1 `fldf3_pl` | `_fldf3_pl.json` | + `carry_invariant: false` (with its sub-family `carry_invariant_innov_gate / _innov_calibrate / _innov_corroborate / _honesty / _pd_safe` set false explicitly — inert without the vehicle, and the loader hard-errors on `innov_gate` without `carry_invariant`), and the EWL/UWL lane layer off (`mw_wl.ewl_enable / uwl_enable / uwl_cold_fix / wl_inject_enable: false` — the lanes ride the invariant carry's chord basis and the loader hard-errors without it), `cycle_slip.relevel_free_epoch: true` | the VEHICLE (leveling carry + its invariant-#1 slip response; the lanes are structurally unavailable on it) |
+| 2 `fldf3_on` | `_fldf3_on.json` | + `phase_leveling_local_block: true` | F3 |
+
+`relevel_free_epoch` is part of the leveling vehicle, not a fourth arm: standing invariant #1 requires the zero-q
+leveling carry's wired slip response, the re-level-walk fix IS that response (SPEC_slip_relevel_walk, 720/720 on
+wu93; pinned on the sim golden) and `mw_detect` is already armed on the chain.  Everything else stays at the
+chain's value in every arm, two of which matter for reading the result: `phase_datum_handover_max_var_m2` is the
+loader default **1.0 m²** on this chain (not the 1e-4 of the FT/camp60wu sticky lineages), so the honest-σ
+successor interlock of §6.8.3 cannot bind here; and `phase_datum_handover_continuous` is **false** (cold PB-gauge
+handovers, as the chain has always run).
+
+⚠ **A named asymmetry, kept on purpose.**  On the `carry_invariant` vehicle the post-fit network RAIM pool is
+inert unless `network.raim_carry_invariant` (default false) re-hosts it (`ApplicationNetwork.cpp` calls it under
+`raim_on && (carry_warm || raim_ci_on)`, and `carry_warm` needs the leveling carry) — arm 0 reports RAIM armed and
+never runs it, while arms 1 and 2 run it live once warm, with refloats.  Arm 0 is left as the SHIPPED posture
+(comparability with `runs/fld63_stk_on` and the field golden) rather than re-hosted off-posture; the card's
+graded delta is **arm 2 ↔ arm 1** (same vehicle, same live pool, same refloat response), and the vehicle-switch
+reading (arm 1 ↔ arm 0) is graded on the instruments that exist on BOTH sides — the prires / block-Baarda /
+station-congruence run-end counters and the truth-free DD instrument — with this asymmetry stated.
+
+Provenance: one exe for every arm, built from HEAD `00d5fdf` in a detached worktree
+(`.claude/worktrees/f3field`, VS 2026 Release), snapshot `gnss_processor_f3field.exe` beside its DLLs, sha256
+`4c6aa137f67888de32afb851a2d72dbb29dcb85954f8d73739a71a6d4c1d69b4`; runs sequential, each from its own
+`runs/<arm>` CWD (the traces are CWD-relative); 20-epoch smokes of all three arms first (`processing.max_duration_s`
+600 — the `network.max_duration_s` key only clips the RINEX parse; a first smoke that set the wrong key ran
+the full window and was killed).  `mw_wl.enable` and `lane_carry.enable` are OFF on the chain already; the chain's
+EWL/UWL lanes (`mw_wl.ewl_enable`, `uwl_enable`, `uwl_cold_fix`) are the one further thing the vehicle switch
+must drop, so the vehicle-switch reading (arm 1 ↔ arm 0) also carries "no EWL/UWL lanes" — the lanes touch the
+invariant carry's chords and the consumer's lane products, not the phase-leveling carry, so the F3 delta
+(arm 2 ↔ arm 1) is unaffected.
+
+Baseline of the truth-free instrument on the field control (`runs/fld63_stk_on`, 2026-09-02 exe, stride 4, G):
+L1C as-traced med|f| 0.249 (null 0.246), near 19.4 %, R 0.461 (null 0.472), ref-free gap +0.012; and the
+synthesized **WL(1,2)** — 37,913 paired chords of 66,087 L1C / 202,411 L2W rows (the unpaired rows are
+mixed-reference or single-band chords) — reads R 0.487 (null 0.482), near 21.4 %, ref-free gap +0.005: ALSO at
+the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|e₁| ≳ 2 cyc), consistent with
+§13.8.2's "~5 cycles off with a ±20-cycle tail".  That is the reading arm 2 has to move.
+
+### 6.15.2 Instruments (all truth-free; the field has no `truth_ambiguities.csv`)
+
+1. **DD integer structure** — `scripts/dd_frac_reref.py <run> --signal {L1C,L2W} --cons G` (§6.13.1).  ⚠ Its
+   null is the UNIFORM case = no integer structure, so "at the null" is the WORST reading, not a floor: the field
+   control reads R 0.468 vs null 0.473 / ref-free gap +0.008 (§6.13.2) and improvement is leaving the null UPWARD
+   (R − null > 0, near-integer share > 20 %, ref-free GAP < 0 — the sim F3 base reads R 0.610 vs 0.430, gap
+   −0.047).  Quote the GAP to the size-matched null, never the raw median; closure against its DD-structure null.
+   ⚠ An at-null reading is AMBIGUOUS on a truth-free bed: multi-cycle DD errors wrap to uniform and read exactly
+   like "no integer content" (§6.13.2's run-selection lesson).  So the falsified branch is paired with three
+   SCALE-BEARING readouts before it is called a falsification: (i) the **WL(1,2) DD fraction** synthesized from
+   the same trace — `dd_cyc(L1C) − dd_cyc(L2W)` per (epoch, sat, ref, sta_a, sta_b) chord, joined on the SAME
+   reference satellite in both bands (the reference is elected per signal, so mixed-reference rows are dropped
+   and counted), λ_WL = 86 cm.  An n-cycle L1 error is n/3.5 cycles at WL if iono-driven ((f₁−f₂)/f₂ = 0.283 —
+   the applicable factor, since the sim root cause is 99 % iono) and n/4.5 if range-common (λ₁/λ_WL = 0.221), so
+   a sub-half-cycle WL corresponds to |e₁| ≲ 1.8 cycles: multi-cycle-but-bounded L1 errors show WL structure
+   while L1/L2 stay uniform (`scripts/dd_frac_wl.py` writes the synthesized trace in the same schema; the same
+   tool grades it AS-TRACED and REF-FREE with the same nulls — quote the ref-free gap); (ii) the trace's own
+   `dd_sigma_cyc` median per arm, filtered to rows with `dd_sigma_cyc ≥ 0` and `sigma_carry_aware = 1` (the σ is
+   −1 when the covariance is unavailable and the carry-aware flag says whether it could see the carried state —
+   the retained fraction is reported per arm so arms are compared on the same population; an honest σ ≥ 0.1 cyc
+   on the leveling arms, a collapsed sub-0.02 cyc σ beside a uniform histogram is the over-count's signature);
+   (iii) the prires / σ̂₀ families of instrument 2.  Per-station and per-hour splits off this trace compare ROTATING populations
+   (the field reference switches 8–11 times/day and a chord needs both stations to see it) and are quoted with
+   that caveat.
+2. **The σ̂₀ families** present on both vehicles: prires census (worst |t|, rows > 4σ̂₀), block-Baarda census
+   (blocks flagged / block-only), station congruence, the constraint-aware global σ̂₀ per family; T3/T4/T1r counts
+   from `network_flag_rates.csv`; the post-fit σ̂₀ where the pool is live.
+3. **F3's own counters** (invariant #4): the `Network (leveling local-block F3)` run-end line — blocks whitened,
+   rows emitted, columns marginalized at inject, pairs zeroed, columns refused, factorization fallbacks, block-dim
+   histogram, within-epoch refloat re-whiten ok/failed.
+4. **Continuity censuses**: PB-gauge handovers (`network_events.csv` PHASE_DATUM / PBGAUGE tiers), the
+   leveling-carry retirement census [A]/[C], the rx-CB carry line, the D0/INC-C0 carry census.
+5. **ZWD plausibility** (`network_zwd.csv`, `trace_zwd`): settled per-station |ΔZWD| per epoch (p50/p95),
+   hourly |rate| p95, formal σ, per-station span.  No ZTD truth on this bed; the reading is physical
+   plausibility (a ZWD that moves decimetres per hour is the over-count wandering, §6.8.4's field analogue).
+6. **Consumer**: the in-process WTZZ00DEU consumer (metre-class and non-attributing on this chain — §18.8 item 3;
+   reported, not leaned on) and a float-only cold-consumer REPLAY of each wire
+   (`_fldf3_{ci,pl,on}_replay.json`, `ar_mode 0`, `Application::runConsumerReplay`) — hourly 3D rms and p50,
+   settled ≥ h6.
+7. **Cost**: D0 total ms/epoch median after epoch 30 (sim: +7.4 % under F3).
+
+### 6.15.3 Pre-registered predictions (written before any 12 h arm ran; smokes only)
+
+- **P1 (F3 fires and is well-conditioned).** Arm 2's F3 line shows blocks whitened every warm epoch (≈ 61 per
+  epoch → ~8×10⁴ over 12 h), 0 factorization fallbacks, 0 columns refused; the block-dim histogram sits in the
+  10–49 range (GPS dual: ~2 bands × ~8–12 sats per station).  Falsifier: fallbacks > 0 (the F1 diagonal fallback
+  re-asserts the station-common directions, §6.11 arm 5) or refused columns.
+- **P2 (the headline).** Arm 2 lifts the field DD fractions OFF uniform on L1C and L2W: R − null ≥ +0.05,
+  near-integer share ≥ 25 % (uniform 20 %), ref-free GAP ≤ −0.02, settled half (h6–h12).  Arms 0 and 1 stay at
+  the null (|R − null| ≤ 0.02, |gap| ≤ 0.015, as `fld63_stk_on`).  Falsifier: arm 2 at the null on L1C, L2W AND WL(1,2) with an honest `dd_sigma_cyc` → the field's
+  non-integer DDs are NOT the leveling over-count (the field residual is then multipath / real slant-iono
+  mis-modelling under the SH posture / the §13.8.2 multi-cycle tail), and the AGU-26 "uniform 0.25" stands with
+  F3 exonerated as the cure.  A partial lift (R − null in (0.02, 0.05)) is a real but insufficient effect and is
+  reported as such, not rounded either way.  Intermediate branch: L1C/L2W at the null but WL(1,2) lifted → the
+  errors are multi-cycle-but-bounded at L1 (1–4 cycles) and F3's effect is graded on the WL readout; PARTIAL.
+- **P3 (station-common wander).** Arm 1's ZWD wanders (hourly |rate| p95 and per-station span markedly above
+  arm 0's — the over-count's field signature, §6.8.4: sim F1 rms 0.19 m) and arm 2 brings it back to arm 0's
+  scale or below (sim F3: 0.009 m rms, |err|/σ 0.94); arm 2's formal ZWD σ is HONEST-scale (≥ 3 mm), not the
+  collapsed sub-mm of a diagonal carry.
+- **P4 (σ̂₀ families).** Arm 2 ≤ arm 1 on prires rows > 4σ̂₀, block-Baarda blocks flagged and worst |t|; T4
+  attribution flags on arm 2 ≈ 0 where arm 1 shows the over-confident coupling rows' own residual (sim: 288 → 0).
+  Against arm 0 no direction is pre-registered (different live QC).
+- **P5 (consumer replay, float).** Settled (h6–h12) 3D rms: arm 2 ≤ arm 1; arm 2 vs arm 0 not pre-registered
+  (vehicle + RAIM asymmetry), reported.  The in-process AR consumer is reported only.
+- **P6 (continuity).** PB-gauge handovers on arm 2 are not more often cold than on arm 1 (same ceiling, same
+  policy); leveling carries erased on arm 2 within 2× of arm 1.
+- **P7 (cost).** Arm 2 D0 median within +15 % of arm 1.
+- **Stop rules.** Any arm exit ≠ 0, an F3 fallback count > 0, or a withhold era > 60 min ends the ladder before
+  grading; a smoke that shows loader warnings naming any ladder knob as INERT stops it before the 12 h arms.
+
+### 6.15.4 Results — filled as they land (nothing above is edited)
+
+**Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
+epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
+(harvest-stamp mismatch), 0 refused, 0 factorization fallbacks, block-dim histogram <10: 136 / 10–24: 643
+(max 18) — the GPS-dual block sizes predicted in P1.  No ladder knob reads INERT.  Loader lines that DO change
+with the vehicle and are therefore part of the arm-1↔arm-0 reading: `state_snapshot_carry` disabled (needs
+carry_invariant), `emit_pb_filter` INERT without carry_invariant (the v1 PB emit filter is off on the leveling
+wires — the consumer sees unfiltered PB records), `mw_wl.bridge_sample_debias` INERT without `ewl_enable`; the
+post-fit RAIM pool goes LIVE (T3 5,838 opportunities / 91 flags on arm 1 vs 0 / 0 on arm 0 over the 20 epochs),
+and on arm 2 it flags 8× more cells than arm 1 in ignition (733 / 5,838; T3c consensus 125 vs 5) — the
+§7 item 4 population (F3's dense L⁻¹ rows sit in the T3/T4 pool at unit variance, admitted by the |A_r| > 0.5
+test); to be read settled, not in ignition.  Cost: the leveling arms run at ~300 ms/epoch against the control's
+~800–1,100 (no invariant DD carry blob), so P7 is read as arm 2 vs arm 1 only.
+
+---
+
 ## §7 Open questions (re-cut 2026-09-04, round 2; round-4 closures and items 15–21, §6.8)
 
 **⚠ FIRST (2026-09-05, §6.9): the RE-COUPLING EDGE on the F3 block at satellite re-admission — BUILT the same day as `network.readmit_seed_horizon_s` + `network.readmit_coupling_marg_ep` (§6.10, pre-registered; arms running)** — the 24 h arm shows two ~4 h NETWORK-WIDE degradation episodes after the eclipse re-admission clusters (clean chords 0.19 → 0.58–0.68 cyc), absent from the quiet hours where F3 sits at the CRLB.  Build: at a satellite's re-admission (col_added after a gap ≥ N epochs / CTA first sighting), marginalize its shared terms out of every station's block regressors for K epochs (or register the re-admission as a Card-1g reinit source); counters at both edges; pre-registered PASS = no clean-chord degradation after the h16.6–18.9 cluster on `_nonint_losblock24h_hv`, settled quarter ≤ 0.2 cyc / ≥ 80 %.

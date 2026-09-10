@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "FIELD F3 ladder (2026-09-09, SPEC_amb_iono_split_overcount s6.15 / s7 item 21): DOY-129, 61 GPS dual stations + SH-VTEC iono, 00-12 UT, fresh cold starts (F3 is fingerprinted), sequential Release runs each from its own runs/<name> CWD under the hash-verified worktree exe (HEAD 00d5fdf, sha256 4c6aa137...).",
+    "Posture = _fld63_stk_on (this base + sticky_pivot:true), restated here rather than extended because the base chain is already at the loader's 8-level extends limit.",
+    "Grade truth-free: scripts/dd_frac_reref.py (R vs null, near-integer share, ref-free GAP; WL(1,2) synthesized), the sigma0 families + T3/T4 counts, the F3 run-end counters, PB-gauge handover + leveling retirement censuses, a float-only cold-consumer REPLAY on each wire (WTZZ00DEU hold-out), D0 ms/epoch.  Age-gate responses stay OFF (KEEP OFF, s6.11).",
+    "ARM 0 / CONTROL: the E3 field posture (_fld63_stk_on) re-run under the ladder exe. Vehicle = carry_invariant (Card-4 invariant DD carry); the phase-leveling inject is skipped there (do_amb_carry needs !carry_invariant), so F3 is structurally inert on this posture. NOTE the post-fit RAIM pool is INERT on this vehicle (raim_carry_invariant default false) - a named asymmetry against the leveling arms, kept deliberately (this is the shipped posture)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_ci/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_ci/state_snapshot.bin"
+  }
+}

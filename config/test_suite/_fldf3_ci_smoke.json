@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "SMOKE (20 epochs = processing.max_duration_s 600) of _fldf3_ci.json - identical knobs, sibling of the arm (not a child: the chain is at the extends depth limit)."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "processing": {
+    "max_duration_s": 600.0
+  },
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_ci_smoke/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_ci_smoke/state_snapshot.bin",
+    "max_duration_s": 600.0
+  }
+}

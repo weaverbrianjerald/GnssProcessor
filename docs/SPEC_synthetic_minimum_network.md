@@ -2264,6 +2264,18 @@ quantified:
 4. It must NOT be wind-up, and it must NOT be iono (that is B, already accounted and matching finding 3's
    DD-iono arithmetic).
 
+**ADDENDUM 2026-09-09 — the term is ABSENT on the F3 golden posture.**  Same instrument, same fixture
+(`runs/simnet60_quiet_wu93_24h`), run on the 24 h F3 arm `runs/nonint_losblock24h_hv` (stride 8, 193,388
+three-band chords): **med|A| = 0.108 cyc** (sd 5.84) and **med|B| = 0.206 cyc** (sd 0.79) — against posture C's
+4.330 / 2.823 and the diagonal-carry sticky arm's 0.181 / 2.689.  Wind-up's share of the cycle-common variance
+is 0.23 % (slope 0.49, r +0.048), i.e. still nothing.  So the station-wide whitened block removes BOTH terms:
+the iono-shaped B (the over-count of SPEC_amb_iono_split_overcount §3, as predicted) and — without being
+designed for it — the cycle-common A that posture C carried at 4.3 cyc.  Item 3's posture ladder is therefore
+DE-MOTIVATED as a stand-alone card: the band-common term does not exist on the posture the goldens run, and
+anyone re-opening it should first re-run posture C itself under F3 (one arm) before building a ladder.  The
+mechanism of posture C's own 4.3 cyc stays formally OPEN (that arm is a pre-F3 diagonal-carry, pre-wu93
+fixture pairing — both differences are confounded with the term).
+
 ## §10 Verification status
 
 **This is the CODE-ANCHOR verification log for §1–§8, not the run status.**  ⚠️ Its
