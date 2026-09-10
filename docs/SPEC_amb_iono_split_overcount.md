@@ -1963,9 +1963,16 @@ mapping and attenuation.  (ii) joint fit e₁ = a·ΔI_cyc + t·ΔT_cyc: **a = +
 (λ₁ΔN₁ = ΔI − ΔT).  ⚠ Prediction (ii)'s "a → 2.28" was mis-stated: 2.28 is the SINGLE-regressor coefficient
 when T is exactly −1.283·ΔI (the measured single-regressor 1.72 is its attenuated version); in the joint fit
 the structural coefficients are (+1, −1), and that is what was measured.  So the band-1 budget CLOSES with
-the ZWD as the fourth member: the "impossible" cycle-common channel is the projection onto the ambiguity
-block of **(I, N₁, N₂, ZWD) moving together along a weakly-determined direction of the shipped field
-posture** — per-LOS iono (SH-pinned), per-epoch un-carried ZWD (a metre-class sink), and per-station
+the ZWD as the fourth member.  ⚠ Read the (+1, −1) correctly (peer): it is the band-1 phase equation, which
+the traced states MUST satisfy if they are what the solve fit to 1.6 cm — so it is not evidence for the
+near-null direction (that would be circular); what it IS is the RECONSTRUCTION CHECK marked OWED above, done
+in aggregate and PASSED: the traced `x_lin + x_r` pairs satisfy the observation model, branch (b) is closed
+EMPIRICALLY (not only by source read), and the 0.75 m gap was an artifact of omitting T.  The evidence for
+the near-null direction is the COVARIANCE STRUCTURE: three states that should be small and near-independent
+are metre-class (ΔI 1.25 m, ΔT 1.22 m, A ~10 cyc), strongly mutually correlated (tropo↔iono −0.85), and
+carry a σ that does not know it (40σ wander).  On that evidence the cycle-common channel is the projection
+onto the ambiguity block of **(I, N₁, N₂, ZWD) moving together along a weakly-determined direction of the
+shipped field posture** — per-LOS iono (SH-pinned), per-epoch un-carried ZWD (a metre-class sink), and per-station
 ambiguities trade against each other while the phase fit stays at 1.6 cm.  The DD "ambiguity" of this
 posture is therefore not an estimable-invariant quantity in practice; its 10-cycle-per-hour wander is the
 tropo–iono trade riding through it.  On the sim golden the ZWD is CARRIED (honest σ, F3-whitened) and e₁ does
