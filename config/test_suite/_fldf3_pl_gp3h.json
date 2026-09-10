@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "ARM 1g / COUPLING GAUGE-PROJECT ON: the pl arm + network.carry_coupling_gauge_project:true (the sim golden arms it; the field chain does not).  Probe 4 showed the S-basis \"observed 0\" withholds VANISH when the Card-1 conditional coupling rows are removed (and 96 solves fail instead), so the coupling rows are what closes the declared null direction; gauge-projecting their regressors is the sim golden's way of keeping them off the datum.",
+    "PRE-REGISTERED (2026-09-09 18:55): withholds 82 -> ~0 in the first 3 h WITH the solve intact (no gate_ok=1/solved=0 epochs beyond arm 1's 1); h1-h3 ZWD span below arm 1's 14.4 m; if withholds persist the coupling rows pin the gauge through a channel the projection does not cover."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_ext63_12h_evt_pl_clkpin.json"
+  ],
+  "processing": {
+    "max_duration_s": 10800.0
+  },
+  "network": {
+    "sticky_pivot": true,
+    "trace_rx_states": true,
+    "trace_zwd": true,
+    "carry_invariant": false,
+    "carry_invariant_innov_gate": false,
+    "carry_invariant_innov_calibrate": false,
+    "carry_invariant_innov_corroborate": false,
+    "carry_invariant_honesty": false,
+    "carry_invariant_pd_safe": false,
+    "mw_wl": {
+      "ewl_enable": false,
+      "uwl_enable": false,
+      "uwl_cold_fix": false,
+      "wl_inject_enable": false
+    },
+    "cycle_slip": {
+      "relevel_free_epoch": true
+    },
+    "product_output_path": "C:/GnssProcessor/runs/fldf3_pl_gp3h/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/fldf3_pl_gp3h/state_snapshot.bin",
+    "carry_coupling_gauge_project": true
+  }
+}

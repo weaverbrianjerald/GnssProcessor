@@ -2069,6 +2069,17 @@ Working hypothesis being tested, not asserted: the leveling carry injects ABSOLU
 priors, which are not datum-invariant, so with the chain's declared null-space dimension of 1 they can pin
 the last gauge direction (observed 0 ⇒ withhold) — a declaration defect of the leveling posture on this
 chain rather than a numerical one.  The ZWD-carry arm (`_fldf3_ci_zwd`) is re-queued behind these probes.
+**Probes 3–5 (read 18:50):** probe 3 (SH iono OFF) — 82 withheld, same gate, ZWD span 12 m: SH exonerated.
+Probe 5 (leveling var floor 0.01 m²) — 82 withheld, ZWD 10.5 m, prires |t| 6e5 (from 1e8): stiffness is not
+the cause.  **Probe 4 (Card-1 conditional coupling OFF): the "observed 0" withholds VANISH (0 of 360)** — and
+96 epochs fail to solve instead (gate ok, unsolved), ZWD 15.9 m, 6 surviving arcs: the CONDITIONAL COUPLING
+ROWS are what closes the declared null direction on this chain, and without them the leveling vehicle cannot
+solve at all.  The sim golden runs the same rows without tripping the gate — and it arms
+`network.carry_coupling_gauge_project: true` (project the coupling regressors out of the gauge directions),
+which the field chain does not.  **Probe 6 `_fldf3_pl_gp3h` PRE-REGISTERED (18:55): arm 1 +
+`carry_coupling_gauge_project: true` — withholds 82 → ~0 with the solve intact (no unsolved epochs beyond arm
+1's one), h1–h3 ZWD span below 14.4 m; persisting withholds ⇒ the rows pin the gauge through a channel the
+projection does not cover.**
 
 **Smokes (20 epochs each, 2026-09-09 17:4x, before the 12 h arms):** all three exit 0.  Arm 2's F3 line at 20
 epochs: 779 blocks whitened, 9,719 rows emitted, 116 columns marginalized at inject, 28 pairs zeroed
