@@ -1814,10 +1814,22 @@ the null.  So the control's L1 DD errors are multi-cycle even at the WL scale (|
    median 0.0105 m (p90 0.012; `sigma0_pf_code` 0 = the code pool is empty on this vehicle, `sigma0_global`
    3.1), and `network_pf_keyed.csv` per-station phase rms p50 1.6 cm (p90 5.4, p99 13 cm; max p50 4 cm) over
    703k settled phase rows.  A 0.75 m range-like misfit per cycle of iono change is nowhere in the residuals,
-   so the co-motion is a LEGAL direction of the posture's model — a fourth per-LOS term closes the budget —
-   and the field's "DD ambiguity" on this vehicle is not an estimable-invariant quantity at all: it moves
-   with the ionosphere through that term.  Which term is not identified here (the SH↔slant pin with its
-   per-LOS GM deviation is the named candidate); the leveling arms say whether the vehicle owns it.
+   **and that FORKS the reading rather than settling it** (peer review, 18:10): the unexplained band-common
+   range is ~0.6·ΔI ≈ **0.75 m per arc** (ΔI MAD 1.25 m), and nothing in a double difference is that size —
+   receiver and satellite clocks cancel EXACTLY, DD troposphere is centimetres (2 cm ZWD through a 3.8 mapping
+   across four terms ≲ 15 cm), DD orbit error centimetres, and a 0.75 m SH↔slant pin deviation would be
+   conspicuous elsewhere.  Attenuation makes it worse, not better: the regression is on the iono STATE, which
+   carries its own error, so errors-in-variables bias the slope toward zero and +1.7 is a LOWER bound on the
+   structural coefficient.  So with the fit normal, no physical term closes the budget, and the two readings
+   left are: (a) the regression slope is not a structural coefficient of the phase model at all (corr 0.90 ⇒
+   ~19 % of A's variance is not ΔI; the budget line assumes all of A is 1.7·ΔI), or (b) the traced states do
+   not enter the phase equation with the assumed coefficients/frame — the TRACE-ARTIFACT branch is alive, not
+   dead: the DD trace and the iono trace are both `x_lin + x_r`, but whether that sum is the solve's state at
+   the SAME stage of the epoch (before/after re-linearization, harvest, relevel) is not verified.  The
+   definitive check is direct: reconstruct the phase residual of a few chords from the TRACED I and N and the
+   run's own model terms and compare with the run's post-fit residual (cm) — metres of reconstructed residual
+   ⇒ (b).  OWED, with the truth-join.  Until then the field co-motion is a measurement about the TRACES, and
+   "the DD ambiguity is not estimable-invariant on this vehicle" is a candidate reading, not a finding.
 4. **What the field's "uniform 0.25" now means.**  A DD estimate that wanders tens of cycles within an arc
    wraps to uniform trivially, and no leveling-carry fix addresses WANDER of that scale (the over-count freezes
    a WRONG but STABLE level).  P2's success branch therefore requires arm 2 to ALSO read stable on this
