@@ -607,6 +607,13 @@ namespace GnssProcessor {
                     non_ref_dds.push_back(dd);
 
             if (non_ref_dds.size() >= 2) {
+                // Tier T1r opportunity (invariant #4): a usable family existed, so
+                // this station-epoch-constellation was screenable by the reference
+                // arm.  Counted UNCONDITIONALLY — the legacy condition below runs
+                // whether or not the hardened gate is armed, and its own denominator
+                // is NOT the pool arm's per-(station,sat,pair) sample count, which
+                // is exactly why T1r must stay a separate tier from T1.
+                ++ref_gate_counters_.gate_opportunities;
                 const double median_dd = computeMedian(non_ref_dds);
 
                 // Card R: the LEGACY condition is the candidate filter; when the
@@ -637,6 +644,7 @@ namespace GnssProcessor {
                     }
                 }
                 const bool ref_fire = (verdict != RefGateVerdict::Suppress);
+                if (ref_fire) ++ref_gate_counters_.gate_flags;  // tier T1r numerator
 
                 if (ref_fire) {
                     const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
@@ -846,7 +854,8 @@ namespace GnssProcessor {
                 } else {
                     info.lambda_if_m = lambda_if;                   // fallback: constellation median
                 }
-                info.valid = std::isfinite(dd);
+                info.valid        = std::isfinite(dd);
+                info.is_reference = (sat == cs.ref_satellite);
                 last_if_jumps_[sat] = info;
             }
 

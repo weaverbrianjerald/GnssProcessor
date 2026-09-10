@@ -944,7 +944,12 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         // Pool this epoch's ΔΔφ_IF by signal pair across present non-pivot stations.
         // Carry elevation (for the stochastic normalization) and the per-sat (1,1)
         // IF wavelength (for the physical floor — exact even for GLONASS FDMA).
-        struct PairSample { int sta; std::string sat, sig1, sig2; double dd, el, lambda; };
+        // is_ref marks the constellation REFERENCE satellite, whose dd is identically
+        // 0 by construction.  Carried per sample so the robust SCALE below can drop it
+        // (§6.14.5 defect 2); it stays in `samples` for the centering median and for
+        // thresholding, so the flag population is unchanged.
+        struct PairSample { int sta; std::string sat, sig1, sig2; double dd, el, lambda;
+                            bool is_ref; };
         std::map<std::string, std::vector<PairSample>> by_pair;
         for (int i = i_lo; i < n_sta_total; ++i) {
             if (!present[i] || !stations[i].if_slip) continue;
@@ -953,7 +958,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 if (jp.sig1.empty() || jp.sig2.empty()) continue;
                 const std::string pair = jp.sig1 + "_" + jp.sig2;
                 by_pair[pair].push_back({i, sat, jp.sig1, jp.sig2,
-                                         jp.delta_grad_m, jp.elevation_deg, jp.lambda_if_m});
+                                         jp.delta_grad_m, jp.elevation_deg, jp.lambda_if_m,
+                                         jp.is_reference});
             }
         }
 
@@ -1003,10 +1009,26 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
 
             // (2) Pooled elevation-normalized robust scale (zenith-equiv m):
             //     s_pool = 1.4826·median(|z|), z = (dd−med)/ifElevMap(el).
+            //     The constellation REFERENCE satellite is EXCLUDED here: its dd is
+            //     identically 0 by construction (grad(ref) = OMC(ref) − OMC(ref) = 0),
+            //     so it contributes an exact structural zero that sits at the centre of
+            //     the distribution and DEFLATES the MAD.  Measured on
+            //     runs/nonint_losblock24h_hv (24 h, 60 sta): those zeros are 12.5 % of
+            //     all samples and the settled s_epoch p50 reads 0.01190 m with them vs
+            //     0.01416 m without — a 16.0 % deflation.  The reference carries no
+            //     information about the noise this threshold is meant to track, and the
+            //     pool arm can never flag it anyway (|dd − med| ≈ 0) — the separate
+            //     per-station reference gate (tier T1r) is what screens it.
+            //     §6.14.5 defect 2.  Fallback: if excluding leaves nothing (a pair whose
+            //     only sample IS the reference), keep the full set rather than emit a
+            //     zero scale — s_eff would then collapse onto the physical floor.
             std::vector<double> zabs;
             zabs.reserve(samples.size());
             for (const auto& s : samples)
-                zabs.push_back(std::abs((s.dd - med) / ifElevMap(s.el)));
+                if (!s.is_ref) zabs.push_back(std::abs((s.dd - med) / ifElevMap(s.el)));
+            if (zabs.empty())
+                for (const auto& s : samples)
+                    zabs.push_back(std::abs((s.dd - med) / ifElevMap(s.el)));
             std::nth_element(zabs.begin(), zabs.begin() + zabs.size() / 2, zabs.end());
             const double s_pool = 1.4826 * zabs[zabs.size() / 2];
             if (static_cast<int>(samples.size()) < min_pool) ++n_sparse;
@@ -1168,7 +1190,15 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                         if (n_if_arcs <= 12)
                             if_detail += fmt::format("{}{}/{}_{}_{}", if_detail.empty() ? "" : ", ",
                                                      stations[sp->sta].name, sp->sat, sp->sig1, sp->sig2);
-                    } else {
+                    } else if (!sp->is_ref) {
+                        // §6.14.5 defect 2, WARM half: the reference's structural
+                        // zero never flags (|dd − med| ≈ 0 by construction), so it
+                        // always lands here and deflates s_epoch — which is the
+                        // quantity the 16.0 % measurement was made on (p50 0.01190 m
+                        // shipped vs 0.01416 m excluded).  s_eff = w·ewma + (1−w)·s_pool,
+                        // so BOTH halves must drop it or the scale stays biased once
+                        // the station-pair goes warm.  Excluding it also stops sc.count
+                        // (the shrinkage weight) from crediting a non-observation.
                         clean_zabs.push_back(abs_dev / emap);
                         // Delta bridge, MW-only path: REMOVED after the truth
                         // audit (SPEC_slip_relevel_walk §8.1) — an MW candidate

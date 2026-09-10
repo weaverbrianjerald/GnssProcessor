@@ -4036,6 +4036,22 @@ int networkTeardown(
         }
     }
 
+    // Tier T1r (§6.14.5 defect 1 / invariant #4): drain the IF-TD REFERENCE arm's
+    // own opportunities and flags out of the per-station detectors.  NOT gated on
+    // nc.slip_qc.ref_gate — the LEGACY reference condition runs and acts on every
+    // lineage, armed or not, so gating this on the hardening toggle would leave the
+    // tier reading 0 on precisely the runs where it is the only reference screen.
+    if (ctx.knobs.trace_flag_rates) {
+        auto& fr = ctx.counters.fr_if_refgate;
+        fr.opp = fr.flag = 0;
+        for (const auto& st : stations) {
+            if (!st.if_slip) continue;
+            const auto& c = st.if_slip->refGateCounters();
+            fr.opp  += static_cast<long>(c.gate_opportunities);
+            fr.flag += static_cast<long>(c.gate_flags);
+        }
+    }
+
     // B8 flag-rate empirical-alpha summary + L3 run-summary CSV (bodies relocated
     // to NetworkRunTraces, INC-4; ONE trace_flag_rates gate covers both).
     traces.writeFlagRateAndRunSummary(config_, ctx.knobs, ctx.counters, synced.size(),

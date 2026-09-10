@@ -2492,6 +2492,7 @@ namespace GnssProcessor {
         size_t n_perconst_partial_epochs = 0;     // RTA-10: epochs published PARTIALLY (σ̂0 carve-out pruned >=1 constellation)
         size_t n_perconst_diffuse_published = 0;  // RTA-10: epochs published in FULL although the global σ̂0 tripped (every constellation individually clean — the diffuse cross-constellation edge of the per-const approximation)
         FlagRate fr_if_slip;    // T1 per (station,sat,pair) IF-phase sample   k=if_phase_td_k_mad
+        FlagRate fr_if_refgate; // T1r per (station,epoch,constellation) family of n>=2 non-ref DDs — the IF-TD REFERENCE arm, whose action drains through sta_if_resets/refsat_reset and increments NOTHING in T1 (§6.14.5 defect 1: the table read T1 flags=0 for a run the tier drove 1917 acting refloats on).  DELIBERATELY a separate tier: different opportunity denominator (station-epoch-constellations, not per-sat samples) and a different threshold (max(k*s_eff, floor_frac*lambda_IF) hardened, a bare physical floor legacy) — merging it into T1 would re-hide exactly that asymmetry.  Aggregated at teardown from each station detector's RefGateCounters.
         FlagRate fr_we_trigger; // T2 per warm within-epoch epoch: σ̂0_first>trig k=sigma0_trigger
         FlagRate fr_raim_cell;  // T3 per (sat,station) standardized residual   k=raim_k
         FlagRate fr_raim_sat;   // T3 consensus per spiked sat (>=min_sta)       k=raim_k

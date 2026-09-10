@@ -147,6 +147,18 @@ namespace GnssProcessor {
             std::string sig1;             ///< High-band signal of the IF pair (e.g. "L1C").
             std::string sig2;             ///< Low-band signal of the IF pair (e.g. "L2W").
             bool   valid{ false };        ///< True if a finite jump was computed.
+            /// True for the constellation's REFERENCE satellite, whose double
+            /// difference is identically 0 by construction (grad(ref) =
+            /// OMC(ref) − OMC(ref) = 0 ⇒ dd(ref) = 0 every epoch).  The network
+            /// pool arm MUST exclude these structural zeros from its robust
+            /// SCALE: they sit at the centre of the distribution and deflate the
+            /// MAD (measured 16.0 % on runs/nonint_losblock24h_hv, 12.5 % of all
+            /// samples — docs/SPEC_amb_iono_split_overcount.md §6.14.5 defect 2).
+            /// They carry no information about the noise the threshold tracks,
+            /// and the reference can never be flagged by the pool arm anyway
+            /// (its deviation is ~0) — which is why the separate per-station
+            /// REFERENCE GATE exists (flag-rate tier T1r).
+            bool   is_reference{ false };
         };
 
         /**
@@ -247,6 +259,18 @@ namespace GnssProcessor {
          * hardening removed and the three `suppressed_*` counters say why.
          */
         struct RefGateCounters {
+            /// @name Tier T1r — the gate's OWN flag rate, counted UNCONDITIONALLY.
+            /// @{
+            /// These two are incremented whether or not @ref RefGateParams::enable
+            /// is armed, because the LEGACY condition always runs and always acts.
+            /// Every other counter here is hardened-gate-only telemetry.  Without
+            /// them the reference arm is invisible in `network_flag_rates.csv`,
+            /// which reads `T1 … flags=0` for runs the tier drove thousands of
+            /// refloats on (standing invariant #4 —
+            /// docs/SPEC_amb_iono_split_overcount.md §6.14.5 defect 1).
+            long long gate_opportunities{0};     ///< Station-epoch-constellations with a family of n ≥ 2 finite non-reference DDs (pos-gated epochs excluded — flagging is suppressed there).
+            long long gate_flags{0};             ///< …of those, the ones that fired (legacy condition, or the hardened verdict when armed).
+            /// @}
             long long legacy_candidates{0};      ///< |median| > floor_frac·λ_IF with n ≥ 2 (the legacy fire condition).
             long long fires{0};                  ///< Reference slips actually flagged (both kinds).
             long long fires_station_event{0};    ///< …of those, the incoherent multi-satellite kind (fired WITHOUT the median rebase).

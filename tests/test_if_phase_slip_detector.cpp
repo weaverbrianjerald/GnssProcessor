@@ -160,7 +160,16 @@ OmcState sixSatOmc() {
              { "G04", 0.21 }, { "G05", -0.15 }, { "G06", 0.05 } };
 }
 
-/// Every Card-R counter is zero (the gate never ran).
+/// Every HARDENED-GATE Card-R counter is zero (the gate never ran).
+///
+/// @warning @c gate_opportunities / @c gate_flags are DELIBERATELY absent here.
+/// They are the tier-T1r flag-rate pair and count UNCONDITIONALLY — the legacy
+/// reference condition runs and acts whether or not the gate is armed, so on a
+/// legacy lineage they are the ONLY reference-arm telemetry there is.  Adding
+/// them to this helper would make the gate-OFF cases demand they stay zero,
+/// which is precisely the invariant-#4 blindness this pair exists to remove
+/// (docs/SPEC_amb_iono_split_overcount.md §6.14.5 defect 1).  The positive
+/// assertion lives in FlagRateCountersCountTheLegacyArmToo below.
 void expectAllCountersZero(const IfPhaseSlipDetector::RefGateCounters& c) {
     EXPECT_EQ(c.legacy_candidates, 0);
     EXPECT_EQ(c.fires, 0);
@@ -169,6 +178,98 @@ void expectAllCountersZero(const IfPhaseSlipDetector::RefGateCounters& c) {
     EXPECT_EQ(c.suppressed_persistence, 0);
     EXPECT_EQ(c.fires_station_event, 0);
     EXPECT_EQ(c.reselects, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Tier T1r + the pool-scale reference marking (§6.14.5 defects 1 and 2)
+// ---------------------------------------------------------------------------
+
+// Defect 1.  `network_flag_rates.csv` T1 counts only the network POOL arm, so
+// it read "opportunities=2754791 flags=0" for a 24 h run in which this
+// per-station REFERENCE arm drove 1917 acting refloats — the ON-path telemetry
+// did not see the ON path.  The T1r pair fixes that, and it must count on the
+// LEGACY path too: that is the configuration where no other counter moves at
+// all, so a conditional increment would leave the tier reading zero on exactly
+// the lineages that have no other instrument.
+TEST(IfPhaseSlipRefGate, FlagRateCountersCountTheLegacyArmToo) {
+    IfHarness h;                       // never calls setRefGate => legacy
+    const ElevState elev = sixSatElevations();
+    OmcState omc = sixSatOmc();
+
+    // Epoch 0 has no previous gradients, so no family and no opportunity.
+    EXPECT_TRUE(h.step(0, omc, elev).empty());
+    EXPECT_EQ(h.det.refGateCounters().gate_opportunities, 0);
+
+    // Epoch 1: five finite non-reference DDs (n >= 2) => one opportunity, quiet.
+    EXPECT_TRUE(h.step(1, omc, elev).empty());
+    EXPECT_EQ(h.det.refGateCounters().gate_opportunities, 1);
+    EXPECT_EQ(h.det.refGateCounters().gate_flags, 0);
+
+    // Epoch 2: a reference slip. One more opportunity, and this one FIRES.
+    omc["G01"] -= 0.30;
+    ASSERT_EQ(h.step(2, omc, elev).size(), 1u);
+    EXPECT_EQ(h.det.refGateCounters().gate_opportunities, 2);
+    EXPECT_EQ(h.det.refGateCounters().gate_flags, 1);
+
+    // The gate-OFF invariant still holds for every HARDENED counter: T1r is
+    // telemetry, and arming it changed no decision.
+    expectAllCountersZero(h.det.refGateCounters());
+
+    // One opportunity per station-epoch-constellation — NOT per satellite.
+    // (T1's denominator is per-sample; conflating the two is what hid this.)
+    EXPECT_TRUE(h.step(3, omc, elev).empty());
+    EXPECT_EQ(h.det.refGateCounters().gate_opportunities, 3);
+    EXPECT_EQ(h.det.refGateCounters().gate_flags, 1);
+}
+
+// The armed gate counts the same opportunities; only the VERDICT differs.
+// Pins that the T1r denominator is gate-independent, so an A/B across
+// `if_phase_td_ref_gate` compares two rates over the same denominator.
+TEST(IfPhaseSlipRefGate, FlagRateOpportunitiesAreIndependentOfArming) {
+    const ElevState elev = sixSatElevations();
+    long long opp_legacy = 0, opp_armed = 0;
+    for (const bool armed : { false, true }) {
+        IfHarness h;
+        if (armed) h.det.setRefGate(armedGate());
+        OmcState omc = sixSatOmc();
+        for (std::size_t e = 0; e < 5; ++e) h.step(e, omc, elev);
+        (armed ? opp_armed : opp_legacy) = h.det.refGateCounters().gate_opportunities;
+    }
+    EXPECT_EQ(opp_legacy, opp_armed);
+    EXPECT_GT(opp_legacy, 0);
+}
+
+// Defect 2.  The network pool arm builds its robust scale from
+// getLastIfJumps(), which includes the reference satellite — whose double
+// difference is identically 0 by construction, since grad(ref) = OMC(ref) −
+// OMC(ref) = 0 every epoch.  Those exact zeros sit at the centre of the
+// distribution and deflate the MAD (measured 16.0 % on a 24 h / 60 sta run).
+// The pool cannot see which satellite is the reference, so the detector must
+// mark it — this pins both halves of that contract: the flag is set on exactly
+// one satellite, and the value it guards really is the structural zero.
+TEST(IfPhaseSlipRefGate, ReferenceSampleIsMarkedAndIsAStructuralZero) {
+    IfHarness h;
+    const ElevState elev = sixSatElevations();
+    OmcState omc = sixSatOmc();
+    h.step(0, omc, elev);
+    h.step(1, omc, elev);
+
+    const auto& jumps = h.det.getLastIfJumps();
+    ASSERT_EQ(jumps.size(), elev.size());
+
+    std::size_t n_ref = 0;
+    for (const auto& [sat, jp] : jumps) {
+        if (!jp.is_reference) continue;
+        ++n_ref;
+        EXPECT_EQ(sat, "G01");            // the retained 80 deg reference
+        EXPECT_TRUE(jp.valid);            // it IS a sample the pool would use
+        EXPECT_DOUBLE_EQ(jp.delta_grad_m, 0.0);   // ...and it is exactly zero
+    }
+    EXPECT_EQ(n_ref, 1u);                 // exactly one per constellation
+
+    // The non-reference DDs are the only ones carrying noise information.
+    for (const auto& [sat, jp] : jumps)
+        if (!jp.is_reference) EXPECT_NE(jp.delta_grad_m, 0.0) << sat;
 }
 
 // ---------------------------------------------------------------------------

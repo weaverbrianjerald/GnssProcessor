@@ -1663,6 +1663,7 @@ void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
                                                   const std::shared_ptr<spdlog::logger>& log) {
     const bool  trace_flag_rates  = knobs.trace_flag_rates;
     const auto& fr_if_slip        = counters.fr_if_slip;
+    const auto& fr_if_refgate     = counters.fr_if_refgate;
     const auto& fr_we_trigger     = counters.fr_we_trigger;
     const auto& fr_raim_cell      = counters.fr_raim_cell;
     const auto& fr_raim_sat       = counters.fr_raim_sat;
@@ -1709,6 +1710,18 @@ void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
         };
         log->info("==== Network flag-rate empirical-alpha summary (network.trace_flag_rates) ====");
         emit("T1",  "IF-phase slip (T1)",      fr_if_slip,    config_.networkCycleSlipIfPhaseTdKMad(), true);
+        // T1r — the IF-TD tier's per-station REFERENCE arm, a SEPARATE row on purpose
+        // (§6.14.5 defect 1).  Its opportunity is a station-epoch-constellation with a
+        // family of n>=2 non-reference DDs, not a per-(station,sat,pair) sample, and its
+        // threshold is a different quantity; folding it into T1 would average two rates
+        // over incommensurable denominators and re-hide the asymmetry that made this arm
+        // invisible.  An implied Gaussian alpha is only meaningful when the hardened
+        // Card-R gate is armed (threshold max(k*s_eff, floor_frac*lambda_IF)); on the
+        // legacy path the decision is a bare PHYSICAL floor, an absolute bound with no k.
+        {
+            const auto& sq = config_.getNetworkConfig().slip_qc;
+            emit("T1r", "IF-TD ref gate (T1r)",   fr_if_refgate, sq.ref_k, sq.ref_gate);
+        }
         emit("T2",  "within-ep trigger (T2)",  fr_we_trigger, config_.networkRaimSigma0Trigger(),      true);
         emit("T3",  "post-fit RAIM cell (T3)", fr_raim_cell,  config_.networkRaimKSigma(),             true);
         emit("T3c", "RAIM consensus (T3)",     fr_raim_sat,   config_.networkRaimKSigma(),             true);
