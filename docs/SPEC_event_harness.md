@@ -2012,7 +2012,7 @@ slipped campaign fixture, 6 h × 60 stations, exe 204736F4… (the merged card),
 
 | gate quantity | control (`golden_sim_campaign_zwdblk`) | **with the card** | gate |
 |---|---|---|---|
-| settled ZWD truth rms | 1.188 m | **0.046 m** | ≤ 0.5 **PASS** (the quiet golden reads 0.076) |
+| settled ZWD truth rms | 1.188 m | **0.046 m** | ≤ 0.5 **PASS** (the quiet golden's ZWD reads 0.0072 m; [corrected 2026-09-11: the 0.076 quoted here was the quiet bed's CONSUMER rms]) |
 | ZWD hourly rms | 1.98 / 1.31 / 0.96 / 0.58 / 1.05 / 1.67 | 0.21 / 0.02 / 0.01 / 0.04 / 0.07 / 0.02 | — |
 | per-station ZWD span p50 / stations > 1 m | 0.207 m / 15 | **0.031 m / 0** | — |
 | consumer settled p50 / rms | 1.085 / 2.389 m | **0.278 / 0.761 m** | p50 ≤ 0.6 **PASS** |
@@ -2232,7 +2232,7 @@ fires — which is what the knob does for the 4 % the repair gate had hidden.
 
 | gate quantity | §12.13 arm (anchor handover only) | **+ mw_evidence_refloat** | gate |
 |---|---|---|---|
-| settled ZWD truth rms | 0.046 m | **0.0071 m** | ≤ 0.05 **PASS** (the quiet golden reads 0.076) |
+| settled ZWD truth rms | 0.046 m | **0.0071 m** | ≤ 0.05 **PASS** (= the quiet golden's own ZWD floor, 0.0072 m) |
 | ZWD hourly rms | 0.21 / 0.02 / 0.01 / 0.04 / 0.07 / 0.02 | 0.17 / 0.01 / 0.007 / 0.006 / 0.007 / 0.008 | — |
 | per-station ZWD span p50 / stations > 1 m | 0.031 m / 0 | 0.021 m / 0 | — |
 | consumer settled p50 / rms | 0.278 / 0.761 m | **0.174 / 0.365 m** | p50 ≤ 0.25 **PASS** |
@@ -2245,11 +2245,17 @@ fires — which is what the knob does for the 4 % the repair gate had hidden.
 | MW admissions (run-end) | legacy only | legacy 4 570, **evidence 2 278** (rows 1 020: 348 integer-known, 672 unknown; ~170 per hour, flat) | dropped loose 1 010 / unknown 5 660 remain |
 | anchor-slip handovers | 261 (211 continuous / 50 cold) | 305 (237 / 68) | cold share 19 → 22 % |
 
-The slipped bed now sits at 7 mm of tropospheric error — below the quiet
-bed's own 76 mm as that bed was last graded (the quiet bed carries the same
-warm-up false-alarm refloats and anchor-arc slips this pair of cards removes;
-a re-grade of the quiet golden with both knobs is owed and will move that
-reference).  On the storm bed roughly one MW admission in three now comes
+The slipped bed now sits at 7 mm of tropospheric error — EQUAL to the quiet
+bed's own floor.  [Corrected 2026-09-11 after the quiet re-run: the "76 mm"
+quoted in the first draft of this paragraph was the quiet bed's CONSUMER 3D
+rms (0.0762 m, `runs/golden_sim_tri_w6_full`), not its ZWD; the quiet bed's
+ZWD truth rms is 0.0072 m.  Quiet 24 h with both slip cards on main's build
+(`runs/golden_sim_quiet24_bothcards`, the regenerated golden verbatim, 2880
+epochs): ZWD 0.0073 m, hourly 0.007 flat; consumer settled h12–24 rms
+0.0895 / p50 0.0593 / UP rms 0.0768 m against the in-block quiet arm's
+0.0875 / 0.0525 / 0.0759 (`golden_sim_zwdblk_quiet`, an older golden); T4 66,
+6 handovers (all continuous), 0 evidence admissions in 24 h.  The matched
+no-card twin of today's golden is owed for the exact neutrality delta.]  On the storm bed roughly one MW admission in three now comes
 through the evidence path: the population the repair gate had been hiding is
 not a tail at storm density.
 
