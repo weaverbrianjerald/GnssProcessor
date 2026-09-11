@@ -258,9 +258,21 @@ namespace GnssProcessor {
                 }
                 if (phase_signals.size() < 2) continue;
 
-                // Use first two phase signals to form IF combination.
-                const auto& [sig1, obs1, mod1] = phase_signals[0];
-                const auto& [sig2, obs2, mod2] = phase_signals[1];
+                // §14.10 PAIR WIDTH.  Off, exactly the pre-knob behaviour: the
+                // FIRST two phase signals form the one IF combination, filed
+                // under the bare system string.  On, every distinct pair is
+                // formed; the first pair keeps that same chain (so its
+                // population, its reference election, its double differences and
+                // its log lines are unchanged) and each additional pair gets a
+                // chain of its own, "<system>|<sig1>_<sig2>" — its own reference,
+                // its own gradient history, its own reset key.
+                const std::string sys_key = PppUtils::getSystemString(obs.system);
+                const std::size_t n_use =
+                    all_pairs_ ? phase_signals.size() : std::size_t{ 2 };
+                for (std::size_t a = 0; a < n_use; ++a) {
+                for (std::size_t b = a + 1; b < n_use; ++b) {
+                const auto& [sig1, obs1, mod1] = phase_signals[a];
+                const auto& [sig2, obs2, mod2] = phase_signals[b];
 
                 const double f1 = ppp_utils_.getFrequency(sig1, obs.system, obs.satellite);
                 const double f2 = ppp_utils_.getFrequency(sig2, obs.system, obs.satellite);
@@ -283,10 +295,13 @@ namespace GnssProcessor {
                 if (lambda_if <= 0.0) continue;
 
                 const std::string synth_key = sig1 + "_" + sig2;
+                const bool is_first_pair = (a == 0 && b == 1);
 
-                result[PppUtils::getSystemString(obs.system)].push_back(
+                result[is_first_pair ? sys_key : (sys_key + "|" + synth_key)].push_back(
                     { obs.satellite, synth_key, sig1, sig2,
                       phi_if_omc, obs.elevation, lambda_if, obs.system, obs.los });
+                }  // b — second band of the pair
+                }  // a — first band of the pair
             }
         }
 
@@ -587,7 +602,8 @@ namespace GnssProcessor {
         bool ref_changed,
         double position_sigma_3d,
         const Eigen::Vector3d& delta_pos,
-        std::vector<std::string>& reset_keys) {
+        std::vector<std::string>& reset_keys,
+        bool run_ref_arm) {
 
         auto logger = log_manager_.getLogger("if_slip_detector");
         // ONE definition, set by detect() — position uncertainty OR model nuisance.
@@ -656,6 +672,21 @@ namespace GnssProcessor {
         }
 
         // --- Reference satellite slip check (runs regardless of all_finite) ---
+        // §14.10.4: ONE reference arm per (station, constellation).  The
+        // ADDITIONAL chains of `if_phase_td_pairs = all` share the first chain's
+        // reference satellite and do NOT re-run its test — running it three times
+        // is not a pure addition, it is three tests on three DIFFERENT iono-free
+        // combinations of the same arcs, and the extra-wide ones are
+        // ill-conditioned: (L2W,L5Q) has IF coefficients 12.26 / −11.26 (noise
+        // amplification 16.6 against 2.98 on (L1C,L2W)) while its λ_IF is
+        // 0.1248 m, so the legacy candidate condition |median(non-ref ΔΔ)| >
+        // 0.5·λ_IF is met by NOISE.  Measured on a 70-epoch quiet 60-station null:
+        // legacy candidates 25 → 5 351 and FIRES 1 → 64 (52 of them marked
+        // incoherent multi-satellite STATION EVENTS), with the POOL arm flagging
+        // ZERO extra — a false-alarm cost entirely invisible in the per-pair
+        // evaluated/flagged tally.  Sharing the reference keeps every chain's
+        // gradients in one frame and leaves the screening where it was.
+        if (run_ref_arm)
         // Collect finite non-reference double differences. If the median is
         // large, the reference satellite slipped  not the non-ref satellites.
         // This must run before individual outlier detection so that the
@@ -838,6 +869,7 @@ namespace GnssProcessor {
         std::vector<std::string> reset_keys;
         auto logger = log_manager_.getLogger("if_slip_detector");
         last_if_jumps_.clear();
+        last_if_jumps_all_.clear();
         // Card R: monotonic detect() index — the unit the reference-gate
         // persistence run-length is measured in.  Incremented unconditionally
         // (inert while the gate is disabled) so the counter never depends on
@@ -864,8 +896,25 @@ namespace GnssProcessor {
 
         auto by_constellation = groupByConstellation(observations);
 
+        // §14.10: one iteration per GRADIENT CHAIN, not per constellation.  With
+        // the pair width at `first` there is exactly one chain per system and
+        // `sys_str` is the bare system string, so everything below — including
+        // every log line, which names the chain — is the pre-knob text.  With it
+        // at `all` the additional chains are named "GPS|L1C_L5Q" and are wholly
+        // independent: own reference election, own prev_grad, own reset keys.
+        // §14.10.4: the FIRST chain's elected reference per system.  std::map
+        // orders "GPS" before "GPS|…" ('|' > every alphanumeric), so the first
+        // chain of a system is always processed before its additional chains and
+        // this is filled by the time they need it.
+        std::map<std::string, std::string> first_ref_by_sys;
+
         for (auto& [sys_str, sat_vec] : by_constellation) {
             if (sat_vec.size() < 2) continue;
+
+            // The first pair's chain is keyed by the bare system string.
+            const std::size_t bar = sys_str.find('|');
+            const bool first_pair_chain = (bar == std::string::npos);
+            const std::string sys_only = first_pair_chain ? sys_str : sys_str.substr(0, bar);
 
             auto& cs = constellation_state_[sys_str];
 
@@ -881,8 +930,32 @@ namespace GnssProcessor {
             for (const auto& sd : sat_vec) lambdas.push_back(sd.lambda_if);
             const double lambda_if = computeMedian(lambdas);
 
-            // Reference selection
-            const bool ref_changed = selectReference(sat_vec, cs);
+            // Reference selection.  §14.10.4: an ADDITIONAL chain does not hold
+            // its own election — it adopts the first chain's reference whenever
+            // that satellite is present here, so the whole satellite's pairs sit
+            // in ONE between-satellite frame and the reference arm (which only
+            // the first chain runs) still covers the reference it screens.  The
+            // fallback to its own election matters only for a satellite set that
+            // does not contain the first chain's reference at all, e.g. a
+            // satellite tracking L1/L2 but not L5.
+            bool ref_changed;
+            if (first_pair_chain) {
+                ref_changed = selectReference(sat_vec, cs);
+                first_ref_by_sys[sys_only] = cs.ref_satellite;
+            } else {
+                const auto fit = first_ref_by_sys.find(sys_only);
+                bool adopted = false;
+                if (fit != first_ref_by_sys.end() && !fit->second.empty())
+                    for (const auto& sd : sat_vec)
+                        if (sd.satellite == fit->second) {
+                            ref_changed = (cs.ref_satellite != fit->second);
+                            cs.ref_satellite = fit->second;
+                            cs.ref_elevation = sd.elevation;
+                            adopted = true;
+                            break;
+                        }
+                if (!adopted) ref_changed = selectReference(sat_vec, cs);
+            }
 
             // Find reference data
             const SatData* ref_data = nullptr;
@@ -900,7 +973,8 @@ namespace GnssProcessor {
             std::map<std::string, double> delta_grad;
             if (!cs.prev_grad.empty())
                 delta_grad = processDoubleDifferences(sat_vec, sys_str, cs, grad_phi_if,
-                    lambda_if, ref_changed, position_sigma_3d, delta_pos, reset_keys);
+                    lambda_if, ref_changed, position_sigma_3d, delta_pos, reset_keys,
+                    /*run_ref_arm=*/first_pair_chain);   // §14.10.4
 
             // For satellites without a previous epoch, fill NaN
             for (const auto& [sat, g] : grad_phi_if)
@@ -956,7 +1030,14 @@ namespace GnssProcessor {
                 // chain still advances, so detection resumes seamlessly.
                 info.valid        = std::isfinite(dd) && !pos_gated;
                 info.is_reference = (sat == cs.ref_satellite);
-                last_if_jumps_[sat] = info;
+                // §14.10: the chain this sample rode, so a driver that flags it
+                // can restart THAT chain and only that one.
+                info.state_key    = sys_str;
+                // The all-pairs cache is a superset and is always filled; the
+                // per-satellite one keeps its pre-knob contract (the FIRST pair).
+                if (!info.sig1.empty() && !info.sig2.empty())
+                    last_if_jumps_all_[{ sat, info.sig1 + "_" + info.sig2 }] = info;
+                if (first_pair_chain) last_if_jumps_[sat] = info;
             }
 
             // Store gradients for next epoch (exclude reset satellites)
@@ -1006,9 +1087,33 @@ namespace GnssProcessor {
         }
     }
 
+    void IfPhaseSlipDetector::resetSatelliteInState(const std::string& state_key,
+        const std::string& satellite) {
+        // §14.10.  Scoped to ONE gradient chain: a flag on the (L1C,L5Q) pair must
+        // not throw away the (L1C,L2W) chain, which did not flag.  Same two
+        // actions resetSatellite takes, on one entry instead of every entry.
+        auto sit = constellation_state_.find(state_key);
+        if (sit == constellation_state_.end()) return;
+        auto& cs = sit->second;
+        auto logger = log_manager_.getLogger("if_slip_detector");
+        auto it = cs.prev_grad.find(satellite);
+        if (it != cs.prev_grad.end()) {
+            logger->debug("Cleared IF phase history for {} in chain {}", satellite, state_key);
+            cs.prev_grad.erase(it);
+            cs.prev_los.erase(satellite);
+        }
+        if (cs.ref_satellite == satellite) {
+            logger->debug("Reference satellite {} for chain {} was reset, will reselect next epoch",
+                satellite, state_key);
+            cs.ref_satellite.clear();
+            cs.ref_elevation = 0.0;
+        }
+    }
+
     void IfPhaseSlipDetector::resetAll() {
         constellation_state_.clear();
         last_if_jumps_.clear();
+        last_if_jumps_all_.clear();
         log_manager_.getLogger("if_slip_detector")->debug("All IF phase slip state cleared");
     }
 

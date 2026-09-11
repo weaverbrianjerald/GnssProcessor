@@ -2476,7 +2476,8 @@ int networkTeardown(
         const double ep = static_cast<double>(std::max<long long>(C.n_cb_split_epochs, 1));
         log->info("Network (common-band scope): verdicts {}, narrowed {} (bands kept "
                   "{}), all-band {} (no exoneration {} / inconsistent {} / anchor "
-                  "co-locate {}), IF-TD vetoes {}, immature pairs {}, weak silences {}; "
+                  "co-locate {}), IF-TD vetoes {}, immature pairs {}, LLI shadows {}, "
+                  "weak silences {}; "
                   "split-referenced satellites mean {:.1f} / max {} of {:.1f} anchored "
                   "[knob {}{}].",
                   C.n_cb_verdicts, C.n_cb_narrowed, C.n_cb_bands_kept,
@@ -2484,7 +2485,8 @@ int networkTeardown(
                       + C.n_cb_anchor_colocate,
                   C.n_cb_all_no_exoneration, C.n_cb_all_inconsistent,
                   C.n_cb_anchor_colocate,
-                  C.n_cb_iftd_veto, C.n_cb_immature_pairs, C.n_cb_weak_silence,
+                  C.n_cb_iftd_veto, C.n_cb_immature_pairs, C.n_cb_lli_shadow,
+                  C.n_cb_weak_silence,
                   static_cast<double>(C.n_cb_split_sats_sum) / ep,
                   C.n_cb_split_sats_max,
                   static_cast<double>(C.n_cb_split_multi_sum) / ep,
@@ -2492,6 +2494,46 @@ int networkTeardown(
                   config_.networkCycleSlipCommonBandScope()
                       ? std::string{}
                       : fmt::format("; would-narrow {}", C.n_cb_would_narrow));
+        // §14.10: attribute the vetoes to the IF-TD PAIR KIND that made them.
+        // The card's claim is that the vetoes come from pairs the single-pair
+        // detector never watched, and the total alone cannot show that.
+        if (!C.n_cb_iftd_veto_by_pair.empty()) {
+            std::string by;
+            for (const auto& [pr, n] : C.n_cb_iftd_veto_by_pair)
+                by += fmt::format("{}{} {}", by.empty() ? "" : ", ", pr, n);
+            log->info("Network (common-band scope): IF-TD vetoes by pair — {}.", by);
+        }
+    }
+
+    // ---- §14.10 IF-TD PAIR WIDTH (network.cycle_slip.if_phase_td_pairs) -----
+    // Invariant #4: the per-pair-kind tally IS the ON-path telemetry.  Printed
+    // whichever mode is set, because the `first` line sizes the card before
+    // arming it — it names the ONE pair the detector watches and how often that
+    // pair fires, so the pairs missing from the list are exactly the unwatched
+    // ones.  Under `all`, a pair kind with evaluated >> 0 and flagged 0 over a
+    // slipped bed is dead wiring, not a quiet lane.
+    if (config_.networkCycleSlipIfPhaseTd()) {
+        const auto& C = ctx.counters;
+        if (C.n_iftd_pair.empty()) {
+            log->info("Network (IF-TD pairs [{}]): no pair was ever evaluated — the "
+                      "detector produced no valid double difference all run.",
+                      config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All
+                          ? "all" : "first");
+        } else {
+            std::string by;
+            long long ev_t = 0, fl_t = 0, rf_t = 0;
+            for (const auto& [pr, t] : C.n_iftd_pair) {
+                by += fmt::format("{}{} eval {} / flag {} / refloat {}",
+                                  by.empty() ? "" : ", ", pr,
+                                  t.evaluated, t.flagged, t.refloated);
+                ev_t += t.evaluated; fl_t += t.flagged; rf_t += t.refloated;
+            }
+            log->info("Network (IF-TD pairs [{}]): {} pair kind(s), eval {} / flag {} / "
+                      "refloat {} total — {}.",
+                      config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All
+                          ? "all" : "first",
+                      C.n_iftd_pair.size(), ev_t, fl_t, rf_t, by);
+        }
     }
 
     // ---- §Z BAND-SCOPED RESPONSES (docs/SPEC_event_harness.md) --------------

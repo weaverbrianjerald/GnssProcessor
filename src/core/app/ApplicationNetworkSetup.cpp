@@ -716,6 +716,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         if (build_slip_for_pl || config_.networkMwWlSeed()
             || mwc.ewl_enable || mwc.wl_inject_enable || lcc.enable) {
             st.mw_slip = std::make_unique<MwSlipDetector>(config_, log_manager_);
+            // §14.10: every station's detector shares one logger, whose records
+            // are keyed only by <sat>_<sig1>_<sig2> — without this the MWDEC /
+            // MWSKIP decision lines cannot be read per station at all.  Log text
+            // only; nothing else reads the label.
+            st.mw_slip->setStationLabel(st.name);
             st.mw_slip->setCorrections(&st.model->getCorrections());
             // M5 card WL-2 (SPEC §3.4): arm the tri-frequency GF_b phase bridge accumulator
             // only when a consumer of the bridge exists — the WL-2 inject path or the WL-3
@@ -766,6 +771,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             && config_.networkCycleSlipIfPhaseTd()) {
             st.if_slip = std::make_unique<IfPhaseSlipDetector>(config_, log_manager_);
             st.if_slip->setDeferFlagging(true);  // network pools per-pair MAD; the driver flags
+            // §14.10 (docs/SPEC_event_harness.md): evaluate EVERY distinct band
+            // pair, each on its own gradient chain, instead of only the first two
+            // signals of each satellite.  Default `first` leaves the detector
+            // exactly as it was, so the OFF path is byte-identical; `all` is what
+            // closes the equal-count trap on the pairs nothing watched.
+            st.if_slip->setAllPairs(
+                config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All);
             // Card R (docs/SPEC_slip_qc_hardening.md §2): push the hardened
             // reference-satellite gate.  Pushed ONLY here, so the STAGED
             // user/kinematic path keeps the legacy gate untouched (spec R5); with

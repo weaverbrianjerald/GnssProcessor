@@ -66,6 +66,14 @@ CommonBandEvidence ev(std::initializer_list<CommonBandPair> silent,
     return e;
 }
 
+/// §14.11 rule F2: mark every processed pair that CONTAINS @p band as
+/// LLI-shadowed, i.e. one of its bands carried a receiver loss-of-lock bit at
+/// the PREVIOUS epoch.  Band-scoped exactly as the detector exports it.
+void shadowBand(CommonBandEvidence& e, const std::string& band) {
+    for (auto& [pr, st] : e.processed)
+        if (pr.first == band || pr.second == band) st.lli_shadow = true;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------- the rule
@@ -339,6 +347,186 @@ TEST(CommonBandScopeRule, AnchorClauseDoesNotMaskOtherFallbacks) {
         kMinArc, /*station_anchors_satellite=*/true);
     EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
     EXPECT_EQ(v.anchor_colocate, 0);
+}
+
+// ------------------------- §14.10: the veto needs an IF-TD pair on EVERY lane
+
+// The card's defect, reproduced from the field: with the IF-TD detector forming
+// ONE pair per satellite (L1C+L2W on GPS), a silent MW lane whose own IF pair
+// was never evaluated has nothing behind it, and the equal-count trap is open on
+// every lane but the first.  Measured on the storm bed at 4.99 h, station
+// S37000SIM / G20: truth L5Q −31 cycles (receiver-flagged) then L1C −29, the
+// (L1C+L5Q) wide lane moved 2 cycles and stayed silent, and the verdict read
+//     keep implicated=L2W; exonerated=L1C;L5Q;
+//     basis=mw(L1C+L5Q)silent(n=99;thr=9.0WL);mw(L1C+L2W)flag;
+//           mw(L2W+L5Q)flag;iftd(L1C+L2W)=flagged
+// — it freed the one band that had NOT slipped, the epoch's misfit was metres,
+// and the user paid +9.5 cm for the following hour.  The three cases below are
+// that shape with and without the (L1C,L5Q) IF-TD evaluation, and the genuine
+// single-band control that must survive the widening unchanged.
+
+/// §14.10 (i) — the S37/G20 shape WITH the non-first IF-TD pair evaluated.  MW
+/// (1,2) and (2,5) fire; (1,5) is silent and mature; IF-TD (1,5) FLAGS, because
+/// two bands moving by −29 and −31 cycles leave the wide lane at 2 cycles while
+/// the iono-free combination moves metres.  The silence is refused, nothing is
+/// exonerated, and the response is today's all-band one — with the veto named in
+/// the basis and attributed to the pair that made it.
+TEST(CommonBandScopeRule, S37G20ShapeVetoedByTheNonFirstIfTdPair) {
+    auto e = ev({ P("L1C", "L5Q") }, { P("L1C", "L2W"), P("L2W", "L5Q") });
+    e.iftd_flagged.insert(P("L1C", "L5Q"));
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.implicated, kTriple);
+    EXPECT_TRUE(v.exonerated.empty());
+    EXPECT_EQ(v.iftd_veto, 1);
+    EXPECT_EQ(v.iftd_veto_pairs, (std::set<CommonBandPair>{ P("L1C", "L5Q") }));
+    EXPECT_NE(v.basis.find("mw(L1C+L5Q)silent"), std::string::npos);
+    EXPECT_NE(v.basis.find("iftd(L1C+L5Q)=flagged"), std::string::npos);
+}
+
+/// The control for (i), and the measured defect itself: the SAME MW evidence
+/// with the (1,5) IF-TD pair UNWATCHED — which is exactly what
+/// `if_phase_td_pairs = first` leaves it — narrows to L2W, the one band that did
+/// not move.  This case must keep failing to veto: it is the before picture.
+TEST(CommonBandScopeRule, S37G20ShapeWithoutItsIfTdPairNarrowsToTheWrongBand) {
+    auto e = ev({ P("L1C", "L5Q") }, { P("L1C", "L2W"), P("L2W", "L5Q") });
+    e.iftd_flagged.insert(P("L1C", "L2W"));   // the only pair `first` evaluates
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_TRUE(v.narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L2W" }));
+    EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L1C", "L5Q" }));
+    EXPECT_EQ(v.iftd_veto, 0);
+    EXPECT_TRUE(v.iftd_veto_pairs.empty());
+}
+
+/// §14.10 (ii) — the PURE equal-count trap on (1,5): L1C and L5Q both −29, so
+/// their wide lane is silent by construction while (1,2) and (2,5) both fire.
+/// Same evidence shape as (i) without the size asymmetry, and the same outcome:
+/// the (1,5) IF-TD flag is the only instrument that can see it.
+TEST(CommonBandScopeRule, EqualCountL1L5VetoedByIfTd) {
+    auto e = ev({ P("L1C", "L5Q") }, { P("L1C", "L2W"), P("L2W", "L5Q") });
+    e.iftd_flagged.insert(P("L1C", "L5Q"));
+    e.iftd_silent.insert(P("L1C", "L2W"));
+    e.iftd_silent.insert(P("L2W", "L5Q"));
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_EQ(v.implicated, kTriple);
+    EXPECT_EQ(v.iftd_veto, 1);
+    EXPECT_EQ(v.iftd_veto_pairs, (std::set<CommonBandPair>{ P("L1C", "L5Q") }));
+    // The two silent IF-TD pairs are recorded, and exonerate nothing on their own.
+    EXPECT_NE(v.basis.find("iftd(L1C+L2W)silent"), std::string::npos);
+    EXPECT_NE(v.basis.find("iftd(L2W+L5Q)silent"), std::string::npos);
+}
+
+/// §14.10 (iii) — the widening must be INERT on a genuine single-band slip.  L2W
+/// alone moves: MW (1,2) and (2,5) fire, (1,5) stays silent, and all three IF-TD
+/// pairs are now evaluated with only the two that contain L2 flagging.  The
+/// silent lane's IF-TD pair is silent too, so it still exonerates and the verdict
+/// is the §14.2 one — narrowed to exactly the slipped band.
+TEST(CommonBandScopeRule, GenuineL2SlipStillNarrowsWithEveryIfPairEvaluated) {
+    auto e = ev({ P("L1C", "L5Q") }, { P("L1C", "L2W"), P("L2W", "L5Q") });
+    e.iftd_flagged.insert(P("L1C", "L2W"));
+    e.iftd_flagged.insert(P("L2W", "L5Q"));
+    e.iftd_silent.insert(P("L1C", "L5Q"));
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L2W" }));
+    EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L1C", "L5Q" }));
+    EXPECT_EQ(v.iftd_veto, 0);
+    EXPECT_NE(v.basis.find("iftd(L1C+L5Q)silent"), std::string::npos);
+}
+
+// ------------------------------- §14.11 RULE F2: the LLI shadow on a silent lane
+
+// The second half of the same field defect.  The uncombined LLI branch of
+// MwSlipDetector::detect schedules the ambiguity resets and `continue`s,
+// deliberately PRESERVING the MW arc — the MW combination is a function of raw
+// observations alone, so a short lock-loss does not invalidate the EWMA.  The
+// consequence for THIS rule is that the arc count runs straight through the
+// flagged epoch and the first sample after it reads "mature" while the lane saw
+// nothing at the epoch the receiver declared broken.  On the storm bed all five
+// spurious `keep` verdicts in 2 994 sat exactly one epoch after an LLI, and in
+// every one the exonerating lane CONTAINED the flagged band (S37/G20 (L1C+L5Q)
+// n 87→99 across the LLI, thr 9.0 WL; S25/E36 (L1C+L5Q) n 164→173).
+
+/// §14.11 (a) — the S37/G20 shape with the (1,5) lane LLI-shadowed and the IF-TD
+/// detector still at `first`, i.e. no IF-TD pair behind that lane.  F2 ALONE
+/// closes it: the shadowed lane cannot exonerate, nothing else can, and the
+/// response is today's all-band one.
+TEST(CommonBandScopeRule, LliShadowedLaneCannotExonerateWithoutIfTd) {
+    auto e = ev({ P("L1C", "L5Q") }, { P("L1C", "L2W"), P("L2W", "L5Q") },
+                /*n=*/99, /*thr_wl=*/9.0);
+    shadowBand(e, "L5Q");            // the receiver flagged L5Q one epoch ago
+    e.iftd_flagged.insert(P("L1C", "L2W"));   // the only pair `first` evaluates
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.implicated, kTriple);
+    EXPECT_TRUE(v.exonerated.empty());
+    EXPECT_EQ(v.lli_shadow, 1);
+    EXPECT_EQ(v.iftd_veto, 0);       // the veto never got the chance; F2 acted first
+    EXPECT_NE(v.basis.find("mw(L1C+L5Q)lli_shadow(n=99)"), std::string::npos);
+}
+
+/// §14.11 (b) — the Galileo shape: an LLI on L5Q at t−1, and at t the lanes that
+/// contain L7Q fire late on the already-answered slip while (1,5) sits silent.
+/// Without F2 that narrows to L7Q, an innocent band.  With it, no narrowing.
+TEST(CommonBandScopeRule, LliShadowNeverPinsTheLateFiringLanesInnocentBand) {
+    const std::set<std::string> gal{ "L1C", "L5Q", "L7Q" };
+    auto e = ev({ P("L1C", "L5Q") }, { P("L1C", "L7Q"), P("L5Q", "L7Q") },
+                /*n=*/173, /*thr_wl=*/4.2);
+    shadowBand(e, "L5Q");
+    const auto v = networkCommonBandVerdict(gal, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_NE(v.implicated, (std::set<std::string>{ "L7Q" }));
+    EXPECT_EQ(v.implicated, gal);
+    EXPECT_EQ(v.lli_shadow, 1);
+}
+
+/// §14.11 (c) — the shadow is BAND-SCOPED, and that is what keeps the rule cheap.
+/// The 853-of-858 population: an LLI on L5Q at t−1, and at t the two lanes that
+/// CONTAIN L5Q fire late on the already-answered slip while (L1C, L2W) — the one
+/// lane carrying no flagged band, so not shadowed — is silent and mature.  It
+/// still exonerates, and the verdict re-implicates exactly the band the receiver
+/// reported.  F2 must not cost this.
+TEST(CommonBandScopeRule, LliShadowLeavesTheUnflaggedLaneFreeToExonerate) {
+    auto e = ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") });
+    shadowBand(e, "L5Q");            // shadows (1,5) and (2,5); (1,2) untouched
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L5Q" }));
+    EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L1C", "L2W" }));
+    EXPECT_EQ(v.lli_shadow, 0);      // both shadowed lanes were flagged anyway
+    EXPECT_FALSE(e.processed.at(P("L1C", "L2W")).lli_shadow);
+}
+
+/// And the converse, so the band scope is pinned in both directions: with the
+/// SAME shadow, a genuine L1C slip at t leaves only shadowed or flagged lanes.
+/// (1,2) fires, (1,5) fires, and the silent (2,5) contains the flagged band — so
+/// nothing exonerates and the response is today's.  The narrowing that would
+/// have pinned L2W here is exactly the spurious one the census found.
+TEST(CommonBandScopeRule, LliShadowRefusesTheOnlySilentLaneWhenItCarriesTheBand) {
+    auto e = ev({ P("L2W", "L5Q") }, { P("L1C", "L2W"), P("L1C", "L5Q") });
+    shadowBand(e, "L5Q");
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_EQ(v.implicated, kTriple);
+    EXPECT_EQ(v.lli_shadow, 1);
+    EXPECT_NE(v.basis.find("mw(L2W+L5Q)lli_shadow"), std::string::npos);
+}
+
+/// An unshadowed run of the SAME evidence as (a) narrows — the control that
+/// proves F2 is what changed the verdict, not the thresholds or the maturity.
+TEST(CommonBandScopeRule, WithoutTheShadowTheSameEvidenceStillNarrows) {
+    auto e = ev({ P("L1C", "L5Q") }, { P("L1C", "L2W"), P("L2W", "L5Q") },
+                /*n=*/99, /*thr_wl=*/9.0);
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L2W" }));
+    EXPECT_EQ(v.lli_shadow, 0);
 }
 
 // ------------------------------------------- §14.5 split-referenced satellites

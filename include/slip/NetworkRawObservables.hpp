@@ -354,6 +354,25 @@ struct SlipQcParams {
 };
 
 /**
+ * @brief §14.10 — one IF-TD band pair's run-end tally.
+ *
+ * The ON-path telemetry of `network.cycle_slip.if_phase_td_pairs` (standing
+ * invariant #4).  Collected per PAIR KIND ("L1C_L2W", "L1C_L5Q", …) and
+ * KNOB-INDEPENDENTLY, so a `first` run already states how many samples the one
+ * watched pair saw and an `all` run shows at a glance whether the new pairs are
+ * live or inert: a pair kind with a large @ref evaluated and @ref flagged 0 over
+ * a slipped bed is dead wiring, not a quiet lane.
+ */
+struct IfTdPairTally {
+    long long evaluated{0};  ///< (station, satellite) samples thresholded on this pair.
+    long long flagged{0};    ///< …of those, flagged by the pooled test.
+    long long refloated{0};  ///< …of those, whose refloat actually freed ≥1 ambiguity (warm carry, not vetoed by the common-band scope, not oracle-handled).
+};
+
+/// Pair label ("&lt;sig1&gt;_&lt;sig2&gt;") → tally; ordered, so the run-end line is deterministic.
+using IfTdPairTallies = std::map<std::string, IfTdPairTally>;
+
+/**
  * @brief Run-end counters for the slip-QC hardening cards (standing invariant
  *        #4 — inert wiring is only visible through counters).
  *

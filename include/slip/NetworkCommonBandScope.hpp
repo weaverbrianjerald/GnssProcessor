@@ -41,7 +41,31 @@
  *    cost of trusting them is measured rather than assumed;
  *  - a silent pair whose IF-TD pair FLAGGED this epoch cannot exonerate.  This
  *    closes the EQUAL-COUNT trap: L1 and L2 slipping by the same integer leave
- *    MW(1,2) silent while the iono-free combination moves 0.107 m per cycle;
+ *    MW(1,2) silent while the iono-free combination moves 0.107 m per cycle.
+ *    ⚠ The IF-TD detector forms ONE pair per satellite by default
+ *    (`network.cycle_slip.if_phase_td_pairs = first`: L1C+L2W on GPS), so the
+ *    veto reaches only that lane; `all` puts an IF-TD pair behind every lane
+ *    (§14.10).  Measured on the storm bed at S37000SIM / G20, 4.99 h: truth L5Q
+ *    −31 then L1C −29, MW(L1C+L5Q) moved 2 wide-lane cycles and stayed silent
+ *    with no IF-TD pair behind it, and the verdict freed L2W — the one band that
+ *    had not slipped;
+ *
+ *  - **RULE F2, the LLI SHADOW (§14.11)**: a pair is NOT silent — it is treated
+ *    as immature — at any epoch where one of its BANDS carried a receiver
+ *    loss-of-lock bit at the PREVIOUS epoch (@ref
+ *    CommonBandProcessed::lli_shadow, exported by
+ *    @c MwSlipDetector::getEpochPairStatus).  The uncombined LLI branch
+ *    schedules the ambiguity resets and `continue`s, deliberately PRESERVING the
+ *    MW arc, so the count runs straight through the flagged epoch and the first
+ *    sample after it looks mature while the lane saw nothing at the epoch the
+ *    receiver declared broken — and a band-common slip does not move the wide
+ *    lane in any case.  Measured on the storm bed: all five spurious `keep`
+ *    verdicts in 2 994 sat exactly one epoch after an LLI, and in every one the
+ *    exonerating lane CONTAINED the flagged band (S37/G20 (L1C+L5Q) n 87→99
+ *    across the LLI, thr 9.0 WL; S25/E36 (L1C+L5Q) n 164→173).  Band-scoped on
+ *    purpose: a lane of two unflagged bands is untouched by the receiver's
+ *    report and may still exonerate, which is what leaves the 853 correct late
+ *    narrowings — the flagged band re-implicated one epoch later — alive;
  *  - a band carrying a loss-of-lock flag is implicated regardless;
  *  - `exonerated(b) ⇔ no LLI on b ∧ ∃ silent, un-vetoed pair p ∋ b`, and
  *    `implicated = B \ exonerated`.
@@ -103,6 +127,18 @@ struct CommonBandProcessed {
     /// cycles did not exclude a 6-cycle slip, it merely failed to see one.
     /// Non-finite when the sample left before a threshold existed.
     double thresh_wl{ 0.0 };
+    /// §14.11 RULE F2 — LLI SHADOW.  One of this pair's BANDS carried a receiver
+    /// loss-of-lock bit at the PREVIOUS epoch, so the pair's previous sample was
+    /// withheld and this one is the first after the gap.  The uncombined LLI
+    /// branch preserves the MW arc deliberately, so the count runs straight
+    /// through the flagged epoch and the pair looks mature; but a band-common
+    /// slip does not move the wide lane, so its silence carries no information
+    /// about the epoch the receiver declared broken.  Such a pair is treated as
+    /// IMMATURE for one epoch — it may not exonerate.  Band-scoped on purpose: a
+    /// lane made only of unflagged bands is untouched by the receiver's report
+    /// and may still exonerate, which is what keeps the correct late narrowings
+    /// (the flagged band re-implicated one epoch later) alive.
+    bool lli_shadow{ false };
 };
 
 struct CommonBandEvidence {
@@ -159,8 +195,19 @@ struct CommonBandVerdict {
     std::string basis;
     /// Silent pairs refused as exonerators because IF-TD flagged them.
     int iftd_veto{ 0 };
+    /// §14.10: WHICH pairs those were.  The card's claim is that the vetoes come
+    /// from band pairs the single-pair IF-TD detector never watched, and a total
+    /// alone cannot show that — so the veto carries its own identity (invariant
+    /// #7) and the run-end clause breaks it down by pair kind.
+    std::set<CommonBandPair> iftd_veto_pairs;
     /// Silent pairs refused as exonerators for arc immaturity.
     int immature_pairs{ 0 };
+    /// §14.11 RULE F2: silent pairs refused as exonerators because one of their
+    /// bands carried an LLI at the previous epoch (@ref
+    /// CommonBandProcessed::lli_shadow).  Counted separately from @ref
+    /// immature_pairs even though the response is the same, because the two
+    /// refusals have different causes and only this one is a receiver report.
+    int lli_shadow{ 0 };
     /// Silent pairs whose detection threshold exceeded @ref kWeakSilenceWlCyc —
     /// a silence that could not have excluded a slip of that size.  REPORTED,
     /// never acted on: the pair still exonerates.  It is the honest measure of
@@ -277,9 +324,14 @@ struct CommonBandEpoch {
     long long bands_kept{ 0 };        ///< Bands spared by a narrowed verdict (Σ|exonerated|).
     long long iftd_veto{ 0 };         ///< Silent pairs refused as exonerators by an IF-TD flag.
     long long immature_pairs{ 0 };    ///< Silent pairs refused as exonerators for arc age.
+    long long lli_shadow{ 0 };        ///< §14.11 F2: silent pairs refused because a band carried an LLI at the previous epoch.
     long long weak_silence{ 0 };      ///< Exonerating silences whose threshold exceeded 6 WL cycles.
     long long anchor_colocate{ 0 };   ///< Would-be narrowings refused because the station anchors the satellite (§14.5).
     long long would_narrow{ 0 };      ///< Knob OFF: verdicts that WOULD have narrowed.
+    /// §14.10: @ref iftd_veto attributed to the IF-TD pair KIND that vetoed
+    /// ("L1C_L5Q" → n).  Under `if_phase_td_pairs = first` only the one watched
+    /// pair can appear here, which is precisely the measurement the card rests on.
+    std::map<std::string, long long> iftd_veto_by_pair;
     /// @}
 
     /// Drop every per-epoch value (called once per processed epoch).
@@ -287,8 +339,9 @@ struct CommonBandEpoch {
         narrowed_at.clear();
         all.clear();
         verdicts = narrowed_n = all_no_exoneration = all_inconsistent = 0;
-        bands_kept = iftd_veto = immature_pairs = weak_silence = 0;
+        bands_kept = iftd_veto = immature_pairs = weak_silence = lli_shadow = 0;
         anchor_colocate = would_narrow = 0;
+        iftd_veto_by_pair.clear();
     }
 
     /**

@@ -972,7 +972,12 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            NetworkSlipOracle* oracle = nullptr,
                            /// §14 COMMON-BAND SCOPE: this epoch's verdicts.  Null
                            /// (the knob off) ⇒ the pair refloat frees both bands.
-                           const CommonBandEpoch* common_band = nullptr);
+                           const CommonBandEpoch* common_band = nullptr,
+                           /// §14.10 PAIR WIDTH: run-end tally sink, per pair
+                           /// KIND (evaluated / flagged / refloated).  Filled
+                           /// knob-independently (invariant #4) — a `first` run
+                           /// reports the one watched pair.  Null skips it.
+                           IfTdPairTallies* pair_tally = nullptr);
 
 /**
  * @brief EVENT HARNESS Study 1 - the injected @c free_epoch arc response.

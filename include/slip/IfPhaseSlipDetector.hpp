@@ -156,6 +156,26 @@ namespace GnssProcessor {
         void resetSatellite(const std::string& satellite);
 
         /**
+         * @brief Clear IF phase history for a satellite in ONE gradient chain.
+         *
+         * §14.10, the per-pair sibling of @ref resetSatellite.  With every band
+         * pair riding its own @c constellation_state_ entry, a flag on the
+         * (L1C,L5Q) pair must restart THAT chain only: resetting the satellite
+         * would throw away the (L1C,L2W) chain that did not flag, which both
+         * loses a clean arc and makes one pair's decision depend on another's.
+         *
+         * A @p state_key with no entry is a silent no-op (the pair had no chain
+         * to restart).
+         *
+         * @param state_key Chain key, i.e. @ref IfJumpInfo::state_key of the
+         *                  flagged sample ("GPS" for a first pair, "GPS|L1C_L5Q"
+         *                  for an additional one).
+         * @param satellite Satellite identifier (e.g. "G01").
+         */
+        void resetSatelliteInState(const std::string& state_key,
+                                   const std::string& satellite);
+
+        /**
          * @brief Clear all internal state (all constellations).
          *
          * Called after a complete filter reset.
@@ -184,6 +204,17 @@ namespace GnssProcessor {
             /// (its deviation is ~0) — which is why the separate per-station
             /// REFERENCE GATE exists (flag-rate tier T1r).
             bool   is_reference{ false };
+            /// §14.10: the key of the @c constellation_state_ entry this sample
+            /// came from — the GRADIENT CHAIN the pair rides.  Under
+            /// @ref setAllPairs the first pair of a satellite keeps the plain
+            /// system string ("GPS", so its chain and its decisions are the
+            /// pre-knob ones byte for byte) and every ADDITIONAL pair gets
+            /// "GPS|L1C_L5Q" — its own reference election, its own prev_grad.
+            /// A driver that flags one pair must reset only THAT chain
+            /// (@ref resetSatelliteInState); resetting the satellite would
+            /// destroy the other pairs' clean chains and make the pools
+            /// dependent, which is exactly what per-pair evaluation must not do.
+            std::string state_key;
         };
 
         /**
@@ -210,6 +241,43 @@ namespace GnssProcessor {
          * satellites. Keyed by satellite id.
          */
         const std::map<std::string, IfJumpInfo>& getLastIfJumps() const { return last_if_jumps_; }
+
+        /// Key of @ref getLastIfJumpsAllPairs: (satellite, "&lt;sig1&gt;_&lt;sig2&gt;").
+        using SatPairKey = std::pair<std::string, std::string>;
+
+        /**
+         * @brief EVERY (satellite, band pair) IF jump from the last detect() call.
+         *
+         * §14.10.  Always populated, whichever pair mode is set, so it is a
+         * superset of @ref getLastIfJumps: with @ref setAllPairs off it holds
+         * exactly the same samples under two-part keys, and with it on it also
+         * holds the additional pairs (3 per triple-band satellite).  The network
+         * driver reads THIS under `network.cycle_slip.if_phase_td_pairs = all`
+         * and @ref getLastIfJumps otherwise, which is what keeps the default path
+         * byte-identical.
+         *
+         * @return (satellite, pair label) → jump; ordered, so pooling is
+         *         deterministic.
+         */
+        const std::map<SatPairKey, IfJumpInfo>& getLastIfJumpsAllPairs() const {
+            return last_if_jumps_all_;
+        }
+
+        /**
+         * @brief §14.10 — evaluate EVERY distinct pair of a satellite's phase bands.
+         *
+         * Off (default) the detector forms ONE pair per satellite: the first two
+         * distinct phase bands it finds (L1C+L2W on GPS, L1C+L5Q on Galileo).  On,
+         * it additionally forms every other pair, each in its OWN
+         * @c constellation_state_ entry — its own reference election, its own
+         * between-epoch gradient chain, its own reset key.  The FIRST pair keeps
+         * the plain system-string entry, so its population, its reference, its
+         * double differences and its log lines are the pre-knob ones byte for
+         * byte and the extra pairs are a pure addition.
+         *
+         * @param all True to evaluate every pair.
+         */
+        void setAllPairs(bool all) { all_pairs_ = all; }
 
         /**
          * @brief Card R (2026-07-21): hardened reference-satellite slip gate.
@@ -425,6 +493,10 @@ namespace GnssProcessor {
          *  (network-pooled MAD path); see @ref setDeferFlagging. */
         bool defer_flagging_{ false };
 
+        /** §14.10: evaluate every distinct band pair, not just the first two
+         *  signals of each satellite; see @ref setAllPairs. */
+        bool all_pairs_{ false };
+
         /** Minimum elevation (degrees) for a satellite to be chosen as reference. */
         static constexpr double kRefElevThreshDeg = 45.0;
 
@@ -491,13 +563,23 @@ namespace GnssProcessor {
             std::string ref_exclude;
         };
 
-        /** Per-constellation state keyed by system string (e.g. "GPS"). */
+        /** Per-GRADIENT-CHAIN state.  Keyed by system string ("GPS") for a
+         *  satellite's FIRST band pair — the pre-knob key, so the default path is
+         *  unchanged — and by "&lt;system&gt;|&lt;sig1&gt;_&lt;sig2&gt;" for every
+         *  additional pair under @ref setAllPairs (§14.10).  Each entry runs its
+         *  own reference election and its own between-epoch gradient chain. */
         std::map<std::string, ConstellationState> constellation_state_;
 
-        /** Cached per-satellite IF jump from the most recent detect() call.
+        /** Cached per-satellite IF jump from the most recent detect() call, FIRST
+         *  pair only (the chains whose key is the bare system string).
          *  Populated at the end of detect() so that getLastIfJump() can
          *  return values without re-computing. */
         std::map<std::string, IfJumpInfo> last_if_jumps_;
+
+        /** §14.10: the same cache keyed by (satellite, pair label), holding EVERY
+         *  evaluated pair — a superset of @ref last_if_jumps_ that is identical to
+         *  it while @ref all_pairs_ is off. */
+        std::map<SatPairKey, IfJumpInfo> last_if_jumps_all_;
 
         /** @brief Per-satellite data collected during observation grouping. */
         struct SatData {
@@ -525,9 +607,17 @@ namespace GnssProcessor {
         static double computeMedian(std::vector<double>& values);
 
         /**
-         * @brief Group observations by constellation and extract IF phase OMC data.
+         * @brief Group observations into GRADIENT CHAINS and extract IF phase OMC data.
+         *
+         * One chain per system with @ref all_pairs_ off (the pre-knob behaviour,
+         * each satellite contributing its first band pair).  With it on, each
+         * satellite additionally contributes every OTHER distinct pair of its
+         * phase bands to a chain of its own, keyed "&lt;system&gt;|&lt;sig1&gt;_&lt;sig2&gt;",
+         * while the first pair stays in the bare-system chain so its population
+         * and decisions are unchanged (§14.10).
+         *
          * @param observations Epoch observations.
-         * @return Map of system string -> vector of SatData.
+         * @return Map of chain key -> vector of SatData.
          */
         std::map<std::string, std::vector<SatData>> groupByConstellation(
             const std::vector<PppObservation>& observations) const;
@@ -554,6 +644,13 @@ namespace GnssProcessor {
          * @param ref_changed     Whether the reference satellite changed.
          * @param position_sigma_3d 3D position sigma (meters).
          * @param[out] reset_keys Ambiguity keys to reset are appended here.
+         * @param run_ref_arm     Run the per-station REFERENCE-satellite slip test
+         *                        (tier T1r) on this chain.  True on every chain
+         *                        under the default pair width, so the default path
+         *                        is unchanged.  False on the ADDITIONAL chains of
+         *                        @ref setAllPairs, which share the first chain's
+         *                        reference and must not re-run its test — see
+         *                        §14.10.4 for what re-running it costs.
          */
         std::map<std::string, double> processDoubleDifferences(
             const std::vector<SatData>& sat_vec,
@@ -564,7 +661,8 @@ namespace GnssProcessor {
             bool ref_changed,
             double position_sigma_3d,
             const Eigen::Vector3d& delta_pos,
-            std::vector<std::string>& reset_keys);
+            std::vector<std::string>& reset_keys,
+            bool run_ref_arm = true);
 
         /**
          * @brief Card R: advance this constellation's non-reference DD

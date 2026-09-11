@@ -341,6 +341,7 @@ add_executable(gnss_tests
     tests/test_gap_reentry_relevel.cpp
     tests/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp
+    tests/test_if_td_pair_width.cpp
     tests/test_network_coupling.cpp
     tests/test_network_invariant_carry_driver.cpp
     tests/test_shdev_carry.cpp

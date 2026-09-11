@@ -257,6 +257,20 @@ namespace GnssProcessor {
          *        DETECTION-grade record, as opposed to @c getEpochCleanPairs's
          *        cleanliness-grade one.
          */
+        /**
+         * @brief Name this detector instance for its DEBUG decision lines (§14.10).
+         *
+         * The network runs ONE detector per station and they all share the
+         * `mw_slip_detector` logger, whose records are keyed only by
+         * `<sat>_<sig1>_<sig2>` — so two stations' lines for the same arc are
+         * indistinguishable and the log cannot be read per station at all.  This
+         * stamps the label into the MWDEC / MWSKIP lines.  Empty by default;
+         * affects nothing but log text.
+         *
+         * @param label Station name (or any short instance id).
+         */
+        void setStationLabel(const std::string& label) { station_label_ = label; }
+
         struct EpochPairStatus {
             /// Arc sample count as the flag decision saw it (samples BEFORE this
             /// one; the Welford increment happens later in the same call).
@@ -271,6 +285,23 @@ namespace GnssProcessor {
             /// Wide-lane wavelength of the pair (m) — divides @ref thresh_m into
             /// the cycles a consumer can compare against a slip magnitude.
             double lambda_wl{ 0.0 };
+            /// §14.11 LLI SHADOW — one of this pair's BANDS carried a receiver
+            /// loss-of-lock bit at the PREVIOUS epoch, so the pair's previous
+            /// sample was WITHHELD: the uncombined LLI branch of @ref detect
+            /// schedules the ambiguity resets and `continue`s, deliberately
+            /// preserving the MW arc (the MW combination is a function of raw
+            /// observations alone, so a short LLI gap does not invalidate the
+            /// EWMA).  The arc count therefore keeps accumulating straight
+            /// through the flagged epoch, and this sample — the FIRST one after
+            /// the gap — is compared against a mean that never saw the epoch the
+            /// receiver declared broken.  A band-common slip leaves the wide lane
+            /// unmoved, so the lane reads "silent and mature" while carrying no
+            /// information at all about the epoch in question.  Measured on the
+            /// storm bed: all five spurious `keep` verdicts in 2 994 sat exactly
+            /// one epoch after an LLI, and in every one the exonerating lane
+            /// CONTAINED the flagged band (S37/G20 (L1C+L5Q) n 87→99 across the
+            /// LLI at 4.9833 h, thr 9.0 WL; S25/E36 (L1C+L5Q) n 164→173).
+            bool   lli_shadow{ false };
         };
 
         /**
@@ -1211,6 +1242,23 @@ namespace GnssProcessor {
          *  adaptive threshold and flag verdict exist.  Cleared alongside
          *  @ref epoch_clean_pairs_. */
         std::map<std::string, EpochPairStatus> epoch_pair_status_;
+
+        /** §14.11 LLI SHADOW memory: satellite → the phase bands that carried a
+         *  receiver loss-of-lock bit, for the PREVIOUS epoch (@ref
+         *  prev_lli_bands_) and the one being processed (@ref cur_lli_bands_).
+         *  Rotated once at the top of @c detect, so a sample stamped during this
+         *  epoch reads LAST epoch's flags — which is the whole point: the LLI
+         *  epoch itself is withheld (the detector `continue`s), and it is the
+         *  FIRST sample AFTER it whose silence is worthless.  One epoch only: by
+         *  the second sample the arc has seen a post-gap value and its silence
+         *  means something again.  Detector-local, so the (station) scope is the
+         *  per-station instance — no cross-station leakage. */
+        std::map<std::string, std::set<std::string>> prev_lli_bands_;
+        std::map<std::string, std::set<std::string>> cur_lli_bands_;
+
+        /** Instance label for the MWDEC / MWSKIP debug lines; see
+         *  @ref setStationLabel.  Log text only. */
+        std::string station_label_;
 
         /** Demoted pre-jump level stash for the across-gap WL settle
          *  estimate (see @c getAcrossGapWlEvidence).  Written by the
