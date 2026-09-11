@@ -80,7 +80,8 @@ std::string setText(const std::set<std::string>& s) {
 
 CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_bands,
                                            const CommonBandEvidence& ev,
-                                           int min_arc_epochs) {
+                                           int min_arc_epochs,
+                                           bool station_anchors_satellite) {
     CommonBandVerdict v;
     // Every non-narrowed outcome returns TODAY'S response, and today's response
     // is "free every band any drain would have freed" — the full tracked set.
@@ -168,6 +169,26 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
         return v;
     }
 
+    // FALLBACK 4 — the ANCHOR CLAUSE (§14.5).  The evidence is sound and would
+    // narrow, but this station currently anchors a phase-bias family of this
+    // satellite.  Narrowing there frees only the implicated band's family, so the
+    // election hands THAT family to a successor and leaves the satellite's other
+    // families pinned here: the per-frequency biases end up realized at different
+    // stations whose arc levels walk independently.  That is what the iteration-1
+    // storm arm paid for (split satellite-epochs 6.6 % → 16.5 %, 27 % in hour 6,
+    // consumer settled p50 0.174 → 0.230 m with every producer channel equal or
+    // better).  On an anchor arc the response therefore stays ALL-BAND so every
+    // family moves together in one epoch and the sticky election can place them
+    // at ONE successor.  `exonerated` is left populated: the evidence was right;
+    // the datum topology is what refuses to act on it.
+    if (station_anchors_satellite) {
+        v.outcome         = CommonBandOutcome::AnchorColocate;
+        v.narrowed        = false;
+        v.anchor_colocate = 1;
+        v.implicated      = live_bands;
+        return v;
+    }
+
     v.implicated = std::move(impl);
     v.outcome    = CommonBandOutcome::Narrowed;
     v.narrowed   = true;
@@ -182,6 +203,7 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                                    const SyncedEpoch& se,
                                    NetworkRunTraces& traces,
                                    const std::shared_ptr<spdlog::logger>& log,
+                                   const std::map<std::string, std::string>* anchor_incumbent,
                                    CommonBandEpoch& out) {
     (void)log;
     out.clear();
@@ -274,7 +296,24 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
             }
             if (live.size() < 2) continue;  // nothing a band scope can narrow
 
-            const CommonBandVerdict v = networkCommonBandVerdict(live, ev, min_arc);
+            // §14.5 ANCHOR CLAUSE input: does THIS station anchor any family of
+            // this satellite?  Same map and the same match the anchor-slip
+            // handover staging uses (anchor_incumbent[<sat>_<signal>] == name),
+            // scanned over every band rather than one.  The map is the election's
+            // sticky incumbent, i.e. last epoch's anchors — which is exactly the
+            // set the drains are about to disturb.
+            bool anchors_sat = false;
+            if (anchor_incumbent) {
+                const std::string pfx = sat + "_";
+                for (auto ait = anchor_incumbent->lower_bound(pfx);
+                     ait != anchor_incumbent->end()
+                     && ait->first.compare(0, pfx.size(), pfx) == 0; ++ait) {
+                    if (ait->second == stations[i].name) { anchors_sat = true; break; }
+                }
+            }
+
+            const CommonBandVerdict v =
+                networkCommonBandVerdict(live, ev, min_arc, anchors_sat);
 
             ++out.verdicts;
             out.iftd_veto      += v.iftd_veto;
@@ -288,6 +327,7 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                     break;
                 case CommonBandOutcome::NoExoneration:  ++out.all_no_exoneration; break;
                 case CommonBandOutcome::Inconsistent:   ++out.all_inconsistent;   break;
+                case CommonBandOutcome::AnchorColocate: ++out.anchor_colocate;    break;
                 case CommonBandOutcome::NoFlag:         break;   // unreachable here
             }
             out.all.emplace_back(std::make_pair(i, sat), v);
@@ -318,7 +358,9 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                              std::nullopt, std::nullopt, "all",
                              std::string("reason=")
                                  + (v.outcome == CommonBandOutcome::Inconsistent
-                                        ? "inconsistent" : "no_exoneration")
+                                        ? "inconsistent"
+                                        : v.outcome == CommonBandOutcome::AnchorColocate
+                                              ? "anchor_colocate" : "no_exoneration")
                                  + ";implicated=" + setText(v.implicated)
                                  + ";basis=" + v.basis);
         }

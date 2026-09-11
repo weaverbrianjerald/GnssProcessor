@@ -408,6 +408,12 @@ struct PassABuffers {
  * @param se           Current synced epoch (event-row timestamp).
  * @param traces       Trace sink (the `T0_band_scope` rows).
  * @param log          Run logger.
+ * @param anchor_incumbent  The election's sticky incumbent map
+ *                     ("&lt;sat&gt;_&lt;signal&gt;" → station name), or nullptr.
+ *                     Drives the §14.5 ANCHOR CLAUSE: a would-be narrowing at a
+ *                     station that anchors ANY family of that satellite becomes
+ *                     today's all-band response, so the satellite's families are
+ *                     never left realized at different stations.
  * @param[out] out     Cleared and refilled; the drains read it through
  *                     @ref commonBandMayFree.
  */
@@ -419,6 +425,7 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                                    const SyncedEpoch& se,
                                    NetworkRunTraces& traces,
                                    const std::shared_ptr<spdlog::logger>& log,
+                                   const std::map<std::string, std::string>* anchor_incumbent,
                                    CommonBandEpoch& out);
 
 /**

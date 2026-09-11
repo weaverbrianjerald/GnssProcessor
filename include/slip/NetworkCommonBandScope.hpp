@@ -128,7 +128,19 @@ enum class CommonBandOutcome {
     NoFlag,          ///< No MW pair fired — nothing to scope, no verdict counted.
     Narrowed,        ///< Positive exoneration: the response is restricted to @c implicated.
     NoExoneration,   ///< A pair fired, nothing was exonerated ⇒ today's response.
-    Inconsistent     ///< A pair fired, yet every band was exonerated ⇒ today's response.
+    Inconsistent,    ///< A pair fired, yet every band was exonerated ⇒ today's response.
+    /// The evidence WOULD have narrowed, but this station currently anchors a
+    /// phase-bias family of this satellite.  §14.5: narrowing there SPLITS the
+    /// satellite's per-frequency references across stations — an L1-only response
+    /// hands over only the L1C family and leaves L2W/L5Q pinned where they were,
+    /// after which the bands' arc levels walk independently.  Measured on the
+    /// iteration-1 storm arm: satellite-epochs with families anchored at
+    /// DIFFERENT stations went 2 500 (6.6 %) → 6 262 (16.5 %), 27 % in hour 6,
+    /// and the consumer paid for it (settled p50 0.174 → 0.230 m) while every
+    /// producer channel held or improved.  So on an anchor arc the response stays
+    /// ALL-BAND and every family of that satellite moves together in one epoch,
+    /// which is what lets the sticky election place them at ONE successor.
+    AnchorColocate
 };
 
 /// One (station, satellite, epoch) verdict.
@@ -154,6 +166,11 @@ struct CommonBandVerdict {
     /// never acted on: the pair still exonerates.  It is the honest measure of
     /// how much of the narrowing rests on a threshold too loose to mean much.
     int weak_silence{ 0 };
+    /// 1 when the ANCHOR CLAUSE (§14.5) converted a would-be narrowing into
+    /// today's all-band response because this station anchors a family of this
+    /// satellite.  @ref exonerated is left populated — the evidence was sound;
+    /// it is the datum topology, not the evidence, that refuses the narrowing.
+    int anchor_colocate{ 0 };
 };
 
 /// A silence is "weak" above this threshold, in wide-lane cycles.  6 cycles is
@@ -172,12 +189,64 @@ inline constexpr double kWeakSilenceWlCyc = 6.0;
  *                        to scope.
  * @param ev              This epoch's evidence for the (station, satellite).
  * @param min_arc_epochs  Maturity bar a SILENT pair must reach to exonerate.
+ * @param station_anchors_satellite  True when the station currently anchors ANY
+ *        phase-bias family of this satellite (any band).  The §14.5 ANCHOR
+ *        CLAUSE: a would-be narrowing there becomes
+ *        @ref CommonBandOutcome::AnchorColocate instead, so the satellite's
+ *        families are never left realized at different stations.
  * @return The verdict.  @c implicated is always a set a drain can intersect
  *         with; on every non-narrowed outcome it equals @p live_bands.
  */
 CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_bands,
                                            const CommonBandEvidence& ev,
-                                           int min_arc_epochs);
+                                           int min_arc_epochs,
+                                           bool station_anchors_satellite = false);
+
+/// Per-epoch reading of how fragmented the phase-bias datum is across stations.
+struct SplitRefCount {
+    /// Satellites with >= 2 anchored families whose anchors are NOT all at the
+    /// same station — the population whose per-frequency biases are realized at
+    /// stations whose arc levels walk independently.
+    int split{ 0 };
+    /// Satellites with >= 2 anchored families: the population that CAN split, and
+    /// the honest denominator for @ref split.
+    int multi_anchored{ 0 };
+};
+
+/**
+ * @brief Count split-referenced satellites in an anchor incumbent map.
+ *
+ * ALWAYS ON and knob-independent (invariant #4): this is the instrument that
+ * caught the iteration-1 storm regression, and it has to read the same on a run
+ * with the scope off.  Cheap — one pass over the map, which holds one entry per
+ * anchored (satellite, signal).
+ *
+ * @param anchor_incumbent  "&lt;sat&gt;_&lt;signal&gt;" → anchoring station name,
+ *                          as left by the election for this epoch.
+ * @return The split and multi-anchored satellite counts.
+ */
+inline SplitRefCount networkSplitReferencedSats(
+        const std::map<std::string, std::string>& anchor_incumbent) {
+    // sat -> (first station seen, saw a different one)
+    std::map<std::string, std::pair<std::string, bool>> per_sat;
+    std::map<std::string, int> n_fam;
+    for (const auto& [amb, sta] : anchor_incumbent) {
+        const std::size_t us = amb.find('_');
+        if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) continue;
+        const std::string sat = amb.substr(0, us);
+        ++n_fam[sat];
+        auto it = per_sat.find(sat);
+        if (it == per_sat.end()) per_sat.emplace(sat, std::make_pair(sta, false));
+        else if (it->second.first != sta) it->second.second = true;
+    }
+    SplitRefCount out;
+    for (const auto& [sat, st] : per_sat) {
+        if (n_fam[sat] < 2) continue;
+        ++out.multi_anchored;
+        if (st.second) ++out.split;
+    }
+    return out;
+}
 
 /**
  * @brief This epoch's verdicts plus the census, owned by the PASS-A slip scan.
@@ -209,6 +278,7 @@ struct CommonBandEpoch {
     long long iftd_veto{ 0 };         ///< Silent pairs refused as exonerators by an IF-TD flag.
     long long immature_pairs{ 0 };    ///< Silent pairs refused as exonerators for arc age.
     long long weak_silence{ 0 };      ///< Exonerating silences whose threshold exceeded 6 WL cycles.
+    long long anchor_colocate{ 0 };   ///< Would-be narrowings refused because the station anchors the satellite (§14.5).
     long long would_narrow{ 0 };      ///< Knob OFF: verdicts that WOULD have narrowed.
     /// @}
 
@@ -217,7 +287,8 @@ struct CommonBandEpoch {
         narrowed_at.clear();
         all.clear();
         verdicts = narrowed_n = all_no_exoneration = all_inconsistent = 0;
-        bands_kept = iftd_veto = immature_pairs = weak_silence = would_narrow = 0;
+        bands_kept = iftd_veto = immature_pairs = weak_silence = 0;
+        anchor_colocate = would_narrow = 0;
     }
 
     /**

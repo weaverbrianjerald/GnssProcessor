@@ -1610,7 +1610,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // non-null pointer into the drains, so OFF is byte-identical.
     CommonBandEpoch common_band;
     networkCommonBandVerdictEpoch(pa, config_, stations, present, i_lo,
-                                  n_sta_total, se, traces, log, common_band);
+                                  n_sta_total, se, traces, log,
+                                  &ctx.carry.anchor_incumbent, common_band);
     {
         auto& C = ctx.counters;
         C.n_cb_verdicts          += common_band.verdicts;
@@ -1621,6 +1622,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         C.n_cb_iftd_veto         += common_band.iftd_veto;
         C.n_cb_immature_pairs    += common_band.immature_pairs;
         C.n_cb_weak_silence      += common_band.weak_silence;
+        C.n_cb_anchor_colocate   += common_band.anchor_colocate;
         C.n_cb_would_narrow      += common_band.would_narrow;
     }
     const CommonBandEpoch* common_band_ptr = common_band.armed ? &common_band : nullptr;

@@ -2473,13 +2473,21 @@ int networkTeardown(
     // the all-band union every live band of a fired arc would have been freed.
     {
         const auto& C = ctx.counters;
+        const double ep = static_cast<double>(std::max<long long>(C.n_cb_split_epochs, 1));
         log->info("Network (common-band scope): verdicts {}, narrowed {} (bands kept "
-                  "{}), all-band {} (no exoneration {} / inconsistent {}), IF-TD vetoes "
-                  "{}, immature pairs {}, weak silences {} [knob {}{}].",
+                  "{}), all-band {} (no exoneration {} / inconsistent {} / anchor "
+                  "co-locate {}), IF-TD vetoes {}, immature pairs {}, weak silences {}; "
+                  "split-referenced satellites mean {:.1f} / max {} of {:.1f} anchored "
+                  "[knob {}{}].",
                   C.n_cb_verdicts, C.n_cb_narrowed, C.n_cb_bands_kept,
-                  C.n_cb_all_no_exoneration + C.n_cb_all_inconsistent,
+                  C.n_cb_all_no_exoneration + C.n_cb_all_inconsistent
+                      + C.n_cb_anchor_colocate,
                   C.n_cb_all_no_exoneration, C.n_cb_all_inconsistent,
+                  C.n_cb_anchor_colocate,
                   C.n_cb_iftd_veto, C.n_cb_immature_pairs, C.n_cb_weak_silence,
+                  static_cast<double>(C.n_cb_split_sats_sum) / ep,
+                  C.n_cb_split_sats_max,
+                  static_cast<double>(C.n_cb_split_multi_sum) / ep,
                   config_.networkCycleSlipCommonBandScope() ? "on" : "off",
                   config_.networkCycleSlipCommonBandScope()
                       ? std::string{}

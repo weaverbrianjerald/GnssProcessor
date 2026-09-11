@@ -299,6 +299,88 @@ TEST(CommonBandScopeRule, ImplicatedIsClosedOverLiveBands) {
     EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L1C" }));
 }
 
+// ------------------------------------------------------- §14.5 anchor clause
+
+/// The evidence is sound and WOULD narrow, but the station anchors a family of
+/// this satellite.  Narrowing there would hand over only the implicated band's
+/// family and leave the rest pinned here, splitting the satellite's
+/// per-frequency references across stations.  Response stays all-band.
+TEST(CommonBandScopeRule, AnchorArcRefusesToNarrow) {
+    const auto e = ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") });
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc,
+                                            /*station_anchors_satellite=*/true);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::AnchorColocate);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.anchor_colocate, 1);
+    // Today's response: every band the drains would have freed.
+    EXPECT_EQ(v.implicated, kTriple);
+    // The evidence itself is untouched — it was the datum topology that refused.
+    EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L1C", "L2W" }));
+}
+
+/// The SAME evidence on a non-anchor arc narrows exactly as before, so the
+/// clause is scoped to the arcs that realize the gauge and nothing else.
+TEST(CommonBandScopeRule, NonAnchorArcNarrowsUnchanged) {
+    const auto e = ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") });
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc,
+                                            /*station_anchors_satellite=*/false);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_TRUE(v.narrowed);
+    EXPECT_EQ(v.anchor_colocate, 0);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L5Q" }));
+}
+
+/// The clause only bites where the evidence would have narrowed: an all-band
+/// fallback on an anchor arc keeps its own reason, so the census separates
+/// "nothing exonerated" from "refused for co-location".
+TEST(CommonBandScopeRule, AnchorClauseDoesNotMaskOtherFallbacks) {
+    const auto v = networkCommonBandVerdict(
+        kTriple, ev({}, { P("L1C", "L2W"), P("L1C", "L5Q"), P("L2W", "L5Q") }),
+        kMinArc, /*station_anchors_satellite=*/true);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_EQ(v.anchor_colocate, 0);
+}
+
+// ------------------------------------------- §14.5 split-referenced satellites
+
+/// Two satellites, one whose families are anchored at two different stations.
+/// The split count is the instrument that caught the iteration-1 storm
+/// regression, so it must count satellites, not families.
+TEST(CommonBandScopeSplitRef, CountsSatellitesWithAnchorsAtDifferentStations) {
+    const std::map<std::string, std::string> inc{
+        { "G04_L1C", "S36000SIM" },   // split: three families, two stations
+        { "G04_L2W", "S36000SIM" },
+        { "G04_L5Q", "S12000SIM" },
+        { "G08_L1C", "S21000SIM" },   // whole: all three at one station
+        { "G08_L2W", "S21000SIM" },
+        { "G08_L5Q", "S21000SIM" },
+    };
+    const auto sr = networkSplitReferencedSats(inc);
+    EXPECT_EQ(sr.split, 1);
+    EXPECT_EQ(sr.multi_anchored, 2);
+}
+
+/// A satellite with a single anchored family cannot be split and must not
+/// inflate the denominator.
+TEST(CommonBandScopeSplitRef, SingleFamilySatelliteIsNotCounted) {
+    const std::map<std::string, std::string> inc{
+        { "G04_L1C", "S36000SIM" },
+        { "E11_L1C", "S02000SIM" },
+        { "E11_L5Q", "S02000SIM" },
+    };
+    const auto sr = networkSplitReferencedSats(inc);
+    EXPECT_EQ(sr.split, 0);
+    EXPECT_EQ(sr.multi_anchored, 1);
+}
+
+/// An empty map (the run's first epoch, before any election) reads zero rather
+/// than tripping on an absent key.
+TEST(CommonBandScopeSplitRef, EmptyMapIsZero) {
+    const auto sr = networkSplitReferencedSats({});
+    EXPECT_EQ(sr.split, 0);
+    EXPECT_EQ(sr.multi_anchored, 0);
+}
+
 // ----------------------------------------------------------- the drain hook
 
 /// A null verdict set is the knob-off path: every drain frees everything it

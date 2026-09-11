@@ -1762,6 +1762,24 @@ int Application::runNetwork() {
                                           && !ctx.inject.anchor_now.empty())
                                          || !ctx.inject.anchor_now_slip.empty()
                                              ? &ctx.inject : nullptr);
+                // §14.5 SPLIT-REFERENCED SATELLITE CENSUS.  ALWAYS ON and
+                // knob-independent (invariant #4): how many satellites now have
+                // their per-frequency phase-bias families anchored at DIFFERENT
+                // stations, whose arc levels walk independently.  Read HERE —
+                // the election just swapped this epoch's anchors into
+                // anchor_incumbent, so the map is current.  Pure, O(map), no
+                // solve contact: the counters below are the only output, so an
+                // unarmed run measures the same thing and the scope's effect on
+                // datum fragmentation is comparable across arms.
+                {
+                    const SplitRefCount sr =
+                        networkSplitReferencedSats(anchor_incumbent);
+                    ctx.counters.n_cb_split_sats_sum += sr.split;
+                    ctx.counters.n_cb_split_multi_sum += sr.multi_anchored;
+                    ++ctx.counters.n_cb_split_epochs;
+                    if (sr.split > ctx.counters.n_cb_split_sats_max)
+                        ctx.counters.n_cb_split_sats_max = sr.split;
+                }
                 // EVENT HARNESS readback: the election filled the directive in with
                 // the stations it retired and elected.  One row per directive, and
                 // the firing ledger is closed HERE — an anchor_handover that named a
