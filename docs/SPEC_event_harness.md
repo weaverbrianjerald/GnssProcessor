@@ -570,7 +570,10 @@ correctly-scoped single-band slip, but on a GENUINE all-band slip its fallback
 pins a band that really moved and the arc is 15x WORSE (floor 0.498 -> 7.658 cyc,
 slant iono -0.089 -> -1.302 m). Arm the erase scope; leave the detector scope OFF
 until the lane-preserving refloat (`SPEC_lane_slip_response` §7) can re-level the
-kept band instead of trusting it.** Measured 2026-09-10, 7 new legs + 1 storm arm.
+kept band instead of trusting it.  The 6 h storm-bed arm that carries BOTH (Z.6)
+takes 30 % off the ZWD settled truth rms and loses 29 points of settled WL — the
+split the leg matrix predicts, on a bed where the detector half pinned a
+genuinely-slipped band 1 091 times.** Measured 2026-09-10, 7 legs + 1 storm arm.
 
 ### Z.1 What was built
 
@@ -728,6 +731,70 @@ cost is visible:
 5. **QC stays silent, again.** 0 post-event T4/T3 re-flags on the arc in every leg
    of the matrix, including the 7.7-cycle one. §9.6(5)'s finding is unchanged: an
    arc that has just been given a metre-class level error is not flagged for it.
+
+### Z.6 Storm-bed validation — the combined arm FAILS, and Z.4 said which half
+
+`config/test_suite/_golden_sim_campaign_zwdblk_bscope.json` = main's
+`_golden_sim_campaign_zwdblk.json` + BOTH knobs (a 3-key diff: the two knobs and
+the run path). 6 h, 60 solve stations + 1 held-out consumer, the SLIPPED campaign
+bed `runs/simnet60_campaign_wu93` (2 486 truth slips), Release, exit 0 in 1 099.7 s
+-> `C:/GnssProcessor/runs/golden_sim_campaign_zwdblk_bscope/`. Gates frozen before
+the run.
+
+| gate | zwdblk (reference, same commands) | bscope arm | gate | verdict |
+|---|---|---|---|---|
+| **ZWD settled truth rms** (`simnet_plateau_decompose` D0) | 1.1884 m | **0.8347 m** (-30 %) | <= 0.5 PASS, <= 0.9 PARTIAL | **PARTIAL** |
+| **consumer 3D p50 / rms** (`simnet_grade`) | 1.0853 / 2.3890 m | **2.8920 / 3.0084 m** | p50 <= 0.6 AND rms <= 1.5 | **FAIL** (2.7x / 1.3x WORSE) |
+| **ambient DD \|e\|** (`simnet_t4_census` control, n=3000) | 1.735 cyc | **2.974 cyc** | <= 0.5 | **FAIL** (1.7x WORSE) |
+| **T4 events** (`simnet_t4_census`) | 9 871 | **9 181** (-7 %) | <= 5 000 | **FAIL** |
+| **ref-free WL(1,2) at own integer, settled** (`simnet_amb_integer --ref-free`) | 86.2 % | **56.9 %** | >= 88 % | **FAIL** (-29 pts) |
+| ref-free EWL(2,5), same window | 99.2 % | 88.5 % | — | worse |
+| slip detection (`simnet_slip_census`) | 2337 det / 75 resp / 74 silent | 2338 / 78 / 70 | unchanged | unchanged |
+
+Run-end counters (invariant #4 — the wiring is live, not inert):
+
+```
+T4 erases 9181 cell(s) -> 15323 band(s) erased / 9181 kept (4224 kept over gate,
+0 single-band cells skipped); detector refloats 1091 arc(s) -> 1091 band(s) freed
+/ 1091 kept (1091 all-band fallbacks; 0 pins on RAW MW/GF evidence, the rest
+lexical; 0 single-band arcs; 0 TOO LATE).
+```
+
+**Reading.** The wire's tropospheric channel improves exactly as the mechanism
+predicts — 30 % off the ZWD settled truth rms, the largest single move any arm has
+made on that number since the ZWD-in-block card itself, and the hourly series falls
+1.95 / 1.27 / 0.84 / 0.68 / 0.92 / 0.88 against 1.98 / 1.31 / 0.96 / 0.58 / 1.05 /
+1.67, i.e. the late-run climb is gone. Everything that touches the INTEGERS is
+worse, and the arm cannot attribute that between its two knobs.
+
+**Z.4 already can, and it points at the detector half.** 1 091 all-band fallbacks
+on a bed with 2 486 truth slips means the fallback pinned a band that really moved
+roughly once per two slips — and Z.3 priced one such event at **15x** the level
+floor of freeing all three (0.498 -> 7.658 cyc, slant iono -0.089 -> -1.302 m).
+1 091 of those is the size of the observed integer collapse; nothing in the T4 half
+(which Z.3 measured at 9x-64x BETTER, on a population that is FA-dominated by
+construction) predicts a loss. Note also that **0 of the 1 091 pins were chosen on
+raw MW/GF evidence** — every one fell to the lexical fallback, because a whole-arc
+detector implication on this bed is an LLI-on-every-band case whose primary-pair
+step is not usable. The detector half therefore ran, on this bed, as "keep L1C
+whatever happened to it", which is the worst version of the trade.
+
+**Verdict.** `network.raim_erase_band_scope: min_keep_one` is VALIDATED at leg
+scale (Z.3, three arcs, 9x / 29x / 64x with the slant-iono witness) and is the
+knob to promote; `network.cycle_slip.refloat_band_scope: implicated` is KEEP_OFF
+— falsified at leg scale on a genuine all-band slip and consistent with the storm
+arm's integer collapse. **The decisive follow-up is a T4-ONLY storm arm**
+(`raim_erase_band_scope: min_keep_one`, `refloat_band_scope` left at `all`), which
+the one-long-arm budget of this session did not allow; the prediction it tests is
+ZWD at or better than 0.835 m with the consumer and the lanes at or better than
+zwdblk's 1.085 / 86.2 %. **A quiet-bed 24 h check is also OWED and was NOT run
+here** — the quiet null leg (Z.2) shows the detector scope acting 20x in 61 epochs
+on a bed with no slips at all, so the quiet arm is not a formality.
+
+**Caveat on the reference numbers.** The gates' "ambient 1.65 cyc" was
+pre-registered from an earlier read; re-measured with the same command on the same
+reference run it is 1.735 (strict variant 1.608). The arm is graded against the
+re-measured value, and the direction of every gate is the same either way.
 
 ### Z.5 Reproducing
 
