@@ -1402,7 +1402,18 @@ namespace GnssProcessor {
         int pivot_zd_slip_in,
         bool pivot_zd_known_in,
         const std::string& code1,
-        const std::string& code2) {
+        const std::string& code2,
+        MwSampleEvidence* out_evidence) {
+
+        // DETECTION STRENGTH (mw_evidence_refloat): the lane CLASS is known here
+        // and nowhere downstream, so publish it up front; the ratio and the arc
+        // maturity are written at each firing gate from the quantities that gate
+        // actually tested.  A path that has no meaningful ratio leaves NaN.
+        if (out_evidence) {
+            out_evidence->evidence_ratio = std::numeric_limits<double>::quiet_NaN();
+            out_evidence->arc_epochs     = 0;
+            out_evidence->bia_corrected  = bia_corrected;
+        }
 
         if (out_slip_cycles) *out_slip_cycles = 0;
         if (out_wl_known)    *out_wl_known = false;
@@ -1550,6 +1561,13 @@ namespace GnssProcessor {
                     if (out_slip_cycles) *out_slip_cycles = 0;     // unknown integer
                     if (out_wl_known)    *out_wl_known    = false;
                     if (out_slip_frac)   *out_slip_frac   = frac;
+                    // STRENGTH: the gate tested frac against effective_thresh, so
+                    // that ratio IS this path's |dev|/threshold.  arc_epochs stays
+                    // 0 — an init-suspicious flag fires on the arc's FIRST sample
+                    // and has no maturity to report (which is precisely why the
+                    // evidence rule's maturity floor refuses it).
+                    if (out_evidence && effective_thresh > 0.0)
+                        out_evidence->evidence_ratio = frac / effective_thresh;
                     return true;
                 }
             }
@@ -1662,6 +1680,16 @@ namespace GnssProcessor {
                     if (out_slip_cycles) *out_slip_cycles = 0;
                     if (out_wl_known)    *out_wl_known    = false;
                     if (out_slip_frac)   *out_slip_frac   = 0.5;
+                    // STRENGTH: the gate quantities are the ones CARRIED from the
+                    // flag epoch (see the trace comment above — recomputing them
+                    // here does not reproduce the firing gate), so the ratio is
+                    // |flag_dev| / flag_thresh, which is > 1 by construction.
+                    if (out_evidence) {
+                        if (flag_thresh > 0.0)
+                            out_evidence->evidence_ratio =
+                                std::abs(flag_dev) / flag_thresh;
+                        out_evidence->arc_epochs = static_cast<int>(stats.count);
+                    }
                     // FLOAT step estimate (cycles): the integer stays
                     // withheld by the deferred-path contract above, but the
                     // confirmed level gap's magnitude is sound — exported as
@@ -2060,6 +2088,13 @@ namespace GnssProcessor {
                     if (out_slip_cycles) *out_slip_cycles = 0;
                     if (out_wl_known)    *out_wl_known    = false;
                     if (out_slip_frac)   *out_slip_frac   = 0.5;
+                    // STRENGTH: this epoch's own gate quantities (the flag is
+                    // immediate here, not deferred), read BEFORE the erase.
+                    if (out_evidence) {
+                        if (thresh > 0.0)
+                            out_evidence->evidence_ratio = std::abs(dev) / thresh;
+                        out_evidence->arc_epochs = static_cast<int>(stats.count);
+                    }
                     mw_stats_.erase(stats_key);
                     return true;
                 } else if (use_td) {
@@ -2158,6 +2193,17 @@ namespace GnssProcessor {
                     stats.count, lambda_wl,
                     stats.bia_corrected ? "yes" : "no",
                     slip_cycles != 0 ? std::to_string(slip_cycles) + " WL" : "n/a");
+
+                // STRENGTH (the principal emission path): |dev| / thresh is the
+                // gate this branch just failed, on the ACTIVE statistic and the
+                // arc's own adaptive threshold — the quantity a detect-only
+                // consumer wants and the one slip_frac cannot substitute for.
+                // stats.count is read BEFORE the erase below.
+                if (out_evidence) {
+                    if (thresh > 0.0)
+                        out_evidence->evidence_ratio = std::abs(dev) / thresh;
+                    out_evidence->arc_epochs = static_cast<int>(stats.count);
+                }
 
                 mw_stats_.erase(stats_key);
                 return true;
@@ -2266,6 +2312,14 @@ namespace GnssProcessor {
                 // FLOAT estimate: the migrated mean's offset from the
                 // demoted integer IS the absorbed cumulative slip.
                 if (out_slip_wl_float) *out_slip_wl_float = drift_cyc;
+                // STRENGTH: dev = the drift, threshold = the lock-drift bound —
+                // the same pairing the trace row for this path reports.  Nothing
+                // is erased here, so stats.count is already the count at the flag.
+                if (out_evidence) {
+                    out_evidence->evidence_ratio =
+                        std::abs(drift_cyc) / kWlLockDriftMaxCyc;
+                    out_evidence->arc_epochs = static_cast<int>(stats.count);
+                }
                 return true;
             }
         }
@@ -2334,6 +2388,14 @@ namespace GnssProcessor {
                 // FLOAT estimate: the absorbed step is the level gap itself
                 // (slow Hatch mean minus the post-step local median).
                 if (out_slip_wl_float) *out_slip_wl_float = -level_gap_cyc;
+                // STRENGTH: dev = the level gap, threshold = the drift bound —
+                // the pairing this path's own trace row writes.  Count read
+                // BEFORE the erase below.
+                if (out_evidence) {
+                    out_evidence->evidence_ratio =
+                        std::abs(level_gap_cyc) / kWlLockDriftMaxCyc;
+                    out_evidence->arc_epochs = static_cast<int>(stats.count);
+                }
                 mw_stats_.erase(stats_key);
                 return true;
             }
@@ -2551,14 +2613,17 @@ namespace GnssProcessor {
                         bool wl_known = false;
                         double slip_frac = 0.5;
                         double slip_wl_f = std::numeric_limits<double>::quiet_NaN();
+                        MwSampleEvidence ev;
                         if (processMwSample(obs, stats_key, mw_raw, lambda_wl, s1, s2,
                                             /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
                                             &slip_cyc, &wl_known, &slip_frac, &slip_wl_f,
                                             /*pivot_sat=*/{}, /*pivot_zd_slip_in=*/0,
-                                            /*pivot_zd_known_in=*/true, c1, c2)) {
+                                            /*pivot_zd_known_in=*/true, c1, c2, &ev)) {
                             results.push_back({ obs.satellite + "_" + ifp.phase_key,
                                                 slip_cyc, wl_known, lambda_wl,
-                                                s1, s2, obs.satellite, slip_frac, slip_wl_f });
+                                                s1, s2, obs.satellite, slip_frac, slip_wl_f,
+                                                ev.evidence_ratio, ev.arc_epochs,
+                                                /*bia_corrected=*/false });
                             logger->warn("Scheduling reset for {} (wl_known={}, slip_wl={})",
                                          obs.satellite + "_" + ifp.phase_key, wl_known, slip_cyc);
                         }
@@ -2617,19 +2682,24 @@ namespace GnssProcessor {
                         bool wl_known = false;
                         double slip_frac = 0.5;
                         double slip_wl_f = std::numeric_limits<double>::quiet_NaN();
+                        MwSampleEvidence ev;
                         if (processMwSample(obs, stats_key, mw_raw, lambda_wl, pair.phase1, pair.phase2,
                                             /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
                                             &slip_cyc, &wl_known, &slip_frac, &slip_wl_f,
                                             /*pivot_sat=*/{}, /*pivot_zd_slip_in=*/0,
-                                            /*pivot_zd_known_in=*/true, pair.code1, pair.code2)) {
+                                            /*pivot_zd_known_in=*/true, pair.code1, pair.code2, &ev)) {
                             // Supplementary pairs produce per-signal reset entries
                             // with full signal info for the multi-frequency solver.
                             results.push_back({ obs.satellite + "_" + pair.phase1,
                                                 slip_cyc, wl_known, lambda_wl,
-                                                pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f });
+                                                pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f,
+                                                ev.evidence_ratio, ev.arc_epochs,
+                                                /*bia_corrected=*/false });
                             results.push_back({ obs.satellite + "_" + pair.phase2,
                                                 slip_cyc, wl_known, lambda_wl,
-                                                pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f });
+                                                pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f,
+                                                ev.evidence_ratio, ev.arc_epochs,
+                                                /*bia_corrected=*/false });
                             logger->warn("Scheduling supplementary MW reset for {}_{}, {}_{} (wl_known={}, slip_wl={})",
                                          obs.satellite, pair.phase1, obs.satellite, pair.phase2,
                                          wl_known, slip_cyc);
@@ -2712,17 +2782,22 @@ namespace GnssProcessor {
                         bool wl_known = false;
                         double slip_frac = 0.5;
                         double slip_wl_f = std::numeric_limits<double>::quiet_NaN();
+                        MwSampleEvidence ev;
                         if (processMwSample(obs, stats_key, mw_raw, lambda_wl, pair.phase1, pair.phase2,
                                             /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
                                             &slip_cyc, &wl_known, &slip_frac, &slip_wl_f,
                                             /*pivot_sat=*/{}, /*pivot_zd_slip_in=*/0,
-                                            /*pivot_zd_known_in=*/true, pair.code1, pair.code2)) {
+                                            /*pivot_zd_known_in=*/true, pair.code1, pair.code2, &ev)) {
                             results.push_back({ obs.satellite + "_" + pair.phase1,
                                                 slip_cyc, wl_known, lambda_wl,
-                                                pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f });
+                                                pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f,
+                                                ev.evidence_ratio, ev.arc_epochs,
+                                                /*bia_corrected=*/false });
                             results.push_back({ obs.satellite + "_" + pair.phase2,
                                                 slip_cyc, wl_known, lambda_wl,
-                                                pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f });
+                                                pair.phase1, pair.phase2, obs.satellite, slip_frac, slip_wl_f,
+                                                ev.evidence_ratio, ev.arc_epochs,
+                                                /*bia_corrected=*/false });
                             logger->warn("Scheduling reset for {}_{}, {}_{} (wl_known={}, slip_wl={})",
                                          obs.satellite, pair.phase1, obs.satellite, pair.phase2,
                                          wl_known, slip_cyc);
@@ -3030,31 +3105,44 @@ namespace GnssProcessor {
                 // lock (receiver bias still present), but the jump-based estimate
                 // still resolves the slip and that estimate is already ZD.
                 double pfloat = std::numeric_limits<double>::quiet_NaN();
+                MwSampleEvidence pev;
                 if (processMwSample(*pivot_entry.obs, piv_key, pivot_entry.mw_bia,
                                     pivot_entry.lambda_wl, pivot_entry.pair.phase1,
                                     pivot_entry.pair.phase2, /*bia_corrected=*/false,
                                     pivot_entry.sat_mw_bias, &pcyc, &pknown, &pfrac,
                                     &pfloat, best_pivot, /*pivot_zd_slip_in=*/0,
                                     /*pivot_zd_known_in=*/true,
-                                    pivot_entry.pair.code1, pivot_entry.pair.code2)) {
+                                    pivot_entry.pair.code1, pivot_entry.pair.code2,
+                                    &pev)) {
                     pivot_zd_slip  = pcyc;
                     pivot_zd_known = pknown;
-                    // The pivot is processed in its own (ZD) frame: its
-                    // float flows out unmodified.
+                    // LANE CLASS: the sample carried bia_corrected=false into
+                    // processMwSample (the pivot cannot integer-lock — the
+                    // receiver bias is still in it), but the VALUE is the
+                    // BIA-corrected mw_bia and this arc IS the S-transform
+                    // reference of its group.  A pivot re-reference is precisely
+                    // the false-alarm population the evidence rule must refuse,
+                    // so the reported class is the lane's, not the call's: true.
                     if (pivot_entry.is_combined) {
                         results.push_back({ best_pivot + "_" + pivot_entry.if_phase_key,
                                             pcyc, pknown, pivot_entry.lambda_wl,
                                             pivot_entry.pair.phase1, pivot_entry.pair.phase2,
-                                            best_pivot, pfrac, pfloat });
+                                            best_pivot, pfrac, pfloat,
+                                            pev.evidence_ratio, pev.arc_epochs,
+                                            /*bia_corrected=*/true });
                     } else {
                         results.push_back({ best_pivot + "_" + pivot_entry.pair.phase1,
                                             pcyc, pknown, pivot_entry.lambda_wl,
                                             pivot_entry.pair.phase1, pivot_entry.pair.phase2,
-                                            best_pivot, pfrac, pfloat });
+                                            best_pivot, pfrac, pfloat,
+                                            pev.evidence_ratio, pev.arc_epochs,
+                                            /*bia_corrected=*/true });
                         results.push_back({ best_pivot + "_" + pivot_entry.pair.phase2,
                                             pcyc, pknown, pivot_entry.lambda_wl,
                                             pivot_entry.pair.phase1, pivot_entry.pair.phase2,
-                                            best_pivot, pfrac, pfloat });
+                                            best_pivot, pfrac, pfloat,
+                                            pev.evidence_ratio, pev.arc_epochs,
+                                            /*bia_corrected=*/true });
                     }
                     logger->warn("Scheduling reset for {} (pivot, wl_known={}, slip_wl={} ZD)",
                                  pivot_entry.is_combined
@@ -3079,6 +3167,7 @@ namespace GnssProcessor {
                 bool wl_known = false;
                 double slip_frac = 0.5;
                 double slip_wl_f = std::numeric_limits<double>::quiet_NaN();
+                MwSampleEvidence ev;
                 if (processMwSample(*entry.obs, stats_key, sd_mw, entry.lambda_wl,
                                     entry.pair.phase1, entry.pair.phase2,
                                     /*bia_corrected=*/true, entry.sat_mw_bias,
@@ -3086,7 +3175,7 @@ namespace GnssProcessor {
                                     best_pivot,
                                     /*pivot_zd_slip_in=*/pivot_zd_slip,
                                     /*pivot_zd_known_in=*/pivot_zd_known,
-                                    entry.pair.code1, entry.pair.code2)) {
+                                    entry.pair.code1, entry.pair.code2, &ev)) {
                     // Re-reference the SD jump to this satellite's OWN ZD slip:
                     // dN_sat = SD + dN_pivot.  Adding an integer leaves the
                     // rounding fraction (slip_frac) unchanged.  Unusable if the
@@ -3099,20 +3188,28 @@ namespace GnssProcessor {
                     slip_wl_f = (pivot_zd_known && std::isfinite(slip_wl_f))
                         ? slip_wl_f + static_cast<double>(pivot_zd_slip)
                         : std::numeric_limits<double>::quiet_NaN();
+                    // LANE CLASS true: this arc is single-differenced against the
+                    // detector's MW pivot, so its "slip" population contains the
+                    // pivot's own S-transform re-references (measured: 8 satellites
+                    // at one station stepping 37-40 WL in the same epoch).  The
+                    // evidence rule refuses this class outright.
                     if (entry.is_combined) {
                         results.push_back({ sat + "_" + entry.if_phase_key,
                                             slip_cyc, wl_known, entry.lambda_wl,
                                             entry.pair.phase1, entry.pair.phase2, sat, slip_frac,
-                                            slip_wl_f });
+                                            slip_wl_f, ev.evidence_ratio, ev.arc_epochs,
+                                            /*bia_corrected=*/true });
                     } else {
                         results.push_back({ sat + "_" + entry.pair.phase1,
                                             slip_cyc, wl_known, entry.lambda_wl,
                                             entry.pair.phase1, entry.pair.phase2, sat, slip_frac,
-                                            slip_wl_f });
+                                            slip_wl_f, ev.evidence_ratio, ev.arc_epochs,
+                                            /*bia_corrected=*/true });
                         results.push_back({ sat + "_" + entry.pair.phase2,
                                             slip_cyc, wl_known, entry.lambda_wl,
                                             entry.pair.phase1, entry.pair.phase2, sat, slip_frac,
-                                            slip_wl_f });
+                                            slip_wl_f, ev.evidence_ratio, ev.arc_epochs,
+                                            /*bia_corrected=*/true });
                     }
                     logger->warn("Scheduling reset for {} (wl_known={}, slip_wl={} ZD)",
                                  entry.is_combined ? (sat + "_" + entry.if_phase_key)

@@ -3449,6 +3449,55 @@ namespace GnssProcessor {
         ///        (forward-only RESPONSE policy — it changes only what a run
         ///        DOES after a slip, never the state a snapshot restores).
         bool networkCycleSlipAnchorSlipHandover() const { return network_config_.cycle_slip_anchor_slip_handover; }
+        /// @brief MW EVIDENCE REFLOAT: admit a strong, mature, bias-free-lane
+        ///        Melbourne-Wubbena detection to the network's DETECT-ONLY refloat
+        ///        path regardless of integer cleanliness.
+        ///
+        /// PASS A today admits an MW refloat candidate only on
+        /// @code r.slip_wl_known && r.slip_wl_cycles != 0
+        ///       && r.slip_frac <= turbo_edit_frac_max @endcode — the T0 integer
+        /// REPAIR gate, re-used on a path whose consumer (the refloat drain) never
+        /// applies the integer.  Grading how cleanly a step ROUNDS says nothing
+        /// about how far above the noise it STOOD: a -99 cycle L5 slip was flagged
+        /// by the L2W/L5Q lane at 78x its own threshold with the integer 99 KNOWN
+        /// and a 0.183 cycle rounding residual — 1.07 m on the 5.86 m wide lane,
+        /// below that lane's own 1 sigma — and was dropped; the L1C/L5Q lane
+        /// flagged the same event at 8.9x with an unknown integer and was dropped
+        /// too.  No counter, no event row.  Five such misses on a 655-slip dose
+        /// leg; one drove a station to 7.5 m ZWD rms.
+        ///
+        /// Armed, a candidate is ALSO admitted when the detection itself is
+        /// strong: a bias-FREE lane (@ref MwSlipResult::bia_corrected false — the
+        /// BIA-corrected between-satellite lanes carry the detector's own MW-pivot
+        /// S-transform re-references, the measured false-alarm population), an arc
+        /// at least @ref networkCycleSlipMwEvidenceMinArcEpochs samples old, and a
+        /// finite @ref MwSlipResult::evidence_ratio at or above
+        /// @ref networkCycleSlipMwEvidenceRatioMin.  The refloat is unchanged —
+        /// still both bands, still never applying an integer — and an
+        /// integer-UNKNOWN candidate additionally skips the delta-bridge intercept
+        /// so a zero integer can never be bridged into a carried level.
+        ///
+        /// Requires @ref networkCycleSlipMwDetect (inert without the detector; the
+        /// loader disarms and warns).  Default off; byte-identical off — the four
+        /// admission counters are collected knob-INDEPENDENTLY, so an OFF run's
+        /// run-end line already reports what the rule would have admitted.
+        /// Fingerprint-EXEMPT (forward-only RESPONSE policy).
+        bool networkCycleSlipMwEvidenceRefloat() const { return network_config_.cycle_slip_mw_evidence_refloat; }
+        /// @brief Evidence gate for @ref networkCycleSlipMwEvidenceRefloat: the
+        ///        minimum |deviation| / threshold at the flag.  Default 3.0 — the
+        ///        value the false-alarm census was taken at (every mature
+        ///        bias-free detection at or above it on a quiet 240-epoch
+        ///        60-station leg was a real slip).
+        /// @return Minimum evidence ratio, dimensionless.
+        double networkCycleSlipMwEvidenceRatioMin() const { return network_config_.cycle_slip_mw_evidence_ratio_min; }
+        /// @brief Evidence gate for @ref networkCycleSlipMwEvidenceRefloat: the
+        ///        minimum arc sample count at the flag (arc MATURITY).  Default
+        ///        10.  A young arc's level is still converging, so its deviation
+        ///        is measured against a threshold that is itself unsettled — the
+        ///        init-suspicious emission path reports 0 here by construction and
+        ///        is therefore always refused.
+        /// @return Minimum arc epochs, samples.
+        int networkCycleSlipMwEvidenceMinArcEpochs() const { return network_config_.cycle_slip_mw_evidence_min_arc_epochs; }
         /// @brief Float per-band delta bridge at the MW/IF-TD drains: when the
         ///        slip's magnitude was MEASURED (confident wide-lane integer +
         ///        IF-TD phase step), shift the carried level in place instead of

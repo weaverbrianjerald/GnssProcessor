@@ -1489,6 +1489,16 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << (nc.cycle_slip_anchor_slip_handover
                        ? std::string("\"cycle_slip_anchor_slip_handover\":true,")
                        : std::string())
+               // MW evidence refloat: solve-affecting when armed (it widens which
+               // detections free an arc), so the arm provenance and BOTH gate
+               // values belong in the manifest — armed-only, the same precedent.
+               << (nc.cycle_slip_mw_evidence_refloat
+                       ? fmt::format("\"cycle_slip_mw_evidence_refloat\":true,"
+                                     "\"cycle_slip_mw_evidence_ratio_min\":{},"
+                                     "\"cycle_slip_mw_evidence_min_arc_epochs\":{},",
+                                     nc.cycle_slip_mw_evidence_ratio_min,
+                                     nc.cycle_slip_mw_evidence_min_arc_epochs)
+                       : std::string())
                // RTB-6/P1: service-observability knobs (health heartbeat + trace rotation).
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)

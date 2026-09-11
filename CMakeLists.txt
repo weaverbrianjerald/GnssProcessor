@@ -435,6 +435,7 @@ add_executable(gnss_tests
     tests/test_network_inject.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp
+    tests/test_mw_evidence_refloat.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

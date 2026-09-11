@@ -2680,6 +2680,19 @@ namespace GnssProcessor {
                   n_anc_slip_continuous = 0, n_anc_slip_cold = 0,
                   n_anc_slip_no_successor = 0, n_anc_slip_inert = 0,
                   n_anc_slip_epochs = 0;
+        /// MW DETECT-ONLY ADMISSION CENSUS (network.cycle_slip.mw_evidence_refloat).
+        /// Reduced serially from PassABuffers::sta_mw_admit after the parallel scan,
+        /// and collected KNOB-INDEPENDENTLY — that is the point.  legacy: admitted by
+        /// today's integer gate.  evidence: admitted by the strength rule alone with
+        /// the knob ARMED.  would_admit: the same population with the knob OFF, i.e.
+        /// exactly what arming would change (an OFF run that reports 0 here says the
+        /// card is inert on that lineage, no run needed).  drop_loose / drop_unknown:
+        /// the two refused populations — a flag with a known integer whose rounding
+        /// residual exceeded turbo_edit_frac_max, and a flag with no usable integer
+        /// at all.  Before this census both were silent: no counter, no event row.
+        long long n_mw_admit_legacy = 0, n_mw_evidence_admitted = 0,
+                  n_mw_evidence_would_admit = 0, n_mw_drop_loose = 0,
+                  n_mw_drop_unknown = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

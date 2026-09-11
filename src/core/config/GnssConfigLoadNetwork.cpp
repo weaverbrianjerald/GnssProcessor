@@ -226,6 +226,33 @@ namespace GnssProcessor {
                       "re-realizing the gauge from the freed arc.  Run-end reports the "
                       "families handed over and the continuous / cold split; ZERO staged "
                       "on a run whose detectors fired is dead wiring, not a quiet run.");
+        // MW EVIDENCE REFLOAT interlock, deliberately HERE (the Card-1g pattern
+        // above): mw_detect parses in loadNetworkSlipDetectors_ but can still be
+        // FORCED ON by a posture later in that same function, so a check at the
+        // parse site would read a value the run does not use.  Without the
+        // detector there is no MW flag to admit and the knob is a structural zero
+        // (invariant #4).
+        if (network_config_.cycle_slip_mw_evidence_refloat
+            && !network_cycle_slip_mw_detect_) {
+            log->warn("Network: network.cycle_slip.mw_evidence_refloat needs "
+                      "network.cycle_slip.mw_detect — it widens the admission of that "
+                      "detector's flags and has nothing to admit without it "
+                      "— disabled.");
+            network_config_.cycle_slip_mw_evidence_refloat = false;
+        }
+        if (network_config_.cycle_slip_mw_evidence_refloat)
+            log->info("Network (MW evidence refloat): ARMED — a DETECT-ONLY MW wide-lane "
+                      "flag is admitted to the refloat path on the STRENGTH of the "
+                      "detection (bias-free lane, arc >= {} samples, |dev|/threshold >= "
+                      "{:.1f}) as well as on the legacy integer gate (known integer, "
+                      "frac <= {:.2f}).  The refloat still applies no integer, and an "
+                      "integer-UNKNOWN candidate skips the delta bridge.  Run-end "
+                      "reports legacy vs evidence admissions and the two DROP "
+                      "populations; those counters are collected with the knob OFF too, "
+                      "so an OFF run already states what this would have admitted.",
+                      network_config_.cycle_slip_mw_evidence_min_arc_epochs,
+                      network_config_.cycle_slip_mw_evidence_ratio_min,
+                      network_cycle_slip_turbo_edit_frac_max_);
         if (network_cycle_slip_relevel_free_epoch_ && network_carry_invariant_) {
             log->warn("Network: network.cycle_slip.relevel_free_epoch (and its "
                       "delta_bridge rider) is inert under network.carry_invariant "
@@ -4053,6 +4080,28 @@ namespace GnssProcessor {
         network_config_.cycle_slip_anchor_slip_handover =
             jval<bool>(json, "network.cycle_slip.anchor_slip_handover",
                        "network_cycle_slip_anchor_slip_handover", false);
+        // --- MW EVIDENCE REFLOAT ---------------------------------------------
+        // Root defect (measured on the event harness): the PASS-A MW admission
+        // re-uses the T0 integer-REPAIR gate (known integer, frac <=
+        // turbo_edit_frac_max) on a DETECT-ONLY path whose consumer — the refloat
+        // drain — never applies the integer.  Rounding cleanliness is the wrong
+        // question there: a -99 cycle L5 slip flagged at 78x threshold with the
+        // integer KNOWN and frac 0.183 (1.07 m on the 5.86 m lane, inside its own
+        // 1 sigma) was dropped, as was the same event on a second lane at 8.9x
+        // with an unknown integer.  Silently — no counter, no event row.  Armed,
+        // a flag is admitted on its own STRENGTH instead: bias-free lane, mature
+        // arc, |dev|/threshold above the gate.  Default OFF and byte-identical
+        // OFF; the counters are collected either way (an OFF run reports its
+        // would-admit population).  Interlock on mw_detect sits in the late band.
+        network_config_.cycle_slip_mw_evidence_refloat =
+            jval<bool>(json, "network.cycle_slip.mw_evidence_refloat",
+                       "network_cycle_slip_mw_evidence_refloat", false);
+        network_config_.cycle_slip_mw_evidence_ratio_min =
+            jval<double>(json, "network.cycle_slip.mw_evidence_ratio_min",
+                         "network_cycle_slip_mw_evidence_ratio_min", 3.0);
+        network_config_.cycle_slip_mw_evidence_min_arc_epochs =
+            jval<int>(json, "network.cycle_slip.mw_evidence_min_arc_epochs",
+                      "network_cycle_slip_mw_evidence_min_arc_epochs", 10);
         network_cycle_slip_relevel_delta_bridge_ =
             jval<bool>(json, "network.cycle_slip.relevel_delta_bridge",
                        "network_cycle_slip_relevel_delta_bridge", false);

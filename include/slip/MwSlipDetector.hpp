@@ -72,6 +72,47 @@ namespace GnssProcessor {
         /// TurboEditResolver's gap-bridge solve tries round(f)±1), never as
         /// an integer to apply.
         double slip_wl_float{ std::numeric_limits<double>::quiet_NaN() };
+
+        // --- DETECTION STRENGTH (mw_evidence_refloat) -----------------------
+        // The three quantities a DETECT-ONLY consumer needs to judge a flag it
+        // cannot judge by integer cleanliness.  slip_frac grades how cleanly the
+        // step ROUNDS, which says nothing about how far above the noise the step
+        // stood — a −99 cycle slip flagged at 78x its own threshold was dropped
+        // by the frac gate at 0.183.  These are reported for every emission path
+        // and are purely additive: no existing consumer reads them.
+
+        /// |deviation| / threshold at the flag, i.e. how many times its OWN
+        /// adaptive gate the firing statistic stood at.  NaN where the emitting
+        /// path has no meaningful ratio (it never fabricates one).
+        double evidence_ratio{ std::numeric_limits<double>::quiet_NaN() };
+        /// The arc's accumulated sample count at the flag, BEFORE the erase —
+        /// arc MATURITY.  0 on the init-suspicious path (the arc is one sample
+        /// old by construction) and wherever the emitting path has no arc.
+        int    arc_epochs{ 0 };
+        /// Lane CLASS: true when the MW value the flag was formed on had both the
+        /// satellite (BIA) and the receiver (single-difference) bias removed.
+        /// Such a lane is single-differenced against the detector's internal MW
+        /// pivot, so a pivot S-transform re-reference shows up as a synchronous
+        /// multi-satellite "slip" at one station — the measured false-alarm
+        /// population.  Evidence-based admission is restricted to bias-FREE lanes
+        /// for exactly that reason.
+        bool   bia_corrected{ false };
+    };
+
+    /**
+     * @brief Detection-strength outputs of one @c processMwSample call.
+     *
+     * A small out-struct rather than three more out-params: @c processMwSample
+     * already carries four.  Every field mirrors the identically named member of
+     * @ref MwSlipResult and is written ONLY on the epochs the call returns true;
+     * a path with no meaningful value leaves the default (NaN / 0 / false) rather
+     * than inventing one, so a consumer's @c std::isfinite check is the honest
+     * "this path published no strength" test.
+     */
+    struct MwSampleEvidence {
+        double evidence_ratio{ std::numeric_limits<double>::quiet_NaN() };
+        int    arc_epochs{ 0 };
+        bool   bia_corrected{ false };
     };
 
     /**
@@ -1648,6 +1689,13 @@ namespace GnssProcessor {
          *                       Bookkeeping only — the MW value arrives pre-computed
          *                       in @p mw_m, so this changes no detection.
          * @param code2          RINEX code observable on @p sig2 (see @p code1).
+         * @param[out] out_evidence If non-null, the DETECTION STRENGTH of the flag
+         *                       (@ref MwSampleEvidence): |dev|/threshold at the
+         *                       firing gate, the arc's sample count BEFORE the
+         *                       erase, and the lane's bias class.  Written only
+         *                       when the call returns true; paths with no
+         *                       meaningful ratio leave NaN rather than fabricate
+         *                       one.  Purely additive — no detection changes.
          * @return True if a slip was detected (caller should generate reset keys).
          */
         bool processMwSample(const PppObservation& obs,
@@ -1663,7 +1711,8 @@ namespace GnssProcessor {
             int pivot_zd_slip_in = 0,
             bool pivot_zd_known_in = true,
             const std::string& code1 = {},
-            const std::string& code2 = {});
+            const std::string& code2 = {},
+            MwSampleEvidence* out_evidence = nullptr);
 
         /** Output stream for MWWL trace CSV file (mutable for const access). */
         mutable std::ofstream mwwl_trace_;

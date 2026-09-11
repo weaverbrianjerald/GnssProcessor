@@ -1358,14 +1358,35 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                         // the WL layer is observation-side only.  Byte-identical for
                         // existing configs: the detector was previously built only when
                         // turbo_edit OR mw_detect, so this branch already implied mw_detect.)
+                        //
+                        // MW EVIDENCE REFLOAT (network.cycle_slip.mw_evidence_refloat):
+                        // the frac gate above is the T0 REPAIR gate, and this path never
+                        // applies an integer — so a strong, mature, bias-free-lane flag is
+                        // ALSO admissible on the strength of the detection.  The census
+                        // below runs knob-independently; with the knob off the rule is
+                        // evaluated and counted but never admits (byte-identical).
                         const double frac_max = config_.networkCycleSlipTurboEditFracMax();
+                        const bool   ev_on    = config_.networkCycleSlipMwEvidenceRefloat();
+                        const double ev_ratio = config_.networkCycleSlipMwEvidenceRatioMin();
+                        const int    ev_narc  = config_.networkCycleSlipMwEvidenceMinArcEpochs();
                         for (const auto& r : mwr) {
-                            if (r.slip_wl_known && r.slip_wl_cycles != 0
-                                && r.slip_frac <= frac_max
-                                && !r.sig1.empty() && !r.sig2.empty())
+                            if (r.sig1.empty() || r.sig2.empty()) continue;
+                            const auto d = networkMwAdmitCandidate(
+                                r.slip_wl_known, r.slip_wl_cycles, r.slip_frac, frac_max,
+                                r.evidence_ratio, r.arc_epochs, r.bia_corrected,
+                                ev_on, ev_ratio, ev_narc);
+                            auto& ac = pa.sta_mw_admit[i];
+                            if (d.admit_legacy)    ++ac.legacy_admitted;
+                            if (d.via_evidence)    ++ac.evidence_admitted;
+                            if (d.would_admit)     ++ac.evidence_would_admit;
+                            if (d.drop_loose)      ++ac.drop_loose;
+                            if (d.drop_unknown)    ++ac.drop_unknown;
+                            if (d.admitted)
                                 sta_mw_refloat[i].push_back(PassABuffers::MwRefloatCand{
                                     r.satellite, r.sig1, r.sig2,
-                                    r.slip_wl_cycles, r.slip_frac, r.lambda_wl});
+                                    r.slip_wl_cycles, r.slip_frac, r.lambda_wl,
+                                    r.slip_wl_known, r.evidence_ratio, r.arc_epochs,
+                                    d.via_evidence});
                         }
                     }
                 } catch (...) { /* best-effort: no MW action this epoch */ }
@@ -1469,16 +1490,45 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         try {
             const auto mwr =
                 stations.front().mw_slip->detectLargeMwResets(modeled.front());
+            // Same admission rule as the parallel scan above (one helper, so the
+            // datum station can never drift to a different gate).
             const double frac_max = config_.networkCycleSlipTurboEditFracMax();
+            const bool   ev_on    = config_.networkCycleSlipMwEvidenceRefloat();
+            const double ev_ratio = config_.networkCycleSlipMwEvidenceRatioMin();
+            const int    ev_narc  = config_.networkCycleSlipMwEvidenceMinArcEpochs();
             for (const auto& r : mwr) {
-                if (r.slip_wl_known && r.slip_wl_cycles != 0
-                    && r.slip_frac <= frac_max
-                    && !r.sig1.empty() && !r.sig2.empty())
+                if (r.sig1.empty() || r.sig2.empty()) continue;
+                const auto d = networkMwAdmitCandidate(
+                    r.slip_wl_known, r.slip_wl_cycles, r.slip_frac, frac_max,
+                    r.evidence_ratio, r.arc_epochs, r.bia_corrected,
+                    ev_on, ev_ratio, ev_narc);
+                auto& ac = pa.sta_mw_admit[0];
+                if (d.admit_legacy) ++ac.legacy_admitted;
+                if (d.via_evidence) ++ac.evidence_admitted;
+                if (d.would_admit)  ++ac.evidence_would_admit;
+                if (d.drop_loose)   ++ac.drop_loose;
+                if (d.drop_unknown) ++ac.drop_unknown;
+                if (d.admitted)
                     sta_mw_refloat[0].push_back(PassABuffers::MwRefloatCand{
                         r.satellite, r.sig1, r.sig2,
-                        r.slip_wl_cycles, r.slip_frac, r.lambda_wl});
+                        r.slip_wl_cycles, r.slip_frac, r.lambda_wl,
+                        r.slip_wl_known, r.evidence_ratio, r.arc_epochs,
+                        d.via_evidence});
             }
         } catch (...) { /* best-effort: no datum-station MW detection this epoch */ }
+    }
+
+    // MW admission census reduce: per-station slots were filled index-addressed
+    // in the parallel region (and, for station 0, by the serial datum scan just
+    // above), so the fold is serial and station-ordered — deterministic.  Run
+    // unconditionally: these counters are the card's knob-independent telemetry.
+    for (int i = 0; i < n_sta_total; ++i) {
+        const auto& ac = pa.sta_mw_admit[static_cast<std::size_t>(i)];
+        ctx.counters.n_mw_admit_legacy         += ac.legacy_admitted;
+        ctx.counters.n_mw_evidence_admitted    += ac.evidence_admitted;
+        ctx.counters.n_mw_evidence_would_admit += ac.evidence_would_admit;
+        ctx.counters.n_mw_drop_loose           += ac.drop_loose;
+        ctx.counters.n_mw_drop_unknown         += ac.drop_unknown;
     }
 
     // Serial slip-QC drains (INC-6): bodies relocated VERBATIM to
