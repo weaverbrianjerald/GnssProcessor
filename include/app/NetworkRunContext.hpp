@@ -2726,6 +2726,13 @@ namespace GnssProcessor {
         /// two refusals have different causes, and this one sizes the population
         /// the five measured spurious `keep` verdicts came from.
         long long n_cb_lli_shadow = 0;
+        /// §14.12 RULE F3 — verdicts formed from the receiver's LLI bits alone,
+        /// at an epoch where every MW sample of the satellite was withheld so the
+        /// normal rule could not run, and how many of those actually restrict a
+        /// drain.  Knob-independent (invariant #4): an OFF run reports what
+        /// arming would scope.  A run whose LLI drain fires with lli_verdicts 0
+        /// is dead wiring.
+        long long n_cb_lli_verdicts = 0, n_cb_lli_narrowed = 0;
         /// SPLIT-REFERENCED SATELLITE CENSUS (§14.5), ALWAYS ON and
         /// knob-independent: per PROCESSED epoch, how many satellites have >= 2
         /// anchored phase-bias families whose anchors sit at DIFFERENT stations.

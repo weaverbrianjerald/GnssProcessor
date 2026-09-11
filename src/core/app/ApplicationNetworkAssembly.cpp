@@ -1625,6 +1625,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
             C.n_cb_iftd_veto_by_pair[pr] += n;
         C.n_cb_immature_pairs    += common_band.immature_pairs;
         C.n_cb_lli_shadow        += common_band.lli_shadow;      // §14.11 F2
+        C.n_cb_lli_verdicts      += common_band.lli_verdicts;    // §14.12 F3
+        C.n_cb_lli_narrowed      += common_band.lli_narrowed;
         C.n_cb_weak_silence      += common_band.weak_silence;
         C.n_cb_anchor_colocate   += common_band.anchor_colocate;
         C.n_cb_would_narrow      += common_band.would_narrow;

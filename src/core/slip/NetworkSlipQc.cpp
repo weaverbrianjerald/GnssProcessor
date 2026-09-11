@@ -1228,7 +1228,15 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All;
 
         struct PairAction { bool handled{false}; bool repaired{false};
-                            bool freed{false}; std::string detail; };
+                            bool freed{false}; std::string detail;
+                            /// §14.12: the pair's own bands the COMMON-BAND verdict
+                            /// refused this epoch.  Invariant #7 wants an identity
+                            /// at the edge, not just a counter — without it a
+                            /// scoped pair refloat and an unscoped one write the
+                            /// same row, which is exactly how the LLI-epoch gap
+                            /// stayed invisible.  Empty ⇒ nothing was refused ⇒ no
+                            /// token ⇒ the pre-knob row text.
+                            std::string cb_kept; };
         const double oracle_now_s =
             static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
         // Refloat both band ambiguities of (sat, sig1, sig2) at station i (only
@@ -1259,7 +1267,15 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 // §14 COMMON-BAND SCOPE: free (this pair's bands ∩ implicated).
                 // Null verdict (knob off) or no narrowed verdict ⇒ true ⇒ the
                 // pre-knob instruction stream.
-                if (!commonBandMayFree(common_band, i, sat, parts->signal)) continue;
+                if (!commonBandMayFree(common_band, i, sat, parts->signal)) {
+                    // §14.12: name it, but only for a band of THIS pair — the
+                    // satellite's other bands were never this drain's to free.
+                    if (parts->signal == sig1 || parts->signal == sig2) {
+                        if (!pact.cb_kept.empty()) pact.cb_kept += "+";
+                        pact.cb_kept += parts->signal;
+                    }
+                    continue;
+                }
                 if (parts->signal == sig1 || parts->signal == sig2) {
                     // SIM-ONLY ORACLE: each BAND is handled independently (the
                     // IF combination cannot localize the slip, but truth can) —
@@ -1491,7 +1507,13 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                   // pre-knob text byte for byte.
                                   + (iftd_all_pairs
                                        ? ";pair=" + sp->sig1 + "+" + sp->sig2
-                                       : std::string{}));
+                                       : std::string{})
+                                  // §14.12: what the common-band verdict refused
+                                  // this drain.  Absent unless a verdict actually
+                                  // restricted it, so every unscoped row keeps the
+                                  // pre-knob text.
+                                  + (pact.cb_kept.empty() ? std::string{}
+                                       : ";cb_kept=" + pact.cb_kept));
                         // Bridge v2, flagged path: CREATE (or refresh — the
                         // refloat_pair above just voided any stale one) the pend
                         // with the pre-slip capture + this δIF.  A station whose

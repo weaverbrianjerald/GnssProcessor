@@ -529,6 +529,105 @@ TEST(CommonBandScopeRule, WithoutTheShadowTheSameEvidenceStillNarrows) {
     EXPECT_EQ(v.lli_shadow, 0);
 }
 
+// ------------------------------- §14.12 RULE F3: the LLI-epoch verdict
+
+// The epoch the §14.2 rule cannot see.  The uncombined LLI branch withholds
+// EVERY MW sample of a flagged satellite (§14.11), so no pair can flag and the
+// normal path forms no verdict at all — and without a verdict the drains run
+// UNSCOPED.  That was harmless while the LLI drain was the only actor there (it
+// frees exactly the bands the receiver flagged), but once an IF-TD pair
+// containing a flagged band can fire in the same epoch it frees BOTH of its
+// bands and the LLI epoch becomes an all-band free.  Measured on the §14.10 S3
+// leg: level residual at +45 0.005 → 0.335 cyc, slant-iono peak 0.004 → 0.143 m,
+// with the NEXT epoch's verdict unchanged.  F3 takes the receiver's bits as the
+// scope, with no exoneration step — today's LLI drain already trusts them.
+
+/// §14.12 (a) — the S3 shape.  LLI on L5Q, every MW sample withheld, the (1,5)
+/// and (2,5) IF-TD pairs flagged.  The verdict implicates exactly L5Q, so the
+/// pair refloats free L5Q alone instead of all three bands.
+TEST(CommonBandScopeRule, LliEpochVerdictScopesToTheFlaggedBand) {
+    CommonBandEvidence e;                       // no processed pairs: all withheld
+    e.lli_signals.insert("L5Q");
+    e.iftd_flagged.insert(P("L1C", "L5Q"));
+    e.iftd_flagged.insert(P("L2W", "L5Q"));
+    const auto v = networkCommonBandLliVerdict(kTriple, e);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::LliOnly);
+    EXPECT_TRUE(v.narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L5Q" }));
+    EXPECT_TRUE(v.exonerated.empty());          // nothing was TESTED
+    EXPECT_EQ(v.basis, "lli=L5Q;mw=withheld");
+
+    // The drain hook is the contract the IF-TD pair refloats obey: with this
+    // verdict registered, (L1C,L5Q) frees L5Q and keeps L1C pinned.
+    CommonBandEpoch ep;
+    ep.armed = true;
+    ep.narrowed_at[{ 3, "G08" }] = v;
+    EXPECT_FALSE(commonBandMayFree(&ep, 3, "G08", "L1C"));
+    EXPECT_FALSE(commonBandMayFree(&ep, 3, "G08", "L2W"));
+    EXPECT_TRUE(commonBandMayFree(&ep, 3, "G08", "L5Q"));
+}
+
+/// §14.12 (b) — the same under `if_phase_td_pairs = first`, where the only IF-TD
+/// pair is (L1C, L2W): an LLI on L1C scopes THAT drain too, which today frees
+/// both of its bands.  F3 is not an `all`-only rule.
+TEST(CommonBandScopeRule, LliEpochVerdictScopesTheFirstPairDrainToo) {
+    CommonBandEvidence e;
+    e.lli_signals.insert("L1C");
+    e.iftd_flagged.insert(P("L1C", "L2W"));
+    const auto v = networkCommonBandLliVerdict(kTriple, e);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::LliOnly);
+    EXPECT_TRUE(v.narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L1C" }));
+
+    CommonBandEpoch ep;
+    ep.armed = true;
+    ep.narrowed_at[{ 0, "G08" }] = v;
+    EXPECT_TRUE(commonBandMayFree(&ep, 0, "G08", "L1C"));
+    EXPECT_FALSE(commonBandMayFree(&ep, 0, "G08", "L2W"));
+}
+
+/// §14.12 (c) — F3 must NOT override the normal path.  An LLI on L5Q with MW
+/// (1,2) flagged in the same epoch (a second, unflagged L1C slip) is evidence
+/// the §14.2 rule CAN weigh, and it already implicates every LLI band.  The
+/// caller's guard is `flagged_pairs.empty()`, so this case never reaches F3 —
+/// asserted here on both rules at once.
+TEST(CommonBandScopeRule, LliEpochVerdictDoesNotOverrideARealFlag) {
+    auto e = ev({ P("L2W", "L5Q") }, { P("L1C", "L2W") });
+    e.lli_signals.insert("L5Q");
+    ASSERT_FALSE(e.flagged_pairs.empty());      // F3's guard: the normal path runs
+
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_NE(v.outcome, CommonBandOutcome::LliOnly);
+    EXPECT_NE(v.basis.find("mw(L2W+L5Q)silent"), std::string::npos);
+    // The silent lane clears L2W and L5Q, but the LLI bit re-implicates L5Q, so
+    // the narrowing is {L1C, L5Q} — the slipped band AND the flagged one.
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L1C", "L5Q" }));
+    EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L2W" }));
+}
+
+/// A flagged band that is not tracked leaves nothing to scope: `implicated` must
+/// stay the full set so a caller registering the verdict cannot restrict a drain
+/// by accident, and `narrowed` must be false so it is not registered at all.
+TEST(CommonBandScopeRule, LliEpochVerdictOnANonLiveBandScopesNothing) {
+    CommonBandEvidence e;
+    e.lli_signals.insert("L7Q");                // not in kTriple
+    const auto v = networkCommonBandLliVerdict(kTriple, e);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::LliOnly);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.implicated, kTriple);
+}
+
+/// Every live band flagged: the scope IS today's response, so nothing is
+/// narrowed and no drain is gated.
+TEST(CommonBandScopeRule, LliEpochVerdictOnEveryBandIsTodaysResponse) {
+    CommonBandEvidence e;
+    for (const auto& b : kTriple) e.lli_signals.insert(b);
+    const auto v = networkCommonBandLliVerdict(kTriple, e);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.implicated, kTriple);
+}
+
 // ------------------------------------------- §14.5 split-referenced satellites
 
 /// Two satellites, one whose families are anchored at two different stations.
