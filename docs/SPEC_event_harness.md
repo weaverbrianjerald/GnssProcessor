@@ -1354,3 +1354,49 @@ is cancelled by grading against an ON null, not eliminated — an A/B that used 
 OFF null would be measuring both. (d) The T4 scope was exercised here only through
 INJECTED erases on healthy arcs; a real attribution on a genuinely bad arc is the
 storm-bed arm below.
+
+### Z.7 The T4-only storm arm — the cure is falsified at storm scale, the mechanism is not
+
+`runs/golden_sim_campaign_zwdblk_bscope_t4` = the §Z.6 arm with
+`cycle_slip.refloat_band_scope` back at `all` and `raim_erase_band_scope:
+min_keep_one` alone (config `_golden_sim_campaign_zwdblk_bscope_t4.json`, the
+card exe, 720/720 epochs, exit 0, 1 256.6 s on a shared box).  Same recipe as
+§Z.6, reference re-measured with the same commands.
+
+| gate | zwdblk control | both knobs (§Z.6) | **T4 scope alone** | gate | verdict |
+|---|---|---|---|---|---|
+| ZWD settled truth rms (D0) | 1.188 m | 0.835 | **0.845 m** (−29 %) | ≤ 0.5 / ≤ 0.9 | **PARTIAL** |
+| consumer settled p50 / rms | 1.084 / 2.389 | 2.891 / 3.008 | **2.173 / 2.644** | p50 ≤ 0.6 and rms ≤ 1.5 | **FAIL** (2.0× worse) |
+| ambient chord-median \|e\| (n = 3000) | 1.66 cyc | 3.07 | **2.92 cyc** | ≤ 0.5 | **FAIL** |
+| T4 events | 9 871 | 9 181 | **9 144** (−7 %) | ≤ 5 000 | **FAIL** |
+| ref-free WL / EWL / L1C, settled | 86.2 / 99.2 / 44.0 % | 56.9 / 88.5 / 28.8 | **58.1 / 88.6 / 29.3 %** | WL ≥ 88 | **FAIL** (−28 pts) |
+| CLK-R Σ\|μ\| drained / max \|A_c\| | 41.5 / 25.6 m | 28.1 / 11.2 | **27.1 / 10.7 m** | report | better |
+| T3 consensus flags | 13 450 / 30 033 | 16 533 / 32 205 | 16 580 / 32 202 | report | worse |
+
+Run-end clause: `T4 erases 9144 cell(s) → 15360 band(s) erased / 9144 kept
+(4400 kept over gate — every band of the cell stood above k·σ̂₀ so the pin is
+the least-BAD band); detector refloats 0 arc(s)` — the wiring is live and the
+detector half is provably out of the picture.
+
+**Reading.** The T4 scope alone reproduces the combined arm's collapse, so §Z.6's
+attribution to the detector-side fallbacks was wrong: those fallbacks are a real
+cost, but they are not what broke the integers.  Why the ×9–×63 of §Z.3 does not
+transfer: on the quiet seed the erased arc was HEALTHY, so any pinned band carried
+a correct level and the pin could only help.  On the storm bed 4 400 of 9 144
+cells (48 %) had every band above the gate, the census puts the erased arcs at
+1.9–2.2× the quiet arcs' |e_pre| (T4 finds real damage about half the time), and
+the kept band is chosen by the post-fit RESIDUAL — the statistic §9.6(5) and
+§Z.4(5) showed is blind to a level error absorbed into the (ρ, I) split (0
+re-flags on a 7.7-cycle error).  Pinning by residual therefore pins a wrong level
+about half the time on a bed whose ambient level error is already 1.7–2.9 cycles,
+and each wrong pin is a permanent injection into the LOS — the §Z.3 all-band-slip
+failure mode, arriving through the other population.
+
+**Verdict.** Both knobs KEEP_OFF (ledger rows carry these numbers).  The
+mechanism of §9 stands; this implementation of the cure does not.  The band to
+keep must be chosen on evidence that can see a level error — the lane integers
+(EWL-MW / WL consistency), i.e. the lane-preserving refloat of
+`SPEC_lane_slip_response` §7 — and the next single-event test of any such cure
+must run from a SLIPPED-bed seed (converged on the campaign fixture, ambient
+cycles off), not the quiet one: a quiet-seed harness win certifies the mechanism,
+not the cure.
