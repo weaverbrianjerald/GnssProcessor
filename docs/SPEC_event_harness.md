@@ -2513,3 +2513,19 @@ bands so the families move together), or narrow but hand over the sibling
 families to the same successor.**  The path-sensitivity floor of the consumer
 (§14.5's calibration twin) is still owed before the size of the effect is
 believed; its direction and its hourly correlate are not in doubt.
+
+**Instruments owed (2026-09-11 ~12:10; from the question "why not form the user's
+combinations inside the network?").**  Not as observation rows — every user
+combination is a linear mix of rows the uncombined solve already holds, adds
+zero rank and only re-weights; falsified twice (the float MW row, the lane
+layer).  As EMISSION-TIER MONITORS, yes, and they are missing:
+(1) `split_referenced_sats` — per epoch and at run end, the number of
+satellites whose families are anchored at different stations (the election
+already knows; a few lines; rides with iteration 3's anchor clause);
+(2) an inter-frequency consistency monitor on the emitted biases — per
+satellite the geometry-free combination of its per-frequency biases, its
+epoch-to-epoch step and its drift, MINUS the constellation-common part (a
+common shift is absorbed by the user's receiver bias per frequency), with a
+run-end line and a harness grader column, so a 70-epoch leg and a storm arm
+both read what the user's dispersive split will feel.  The closed-loop user
+remains the final arbiter once its noise floor is calibrated (§14.5).
