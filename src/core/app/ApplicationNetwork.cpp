@@ -1719,6 +1719,27 @@ int Application::runNetwork() {
                 // survive exactly until a solve actually commits the new frame.
                 auto& pa_reref = ctx.carry.phase_anchor_reref;
                 const std::size_t pa_before = pa_reref.size();
+                // ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover,
+                // docs/SPEC_event_harness.md §12.7).  MUST sit exactly here: after
+                // every PASS-A slip drain and the signal-integrity / admission
+                // refloats (so both freed sets are complete) and immediately before
+                // the election, which is the only consumer.  It stages the same
+                // one-epoch candidacy ban the harness injector uses, so a family
+                // whose ANCHOR arc was just freed is handed to a successor at the
+                // successor's own carried value_abs IN THIS EPOCH — before the freed
+                // arc's level is re-drawn from one epoch of code and the whole
+                // family's gauge follows it.  Knob OFF: not called, nothing staged,
+                // and the `inject` argument below resolves exactly as before.
+                if (config_.networkCycleSlipAnchorSlipHandover()) {
+                    const int n_st = networkStageAnchorSlipHandovers(
+                            stations, anchor_incumbent,
+                            ctx.carry.relevel.free_ambs, carry_slipped_ambs,
+                            ctx.inject);
+                    if (n_st > 0) {
+                        ctx.counters.n_anc_slip_staged += n_st;
+                        ++ctx.counters.n_anc_slip_epochs;
+                    }
+                }
                 networkElectPhaseAnchors(sticky, stations, present, cnd, hyg,
                                          ctx.counters.hyg,
                                          anchor_incumbent,
@@ -1731,9 +1752,15 @@ int Application::runNetwork() {
                                          ctx.knobs.pa_carry_reref ? &pa_reref
                                                                   : nullptr,
                                          ctx.knobs.pd_handover_max_var_ratio,
-                                         // EVENT HARNESS: this epoch's forced
-                                         // retirement, or nullptr (the normal path).
-                                         ctx.inject.armed && !ctx.inject.anchor_now.empty()
+                                         // This epoch's forced retirements, or
+                                         // nullptr (the normal path).  TWO sources:
+                                         // the EVENT HARNESS schedule, and the
+                                         // production anchor-slip handover staged
+                                         // just above — either one alone is enough
+                                         // to make the directive set live.
+                                         (ctx.inject.armed
+                                          && !ctx.inject.anchor_now.empty())
+                                         || !ctx.inject.anchor_now_slip.empty()
                                              ? &ctx.inject : nullptr);
                 // EVENT HARNESS readback: the election filled the directive in with
                 // the stations it retired and elected.  One row per directive, and
@@ -1766,6 +1793,37 @@ int Application::runNetwork() {
                             ctx.inject.onset_logged[k] = true;
                             ++ctx.inject.fired_by_kind["anchor_handover"];
                         }
+                }
+                // ANCHOR-SLIP HANDOVER readback (§12.7).  BOTH EDGES with identities
+                // (invariant #7): the retired incumbent is the row's station, the
+                // successor and the branch its detail.  A cold OUTCOME is a gauge
+                // re-realization and says so; a directive that found no successor at
+                // all left the family unpinned for the epoch and says that too.
+                for (const auto& d : ctx.inject.anchor_now_slip) {
+                    if (d.n_families == 0) {
+                        // The family was not in this epoch's union (coverage-gated,
+                        // bridged, or pruned).  No identities to report — counted so
+                        // run-end can separate it from a handover that happened.
+                        ++ctx.counters.n_anc_slip_inert;
+                        continue;
+                    }
+                    const char* branch = d.n_no_successor > 0 ? "none"
+                                       : (d.n_cold_fallback > 0 ? "cold" : "continuous");
+                    if (d.n_no_successor > 0) {
+                        ++ctx.counters.n_anc_slip_no_successor;   // NOT re-hosted
+                    } else {
+                        ++ctx.counters.n_anc_slip_handed;
+                        if (d.n_cold_fallback > 0) ++ctx.counters.n_anc_slip_cold;
+                        else                       ++ctx.counters.n_anc_slip_continuous;
+                    }
+                    emitEvent("PHASE_ANCHOR", "anchor_slip_handover",
+                              d.sat + "_" + d.signal,
+                              d.retired.empty() ? std::string("-") : d.retired.front(),
+                              std::nullopt, std::nullopt, "handover",
+                              fmt::format("to={};branch={}",
+                                          d.elected.empty() ? std::string("-")
+                                                            : d.elected.front(),
+                                          branch));
                 }
                 // BOTH EDGES in one row (invariant #7): who released the gauge, who
                 // took it, and whether the frame was preserved.  A handover logged

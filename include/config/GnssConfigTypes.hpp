@@ -1332,6 +1332,17 @@ namespace GnssProcessor {
         /// §Z: BAND SCOPE of the whole-satellite detector refloats
         /// (@ref NetworkRefloatBandScope).  Default @c All is byte-identical.
         NetworkRefloatBandScope cycle_slip_refloat_band_scope{ NetworkRefloatBandScope::All };
+        /// §12.7 ANCHOR-SLIP HANDOVER (docs/SPEC_event_harness.md): when a slip
+        /// response frees the arc that ANCHORS a (sat, signal) phase-bias family,
+        /// stage the one-epoch candidacy ban so the SAME epoch's election hands the
+        /// family to a successor at the successor's own carried @c value_abs,
+        /// instead of re-realizing the gauge from an arc whose level is about to be
+        /// re-drawn from one epoch of code.  Default @c false is byte-identical.
+        /// SOLVE-AFFECTING when armed, but deliberately NOT fingerprinted: it is a
+        /// forward-only RESPONSE knob (the relevel_free_epoch exemption class) —
+        /// it changes what a run DOES after a slip, never the meaning of the state
+        /// a snapshot restores.
+        bool cycle_slip_anchor_slip_handover{ false };
         int    trace_dd_fractional_epoch_stride{ 1 };  ///< T2e: write @c network_dd_fractional.csv only every Nth PROCESSED epoch (1 = every epoch = current).  Fraction statistics don't need every epoch; combines with @ref trace_dd_fractional_max_pairs to make a traced convergence run affordable.  TRACE-ONLY (never folded into the warm-resume fingerprint).  Inert unless @ref trace_dd_fractional.
         /// S1: emit @c network_phase_anchor.csv — per PROCESSED epoch, one row per
         /// GAUGE-PINNED ambiguity as (week,tow,cons,signal,sat,anchor_sta), i.e. WHICH

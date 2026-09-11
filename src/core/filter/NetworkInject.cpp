@@ -121,13 +121,20 @@ namespace GnssProcessor {
                                           const SyncedEpoch& se_raw,
                                           SyncedEpoch& scratch) {
         auto& st = ctx.inject;
-        if (!st.armed) return se_raw;          // byte-identical path: no copy, no branch
 
         // The staged directives are strictly one-epoch objects (invariant #7's
         // decoupling edge: a directive that survived its epoch would fire again
-        // on every later election).
+        // on every later election).  ALL THREE clear at this one point, AHEAD of
+        // the armed guard: `anchor_now_slip` is staged by the PRODUCTION
+        // anchor-slip handover card (network.cycle_slip.anchor_slip_handover),
+        // which runs on unarmed runs where the injector returns early.  Clearing
+        // three already-empty containers is not a solve-visible act, so the
+        // unarmed path stays byte-identical.
         st.anchor_now.clear();
         st.arc_erase_now.clear();
+        st.anchor_now_slip.clear();
+
+        if (!st.armed) return se_raw;          // byte-identical path: no copy, no branch
 
         const double tow = se_raw.time.tow;
 

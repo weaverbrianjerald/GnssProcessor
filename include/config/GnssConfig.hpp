@@ -3434,6 +3434,21 @@ namespace GnssProcessor {
         ///        level-walk root).  Default off; byte-identical off;
         ///        fingerprint-exempt (forward-only response policy).
         bool networkCycleSlipRelevelFreeEpoch() const { return network_cycle_slip_relevel_free_epoch_; }
+        /// @brief ANCHOR-SLIP HANDOVER (docs/SPEC_event_harness.md §12.6/§12.7):
+        ///        when a slip response FREES the arc that currently anchors a
+        ///        (sat, signal) phase-bias family, stage a one-epoch candidacy
+        ///        ban for that family so the election held later in the SAME
+        ///        epoch hands it to a successor at the successor's own carried
+        ///        @c value_abs — BEFORE the freed arc's level is re-drawn from
+        ///        one epoch of code.  Without it the sticky election keeps the
+        ///        slipped incumbent and the family's gauge is re-realized from
+        ///        the freed arc: measured on the harness at 157 T4 erases, a 9 m
+        ///        step in the satellite's emitted clock and a 10 m swing in the
+        ///        station's own clock, against 0 / 2 mm / 1 cm with the handover
+        ///        forced.  Default off; byte-identical off; fingerprint-EXEMPT
+        ///        (forward-only RESPONSE policy — it changes only what a run
+        ///        DOES after a slip, never the state a snapshot restores).
+        bool networkCycleSlipAnchorSlipHandover() const { return network_config_.cycle_slip_anchor_slip_handover; }
         /// @brief Float per-band delta bridge at the MW/IF-TD drains: when the
         ///        slip's magnitude was MEASURED (confident wide-lane integer +
         ///        IF-TD phase step), shift the carried level in place instead of

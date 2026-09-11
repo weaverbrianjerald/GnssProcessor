@@ -284,6 +284,64 @@ void networkElectPhaseAnchors(
         const NetworkInjectState* inject = nullptr);
 
 /**
+ * @brief ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover):
+ *        stage a one-epoch candidacy ban for every (sat, signal) family whose
+ *        ANCHOR arc a slip response freed THIS epoch.
+ *
+ * The defect it closes (docs/SPEC_event_harness.md §12.6/§12.7, measured).  Each
+ * phase-bias family is realized at exactly one station's ambiguity — the anchor
+ * @ref networkElectPhaseAnchors elected, and keeps electing while it is sticky.
+ * When a detector drain FREES that very arc, nothing hands the family over: the
+ * sticky election re-elects the slipped incumbent and the gauge is re-realized
+ * from an arc whose level is about to be re-drawn from ONE epoch of code.  On the
+ * harness a single +40-cycle L1C slip on an anchor arc cost 157 T4 erases of
+ * HEALTHY arcs at eight other stations, a 10.7 m swing in the station's own clock
+ * and a 9 m step in the satellite's emitted clock; with the handover forced in the
+ * SAME epoch the identical slip cost 0 erases, 2 mm of wire and 1 cm of clock.
+ *
+ * The staging is expressed as the injector's candidacy ban (a directive in
+ * @c NetworkInjectState::anchor_now_slip, @c cold = false) rather than a direct
+ * assignment, for the same reason the harness does: the SUCCESSOR is then chosen
+ * by the production rules — coverage rank, hygiene eligibility, the variance gates
+ * on the continuous branch, and the honest cold fallback when none of them is
+ * satisfiable.  This seam forces the EVENT, never the outcome.
+ *
+ * MUST be called AFTER every PASS-A slip drain (both freed sets must be complete)
+ * and IMMEDIATELY BEFORE @ref networkElectPhaseAnchors, whose @p inject argument
+ * must then be non-null whenever this returned a positive count.
+ *
+ * @param stations            The station roster — only @c name is read; index
+ *                            @c i of each freed pair indexes into it.
+ * @param anchor_incumbent    amb key ("<sat>_<signal>") -> anchoring station name,
+ *                            as it stands BEFORE this epoch's election.  A freed
+ *                            arc whose station is not this map's entry for its key
+ *                            is a non-anchor arc and stages nothing.
+ * @param free_ambs           @c ctx.carry.relevel.free_ambs — the latched
+ *                            (station index, amb key) set the leveling free-epoch
+ *                            response marked (empty unless
+ *                            network.cycle_slip.relevel_free_epoch).
+ * @param carry_slipped_ambs  The epoch's DD invariant-carry slip funnel, the same
+ *                            pairs in the same encoding — the vehicle on
+ *                            @c carry_invariant lineages, where the leveling latch
+ *                            is structurally empty.  Both are consulted; a family
+ *                            named by both stages ONE directive.
+ * @param inject              Run-scope directive state; @c anchor_now_slip is
+ *                            APPENDED to (it was cleared at the top of the epoch).
+ *                            Nothing else in it is touched — the injector's own
+ *                            schedule, ledger and never-fired logic are untouched.
+ * @return The number of directives staged (= families whose anchor arc was freed).
+ *         0 means no anchor arc was freed this epoch, which on a run whose
+ *         detectors never fired is the honest zero and on one whose detectors DID
+ *         fire is simply a slip that did not land on a gauge arc.
+ */
+int networkStageAnchorSlipHandovers(
+        const std::vector<NetStation>& stations,
+        const std::map<std::string, std::string>& anchor_incumbent,
+        const std::set<std::pair<int, std::string>>& free_ambs,
+        const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+        NetworkInjectState& inject);
+
+/**
  * @brief QUEUE item 1(d): erase the phase-leveling local ambiguity carries of
  *        every re-referenced (sat, signal) family, at EVERY station.
  *

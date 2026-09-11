@@ -201,6 +201,31 @@ namespace GnssProcessor {
         // superseded and structurally EMPTY — the re-level response cannot
         // move a byte there (and the DD invariant carry owns its own slip
         // funnel), so arming it would only mislead (standing invariant #4).
+        // ANCHOR-SLIP HANDOVER interlocks (SPEC_event_harness §12.7), deliberately
+        // HERE (the Card-1g pattern above): the phase-datum MODE flags parse ~1700
+        // lines after the cycle_slip block, so a check at the parse site would read
+        // their code defaults.  The card acts inside networkElectPhaseAnchors, which
+        // is the `else` arm of the three-way mode dispatch — under the ensemble or
+        // eq34 datum, or with the whole prioritized election off, there is no anchor
+        // to hand over and the knob is a structural zero (invariant #4).
+        if (network_config_.cycle_slip_anchor_slip_handover
+            && (!network_phase_datum_prioritized_ || network_phase_datum_ensemble_
+                || network_phase_datum_eq34_)) {
+            log->warn("Network: network.cycle_slip.anchor_slip_handover needs the "
+                      "PRIORITIZED anchor election (network.phase_datum_prioritized "
+                      "without phase_datum_ensemble / phase_datum_eq34) — that is the "
+                      "only realization with a per-family anchor to hand over "
+                      "— disabled.");
+            network_config_.cycle_slip_anchor_slip_handover = false;
+        }
+        if (network_config_.cycle_slip_anchor_slip_handover)
+            log->info("Network (anchor-slip handover, SPEC_event_harness §12.7): ARMED "
+                      "— a slip response that frees a family's ANCHOR arc stages a "
+                      "one-epoch candidacy ban, so the same epoch's election hands the "
+                      "family to a successor at its own carried value_abs instead of "
+                      "re-realizing the gauge from the freed arc.  Run-end reports the "
+                      "families handed over and the continuous / cold split; ZERO staged "
+                      "on a run whose detectors fired is dead wiring, not a quiet run.");
         if (network_cycle_slip_relevel_free_epoch_ && network_carry_invariant_) {
             log->warn("Network: network.cycle_slip.relevel_free_epoch (and its "
                       "delta_bridge rider) is inert under network.carry_invariant "
@@ -4009,6 +4034,25 @@ namespace GnssProcessor {
         network_cycle_slip_relevel_free_epoch_ =
             jval<bool>(json, "network.cycle_slip.relevel_free_epoch",
                        "network_cycle_slip_relevel_free_epoch", false);
+        // --- SPEC_event_harness §12.6/§12.7: the ANCHOR-SLIP HANDOVER ---------
+        // Root defect (measured, Study 4): every (sat, signal) phase-bias family
+        // is realized at ONE station's arc — the anchor the sticky election
+        // elected.  When a slip response FREES that arc, the election keeps the
+        // incumbent (the ban that would move it exists, but only the harness
+        // injector ever staged one) and the family's gauge is re-realized from
+        // the freed arc's one-epoch code re-level: 157 T4 erases on HEALTHY arcs
+        // at eight other stations, 10.7 m on the station's own clock, a 9 m step
+        // in the satellite's emitted clock.  Armed, the freed anchor's family is
+        // banned for THAT epoch only, so the production election picks a
+        // successor by its own rules and the CONTINUOUS branch pins it at its own
+        // carried value_abs — the same slip then costs 0 erases / 2 mm / 1 cm.
+        // Default OFF, byte-identical OFF, fingerprint-EXEMPT (a RESPONSE knob:
+        // it changes only what a run DOES after a slip, never the state a
+        // snapshot restores).  Interlocks sit in the late band (the phase-datum
+        // mode flags parse well after this block).
+        network_config_.cycle_slip_anchor_slip_handover =
+            jval<bool>(json, "network.cycle_slip.anchor_slip_handover",
+                       "network_cycle_slip_anchor_slip_handover", false);
         network_cycle_slip_relevel_delta_bridge_ =
             jval<bool>(json, "network.cycle_slip.relevel_delta_bridge",
                        "network_cycle_slip_relevel_delta_bridge", false);

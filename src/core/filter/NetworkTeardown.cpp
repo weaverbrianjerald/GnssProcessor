@@ -2420,6 +2420,35 @@ int networkTeardown(
                   closure == qcc.wu_restart_events ? "OK" : "*** MISWIRE ***");
     }
 
+    // ---- ANCHOR-SLIP HANDOVER (docs/SPEC_event_harness.md §12.7) ------------
+    // Invariant #4: these counters ARE the ON-path telemetry.  The card's whole
+    // claim is that a slip landing on a GAUGE arc is a different event from one
+    // landing anywhere else, so an armed run reporting 0 staged on a lineage whose
+    // detectors fired has not proved the network is quiet — it has proved nothing.
+    if (config_.networkCycleSlipAnchorSlipHandover()) {
+        const auto& C = ctx.counters;
+        log->info("Network (anchor-slip handovers, §12.7): {} family(ies) staged over "
+                  "{} epoch(s) — {} handed over ({} continuous / {} COLD FALLBACK, the "
+                  "successor had no usable carried value so the gauge re-realized "
+                  "anyway), {} with NO successor (the freed anchor was the family's only "
+                  "tracker — unpinned for that epoch), {} inert (the family was not in "
+                  "the epoch's union: gated, bridged or pruned).",
+                  C.n_anc_slip_staged, C.n_anc_slip_epochs, C.n_anc_slip_handed,
+                  C.n_anc_slip_continuous, C.n_anc_slip_cold,
+                  C.n_anc_slip_no_successor, C.n_anc_slip_inert);
+        if (C.n_anc_slip_staged == 0)
+            log->info("Network (anchor-slip handovers): ZERO staged this run — no slip "
+                      "response freed an ANCHOR arc.  On a run whose detectors DID fire "
+                      "that is the honest zero (the slips missed the gauge arcs); on one "
+                      "where they did not fire at all it says nothing about this card.");
+        else if (C.n_anc_slip_handed == 0)
+            log->warn("Network (anchor-slip handovers): DEAD WIRING — {} directive(s) "
+                      "staged and NOT ONE reached a family (staged {} / inert {} / no "
+                      "successor {}).  The ban never met the election; invariant #4.",
+                      C.n_anc_slip_staged, C.n_anc_slip_staged, C.n_anc_slip_inert,
+                      C.n_anc_slip_no_successor);
+    }
+
     // ---- §Z BAND-SCOPED RESPONSES (docs/SPEC_event_harness.md) --------------
     // Invariant #4: these counters ARE the ON-path telemetry.  Either knob armed
     // with its headline count at 0 on a run whose T4 tier fires (or whose
