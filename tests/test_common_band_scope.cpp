@@ -628,6 +628,66 @@ TEST(CommonBandScopeRule, LliEpochVerdictOnEveryBandIsTodaysResponse) {
     EXPECT_EQ(v.implicated, kTriple);
 }
 
+// §14.12.5 — the ANCHOR CLAUSE applies to F3 too.  Leaving it off re-entered
+// iteration 2's defect through the LLI door: on the storm arm, split-referenced
+// satellites 3.5 → 7.6 of 52.8 per epoch (6.6 % → 14.4 %) and single-family
+// anchor handovers 57 → 103, with 49 of the new ones on an arc carrying an F3
+// verdict that epoch — while the normal path's own clause held its `keep` rows
+// at ZERO single-family handovers.  The §14.10 S3 leg could not see it because
+// S21000SIM anchors nothing.
+
+/// (a) F3 on an arc that anchors a family of the satellite: every band freed, so
+/// all of the satellite's families move together to one successor.
+TEST(CommonBandScopeRule, LliEpochVerdictOnAnAnchorArcRefusesToNarrow) {
+    CommonBandEvidence e;
+    e.lli_signals.insert("L5Q");
+    const auto v = networkCommonBandLliVerdict(kTriple, e,
+                                               /*station_anchors_satellite=*/true);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::AnchorColocate);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.anchor_colocate, 1);
+    EXPECT_EQ(v.implicated, kTriple);
+    EXPECT_TRUE(v.lli_epoch);                       // the row must name the rule
+    // The evidence that WOULD have narrowed is still on the row: it is the datum
+    // topology that refuses to act on it, not the evidence.
+    EXPECT_EQ(v.basis, "lli=L5Q;mw=withheld");
+
+    // And no drain is gated, so the LLI free and every IF-TD pair behave as today.
+    CommonBandEpoch ep;
+    ep.armed = true;
+    if (v.narrowed) ep.narrowed_at[{ 7, "G04" }] = v;
+    for (const auto& b : kTriple)
+        EXPECT_TRUE(commonBandMayFree(&ep, 7, "G04", b)) << b;
+}
+
+/// (b) the same evidence on a NON-anchor arc is unchanged — `keep`, implicated =
+/// exactly the flagged bands.  The clause must cost nothing off an anchor.
+TEST(CommonBandScopeRule, LliEpochVerdictOffAnAnchorArcIsUnchanged) {
+    CommonBandEvidence e;
+    e.lli_signals.insert("L5Q");
+    const auto v = networkCommonBandLliVerdict(kTriple, e,
+                                               /*station_anchors_satellite=*/false);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::LliOnly);
+    EXPECT_TRUE(v.narrowed);
+    EXPECT_EQ(v.anchor_colocate, 0);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L5Q" }));
+    EXPECT_TRUE(v.lli_epoch);
+}
+
+/// The clause fires only on a verdict that WOULD have narrowed.  An LLI on a band
+/// that is not tracked narrows nothing, so an anchor arc must not be charged an
+/// anchor co-locate it never earned — the counter has to size the real population.
+TEST(CommonBandScopeRule, LliEpochAnchorClauseDoesNotFireOnANullNarrowing) {
+    CommonBandEvidence e;
+    e.lli_signals.insert("L7Q");                    // not in kTriple
+    const auto v = networkCommonBandLliVerdict(kTriple, e,
+                                               /*station_anchors_satellite=*/true);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::LliOnly);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.anchor_colocate, 0);
+    EXPECT_EQ(v.implicated, kTriple);
+}
+
 // ------------------------------------------- §14.5 split-referenced satellites
 
 /// Two satellites, one whose families are anchored at two different stations.

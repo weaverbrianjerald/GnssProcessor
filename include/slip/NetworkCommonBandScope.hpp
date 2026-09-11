@@ -227,6 +227,12 @@ struct CommonBandVerdict {
     /// never acted on: the pair still exonerates.  It is the honest measure of
     /// how much of the narrowing rests on a threshold too loose to mean much.
     int weak_silence{ 0 };
+    /// §14.12: this verdict came from the LLI-EPOCH rule (F3), not the §14.2 one.
+    /// Carried so the event row can name the rule even when the ANCHOR CLAUSE
+    /// rewrites the outcome to @ref CommonBandOutcome::AnchorColocate — otherwise
+    /// the two paths' co-locate rows are indistinguishable in the trace, which is
+    /// precisely the attribution the storm arm needed.
+    bool lli_epoch{ false };
     /// 1 when the ANCHOR CLAUSE (§14.5) converted a would-be narrowing into
     /// today's all-band response because this station anchors a family of this
     /// satellite.  @ref exonerated is left populated — the evidence was sound;
@@ -283,14 +289,28 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
  * @param live_bands    The arc's tracked phase bands.
  * @param ev            This epoch's evidence; only @ref
  *                      CommonBandEvidence::lli_signals is read.
- * @return A @ref CommonBandOutcome::LliOnly verdict.  @c narrowed is true only
- *         when the flagged set is a strict subset of @p live_bands — otherwise
- *         the scope would be today's response and there is nothing to gate.
- *         @c implicated is @p live_bands whenever no flagged band is live, so a
- *         caller that registers it anyway cannot restrict a drain by accident.
+ * @param station_anchors_satellite  True when the station currently anchors ANY
+ *        phase-bias family of this satellite.  The §14.5 ANCHOR CLAUSE applies
+ *        here exactly as it does on the normal path, and for the same reason —
+ *        §14.12.5: narrowing on an anchor arc frees only the flagged band's
+ *        family, so the election hands THAT family over alone and the
+ *        satellite's per-frequency references end up at different stations.
+ *        Omitting it was measured on the storm arm: split-referenced satellites
+ *        3.5 → 7.6 of 52.8 per epoch (6.6 % → 14.4 %), single-family anchor
+ *        handovers 57 → 103 with 49 of the new ones on an arc carrying an F3
+ *        verdict that epoch — iteration 2's defect, re-entered through F3, while
+ *        the normal path's own clause held it at 0.
+ * @return A @ref CommonBandOutcome::LliOnly verdict, or
+ *         @ref CommonBandOutcome::AnchorColocate when the clause refuses it.
+ *         @c narrowed is true only when the flagged set is a strict subset of
+ *         @p live_bands — otherwise the scope would be today's response and there
+ *         is nothing to gate.  @c implicated is @p live_bands whenever no flagged
+ *         band is live, so a caller that registers it anyway cannot restrict a
+ *         drain by accident.
  */
 CommonBandVerdict networkCommonBandLliVerdict(const std::set<std::string>& live_bands,
-                                             const CommonBandEvidence& ev);
+                                             const CommonBandEvidence& ev,
+                                             bool station_anchors_satellite = false);
 
 /// Per-epoch reading of how fragmented the phase-bias datum is across stations.
 struct SplitRefCount {
@@ -377,6 +397,11 @@ struct CommonBandEpoch {
     /// Of those, the ones that actually restrict a drain (the flagged set is a
     /// strict subset of the live bands).
     long long lli_narrowed{ 0 };
+    /// §14.12.5: of the LLI-epoch verdicts, the ones the ANCHOR CLAUSE refused
+    /// (also counted in @ref anchor_colocate, which stays the honest total).  Kept
+    /// separate because the storm arm needed exactly this split to attribute the
+    /// split-reference regression to the F3 path rather than the normal one.
+    long long lli_anchor_colocate{ 0 };
     long long weak_silence{ 0 };      ///< Exonerating silences whose threshold exceeded 6 WL cycles.
     long long anchor_colocate{ 0 };   ///< Would-be narrowings refused because the station anchors the satellite (§14.5).
     long long would_narrow{ 0 };      ///< Knob OFF: verdicts that WOULD have narrowed.
@@ -393,7 +418,7 @@ struct CommonBandEpoch {
         verdicts = narrowed_n = all_no_exoneration = all_inconsistent = 0;
         bands_kept = iftd_veto = immature_pairs = weak_silence = lli_shadow = 0;
         anchor_colocate = would_narrow = 0;
-        lli_verdicts = lli_narrowed = 0;
+        lli_verdicts = lli_narrowed = lli_anchor_colocate = 0;
         iftd_veto_by_pair.clear();
     }
 
