@@ -1405,7 +1405,7 @@ not the cure.
 
 ## 12. Study 4 — the slip DOSE: does a CONVERGED network survive the campaign's slip rate?
 
-*Pre-registered 2026-09-11 (Fable manager session) BEFORE any dose leg was graded.
+*Pre-registered 2026-09-10 evening, local (the snapshot files carry 2026-09-11 UTC stamps), Fable manager session, BEFORE any dose leg was graded.
 The legs were generated first, the gates written second, the numbers read third.*
 
 ### 12.0 Why this study replaced "lane-evidence band choice"
@@ -1489,7 +1489,7 @@ between = ambiguous → the 720-epoch leg before any verdict.  A `walk` on
 iteration; a `flat` on `doseall` retires the slip-response family and opens the
 convergence card.
 
-### 12.3 First pass (2026-09-11, hand-graded with the trace-complete channels; the dose grader re-grades on landing)
+### 12.3 First pass (2026-09-10 evening, hand-graded with the trace-complete channels; the dose grader re-grades on landing)
 
 Gate: the dose exe's `evleg_null240` reproduces `evleg_gate4_null` over the 62
 shared epochs (0 differing lines of 25 989), and the gate itself reproduced the
@@ -1554,7 +1554,7 @@ of the total.  Pending: `doseall_not4` (same 655 events, T4 starved — is the
 tier the amplifier or a symptom?), `dose24` / `dose12` / `doseall_half` (is the
 onset a density THRESHOLD or linear in the dose?).
 
-### 12.4 The twins and the density ladder (2026-09-11, `scripts/event_dose_grade.py` + the quick frame read)
+### 12.4 The twins and the density ladder (2026-09-10 evening, `scripts/event_dose_grade.py` + the quick frame read)
 
 All legs share the `doseall` schedule (`--from-leg`): a rung is a SUBSET of the same
 655 events, so the events themselves are identical across rungs.  Every leg is
@@ -1649,7 +1649,7 @@ a satellite outside S21000SIM's solution and drew no response at all), and the
 slipped seed's last snapshot (ep0665) leaves only 55 epochs of the 6 h
 fixture — legs on `evseed_slipped6h` start from ep0604.
 
-### 12.5 The band-scope twin FAILS, and the datum-station timeline names the engine (2026-09-11 ~01:30)
+### 12.5 The band-scope twin FAILS, and the datum-station timeline names the engine (2026-09-10, evening local)
 
 **`doseall_bscope`** (same 655 events; `refloat_band_scope: implicated` +
 `raim_erase_band_scope: min_keep_one`, graded against its own matched null,
@@ -1704,7 +1704,7 @@ sim-validated for wander in the readmit card, currently a golden exception), or
 a datum HANDOVER away from a station for the epochs of its own slip response
 (the phase-anchor sticky handover's sibling for the clock pivot).
 
-### 12.6 The gauge is the engine — both gauges (2026-09-11 ~02:15)
+### 12.6 The gauge is the engine — both gauges (2026-09-10, evening local)
 
 | leg | station(s) dosed | phase-bias families the station anchors at +10 | clock datum? | slips | T4 erases (onset bin) | clock-anchor decouples | wire diff at +220 | consumer diff, last bin |
 |---|---|---|---|---|---|---|---|---|
@@ -1758,7 +1758,7 @@ within 3 epochs, T4 rows, a wire C/P step; (iii) the CURE passes if
 the forced continuous handover leaves the burst or if the handover itself
 steps the wire (Study 1's continuous handover cost +0.40 m for one epoch).
 
-### 12.7 The cure, validated on the harness before it exists in production (2026-09-11 ~02:45)
+### 12.7 The cure, validated on the harness before it exists in production (2026-09-10, evening local)
 
 ⚠ Correction to §12.6's pre-registration: `nonanc_slip` was NOT a non-anchor
 control — S29000SIM anchors G27 too (its anchor list was truncated when the leg
@@ -1802,4 +1802,201 @@ are handled, the 13 clock-datum-station slips are not, so the pre-registered
 expectation is a LATER and WEAKER cascade, not none; then `doseall` on the
 sum-to-zero seed (`evseed_quiet6h_s2z`, prepared) with the knob ON — the
 full-cure test, PASS = ZWD rms diff < 0.15 m and T4 ≤ 50 over the leg.
+
+### 12.8 Two more twins (2026-09-10, evening local)
+
+**`dose_s30_not4`** (the clock-datum station's 13 slips with T4 starved, vs
+the post-fix `null240_pf`): S30's ZWD still runs away — −0.55 m at +120..+139,
++1.70 m at +160..+179, +2.53 m at +180..+199, +1.18 m at +220..+239 (with T4:
+10.2 m) — and its clock contrast −1.0 → −3.4 → +2.8 → +3.7 m; but the
+BROADCAST is much weaker: wire 0.07 → 0.26 m (with T4: 1.36 → 1.76 m),
+consumer +0.33 m (with T4 +0.22).  The two halves of the datum-station engine
+are therefore separable: the LEAK (a slip response at the station whose clock
+is the datum goes into its ZWD/clock — no free clock to absorb it) does not
+need the outlier tier; the outlier tier's erases of that station's other arcs
+against the displaced ZWD amplify the leak 4–10× and are what broadcasts it
+into fifteen satellite clocks at once.  The cure for the leak is a datum with a
+free clock at every station (`clock_datum_sum_to_zero`; seed
+`evseed_quiet6h_s2z` converging); the anchor-slip handover card does not touch
+this path.
+
+**`anc_ctl_s29`** (S29000SIM / G26 L1C +40, G26 not anchored at S29) is an
+INVALID control: the network does not use G26 at S29 (no detector row, no
+residual row, every channel exactly 0.000 — the slip landed on an observation
+outside the solution, as G16 did at S21 in `dose1_s21`).  The generator's
+satellite pick must come from the station's SOLVED set (the null leg's
+`network_station_residuals.csv`), not from truth visibility; a second control
+on a solved, non-anchored satellite follows.
+
+**`anc_ctl2_s29`** (S29000SIM / G31 L1C +40; G31 is SOLVED at S29 and not anchored
+there) — the valid control.  MW(1,5) and IF-TD(1,2) both fire, so all three
+bands are freed; the station's other arcs move 0.11 → 0.26 cycle (as-traced),
+its clock < 3 mm, its ZWD < 1 mm, the emitted clock of G31 < 1 mm, the phase
+bias < 5 mm, consumer −0.01 → −0.10 m, **no T4 row, clock-anchor decouples 1
+(= null)**.  With `anc_slip` (G10, anchored at S29: 157 erases, 10.7 m clock,
+−8.9 m wire) and `anc_slip_ho` (0 erases) this closes the identification: at
+the same station, in the same epoch, with the same slip size and the same
+detector responses, only the ANCHOR arc's slip breaks the network, and only
+the missing handover makes it do so.
+
+A second observation from this control, filed for the AR track, not the
+cascade: the freed arc itself re-levels **4.0 / 5.2 / 5.4 cycles off** on
+L1C / L2W / L5Q (ratios 1 : 1.29 : 1.34 = the pure-iono direction of §10.3),
+i.e. a 0.8–1.1 m error on that LOS's slant iono (`ion_d` −0.81 → −1.08 m),
+not decaying over the leg — ten times Study 1's all-band floor at S21000SIM
+(0.45 cycle).  An all-band re-level draws the level from code and inherits the
+station's own receiver-DCB / iono split, which is evidently ~1 m at S29 and
+~0.1 m at S21; nothing downstream sees it (no residual, no erase, no wire
+step) because the free per-LOS iono absorbs it exactly.  It costs the integers,
+not the products.
+
+### 12.9 Pre-registration — the datum half of the cure (written before any leg on the new seed was run)
+
+Seed `runs/evseed_quiet6h_s2z` = the sim golden + `network.clock_datum_sum_to_zero: true`
+(each constellation's clock common-mode fixed by Σδtˢ = 0 over its satellite
+clocks — no station's receiver clock is pinned; the loader notes sticky_pivot
+is inert under it, there being no pivot), converged 6 h on the quiet fixture,
+snapshots every 60 epochs, `gnss_processor_dose.exe`.  The knob is
+fingerprinted (`clkdatum:s2z=`), which is why it needs its own seed.  Legs
+resume ep0665 (same tow as the pre-fix seed's, so `--from-leg` schedules carry
+over unchanged); every leg is post-fix and graded against `null240_s2z`.
+
+| leg | schedule | gate (PASS) | what a FAIL means |
+|---|---|---|---|
+| `dose_s30_s2z` | `dose_s30`'s 13 slips on S30000SIM | S30 ZWD diff ≤ 2 cm in every bin, T4 ≤ 2 over the leg, clock-anchor decouples ≤ null + 2 | the datum-station leak is not the pinned clock (§12.5's reading is wrong) |
+| `doseall_s2z` | `doseall`'s 655 slips, anchor-slip handover OFF | report only; expected: the anchor cascade remains (35 anchor-arc slips), with the datum-station contribution gone | — |
+| `doseall_s2z_knob` | the same 655 slips, `anchor_slip_handover: true` (worker's exe) | **the full cure**: ZWD rms diff < 0.15 m and median < 2 cm at +200..+239, T4 ≤ 50 over the leg, wire diff < 0.05 m, consumer diff within ±0.1 m, clock-anchor decouples ≤ null + 5 | a third gauge or a non-gauge path exists; go back to the single-event legs |
+
+The comparison that matters is `doseall_s2z_knob` against `doseall` (§12.4):
+3 099 → ≤ 50 erases, 1.83 m → < 0.15 m ZWD rms, 5.2 m → < 0.05 m wire.
+
+### 12.10 The datum half is FALSIFIED — there is one gauge, and it is the phase-bias anchor (2026-09-10, evening local)
+
+`dose_s30_s2z` (the datum station's 13 slips on the sum-to-zero seed, vs
+`null240_s2z`): the cascade is reproduced to the epoch — T4 0 / 0 / 0 / 0 /
+56 / 279 / 15 per bin (pinned datum: 0 / 0 / 0 / 0 / 45 / 294 / 12), S30's
+ZWD **10.05 m** at +160..+179 (pinned: 10.2 m), its clock contrast −21 m, its
+slant iono +5.5 m, wire 1.27 → 1.63 m (pinned 1.36 → 1.76), 351 erases
+(pinned 352).  §12.5's reading ("no free clock to absorb the response") is
+wrong, and §12.9's PASS gate for this leg was not met by a mile.  What the
+per-slip census on BOTH seeds shows instead:
+
+| S30000SIM slip | anchored at S30? | response | T4 erases in +0..+5 (pinned / s2z) | clock-anchor decouples in +0..+2 |
+|---|---|---|---|---|
+| +23 E10, +44 G24, +54 G29, +94 E24, +97 E18, +105 E09, +129 E18 | no (anchors elsewhere) | detector refloats | **0 / 0** each | 0 |
+| +122 G25 L5Q +56 | no | **missed by every detector, caught post-fit by T4** | 9 / 11 | 3 / 4 |
+| **+151 G20 L5Q −57** | **YES** | MW refloat | **31 / 30** (the 10-m ZWD runaway starts here) | 2 / 2 |
+| +161 E34, +166 E09 | no | detector refloats | 5 / 3, 4 / 6 (inside the runaway) | 0–1 |
+| **+186 G12 L1C +45** | **YES** | LLI + MW + IF-TD | **254 / 224** (the 15-satellite broadcast) | 16 / 14 |
+| +190 G24 L2W | no | detector refloats | 102 / 102 (the storm already running) | 1 / 3 |
+
+S30000SIM behaves exactly like S29000SIM and S31000SIM: it is an anchor
+station (nine families: G05, G12, G20), and its slips on NON-anchored
+satellites cost nothing while its two slips on anchored satellites started
+and broadcast the cascade.  Being the clock datum adds nothing — the same
+schedule on a datum with every receiver clock free reproduces every number.
+The ONE remaining secondary path is the +122 kind: a slip the detectors miss
+reaches the solve for an epoch before the outlier tier removes it (0.8 m into
+that epoch's ZWD and products; a small burst) — a detector-coverage item, not
+a gauge item.
+
+**Consequence.**  The full-cure test does not need the sum-to-zero seed: it is
+`doseall` on the ORIGINAL seed with `anchor_slip_handover` ON (the worker's
+G3, `doseall_knob` vs `null240_knob`), graded against §12.9's last-row gates
+(ZWD rms diff < 0.15 m and median < 2 cm at +200..+239, T4 ≤ 50 over the leg,
+wire diff < 0.05 m, consumer diff within ±0.1 m, clock-anchor decouples ≤ null
++ 5), plus `dose_s30` with the knob ON as the single-station gate (expected:
+the +151 and +186 events cost what `anc_slip_ho` cost, the +122 miss remains).
+`clock_datum_sum_to_zero` stays where the ledger left it (a golden exception);
+`runs/evseed_quiet6h_s2z` is kept as a fixture (its null differs from the
+pinned-datum null: 135 vs 148 MW rows, 5 vs 2 decouples over 240 epochs).
+
+### 12.11 The card on the datum station's schedule — PASS (2026-09-10, 23:15 local; worker's exe 204736F4…, matched null `null240_knob`)
+
+`dose_s30_knob` = `dose_s30`'s 13 slips with `network.cycle_slip.anchor_slip_handover: true`:
+
+| channel | without the card (`dose_s30`, §12.5) | **with the card** |
+|---|---|---|
+| S30 ZWD diff, worst bin | **10.2 m** (+160..+179) | **0.055 m** (+120..+139), 0.014 m at the end |
+| S30 rx-clock contrast diff, worst bin | −21 m (s2z) / −3.4 m | −0.13 m |
+| S30 slant-iono diff | +5.5 m | ≤ 0.005 m |
+| T4 erases over the leg | 352 | **11** (10 of them in +120..+159 = the +122 slip every detector missed; null 1) |
+| clock-anchor decouples | 27–30 | 5 (null 3) |
+| wire diff (emitted clocks, de-meaned rms) | 1.36 → 1.76 m | ≤ 0.002 m |
+| consumer 3D diff, last bin | +0.22 m | −0.008 m |
+| anchor-slip handovers (event / null) | — | 19 / 16, 18 continuous + 1 cold fallback (run-end clause) |
+
+The null itself carries 16 handovers: the quiet bed's false-alarm MW refloats
+free anchor arcs too, and the card handles those the same way.  What remains
+in the event leg is exactly the secondary path §12.10 named — a slip missed
+by every detector reaches the solve for one epoch — worth its own detector
+item, not a gauge item.  Pre-registered gate (§12.10 last paragraph) met.
+
+### 12.12 The card's gates (worker report, branch `worktree-anchorslip` @ ec26de1; 2026-09-10 ~23:40 local)
+
+Built: `network.cycle_slip.anchor_slip_handover` (default OFF, not fingerprinted;
+disarmed unless the prioritized anchor election runs), the staging seam
+`networkStageAnchorSlipHandovers` in `NetworkPhaseDatum.cpp` (reads
+`relevel.free_ambs` and `carry_slipped_ambs`, one directive per (sat, signal),
+into a new `NetworkInjectState::anchor_now_slip`; `anchorFor` checks the
+injector's own directives first), the call sited immediately before
+`networkElectPhaseAnchors`, counters `n_anc_slip_{staged,handed,continuous,
+cold,no_successor,inert,epochs}`, `PHASE_ANCHOR/anchor_slip_handover` rows
+(station = retired incumbent, detail `to=<successor>;branch=…`), the armed-only
+run-end clause and manifest key, 12 tests in `tests/test_anchor_slip_handover.cpp`;
+suite 1816 pass / 0 fail / 17 skip.
+
+| gate | result |
+|---|---|
+| G1 OFF byte-identity (`null_anchorslip_off` vs `null_fixchk`) | **PASS** — identical sha256 |
+| G2 `anc_slip_knob` vs `anc_slip` / `anc_slip_ho` | **PASS** — T4 0 (was 157), decouples 1 (was 13), other arcs 0.146 / 0.058 cyc at +1 / +8 (was 13.1 / 11.7), clock −0.015 / −0.031 m (was 10.7 / 8.8), emitted-clock peak 0.0027 m (was −9.7).  Two families handed over, not three: the IF-TD response freed L1C;L2W only, so G10 L5Q's anchor arc was never freed and the card correctly staged nothing for it — the pre-registration over-specified the count. |
+| G3 `doseall_knob` vs `null240_knob` (655 slips, all fired) | T4 **3 099 → 200** (onset +80 instead of +11; 0 / 0 / 104 / 42 / 21 / 32 / 1 per bin), clock-anchor decouples **258 → 44**, wire **5.96 → 0.04 m**, consumer **+1.46 → −0.13 m**, slant-iono rms 2.43 → 0.09 m, untouched-arc level drift 0.83 → −0.05 cyc; anchor-slip handovers 120 (107 continuous / 13 cold fallbacks); detector populations unchanged (MW 560, IF-TD 350, LLI 312, refsat 78).  ZWD rms **1.76 → 0.94 m** — but see below. |
+
+**The ZWD rms is ONE station.**  At +200..+239 the median |ZWD diff| over the 60
+stations is **5.3 mm**, 59 stations are within 42 mm, and S36000SIM alone
+reads **+7.49 m** with **124 of the 200** erases; 7.49 / √60 = 0.97 m is the
+whole rms.  S36's cascade starts at +89 (seven of its arcs erased in one
+epoch) from a slip that drew NO response row at all — one of **15 slips in
+655 (2.3 %) that no detector caught within two epochs** (post-fit T4 caught 0
+of them on this leg).  A slip that stays in the solve is the §12.10 secondary
+path, and one is enough to wreck a station, though on this leg it did not
+propagate (the other 76 erases are scattered; the wire and the consumer are
+flat).  The 13 cold fallbacks are NOT where the damage is (S60 3, S30 1, S31 1
+— all within 21 mm).  So the anchor-slip handover removes the gauge engine;
+what is left is detector coverage, a separate card.
+
+**Knob-on nulls differ from knob-off nulls** by construction: the warm-resume
+refloat burst frees anchor arcs too, and the card hands them over (16 families
+at +1 on this seed), so every knob-on leg is graded against a knob-on null.
+
+**Collateral (worker):** `scripts/vs2026_build.ps1` hard-codes the main project
+path — from a worktree it reconfigured and rebuilt MAIN's Release tree (same
+source as HEAD, no harm) and left the worktree unbuilt; the worker used a
+repointed copy.  Worth a `-Project` switch.
+
+**The 15 "missed" slips, resolved (from the traces, not the sky).**  Fourteen
+fell on (station, satellite) pairs that were NOT in the solved set at the slip
+epoch (no residual row within ±1 epoch, no `slip_raw` row) — G16 at eight
+stations, E27 at three, G26, E30: the satellites are solved elsewhere and at
+other times, but at that station and epoch the observation was outside the
+solution, so the injection was inert, not missed.  (Generator item: pick
+(station, sat, epoch) from the solved set — the null leg's residual and anchor
+traces — not from truth visibility; `dose1_s21`'s G16 was the same.)  The ONE
+real miss is S36000SIM / G04 L5Q, −99 cycles at 20.5°, no LLI — and **S36000SIM
+was G04's anchor for all three bands at that epoch.**  Its `slip_raw` row
+carries the L1C;L2W pair only, so no MW pair covered L5 for that arc at that
+moment; IF-TD's pair is L1C;L2W (blind to L5); nothing freed the arc, so the
+card had nothing to hand over; the pinned anchor row kept −25 m of misfit in
+the solve, the station frame absorbed it, and at +89 the outlier tier erased
+seven of S36's INNOCENT arcs (pinned anchor arcs are outside the leveling RAIM
+pool, so the tier can never blame the anchor itself) — the 7.5 m runaway.
+The datum station's +122 miss (§12.10) had the same shape: G25 L5Q at 20°, no
+LLI, caught only post-fit.  Two follow-ups, both precise: (a) DETECTOR
+COVERAGE — the L5 MW pair must exist for every triple-frequency arc the moment
+it is solved (why was only L1C;L2W in the feed for a 20° arc?); a harness card
+that injects L5Q slips at 15–25° on solved arcs and counts detections by tier;
+(b) ATTRIBUTION — an undetected slip on a pinned anchor arc is structurally
+invisible to the outlier tier and gets charged to the station's other arcs;
+when a station-wide burst lands on a station that anchors families, test (or
+hand over) the anchor arcs before erasing anything else.
 
