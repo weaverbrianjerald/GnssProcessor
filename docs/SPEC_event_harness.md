@@ -2442,3 +2442,47 @@ slightly different wires, and it ends better with the scope (−0.14 vs
 the dose leg's honest metric is the producer-side level channels, which
 improved.  Iteration-1 storm arm `runs/golden_sim_campaign_zwdblk_cbscope`
 launched for the T4 guard and the settled consumer under L1-only narrowing.
+
+### 14.5 Iteration-1 storm arm — producer better, consumer worse, and no producer-side fingerprint (2026-09-11 ~11:40; `runs/golden_sim_campaign_zwdblk_cbscope`, exe 3B40685D…, 1323 s, 720/720)
+
+The L1-only narrowing of iteration 1 (1 160 `keep` verdicts, every one
+`implicated=L1C`; 3 048 `all`), against §13.6's arm (both slip cards, no scope):
+
+| quantity | §13.6 | + scope (iter. 1) | bar |
+|---|---|---|---|
+| settled ZWD truth rms | 0.0071 m | **0.0069 m** | ≤ 0.01 PASS |
+| consumer settled p50 / rms | 0.174 / 0.365 m | **0.230 / 0.474 m** | p50 ≤ 0.15 **FAIL** (worse) |
+| consumer hourly rms | 0.62 / 0.29 / 0.23 / 0.18 / 0.47 / 0.39 | 0.64 / 0.30 / 0.26 / 0.23 / 0.45 / **0.65** | hours 3, 4, 6 worse; 1, 2, 5 same |
+| T4 events / erased ratio | 78 / 1.51 | **83** / 1.65 | ≤ 78 **FAIL** by 5 — all 5 in hour 6 (41 → 46) |
+| WL / EWL / L1C ref-free | 98.9 / 100 / 87.1 % | 99.0 / 100 / 87.6 % | WL PASS; L1C ≥ 90 FAIL (87.6) |
+| anchor-slip handovers (cold) | 305 (68) | **267 (57)** | cold < 68 PASS |
+| re-anchors / continuous S-transforms / cold re-realizations | 476 / 356 / 99 | 442 / 333 / 88 | — |
+| detector rows, clock decouples, readmissions | 2391 / 1563 / 1195 / 111 | identical | — |
+
+**Every difference between the arms is fewer gauge moves; the detectors and
+the clock tier are identical.**  The falsifier's mechanism (a band kept on an
+anchor arc that had slipped, leaving a stale pinned row) is refuted by a
+direct census: of the 1 160 keeps, 81 kept a band whose family was anchored
+at that station, and **none of the 81 was followed by an outlier erase within
+10 epochs or a tropospheric excursion** (p50 3 mm, p95 23 mm over 20 epochs,
+same as all keeps); the `all` verdicts on anchor arcs are the ones followed by
+excursions (p50 0.17 m) — those are the handovers.  The 5 extra erases sit in
+hour 6 at stations (S10, S15, S28, S33, S36, S49) with no keep on their anchor
+arcs.  So a strictly smaller, correct repair on the producer leaves the
+producer's truth channels equal or better and the single consumer station
+worse — with nothing at any producer station to point at.
+
+**Reading, and the test it requires.**  The consumer is one float PPP-RTK
+station; its settled median is a single realization whose value depends on
+the history of every wire step it absorbed.  Two arms whose wires differ by
+38 handovers can differ by tens of centimetres of consumer median without a
+quality difference — and §13.6's consumer gate (0.278 → 0.174) was read as
+quality.  **The calibration owed before any consumer gate is trusted on this
+bed: the same config run under a numerically irrelevant perturbation
+(`network.parallel_reduce` on, summation order only; config
+`_golden_sim_campaign_zwdblk_mwevid_preduce.json`) — the consumer p50 / rms
+difference of that pair is the bed's consumer noise floor.**  Until it is
+measured, the card's consumer bar is suspended and the producer-side bars
+(ZWD, integers, T4, handovers) carry the verdict; the iteration-2 storm arm
+(silence from the detector's own decision) is the one that decides the card,
+because iteration 1 could only ever narrow to L1.
