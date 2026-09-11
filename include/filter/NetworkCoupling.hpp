@@ -95,6 +95,41 @@ struct LocalBlockCol {
     /// from the ambiguity population.  Default false: every pre-existing 6-element
     /// brace-init keeps its exact meaning.
     bool              is_zwd{false};
+    /// I-in-block (@c network.carry_iono_in_block): this entry is one of the station's
+    /// carried per-LOS SLANT-IONO columns, not an ambiguity.  Exactly like @c is_zwd it
+    /// is TELEMETRY ONLY — the builder's algebra never reads it — so that
+    /// @c pl_blk_iono_cols / @c pl_blk_iono_missing_cross can be split out of the
+    /// ambiguity population.  Default false: every pre-existing brace-init (6- or
+    /// 7-element) keeps its exact meaning.
+    bool              is_iono{false};
+    /// AGE-AWARE young-arc inflate (@c network.phase_leveling_young_inflate_var_m2,
+    /// SPEC_amb_iono_split_overcount §6.17–§6.18): the variance @f$V_0e^{-age/	au}@f$
+    /// this column's freshly RE-LEVELLED level is worth LESS than its phase-stiff
+    /// harvested variance says.  Applied by @ref CouplingRowBuilder::buildLocalBlock as
+    /// a CONGRUENCE scaling of this column's row/column of Σ (f = √((Σ_jj+var_add)/Σ_jj)
+    /// on the row and the column) rather than an addition to the diagonal, so Σ stays PD
+    /// and every correlation coefficient is EXACTLY unchanged — only this column's own
+    /// marginal loosens.  0 (default) = no scaling and not one write to Σ, so every
+    /// pre-existing brace-init keeps its exact meaning and the OFF path is
+    /// byte-identical.  Never set on a ZWD or iono column: the card is about an ARC's
+    /// re-level, and neither of those is an arc.
+    double            var_add{0.0};
+    /// RX-CLK-in-block (@c network.carry_rx_clock_in_block): this entry is one of the
+    /// station's carried RECEIVER-CLOCK-family columns (the primary clock, or an ISB
+    /// under @c network.carry_rx_clock_isb).  Exactly like @c is_zwd / @c is_iono it is
+    /// TELEMETRY ONLY — the builder's algebra never reads it — so that
+    /// @c pl_blk_rxclk_cols / @c pl_blk_rxclk_missing_cross can be split out of the
+    /// ambiguity population.  ⚠ The clock's carried MEAN is the drift-extrapolated
+    /// prediction, which the injector supplies by pointing @c lc at a predicted COPY of
+    /// the carry entry; the builder therefore needs no special case for it.  Default
+    /// false: every pre-existing brace-init keeps its exact meaning.
+    bool              is_rx_clk{false};
+    /// RX-CLK-in-block: …and this clock-family entry is one of the station's per-system
+    /// ISB columns rather than its primary receiver clock.  TELEMETRY ONLY (only
+    /// @c pl_blk_rxclk_isb_cols reads it), and meaningful only with @c is_rx_clk set.
+    /// The algebraic difference between the two lives at the INJECTOR — an ISB is
+    /// carried as a pure random walk, the clock about a carried drift — not here.
+    bool              is_rx_isb{false};
 };
 
 /// Card 1d: one buffered PRESENT-column term of a coupling row under the

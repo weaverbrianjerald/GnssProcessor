@@ -11,6 +11,7 @@
  */
 
 #include "filter/NetworkCoupling.hpp"
+#include "filter/NetworkYoungInflate.hpp"
 
 #include "filter/NetworkEstimator.hpp"   // est.clockColumn / phaseBiasColumn / codeBiasColumn / vtecCoeffColumn
 #include "config/GnssConfigTypes.hpp"    // GlobalVtecShConfig::q_per_degree (couplingQ)
@@ -369,6 +370,15 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         // screen, i.e. once it is really a row of this block — the caller cannot know
         // that, and a column counted at push time would report a refused ZWD as carried.
         if (c.is_zwd) ++R.pl_blk_zwd_cols;
+        // I-in-block: same rule, same reason — a per-LOS iono column counts once it is
+        // really a row of this block, never at push time.
+        if (c.is_iono) ++R.pl_blk_iono_cols;
+        // RX-CLK-in-block: same rule, same reason.  The ISB split is a sub-count, not a
+        // partition — an ISB column increments both.
+        if (c.is_rx_clk) {
+            ++R.pl_blk_rxclk_cols;
+            if (c.is_rx_isb) ++R.pl_blk_rxclk_isb_cols;
+        }
         ing.push_back(std::move(g));
     }
     const Eigen::Index n = static_cast<Eigen::Index>(ing.size());
@@ -417,12 +427,56 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 // that is exactly the shape a "carried ZWD that is not really coupled"
                 // has, and it is invisible inside pl_blk_pair_missing.
                 if (ci.is_zwd || cj.is_zwd) ++R.pl_blk_zwd_missing_cross;
+                // I-in-block: the iono columns' own share, split out for the same reason.
+                // An iono entry stashed WITHOUT a harvest block (its per-column harvest
+                // threw, or the station built no block that epoch) makes EVERY pair with
+                // it miss — the shape a "carried iono that is not actually coupled to
+                // anything" has, invisible inside the aggregate.  A pair that is BOTH
+                // (iono, zwd) counts in both splits by design: neither counter claims to
+                // partition pl_blk_pair_missing.
+                if (ci.is_iono || cj.is_iono) ++R.pl_blk_iono_missing_cross;
+                // RX-CLK-in-block: the clock family's own share, split out for the same
+                // reason.  A clock entry stashed WITHOUT a harvest block makes EVERY pair
+                // with it miss — the shape a "carried clock that is not actually coupled
+                // to anything" has, i.e. a silently DIAGONAL prior on the most
+                // station-common direction of all, invisible inside the aggregate.  A pair
+                // that is both (clock, zwd) or (clock, iono) counts in both splits by
+                // design: no counter here claims to partition pl_blk_pair_missing.
+                if (ci.is_rx_clk || cj.is_rx_clk) ++R.pl_blk_rxclk_missing_cross;
                 continue;
             }
             if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);
             blk.Sigma(i, j) = v;
             blk.Sigma(j, i) = v;
         }
+    }
+    // (2b) AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,
+    //      SPEC_amb_iono_split_overcount §6.17–§6.18): a column whose LAST RE-LEVEL is
+    //      recent holds a CODE-quality level at the PHASE-stiff variance the conditional
+    //      hands back (it is conditioned on the station's MATURE arcs), so the T4 tier
+    //      erases an arc that is merely UNREFINED and the erase–re-level treadmill runs.
+    //      The correction is a CONGRUENCE Σ ← DΣD with D = diag(f_j),
+    //      f_j = √((Σ_jj + var_add_j)/Σ_jj) ≥ 1 — applied HERE, after the diagonal and
+    //      the harvested cross terms are both in place and BEFORE the whitening, which
+    //      is the only point at which "this column's row and column" is a well-defined
+    //      object.  Three properties, and the reason it is a congruence and not a
+    //      diagonal addition: the target diagonal is inflated EXACTLY (f_j²Σ_jj =
+    //      Σ_jj + a_j); PD is preserved by Sylvester's law of inertia (D is diagonal,
+    //      strictly positive — the scalar screen above already guaranteed Σ_jj > 0); and
+    //      every correlation coefficient is UNCHANGED, because f_jf_kΣ_jk divided by
+    //      √(f_j²Σ_jj·f_k²Σ_kk) is ρ_jk.  A freshly re-levelled arc is not LESS coupled
+    //      to its station's other columns — it is worth less on its own.  OFF (every
+    //      var_add 0) writes nothing to Σ, so the block is byte-identical.
+    {
+        std::vector<double> yng_add(static_cast<std::size_t>(n), 0.0);
+        bool any_yng = false;
+        for (Eigen::Index i = 0; i < n; ++i) {
+            const double a = ing[static_cast<std::size_t>(i)].c->var_add;
+            if (a > 0.0) { yng_add[static_cast<std::size_t>(i)] = a; any_yng = true; }
+        }
+        if (any_yng)
+            R.pl_blk_yng_scaled += static_cast<long long>(
+                NetworkYoungInflate::congruence(blk.Sigma, yng_add));
     }
     // (3) Whiten: Σ = LLᵀ (ridge retry inside), rows L⁻¹·[I | M | y] at unit weight.
     //     A non-SPD factor after the retry buffers NOTHING — the caller emits the

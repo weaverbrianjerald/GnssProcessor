@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "EVENT-HARNESS Study 2 ON base: the sim golden with the SINGLE knob under test armed.",
+    "network.carry_rx_clock_in_block gives the station receiver clock — a LOCAL A_r column with",
+    "NO temporal prior on the network path — a random walk about a carried drift, INSIDE the F3",
+    "whitened local block.  Everything else is golden_sim_tri_w6 verbatim (extends chain).",
+    "It is FINGERPRINTED (armed-only conditional append, NetworkRunContext.cpp), so the ON arm",
+    "needs its OWN 6 h seed; runs/evseed_rxclk6h is that seed.  q/rate/jump/isb are left at the",
+    "loader defaults (q 0.09 m^2/epoch, rate_var0 1.0, rate_q 1e-10, jump_k 10, isb true)."
+  ],
+  "extends": "../golden/golden_sim_tri_w6.json",
+  "network": {
+    "carry_rx_clock_in_block": true
+  }
+}

@@ -24,7 +24,8 @@
  * instrumentation, and the closed-loop consumer metrics.
  */
 
-#include "filter/NetworkRunTypes.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
+#include "filter/NetworkRunTypes.hpp"
+#include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
 #include "filter/NetworkIonoDwRelease.hpp"   // NetworkIonoDwReleaseTallies (iono-deweight release hygiene)
@@ -116,6 +117,16 @@ namespace GnssProcessor {
         /// (no memory until it matures).  false = "diagonal" (per-column rows — measured
         /// harmful, SPEC_amb_iono §6.11 arm 5).
         bool pl_blk_young_free{};
+    /// AGE-AWARE young-arc variance inflation (network.phase_leveling_young_inflate_*,
+    /// SPEC_amb_iono_split_overcount §6.17–§6.18): a carried ambiguity column whose LAST
+    /// RE-LEVEL (@ref LocalCarry::relevel_s) is recent carries a CODE-quality level at a
+    /// PHASE-stiff harvested variance, so the T4 tier erases it and the erase–re-level
+    /// treadmill sustains a metre-class ZWD/clock plateau.  V0·exp(−age/τ) is added to
+    /// the column's prior variance — as a PD- and correlation-preserving congruence
+    /// scaling of its row/column of Σ inside the F3 block, as a plain var_eff += var_add
+    /// on the per-column row without it.  @c var_m2 == 0 = OFF = byte-identical; the
+    /// loader guarantees phase_leveling and !carry_invariant when it is not.
+    NetworkYoungInflate::Knobs yng{};
         bool pl_warmup_on_conv{};
         bool pl_refloat_on_conv{};
         double pl_conv_rms_thresh{};
@@ -148,6 +159,37 @@ namespace GnssProcessor {
         double iono_q{};       ///< Slant-iono carry RW process noise (m²/s).
         double iono_var_floor{};   ///< Inject-side variance floor (m²) — the wrong-carry healing bound.
         double iono_max_gap_s{};   ///< Carry eviction gap (s); deliberately longer than pl_max_gap_s.
+        /// network.carry_iono_in_block — I-in-block: the station's present per-LOS iono
+        /// columns join its F3 whitened local block (harvest appends them to `cols` between
+        /// the ambiguities and the ZWD so `PlHarvestBlock::C` is (n_amb+n_iono+[1])², each
+        /// entry stashes with the same `blk`/`blk_idx` as an ambiguity, and PASS B pushes
+        /// one more `LocalBlockCol` per LOS) instead of the FALSIFIED diagonal
+        /// network.carry_iono row.  A diagonal per-LOS row asserts the iono direction the
+        /// station's B carried band priors already assert — the B-fold over-count of
+        /// SPEC_amb_iono_split_overcount §7 item 17; inside the block the harvested cross
+        /// terms subtract it exactly.  Loader guarantees phase_leveling + pl_local_block +
+        /// carry_cpl_cond + !carry_invariant, and HARD-ERRORS on a carry_iono co-arm.
+        /// OFF = byte-identical.
+        bool iono_blk{};
+        double iono_blk_q_m2{};      ///< I-in-block RW process noise, m² of L1 slant delay PER EPOCH (⚠ not per second — see GnssConfig::networkCarryIonoInBlockQM2).
+        double iono_blk_max_gap_s{}; ///< I-in-block staleness bound (s); the loader has already resolved the "= phase_leveling_max_gap_s" sentinel.
+        /// network.carry_rx_clock_in_block — RX-CLK-in-block: the station's RECEIVER
+        /// CLOCK column (and, under @c rxclk_isb, its per-system ISB columns) join its F3
+        /// whitened local block.  The clock is otherwise a FREE per-epoch local column
+        /// with no temporal prior on this path — the rho-direction sink the ZWD and iono
+        /// cards push their residual error into.  ⚠ Carried as a random walk about a
+        /// CARRIED DRIFT, because @c x_lin(clock) is a run-constant here (the producer
+        /// never writes its solution back), so the whole ~0.3 m/s clock ramp lives in
+        /// x_r and a bare RW prior would be ~30 sigma wrong every epoch.  Loader
+        /// guarantees phase_leveling + pl_local_block + carry_cpl_cond and
+        /// !carry_invariant.  OFF = byte-identical.
+        bool rxclk_blk{};
+        double rxclk_q_m2{};        ///< Carried clock BIAS random-walk variance, m^2 PER EPOCH (⚠ not per second — see GnssConfig::networkCarryRxClockQM2).
+        double rxclk_max_gap_s{};   ///< Staleness bound (s); the loader has already resolved the "= phase_leveling_max_gap_s" sentinel.
+        double rxclk_rate_var0{};   ///< Initial variance of the carried DRIFT state, m^2/s^2 (deliberately large: an unknown drift must inject a near-free prior).
+        double rxclk_rate_q{};      ///< Carried DRIFT random-walk variance, m^2/s^2 PER EPOCH.
+        double rxclk_jump_k{};      ///< Clock-JUMP gate (sigma) on the one-step prediction innovation at harvest; exceeding it erases the carry (invariant #1's wired response).
+        bool rxclk_isb{};           ///< Carry the per-system ISB columns too (pure RW, no drift state).
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
         bool rx_cb_datum{};   ///< RXCB-DATUM: zero-mean-over-receivers DCB datum (network.rx_code_bias_datum).
         double rx_cb_datum_sigma{};  ///< RXCB-DATUM loose physical-bound sigma in m (network.rx_code_bias_datum_sigma_m).
@@ -1082,6 +1124,11 @@ namespace GnssProcessor {
         /// exactly one epoch old, so a stale level is never differenced against a
         /// one-epoch ΔMW.
         double pl_prev_now_s{-1.0};
+        /// RX-CLK-in-block: the previous RX-CLOCK HARVEST's stamp (s).  Deliberately a
+        /// second field rather than a read of @c pl_prev_now_s, which has already been
+        /// advanced to this epoch by the time the clock harvest runs.  Its only use is
+        /// converting a sighting gap into EPOCHS for the per-epoch q.
+        double rxclk_prev_now_s{-1.0};
         /// §7.6(d) lane observatory T4-side pre-erase capture: the
         /// about-to-be-erased @c LocalCarry::value_abs (+ its @c last_seen_s
         /// stamp + the erase-cause bit) at the RAIM attribution / consensus
@@ -1138,6 +1185,48 @@ namespace GnssProcessor {
         /// conditionally fingerprinted (solve-affecting; never flip mid-chain).  Inert
         /// unless network.carry_iono.
         std::map<std::pair<int, std::string>, LocalCarry> iono_carry;
+        /// I-in-block per-LOS slant-iono carry (@c network.carry_iono_in_block): the same
+        /// (station index, sat) key as @c iono_carry above, and DELIBERATELY a separate
+        /// map — the two are mutually exclusive vehicles (the loader hard-errors on a
+        /// co-arm), and sharing one map would let the QUEUE-8(b) prune / prires / CS-GF
+        /// paths, all gated on @c knobs.iono_on, silently act on in-block entries.  Unlike
+        /// @c iono_carry these entries carry the F3 bookkeeping (@c blk / @c blk_idx /
+        /// @c coupling / @c birth_s), because they are folded as columns of the station's
+        /// whitened block exactly like a carried ambiguity.  Value is ABSOLUTE slant delay
+        /// in metres at L1 (x_lin + x_r).  NOT snapshotted — a warm resume cold-starts it,
+        /// which is one epoch of today's white-iono behaviour (the @c iono_carry
+        /// precedent), and a restored entry would carry no block anyway.
+        std::map<std::pair<int, std::string>, LocalCarry> iono_blk_carry;
+        /// RX-CLK-in-block (@c network.carry_rx_clock_in_block): the carried
+        /// receiver-clock-family local columns, keyed (station index, kind) with kind ""
+        /// for the PRIMARY receiver clock and the system name for each ISB.  Value is the
+        /// ABSOLUTE clock/ISB in metres (x_lin + x_r) as of @c last_seen_s, with the F3
+        /// bookkeeping (@c blk / @c blk_idx / @c coupling) every in-block column carries.
+        /// NOT snapshotted — a warm resume cold-starts it, which is one epoch of today's
+        /// white-clock behaviour, and a restored entry would carry no block anyway.
+        std::map<std::pair<int, std::string>, LocalCarry> rx_clk_carry;
+        /// RX-CLK-in-block: the DRIFT half of the carried (bias, drift) pair, keyed like
+        /// @c rx_clk_carry but populated ONLY for the primary clock (kind "") — an ISB is
+        /// a near-constant bias and takes a pure random walk.  Kept in its own map rather
+        /// than bolted onto @c LocalCarry because @c LocalCarry is shared machinery used
+        /// by five other carries, none of which has a rate.
+        ///
+        /// ⚠ This state exists because the network producer NEVER writes its solution back
+        /// into the station StateManager: @c x_lin(clock) is set once (0, or the latched
+        /// cold_clock_seed median) and is constant for the run, so @c x_r carries the
+        /// whole clock including its ~0.3 m/s ramp — 9 m per 30 s epoch, ~30 sigma against
+        /// a bias-only prior.  The rate is a scalar Kalman state driven by the harvested
+        /// increments; it also supplies the one-step PREDICTION whose innovation is the
+        /// clock-jump detector.
+        struct RxClkRate {
+            double rate{0.0};          ///< Estimated drift, m/s (GPS-referenced, same frame as the clock state).
+            double rate_var{-1.0};     ///< Its variance, m^2/s^2.  < 0 = never updated ⇒ the injector uses network.carry_rx_clock_rate_var0_m2ps2.
+            double prev_abs{0.0};      ///< Previous harvested ABSOLUTE clock (m) — the increment's left end.
+            double prev_s{-1.0};       ///< Its time (s).  < 0 = no previous sighting.
+            double prev_var{0.0};      ///< Its harvested variance (m^2), for the increment's measurement noise.
+            long long n_incr{0};       ///< Increments folded.  0 ⇒ no rate yet ⇒ the jump gate cannot fire (there is no prediction to test).
+        };
+        std::map<std::pair<int, std::string>, RxClkRate> rx_clk_rate;
         /// CS-GF authority states (QUEUE 8b successor, iono_carry_source =
         /// smoothed_gf): per (station index, sat) carrier-smoothed GF-code
         /// slant-iono, advanced serially in the PASS-A slip scan from the
@@ -2236,6 +2325,20 @@ namespace GnssProcessor {
         long long n_pl_blk_col_refused  = 0;             ///< block columns dropped by the scalar-row "never poison" screen
         long long n_pl_blk_fallback     = 0;             ///< station-epochs whose block factorization failed → F1/diagonal rows
         long long n_pl_blk_young_cols   = 0;             ///< F3 age gate: injectable columns kept OUT of their block (too young) and emitted per-column
+        // AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2) —
+        // invariant #4 telemetry.  An armed run with n_yng_cols == 0 is ARMED AND INERT
+        // (no carried column was ever stamped young at an inject), not a quiet run; a
+        // mean age at the ceiling says the population being inflated is nearly mature
+        // and the knob is buying almost nothing.  ⚠ n_yng_cols counts columns for which
+        // a positive var_add was COMPUTED and handed to a route — a column the block's
+        // scalar "never poison" screen then refused (n_pl_blk_col_refused) is included.
+        long long n_pl_blk_yng_scaled = 0;               ///< F3 block columns whose row/column of Σ was actually CONGRUENCE-scaled (read against n_yng_cols: a gap = columns computed young whose block never reached the scaling — refused by the scalar screen, or the station took the per-column route)
+        long long n_yng_cols        = 0;                 ///< column-epochs inflated (a positive var_add computed and handed to the block congruence or the diagonal row)
+        long long n_yng_skip_age    = 0;                 ///< STAMPED column-epochs refused because age > phase_leveling_young_inflate_max_age_ep (invariant #3: the deferral is measured).  An UNSTAMPED entry (relevel_s == 0 — warm-resume restore / pre-card lineage) is treated as mature and counted in neither.
+        double    yng_var_add_sum   = 0.0;               ///< Σ of the var_add actually handed out (m²) — the total prior information given back
+        double    yng_age_sum       = 0.0;               ///< Σ of the ages (loop epochs) of the inflated columns; ÷ n_yng_cols = the run's mean inflated age
+        long long n_yng_stamp_create = 0;                ///< re-level stamps set at the harvest because the entry was CREATED (first stash, or the re-stash after a T4 erase / gap prune deleted it)
+        long long n_yng_stamp_free   = 0;                ///< re-level stamps set at the harvest because the arc was FREED this epoch (the latched relevel.free_ambs set the PASS-B inject consulted)
         long long n_pl_blk_hist[5]      = {0, 0, 0, 0, 0}; ///< block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75
         long long n_pl_blk_max_dim      = 0;             ///< largest block dimension over the run
         // B9-in-block (network.carry_zwd_in_block) — invariant #4/#7 telemetry.  A run with
@@ -2245,6 +2348,31 @@ namespace GnssProcessor {
         long long n_pl_blk_zwd_cols     = 0;             ///< ZWD columns ADMITTED into a block build (station-epochs; a block that then failed to factorize still counts — n_pl_blk_zwd_fallback_diag says how many of those ended up on the diagonal row instead)
         long long n_pl_blk_zwd_fallback_diag = 0;        ///< station-epochs whose ZWD fell back to the B9 DIAGONAL row (no block for the station this epoch, or the block's factorization failed)
         long long n_pl_blk_zwd_missing_cross = 0;        ///< (ambiguity, ZWD) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / ZWD stashed without a block) — a subset of n_pl_blk_pair_missing
+        // I-in-block (network.carry_iono_in_block) — invariant #4/#7 telemetry, the same
+        // discipline as the ZWD split above.  An armed run with n_pl_blk_iono_cols == 0 is
+        // UNWIRED, not clean.  ⚠ n_pl_blk_iono_not_folded is NOT a "degraded to the old
+        // row" count: this card has no diagonal iono row (that IS the falsified QUEUE-8(b)
+        // vehicle), so those columns carried NOTHING that station-epoch.
+        long long n_pl_blk_iono_cols    = 0;             ///< per-LOS iono columns ADMITTED into a block build (a block that then failed to factorize still counts — n_pl_blk_iono_not_folded says how many of those did not act)
+        long long n_pl_blk_iono_not_folded = 0;          ///< iono columns pushed but NOT folded (non-SPD block / no block): their carry did not act this station-epoch, and there is deliberately no diagonal fallback
+        long long n_pl_blk_iono_missing_cross = 0;       ///< (iono, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block) — a subset of n_pl_blk_pair_missing
+        long long n_iono_blk_erased_t4  = 0;             ///< in-block iono carries erased by a T4/consensus arc refloat (invariant #1: the T4 statistic reads level+iono error as a sum, so the LOS re-draws both)
+        long long n_iono_blk_gap_drop   = 0;             ///< in-block iono carries dropped at the harvest prune for exceeding carry_iono_in_block_max_gap_s without a sighting (the absent-satellite / eclipse edge)
+        long long n_raim_pool_iono_rows = 0;             ///< post-fit RAIM pool admissions (station-epochs × rows) whose admitted row IS one of the iono columns' whitened block rows — the §7 item 4 interaction MEASURED for the I half, exactly as n_raim_pool_zwd_rows measures it for the ρ half.  Counted only; the pool rule is unchanged by this card.
+        // RX-CLK-in-block (network.carry_rx_clock_in_block) — invariant #4/#7 telemetry,
+        // the same discipline as the ZWD and iono splits.  An armed run with
+        // n_pl_blk_rxclk_cols == 0 is UNWIRED, not clean.  ⚠ n_pl_blk_rxclk_not_folded is
+        // NOT a "degraded to the old row" count: this card has no diagonal clock row (a
+        // diagonal prior on the most station-COMMON direction of all is exactly the
+        // over-count that falsified the diagonal ZWD carry), so those columns carried
+        // NOTHING that station-epoch.
+        long long n_pl_blk_rxclk_cols   = 0;             ///< receiver-clock-family columns ADMITTED into a block build (a block that then failed to factorize still counts — n_pl_blk_rxclk_not_folded says how many did not act)
+        long long n_pl_blk_rxclk_isb_cols = 0;           ///< …of which are ISB columns.  0 is NOT an alarm (a GPS-only / BSSD posture allocates no per-system time-offset state).
+        long long n_pl_blk_rxclk_not_folded = 0;         ///< clock-family columns pushed but NOT folded (non-SPD block): their carry did not act, and there is deliberately no diagonal fallback
+        long long n_pl_blk_rxclk_missing_cross = 0;      ///< (clock-family, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block) — a subset of n_pl_blk_pair_missing
+        long long n_rxclk_carry_refused = 0;             ///< clock carries ERASED by the jump gate (network.carry_rx_clock_jump_k) at harvest: |one-step prediction innovation| > k*sigma ⇒ the receiver (or the solve) stepped, so both the bias and the drift are dropped and re-born cold.  Invariant #1's wired response for a quantity that has no other jump detector anywhere on the network path.
+        long long n_rxclk_carry_gap_drop = 0;            ///< clock-family carries dropped at the harvest prune for exceeding carry_rx_clock_max_gap_s without a sighting (the absent-station edge)
+        long long n_raim_pool_rxclk_rows = 0;            ///< post-fit RAIM pool admissions (station-epochs x rows) whose admitted row IS one of the clock-family columns' whitened block rows — the SPEC_amb_iono_split_overcount §7 item 4 interaction MEASURED for the rho half, exactly as n_raim_pool_zwd_rows / n_raim_pool_iono_rows measure it for theirs.  Counted only; the pool rule is unchanged by this card.
         long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row IS the ZWD's whitened block row — the §7 item 4 interaction, MEASURED (the pool admits by |A_r(row, amb_col)| > 0.5 and a ZWD block row mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged by this card.
         long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (invariant #7's re-coupling edge, counted)
         long long n_pl_blk_refloat_fail = 0;             ///< … whose re-whiten was non-SPD: the block's rows were dropped for that re-solve (safe degrade — the refloated arcs re-float from data)

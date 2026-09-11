@@ -424,6 +424,9 @@ add_executable(gnss_tests
     tests/test_lane_observatory_config.cpp
     tests/test_zwd_seam_reseed_config.cpp
     tests/test_carry_zwd_in_block.cpp
+    tests/test_carry_iono_in_block.cpp
+    tests/test_carry_rx_clock_in_block.cpp
+    tests/test_young_arc_inflate.cpp
     tests/test_amb_seam_reinflate_config.cpp
     tests/test_resume_frame_restore.cpp
     tests/test_resume_coupling_restore.cpp

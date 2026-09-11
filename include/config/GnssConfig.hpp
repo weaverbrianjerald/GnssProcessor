@@ -1914,6 +1914,75 @@ namespace GnssProcessor {
             return network_phase_leveling_local_block_young_mode_;
         }
 
+        /**
+         * @brief AGE-AWARE variance inflation of freshly RE-LEVELLED leveling arcs —
+         *        the variance added at age 0
+         *        (@c network.phase_leveling_young_inflate_var_m2, m²; 0 = OFF).
+         *
+         * SPEC_amb_iono_split_overcount §6.17–§6.18.  On the slipped 60-station bed a
+         * detector slip response frees the arc for one epoch
+         * (@c network.cycle_slip.relevel_free_epoch) and the next harvest re-stashes it
+         * at that epoch's posterior: a level whose VALUE is code-quality (0.2–0.4 m off,
+         * the truth census) but whose harvested VARIANCE is phase-STIFF, because the
+         * conditional it is read from is conditioned on the station's MATURE arcs.  The
+         * arc is then inconsistent with geometry until ~20 min of geometry change refine
+         * it, the T4 attribution tier reads that as a slip and ERASES it (21
+         * erases/station-hour), and the erase–re-level treadmill sustains a metre-class
+         * ZWD/clock plateau.
+         *
+         * The fix states what the level is worth: a column whose
+         * @ref LocalCarry::relevel_s is younger than
+         * @ref networkPhaseLevelingYoungInflateMaxAgeEp gets
+         * @f$V_{add} = V_0 e^{-age/	au}@f$ added to its prior variance, starting at
+         * CODE level (0.09 m² = (0.3 m)²) and decaying.  Two deliberate differences from
+         * the falsified neighbours: only arcs YOUNG SINCE THEIR LAST RE-LEVEL are
+         * touched (uniform floors 1e-4/1e-3 m² and uniform level q 1e-7/1e-6 m²/s were
+         * falsified — too small AND applied to every arc), and an inflated arc STAYS
+         * INSIDE the F3 whitened block (arm 5b, young legs kept free of the block, was
+         * falsified on the quiet bed's post-eclipse legs).  Inside the block the
+         * inflation is a CONGRUENCE scaling of the arc's row/column of the harvested Σ
+         * — Σ stays PD and every correlation coefficient is EXACTLY unchanged; only the
+         * arc's own marginal loosens.  See @ref GnssProcessor::NetworkYoungInflate.
+         *
+         * Requires @c network.phase_leveling (warn + disable otherwise); works with or
+         * without F3 (off the block it is @c var_eff += var_add on the per-column row);
+         * disabled under @c network.carry_invariant.  Run-end clause
+         * "Network (young-arc inflate)" is the ON-path telemetry (invariant #4).
+         * OFF = structurally byte-identical.
+         */
+        double networkPhaseLevelingYoungInflateVarM2() const {
+            return network_phase_leveling_young_inflate_var_m2_;
+        }
+        /**
+         * @brief e-folding AGE of the young-arc inflation, in LOOP EPOCHS
+         *        (@c network.phase_leveling_young_inflate_tau_ep; default 20).
+         *
+         * The age unit is loop epochs, converted from seconds with the run's OWN
+         * observed inter-epoch spacing (PASS-B time minus the previous harvest stamp),
+         * so the knob means the same thing at 1 s and 30 s cadence and no nominal-rate
+         * config is invented.  20 epochs at 30 s ≈ the ~20 min of geometry change the
+         * truth census measured a re-levelled arc needs before it is consistent again.
+         * Must be > 0 (a loader hard error): a non-positive τ would turn the
+         * exponential into a step.
+         */
+        double networkPhaseLevelingYoungInflateTauEp() const {
+            return network_phase_leveling_young_inflate_tau_ep_;
+        }
+        /**
+         * @brief Age ceiling of the young-arc inflation, in LOOP EPOCHS
+         *        (@c network.phase_leveling_young_inflate_max_age_ep; default 60).
+         *
+         * Beyond this age NOTHING is added — the exponential is cut off rather than
+         * left to run into the numerical noise, so the ON path's cost and its reach are
+         * both bounded and the run-end counter can report how many columns were refused
+         * for age (invariant #3: the deferral is measured, not assumed).  An entry with
+         * @c relevel_s == 0 (unstamped — a warm-resume restore, or a pre-card lineage)
+         * is treated as MATURE and is neither inflated nor counted here.
+         */
+        int networkPhaseLevelingYoungInflateMaxAgeEp() const {
+            return network_phase_leveling_young_inflate_max_age_ep_;
+        }
+
         /// @brief Floor (m²) on the D2 satellite-PHASE-bias carried prior variance
         ///        (@c network.shared_carry_var_floor_pb_m2, B4).  Caps the carry's
         ///        information so a stiff zero-q phase-bias carry cannot lock a biased
@@ -2238,6 +2307,258 @@ namespace GnssProcessor {
          * @c cols set, and therefore @c C's dimension, is unchanged).
          */
         bool networkCarryZwdInBlock() const { return network_carry_zwd_in_block_; }
+
+        /**
+         * @brief Carry the per-LOS slant-ionosphere columns INSIDE the F3 jointly-whitened
+         *        local block (@c network.carry_iono_in_block) — the I half of the
+         *        ZWD-in-block card.
+         *
+         * Motive (SPEC_amb_iono_split_overcount §7 item 17, "block ALL carried local
+         * columns"; §6.16.7d for the ρ half): on the slipped 60-station bed the
+         * producer's per-band DD errors sit at ~1.7 cycles with the WL intact — a
+         * station-wide @f$(\rho, I)@f$ SPLIT error frozen into the zero-q levels at every
+         * re-level (§6.17e).  Carrying the ZWD (the @f$\rho@f$ half) inside the block took
+         * the ZWD truth rms 2.10 → 1.19 m and the consumer 1.75 → 1.09 m.  This knob is
+         * the @f$I@f$ half.
+         *
+         * Why it is NOT @ref networkCarryIono (QUEUE 8(b), commit 803c58a, FALSIFIED ×4):
+         * that carry folds each LOS as an INDEPENDENT DIAGONAL prior row, which asserts
+         * the per-LOS iono direction a second time on top of the assertion the station's
+         * B carried band priors already make implicitly — the B-fold over-count of §7
+         * item 17, the same structural defect that falsified the diagonal ZWD carry
+         * (consumer 3D rms 0.204 → 0.723 m on the quiet bed, vs 0.088 m in-block).
+         * Inside the jointly-whitened block the harvested
+         * @f$(N_{rr}^{-1})_{c\,c_j}@f$ cross terms subtract that overlap EXACTLY.  The
+         * two are therefore mutually exclusive: arming both is a hard loader error, not
+         * a warning.
+         *
+         * Wiring: at the harvest the station's present per-LOS iono columns are appended
+         * to the block's @c cols (between the ambiguities and the ZWD, so the ZWD keeps
+         * its last-row slot) and each is harvested with the SAME per-column solve the
+         * ambiguities use, so @c PlHarvestBlock::C becomes
+         * @f$(n_{amb} + n_{iono} + [1\ \mathrm{ZWD}])^2@f$; the entry stashes with the
+         * same @c blk / @c blk_idx bookkeeping, and PASS B pushes one more
+         * @c LocalBlockCol per carried LOS so the whole station folds through ONE
+         * Cholesky.  The carried value is ABSOLUTE (@c x_lin + @c x_r, mirroring
+         * @c LocalCarry::value_abs) — @c network_ionosphere.csv writes @c x_r alone and
+         * is frame-broken, and a carry must be frame-complete.
+         *
+         * Deliberate asymmetries against the QUEUE-8(b) diagonal carry: NO inject-side
+         * variance floor (the floor existed to bound how badly a DOUBLE-COUNTED prior
+         * could out-stiffen the code channel; the block's exactness is the replacement),
+         * NO @ref networkPhaseLevelingLosScale scaling (F1 exists to repair the same
+         * over-count the block already handles — applying it here would UNDER-weight),
+         * and NO F3 young-column age gate (the "first sighting ⇒ no carry" rule already
+         * gives every newborn LOS a one-epoch cold start).
+         *
+         * Interlocks (loader-enforced): requires @ref networkPhaseLeveling AND
+         * @ref networkPhaseLevelingLocalBlock (WARN + disable — armed-and-inert is
+         * forbidden, invariant #4); disabled with a WARN under
+         * @ref networkCarryInvariant (F3 is structurally inert there); HARD ERROR when
+         * @ref networkCarryIono is also on.  Default false = byte-identical (the harvest
+         * @c cols set, and therefore @c C's dimension, is unchanged).
+         */
+        bool networkCarryIonoInBlock() const { return network_carry_iono_in_block_; }
+
+        /**
+         * @brief Per-EPOCH random-walk process noise of the in-block iono carry, m² of
+         *        slant delay at the GPS L1 frequency (@c network.carry_iono_in_block_q_m2).
+         *
+         * UNIT / FRAME, stated explicitly because it differs from every other carry q in
+         * this config: the per-LOS iono state is METRES OF SLANT DELAY AT L1
+         * (@c StateManager::addIonosphereState takes "initial slant ionosphere delay in
+         * meters"; @c MeasurementModel scales it per signal by
+         * @f$\alpha = f_{L1}^2/f_i^2@f$).  This knob is therefore m² at L1, and it is
+         * PER EPOCH, not per second — @ref networkZwdCarryQ and
+         * @ref networkIonoCarryQ are m²/s.  The gap is converted to epochs with the
+         * run's own observed inter-epoch spacing (the current PASS-B time minus the
+         * previous harvest stamp), floored at one epoch, so the knob means the same
+         * thing at 1 s and at 30 s cadence and needs no nominal-rate config.
+         *
+         * The inflated variance @f$var + q \cdot gap_{ep}@f$ goes on the block's DIAGONAL
+         * for the iono columns only (Σ's off-diagonals are the harvested cross terms),
+         * which is @f$C' = C + \mathrm{diag}(q\,gap)@f$ restricted to those rows/columns —
+         * PD-preserving by construction (raising a diagonal of a PD matrix).
+         *
+         * Default 2.5e-3 m² ⇒ σ ≈ 5 cm of L1 slant delay per 30 s epoch: loose enough
+         * that a real ionospheric gradient is never fought by the carry, tight enough
+         * that the carry still supplies the between-epoch continuity a per-epoch white
+         * iono column has none of.
+         */
+        double networkCarryIonoInBlockQM2() const { return network_carry_iono_in_block_q_m2_; }
+
+        /**
+         * @brief Staleness bound of the in-block iono carry, seconds
+         *        (@c network.carry_iono_in_block_max_gap_s).
+         *
+         * A LOS not seen for longer than this is DROPPED (counted,
+         * @c n_iono_blk_gap_drop) rather than folded — invariant #1's event response for
+         * the absent-satellite edge, and invariant #7's decoupling edge.  Defaults to
+         * @ref networkPhaseLevelingMaxGapS: the iono carry rides the SAME block the
+         * leveling carry does, so a horizon longer than the block's own would keep an
+         * entry alive with no block to join (the QUEUE-8(b) knob deliberately ran LONGER
+         * than the leveling gap because its diagonal row needed no block).  A JSON value
+         * ≤ 0 is the "use the leveling gap" sentinel; a positive value overrides.
+         */
+        double networkCarryIonoInBlockMaxGapS() const { return network_carry_iono_in_block_max_gap_s_; }
+
+        /**
+         * @brief Carry the station's RECEIVER CLOCK column inside the F3 jointly-whitened
+         *        local block as an HONEST random walk about a carried drift
+         *        (@c network.carry_rx_clock_in_block) — the @f$\rho@f$-direction sibling of
+         *        @ref networkCarryZwdInBlock and @ref networkCarryIonoInBlock.
+         *
+         * MOTIVE.  On the network producer the per-station receiver clock is a purely
+         * PER-EPOCH local parameter: it is a column of @f$A_r@f$ (see
+         * @c Application::networkSplitStation_'s linearity invariant — "rx clock, tropo
+         * ZWD, per-sat slant iono, ambiguities, code/phase biases, ISBs"), it is
+         * eliminated by the Schur reduction every epoch, and it has NO temporal prior at
+         * all — @c filter.process_noise.clock_bias_q is inert on this path (measured: an
+         * arm with q 1000 → 0.09 produced a byte-identical @c products.txt).  On the
+         * slipped bed that free per-epoch column is the @f$\rho@f$-direction SINK: it
+         * absorbs, instantly and without cost, whatever station-common error the levels
+         * and the ZWD could not (rx-clock contrast vs truth rms 8.3 m).  Carrying it
+         * gives that direction a price.
+         *
+         * WHY IN THE BLOCK AND NOT AS A DIAGONAL ROW.  Identical to the ZWD's argument
+         * (SPEC_amb_iono_split_overcount §7 item 17, "block ALL carried local columns"):
+         * the receiver clock is the most station-COMMON direction there is — every
+         * carried ambiguity row of the station asserts it implicitly — so an independent
+         * diagonal prior would assert it a further @f$n_{LOS}@f$ times.  That over-count
+         * is exactly what falsified the diagonal ZWD carry (consumer 3D rms 0.204 →
+         * 0.723 m quiet bed, vs 0.088 m in-block).  Inside the block the harvested
+         * @f$(N_{rr}^{-1})_{c\,c_j}@f$ cross terms subtract the overlap exactly.
+         *
+         * ⚠ THE DRIFT, and why this card is NOT a bare random walk.  The producer never
+         * writes its solution back into the station @c StateManager, so
+         * @c x_lin(clock) is set ONCE (0, or the latched @ref networkColdClockSeed median)
+         * and is CONSTANT for the whole run: the entire time-varying receiver clock —
+         * offset, drift and jitter — lives in @f$x_r@f$ every epoch.  A real receiver
+         * clock is @f$c(t)=c_0+d\,t+\mathrm{RW}@f$ with a drift @f$d@f$ of order 1e-9 s/s
+         * (0.3 m/s ⇒ 9 m per 30 s epoch; measured exactly that on the sim truth bed,
+         * 0.29994 m/s with 0.299 m RW increments), so a pure RW prior would be wrong by
+         * ~30σ EVERY epoch.  This card therefore carries the honest @b (bias, drift) pair:
+         * the block column holds the bias, and the drift is a per-station scalar Kalman
+         * state (its own @ref networkCarryRxClockRateQ) updated from the harvested
+         * increments, whose contribution @f$\sigma_d^2\,\Delta t^2@f$ joins the injected
+         * variance.  The injected prior mean is @f$\hat c_{prev} + \hat d\,\Delta t@f$,
+         * not @f$\hat c_{prev}@f$.  With an uninformative first rate variance
+         * (@ref networkCarryRxClockRateVar0) the first-sighting prior is deliberately
+         * near-useless (σ ≈ 30 m) and tightens to σ ≈ 0.3 m after ONE increment —
+         * self-limiting, never a stiff wrong prior.
+         *
+         * Interlocks (loader-enforced): requires @ref networkPhaseLeveling AND
+         * @ref networkPhaseLevelingLocalBlock AND a structurally buildable F3 block
+         * (@ref networkCarryConditionalCoupling on, @ref networkCarryCouplingJointWhiten
+         * off) — WARN + disable, because armed-and-inert is forbidden (invariant #4);
+         * disabled with a WARN under @ref networkCarryInvariant (F3 is structurally inert
+         * there); HARD ERROR on a negative q / gap / rate variance.  Default false =
+         * byte-identical (the harvest @c cols set, and therefore @c C's dimension, is
+         * unchanged).
+         */
+        bool networkCarryRxClockInBlock() const { return network_carry_rx_clock_in_block_; }
+
+        /**
+         * @brief Per-EPOCH random-walk process variance of the carried receiver-clock BIAS,
+         *        m² (@c network.carry_rx_clock_q_m2).
+         *
+         * ⚠ PER EPOCH, not per second (@ref networkZwdCarryQ and @ref networkIonoCarryQ
+         * are m²/s), matching @ref networkCarryIonoInBlockQM2: the gap is converted to
+         * epochs with the run's OWN observed inter-epoch spacing (the current PASS-B time
+         * minus the previous harvest stamp), floored at one epoch, so the knob means the
+         * same thing at 1 s and at 30 s cadence and no nominal-rate config is invented.
+         * The inflation @f$var + q\cdot gap_{ep} + \sigma_d^2\Delta t^2@f$ lands on the
+         * block's DIAGONAL for the clock column only (Σ's off-diagonals are the harvested
+         * cross terms), i.e. @f$C' = C + \mathrm{diag}(\cdot)@f$ — PD-preserving by
+         * construction.
+         *
+         * Default 0.09 m² ⇒ σ = 0.30 m of clock jitter per 30 s epoch, which is EXACTLY
+         * the sim truth bed's detrended increment std (measured 0.2988 m, lag-1
+         * correlation −0.004: a clean white random walk about the drift line).  A field
+         * receiver's short-term Allan deviation sets the field value; do not assume 0.09
+         * transfers.
+         */
+        double networkCarryRxClockQM2() const { return network_carry_rx_clock_q_m2_; }
+
+        /**
+         * @brief Staleness bound of the receiver-clock carry, seconds
+         *        (@c network.carry_rx_clock_max_gap_s).
+         *
+         * A station unseen for longer than this has its clock carry DROPPED (counted,
+         * @c n_rxclk_carry_gap_drop) rather than folded — invariant #1's absent-station
+         * edge and invariant #7's decoupling edge.  Defaults to
+         * @ref networkPhaseLevelingMaxGapS via a 0 sentinel resolved at load: the clock
+         * carry rides the SAME block the leveling carry does, so a longer horizon would
+         * keep an entry alive with no block to join.  It is also the horizon over which
+         * the extrapolated drift term @f$\hat d\,\Delta t@f$ is trusted at all.
+         */
+        double networkCarryRxClockMaxGapS() const { return network_carry_rx_clock_max_gap_s_; }
+
+        /**
+         * @brief Initial variance of the carried receiver-clock DRIFT state, m²/s²
+         *        (@c network.carry_rx_clock_rate_var0_m2ps2).
+         *
+         * The drift is unknown at a station's first sighting, so its prior starts here and
+         * the scalar rate filter collapses it after ONE harvested increment
+         * (@f$R_{rate}\approx(2\,var+q)/\Delta t^2@f$, tiny against this).  It is
+         * deliberately LARGE (default 1.0 m²/s² ⇒ σ 1 m/s, three times any plausible
+         * receiver drift): the resulting first-epoch injected variance
+         * @f$\sigma_d^2\Delta t^2 = 900@f$ m² makes the pre-rate prior near-uninformative
+         * ON PURPOSE, so a station whose drift is not yet known is never given a stiff
+         * wrong clock.  Lower it only with evidence; raising it costs nothing but one more
+         * near-free epoch.
+         */
+        double networkCarryRxClockRateVar0() const { return network_carry_rx_clock_rate_var0_; }
+
+        /**
+         * @brief Per-EPOCH random-walk process variance of the carried receiver-clock DRIFT
+         *        state, m²/s² (@c network.carry_rx_clock_rate_q_m2ps2).
+         *
+         * The drift itself wanders (temperature, ageing).  Default 1e-10 m²/s² per epoch
+         * ⇒ σ 1e-5 m/s per epoch, ~1.1e-4 m/s over an hour at 30 s: three orders under a
+         * typical receiver drift, so the rate filter tracks slow drift changes without
+         * ever chasing the bias jitter.  Set to 0 for a strictly constant-drift model
+         * (valid on the sim bed, whose drift is exactly linear).
+         */
+        double networkCarryRxClockRateQ() const { return network_carry_rx_clock_rate_q_; }
+
+        /**
+         * @brief Innovation gate (in σ) on the carried receiver clock's one-step prediction
+         *        (@c network.carry_rx_clock_jump_k).
+         *
+         * Invariant #1's wired event response.  Field receivers STEP their clocks (a
+         * millisecond = 3e5 m is routine), and there is no receiver-clock jump detector
+         * anywhere on the network path.  At each harvest the newly solved absolute clock
+         * is compared with the prediction the previous epoch would have injected;
+         * @f$|v| > k\sqrt{var_{pred}}@f$ means the receiver jumped (or the solve did), and
+         * the response is an ERASE-and-rebirth of both the bias and the drift state —
+         * counted as @c n_rxclk_carry_refused.  Both edges are explicit (invariant #7):
+         * the DECOUPLING edge bounds the damage (nothing is carried across the jump), and
+         * the RE-COUPLING edge re-seeds cold from data with the uninformative rate prior,
+         * so the two epochs after a jump inject a near-free prior rather than a stale one.
+         * Default 10.0 σ — loose enough that ordinary RW jitter never trips it (a 10σ
+         * event on a Gaussian is ~1e-23), tight enough that a 1 ms step (1e6 σ) always does.
+         */
+        double networkCarryRxClockJumpK() const { return network_carry_rx_clock_jump_k_; }
+
+        /**
+         * @brief Also carry the station's INTER-SYSTEM BIAS (ISB) columns in the same block
+         *        (@c network.carry_rx_clock_isb, sub-knob of
+         *        @ref networkCarryRxClockInBlock).
+         *
+         * The per-system time-offset states (@c StateManager::getSystemTimeOffsetStates)
+         * are local @f$A_r@f$ columns exactly like the clock, and physically they are
+         * near-CONSTANT biases (the sim truth injects a fixed 8.000 m GPS→Galileo offset),
+         * so they take a PURE random walk — no drift state, since a drifting ISB would be
+         * a receiver defect rather than a model.  They share
+         * @ref networkCarryRxClockQM2, which is conservative for them by a wide margin.
+         * Counted separately (@c n_pl_blk_rxclk_isb_cols) so an arm can read the two
+         * families apart; 0 there is NOT an alarm (a BSSD or GPS-only posture allocates no
+         * ISB state at all).  Default true — the ISB is a local column of the same block,
+         * and leaving it white while pricing the clock would just move the sink one
+         * column over.
+         */
+        bool networkCarryRxClockIsb() const { return network_carry_rx_clock_isb_; }
 
         /**
          * @brief ZWD carry random-walk process noise (m²/s) inflating the carried ZWD
@@ -6774,6 +7095,9 @@ namespace GnssProcessor {
         double network_phase_leveling_var_floor_m2_{0.0}; ///< Floor (m²) on the carried prior variance (caps Λ — lock-in guard); 0 = off (no cap).
         bool   network_phase_leveling_los_scale_{false};  ///< F1: multiply each carried ambiguity row's variance by B_eff (carried columns injected on the same station-satellite LOS this epoch) at inject — undoes the per-LOS B-fold over-count of the iono-direction carry precision (SPEC_amb_iono_split_overcount).  OFF = byte-identical.
         int    network_phase_leveling_local_block_min_age_ep_{0}; ///< F3 block admission age gate (loop epochs since a leg's first stash): younger legs are kept out of the block.  0 = OFF.
+        double network_phase_leveling_young_inflate_var_m2_{0.0};  ///< AGE-AWARE young-arc variance inflation (SPEC_amb_iono_split_overcount §6.17–§6.18): the variance ADDED at age 0 to a column whose LAST RE-LEVEL (@c LocalCarry::relevel_s) is recent — 0.09 m² = (0.3 m)², the measured code-level error of a one-epoch re-level.  0 = OFF = byte-identical.  Requires network.phase_leveling; disabled under carry_invariant; works with or without F3 (in-block it is a PD- and correlation-preserving congruence scaling of the arc's row/column of Σ, out of block a plain var_eff += var_add).
+        double network_phase_leveling_young_inflate_tau_ep_{20.0}; ///< … its e-folding age in LOOP EPOCHS (seconds converted with the run's own observed inter-epoch spacing).  Must be > 0.
+        int    network_phase_leveling_young_inflate_max_age_ep_{60}; ///< … the age ceiling in LOOP EPOCHS past which nothing is added (counted, so the deferral is measured).  Must be > 0.
         std::string network_phase_leveling_local_block_young_mode_{"free"}; ///< F3 age gate response: "free" (young legs not injected until mature) or "diagonal" (per-column rows — measured harmful, kept for the record).
         bool   network_phase_leveling_local_block_{false}; ///< F3: carry each station's injectable ambiguity set as ONE jointly-whitened local block (harvested conditional cross covariances on Σ's off-diagonals; departed columns marginalized) — exact for every local-local direction incl. the station-common ones F1 leaves over-counted (SPEC_amb_iono_split_overcount).  Supersedes F1 on whitened blocks.  OFF = byte-identical.
         double network_shared_carry_var_floor_pb_m2_{0.0}; ///< B4: floor (m²) on the D2 sat-PHASE-bias carried prior variance (caps Λ — bounds the zero-q lock-in while preserving Ge-2008 FCB averaging); 0 = off.
@@ -6791,6 +7115,16 @@ namespace GnssProcessor {
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).  ⚠ FALSIFIED for continuous runs of the standard posture (2026-09-01, consumer 0.204 → 0.723 m rms — information double-count against the station filter's own persistence); its seam value is delivered by network.zwd_seam_reseed instead.
         bool   network_carry_zwd_in_block_{false};         ///< B9-in-block: carry the station ZWD column INSIDE the F3 jointly-whitened local block (harvested (N_rr⁻¹) cross terms against every carried ambiguity column) instead of as a separate diagonal coupling row — makes the ZWD carry EXACT along the station-common directions the diagonal row over-counts (SPEC_amb_iono_split_overcount §7 item 17).  Requires network.carry_zwd AND network.phase_leveling_local_block (loader WARNs + disables otherwise).  OFF = byte-identical.
+        bool   network_carry_iono_in_block_{false};        ///< I-in-block: carry the per-LOS slant-iono columns INSIDE the F3 jointly-whitened local block (harvested (N_rr⁻¹) cross terms against every other carried column of the station) — the I half of the ZWD-in-block card (SPEC_amb_iono_split_overcount §7 item 17, §6.16.7d).  MUTUALLY EXCLUSIVE with the legacy DIAGONAL network.carry_iono (QUEUE 8b, falsified ×4): a diagonal row re-asserts the per-LOS iono direction the B band priors already assert.  Requires network.phase_leveling + network.phase_leveling_local_block; disabled under carry_invariant.  OFF = byte-identical.
+        double network_carry_iono_in_block_q_m2_{2.5e-3}; ///< I-in-block: PER-EPOCH random-walk process noise, m² of slant delay AT L1 (the per-LOS iono state's own unit).  ⚠ per EPOCH, not per second (zwd_carry_q / iono_carry_q are m²/s); the gap is converted with the run's observed inter-epoch spacing.  var_eff = var + q·gap_ep on the block DIAGONAL only.
+        double network_carry_iono_in_block_max_gap_s_{0.0}; ///< I-in-block: staleness bound (s) past which a LOS's carry is dropped (counted).  0 = the sentinel meaning "use network.phase_leveling_max_gap_s"; the loader resolves it to that value at load, so the getter always reports the effective seconds.
+        bool   network_carry_rx_clock_in_block_{false};    ///< RX-CLK-in-block: carry the station RECEIVER CLOCK column INSIDE the F3 jointly-whitened local block as a random walk about a CARRIED DRIFT (the producer never writes its solution back, so x_lin(clock) is a run-constant and the whole clock — offset + ~0.3 m/s drift + jitter — lives in x_r).  The rho-direction sibling of carry_zwd_in_block / carry_iono_in_block: the per-epoch clock column is the free sink those two cards push their residual error into.  Requires network.phase_leveling + network.phase_leveling_local_block; disabled under carry_invariant.  OFF = byte-identical.
+        double network_carry_rx_clock_q_m2_{0.09};         ///< RX-CLK-in-block: PER-EPOCH random-walk process variance of the carried clock BIAS, m^2.  (⚠ per EPOCH, not per second — zwd_carry_q / iono_carry_q are m^2/s; the gap is converted with the run's observed inter-epoch spacing.)  Default 0.09 = sigma 0.30 m per 30 s, the sim truth bed's measured detrended increment std.
+        double network_carry_rx_clock_max_gap_s_{0.0};     ///< RX-CLK-in-block: staleness bound (s) past which a station's clock carry is dropped (counted).  0 = the sentinel meaning "use network.phase_leveling_max_gap_s"; the loader resolves it at load, so the getter always reports effective seconds.
+        double network_carry_rx_clock_rate_var0_{1.0};     ///< RX-CLK-in-block: initial variance of the carried DRIFT state, m^2/s^2.  Deliberately large (sigma 1 m/s) so a station whose drift is not yet estimated injects a near-uninformative prior (sigma ~30 m at 30 s) instead of a stiff wrong one; collapses after ONE harvested increment.
+        double network_carry_rx_clock_rate_q_{1e-10};      ///< RX-CLK-in-block: PER-EPOCH random-walk process variance of the carried DRIFT state, m^2/s^2.  Default 1e-10 (sigma 1e-5 m/s per epoch) tracks slow drift wander without chasing the bias jitter; 0 = strictly constant drift.
+        double network_carry_rx_clock_jump_k_{10.0};       ///< RX-CLK-in-block: innovation gate (sigma) on the one-step clock prediction at harvest.  A receiver clock STEP (1 ms = 3e5 m) has no detector anywhere on the network path; exceeding this erases both the bias and the drift carry (counted, cold rebirth) so the jump never enters the block.
+        bool   network_carry_rx_clock_isb_{true};          ///< RX-CLK-in-block: also carry the per-system INTER-SYSTEM BIAS (ISB) columns in the same block, as a PURE random walk (no drift state — an ISB is a near-constant bias; the sim truth injects a fixed 8.000 m GPS->Galileo offset).  Counted separately; 0 ISB columns is NOT an alarm (a GPS-only or BSSD posture allocates none).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Used by network.carry_zwd and by the network.zwd_seam_reseed post-resume window.
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.

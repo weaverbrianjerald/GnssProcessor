@@ -1992,7 +1992,17 @@ int networkTeardown(
                       "75+:{} (max {}); within-epoch refloat re-whiten {} ok / {} failed; "
                       "age gate {} ep ({}): {} young column(s) kept out of the block.  "
                       "ZWD in block: {} col(s), {} diagonal fallback(s), {} missing cross "
-                      "term(s), {} RAIM-pool admission(s) of the ZWD row{}",
+                      "term(s), {} RAIM-pool admission(s) of the ZWD row{}.  "
+                      "Iono in block: {} col(s), {} fallback(s) (block non-SPD ⇒ NOT "
+                      "folded; this card has no diagonal iono row by design), {} missing "
+                      "cross term(s), {} RAIM-pool admission(s), {} erased by T4, {} "
+                      "dropped at gaps; q {:.3e} m² per epoch at L1, gap bound {:.0f} s{}.  "
+                      "Rx clock in block: {} col(s) ({} ISB), {} not folded (block non-SPD "
+                      "⇒ carried nothing; this card has no diagonal clock row by design), "
+                      "{} missing cross term(s), {} RAIM-pool admission(s), {} refused "
+                      "(innovation: a clock JUMP at >{:.1f} sigma, carry erased), {} dropped "
+                      "at gaps; bias q {:.3e} m² per epoch, drift q {:.3e} m²/s² per epoch "
+                      "from {:.3e}, gap bound {:.0f} s{}",
                       (cliff_live && config_.networkCarryConditionalCoupling()
                        && !config_.networkCarryCouplingJointWhiten())
                           ? "" : " ⚠ CHANNEL NOT ARMED on this posture (phase_leveling "
@@ -2020,7 +2030,82 @@ int networkTeardown(
                                    "the channel is UNWIRED (no station-epoch reached the "
                                    "block with a live ZWD carry), not quiet."
                                  : "")
+                          : " (knob OFF — these are structurally 0)",
+                      // I-in-block (network.carry_iono_in_block) — invariant #4, on the F3
+                      // line because the block IS the vehicle.  0 columns under an armed
+                      // knob is UNWIRED, not clean; a large not-folded count says the
+                      // station blocks kept failing to factorize, and since this card has
+                      // no diagonal row that means the iono carry did NOTHING there.
+                      C.n_pl_blk_iono_cols, C.n_pl_blk_iono_not_folded,
+                      C.n_pl_blk_iono_missing_cross, C.n_raim_pool_iono_rows,
+                      C.n_iono_blk_erased_t4, C.n_iono_blk_gap_drop,
+                      config_.networkCarryIonoInBlockQM2(),
+                      config_.networkCarryIonoInBlockMaxGapS(),
+                      config_.networkCarryIonoInBlock()
+                          ? (C.n_pl_blk_iono_cols == 0
+                                 ? "  ⚠ ARMED AND INERT: 0 iono columns under an ARMED "
+                                   "carry_iono_in_block — no station-epoch reached the "
+                                   "block with a live per-LOS iono carry, which is a "
+                                   "MISWIRE, not a quiet run."
+                                 : "")
+                          : " (knob OFF — these are structurally 0)",
+                      // RX-CLK-in-block (network.carry_rx_clock_in_block) — invariant #4,
+                      // on the F3 line because the block IS the vehicle.  0 columns under
+                      // an armed knob is UNWIRED, not clean.  ⚠ Read `refused` as the
+                      // clock-JUMP census: it is the ONLY jump detector the network's
+                      // receiver clock has, so a field lineage with 0 refusals over a day
+                      // is either a very well behaved receiver fleet or a gate set too
+                      // loose — and a large count means the carry is being rebuilt
+                      // constantly, i.e. the drift model is not tracking.
+                      C.n_pl_blk_rxclk_cols, C.n_pl_blk_rxclk_isb_cols,
+                      C.n_pl_blk_rxclk_not_folded, C.n_pl_blk_rxclk_missing_cross,
+                      C.n_raim_pool_rxclk_rows, C.n_rxclk_carry_refused,
+                      config_.networkCarryRxClockJumpK(), C.n_rxclk_carry_gap_drop,
+                      config_.networkCarryRxClockQM2(), config_.networkCarryRxClockRateQ(),
+                      config_.networkCarryRxClockRateVar0(),
+                      config_.networkCarryRxClockMaxGapS(),
+                      config_.networkCarryRxClockInBlock()
+                          ? (C.n_pl_blk_rxclk_cols == 0
+                                 ? "  ⚠ ARMED AND INERT: 0 receiver-clock columns under an "
+                                   "ARMED carry_rx_clock_in_block — no station-epoch reached "
+                                   "the block with a live clock carry, which is a MISWIRE, "
+                                   "not a quiet run."
+                                 : "")
                           : " (knob OFF — these are structurally 0)");
+        // AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,
+        // SPEC_amb_iono_split_overcount §6.17–§6.18) — the ON-path telemetry
+        // (invariant #4).  Printed ONLY when armed, so an OFF log is byte-identical.
+        // What to read: 0 inflated column-epochs under an armed knob is ARMED AND
+        // INERT — the stamps never reached an inject, not a quiet run; a mean age near
+        // the ceiling says the population being inflated is nearly mature and the knob
+        // is buying almost nothing; and the stamp split (created vs freed) says which
+        // event is actually producing the code-quality levels on this bed.  The
+        // block-scaled count read against the inflated count separates "computed" from
+        // "actually applied inside Σ" — a gap is columns that took the per-column route
+        // (F3 off, factorization fallback, young-leg gate) or were refused by the
+        // block's scalar screen.
+        if (config_.networkPhaseLevelingYoungInflateVarM2() > 0.0)
+            log->info("Network (young-arc inflate): {} column-epoch(s) inflated (V0 {:.4g} m², "
+                      "tau {:.4g} ep, max age {} ep), mean age {:.2f} ep, Σ var_add {:.4g} m²; "
+                      "{} of them congruence-scaled inside an F3 block; {} stamped "
+                      "column-epoch(s) skipped for age > max; {} re-level stamp(s) set "
+                      "(created {} / freed {}).{}",
+                      C.n_yng_cols,
+                      config_.networkPhaseLevelingYoungInflateVarM2(),
+                      config_.networkPhaseLevelingYoungInflateTauEp(),
+                      config_.networkPhaseLevelingYoungInflateMaxAgeEp(),
+                      C.n_yng_cols > 0
+                          ? C.yng_age_sum / static_cast<double>(C.n_yng_cols) : 0.0,
+                      C.yng_var_add_sum, C.n_pl_blk_yng_scaled, C.n_yng_skip_age,
+                      C.n_yng_stamp_create + C.n_yng_stamp_free,
+                      C.n_yng_stamp_create, C.n_yng_stamp_free,
+                      C.n_yng_cols == 0
+                          ? "  ⚠ ARMED AND INERT: 0 column-epochs inflated under an ARMED "
+                            "phase_leveling_young_inflate_var_m2 — no carried column ever "
+                            "reached an inject inside its age window, which is a MISWIRE "
+                            "(no stamps, no leveling inject, or an epoch spacing the run "
+                            "never resolved), not a quiet run."
+                          : "");
         // Seam-scoped ZWD re-seed (network.zwd_seam_reseed) — the ON-path telemetry
         // (standing invariant #4): an armed knob with 0 folds means the window never
         // armed (no warm resume, or the snapshot carried no Z rows) or every fold
