@@ -2347,3 +2347,41 @@ consumer p50 ≤ 0.15 (from 0.174), rms ≤ 0.35, ZWD ≤ 0.01, T4 ≤ 78, L1C
 ref-free ≥ 90 % (from 87.1), WL ≥ 98.9 %, cold fallbacks < 68.  A T4 count
 ABOVE 78 on the storm bed is the falsifier: a wrongly exonerated band shows
 up post-fit at that arc.
+
+## 15. Next card, pre-registration stub — the COLD anchor fallbacks (census 2026-09-11 on `golden_sim_campaign_zwdblk_mwevid`)
+
+The anchor-slip handover falls back to a COLD re-realization when the elected
+successor has no usable carried value (68 of 305 on the storm arm with both
+slip cards; 50 of 261 on the anchor-only arm).  Two censuses, both from the
+observation trace (`network_slip_raw.csv`, every station × satellite × epoch,
+so an arc's age is the time since the satellite rose at that station; the
+residual trace cannot be used — pinned arcs never appear in it):
+
+| population | successor arc age, epochs (p10 / p50 / p90) |
+|---|---|
+| 68 cold handovers | 12 / **39** / 158 |
+| 237 continuous handovers | 65 / 236 / 474 |
+
+- 21 of the 68 fall in the arm's first 30 minutes, where EVERY arc is young
+  (cold start): unavoidable, and a warm resume never sees them.
+- Of the remaining 47, **43 had three or more mature alternatives** (another
+  station holding the same satellite for ≥ 60 epochs) and **in 0 of 43 cases
+  was the chosen successor the highest-elevation mature candidate** — the
+  successors sat at 16–34° with 10–65-epoch arcs while mature candidates
+  stood at 78–80°.  Cold handovers come in whole-satellite groups (13 pairs,
+  10 triples: every band of the satellite handed over in one epoch — the
+  all-band responses the common-band scope of §14 removes for single-band
+  slips).
+
+**Hypothesis for the card:** the successor election does not test carry
+usability (maturity) as a CANDIDACY condition; it applies its priority (which
+appears to favour a station already holding the satellite's sibling bands, or
+list order) and only afterwards discovers the carry is unusable and falls back
+cold.  **Pre-registered fix:** candidacy requires a usable carried value
+(mature arc, finite value_abs, not itself freed this epoch); the normal
+priority then ranks the usable candidates; a family with no usable candidate
+keeps today's cold path.  **Gates:** OFF byte-identical; on the storm arm the
+cold count falls from 68 to ≤ 25 (the cold-start 21 remain), continuous
+handovers land on arcs of age ≥ 60, consumer / ZWD / T4 not worse than §13.6;
+the harness leg is the §12.7 single-event anchor slip at a station whose
+satellite has a young low successor and a mature high one available.
