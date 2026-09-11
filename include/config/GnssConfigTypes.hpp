@@ -772,6 +772,39 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief BAND SCOPE of the T4 attribution erase (docs/SPEC_event_harness.md §Z).
+     *
+     * Study 1 measured, on three healthy arcs of the quiet sim bed, that the
+     * 0.445-cycle persistent level floor a T4 erase leaves is bought by the
+     * BAND SCOPE and by nothing else on the erase path: restricting the same
+     * erase to 2 of a 3-band arc drops the floor 9× (0.445 → 0.050) on every
+     * band, including the band that was never touched.  Freeing all bands of a
+     * line of sight removes that LOS's last level anchor, so (ρ, I, N₁..N₃) must
+     * re-draw together from ONE epoch of code — standing invariant #1's
+     * re-coupling edge verbatim.  Leave one band pinned and the re-tapped levels
+     * land on the survivor's ionosphere instead of on code noise.
+     */
+    enum class NetworkRaimEraseBandScope {
+        All,        ///< (default) erase every signal of the flagged (station, satellite) — the pre-knob path, byte-identical.
+        MinKeepOne  ///< Erase the bands whose own post-fit normalized residual |r|/σ̂₀ stands above the T4 gate, and ALWAYS keep the band with the smallest |r|/σ̂₀ pinned as the LOS's level anchor.  A single-band arc is skipped entirely (there is no band to spare).
+    };
+
+    /**
+     * @brief BAND SCOPE of the whole-satellite DETECTOR refloats (§Z).
+     *
+     * The other half of the same finding.  MW and LLI already act per pair /
+     * per signal; the paths that can free an ENTIRE arc are the IF-TD pair on a
+     * 2-band arc, an LLI asserted on every band, and the wind-up accumulator
+     * RESTART drain (a band-common model step, so it implicates all of them by
+     * construction).  @c Implicated frees only what the detector named and, when
+     * that covers every live band, keeps the least-suspect one pinned.
+     */
+    enum class NetworkRefloatBandScope {
+        All,        ///< (default) free every band the detector named — the pre-knob path, byte-identical.
+        Implicated  ///< Free only the implicated bands; when they cover the whole arc, keep the band with the smallest RAW detector evidence (the MW/GF per-band decomposition) pinned and count the fallback.
+    };
+
+    /**
      * @brief The network producer's time-linked parameter classes — the key
      *        space of the @c network.process_noise table.
      *
@@ -1102,7 +1135,16 @@ namespace GnssProcessor {
         double      delta_cycles{ 0.0 };  ///< slip: cycles added to the phase observable.
         bool        flag_lli{ false };    ///< slip: also raise LLI bit 0x1 on the onset epoch.
         double      duration_s{ 0.0 };    ///< outage: window length; the return is a natural re-admission.
-        std::string mode;                 ///< anchor_handover: "cold" | "continuous".
+        /// @c anchor_handover: "cold" | "continuous".
+        ///
+        /// @c arc_erase: the DIAGNOSTIC sub-knob (§9 Study 1) — "erase" (the
+        /// default and the PRODUCTION T4 path) | "free_epoch" (act as a DETECTOR
+        /// refloat instead: keep the @c LocalCarry entry, latch the free-epoch
+        /// set, no iono co-erase, no C3c queue) | "erase_keep_iono" |
+        /// "erase_no_reseed" | "erase_no_funnel" (the production erase MINUS the
+        /// one named action).  Harness-only: it changes what the INJECTED event
+        /// does, never what a real attribution does.
+        std::string mode;
         /// Metres of NON-DISPERSIVE range step.  @c sat_clock_step adds it to the
         /// a-priori satellite clock of @ref sat (every station); @c rx_clock_step
         /// adds it to the receiver clock of @ref station (every satellite) — the
@@ -1282,6 +1324,14 @@ namespace GnssProcessor {
         /// off and is self-consistent with what the file actually contains.  Inert unless
         /// @ref trace_dd_fractional.  TRACE-ONLY: never folded into the warm-resume fingerprint.
         NetworkDdFracRef trace_dd_fractional_ref{ NetworkDdFracRef::Lowest };
+        /// §Z: BAND SCOPE of the T4 attribution erase (@ref NetworkRaimEraseBandScope).
+        /// Default @c All reproduces the pre-knob instruction stream byte for byte.
+        /// SOLVE-AFFECTING when armed (it changes which carried levels survive an
+        /// erase), so it is fingerprinted like any other carry-shaping knob.
+        NetworkRaimEraseBandScope raim_erase_band_scope{ NetworkRaimEraseBandScope::All };
+        /// §Z: BAND SCOPE of the whole-satellite detector refloats
+        /// (@ref NetworkRefloatBandScope).  Default @c All is byte-identical.
+        NetworkRefloatBandScope cycle_slip_refloat_band_scope{ NetworkRefloatBandScope::All };
         int    trace_dd_fractional_epoch_stride{ 1 };  ///< T2e: write @c network_dd_fractional.csv only every Nth PROCESSED epoch (1 = every epoch = current).  Fraction statistics don't need every epoch; combines with @ref trace_dd_fractional_max_pairs to make a traced convergence run affordable.  TRACE-ONLY (never folded into the warm-resume fingerprint).  Inert unless @ref trace_dd_fractional.
         /// S1: emit @c network_phase_anchor.csv — per PROCESSED epoch, one row per
         /// GAUGE-PINNED ambiguity as (week,tow,cons,signal,sat,anchor_sta), i.e. WHICH

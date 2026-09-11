@@ -121,6 +121,46 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief A staged @c arc_erase directive, consumed by the T4 attribution
+     *        block (production modes) or by the PASS-A slip drains (@c free_epoch).
+     *
+     * @c mode is the DIAGNOSTIC sub-knob of Study 1 (docs/SPEC_event_harness.md
+     * §9).  The erase path performs FOUR actions the detector refloat does not,
+     * and the study asks which of them owns the persistent level floor an
+     * unnecessary erase leaves behind:
+     *
+     *   | mode              | LocalCarry entry | LOS iono carry | pending-reseed | C3c queue | free-epoch latch |
+     *   |-------------------|------------------|----------------|----------------|-----------|------------------|
+     *   | @c erase (default)| ERASED           | co-erased      | marked         | queued    | no               |
+     *   | @c erase_keep_iono| ERASED           | KEPT           | marked         | queued    | no               |
+     *   | @c erase_no_reseed| ERASED           | co-erased      | NOT marked     | queued    | no               |
+     *   | @c erase_no_funnel| ERASED           | co-erased      | marked         | NOT queued| no               |
+     *   | @c free_epoch     | KEPT             | KEPT           | marked         | (detector)| YES              |
+     *
+     * Harness-only: the mode gates what the INJECTED erase does.  A real
+     * attribution is untouched on every path, and an unarmed run cannot reach
+     * any of it.
+     */
+    struct InjectArcErase {
+        std::string station;          ///< Station name (roster-matched at the RAIM/drain site).
+        std::string sat;              ///< Satellite id.
+        std::string mode{ "erase" };  ///< See the table above; loader-defaulted to "erase".
+        /// BAND SCOPE (Study 1 rung 2): the phase signals the erase/free acts on.
+        /// EMPTY = every signal of that satellite, which is what BOTH production
+        /// paths do and what the harness did before this field existed.  A
+        /// non-empty set restricts the action, so a healthy arc can be freed on
+        /// the same 2-of-3 scope a real IF-TD detector refloat uses.
+        std::set<std::string> signals;
+        std::size_t ev_index{ 0 };    ///< Index into @c NetworkInjectState::events (ledger updates).
+        /// @brief True when @p sig is in this directive's band scope.
+        bool coversSignal(const std::string& sig) const {
+            return signals.empty() || signals.count(sig) != 0;
+        }
+        /// @brief True for every mode that runs the T4 erase path (i.e. not @c free_epoch).
+        bool isErase() const { return mode != "free_epoch"; }
+    };
+
+    /**
      * @brief Run-scope state of the injector: the schedule, its firing ledger and
      *        the one-epoch directives other seams consume.
      *
@@ -141,9 +181,13 @@ namespace GnssProcessor {
 
         /// This epoch's staged directives (cleared at the top of every epoch).
         std::vector<InjectAnchorDirective> anchor_now;
-        /// This epoch's staged (station name, satellite) T4 erases.
-        std::vector<std::pair<std::string, std::string>> arc_erase_now;
+        /// This epoch's staged arc-erase directives (station, satellite, mode).
+        std::vector<InjectArcErase> arc_erase_now;
         long long n_arc_erase_acted{ 0 };  ///< Chords actually refloated by injected erases.
+        /// Study-1 path census: mode -> chords the injected event actually acted on.
+        /// A zero here on an armed leg is invariant #4's "the wiring is inert",
+        /// which is exactly the confound the sub-knobs exist to rule out.
+        std::map<std::string, long long> arc_erase_mode_acted;
 
         /// @brief Directive covering @p amb, or @c nullptr.  Cheap on the empty path.
         const InjectAnchorDirective* anchorFor(const std::string& amb) const {

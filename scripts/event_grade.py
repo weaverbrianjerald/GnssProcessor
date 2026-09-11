@@ -417,6 +417,11 @@ def main():
                     help="--seam-ref settle threshold in metres (default 0.01)")
     ap.add_argument("--pre", type=int, default=10)
     ap.add_argument("--post", type=int, default=50)
+    ap.add_argument("--signal", default=None,
+                    help="grade the lvl channel on THIS band instead of the "
+                         "event's own (the per-band pass of a multi-band leg); "
+                         "on a multi-event leg it also selects the event whose "
+                         "delta_cycles is folded into the truth")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
 
@@ -429,17 +434,44 @@ def main():
     lo, hi = -abs(args.pre), abs(args.post)
     m = leg_meta(args.legdir)
     ev = m.get("event") or {}
+    # A leg may carry SEVERAL events at one tow (Study 3's all-band injected
+    # slip writes one per band).  The lvl channel is per-signal, so grade ONE of
+    # them: --signal names which, and the matching event supplies the injected
+    # delta that gets folded into the truth.  Without --signal the first event
+    # is graded, which is what a single-event leg has always done.
+    ev_all = ev if isinstance(ev, list) else [ev]
+    if isinstance(ev, list):
+        ev = {}
+        if args.signal:
+            for e in ev_all:
+                if (e or {}).get("signal") == args.signal:
+                    ev = e
+                    break
+        if not ev:
+            ev = ev_all[0] if ev_all else {}
     t0 = m.get("event_tow")
     if t0 is None:
         raise SystemExit("this leg has no event (it IS a null leg) — grade an event leg")
     kind = ev.get("kind", "?")
     sta, sat = ev.get("station", ""), ev.get("sat", "")
-    sig = ev.get("signal") or "L1C"
+    sig = args.signal or ev.get("signal") or "L1C"
     if sig == "all":
         sig = "L1C"
+    # An arc_erase BAND SCOPE is a ";"-separated list (Study 1 rung 2); the lvl
+    # channel is per-signal, so grade the FIRST band of the scope and say so.
+    if ";" in sig or "," in sig:
+        scope = [t for t in sig.replace(",", ";").split(";") if t]
+        sig = scope[0]
     inj = ev.get("delta_cycles", 0.0) if kind == "slip" else 0.0
 
     notes = []
+    if len(ev_all) > 1:
+        notes.append(f"leg carries {len(ev_all)} events at t0 "
+                     f"({', '.join(str((e or {}).get('signal') or (e or {}).get('kind')) for e in ev_all)})"
+                     f" — lvl graded on {sig}")
+    if ";" in (ev.get("signal") or "") or "," in (ev.get("signal") or ""):
+        notes = [f"band scope {ev['signal']} — lvl graded on {sig} "
+                 f"(the other bands need a separate pass)"]
     res = {"leg": os.path.abspath(args.legdir), "null": os.path.abspath(args.null),
            "event": ev, "t0": t0, "window": [lo, hi]}
 

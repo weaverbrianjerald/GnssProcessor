@@ -38,6 +38,37 @@
 
 namespace GnssProcessor {
 
+// ---------------------------------------------------------------------------
+// §Z BAND-SCOPED T4 ERASE — the rule (docs/SPEC_event_harness.md §Z)
+// ---------------------------------------------------------------------------
+RaimEraseBandScope networkRaimEraseBandScope(
+    const std::vector<std::pair<std::string, double>>& sig_r, double bar) {
+    RaimEraseBandScope d;
+    if (sig_r.empty()) return d;
+    d.act = true;
+    // Smallest |r| wins the pin; ties break on the lexically lowest signal so the
+    // choice is deterministic across runs, platforms and pool orderings.
+    std::size_t keep = 0;
+    for (std::size_t k = 1; k < sig_r.size(); ++k)
+        if (sig_r[k].second < sig_r[keep].second
+            || (sig_r[k].second == sig_r[keep].second
+                && sig_r[k].first < sig_r[keep].first))
+            keep = k;
+    d.keep = sig_r[keep].first;
+    if (sig_r.size() == 1) { d.single_band = true; return d; }
+    for (std::size_t k = 0; k < sig_r.size(); ++k)
+        if (k != keep && sig_r[k].second > bar) d.erase.insert(sig_r[k].first);
+    d.kept_over_gate = sig_r[keep].second > bar;
+    // No band cleared the gate: the cell was flagged by the median-polish
+    // INTERACTION (net of the row and column effects), so a per-signal residual
+    // can sit under k·σ̂₀ while the arc still stands out.  Erase everything but
+    // the pin — never suppress the response on absence of per-band evidence.
+    if (d.erase.empty())
+        for (std::size_t k = 0; k < sig_r.size(); ++k)
+            if (k != keep) d.erase.insert(sig_r[k].first);
+    return d;
+}
+
 void networkPostFitRaim(NetworkRunContext& ctx,
                         const GnssConfig& config_,
                         const std::shared_ptr<spdlog::logger>& log,
@@ -767,16 +798,36 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // is marked as injected only in its event row.  It also OPENS the block on
         // an epoch whose σ̂₀ never tripped: that is the point of the harness.
         bool inject_arc_act = false;
+        auto joinSet = [](const std::set<std::string>& v) {
+            std::string o;
+            for (const auto& x : v) o += (o.empty() ? "" : ";") + x;
+            return o;
+        };
+        // Study-1 DIAGNOSTIC sub-knob (docs/SPEC_event_harness.md SS9):
+        // (station idx, sat) -> the injected mode.  Consulted ONLY for arcs this
+        // injector staged; a real attribution's arcs are absent from the map and
+        // take the production path unchanged.
+        std::map<std::pair<int, std::string>, std::string> inject_arc_mode;
+        /// Band scope per injected arc (empty set => every signal, production).
+        std::map<std::pair<int, std::string>, std::set<std::string>> inject_arc_sigs;
+        std::vector<const InjectArcErase*> inject_arc_staged;
         if (ctx.inject.armed && !ctx.inject.arc_erase_now.empty()) {
-            for (const auto& [sta_name, sat] : ctx.inject.arc_erase_now)
+            bool any_erase_mode = false;
+            for (const auto& d : ctx.inject.arc_erase_now) {
+                if (!d.isErase()) continue;   // free_epoch is the PASS-A drain's
+                any_erase_mode = true;
                 for (size_t i = 0; i < stations.size(); ++i)
-                    if (stations[i].name == sta_name && present[i]
+                    if (stations[i].name == d.station && present[i]
                         && est_index_of[i] >= 0
                         && (phase_datum_prioritized || !stations[i].is_pivot)) {
-                        bad_arcs.emplace_back(static_cast<int>(i), sat);
+                        bad_arcs.emplace_back(static_cast<int>(i), d.sat);
+                        inject_arc_mode[{ static_cast<int>(i), d.sat }] = d.mode;
+                        inject_arc_sigs[{ static_cast<int>(i), d.sat }] = d.signals;
+                        inject_arc_staged.push_back(&d);
                         inject_arc_act = true;
                     }
-            if (!inject_arc_act)
+            }
+            if (any_erase_mode && !inject_arc_act)
                 log->error("Network (fault inject): TOW {:.1f} arc_erase found no "
                            "eligible (station, satellite) — the station is absent, "
                            "un-indexed, or the legacy pivot.  The event will be "
@@ -813,11 +864,99 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 const auto vit = vmap.find(sat);
                 return vit != vmap.end() && vit->second.measured;
             };
+            // ---- §Z BAND-SCOPED ERASE (docs/SPEC_event_harness.md) -------------
+            // `min_keep_one`: an ISOLATED-ARC (statistical) erase frees only the
+            // bands whose OWN post-fit normalized residual stands above the T4
+            // gate, and ALWAYS spares the band with the smallest |r|/σ̂₀ — the
+            // survivor is the line of sight's level anchor, and Study 1 measured
+            // that keeping one is worth 9× on the persistent level floor.
+            //
+            // Per-signal residual source: `cells`, built in Pass 1 as one row per
+            // (station, satellite, SIGNAL) carrying that carried-ambiguity's max
+            // standardized post-fit phase residual — the SAME number the median
+            // polish consumes after `cell_max` collapses the signal axis away.
+            // Nothing is re-derived here; the scope reads the value the
+            // attribution itself was computed from, one aggregation step earlier.
+            //
+            // The CONSENSUS whole-satellite path (statistical_arc = false) is
+            // deliberately NOT scoped: a ≥ min_sta cross-station agreement is real
+            // evidence about the satellite, not about one arc's bands.
+            const bool bscope_t4 =
+                config_.getNetworkConfig().raim_erase_band_scope
+                    == NetworkRaimEraseBandScope::MinKeepOne;
+            std::map<std::pair<int, std::string>,
+                     std::vector<std::pair<std::string, double>>> cell_sig_r;
+            /// (station, sat) -> the band left pinned, for the event row's detail.
+            std::map<std::pair<int, std::string>, std::string> bs_kept_by_arc;
+            if (bscope_t4)
+                for (const auto& c : cells)
+                    cell_sig_r[{ c.sta, c.sat }].emplace_back(c.sig, c.r);
+            // Adjudicate one cell: the RULE is the pure
+            // networkRaimEraseBandScope (unit-tested); this only looks the cell up.
+            auto bandScope = [&](int i, const std::string& sat) -> RaimEraseBandScope {
+                const auto it = cell_sig_r.find({ i, sat });
+                if (it == cell_sig_r.end()) return {};
+                return networkRaimEraseBandScope(it->second, raim_k * sigma0);
+            };
             auto refloat_sat_at = [&](int i, const std::string& sat,
                                       bool statistical_arc) -> int {
                 int n = 0;
+                // §Z: resolved once per (station, satellite) visit, above the
+                // per-signal loop, so the pin is one decision and not a race
+                // between bands.
+                std::set<std::string> bs_erase;
+                std::string           bs_keep;
+                bool                  bs_on = false;
+                if (bscope_t4 && statistical_arc) {
+                    const RaimEraseBandScope bs = bandScope(i, sat);
+                    bs_erase = bs.erase;
+                    bs_keep  = bs.keep;
+                    const bool over = bs.kept_over_gate;
+                    if (bs.act) {
+                        if (bs.single_band) {
+                            // Single-band arc — skip the erase outright.  The level
+                            // is suspect, but freeing it re-draws (ρ, I, N) from one
+                            // epoch of code with nothing left to anchor them, which
+                            // is the failure this scope exists to prevent.
+                            ++ctx.counters.n_bscope_t4_single_band;
+                            ++ctx.counters.n_bscope_t4_cells;
+                            bs_kept_by_arc[{ i, sat }] = bs_keep + "(single)";
+                            return 0;
+                        }
+                        bs_on = true;
+                        ++ctx.counters.n_bscope_t4_cells;
+                        ++ctx.counters.n_bscope_t4_kept;
+                        if (over) ++ctx.counters.n_bscope_t4_kept_over_gate;
+                        bs_kept_by_arc[{ i, sat }] =
+                            bs_keep + (over ? "(over_gate)" : "");
+                    }
+                    // No cell rows for this (station, sat) — the arc is not in the
+                    // attribution pool this epoch.  Fall through to the unscoped
+                    // erase: the scope has no evidence to act on, and refusing the
+                    // response on missing evidence is the other failure mode.
+                }
+                // Study-1 sub-knob: production defaults unless THIS arc was
+                // staged by the injector with a diagnostic mode.  Every flag
+                // below is `true` on the production path, so an unarmed run's
+                // instruction stream is the pre-card one.
+                bool inj_iono = true, inj_reseed = true, inj_funnel = true;
+                const std::set<std::string>* inj_sigs = nullptr;
+                if (!inject_arc_mode.empty()) {
+                    const auto mit = inject_arc_mode.find({ i, sat });
+                    if (mit != inject_arc_mode.end()) {
+                        inj_iono   = (mit->second != "erase_keep_iono");
+                        inj_reseed = (mit->second != "erase_no_reseed");
+                        inj_funnel = (mit->second != "erase_no_funnel");
+                        const auto sit = inject_arc_sigs.find({ i, sat });
+                        if (sit != inject_arc_sigs.end() && !sit->second.empty())
+                            inj_sigs = &sit->second;
+                    }
+                }
                 for (const auto& pa : ambPool(asm_res[i]))
-                    if (pa.sat == sat) {
+                    if (pa.sat == sat
+                        && !(inj_sigs && inj_sigs->count(pa.signal) == 0)
+                        && !(bs_on && bs_erase.count(pa.signal) == 0)) {
+                        if (bs_on) ++ctx.counters.n_bscope_t4_erased;
                         // SPEC_slip_relevel_walk §6, retap piece: an ISOLATED-ARC
                         // refloat carries NO measured delta and its population is
                         // FA-dominated (21114 arc refloats vs ~4500 slip-driven on
@@ -896,7 +1035,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         // the LOS's iono carry with it so the re-level re-draws both.
                         // Idempotent across the per-signal loop; a retap-KEPT arc above
                         // never reaches this line (kept level ⇒ kept iono carry).
-                        if (ctx.knobs.iono_on &&
+                        if (inj_iono && ctx.knobs.iono_on &&
                             ctx.carry.iono_carry.erase({i, pa.sat}))
                             ++ctx.counters.n_iono_carry_erased_t4;
                         // I-in-block (network.carry_iono_in_block): the SAME edge for the
@@ -930,12 +1069,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         // shared RHS b_red = u_s − N_sr N_rr⁻¹ u_r algebraically unchanged
                         // (SPEC_deweight_release_hygiene §7.2).  Kept because it IS the
                         // actuator on the phase-leveling lineage.
-                        stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+                        if (inj_reseed)
+                            stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
                         // THE actuator under carry_invariant: queue for the next epoch's
                         // C3c funnel, which membership-excludes the arc from A_old so its
                         // chord is re-tapped from a diffuse prior.  Deferred because the
                         // funnel was consumed at SB_DDBUILD, long before SB_RAIM.
-                        if (raim_ci_refloat) {
+                        if (inj_funnel && raim_ci_refloat) {
                             raim_refloat_pending.insert({i, pa.amb_key});
                             ++raim_ci_tallies.refloats_queued;
                         }
@@ -956,23 +1096,30 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 n_ref += refloat_sat_at(sta, sat, /*statistical_arc=*/true);
             if (inject_arc_act) {
                 // The injected pairs are the TAIL of bad_arcs (appended above).
-                const std::size_t n_inj = ctx.inject.arc_erase_now.size();
-                for (const auto& [sta_name, sat] : ctx.inject.arc_erase_now)
-                    traces.emitEvent(se.time, "INJECT", "arc_erase", sat, sta_name,
+                const std::size_t n_inj = inject_arc_staged.size();
+                std::string modes;
+                for (const InjectArcErase* d : inject_arc_staged) {
+                    traces.emitEvent(se.time, "INJECT", "arc_erase", d->sat, d->station,
                                      std::nullopt, std::nullopt, "injected",
-                                     fmt::format("t4_path;sigma0={:.3f};chords={}",
+                                     fmt::format("t4_path;mode={};bands={};sigma0={:.3f};chords={}",
+                                                 d->mode,
+                                                 d->signals.empty() ? std::string("all")
+                                                                    : joinSet(d->signals),
                                                  sigma0, n_ref));
-                ctx.inject.n_arc_erase_acted += n_ref;
-                for (std::size_t k = 0; k < ctx.inject.events.size(); ++k)
-                    if (ctx.inject.events[k].kind == "arc_erase"
-                        && !ctx.inject.onset_logged[k]) {
+                    ctx.inject.arc_erase_mode_acted[d->mode] += n_ref;
+                    modes += (modes.empty() ? "" : ",") + d->mode;
+                    const std::size_t k = d->ev_index;
+                    if (k < ctx.inject.events.size() && !ctx.inject.onset_logged[k]) {
                         ++ctx.inject.n_applied[k];
                         ctx.inject.onset_logged[k] = true;
                         ++ctx.inject.fired_by_kind["arc_erase"];
                     }
+                }
+                ctx.inject.n_arc_erase_acted += n_ref;
                 log->warn("Network (fault inject): TOW {:.1f} injected T4 erase on {} "
-                          "arc(s) refloated {} carried chord(s) through the ATTRIBUTION "
-                          "path (sigma0={:.3f}).", se.time.tow, n_inj, n_ref, sigma0);
+                          "arc(s) [mode={}] refloated {} carried chord(s) through the "
+                          "ATTRIBUTION path (sigma0={:.3f}).",
+                          se.time.tow, n_inj, modes, n_ref, sigma0);
             }
             attrib_acted = true;
             if (raim_ci_on) raim_ci_tallies.arcs_flagged += static_cast<long long>(bad_arcs.size());
@@ -999,9 +1146,17 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                               sat_prom.count(s) ? std::optional<double>(sat_prom.at(s))
                                                 : std::nullopt,
                               raim_k, "refloat", sd);
-                for (const auto& [sta, sat] : bad_arcs)
+                for (const auto& [sta, sat] : bad_arcs) {
+                    // §Z: the kept band is part of the event's identity — an arc
+                    // that was band-scoped is a DIFFERENT response from one that
+                    // was erased whole, and the trace must say which it was.
+                    const auto kit = bs_kept_by_arc.find({ sta, sat });
                     emitEvent("T4_attrib", "attrib_arc", sat, stations[sta].name,
-                              std::nullopt, raim_k, "refloat", sd);
+                              std::nullopt, raim_k, "refloat",
+                              kit == bs_kept_by_arc.end()
+                                  ? sd
+                                  : sd + ";band_scope=min_keep_one;kept=" + kit->second);
+                }
             }
         }
     }

@@ -2653,6 +2653,17 @@ namespace GnssProcessor {
         /// (gap / slip-gate / first sighting) and blend steps.  Armed with
         /// blends = 0 is a MISWIRE (invariant #4).
         long long n_iono_cs_resets = 0, n_iono_cs_blends = 0;
+        /// §Z BAND-SCOPED T4 ERASE (network.raim_erase_band_scope = min_keep_one;
+        /// docs/SPEC_event_harness.md).  cells: isolated-arc erase cells the scope
+        /// actually adjudicated.  erased / kept: bands freed vs bands left pinned
+        /// (kept is one per adjudicated multi-band cell by construction).
+        /// kept_over_gate: cells where EVERY band stood above k·σ̂₀, so the pin is
+        /// the least-BAD band rather than a clean one.  single_band: cells skipped
+        /// outright because the arc had one band and there was none to spare.
+        /// Armed with cells = 0 on a T4-active run is a MISWIRE (invariant #4).
+        long long n_bscope_t4_cells = 0, n_bscope_t4_erased = 0,
+                  n_bscope_t4_kept = 0, n_bscope_t4_kept_over_gate = 0,
+                  n_bscope_t4_single_band = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

@@ -220,6 +220,12 @@ INSTANTIATE_TEST_SUITE_P(
                        {"sat", "G05"}},
         // arc_erase with no station
         nlohmann::json{{"kind", "arc_erase"}, {"tow", 1.0}, {"sat", "G05"}},
+        // arc_erase with an unknown Study-1 diagnostic mode
+        nlohmann::json{{"kind", "arc_erase"}, {"tow", 1.0}, {"station", "STA1"},
+                       {"sat", "G05"}, {"mode", "nuke_it"}},
+        // arc_erase whose band scope names a CODE observable
+        nlohmann::json{{"kind", "arc_erase"}, {"tow", 1.0}, {"station", "STA1"},
+                       {"sat", "G05"}, {"signal", "C1C"}},
         // anchor_handover with a bad mode
         nlohmann::json{{"kind", "anchor_handover"}, {"tow", 1.0}, {"sat", "G05"},
                        {"mode", "warm"}},
@@ -427,7 +433,13 @@ TEST(NetworkInjectEpoch, DecisionKindsStageAOneEpochDirective) {
     EXPECT_TRUE(h.ctx->inject.anchor_now[0].matches("G05_L1C"));
     EXPECT_FALSE(h.ctx->inject.anchor_now[0].matches("G07_L1C"));
     ASSERT_EQ(h.ctx->inject.arc_erase_now.size(), 1u);
-    EXPECT_EQ(h.ctx->inject.arc_erase_now[0].first, "STA1");
+    EXPECT_EQ(h.ctx->inject.arc_erase_now[0].station, "STA1");
+    EXPECT_EQ(h.ctx->inject.arc_erase_now[0].sat, "G07");
+    // Study 1: no mode named => the PRODUCTION erase, whole satellite.
+    EXPECT_EQ(h.ctx->inject.arc_erase_now[0].mode, "erase");
+    EXPECT_TRUE(h.ctx->inject.arc_erase_now[0].isErase());
+    EXPECT_TRUE(h.ctx->inject.arc_erase_now[0].signals.empty());
+    EXPECT_TRUE(h.ctx->inject.arc_erase_now[0].coversSignal("L5Q"));
 
     // The NEXT epoch clears them — a directive must never fire twice.  (The
     // consumers close the firing ledger, so onset_logged is still false here and
@@ -438,6 +450,37 @@ TEST(NetworkInjectEpoch, DecisionKindsStageAOneEpochDirective) {
     (void)networkInjectEpoch(*h.ctx, h.log, *h.traces, b, sb);
     EXPECT_TRUE(h.ctx->inject.anchor_now.empty());
     EXPECT_TRUE(h.ctx->inject.arc_erase_now.empty());
+}
+
+TEST(NetworkInjectEpoch, ArcEraseStudy1ModeAndBandScope) {
+    // docs/SPEC_event_harness.md SS9: the diagnostic sub-knobs are parsed onto
+    // the staged directive, free_epoch is routed AWAY from the T4 block
+    // (isErase() false), and a ";"-separated `signal` narrows the band scope.
+    nlohmann::json ij = {{"events", nlohmann::json::array({
+        {{"kind", "arc_erase"}, {"tow", 1000.0}, {"station", "STA1"},
+         {"sat", "G07"}, {"mode", "free_epoch"}, {"signal", "L1C;L2W"}},
+        {{"kind", "arc_erase"}, {"tow", 1000.0}, {"station", "STA1"},
+         {"sat", "G08"}, {"mode", "erase_keep_iono"}, {"signal", "all"}}})}};
+    Harness h{ij, "h_study1"};
+    SyncedEpoch a = epochAt(1000.0), sa;
+    (void)networkInjectEpoch(*h.ctx, h.log, *h.traces, a, sa);
+    ASSERT_EQ(h.ctx->inject.arc_erase_now.size(), 2u);
+
+    const auto& d0 = h.ctx->inject.arc_erase_now[0];
+    EXPECT_EQ(d0.mode, "free_epoch");
+    EXPECT_FALSE(d0.isErase());          // the PASS-A drain owns it, not T4
+    EXPECT_EQ(d0.signals.size(), 2u);
+    EXPECT_TRUE(d0.coversSignal("L1C"));
+    EXPECT_TRUE(d0.coversSignal("L2W"));
+    EXPECT_FALSE(d0.coversSignal("L5Q")); // the anchor band stays pinned
+    EXPECT_EQ(d0.ev_index, 0u);
+
+    const auto& d1 = h.ctx->inject.arc_erase_now[1];
+    EXPECT_EQ(d1.mode, "erase_keep_iono");
+    EXPECT_TRUE(d1.isErase());
+    EXPECT_TRUE(d1.signals.empty());     // "all" == every signal
+    EXPECT_TRUE(d1.coversSignal("L5Q"));
+    EXPECT_EQ(d1.ev_index, 1u);
 }
 
 TEST(NetworkInjectEpoch, ArmedButNeverFiredIsAHardRunEndError) {

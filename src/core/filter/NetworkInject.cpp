@@ -14,6 +14,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace GnssProcessor {
@@ -264,7 +265,27 @@ namespace GnssProcessor {
                 st.anchor_now.push_back(std::move(d));
                 // The ledger entry is closed AFTER the election, at readback.
             } else if (e.kind == "arc_erase") {
-                st.arc_erase_now.emplace_back(e.station, e.sat);
+                InjectArcErase a;
+                a.station  = e.station;
+                a.sat      = e.sat;
+                a.mode     = e.mode.empty() ? std::string("erase") : e.mode;
+                a.ev_index = i;
+                // Band scope: "" / "all" => every signal (the production scope).
+                if (!e.signal.empty() && e.signal != "all") {
+                    std::string tok;
+                    for (char c : e.signal + ";")
+                        if (c == ';' || c == ',') {
+                            if (!tok.empty()) a.signals.insert(tok);
+                            tok.clear();
+                        } else if (!std::isspace(static_cast<unsigned char>(c))) {
+                            tok.push_back(c);
+                        }
+                }
+                st.arc_erase_now.push_back(std::move(a));
+                // The ledger entry is closed by the CONSUMER (the T4 block for
+                // every erase mode, the PASS-A drain for free_epoch) — a
+                // directive that no seam could act on must still reach the
+                // never-fired hard error.
             }
         }
         return *out;
@@ -289,11 +310,16 @@ namespace GnssProcessor {
             by_kind += fmt::format("{}{}={}", by_kind.empty() ? "" : ", ", k, n);
         if (by_kind.empty()) by_kind = "none";
 
+        std::string by_mode;
+        for (const auto& [m, n] : st.arc_erase_mode_acted)
+            by_mode += fmt::format("{}{}={}", by_mode.empty() ? "" : ", ", m, n);
+        if (by_mode.empty()) by_mode = "none";
         log->info("Network (fault inject): {} event(s) armed, {} fired ({}), {} never "
-                  "fired.  Injected T4 erases refloated {} carried chord(s).  Attribution: "
+                  "fired.  Injected T4 erases refloated {} carried chord(s).  Study-1 "
+                  "path census (mode=chords acted): {}.  Attribution: "
                   "network_events.csv tier INJECT (network.trace_events).",
                   st.events.size(), n_fired, by_kind, never.size(),
-                  st.n_arc_erase_acted);
+                  st.n_arc_erase_acted, by_mode);
 
         if (!never.empty()) {
             // The simulator's scripted-schedule rule: an exam fixture must never

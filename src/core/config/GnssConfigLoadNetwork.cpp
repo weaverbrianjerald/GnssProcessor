@@ -1398,6 +1398,43 @@ namespace GnssProcessor {
             }
         }
 
+        // §Z band-scoped responses (docs/SPEC_event_harness.md).  BOTH are
+        // SOLVE-AFFECTING when armed and default to the pre-knob behaviour, so an
+        // unarmed run is byte-identical (invariant #6).  A typo must not silently
+        // arm or disarm a carry-shaping response: warn loudly and take the default.
+        {
+            const std::string s = jval<std::string>(json, "network.raim_erase_band_scope",
+                                                    "raim_erase_band_scope",
+                                                    std::string{"all"});
+            if (s.empty() || s == "all")
+                network_config_.raim_erase_band_scope = NetworkRaimEraseBandScope::All;
+            else if (s == "min_keep_one")
+                network_config_.raim_erase_band_scope = NetworkRaimEraseBandScope::MinKeepOne;
+            else {
+                network_config_.raim_erase_band_scope = NetworkRaimEraseBandScope::All;
+                log->error("Network (§Z): network.raim_erase_band_scope = '{}' is not one of "
+                           "all|min_keep_one — falling back to 'all' (today's whole-arc erase).  "
+                           "min_keep_one keeps the least-suspect band pinned so the line of "
+                           "sight retains a level anchor across the erase.", s);
+            }
+        }
+        {
+            const std::string s = jval<std::string>(json, "network.cycle_slip.refloat_band_scope",
+                                                    "network_cycle_slip_refloat_band_scope",
+                                                    std::string{"all"});
+            if (s.empty() || s == "all")
+                network_config_.cycle_slip_refloat_band_scope = NetworkRefloatBandScope::All;
+            else if (s == "implicated")
+                network_config_.cycle_slip_refloat_band_scope = NetworkRefloatBandScope::Implicated;
+            else {
+                network_config_.cycle_slip_refloat_band_scope = NetworkRefloatBandScope::All;
+                log->error("Network (§Z): network.cycle_slip.refloat_band_scope = '{}' is not one "
+                           "of all|implicated — falling back to 'all' (today's whole-satellite "
+                           "free).  'implicated' frees only the bands the detector named and, "
+                           "when that is every band, keeps the least-suspect one pinned.", s);
+            }
+        }
+
         // S1 (docs/SPEC_lane_spectrometer.md §3.3): the per-(cons,signal,sat) -> anchor
         // STATION map, for the spectrometer's anchor partition.  Trace-only, no stride —
         // the row count scales with gauge freedoms (sats x signals), not station pairs.
@@ -9934,6 +9971,25 @@ namespace GnssProcessor {
                 } else if (ev.kind == "arc_erase") {
                     if (!need(!ev.station.empty(), "a station")) return false;
                     if (!need(!ev.sat.empty(), "a sat")) return false;
+                    // DIAGNOSTIC sub-knob (docs/SPEC_event_harness.md §9): which
+                    // of the erase path's four extra actions the injected event
+                    // performs.  Default = the PRODUCTION path, so an event that
+                    // does not name a mode is exactly what it was before.
+                    if (ev.mode.empty()) ev.mode = "erase";
+                    // Optional BAND SCOPE: "" / "all" => every signal of the
+                    // satellite (both production paths' scope); otherwise a
+                    // ";"-separated list of RINEX-3 PHASE codes.
+                    if (!ev.signal.empty() && ev.signal != "all"
+                        && !need(ev.signal[0] == 'L',
+                                 "a PHASE signal scope (leading L), 'all', or none"))
+                        return false;
+                    if (!need(ev.mode == "erase" || ev.mode == "free_epoch"
+                              || ev.mode == "erase_keep_iono"
+                              || ev.mode == "erase_no_reseed"
+                              || ev.mode == "erase_no_funnel",
+                              "mode 'erase' (default) | 'free_epoch' | "
+                              "'erase_keep_iono' | 'erase_no_reseed' | "
+                              "'erase_no_funnel'")) return false;
                 } else if (ev.kind == "sat_clock_step") {
                     if (!need(!ev.sat.empty(), "a sat")) return false;
                     if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
