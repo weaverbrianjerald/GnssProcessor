@@ -2720,3 +2720,42 @@ Harness (worker, before any storm arm; quiet seed ep0665, S21000SIM, event at +1
 Storm (ONE arm at the end; the §14.3 bars unchanged): consumer settled p50 ≤ 0.174 m, T4 ≤ 78, L1C ≥ 90 %, WL ≥ 98.9 %, ZWD ≤ 0.0071 m, handovers 305, split-referenced 6.6 %.  PASS → both knobs RECOMMEND_ON and pinned together in the sim golden.  FAIL with G2/G3 passing → a second mechanism carries the hour; KEEP_OFF stands and the new fingerprint is recorded.
 
 What falsifies the reading: the divergence epoch is not 4.99 h; or the wrong-narrowing census shows other wrong `keep` rows that cost the consumer nothing (then the collateral / anchor path is the lever, not the narrowing).
+
+### 16.5 The census returns — the reading corrected and the storm gates REVISED before any FIX arm exists (2026-09-11, ~15:30 local; census worker's `task_b..task_h.py`, manager's `cb3_part.py` / `cb3_part2.py` / `cb3_decomp.py`)
+
+**What falsified the §16.2 reading: the consumers do not part at 4.99 h.**  Both take an identical 1.30 m shock at **4.6833 h** — the GPS pivot G01 sets (`PIVOT handover G:G01->G02 datum_bump`, 52 clock anchors `cta_decouple` + `cta_disc_landed`, 157 CB + 156 PB + 52 CLK discontinuities DECLARED) — a full re-reference the user re-absorbs over ~40 min with metre-class excursions.  The two recoveries differ from 4.6917 h on:
+
+| h | arm A (scope OFF) | arm B (scope ON) |
+|---|---|---|
+| 4.6833 | 1.301 m, identical in both (the pivot change) | 1.301 m |
+| 4.80 | E31 L5Q/L7Q handover S26→S54 **COLD** (declared PB re-realization) → vertical spike **1.53 m** at 4.83 h | the same handover **CONTINUOUS** (the intact bands kept S54's arcs carry-usable) → 0.79 m |
+| 4.9917 | — (σ̂₀ 0.948, nothing acted) | the wrong narrowing's fallout: 7 clock anchors decoupled with **7 CLK + 27 PB + 21 CB discontinuities declared**, G20's clock re-engaged +2.15 cm off (datum-free +1.96 cm, its phase biases unmoved), T4 acting on G20/S37 (prominence 162) and on three innocent arcs (17–23) while S37's own highest-prominence arcs (G24 884, G30 877, G22 808) were left alone; σ̂₀ 1.356 |
+| 5.0–5.4 | East decays to 0 | East sits at −0.2 m, 48 epochs of B−A > 5 cm (mean +0.12 m) |
+
+**Decomposition of the settled median (h ≥ 3), the §14.9 gate:**
+
+| window | A p50 / rms | B p50 / rms | Δp50 |
+|---|---|---|---|
+| nothing excluded (n = 360) | 0.1741 / 0.3649 | 0.2067 / 0.3273 | **+3.25 cm** |
+| pivot-recovery 4.6833–5.40 h excluded (n = 273) | 0.1663 / 0.2730 | 0.1566 / 0.2686 | **−0.97 cm** |
+| 4.6833–5.60 excluded (n = 249) | 0.1455 / 0.2032 | 0.1385 / 0.2211 | −0.70 cm |
+| 3.0–4.68 alone | 0.1091 / 0.1459 | 0.1127 / 0.1470 | +0.36 cm |
+| 4.6833–5.40 alone | 0.2728 / 0.5661 | 0.3332 / 0.4673 | +6.0 cm |
+| 5.40–6.0 alone | 0.4031 / 0.4724 | 0.3362 / 0.4627 | −6.7 cm |
+
+The whole +3.3 cm is inside the recovery window of a declared datum change the knob did not cause; outside it the rule's consumer is BETTER, and over the run the rule turned nine cold handovers into continuous ones at identical (tow, family) with zero the other way (2.18 G23 L1C; 3.36 E04 L1C+L5Q; 4.12 G18 L2W+L5Q; 4.80 E31 L5Q+L7Q; 5.58 G12 L2W+L5Q; cold by hour A/B: 27/27, 11/11, 7/6, 2/0, 8/4, 13/11).
+
+**Wrong-narrowing census:** 6 `keep` rows in 2,994 carry a truth slip on an exonerated band within 90 s — and ALL six follow a receiver-flagged slip on the same arc 30 s earlier.  In five, that flagged slip had been answered by the LLI drain at its own epoch and the row's defect is a SPURIOUS implicated band (no truth slip on it); S37/G20 is the only row that exonerated an unanswered slip (the L1C −29 landing the epoch after the flagged L5Q −31).  Truth adjacency: 30 slip pairs ≤ 60 s apart on one arc, 9 with |Δa−Δb| ≤ 12 WL, 6 of those on pairs the IF-TD never forms (L1C+L5Q on GPS, L1C+L7Q, L5Q+L7Q, L2W+L5Q); minimum |Δ| on the bed 12 cycles.  Wire: B−A datum-free clock dispersion 0.9 / 1.5 / 2.2 / 2.7 / 6.5 / 7.5 mm rms by hour — a 7 mm per-satellite difference cannot carry a 12 cm consumer difference; the two arms' emitted clocks agree to mm satellite by satellite (⚠ `simnet_sat_clock_census.py` treats the emitted record as a null-truth error and is not an absolute grade on this bed — its metre-class "tails" G27 3.28 m, G20 2.02 m are the bed's true clocks, identical in both arms).
+
+**The storm gates, revised now (the harness gates G1–G4 of §16.4 stand unchanged):**
+- The pooled settled p50 is REPORTED, not gated: its ±3 cm is the recovery path from a declared datum change.
+- **W1** consumer, window-excluded: settled p50 with 4.6833–5.40 h excluded ≤ A's 0.1663 (cbscope3 already 0.1566); 3.0–4.68 h within ±5 mm of A.
+- **W2** the 4.99 h fallout gone: zero `keep` rows with an UNANSWERED truth slip on an exonerated band (G4); no B-only CLK_ANCHOR decouples at 4.9917 h; no declared CLK discontinuities at 4.9917 h (A: 0); no T4 `acted` rows at 4.9917 h (A: 0).
+- **W3** producer and wire not worse than cbscope3: ZWD ≤ 0.0071 m, WL ≥ 99.2 %, L1C ≥ 89.6 %, split-referenced 6.6 %, handovers 305 with cold ≤ 59; T4 ≤ 86 (the 5.62 h epoch is an attribution scatter — A 41 / B 46 rows there, the consumer gap peaks one epoch BEFORE it — so a ±5 there is not a signal).
+- **W4** (report only): the pooled p50, the hourly table, the 4.6833–5.40 window alone, the disc_counter declarations by kind at 4.9917.
+
+Verdict rule: W1–W3 PASS → `common_band_scope` and `if_phase_td_pairs: all` RECOMMEND_ON and pinned TOGETHER in the sim golden (the field exception of §14.8 stands for both).  W2 FAIL → the fix is wrong, not the rule.  W1 FAIL with W2/W3 PASS → KEEP_OFF stands and the window's contents are named.
+
+**Added harness leg S3** (LLI-flagged L5Q −31 at +10 and nothing else; arms ON and FIX): expectation — at +10 the LLI implicates L5Q; at +11/+12 NO verdict row.  A `keep` at +11 implicating a band that did not slip reproduces the five spurious rows and names the LLI-epoch handling (the detector withholding the flagged epoch's sample and reading the next epoch as the combined jump) as a second defect, to be closed in the SAME card.
+
+**Next card, stub — the pivot departure.**  A declared full re-reference (52 clocks, 313 biases) costs the user 1.30 m and ~40 min of recovery in BOTH arms: the largest consumer event of the settled window, and a gauge change that ought to be absorbed by transformation, not re-convergence.  Instrument: the 4.6833 h epoch of either arm, consumer-side.  `network.clock_datum_broadcast_anchored` (no pivot, no handover seam) remains the un-validated candidate (CLAUDE.md amendment 5).
