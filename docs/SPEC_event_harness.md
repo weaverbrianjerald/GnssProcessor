@@ -2486,3 +2486,30 @@ measured, the card's consumer bar is suspended and the producer-side bars
 (ZWD, integers, T4, handovers) carry the verdict; the iteration-2 storm arm
 (silence from the detector's own decision) is the one that decides the card,
 because iteration 1 could only ever narrow to L1.
+
+**Addendum (2026-09-11 ~12:00) — where the consumer's loss comes from, and what it
+says about the rule.**  Two censuses on the same pair of arms:
+
+| census | §13.6 arm | + scope (iter. 1) |
+|---|---|---|
+| satellite-epochs whose bands are anchored at DIFFERENT stations (of 38 004 with ≥ 2 bands anchored) | 2 500 (6.6 %); hourly 3 / 6 / 9 / 8 / 8 / 7 % | **6 262 (16.5 %)**; hourly 6 / 12 / 20 / 15 / 19 / **27 %** |
+| wire inter-frequency bias steps > 5 cm (L1C−L2W / L1C−L5Q / L2W−L5Q / L1C−L7Q) | 438 / 868 / 82 / 347 | 443 / 942 / 146 / 412 (+206 in total; rms of steps lower — fewer huge cold steps) |
+
+The hourly profile of the split-anchoring share follows the consumer's hourly
+error (hour 6: 27 % and 0.65 m).  Mechanism: an all-band response on an
+anchor station hands over ALL of that satellite's families in one epoch, and
+the sticky election tends to place them at one successor; an L1-only response
+hands over the L1C family alone and leaves L2W / L5Q pinned where they were.
+The satellite's per-frequency biases are then realized at different stations,
+whose arc levels walk independently, and the wire carries a slowly changing
+INTER-FREQUENCY inconsistency per satellite — invisible to every producer
+truth grade (each band is graded separately and each is fine) but exactly what
+a float user's dispersive split reads as ionospheric change on that satellite.
+Every one of the 81 keeps on anchor arcs leaves its satellite split for tens
+of epochs, which is the 2 500 → 6 262.  **Design consequence for iteration 3
+if iteration 2 confirms it: the scope must not split a satellite's references —
+on an arc that anchors any family of the satellite, do not narrow (free all
+bands so the families move together), or narrow but hand over the sibling
+families to the same successor.**  The path-sensitivity floor of the consumer
+(§14.5's calibration twin) is still owed before the size of the effect is
+believed; its direction and its hourly correlate are not in doubt.
