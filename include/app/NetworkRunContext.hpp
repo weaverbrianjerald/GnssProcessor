@@ -2664,6 +2664,22 @@ namespace GnssProcessor {
         long long n_bscope_t4_cells = 0, n_bscope_t4_erased = 0,
                   n_bscope_t4_kept = 0, n_bscope_t4_kept_over_gate = 0,
                   n_bscope_t4_single_band = 0;
+        /// ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover;
+        /// docs/SPEC_event_harness.md §12.7).  staged: directives the seam put up
+        /// (= families whose ANCHOR arc a slip response freed).  handed: of those,
+        /// the ones the election actually re-hosted.  continuous / cold: the
+        /// successor pinned at its own carried value_abs vs pinned at 0 because no
+        /// usable ledger entry survived the variance gates — a cold outcome IS a
+        /// gauge re-realization and is never folded into the continuous total.
+        /// no_successor: the ban left no candidate, so the family went unpinned for
+        /// the epoch.  inert: the directive matched no family in this epoch's union
+        /// (gated, bridged or pruned column).  ARMED with staged = 0 on a run whose
+        /// detectors fired is not proof of a quiet network — it is the first thing
+        /// to check (invariant #4); staged > 0 with handed = 0 is dead wiring.
+        long long n_anc_slip_staged = 0, n_anc_slip_handed = 0,
+                  n_anc_slip_continuous = 0, n_anc_slip_cold = 0,
+                  n_anc_slip_no_successor = 0, n_anc_slip_inert = 0,
+                  n_anc_slip_epochs = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

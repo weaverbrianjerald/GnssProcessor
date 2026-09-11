@@ -346,7 +346,14 @@ void networkElectPhaseAnchors(
                         }
             }
         }
-        if (anchor == static_cast<size_t>(-1)) continue;   // no tracker (unreachable)
+        if (anchor == static_cast<size_t>(-1)) {
+            // No tracker at all — or, under a directive, the banned incumbent was
+            // the ONLY one.  The family gets no pin this epoch; count it so a
+            // handover that could not happen is never read as one that did
+            // (invariant #7: the decoupling edge with no re-coupling edge).
+            if (dir) ++dir->n_no_successor;
+            continue;
+        }
         // TWO-EDGE CONTINUOUS HANDOVER (docs/SPEC_pivot_visibility_gauge_defect.md).
         //
         // The gauge is "this anchor's ambiguity for `amb` = target".  Re-pinning a
@@ -446,6 +453,12 @@ void networkElectPhaseAnchors(
         if (dir) {
             ++dir->n_families;
             if (dir->cold) ++dir->n_forced_cold;
+            // A handover that FELL BACK to the cold pin (no ledger entry for the
+            // successor, or one refused by the variance gates) re-realizes the
+            // gauge — the exact event the anchor-slip card exists to avoid.  It is
+            // counted separately from `n_forced_cold`, which is the harness ASKING
+            // for cold: a cold outcome must never hide inside a continuous total.
+            if (is_handover && !continuous) ++dir->n_cold_fallback;
             if (!banned.empty()) dir->retired.push_back(banned);
             dir->elected.push_back(stations[anchor].name);
         }
@@ -498,6 +511,51 @@ void networkElectPhaseAnchors(
     }
     anchor_incumbent.swap(new_incumbent);
     anchor_pin_target.swap(new_target);
+}
+
+int networkStageAnchorSlipHandovers(
+        const std::vector<NetStation>& stations,
+        const std::map<std::string, std::string>& anchor_incumbent,
+        const std::set<std::pair<int, std::string>>& free_ambs,
+        const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+        NetworkInjectState& inject) {
+    if (anchor_incumbent.empty()
+        || (free_ambs.empty() && carry_slipped_ambs.empty()))
+        return 0;   // nothing freed, or no incumbent map yet (the run's first epoch)
+
+    // One directive per (sat, signal) FAMILY, not per freed arc: two stations can
+    // slip the same satellite in one epoch and only one of them can be the anchor,
+    // but a defensive de-duplication costs nothing and keeps `anchorFor`'s
+    // first-match contract unambiguous.
+    std::set<std::string> staged;
+    int n = 0;
+
+    const auto consider = [&](const std::set<std::pair<int, std::string>>& freed) {
+        for (const auto& [i, amb] : freed) {
+            if (i < 0 || static_cast<std::size_t>(i) >= stations.size()) continue;
+            const auto inc = anchor_incumbent.find(amb);
+            if (inc == anchor_incumbent.end()) continue;       // family has no anchor
+            if (inc->second != stations[i].name) continue;     // a NON-anchor arc: no-op
+            if (!staged.insert(amb).second) continue;          // already staged
+            const std::size_t us = amb.find('_');
+            if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) continue;
+            InjectAnchorDirective d;
+            d.sat    = amb.substr(0, us);
+            d.signal = amb.substr(us + 1);
+            d.cold   = false;   // CONTINUOUS: the successor is pinned at its own
+                                // carried value_abs, which is the whole cure.  A
+                                // cold OUTCOME is still possible (no usable ledger
+                                // entry) and is counted, never hidden.
+            inject.anchor_now_slip.push_back(std::move(d));
+            ++n;
+        }
+    };
+    // Both vehicles.  `free_ambs` is the phase-leveling free-epoch latch; on a
+    // carry_invariant lineage that latch is structurally empty (the loader
+    // disarms relevel_free_epoch there) and the DD funnel carries the same pairs.
+    consider(free_ambs);
+    consider(carry_slipped_ambs);
+    return n;
 }
 
 int networkApplyPhaseAnchorCarryReref(

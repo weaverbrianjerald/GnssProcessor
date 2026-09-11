@@ -118,6 +118,16 @@ namespace GnssProcessor {
         mutable std::vector<std::string> elected;  ///< Successor station names elected this epoch.
         mutable int n_families{ 0 };               ///< Families the directive actually touched.
         mutable int n_forced_cold{ 0 };            ///< Families whose continuous branch was refused.
+        /// Families that took the COLD pin although the directive did NOT ask for it:
+        /// the successor had no ledger entry, or one too poorly determined to be a
+        /// datum.  A cold outcome is a real gauge re-realization — invariant #7's
+        /// re-coupling edge — so it is COUNTED here and never folded into the
+        /// continuous total (docs/SPEC_event_harness.md §12.7).
+        mutable int n_cold_fallback{ 0 };
+        /// Families for which the ban left NO usable candidate at all, so the
+        /// election pinned nobody this epoch.  The decoupling edge with no
+        /// re-coupling: counted, never silent.
+        mutable int n_no_successor{ 0 };
     };
 
     /**
@@ -181,6 +191,16 @@ namespace GnssProcessor {
 
         /// This epoch's staged directives (cleared at the top of every epoch).
         std::vector<InjectAnchorDirective> anchor_now;
+        /// PRODUCTION anchor-slip handovers (network.cycle_slip.anchor_slip_handover,
+        /// docs/SPEC_event_harness.md §12.7) — staged by
+        /// @ref networkStageAnchorSlipHandovers for every family whose ANCHOR arc a
+        /// slip response freed this epoch.  Deliberately a SECOND vector rather than
+        /// a push into @c anchor_now: the injector's firing ledger, its never-fired
+        /// hard error and its INJECT event rows all iterate @c anchor_now and must
+        /// keep seeing exactly the scripted directives.  Same one-epoch lifetime,
+        /// cleared at the same point — but it lives on UNARMED runs too, so the
+        /// clear sits ahead of @c networkInjectEpoch's armed guard.
+        std::vector<InjectAnchorDirective> anchor_now_slip;
         /// This epoch's staged arc-erase directives (station, satellite, mode).
         std::vector<InjectArcErase> arc_erase_now;
         long long n_arc_erase_acted{ 0 };  ///< Chords actually refloated by injected erases.
@@ -190,8 +210,15 @@ namespace GnssProcessor {
         std::map<std::string, long long> arc_erase_mode_acted;
 
         /// @brief Directive covering @p amb, or @c nullptr.  Cheap on the empty path.
+        ///
+        /// The INJECTED schedule is consulted FIRST: a harness leg that scripts an
+        /// @c anchor_handover for a family the production card also staged must get
+        /// the scripted directive (its @c cold mode is the whole point of such a
+        /// leg), and the election reads exactly one directive per family.
         const InjectAnchorDirective* anchorFor(const std::string& amb) const {
             for (const auto& d : anchor_now)
+                if (d.matches(amb)) return &d;
+            for (const auto& d : anchor_now_slip)
                 if (d.matches(amb)) return &d;
             return nullptr;
         }

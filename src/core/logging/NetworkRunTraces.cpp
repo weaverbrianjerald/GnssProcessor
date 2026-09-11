@@ -1483,6 +1483,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << (nc.cycle_slip_refloat_band_scope == NetworkRefloatBandScope::Implicated
                        ? std::string("\"cycle_slip_refloat_band_scope\":\"implicated\",")
                        : std::string())
+               // §12.7 anchor-slip handover: solve-affecting when armed (it moves
+               // which station realizes a family's gauge), so the arm provenance
+               // belongs in the manifest — armed-only, the band-scope precedent.
+               << (nc.cycle_slip_anchor_slip_handover
+                       ? std::string("\"cycle_slip_anchor_slip_handover\":true,")
+                       : std::string())
                // RTB-6/P1: service-observability knobs (health heartbeat + trace rotation).
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
