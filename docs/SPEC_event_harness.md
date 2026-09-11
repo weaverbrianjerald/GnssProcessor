@@ -2619,3 +2619,52 @@ datum, a quieter clock and the consumer.  Final validation: ONE storm arm
 (`runs/golden_sim_campaign_zwdblk_cbscope3`, launched 12:35) against §14.7's
 gates — split ≤ 10 %, T4 ≤ 78, consumer p50 ≤ 0.174 with rms ≤ 0.324, ZWD ≤
 0.0071, L1C ≥ 90 %, handovers < 305.
+
+### 14.9 FINAL storm arm (iteration 3) — split removed, producer better, the user's median still 3 cm worse: KEEP_OFF on the pre-registered gates (2026-09-11 ~13:00; `runs/golden_sim_campaign_zwdblk_cbscope3`, exe 776537A2…, 1464 s)
+
+| quantity | §13.6 (both cards) | iter. 2 | **iter. 3 (anchor clause)** | §14.7 bar |
+|---|---|---|---|---|
+| settled ZWD truth rms | 0.0071 m | 0.0063 | **0.0071 m** | ≤ 0.0071 PASS |
+| consumer settled p50 / rms | 0.174 / 0.365 | 0.199 / 0.324 | **0.207 / 0.327 m** | p50 ≤ 0.174 **FAIL** (+3.3 cm); rms better (−3.8 cm) |
+| consumer hourly rms | 0.62 / 0.29 / 0.23 / 0.18 / 0.47 / 0.39 | 0.70 / 0.25 / 0.22 / 0.19 / 0.41 / 0.34 | 0.65 / 0.29 / 0.23 / 0.18 / **0.35** / 0.41 | hours 1–4 equal, 5 better, 6 slightly worse |
+| T4 events / erased ratio / ambient | 78 / 1.51 / 0.229 | 107 / 0.75 / 0.198 | **86** / 0.94 / **0.197** | ≤ 78 **FAIL** (+8: hour 5 0 → 4, hour 6 41 → 46) |
+| WL / EWL / L1C ref-free | 98.9 / 100 / 87.1 % | 99.2 / 100 / 90.0 | **99.2 / 100 / 89.6 %** | L1C ≥ 90 FAIL by 0.4 |
+| anchor-slip handovers (cold) | 305 (68) | 174 (28) | **305 (59)** | < 305 FAIL by equality; cold better |
+| split-referenced satellites | 6.6 % | 43.8 % | **6.6 % — identical to baseline hour for hour** | ≤ 10 % PASS |
+| clock-anchor decouples / continuous S-transforms / cold re-realizations | 111 / 356 / 99 | — | 118 / 374 / 81 | +7 / +18 / −18 |
+| verdicts / narrowed / anchor co-locates / vetoes | — | 4208 / 3099 / — / 116 | 4208 / 2994 / 105 / 116 | — |
+| wire inter-frequency steps > 5 cm (L1C−L2W / L1C−L5Q / L2W−L5Q / L1C−L7Q / L5Q−L7Q) | 438 / 868 / 82 / 347 / 105 | — | 435 / 853 / 70 / 349 / 91 | equal or fewer on every pair |
+
+**Reading.**  The anchor clause does exactly what it was built for: the
+split-reference share is the baseline's to the tenth of a percent in every
+hour, cold re-realizations fall 99 → 81, and the wire's inter-frequency
+consistency is equal or better on every pair.  The producer's own channels
+are equal or better (ambient DD error 0.229 → 0.197 cyc, erased-arc ratio
+1.51 → 0.94, WL 99.2 %, L1C +2.5 points).  What remains is a small, consistent
+consumer cost from narrowing on ORDINARY arcs: the settled median is +3.3 cm
+(iteration 2: +2.5 cm; the calibration twin puts numeric noise at 0.1 mm)
+with the rms 4 cm better, together with +7 clock-anchor decouples and +8
+outlier erases, all in hours 5–6, and no fingerprint in the wire's
+inter-frequency census.  **Verdict on the pre-registered gates: not met**
+(consumer p50, T4, L1C by 0.4, handovers by equality).  The knob stays merged,
+default OFF, byte-identical, with its observability (verdict rows, the
+always-on split-reference counter) live; ledger **KEEP_OFF with the
+mechanism**, no golden pin.  What would flip it: locate the 3 cm — the seven
+extra decouples and eight erases sit in hours 5–6 of the slipped bed, so a
+seed near hour 5 and 60-epoch legs at those epochs (with the split counter
+and the inter-frequency monitor reading zero, the remaining suspect is the
+single-band re-level's interaction with the clock anchor's NIS test), or a
+warm-consumer replay on the two wires showing the median difference is the
+consumer's own history.  ⚠ Lesson for the harness: the dose leg's cold-replay
+consumer ranked iteration 3 BEST of four arms and iteration 2 worst; the
+settled storm consumer ranks them the other way on the median — a 2 h
+cold-replay consumer is not a consumer gate.
+
+**Quiet-bed neutrality of the two MERGED cards (24 h twins on today's golden,
+main's exe, both cards on vs both off):** ZWD 0.0073 m both; consumer settled
+h12–24 rms 0.0761 → **0.0895 m (+18 %)**, p50 0.0603 → 0.0593, UP rms 0.0643 →
+0.0768; T4 60 → 66.  The evidence card admitted 0 detections in those 24 h,
+so the tail cost belongs to the anchor-slip handover's 6 false-alarm family
+moves (all continuous).  Recorded in both ledger rows as a measured open
+cost; the harness leg at those six epochs is owed (60-epoch legs, not
+another 24 h arm).
