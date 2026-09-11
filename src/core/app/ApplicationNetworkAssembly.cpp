@@ -1388,6 +1388,40 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                     r.slip_wl_known, r.evidence_ratio, r.arc_epochs,
                                     d.via_evidence});
                         }
+
+                        // COMMON-BAND SCOPE evidence (SPEC_event_harness §14).
+                        // Collected KNOB-INDEPENDENTLY (invariant #4) from what
+                        // this station's detector already produced: every arc it
+                        // PROCESSED a sample for with that sample's maturity and
+                        // threshold, every flag (ADMITTED OR DROPPED — a dropped
+                        // flag is still not silence), and the receiver's own LLI
+                        // bits.  The processed map, NOT getEpochCleanPairs: that
+                        // set answers TurboEdit's cleanliness question, whose
+                        // σ-awareness bar a narrow lane on a noisy bed never
+                        // meets (see MwSlipDetector::getEpochPairStatus).
+                        // Per-station slot, no shared write.  The IF-TD half is
+                        // a network-POOLED decision and is previewed serially in
+                        // the verdict seam.
+                        auto& cbev = pa.sta_cb_ev[i];
+                        for (const auto& [pkey, pst] : st.mw_slip->getEpochPairStatus()) {
+                            std::string csat, cs1, cs2;
+                            if (!parseIfPairResetKey(pkey, csat, cs1, cs2)) continue;
+                            CommonBandProcessed cp;
+                            cp.arc_n     = pst.arc_n_at_sample;
+                            cp.flagged   = pst.flagged;
+                            cp.thresh_wl = (pst.lambda_wl > 0.0)
+                                               ? pst.thresh_m / pst.lambda_wl
+                                               : std::numeric_limits<double>::quiet_NaN();
+                            cbev[csat].processed[{cs1, cs2}] = cp;
+                        }
+                        for (const auto& r : mwr) {
+                            if (r.sig1.empty() || r.sig2.empty()) continue;
+                            cbev[r.satellite].flagged_pairs.insert({r.sig1, r.sig2});
+                        }
+                        for (const auto& obs : modeled[i])
+                            for (const auto& [code, lli] : obs.lli_flags)
+                                if (!code.empty() && code[0] == 'L' && (lli & 1))
+                                    cbev[obs.satellite].lli_signals.insert(code);
                     }
                 } catch (...) { /* best-effort: no MW action this epoch */ }
             }
@@ -1567,6 +1601,32 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                       "from the next epoch.",
                       se.time.tow, ctx.counters.n_resume_slip_warmup_epochs);
     }
+    // COMMON-BAND SCOPE (SPEC_event_harness §14): ONE verdict per (station,
+    // satellite) for this epoch, formed HERE — before either drain — so the MW
+    // refloat, the LLI free and the IF-TD pair refloat all obey the SAME
+    // decision and their per-epoch union is exactly `implicated` (Study 3's
+    // per-epoch invariant, §Z.2).  Runs armed or not: the census is what sizes
+    // the card before arming it (invariant #4).  Only the ARMED run gets a
+    // non-null pointer into the drains, so OFF is byte-identical.
+    CommonBandEpoch common_band;
+    networkCommonBandVerdictEpoch(pa, config_, stations, present, i_lo,
+                                  n_sta_total, se, traces, log,
+                                  &ctx.carry.anchor_incumbent, common_band);
+    {
+        auto& C = ctx.counters;
+        C.n_cb_verdicts          += common_band.verdicts;
+        C.n_cb_narrowed          += common_band.narrowed_n;
+        C.n_cb_all_no_exoneration += common_band.all_no_exoneration;
+        C.n_cb_all_inconsistent  += common_band.all_inconsistent;
+        C.n_cb_bands_kept        += common_band.bands_kept;
+        C.n_cb_iftd_veto         += common_band.iftd_veto;
+        C.n_cb_immature_pairs    += common_band.immature_pairs;
+        C.n_cb_weak_silence      += common_band.weak_silence;
+        C.n_cb_anchor_colocate   += common_band.anchor_colocate;
+        C.n_cb_would_narrow      += common_band.would_narrow;
+    }
+    const CommonBandEpoch* common_band_ptr = common_band.armed ? &common_band : nullptr;
+
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
                               n_sta_total, carry_invariant, mw_carry_warm,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
@@ -1582,7 +1642,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               // network.cycle_slip.oracle_relevel armed the run,
                               // so the OFF path never reaches a hook call
                               // (structurally byte-identical, invariant #6).
-                              ctx.carry.slip_oracle.get());
+                              ctx.carry.slip_oracle.get(),
+                              common_band_ptr);
 
     // Edge-1 piece 2: pass the mark sink ONLY when armed, so the OFF path passes
     // nullptr and the driver's insert is not even reached (byte-identical).
@@ -1613,7 +1674,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                           (config_.networkCycleSlipRelevelBridgeGf() || bscope_on)
                               ? &qc.epoch : nullptr,
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.hist : nullptr,
-                          ctx.carry.slip_oracle.get());   // SIM-ONLY ORACLE
+                          ctx.carry.slip_oracle.get(),    // SIM-ONLY ORACLE
+                          common_band_ptr);               // §14 COMMON-BAND SCOPE
 
     // ---- §10.4: wind-up accumulator-restart response ------------------------
     // (SPEC_phase_windup_sign §10.4.)  Drains the per-station restart ledgers

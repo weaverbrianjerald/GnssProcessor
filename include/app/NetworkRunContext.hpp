@@ -2693,6 +2693,42 @@ namespace GnssProcessor {
         long long n_mw_admit_legacy = 0, n_mw_evidence_admitted = 0,
                   n_mw_evidence_would_admit = 0, n_mw_drop_loose = 0,
                   n_mw_drop_unknown = 0;
+        /// COMMON-BAND SCOPE CENSUS (network.cycle_slip.common_band_scope,
+        /// SPEC_event_harness §14).  Reduced per epoch from CommonBandEpoch and,
+        /// like the MW admission census above, collected KNOB-INDEPENDENTLY —
+        /// that is the point.  verdicts: (station, satellite) pairs that had at
+        /// least one MW pair FIRE, i.e. the population a band scope could act on.
+        /// narrowed: of those, the ones positive exoneration restricted.
+        /// bands_kept: bands a narrowed verdict SPARED (Σ|exonerated|) — the
+        /// headline, because under the all-band union every live band would
+        /// otherwise have been freed.  all_no_exoneration / all_inconsistent: the
+        /// two fallbacks that return today's response (nothing exonerated; every
+        /// band exonerated although a pair fired).  iftd_veto: silent pairs
+        /// REFUSED as exonerators because the IF-TD detector flagged them (the
+        /// equal-count trap).  immature_pairs: silent pairs refused for arc age.
+        /// would_narrow: the knob-OFF count of verdicts that WOULD have narrowed,
+        /// i.e. exactly what arming changes — an OFF run reporting 0 here says
+        /// the card is inert on that lineage, no armed run needed.
+        /// weak_silence: exonerating silences whose DETECTION THRESHOLD stood
+        /// above 6 wide-lane cycles — a gate too loose to have excluded the slip
+        /// sizes the scope responds to.  Reported, never acted on; it is the
+        /// honest measure of how much narrowing rests on a weak silence.
+        long long n_cb_verdicts = 0, n_cb_narrowed = 0, n_cb_all_no_exoneration = 0,
+                  n_cb_all_inconsistent = 0, n_cb_bands_kept = 0,
+                  n_cb_iftd_veto = 0, n_cb_immature_pairs = 0,
+                  n_cb_weak_silence = 0, n_cb_anchor_colocate = 0,
+                  n_cb_would_narrow = 0;
+        /// SPLIT-REFERENCED SATELLITE CENSUS (§14.5), ALWAYS ON and
+        /// knob-independent: per PROCESSED epoch, how many satellites have >= 2
+        /// anchored phase-bias families whose anchors sit at DIFFERENT stations.
+        /// Those satellites' per-frequency biases are realized against arc levels
+        /// that walk independently, and this is the instrument that caught the
+        /// iteration-1 storm regression (6.6 % -> 16.5 % of satellite-epochs,
+        /// 27 % in hour 6).  It must read the same with the scope OFF, which is
+        /// why it is not knob-gated.  Sum + epochs give the mean; the max is the
+        /// worst epoch; multi_sum's mean is the population that CAN split.
+        long long n_cb_split_sats_sum = 0, n_cb_split_sats_max = 0,
+                  n_cb_split_multi_sum = 0, n_cb_split_epochs = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

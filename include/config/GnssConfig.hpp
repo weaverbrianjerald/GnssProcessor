@@ -3498,6 +3498,50 @@ namespace GnssProcessor {
         ///        is therefore always refused.
         /// @return Minimum arc epochs, samples.
         int networkCycleSlipMwEvidenceMinArcEpochs() const { return network_config_.cycle_slip_mw_evidence_min_arc_epochs; }
+        /// @brief COMMON-BAND SCOPE — free only the band the evidence NAMES
+        ///        (`network.cycle_slip.common_band_scope`, SPEC_event_harness §14).
+        ///
+        /// A single-band slip on a triple-frequency arc fires every MW pair that
+        /// CONTAINS the band (an L5 slip fires (1,5) and (2,5), leaving (1,2)
+        /// silent), and each firing pair's drain refloats BOTH of its bands — so
+        /// the per-epoch union is ALL bands, the §9 all-band floor, for a slip
+        /// that touched one.  Armed, ONE verdict is formed per (station,
+        /// satellite, epoch) BEFORE any drain runs:
+        ///
+        ///  - a MW pair is SILENT iff it was evaluated this epoch, is mature
+        ///    (arc count >= @ref networkCycleSlipCommonBandMinArcEpochs) and did
+        ///    not flag — the detector's affirmative-cleanliness set;
+        ///  - a silent pair whose IF-TD pair FLAGGED this epoch cannot exonerate
+        ///    (the equal-count trap: L1 and L2 slipping by the SAME integer leave
+        ///    MW(1,2) silent while the iono-free combination moves 0.107 m/cyc);
+        ///  - a band carrying a loss-of-lock flag is implicated regardless;
+        ///  - exonerated(b) iff no LLI on b AND some silent, un-vetoed pair
+        ///    contains b;  implicated = tracked bands \\ exonerated.
+        ///
+        /// Every drain then frees (its own bands INTERSECT implicated), so the
+        /// per-epoch union is exactly `implicated` (Study 3's per-epoch
+        /// invariant).  Three fallbacks return TODAY'S response verbatim: no MW
+        /// pair fired, nothing exonerated, or implicated empty although a pair
+        /// fired (inconsistent evidence).
+        ///
+        /// Requires @ref networkCycleSlipMwDetect — the exoneration evidence IS
+        /// the MW detector's clean-pair set (the loader disarms and warns
+        /// without it).  Default off; byte-identical off (no verdict object is
+        /// consulted).  Fingerprint-EXEMPT (forward-only RESPONSE policy).
+        /// @return True when the common-band scope is armed.
+        bool networkCycleSlipCommonBandScope() const { return network_config_.cycle_slip_common_band_scope; }
+        /// @brief Exoneration maturity gate for @ref networkCycleSlipCommonBandScope:
+        ///        the minimum MW arc sample count at which a SILENT pair may
+        ///        exonerate its two bands.  Default 10.
+        ///
+        /// An immature arc could not have flagged at all, so its silence is not
+        /// evidence; exonerating from it would keep a genuinely slipped band
+        /// pinned.  The MW detector's own affirmative-cleanliness set already
+        /// requires 10 samples, so the default is inert by construction — a
+        /// LARGER value tightens the rule and the run-end `immature pairs`
+        /// counter reports exactly what it refused.
+        /// @return Minimum MW arc epochs for exoneration, samples.
+        int networkCycleSlipCommonBandMinArcEpochs() const { return network_config_.cycle_slip_common_band_min_arc_epochs; }
         /// @brief Float per-band delta bridge at the MW/IF-TD drains: when the
         ///        slip's magnitude was MEASURED (confident wide-lane integer +
         ///        IF-TD phase step), shift the carried level in place instead of

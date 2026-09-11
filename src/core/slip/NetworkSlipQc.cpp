@@ -524,7 +524,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                         RelevelPend>* relevel_pend,
                                std::map<std::tuple<int, std::string, std::string>,
                                         LocalCarry>* bridge_local_carry,
-                               NetworkSlipOracle* oracle) {
+                               NetworkSlipOracle* oracle,
+                               const CommonBandEpoch* common_band) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_mw_refloat = pa.sta_mw_refloat;
     // §Z: band-scoped refloat (docs/SPEC_event_harness.md).  Off ⇒ every
@@ -906,10 +907,16 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                               std::nullopt, std::nullopt, "keep",
                               sig1 + ";" + sig2 + ";band_scope=implicated;kept="
                                   + bs_keep);
-                const auto a = (bs_keep == sig1) ? SignalAction{}
+                // §14 COMMON-BAND SCOPE: this pair may free only its bands that
+                // the epoch's ONE verdict implicated.  Null verdict (knob off) or
+                // no narrowed verdict for this (station, satellite) ⇒ true for
+                // both bands ⇒ the pre-knob instruction stream.
+                const bool cb1 = commonBandMayFree(common_band, i, sat, sig1);
+                const bool cb2 = commonBandMayFree(common_band, i, sat, sig2);
+                const auto a = (bs_keep == sig1 || !cb1) ? SignalAction{}
                              : refloat_signal(i, sat, sig1,
                                               RelevelEpochState::kCauseMw);
-                const auto b = (bs_keep == sig2) ? SignalAction{}
+                const auto b = (bs_keep == sig2 || !cb2) ? SignalAction{}
                              : refloat_signal(i, sat, sig2,
                                               RelevelEpochState::kCauseMw);
                 // Bridge v2: the same-epoch candidate (MW and T1 firing together)
@@ -1079,6 +1086,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 for (const auto& [code, lli] : obs.lli_flags) {
                     if (code.empty() || code[0] != 'L' || !(lli & 1)) continue;
                     if (!bs_keep_lli.empty() && code == bs_keep_lli) continue;
+                    // §14: an LLI band is ALWAYS implicated by the rule, so this
+                    // guard never fires on a band the receiver flagged — it is
+                    // here because the LLI loop and the MW loop must obey the
+                    // same one verdict (the per-epoch-union invariant).
+                    if (!commonBandMayFree(common_band, i, obs.satellite, code)) continue;
                     const auto sa = refloat_signal(i, obs.satellite, code,
                                                    RelevelEpochState::kCauseLli);
                     if (sa.matched)   matched   = true;
@@ -1146,7 +1158,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                     RelevelPend>* relevel_pend,
                            const RawSlipEpoch* raw_epoch,
                            const std::vector<RawSlipHistory>* raw_hist,
-                           NetworkSlipOracle* oracle) {
+                           NetworkSlipOracle* oracle,
+                           const CommonBandEpoch* common_band) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -1231,6 +1244,10 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                 if (!parts || parts->satellite != sat) continue;
                 if (!keep.empty() && parts->signal == keep) continue;   // §Z pinned
+                // §14 COMMON-BAND SCOPE: free (this pair's bands ∩ implicated).
+                // Null verdict (knob off) or no narrowed verdict ⇒ true ⇒ the
+                // pre-knob instruction stream.
+                if (!commonBandMayFree(common_band, i, sat, parts->signal)) continue;
                 if (parts->signal == sig1 || parts->signal == sig2) {
                     // SIM-ONLY ORACLE: each BAND is handled independently (the
                     // IF combination cannot localize the slip, but truth can) —
@@ -1345,11 +1362,24 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         };
         for (auto& [pair, samples] : by_pair) {
             // (1) Network common-mode center: median of the raw DDs (m).
-            std::vector<double> raw;
-            raw.reserve(samples.size());
-            for (const auto& s : samples) raw.push_back(s.dd);
-            std::nth_element(raw.begin(), raw.begin() + raw.size() / 2, raw.end());
-            const double med = raw[raw.size() / 2];
+            // (2) Pooled elevation-normalized robust scale — see below.
+            // Both live in ifTdPoolStats (NetworkSlipQc.hpp) so the common-band
+            // scope's read-only flag PREVIEW (SPEC_event_harness §14) runs the
+            // identical arithmetic; the expressions are verbatim what this loop
+            // computed inline before, and the order statistics are
+            // order-independent, so the flag population is unchanged.
+            std::vector<double> pool_dd, pool_el;
+            std::vector<char>   pool_ref;
+            pool_dd.reserve(samples.size());
+            pool_el.reserve(samples.size());
+            pool_ref.reserve(samples.size());
+            for (const auto& s : samples) {
+                pool_dd.push_back(s.dd);
+                pool_el.push_back(s.el);
+                pool_ref.push_back(s.is_ref ? char{1} : char{0});
+            }
+            const IfTdPairPool pstat = ifTdPoolStats(pool_dd, pool_el, pool_ref);
+            const double med = pstat.med;
 
             // (2) Pooled elevation-normalized robust scale (zenith-equiv m):
             //     s_pool = 1.4826·median(|z|), z = (dd−med)/ifElevMap(el).
@@ -1366,15 +1396,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             //     §6.14.5 defect 2.  Fallback: if excluding leaves nothing (a pair whose
             //     only sample IS the reference), keep the full set rather than emit a
             //     zero scale — s_eff would then collapse onto the physical floor.
-            std::vector<double> zabs;
-            zabs.reserve(samples.size());
-            for (const auto& s : samples)
-                if (!s.is_ref) zabs.push_back(std::abs((s.dd - med) / ifElevMap(s.el)));
-            if (zabs.empty())
-                for (const auto& s : samples)
-                    zabs.push_back(std::abs((s.dd - med) / ifElevMap(s.el)));
-            std::nth_element(zabs.begin(), zabs.begin() + zabs.size() / 2, zabs.end());
-            const double s_pool = 1.4826 * zabs[zabs.size() / 2];
+            const double s_pool = pstat.s_pool;
             if (static_cast<int>(samples.size()) < min_pool) ++n_sparse;
 
             // Group the pair's samples by station (ordered → deterministic) so each
@@ -1387,11 +1409,12 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 auto& sc = stations[sta].if_pair_scale[pair];
 
                 // Empirical-Bayes shrinkage: pool prior (cold) → station EWMA (warm).
+                // Shared with the common-band scope's flag preview (§14).  `w` is
+                // kept for the trace column alone — ifTdShrunkScale re-derives it.
                 const double w = static_cast<double>(sc.count) /
                                  (static_cast<double>(sc.count) + shrink_kappa);
-                double s_eff = (sc.count > 0) ? (w * sc.ewma_scale + (1.0 - w) * s_pool)
-                                              : s_pool;
-                if (!(s_eff > 0.0)) s_eff = s_pool;  // degenerate all-equal pool
+                const double s_eff =
+                    ifTdShrunkScale(sc.count, sc.ewma_scale, s_pool, shrink_kappa);
                 if (sc.count >= static_cast<long>(shrink_kappa)) ++n_warm_sp;
 
                 std::vector<double> clean_zabs;

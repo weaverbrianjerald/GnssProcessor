@@ -237,6 +237,71 @@ namespace GnssProcessor {
         const std::set<std::string>& getEpochCleanPairs() const { return epoch_clean_pairs_; }
 
         /**
+         * @brief Arc sample count of each key in @c getEpochCleanPairs.
+         *
+         * Same keys, same lifetime (cleared and rebuilt by every
+         * @c detectLargeMwResets call).  @c getEpochCleanPairs already enforces
+         * an internal maturity floor for TurboEdit's equal-slip split; this map
+         * lets a consumer apply its OWN, stricter bar to the same evidence and —
+         * the operative half — COUNT what that bar refused.  The network
+         * producer's common-band scope (SPEC_event_harness.md §14) is the first
+         * such consumer: a silent pair exonerates its two bands only when its
+         * arc reaches @c network.cycle_slip.common_band_min_arc_epochs.
+         *
+         * @return Map from affirmatively-clean arc key to that arc's sample count.
+         */
+        const std::map<std::string, int>& getEpochCleanArcN() const { return epoch_clean_arc_n_; }
+
+        /**
+         * @brief What the detector DID with one arc this epoch — the
+         *        DETECTION-grade record, as opposed to @c getEpochCleanPairs's
+         *        cleanliness-grade one.
+         */
+        struct EpochPairStatus {
+            /// Arc sample count as the flag decision saw it (samples BEFORE this
+            /// one; the Welford increment happens later in the same call).
+            int    arc_n_at_sample{ 0 };
+            /// The detector's own flag verdict for this sample.  Advisory: a
+            /// consumer deciding "did this pair flag" should use the emitted
+            /// @c MwSlipResult set, which is what every downstream drain acts on.
+            bool   flagged{ false };
+            /// Adaptive detection threshold at this sample (metres).  NaN when the
+            /// sample left before a threshold existed (an arc's very first epoch).
+            double thresh_m{ std::numeric_limits<double>::quiet_NaN() };
+            /// Wide-lane wavelength of the pair (m) — divides @ref thresh_m into
+            /// the cycles a consumer can compare against a slip magnitude.
+            double lambda_wl{ 0.0 };
+        };
+
+        /**
+         * @brief Per-epoch record of every arc the detector PROCESSED a sample for.
+         *
+         * Same key shape and lifetime as @c getEpochCleanPairs
+         * ("&lt;sat&gt;_&lt;sig1&gt;_&lt;sig2&gt;", cleared and rebuilt by every
+         * @c detectLargeMwResets call), and deliberately a DIFFERENT question.
+         *
+         * @c getEpochCleanPairs answers "is this arc clean enough to assert
+         * ΔN_WL = 0 for TurboEdit's GF-only split" — a conjunction of a 0.3-cycle
+         * deviation bound and a σ-awareness condition (3σ ≤ 0.7·λ_WL) that a
+         * NARROW lane on a noisy bed can never satisfy, no matter how quiet it
+         * is.  Measured on the 60-station sim: MW scatter σ_MAD p50 = 0.414 m on
+         * L1C+L2W against that pair's 0.201 m bar, so the narrow lanes are never
+         * affirmed and only the extra-wide lanes (λ_WL 5.9–9.8 m) ever appear
+         * there.
+         *
+         * THIS map answers the weaker, detection-grade question a slip-response
+         * consumer actually needs: "did the detector look at this pair this
+         * epoch, on an arc old enough to have flagged, and not flag it?"  The
+         * network producer's common-band scope (SPEC_event_harness.md §14) is
+         * built on that, and reports @ref EpochPairStatus::thresh_m so a silence
+         * too loose to exclude the slip size in question can be counted rather
+         * than trusted blindly.
+         *
+         * @return Map from processed arc key to that sample's detection record.
+         */
+        const std::map<std::string, EpochPairStatus>& getEpochPairStatus() const { return epoch_pair_status_; }
+
+        /**
          * @brief Get the worst-case fractional residual of each
          *        currently-locked WL arc, in cycles.
          *
@@ -1134,6 +1199,18 @@ namespace GnssProcessor {
          *  @c processMwSample for mature arcs that did not flag and whose
          *  sample deviation stayed within a small fraction of λ_WL. */
         std::set<std::string> epoch_clean_pairs_;
+
+        /** Arc sample count of each @ref epoch_clean_pairs_ key (see
+         *  @c getEpochCleanArcN).  Same keys, cleared and rebuilt together. */
+        std::map<std::string, int> epoch_clean_arc_n_;
+
+        /** Per-epoch DETECTION record of every arc processed this epoch (see
+         *  @c getEpochPairStatus).  Written twice per sample in
+         *  @c processMwSample: once right after the gap check, so an arc that
+         *  leaves through an early return is still recorded, and again once the
+         *  adaptive threshold and flag verdict exist.  Cleared alongside
+         *  @ref epoch_clean_pairs_. */
+        std::map<std::string, EpochPairStatus> epoch_pair_status_;
 
         /** Demoted pre-jump level stash for the across-gap WL settle
          *  estimate (see @c getAcrossGapWlEvidence).  Written by the

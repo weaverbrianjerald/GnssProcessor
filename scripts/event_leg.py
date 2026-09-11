@@ -143,6 +143,19 @@ def _flatten(base):
     return cfg, chain
 
 
+def _deep_merge(dst, src):
+    """Recursive dict merge (same semantics as scripts/ev_dose_legs.py:deep_merge).
+
+    A dict value merges INTO an existing dict; anything else REPLACES.  Arrays
+    therefore replace wholesale — the documented config-inheritance rule.
+    """
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            _deep_merge(dst[k], v)
+        else:
+            dst[k] = v
+
+
 def _write(cfg, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -266,6 +279,20 @@ def _leg_common(args, event_json):
     else:
         net.pop("inject", None)
 
+    # --extra: deep-merged LAST so it can override anything this function set.
+    # make-leg inherits the SEED's config, which predates any knob added after
+    # the seed was written — arming those is exactly what --extra is for.
+    # Recorded verbatim in leg_meta.json so the leg is self-describing.
+    extra = {}
+    if getattr(args, "extra", ""):
+        try:
+            extra = json.loads(args.extra)
+        except ValueError as e:
+            raise SystemExit(f"FATAL: --extra is not valid JSON: {e}")
+        if not isinstance(extra, dict):
+            raise SystemExit("FATAL: --extra must be a JSON object")
+        _deep_merge(cfg, extra)
+
     cfg_path = _write(cfg, os.path.join(legdir, "leg.json"))
     meta = {
         "legdir": legdir, "seed_run": seed_run, "snapshot": snap_src,
@@ -278,6 +305,7 @@ def _leg_common(args, event_json):
         "event": (net.get("inject", {}).get("events", [None])[0]
                   if event_json is not None else None),
         "max_duration_s": proc["max_duration_s"],
+        "extra": extra,
     }
     with open(os.path.join(legdir, "leg_meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
@@ -294,6 +322,8 @@ def _leg_common(args, event_json):
         print(f"  event tow       {ev_tow!r}  (= first + {args.at_ep} ep)")
     else:
         print("  EVENT           none (NULL control leg)")
+    if extra:
+        print(f"  EXTRA           {json.dumps(extra)}")
     print(f"  config          {cfg_path}")
     print(f"RUN: pushd {legdir} && \"{args.exe}\" \"{cfg_path}\"")
     if args.run:
@@ -378,6 +408,9 @@ def main():
                             "epoch (default 10 — past the ~5-epoch resume transient)")
         p.add_argument("--exe", default=DEFAULT_EXE)
         p.add_argument("--run", action="store_true")
+        p.add_argument("--extra", default="",
+                       help="JSON object deep-merged into leg.json AFTER every "
+                            "harness field (arms knobs the seed's config predates)")
         if need_ev:
             p.add_argument("--event", required=True,
                            help="one event object as JSON; 'tow' is filled in from "

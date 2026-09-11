@@ -1465,6 +1465,21 @@ namespace GnssProcessor {
         // so a rollback gives erase-equivalent behavior naturally.
         arc_snapshots_[stats_key] = stats;
 
+        // §14 COMMON-BAND SCOPE (getEpochPairStatus): stamp the arc as PROCESSED
+        // this epoch, HERE — after the gap reset (so an arc the gap just zeroed
+        // reports its fresh, immature count and cannot be read as evidence of
+        // silence) and before every early return below, including the two that
+        // erase the arc.  A sample that reaches the flag decision overwrites this
+        // with the real threshold and verdict; one that leaves earlier keeps the
+        // count, which is all a maturity gate needs.  Bookkeeping only.
+        {
+            auto& st = epoch_pair_status_[stats_key];
+            st.arc_n_at_sample = static_cast<int>(stats.count);
+            st.flagged         = false;
+            st.thresh_m        = std::numeric_limits<double>::quiet_NaN();
+            st.lambda_wl       = lambda_wl;
+        }
+
         // First epoch: initialize arc.
         if (stats.count == 0) {
             stats.mean         = mw_m;
@@ -1899,6 +1914,19 @@ namespace GnssProcessor {
         const double sigma   = computeMadSigma(stats);
         const bool is_slip   = std::isfinite(thresh) && std::abs(dev) > thresh;
 
+        // §14: complete this sample's detection record now that the adaptive
+        // threshold and the flag verdict exist.  stats.count is still the count
+        // BEFORE this sample (the Welford increment is further down), which is
+        // the same maturity the cleanliness set tests — so the two records agree
+        // on what "n" means.
+        {
+            auto& st = epoch_pair_status_[stats_key];
+            st.arc_n_at_sample = static_cast<int>(stats.count);
+            st.flagged         = is_slip;
+            st.thresh_m        = thresh;
+            st.lambda_wl       = lambda_wl;
+        }
+
         // Level-frame slip indicator with the LEGACY pairing (Hatch dev vs
         // the TD1-MAD gate), used solely to protect the Welford M2
         // admission below.  M2 integrates the HATCH-frame delta, so its
@@ -1975,6 +2003,13 @@ namespace GnssProcessor {
             && 3.0 * sigma <= (1.0 - kEpochCleanMaxDevWlCyc) * lambda_wl
             && std::abs(dev_hatch) <= kEpochCleanMaxDevWlCyc * lambda_wl) {
             epoch_clean_pairs_.insert(stats_key);
+            // The arc's sample count travels ALONGSIDE the key so a consumer can
+            // apply its OWN maturity bar.  kEpochCleanMinArcN above is this
+            // detector's internal floor for TurboEdit's equal-slip split; the
+            // network's common-band scope (SPEC_event_harness §14) runs a
+            // configurable gate on the same evidence and must be able to refuse a
+            // pair this set admitted — and to COUNT what it refused.
+            epoch_clean_arc_n_[stats_key] = static_cast<int>(stats.count);
         }
 
         // Contribute this dev to the cross-satellite pool for this
@@ -2427,6 +2462,10 @@ namespace GnssProcessor {
         // rebuilt from scratch each pass so stale affirmations can never
         // leak into a later epoch's TurboEdit GF-only gating.
         epoch_clean_pairs_.clear();
+        epoch_clean_arc_n_.clear();
+        // §14 (SPEC_event_harness): the DETECTION-grade per-epoch record — same
+        // lifetime as the cleanliness set above, different question.
+        epoch_pair_status_.clear();
 
         // Helper: push a reset result (no known WL integer)
         auto pushReset = [&](const std::string& key, double lwl = 0.0,
