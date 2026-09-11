@@ -428,6 +428,7 @@ add_executable(gnss_tests
     tests/test_resume_frame_restore.cpp
     tests/test_resume_coupling_restore.cpp
     tests/test_rt_state_snapshot.cpp
+    tests/test_band_scoped_response.cpp
     tests/test_network_inject.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")

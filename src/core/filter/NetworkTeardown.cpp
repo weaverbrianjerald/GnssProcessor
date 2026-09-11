@@ -2317,6 +2317,45 @@ int networkTeardown(
                   closure == qcc.wu_restart_events ? "OK" : "*** MISWIRE ***");
     }
 
+    // ---- §Z BAND-SCOPED RESPONSES (docs/SPEC_event_harness.md) --------------
+    // Invariant #4: these counters ARE the ON-path telemetry.  Either knob armed
+    // with its headline count at 0 on a run whose T4 tier fires (or whose
+    // whole-satellite detectors fire) is dead wiring, not a quiet run — the whole
+    // point of the card is that the response population is large (~21 T4 arc
+    // erases per station-hour on the slipped bed).
+    {
+        const auto& nc = config_.getNetworkConfig();
+        const bool t4_bs = nc.raim_erase_band_scope
+                               == NetworkRaimEraseBandScope::MinKeepOne;
+        const bool det_bs = nc.cycle_slip_refloat_band_scope
+                               == NetworkRefloatBandScope::Implicated;
+        if (t4_bs || det_bs) {
+            const auto& C = ctx.counters;
+            const auto& Q = slip_qc.counters;
+            log->info("Network (band-scoped responses, §Z): T4 erases {} cell(s) → "
+                      "{} band(s) erased / {} kept ({} kept over gate — every band of "
+                      "the cell stood above k·σ̂₀ so the pin is the least-BAD band, "
+                      "{} single-band cell(s) skipped outright); detector refloats "
+                      "{} arc(s) → {} band(s) freed / {} kept ({} all-band fallback(s) "
+                      "— the honest cost line: a whole-satellite loss of lock where a "
+                      "truly-slipped band stayed pinned; {} of the pins were chosen on "
+                      "RAW MW/GF per-band evidence, the rest on the lexical fallback; "
+                      "{} single-band arc(s) freed anyway, nothing to spare; {} "
+                      "TOO LATE — every band was already freed by an EARLIER drain "
+                      "this epoch, so nothing could be pinned: NONZERO means a "
+                      "freeing site upstream is not routed through the scope and "
+                      "the per-epoch invariant is not held, invariant #4).  "
+                      "Scope: T4={} detector={}.",
+                      C.n_bscope_t4_cells, C.n_bscope_t4_erased, C.n_bscope_t4_kept,
+                      C.n_bscope_t4_kept_over_gate, C.n_bscope_t4_single_band,
+                      Q.bscope_arcs, Q.bscope_freed, Q.bscope_kept,
+                      Q.bscope_all_band_fallback, Q.bscope_measured,
+                      Q.bscope_single_band, Q.bscope_too_late,
+                      t4_bs ? "min_keep_one" : "all",
+                      det_bs ? "implicated" : "all");
+        }
+    }
+
     // ---- Rung 3 v3: carry-domain lane observatory (SPEC_lane_slip_response §7.3)
     if (config_.networkCycleSlipRelevelLaneSnap()) {
         const auto& C = ctx.counters;

@@ -57,6 +57,88 @@ inline double ifElevMap(double el_deg) {
     return (s > 1e-3) ? (1.0 / s) : 1.0;
 }
 
+/**
+ * @brief §Z — the outcome of a band-scoped detector refloat decision for one arc.
+ *
+ * (docs/SPEC_event_harness.md §Z.)  Study 1 measured that freeing EVERY band of a
+ * line of sight is what buys the persistent ~0.45-cycle level floor: with no band
+ * left pinned, (ρ, I, N₁..N₃) re-draw together from one epoch of code, and the
+ * station-common iono error that lands in the fresh zero-q level never leaves.
+ * Leave one band pinned and it anchors the LOS's ionosphere while the freed bands
+ * re-tap — the floor drops 9–29× on every band, including bands never freed.
+ */
+struct BandScopeDecision {
+    bool        scoped{false};        ///< The scope ACTED: this drain's bands plus what was ALREADY freed this epoch cover the arc, and one survivor was spared.
+    bool        single_band{false};   ///< The arc has ONE live band.  Never spared on the DETECTOR path (see @ref networkSlipBandScope).
+    bool        measured{false};      ///< The kept band was chosen on RAW evidence (not the lexical fallback).
+    bool        too_late{false};      ///< Every live band was ALREADY freed by an earlier drain this epoch — nothing left to pin.  A wiring defect if it is ever nonzero (see @ref networkSlipBandScope).
+    std::string keep;                 ///< The band left pinned; empty when the scope did not act.
+    double      keep_dn_cyc{0.0};     ///< |ΔN| of the kept band in cycles from the MW/GF decomposition; 0 when !@ref measured.
+};
+
+/**
+ * @brief §Z — decide which band of an arc stays pinned when a detector implicated
+ *        all of them.  PURE (no state, no I/O) — the unit-testable core.
+ *
+ * Returns a no-op decision (@c scoped false) whenever the implicated set leaves at
+ * least one live band alone: the natural scope of MW, of a 3-band arc's IF-TD pair,
+ * or of a single-band LLI already keeps an anchor, and the knob must not perturb it.
+ *
+ * ⚠ **The invariant is per EPOCH, not per drain** — measured, not assumed.  The
+ * first Study-3 all-band leg wired the scope per drain and came out BYTE-IDENTICAL
+ * to its control: an LLI on all three bands made the MW/LLI drain keep L1C, and
+ * then the IF-TD driver — whose pair (L1C, L2W) does NOT cover a 3-band arc, so
+ * its own scope is correctly a no-op — freed L1C anyway, and the arc ended the
+ * epoch with every band freed exactly as before.  @p already_freed closes that:
+ * the decision is taken against this drain's bands UNION what earlier drains have
+ * already latched this epoch, and the survivor is chosen from the bands that are
+ * still pinned.  Pass the epoch's freed set (`relevel->free_ambs` and/or the
+ * Card-4 `carry_slipped_ambs`, filtered to this arc) — empty is the first drain's
+ * correct input.
+ *
+ * When the implicated set DOES cover the arc the band with the smallest raw
+ * per-band evidence is kept.  That evidence is the MW/GF decomposition of the
+ * arc's primary pair: with ΔMW in wide-lane cycles equal to Δ(N₁−N₂) and ΔGF in
+ * metres equal to λ₁ΔN₁ − λ₂ΔN₂ (the one-epoch Δiono term is what the GF detector
+ * already assumes negligible), the two band deltas separate exactly —
+ * ΔN₁ = (ΔGF − λ₂ΔMW)/(λ₁−λ₂), ΔN₂ = (ΔGF − λ₁ΔMW)/(λ₁−λ₂).  Bands outside that
+ * pair carry NO evidence and are never preferred over a measured one (absence of
+ * evidence is not evidence of innocence — standing invariant #1).  With no usable
+ * evidence at all the pin falls back to the lexically lowest live band, which is
+ * deterministic and is also the shortest wavelength, i.e. the smallest metric level
+ * error per retained cycle.
+ *
+ * ⚠ **This is the one place a truly-slipped band can stay pinned** — a receiver
+ * loss of lock on the whole satellite implicates every band honestly, and the
+ * fallback keeps one of them anyway.  That is a deliberate trade against the
+ * measured cost of freeing them all, not a claim that the kept band is clean; the
+ * honest handling of that case is the lane-preserving refloat (an EWL-MW snap that
+ * re-levels the band rather than keeping or freeing it) named in
+ * docs/SPEC_lane_slip_response.md §7, which is out of this card's scope.  The
+ * @c bscope_all_band_fallback counter exists so the population is never silent.
+ *
+ * A SINGLE-band arc is never spared here: with one band there is no LOS anchor to
+ * preserve (the (ρ, I, N) split is already unidentifiable from that arc alone),
+ * and refusing a detector's positive slip evidence would leave the step standing
+ * with no observable able to catch it again.  @ref BandScopeDecision::single_band
+ * reports it so the run-end census can separate that population.
+ *
+ * @param live_bands    Every signal of this (station, satellite) with a live ambiguity.
+ * @param implicated    The signals THIS detector named.
+ * @param already_freed The signals of this arc an EARLIER drain already freed this
+ *                      epoch (empty for the first drain).  They cannot be un-freed,
+ *                      so they count toward covering the arc but are never chosen
+ *                      as the survivor.
+ * @param obs           The arc's raw row this epoch, or nullptr when none exists.
+ * @param verdict       The arc's raw step adjudication, or nullptr.
+ * @return The decision; @c scoped false means "do exactly what an unscoped run does".
+ */
+BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
+                                       const std::set<std::string>& implicated,
+                                       const std::set<std::string>& already_freed,
+                                       const RawSlipObs* obs,
+                                       const RawSlipVerdict* verdict);
+
 /// Parse an IfPhaseSlipDetector reset key ("G01_L1C_L2W") into the satellite and
 /// the two band signals of the IF pair it was formed from.  Returns false on a
 /// malformed key.  The network carries per-band ambiguities, so a flagged IF pair
@@ -299,7 +381,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    RelevelEpochState* relevel = nullptr,
                                    std::map<std::tuple<int, std::string, std::string>,
                                             RelevelPend>* relevel_pend = nullptr,
-                                   NetworkSlipOracle* oracle = nullptr);
+                                   NetworkSlipOracle* oracle = nullptr,
+                                   const RawSlipEpoch* bscope_raw = nullptr);
 
 /**
  * @brief Card G RESPONSE (docs/SPEC_slip_qc_hardening.md §G3/W1) — mark the

@@ -536,6 +536,18 @@ struct SlipQcCounters {
     long long wu_restart_stale{0};         ///< ...ledger entry from an EARLIER epoch (station was absent at its restart) — refused, never respond to history.
     long long wu_restart_arcs{0};          ///< individual ambiguities refloated across all responses.
     long long relevel_free_skips{0};       ///< Inject-site skips actually taken (arc had a live carry).
+    // §Z band-scoped DETECTOR refloat (network.cycle_slip.refloat_band_scope =
+    // implicated; docs/SPEC_event_harness.md).  Armed with bscope_arcs = 0 on a
+    // slip-bearing run is a MISWIRE (invariant #4) — every whole-satellite path
+    // (IF-TD pair on a 2-band arc, LLI on every band, the wind-up restart drain)
+    // reaches the scope.
+    long long bscope_arcs{0};              ///< Arcs where the implicated set covered every live band and the scope ACTED.
+    long long bscope_freed{0};             ///< Bands freed under those decisions.
+    long long bscope_kept{0};              ///< Bands left pinned (one per acted arc by construction).
+    long long bscope_measured{0};          ///< …of those, pinned on RAW MW/GF per-band evidence rather than the lexical fallback.
+    long long bscope_all_band_fallback{0}; ///< …the honest cost line: a whole-satellite loss of lock where a truly-slipped band may stay pinned (see networkSlipBandScope).
+    long long bscope_single_band{0};
+    long long bscope_too_late{0};          ///< ...decisions where EVERY live band had already been freed by an earlier drain this epoch - nothing left to pin.  Nonzero means a freeing site upstream is not routed through the scope (invariant #4).       ///< Single-band arcs freed anyway — nothing to spare, and no LOS anchor to preserve.
     /// SPEC_withhold_era_release §8 (family D): leveling-carry entries erased by
     /// the DATUM-SLIP re-reference inside the MW refloat drain — the frame moved
     /// under the arc, so the carried value is stale in the old gauge.  Counted

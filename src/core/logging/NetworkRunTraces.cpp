@@ -1472,6 +1472,17 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      "\"mdb_event_holdoff_ep\":{},",
                                      nc.mdb_event_m, nc.mdb_event_holdoff_ep)
                        : std::string())
+               // §Z band-scoped responses: BOTH are solve-affecting, so the arm
+               // provenance belongs in the manifest — a grader must be able to see
+               // that an arm is NOT comparing like with like without re-reading the
+               // config.  Emitted ONLY when armed (the mdb / adm_screen precedent —
+               // the decomposition golden hashes this file).
+               << (nc.raim_erase_band_scope == NetworkRaimEraseBandScope::MinKeepOne
+                       ? std::string("\"raim_erase_band_scope\":\"min_keep_one\",")
+                       : std::string())
+               << (nc.cycle_slip_refloat_band_scope == NetworkRefloatBandScope::Implicated
+                       ? std::string("\"cycle_slip_refloat_band_scope\":\"implicated\",")
+                       : std::string())
                // RTB-6/P1: service-observability knobs (health heartbeat + trace rotation).
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
