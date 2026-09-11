@@ -1472,12 +1472,21 @@ namespace GnssProcessor {
         // erase the arc.  A sample that reaches the flag decision overwrites this
         // with the real threshold and verdict; one that leaves earlier keeps the
         // count, which is all a maturity gate needs.  Bookkeeping only.
+        // §14.11: is this the FIRST sample after an epoch the receiver flagged on
+        // one of THIS pair's bands?  Computed once here and carried into the
+        // second stamp below, so both records agree.
+        const bool lli_shadowed = [&] {
+            const auto it = prev_lli_bands_.find(obs.satellite);
+            return it != prev_lli_bands_.end()
+                && (it->second.count(sig1) != 0 || it->second.count(sig2) != 0);
+        }();
         {
             auto& st = epoch_pair_status_[stats_key];
             st.arc_n_at_sample = static_cast<int>(stats.count);
             st.flagged         = false;
             st.thresh_m        = std::numeric_limits<double>::quiet_NaN();
             st.lambda_wl       = lambda_wl;
+            st.lli_shadow      = lli_shadowed;
         }
 
         // First epoch: initialize arc.
@@ -1925,7 +1934,29 @@ namespace GnssProcessor {
             st.flagged         = is_slip;
             st.thresh_m        = thresh;
             st.lambda_wl       = lambda_wl;
+            st.lli_shadow      = lli_shadowed;
         }
+
+        // §14.10 READOUT.  The same four numbers as a DECISION LINE, because the
+        // per-sample record above is only readable through a verdict, and a
+        // verdict exists only on epochs where some pair FIRED — so the epochs
+        // that matter most (the silent lane either side of a slip) were
+        // unreadable.  DEBUG level: silent at the shipped `warn`, and a line
+        // emission cannot change a decision, so an armed run stays byte-identical
+        // on every product.  `n` is the arc count BEFORE this sample, so n small
+        // on a settled arc means the arc was just reset (gap or LLI), which is
+        // what distinguishes "evaluated against the arc" from "arc restarted and
+        // this sample re-based".
+        log_manager_.getLogger("mw_slip_detector")->debug(
+            "MWDEC sta={} {} t={:.1f} dev={:+.4f} m ({:+.3f} WL) thr={:.4f} m ({:.3f} WL) "
+            "n={} lam_wl={:.4f} flag={} lli={} lli_shadow={}",
+            station_label_,
+            stats_key, epoch_s, dev, (lambda_wl > 0.0 ? dev / lambda_wl : 0.0),
+            thresh, (lambda_wl > 0.0 ? thresh / lambda_wl : 0.0),
+            stats.count, lambda_wl, is_slip ? 1 : 0,
+            (obs.lli_flags.count(sig1) ? obs.lli_flags.at(sig1) : 0)
+                | (obs.lli_flags.count(sig2) ? obs.lli_flags.at(sig2) : 0),
+            lli_shadowed ? 1 : 0);
 
         // Level-frame slip indicator with the LEGACY pairing (Hatch dev vs
         // the TD1-MAD gate), used solely to protect the Welford M2
@@ -2466,6 +2497,14 @@ namespace GnssProcessor {
         // §14 (SPEC_event_harness): the DETECTION-grade per-epoch record — same
         // lifetime as the cleanliness set above, different question.
         epoch_pair_status_.clear();
+        // §14.11 LLI SHADOW: rotate the one-epoch loss-of-lock memory BEFORE any
+        // sample is processed, so every stamp this pass reads LAST epoch's flags.
+        // The LLI epoch itself never reaches processMwSample (the branch below
+        // `continue`s after scheduling the resets), so the shadow it casts is on
+        // the NEXT epoch's first sample — the one compared against a mean that
+        // never saw the epoch the receiver declared broken.
+        prev_lli_bands_.swap(cur_lli_bands_);
+        cur_lli_bands_.clear();
 
         // Helper: push a reset result (no known WL integer)
         auto pushReset = [&](const std::string& key, double lwl = 0.0,
@@ -2586,6 +2625,17 @@ namespace GnssProcessor {
                                              computeWideLaneWavelengthMeters(obs, s1, s2),
                                              NaN, /*cross_sat_floor_m=*/NaN, false, true);
                         }
+                    }
+                    // §14.11: same band memory on the combined path.  Here the
+                    // arcs ARE erased below, so the next sample starts a fresh,
+                    // immature arc and the maturity gate already refuses it — the
+                    // stamp is recorded for symmetry and for the basis string, not
+                    // because this path needs it.
+                    {
+                        auto& bands = cur_lli_bands_[obs.satellite];
+                        for (const auto& [code, lli] : obs.lli_flags)
+                            if (!code.empty() && code[0] == 'L' && lli != 0)
+                                bands.insert(code);
                     }
                     for (auto it = mw_stats_.begin(); it != mw_stats_.end(); )
                         it = (it->first.rfind(obs.satellite, 0) == 0) ? mw_stats_.erase(it) : std::next(it);
@@ -2755,6 +2805,31 @@ namespace GnssProcessor {
                         if (!key.empty() && key[0] == 'L' && key.find('_') == std::string::npos)
                             pushReset(obs.satellite + "_" + key);
                     logger->warn("LLI lock loss (uncombined): scheduling all phase ambiguity resets for {}", obs.satellite);
+                    // §14.11: remember WHICH bands the receiver flagged, so the
+                    // next epoch's stamp can mark the pairs that contain one of
+                    // them as LLI-shadowed.  Band-scoped on purpose: a lane made
+                    // only of unflagged bands is untouched by the receiver's
+                    // report and its silence is still worth something, which is
+                    // what keeps the correct late narrowings alive.
+                    {
+                        auto& bands = cur_lli_bands_[obs.satellite];
+                        for (const auto& [code, lli] : obs.lli_flags)
+                            if (!code.empty() && code[0] == 'L'
+                                && code.find('_') == std::string::npos && lli != 0)
+                                bands.insert(code);
+                        // §14.10 READOUT: the LLI epoch is the one with no MWDEC
+                        // line of its own — say so, or the gap reads as missing data.
+                        std::string blist;
+                        for (const auto& b : bands) {
+                            if (!blist.empty()) blist += ";";
+                            blist += b;
+                        }
+                        logger->debug("MWSKIP sta={} {} t={:.1f} lli_bands=[{}] — EVERY pair's "
+                                      "sample WITHHELD this epoch (MW arc preserved, "
+                                      "count not reset); next epoch's first sample is "
+                                      "LLI-shadowed on every pair containing one of them.",
+                                      station_label_, obs.satellite, obs.time.tow, blist);
+                    }
                     // MW stats intentionally PRESERVED across LLI.  The
                     // running MW = (φ_1 − φ_2)/λ_WL − code-NL/λ_WL is a
                     // function of raw observations only — independent

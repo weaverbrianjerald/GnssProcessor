@@ -1412,6 +1412,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                             cp.thresh_wl = (pst.lambda_wl > 0.0)
                                                ? pst.thresh_m / pst.lambda_wl
                                                : std::numeric_limits<double>::quiet_NaN();
+                            cp.lli_shadow = pst.lli_shadow;   // §14.11 rule F2
                             cbev[csat].processed[{cs1, cs2}] = cp;
                         }
                         for (const auto& r : mwr) {
@@ -1620,7 +1621,12 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         C.n_cb_all_inconsistent  += common_band.all_inconsistent;
         C.n_cb_bands_kept        += common_band.bands_kept;
         C.n_cb_iftd_veto         += common_band.iftd_veto;
+        for (const auto& [pr, n] : common_band.iftd_veto_by_pair)   // §14.10
+            C.n_cb_iftd_veto_by_pair[pr] += n;
         C.n_cb_immature_pairs    += common_band.immature_pairs;
+        C.n_cb_lli_shadow        += common_band.lli_shadow;      // §14.11 F2
+        C.n_cb_lli_verdicts      += common_band.lli_verdicts;    // §14.12 F3
+        C.n_cb_lli_narrowed      += common_band.lli_narrowed;
         C.n_cb_weak_silence      += common_band.weak_silence;
         C.n_cb_anchor_colocate   += common_band.anchor_colocate;
         C.n_cb_would_narrow      += common_band.would_narrow;
@@ -1675,7 +1681,14 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                               ? &qc.epoch : nullptr,
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.hist : nullptr,
                           ctx.carry.slip_oracle.get(),    // SIM-ONLY ORACLE
-                          common_band_ptr);               // §14 COMMON-BAND SCOPE
+                          common_band_ptr,                // §14 COMMON-BAND SCOPE
+                          // §14.10 PAIR WIDTH: ALWAYS passed — the per-pair-kind
+                          // tally is knob-independent telemetry (invariant #4),
+                          // so a `first` run's run-end clause already sizes what
+                          // the one watched pair sees.  Counters only; the
+                          // solve, the products and the event rows are untouched
+                          // while the knob is `first`.
+                          &ctx.counters.n_iftd_pair);
 
     // ---- §10.4: wind-up accumulator-restart response ------------------------
     // (SPEC_phase_windup_sign §10.4.)  Drains the per-station restart ledgers

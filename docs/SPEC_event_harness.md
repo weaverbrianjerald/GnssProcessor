@@ -2669,6 +2669,399 @@ moves (all continuous).  Recorded in both ledger rows as a measured open
 cost; the harness leg at those six epochs is owed (60-epoch legs, not
 another 24 h arm).
 
+## 14.10 The IF-TD detector watched ONE lane per satellite — `network.cycle_slip.if_phase_td_pairs` (2026-09-11)
+
+### 14.10.1 The defect
+
+The common-band scope's IF-TD VETO (§14.2) is what closes the EQUAL-COUNT trap:
+two bands slipping by the same integer leave their Melbourne-Wübbena lane silent
+while the iono-free combination moves 0.107 m per cycle, so a silent MW pair with
+no IF-TD pair behind it exonerates two bands that both moved.  But
+`IfPhaseSlipDetector` forms **exactly one pair per satellite** — the first two
+distinct phase bands it finds (L1C+L2W on GPS, L1C+L5Q on Galileo) — so the veto
+reaches one lane of three and the trap is open on every other one.
+
+Measured on the storm bed, station **S37000SIM / G20 at 4.99 h**: truth L5Q −31
+cycles (receiver-flagged) at 4.98 h and L1C −29 cycles at 4.99 h.  The (L1C+L5Q)
+lane moved by 2 wide-lane cycles and stayed silent, and the verdict read
+
+```
+keep implicated=L2W; exonerated=L1C;L5Q;
+basis=mw(L1C+L5Q)silent(n=99;thr=9.0WL);mw(L1C+L2W)flag;
+      mw(L2W+L5Q)flag;iftd(L1C+L2W)=flagged
+```
+
+— it freed the one band that had **not** slipped, the epoch's misfit was metres,
+and the user paid +9.5 cm for the following hour.
+
+### 14.10.2 The knob
+
+`network.cycle_slip.if_phase_td_pairs` = `first` (default, byte-identical) |
+`all`.  Under `all` the detector evaluates **every distinct pair** of a
+satellite's tracked phase bands (3 on a triple-band arc, 1 on a dual-band one).
+Each pair rides its own GRADIENT CHAIN: `constellation_state_` is keyed by the
+bare system string for a satellite's FIRST pair — so that pair's population,
+double differences and log lines are the pre-knob ones byte for byte — and by
+`"<system>|<sig1>_<sig2>"` for every additional pair.  The driver's pools
+(centre / scale / shrinkage) were already per pair KIND, and the verdict's
+read-only preview reads the same source, so the extra pairs are a pure addition
+on both sides.
+
+A flag resets **that chain only** (`resetSatelliteInState`); the whole-satellite
+`resetSatellite` would discard the other pairs' clean gradient histories and make
+one pair's decision depend on another's.  `T1_if_slip` rows carry a
+`pair=L1C+L5Q` token under `all` (omitted under `first`, so those rows stay the
+pre-knob text), reset keys are per pair (`G01_L1C_L5Q`), and the run-end clause
+reports evaluated / flagged / refloated per pair kind, knob-independently.
+
+### 14.10.3 ⚠ 14.10.4 first — ONE reference arm per (station, constellation)
+
+Running the reference-satellite slip test (tier T1r) per CHAIN is **not** a pure
+addition: it is three tests on three different iono-free combinations of the same
+arcs, and the extra-wide ones are ill-conditioned.  (L2W,L5Q) has IF coefficients
+12.26 / −11.26 — noise amplification 16.6 against 2.98 on (L1C,L2W) — while its
+λ_IF is 0.1248 m, so the legacy candidate condition |median(non-ref ΔΔ)| >
+0.5·λ_IF is met by NOISE.  Measured on a 70-epoch quiet 60-station null before
+this clause:
+
+| quantity | `first` | `all`, per-chain ref arm | `all`, shared ref arm |
+|---|---|---|---|
+| IF-TD ref-gate legacy candidates | 25 | **5 351** | **25** |
+| …of which FIRED | 1 | **64** (52 marked incoherent STATION EVENTS) | **1** |
+| pooled-arm flags | 0 | 0 | 0 |
+| products / solution / ZWD / DD-frac vs `first` | — | all DIFFER | **all IDENTICAL** |
+
+A false-alarm cost entirely invisible in the per-pair evaluated/flagged tally, and
+the reason the first `all` arms were not byte-identical to `first` on a quiet bed.
+Additional chains now ADOPT the first chain's reference (so every pair of a
+satellite sits in one between-satellite frame) and skip its test; the fallback to
+their own election covers only a satellite set that does not contain that
+reference at all.
+
+### 14.10.4 Harness legs (quiet seed ep0665, S21000SIM / G08, event at +10, 70 epochs)
+
+Arms: **OFF** (`common_band_scope` false, `if_phase_td_pairs` first), **ON**
+(true, first), **FIX** (true, all).  Arms of a leg differ in exactly those two
+knobs (verified by config diff).  G08's arc at the seed is 367 epochs old, but the
+MW detector's state is not in the snapshot, so the in-leg maturity reads n = 10 at
+the event — exactly the `common_band_min_arc_epochs` bar, which is what makes
+these legs reproduce the field shape at all.
+
+| leg | event(s) | ON verdict | FIX verdict |
+|---|---|---|---|
+| **S1** storm shape | L5Q −31 **with LLI** @+10, L1C −29 @+11 | +1 `keep implicated=L2W` — **the field defect, verbatim** | +1 `keep implicated=L2W` — **all-pairs alone does NOT close it** |
+| **S2** pure equal-count | L1C −29 and L5Q −29 both @+10, no flag | +0 `keep implicated=L2W` — wrong | +0 `all reason=no_exoneration`, `iftd(L1C+L5Q)=flagged` — **veto fires** |
+| **L2** single-band control | L2W −33 @+10, no flag | +0 `keep implicated=L2W` | identical verdict; basis gains `iftd(L1C+L5Q)silent` |
+| **S3** LLI only | L5Q −31 with LLI @+10 | +1 `keep implicated=L5Q` — the CORRECT late narrowing | identical verdict |
+
+Per-band DD level residual of the injected arc (event − null, cycles; the
+`sig` band has its injected integer removed, the others do not — read across
+arms):
+
+| leg / arm | L2_d@+1 | L5_d@+1 | L2_d@+45 | L5_d@+45 | oth_d rms +14..45 | ZWD_d peak | iono_d peak | T4 rows (ids) |
+|---|---|---|---|---|---|---|---|---|
+| S1 OFF | −2.214 | −2.280 | −0.367 | −0.378 | 0.0214 | 0.0026 m | −0.331 m | 0 |
+| **S1 ON (pre-F2, the defect)** | **+13.822** | **+9.078** | +0.290 | +0.289 | **0.0668** | **0.729 m** | 0.523 m | **15 (15, all at S21000SIM)** |
+| S1 FIX (pre-F2) | +5.935 | +4.434 | +0.236 | +0.251 | 0.0215 | 0.237 m | 0.470 m | **0** |
+| S1 ON / FIX with F2 (§14.11) | −2.214 / −2.228 | −2.280 / −2.294 | −0.367 | −0.378 | 0.0214 / 0.0192 | 0.0026 m | −0.330 m | 0 |
+| S2 OFF | −0.587 | −29.584 | −0.326 | −29.335 | 0.0193 | 0.0027 m | 0.143 m | 0 |
+| **S2 ON (the defect)** | −2.428 | −31.484 | −0.256 | −29.264 | 0.0459 | 0.247 m | **3.846 m** | 0 |
+| **S2 FIX** | −0.587 | −29.584 | −0.326 | −29.335 | 0.0193 | 0.0027 m | 0.143 m | 0 |
+| L2 OFF | −0.587 | −0.584 | −0.326 | −0.335 | 0.0193 | 0.0027 m | 0.143 m | 0 |
+| L2 ON | −0.031 | −0.002 | −0.013 | −0.008 | 0.00014 | 0.0003 m | −0.003 m | 0 |
+| **L2 FIX** | −0.031 | −0.002 | −0.013 | −0.008 | 0.00014 | 0.0003 m | −0.003 m | 0 |
+
+Readings: **S2 FIX is OFF digit for digit** — the veto returns the leg to today's
+response.  **L2 FIX is ON digit for digit** on every channel, and products /
+solution / ZWD / DD-fractional are byte-identical between them, so the widening is
+exactly inert on a genuine single-band slip.  **S1 ON pre-F2 is what the defect
+costs**: 13.8 and 9.1 cycles of level error at +1, ZWD 0.73 m, the station's other
+arcs 3.1× worse, and the post-fit tier erasing **15 innocent arcs at that one
+station**.  All-pairs alone removes all 15 erases and halves the level error (the
+new pairs catch the L5Q slip at +0), but it does not remove the wrong narrowing:
+a flag resets its own chain, so at +1 — the epoch of the second slip and of the
+verdict — the (1,5) and (2,5) pairs have no previous gradient, produce no sample,
+and cannot veto.  That is §14.11.
+
+**⚠ The one measured COST of `all`: S3.**  With the widening the S3 leg's level
+residual goes 0.005 → 0.335 cyc at +45 and its slant-iono peak 0.004 → 0.143 m,
+i.e. from near-perfect to the §9 all-band floor, *with the +1 verdict unchanged at
+`keep implicated=L5Q`*.  Mechanism: at the LLI epoch itself **no verdict exists** —
+every MW sample is withheld (§14.11), so `flagged_pairs` is empty and the rule
+returns FALLBACK 1, and the drains run UNSCOPED.  Under `first` that was harmless
+because the only actor there is the LLI drain, which is already band-scoped by the
+receiver's own bits (it freed L5Q alone).  Under `all` the (1,5) and (2,5) IF-TD
+pairs also flag at +0 and, unscoped, free both of their bands each — all three.
+**Named fix, not built here: form a verdict at an LLI epoch too** (the LLI bits are
+themselves evidence: implicated = flagged bands, provided a silent mature
+un-shadowed lane free of flagged bands exonerates the rest), so FALLBACK 1 stops
+meaning "unscoped" on the one epoch class where a receiver flag has already named
+the band.
+
+## 14.11 RULE F2 — the LLI shadow: a lane that did not see the flagged epoch is not silent
+
+### 14.11.1 The mechanism, from the detector's own decision lines
+
+`MwSlipDetector::detect`'s uncombined branch, on any epoch where a satellite
+carries a receiver loss-of-lock bit, schedules the ambiguity resets and
+`continue`s — **deliberately preserving the MW arc** (the MW combination is a
+function of raw observations alone, so a short lock-loss does not invalidate the
+EWMA).  So the arc count runs straight through the flagged epoch and the first
+sample after it reads MATURE while the lane saw nothing at the epoch the receiver
+declared broken — and a band-common slip does not move the wide lane in any case.
+
+Storm-bed census: all five spurious `keep` verdicts in 2 994 sit exactly one epoch
+after a receiver-flagged slip on the same arc, and in every one the exonerating
+lane CONTAINED the flagged band (S37/G20 (L1C+L5Q) n 87 → 99 across the LLI, thr
+9.0 WL; S25/E36 (L1C+L5Q) n 164 → 173).
+
+Reproduced on the S1 leg, from the new `MWDEC` / `MWSKIP` lines
+(`runs/evleg_m_s1_fix`, S21000SIM / G08):
+
+```
+  -1 L1C+L2W     dev  +0.5668 m (+0.658 WL)  thr 3.4777 (4.035 WL)  n= 9  flag=0  shadow=0
+  +0 ALL PAIRS WITHHELD (LLI on L5Q)          <- no sample evaluated; n does NOT advance
+  +1 L1C+L2W     dev -24.5936 m (-28.534 WL)  thr 3.5786 (4.152 WL)  n=10  flag=1  shadow=0
+  +1 L1C+L5Q     dev  +1.6025 m ( +2.133 WL)  thr 3.1228 (4.156 WL)  n=10  flag=0  shadow=1
+  +1 L2W+L5Q     dev +181.82 m (+31.023 WL)   thr 2.0700 (0.353 WL)  n=10  flag=1  shadow=1
+  +2 L1C+L5Q     dev  +1.1801 m ( +1.571 WL)  thr 4.8701 (6.481 WL)  n=11  flag=0  shadow=0
+```
+
+The answer to "does the detector evaluate the LLI epoch's sample or withhold it":
+**it withholds it, for the whole satellite, and keeps the arc** — so the next
+epoch's sample is compared against the pre-LLI mean and reads the COMBINED jump.
+Line 4 is the damage: +2.13 WL against a 4.16 WL gate, silent and "mature", and
+it exonerated L1C and L5Q.  The S3 leg's +1 shows the other half — `L1C+L2W dev
++0.466 WL, shadow=0` next to `L1C+L5Q +31.133 WL flag=1` and `L2W+L5Q +31.023 WL
+flag=1` — the lane carrying no flagged band, which is why the correct late
+narrowing survives F2.
+
+### 14.11.2 The rule
+
+Gated by `network.cycle_slip.common_band_scope`; no new knob, OFF stays
+byte-identical.  **A MW pair is NOT silent — it is refused exactly as an immature
+pair is — at any epoch where one of its BANDS carried an LLI at the previous epoch
+on that (station, satellite).**  Exported by the detector itself:
+`EpochPairStatus::lli_shadow`, from a one-epoch per-satellite band memory
+(`prev_lli_bands_`, rotated at the top of `detect`), so no run-context fallback is
+needed and the (station) scope is the per-station detector instance.  Band-scoped
+on purpose: a lane made only of unflagged bands is untouched by the receiver's
+report and may still exonerate.  Basis token `mw(L1C+L5Q)lli_shadow(n=99)`,
+counter `cb_lli_shadow`, run-end clause extended.
+
+| leg | with F2 |
+|---|---|
+| **S1 ON** | +1 `all reason=no_exoneration; basis=mw(L1C+L5Q)lli_shadow(n=10);…` — **F2 alone closes the storm shape**; levels, ZWD, other arcs and T4 all return to the OFF baseline |
+| **S1 FIX** | same verdict; the +0 IF-TD catches remain |
+| **S2** | unchanged (no LLI on that leg) — the two mechanisms are complementary, each closing its own shape |
+| **L2** | unchanged `keep implicated=L2W`, level residual 0.008–0.013 cyc |
+| **S3** | unchanged `keep implicated=L5Q` at +1 — the 853-of-858 correct late narrowing is not costed |
+
+### 14.11.3 Detector readout
+
+Two DEBUG lines in `MwSlipDetector` (silent at the shipped level; an emission
+cannot change a decision, and products are byte-identical):
+
+- `MWDEC sta=… <sat>_<sig1>_<sig2> t=… dev=… thr=… n=… lam_wl=… flag=… lli=… lli_shadow=…`
+  at the flag decision, for **every evaluated pair** — the per-sample record was
+  previously readable only through a verdict, and a verdict exists only on epochs
+  where some pair FIRED, so the silent lane either side of a slip was unreadable;
+- `MWSKIP sta=… <sat> t=… lli_bands=[…] — EVERY pair's sample WITHHELD this epoch`
+  in the LLI branch, so a missing MWDEC line reads as a withheld sample rather
+  than as missing data.
+
+`setStationLabel` because all 60 stations share the one `mw_slip_detector` logger
+and its records are keyed only by `<sat>_<sig1>_<sig2>` — without the label the
+log cannot be read per station at all.  Arm with
+`logging.enable_mw_slip_detector: true` + `logging.levels.mw_slip_detector:
+"debug"` (the §13.4 recipe) and read the rotated `mw_slip_detector.N.log` files
+too.  ⚠ The sink is 4 × 5 MB and a 60-station leg writes ~15 MB per 25 epochs, so
+a 70-epoch leg rotates its own event out: use a **25-epoch leg with `--at-ep 10`**
+when the log is the instrument (`runs/evleg_m_s1_*`, `m_s3_*`).
+
+### 14.11.4 Gates
+
+| gate | result |
+|---|---|
+| **G1** both knobs at their defaults, vs main's own Release exe (`420634f`) | **PASS** on the L2 control leg and on the quiet 240-epoch null: products, solution, events, ZWD, DD-fractional, rx-states and the consumer trace all byte-identical |
+| `all` vs `first`, quiet 70-epoch null | products / solution / ZWD / DD-fractional **byte-identical**; `network_events.csv` differs only by the new rows and `pair=` tokens |
+| `all` vs `first`, L2 single-band control | same four artifacts **byte-identical** |
+| `all` vs `first`, S1 / S3 | differ, as they must — the new pairs catch the L5 slip at +0 |
+| unit suite | 1892 cases / 259 suites, 1875 passed, 17 fixture-gated skips, 0 failures (+22 over main's 1870) |
+
+Run-end clause from a FIX leg (`runs/evleg_r_s1_fix`):
+
+```
+Network (common-band scope): verdicts 480, narrowed 3 (bands kept 6), all-band 477
+  (no exoneration 471 / inconsistent 6 / anchor co-locate 0), IF-TD vetoes 0,
+  immature pairs 720, LLI shadows 1, weak silences 3; split-referenced satellites
+  mean 3.4 / max 5 of 52.3 anchored [knob on].
+Network (IF-TD pairs [all]): 5 pair kind(s), eval 202014 / flag 3 / refloat 3 total —
+  L1C_L2W eval 39813 / flag 1 / refloat 1, L1C_L5Q eval 67338 / flag 1 / refloat 1,
+  L1C_L7Q eval 27525 / flag 0 / refloat 0, L2W_L5Q eval 39813 / flag 1 / refloat 1,
+  L5Q_L7Q eval 27525 / flag 0 / refloat 0.
+```
+
+Both knobs stay default (`first` / OFF).  Owed before any promotion: the storm-bed
+arm, and the §14.10.4 LLI-epoch verdict named above.
+
+## 14.12 RULE F3 — the LLI-EPOCH verdict: the epoch the rule could not see
+
+### 14.12.1 The gap §14.10.4 found
+
+At an epoch where the receiver flags a band, `MwSlipDetector::detect`'s
+uncombined branch withholds **every** MW sample of that satellite (§14.11).  So
+`flagged_pairs` is empty, the §14.2 rule returns FALLBACK 1 — "no MW pair fired,
+not a verdict at all" — and **the drains run UNSCOPED**.
+
+That was harmless for as long as the LLI drain was the only actor at such an
+epoch: it frees exactly the bands the receiver flagged, i.e. it is already
+band-scoped by its own evidence.  It stops being harmless the moment a SIBLING
+drain can fire in the same epoch.  Under `if_phase_td_pairs = all` the IF-TD
+pairs that contain the flagged band do fire there — the IF-TD detector does not
+skip LLI epochs — and unscoped, each frees BOTH of its bands.  On a triple-band
+arc with an L5 flag that is (1,5) ∪ (2,5) = all three, so every LLI epoch becomes
+an all-band free.  Measured on the §14.10 **S3** leg (L5Q −31 with the flag, the
+LLI path alone):
+
+| S3 leg | level residual @+45 | slant-iono peak | +1 verdict |
+|---|---|---|---|
+| `first` (only the LLI drain acts) | **0.005 cyc** | 0.004 m | `keep implicated=L5Q` |
+| `all`, no F3 | **0.335 cyc** (the §9 all-band floor) | 0.143 m | `keep implicated=L5Q`, unchanged |
+
+The verdict at +1 was right the whole time; the damage was done at +0, where
+there was no verdict to obey.
+
+### 14.12.2 The rule
+
+Gated by `network.cycle_slip.common_band_scope`; no new knob, OFF stays
+byte-identical.  When LLI bits are set for a (station, satellite) at this epoch
+**and the normal path formed no verdict** (no MW pair flagged — on the uncombined
+path, all withheld), form one:
+
+- `action = keep`, `implicated = lli_signals ∩ live_bands`;
+- **no exoneration step.**  The receiver's bits ARE the scope — today's LLI drain
+  already trusts them that far, and there is no MW evidence at this epoch to
+  weigh anything against.  `exonerated` stays empty so the `bands_kept` census
+  keeps meaning "spared by positive exoneration";
+- basis `lli=L5Q;mw=withheld`, outcome @ref CommonBandOutcome::LliOnly, counters
+  `cb_lli_verdicts` / `cb_lli_narrowed` (knob-independent), run-end clause
+  extended;
+- every drain at that epoch — the LLI free and every IF-TD pair refloat — then
+  frees (its bands ∩ implicated), through the one existing hook, exactly as the
+  drains already do under a verdict.
+
+**If any MW pair DID flag at an LLI epoch the normal path runs, unchanged**: F3's
+guard is `flagged_pairs.empty()`, and the §14.2 rule already implicates every
+band carrying a loss-of-lock bit, so there is nothing for F3 to add there.
+
+Two degenerate cases are explicit: a flagged band that is not tracked leaves
+`implicated = live_bands` and `narrowed = false`, so a caller cannot restrict a
+drain by accident; and every live band flagged is today's response, also
+`narrowed = false`.
+
+**⚠ Under `first` + scope ON this also scopes the (L1C+L2W) IF-TD drain** when the
+LLI is on L1C or L2W — today that drain frees both of its bands at an LLI epoch.
+F3 is therefore not an `all`-only rule, and its first effect on the existing ON
+posture is a narrowing the ON lineage has never run.
+
+**Deliberately NOT applied: the §14.5 ANCHOR CLAUSE.**  An F3 verdict is not
+refused on an arc that anchors a family of the satellite, because the LLI drain
+ALREADY frees exactly the flagged bands there today — so F3 changes only the
+sibling drains, and refusing to scope them would restore the very all-band free
+the rule exists to remove.  Whether that trade costs reference co-location is
+measurable rather than assumed: the always-on split-referenced-satellite census
+(§14.5) reads it on every arm.
+
+### 14.12.3 Legs and gates
+
+See §14.12.4 for the measured table.  Pre-registered, same seed / station /
+satellite / arms as §14.10.4:
+
+| leg | pre-registered |
+|---|---|
+| **S3 FIX** | +0 `keep implicated=L5Q` with the IF-TD refloat rows scoped to L5Q; +1 `keep implicated=L5Q` as before; level residual @+45 and iono peak equal to the `first` values (0.005 cyc / 0.004 m) |
+| **S1 FIX** | +0 `keep implicated=L5Q`; +1 `all … lli_shadow` unchanged; residual table unchanged from the S1+F2 row |
+| **S2 FIX / L2 FIX** | products byte-identical to the pre-F3 `all` runs (`fd217f07…` / `4e0b5606…`) — neither leg has an LLI, so F3 cannot reach them |
+| **null 70 / null 240** | `all` ≡ `first` on products / solution / ZWD / DD-fractional; OFF ≡ main's `420634f` exe |
+
+### 14.12.4 RESULT — the gap closes, and `all` becomes a pure addition on every leg
+
+Final exe `gnss_processor_iftdpairs_v6.exe` (SHA-256 `B94E7600D4159…`), same seed /
+station / satellite / arms; every knob explicit; all three arms of every leg
+rebuilt from FRESH event dicts and their schedules verified before a single run.
+
+| leg | ON (scope, first) | FIX (scope, all) |
+|---|---|---|
+| **S3** LLI only | +0 `keep rule=lli_epoch;implicated=L5Q;narrowed=1;basis=lli=L5Q;mw=withheld`; +1 `keep implicated=L5Q` | **identical rows**, plus the two scoped drains: `T1_if_slip … pair=L1C+L5Q;cb_kept=L1C` and `… pair=L2W+L5Q;cb_kept=L2W` |
+| **S1** storm shape | +0 the same `lli_epoch` row; +1 `all … mw(L1C+L5Q)lli_shadow(n=10)` | identical rows + the same two scoped drains at +0 |
+| **S2** equal-count | +0 `keep implicated=L2W` (the defect) | +0 `all reason=no_exoneration`, `iftd(L1C+L5Q)=flagged` |
+| **L2** single band | +0 `keep implicated=L2W` | identical verdict |
+
+Per-band DD level residual of the injected arc (event − null, cycles):
+
+| leg / arm | L2_d@+1 | L5_d@+1 | L2_d@+45 | L5_d@+45 | oth_d rms +14..45 | ZWD_d peak | iono_d peak | T4 |
+|---|---|---|---|---|---|---|---|---|
+| S3 ON | 0.001 | 0.032 | 0.005 | 0.008 | 0.000182 | −0.0006 m | 0.0037 m | 0 |
+| **S3 FIX** | **0.001** | **0.032** | **0.005** | **0.008** | **0.000182** | **−0.0006 m** | **0.0037 m** | 0 |
+| S1 ON | −2.214 | −2.280 | −0.367 | −0.378 | 0.021447 | −0.0026 m | −0.331 m | 0 |
+| **S1 FIX** | **−2.214** | **−2.280** | **−0.367** | **−0.378** | **0.021447** | **−0.0026 m** | **−0.331 m** | 0 |
+
+**S3 FIX is now S3 ON digit for digit** — the §14.12.1 cost (0.335 cyc / 0.143 m)
+is gone, and the pre-registered `first` values (0.005 cyc / 0.004 m) are met
+exactly.  **S1 FIX is S1 ON digit for digit** too.
+
+Byte-identity:
+
+| comparison | products / solution / ZWD / DD-fractional |
+|---|---|
+| **OFF vs main's `420634f` exe**, L2 control leg | **IDENTICAL** (events too) |
+| **OFF vs main's exe**, quiet 240-epoch null | **IDENTICAL** (events, rx-states and the consumer trace too; products `4c96e34a4aebc4a9`) |
+| `all` vs `first`, quiet 70-epoch null | **IDENTICAL** |
+| `all` vs `first`, **S3** and **S1** | **IDENTICAL** — with F3 the widening no longer changes the solve on an LLI leg at all |
+| `all` vs `first`, L2 control | **IDENTICAL** (`4e0b56068e44a862`) |
+| S2 FIX vs the pre-F3 `all` run | **IDENTICAL**, events included (`fd217f072a2eaf98`) — no LLI on that leg, so F3 cannot reach it |
+
+So after F3 the only legs on which `all` changes the solve at all are the ones
+where a *new pair catches a slip the first pair could not see* — S2.  That is the
+contract the card was aiming at.
+
+Run-end clause (`runs/evleg_t_s3_fix`):
+
+```
+Network (common-band scope): verdicts 480, narrowed 4 (bands kept 8), all-band 476
+  (no exoneration 470 / inconsistent 6 / anchor co-locate 0), IF-TD vetoes 0,
+  immature pairs 720, LLI shadows 0, LLI-epoch verdicts 1 (1 narrowed),
+  weak silences 3; split-referenced satellites mean 3.4 / max 5 of 52.3 anchored
+  [knob on].
+Network (IF-TD pairs [all]): 5 pair kind(s), eval 202015 / flag 2 / refloat 2 total —
+  L1C_L2W eval 39814 / flag 0 / refloat 0, L1C_L5Q eval 67338 / flag 1 / refloat 1,
+  L1C_L7Q eval 27525 / flag 0 / refloat 0, L2W_L5Q eval 39813 / flag 1 / refloat 1,
+  L5Q_L7Q eval 27525 / flag 0 / refloat 0.
+```
+
+The **split-referenced satellite census reads 3.4 / max 5 on both arms**, i.e. the
+`first` value — so scoping the LLI epoch did not separate a satellite's references,
+which is the measurement the deliberate omission of the anchor clause (§14.12.2)
+was left open for.
+
+Unit suite 1897 cases / 259 suites, 1880 passed, 17 fixture-gated skips, 0
+failures (+27 over main's 1870; F3 adds 5 rule/hook cases to
+`tests/test_common_band_scope.cpp`).
+
+⚠ **A harness-builder trap, recorded because it cost a leg.**  `event_leg.py
+make-leg` arms ONE event; a multi-event leg patches `leg.json` afterwards.  A
+builder that hoists the event list out of the arm loop and then `pop()`s the
+per-event offset out of it mutates the shared dicts, so the SECOND arm built gets
+a different schedule — here S2's second slip moved from +0 to +1, turning the
+equal-count trap into a two-epoch slip and producing a plausible-looking but
+different verdict.  Build the schedule fresh per arm, and **print every leg's
+`(signal, cycles, lli, tow − t0)` before running any of them** (the batch-6
+builder does).
+
+Still owed before any promotion: the storm-bed arm.  Both knobs stay default
+(`first` / OFF).
+
 ## 16. Study 7 — the common-band scope's 3 cm is ONE wrong narrowing at 4.99 h (2026-09-11, afternoon; pre-registered before any leg)
 
 ### 16.1 What the two storm arms' own logs established (no runs; `scratchpad/cb3_census.py`)

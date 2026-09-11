@@ -117,12 +117,29 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
             append("mw(" + pairText(pr) + ")immature(n=" + std::to_string(st.arc_n) + ")");
             continue;
         }
+        // RULE F2 (§14.11) — the LLI SHADOW.  One of this pair's bands carried a
+        // receiver loss-of-lock bit at the PREVIOUS epoch, so the detector
+        // withheld the pair's sample there and preserved the arc, and THIS
+        // sample is the first after the gap.  The count therefore reads mature
+        // while the lane saw nothing at the epoch the receiver declared broken —
+        // and a band-common slip leaves the wide lane unmoved anyway.  Treated
+        // exactly as immature: refused, counted, named.  Measured on the storm
+        // bed: all five spurious `keep` verdicts in 2 994 sat one epoch after an
+        // LLI, and in every one the exonerating lane CONTAINED the flagged band.
+        // Band-scoped, so a lane of two unflagged bands still exonerates — which
+        // is what leaves the 853 correct late narrowings untouched.
+        if (st.lli_shadow) {
+            ++v.lli_shadow;
+            append("mw(" + pairText(pr) + ")lli_shadow(n=" + std::to_string(st.arc_n) + ")");
+            continue;
+        }
         const std::string desc = "mw(" + pairText(pr) + ")silent(n="
                                  + std::to_string(st.arc_n) + ",thr=" + thrText(st.thresh_wl) + ")";
         if (ev.iftd_flagged.count(pr)) {
             // The EQUAL-COUNT trap: L1 and L2 slipping by the same integer leave
             // MW(1,2) silent, and only the iono-free combination sees it.
             ++v.iftd_veto;
+            v.iftd_veto_pairs.insert(pr);   // §14.10: the veto's own identity
             append(desc + ";iftd(" + pairText(pr) + ")=flagged");
             iftd_noted.insert(pr);
             continue;
@@ -195,6 +212,26 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
     return v;
 }
 
+CommonBandVerdict networkCommonBandLliVerdict(const std::set<std::string>& live_bands,
+                                             const CommonBandEvidence& ev) {
+    CommonBandVerdict v;
+    v.outcome = CommonBandOutcome::LliOnly;
+    // The receiver's bits, intersected with what the drains can actually act on.
+    std::set<std::string> impl;
+    for (const auto& b : live_bands)
+        if (ev.lli_signals.count(b)) impl.insert(b);
+    // No flagged band is live: there is nothing to scope, and `implicated` must
+    // stay the full set so a caller that registers this verdict anyway cannot
+    // restrict a drain by accident.
+    v.implicated = impl.empty() ? live_bands : impl;
+    v.narrowed   = (!impl.empty() && impl.size() < live_bands.size());
+    // No exoneration step: the bands the receiver did NOT flag are not
+    // "exonerated" by any test, they are simply outside the scope the receiver
+    // named.  Leaving `exonerated` empty keeps the bands_kept census honest.
+    v.basis = "lli=" + setText(ev.lli_signals) + ";mw=withheld";
+    return v;
+}
+
 void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                                    const GnssConfig& config_,
                                    const std::vector<NetStation>& stations,
@@ -211,9 +248,21 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
     const int min_arc = config_.networkCycleSlipCommonBandMinArcEpochs();
 
     // ---- IF-TD FLAG PREVIEW (read-only; see the file banner) ---------------
-    // Keyed (station, satellite) → the pair, plus whether the pooled test flags
-    // it.  Empty when the IF-TD detector is not armed: no evaluation, no veto.
-    std::map<std::pair<int, std::string>, std::pair<CommonBandPair, bool>> iftd;
+    // Keyed (station, satellite) → EVERY pair the detector evaluated this epoch,
+    // each with whether the pooled test flags it.  Empty when the IF-TD detector
+    // is not armed: no evaluation, no veto.
+    //
+    // §14.10: with `network.cycle_slip.if_phase_td_pairs = all` a satellite has
+    // one entry per band pair rather than one in total, which is what lets the
+    // veto reach a silent MW lane whose own IF pair was never watched before —
+    // the S37/G20 shape, where MW(L1C+L5Q) stayed silent through a −31 / −29
+    // two-band slip and the response freed the one band that had not moved.
+    // With it `first` there is exactly one entry per (station, satellite) and
+    // every expression below reduces to the pre-knob one.
+    std::map<std::pair<int, std::string>,
+             std::vector<std::pair<CommonBandPair, bool>>> iftd;
+    const bool iftd_all_pairs =
+        config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All;
     if (config_.networkCycleSlipIfPhaseTd()) {
         const double k_mad        = config_.networkCycleSlipIfPhaseTdKMad();
         const double floor_frac   = config_.networkCycleSlipIfPhaseTdFloorFrac();
@@ -225,12 +274,24 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
         for (int i = i_lo; i < n_sta_total; ++i) {
             if (i < 0 || static_cast<std::size_t>(i) >= stations.size()) continue;
             if (!present[static_cast<std::size_t>(i)] || !stations[i].if_slip) continue;
-            for (const auto& [sat, jp] : stations[i].if_slip->getLastIfJumps()) {
-                if (!jp.valid || !std::isfinite(jp.delta_grad_m)) continue;
-                if (jp.sig1.empty() || jp.sig2.empty()) continue;
-                by_pair[jp.sig1 + "_" + jp.sig2].push_back(
-                    { i, sat, jp.sig1, jp.sig2, jp.delta_grad_m,
-                      jp.elevation_deg, jp.lambda_if_m, jp.is_reference });
+            // Exactly the driver's two source branches, so the preview pools the
+            // same samples the decision will (§14.10).
+            if (!iftd_all_pairs) {
+                for (const auto& [sat, jp] : stations[i].if_slip->getLastIfJumps()) {
+                    if (!jp.valid || !std::isfinite(jp.delta_grad_m)) continue;
+                    if (jp.sig1.empty() || jp.sig2.empty()) continue;
+                    by_pair[jp.sig1 + "_" + jp.sig2].push_back(
+                        { i, sat, jp.sig1, jp.sig2, jp.delta_grad_m,
+                          jp.elevation_deg, jp.lambda_if_m, jp.is_reference });
+                }
+            } else {
+                for (const auto& [key, jp] : stations[i].if_slip->getLastIfJumpsAllPairs()) {
+                    if (!jp.valid || !std::isfinite(jp.delta_grad_m)) continue;
+                    if (jp.sig1.empty() || jp.sig2.empty()) continue;
+                    by_pair[key.second].push_back(
+                        { i, key.first, jp.sig1, jp.sig2, jp.delta_grad_m,
+                          jp.elevation_deg, jp.lambda_if_m, jp.is_reference });
+                }
             }
         }
 
@@ -266,7 +327,7 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                     const double floor_m = floor_frac * sp->lambda;
                     const double thr     = std::max(k_mad * s_eff * emap, floor_m);
                     const bool   flagged = std::abs(sp->dd - pstat.med) > thr;
-                    iftd[{ sp->sta, sp->sat }] = { { sp->sig1, sp->sig2 }, flagged };
+                    iftd[{ sp->sta, sp->sat }].push_back({ { sp->sig1, sp->sig2 }, flagged });
                 }
             }
         }
@@ -277,15 +338,24 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
         if (i < 0 || static_cast<std::size_t>(i) >= pa.sta_cb_ev.size()) continue;
         if (!present[static_cast<std::size_t>(i)] || !stations[i].sm) continue;
         for (const auto& [sat, ev_in] : pa.sta_cb_ev[static_cast<std::size_t>(i)]) {
-            if (ev_in.flagged_pairs.empty()) continue;   // FALLBACK 1, uncounted
+            // §14.12 RULE F3.  An epoch the receiver flagged and no MW pair could
+            // see (every sample of the satellite withheld, §14.11) used to fall
+            // through FALLBACK 1 as "no verdict", which means the drains run
+            // UNSCOPED — harmless while the LLI drain is the only actor, since it
+            // is already scoped by the receiver's bits, but not once an IF-TD pair
+            // containing a flagged band fires in the same epoch.
+            const bool lli_only = ev_in.flagged_pairs.empty()
+                               && !ev_in.lli_signals.empty();
+            if (ev_in.flagged_pairs.empty() && !lli_only) continue;  // FALLBACK 1, uncounted
 
             // Fold in this epoch's IF-TD evaluation (the preview above).
             CommonBandEvidence ev = ev_in;
             const auto iit = iftd.find({ i, sat });
-            if (iit != iftd.end()) {
-                if (iit->second.second) ev.iftd_flagged.insert(iit->second.first);
-                else                    ev.iftd_silent.insert(iit->second.first);
-            }
+            if (iit != iftd.end())
+                for (const auto& [pr, flagged] : iit->second) {
+                    if (flagged) ev.iftd_flagged.insert(pr);
+                    else         ev.iftd_silent.insert(pr);
+                }
 
             // B = the arc's TRACKED phase bands, i.e. the live ambiguity signals
             // the drains would act on.  Same source the §Z scope reads.
@@ -312,12 +382,31 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                 }
             }
 
+            // §14.12: the LLI-only path takes the receiver's bits directly; the
+            // ANCHOR CLAUSE is deliberately NOT applied to it, because the LLI
+            // drain ALREADY frees exactly those bands today — so F3 changes only
+            // the sibling drains, and refusing to scope them here would restore
+            // the very all-band free the rule exists to remove.  Whether that
+            // trade costs co-location is measurable: the always-on
+            // split-referenced-satellite census reads it.
             const CommonBandVerdict v =
-                networkCommonBandVerdict(live, ev, min_arc, anchors_sat);
+                lli_only ? networkCommonBandLliVerdict(live, ev)
+                         : networkCommonBandVerdict(live, ev, min_arc, anchors_sat);
+
+            if (lli_only) {
+                ++out.lli_verdicts;
+                if (v.narrowed) ++out.lli_narrowed;
+                out.all.emplace_back(std::make_pair(i, sat), v);
+                if (out.armed && v.narrowed) out.narrowed_at[{ i, sat }] = v;
+                continue;
+            }
 
             ++out.verdicts;
             out.iftd_veto      += v.iftd_veto;
+            for (const auto& pr : v.iftd_veto_pairs)   // §14.10 breakdown
+                ++out.iftd_veto_by_pair[pr.first + "_" + pr.second];
             out.immature_pairs += v.immature_pairs;
+            out.lli_shadow     += v.lli_shadow;       // §14.11 F2
             out.weak_silence   += v.weak_silence;
             switch (v.outcome) {
                 case CommonBandOutcome::Narrowed:
@@ -329,6 +418,7 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                 case CommonBandOutcome::Inconsistent:   ++out.all_inconsistent;   break;
                 case CommonBandOutcome::AnchorColocate: ++out.anchor_colocate;    break;
                 case CommonBandOutcome::NoFlag:         break;   // unreachable here
+                case CommonBandOutcome::LliOnly:        break;   // §14.12, handled above
             }
             out.all.emplace_back(std::make_pair(i, sat), v);
             if (out.armed && v.narrowed) out.narrowed_at[{ i, sat }] = v;
@@ -347,7 +437,17 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
         const std::string  sta = (static_cast<std::size_t>(i) < stations.size())
                                      ? stations[static_cast<std::size_t>(i)].name
                                      : std::string{};
-        if (v.narrowed) {
+        if (v.outcome == CommonBandOutcome::LliOnly) {
+            // §14.12: `keep` whether or not it restricts anything — the row's
+            // job is to say that this epoch HAD a verdict, which is exactly what
+            // was missing before.  `exonerated` is absent on purpose: nothing was
+            // tested, the receiver named the scope.
+            traces.emitEvent(se.time, "T0_band_scope", "common_band", sat, sta,
+                             std::nullopt, std::nullopt, "keep",
+                             "rule=lli_epoch;implicated=" + setText(v.implicated)
+                                 + ";narrowed=" + std::string(v.narrowed ? "1" : "0")
+                                 + ";basis=" + v.basis);
+        } else if (v.narrowed) {
             traces.emitEvent(se.time, "T0_band_scope", "common_band", sat, sta,
                              std::nullopt, std::nullopt, "keep",
                              "implicated=" + setText(v.implicated)

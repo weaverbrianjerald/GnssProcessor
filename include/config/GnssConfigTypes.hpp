@@ -805,6 +805,34 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief How many BAND PAIRS the IF-TD detector evaluates per satellite
+     *        (`network.cycle_slip.if_phase_td_pairs`, SPEC_event_harness §14.10).
+     *
+     * The iono-free triple difference is formed over a PAIR of phase bands, and
+     * the detector has always formed exactly ONE per satellite — the first two
+     * distinct bands it finds (L1C+L2W on GPS, L1C+L5Q on Galileo).  Every other
+     * pair is therefore unwatched, and the EQUAL-COUNT trap that the common-band
+     * scope's IF-TD veto exists to close (§14.2) is open on all of them: two
+     * bands slipping by the same integer leave their Melbourne-Wübbena lane
+     * silent while the iono-free combination moves 0.107 m per cycle, so a silent
+     * MW pair with no IF-TD pair behind it exonerates two bands that both moved.
+     *
+     * Measured on the storm bed (station S37000SIM / G20, 4.99 h): truth L5Q −31
+     * cycles then L1C −29, the (L1C+L5Q) MW lane moved 2 wide-lane cycles and
+     * stayed silent, and the verdict freed L2W — the one band that had NOT
+     * slipped.  An IF-TD on (L1C,L5Q) would have read −2.5 m and vetoed it.
+     *
+     * Pooling (centre / scale / shrinkage) is PER PAIR KIND in both the driver
+     * and the verdict's preview, and each additional pair gets its own gradient
+     * chain and its own reference election, so @c All is a pure ADDITION: the
+     * first pair's decisions are unchanged.
+     */
+    enum class NetworkIfPhaseTdPairs {
+        First,  ///< (default) one pair per satellite — the first two distinct phase bands; the pre-knob path, byte-identical.
+        All     ///< Every distinct pair of the satellite's tracked phase bands (3 on a triple-band arc, 1 on a dual-band one), each with its own pool, gradient chain, reference election and reset keys.
+    };
+
+    /**
      * @brief The network producer's time-linked parameter classes — the key
      *        space of the @c network.process_noise table.
      *
@@ -1332,6 +1360,13 @@ namespace GnssProcessor {
         /// §Z: BAND SCOPE of the whole-satellite detector refloats
         /// (@ref NetworkRefloatBandScope).  Default @c All is byte-identical.
         NetworkRefloatBandScope cycle_slip_refloat_band_scope{ NetworkRefloatBandScope::All };
+        /// §14.10: how many band PAIRS the IF-TD detector evaluates per satellite
+        /// (@ref NetworkIfPhaseTdPairs).  Default @c First is the pre-knob single
+        /// pair, byte-identical.  SOLVE-AFFECTING when armed (new pairs can flag,
+        /// and their flags refloat and veto), so it is fingerprinted like any
+        /// other detection-shaping knob.  Inert without
+        /// @c network.cycle_slip.if_phase_td.
+        NetworkIfPhaseTdPairs cycle_slip_if_phase_td_pairs{ NetworkIfPhaseTdPairs::First };
         /// §12.7 ANCHOR-SLIP HANDOVER (docs/SPEC_event_harness.md): when a slip
         /// response frees the arc that ANCHORS a (sat, signal) phase-bias family,
         /// stage the one-epoch candidacy ban so the SAME epoch's election hands the

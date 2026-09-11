@@ -2718,6 +2718,21 @@ namespace GnssProcessor {
                   n_cb_iftd_veto = 0, n_cb_immature_pairs = 0,
                   n_cb_weak_silence = 0, n_cb_anchor_colocate = 0,
                   n_cb_would_narrow = 0;
+        /// §14.11 RULE F2 — silent pairs refused as exonerators because one of
+        /// their bands carried a receiver LLI at the PREVIOUS epoch, so the
+        /// detector withheld that pair's sample and preserved the arc (count
+        /// running straight through the flagged epoch while the lane saw
+        /// nothing).  Its own counter, not folded into n_cb_immature_pairs: the
+        /// two refusals have different causes, and this one sizes the population
+        /// the five measured spurious `keep` verdicts came from.
+        long long n_cb_lli_shadow = 0;
+        /// §14.12 RULE F3 — verdicts formed from the receiver's LLI bits alone,
+        /// at an epoch where every MW sample of the satellite was withheld so the
+        /// normal rule could not run, and how many of those actually restrict a
+        /// drain.  Knob-independent (invariant #4): an OFF run reports what
+        /// arming would scope.  A run whose LLI drain fires with lli_verdicts 0
+        /// is dead wiring.
+        long long n_cb_lli_verdicts = 0, n_cb_lli_narrowed = 0;
         /// SPLIT-REFERENCED SATELLITE CENSUS (§14.5), ALWAYS ON and
         /// knob-independent: per PROCESSED epoch, how many satellites have >= 2
         /// anchored phase-bias families whose anchors sit at DIFFERENT stations.
@@ -2729,6 +2744,22 @@ namespace GnssProcessor {
         /// worst epoch; multi_sum's mean is the population that CAN split.
         long long n_cb_split_sats_sum = 0, n_cb_split_sats_max = 0,
                   n_cb_split_multi_sum = 0, n_cb_split_epochs = 0;
+        /// §14.10 IF-TD PAIR WIDTH (network.cycle_slip.if_phase_td_pairs), the
+        /// ON-path telemetry of the new pairs: per PAIR KIND, how many samples
+        /// the pooled test thresholded, how many it flagged, and how many of
+        /// those flags actually freed an ambiguity.  Collected KNOB-
+        /// INDEPENDENTLY — a `first` run reports the one watched pair, so the
+        /// clause sizes the card before arming it, and an `all` run whose extra
+        /// pair kinds show evaluated ≫ 0 with flagged 0 over a slipped bed is
+        /// dead wiring, not a quiet lane (invariant #4).
+        IfTdPairTallies n_iftd_pair;
+        /// §14.10, the veto's per-pair-kind breakdown: silent MW pairs the
+        /// common-band scope refused as exonerators because an IF-TD pair
+        /// flagged, attributed to the IF-TD pair KIND that did the vetoing.  The
+        /// whole point of the card is that the vetoes come from pairs the
+        /// single-pair detector never watched, so the total (@ref
+        /// n_cb_iftd_veto) alone cannot show it.
+        std::map<std::string, long long> n_cb_iftd_veto_by_pair;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

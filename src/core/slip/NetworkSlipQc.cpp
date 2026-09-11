@@ -1159,7 +1159,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            const RawSlipEpoch* raw_epoch,
                            const std::vector<RawSlipHistory>* raw_hist,
                            NetworkSlipOracle* oracle,
-                           const CommonBandEpoch* common_band) {
+                           const CommonBandEpoch* common_band,
+                           IfTdPairTallies* pair_tally) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -1215,8 +1216,27 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         // SignalAction.  `handled` is ANY band; the pend gate below uses it,
         // because a bridge replace that re-bases one band while the other was
         // truth-repaired would overwrite the repair with a pre-slip level.
+        // §14.10 PAIR WIDTH.  `first` (default) is the pre-knob detector: ONE
+        // pair per satellite, the first two distinct phase bands, so every other
+        // pair is unwatched and the equal-count trap the common-band scope's
+        // IF-TD veto exists to close is open on all of them.  `all` evaluates
+        // every pair; each rides its OWN gradient chain in the detector and its
+        // OWN pool here (`by_pair` is keyed by pair kind already), so the first
+        // pair's samples, centre, scale and thresholds are unchanged and the new
+        // pairs are a pure addition.
+        const bool iftd_all_pairs =
+            config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All;
+
         struct PairAction { bool handled{false}; bool repaired{false};
-                            bool freed{false}; std::string detail; };
+                            bool freed{false}; std::string detail;
+                            /// §14.12: the pair's own bands the COMMON-BAND verdict
+                            /// refused this epoch.  Invariant #7 wants an identity
+                            /// at the edge, not just a counter — without it a
+                            /// scoped pair refloat and an unscoped one write the
+                            /// same row, which is exactly how the LLI-epoch gap
+                            /// stayed invisible.  Empty ⇒ nothing was refused ⇒ no
+                            /// token ⇒ the pre-knob row text.
+                            std::string cb_kept; };
         const double oracle_now_s =
             static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
         // Refloat both band ambiguities of (sat, sig1, sig2) at station i (only
@@ -1247,7 +1267,15 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 // §14 COMMON-BAND SCOPE: free (this pair's bands ∩ implicated).
                 // Null verdict (knob off) or no narrowed verdict ⇒ true ⇒ the
                 // pre-knob instruction stream.
-                if (!commonBandMayFree(common_band, i, sat, parts->signal)) continue;
+                if (!commonBandMayFree(common_band, i, sat, parts->signal)) {
+                    // §14.12: name it, but only for a band of THIS pair — the
+                    // satellite's other bands were never this drain's to free.
+                    if (parts->signal == sig1 || parts->signal == sig2) {
+                        if (!pact.cb_kept.empty()) pact.cb_kept += "+";
+                        pact.cb_kept += parts->signal;
+                    }
+                    continue;
+                }
                 if (parts->signal == sig1 || parts->signal == sig2) {
                     // SIM-ONLY ORACLE: each BAND is handled independently (the
                     // IF combination cannot localize the slip, but truth can) —
@@ -1309,18 +1337,33 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         // 0 by construction.  Carried per sample so the robust SCALE below can drop it
         // (§6.14.5 defect 2); it stays in `samples` for the centering median and for
         // thresholding, so the flag population is unchanged.
+        // §14.10: `state_key` is the detector chain the sample rode, so a flag
+        // restarts that chain alone (resetSatelliteInState) instead of the
+        // satellite's every pair — which is what keeps the pair decisions
+        // independent.  Unused under `first`, where there is one chain per system.
         struct PairSample { int sta; std::string sat, sig1, sig2; double dd, el, lambda;
-                            bool is_ref; };
+                            bool is_ref; std::string state_key; };
         std::map<std::string, std::vector<PairSample>> by_pair;
         for (int i = i_lo; i < n_sta_total; ++i) {
             if (!present[i] || !stations[i].if_slip) continue;
-            for (const auto& [sat, jp] : stations[i].if_slip->getLastIfJumps()) {
-                if (!jp.valid || !std::isfinite(jp.delta_grad_m)) continue;
-                if (jp.sig1.empty() || jp.sig2.empty()) continue;
-                const std::string pair = jp.sig1 + "_" + jp.sig2;
-                by_pair[pair].push_back({i, sat, jp.sig1, jp.sig2,
-                                         jp.delta_grad_m, jp.elevation_deg, jp.lambda_if_m,
-                                         jp.is_reference});
+            if (!iftd_all_pairs) {
+                for (const auto& [sat, jp] : stations[i].if_slip->getLastIfJumps()) {
+                    if (!jp.valid || !std::isfinite(jp.delta_grad_m)) continue;
+                    if (jp.sig1.empty() || jp.sig2.empty()) continue;
+                    const std::string pair = jp.sig1 + "_" + jp.sig2;
+                    by_pair[pair].push_back({i, sat, jp.sig1, jp.sig2,
+                                             jp.delta_grad_m, jp.elevation_deg, jp.lambda_if_m,
+                                             jp.is_reference, jp.state_key});
+                }
+            } else {
+                for (const auto& [key, jp] : stations[i].if_slip->getLastIfJumpsAllPairs()) {
+                    if (!jp.valid || !std::isfinite(jp.delta_grad_m)) continue;
+                    if (jp.sig1.empty() || jp.sig2.empty()) continue;
+                    by_pair[key.second].push_back({i, key.first, jp.sig1, jp.sig2,
+                                                   jp.delta_grad_m, jp.elevation_deg,
+                                                   jp.lambda_if_m,
+                                                   jp.is_reference, jp.state_key});
+                }
             }
         }
 
@@ -1425,14 +1468,28 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     const double abs_dev = std::abs(sp->dd - med);
                     const bool   flagged = (abs_dev > thr);
                     if (trace_flag_rates) { ++fr_if_slip.opp; if (flagged) ++fr_if_slip.flag; }  // B8/T1
+                    // §14.10 run-end telemetry, knob-independent (invariant #4).
+                    IfTdPairTally* tally = pair_tally ? &(*pair_tally)[pair] : nullptr;
+                    if (tally) { ++tally->evaluated; if (flagged) ++tally->flagged; }
                     if (flagged) {
-                        stations[sp->sta].if_slip->resetSatellite(sp->sat);  // restart arc
+                        // §14.10: restart THIS pair's chain only.  Resetting the
+                        // satellite would discard the other pairs' clean gradient
+                        // histories and make one pair's decision depend on
+                        // another's flag — the independence the per-pair-kind
+                        // pools exist for.  Under `first` there is one chain per
+                        // system and the two calls do the same thing.
+                        if (iftd_all_pairs)
+                            stations[sp->sta].if_slip->resetSatelliteInState(sp->state_key,
+                                                                             sp->sat);
+                        else
+                            stations[sp->sta].if_slip->resetSatellite(sp->sat);  // restart arc
                         // §Z: ONE call — it folds counters, so the event row
                         // reads the hoisted value rather than re-deciding.
                         const std::string bs_keep =
                             bandScopeKeepIf(sp->sta, sp->sat, sp->sig1, sp->sig2);
                         const auto pact =
                             refloat_pair(sp->sta, sp->sat, sp->sig1, sp->sig2, bs_keep);
+                        if (tally && pact.freed) ++tally->refloated;
                         emitEvent("T1_if_slip", "if_slip", sp->sat,
                                   stations[sp->sta].name, abs_dev, thr,
                                   pact.handled
@@ -1442,7 +1499,21 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                       ? (sp->sig1 + ";" + sp->sig2 + ";" + pact.detail)
                                       : (sp->sig1 + ";" + sp->sig2))
                                   + (bs_keep.empty() ? std::string{}
-                                       : ";band_scope=implicated;kept=" + bs_keep));
+                                       : ";band_scope=implicated;kept=" + bs_keep)
+                                  // §14.10: which PAIR fired.  Added only under
+                                  // `all`, where a satellite has several rows per
+                                  // epoch and sig1;sig2 alone no longer identifies
+                                  // the evaluation — so the `first` rows stay the
+                                  // pre-knob text byte for byte.
+                                  + (iftd_all_pairs
+                                       ? ";pair=" + sp->sig1 + "+" + sp->sig2
+                                       : std::string{})
+                                  // §14.12: what the common-band verdict refused
+                                  // this drain.  Absent unless a verdict actually
+                                  // restricted it, so every unscoped row keeps the
+                                  // pre-knob text.
+                                  + (pact.cb_kept.empty() ? std::string{}
+                                       : ";cb_kept=" + pact.cb_kept));
                         // Bridge v2, flagged path: CREATE (or refresh — the
                         // refloat_pair above just voided any stale one) the pend
                         // with the pre-slip capture + this δIF.  A station whose

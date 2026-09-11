@@ -4068,6 +4068,28 @@ namespace GnssProcessor {
         network_cycle_slip_if_phase_td_shrink_kappa_ =
             jval<double>(json, "network.cycle_slip.if_phase_td_shrink_kappa",
                          "network_cycle_slip_if_phase_td_shrink_kappa", 20.0);
+        // §14.10: how many BAND PAIRS the IF-TD detector evaluates per satellite.
+        // Detection-shaping when armed and defaults to the pre-knob single pair,
+        // so an unarmed run is byte-identical (invariant #6).  A typo must not
+        // silently widen or narrow a detector: warn loudly and take the default.
+        {
+            const std::string s = jval<std::string>(json, "network.cycle_slip.if_phase_td_pairs",
+                                                    "network_cycle_slip_if_phase_td_pairs",
+                                                    std::string{"first"});
+            if (s.empty() || s == "first")
+                network_config_.cycle_slip_if_phase_td_pairs = NetworkIfPhaseTdPairs::First;
+            else if (s == "all")
+                network_config_.cycle_slip_if_phase_td_pairs = NetworkIfPhaseTdPairs::All;
+            else {
+                network_config_.cycle_slip_if_phase_td_pairs = NetworkIfPhaseTdPairs::First;
+                log->error("Network (§14.10): network.cycle_slip.if_phase_td_pairs = '{}' is not "
+                           "one of first|all — falling back to 'first' (today's ONE pair per "
+                           "satellite: the first two distinct phase bands).  'all' evaluates "
+                           "every distinct band pair, each with its own pool, gradient chain "
+                           "and reference election, which is what closes the EQUAL-COUNT trap "
+                           "on the pairs the single-pair detector never watched.", s);
+            }
+        }
 
         // --- SPEC_slip_relevel_walk §6: the slip re-level response ------------
         // Root defect: a detector's pending-reseed mark is CONSUMED by the
@@ -4304,6 +4326,26 @@ namespace GnssProcessor {
                       "is the zero-q leveling carry) — disabled.");
             network_cycle_slip_windup_restart_refloat_ = false;
         }
+        // §14.10 IF-TD PAIR WIDTH.  Interlock + arm line, same rationale as the
+        // band-scope clauses: without the detector there is no pair to widen, so
+        // 'all' would be a silently inert knob rather than a structural zero.
+        if (network_config_.cycle_slip_if_phase_td_pairs == NetworkIfPhaseTdPairs::All
+            && !network_cycle_slip_if_phase_td_) {
+            log->warn("Network: network.cycle_slip.if_phase_td_pairs = 'all' needs "
+                      "network.cycle_slip.if_phase_td (there is no IF-TD detector to widen) "
+                      "— reset to 'first'.");
+            network_config_.cycle_slip_if_phase_td_pairs = NetworkIfPhaseTdPairs::First;
+        }
+        if (network_config_.cycle_slip_if_phase_td_pairs == NetworkIfPhaseTdPairs::All)
+            log->info("Network (IF-TD pairs): ALL — every distinct pair of a satellite's "
+                      "tracked phase bands is evaluated (3 on a triple-band arc), each with "
+                      "its OWN pooled centre/scale/shrinkage, gradient chain, reference "
+                      "election and reset key, so the first pair's decisions are unchanged "
+                      "and the extra pairs are a pure addition.  This is what closes the "
+                      "EQUAL-COUNT trap on the pairs the single-pair detector never watched: "
+                      "two bands slipping by the same integer leave their MW lane silent "
+                      "while the iono-free combination moves 0.107 m per cycle.  Run-end "
+                      "reports evaluated / flagged / refloated per pair kind.");
         if (network_cycle_slip_relevel_delta_bridge_
             && (!network_cycle_slip_mw_detect_ || !network_cycle_slip_if_phase_td_)) {
             log->warn("Network: network.cycle_slip.relevel_delta_bridge needs BOTH "

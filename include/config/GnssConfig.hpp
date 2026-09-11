@@ -3426,6 +3426,29 @@ namespace GnssProcessor {
          */
         double networkCycleSlipIfPhaseTdShrinkKappa() const { return network_cycle_slip_if_phase_td_shrink_kappa_; }
 
+        /**
+         * @brief How many band PAIRS the IF-TD detector evaluates per satellite
+         *        (@c network.cycle_slip.if_phase_td_pairs, SPEC_event_harness §14.10).
+         *
+         * `first` (default) is the pre-knob detector: ONE pair per satellite, the
+         * first two distinct phase bands (L1C+L2W on GPS, L1C+L5Q on Galileo), so
+         * every other pair is unwatched and the EQUAL-COUNT trap the common-band
+         * scope's IF-TD veto exists to close is open on all of them.  `all`
+         * evaluates every distinct pair of the satellite's tracked bands — 3 on a
+         * triple-band arc — each with its own pool, gradient chain, reference
+         * election and reset keys, so the first pair's decisions are unchanged and
+         * the extra pairs are a pure addition.
+         *
+         * Stored in @ref NetworkConfig with the other band-scope enums; the getter
+         * name follows the sibling @c if_phase_td knobs.  Inert without
+         * @ref networkCycleSlipIfPhaseTd.
+         *
+         * @return The configured pair mode.
+         */
+        NetworkIfPhaseTdPairs networkCycleSlipIfPhaseTdPairs() const {
+            return network_config_.cycle_slip_if_phase_td_pairs;
+        }
+
         /// @brief SPEC_slip_relevel_walk §6 — latch a detector-marked arc's free
         ///        epoch where the leveling-carry inject can still see it (the
         ///        pending-reseed mark is consumed by the PASS-B measurement
