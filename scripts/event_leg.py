@@ -276,16 +276,19 @@ def cmd_null(args):
 def cmd_rerun(args):
     """Re-seed a leg from its recorded snapshot and run it again.
 
-    ⚠ THE SNAPSHOT-OVERWRITE TRAP (SPEC_warm_resume_event_card §0.4), and it is
-    NOT closed for this refusal reason.  A leg WRITES its own snapshot at its
-    first emitted epoch — `state_snapshot_interval_s` does not suppress that
-    first write — so after one run `seed.txt` holds the leg's OWN second epoch.
-    Relaunching the exe on the same `leg.json` then hits
-    `warmResumeAllowed`'s non-positive-age refusal, and that particular branch
-    does NOT go through the HB-1 hard-error hook: `state_snapshot_require: true`
-    warns and falls through to a COLD START (which then died 0xC0000409 when this
-    was found, 2026-09-10).  So: never invoke the exe on an existing leg.json.
-    Use this, which restores the pristine copy first.
+    ⚠ THE SNAPSHOT-OVERWRITE TRAP (SPEC_warm_resume_event_card §0.4).  A leg
+    WRITES its own snapshot at its first emitted epoch —
+    `state_snapshot_interval_s` does not suppress that first write — so after one
+    run `seed.txt` holds the leg's OWN second epoch, and relaunching the exe on
+    the same `leg.json` resumes to an epoch the snapshot already contains
+    (`warmResumeAllowed`'s non-positive-age refusal).
+
+    Since SPEC_event_harness §11.1 that refusal is a CLEAN refusal: one error line
+    naming the reason and pointing here, and exit code 1.  Before that fix it was
+    a `COLD START` warning followed by a 0xC0000409 fast-fail with the reason
+    printed nowhere, which is how a relaunched leg could read as a cold one.
+    Either way the leg does not run: never invoke the exe on an existing
+    `leg.json`.  Use this, which restores the pristine copy first.
     """
     legdir = args.legdir
     if not os.path.isabs(legdir):

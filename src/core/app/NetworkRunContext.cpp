@@ -1069,15 +1069,26 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     // warm resume is a hard run error instead of a warn + silent cold start — the
     // structural guard for same-snapshot A/B (a resume overwrites the snapshot it read,
     // so an un-re-seeded relaunch would otherwise be graded as warm while running cold).
-    auto hb1 = [&](const std::string& why) {
-        if (nc.state_snapshot_require)
-            throw std::runtime_error(
-                "Network (RTB-7d/HB-1): state_snapshot_require is armed but the warm resume "
-                "did not complete: " + why);
+    //
+    // ⚠ The message is built by NetworkStateSnapshotIO::warmResumeRefusalMessage so
+    // every branch below says the same thing in the same words, and the
+    // non-positive-age branch (the one SPEC_event_harness §6b found reading as a
+    // COLD START in the log and then killing the process with an unhandled
+    // exception) names its own remedy.  The throw is caught at the runNetwork()
+    // call site, which logs e.what() as the ONE error line and returns 1 — a
+    // controlled abort with the reason in the log, not a 0xC0000409 fast-fail.
+    auto hb1 = [&](WarmResumeRefusal why, const std::string& detail) {
+        const std::string msg = NetworkStateSnapshotIO::warmResumeRefusalMessage(
+                nc.state_snapshot_require, why, detail);
+        if (!msg.empty()) throw std::runtime_error(msg);
     };
+    // The COLD-START warnings below are suppressed under `require`: announcing a
+    // cold start the run is about to refuse is the exact confusion §6b reported.
+    const bool cold_ok = !nc.state_snapshot_require;
     if (nc.state_snapshot_require && !snap_path.empty()
         && !std::filesystem::exists(snap_path))
-        hb1("snapshot file '" + snap_path.string() + "' does not exist");
+        hb1(WarmResumeRefusal::MissingFile,
+            "snapshot file '" + snap_path.string() + "' does not exist");
     // M2 v2 — the ONE field-BLOCKING deferral,
     // enforced rather than documented.  The variance factor α² is cross-epoch,
     // solve-affecting, and NOT in the snapshot; a resumed leg would restart every
@@ -1101,10 +1112,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
         NetworkStateSnapshot snap;
         std::string err;
         if (!NetworkStateSnapshotIO::read(snap_path, snap, &err)) {
-            log->warn("Network (RTB-7): state snapshot '{}' failed to parse ({}) — COLD START "
-                      "(a new generation id is minted at first emit as usual).",
-                      snap_path.string(), err);
-            hb1("parse failure: " + err);
+            if (cold_ok)
+                log->warn("Network (RTB-7): state snapshot '{}' failed to parse ({}) — COLD START "
+                          "(a new generation id is minted at first emit as usual).",
+                          snap_path.string(), err);
+            hb1(WarmResumeRefusal::ParseFailure, "parse failure: " + err);
         } else {
             // First epoch this run will actually process (honouring the
             // start_offset_hours fast-forward) — the age reference of the gate.
@@ -1128,16 +1140,20 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
             // established per-key logic judge each key.
             const double horizon_s = std::max(pl_max_gap_s, clk_model_max_gap);
             std::string gate;
+            WarmResumeRefusal gate_why = WarmResumeRefusal::None;
             if (first_live_s < 0.0) {
-                log->warn("Network (RTB-7): state snapshot '{}' found but there are no live "
-                          "epochs to resume against — COLD START.", snap_path.string());
-                hb1("no live epochs to resume against");
+                if (cold_ok)
+                    log->warn("Network (RTB-7): state snapshot '{}' found but there are no live "
+                              "epochs to resume against — COLD START.", snap_path.string());
+                hb1(WarmResumeRefusal::NoLiveEpochs,
+                    "no live epochs to resume against (snapshot '" + snap_path.string() + "')");
             } else if (!NetworkStateSnapshotIO::warmResumeAllowed(
-                           snap, live_fingerprint, first_live_s, horizon_s, &gate)) {
-                log->warn("Network (RTB-7): state snapshot '{}' NOT warm-resumable — {} — "
-                          "COLD START (a new generation id is minted at first emit as usual).",
-                          snap_path.string(), gate);
-                hb1("gate rejected the snapshot: " + gate);
+                           snap, live_fingerprint, first_live_s, horizon_s, &gate, &gate_why)) {
+                if (cold_ok)
+                    log->warn("Network (RTB-7): state snapshot '{}' NOT warm-resumable — {} — "
+                              "COLD START (a new generation id is minted at first emit as usual).",
+                              snap_path.string(), gate);
+                hb1(gate_why, "snapshot '" + snap_path.string() + "': " + gate);
             } else {
                 // Emitter layer FIRST (all-or-nothing): a failed emitter restore
                 // discards the whole warm resume — restoring the driver carries
@@ -1145,12 +1161,16 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                 // discontinuity counters (the silent consumer datum break).
                 std::istringstream es(snap.emitter_state);
                 if (!emitter.restoreState(es)) {
-                    log->warn("Network (RTB-7): state snapshot '{}' passed the gate but its "
-                              "EMITTER section failed to restore (corrupt or parameter "
-                              "mismatch) — COLD START; driver state deliberately NOT "
-                              "restored (the two layers only make sense together).",
-                              snap_path.string());
-                    hb1("emitter section failed to restore");
+                    if (cold_ok)
+                        log->warn("Network (RTB-7): state snapshot '{}' passed the gate but its "
+                                  "EMITTER section failed to restore (corrupt or parameter "
+                                  "mismatch) — COLD START; driver state deliberately NOT "
+                                  "restored (the two layers only make sense together).",
+                                  snap_path.string());
+                    hb1(WarmResumeRefusal::EmitterRestore,
+                        "snapshot '" + snap_path.string() + "' passed the gate but its EMITTER "
+                        "section failed to restore (corrupt, or written under different "
+                        "emitter parameters)");
                 } else {
                     // --- Driver layer -----------------------------------------
                     prev_carry.clear();
@@ -1691,10 +1711,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             carry_driver.reset();
                             ctx.carry.carry_sat_vertex.clear();
                             ctx.carry.carry_group_id.clear();
-                            if (nc.state_snapshot_require)
-                                throw std::runtime_error(
-                                    "Network (RTB-7d/HB-1): state_snapshot_require is armed and "
-                                    "the carry blob could not be restored/bound: " + cerr);
+                            hb1(WarmResumeRefusal::Other,
+                                "the invariant-carry blob could not be restored/bound: " + cerr);
                         } else {
                             // RE-2: wired event response for the stiff restored carry.
                             std::size_t shocked = 0;
@@ -4124,6 +4142,25 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                     gap_ep, rxclk_q);
                                 const double var_pred = rp.var;
                                 const double innov    = value_abs - rp.mean;
+                                // Gate-scale census (invariant #4): the gate is
+                                // k*sqrt(var_pred) METRES and var_pred is per
+                                // station-epoch, so a report can quote the size an
+                                // event must exceed rather than just k.  Measure-only.
+                                if (var_pred > 0.0 && std::isfinite(innov)) {
+                                    auto& C = ctx.counters;
+                                    const double gate_m = rxclk_jump_k * std::sqrt(var_pred);
+                                    if (C.n_rxclk_gate_tests == 0) {
+                                        C.min_rxclk_gate_m = gate_m;
+                                        C.max_rxclk_gate_m = gate_m;
+                                    } else {
+                                        C.min_rxclk_gate_m = std::min(C.min_rxclk_gate_m, gate_m);
+                                        C.max_rxclk_gate_m = std::max(C.max_rxclk_gate_m, gate_m);
+                                    }
+                                    ++C.n_rxclk_gate_tests;
+                                    C.sum_rxclk_gate_m += gate_m;
+                                    C.max_rxclk_innov_m =
+                                        std::max(C.max_rxclk_innov_m, std::abs(innov));
+                                }
                                 if (var_pred > 0.0 && std::isfinite(innov)
                                     && std::abs(innov) > rxclk_jump_k * std::sqrt(var_pred)) {
                                     // Invariant #1/#7: the receiver (or the solve) STEPPED.

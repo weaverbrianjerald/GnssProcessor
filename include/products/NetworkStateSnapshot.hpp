@@ -360,6 +360,27 @@ struct NetworkStateSnapshot {
 };
 
 /**
+ * @brief Why a warm resume was refused — the HB-1 classification.
+ *
+ * A machine-readable companion to the gate's prose, so the
+ * `network.state_snapshot_require` policy is decided on the CLASS rather than on
+ * a substring of an error message, and so the one refusal with a
+ * harness-specific remedy (@ref WarmResumeRefusal::NonPositiveAge — a leg
+ * relaunched in place after it overwrote its own seed) can name that remedy.
+ */
+enum class WarmResumeRefusal {
+    None = 0,        ///< Not a refusal (the gate passed).
+    MissingFile,     ///< @c network.state_snapshot_path does not exist.
+    ParseFailure,    ///< The file exists but did not parse.
+    NoLiveEpochs,    ///< No epoch to resume against (start_offset past the end).
+    Fingerprint,     ///< Datum-relevant config changed since the snapshot was written.
+    NonPositiveAge,  ///< First live epoch is AT or BEFORE the snapshot epoch.
+    Stale,           ///< Age beyond the carry-validity horizon.
+    EmitterRestore,  ///< The emitter section failed to restore (all-or-nothing).
+    Other            ///< Any future refusal that has not earned its own class.
+};
+
+/**
  * @class NetworkStateSnapshotIO
  * @brief Serialization, atomic file replace, and the warm/cold resume gate for
  *        @ref NetworkStateSnapshot.
@@ -444,13 +465,41 @@ public:
      *                                the resuming run will process.
      * @param carry_horizon_s         Carry-validity horizon (s of product time).
      * @param reason                  Optional explanation (both outcomes).
+     * @param why                     Optional MACHINE-readable refusal class, so a
+     *                                caller can act on the reason instead of
+     *                                pattern-matching the prose (set to
+     *                                @c WarmResumeRefusal::None when the gate passes).
      * @return True when a warm resume is allowed.
      */
     static bool warmResumeAllowed(const NetworkStateSnapshot& snap,
                                   uint64_t live_config_fingerprint,
                                   double first_live_epoch_s,
                                   double carry_horizon_s,
-                                  std::string* reason = nullptr);
+                                  std::string* reason = nullptr,
+                                  WarmResumeRefusal* why = nullptr);
+
+    /**
+     * @brief HB-1: the ONE place that decides what a refused warm resume MEANS.
+     *
+     * `network.state_snapshot_require` exists so that a leg which cannot complete
+     * its warm resume STOPS instead of silently becoming a cold run that is then
+     * graded as warm.  Every refusal path — a missing file, a parse failure, a
+     * fingerprint mismatch, a non-positive age, a stale age, a failed emitter
+     * restore — funnels through here, so "require" cannot mean different things on
+     * different branches (docs/SPEC_event_harness.md §6b: the non-positive-age
+     * branch was the one that read as a cold start in the log and then killed the
+     * process with an unhandled exception, 0xC0000409, with the reason nowhere in
+     * the log).
+     *
+     * @param require  @c network.state_snapshot_require.
+     * @param why      The refusal class.
+     * @param detail   The gate's own prose (appended verbatim).
+     * @return The fatal message the caller must log-and-throw when @p require is
+     *         set, or an EMPTY string when the run may legally fall through to a
+     *         cold start.  @c WarmResumeRefusal::None always returns empty.
+     */
+    static std::string warmResumeRefusalMessage(bool require, WarmResumeRefusal why,
+                                                const std::string& detail);
 
     /// FNV-1a-64 over @p s (the config-fingerprint hash primitive; same
     /// constants as the L15 manifest's config-bytes hash).

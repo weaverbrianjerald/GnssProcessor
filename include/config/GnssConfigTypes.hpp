@@ -1089,12 +1089,13 @@ namespace GnssProcessor {
      * seam is reachable and the run is byte-identical.
      */
     struct NetworkInjectEvent {
-        /// @c slip | @c outage | @c anchor_handover | @c arc_erase | @c sat_clock_step.
+        /// @c slip | @c outage | @c anchor_handover | @c arc_erase | @c sat_clock_step
+        /// | @c rx_clock_step.
         std::string kind;
         /// GPS seconds-of-week at which the event STARTS.  The run's week is implied
         /// (a leg never spans a rollover); matched with a +/-0.25 s half-epoch guard.
         double      tow{ -1.0 };
-        std::string station;        ///< Station name (slip, outage, arc_erase).
+        std::string station;        ///< Station name (slip, outage, arc_erase, rx_clock_step).
         std::string sat;            ///< Satellite id, e.g. "G05" (every kind but a station-wide one).
         /// RINEX-3 phase code, e.g. "L1C" (slip); "all" or a code (anchor_handover).
         std::string signal;
@@ -1102,7 +1103,11 @@ namespace GnssProcessor {
         bool        flag_lli{ false };    ///< slip: also raise LLI bit 0x1 on the onset epoch.
         double      duration_s{ 0.0 };    ///< outage: window length; the return is a natural re-admission.
         std::string mode;                 ///< anchor_handover: "cold" | "continuous".
-        double      step_m{ 0.0 };        ///< sat_clock_step: metres added to the a-priori satellite clock.
+        /// Metres of NON-DISPERSIVE range step.  @c sat_clock_step adds it to the
+        /// a-priori satellite clock of @ref sat (every station); @c rx_clock_step
+        /// adds it to the receiver clock of @ref station (every satellite) — the
+        /// exact dual, and PERSISTENT from @ref tow on in both cases.
+        double      step_m{ 0.0 };
     };
 
     /**

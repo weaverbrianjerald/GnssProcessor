@@ -678,30 +678,83 @@ bool NetworkStateSnapshotIO::read(const std::filesystem::path& path, NetworkStat
 bool NetworkStateSnapshotIO::warmResumeAllowed(const NetworkStateSnapshot& snap,
                                                uint64_t live_config_fingerprint,
                                                double first_live_epoch_s,
-                                               double carry_horizon_s, std::string* reason) {
-    auto no = [&](std::string m) {
+                                               double carry_horizon_s, std::string* reason,
+                                               WarmResumeRefusal* why) {
+    if (why) *why = WarmResumeRefusal::None;
+    auto no = [&](WarmResumeRefusal w, std::string m) {
         if (reason) *reason = std::move(m);
+        if (why) *why = w;
         return false;
     };
     if (snap.config_fingerprint != live_config_fingerprint)
-        return no(fmt::format("config fingerprint mismatch (snapshot {:016x} vs live {:016x} — "
+        return no(WarmResumeRefusal::Fingerprint,
+                  fmt::format("config fingerprint mismatch (snapshot {:016x} vs live {:016x} — "
                               "datum-relevant config changed)",
                               snap.config_fingerprint, live_config_fingerprint));
     const double snap_s = static_cast<double>(snap.snap_week) * 604800.0 + snap.snap_tow;
     const double age_s  = first_live_epoch_s - snap_s;
     if (!(age_s > 0.0))
-        return no(fmt::format("first live epoch is not after the snapshot epoch (age {:.3f} s — "
+        return no(WarmResumeRefusal::NonPositiveAge,
+                  fmt::format("first live epoch is not after the snapshot epoch (age {:.3f} s — "
                               "resuming at or before the snapshotted epoch would double-fold "
                               "its carry)",
                               age_s));
     if (age_s > carry_horizon_s)
-        return no(fmt::format("stale: snapshot age {:.1f} s exceeds the carry-validity horizon "
+        return no(WarmResumeRefusal::Stale,
+                  fmt::format("stale: snapshot age {:.1f} s exceeds the carry-validity horizon "
                               "{:.1f} s (every carried key would be dropped/reseeded downstream)",
                               age_s, carry_horizon_s));
     if (reason)
         *reason = fmt::format("age {:.1f} s within horizon {:.1f} s; config fingerprint matches",
                               age_s, carry_horizon_s);
     return true;
+}
+
+std::string NetworkStateSnapshotIO::warmResumeRefusalMessage(bool require,
+                                                             WarmResumeRefusal why,
+                                                             const std::string& detail) {
+    if (!require || why == WarmResumeRefusal::None) return {};
+
+    const char* what = "the warm resume did not complete";
+    switch (why) {
+        case WarmResumeRefusal::MissingFile:
+            what = "the snapshot file does not exist"; break;
+        case WarmResumeRefusal::ParseFailure:
+            what = "the snapshot file did not parse"; break;
+        case WarmResumeRefusal::NoLiveEpochs:
+            what = "there is no live epoch to resume against"; break;
+        case WarmResumeRefusal::Fingerprint:
+            what = "the snapshot's config fingerprint does not match this run"; break;
+        case WarmResumeRefusal::NonPositiveAge:
+            what = "the snapshot is NOT OLDER than the first epoch this run would process"; break;
+        case WarmResumeRefusal::Stale:
+            what = "the snapshot is older than the carry-validity horizon"; break;
+        case WarmResumeRefusal::EmitterRestore:
+            what = "the snapshot's EMITTER section failed to restore"; break;
+        default: break;
+    }
+
+    // The one refusal with a harness-specific remedy.  A leg overwrites its own
+    // seed at its FIRST emitted epoch (state_snapshot_interval_s does not suppress
+    // that write), so relaunching the exe on an already-run leg.json puts the
+    // first live epoch AT the snapshot epoch — age 0.000 s.
+    const char* remedy =
+        (why == WarmResumeRefusal::NonPositiveAge)
+            ? "  This is what an EVENT-HARNESS leg relaunched IN PLACE looks like: the "
+              "previous run overwrote its own seed at its first emitted epoch, so the "
+              "snapshot now IS the epoch you are resuming to.  Re-seed from the pristine "
+              "snapshot with `python scripts/event_leg.py rerun <legdir>` "
+              "(docs/SPEC_event_harness.md §6b) — never relaunch the exe on an existing "
+              "leg.json."
+            : "  Fix the snapshot/config pair, or clear network.state_snapshot_require to "
+              "accept a cold start.";
+
+    return fmt::format(
+        "Network (RTB-7d/HB-1): network.state_snapshot_require is ARMED and {} — {}.  "
+        "The run is REFUSED BEFORE ITS FIRST EPOCH; it does NOT fall through to a cold "
+        "start (that is exactly what `require` means, and a cold leg graded as a warm one "
+        "is the failure this guard exists to prevent).{}",
+        what, detail, remedy);
 }
 
 } // namespace GnssProcessor

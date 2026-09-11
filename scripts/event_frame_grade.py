@@ -32,8 +32,24 @@ which cancels the warm-resume seam transient the two legs share):
              ``iono_m``, which is the correction alone) minus ``truth_atmo.csv``
              ``I_L1_m``.  Carries the station's receiver-DCB offset; read the DIFF.
   C / P      the emitted satellite clock and L1 phase bias for the injected satellite.
+  Call       the emitted satellite clock event - null over EVERY satellite in the
+             product: its per-epoch MEAN is the network-common share a single-station
+             event pushed into the satellite clocks (expect ~ -step/N for a station
+             step), its RMS the total wire signature.
   cons       consumer 3D ENU error from ``closed_loop_trace.csv``.
   qc         detector rows on that (station, sat) from ``network_events.csv``.
+
+``rx_clock_step`` legs (``--step-m``, or ``step_m`` read from the leg's own event
+json) additionally get the channel the kind exists for.  The injected step is
+SUBTRACTED from the event - null receiver-clock difference, so:
+
+  absorb     ``clk_raw_d / step_m`` -- the fraction of the injected step the
+             estimated receiver clock actually took.  Read the RAW difference, not
+             the contrast: a single station's step is 1/N network-common, so a
+             60-station contrast can structurally show at most ``(1 - 1/N)`` of it.
+  res        ``clk_raw_d - step_m`` -- what did NOT land in the clock, in metres.
+             Everything the clock did not absorb had to go somewhere else: the
+             station's other arcs (``oth_d``), its ZWD, its slant iono, or the wire.
 
 Nothing here is a verdict.  It is an instrument.
 """
@@ -222,6 +238,52 @@ def los_iono_error(legdir, fixture, sta, sat, t0, lo, hi):
     return out, None
 
 
+# ------------------------------------------------------- wire, ALL satellites
+def wire_all_clocks(legdir, t0, lo, hi):
+    """{rel_ep: {sat: emitted clock, m}} over every satellite in products.txt.
+
+    The per-satellite `wire_series` answers "what happened to THIS satellite".  A
+    single-station event has no satellite of its own: what it does to the wire is
+    a network-COMMON shift shared by every satellite (the station's share of the
+    clock datum, ~1/N), which only shows up when the whole set is read at once.
+    """
+    p = os.path.join(legdir, "products.txt")
+    if not os.path.isfile(p):
+        return {}, "no products.txt"
+    out, k = defaultdict(dict), None
+    with open(p, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if not line or line[0] == "#":
+                continue
+            fs = line.rstrip().split(",")
+            if fs[0] == "E" and len(fs) >= 3:
+                try:
+                    k = rel_ep(float(fs[2]), t0)
+                except ValueError:
+                    k = None
+                continue
+            if k is None or k < lo or k > hi:
+                continue
+            if fs[0] == "C" and len(fs) >= 3:
+                try:
+                    out[k][fs[1]] = float(fs[2])
+                except ValueError:
+                    pass
+    return dict(out), None
+
+
+def wire_all_stats(e, n):
+    """Per-epoch (mean, rms) of the emitted satellite clock, event - null."""
+    mean, rms = {}, {}
+    for k, per in e.items():
+        d = [per[s] - n[k][s] for s in per if k in n and s in n[k]]
+        if not d:
+            continue
+        mean[k] = sum(d) / len(d)
+        rms[k] = math.sqrt(sum(x * x for x in d) / len(d))
+    return mean, rms
+
+
 # ----------------------------------------------------------------- reduce
 def _rms(series, k0, k1):
     v = [x for k, x in series.items() if k0 <= k <= k1 and x is not None]
@@ -255,6 +317,11 @@ def main():
                          "a null-vs-null quiet contrast)")
     ap.add_argument("--sat", default=None, help="grade this satellite instead")
     ap.add_argument("--sig", default=None, help="band for the per-arc columns")
+    ap.add_argument("--step-m", type=float, default=None,
+                    help="injected step in metres, for a kind that steps a whole "
+                         "station's range (rx_clock_step).  Default: the leg's own "
+                         "event json.  Given, it is SUBTRACTED from the event - null "
+                         "receiver-clock difference and the absorption is reported.")
     args = ap.parse_args()
 
     lo, hi = -abs(args.pre), abs(args.post)
@@ -276,9 +343,17 @@ def main():
     if sig == "all":
         sig = "L1C"
     inj = ev.get("delta_cycles", 0.0) if kind == "slip" else 0.0
+    # A station-wide range step (rx_clock_step) carries no satellite by construction —
+    # that IS the event — so the arc/iono/wire columns need one named on the command
+    # line, the same way anchor_handover needs --station.
+    step_m = args.step_m
+    if step_m is None:
+        step_m = ev.get("step_m", 0.0) if kind == "rx_clock_step" else 0.0
     if not sta or not sat:
-        raise SystemExit("this leg has no (station, sat) target — use --null on an "
-                         "event leg, or add a _target block to leg_meta.json")
+        raise SystemExit("this leg has no (station, sat) target — pass --station / --sat "
+                         "(rx_clock_step is station-wide and names no satellite; "
+                         "anchor_handover names no station), use --null on an event leg, "
+                         "or add a _target block to leg_meta.json")
 
     notes = []
     lv_e, err = station_level_errors(args.legdir, args.fixture, sta, sat, t0, lo, hi,
@@ -308,6 +383,10 @@ def main():
     if err:
         notes.append("cons: " + err)
     con_n, _, _ = consumer_series(args.null, t0, lo, hi)
+    wall_e, err = wire_all_clocks(args.legdir, t0, lo, hi)
+    if err:
+        notes.append("Call: " + err)
+    wall_n, _ = wire_all_clocks(args.null, t0, lo, hi)
     qc_e, _ = qc_events(args.legdir, sta, sat, t0, lo, hi)
 
     band_e = {b: lv_e.get((sat, b), {}) for b in BANDS}
@@ -316,23 +395,36 @@ def main():
     d_oth, d_clk, d_zwd = diff(oth_e, oth_n), diff(clk_e, clk_n), diff(zwd_e, zwd_n)
     d_ion, d_C, d_P, d_con = (diff(ion_e, ion_n), diff(wC_e, wC_n),
                               diff(wP_e, wP_n), diff(con_e, con_n))
+    d_clk_raw = diff(clk_raw_e, clk_raw_n)
+    d_Call_mean, d_Call_rms = wire_all_stats(wall_e, wall_n)
+    # The step channel: how much of the injected metres the estimated receiver clock
+    # actually took, and what is left over to land somewhere else.
+    absorb = ({k: v / step_m for k, v in d_clk_raw.items() if v is not None}
+              if step_m else {})
+    resid = ({k: v - step_m for k, v in d_clk_raw.items() if v is not None}
+             if step_m else {})
 
-    print(f"FRAME grade — {kind} on {sta}/{sat}/{sig}   t0 tow {t0:.0f}")
+    print(f"FRAME grade — {kind} on {sta}/{sat}/{sig}   t0 tow {t0:.0f}"
+          + (f"   step {step_m:+.3f} m" if step_m else ""))
     print(f"  leg   {args.legdir}")
     print(f"  null  {args.null}")
     print()
+    step_hdr = f" {'clkR_d':>8} {'absorb':>7} {'res_d':>8}" if step_m else ""
     hdr = (f"{'ep':>4} {'L1_d':>8} {'L2_d':>8} {'L5_d':>8} {'oth':>7} {'oth_d':>8} "
-           f"{'clk_c':>8} {'clk_d':>8} {'zwd_d':>8} {'ion_d':>8} "
-           f"{'C_d':>8} {'P_d':>8} {'cons':>7} {'cons_d':>8}  qc")
+           f"{'clk_c':>8} {'clk_d':>8}" + step_hdr + f" {'zwd_d':>8} {'ion_d':>8} "
+           f"{'C_d':>8} {'Call_m':>8} {'P_d':>8} {'cons':>7} {'cons_d':>8}  qc")
     print(hdr)
     print("-" * len(hdr))
     for k in range(lo, hi + 1):
         q = ",".join(qc_e.get(k, []))[:40]
+        stepc = (f" {fmt(d_clk_raw.get(k),4,8)} {fmt(absorb.get(k),3,7)} "
+                 f"{fmt(resid.get(k),4,8)}") if step_m else ""
         print(f"{k:>+4d} {fmt(d_band['L1C'].get(k),3,8)} {fmt(d_band['L2W'].get(k),3,8)} "
               f"{fmt(d_band['L5Q'].get(k),3,8)} {fmt(oth_e.get(k),3,7)} "
-              f"{fmt(d_oth.get(k),3,8)} {fmt(clk_e.get(k),4,8)} {fmt(d_clk.get(k),4,8)} "
-              f"{fmt(d_zwd.get(k),4,8)} {fmt(d_ion.get(k),4,8)} "
-              f"{fmt(d_C.get(k),4,8)} {fmt(d_P.get(k),4,8)} "
+              f"{fmt(d_oth.get(k),3,8)} {fmt(clk_e.get(k),4,8)} {fmt(d_clk.get(k),4,8)}"
+              + stepc +
+              f" {fmt(d_zwd.get(k),4,8)} {fmt(d_ion.get(k),4,8)} "
+              f"{fmt(d_C.get(k),4,8)} {fmt(d_Call_mean.get(k),4,8)} {fmt(d_P.get(k),4,8)} "
               f"{fmt(con_e.get(k),3,7)} {fmt(d_con.get(k),3,8)}  {q}")
 
     # ------------------------------------------------------------- summary
@@ -354,8 +446,20 @@ def main():
         "C_d_peak": _peak(d_C)[0], "P_d_peak": _peak(d_P)[0],
         "cons_45": con_e.get(45), "cons_d_45": d_con.get(45),
         "cons_d_peak": _peak(d_con)[0],
+        "clk_raw_d_rms_14_45": _rms(d_clk_raw, 14, 45),
+        "Call_d_rms_14_45": _rms(d_Call_rms, 14, 45),
+        "Call_d_mean_45": d_Call_mean.get(45),
         "notes": notes,
     }
+    if step_m:
+        # The kind's OWN channel.  +1 / +2 is the question ("did the clock take it,
+        # and did it take it at once?"); +0 is the epoch the step lands on, and +45
+        # says whether the absorption held.
+        row["step_m"] = step_m
+        for k in (0, 1, 2, 5, 45):
+            row[f"absorb_{k}"] = absorb.get(k)
+            row[f"res_{k}"] = resid.get(k)
+        row["res_rms_14_45"] = _rms(resid, 14, 45)
     print()
     print("SUMMARY " + json.dumps({k: (round(v, 6) if isinstance(v, float) else v)
                                    for k, v in row.items() if k != "notes"}))
@@ -368,6 +472,8 @@ def main():
                        "band": {b: band_e[b] for b in BANDS},
                        "oth": oth_e, "oth_d": d_oth,
                        "clk_contrast": clk_e, "clk_raw": clk_raw_e, "clk_d": d_clk,
+                       "clk_raw_d": d_clk_raw, "absorb": absorb, "res_d": resid,
+                       "Call_d_mean": d_Call_mean, "Call_d_rms": d_Call_rms,
                        "zwd": zwd_e, "zwd_d": d_zwd, "ion": ion_e, "ion_d": d_ion,
                        "C_d": d_C, "P_d": d_P, "cons": con_e, "cons_d": d_con,
                        "qc": {str(k): v for k, v in qc_e.items()}},
