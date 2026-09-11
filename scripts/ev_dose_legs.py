@@ -42,6 +42,11 @@ validated warm-restart posture, the seed-copy rule and the half-epoch back-off; 
 script only widens ``network.inject.events`` to the full schedule afterwards and
 records it in ``leg_meta.json`` (``events``) and ``schedule.csv`` for the graders.
 A leg is not re-runnable in place — use ``python scripts/event_leg.py rerun``.
+WARNING: ``--from-leg`` copies the source leg's SCHEDULE only — never its config knobs.
+Every knob the source leg armed through ``--extra`` must be passed again in this
+call's ``--extra`` or the twin silently runs without it (a knob-on subset built
+without re-passing ``anchor_slip_handover`` is a two-knob A/B, not a subset).
+
 """
 import argparse
 import csv

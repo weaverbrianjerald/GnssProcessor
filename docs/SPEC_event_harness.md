@@ -2188,3 +2188,79 @@ Gates §13.3 G1–G5.  Not built: the IF-TD second pair, and the warm-up
 false-alarm limit cycle (a flagged arc is erased and re-initialised on the
 next sample; a real slip landing on that sample is absorbed as the new level —
 none of the five misses was this, but it is a real hole at low elevation).
+
+### 13.5 The card's gates (worker build 0550b58 on its own worktree, merged to main as 2490087; manager re-grade; 2026-09-11 morning)
+
+`network.cycle_slip.mw_evidence_refloat` (+ `mw_evidence_ratio_min` 3.0,
+`mw_evidence_min_arc_epochs` 10), default OFF.  `MwSlipResult` now exports
+`evidence_ratio`, `arc_epochs`, `bia_corrected`; PASS A admits on the legacy
+rule OR (knob ∧ bias-free lane ∧ age ≥ 10 ∧ ratio ≥ 3); the candidate carries
+`integer_known` (the bridge intercepts are skipped for an unknown integer);
+rows append `;src=evidence;ratio=…;n=…;int=known|unknown`; run-end clause
+always: `MW detect-only admission: legacy N, evidence N [knob on|off;
+would-admit N]; dropped loose N / unknown N` (10 new tests, suite 1826 / 0 / 17
+re-run by the manager from the worker's Debug build).
+
+| gate | leg(s) | result |
+|---|---|---|
+| G1 byte-identity OFF | `null_mwevid_off` vs `null_main_ancho` (60 ep) | **PASS** — products / solution / events / ZWD SHA-256 all MATCH (re-hashed by the manager: F3F37BC3…, 30041F28…, 690927F6…, DDC169A2…) |
+| G2 single event | 2×2 on S36/G04/L5Q −99 at +89: `l5miss_s36` (both off), `_on` (knob), `_anc` (handover), `_anc_evid` (both) | knob alone: the detection row appears (`L1C;L5Q;src=evidence;ratio=8.9;n=87;int=unknown`; the drain logs "refloated 1 wide-lane slip [S36000SIM/G04]") and the solve does not move — T4 22, clock −17.8 m, ZWD +14.3 m, iono +21.3 m IDENTICAL to both-off; handover alone: identical wreck (nothing freed the arc); **both: T4 0, clock +0.021 m, ZWD −0.013 m, consumer +0.0008 m** (3 families handed over continuously at 281850).  The knob supplies the detection; the handover is the cure on an anchor arc. |
+| G3 655-slip dose, knob ON (+ handover) | `doseall_evid` vs `null240_evid`; control `doseall_knob` vs `null240_knob` | **PASS** — T4 200 → **0**; the five formerly-missed slips 0/5 → **5/5** detected at +0 (all `src=evidence`); max per-station ZWD diff 10.6 m (S36) → **0.019 m** (the worker's "0.296" was S36's CLOCK column; ZWD ≤ 0.02 m at every station); wire de-meaned rms 0.041 → **0.009 m**; consumer peak 0.46 → 0.34 m, last bin −0.13 → −0.09 m; MW rows on injected arcs 560 → 705; handovers 120 → 138 (120 continuous / 18 cold); S36 residual after its all-band free: clock +0.30 m, iono +0.53 m at +240 (the §9 all-band re-level of a 20° arc, now a non-anchor) |
+| G4 false-alarm price | `null240_evid` vs `null240_knob` | **PASS** — 0 evidence admissions in 240 ep × 60 sta; all four artifacts SHA-256 identical armed vs unarmed; run-end `legacy 286, evidence 0; dropped loose 196 / unknown 1338` (the population the rule declines) |
+| G5 storm bed | `runs/golden_sim_campaign_zwdblk_mwevid` (= the §12.13 arm + the knob) | see §13.6 |
+
+**Why the refloat alone is inert on an anchor arc — and a sharper statement of
+the §12 engine.**  Two control legs with the handover OFF, injector
+`arc_erase mode=free_epoch` on the same pinned anchor arc (S36/G04, no slip):
+all three bands freed (`ambs=3;latch=free_ambs`) and two bands freed
+(`L1C;L2W`) both read **exactly 0.0000 on every channel** against the null
+(clock, ZWD, iono, emitted C and P, consumer) — a freed anchor arc is NOT
+re-levelled while it holds the pin; the pin keeps its level.  So a slip on an
+anchor arc is a **stale pinned row carrying the whole slip as a misfit** — the
+solve distributes −25 m of misfit into the station frame (clock −17.8 m, ZWD
++14 m, iono +21 m at S36) and into the satellite's products, and the outlier
+tier, which cannot see a pinned row, erases the station's innocent arcs.
+§12.7's phrase "the family is re-realized from the freed arc" is imprecise:
+nothing is re-drawn; the pin simply stays on an arc whose observations moved.
+The cure is unchanged (move the pin off the arc in the slip epoch), but the
+division of labour is now exact: on a NON-anchor arc the detector's refloat
+alone repairs the slip (the four T4-only cases in G3); on an ANCHOR arc the
+refloat's only job is to put the ambiguity into `free_ambs` so the handover
+fires — which is what the knob does for the 4 % the repair gate had hidden.
+
+### 13.6 STORM-BED VALIDATION — PASS on every bar (2026-09-11; `runs/golden_sim_campaign_zwdblk_mwevid` = the §12.13 arm + `mw_evidence_refloat`, worker exe 8A9BEBA1…, 1130 s, 720/720; graded with `scripts/simnet_storm_grade.py`)
+
+| gate quantity | §12.13 arm (anchor handover only) | **+ mw_evidence_refloat** | gate |
+|---|---|---|---|
+| settled ZWD truth rms | 0.046 m | **0.0071 m** | ≤ 0.05 **PASS** (the quiet golden reads 0.076) |
+| ZWD hourly rms | 0.21 / 0.02 / 0.01 / 0.04 / 0.07 / 0.02 | 0.17 / 0.01 / 0.007 / 0.006 / 0.007 / 0.008 | — |
+| per-station ZWD span p50 / stations > 1 m | 0.031 m / 0 | 0.021 m / 0 | — |
+| consumer settled p50 / rms | 0.278 / 0.761 m | **0.174 / 0.365 m** | p50 ≤ 0.25 **PASS** |
+| consumer hourly rms | 1.12 / 0.34 / 0.33 / 0.22 / 1.04 / 0.78 | 0.62 / 0.29 / 0.23 / 0.18 / 0.47 / 0.39 | hours 5–6 must not rise: **halved** |
+| T4 attribution events / erased-arc ratio | 306 / 1.34 | **78 / 1.51** | ≤ 306 **PASS** (−75 %) |
+| T4 ambient per-band DD error | 0.26 cyc | 0.229 cyc | — |
+| ref-free WL / EWL / L1C at own integer | 98.1 / 99.8 / 81.1 % | **98.9 / 100.0 / 87.1 %** | WL ≥ 98 **PASS** |
+| CLK-R drained / max A_c | 4.2 / 0.3 m | 3.62 / 0.28 m | — |
+| detector events | 4 545 | 5 151 | +606 = the admitted detections' rows |
+| MW admissions (run-end) | legacy only | legacy 4 570, **evidence 2 278** (rows 1 020: 348 integer-known, 672 unknown; ~170 per hour, flat) | dropped loose 1 010 / unknown 5 660 remain |
+| anchor-slip handovers | 261 (211 continuous / 50 cold) | 305 (237 / 68) | cold share 19 → 22 % |
+
+The slipped bed now sits at 7 mm of tropospheric error — below the quiet
+bed's own 76 mm as that bed was last graded (the quiet bed carries the same
+warm-up false-alarm refloats and anchor-arc slips this pair of cards removes;
+a re-grade of the quiet golden with both knobs is owed and will move that
+reference).  On the storm bed roughly one MW admission in three now comes
+through the evidence path: the population the repair gate had been hiding is
+not a tail at storm density.
+
+**Ledger:** `network.cycle_slip.mw_evidence_refloat` → **RECOMMEND_ON**, regime
+`on("network.phase_leveling") and on("network.cycle_slip.mw_detect")`, pinned
+in the sim golden; the field golden is out of regime (carry_invariant vehicle,
+no phase leveling).  Open after this card: (a) two MW pairs firing on the same
+satellite in the same epoch free all three bands although only their COMMON
+band slipped — a "lane-intersection" scope (free only the shared band) is the
+honest single-band response and is the next detector-side card; (b) the 68
+cold fallbacks; (c) the IF-TD second pair; (d) the warm-up erase-and-re-init
+limit cycle (priced at ~8e-4 per lane-epoch, §13.4); (e) the BSSD L1/L2
+pivot-change artifact (8 arcs' MW histories erased at one station in one
+epoch).

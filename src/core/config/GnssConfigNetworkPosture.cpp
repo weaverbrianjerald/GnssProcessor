@@ -171,6 +171,14 @@ namespace GnssProcessor {
               "anchor arc (the sticky election otherwise re-realizes the family from the freed "
               "arc: the gauge engine of the storm-bed plateau, SPEC_event_harness s12); storm bed "
               "ZWD 1.19 -> 0.05 m, consumer p50 1.09 -> 0.28 m, T4 9,871 -> 306, WL 86 -> 98 %" },
+            { network_phase_leveling_ && network_cycle_slip_mw_detect_,
+              nc.cycle_slip_mw_evidence_refloat,
+              Tier::ON, false, "network.cycle_slip.mw_evidence_refloat",
+              "admit a strong, mature, bias-free-lane MW detection to the refloat path whether "
+              "or not its integer rounds cleanly (PASS A had re-used the T0 REPAIR gate, frac <= "
+              "0.15 on a 5.86 m lane, and dropped correct 99-cycle flags at 78x threshold with no "
+              "counter, SPEC_event_harness s13); storm bed with the anchor handover ZWD 0.046 -> "
+              "0.007 m, consumer p50 0.28 -> 0.17 m, T4 306 -> 78, WL 98.9 %" },
             { true,
               network_disc_threshold_frac_cycles_ >= 0.24 && network_disc_threshold_frac_cycles_ <= 0.26,
               Tier::ON, false, "network.disc_threshold_frac_cycles",
