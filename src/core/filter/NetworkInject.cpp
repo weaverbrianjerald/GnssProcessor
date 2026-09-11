@@ -38,6 +38,48 @@ namespace GnssProcessor {
             return !already && started(ev, tow);
         }
 
+        /**
+         * @brief Add @p step_m metres of NON-DISPERSIVE range to one observation.
+         *
+         * Code observables (@c C*) take the metres directly; phase observables
+         * (@c L*) take @c step_m/lambda cycles, because RINEX phase is in CYCLES
+         * at this site and @c PppModel::computeModels derives BOTH
+         * @c PppObservation::observed (metres, via the wavelength) and
+         * @c raw_observed (cycles, what MW / GF / IF-TD read) from this one entry.
+         * A phase code whose wavelength does not resolve is LEFT ALONE and not
+         * counted — an unmoved observable must never be reported as touched.
+         *
+         * Shared by @c sat_clock_step (all stations, one satellite) and
+         * @c rx_clock_step (one station, all satellites): the two kinds differ
+         * only in which index they sweep, which is exactly the duality between a
+         * satellite-clock jump and a receiver-clock jump.
+         *
+         * @return Observables actually moved.
+         */
+        long long addRangeStep(RinexObservation& o, double step_m, const PppUtils* utils) {
+            long long n = 0;
+            // Snapshot the codes first: operator[] may reallocate a privately-grown
+            // layout, which would invalidate an iterator over `measurements`.
+            std::vector<std::string> codes;
+            codes.reserve(o.measurements.size());
+            for (const auto& kv : o.measurements) codes.push_back(kv.first);
+            for (const auto& code : codes) {
+                if (code.empty()) continue;
+                if (code[0] == 'C') {
+                    o.measurements[code] += step_m;
+                    ++n;
+                } else if (code[0] == 'L') {
+                    const double lam = utils
+                            ? utils->getWavelength(o.system, code, o.satellite) : 0.0;
+                    if (lam > 0.0) {
+                        o.measurements[code] += step_m / lam;
+                        ++n;
+                    }
+                }
+            }
+            return n;
+        }
+
     } // namespace
 
     void networkInjectArm(NetworkRunContext& ctx, const GnssConfig& config_,
@@ -64,7 +106,8 @@ namespace GnssProcessor {
             if (e.kind == "slip")           list += fmt::format(" d={:.3f}cyc", e.delta_cycles);
             if (e.kind == "outage")         list += fmt::format(" dur={:.0f}s", e.duration_s);
             if (e.kind == "anchor_handover")list += " mode=" + e.mode;
-            if (e.kind == "sat_clock_step") list += fmt::format(" step={:.3f}m", e.step_m);
+            if (e.kind == "sat_clock_step" || e.kind == "rx_clock_step")
+                list += fmt::format(" step={:.3f}m", e.step_m);
         }
         log->warn("Network (fault inject): ARMED with {} scripted event(s) — this run's "
                   "input is DELIBERATELY CORRUPTED and its products are a harness "
@@ -94,6 +137,7 @@ namespace GnssProcessor {
             const bool due =
                 (e.kind == "slip"            && started(e, tow))
              || (e.kind == "sat_clock_step"  && started(e, tow))
+             || (e.kind == "rx_clock_step"   && started(e, tow))
              || (e.kind == "outage"          && inWindow(e, tow));
             if (due) obs_due.push_back(i);
         }
@@ -151,36 +195,39 @@ namespace GnssProcessor {
                     row(e, "injected", e.delta_cycles,
                         fmt::format("slip_onset;signal={};lli={};rows={}", e.signal,
                                     e.flag_lli ? 1 : 0, touched));
-            } else {   // sat_clock_step
+            } else if (e.kind == "sat_clock_step") {
                 // y = L~ - (rho - c.dt^s + ...).  Adding step_m to every code
                 // observable and step_m/lambda cycles to every phase observable of
                 // this satellite IS adding step_m to the a-priori satellite clock.
                 for (auto& [sta, vec] : scratch.by_station)
                     for (auto& o : vec) {
                         if (o.satellite != e.sat) continue;
-                        // Snapshot the codes first: operator[] may reallocate a
-                        // privately-grown layout, which would invalidate an iterator.
-                        std::vector<std::string> codes;
-                        for (const auto& kv : o.measurements) codes.push_back(kv.first);
-                        for (const auto& code : codes) {
-                            if (code.empty()) continue;
-                            if (code[0] == 'C') {
-                                o.measurements[code] += e.step_m;
-                                ++touched;
-                            } else if (code[0] == 'L') {
-                                const double lam = st.utils
-                                        ? st.utils->getWavelength(o.system, code, o.satellite)
-                                        : 0.0;
-                                if (lam > 0.0) {
-                                    o.measurements[code] += e.step_m / lam;
-                                    ++touched;
-                                }
-                            }
-                        }
+                        touched += addRangeStep(o, e.step_m, st.utils.get());
                     }
                 if (touched && onset)
                     row(e, "injected", e.step_m,
                         fmt::format("clock_step_onset;rows={}", touched));
+            } else {   // rx_clock_step — the exact DUAL of sat_clock_step
+                // Same residual, other index: y = L~ - (rho + c.dt_r - c.dt^s + ...),
+                // so adding step_m metres to EVERY code observable and step_m/lambda
+                // cycles to EVERY phase observable of EVERY satellite AT ONE STATION
+                // is adding step_m to that station's receiver clock c.dt_r.  A
+                // receiver clock jump is station-common and NON-DISPERSIVE, and it is
+                // PERSISTENT — the same delta every epoch from tow on, never a
+                // one-epoch spike (a receiver that steps its clock does not step it
+                // back).  Nothing here is satellite- or band-scoped; the loader
+                // refuses a `sat` or a `signal` so that stays true.
+                long long n_sats = 0;
+                auto sit = scratch.by_station.find(e.station);
+                if (sit != scratch.by_station.end())
+                    for (auto& o : sit->second) {
+                        const long long n = addRangeStep(o, e.step_m, st.utils.get());
+                        if (n) ++n_sats;
+                        touched += n;
+                    }
+                if (touched && onset)
+                    row(e, "injected", e.step_m,
+                        fmt::format("rx_clock_step_onset;sats={};rows={}", n_sats, touched));
             }
 
             if (touched) {

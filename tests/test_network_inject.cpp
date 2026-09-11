@@ -154,10 +154,11 @@ TEST(NetworkInjectConfig, EachKindParses) {
         {{"kind", "anchor_handover"}, {"tow", 300.0}, {"sat", "G05"}, {"mode", "cold"}},
         {{"kind", "arc_erase"}, {"tow", 400.0}, {"station", "STA1"}, {"sat", "G07"}},
         {{"kind", "sat_clock_step"}, {"tow", 500.0}, {"sat", "G05"}, {"step_m", 0.5}},
+        {{"kind", "rx_clock_step"}, {"tow", 600.0}, {"station", "STA1"}, {"step_m", 0.5}},
     })}};
     ASSERT_TRUE(loadWith(ij, cfg, lm, "t3"));
     const auto& ic = cfg.getNetworkConfig().inject;
-    ASSERT_EQ(ic.events.size(), 5u);
+    ASSERT_EQ(ic.events.size(), 6u);
     EXPECT_TRUE(ic.enable);                       // implied by a non-empty events list
     EXPECT_EQ(ic.events[0].kind, "slip");
     EXPECT_TRUE(ic.events[0].flag_lli);
@@ -166,6 +167,12 @@ TEST(NetworkInjectConfig, EachKindParses) {
     EXPECT_EQ(ic.events[2].mode, "cold");
     EXPECT_EQ(ic.events[2].signal, "all");        // defaulted
     EXPECT_DOUBLE_EQ(ic.events[4].step_m, 0.5);
+    // rx_clock_step: the DUAL of sat_clock_step — a station, no satellite, no signal.
+    EXPECT_EQ(ic.events[5].kind, "rx_clock_step");
+    EXPECT_EQ(ic.events[5].station, "STA1");
+    EXPECT_TRUE(ic.events[5].sat.empty());
+    EXPECT_TRUE(ic.events[5].signal.empty());
+    EXPECT_DOUBLE_EQ(ic.events[5].step_m, 0.5);
 }
 
 TEST(NetworkInjectConfig, EnableFalseParksTheSchedule) {
@@ -218,7 +225,20 @@ INSTANTIATE_TEST_SUITE_P(
                        {"mode", "warm"}},
         // sat_clock_step with a zero step
         nlohmann::json{{"kind", "sat_clock_step"}, {"tow", 1.0}, {"sat", "G05"},
-                       {"step_m", 0.0}}));
+                       {"step_m", 0.0}},
+        // rx_clock_step with no station (the whole event is the station)
+        nlohmann::json{{"kind", "rx_clock_step"}, {"tow", 1.0}, {"step_m", 0.5}},
+        // rx_clock_step with a zero step
+        nlohmann::json{{"kind", "rx_clock_step"}, {"tow", 1.0}, {"station", "STA1"},
+                       {"step_m", 0.0}},
+        // rx_clock_step with a `sat`: it READS as a scope and is not one — a receiver
+        // clock jump is station-common, so accepting it would arm a different event
+        // than the operator wrote
+        nlohmann::json{{"kind", "rx_clock_step"}, {"tow", 1.0}, {"station", "STA1"},
+                       {"sat", "G05"}, {"step_m", 0.5}},
+        // rx_clock_step with a `signal`: same trap on the dispersive axis
+        nlohmann::json{{"kind", "rx_clock_step"}, {"tow", 1.0}, {"station", "STA1"},
+                       {"signal", "L1C"}, {"step_m", 0.5}}));
 
 // ---------------------------------------------------------------- epoch semantics
 TEST(NetworkInjectEpoch, UnarmedReturnsTheCallersOwnEpoch) {
@@ -316,6 +336,81 @@ TEST(NetworkInjectEpoch, SatClockStepMovesEveryStationAndBothChannels) {
     // A different satellite is untouched on both channels.
     EXPECT_DOUBLE_EQ(out.by_station.at("STA1")[1].measurements.at("C1C"), 2.1e7);
     EXPECT_DOUBLE_EQ(out.by_station.at("STA1")[1].measurements.at("L1C"), 1.1e8);
+}
+
+TEST(NetworkInjectEpoch, RxClockStepMovesEverySignalOfOneStationOnly) {
+    // The DUAL of sat_clock_step: one station, EVERY satellite, both channels.
+    nlohmann::json ij = {{"events", nlohmann::json::array({
+        {{"kind", "rx_clock_step"}, {"tow", 1000.0}, {"station", "STA1"},
+         {"step_m", 0.5}}})}};
+    Harness h{ij, "h5r"};
+    SyncedEpoch se = epochAt(1000.0), scratch;
+    const SyncedEpoch& out = networkInjectEpoch(*h.ctx, h.log, *h.traces, se, scratch);
+
+    // Every satellite of the stepped station moved, and by the SAME metres on code.
+    const auto& s1 = out.by_station.at("STA1");
+    ASSERT_EQ(s1.size(), 2u);
+    EXPECT_DOUBLE_EQ(s1[0].measurements.at("C1C"), 2.0e7 + 0.5);   // G05
+    EXPECT_DOUBLE_EQ(s1[1].measurements.at("C1C"), 2.1e7 + 0.5);   // G07
+    // Phase moved by step/lambda cycles (L1 lambda ~ 0.1903 m => ~2.63 cyc), the SAME
+    // cycle count on both satellites because the band is the same — non-dispersive.
+    const double d05 = s1[0].measurements.at("L1C") - 1.0e8;
+    const double d07 = s1[1].measurements.at("L1C") - 1.1e8;
+    EXPECT_GT(d05, 2.5);
+    EXPECT_LT(d05, 2.7);
+    EXPECT_NEAR(d05, d07, 1e-9);
+
+    // A DIFFERENT station is untouched on both channels — this is the half that
+    // separates a receiver-clock jump from a satellite-clock jump.
+    const auto& s2 = out.by_station.at("STA2");
+    ASSERT_EQ(s2.size(), 1u);
+    EXPECT_DOUBLE_EQ(s2[0].measurements.at("C1C"), 2.0e7);
+    EXPECT_DOUBLE_EQ(s2[0].measurements.at("L1C"), 1.0e8);
+
+    // 2 satellites x (1 code + 1 phase) = 4 observables touched, fired once.
+    EXPECT_EQ(h.ctx->inject.n_applied[0], 1);
+    EXPECT_TRUE(h.ctx->inject.onset_logged[0]);
+    EXPECT_EQ(h.ctx->inject.fired_by_kind["rx_clock_step"], 1);
+    EXPECT_EQ(networkInjectRunEnd(*h.ctx, h.log), 0);
+}
+
+TEST(NetworkInjectEpoch, RxClockStepPersistsAndDoesNotAccumulate) {
+    // A receiver that stepped its clock does not step it back: the SAME delta on
+    // every later epoch, applied to that epoch's own raw observables (never a ramp,
+    // never a one-epoch spike).  Nothing before tow moves.
+    nlohmann::json ij = {{"events", nlohmann::json::array({
+        {{"kind", "rx_clock_step"}, {"tow", 1000.0}, {"station", "STA1"},
+         {"step_m", 0.5}}})}};
+    Harness h{ij, "h5s"};
+
+    SyncedEpoch before = epochAt(970.0), sb;
+    const SyncedEpoch& o0 = networkInjectEpoch(*h.ctx, h.log, *h.traces, before, sb);
+    EXPECT_DOUBLE_EQ(o0.by_station.at("STA1")[0].measurements.at("C1C"), 2.0e7);
+    EXPECT_EQ(h.ctx->inject.n_applied[0], 0);
+
+    double first = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        SyncedEpoch se = epochAt(1000.0 + 30.0 * i), scratch;
+        const SyncedEpoch& out = networkInjectEpoch(*h.ctx, h.log, *h.traces, se, scratch);
+        const double d = out.by_station.at("STA1")[0].measurements.at("C1C") - 2.0e7;
+        if (i == 0) first = d;
+        EXPECT_DOUBLE_EQ(d, 0.5);
+        EXPECT_DOUBLE_EQ(d, first);        // constant, not accumulating
+    }
+    EXPECT_EQ(h.ctx->inject.n_applied[0], 3);
+}
+
+TEST(NetworkInjectEpoch, RxClockStepOnAnAbsentStationNeverFires) {
+    // The harness rule: a fixture that silently did not exist is worse than a run
+    // that refuses to finish (a leg would otherwise be graded as a null).
+    nlohmann::json ij = {{"events", nlohmann::json::array({
+        {{"kind", "rx_clock_step"}, {"tow", 1000.0}, {"station", "NOPE"},
+         {"step_m", 0.5}}})}};
+    Harness h{ij, "h5t"};
+    SyncedEpoch se = epochAt(1000.0), scratch;
+    (void)networkInjectEpoch(*h.ctx, h.log, *h.traces, se, scratch);
+    EXPECT_FALSE(h.ctx->inject.anyFired());
+    EXPECT_EQ(networkInjectRunEnd(*h.ctx, h.log), 1);
 }
 
 TEST(NetworkInjectEpoch, DecisionKindsStageAOneEpochDirective) {

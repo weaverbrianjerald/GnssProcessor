@@ -16,7 +16,7 @@
  *
  * ### Where it acts, and why there
  *
- * Four of the five kinds are corruptions of the producer's INPUT and are applied
+ * Four of the six kinds are corruptions of the producer's INPUT and are applied
  * to a per-epoch mutable copy of the @c SyncedEpoch, at the very top of the
  * epoch body — before @c networkFastClockTick, before @c computeModels, before
  * every T0 detector, before the raw-observable pass and before assembly.  That
@@ -29,14 +29,22 @@
  * @c modeled after the fact would need a dual write, a wavelength lookup, and a
  * site inside an OpenMP region.
  *
- * The fifth kind, @c sat_clock_step, is applied at the same site and this is
- * EXACT, not an approximation.  The uncombined residual is
- * @f$ y = \tilde{L} - (\rho - c\,\delta t^s + \ldots) @f$, so adding
- * @f$ s @f$ metres to every code observable and @f$ s/\lambda @f$ cycles to
- * every phase observable of a satellite is algebraically identical to adding
- * @f$ s @f$ metres to the a-priori satellite clock @f$ c\,\delta t^s @f$ used by
- * every station.  Doing it here keeps the injector out of @c ModelGeometry,
- * which has no access to the run context.
+ * Two of them, @c sat_clock_step and @c rx_clock_step, are applied at the same
+ * site and this is EXACT, not an approximation.  The uncombined residual is
+ * @f$ y = \tilde{L} - (\rho + c\,\delta t_r - c\,\delta t^s + \ldots) @f$, so
+ * adding @f$ s @f$ metres to every code observable and @f$ s/\lambda @f$ cycles
+ * to every phase observable
+ *
+ *   * of ONE SATELLITE at every station is adding @f$ s @f$ to the a-priori
+ *     satellite clock @f$ c\,\delta t^s @f$ (@c sat_clock_step); and
+ *   * of EVERY SATELLITE at ONE STATION is adding @f$ s @f$ to that station's
+ *     receiver clock @f$ c\,\delta t_r @f$ (@c rx_clock_step) —
+ *
+ * the same scalar write swept over the other index of the same residual, which
+ * is the whole duality between the two.  Both are PERSISTENT steps (the delta is
+ * re-applied every epoch from @c tow on) because that is what a clock which has
+ * jumped does; neither is a one-epoch spike.  Doing it here keeps the injector
+ * out of @c ModelGeometry, which has no access to the run context.
  *
  * The two remaining kinds are not observation faults at all — they force a
  * DECISION the producer would otherwise make on the data — so they are staged

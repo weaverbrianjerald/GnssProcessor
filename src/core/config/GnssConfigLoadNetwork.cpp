@@ -9879,9 +9879,10 @@ namespace GnssProcessor {
                 ev.kind = el.value("kind", std::string{});
                 if (ev.kind != "slip" && ev.kind != "outage"
                     && ev.kind != "anchor_handover" && ev.kind != "arc_erase"
-                    && ev.kind != "sat_clock_step") {
+                    && ev.kind != "sat_clock_step" && ev.kind != "rx_clock_step") {
                     log->error("Config: {}.kind '{}' is not one of slip | outage | "
-                               "anchor_handover | arc_erase | sat_clock_step.",
+                               "anchor_handover | arc_erase | sat_clock_step | "
+                               "rx_clock_step.",
                                where, ev.kind);
                     return false;
                 }
@@ -9933,9 +9934,32 @@ namespace GnssProcessor {
                 } else if (ev.kind == "arc_erase") {
                     if (!need(!ev.station.empty(), "a station")) return false;
                     if (!need(!ev.sat.empty(), "a sat")) return false;
-                } else {   // sat_clock_step
+                } else if (ev.kind == "sat_clock_step") {
                     if (!need(!ev.sat.empty(), "a sat")) return false;
                     if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
+                } else {   // rx_clock_step — the exact dual of sat_clock_step
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
+                    // A `sat` here would read as a scope and is not one: a receiver
+                    // clock jump is station-COMMON by construction and touches every
+                    // satellite.  Refuse rather than silently ignore — a typo that
+                    // fell through would arm a different event than the operator wrote
+                    // and the leg would be graded as though it were the intended one.
+                    if (!ev.sat.empty()) {
+                        log->error("Config: {} (kind 'rx_clock_step') must NOT carry a 'sat' "
+                                   "('{}' given).  A receiver-clock jump is station-COMMON: it "
+                                   "shifts EVERY satellite's code and phase at that station by "
+                                   "step_m.  Use sat_clock_step for a per-satellite step.",
+                                   where, ev.sat);
+                        return false;
+                    }
+                    if (!ev.signal.empty()) {
+                        log->error("Config: {} (kind 'rx_clock_step') must NOT carry a 'signal' "
+                                   "('{}' given).  A receiver-clock jump is NON-DISPERSIVE: it "
+                                   "shifts every signal of every satellite at that station "
+                                   "equally.", where, ev.signal);
+                        return false;
+                    }
                 }
                 ic.events.push_back(std::move(ev));
             }

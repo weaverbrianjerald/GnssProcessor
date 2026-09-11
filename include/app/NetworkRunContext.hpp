@@ -2372,6 +2372,17 @@ namespace GnssProcessor {
         long long n_pl_blk_rxclk_missing_cross = 0;      ///< (clock-family, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block) — a subset of n_pl_blk_pair_missing
         long long n_rxclk_carry_refused = 0;             ///< clock carries ERASED by the jump gate (network.carry_rx_clock_jump_k) at harvest: |one-step prediction innovation| > k*sigma ⇒ the receiver (or the solve) stepped, so both the bias and the drift are dropped and re-born cold.  Invariant #1's wired response for a quantity that has no other jump detector anywhere on the network path.
         long long n_rxclk_carry_gap_drop = 0;            ///< clock-family carries dropped at the harvest prune for exceeding carry_rx_clock_max_gap_s without a sighting (the absent-station edge)
+        // --- the jump gate's OWN scale, so a leg can say what it would have caught ---
+        // The gate is |innovation| > k*sqrt(var_pred), and var_pred is per station-epoch
+        // (harvested variance + drift extrapolation + q), so "the gate" is a DISTRIBUTION,
+        // not a constant.  Without this census a report can only quote k; with it, it can
+        // quote the metres an event has to exceed.  Armed-only (the whole rx-clock harvest
+        // block is inside `if (rxclk_blk_on)`), so an OFF run moves none of it.
+        long long n_rxclk_gate_tests = 0;                ///< station-epochs the jump gate actually tested (primary clock only; an ISB has no rate)
+        double    sum_rxclk_gate_m = 0.0;                ///< Σ k*sqrt(var_pred) over those tests, metres
+        double    min_rxclk_gate_m = 0.0;                ///< smallest k*sqrt(var_pred) seen (0 ⇒ never tested)
+        double    max_rxclk_gate_m = 0.0;                ///< largest  k*sqrt(var_pred) seen (0 ⇒ never tested)
+        double    max_rxclk_innov_m = 0.0;               ///< largest |innovation| seen, metres — the loudest step the gate DID see
         long long n_raim_pool_rxclk_rows = 0;            ///< post-fit RAIM pool admissions (station-epochs x rows) whose admitted row IS one of the clock-family columns' whitened block rows — the SPEC_amb_iono_split_overcount §7 item 4 interaction MEASURED for the rho half, exactly as n_raim_pool_zwd_rows / n_raim_pool_iono_rows measure it for theirs.  Counted only; the pool rule is unchanged by this card.
         long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row IS the ZWD's whitened block row — the §7 item 4 interaction, MEASURED (the pool admits by |A_r(row, amb_col)| > 0.5 and a ZWD block row mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged by this card.
         long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (invariant #7's re-coupling edge, counted)

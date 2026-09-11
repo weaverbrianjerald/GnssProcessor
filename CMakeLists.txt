@@ -432,6 +432,7 @@ add_executable(gnss_tests
     tests/test_resume_coupling_restore.cpp
     tests/test_rt_state_snapshot.cpp
     tests/test_network_inject.cpp
+    tests/test_warm_resume_require.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

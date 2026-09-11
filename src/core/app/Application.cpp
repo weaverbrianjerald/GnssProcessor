@@ -1500,7 +1500,23 @@ if (config_.isBaselineMode()) {
 //     multi-station pipeline.  PPP_RTK_User flows through the normal PPP
 //     path below as an uncombined PPP-RTK consumer. ---
 if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
-    return runNetwork();
+    // HB-1 (docs/SPEC_event_harness.md §6b): the network producer signals a
+    // REFUSED start — `network.state_snapshot_require` on any warm-resume
+    // refusal, the carry_vce_apply warm-resume block, a carry blob that will
+    // not bind — by throwing.  main() has no handler, so without this the
+    // process fast-failed through abort() with exit code 0xC0000409 and the
+    // reason NOWHERE in the log: the last thing an operator saw was the
+    // preceding COLD-START warning, so a refused leg read as a cold one.
+    // Catch it here, log e.what() as the ONE error line, and exit 1.  A
+    // successful run never reaches the handler, so this changes no bytes.
+    try {
+        return runNetwork();
+    } catch (const std::exception& e) {
+        auto log = log_manager_.getLogger("main_log");
+        log->error("{}", e.what());
+        log->flush();
+        return 1;
+    }
 }
 
 // --- Phase 1b: Resolve (download/cache) product and RINEX data ---

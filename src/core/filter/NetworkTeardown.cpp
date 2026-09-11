@@ -2072,6 +2072,24 @@ int networkTeardown(
                                    "not a quiet run."
                                  : "")
                           : " (knob OFF — these are structurally 0)");
+        // The jump gate's own SCALE, printed only when the card is armed (an OFF
+        // run's log is byte-identical).  `refused` above is a count; without the
+        // metres a report can only quote k, and k alone does not say whether a given
+        // event is above or below the gate.  var_pred is per station-epoch (harvested
+        // variance + drift extrapolation + q), so the gate is a distribution — mean,
+        // min and max.  `max |innov|` is the loudest step the gate actually saw; on a
+        // quiet bed with no injected event it is the noise ceiling, and an injected
+        // rx_clock_step must clear the gate at its own station to be refused.
+        if (config_.networkCarryRxClockInBlock())
+            log->info("Network (F3 carry, rx-clock JUMP GATE): k = {:.1f} sigma over {} "
+                      "station-epoch test(s) ⇒ gate mean {:.4f} m, min {:.4f} m, max {:.4f} m; "
+                      "largest |innovation| seen {:.4f} m; {} refusal(s).  An injected or real "
+                      "step BELOW the gate is absorbed by the carried prior (it FIGHTS the "
+                      "step); above it the carry is erased and re-born cold.",
+                      config_.networkCarryRxClockJumpK(), C.n_rxclk_gate_tests,
+                      C.n_rxclk_gate_tests ? C.sum_rxclk_gate_m / C.n_rxclk_gate_tests : 0.0,
+                      C.min_rxclk_gate_m, C.max_rxclk_gate_m, C.max_rxclk_innov_m,
+                      C.n_rxclk_carry_refused);
         // AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,
         // SPEC_amb_iono_split_overcount §6.17–§6.18) — the ON-path telemetry
         // (invariant #4).  Printed ONLY when armed, so an OFF log is byte-identical.
