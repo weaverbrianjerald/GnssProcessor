@@ -26,6 +26,7 @@
 #include "logging/NetworkRunTraces.hpp" // NetworkRunTraces (emitEvent, if_slip_trace), FlagRate
 #include "slip/NetworkRawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters (Cards E/L/G)
 #include "slip/NetworkSlipOracle.hpp"   // NetworkSlipOracle (sim-only oracle slip response)
+#include "slip/NetworkCommonBandScope.hpp"  // §14 common-band verdict types (drain hook)
 
 #include <algorithm>
 #include <cmath>
@@ -56,6 +57,76 @@ inline double ifElevMap(double el_deg) {
     const double el_rad = std::max(el_deg, kMinElDeg) * (Constants::PI / 180.0);
     const double s = std::sin(el_rad);
     return (s > 1e-3) ? (1.0 / s) : 1.0;
+}
+
+/// Pooled centre and scale of ONE IF-TD signal pair, over that pair's samples
+/// from every present station (steps 1–2 of @ref networkSlipIfTdDriver).
+struct IfTdPairPool {
+    double med{ 0.0 };     ///< Median of the RAW double differences (m) — the network common mode.
+    double s_pool{ 0.0 };  ///< 1.4826·median(|z|), z = (dd−med)/ifElevMap(el) — zenith-equivalent m.
+};
+
+/// @brief Pooled IF-TD centre + robust scale for one signal pair.
+///
+/// Factored out of @ref networkSlipIfTdDriver so the common-band scope's
+/// read-only FLAG PREVIEW (SPEC_event_harness §14 — the verdict is formed before
+/// the drains, while the pooled flag is decided inside the IF-TD driver that runs
+/// after them) cannot drift from the decision it previews.  Both call this.
+///
+/// The centre is removed in RAW space because the network common mode (frame /
+/// datum wobble) is elevation-independent.  The scale EXCLUDES the constellation
+/// reference satellite, whose double difference is identically zero by
+/// construction and deflates the MAD by ~16 % (§6.14.5 defect 2); the fallback
+/// keeps the full set when excluding would leave nothing, so a pair whose only
+/// sample IS the reference gets a real scale rather than a zero that collapses
+/// onto the physical floor.  Both order statistics are (n/2)-th elements, so the
+/// result does not depend on the order the samples arrive in.
+///
+/// @param dd      Raw between-epoch double differences, one per sample (m).
+/// @param el      Satellite elevation of each sample (degrees); same length as @p dd.
+/// @param is_ref  Non-zero where the sample IS the constellation reference; same length.
+/// @return Pooled centre and scale; @c {0,0} for an empty sample set.
+inline IfTdPairPool ifTdPoolStats(const std::vector<double>& dd,
+                                  const std::vector<double>& el,
+                                  const std::vector<char>& is_ref) {
+    IfTdPairPool out;
+    if (dd.empty()) return out;
+    std::vector<double> raw = dd;
+    std::nth_element(raw.begin(), raw.begin() + raw.size() / 2, raw.end());
+    out.med = raw[raw.size() / 2];
+    std::vector<double> zabs;
+    zabs.reserve(dd.size());
+    for (std::size_t k = 0; k < dd.size(); ++k)
+        if (!is_ref[k]) zabs.push_back(std::abs((dd[k] - out.med) / ifElevMap(el[k])));
+    if (zabs.empty())
+        for (std::size_t k = 0; k < dd.size(); ++k)
+            zabs.push_back(std::abs((dd[k] - out.med) / ifElevMap(el[k])));
+    std::nth_element(zabs.begin(), zabs.begin() + zabs.size() / 2, zabs.end());
+    out.s_pool = 1.4826 * zabs[zabs.size() / 2];
+    return out;
+}
+
+/// @brief Empirical-Bayes shrunk IF-TD scale for one (station, signal pair).
+///
+/// Step 3 of @ref networkSlipIfTdDriver, factored for the same reason as
+/// @ref ifTdPoolStats.  The effective scale shrinks from the network pool prior
+/// toward the station-pair's OWN EWMA as that pair accumulates clean samples, so
+/// a quiet reference station and a noisy modernized-signal station each get their
+/// own envelope instead of one threshold set by the majority.
+///
+/// @param count         Clean samples folded into this station-pair's EWMA.
+/// @param ewma_scale    That EWMA (zenith-equivalent m).
+/// @param s_pool        This epoch's pooled prior (zenith-equivalent m).
+/// @param shrink_kappa  Shrinkage constant, in samples.
+/// @return Effective scale (zenith-equivalent m); falls back to @p s_pool on a
+///         degenerate (non-positive) blend, e.g. an all-equal pool.
+inline double ifTdShrunkScale(long count, double ewma_scale,
+                              double s_pool, double shrink_kappa) {
+    const double w = static_cast<double>(count) /
+                     (static_cast<double>(count) + shrink_kappa);
+    double s_eff = (count > 0) ? (w * ewma_scale + (1.0 - w) * s_pool) : s_pool;
+    if (!(s_eff > 0.0)) s_eff = s_pool;  // degenerate all-equal pool
+    return s_eff;
 }
 
 /**
@@ -299,10 +370,56 @@ struct PassABuffers {
     };
     std::vector<MwAdmitCounts> sta_mw_admit;
 
+    /// COMMON-BAND SCOPE evidence (SPEC_event_harness §14): per station, the
+    /// per-satellite MW silence / MW flags / LLI this epoch, filled in the
+    /// parallel region (per-station slot, no shared write) and consumed by the
+    /// SERIAL verdict seam before either drain.  Collected KNOB-INDEPENDENTLY —
+    /// the census is the only honest way to size the card before arming it
+    /// (invariant #4) — and it reads detector output that PASS A already has in
+    /// hand, so the OFF path pays a map insert and nothing else.
+    std::vector<std::map<std::string, CommonBandEvidence>> sta_cb_ev;
+
     explicit PassABuffers(std::size_t n)
         : a_ok(n, 0), a_err(n), sta_repairs(n), sta_if_resets(n), sta_mw_refloat(n),
-          sta_mw_admit(n) {}
+          sta_mw_admit(n), sta_cb_ev(n) {}
 };
+
+/**
+ * @brief COMMON-BAND SCOPE seam (SPEC_event_harness.md §14): form ONE verdict
+ *        per (station, satellite) for this epoch, BEFORE any drain runs.
+ *
+ * Reads @c PassABuffers::sta_cb_ev (the parallel region's MW silence / MW flags
+ * / LLI), previews the network-pooled IF-TD flag READ-ONLY so the equal-count
+ * veto can be applied before the driver that decides it, applies the §14.2 rule
+ * through @ref networkCommonBandVerdict, writes the `T0_band_scope` event rows
+ * (armed only) and fills @p out's census.
+ *
+ * Runs whether or not the knob is armed: with it OFF the verdicts are counted
+ * (`would_narrow` is what arming would change) but @c CommonBandEpoch::narrowed_at
+ * stays empty and no event row is written, so the run is byte-identical.
+ *
+ * @param pa           PASS-A buffers (reads @c sta_cb_ev).
+ * @param config_      Config (the scope's two knobs and the IF-TD threshold set).
+ * @param stations     Station roster — read-only here: live ambiguity bands, the
+ *                     IF-TD detectors' cached jumps and the per-pair EWMA scales.
+ * @param present      Per-station PASS-A presence (absent stations are skipped).
+ * @param i_lo         First non-pivot station index (0 under prioritized datum).
+ * @param n_sta_total  Station count.
+ * @param se           Current synced epoch (event-row timestamp).
+ * @param traces       Trace sink (the `T0_band_scope` rows).
+ * @param log          Run logger.
+ * @param[out] out     Cleared and refilled; the drains read it through
+ *                     @ref commonBandMayFree.
+ */
+void networkCommonBandVerdictEpoch(const PassABuffers& pa,
+                                   const GnssConfig& config_,
+                                   const std::vector<NetStation>& stations,
+                                   const std::vector<bool>& present,
+                                   int i_lo, int n_sta_total,
+                                   const SyncedEpoch& se,
+                                   NetworkRunTraces& traces,
+                                   const std::shared_ptr<spdlog::logger>& log,
+                                   CommonBandEpoch& out);
 
 /**
  * @brief Phase-leveling T0 serial repair drain: apply the PASS-A integer slip
@@ -449,7 +566,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                         RelevelPend>* relevel_pend = nullptr,
                                std::map<std::tuple<int, std::string, std::string>,
                                         LocalCarry>* bridge_local_carry = nullptr,
-                               NetworkSlipOracle* oracle = nullptr);
+                               NetworkSlipOracle* oracle = nullptr,
+                               /// §14 COMMON-BAND SCOPE: this epoch's verdicts.  Null
+                               /// (the knob off) ⇒ @ref commonBandMayFree answers true
+                               /// for every signal and the drain is byte-identical.
+                               const CommonBandEpoch* common_band = nullptr);
 
 /**
  * @brief SPEC_phase_windup_sign §10.4 — drain the accumulator-RESTART ledgers
@@ -841,7 +962,10 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                     RelevelPend>* relevel_pend = nullptr,
                            const RawSlipEpoch* raw_epoch = nullptr,
                            const std::vector<RawSlipHistory>* raw_hist = nullptr,
-                           NetworkSlipOracle* oracle = nullptr);
+                           NetworkSlipOracle* oracle = nullptr,
+                           /// §14 COMMON-BAND SCOPE: this epoch's verdicts.  Null
+                           /// (the knob off) ⇒ the pair refloat frees both bands.
+                           const CommonBandEpoch* common_band = nullptr);
 
 /**
  * @brief EVENT HARNESS Study 1 - the injected @c free_epoch arc response.

@@ -1975,6 +1975,13 @@ namespace GnssProcessor {
             && 3.0 * sigma <= (1.0 - kEpochCleanMaxDevWlCyc) * lambda_wl
             && std::abs(dev_hatch) <= kEpochCleanMaxDevWlCyc * lambda_wl) {
             epoch_clean_pairs_.insert(stats_key);
+            // The arc's sample count travels ALONGSIDE the key so a consumer can
+            // apply its OWN maturity bar.  kEpochCleanMinArcN above is this
+            // detector's internal floor for TurboEdit's equal-slip split; the
+            // network's common-band scope (SPEC_event_harness §14) runs a
+            // configurable gate on the same evidence and must be able to refuse a
+            // pair this set admitted — and to COUNT what it refused.
+            epoch_clean_arc_n_[stats_key] = static_cast<int>(stats.count);
         }
 
         // Contribute this dev to the cross-satellite pool for this
@@ -2427,6 +2434,7 @@ namespace GnssProcessor {
         // rebuilt from scratch each pass so stale affirmations can never
         // leak into a later epoch's TurboEdit GF-only gating.
         epoch_clean_pairs_.clear();
+        epoch_clean_arc_n_.clear();
 
         // Helper: push a reset result (no known WL integer)
         auto pushReset = [&](const std::string& key, double lwl = 0.0,

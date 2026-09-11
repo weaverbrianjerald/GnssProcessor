@@ -2465,6 +2465,27 @@ int networkTeardown(
                   C.n_mw_drop_unknown);
     }
 
+    // ---- COMMON-BAND SCOPE (network.cycle_slip.common_band_scope, §14) ------
+    // Printed ALWAYS, armed or not, for the same reason as the clause above: the
+    // would-narrow count sizes the card on a lineage without running it armed,
+    // and an ARMED run reporting narrowed 0 while verdicts > 0 is dead wiring,
+    // not a quiet network (invariant #4).  `bands kept` is the headline — under
+    // the all-band union every live band of a fired arc would have been freed.
+    {
+        const auto& C = ctx.counters;
+        log->info("Network (common-band scope): verdicts {}, narrowed {} (bands kept "
+                  "{}), all-band {} (no exoneration {} / inconsistent {}), IF-TD vetoes "
+                  "{}, immature pairs {} [knob {}{}].",
+                  C.n_cb_verdicts, C.n_cb_narrowed, C.n_cb_bands_kept,
+                  C.n_cb_all_no_exoneration + C.n_cb_all_inconsistent,
+                  C.n_cb_all_no_exoneration, C.n_cb_all_inconsistent,
+                  C.n_cb_iftd_veto, C.n_cb_immature_pairs,
+                  config_.networkCycleSlipCommonBandScope() ? "on" : "off",
+                  config_.networkCycleSlipCommonBandScope()
+                      ? std::string{}
+                      : fmt::format("; would-narrow {}", C.n_cb_would_narrow));
+    }
+
     // ---- §Z BAND-SCOPED RESPONSES (docs/SPEC_event_harness.md) --------------
     // Invariant #4: these counters ARE the ON-path telemetry.  Either knob armed
     // with its headline count at 0 on a run whose T4 tier fires (or whose

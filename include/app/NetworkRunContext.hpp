@@ -2693,6 +2693,26 @@ namespace GnssProcessor {
         long long n_mw_admit_legacy = 0, n_mw_evidence_admitted = 0,
                   n_mw_evidence_would_admit = 0, n_mw_drop_loose = 0,
                   n_mw_drop_unknown = 0;
+        /// COMMON-BAND SCOPE CENSUS (network.cycle_slip.common_band_scope,
+        /// SPEC_event_harness §14).  Reduced per epoch from CommonBandEpoch and,
+        /// like the MW admission census above, collected KNOB-INDEPENDENTLY —
+        /// that is the point.  verdicts: (station, satellite) pairs that had at
+        /// least one MW pair FIRE, i.e. the population a band scope could act on.
+        /// narrowed: of those, the ones positive exoneration restricted.
+        /// bands_kept: bands a narrowed verdict SPARED (Σ|exonerated|) — the
+        /// headline, because under the all-band union every live band would
+        /// otherwise have been freed.  all_no_exoneration / all_inconsistent: the
+        /// two fallbacks that return today's response (nothing exonerated; every
+        /// band exonerated although a pair fired).  iftd_veto: silent pairs
+        /// REFUSED as exonerators because the IF-TD detector flagged them (the
+        /// equal-count trap).  immature_pairs: silent pairs refused for arc age.
+        /// would_narrow: the knob-OFF count of verdicts that WOULD have narrowed,
+        /// i.e. exactly what arming changes — an OFF run reporting 0 here says
+        /// the card is inert on that lineage, no armed run needed.
+        long long n_cb_verdicts = 0, n_cb_narrowed = 0, n_cb_all_no_exoneration = 0,
+                  n_cb_all_inconsistent = 0, n_cb_bands_kept = 0,
+                  n_cb_iftd_veto = 0, n_cb_immature_pairs = 0,
+                  n_cb_would_narrow = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

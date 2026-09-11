@@ -1365,6 +1365,33 @@ namespace GnssProcessor {
         /// Young arcs have no established level, so their "deviation" is measured
         /// against a threshold that is itself still converging.
         int cycle_slip_mw_evidence_min_arc_epochs{ 10 };
+        /// COMMON-BAND SCOPE (SPEC_event_harness.md §14): free only the band the
+        /// evidence NAMES.  A single-band slip on a triple-frequency arc moves
+        /// every MW pair that CONTAINS the band — an L5 slip fires (1,5) and
+        /// (2,5) and leaves (1,2) silent — and each firing pair's drain refloats
+        /// BOTH of its bands, so the per-epoch union is all three: the §9
+        /// all-band floor (0.45-0.65 cyc for 45 epochs at low elevation) paid for
+        /// a slip that touched one band.  This knob forms ONE per-(station,
+        /// satellite, epoch) verdict from POSITIVE exoneration — a silent, mature
+        /// MW pair exonerates both of its bands — and every drain then frees only
+        /// (its bands INTERSECT implicated).  Without exoneration the response is
+        /// today's, exactly.  Deliberately NOT the Study-3
+        /// @ref cycle_slip_refloat_band_scope mechanism, which picked the band
+        /// from the MW/GF DECOMPOSITION and was falsified on the storm bed; this
+        /// rule is set-theoretic and needs no decomposition.
+        /// Default @c false is byte-identical (no verdict object is consulted).
+        /// SOLVE-AFFECTING when armed, fingerprint-EXEMPT (forward-only RESPONSE
+        /// knob — the relevel_free_epoch / anchor_slip_handover class).
+        bool cycle_slip_common_band_scope{ false };
+        /// Exoneration maturity gate: a silent MW pair may exonerate its bands
+        /// only when its arc has at least this many samples.  An immature arc
+        /// could not have flagged at all, so its silence carries no information —
+        /// affirming cleanliness from it would keep a genuinely slipped band
+        /// pinned.  The detector's own affirmative-cleanliness set already
+        /// requires 10 samples, so the default is inert by construction; a LARGER
+        /// value tightens it, and the counter @c cb_immature_pairs reports what
+        /// it refused.
+        int cycle_slip_common_band_min_arc_epochs{ 10 };
         int    trace_dd_fractional_epoch_stride{ 1 };  ///< T2e: write @c network_dd_fractional.csv only every Nth PROCESSED epoch (1 = every epoch = current).  Fraction statistics don't need every epoch; combines with @ref trace_dd_fractional_max_pairs to make a traced convergence run affordable.  TRACE-ONLY (never folded into the warm-resume fingerprint).  Inert unless @ref trace_dd_fractional.
         /// S1: emit @c network_phase_anchor.csv — per PROCESSED epoch, one row per
         /// GAUGE-PINNED ambiguity as (week,tow,cons,signal,sat,anchor_sta), i.e. WHICH

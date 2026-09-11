@@ -253,6 +253,32 @@ namespace GnssProcessor {
                       network_config_.cycle_slip_mw_evidence_min_arc_epochs,
                       network_config_.cycle_slip_mw_evidence_ratio_min,
                       network_cycle_slip_turbo_edit_frac_max_);
+        // COMMON-BAND SCOPE interlock, same placement rationale as the evidence
+        // refloat above: the EXONERATION evidence IS the MW detector's
+        // affirmative-cleanliness set, so without mw_detect there are no silent
+        // pairs, nothing is ever exonerated, and every verdict falls back to
+        // today's response — a structural zero (invariant #4).
+        if (network_config_.cycle_slip_common_band_scope
+            && !network_cycle_slip_mw_detect_) {
+            log->warn("Network: network.cycle_slip.common_band_scope needs "
+                      "network.cycle_slip.mw_detect — the exoneration evidence IS that "
+                      "detector's clean-pair set, so without it nothing is ever "
+                      "exonerated and every verdict is today's response "
+                      "— disabled.");
+            network_config_.cycle_slip_common_band_scope = false;
+        }
+        if (network_config_.cycle_slip_common_band_scope)
+            log->info("Network (common-band scope): ARMED — ONE verdict per (station, "
+                      "satellite, epoch) formed BEFORE the drains: a SILENT, mature MW "
+                      "pair (arc >= {} samples) exonerates both of its bands unless the "
+                      "IF-TD detector flagged that pair this epoch or the band carries "
+                      "LLI; each drain then frees only (its bands INTERSECT implicated). "
+                      "No exoneration, nothing implicated, or implicated empty with a "
+                      "pair fired => today's all-band response, verbatim.  Run-end "
+                      "reports verdicts / narrowed / bands kept and the two fallback "
+                      "populations; those counters are collected with the knob OFF too, "
+                      "so an OFF run already states what this would have narrowed.",
+                      network_config_.cycle_slip_common_band_min_arc_epochs);
         if (network_cycle_slip_relevel_free_epoch_ && network_carry_invariant_) {
             log->warn("Network: network.cycle_slip.relevel_free_epoch (and its "
                       "delta_bridge rider) is inert under network.carry_invariant "
@@ -4102,6 +4128,14 @@ namespace GnssProcessor {
         network_config_.cycle_slip_mw_evidence_min_arc_epochs =
             jval<int>(json, "network.cycle_slip.mw_evidence_min_arc_epochs",
                       "network_cycle_slip_mw_evidence_min_arc_epochs", 10);
+        // COMMON-BAND SCOPE (SPEC_event_harness §14).  Default OFF is
+        // byte-identical: no verdict object is built and no drain consults one.
+        network_config_.cycle_slip_common_band_scope =
+            jval<bool>(json, "network.cycle_slip.common_band_scope",
+                       "network_cycle_slip_common_band_scope", false);
+        network_config_.cycle_slip_common_band_min_arc_epochs =
+            jval<int>(json, "network.cycle_slip.common_band_min_arc_epochs",
+                      "network_cycle_slip_common_band_min_arc_epochs", 10);
         network_cycle_slip_relevel_delta_bridge_ =
             jval<bool>(json, "network.cycle_slip.relevel_delta_bridge",
                        "network_cycle_slip_relevel_delta_bridge", false);

@@ -237,6 +237,22 @@ namespace GnssProcessor {
         const std::set<std::string>& getEpochCleanPairs() const { return epoch_clean_pairs_; }
 
         /**
+         * @brief Arc sample count of each key in @c getEpochCleanPairs.
+         *
+         * Same keys, same lifetime (cleared and rebuilt by every
+         * @c detectLargeMwResets call).  @c getEpochCleanPairs already enforces
+         * an internal maturity floor for TurboEdit's equal-slip split; this map
+         * lets a consumer apply its OWN, stricter bar to the same evidence and —
+         * the operative half — COUNT what that bar refused.  The network
+         * producer's common-band scope (SPEC_event_harness.md §14) is the first
+         * such consumer: a silent pair exonerates its two bands only when its
+         * arc reaches @c network.cycle_slip.common_band_min_arc_epochs.
+         *
+         * @return Map from affirmatively-clean arc key to that arc's sample count.
+         */
+        const std::map<std::string, int>& getEpochCleanArcN() const { return epoch_clean_arc_n_; }
+
+        /**
          * @brief Get the worst-case fractional residual of each
          *        currently-locked WL arc, in cycles.
          *
@@ -1134,6 +1150,10 @@ namespace GnssProcessor {
          *  @c processMwSample for mature arcs that did not flag and whose
          *  sample deviation stayed within a small fraction of λ_WL. */
         std::set<std::string> epoch_clean_pairs_;
+
+        /** Arc sample count of each @ref epoch_clean_pairs_ key (see
+         *  @c getEpochCleanArcN).  Same keys, cleared and rebuilt together. */
+        std::map<std::string, int> epoch_clean_arc_n_;
 
         /** Demoted pre-jump level stash for the across-gap WL settle
          *  estimate (see @c getAcrossGapWlEvidence).  Written by the
