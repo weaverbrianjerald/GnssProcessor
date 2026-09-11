@@ -2733,6 +2733,11 @@ namespace GnssProcessor {
         /// arming would scope.  A run whose LLI drain fires with lli_verdicts 0
         /// is dead wiring.
         long long n_cb_lli_verdicts = 0, n_cb_lli_narrowed = 0;
+        /// §14.12.5: of those, the ones the §14.5 ANCHOR CLAUSE refused (also in
+        /// @ref n_cb_anchor_colocate).  Its own counter because the two paths'
+        /// co-locates have to be distinguishable: the storm arm attributed the
+        /// split-reference regression to the F3 path with exactly this split.
+        long long n_cb_lli_anchor_colocate = 0;
         /// SPLIT-REFERENCED SATELLITE CENSUS (§14.5), ALWAYS ON and
         /// knob-independent: per PROCESSED epoch, how many satellites have >= 2
         /// anchored phase-bias families whose anchors sit at DIFFERENT stations.

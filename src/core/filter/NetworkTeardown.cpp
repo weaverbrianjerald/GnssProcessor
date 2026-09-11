@@ -2477,7 +2477,8 @@ int networkTeardown(
         log->info("Network (common-band scope): verdicts {}, narrowed {} (bands kept "
                   "{}), all-band {} (no exoneration {} / inconsistent {} / anchor "
                   "co-locate {}), IF-TD vetoes {}, immature pairs {}, LLI shadows {}, "
-                  "LLI-epoch verdicts {} ({} narrowed), weak silences {}; "
+                  "LLI-epoch verdicts {} ({} narrowed, {} anchor co-locate), "
+                  "weak silences {}; "
                   "split-referenced satellites mean {:.1f} / max {} of {:.1f} anchored "
                   "[knob {}{}].",
                   C.n_cb_verdicts, C.n_cb_narrowed, C.n_cb_bands_kept,
@@ -2487,6 +2488,7 @@ int networkTeardown(
                   C.n_cb_anchor_colocate,
                   C.n_cb_iftd_veto, C.n_cb_immature_pairs, C.n_cb_lli_shadow,
                   C.n_cb_lli_verdicts, C.n_cb_lli_narrowed,
+                  C.n_cb_lli_anchor_colocate,
                   C.n_cb_weak_silence,
                   static_cast<double>(C.n_cb_split_sats_sum) / ep,
                   C.n_cb_split_sats_max,

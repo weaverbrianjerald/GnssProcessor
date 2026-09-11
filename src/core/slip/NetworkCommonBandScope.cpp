@@ -213,9 +213,11 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
 }
 
 CommonBandVerdict networkCommonBandLliVerdict(const std::set<std::string>& live_bands,
-                                             const CommonBandEvidence& ev) {
+                                             const CommonBandEvidence& ev,
+                                             bool station_anchors_satellite) {
     CommonBandVerdict v;
-    v.outcome = CommonBandOutcome::LliOnly;
+    v.outcome   = CommonBandOutcome::LliOnly;
+    v.lli_epoch = true;
     // The receiver's bits, intersected with what the drains can actually act on.
     std::set<std::string> impl;
     for (const auto& b : live_bands)
@@ -229,6 +231,28 @@ CommonBandVerdict networkCommonBandLliVerdict(const std::set<std::string>& live_
     // "exonerated" by any test, they are simply outside the scope the receiver
     // named.  Leaving `exonerated` empty keeps the bands_kept census honest.
     v.basis = "lli=" + setText(ev.lli_signals) + ";mw=withheld";
+
+    // §14.12.5 — the ANCHOR CLAUSE, the same one the normal path runs (§14.5) and
+    // for the same reason.  Narrowing on an arc that anchors a family of this
+    // satellite frees only the flagged band's family, so the election hands THAT
+    // family to a successor and leaves the others pinned here: the satellite's
+    // per-frequency references separate and their arc levels walk independently.
+    // Leaving F3 without the clause re-entered iteration 2's defect through the
+    // LLI door — measured on the storm arm, split-referenced satellites 3.5 → 7.6
+    // of 52.8 per epoch (6.6 % → 14.4 %) and single-family anchor handovers
+    // 57 → 103, with 49 of the new ones on an arc carrying an F3 verdict that
+    // epoch, while the normal path's `keep` rows produced ZERO.  The §14.10 S3
+    // leg could not see it: S21000SIM anchors nothing.
+    //
+    // The clause is applied AFTER the basis is built, so the row still names the
+    // evidence that WOULD have narrowed — it is the datum topology that refuses
+    // to act on it, not the evidence.
+    if (station_anchors_satellite && v.narrowed) {
+        v.outcome         = CommonBandOutcome::AnchorColocate;
+        v.narrowed        = false;
+        v.anchor_colocate = 1;
+        v.implicated      = live_bands;
+    }
     return v;
 }
 
@@ -390,12 +414,20 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
             // trade costs co-location is measurable: the always-on
             // split-referenced-satellite census reads it.
             const CommonBandVerdict v =
-                lli_only ? networkCommonBandLliVerdict(live, ev)
+                lli_only ? networkCommonBandLliVerdict(live, ev, anchors_sat)
                          : networkCommonBandVerdict(live, ev, min_arc, anchors_sat);
 
             if (lli_only) {
                 ++out.lli_verdicts;
                 if (v.narrowed) ++out.lli_narrowed;
+                // §14.12.5: folded into the SHARED anchor counter so the run-end
+                // total stays the honest population, and into its own so the two
+                // paths' co-locates are distinguishable (the storm arm needed
+                // exactly that split to attribute the regression).
+                if (v.outcome == CommonBandOutcome::AnchorColocate) {
+                    out.anchor_colocate     += v.anchor_colocate;
+                    out.lli_anchor_colocate += v.anchor_colocate;
+                }
                 out.all.emplace_back(std::make_pair(i, sat), v);
                 if (out.armed && v.narrowed) out.narrowed_at[{ i, sat }] = v;
                 continue;
@@ -456,7 +488,12 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
         } else {
             traces.emitEvent(se.time, "T0_band_scope", "common_band", sat, sta,
                              std::nullopt, std::nullopt, "all",
-                             std::string("reason=")
+                             // §14.12.5: name the RULE on a co-locate row too, or
+                             // the F3 path's refusals cannot be told from the
+                             // normal path's in the trace.
+                             (v.lli_epoch ? std::string("rule=lli_epoch;")
+                                          : std::string{})
+                                 + "reason="
                                  + (v.outcome == CommonBandOutcome::Inconsistent
                                         ? "inconsistent"
                                         : v.outcome == CommonBandOutcome::AnchorColocate

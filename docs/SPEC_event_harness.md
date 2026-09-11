@@ -3191,3 +3191,101 @@ Leg S3 (LLI-flagged L5Q −31 at +10, nothing else), refined expectation: ON wit
 **What the columns decide.**  `all` = the ceiling of what integer information buys on this bed — prices user-side AR and atmosphere constraints in one leg, and tests the standing root-cause (`project_why_non_integer_rootcause`: 99.3 % ionosphere): iono snapping to the phase floor CONFIRMS it and points the fix at integer information; iono staying wrong FALSIFIES it and names another sink.  The partial columns are the coupling map: where a pinned band's or station's former error lands.
 
 **Gates:** G1 OFF byte-identical (the knob absent → no code path touched); G2 actuation (pinned DDs read integer to < 0.01 cyc at +1); G3 the six-column table with every cell from a truth grader, never a raw wire step (Psychas); G4 the slipped-seed repeat holds the pin through ≥ 1 truth slip on a pinned arc.
+
+### 14.12.5 The ANCHOR CLAUSE inside F3 — iteration 2's defect, re-entered through the LLI door
+
+The Study-7 storm arm (`runs/golden_sim_campaign_zwdblk_cbscope4`) cleared every
+§14.10/§14.11 gate — the 4.99 h fallout gone (0 T4 rows / 0 clock decouples / 0
+declared clock breaks at 4.9917), unanswered exonerations 1 → 0, T4 86 → 11, ZWD
+0.0071 → 0.0064, L1C ref-free 89.6 → 90.1 %, cold handovers 59 → 51, consumer
+pooled p50 0.2067 → 0.1673 (better than OFF's 0.1741) — with ONE defect, and it
+was F3's:
+
+| quantity | §14.9 (cbscope3) | cbscope4, F3 without the clause |
+|---|---|---|
+| split-referenced satellites, mean of 52.8 | 3.5 (6.6 %) | **7.6 (14.4 %)** |
+| single-family anchor handovers | 57 | **103** |
+| …of the new ones, on an arc carrying an F3 verdict that epoch | — | **49** |
+| single-family handovers from the NORMAL path's `keep` rows | 0 | **0** |
+
+§14.12.2 had left the clause off deliberately, on the argument that the LLI drain
+already frees exactly the flagged bands so F3 changes only the sibling drains.
+That argument is sound for the DRAIN and wrong for the DATUM: narrowing on an arc
+that anchors a family still frees only the flagged band's family, so the election
+hands THAT family over alone and the satellite's per-frequency references
+separate.  The §14.10 S3 leg could not see it — **S21000SIM anchors nothing**,
+which is exactly why §14.3 chose it.
+
+**The fix** is the §14.5 clause applied inside F3, identically: if the arc anchors
+ANY family of the satellite the LLI-epoch verdict is `all` with reason
+`anchor_colocate`, so every family moves to one successor.  Counted in the shared
+`cb_anchor_colocate` (which stays the honest total) AND in its own
+`cb_lli_anchor_colocate`, because the storm arm needed exactly that split to
+attribute the regression to the F3 path.  The clause fires only on a verdict that
+WOULD have narrowed, so an LLI on an untracked band is not charged a co-locate it
+never earned.  The event row keeps `rule=lli_epoch` on the co-locate row too —
+without it the two paths' refusals are indistinguishable in the trace.
+
+### 14.12.6 RESULT — the anchor-arc leg (S36000SIM / G04, L5Q −31 with LLI at +10)
+
+Exe `gnss_processor_iftdpairs_v7.exe` (SHA-256 `35D7DDF8BDFD5…`), quiet seed
+ep0665, 70 epochs, knobs explicit.  G04's families anchor at S36000SIM (§14.8).
+
+| arm | +0 verdict | +0 PHASE_ANCHOR handovers | later | split-ref mean / max |
+|---|---|---|---|---|
+| null (any arm) | — | — | — | **3.4 / 5** |
+| **OFF** | (no verdict) | 1 → S60000SIM | +1: 1 → S31000SIM | 4.3 / 6 |
+| ON `first`, pre-clause | `keep rule=lli_epoch;implicated=L5Q` | 1 → S60000SIM | +1: 1 → S31000SIM | 4.3 / 6 |
+| ON `first`, **clause** | `all rule=lli_epoch;reason=anchor_colocate` | 1 → S60000SIM | +1: 1 → S31000SIM | 4.3 / 6 |
+| **FIX `all`, pre-clause** | `keep rule=lli_epoch;implicated=L5Q`, drains scoped (`cb_kept=L1C`, `cb_kept=L2W`) | **1 → S60000SIM** | +1 normal path fires its own clause, 1 → S31000SIM | **4.3 / 6** |
+| **FIX `all`, clause** | `all rule=lli_epoch;reason=anchor_colocate`, drains unscoped | **3 → S60000SIM, all one successor** | +1 `keep implicated=L5Q`, no further handover | **3.4 / 5 = the null** |
+
+Both pre-registered predictions hold: pre-clause **one** family hands over and the
+split census rises above the null; with the clause **all three** families hand over
+to the **same** successor at +10 and the census equals the null's.
+
+**The OFF control is what makes the attribution exact.**  OFF — knob entirely off —
+gives the same 1 handover and the same 4.3 / 6 as the ON arm with or without the
+clause.  So the single-family handover at an LLI epoch on the `first` lineage is
+**today's behaviour**, not a card effect: the LLI drain is band-scoped by the
+receiver's own bits and always was.  F3's leak was `all`-SPECIFIC — it scoped the
+IF-TD pair drains that would otherwise have freed all bands and co-located the
+families — and the clause removes exactly that.  With the clause the `all` arm is
+the **only** posture on this leg that keeps a satellite's references together
+(3.4 / 5 against OFF's 4.3 / 6).
+
+Regression set, all byte-identical including `network_events.csv`:
+
+| comparison | products / solution / ZWD / DD-frac / events |
+|---|---|
+| S3 at S21, ON and FIX, vs §14.12.4 | **IDENTICAL** (S21 anchors nothing, so the clause cannot fire) |
+| S1 at S21, ON and FIX, vs §14.12.4 | **IDENTICAL** |
+| OFF null 70 vs §14.12.4 | **IDENTICAL** |
+| OFF quiet 240-ep null vs main's `420634f` exe | **IDENTICAL** (products `4c96e34a4aebc4a9`, + rx-states and the consumer trace) |
+| `all` vs `first`, quiet 70-ep null | **IDENTICAL** on products / solution / ZWD / DD-frac |
+
+Run-end clause (`runs/evleg_u_anch_fix_cl`):
+
+```
+Network (common-band scope): verdicts 480, narrowed 4 (bands kept 8), all-band 477
+  (no exoneration 470 / inconsistent 6 / anchor co-locate 1), IF-TD vetoes 0,
+  immature pairs 720, LLI shadows 0, LLI-epoch verdicts 1 (0 narrowed,
+  1 anchor co-locate), weak silences 3; split-referenced satellites mean 3.4 /
+  max 5 of 52.3 anchored [knob on].
+```
+
+Unit suite 1900 cases / 259 suites, 1883 passed, 17 fixture-gated skips, 0
+failures (+3: the clause on an anchor arc, the unchanged non-anchor arc, and the
+guard that a null narrowing is not charged a co-locate).
+
+**Residual, recorded not fixed** (from the Study-7 arm): 2 spurious-implicate
+`keep` rows remain — S31/G18 at 3.675 h with (L1C+L5Q) silent at n = 36, thr
+10.6 WL, and S27/E30 at 5.2333 h with (L5Q+L7Q) silent at n = 10, thr 1.2 WL.
+Both are YOUNG-LANE silences, not the F2 shadow: the maturity bar is 10 samples
+and these lanes met it while their gates stood at 10.6 and 1.2 wide-lane cycles.
+The `weak_silence` counter already reports the first class; the second is a
+mature-but-thin lane.  Ledger residual, not a §14.12 item.
+
+Still owed before promotion: nothing new from §14.12.5 — the storm arm is the gate
+and it is the manager's to re-run with the clause.  Both knobs stay default
+(`first` / OFF).
