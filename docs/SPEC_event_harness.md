@@ -2553,3 +2553,45 @@ with v2 (one family handed over) vs v3 (three), and the dose with the split
 count expected back at the no-scope level.  Storm arms running: iteration 2
 (`runs/golden_sim_campaign_zwdblk_cbscope2`) and the consumer noise-floor
 calibration twin (`runs/golden_sim_campaign_zwdblk_mwevid_preduce`).
+
+### 14.7 Iteration-2 storm arm, the consumer instrument calibrated, and the outlier rise located (2026-09-11 ~12:40; `runs/golden_sim_campaign_zwdblk_cbscope2`, exe A9F824AF…, 1457 s; `runs/golden_sim_campaign_zwdblk_mwevid_preduce` = §13.6's arm under `parallel_reduce`)
+
+**The consumer instrument is trustworthy.**  The calibration twin's products
+and solution DIFFER from §13.6's arm at the numeric level (summation order),
+yet its consumer settled p50 / rms read 0.1742 / 0.3649 against 0.1741 /
+0.3649, its hourly rms is identical to three decimals, and every event class
+count is identical (detections, handovers, decouples, T4 78 = 78).  A single
+user station's settled median is reproducible to a tenth of a millimetre
+under numeric perturbation; the changes measured under the scope are real and
+come from the discrete differences (which handovers happen).  §14.5's
+suspension of the consumer bar is lifted.  What the twin does NOT calibrate is
+sensitivity to a different SET of discrete events; that is the mechanism
+itself, and it has a census signature.
+
+| quantity | §13.6 (both cards) | iter. 1 (L1-only) | **iter. 2 (all bands)** | bar |
+|---|---|---|---|---|
+| settled ZWD truth rms | 0.0071 m | 0.0069 | **0.0063 m** | ≤ 0.01 PASS |
+| consumer settled p50 / rms | 0.174 / 0.365 | 0.230 / 0.474 | **0.199 / 0.324** | p50 ≤ 0.15 FAIL; rms better |
+| consumer hourly rms | 0.62 / 0.29 / 0.23 / 0.18 / 0.47 / 0.39 | 0.64 / 0.30 / 0.26 / 0.23 / 0.45 / 0.65 | 0.70 / 0.25 / 0.22 / 0.19 / 0.41 / 0.34 | hours 2–6 all better than §13.6; hour 1 worse |
+| T4 events / erased ratio / ambient | 78 / 1.51 / 0.229 | 83 / 1.65 / 0.226 | **107** / 0.75 / 0.198 | ≤ 78 FAIL (+29, hours 5–6: 0 → 8, 41 → 63) |
+| WL / EWL / L1C ref-free | 98.9 / 100 / 87.1 % | 99.0 / 100 / 87.6 | **99.2 / 100 / 90.0 %** | L1C ≥ 90 PASS |
+| anchor-slip handovers (cold) | 305 (68) | 267 (57) | **174 (28)** | cold < 68 PASS |
+| verdicts / narrowed / vetoes / weak silences | — | 4208 / 1160 / 0 / — | 4208 / 3099 ({L1C} 1190, {L5Q} 850, {L2W} 775, {L7Q} 284) / 116 / 1843 | — |
+| split-referenced satellites (share of anchored; hour 6) | 6.6 % (7 %) | 16.5 % (27 %) | **43.8 % (64 %)** | — |
+
+**Where the outlier rise comes from.**  Not from the kept bands: of the 3 099
+keeps, 254 kept a band whose family was anchored at that station, and 1 of
+those 254 was followed by an outlier erase within 10 epochs (all keeps: 26 of
+3 099; ZWD change at noise, p50 2 mm).  It comes from the split itself: **70
+of the 107 erases (65 %) land on a satellite that was split-referenced at that
+epoch, against a 44 % base rate** — a satellite whose per-frequency gauges
+are realized at different stations reads as inter-band inconsistent at the
+OTHER stations, and the tier erases their arcs.  The same split that costs the
+user (§14.5) costs the producer post-fit, only later and less.
+
+**Verdict on iteration 2:** the narrowing itself is right and cheap (every
+producer truth channel improves; L1 integers reach 90 %; cold fallbacks fall
+by 60 %); its one defect is that it lets a satellite's references separate.
+Iteration 3's anchor clause is the fix for exactly that; its gates, against
+THIS arm: split share back to ≤ 10 %, T4 ≤ 78, consumer p50 ≤ 0.174 with the
+rms ≤ 0.324 kept, ZWD ≤ 0.0071, L1C ≥ 90 %, handovers below 305.
