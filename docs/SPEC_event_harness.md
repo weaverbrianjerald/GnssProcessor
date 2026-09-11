@@ -118,6 +118,8 @@ would otherwise be graded as a null and reported as "the event had no effect".
 | `scripts/event_frame_grade.py` | the station-FRAME grader; `--step-m` adds the absorption / residual channel |
 | `scripts/ev_dose_legs.py` | §12: slip-DOSE schedules (campaign statistics, Poisson or fixed count; `--from-leg` + `--stations` / `--thin` carve identical-event subsets; `--extra` attribution twins) |
 | `scripts/event_dose_grade.py` | §12: the multi-event grader — folds EVERY injected slip into the event leg's truth, station-frame trajectories for dosed stations and the bystander pool, per-slip residual table, coverage block, (tier, event, action) census |
+| `scripts/ev_slip_census.py` | §13.1: detector-coverage census over a dose leg's injected slips — what caught each one (tier / pair / lag), by band, flag and elevation; the inert-injection filter (no raw row ⇒ outside the solved set) |
+| `scripts/ev_mw_detect_census.py` | §13.4: census of the MW detector's own decision lines (`logging.enable_mw_slip_detector`; reads the rotated `mw_slip_detector.N.log` too) — lane, arc age, evidence ratio, integer known / rounding residual; prices candidate refloat gates against the false-alarm population |
 
 ## 4. The leg recipe
 
@@ -2038,3 +2040,151 @@ harness questions, not storm questions.
 carry_invariant vehicle — its leveling posture inherits the pin when it lands).
 `make_golden_config.py --verify` PASS (51 armed on the sim golden).
 
+
+## 13. Study 5 — detector coverage: the unflagged GPS L5 slip (2026-09-11)
+
+### 13.1 The question, and what was established before any new leg
+
+§12.12 left one residual path: a slip that no detector catches, landing on a
+phase-bias anchor arc, still wrecks its station (S36 to 7.5 m on
+`doseall_knob`), because nothing frees the arc, the handover card has nothing
+to hand over, and the outlier tier cannot indict a pinned row.  Question: WHY
+does that slip escape, how often, and what production change closes it?
+
+**Census first** (`slip_census.py`, scratchpad; every injected slip of
+`runs/evleg_doseall` and `runs/evleg_doseall_knob`, 655 each, identical
+outcomes on both legs).  Of 1 282 non-inert slips, every band — with or
+without a receiver flag — is caught within +0..+2 epochs by MW / LLI / IF-TD,
+EXCEPT unflagged L5:
+
+| injected band, flag | caught late or never | of |
+|---|---|---|
+| L1 / L2 / L7 (Galileo E5b), flag or none | 0 | 852 |
+| L5, flag set | 0 | 212 |
+| **L5, no flag** | **10 (= the same 5 events on both legs)** | 218 |
+
+The five: S36/G04 −99 cyc at 20.4° (no detector, caught by NOTHING — the
+§12.12 wreck), S25/G05 −40 at 61.6°, S15/G20 +110 at 30.9°, S30/G25 +56 at
+20.0° (the §12.10 datum-station miss), S33/G19 −40 at 18.1° — the last four
+caught post-fit by T4 in the same epoch.  All GPS; Galileo E5a slips have 0
+misses (the E5a/E5b pair, λ 9.8 m, catches them).  **Elevation is NOT the
+discriminator** (18–62°), so this is not the low-elevation noise story the
+§12.12 wording implied.
+
+What catches an unflagged L5 slip when it IS caught: MW L2W;L5Q (80) and MW
+L1C;L5Q (42) on GPS, MW L7Q;L5Q (83) on Galileo, IF-TD L1C;L5Q (3 — Galileo
+E1/E5a).  Two structural facts from the code:
+
+- **IF-TD forms ONE pair per satellite: the first two distinct bands**
+  (`IfPhaseSlipDetector.cpp` ~250) — L1C;L2W on GPS, L1C;L5Q on Galileo.  It
+  is blind to a GPS L5-only slip by construction.  (§12.12's "the L5 MW pair
+  did not exist" was inferred from `network_slip_raw.csv`, which prints the
+  first two bands by construction — the MW detector DOES form (1,5) and (2,5);
+  the census shows them firing at S36 on other satellites.)
+- **The MW detector reports a slip in two grades and the network consumes one.**
+  On the network path (uncombined branch; no satellite MW bias on the sim, so
+  no integer locking) `processMwSample` returns (integer, integer_known,
+  fraction).  PASS A (`ApplicationNetworkAssembly.cpp:1363`) admits a refloat
+  candidate only if `slip_wl_known && slip_wl_cycles != 0 && slip_frac <=
+  turbo_edit_frac_max` (0.15).  An UNKNOWN-integer detection (the init-frac
+  "suspicious" path, a confirmed TD step, an integer not resolvable from one
+  sample) or a known integer with fraction > 0.15 is **dropped with no
+  counter and no event row** — invariants #4 and #7 both violated.
+
+### 13.2 Hypotheses — frozen before the reproduction legs are read
+
+Two legs from the quiet seed ep0665, main's `gnss_processor_ancho2.exe`
+(HEAD 9935aec), the MW detector's logger armed (it is OFF by default —
+`logging.enable_mw_slip_detector`):
+
+- `runs/evleg_l5miss_s36` — the ONE slip (S36000SIM / G04 / L5Q / −99, no
+  flag) at +89 (tow 281850 = the dose leg's epoch), 100 epochs, log at debug.
+- `runs/evleg_s36only_mwlog` — the dose leg's S36 subset (its 11 slips,
+  identical events, 240 ep), log at info: station-local history reproduced.
+
+| hypothesis | prediction in the logs | production change if true |
+|---|---|---|
+| **H1 dropped detection** — MW fired on (2,5) and/or (1,5) at +89 but returned integer-unknown or fraction > 0.15, and PASS A discarded it | a "MW slip detected for G04 … locked=no, delta_wl=n/a" / "MW init suspicious … unknown integer" line at the slip epoch; NO T0 event row | consume unknown-integer / loose-fraction MW detections as a REFLOAT of the pair's two bands (the network's reset-over-repair), knob `network.cycle_slip.mw_unknown_integer_refloat`, default OFF, counter + event row for every dropped detection regardless of the knob |
+| **H2 silent detector** — no G04 detection line at all: the pair's samples were absent (NaN MW, no C5 code) or the arc was inside a warm-up that initialised ON the slipped value | `[DIAG MW skip]` lines for G04, or an arc restart at / just before +89 | depends on which: the warm-up hole needs an init-frac test on the (2,5) lane (λ 5.86 m makes a fresh sample's fraction informative), the pair hole needs the pair |
+| H3 below threshold | a G04 line with dev < thresh | impossible at 74 m / 580 m for 99 cycles; listed so the reader sees it was considered |
+| H4 state-dependent | the miss does NOT reproduce in the single-event leg but DOES in the S36 subset (station history matters), or in neither (network-level reset) | then the dose leg's own log is the instrument |
+
+### 13.3 Pre-registered gates for the production change (whatever H is true)
+
+| gate | leg | pass |
+|---|---|---|
+| G1 | null on the card exe, knob OFF | byte-identical to `runs/evleg_null_main_ancho` |
+| G2 | `l5miss_s36` + knob ON, vs the matched knob-OFF leg | detection row at +0/+1 naming an L5Q-bearing pair; PHASE_ANCHOR handover row for G04 (the freed anchor); T4 erases at S36 in +0..+10 = 0 (the dose leg had 7 at +0, 6 at +1); S36 ZWD / clock / other-arc levels within 2× the null floor (`event_frame_grade.py`); consumer within the null floor |
+| G3 | `doseall_knob` events + knob ON (matched knob-ON null) | S36 no longer wrecked: max per-station ZWD rms ≤ 0.2 m (was 7.5); T4 ≤ 200; wire ≤ 0.05 m; the four T4-only slips become detector catches |
+| G4 | quiet 240-ep null + knob ON vs knob OFF | false-alarm price: new refloats ≤ 20 network-wide (≤ 1 % of the campaign slip rate); ZWD / consumer diff within the null-vs-null floor |
+| G5 | storm bed `_golden_sim_campaign_zwdblk_ancho` + knob (FINAL) | ZWD ≤ 0.05 m, consumer p50 ≤ 0.25 (was 0.278), T4 ≤ 306, WL ≥ 98 %; hour-5/6 consumer rms must not rise |
+
+The IF-TD second pair (a (1,5) IF pair per GPS satellite) is a SEPARATE item:
+it would add a detector to the L5 lane, but the census says the MW (2,5)
+lane already covers 96 % and the question is what happens to the last 4 %.
+
+### 13.4 RESULT — H1, with the exact gate named (2026-09-11; legs `l5miss_s36`, `s36only_mwlog`, `l5miss4_mwlog`, main exe `gnss_processor_ancho2.exe`)
+
+**The miss reproduces in the single-event leg** (S36/G04/L5Q −99 at +89: the
+outlier tier erases 7 innocent arcs at S36 at +0 and 6 more at +1, G04 stays
+anchored at S36 on all three bands, no detector row — exactly the dose leg).
+The detector's own log (rotating sink; older lines are in
+`mw_slip_detector.N.log`) shows what happened at the slip epoch:
+
+| lane | λ | arc age | \|dev\| | threshold | integer | rounding residual | PASS A |
+|---|---|---|---|---|---|---|---|
+| L2W/L5Q (bias-free) | 5.861 m | 89 | 581.3 m = 99.2 WL | 7.42 m | **99, known** | **0.183 cyc** (1.07 m) | **dropped: 0.183 > `turbo_edit_frac_max` 0.15** |
+| L1C/L5Q (bias-free) | 0.751 m | 87 | 75.4 m = 100.3 WL | 8.46 m | unknown (0.3 cyc off) | — | dropped: integer unknown |
+| L1C/L2W (BIA, between-satellite) | 0.862 m | — | no jump (L5-only slip) | — | — | — | — |
+
+Both L5 lanes flagged the slip at 8.9× and 78× their thresholds.  The network
+consumed neither: the refloat path re-uses the T0 REPAIR gate — "trust the
+integer only if its rounding residual is ≤ 0.15 cycles" — and on the 5.86 m
+extra-wide lane 0.15 cycles is 0.88 m, below the lane's own 1σ code noise at
+20° (σ = 0.93 m in the log).  A repair-quality gate on a detection whose only
+consumer is a refloat, which never uses the integer.
+
+**The other four misses have the same shape** (`l5miss4_mwlog`, the dose leg's
+S25/S15/S30/S33 subset, identical events):
+
+| slip | L2W/L5Q lane | L1C/L5Q lane |
+|---|---|---|
+| S25/G05 −40 (61.6°) | 39.8 WL, integer 40 known, residual ≈ 0.2 → dropped | 39.3 WL, unknown |
+| S15/G20 +110 (30.9°) | 109.8 WL, −110 known, ≈ 0.2 → dropped | 109.8 WL, −110 known, ≈ 0.2 → dropped |
+| S30/G25 +56 (20.0°) | 56.2 WL, −56 known, ≈ 0.2 → dropped | 55.5 WL, unknown |
+| S33/G19 −40 (18.1°) | 40.2 WL, 40 known, ≈ 0.2 → dropped | 39.5 WL, unknown |
+
+So the 4 % is the tail of the rounding-residual distribution on the L5 lanes
+(σ_frac ≈ 0.15–0.2 cycles at low elevation on (2,5); larger on (1,5)), not a
+missing pair, not elevation, not the detector.  The detector caught 5/5.
+
+**What a refloat gate may cost — the false-alarm census** (`mw_detect_census.py`
+over `s36only_mwlog`: 240 ep, 60 stations, S36's 15 real slips, 719 "MW slip
+detected" lines):
+
+| population | count | reaches the network today |
+|---|---|---|
+| warm-up (arc age ≤ 2), all lanes | 680 | 70 admitted (the +1 resume burst: ~80 refloat rows at 279210); the rest dropped |
+| arc age 3–9 | 2 | 0 |
+| mature (age ≥ 10), bias-free lanes, ratio ≥ 3 | 25 | **every one is one of S36's real slips** — zero false alarms in 59 quiet stations × 2 h |
+| mature, BIA lane (L1C/L2W between-satellite), ratio 2.4–7.5 | 12 | 8 of them are ONE event: eight satellites at one station jump by the same 37–40 WL at the same epoch — a between-satellite pivot artifact (the S-transform on a pivot change), dropped today |
+
+Steady-state refloats the network actually performs at the 59 quiet stations
+after the burst: **3 in two hours**.  A gate of the form *mature arc AND
+evidence ≥ 3× threshold AND bias-free lane* admits all five misses and nothing
+else on this bed; the bias-free restriction is what keeps the pivot artifact
+out (a detector-side defect worth its own line: that event also ERASES those
+eight arcs' MW histories, so the station's L1/L2 lane is blind for the next
+few epochs).
+
+**Production card (building, default OFF): `network.cycle_slip.mw_evidence_refloat`**
+— the detector exports, with every detection, its evidence ratio (|dev|/thresh),
+the arc's age, and the lane's bias class; PASS A admits a refloat candidate on
+the legacy rule OR (knob AND bias-free lane AND age ≥ `mw_evidence_min_arc_epochs`
+(10) AND ratio ≥ `mw_evidence_ratio_min` (3)); the candidate carries
+`integer_known` so the bridge path never consumes a zero integer; dropped
+detections are COUNTED always (loose / unknown / would-admit) — invariant #4.
+Gates §13.3 G1–G5.  Not built: the IF-TD second pair, and the warm-up
+false-alarm limit cycle (a flagged arc is erased and re-initialised on the
+next sample; a real slip landing on that sample is absorbed as the new level —
+none of the five misses was this, but it is a real hole at low elevation).
