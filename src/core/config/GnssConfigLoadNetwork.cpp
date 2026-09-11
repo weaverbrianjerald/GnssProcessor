@@ -9896,10 +9896,15 @@ namespace GnssProcessor {
                            "objects.");
                 return false;
             }
-            if (arr.size() > 64) {
-                log->error("Config: network.inject.events has {} entries (> 64; "
-                           "paste-accident guard).  The harness is a ONE-EVENT "
-                           "instrument by design.", arr.size());
+            // Cap: a paste-accident guard, not a design statement.  The harness began
+            // as a ONE-EVENT instrument (64 was generous); the DOSE studies
+            // (SPEC_event_harness §12) script a whole slip SCHEDULE — the campaign
+            // bed's 6.8 slips/station-hour over 60 stations for 2 h is ~800 events —
+            // so the guard now sits well above any schedule a 24 h fixture can hold.
+            constexpr std::size_t kMaxInjectEvents = 4096;
+            if (arr.size() > kMaxInjectEvents) {
+                log->error("Config: network.inject.events has {} entries (> {}; "
+                           "paste-accident guard).", arr.size(), kMaxInjectEvents);
                 return false;
             }
             have_events = !arr.empty();

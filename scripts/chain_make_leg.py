@@ -60,10 +60,40 @@ def read_snapshot_header(path):
     return week, tow, n_emitted, fingerprint
 
 
-def start_offset_hours(week, tow):
-    """Self-correcting recurrence -> offset that lands on snapshot_epoch + 1."""
+def start_offset_hours(week, tow, anchor_s=None):
+    """Self-correcting recurrence -> offset that lands on snapshot_epoch + 1.
+
+    anchor_s = the fixture's FIRST observation epoch in continuous GPS seconds
+    (fixture_first_obs_s) — the producer's fast-forward gate latches on the first
+    synced epoch of the files, not on the GPS day start (caught 2026-09-11: a
+    12:00-start fixture was offset 12 h; the 00:00:30 quiet fixture resumed one
+    epoch late).  None keeps the old day-start anchor for reproducing pre-fix legs."""
+    if anchor_s is None:
+        anchor_s = DAY_ANCHOR_S
     continuous_s = week * 604800.0 + tow
-    return (continuous_s - DAY_ANCHOR_S + HALF_EPOCH_BACKOFF_S) / 3600.0
+    return (continuous_s - anchor_s + HALF_EPOCH_BACKOFF_S) / 3600.0
+
+
+def fixture_first_obs_s(cfg):
+    """Continuous GPS seconds of TIME OF FIRST OBS in the first station's RINEX header;
+    falls back to DAY_ANCHOR_S with a warning when unreadable."""
+    import datetime as _dt
+    try:
+        path = cfg.get("network", {}).get("stations", [])[0]["rinex_path"]
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for _ in range(200):
+                line = fh.readline()
+                if not line or "END OF HEADER" in line:
+                    break
+                if "TIME OF FIRST OBS" in line:
+                    f = line.split()
+                    y, mo, d, h, mi = (int(x) for x in f[:5])
+                    t = _dt.datetime(y, mo, d, h, mi) - _dt.datetime(1980, 1, 6)
+                    return t.total_seconds() + float(f[5])
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: cannot read TIME OF FIRST OBS ({e})")
+    print("WARNING: anchoring the resume offset on the GPS day start (DAY_ANCHOR_S)")
+    return DAY_ANCHOR_S
 
 
 def main():
@@ -114,6 +144,9 @@ def main():
 
     cfg.setdefault("processing", {})["max_duration_s"] = args.max_duration
     net = cfg.setdefault("network", {})
+    # Re-anchor the resume offset on the fixture's first observation now that the
+    # config (and so the station RINEX paths) is known — see start_offset_hours.
+    offset_h = start_offset_hours(week, tow, fixture_first_obs_s(cfg))
     net["start_offset_hours"] = offset_h
     net["state_snapshot_path"] = leg_snap.replace("\\", "/")
     net["state_snapshot_require"] = True          # never silently cold-start

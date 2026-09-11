@@ -90,8 +90,49 @@ def read_snapshot_header(path):
     return week, tow, n_emitted, fingerprint
 
 
-def start_offset_hours(week, tow):
-    return (week * 604800.0 + tow - DAY_ANCHOR_S + HALF_EPOCH_BACKOFF_S) / 3600.0
+def start_offset_hours(week, tow, anchor_s=None):
+    """Offset so the first PROCESSED epoch is the snapshot's tow + 30 s.
+
+    anchor_s = the fixture's first observation epoch in continuous GPS seconds
+    (see fixture_first_obs_s); the half-epoch back-off keeps the strict `<` gate
+    off the double-residue boundary."""
+    if anchor_s is None:
+        anchor_s = DAY_ANCHOR_S
+    return (week * 604800.0 + tow - anchor_s + HALF_EPOCH_BACKOFF_S) / 3600.0
+def fixture_first_obs_s(cfg):
+    """Continuous GPS seconds of the fixture's FIRST observation epoch.
+
+    The producer's fast-forward gate (ApplicationNetwork.cpp, `start_offset_hours`)
+    anchors on the first SYNCED epoch of the observation files, not on the GPS day
+    start.  Read `TIME OF FIRST OBS` from the first station's RINEX header; fall back
+    to DAY_ANCHOR_S (with a loud warning) only when the header cannot be read.
+    Caught 2026-09-11: the campaign fixture starts at 12:00, so every leg on it was
+    offset 12 h and refused; the quiet fixture starts at 00:00:30, so its legs
+    resumed ONE EPOCH LATE (snapshot + 60 s) without anyone noticing.
+    """
+    import datetime as _dt
+    try:
+        st = cfg.get("network", {}).get("stations", [])
+        path = st[0]["rinex_path"]
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for _ in range(200):
+                line = fh.readline()
+                if not line:
+                    break
+                if "TIME OF FIRST OBS" in line:
+                    f = line.split()
+                    y, mo, d, h, mi = (int(x) for x in f[:5])
+                    s = float(f[5])
+                    t = _dt.datetime(y, mo, d, h, mi) - _dt.datetime(1980, 1, 6)
+                    return t.total_seconds() + s
+                if "END OF HEADER" in line:
+                    break
+    except Exception as e:  # noqa: BLE001 - any failure falls back loudly
+        print(f"WARNING: cannot read TIME OF FIRST OBS ({e}); anchoring on the GPS day start")
+    print("WARNING: anchoring the resume offset on DAY_ANCHOR_S (day start) — only right for a "
+          "fixture that starts at 00:00:00")
+    return DAY_ANCHOR_S
+
 
 
 def _flatten(base):
@@ -187,9 +228,10 @@ def _leg_common(args, event_json):
     shutil.copyfile(snap_src, leg_snap)
 
     week, tow, n_emitted, fingerprint = read_snapshot_header(leg_snap)
-    offset_h = start_offset_hours(week, tow)
 
     cfg, _ = _flatten(seed_cfg_path)
+    anchor_s = fixture_first_obs_s(cfg)
+    offset_h = start_offset_hours(week, tow, anchor_s)
     net = cfg.setdefault("network", {})
     proc = cfg.setdefault("processing", {})
 
@@ -229,6 +271,7 @@ def _leg_common(args, event_json):
         "legdir": legdir, "seed_run": seed_run, "snapshot": snap_src,
         "week": week, "snapshot_tow": tow, "n_emitted": n_emitted,
         "fingerprint": fingerprint, "start_offset_hours": offset_h,
+        "fixture_first_obs_s": anchor_s,
         "epochs": args.epochs, "first_tow": first_tow,
         "event_tow": (ev_tow if event_json is not None else None),
         "at_ep": args.at_ep,
@@ -243,7 +286,8 @@ def _leg_common(args, event_json):
     print(f"  snapshot        {os.path.basename(snap_src)}  "
           f"week/tow {week}/{tow!r}  n_emitted {n_emitted}")
     print(f"  fingerprint     {fingerprint}")
-    print(f"  start_offset_h  {offset_h!r}   first epoch tow {first_tow!r}")
+    print(f"  start_offset_h  {offset_h!r}   first epoch tow {first_tow!r}   "
+          f"(anchored on the fixture's first obs, +{week * 604800.0 + tow + EPOCH_INTERVAL_S - anchor_s:.0f} s)")
     print(f"  epochs          {args.epochs}   max_duration_s {proc['max_duration_s']}")
     if event_json is not None:
         print(f"  EVENT           {json.dumps(meta['event'])}")
