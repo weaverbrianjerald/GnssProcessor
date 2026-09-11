@@ -357,7 +357,7 @@ that file).
 
 ---
 
-## Y. Study 2 — the receiver-clock carry under single events
+## 10. Study 2 — the receiver-clock carry under single events
 
 **Date 2026-09-10.  Verdict: `network.carry_rx_clock_in_block` is INERT on every event
 the harness can inject, at a cost on the null of under one per cent.  It transports the
@@ -377,7 +377,7 @@ one-step prediction) as invariant #1's wired response.  Study 2 asks whether giv
 sink a memory makes the station's **frame** hold under one event, and what the memory
 costs on a quiet station.
 
-### Y.1 The knob is FINGERPRINTED, and that decided the design
+### 10.1 The knob is FINGERPRINTED, and that decided the design
 
 `carry_rx_clock_in_block` and `carry_iono_in_block` are both inside the warm-resume
 fingerprint (`NetworkRunContext.cpp`, armed-only conditional appends beside the
@@ -394,7 +394,7 @@ That is not a formality, it is the experiment design:
   seed's by exactly ONE settings key — verified by a flattened-config diff:
   `network.carry_rx_clock_in_block` plus the two output paths.  Each arm's event legs are
   graded against **that arm's own null**; ON-null-vs-OFF-null is the lineage contrast and
-  **is also this study's noise floor** (§Y.4).
+  **is also this study's noise floor** (§10.4).
 * It is also the better experiment.  Resuming an OFF snapshot with the knob ON — what a
   fingerprint-SAFE knob would have permitted — starts the clock carry COLD, ten epochs
   before the event.  The card is about a SETTLED carry; a cold one measures its ignition.
@@ -402,7 +402,7 @@ That is not a formality, it is the experiment design:
   against `erase_off`), with its own matched null leg.  One fingerprint finding, two
   different experiment shapes.
 
-### Y.2 Design
+### 10.2 Design
 
 Same bed, snapshot and arc as §6: `runs/simnet60_quiet_wu93_24h`,
 `state_snapshot.txt.ep0665` (tow 279150), 61 epochs, event at +10 (tow 279480), target
@@ -431,7 +431,7 @@ seed  Rx clock in block: 85559 col(s) (42780 ISB), 0 not folded, 0 missing cross
 7320 = 2 columns (clock + ISB) × 60 stations × 61 epochs: every station folded its clock
 every epoch.  **One** clock-JUMP refusal in 6 h across 60 stations.
 
-### Y.3 The OFF arm first — the events are NOT alike, and the big one is not a ρ error
+### 10.3 The OFF arm first — the events are NOT alike, and the big one is not a ρ error
 
 A pre-registered reading, from the OFF arm alone, before the ON legs were graded.  The
 `arc_erase` level error is **dispersive**: L2/L1 = 1.285–1.307 and L5/L1 = 1.359–1.363 in
@@ -444,7 +444,7 @@ And the arc's L1 level error in metres equals the per-LOS iono displacement to 2
 direction, not in ρ.**  Therefore — written down in advance — a ρ-direction memory should
 do little for it.  The cold handover looked like the place a ρ memory could grip: it is a
 mixture (L2/L1 1.141 at +2) and carries 3× the erase's clock signature (`clk_d` rms
-0.0160 vs 0.0049 m).  That half of the prediction turned out to be **wrong** (§Y.4).
+0.0160 vs 0.0049 m).  That half of the prediction turned out to be **wrong** (§10.4).
 
 The OFF ladder of frame reaction is clean and monotone — a correctly detected and
 refloated real slip barely moves the station, an unnecessary erase moves it 3.7×, and a
@@ -456,7 +456,7 @@ network datum re-realization moves a BYSTANDER station 11×:
 | `arc_erase` on a healthy arc | **0.0201** (3.7×) | −0.370 | 0.0049 |
 | `anchor_handover` cold, at a bystander | **0.0611** (11×) | −0.388 | 0.0160 |
 
-### Y.4 The table — {event} × {OFF, ON}
+### 10.4 The table — {event} × {OFF, ON}
 
 `lvl` columns are the injected arc's L1C level error (cycles, event − null); `oth` is the
 station's other arcs' mean |level error|; `clk` is the receiver-clock contrast (m); `cons`
@@ -493,7 +493,7 @@ in the table is at or under that floor:
 * **slip 10 cyc — NO EFFECT.**  Persistent floor 0.0370 → 0.0359 cyc, frame reaction
   0.00538 → 0.00543, iono +7.4 → +7.3 mm.  The T1 detector already handles this event at
   zero latency; there is nothing left for a clock memory to hold.
-* **`arc_erase` — NO EFFECT, and §Y.3 says why.**  Persistent floor 0.4166 → 0.4224 cyc
+* **`arc_erase` — NO EFFECT, and §10.3 says why.**  Persistent floor 0.4166 → 0.4224 cyc
   (1.4 % *worse*), frame reaction 0.0201 → 0.0204, per-LOS iono −0.3701 → −0.3700 m.  The
   erase's error is dispersive; a ρ-direction prior has the wrong basis direction for it.
   **The prediction held.**
@@ -509,7 +509,7 @@ in the table is at or under that floor:
   differs by up to **43 mm** and the phase bias by 4.5 mm — it simply does not change the
   ERROR.
 
-### Y.5 The mechanism, and where the card would actually bite
+### 10.5 The mechanism, and where the card would actually bite
 
 The receiver-clock contrast error on this bed is **1.31 m rms network-wide** (p50 1.16,
 p90 1.90) — structured, not noise — while the carry's own per-epoch prior is σ = 0.30 m.
@@ -529,7 +529,7 @@ add `step_m` to every observable of every satellite *at one station*, the exact 
 `sat_clock_step`'s per-satellite form, one scalar write at the same §2.1 site).  Until
 then the honest statement is: **inert where measured, untested where designed.**
 
-### Y.6 The extra rung — `phase_leveling_young_inflate_var_m2` on one erase
+### 10.6 The extra rung — `phase_leveling_young_inflate_var_m2` on one erase
 
 It FAILED on the storm bed; the harness says what it does to ONE event, and separates two
 things the storm bed could not.  Because the knob is NOT fingerprinted it rides the OFF
@@ -553,7 +553,7 @@ seed with a matched null (`runs/evleg_s2_null_yng`), one knob apart from `null_o
   quality gain; on the level and ZWD channels — the ones with truth — it is unambiguously
   worse.  **KEEP_OFF confirmed, now with a mechanism.**
 
-### Y.7 Byte-identity and the suite (branch `worktree-ionoblk`)
+### 10.7 Byte-identity and the suite (branch `worktree-ionoblk`)
 
 * **OFF is byte-identical to main HEAD.**  `config/test_suite/_golden_sim_off60.json`
   (61-epoch golden smoke, output path repointed only), `gnss_processor_rxclk2.exe`
@@ -570,10 +570,10 @@ seed with a matched null (`runs/evleg_s2_null_yng`), one knob apart from `null_o
   box; the ON seed's 1156 s against §6's OFF 1540 s is a contention artifact in both
   directions, not a measurement.
 
-### Y.8 Reproducing
+### 10.8 Reproducing
 
 ```powershell
-# OFF arm rides the existing seed; ON arm needs its own (the fingerprint, §Y.1)
+# OFF arm rides the existing seed; ON arm needs its own (the fingerprint, §10.1)
 python scripts\event_leg.py write-seed --name rxclk6h --base config\test_suite\_ev_rxclk_on.json --hours 6
 python scripts\event_leg.py make-leg --seed-run runs/evseed_rxclk6h --snapshot-ep 665 --epochs 60 `
        --name s2_erase_on --at-ep 10 --event '{"kind":"arc_erase","station":"S21000SIM","sat":"G10"}'
