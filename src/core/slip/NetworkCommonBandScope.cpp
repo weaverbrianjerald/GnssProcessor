@@ -42,6 +42,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <optional>
 
 namespace GnssProcessor {
@@ -53,6 +54,15 @@ namespace {
 /// make `mw(L1C,L2W)` read as a separator.
 std::string pairText(const CommonBandPair& p) {
     return p.first + "+" + p.second;
+}
+
+/// Render a silence threshold in wide-lane cycles for the basis string; `?`
+/// when the sample left before a threshold existed.
+std::string thrText(double thresh_wl) {
+    if (!std::isfinite(thresh_wl)) return "?WL";
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1fWL", thresh_wl);
+    return buf;
 }
 
 /// Render an ordered signal set as `a;b;c`, or `none` when empty.
@@ -91,33 +101,44 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
         basis += t;
     };
 
-    std::set<std::string> cleared;   // bands some silent, un-vetoed pair covers
-    for (const auto& [pr, n] : ev.clean_pairs) {
-        // A pair the detector ALSO flagged is not silent, whatever the clean set
-        // says.  The detector's set already excludes flagged arcs; the guard is
-        // here so the rule stands on its own inputs.
+    std::set<std::string> cleared;          // bands some silent, un-vetoed pair covers
+    std::set<CommonBandPair> iftd_noted;    // IF-TD flags the veto branch already named
+    for (const auto& [pr, st] : ev.processed) {
+        // FLAGGED beats everything: a pair that emitted an MwSlipResult this
+        // epoch — admitted to the refloat path OR dropped on the admission
+        // gate — is not silent.  The emitted set is the authority, not the
+        // detector's advisory `st.flagged`, because the emitted set is what the
+        // drains act on.
         if (ev.flagged_pairs.count(pr)) continue;
-        if (n < min_arc_epochs) {
+        if (st.arc_n < min_arc_epochs) {
+            // An arc too young to have flagged cannot testify that it didn't.
             ++v.immature_pairs;
-            append("mw(" + pairText(pr) + ")immature(n=" + std::to_string(n) + ")");
+            append("mw(" + pairText(pr) + ")immature(n=" + std::to_string(st.arc_n) + ")");
             continue;
         }
+        const std::string desc = "mw(" + pairText(pr) + ")silent(n="
+                                 + std::to_string(st.arc_n) + ",thr=" + thrText(st.thresh_wl) + ")";
         if (ev.iftd_flagged.count(pr)) {
             // The EQUAL-COUNT trap: L1 and L2 slipping by the same integer leave
             // MW(1,2) silent, and only the iono-free combination sees it.
             ++v.iftd_veto;
-            append("mw(" + pairText(pr) + ")silent(n=" + std::to_string(n)
-                   + ");iftd(" + pairText(pr) + ")=flagged");
+            append(desc + ";iftd(" + pairText(pr) + ")=flagged");
+            iftd_noted.insert(pr);
             continue;
         }
-        append("mw(" + pairText(pr) + ")silent(n=" + std::to_string(n) + ")");
+        append(desc);
+        // Reported, not acted on: the pair still exonerates.  This counts how
+        // much of the narrowing rests on a gate too loose to have excluded the
+        // slip sizes the scope is responding to.
+        if (std::isfinite(st.thresh_wl) && st.thresh_wl > kWeakSilenceWlCyc)
+            ++v.weak_silence;
         cleared.insert(pr.first);
         cleared.insert(pr.second);
     }
     for (const auto& pr : ev.flagged_pairs)
         append("mw(" + pairText(pr) + ")flag");
     for (const auto& pr : ev.iftd_flagged)
-        if (!ev.clean_pairs.count(pr)) append("iftd(" + pairText(pr) + ")=flagged");
+        if (!iftd_noted.count(pr)) append("iftd(" + pairText(pr) + ")=flagged");
     for (const auto& pr : ev.iftd_silent)
         append("iftd(" + pairText(pr) + ")silent");
     append("lli=" + setText(ev.lli_signals));
@@ -258,6 +279,7 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
             ++out.verdicts;
             out.iftd_veto      += v.iftd_veto;
             out.immature_pairs += v.immature_pairs;
+            out.weak_silence   += v.weak_silence;
             switch (v.outcome) {
                 case CommonBandOutcome::Narrowed:
                     ++out.narrowed_n;

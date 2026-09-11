@@ -2475,11 +2475,11 @@ int networkTeardown(
         const auto& C = ctx.counters;
         log->info("Network (common-band scope): verdicts {}, narrowed {} (bands kept "
                   "{}), all-band {} (no exoneration {} / inconsistent {}), IF-TD vetoes "
-                  "{}, immature pairs {} [knob {}{}].",
+                  "{}, immature pairs {}, weak silences {} [knob {}{}].",
                   C.n_cb_verdicts, C.n_cb_narrowed, C.n_cb_bands_kept,
                   C.n_cb_all_no_exoneration + C.n_cb_all_inconsistent,
                   C.n_cb_all_no_exoneration, C.n_cb_all_inconsistent,
-                  C.n_cb_iftd_veto, C.n_cb_immature_pairs,
+                  C.n_cb_iftd_veto, C.n_cb_immature_pairs, C.n_cb_weak_silence,
                   config_.networkCycleSlipCommonBandScope() ? "on" : "off",
                   config_.networkCycleSlipCommonBandScope()
                       ? std::string{}

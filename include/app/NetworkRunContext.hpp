@@ -2709,10 +2709,14 @@ namespace GnssProcessor {
         /// would_narrow: the knob-OFF count of verdicts that WOULD have narrowed,
         /// i.e. exactly what arming changes — an OFF run reporting 0 here says
         /// the card is inert on that lineage, no armed run needed.
+        /// weak_silence: exonerating silences whose DETECTION THRESHOLD stood
+        /// above 6 wide-lane cycles — a gate too loose to have excluded the slip
+        /// sizes the scope responds to.  Reported, never acted on; it is the
+        /// honest measure of how much narrowing rests on a weak silence.
         long long n_cb_verdicts = 0, n_cb_narrowed = 0, n_cb_all_no_exoneration = 0,
                   n_cb_all_inconsistent = 0, n_cb_bands_kept = 0,
                   n_cb_iftd_veto = 0, n_cb_immature_pairs = 0,
-                  n_cb_would_narrow = 0;
+                  n_cb_weak_silence = 0, n_cb_would_narrow = 0;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

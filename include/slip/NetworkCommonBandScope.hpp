@@ -18,11 +18,27 @@
  *
  * Per (station, satellite, epoch), over the tracked phase bands B:
  *
- *  - a MW pair is **silent** iff it was evaluated this epoch, is MATURE (arc
- *    count ≥ `common_band_min_arc_epochs`) and did not flag — the detector's
- *    affirmative-cleanliness set (@c MwSlipDetector::getEpochCleanPairs).  A
- *    flagged pair (admitted OR dropped — a dropped flag is still not silent),
- *    an immature pair and an absent pair are all NOT silent;
+ *  - a MW pair is **silent** iff the detector PROCESSED a sample for it this
+ *    epoch (@c MwSlipDetector::getEpochPairStatus), the arc's count at that
+ *    sample reached `common_band_min_arc_epochs`, and it did NOT flag — no
+ *    @c MwSlipResult for that pair, admitted OR dropped, since a dropped flag
+ *    is still not silence.  An immature pair and an unprocessed pair are both
+ *    NOT silent.
+ *
+ *    This is deliberately the DETECTION-grade question, not the
+ *    cleanliness-grade one.  Iteration 1 of this card read
+ *    @c getEpochCleanPairs, whose σ-awareness condition (3σ ≤ 0.7·λ_WL) a
+ *    narrow lane on a noisy bed cannot satisfy however quiet it is: measured
+ *    MW scatter σ_MAD p50 = 0.414 m on L1C+L2W against that pair's 0.201 m
+ *    bar, so across 519 verdicts on the 60-station sim the set named ONLY the
+ *    extra-wide lanes and the rule never engaged on a single-band slip.  The
+ *    cleanliness set stays untouched for its TurboEdit consumer;
+ *
+ *  - a silence carries its own THRESHOLD (@ref CommonBandProcessed::thresh_wl).
+ *    A pair whose gate stood at 8 WL cycles did not exclude a 6-cycle slip, it
+ *    merely failed to see one; those are counted (@ref
+ *    CommonBandVerdict::weak_silence) and still allowed to exonerate, so the
+ *    cost of trusting them is measured rather than assumed;
  *  - a silent pair whose IF-TD pair FLAGGED this epoch cannot exonerate.  This
  *    closes the EQUAL-COUNT trap: L1 and L2 slipping by the same integer leave
  *    MW(1,2) silent while the iono-free combination moves 0.107 m per cycle;
@@ -74,10 +90,27 @@ using CommonBandPair = std::pair<std::string, std::string>;
  * @ref iftd_flagged, which is the network POOLED decision and is previewed
  * serially just before the verdict.
  */
+/// What the MW detector did with one pair this epoch (from
+/// @c MwSlipDetector::getEpochPairStatus).
+struct CommonBandProcessed {
+    /// Arc sample count at the flag decision — the maturity gate's input.
+    int arc_n{ 0 };
+    /// The detector's own verdict.  Advisory only: the rule decides "flagged"
+    /// from the emitted @c MwSlipResult set, which is what the drains act on.
+    bool flagged{ false };
+    /// Detection threshold at that sample, in WIDE-LANE CYCLES.  A silence is
+    /// only as strong as this is small — a pair whose threshold stood at 8 WL
+    /// cycles did not exclude a 6-cycle slip, it merely failed to see one.
+    /// Non-finite when the sample left before a threshold existed.
+    double thresh_wl{ 0.0 };
+};
+
 struct CommonBandEvidence {
-    /// Affirmatively-clean (silent) MW pairs this epoch → that arc's sample
-    /// count.  From @c MwSlipDetector::getEpochCleanPairs / @c getEpochCleanArcN.
-    std::map<CommonBandPair, int> clean_pairs;
+    /// Every MW pair the detector PROCESSED a sample for this epoch.  The
+    /// silence source: a pair is silent iff it is here, mature, and absent from
+    /// @ref flagged_pairs.  NOT the cleanliness set — see @ref
+    /// MwSlipDetector::getEpochPairStatus for why that is the wrong instrument.
+    std::map<CommonBandPair, CommonBandProcessed> processed;
     /// MW pairs that FLAGGED this epoch — admitted to the refloat path OR
     /// dropped on the admission gate.  A dropped flag is still not silent.
     std::set<CommonBandPair> flagged_pairs;
@@ -116,7 +149,17 @@ struct CommonBandVerdict {
     int iftd_veto{ 0 };
     /// Silent pairs refused as exonerators for arc immaturity.
     int immature_pairs{ 0 };
+    /// Silent pairs whose detection threshold exceeded @ref kWeakSilenceWlCyc —
+    /// a silence that could not have excluded a slip of that size.  REPORTED,
+    /// never acted on: the pair still exonerates.  It is the honest measure of
+    /// how much of the narrowing rests on a threshold too loose to mean much.
+    int weak_silence{ 0 };
 };
+
+/// A silence is "weak" above this threshold, in wide-lane cycles.  6 cycles is
+/// the low end of the harness's injected slip sizes, so a pair whose gate stood
+/// above it did not exclude the event class the scope is responding to.
+inline constexpr double kWeakSilenceWlCyc = 6.0;
 
 /**
  * @brief The PURE rule of §14.2.
@@ -165,6 +208,7 @@ struct CommonBandEpoch {
     long long bands_kept{ 0 };        ///< Bands spared by a narrowed verdict (Σ|exonerated|).
     long long iftd_veto{ 0 };         ///< Silent pairs refused as exonerators by an IF-TD flag.
     long long immature_pairs{ 0 };    ///< Silent pairs refused as exonerators for arc age.
+    long long weak_silence{ 0 };      ///< Exonerating silences whose threshold exceeded 6 WL cycles.
     long long would_narrow{ 0 };      ///< Knob OFF: verdicts that WOULD have narrowed.
     /// @}
 
@@ -173,7 +217,7 @@ struct CommonBandEpoch {
         narrowed_at.clear();
         all.clear();
         verdicts = narrowed_n = all_no_exoneration = all_inconsistent = 0;
-        bands_kept = iftd_veto = immature_pairs = would_narrow = 0;
+        bands_kept = iftd_veto = immature_pairs = weak_silence = would_narrow = 0;
     }
 
     /**

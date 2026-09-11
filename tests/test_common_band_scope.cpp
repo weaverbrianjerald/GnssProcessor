@@ -40,18 +40,29 @@ constexpr int kMinArc = 10;
 /// A mature, settled arc — well clear of the maturity bar.
 constexpr int kMatureN = 87;
 
+/// A detection gate tight enough that the silence means something (WL cycles).
+constexpr double kTightThrWl = 3.1;
+
 const std::set<std::string> kTriple{ "L1C", "L2W", "L5Q" };
 
 CommonBandPair P(const std::string& a, const std::string& b) { return { a, b }; }
 
-/// Evidence for the common GPS triple-frequency shape: name the pairs that
-/// stayed SILENT (all mature at @p n) and the pairs that FIRED.
+/// Evidence for the common GPS triple-frequency shape.
+///
+/// EVERY named pair is one the detector PROCESSED this epoch — that is the
+/// silence source since iteration 2 — and the @p flagged list additionally
+/// emitted an MwSlipResult, so those are the pairs that are NOT silent.  A pair
+/// in neither list was not processed at all and cannot testify either way.
 CommonBandEvidence ev(std::initializer_list<CommonBandPair> silent,
                       std::initializer_list<CommonBandPair> flagged,
-                      int n = kMatureN) {
+                      int n = kMatureN, double thr_wl = kTightThrWl) {
     CommonBandEvidence e;
-    for (const auto& p : silent)  e.clean_pairs[p] = n;
-    for (const auto& p : flagged) e.flagged_pairs.insert(p);
+    for (const auto& p : silent)
+        e.processed[p] = CommonBandProcessed{ n, /*flagged=*/false, thr_wl };
+    for (const auto& p : flagged) {
+        e.processed[p] = CommonBandProcessed{ n, /*flagged=*/true, thr_wl };
+        e.flagged_pairs.insert(p);
+    }
     return e;
 }
 
@@ -134,14 +145,69 @@ TEST(CommonBandScopeRule, EqualCountL1L2VetoedByIfTd) {
 TEST(CommonBandScopeRule, ImmaturePairCannotExonerate) {
     const auto v = networkCommonBandVerdict(
         kTriple,
-        ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") },
-           /*n=*/kMinArc - 1),
+        ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") }, /*n=*/5),
         kMinArc);
     EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
     EXPECT_FALSE(v.narrowed);
     EXPECT_EQ(v.implicated, kTriple);
     EXPECT_EQ(v.immature_pairs, 1);
-    EXPECT_NE(v.basis.find("immature(n=9)"), std::string::npos);
+    EXPECT_NE(v.basis.find("immature(n=5)"), std::string::npos);
+}
+
+/// The positive half of the maturity gate, stated on its own: the SAME
+/// unflagged pair at n = 10 (the bar exactly) is silent and does exonerate.
+/// Iteration 1 read the cleanliness set here and this pair was never offered,
+/// which is why the rule never engaged on the sim.
+TEST(CommonBandScopeRule, UnflaggedMaturePairIsSilent) {
+    const auto v = networkCommonBandVerdict(
+        kTriple,
+        ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") },
+           /*n=*/kMinArc),
+        kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L5Q" }));
+    EXPECT_EQ(v.immature_pairs, 0);
+    EXPECT_NE(v.basis.find("silent(n=10,thr=3.1WL)"), std::string::npos);
+}
+
+/// A pair the detector never PROCESSED this epoch is not evidence of anything.
+/// Absence and silence are different facts, and only the second exonerates.
+TEST(CommonBandScopeRule, UnprocessedPairCannotExonerate) {
+    CommonBandEvidence e;
+    e.processed[P("L1C", "L5Q")] = CommonBandProcessed{ kMatureN, true, kTightThrWl };
+    e.processed[P("L2W", "L5Q")] = CommonBandProcessed{ kMatureN, true, kTightThrWl };
+    e.flagged_pairs = { P("L1C", "L5Q"), P("L2W", "L5Q") };
+    // (L1C,L2W) simply never appears — the arc was not sampled this epoch.
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_EQ(v.implicated, kTriple);
+    EXPECT_EQ(v.immature_pairs, 0);
+}
+
+/// A silence whose DETECTION THRESHOLD stood above 6 wide-lane cycles could not
+/// have excluded a 6-cycle slip.  It still exonerates — the rule is unchanged —
+/// but it is COUNTED, so the share of narrowing resting on a loose gate is
+/// measurable instead of assumed.
+TEST(CommonBandScopeRule, WeakSilenceExoneratesButIsCounted) {
+    const auto v = networkCommonBandVerdict(
+        kTriple,
+        ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") },
+           kMatureN, /*thr_wl=*/8.4),
+        kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L5Q" }));
+    EXPECT_EQ(v.weak_silence, 1);
+    EXPECT_NE(v.basis.find("thr=8.4WL"), std::string::npos);
+}
+
+/// ...and a tight one is not counted, so the counter tracks the gate and not
+/// merely the act of narrowing.
+TEST(CommonBandScopeRule, TightSilenceIsNotWeak) {
+    const auto v = networkCommonBandVerdict(
+        kTriple, ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") }),
+        kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v.weak_silence, 0);
 }
 
 /// §14.2 worked case 7 — (1,2) fires ALONE while (1,5) and (2,5) are both
@@ -195,14 +261,20 @@ TEST(CommonBandScopeRule, NoFlagIsNotAVerdict) {
     EXPECT_EQ(v.implicated, kTriple);
 }
 
-/// A pair the detector reported BOTH clean and flagged (defensive: the clean set
-/// excludes flagged arcs by construction) is not silent.  Belt and braces — the
-/// rule must stand on its own inputs.
-TEST(CommonBandScopeRule, FlaggedPairNeverExoneratesEvenIfAlsoListedClean) {
-    auto e = ev({ P("L1C", "L2W") }, { P("L1C", "L2W") });
+/// A processed pair that ALSO emitted an MwSlipResult is not silent.  The
+/// emitted set is the authority over the detector's advisory per-sample flag,
+/// because the emitted set is what the drains act on — a flag DROPPED on the
+/// admission gate never reaches a drain but is still not silence.
+TEST(CommonBandScopeRule, FlaggedPairNeverExoneratesEvenIfProcessedQuietly) {
+    CommonBandEvidence e;
+    // Processed, mature, and the per-sample flag says quiet — yet an
+    // MwSlipResult was emitted for it (the drop-on-admission population).
+    e.processed[P("L1C", "L2W")] = CommonBandProcessed{ kMatureN, false, kTightThrWl };
+    e.flagged_pairs = { P("L1C", "L2W") };
     const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
     EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
     EXPECT_EQ(v.implicated, kTriple);
+    EXPECT_TRUE(v.exonerated.empty());
 }
 
 /// Two tracked bands only (the dual-frequency posture): the pair IS the arc, so

@@ -1391,21 +1391,28 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
 
                         // COMMON-BAND SCOPE evidence (SPEC_event_harness §14).
                         // Collected KNOB-INDEPENDENTLY (invariant #4) from what
-                        // this station's detector already produced: the
-                        // affirmative-cleanliness set with each arc's sample
-                        // count, every flag (ADMITTED OR DROPPED — a dropped flag
-                        // is still not silent), and the receiver's own LLI bits.
+                        // this station's detector already produced: every arc it
+                        // PROCESSED a sample for with that sample's maturity and
+                        // threshold, every flag (ADMITTED OR DROPPED — a dropped
+                        // flag is still not silence), and the receiver's own LLI
+                        // bits.  The processed map, NOT getEpochCleanPairs: that
+                        // set answers TurboEdit's cleanliness question, whose
+                        // σ-awareness bar a narrow lane on a noisy bed never
+                        // meets (see MwSlipDetector::getEpochPairStatus).
                         // Per-station slot, no shared write.  The IF-TD half is
                         // a network-POOLED decision and is previewed serially in
                         // the verdict seam.
                         auto& cbev = pa.sta_cb_ev[i];
-                        const auto& cb_clean_n = st.mw_slip->getEpochCleanArcN();
-                        for (const auto& ckey : st.mw_slip->getEpochCleanPairs()) {
+                        for (const auto& [pkey, pst] : st.mw_slip->getEpochPairStatus()) {
                             std::string csat, cs1, cs2;
-                            if (!parseIfPairResetKey(ckey, csat, cs1, cs2)) continue;
-                            const auto nit = cb_clean_n.find(ckey);
-                            cbev[csat].clean_pairs[{cs1, cs2}] =
-                                (nit == cb_clean_n.end()) ? 0 : nit->second;
+                            if (!parseIfPairResetKey(pkey, csat, cs1, cs2)) continue;
+                            CommonBandProcessed cp;
+                            cp.arc_n     = pst.arc_n_at_sample;
+                            cp.flagged   = pst.flagged;
+                            cp.thresh_wl = (pst.lambda_wl > 0.0)
+                                               ? pst.thresh_m / pst.lambda_wl
+                                               : std::numeric_limits<double>::quiet_NaN();
+                            cbev[csat].processed[{cs1, cs2}] = cp;
                         }
                         for (const auto& r : mwr) {
                             if (r.sig1.empty() || r.sig2.empty()) continue;
@@ -1613,6 +1620,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         C.n_cb_bands_kept        += common_band.bands_kept;
         C.n_cb_iftd_veto         += common_band.iftd_veto;
         C.n_cb_immature_pairs    += common_band.immature_pairs;
+        C.n_cb_weak_silence      += common_band.weak_silence;
         C.n_cb_would_narrow      += common_band.would_narrow;
     }
     const CommonBandEpoch* common_band_ptr = common_band.armed ? &common_band : nullptr;
