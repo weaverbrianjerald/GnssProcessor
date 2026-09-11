@@ -2595,3 +2595,27 @@ by 60 %); its one defect is that it lets a satellite's references separate.
 Iteration 3's anchor clause is the fix for exactly that; its gates, against
 THIS arm: split share back to ≤ 10 %, T4 ≤ 78, consumer p50 ≤ 0.174 with the
 rms ≤ 0.324 kept, ZWD ≤ 0.0071, L1C ≥ 90 %, handovers below 305.
+
+### 14.8 Iteration 3 — the anchor clause puts the references back together (worker commit 5223dc6; exe `gnss_processor_cbscope3.exe` 776537A2…; 2026-09-11 ~12:35; manager re-grade)
+
+Change: when a verdict would narrow on an arc that anchors ANY family of the
+satellite, it does not — reason `anchor_colocate`, every band freed, so all
+of the satellite's families move together; plus the always-on
+`split_referenced_sats` mean / max in the run-end clause (validated against
+the trace-based census: 3.05 / 5 vs 3.0 / 5 on the anchor leg).  27 tests in
+three suites; suite 1853 / 0 / 17.
+
+| gate | result |
+|---|---|
+| G1 OFF byte-identity vs main | PASS, hashes identical to iterations 1–2 |
+| S21 leg identity | `cb_l5_g08_v3` ≡ `cb_l5_g08_v2` on all four artifacts (S21 anchors nothing; the clause did not touch it) |
+| the anchor leg S36/G04/L5Q −99 | v2: `keep implicated=L5Q` → ONE family handed over (G04_L5Q → S31); v3: `all reason=anchor_colocate` → **all three families handed to S31 in the same epoch**.  Local price of the co-located all-band free: slant iono 0.04 → 0.68 m, ZWD 2 → 13 mm at S36 (the §9 floor); clock quieter (0.030 → 0.021 m); consumer diff sub-mm in both |
+| G5 655-slip dose (`doseall_cb3`) | split-referenced satellites **4.79 / 7 per epoch = the no-scope baseline to two decimals** (iter. 1 10.61, iter. 2 17.00; manager re-grade 4.79 / 7, share 9.1 %); handovers back to 138 (124 continuous / 14 cold vs baseline 120 / 18); 36 anchor co-locates; per-slip level residual p50 0.033 / 0.036 / 0.030 cyc at +1 / +20 / +45 (iter. 2: 0.030 / 0.025 / 0.022; baseline 0.381 / 0.201 / 0.151 — still 5× better); **consumer the best of the four arms: ends 0.294 m (baseline 0.307, iter. 2 0.446), peak event−null −0.235 m (the dosed leg beating its null)**; T4 0; detector rows identical |
+
+The trade is now explicit and cheap: co-locating the references costs the
+§9 all-band floor at the anchor station for the 36 co-locates on the dose
+(~35 % on the per-slip median against iteration 2) and buys a coherent
+datum, a quieter clock and the consumer.  Final validation: ONE storm arm
+(`runs/golden_sim_campaign_zwdblk_cbscope3`, launched 12:35) against §14.7's
+gates — split ≤ 10 %, T4 ≤ 78, consumer p50 ≤ 0.174 with rms ≤ 0.324, ZWD ≤
+0.0071, L1C ≥ 90 %, handovers < 305.
