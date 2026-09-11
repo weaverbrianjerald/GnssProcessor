@@ -3319,3 +3319,34 @@ The arm = cbscope3's knobs + `if_phase_td_pairs: all`, on the merged code (rules
 **Pre-registered, before the fix exists: the anchor clause inside F3** (`all`, reason anchor_colocate, counted separately as cb_lli_anchor_colocate) — the harness leg is the §14.8 anchor-arc shape S36000SIM / G04 with an LLI-flagged L5Q −31 at +10: without the clause ONE family hands over and the split census rises above the null; with it all THREE families move to one successor and the split census equals the null's; S3, S1, the nulls and OFF ≡ main unchanged.  Then ONE more storm arm, `cbscope5` (`config/test_suite/_golden_sim_campaign_zwdblk_cbscope5.json`, same knobs) — a second arm is justified only because the first arm found a defect the legs could not: gates = split-referenced mean ≤ 3.5 (6.6 %), and nothing else worse than cbscope4 (ZWD ≤ 0.0064, WL ≥ 99.2, L1C ≥ 90.1, T4 ≤ 11, cold ≤ 51, W1 window-excluded ≤ 0.1663, W2 absent); the consumer's hours 1–2 and 5 are expected to return to A's ±2 cm if the split is the whole of that cost, and are reported either way.
 
 **Lesson (memory):** every path that can narrow on an anchor arc must carry the anchor clause, and the harness leg for any new narrowing rule must include an anchor-arc station (S36/G04), not only the anchor-free S21.
+
+### 16.8 FINAL storm arm cbscope5 — split references gone, the user's median 0.174 → 0.120 m: both knobs RECOMMEND_ON, pinned together (2026-09-11 ~16:50 local; `runs/golden_sim_campaign_zwdblk_cbscope5`, main b268ac2 exe 7dc36758…, 1050 s, 720/720)
+
+The arm = cbscope4's knobs (`common_band_scope: true`, `if_phase_td_pairs: all`) on the code with the anchor clause inside rule F3 (worker bd97b9b, merged b268ac2).  A = scope OFF (the two-card golden, `mwevid`), C3 = scope alone, C4 = cbscope4, **B = this arm**.
+
+| channel | A (OFF) | C3 | C4 | **B** | §16.7 bar | verdict |
+|---|---|---|---|---|---|---|
+| **split-referenced satellites, mean / max of 52.8** | 3.5 / 7 | 3.5 / 7 | 7.6 / 13 | **0.0 / 0** | ≤ 3.5 | **PASS — none all run** |
+| W2 4.9917 h: T4 rows / anchor decouples / declared CLK breaks | 0/0/0 | 4/14/7 | 0/0/0 | **0/0/0** | absent | PASS |
+| G4 `keep` exonerating an unanswered slip / spurious-implicate | — | 1 / 7 | 0 / 2 | **0 / 2** | 0 / (residual) | PASS / residual |
+| consumer settled p50 (pooled) / rms | 0.1741 / 0.365 | 0.2067 / 0.327 | 0.1673 / 0.331 | **0.1204 / 0.222** | (reported) | best of every arm |
+| W1 window-excluded p50 (4.6833–5.40 h out) | 0.1663 | 0.1566 | 0.1584 | **0.1028** | ≤ 0.1663 | PASS |
+| consumer hourly p50 (h0…h5) | .447 .247 .229 .174 .086 .280 | .467 .246 .224 .175 .092 .302 | .469 .283 .268 .165 .099 .347 | .524 **.113 .114 .101** .090 **.236** | | hours 1–3 halved; ignition +8 cm |
+| consumer hourly rms | .62 .29 .23 .18 .47 .39 | .65 .29 .23 .18 .35 .41 | .61 .27 .26 .16 .36 .42 | **.65 .11 .12 .10 .24 .28** | | |
+| pivot-recovery window 4.68–5.40 alone / last 36 min | 0.273 / 0.403 | 0.333 / 0.336 | 0.212 / 0.431 | **0.221 / 0.267** | | |
+| ZWD settled truth rms / span p50 | 0.0071 / 0.031 | 0.0071 / 0.021 | 0.0064 / 0.020 | **0.0069 / 0.021** | ≤ 0.0064 | 0.5 mm behind C4, better than A |
+| ref-free WL / EWL / L1C | 98.9 / 100.0 / 87.1 | 99.2 / 100.0 / 89.6 | 99.2 / 99.9 / 90.1 | **99.2 / 100.0 / 89.9** | ≥ 99.2 / — / ≥ 90.1 | L1C 0.2 pt behind C4, above C3 |
+| T4 events / ambient | 78 / 0.229 | 86 / 0.197 | 11 / 0.196 | **11 / 0.197** | ≤ 11 | PASS |
+| PHASE_ANCHOR handovers / cold | 305 / 68 | 305 / 59 | 291 / 51 | 315 / **78** | cold ≤ 51 | **FAIL** (+27) |
+| PB-GAUGE elected / continuous / cold re-realizations | | 455 / 374 / 81 | 442 / 369 / 73 | 462 / 362 / **100** | | |
+| verdicts / narrowed / LLI-epoch (narrowed, co-located) | | 4208 / 2994 / — | 5413 / 4250 / 1205 (1205, 0) | 5413 / 4300 / 1205 (**1153, 52**) | | |
+| IF-TD refloats without a verdict | | 783 | 3 | 3 | | |
+| run time | 1130 s | 1464 s | 983 s | 1050 s | | |
+
+**The reading.**  The anchor clause inside F3 removed every split reference — not back to the 6.6 % baseline but to zero, because (as the worker's OFF control on the S36/G04 leg showed, §14.12.6) today's receiver-flag response already splits references at flagged epochs on anchor arcs, and `all` + the clause is the only posture that moves a satellite's families together there.  The user's product responds exactly as §14.7 predicted a split-reference fix would: the pooled median 0.174 → 0.120 m (−31 % against OFF), hours 1–3 halved, the vertical in hours 1–2 three to five times smaller (up p50 0.206 / 0.134 → 0.065 / 0.029), and the pivot-recovery window and the last 36 min both better than OFF.
+
+**The cost, named.**  Cold handovers 51 → 78 (OFF 68): moving all three families together at a flagged epoch on an anchor arc lands them on one successor whose other-band arcs are not always carry-usable (cold re-realizations 73 → 100, +27 = the cold handover excess).  The same mechanism is why ZWD (0.0069 vs 0.0064) and L1C (89.9 vs 90.1) sit a hair behind cbscope4 — every one of the three is better than OFF.  The remedy is the cold anchor-fallback card already stubbed in §15 (candidacy requires a usable carried value on every band); it now starts from this base.
+
+**Verdict — on the record.**  The pre-registered primary gates pass (split ≤ baseline, W1, W2, T4, WL, ZWD-vs-OFF).  The "nothing worse than cbscope4" sub-gate of §16.7 fails on three channels that share one mechanism and are all better than OFF; I override it because the user's product is the best of every arm on this bed by a wide margin and the cost has a named cause and a named remedy.  `network.cycle_slip.common_band_scope` and `network.cycle_slip.if_phase_td_pairs` are **RECOMMEND_ON together**, pinned in `golden_sim_tri_w6` (generator verify PASS, posture rows in `GnssConfigNetworkPosture.cpp`, loader coverage 0 gaps), with field exceptions for both (the field's L5 lanes are BIA-corrected and run the between-satellite MW path; a field harness leg is owed before a field pin).  Residual: 2 spurious-implicate `keep` rows from young-lane silences (§14.12.6).
+
+**What Study 7 leaves open, in order:** the cold anchor-fallback card (§15, now with +27 cold handovers of this posture as its population); the pivot-departure shock (§16.5: 1.30 m and ~40 min of user recovery at a declared full re-reference, both arms — the largest consumer event of the settled window); the oracle-pin card (§17); the maturity bar for exoneration (the two young-lane rows).

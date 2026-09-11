@@ -179,6 +179,20 @@ namespace GnssProcessor {
               "0.15 on a 5.86 m lane, and dropped correct 99-cycle flags at 78x threshold with no "
               "counter, SPEC_event_harness s13); storm bed with the anchor handover ZWD 0.046 -> "
               "0.007 m, consumer p50 0.28 -> 0.17 m, T4 306 -> 78, WL 98.9 %" },
+            { network_phase_leveling_ && network_cycle_slip_mw_detect_,
+              nc.cycle_slip_common_band_scope,
+              Tier::ON, false, "network.cycle_slip.common_band_scope",
+              "free only the band the MW evidence names: a silent, mature pair exonerates its bands unless "
+              "IF-TD flagged it, LLI is set, or the pair is in the LLI shadow (rule F2); the anchor clause keeps "
+              "a satellite's references co-located; the LLI-epoch verdict (rule F3) scopes every drain to the "
+              "receiver's bits (SPEC_event_harness s14, s16): single-band legs 24-300x lower level residual, "
+              "nine cold handovers made continuous on the storm bed; STORM BED, FINAL ARM (runs/golden_sim_campaign_zwdblk_cbscope5 = common_band_scope true + if_phase_td_pairs all on main b268ac2 with rules F2, F3 and " },
+            { network_phase_leveling_ && network_cycle_slip_mw_detect_,
+              nc.cycle_slip_if_phase_td_pairs == NetworkIfPhaseTdPairs::All,
+              Tier::ON, false, "network.cycle_slip.if_phase_td_pairs",
+              "an IF-TD pair behind EVERY MW lane (per-pair pools, shared reference arm) so the common-band "
+              "verdict can veto an equal-count silence on any pair, not only the first (SPEC_event_harness "
+              "s14.10, s16): the same-epoch trap S2 vetoed exactly, inert on a single-band slip; STORM BED, FINAL ARM (runs/golden_sim_campaign_zwdblk_cbscope5 = common_band_scope true + if_phase_td_pairs all on main b268ac2 with rules F2, F3 and " },
             { true,
               network_disc_threshold_frac_cycles_ >= 0.24 && network_disc_threshold_frac_cycles_ <= 0.26,
               Tier::ON, false, "network.disc_threshold_frac_cycles",
