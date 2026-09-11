@@ -2264,3 +2264,86 @@ cold fallbacks; (c) the IF-TD second pair; (d) the warm-up erase-and-re-init
 limit cycle (priced at ~8e-4 per lane-epoch, §13.4); (e) the BSSD L1/L2
 pivot-change artifact (8 arcs' MW histories erased at one station in one
 epoch).
+
+## 14. Study 6 — the COMMON-BAND scope: free only the band the evidence names (2026-09-11)
+
+### 14.1 The question, the population, what is already known
+
+A single-band slip on a triple-frequency arc moves every MW pair that contains
+the band: an L5 slip fires (1,5) and (2,5) and leaves (1,2) silent.  The drain
+refloats each firing pair's TWO bands, so the union is all three — an all-band
+free, the §9 floor (0.45–0.65 cyc for 45 epochs at low elevation, slant iono
+−0.08 m), for a slip that touched one band.  On the storm bed the run-end
+clause reads 2 278 evidence admissions for 1 020 rows and 4 570 legacy
+admissions: most slips fire two lanes, so most responses are all-band.  The
+band-scope card of Study 3 (`refloat_band_scope: implicated`) tried to pick
+the band from the MW/GF DECOMPOSITION and was falsified on the storm bed —
+its fallback ran as "keep L1C whatever happened to it" 1 091 times and
+collapsed the integers.  This card uses a different, set-theoretic piece of
+evidence: **a silent, mature pair exonerates both of its bands**; a band is
+implicated when no silent pair contains it.  Narrowing needs POSITIVE
+exoneration; without it the response is today's.
+
+### 14.2 The rule (pre-registered)
+
+Per (station, satellite, epoch), tracked phase bands B (2 or 3):
+
+- MW pair p is **silent** iff its arc was evaluated this epoch, is mature
+  (arc count ≥ `common_band_min_arc_epochs`, 10) and did not flag — the
+  detector's `getEpochCleanPairs()` set, with the maturity guard added if it
+  is not already implied.  A flagged pair (admitted or dropped), an immature
+  or absent pair is NOT silent.
+- If the IF-TD detector evaluated the pair (GPS: L1C;L2W; Galileo: L1C;L5Q)
+  and FLAGGED it this epoch, that pair cannot exonerate (closes the
+  equal-count trap: L1 and L2 slipping by the same integer leave MW(1,2)
+  silent but move the iono-free combination by 0.107 m per cycle).
+- A band with a loss-of-lock flag set is implicated regardless.
+- **exonerated(b) ⇔ no LLI on b ∧ ∃ silent pair p ∋ b (with IF-TD on p not
+  flagged).  implicated = B \ exonerated.**
+- Fallbacks to TODAY'S response (free every band any drain would have freed):
+  no MW pair fired; implicated = ∅ although a pair fired (inconsistent
+  evidence); implicated = B (nothing exonerated).
+- The verdict is formed ONCE per epoch before the drains and governs every
+  drain for that (station, satellite): the MW refloat, the LLI free and the
+  IF-TD pair refloat each free (their bands ∩ implicated); the per-epoch
+  union is therefore exactly `implicated` (Study 3's per-epoch invariant).
+
+Worked cases: L5 slip → {L5Q}; L1 slip → {L1C} (IF-TD fires on (1,2) but
+(2,5) silent exonerates L2 and L5); L2 slip → {L2W}; two bands by different
+counts → all pairs fire → all (today); equal-count L1+L2 → (1,2) silent but
+IF-TD(1,2) fires → nothing exonerated → all (today); a pair in warm-up cannot
+exonerate → all (today); (1,2) fires alone with (1,5) and (2,5) silent →
+implicated = ∅ → inconsistent → today.
+
+### 14.3 Pre-registered legs and gates (knob `network.cycle_slip.common_band_scope`, default OFF)
+
+Quiet seed ep0665, event at +10, 70 epochs, station **S21000SIM** (anchors no
+family, so the refloat alone acts and the handover is not in the picture),
+satellites from its solved GPS set with DD chords: **G08 (46°)** and **G10
+(15°)**.  Every leg arms `anchor_slip_handover`, `mw_evidence_refloat` and the
+scope knob explicitly (make-leg inherits the seed's config, which predates
+all three).  Each leg vs its own knob-matched null.
+
+| leg | event | expectation with the scope (vs today) |
+|---|---|---|
+| E1 `cb_l5_g08`, `cb_l5_g10` | L5Q +40, no flag | today all 3 bands freed (MW (1,5)+(2,5)); scope → `implicated=L5Q`; per-band level residual at +14..+45 falls from the §9 floor to ≲ 0.05 cyc, slant-iono step → ≲ 0.01 m |
+| E2 `cb_l1_g08` | L1C +40, no flag | today all 3 (MW (1,2)+(1,5), IF-TD (1,2)); scope → {L1C} |
+| E3 `cb_l2_g08` | L2W +40, no flag | today all 3; scope → {L2W} |
+| E4 control `cb_all_g08` | L1C +40, L2W +31, L5Q +30 in one epoch, no flag | all pairs fire → all implicated → **byte-identical to the knob-OFF leg** |
+| E5 control `cb_eq12_g08` | L1C +20 and L2W +20, no flag | MW(1,2) silent, IF-TD(1,2) flags → nothing exonerated → all bands; the verdict row must name `iftd(1,2)=flagged` |
+| E6 `cb_lli5_g08` | L5Q +40 WITH the flag | LLI path; scope → {L5Q} (L1/L2 exonerated by silent (1,2)) |
+
+Gates: **G1** knob-OFF null byte-identical to `runs/evleg_null_mwevid_main`;
+**G2** E1–E3, E6 narrowed as expected AND per-band level residual at +45
+better than the knob-OFF twin by ≥ 3× (event_frame_grade L1_d/L2_d/L5_d),
+slant iono within 2× the null floor; **G3** E4 byte-identical, E5 not
+narrowed; **G4** quiet 240-ep null with the knob: 0 narrowed verdicts unless
+a real detection, artifacts byte-identical to `null240_evid`; **G5** the
+655-slip dose (`doseall_evid` events + scope, matched null): levels `all_d`
+/ `oth_d` and the per-slip residual table improve, consumer and wire not
+worse, T4 ≤ 0 (stays 0), handovers FALL (only the slipped band's family moves);
+**G6** storm bed (`_golden_sim_campaign_zwdblk_mwevid` + scope, manager):
+consumer p50 ≤ 0.15 (from 0.174), rms ≤ 0.35, ZWD ≤ 0.01, T4 ≤ 78, L1C
+ref-free ≥ 90 % (from 87.1), WL ≥ 98.9 %, cold fallbacks < 68.  A T4 count
+ABOVE 78 on the storm bed is the falsifier: a wrongly exonerated band shows
+up post-fit at that arc.
