@@ -164,6 +164,13 @@ namespace GnssProcessor {
               Tier::ON, false, "network.cycle_slip.mw_detect",
               "the robust coarse detector (WL+LLI, no a-priori position); zero-q alone locked a "
               "wrong integer, rms_clock 2 -> 7-8 m" },
+            { network_phase_leveling_ && network_phase_datum_prioritized_,
+              nc.cycle_slip_anchor_slip_handover,
+              Tier::ON, false, "network.cycle_slip.anchor_slip_handover",
+              "hand a phase-bias family over CONTINUOUSLY in the epoch a slip response frees its "
+              "anchor arc (the sticky election otherwise re-realizes the family from the freed "
+              "arc: the gauge engine of the storm-bed plateau, SPEC_event_harness s12); storm bed "
+              "ZWD 1.19 -> 0.05 m, consumer p50 1.09 -> 0.28 m, T4 9,871 -> 306, WL 86 -> 98 %" },
             { true,
               network_disc_threshold_frac_cycles_ >= 0.24 && network_disc_threshold_frac_cycles_ <= 0.26,
               Tier::ON, false, "network.disc_threshold_frac_cycles",

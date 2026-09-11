@@ -2000,3 +2000,41 @@ invisible to the outlier tier and gets charged to the station's other arcs;
 when a station-wide burst lands on a station that anchors families, test (or
 hand over) the anchor arcs before erasing anything else.
 
+### 12.13 STORM-BED VALIDATION — the plateau is gone (2026-09-10, 23:30 local; `runs/golden_sim_campaign_zwdblk_ancho`)
+
+The user directive reserves the day-long bed for the final validation of a fix
+whose event-level behaviour is understood.  One arm: the in-block control
+config plus `network.cycle_slip.anchor_slip_handover: true`, cold start on the
+slipped campaign fixture, 6 h × 60 stations, exe 204736F4… (the merged card),
+1006 s wall, 720/720 emitted.  `scripts/simnet_storm_grade.py`:
+
+| gate quantity | control (`golden_sim_campaign_zwdblk`) | **with the card** | gate |
+|---|---|---|---|
+| settled ZWD truth rms | 1.188 m | **0.046 m** | ≤ 0.5 **PASS** (the quiet golden reads 0.076) |
+| ZWD hourly rms | 1.98 / 1.31 / 0.96 / 0.58 / 1.05 / 1.67 | 0.21 / 0.02 / 0.01 / 0.04 / 0.07 / 0.02 | — |
+| per-station ZWD span p50 / stations > 1 m | 0.207 m / 15 | **0.031 m / 0** | — |
+| consumer settled p50 / rms | 1.085 / 2.389 m | **0.278 / 0.761 m** | p50 ≤ 0.6 **PASS** |
+| consumer hourly rms | 1.59 / 2.19 / 1.56 / 1.03 / 2.55 / 3.09 | 1.12 / 0.34 / 0.33 / 0.22 / 1.04 / 0.78 | — |
+| T4 attribution events / erased-arc ratio | 9 871 / 2.17 | **306 / 1.34** | must fall: **PASS** (−97 %) |
+| T4 ambient per-band DD error | 1.6 cyc | **0.26 cyc** | — |
+| ref-free WL / EWL / L1C at own integer | 86.2 / 99.2 / 44.0 % | **98.1 / 99.8 / 81.1 %** | WL ≥ 83 **PASS** |
+| CLK-R drained / max A_c | 41.5 / 25.6 m | 4.2 / 0.3 m | — |
+| detector events | 4 545 | 4 545 | unchanged (same slips caught) |
+| anchor-slip handovers | — | 261 (211 continuous / 50 cold fallback) | — |
+
+Every pre-registered gate passes, most by an order of magnitude.  The ZWD sink
+that opened this campaign (§0 of `project_zwd_sink_census`: 1.2 m in-block,
+2.1 m before) is closed to 4.6 cm — below the quiet bed's own 7.6 cm — and the
+wide-lane integers, which the storm bed had never held above 86 %, sit at 98 %.
+What remains: the consumer's hour-5/6 bump (1.04 / 0.78 m rms against 0.2–0.3
+in hours 2–4) and its 0.28 m median against the quiet bed's 0.05 — the §12.12
+detector-coverage item (an undetected L5 slip on an anchor arc wrecks a
+station) and the 50 cold fallbacks are the two named candidates; both are
+harness questions, not storm questions.
+
+**Ledger:** `network.cycle_slip.anchor_slip_handover` → **RECOMMEND_ON**, regime
+`on(phase_leveling) and on(phase_datum_prioritized)`, pinned in the sim golden
+(`golden_manifest.json`; the field golden is out of regime on its
+carry_invariant vehicle — its leveling posture inherits the pin when it lands).
+`make_golden_config.py --verify` PASS (51 armed on the sim golden).
+
