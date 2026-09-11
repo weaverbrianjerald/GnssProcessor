@@ -2385,3 +2385,54 @@ cold count falls from 68 to ≤ 25 (the cold-start 21 remain), continuous
 handovers land on arcs of age ≥ 60, consumer / ZWD / T4 not worse than §13.6;
 the harness leg is the §12.7 single-event anchor slip at a station whose
 satellite has a young low successor and a mature high one available.
+
+### 14.4 Iteration 1 — the rule is right, the evidence source was wrong (worker build 5fe64c7 on its worktree; 2026-09-11 ~11:00)
+
+Built as specified: `include/slip/NetworkCommonBandScope.hpp` +
+`src/core/slip/NetworkCommonBandScope.cpp` (the verdict seam, called before
+`networkSlipDrainMwRefloat`), knob + `common_band_min_arc_epochs`, counters,
+`T0_band_scope` rows (`keep` for a narrowed verdict, `all` with a reason for a
+fallback when a pair fired), run-end clause with `would-narrow`, 17 tests
+(suite 1843 / 0 / 17), `event_leg.py --extra`.  One shared-path edit: the
+IF-TD driver's pooled centre / scale / shrinkage were factored into
+`ifTdPoolStats` + `ifTdShrunkScale` so the verdict's read-only IF-TD flag
+preview cannot drift from the decision it previews — certified by G1.
+
+| gate | result |
+|---|---|
+| G1 OFF byte-identity vs main's `gnss_processor_mwevid_main.exe` | **PASS** (products / solution / events / ZWD identical) |
+| G2 E1–E3, E6 | **no narrowing** — every verdict `all reason=no_exoneration`; ON ≡ OFF digit-for-digit on every graded channel |
+| G3 E4 three-band | PASS: products / solution / ZWD identical, events differ only by the new rows.  E5 equal-count: all-band, but `cb_iftd_veto` = 0 — MW(1,2) never entered the clean set, so the trap could not arise |
+| G4 quiet 240-ep null ON vs `null240_evid` | DIFFERS: 519 verdicts, 38 narrowed (2 on acting detections), first divergence a 0.2 mm clock at 284100 → knob-on nulls for knob-on legs |
+| G5 655-slip dose (`doseall_cb` vs `doseall_evid`, each vs its null) | levels BETTER everywhere: per-slip residual p50 at +1 0.381 → 0.199 cyc, at +45 0.151 → 0.127; other arcs of the dosed station −0.049 → +0.002; iono diff 0.019 → 0.006; handovers 138 → 116 (cold 18 → 15); T4 0 → 0; wire 0.0088 → 0.0086; detector rows identical.  Consumer: mid-leg diff 0.34 → 0.66 m peak, last bin −0.09 → −0.14 m |
+
+**Why nothing narrowed on the harness.**  The verdict took its silence from
+`getEpochCleanPairs()`, which admits an arc only under two wavelength-
+proportional bars (3σ ≤ 0.7 λ_WL, |dev| ≤ 0.3 λ_WL) — a TurboEdit-grade
+"affirmatively clean" test.  On this bed the narrow lanes never meet it:
+measured MW scatter (`network_slip_raw.csv`, arcs ≥ 20 samples) L1C+L2W σ_MAD
+p50 0.414 m against its bar 0.201 m; L1C+L5Q 0.406 m against 0.175 m.  Only
+the extra-wide lanes (L2W+L5Q bar 1.37 m, L7Q+L5Q 2.28 m) ever qualify, so
+the only exonerators were (2,5) and (5,7) and the only narrowing shape was
+"free L1C, keep L2W and L5Q" (869 of 871 narrowings on the dose; 99.8 % of
+exonerations from one lane).  An L5 slip — the case that motivated the card —
+cannot be narrowed at all under that source.  **Iteration 2 (sent): silence =
+the pair was evaluated this epoch, its arc count ≥ 10, and it did not flag —
+the detector's own decision, not the cleanliness bar; the IF-TD veto stays.**
+The basis string will carry the silent pair's threshold in WL cycles, because
+on this bed the narrow lanes' thresholds run 3–11 WL cycles (the sim's code
+noise is ~5× the field's), so a narrow lane's silence excludes only slips
+above that; with three lanes plus IF-TD, a single missed lane produces an
+INCONSISTENT verdict (every band sits in two lanes) and falls back to all, so
+a wrong narrowing needs two lanes to miss the same slip — the storm bed's
+T4 count is the guard for that.
+
+**The consumer mid-leg regression is path sensitivity, not quality.**  The
+consumer replays COLD from the leg start (n_sats 14–17, no fixes, absolute
+error 1.7 m at +0 falling to 0.3–0.4 m by +240 on every leg); its event−null
+difference over +20..+120 is two still-converging float solutions on
+slightly different wires, and it ends better with the scope (−0.14 vs
+−0.09 m).  The storm bed's settled consumer statistics decide the consumer;
+the dose leg's honest metric is the producer-side level channels, which
+improved.  Iteration-1 storm arm `runs/golden_sim_campaign_zwdblk_cbscope`
+launched for the T4 guard and the settled consumer under L1-only narrowing.
