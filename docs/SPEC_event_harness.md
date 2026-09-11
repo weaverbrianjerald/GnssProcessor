@@ -3191,3 +3191,33 @@ Leg S3 (LLI-flagged L5Q −31 at +10, nothing else), refined expectation: ON wit
 **What the columns decide.**  `all` = the ceiling of what integer information buys on this bed — prices user-side AR and atmosphere constraints in one leg, and tests the standing root-cause (`project_why_non_integer_rootcause`: 99.3 % ionosphere): iono snapping to the phase floor CONFIRMS it and points the fix at integer information; iono staying wrong FALSIFIES it and names another sink.  The partial columns are the coupling map: where a pinned band's or station's former error lands.
 
 **Gates:** G1 OFF byte-identical (the knob absent → no code path touched); G2 actuation (pinned DDs read integer to < 0.01 cyc at +1); G3 the six-column table with every cell from a truth grader, never a raw wire step (Psychas); G4 the slipped-seed repeat holds the pin through ≥ 1 truth slip on a pinned arc.
+
+### 16.7 Storm arm cbscope4 — the fallout is gone, and the arm found the one clause F3 lacked (2026-09-11 ~16:05 local; `runs/golden_sim_campaign_zwdblk_cbscope4`, main bbc8273 exe 2d499e97…, 983 s, 720/720; graded with `scripts/ev_study7_gates.py` and `simnet_storm_grade.py`)
+
+The arm = cbscope3's knobs + `if_phase_td_pairs: all`, on the merged code (rules F2 and F3 live under `common_band_scope`).  A = scope OFF (`mwevid`), C = cbscope3, B = this arm.
+
+| gate | A | C | **B** | bar | verdict |
+|---|---|---|---|---|---|
+| W2 T4 rows at 4.9917 h / clock-anchor decouples / declared CLK breaks | 0 / 0 / 0 | 4 / 14 / 7 | **0 / 0 / 0** | absent | **PASS** |
+| G4 `keep` rows exonerating an UNANSWERED slip | — | 1 | **0** | 0 | **PASS** |
+| G4 spurious-implicate `keep` rows (±60 s criterion) | — | 7 | **2** | 0 | residual (young-lane silences, below) |
+| W1 settled p50, pivot-recovery window 4.6833–5.40 h excluded | 0.1663 | 0.1566 | **0.1584** | ≤ 0.1663 | PASS |
+| W1 3.0–4.68 h p50 | 0.1091 | 0.1127 | 0.1170 | ±5 mm of A | miss by 3 mm |
+| pooled settled p50 / rms (reported) | 0.1741 / 0.365 | 0.2067 / 0.327 | **0.1673 / 0.331** | (§14.3's ≤ 0.174) | (passes even the original bar) |
+| consumer hourly p50 | .447 .247 .229 .174 .086 .280 | .467 .246 .224 .175 .092 .302 | .469 **.283 .268** .165 .099 **.347** | | hours 1–2 and 5 worse |
+| W3 ZWD settled truth rms | 0.0071 | 0.0071 | **0.0064** | ≤ 0.0071 | PASS |
+| W3 WL / EWL / L1C ref-free | 98.9 / 100.0 / 87.1 | 99.2 / 100.0 / 89.6 | **99.2 / 99.9 / 90.1** | ≥ 99.2 / — / ≥ 89.6 | PASS |
+| W3 T4 events / ambient | 78 / 0.229 | 86 / 0.197 | **11 / 0.196** | ≤ 86 | PASS |
+| W3 handovers (PHASE_ANCHOR rows) / cold | 305 / 68 | 305 / 59 | 291 / **51** | cold ≤ 59 | PASS |
+| **W3 split-referenced satellites, mean / max of 52.8** | (3.5) | 3.5 / 7 (6.6 %) | **7.6 / 13 (14.4 %)** | 6.6 % | **FAIL** |
+| IF-TD pair flags (first pair / new pairs) | | 933 + 1578 | + 640 / 939 / 657 | | = the truth slip counts per band, no false-alarm excess |
+| IF-TD refloats without any verdict at that epoch | | 783 | **3** | | F3 scopes them |
+| run time | 1130 s | 1464 s | 983 s | | fewer outlier iterations |
+
+**The defect, located.**  Single-family anchor handovers 57 (C) → 103 (B); 49 of the new ones sit on an arc that carried an `rule=lli_epoch` verdict in that epoch; the normal path's `keep` rows produce 0 single-family handovers in either arm.  F3 narrows at a receiver-flagged epoch WITHOUT the §14.5 anchor clause, so on an arc that anchors a family the flagged band's family hands over alone and the satellite's references split — iteration 2's defect (§14.5–14.7, split 9 → 44 % without the clause) re-entered through one rule at a lower rate.  The S3 leg could not see it: S21000SIM anchors nothing.  The consumer's residual hourly costs (hours 1–2 +3.5–4 cm, hour 5 +6.7 cm against OFF) are what a split reference does to a user — the inter-frequency inconsistency the per-band producer grades cannot see (§14.7) — and the pooled median improved anyway because the 4.99 h fallout, the larger term, is gone.
+
+**Residual, recorded not fixed:** 2 spurious-implicate `keep` rows — S31/G18 3.675 h (`mw(L1C+L5Q)silent(n=36;thr=10.6WL)`) and S27/E30 5.2333 h (`mw(L5Q+L7Q)silent(n=10;thr=1.2WL)`, the lane exactly at the maturity bar) — young-lane silences, not the shadow; the maturity bar (10 samples) is the lever if they ever matter.
+
+**Pre-registered, before the fix exists: the anchor clause inside F3** (`all`, reason anchor_colocate, counted separately as cb_lli_anchor_colocate) — the harness leg is the §14.8 anchor-arc shape S36000SIM / G04 with an LLI-flagged L5Q −31 at +10: without the clause ONE family hands over and the split census rises above the null; with it all THREE families move to one successor and the split census equals the null's; S3, S1, the nulls and OFF ≡ main unchanged.  Then ONE more storm arm, `cbscope5` (`config/test_suite/_golden_sim_campaign_zwdblk_cbscope5.json`, same knobs) — a second arm is justified only because the first arm found a defect the legs could not: gates = split-referenced mean ≤ 3.5 (6.6 %), and nothing else worse than cbscope4 (ZWD ≤ 0.0064, WL ≥ 99.2, L1C ≥ 90.1, T4 ≤ 11, cold ≤ 51, W1 window-excluded ≤ 0.1663, W2 absent); the consumer's hours 1–2 and 5 are expected to return to A's ±2 cm if the split is the whole of that cost, and are reported either way.
+
+**Lesson (memory):** every path that can narrow on an anchor arc must carry the anchor clause, and the harness leg for any new narrowing rule must include an anchor-arc station (S36/G04), not only the anchor-free S21.
