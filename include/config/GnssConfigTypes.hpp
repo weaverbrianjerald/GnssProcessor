@@ -1343,6 +1343,28 @@ namespace GnssProcessor {
         /// it changes what a run DOES after a slip, never the meaning of the state
         /// a snapshot restores.
         bool cycle_slip_anchor_slip_handover{ false };
+        /// MW EVIDENCE REFLOAT: admit a DETECT-ONLY MW wide-lane flag to the PASS-A
+        /// refloat path on the strength of the DETECTION (how far above its own
+        /// adaptive threshold the step stood, on a mature bias-free lane) rather
+        /// than on the cleanliness of an integer the consumer never applies.  The
+        /// legacy admission re-uses the T0 REPAIR gate (known integer, rounding
+        /// residual <= turbo_edit_frac_max), which measurably drops real slips: a
+        /// -99 cycle L5 step flagged at 78x threshold with a 0.183 cycle residual
+        /// (1.07 m on a 5.86 m lane — inside the lane's own 1 sigma) was refused.
+        /// Default @c false is byte-identical; the counters are collected either
+        /// way so an OFF run reports what the rule WOULD have admitted.
+        /// SOLVE-AFFECTING when armed, fingerprint-EXEMPT (forward-only RESPONSE
+        /// knob, the relevel_free_epoch / anchor_slip_handover class).
+        bool cycle_slip_mw_evidence_refloat{ false };
+        /// Evidence gate: the flag's |deviation| / threshold must reach this.  3.0
+        /// is the value the false-alarm census was taken at — every mature
+        /// bias-free detection at or above it on a quiet 240-epoch 60-station leg
+        /// was a real slip.
+        double cycle_slip_mw_evidence_ratio_min{ 3.0 };
+        /// Evidence gate: the arc's sample count at the flag must reach this.
+        /// Young arcs have no established level, so their "deviation" is measured
+        /// against a threshold that is itself still converging.
+        int cycle_slip_mw_evidence_min_arc_epochs{ 10 };
         int    trace_dd_fractional_epoch_stride{ 1 };  ///< T2e: write @c network_dd_fractional.csv only every Nth PROCESSED epoch (1 = every epoch = current).  Fraction statistics don't need every epoch; combines with @ref trace_dd_fractional_max_pairs to make a traced convergence run affordable.  TRACE-ONLY (never folded into the warm-resume fingerprint).  Inert unless @ref trace_dd_fractional.
         /// S1: emit @c network_phase_anchor.csv — per PROCESSED epoch, one row per
         /// GAUGE-PINNED ambiguity as (week,tow,cons,signal,sat,anchor_sta), i.e. WHICH

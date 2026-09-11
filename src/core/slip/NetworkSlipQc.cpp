@@ -839,7 +839,17 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 // fired at the flag epoch, and a second free would discard the
                 // just-replaced level.  Every other outcome falls through to
                 // today's path (the arc frees again — conservative).
-                if (bridge_v2) {
+                //
+                // MW EVIDENCE REFLOAT: an evidence-admitted candidate may carry
+                // NO usable integer (dn_wl is 0 and meaningless there).  Every
+                // branch below consumes cand.dn_wl as a measured step, so the
+                // whole intercept is skipped for those — filling has_dn with a
+                // zero would BRIDGE the carried level by zero, i.e. assert the
+                // slip did not move it, which is worse than not bridging at all.
+                // Byte-identical with the knob off: the legacy gate requires
+                // slip_wl_known, so integer_known is true for every candidate it
+                // admits.
+                if (bridge_v2 && cand.integer_known) {
                     const auto pkey = std::make_tuple(i, sat, sig1 + "_" + sig2);
                     const auto pit = relevel_pend->find(pkey);
                     if (pit != relevel_pend->end() && !pit->second.has_dn) {
@@ -906,8 +916,12 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 // is deferred into the IF-TD driver, which stores the integer IN
                 // the pend it creates this epoch; the replace then runs at the
                 // NEXT epoch's sweep, once the corroborating free re-level exists.
+                // cand.integer_known for the same reason as the intercept above:
+                // the deferred path stores dn_wl in the pend it creates and
+                // replaces from it next epoch, so an unknown integer must not
+                // enter (byte-identical off — see the intercept comment).
                 if (relevel && carry_warm && config_.networkCycleSlipRelevelDeltaBridge()
-                    && (a.refloated || b.refloated))
+                    && cand.integer_known && (a.refloated || b.refloated))
                     relevel->mw_cands.push_back(MwBridgeCand{
                         i, sat, sig1, sig2, cand.dn_wl,
                         std::max(cand.frac,
@@ -928,6 +942,17 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                     a.oracle_repaired ? a.oracle_detail
                   : b.oracle_repaired ? b.oracle_detail
                   : a.oracle_handled  ? a.oracle_detail : b.oracle_detail;
+                // MW EVIDENCE REFLOAT: an evidence-admitted row carries its own
+                // provenance so the population is separable in the trace without
+                // re-deriving the rule — tier, event and action are UNCHANGED
+                // (this is the same detection, admitted by a second gate), and
+                // legacy rows are byte-for-byte what they were.
+                const std::string ev_detail =
+                    cand.via_evidence
+                        ? fmt::format(";src=evidence;ratio={:.1f};n={};int={}",
+                                      cand.evidence_ratio, cand.arc_epochs,
+                                      cand.integer_known ? "known" : "unknown")
+                        : std::string{};
                 if (matched && mw_done.insert(sat).second) {
                     emitEvent("T0_mw_detect", "mw_wl_slip", sat, stations[i].name,
                               std::nullopt, std::nullopt,
@@ -936,7 +961,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                               (orc_h ? (sig1 + ";" + sig2 + ";" + orc_detail)
                                      : (sig1 + ";" + sig2))
                                   + (bs_keep.empty() ? std::string{}
-                                       : ";band_scope=implicated;kept=" + bs_keep));
+                                       : ";band_scope=implicated;kept=" + bs_keep)
+                                  + ev_detail);
                     ++qc_cnt.mw_detections;
                     if (refloated) ++qc_cnt.mw_refloats;
                     if (++n_mw <= 12)

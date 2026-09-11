@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -164,6 +165,82 @@ inline bool parseIfPairResetKey(const std::string& key, std::string& sat,
  * (size = stations.size(), a_ok zero-filled).  Freshly constructed every
  * epoch — never hoisted for reuse.
  */
+/**
+ * @brief Outcome of the PASS-A MW refloat admission rule for ONE detector result.
+ *
+ * Factored out of the two admission sites so the rule is testable in isolation and
+ * so both sites (the parallel per-station scan and the serial datum-station scan)
+ * are provably the same rule.  Pure: no state, no logging, no allocation.
+ */
+struct MwAdmitDecision {
+    /// The EVIDENCE rule with the knob factored out — bias-free lane, mature arc,
+    /// finite ratio at or above the gate.  Evaluated ALWAYS so an OFF run can
+    /// report its would-admit population (@ref would_admit).
+    bool evidence_ok{ false };
+    /// Today's gate, unchanged: known non-zero integer whose rounding residual is
+    /// within the T0 repair tolerance.
+    bool admit_legacy{ false };
+    /// @ref evidence_ok actually in force (the knob is armed).
+    bool admit_evidence{ false };
+    /// The candidate is pushed.
+    bool admitted{ false };
+    /// Pushed, and ONLY the evidence rule put it there — the population whose
+    /// event rows carry `src=evidence`.
+    bool via_evidence{ false };
+    /// DROPPED with a known integer whose residual was too loose.
+    bool drop_loose{ false };
+    /// DROPPED with no usable integer at all.
+    bool drop_unknown{ false };
+    /// Knob OFF, but the evidence rule alone would have admitted it.  This is the
+    /// counter that sizes the card before anyone arms it.
+    bool would_admit{ false };
+};
+
+/**
+ * @brief The PASS-A MW refloat admission rule (pure).
+ *
+ * The legacy half re-uses the T0 integer-REPAIR gate on a DETECT-ONLY path whose
+ * consumer never applies the integer, so it grades how cleanly a step ROUNDS and
+ * not how far above the noise it STOOD.  The evidence half asks the second
+ * question directly and is restricted to lanes where a strong flag means a slip:
+ * BIA-corrected lanes are single-differenced against the detector's own MW pivot,
+ * so a pivot S-transform re-reference presents there as a synchronous
+ * multi-satellite step and is the measured false-alarm population.
+ *
+ * @param slip_wl_known   @c MwSlipResult::slip_wl_known.
+ * @param slip_wl_cycles  @c MwSlipResult::slip_wl_cycles.
+ * @param slip_frac       @c MwSlipResult::slip_frac (rounding residual, cycles).
+ * @param frac_max        network.cycle_slip.turbo_edit_frac_max.
+ * @param evidence_ratio  @c MwSlipResult::evidence_ratio (|dev|/threshold; NaN
+ *                        where the emitting path published none — refused).
+ * @param arc_epochs      @c MwSlipResult::arc_epochs (arc samples at the flag).
+ * @param bia_corrected   @c MwSlipResult::bia_corrected (lane class).
+ * @param knob_on         network.cycle_slip.mw_evidence_refloat.
+ * @param ratio_min       network.cycle_slip.mw_evidence_ratio_min.
+ * @param min_arc_epochs  network.cycle_slip.mw_evidence_min_arc_epochs.
+ * @return The decision; @c admitted is what the caller acts on.
+ */
+inline MwAdmitDecision networkMwAdmitCandidate(bool slip_wl_known, int slip_wl_cycles,
+                                               double slip_frac, double frac_max,
+                                               double evidence_ratio, int arc_epochs,
+                                               bool bia_corrected,
+                                               bool knob_on, double ratio_min,
+                                               int min_arc_epochs) {
+    MwAdmitDecision d;
+    d.admit_legacy = slip_wl_known && slip_wl_cycles != 0 && slip_frac <= frac_max;
+    d.evidence_ok  = !bia_corrected
+                     && arc_epochs >= min_arc_epochs
+                     && std::isfinite(evidence_ratio)
+                     && evidence_ratio >= ratio_min;
+    d.admit_evidence = knob_on && d.evidence_ok;
+    d.admitted       = d.admit_legacy || d.admit_evidence;
+    d.via_evidence   = !d.admit_legacy && d.admit_evidence;
+    d.would_admit    = !knob_on && !d.admit_legacy && d.evidence_ok;
+    d.drop_loose     = !d.admitted && slip_wl_known && slip_frac > frac_max;
+    d.drop_unknown   = !d.admitted && !slip_wl_known;
+    return d;
+}
+
 struct PassABuffers {
     /// Per-station PASS-A geometry success flag, folded into present[] in a
     /// serial pass.  char, not bool: std::vector<bool> packs bits, so
@@ -195,11 +272,36 @@ struct PassABuffers {
         int    dn_wl{0};        ///< Confident ZD wide-lane integer (cycles).
         double frac{0.0};       ///< MW fractional distance (cycles) — confidence.
         double lambda_wl{0.0};  ///< Wide-lane wavelength (m).
+        /// True when @ref dn_wl is a usable integer.  FALSE candidates exist only
+        /// on the evidence path and must never reach the delta-bridge intercept:
+        /// filling a pend's has_dn with a zero integer would BRIDGE the carried
+        /// level by zero, i.e. assert the slip did not move it.
+        bool   integer_known{ true };
+        double evidence_ratio{ std::numeric_limits<double>::quiet_NaN() };  ///< |dev|/threshold at the flag.
+        int    arc_epochs{ 0 };      ///< Arc samples at the flag.
+        /// Admitted by the EVIDENCE rule alone (the legacy gate refused it) —
+        /// drives the `src=evidence` event-row detail.
+        bool   via_evidence{ false };
     };
     std::vector<std::vector<MwRefloatCand>> sta_mw_refloat;
 
+    /// MW admission census, filled per station in the parallel region (index-
+    /// addressed, no shared write) and reduced SERIALLY into
+    /// NetworkServiceCounters.  Collected KNOB-INDEPENDENTLY: with
+    /// mw_evidence_refloat off this is what the card WOULD have changed, which is
+    /// the only honest way to size it before arming (invariant #4).
+    struct MwAdmitCounts {
+        long long drop_loose{ 0 };            ///< Known integer, residual too loose, refused.
+        long long drop_unknown{ 0 };          ///< No usable integer, refused.
+        long long evidence_admitted{ 0 };     ///< Admitted by the evidence rule alone (knob ON).
+        long long evidence_would_admit{ 0 };  ///< Knob OFF; the evidence rule alone would have.
+        long long legacy_admitted{ 0 };       ///< Admitted by today's integer gate.
+    };
+    std::vector<MwAdmitCounts> sta_mw_admit;
+
     explicit PassABuffers(std::size_t n)
-        : a_ok(n, 0), a_err(n), sta_repairs(n), sta_if_resets(n), sta_mw_refloat(n) {}
+        : a_ok(n, 0), a_err(n), sta_repairs(n), sta_if_resets(n), sta_mw_refloat(n),
+          sta_mw_admit(n) {}
 };
 
 /**

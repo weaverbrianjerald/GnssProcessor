@@ -2449,6 +2449,22 @@ int networkTeardown(
                       C.n_anc_slip_no_successor);
     }
 
+    // ---- MW DETECT-ONLY ADMISSION (network.cycle_slip.mw_evidence_refloat) --
+    // Printed ALWAYS, armed or not: the drop populations were silent before this
+    // card (no counter, no event row), and the would-admit count is what sizes
+    // the knob on a lineage without running it armed.  An OFF run reporting
+    // would-admit 0 says the card is inert there; an ON run reporting evidence 0
+    // with would-admit > 0 on the same leg is dead wiring (invariant #4).
+    {
+        const auto& C = ctx.counters;
+        log->info("Network (MW detect-only admission): legacy {}, evidence {} "
+                  "[knob {}; would-admit {}]; dropped loose {} / unknown {}.",
+                  C.n_mw_admit_legacy, C.n_mw_evidence_admitted,
+                  config_.networkCycleSlipMwEvidenceRefloat() ? "on" : "off",
+                  C.n_mw_evidence_would_admit, C.n_mw_drop_loose,
+                  C.n_mw_drop_unknown);
+    }
+
     // ---- §Z BAND-SCOPED RESPONSES (docs/SPEC_event_harness.md) --------------
     // Invariant #4: these counters ARE the ON-path telemetry.  Either knob armed
     // with its headline count at 0 on a run whose T4 tier fires (or whose
