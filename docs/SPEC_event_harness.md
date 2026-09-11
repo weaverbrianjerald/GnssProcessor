@@ -2668,3 +2668,55 @@ so the tail cost belongs to the anchor-slip handover's 6 false-alarm family
 moves (all continuous).  Recorded in both ledger rows as a measured open
 cost; the harness leg at those six epochs is owed (60-epoch legs, not
 another 24 h arm).
+
+## 16. Study 7 — the common-band scope's 3 cm is ONE wrong narrowing at 4.99 h (2026-09-11, afternoon; pre-registered before any leg)
+
+### 16.1 What the two storm arms' own logs established (no runs; `scratchpad/cb3_census.py`)
+
+A = `golden_sim_campaign_zwdblk_mwevid` (scope OFF), B = `golden_sim_campaign_zwdblk_cbscope3` (scope ON); hour h = (tow − 302400)/3600.
+
+| hour | p50 A | p50 B | rms A | rms B | p50 up A / B | p50 horiz A / B | p50 (B−A) per epoch | epochs \|B−A\| > 5 cm |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 0.447 | 0.467 | 0.619 | 0.646 | 0.244 / 0.248 | 0.374 / 0.381 | 0.0000 | 16 |
+| 1 | 0.2475 | 0.2455 | 0.285 | 0.287 | 0.206 / 0.213 | 0.114 / 0.103 | +0.0015 | 0 |
+| 2 | 0.2286 | 0.2243 | 0.230 | 0.225 | 0.134 / 0.137 | 0.181 / 0.174 | −0.0044 | 0 |
+| 3 | 0.1745 | 0.1750 | 0.179 | 0.178 | 0.140 / 0.136 | 0.106 / 0.110 | −0.0006 | 0 |
+| 4 | 0.0861 | 0.0925 | 0.468 | 0.354 | 0.077 / 0.081 | 0.039 / 0.046 | +0.0074 | 27 |
+| 5 | 0.2798 | 0.3022 | 0.386 | 0.405 | 0.184 / 0.175 | 0.159 / 0.234 | **+0.0949** | **108** |
+
+The settled (h3–h6) p50 0.1741 → 0.2067 of §14.9 is the mixture of an identical hour 3, a near-identical hour 4 (A's 0.468 rms spike is the larger one) and an hour 5 in which B is worse by a median **+9.5 cm on 108 of 120 epochs, all of it horizontal** (up is better).  Per-hour event counts are identical in the two arms for T0_mw_detect, T1_if_slip, PHASE_ANCHOR and READMIT; CLK_ANCHOR differs by exactly +7 disc_bump / +7 refloat in hour 4 and +7 reengage in hour 5; T4: 15 rows only in B (4 at 4.99 h — G14/S11, G11/S16, G11/S21, G20/S37 — and 11 at 5.62 h), 7 only in A, 71 common.
+
+**The 4.99 h row, with the truth beside it (S37000SIM / G20):**
+
+| h | truth (`truth_slips.csv`) | B's verdict |
+|---|---|---|
+| 4.72 | L2W +33, flagged | 4.74 / 4.75 `keep implicated=L2W` ✓ |
+| 4.88 | L2W +38 | 4.88 `keep implicated=L2W` ✓ (iftd(L1C+L2W) flagged) |
+| 4.98 | **L5Q −31, flagged** | — (no verdict row) |
+| 4.99 | **L1C −29** | `keep implicated=L2W; exonerated=L1C;L5Q; basis=mw(L1C+L5Q)silent(n=99;thr=9.0WL);mw(L1C+L2W)flag;mw(L2W+L5Q)flag;iftd(L1C+L2W)=flagged` — **wrong on both counts** |
+
+The other three 4.99 h T4 rows carry no verdict and no truth slip in the preceding hour: collateral of that epoch's metre-level misfit.  Truth on this bed: 2,486 slips, 2,476 single-band (5 same-epoch two-band coincidences, all with |Δ| ≥ 36 on both bands), and **|Δ| ≥ 10 cycles on every row** — the "weak silence" of §14's interlock (a lane threshold above a small slip) cannot occur here; the trap is two LARGE slips one epoch apart whose difference (2 WL) sits below the lane's 9.0 WL threshold.
+
+### 16.2 The mechanism (the reading, frozen before the workers report)
+
+1. The (L1C+L5Q) lane did not evaluate the LLI epoch against its arc — n was still 99 at 4.99 h, so it was neither flagged nor restarted at 4.98 — and at 4.99 h the detector saw both slips at once; the lane's signature was their DIFFERENCE, +2 WL.
+2. The rule's IF-TD veto exists for the first pair only (L1C+L2W on GPS; the IF-TD detector forms one pair per satellite), so the (1,5) silence had no phase-precise check.  IF(1,5)-TD would have read 2.2606·0.1903·(−29) − 1.2606·0.2548·(−31) = **−2.52 m**.
+3. L1 and L5 kept levels wrong by 29 and 31 cycles (5.5 m, 7.9 m) under stiff priors and L2 was re-leveled against them; the outlier tier refloated the arc in the same epoch and indicted three healthy arcs; seven satellites' clock anchors decoupled; the user's horizontal error sat +9.5 cm for the following hour.
+
+What carries the HOUR is the open half.  H-clk: the seven decoupled satellites' clocks re-realize with an offset their phase biases do not follow — the fingerprint is a step at 4.99 h in the B−A difference of the consumer-visible clock-minus-bias per satellite (the census worker reports it; §14.9's "no wire fingerprint" compared each wire against itself, never the two wires against each other).  H-coll: the three collateral refloats plus the arc's own all-band re-level (the §9 0.45-cycle floor for ~45 epochs) — too short to carry an hour on their own.  The fix below does not depend on which; the storm arm does.
+
+### 16.3 The fix, pre-registered — IF-TD on EVERY pair (`network.cycle_slip.if_phase_td_pairs`: `first` | `all`)
+
+`first` = today (default, byte-identical).  `all` = the IF-TD driver evaluates every distinct pair present on the satellite at the station (3 on a triple-band satellite) with pools per PAIR KIND, so the first pair's decisions never change and the new pairs are a pure addition; drain semantics for a flagged new pair are today's per-pair semantics (∩ implicated when the verdict is ON); T1_if_slip rows and counters per pair; the verdict vetoes ANY silent MW pair whose IF pair flagged.  With the verdict OFF, `all` changes a response only when every MW pair is silent and only a non-first IF pair flags — the all-bands-equal case (ΔN1 = ΔN2 = ΔN5: today L1/L2 are refloated and L5 keeps a k-cycle error), absent from this bed (0 three-band coincidences), so `all` alone is expected byte-identical on the storm bed.
+
+### 16.4 Pre-registered gates
+
+Harness (worker, before any storm arm; quiet seed ep0665, S21000SIM, event at +10, 70 epochs, knobs explicit on every arm):
+- **G1** byte-identity: `first` + scope OFF ≡ main's exe (quiet 240-epoch null and the L2 leg).
+- **G2** reproduction: S1 (L5Q −31 with LLI at +10, L1C −29 at +11) and S2 (L1C −29 and L5Q −29 at +10) under ON → `keep implicated=L2W`, L1/L5 residual tens of cycles, T4 and collateral rows; under FIX → `all` naming the (L1C+L5Q) veto, products ≡ OFF.
+- **G3** inertness on a genuine single-band slip: the L2 leg under FIX ≡ ON byte-identical (still narrowed to L2W).
+- **G4** storm census (after the arm): `keep` verdicts with a truth slip on an exonerated band — today's count (worker census) → 0.
+
+Storm (ONE arm at the end; the §14.3 bars unchanged): consumer settled p50 ≤ 0.174 m, T4 ≤ 78, L1C ≥ 90 %, WL ≥ 98.9 %, ZWD ≤ 0.0071 m, handovers 305, split-referenced 6.6 %.  PASS → both knobs RECOMMEND_ON and pinned together in the sim golden.  FAIL with G2/G3 passing → a second mechanism carries the hour; KEEP_OFF stands and the new fingerprint is recorded.
+
+What falsifies the reading: the divergence epoch is not 4.99 h; or the wrong-narrowing census shows other wrong `keep` rows that cost the consumer nothing (then the collateral / anchor path is the lever, not the narrowing).
