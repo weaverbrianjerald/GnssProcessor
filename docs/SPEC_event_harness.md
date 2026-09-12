@@ -4936,6 +4936,92 @@ P2a passing with P2c failing ⇒ the frame is right but the branch content is no
 P3 failing with P2 passing ⇒ correct but worthless on this lineage — then the harness stays no-blob and the
 ledger row says so.
 
+### 21.6 RESULTS — Phase 2: the re-base is exact and total, and it is NECESSARY BUT NOT SUFFICIENT; RS-2b pre-registered (2026-09-12 ~12:30 local; seed `runs/evseed_field6h_v2`, exe `gnss_processor_rs2seed.exe` 0fe4b64e… = main 2c62724's tree; legs `runs/evleg_rs2_null_{rebase,norebase,nocarry}` from ep0604, one exe; manager re-grade with `scripts/ev_seam_grade.py`)
+
+**P1 on main's own rebuild: PASS** — `gnss_processor_rs2main.exe` (520c1106…, main after the RS-2 merge)
+reproduces `products.txt` `b9da8cc1…` in BOTH smoke arms; the snapshot differs only by the four `ZL` rows;
+fingerprint `545b8bdd2b638231` in both.  **The v2 seed:** 723 synced / 720 emitted / 0 withheld, 12 snapshots,
+ep0604 at the same tow as v1's (277290) with 4 `ZL` rows and the SAME fingerprint — the write knob is
+non-fingerprinted on a real 6 h lineage.  The only substantive config delta from v1 is
+`cycle_slip.mw_evidence_refloat: true` (the §20.1 field pin, promoted after v1 was written), so v1 and v2
+legs are not cross-comparable; every comparison below is within v2.
+
+| | **rebase** (blob + re-base) | **norebase** (blob, re-base off) | **nocarry** (no blob) |
+|---|---|---|---|
+| disposition | **61/61 emitted** | **61/61 `sh_gate_withheld`** | 61/61 emitted |
+| G3 from +5: worst \|Δa₀₀\|; clock_std ×; σ̂₀_code × | 2.73 TECU @+7; 0.902; 1.126 | 1095.7; 330.8; 397.5 | 2.25 @+43; 0.876; 1.053 |
+| a₀₀(+60) − seed | −0.61 | −508.96 | −0.91 |
+| rhs-attrib at +1 | no trip | `dd_fold` 7.823e7 (v1's table to 4 s.f.) | no trip |
+| RS-2 run-end | write ARMED / read ARMED; ZL on 4 blocks; **re-based 637 rows**, max \|Δẑ\| **411 715 m**, 0 un-basable | read off; re-based 0 | no blob |
+| chord births +1 / +2 / +3 / +4 / +5 | 64 / **305** / 4 / 8 / 0 | 64 / 674 / 8 / 16 / 6 | 701 / 7 / 5 / 8 / 0 |
+| D5 flags / re-taps at +1; +2 | **301 / 301**; 0 / 0 | 676 / 676; 4 / 4 | 0; 1 |
+| R records | +1: 30 sats (the only one) | none (nothing emitted) | +1: 30 sats (the only one) |
+| per-sat-median-removed \|ΔPB\| p50 at +2 / +60 | 14.05 / 13.79 m | NA | 9.98 / 9.65 m |
+| clock contrast p50/p95 at +5; at +60 | 2.95/7.49; 4.00/10.92 m | NA | 1.68/6.91; 3.41/9.03 m |
+| pooled +5..+60: clock p50/p95; CB p50; ZWD p50/p95 | 3.64/11.75; 0.669; 2.14/9.43 | NA | 2.50/10.49; 0.675; 4.12/14.36 |
+| consumer p50 from +5 (seed 8.94) | 5.18 m | no rows | 5.05 m |
+
+Seed yardsticks (own epoch-to-epoch step, tows 277320–279090): clock contrast 0.0906 / 0.4030, W6 code bias
+0.0097 / 0.0390, phase bias 0.0027 / 0.0076, station ZWD 0.107 / 0.569 m (p50 / p95) — within 2 % of v1's.
+
+**What is established.**
+1. **The re-base is the fix for the catastrophe, single-knob and total:** same seed, same exe,
+   `resume_carry_rebase` alone takes the resume from 0/61 to 61/61 with a₀₀, clock scatter and σ̂₀ at the
+   seed's.  `norebase` reproduces §21.1 to four significant figures on a freshly written seed.
+2. **The wiring is complete, not silently partial:** 637 re-based + 64 not carried = 701 restored chords; the
+   64 are exactly the chords that fail to carry at +1 in BOTH blob-restoring legs (arc churn at the seam); 0
+   un-basable.  The correction scale — max |Δẑ| 412 km — is the code-seeded linearization's distance from the
+   writer's converged one, the same order as the 256 km cold-start leak `cold_clock_seed` addresses.
+3. **P2a / P2c / P3 FAIL as pre-registered.**  D5 flags at +1 are 301, not ≤ 10 (676 halved, not removed);
+   305 chords are reborn at +2; the emitter still re-realizes 30 satellites at +1; per-sat-median-removed
+   |ΔPB| at +2 is 14.05 m, not ≤ 0.05; and on every pooled wire channel except ZWD the re-based leg ends
+   FURTHER from the seed than the no-blob leg (clock 3.64 vs 2.50 m, PB 13.8 vs 9.7 m), the two emitting legs
+   differing from each other by 1.5 m (clock) and 4–5 m (PB).  The interim harness posture stays
+   `state_snapshot_carry: false`.
+4. **The residual is a first-epoch DISAGREEMENT between the restored branch and the cold station layer, not a
+   frame error the re-base missed.**  The 301 flagged chords (`network_d5_flags.csv` at +1): |v| p10 4.8 /
+   p50 11.0 / p90 27.1 / max 104 m against a modelled `var_v` p50 0.33 m² (σ 0.58 m) — a 19σ disagreement, on
+   L2W (171) AND L1C (113) AND L1W (17), across 51 stations.  For comparison the seed's own 52 D5 flags in the
+   same window have |v| p50 91 660 m with diffuse `var_v`: they are the born-chord artefact the D5 v5 note
+   describes (`carry_invariant_innov_carried_only` is NOT armed on the field golden — hygiene item), so the
+   leg's +1 flags are the first carried-chord innovations this lineage has produced at a seam.  Two readings
+   remain open and they are opposite: (a) the branch is right and the single-epoch data-only DD is wrong by
+   metres because the station layer's memory (rx-CB carry, the T5 iono deviation, the PB realization) is not
+   in the snapshot — then holding the branch through the first epochs lets the station layer converge around
+   it; (b) the branch is inconsistent with this run's data for a deeper reason (a shared-border frame the
+   local re-base cannot reach) — then holding it degrades the solve.  §21.5's "P2a passing with P2c failing ⇒
+   second-order seam" is the case we are in; the D5 gate erases the branch before either reading can be told
+   apart, which is why the next increment is a measurement, not a fix.
+
+**RS-2b pre-registered — the D5 resume warm-up (`network.resume_d5_warmup_ep`, int, default 0).**  For the
+first K epochs after a WARM resume the D5 innovation gate is diagnostic-only: trips are counted
+(`d5_warmup_suppressed`, and the trace row keeps its columns plus a `warmup_suppressed` flag) but neither
+re-tapped nor mark the arc slipped; the MW / LLI / IF-TD drains stay LIVE (a real slip still refloats), the
+corroboration gate is untouched, cold starts are unaffected (the countdown is set only at a warm resume).
+Forward-only resume response policy, fingerprint-EXEMPT (the `resume_slip_warmup_ep` class).  Legs from the
+v2 seed ep0604, blob + re-base, `--extra` `resume_d5_warmup_ep` 5 (`rs2_null_rebase_d5w5`) and 1
+(`rs2_null_rebase_d5w1`, the dose control):
+
+* **P4a the branch survives:** births at +2 ≤ 20 (was 305); D5 suppressed count reported per epoch +1..+K;
+  D5 flags at +K+1..+K+5 (the first live epochs) ≤ 10 per epoch — if they return at hundreds the branch was
+  wrong (reading b).
+* **P4b the solve stays sane with the branch held:** emitted 60/60; |a₀₀ − seed| ≤ 2 TECU at every epoch from
+  +1; clock_std and σ̂₀_code ≤ 1.5× the seed's; no SH-gate or σ̂₀ withhold.
+* **P4c the branch carries information (reading a):** pooled +5..+60 clock contrast p50 ≤ the no-blob leg's
+  2.50 m AND ≤ 3× the seed's own step (0.27 m) for a full pass; per-sat-median-removed |ΔPB| at +2 ≤ 1 m
+  (no-blob 9.98); consumer p50 ≤ 5.05 m.  The R record at +1 is recorded — 30 satellites again would mean
+  the PB re-realization at a warm resume is structural to the emitter on this lineage (a separate item),
+  not a branch property.
+* P4a+P4b pass with P4c failing ⇒ the branch is right but the wire's PB/clock realization is set elsewhere
+  (the station layer / emitter memory: RS-3, snapshot the rx-CB carry, the T5 deviation and the PB
+  realization).  P4b failing ⇒ reading (b): the restore is unfaithful beyond the local frame; the harness
+  stays no-blob and the ledger row says so.
+
+**Ledger (this commit, `scripts/_rs2_refarc_ledger_oneoff.py rs2 PIN …`):** `network.state_snapshot_carry_lin`
+RECOMMEND_SCOPED, PINNED on the field golden (write side, products byte-identical — every snapshot-writing
+run of this lineage now carries its frame); `network.resume_carry_rebase` RECOMMEND_SCOPED with the
+necessary-not-sufficient record above, armed by the harness on every resume leg, pinned nowhere.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code

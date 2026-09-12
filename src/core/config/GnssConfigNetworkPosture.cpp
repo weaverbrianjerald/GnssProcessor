@@ -343,6 +343,18 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.state_snapshot_carry_diagonal",
               "GPS-only: accuracy >= dense at 478x smaller (270.9 -> 0.57 MB at 305 sta); dense "
               "churns ~186 GB per 6h" },
+            // --- RS-2 (SPEC_event_harness s21, 2026-09-12): the WRITE half of the
+            //     linearization-frame carry.  The blob's Z rows are correction-frame DDs;
+            //     without the writer's sum c*x_lin per chord a resumed run folds every
+            //     restored chord in the wrong frame.  Write side only (products byte-identical,
+            //     only the snapshot grows); regime = a carry blob is being written at all.
+            { nc.state_snapshot_carry,
+              nc.state_snapshot_carry_lin,
+              Tier::SCOPED, false, "network.state_snapshot_carry_lin",
+              "write one ZL row (sum c*x_lin per chord) per carried block so a warm resume can "
+              "re-base the restored branch onto its own linearization (network.resume_carry_rebase); "
+              "the field golden's warm resume went from 61/61 withheld to emitting (SPEC_event_harness "
+              "s21.5)" },
             { warm && network_phase_leveling_,
               network_zwd_seam_reseed_,
               Tier::SCOPED, false, "network.zwd_seam_reseed",
@@ -737,6 +749,17 @@ namespace GnssProcessor {
               "warm resume rebuilds the Card-1 regressors + the dense border from a v3 (QK/QP) "
               "snapshot: first-fold clock trips 33 -> 1, consumer h12 2.05 -> 0.62 m rms (a cold "
               "consumer on the wire converges like on the continuous run)" },
+            // --- RS-2 (SPEC_event_harness s21.4): the READ half.  At the first post-resume DD
+            //     prior build z_hat += W*zl_writer - zl_now (W = the cycle-basis projection the
+            //     build already forms; Pz untouched).  Forward-only resume policy, not
+            //     fingerprinted; a blob without ZL rows warns and keeps today's behaviour.
+            { warm && nc.state_snapshot_carry,
+              network_resume_carry_rebase_,
+              Tier::SCOPED, false, "network.resume_carry_rebase",
+              "re-base the restored invariant DD branch onto this run's linearization at the first "
+              "post-resume build instead of folding it in the writer's frame (the field golden's "
+              "61/61-withheld resume: dd_fold 7.8e7 of RHS norm, 676 D5 flags at +1; SPEC_event_harness "
+              "s21.5)" },
             { network_clock_temporal_anchor_ && !network_clock_model_,
               network_readmit_seed_horizon_s_ > 0.0,
               Tier::SCOPED, false, "network.readmit_seed_horizon_s",

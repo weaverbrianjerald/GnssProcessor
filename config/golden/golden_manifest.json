@@ -65,7 +65,8 @@
     "network.sbasis_complete": true,
     "network.parallel_max_threads": 20,
     "network.sticky_pivot": true,
-    "network.cycle_slip.mw_evidence_refloat": true
+    "network.cycle_slip.mw_evidence_refloat": true,
+    "network.state_snapshot_carry_lin": true
    },
    "unset": [
     "network.emit_pb_filter_jump_k",
