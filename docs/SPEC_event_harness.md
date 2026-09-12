@@ -5505,6 +5505,24 @@ already exist).  Legs from `v5raw` / `v5` ep0604, one exe: `rs7_raw_ctl` / `rs7_
 * **P9c** PB wire unchanged at 0.000 (RS-5); a₀₀ within 2 TECU; the `zwd_seam_reseed` pair re-run on the
   border-restored posture decides that knob's field scope.
 
+### 21.15 FINAL CERTIFICATION of the day's tree (2026-09-13 ~04:30 local; worker on main at `cb4fca4`; docs commits after it only)
+
+Debug and Release rebuilt with the wrapper, first attempt.  **Full Debug suite on main: 2013 cases / 275 suites,
+2012 passed, 1 skipped (the documented fixture gate), 0 failed.**  Smokes on `gnss_processor_close3.exe`
+(3E83D30A…): the golden as it ships and the same with all four write knobs (`state_snapshot_carry_lin` /
+`_datum_capture` / `_emit_capture` / `_station_capture`) false both hash `products.txt` **`87a33bf0…`** — the
+write side of every card is byte-identical; the snapshots separate exactly by knob (`base` writes RC 61 / SD
+376 / ER 135 / PF 135 / ZL 4 / EQD 6 / CBP 129; `nowrite` none of them); posture rows correct, no unknown-knob
+warnings.  Closing leg `runs/evleg_close3_null_main` (v5 ep0604, `event_leg.py` defaults, which now arm every
+resume knob of the day): 60/60, every seam and run-end line as §21.14's `rs6_null_both`, and its
+`products.txt` **byte-identical to `rs6_null_both`'s** (`c45e52a0…`) across two independently linked binaries.
+
+The seam card's state at close: the field golden warm-resumes with the DD branch, both datums, the emit layer
+and the station layer continuous; the phase-bias wire is continuous to 0.000 m at the first epoch and the
+a₀₀ seam transient is gone; a stateful consumer sees 0 phase-bias resets at the seam.  What remains is the dense
+shared border, restored DIAGONAL on this lineage (RS-7, §21.14) — the code-bias level, the ZWD sink offset, the
+pooled clock contrast and the rx-CB gate's 26 % share all sit with it.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
