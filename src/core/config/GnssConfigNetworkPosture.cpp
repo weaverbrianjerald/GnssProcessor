@@ -365,6 +365,16 @@ namespace GnssProcessor {
               "carry the eq34 chain tree + the time-linked code-bias datum memory in the snapshot so a "
               "warm resume can continue both datums (RS-3): first-epoch eq34 re-references 110 -> 8, "
               "code-bias re-seed discontinuities 30 -> 0, R record 30 -> 0 satellites" },
+            // --- RS-5 (SPEC_event_harness s21.10/s21.11): WRITE half of emit-layer continuity -
+            //     the eq34 emit re-base frame and the PB emission filter state ride the snapshot.
+            //     Write side only, products byte-identical.
+            { !nc.state_snapshot_path.empty()
+                  && (network_carry_invariant_emit_rebase_ || network_emit_pb_filter_),
+              nc.state_snapshot_emit_capture,
+              Tier::SCOPED, false, "network.state_snapshot_emit_capture",
+              "carry the emit layer's memory (ER/PF/PS rows) so a warm resume does not cold-start the "
+              "eq34 emit re-base and the PB filter: the seam's 17.7 m per-key phase-bias step becomes "
+              "0.000 m p50 (RS-5)" },
             { warm && network_phase_leveling_,
               network_zwd_seam_reseed_,
               Tier::SCOPED, false, "network.zwd_seam_reseed",
@@ -802,6 +812,15 @@ namespace GnssProcessor {
               "marks datum_changed for a constellation whose restored per-key baselines moved "
               "past discThresholdM on more than 10 % of the jump test's own population "
               "(measured ~17 m p50 with datum_changed 0 today, SPEC_event_harness s21.9)" },
+            // --- RS-5 (SPEC_event_harness s21.10/s21.11): READ half - restore both emit engines
+            //     at the seam.  Forward-only resume policy, not fingerprinted; requires
+            //     resume_frame_restore.
+            { warm && network_resume_frame_restore_,
+              network_resume_emit_restore_,
+              Tier::SCOPED, false, "network.resume_emit_restore",
+              "restore the eq34 emit re-base frame + the PB emission filter at a warm resume: emitted "
+              "phase biases match the continuous wire to p50 0.000 m at +1, a stateful consumer sees 0 "
+              "PB resets at the seam (control 19); products otherwise byte-identical (RS-5)" },
             // --- RTA-4 serialize_disc_counters (first ledger row 2026-09-12, RS-4): the per-key
             //     discontinuity counters reach the wire (optional P/B/C fields).  Outputs-only;
             //     changes product bytes, so the goldens pin it only with a recorded re-baseline.

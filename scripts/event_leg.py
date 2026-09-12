@@ -209,6 +209,10 @@ def cmd_write_seed(args):
     # chain tree and the time-linked code-bias datum - so a resume leg continues both
     # datums instead of re-electing / re-seeding them (110 -> 8 rerefs, 30 -> 0 CB discs).
     net["state_snapshot_datum_capture"] = True
+    # RS-5 (SPEC_event_harness §21.10): also capture the EMIT layer - the eq34 emit
+    # re-base frame and the PB emission filter state - so a resume leg's wire continues
+    # the writer's phase-bias levels (17.7 m p50 -> 0.000 m at the first epoch).
+    net["state_snapshot_emit_capture"] = True
     net["state_snapshot_require"] = False          # the seed IS the cold start
     net["product_output_path"] = _fwd(os.path.join(rundir, "products.txt"))
     net["write_run_manifest"] = True
@@ -314,6 +318,9 @@ def _leg_common(args, event_json):
     # first post-resume emit (datum_changed for the constellation) — the CLK-R seam mark
     # is suppressed once the held frame is restored, so without this the seam is silent.
     net["resume_pb_seam_mark"] = True
+    # RS-5: restore both emit engines at the seam.  Inert (logged) against a seed
+    # written without state_snapshot_emit_capture.
+    net["resume_emit_restore"] = True
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
     # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the
