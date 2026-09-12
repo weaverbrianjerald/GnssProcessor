@@ -5108,6 +5108,24 @@ without the branch).
   first-epoch offsets per channel say which; P5a failing means the sticky seed does not engage on restored
   maps under `carry_invariant` (its carry-value test), and the fix moves into the election.
 
+### 21.8 MAIN CERTIFICATION after the day's merges (2026-09-12 ~14:20 local; worker on main's own tree)
+
+main `58c4088` (RS-2 `2c62724`, reference-arc clause `4b88ca2`, RS-2b `b6afe8c`, the three ledger/posture
+passes): `src`/`include`/`scripts` clean; Debug and Release rebuilt with the wrapper, first attempt.  **Full
+Debug suite on main: 1975 cases / 269 suites, 1974 passed, 1 skipped (the documented fixture gate
+`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`), 0 failed** (the 17 skips seen in worktrees are the
+`data/`-fixture gates that resolve on main's baked data root).  Smoke pair on `gnss_processor_main_close.exe`
+(74f9ed0b…): `products.txt` **`b9da8cc1…` in both arms** (the golden as it ships with `state_snapshot_carry_lin`
+pinned vs the same with it false), the snapshot differing only by the four `ZL` rows, fingerprint
+`545b8bdd2b638231` both; the POSTURE block lists `state_snapshot_carry_lin` (armed ⇒ no advisory in the ON arm,
+`POSTURE OFF [SCOPED]` in the OFF arm), `resume_carry_rebase` and `resume_d5_warmup_ep` (off on a seed
+writer, correctly), and omits `common_band_ref_arc` because its parent scope is the field exception (out of
+regime, row present at `GnssConfigNetworkPosture.cpp:201`); zero unknown-knob warnings.  **Closing null leg
+`runs/evleg_close_null_main`** from `evseed_field6h_v2` ep0604 with `event_leg.py`'s registered defaults
+(frame restore, re-base, `resume_d5_warmup_ep` 1, coupling restore false): 61/61 emitted, 301 suppressed /
+637 re-based, and `products.txt` `d75d12a6…` **byte-identical to `rs2_null_rebase_d5w1`'s** on a different
+binary — the harness posture reproduces the hand-armed leg exactly.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
