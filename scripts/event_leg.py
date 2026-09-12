@@ -310,6 +310,10 @@ def _leg_common(args, event_json):
     # datum memory at the seam.  Inert (logged) against a seed written without
     # state_snapshot_datum_capture.
     net["resume_datum_restore"] = True
+    # RS-4 (SPEC_event_harness §21.10): declare a phase-bias LEVEL re-realization at the
+    # first post-resume emit (datum_changed for the constellation) — the CLK-R seam mark
+    # is suppressed once the held frame is restored, so without this the seam is silent.
+    net["resume_pb_seam_mark"] = True
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
     # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the

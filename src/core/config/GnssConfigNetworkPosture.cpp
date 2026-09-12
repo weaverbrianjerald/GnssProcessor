@@ -802,6 +802,15 @@ namespace GnssProcessor {
               "marks datum_changed for a constellation whose restored per-key baselines moved "
               "past discThresholdM on more than 10 % of the jump test's own population "
               "(measured ~17 m p50 with datum_changed 0 today, SPEC_event_harness s21.9)" },
+            // --- RTA-4 serialize_disc_counters (first ledger row 2026-09-12, RS-4): the per-key
+            //     discontinuity counters reach the wire (optional P/B/C fields).  Outputs-only;
+            //     changes product bytes, so the goldens pin it only with a recorded re-baseline.
+            { true,
+              network_serialize_disc_counters_,
+              Tier::SCOPED, false, "network.serialize_disc_counters",
+              "serialize the per-key phase / code / clock discontinuity counters so a FILE consumer "
+              "sees the re-realizations the in-process consumer reacts to (smoke: only P/B/C records "
+              "change, b9da8cc1 -> 87a33bf0); pin on the goldens at the RS-5 close-out re-baseline" },
             { network_clock_temporal_anchor_ && !network_clock_model_,
               network_readmit_seed_horizon_s_ > 0.0,
               Tier::SCOPED, false, "network.readmit_seed_horizon_s",
