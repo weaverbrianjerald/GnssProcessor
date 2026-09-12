@@ -5358,6 +5358,29 @@ first emitted epoch overwrites the `seed.txt` it resumed from (`NetworkRunContex
 `state_snapshot_interval_s` says).  The `.epNNNN` library is intact; `event_leg.py rerun` restores the pristine
 copy; never re-run a leg in place.
 
+### 21.12 CLOSE-OUT CERTIFICATION (2026-09-12 ~22:30 local; worker on main's own tree at `17f854f`)
+
+Debug and Release rebuilt with the wrapper, first attempt.  **Full Debug suite: 2001 cases / 273 suites,
+2000 passed, 1 skipped (the documented fixture gate), 0 failed.**  Three-way 20-epoch smoke of the shipped
+field golden on `gnss_processor_close2.exe` (106D0205…): `base` (as it ships) **`87a33bf0…`**; `noser`
+(`serialize_disc_counters` false) **`b9da8cc1…`** — the previous canonical hash, so nothing but the
+serialization moved products today; `nowrite` (the three write knobs `state_snapshot_carry_lin` /
+`_datum_capture` / `_emit_capture` false) **== `base`** — the write side is byte-identical.  The base/noser
+diff is exactly P 2700 / B 2595 / C 640 records, one appended or inserted integer each, S/E/H/U untouched
+(RS-4's census reproduced).  **The field golden's canonical 20-epoch hash is `87a33bf0…` from here on.**  All
+nine knobs registered today read correctly in the POSTURE block (the four write/contract knobs armed; the
+resume knobs `POSTURE OFF [SCOPED]` on a cold seed writer; `resume_datum_restore` and `common_band_ref_arc`
+out of regime), no unknown-knob warnings.  Closing leg `runs/evleg_close2_null_main` (v4 ep0604, harness
+defaults): 60/60, every seam and run-end line as §21.11's restore leg, and its `products.txt`
+**byte-identical to `rs5_null_restore`'s** (`5fca04e2…`) on main's merged exe.
+
+Two notes for the next session.  (1) **A leg inherits its SEED's config:** `runs/evseed_field6h_v4` was
+written before the `serialize_disc_counters` pin, so every v4 leg keeps the unserialized product contract —
+write a v5 seed from the current golden before grading anything that needs the per-key counters on the wire.
+(2) Two pre-existing golden properties, not today's: the loader's regime label reads "WARM-RESUME start" on a
+cold smoke (it keys on `state_snapshot_path` being set), and the POSTURE CHAIN advisory about
+`emit_generation_id` under `state_snapshot_require: false` fires on every cold seed writer.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
