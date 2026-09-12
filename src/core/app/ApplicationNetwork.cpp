@@ -1767,6 +1767,7 @@ int Application::runNetwork() {
                 AnchorCandidacyUsable cand_usable;
                 if (ctx.knobs.pd_candidacy_usable) {
                     cand_usable.on           = true;
+                    cand_usable.satellite_clause = ctx.knobs.pd_candidacy_satellite;
                     cand_usable.min_age_ep   = ctx.knobs.pd_candidacy_min_age_ep;
                     cand_usable.now_ep       =
                         static_cast<long long>(ctx.counters.n_loop_epochs);

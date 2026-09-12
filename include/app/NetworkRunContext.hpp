@@ -440,6 +440,11 @@ namespace GnssProcessor {
         /// network.phase_datum_candidacy_min_age_ep — the maturity bar in loop epochs
         /// (0 = no age test); 0 when the mechanism is off.
         int    pd_candidacy_min_age_ep{};
+        /// COLD ANCHOR-FALLBACK iteration 2 (SPEC_event_harness §15.8): resolve a
+        /// satellite's handover JOINTLY so its families cannot elect different hosts.
+        /// Already ANDed with pd_candidacy_usable; false there means iteration 1's
+        /// per-family screen, which is the single-knob A/B.
+        bool   pd_candidacy_satellite{};
         int    eq34_min_arc_ep{};     ///< INC-1 eligibility threshold in consecutive-present epochs (0 = no gate).
         double prior_realization_max_gap_s{};  ///< INC-1 warm conditioning: the block applies only while the key's last EMITTED realization is younger than this (s); <= 0 disables the conditioning.
         bool   pin_bridge_on{};       ///< INC-2 time-linked phase datum armed.

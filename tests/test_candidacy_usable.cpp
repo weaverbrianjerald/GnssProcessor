@@ -154,20 +154,104 @@ std::map<std::string, std::string> incumbency(const std::string& sta) {
     return {{ambKey(), sta}};
 }
 
-/// The candidacy view, armed.
+/// The candidacy view, armed.  `satellite_clause` defaults FALSE here so the
+/// iteration-1 cases below read exactly as they were written; the iteration-2
+/// cases arm it explicitly, which is also the single-knob A/B.
 AnchorCandidacyUsable armed(
         int min_age_ep,
         long long now_ep = 0,
         const std::set<std::pair<int, std::string>>* freed = nullptr,
         const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* lc =
-            nullptr) {
+            nullptr,
+        bool satellite_clause = false) {
     AnchorCandidacyUsable u;
     u.on           = true;
+    u.satellite_clause = satellite_clause;
     u.min_age_ep   = min_age_ep;
     u.now_ep       = now_ep;
     u.free_ambs    = freed;
     u.local_carry  = lc;
     return u;
+}
+
+// ---------------------------------------------------------------------------
+// ITERATION 2 — the SATELLITE clause fixture (three bands of ONE satellite)
+// ---------------------------------------------------------------------------
+
+const std::vector<std::string> kSigs3{"L1C", "L2W", "L5Q"};
+
+std::string amb3(const std::string& sig) {
+    return StateKeys::makeAmbiguityKey(kSat, sig);
+}
+
+/// Four stations ranked A > B > C > D by coverage.  `tracks[i]` names the bands
+/// station i tracks (its `usable_keys`), so a station can be a candidate for two
+/// of the satellite's bands and not the third.
+Roster makeRoster3(const std::vector<std::string>& names,
+                   const std::vector<int>& coverage,
+                   const std::vector<std::vector<std::string>>& tracks) {
+    Roster r;
+    r.stations.resize(names.size());
+    r.present.assign(names.size(), true);
+    r.cnd.sat_el.resize(names.size());
+    r.cnd.usable_keys.resize(names.size());
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        r.stations[i].name = names[i];
+        r.cnd.cover['G'][i] = coverage[i];
+        r.cnd.cand_set['G'].insert(i);
+        r.cnd.sat_el[i][kSat] = 45.0;
+        for (const auto& sig : tracks[i])
+            r.cnd.usable_keys[i][amb3(sig)] = StateKeys::makeSatPhaseBiasKey(kSat, sig);
+    }
+    for (const auto& sig : kSigs3)
+        r.cnd.union_keys[amb3(sig)] = StateKeys::makeSatPhaseBiasKey(kSat, sig);
+    return r;
+}
+
+struct Outcome3 {
+    std::map<std::string, std::string> anchor;   ///< amb -> station ("" = unpinned)
+    std::map<std::string, double>      target;
+    std::map<std::string, bool>        continuous;
+    NetworkAnchorTallies               tally;
+    /// Rule (c): distinct anchor stations across the satellite's families.
+    std::size_t distinctStations() const {
+        std::set<std::string> s;
+        for (const auto& kv : anchor) s.insert(kv.second);
+        return s.size();
+    }
+};
+
+/// One election over the three-band fixture.  `ban` names the signals whose
+/// incumbent is retired this epoch ("all" retires every band).
+Outcome3 elect3(Roster& r,
+                std::map<std::string, std::string> incumbent,
+                const AnchorHandoverLedger& ledger,
+                const AnchorCandidacyUsable& usable,
+                const std::vector<std::string>& ban_signals) {
+    NetworkInjectState inject;
+    for (const auto& sig : ban_signals) {
+        InjectAnchorDirective d;
+        d.sat    = kSat;
+        d.signal = sig;
+        d.cold   = false;
+        inject.anchor_now_slip.push_back(std::move(d));
+    }
+    AnchorHygiene hyg;
+    Outcome3 o;
+    std::map<std::string, double>      pin_target;
+    std::map<std::string, std::string> this_epoch_anchor;
+    std::set<std::string>              shared;
+    std::vector<AnchorHandoverEvent>   events;
+    networkElectPhaseAnchors(/*sticky=*/true, r.stations, r.present, r.cnd, hyg,
+                             o.tally, incumbent, pin_target, this_epoch_anchor,
+                             shared, &ledger, &events, kMaxVar, nullptr, 0.0,
+                             ban_signals.empty() ? nullptr : &inject, &usable);
+    o.anchor = this_epoch_anchor;
+    for (const auto& st : r.stations)
+        for (const auto& kv : st.pinned_amb_targets)
+            o.target[kv.first] = kv.second;
+    for (const auto& e : events) o.continuous[e.amb] = e.continuous;
+    return o;
 }
 
 /// A loaded GnssConfig, for the loader round trip.  `ok_out` receives the parse
@@ -562,4 +646,173 @@ TEST(CandidacyUsableElection, AFirstSightingNeverEntersThePass) {
     EXPECT_EQ(o.tally.candidacy_usable_elected, 0);
     EXPECT_EQ(o.tally.candidacy_no_usable_fallback, 0);
     EXPECT_EQ(o.tally.candidacy_skipped_unusable, 0);
+}
+
+// ===========================================================================
+// 7: ITERATION 2 — the SATELLITE clause (§15.8).  Iteration 1 screened per
+//    FAMILY, so a satellite's three bands could elect three hosts: correct one
+//    band at a time and, jointly, an inter-frequency inconsistency the per-band
+//    producer instruments cannot see (storm arm: every producer channel better,
+//    consumer median +49 %, split-referenced satellites 0.0 -> 0.9 / 3).
+// ===========================================================================
+
+TEST(CandidacyUsableConfig, SatelliteClauseDefaultsOnAndParses) {
+    Loaded d("satdef", "");
+    ASSERT_TRUE(d.ok);
+    EXPECT_TRUE(d.cfg.networkPhaseDatumCandidacySatellite())
+        << "the shipped form of the card is the corrected one; OFF is the "
+           "iteration-1 A/B, not the default";
+    Loaded off("satoff", "    \"phase_datum_candidacy_satellite\": false,\n");
+    ASSERT_TRUE(off.ok);
+    EXPECT_FALSE(off.cfg.networkPhaseDatumCandidacySatellite());
+}
+
+TEST(CandidacyUsableElection, JointResolutionTakesTheHostUsableForTheMostBands) {
+    // BBBB outranks CCCC and is usable for two of the three bands; CCCC is usable
+    // for all three.  The family-only rule sends L1C/L2W to BBBB and L5Q to CCCC —
+    // a split reference.  The clause sends all three to CCCC.
+    auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
+                         {kSigs3, kSigs3, kSigs3, kSigs3});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, amb3("L1C")}] = {1.0, 1e-6, 1e-3};
+    ledger.value_abs[{1, amb3("L2W")}] = {2.0, 1e-6, 1e-3};
+    // BBBB's L5Q arc is not carry-usable; CCCC's three all are.
+    ledger.value_abs[{2, amb3("L1C")}] = {3.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, amb3("L2W")}] = {4.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, amb3("L5Q")}] = {5.0, 1e-6, 1e-3};
+    std::map<std::string, std::string> inc;
+    for (const auto& s : kSigs3) inc[amb3(s)] = "AAAA";
+
+    const Outcome3 o = elect3(r, inc, ledger, armed(0, 0, nullptr, nullptr, true),
+                              {"all"});
+
+    for (const auto& s : kSigs3)
+        EXPECT_EQ(o.anchor.at(amb3(s)), "CCCC") << "band " << s;
+    EXPECT_EQ(o.distinctStations(), 1u) << "rule (c): one reference per satellite";
+    EXPECT_EQ(o.tally.sat_clause_satellites, 1);
+    EXPECT_EQ(o.tally.sat_clause_families, 3);
+    EXPECT_EQ(o.tally.sat_clause_split_avoided, 2)
+        << "L1C and L2W are the two the family-only rule would have sent to BBBB";
+    EXPECT_EQ(o.tally.sat_clause_cold_colocated, 0);
+    EXPECT_EQ(o.tally.handover_cold, 0);
+    EXPECT_EQ(o.tally.handover_continuous, 3);
+    EXPECT_DOUBLE_EQ(o.target.at(amb3("L5Q")), 5.0);
+}
+
+TEST(CandidacyUsableElection, IterationOneSplitsTheSameSatelliteTwoWays) {
+    // The single-knob A/B for the case above: with the satellite clause OFF the
+    // election is iteration 1 exactly, and the satellite ends on TWO stations.
+    auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
+                         {kSigs3, kSigs3, kSigs3, kSigs3});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, amb3("L1C")}] = {1.0, 1e-6, 1e-3};
+    ledger.value_abs[{1, amb3("L2W")}] = {2.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, amb3("L1C")}] = {3.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, amb3("L2W")}] = {4.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, amb3("L5Q")}] = {5.0, 1e-6, 1e-3};
+    std::map<std::string, std::string> inc;
+    for (const auto& s : kSigs3) inc[amb3(s)] = "AAAA";
+
+    const Outcome3 o = elect3(r, inc, ledger,
+                              armed(0, 0, nullptr, nullptr, /*satellite=*/false),
+                              {"all"});
+
+    EXPECT_EQ(o.anchor.at(amb3("L1C")), "BBBB");
+    EXPECT_EQ(o.anchor.at(amb3("L2W")), "BBBB");
+    EXPECT_EQ(o.anchor.at(amb3("L5Q")), "CCCC");
+    EXPECT_EQ(o.distinctStations(), 2u) << "the defect §15.6 measured, in a test";
+    EXPECT_EQ(o.tally.sat_clause_families, 0) << "the clause did not run";
+}
+
+TEST(CandidacyUsableElection, ABandNoCandidateCanServeIsPinnedColdAtTheJointHost) {
+    // BBBB is usable for two bands and NOBODY is usable for L5Q.  The joint host is
+    // still BBBB and L5Q is pinned THERE at 0 — a frame step on the same reference,
+    // which is what the card trades a split for.
+    auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
+                         {kSigs3, kSigs3, kSigs3, kSigs3});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, amb3("L1C")}] = {1.0, 1e-6, 1e-3};
+    ledger.value_abs[{1, amb3("L2W")}] = {2.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, amb3("L1C")}] = {3.0, 1e-6, 1e-3};   // CCCC: only one band
+    std::map<std::string, std::string> inc;
+    for (const auto& s : kSigs3) inc[amb3(s)] = "AAAA";
+
+    const Outcome3 o = elect3(r, inc, ledger, armed(0, 0, nullptr, nullptr, true),
+                              {"all"});
+
+    for (const auto& s : kSigs3)
+        EXPECT_EQ(o.anchor.at(amb3(s)), "BBBB") << "band " << s;
+    EXPECT_EQ(o.distinctStations(), 1u);
+    EXPECT_EQ(o.tally.sat_clause_cold_colocated, 1) << "L5Q, pinned cold at BBBB";
+    EXPECT_DOUBLE_EQ(o.target.at(amb3("L5Q")), 0.0);
+    EXPECT_EQ(o.tally.handover_cold, 1);
+    EXPECT_EQ(o.tally.handover_continuous, 2);
+}
+
+TEST(CandidacyUsableElection, PartialHandoverPrefersTheHostOfTheOtherBands) {
+    // L1C and L2W are anchored at CCCC and KEEP it; only L5Q hands over.  BBBB
+    // outranks CCCC and is usable, so the family-only rule would move L5Q there and
+    // split the satellite; rule (b) keeps the satellite on CCCC.
+    auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
+                         {kSigs3, kSigs3, kSigs3, kSigs3});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, amb3("L5Q")}] = {7.0, 1e-6, 1e-3};   // BBBB usable
+    ledger.value_abs[{2, amb3("L5Q")}] = {8.0, 1e-6, 1e-3};   // CCCC usable too
+    std::map<std::string, std::string> inc{
+        {amb3("L1C"), "CCCC"}, {amb3("L2W"), "CCCC"}, {amb3("L5Q"), "AAAA"}};
+
+    const Outcome3 o = elect3(r, inc, ledger, armed(0, 0, nullptr, nullptr, true),
+                              {"L5Q"});
+
+    EXPECT_EQ(o.anchor.at(amb3("L1C")), "CCCC");
+    EXPECT_EQ(o.anchor.at(amb3("L2W")), "CCCC");
+    EXPECT_EQ(o.anchor.at(amb3("L5Q")), "CCCC")
+        << "the held host wins over the higher-ranked stranger — rule (b)";
+    EXPECT_EQ(o.distinctStations(), 1u);
+    EXPECT_EQ(o.tally.sat_clause_colocated, 1);
+    EXPECT_EQ(o.tally.sat_clause_split_avoided, 1) << "BBBB is the family-only pick";
+    EXPECT_DOUBLE_EQ(o.target.at(amb3("L5Q")), 8.0);
+    EXPECT_EQ(o.tally.handover_cold, 0);
+}
+
+TEST(CandidacyUsableElection, PartialHandoverFallsBackWhenTheHeldHostCannotServe) {
+    // The held host CCCC does not track L5Q at all, so rule (b) has nothing to take
+    // and rule (a) elects the best usable candidate.  The satellite DOES split here
+    // — structurally, because no single station can host all three — and the clause
+    // says so rather than pretending otherwise.
+    auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
+                         {kSigs3, kSigs3, {"L1C", "L2W"}, kSigs3});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, amb3("L5Q")}] = {7.0, 1e-6, 1e-3};
+    std::map<std::string, std::string> inc{
+        {amb3("L1C"), "CCCC"}, {amb3("L2W"), "CCCC"}, {amb3("L5Q"), "AAAA"}};
+
+    const Outcome3 o = elect3(r, inc, ledger, armed(0, 0, nullptr, nullptr, true),
+                              {"L5Q"});
+
+    EXPECT_EQ(o.anchor.at(amb3("L5Q")), "BBBB");
+    EXPECT_EQ(o.tally.sat_clause_colocated, 0);
+    EXPECT_EQ(o.tally.sat_clause_families, 1);
+    EXPECT_EQ(o.distinctStations(), 2u) << "unavoidable: CCCC cannot host L5Q";
+}
+
+TEST(CandidacyUsableElection, SatelliteClauseReportsWhenNoCandidateIsUsable) {
+    // Nobody has a usable carry: the clause finds no host, the election is today's,
+    // and the satellite still ends on ONE station because today's coverage sweep is
+    // itself per-satellite-consistent when every band's candidate order is.
+    auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
+                         {kSigs3, kSigs3, kSigs3, kSigs3});
+    AnchorHandoverLedger ledger;   // empty
+    std::map<std::string, std::string> inc;
+    for (const auto& s : kSigs3) inc[amb3(s)] = "AAAA";
+
+    const Outcome3 o = elect3(r, inc, ledger, armed(0, 0, nullptr, nullptr, true),
+                              {"all"});
+
+    for (const auto& s : kSigs3) EXPECT_EQ(o.anchor.at(amb3(s)), "BBBB");
+    EXPECT_EQ(o.distinctStations(), 1u);
+    EXPECT_EQ(o.tally.sat_clause_no_usable, 1);
+    EXPECT_EQ(o.tally.sat_clause_families, 0);
+    EXPECT_EQ(o.tally.candidacy_no_usable_fallback, 3);
+    EXPECT_EQ(o.tally.handover_cold, 3);
 }

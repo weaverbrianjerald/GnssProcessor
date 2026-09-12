@@ -696,6 +696,47 @@ int networkTeardown(
                       "station today's coverage sweep takes first.  Byte-identical to OFF "
                       "on this window by construction, not by luck.",
                       entered);
+        // ITERATION 2 — the SATELLITE clause (docs/SPEC_event_harness.md §15.8).
+        // Rule (c): the distinct-anchor census is NOT recomputed here — it is read
+        // from the SAME always-on counters the storm grade reads
+        // (networkSplitReferencedSats, run every epoch knob-independently), so the
+        // clause and the grade agree by construction rather than by agreement.
+        if (ctx.knobs.pd_candidacy_satellite) {
+            const auto& C = ctx.counters;
+            const double ep = C.n_cb_split_epochs > 0
+                            ? static_cast<double>(C.n_cb_split_epochs) : 1.0;
+            log->info("Network (COLD ANCHOR-FALLBACK, SATELLITE clause): {} satellite-epoch(s) "
+                      "resolved jointly over {} family(ies) — {} decided by the held-host "
+                      "preference (a PARTIAL handover co-located on the station already "
+                      "anchoring the satellite's other families), {} where the family-only "
+                      "rule would have picked a DIFFERENT station (the split references this "
+                      "clause removed), {} pinned at the joint host through the COLD path (a "
+                      "frame step, not a split), {} the joint host does not TRACK (the only "
+                      "residual split this clause can leave), and {} satellite-epoch(s) with "
+                      "no usable candidate for ANY mover.  Resulting SPLIT-REFERENCED census "
+                      "(the storm grade's own numbers): mean {:.2f} / max {} satellites of "
+                      "{:.1f} anchored, over {} epoch(s).",
+                      h.sat_clause_satellites, h.sat_clause_families,
+                      h.sat_clause_colocated, h.sat_clause_split_avoided,
+                      h.sat_clause_cold_colocated, h.sat_clause_host_untracked,
+                      h.sat_clause_no_usable,
+                      static_cast<double>(C.n_cb_split_sats_sum) / ep,
+                      C.n_cb_split_sats_max,
+                      static_cast<double>(C.n_cb_split_multi_sum) / ep,
+                      C.n_cb_split_epochs);
+            if (h.sat_clause_families > 0 && h.sat_clause_split_avoided == 0)
+                log->info("Network (COLD ANCHOR-FALLBACK, SATELLITE clause): the clause ran on "
+                          "{} family(ies) and the family-only rule would have chosen the SAME "
+                          "station every time — this window had no split to avoid, which is "
+                          "not evidence the clause works.",
+                          h.sat_clause_families);
+            if (h.sat_clause_host_untracked > 0)
+                log->warn("Network (COLD ANCHOR-FALLBACK, SATELLITE clause): {} family(ies) "
+                          "could not be co-located because the joint host does not track their "
+                          "key — those are the ONLY families that can still split their "
+                          "satellite's reference.",
+                          h.sat_clause_host_untracked);
+        }
     }
 
     // --- QUEUE item 1(d): PHASE_ANCHOR carry re-reference run-end telemetry -----

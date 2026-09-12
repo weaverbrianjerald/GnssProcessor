@@ -149,6 +149,19 @@ struct NetworkAnchorTallies {
     long long candidacy_skip_var_refused = 0;    ///< ...entry present but refused by the variance / ratio ceiling (or a forced-cold directive).
     long long candidacy_skip_freed = 0;          ///< ...the candidate's own arc was FREED this epoch (leveling latch or DD slip funnel): its level is about to be re-drawn from code.
     long long candidacy_skip_young = 0;          ///< ...arc younger than phase_datum_candidacy_min_age_ep.
+    // --- ITERATION 2: the SATELLITE clause (network.phase_datum_candidacy_satellite) --
+    // docs/SPEC_event_harness.md §15.8.  Iteration 1's per-FAMILY screen let a
+    // satellite's three bands elect three hosts; these count the joint resolution that
+    // replaces it.  `sat_clause_split_avoided` is the load-bearing one — it is the
+    // number of families the family-only rule would have sent to a DIFFERENT station,
+    // i.e. the split references this clause removed.
+    long long sat_clause_satellites = 0;         ///< satellite-epochs resolved jointly (>= 1 family moving).
+    long long sat_clause_families = 0;           ///< families whose successor came from the joint resolution.
+    long long sat_clause_colocated = 0;          ///< ...where rule (b) decided it: the host already anchors the satellite's OTHER families.
+    long long sat_clause_split_avoided = 0;      ///< ...where the family-only rule would have picked a DIFFERENT station.
+    long long sat_clause_cold_colocated = 0;     ///< families pinned at the joint host through the COLD path (not usable there) — a frame step, not a split.
+    long long sat_clause_host_untracked = 0;     ///< families the joint host does not TRACK, so they fall back to the per-family path (the only way this clause can still split).
+    long long sat_clause_no_usable = 0;          ///< satellite-epochs where no candidate was usable for ANY moving family → today's sweeps.
     double bridge_margin_decades = 0.0;  ///< K2-style margin of the bridge information over the rank-gate cutoff.
     bool   bridge_margin_logged = false; ///< one-shot latch for that check.
 };

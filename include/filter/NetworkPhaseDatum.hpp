@@ -204,6 +204,13 @@ struct AnchorCandidacyUsable {
     bool on = false;
     /// network.phase_datum_candidacy_min_age_ep (0 = no age test).
     int  min_age_ep = 0;
+    /// ITERATION 2 — the SATELLITE clause (network.phase_datum_candidacy_satellite,
+    /// SPEC_event_harness §15.8).  false = iteration 1's per-FAMILY screen, which is
+    /// what the single-knob A/B needs; true = a satellite's families that hand over in
+    /// the SAME epoch take ONE successor, and a PARTIAL handover prefers the station
+    /// already anchoring the satellite's other families.  The per-family screen bought
+    /// producer quality with split references and cost the consumer 49 % (§15.6).
+    bool satellite_clause = false;
     /// The loop-epoch counter the carries' @c birth_ep is stamped from
     /// (`ctx.counters.n_loop_epochs`); age = now_ep − birth_ep.
     long long now_ep = 0;

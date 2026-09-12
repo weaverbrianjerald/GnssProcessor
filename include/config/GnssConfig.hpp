@@ -4643,6 +4643,43 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief COLD ANCHOR-FALLBACK iteration 2 — the SATELLITE clause
+         *        (@c network.phase_datum_candidacy_satellite; default TRUE, inert
+         *        unless @ref networkPhaseDatumCandidacyUsable).
+         *
+         * Iteration 1's screen is per-FAMILY: each (sat, signal) independently elects
+         * the host whose carry is best for ITS band.  Measured on the storm arm
+         * (SPEC_event_harness §15.6): the producer side improved on every channel and
+         * the user's median rose 49 %, with split-referenced satellites 0.0 → 0.9 mean
+         * / 3 max — a satellite's three bands electing three hosts is an
+         * inter-frequency inconsistency the per-band producer instruments cannot see
+         * and the consumer pays for (the shape §16.7/§16.8 measured and cured with an
+         * anchor clause).
+         *
+         * ON, the election resolves a satellite's handover JOINTLY:
+         *  (a) every family of satellite s handing over this epoch takes ONE successor
+         *      — the first coverage-ranked candidate USABLE for the largest number of
+         *      them (ties → coverage order).  A family for which that host is not
+         *      usable is still pinned THERE, through the honest cold path
+         *      (@c sat_clause_cold_colocated): a cold pin on the same host is a frame
+         *      step, not a split.  No candidate usable for any of them ⇒ today's
+         *      sweeps, unchanged.
+         *  (b) when only SOME of s's families move, the station already anchoring the
+         *      others is tried FIRST and, if it tracks and is usable for at least one
+         *      mover, takes them all (@c sat_clause_colocated) — the only reading
+         *      under which (c) can hold.
+         *  (c) the run-end clause reports the per-satellite distinct-anchor census
+         *      from the SAME counters the storm grade reads, so the clause and the
+         *      grade agree by construction.
+         *
+         * OFF is iteration 1 exactly (per-family), which is what makes the A/B a
+         * single knob.
+         */
+        bool networkPhaseDatumCandidacySatellite() const {
+            return network_phase_datum_candidacy_satellite_;
+        }
+
+        /**
          * @brief Minimum arc age, in loop epochs, for a candidate to be USABLE
          *        (@c network.phase_datum_candidacy_min_age_ep; 0 = no age test).
          *
@@ -7502,6 +7539,7 @@ namespace GnssProcessor {
         double network_phase_datum_handover_max_var_m2_{1.0}; ///< Conditional-variance ceiling (m^2) a handover ledger value must beat to be pinned; above it the handover falls through to the COLD path. INERT unless network_phase_datum_handover_continuous_.
         bool   network_phase_datum_handover_continuous_{false}; ///< Hand an anchor handover over at the successor's own outgoing-frame ambiguity value instead of re-pinning at 0, so the gauge change is an S-transform and the emitted family does not step. Both edges counted + traced. INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (no ledger allocated).
         bool   network_phase_datum_candidacy_usable_{false}; ///< COLD ANCHOR-FALLBACK (SPEC_event_harness §15): when a handover is about to happen, sweep the coverage-ranked candidates for one whose carried value is USABLE by the continuous branch's OWN predicate (finite, 0 < var <= ceiling, ratio gate, not freed this epoch, arc age >= network_phase_datum_candidacy_min_age_ep_) BEFORE falling through to today's take-the-first-tracker sweeps.  A family with no usable candidate keeps today's honest cold path.  INERT unless network_phase_datum_handover_continuous_ (no ledger to screen against).  OFF = byte-identical (the pass is never entered).
+        bool   network_phase_datum_candidacy_satellite_{true}; ///< COLD ANCHOR-FALLBACK iteration 2 (SPEC_event_harness §15.8): resolve a satellite's handover JOINTLY — every family of the satellite moving this epoch takes ONE successor (the first coverage-ranked candidate usable for the most of them; a family it is not usable for is pinned THERE through the cold path, which is a frame step, not a split), and a PARTIAL handover prefers the station already anchoring the satellite's other families.  Iteration 1's per-family screen bought producer quality with split references (0.0 → 0.9/3) and cost the consumer 49 %.  Default TRUE; INERT unless network_phase_datum_candidacy_usable_; OFF = iteration 1 exactly (the single-knob A/B).
         int    network_phase_datum_candidacy_min_age_ep_{60}; ///< COLD ANCHOR-FALLBACK maturity bar in loop epochs (n_loop_epochs − LocalCarry::birth_ep); 0 = no age test, unknown age = mature (the restored-entry convention).  Sized on the §15 census: cold successors p50 39 ep vs continuous p50 236 ep.  INERT unless network_phase_datum_candidacy_usable_.
         bool   network_phase_anchor_carry_reref_{false};   ///< QUEUE item 1(d) (SPEC_pivot_visibility_gauge_defect §5.07.5 R1): at a PHASE_ANCHOR handover, marginalize the (sat,signal) family's shared PB carry for ONE epoch (the eq34_reref treatment) and erase its phase-leveling local carries at every station — the retired-frame prior is not folded against the re-realized design matrix, so the frame step lands on the FREE phase bias instead of being absorbed by the satellite clock (measured 41 sigma on G21). INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (the set is never populated).
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.

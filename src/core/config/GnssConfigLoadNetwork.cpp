@@ -7092,6 +7092,15 @@ namespace GnssProcessor {
         network_phase_datum_candidacy_usable_ =
             jval<bool>(json, "network.phase_datum_candidacy_usable",
                        "network_phase_datum_candidacy_usable", false);
+        // Iteration 2 (SPEC_event_harness §15.8) — the SATELLITE clause.  Iteration 1's
+        // per-family screen let a satellite's three bands elect three hosts: producer
+        // channels improved on every axis and the consumer median rose 49 % with
+        // split-referenced satellites 0.0 -> 0.9 mean / 3 max.  Default TRUE, so the
+        // knob above ships its corrected form; OFF reproduces iteration 1 exactly,
+        // which is what makes the A/B a single knob.
+        network_phase_datum_candidacy_satellite_ =
+            jval<bool>(json, "network.phase_datum_candidacy_satellite",
+                       "network_phase_datum_candidacy_satellite", true);
         network_phase_datum_candidacy_min_age_ep_ =
             jval<int>(json, "network.phase_datum_candidacy_min_age_ep",
                       "network_phase_datum_candidacy_min_age_ep", 60);
@@ -8370,6 +8379,22 @@ namespace GnssProcessor {
                           network_phase_datum_handover_max_var_ratio_ > 0.0
                               ? ", ratio ceiling included" : "",
                           network_phase_datum_candidacy_min_age_ep_);
+            if (network_phase_datum_candidacy_satellite_)
+                log->info("Network producer (COLD ANCHOR-FALLBACK, SATELLITE clause): a "
+                          "satellite's families that hand over in the SAME epoch take ONE "
+                          "successor (the first coverage-ranked candidate usable for the most "
+                          "of them; a family it is not usable for is pinned THERE through the "
+                          "cold path — a frame step, not a split), and a PARTIAL handover "
+                          "prefers the station already anchoring the satellite's other "
+                          "families.  Iteration 1's per-family screen bought producer quality "
+                          "with split references (0.0 -> 0.9 mean / 3 max) and cost the "
+                          "consumer 49 % (SPEC_event_harness §15.6).");
+            else
+                log->warn("Network producer (COLD ANCHOR-FALLBACK): "
+                          "network.phase_datum_candidacy_satellite is OFF — this is "
+                          "ITERATION 1, the per-FAMILY screen, whose storm arm measured "
+                          "split-referenced satellites 0.0 -> 0.9 / 3 and a +49 % consumer "
+                          "median.  Arm it only for the single-knob A/B.");
         }
         // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge).
         if (network_readmit_seed_horizon_s_ > 0.0)

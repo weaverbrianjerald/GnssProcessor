@@ -336,6 +336,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                 && config_.networkPhaseDatumCandidacyUsable();
         k.pd_candidacy_min_age_ep = k.pd_candidacy_usable
                                 ? config_.networkPhaseDatumCandidacyMinAgeEp() : 0;
+        // Iteration 2, the SATELLITE clause — resolved with its parent so every site
+        // reads ONE bool and an iteration-1 A/B is a single knob.
+        k.pd_candidacy_satellite = k.pd_candidacy_usable
+                                && config_.networkPhaseDatumCandidacySatellite();
     }
     // SBC S-basis completion (network.sbasis_complete).  Resolved here so the
     // pb_level_prev harvest (which the completion's continuity targets re-use —

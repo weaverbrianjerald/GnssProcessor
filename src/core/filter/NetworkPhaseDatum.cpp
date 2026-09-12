@@ -325,6 +325,26 @@ void networkElectPhaseAnchors(
                >= static_cast<long long>(cand_usable->min_age_ep);
     };
 
+    // THE CANDIDACY ACCEPTANCE TEST — one definition, three readers: the per-family
+    // pass, the satellite clause's joint scoring, and the co-located cold decision.
+    // It returns WHY a candidate was refused so the four skip splits stay a partition
+    // of `candidacy_skipped_unusable` (invariant #4: a total with no partition cannot
+    // say whether the ledger is thin or the maturity bar too tight).
+    enum class CandSkip { kOk, kNotCandidate, kNoEntry, kVarRefused, kFreed, kYoung };
+    auto candScreen = [&](size_t i, const std::string& amb,
+                          const InjectAnchorDirective* dir_,
+                          const std::string& banned_name) -> CandSkip {
+        if (!usable_keys[i].count(amb) || !hyg.eligibleHost(i, amb)
+            || (!banned_name.empty() && stations[i].name == banned_name))
+            return CandSkip::kNotCandidate;   // not a candidate at all — never counted
+        const LedgerVerdict v = ledgerVerdict(ledgerEntry(i, amb), dir_ && dir_->cold);
+        if (!v.ok)              return v.has_entry ? CandSkip::kVarRefused
+                                                   : CandSkip::kNoEntry;
+        if (candFreed(i, amb))  return CandSkip::kFreed;
+        if (!candMature(i, amb))return CandSkip::kYoung;
+        return CandSkip::kOk;
+    };
+
     std::map<char, std::vector<size_t>> cand;
     for (auto& [c, s] : cand_set) {
         std::vector<size_t> v(s.begin(), s.end());
@@ -334,6 +354,94 @@ void networkElectPhaseAnchors(
             return stations[a].name < stations[b].name;
         });
         cand[c] = std::move(v);
+    }
+
+    // ---- ITERATION 2: the SATELLITE clause -----------------------------------
+    // docs/SPEC_event_harness.md §15.8.  Iteration 1 screened per FAMILY, so a
+    // satellite's three bands could each elect the host whose carry was best for
+    // THEIR band — correct one band at a time and, jointly, an inter-frequency
+    // inconsistency the per-band producer instruments cannot see (measured: the
+    // storm arm's producer channels all improved while the consumer median rose
+    // 49 % and split-referenced satellites went 0.0 → 0.9 mean / 3 max, §15.6).
+    //
+    // So the handover is resolved per SATELLITE, ahead of the per-family loop:
+    //   (a) every family of s moving THIS epoch takes ONE successor — the first
+    //       coverage-ranked candidate usable for the largest number of them (ties
+    //       → coverage order).  A family that host is not usable for is still
+    //       pinned THERE, through the honest cold path: a cold pin on the same
+    //       host is a frame step, not a split.
+    //   (b) when only SOME of s's families move, the station already anchoring the
+    //       others is tried FIRST.
+    // A satellite with no usable candidate for any mover is left to today's sweeps.
+    struct SatJoint {
+        std::vector<std::string> moving;                  ///< amb keys handing over
+        std::size_t host = static_cast<std::size_t>(-1);  ///< the joint successor
+        bool colocated = false;                           ///< rule (b) decided it
+    };
+    std::map<std::string, SatJoint> sat_joint;
+    if (cand_usable && cand_usable->on && cand_usable->satellite_clause) {
+        // Which families move is decided HERE with the same predicate the loop
+        // applies below (sticky ∧ present ∧ tracks ∧ not banned keeps the pin), so
+        // the pre-pass and the loop cannot disagree about the population.
+        std::map<std::string, std::set<std::string>> held;   // sat -> stations keeping a pin
+        for (const auto& [amb, pbkey] : union_keys) {
+            if (hyg.isBridged(amb)) continue;
+            const std::size_t us = amb.find('_');
+            if (us == std::string::npos || us == 0) continue;
+            const auto inc = anchor_incumbent.find(amb);
+            if (inc == anchor_incumbent.end()) continue;   // first sighting: no handover
+            const InjectAnchorDirective* d = inject ? inject->anchorFor(amb) : nullptr;
+            const std::string bn = d ? inc->second : std::string{};
+            bool keeps = false;
+            if (sticky)
+                for (std::size_t i = 0; i < stations.size(); ++i)
+                    if (present[i] && stations[i].name == inc->second
+                        && usable_keys[i].count(amb)
+                        && !(!bn.empty() && stations[i].name == bn)) { keeps = true; break; }
+            if (keeps) held[amb.substr(0, us)].insert(inc->second);
+            else       sat_joint[amb.substr(0, us)].moving.push_back(amb);
+        }
+        for (auto& [sat, j] : sat_joint) {
+            const char c2 = sat.empty() ? char(0) : sat.front();
+            const auto cit = cand.find(c2);
+            if (cit == cand.end()) { ++tally.sat_clause_no_usable; continue; }
+            auto nUsable = [&](std::size_t i) {
+                std::size_t n = 0;
+                for (const auto& amb : j.moving) {
+                    const InjectAnchorDirective* d = inject ? inject->anchorFor(amb) : nullptr;
+                    std::string bn;
+                    if (d) {
+                        const auto it = anchor_incumbent.find(amb);
+                        if (it != anchor_incumbent.end()) bn = it->second;
+                    }
+                    if (candScreen(i, amb, d, bn) == CandSkip::kOk) ++n;
+                }
+                return n;
+            };
+            // (b) first.  Taking the held host whenever it is usable for AT LEAST
+            // ONE mover is the only reading under which the satellite cannot split:
+            // letting a higher-scoring stranger win would re-create exactly the
+            // defect this iteration exists to remove, and a family the held host
+            // cannot serve takes a CO-LOCATED cold pin instead.
+            const auto h = held.find(sat);
+            if (h != held.end())
+                for (std::size_t i : cit->second)
+                    if (h->second.count(stations[i].name) && nUsable(i) > 0) {
+                        j.host = i;
+                        j.colocated = true;
+                        break;
+                    }
+            // (a) otherwise the joint maximum, in coverage order.
+            if (j.host == static_cast<std::size_t>(-1)) {
+                std::size_t best = 0;
+                for (std::size_t i : cit->second) {
+                    const std::size_t n = nUsable(i);
+                    if (n > best) { best = n; j.host = i; }
+                }
+            }
+            if (j.host == static_cast<std::size_t>(-1)) ++tally.sat_clause_no_usable;
+            else                                        ++tally.sat_clause_satellites;
+        }
     }
 
     // (c) Elect one anchor per (sat,signal): keep the STICKY incumbent while
@@ -426,39 +534,57 @@ void networkElectPhaseAnchors(
         bool from_candidacy = false;
         if (anchor == static_cast<size_t>(-1) && cand_usable && cand_usable->on
             && inc_it != anchor_incumbent.end()) {
+            // The per-FAMILY pass runs whether or not the satellite clause is armed:
+            // it owns the four skip counters and the row's cand_skipped /
+            // cand_first_unusable, and under the clause it is also the FAMILY-ONLY
+            // pick the split census is measured against (the `rank_changed` idiom).
+            size_t fam_pick = static_cast<size_t>(-1);
             auto cit = cand.find(c);
             if (cit != cand.end()) {
                 for (size_t i : cit->second) {
-                    if (!usable_keys[i].count(amb) || !hyg.eligibleHost(i, amb)
-                        || banned_sta(i))
-                        continue;
-                    const LedgerVerdict v =
-                            ledgerVerdict(ledgerEntry(i, amb), dir && dir->cold);
-                    // The skip reasons are checked in the order they DISQUALIFY, and
-                    // exactly one is counted per skipped candidate, so the four
-                    // splits partition `candidacy_skipped_unusable` (invariant #4:
-                    // a total with no partition cannot say WHY the pass fell back).
-                    if (!v.ok) {
-                        ++tally.candidacy_skipped_unusable;
-                        if (!v.has_entry) ++tally.candidacy_skip_no_entry;
-                        else              ++tally.candidacy_skip_var_refused;
-                    } else if (candFreed(i, amb)) {
-                        ++tally.candidacy_skipped_unusable;
-                        ++tally.candidacy_skip_freed;
-                    } else if (!candMature(i, amb)) {
-                        ++tally.candidacy_skipped_unusable;
-                        ++tally.candidacy_skip_young;
-                    } else {
-                        anchor = i;
-                        from_candidacy = true;
-                        break;
+                    const CandSkip v = candScreen(i, amb, dir, banned);
+                    if (v == CandSkip::kNotCandidate) continue;
+                    if (v == CandSkip::kOk) { fam_pick = i; break; }
+                    // Exactly one reason per skipped candidate, so the four splits
+                    // partition `candidacy_skipped_unusable`.
+                    ++tally.candidacy_skipped_unusable;
+                    switch (v) {
+                        case CandSkip::kNoEntry:    ++tally.candidacy_skip_no_entry;    break;
+                        case CandSkip::kVarRefused: ++tally.candidacy_skip_var_refused; break;
+                        case CandSkip::kFreed:      ++tally.candidacy_skip_freed;       break;
+                        default:                    ++tally.candidacy_skip_young;       break;
                     }
                     ++n_cand_skipped;
                     if (first_unusable.empty()) first_unusable = stations[i].name;
                 }
             }
-            if (from_candidacy) {
-                ++tally.candidacy_usable_elected;
+            size_t pick = fam_pick;
+            // ITERATION 2: the satellite's JOINT successor overrides the family-only
+            // pick, so every family of the satellite that moves this epoch lands on
+            // ONE host.  A family the host does not TRACK cannot be pinned there at
+            // all (no ambiguity state) and falls back to the per-family path — the
+            // only residual way this clause can still split, and counted as such.
+            const auto sj = sat_joint.find(amb.substr(0, amb.find('_')));
+            if (sj != sat_joint.end()
+                && sj->second.host != static_cast<std::size_t>(-1)) {
+                const size_t host = sj->second.host;
+                if (usable_keys[host].count(amb)) {
+                    pick = host;
+                    ++tally.sat_clause_families;
+                    if (sj->second.colocated) ++tally.sat_clause_colocated;
+                    if (fam_pick != static_cast<size_t>(-1) && fam_pick != host)
+                        ++tally.sat_clause_split_avoided;
+                    if (candScreen(host, amb, dir, banned) != CandSkip::kOk)
+                        ++tally.sat_clause_cold_colocated;
+                } else {
+                    ++tally.sat_clause_host_untracked;
+                }
+            }
+            if (pick != static_cast<size_t>(-1)) {
+                anchor = pick;
+                from_candidacy = true;
+                if (candScreen(pick, amb, dir, banned) == CandSkip::kOk)
+                    ++tally.candidacy_usable_elected;
                 // The number that proves the pass DID something: today's sweep is
                 // cheap to evaluate alongside, and an arm whose elected station
                 // always matches it changed nothing however clean its log looks.
