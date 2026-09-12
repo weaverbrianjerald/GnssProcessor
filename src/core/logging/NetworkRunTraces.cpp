@@ -1566,6 +1566,20 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.state_snapshot_emit_capture ? "true" : "false",
                                      config_.networkResumeEmitRestore() ? "true" : "false")
                        : std::string())
+               // RS-6 (SPEC_event_harness §21.13): the station-layer continuity halves
+               // plus the two diagnostic sub-switches (an attribution leg must be
+               // self-describing), on the same armed-only discipline as the pairs above.
+               << ((nc.state_snapshot_station_capture
+                    || config_.networkResumeStationRestore())
+                       ? fmt::format("\"state_snapshot_station_capture\":{},"
+                                     "\"resume_station_restore\":{},"
+                                     "\"resume_station_restore_rxcb\":{},"
+                                     "\"resume_station_restore_shdev\":{},",
+                                     nc.state_snapshot_station_capture ? "true" : "false",
+                                     config_.networkResumeStationRestore() ? "true" : "false",
+                                     config_.networkResumeStationRestoreRxCb() ? "true" : "false",
+                                     config_.networkResumeStationRestoreShDev() ? "true" : "false")
+                       : std::string())
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
                << fmt::format("\"state_snapshot_resume_shock_m\":{},",
                               nc.state_snapshot_resume_shock_m)

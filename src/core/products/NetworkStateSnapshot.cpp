@@ -245,6 +245,20 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     // const false) — "PS,,<sum>,<n>" is a legal row and the parser accepts it.
     for (const auto& [cst, ac] : snap.pb_filter_step)
         put(fmt::format("PS,{},{},{}", cst, ac.sum_log_e2, ac.n_eff));
+    // RS-6 STATION-LAYER records (SPEC_event_harness §21.13): the rx-CB carry, then
+    // the T5 per-LOS deviation carry.  Written only under
+    // network.state_snapshot_station_capture (the driver leaves both containers empty
+    // otherwise, so a run without it writes the previous bytes unchanged), under the
+    // existing header like the RS-3 / RS-5 groups, and BEFORE the CARRY / EMITTER
+    // blobs so the verbatim blob state machines can never swallow them.  The RC key's
+    // CB family ("GPS_DCB", "GPS_IFB5", …) and the SD key's '|' carry no comma, so
+    // neither needs escaping.  An RC row is the Z row's field set exactly — the
+    // restore therefore runs through the same makeRestoredLocalCarry the L / Z rows do.
+    for (const auto& [key, l] : snap.rx_cb_carry)
+        put(fmt::format("RC,{},{},{},{},{}", key.first, key.second,
+                        l.value_abs, l.var, l.last_seen_s));
+    for (const auto& [key, d] : snap.sh_dev_carry)
+        put(fmt::format("SD,{},{},{},{},{}", key, d.dev, d.var, d.var_ss, d.t_s));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -656,6 +670,31 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             if (!std::isfinite(d1) || !std::isfinite(d2) || d2 < 0.0)
                 return fail("PS field not finite (or a negative row count)");
             s.pb_filter_step[f[1]] = NetworkStateSnapshot::PbFilterStep{d1, d2};
+        } else if (tag == "RC") {   // RS-6: receiver code-bias (rx-CB) carry entry
+            if (f.size() != 6 || f[2].empty()) return fail("malformed RC line");
+            if (!parseI(f[1], i1)) return fail("malformed RC station index");
+            if (!parseD(f[3], d1) || !parseD(f[4], d2) || !parseD(f[5], d3))
+                return fail("malformed RC fields");
+            // The restored value_abs IS the prior the next fold's innovation
+            // differences against and `var` is its weight, so a nan/inf strtod would
+            // accept here (the ER / CBP precedent) would poison every subsequent
+            // fold of that (station, family).  A non-positive variance is refused for
+            // the same reason: the harvest only ever stashes var > 0.
+            if (!std::isfinite(d1) || !std::isfinite(d2) || !std::isfinite(d3)
+                || !(d2 > 0.0))
+                return fail("RC field not finite (or a non-positive variance)");
+            s.rx_cb_carry[{static_cast<int>(i1), f[2]}] =
+                NetworkStateSnapshot::Local{d1, d2, d3};
+        } else if (tag == "SD") {   // RS-6: T5 / Iono-2 per-LOS deviation carry entry
+            if (f.size() != 6 || f[1].empty()) return fail("malformed SD line");
+            if (!parseD(f[2], d1) || !parseD(f[3], d2) || !parseD(f[4], d3))
+                return fail("malformed SD fields");
+            double d4 = 0.0;
+            if (!parseD(f[5], d4)) return fail("malformed SD t_s");
+            if (!std::isfinite(d1) || !std::isfinite(d2) || !std::isfinite(d3)
+                || !std::isfinite(d4) || d2 < 0.0 || d3 < 0.0)
+                return fail("SD field not finite (or a negative variance)");
+            s.sh_dev_carry[f[1]] = NetworkStateSnapshot::ShDev{d1, d2, d3, d4};
         } else {
             return fail("unknown record tag '" + tag + "'");
         }

@@ -3500,6 +3500,35 @@ int networkTeardown(
                         "log for the RS-5 line."
                       : "");
     }
+    // RS-6 (SPEC_event_harness §21.13): the STATION-LAYER continuity halves, beside the
+    // RS-5 line and at the same (function) scope for the same invariant-#4 reason — the
+    // two carries run on lineages that do and do not arm each other.  Printed whenever
+    // EITHER half is armed: an armed writer that wrote no rows and an armed reader that
+    // restored none are exactly the two invariant-#4 cases this line exists to expose,
+    // and the bare "off" on the other half is what says which it is.  The sub-switch
+    // states are always named: an attribution leg that restored one half must be
+    // readable from the run-end tail alone.
+    if (config_.getNetworkConfig().state_snapshot_station_capture
+        || config_.networkResumeStationRestore()) {
+        const auto& C = ctx.counters;
+        log->info("Network (RS-6 station restore): write {} / read {} (rxcb {}, shdev {}); "
+                  "last snapshot carried {} station-layer row(s); restored rx-CB entries "
+                  "{}, deviation entries {}.{}",
+                  config_.getNetworkConfig().state_snapshot_station_capture ? "ARMED" : "off",
+                  config_.networkResumeStationRestore() ? "ARMED" : "off",
+                  config_.networkResumeStationRestoreRxCb() ? "on" : "off",
+                  config_.networkResumeStationRestoreShDev() ? "on" : "off",
+                  ctx.carry.snap_station_rows_last,
+                  C.n_resume_station_rxcb, C.n_resume_station_shdev,
+                  (config_.networkResumeStationRestore()
+                   && C.n_resume_station_rxcb == 0 && C.n_resume_station_shdev == 0)
+                      ? "  ⚠ 0 restored under an ARMED read — the snapshot carried no "
+                        "RC / SD rows (a writer without "
+                        "network.state_snapshot_station_capture?), both sub-switches are "
+                        "off, neither carry is armed this run, or no warm resume "
+                        "happened; check the resume log for the RS-6 line."
+                      : "");
+    }
     // RS-4 (SPEC_event_harness §21.9): the DECLARATION half, beside the RS-3 line and
     // at the same (function) scope for the same invariant-#4 reason.  The census is
     // taken on EVERY warm resume the knob is armed for, so an armed run that marked
