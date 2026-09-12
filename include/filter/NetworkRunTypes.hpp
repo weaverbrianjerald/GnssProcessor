@@ -414,8 +414,22 @@ struct LocalCarry {
     std::shared_ptr<const PlHarvestBlock> blk{};  ///< F3 (network.phase_leveling_local_block): the harvest cross-covariance block this entry's off-diagonals live in — null when the knob is off, on the ZWD carry, and for a warm-resume-restored entry (no block ⇒ every pair with it is zeroed + counted at inject).
     int blk_idx{-1};                              ///< F3: this entry's row/column in @c blk->C (−1 = none).
     double var_first{0.0};                        ///< The arc's FIRST-STASH conditional variance (m²; 0 = unknown): set once at birth, kept across re-stashes (an erase-and-rebirth starts it over, a re-level keeps it).  The honest-σ-scale denominator of network.phase_datum_handover_max_var_ratio; snapshotted only when that knob is armed.
-    long long birth_ep{0};                        ///< Loop-epoch index (n_loop_epochs) of the arc's FIRST stash (0 = unknown ⇒ mature): set once at birth, kept across re-stashes, restarted by an erase-and-rebirth.  network.phase_leveling_local_block_min_age_ep keeps a leg OUT of the F3 block (per-column row instead) until n_loop_epochs − birth_ep ≥ the gate — a leg born at a satellite's re-admission carries its code-level birth error, and the block's joint whitening would spread it into the station's mature columns.  Not snapshotted (a restored entry reads mature).
-    double birth_s{0.0};                          ///< Continuous-GPS seconds (week*604800 + tow) of the arc's FIRST stash — the seconds twin of @c birth_ep, set once at birth from the harvest's @c pl_now_s, kept across re-stashes, restarted by an erase-and-rebirth (a T4 attribution erase deletes the entry and the next harvest re-creates it with a level that ALREADY contains any earlier slip).  Read by the SIM-ONLY slip oracle (@c network.cycle_slip.oracle_relevel) as the hard lower edge of its truth-slip window, so a repair can never re-apply a jump the re-created level already absorbed.  NOT snapshotted (like @c birth_ep): a warm-resume-restored entry reads 0, which only widens the oracle window to its @c oracle_window_s bound — acceptable for a sim-only diagnostic and the conservative direction.
+    /// RESTORED-ARC sentinel for @ref birth_ep (SPEC_event_harness §15.4).  A
+    /// warm-resume-restored entry is stamped with this instead of being left at 0,
+    /// because 0 also means "never stashed" — which is exactly what the harvest's
+    /// first-stash-wins rule reads it as, so a restored arc used to be re-branded
+    /// as born at the RESUME epoch by the first post-resume harvest and every age
+    /// gate then saw a network of newborns for @c min_age epochs.  A negative stamp
+    /// is unreachable by the harvest (@c n_loop_epochs is incremented before the
+    /// harvest, so a genuine first stash is ≥ 1), survives the `!= 0` first-stash
+    /// test, and reads MATURE at every age reader (all of which test `> 0`).
+    static constexpr long long kBirthEpRestored = -1;
+    /// RESTORED-ARC sentinel for @ref birth_s — the seconds twin of
+    /// @ref kBirthEpRestored, on the same rule (a real stamp is a continuous-GPS
+    /// second, so it is always ≫ 0).
+    static constexpr double    kBirthSRestored  = -1.0;
+    long long birth_ep{0};                        ///< Loop-epoch index (n_loop_epochs) of the arc's FIRST stash: set once at birth, kept across re-stashes, restarted by an erase-and-rebirth.  0 = never stashed, @ref kBirthEpRestored (−1) = warm-resume-restored with its true birth un-snapshotted; BOTH read as MATURE (every reader tests `> 0`), and both survive the harvest's first-stash-wins rule, which tests `!= 0`.  network.phase_leveling_local_block_min_age_ep keeps a leg OUT of the F3 block (per-column row instead) until n_loop_epochs − birth_ep ≥ the gate — a leg born at a satellite's re-admission carries its code-level birth error, and the block's joint whitening would spread it into the station's mature columns.  Not snapshotted: a restored entry is sentinel-stamped and reads mature FOR ITS WHOLE LIFE (until an erase-and-rebirth), which is the documented restored-entry contract.
+    double birth_s{0.0};                          ///< Continuous-GPS seconds (week*604800 + tow) of the arc's FIRST stash — the seconds twin of @c birth_ep, set once at birth from the harvest's @c pl_now_s, kept across re-stashes, restarted by an erase-and-rebirth (a T4 attribution erase deletes the entry and the next harvest re-creates it with a level that ALREADY contains any earlier slip).  Read by the SIM-ONLY slip oracle (@c network.cycle_slip.oracle_relevel) as the hard lower edge of its truth-slip window, so a repair can never re-apply a jump the re-created level already absorbed.  NOT snapshotted (like @c birth_ep): a warm-resume-restored entry carries @ref kBirthSRestored (−1), which never wins the window's `max` and so leaves the window at its @c oracle_window_s latency bound for the arc's whole restored life — acceptable for a sim-only diagnostic and the conservative direction.
     /// Continuous-GPS seconds of the arc's LAST RE-LEVEL — the age clock of the
     /// AGE-AWARE young-arc variance inflation
     /// (@c network.phase_leveling_young_inflate_var_m2,
@@ -436,8 +450,89 @@ struct LocalCarry {
     /// (the erase–re-level treadmill, 21 erases/station-hour).  NOT snapshotted (like
     /// @c birth_s / @c birth_ep): a warm-resume-restored entry reads 0, which this
     /// card treats as UNSTAMPED ⇒ MATURE ⇒ no inflation — the conservative direction.
+    /// (Unlike @c birth_s / @c birth_ep it needs no restore sentinel: it is stamped
+    /// only on CREATE and on FREE, never on an ordinary re-stash, so a restored
+    /// entry's 0 survives every harvest until the arc is actually re-levelled.)
     double relevel_s{0.0};
 };
+
+/// One carried-ambiguity entry as a warm resume restores it from a snapshot's
+/// `L` / `Z` row — the ONE place the RESTORED-ARC AGE convention is realized.
+///
+/// The snapshot deliberately does not serialize the arc's birth (see
+/// @ref LocalCarry::birth_ep): the documented contract is that a restored entry
+/// reads MATURE, because its true birth is at least as old as the snapshot and
+/// refusing it would refuse the whole network for @c min_age epochs after every
+/// resume.  Leaving the fields at their 0 default did NOT deliver that contract —
+/// the harvest's first-stash-wins rule reads 0 as "never stamped" and re-stamps
+/// it with the CURRENT loop epoch, so one post-resume harvest re-branded every
+/// restored arc as newborn (measured: 390 of 414 candidacy skips read `young` on a
+/// 60-epoch leg, SPEC_event_harness §15.4).  The sentinel is what makes "restored"
+/// distinguishable from "never stashed" without touching the snapshot format or
+/// the warm-resume fingerprint.
+///
+/// @param value_abs   Carried absolute estimate (m) — the snapshot's field.
+/// @param var         Carried posterior variance (m²) — the snapshot's field.
+/// @param last_seen_s Continuous-GPS seconds of the stash that wrote the row.
+/// @param var_first   First-stash variance if the row carried one (0 = absent).
+/// @return A @ref LocalCarry with both birth stamps at their RESTORED sentinels.
+inline LocalCarry makeRestoredLocalCarry(double value_abs, double var,
+                                        double last_seen_s,
+                                        double var_first = 0.0) {
+    LocalCarry lc{value_abs, var, last_seen_s};
+    lc.var_first = var_first;
+    lc.birth_ep  = LocalCarry::kBirthEpRestored;
+    lc.birth_s   = LocalCarry::kBirthSRestored;
+    return lc;
+}
+
+/// Is this carried entry YOUNGER than the maturity bar — ONE definition, two
+/// readers (the F3 block admission gate `network.phase_leveling_local_block_min_
+/// age_ep` in ApplicationNetworkAssembly, and the cold anchor-fallback candidacy
+/// bar `network.phase_datum_candidacy_min_age_ep` in NetworkPhaseDatum).
+///
+/// The RESTORED-ARC AGE convention lives here: an entry whose @c birth_ep is not
+/// POSITIVE has no usable age — 0 (never stashed, or a pre-sentinel vintage) and
+/// @ref LocalCarry::kBirthEpRestored (warm-resume-restored) alike — and is never
+/// young.  The conservative direction is to let the variance ceiling decide rather
+/// than refuse a carry the ledger says has converged.
+///
+/// @param lc          The station's carried entry for the arc.
+/// @param now_ep      This epoch's @c n_loop_epochs.
+/// @param min_age_ep  The maturity bar in loop epochs; ≤ 0 disables the test.
+/// @return True only when the arc has a positive birth stamp AND fewer than
+///         @p min_age_ep loop epochs have elapsed since it.
+inline bool localCarryYoung(const LocalCarry& lc, long long now_ep,
+                            int min_age_ep) {
+    return min_age_ep > 0 && lc.birth_ep > 0
+           && (now_ep - lc.birth_ep) < static_cast<long long>(min_age_ep);
+}
+
+/// Stamp @p fresh with the arc's birth on the FIRST-STASH-WINS rule — the one
+/// definition of the rule the phase-leveling harvest applies at every stash.
+///
+/// ⚠ The "already stamped" test is `!= 0`, not `> 0` (SPEC_event_harness §15.4).
+/// Both non-zero states mean "this arc's birth is already settled": a positive
+/// stamp is a real first stash, and @ref LocalCarry::kBirthEpRestored is a warm
+/// resume saying "older than this run, true age not snapshotted ⇒ MATURE".  A
+/// `> 0` test cannot tell the sentinel from an unstashed 0, which is exactly how
+/// the first post-resume harvest used to re-brand every restored arc as born at
+/// the resume epoch.
+///
+/// An erase-and-rebirth (a T4 attribution erase, a gap prune, a re-admission)
+/// needs no clause here: it DELETES the entry, so @p prev is null and the arc is
+/// stamped with today's epoch — which is the honest answer for a re-born arc.
+///
+/// @param fresh   The entry about to be stashed (its birth fields are written).
+/// @param prev    The station's previous entry for the same key, or null when
+///                there is none (a first stash, or a re-stash after an erase).
+/// @param now_ep  This epoch's @c n_loop_epochs (≥ 1 at any harvest).
+/// @param now_s   This harvest's continuous-GPS seconds (@c pl_now_s).
+inline void localCarryStampBirth(LocalCarry& fresh, const LocalCarry* prev,
+                                 long long now_ep, double now_s) {
+    fresh.birth_ep = (prev && prev->birth_ep != 0) ? prev->birth_ep : now_ep;
+    fresh.birth_s  = (prev && prev->birth_s != 0.0) ? prev->birth_s : now_s;
+}
 
 /// SPEC_slip_relevel_walk §6 — the slip re-level response's per-epoch state
 /// (network.cycle_slip.relevel_free_epoch / relevel_delta_bridge).

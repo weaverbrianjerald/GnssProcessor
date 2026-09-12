@@ -1247,9 +1247,16 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     }
                     local_carry.clear();
                     for (const auto& [key, l] : snap.local_carry) {
-                        LocalCarry lc{l.value_abs, l.var, l.last_seen_s};
-                        lc.var_first = l.var_first;   // 0 on a pre-ratio file: the ratio ceiling then refuses the arc until it re-converges
-                        local_carry[key] = lc;
+                        // RESTORED-ARC AGE (SPEC_event_harness §15.4): the birth
+                        // stamps are deliberately not snapshotted, and the entry is
+                        // therefore SENTINEL-stamped rather than left at 0 — 0 also
+                        // means "never stashed", which is what the harvest's
+                        // first-stash-wins rule reads it as, so the first post-resume
+                        // harvest used to re-brand every restored arc as born at the
+                        // RESUME.  var_first stays 0 on a pre-ratio file: the ratio
+                        // ceiling then refuses the arc until it re-converges.
+                        local_carry[key] = makeRestoredLocalCarry(
+                            l.value_abs, l.var, l.last_seen_s, l.var_first);
                     }
                     // STABILITY target 2 leg C: seam-scoped soft refloat of the
                     // restored leveling carries.  The h-vintage zero-q levels were
@@ -1271,7 +1278,14 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     }
                     zwd_carry.clear();
                     for (const auto& [idx, l] : snap.zwd_carry)
-                        zwd_carry[idx] = LocalCarry{l.value_abs, l.var, l.last_seen_s};
+                        // Same restored-entry convention as the L rows above.  The ZWD
+                        // carry has no age reader today and its harvest replaces the
+                        // whole entry (so the sentinel does not survive the first
+                        // stash), but a restored Z row IS a restored entry and reads
+                        // as one — an age gate added here later must not have to
+                        // rediscover §15.4.
+                        zwd_carry[idx] = makeRestoredLocalCarry(l.value_abs, l.var,
+                                                                l.last_seen_s);
                     // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17
                     // finding 3): arm the post-resume inject window.  This is the
                     // RE-COUPLING edge (invariant #7): the restored h-vintage ZWD
@@ -3605,21 +3619,24 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     const double var_first =
                         (oldc != local_carry.end() && oldc->second.var_first > 0.0)
                             ? oldc->second.var_first : var;
-                    // Birth epoch (the F3 block admission age gate's clock): first stash
-                    // wins, kept across re-stashes, restarted by an erase-and-rebirth.
-                    const long long birth_ep =
-                        (oldc != local_carry.end() && oldc->second.birth_ep > 0)
-                            ? oldc->second.birth_ep
-                            : static_cast<long long>(ctx.counters.n_loop_epochs);
-                    // …and its SECONDS twin, on exactly the same first-stash-wins rule.
-                    // The sim-only slip oracle (network.cycle_slip.oracle_relevel) uses it
-                    // as the HARD lower edge of its truth-slip window: a T4 attribution
-                    // erase drops the entry, and the level the next harvest CREATES already
-                    // contains every earlier jump, so a truth slip stamped at or before
-                    // this second is absorbed and must never be re-applied.
-                    const double birth_s =
-                        (oldc != local_carry.end() && oldc->second.birth_s > 0.0)
-                            ? oldc->second.birth_s : pl_now_s;
+                    // The arc's BIRTH — birth_ep (the F3 block admission age gate's
+                    // and the candidacy bar's clock) and its seconds twin birth_s (the
+                    // sim-only slip oracle's hard window floor: a truth slip stamped at
+                    // or before the entry's creation is already absorbed by the level
+                    // the harvest CREATED and must never be re-applied) — is stamped by
+                    // localCarryStampBirth below, the ONE definition of the
+                    // first-stash-wins rule (filter/NetworkRunTypes.hpp).  First stash
+                    // wins, kept across re-stashes, restarted by an erase-and-rebirth
+                    // (which needs no clause: the entry is GONE, so `oldc == end()` and
+                    // today's epoch is the honest stamp).
+                    // ⚠ Its "already stamped" test is `!= 0`, NOT `> 0`
+                    // (SPEC_event_harness §15.4): a warm-resume-restored entry carries
+                    // LocalCarry::kBirthEpRestored / kBirthSRestored precisely so the
+                    // rule can tell "restored, true age not snapshotted ⇒ MATURE" from
+                    // "never stashed ⇒ stamp it now".  With `> 0` the FIRST post-resume
+                    // harvest re-branded every restored arc as born at the resume epoch,
+                    // and every age gate then saw a network of newborns for min_age
+                    // epochs (390 of 414 candidacy skips read `young` on a 60-epoch leg).
                     // AGE-AWARE young-arc inflate stamp (SPEC_amb_iono_split_overcount
                     // §6.17–§6.18).  Two events, and ONLY two, produce a level whose
                     // VALUE is code-quality while its harvested VARIANCE is phase-stiff:
@@ -3643,8 +3660,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             {static_cast<int>(i), pa.amb_key}) > 0;
                     LocalCarry nlc{value_abs, var, pl_now_s, std::move(coupling)};
                     nlc.var_first = var_first;
-                    nlc.birth_ep  = birth_ep;
-                    nlc.birth_s   = birth_s;
+                    localCarryStampBirth(
+                        nlc, (oldc != local_carry.end() ? &oldc->second : nullptr),
+                        static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
                     nlc.relevel_s = NetworkYoungInflate::stamp(
                         yng_created ? 0.0 : oldc->second.relevel_s,
                         yng_created, yng_freed, pl_now_s);
@@ -4054,17 +4072,17 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     LocalCarry ent{value_abs, var, pl_now_s, std::move(coupling)};
                     // birth_ep / birth_s / var_first survive a re-stash and restart only
                     // on an erase-and-rebirth (a T4 erase, or a gap prune) — the ambiguity
-                    // carry's rule, so the age of an iono carry means the same thing.
+                    // carry's rule, through the ambiguity carry's own helper, so the age
+                    // of an iono carry means the same thing.  (This map is NOT
+                    // snapshotted, so it never sees a RESTORED sentinel today; the shared
+                    // helper is what makes that stay true if it ever is.)
                     const auto oit = iono_blk_carry.find(key);
-                    if (oit != iono_blk_carry.end()) {
-                        ent.var_first = oit->second.var_first;
-                        ent.birth_ep  = oit->second.birth_ep;
-                        ent.birth_s   = oit->second.birth_s;
-                    } else {
-                        ent.var_first = var;
-                        ent.birth_ep  = static_cast<long long>(ctx.counters.n_loop_epochs);
-                        ent.birth_s   = pl_now_s;
-                    }
+                    const LocalCarry* iprev =
+                        (oit != iono_blk_carry.end()) ? &oit->second : nullptr;
+                    ent.var_first = iprev ? iprev->var_first : var;
+                    localCarryStampBirth(
+                        ent, iprev,
+                        static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
                     // Row irow0 + a of the station's harvest block = this iono column's
                     // n_c read at every carried column of the station (its own entry
                     // equals `var`, the pure conditional).  The entry then points at the
@@ -4241,17 +4259,16 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     LocalCarry ent{value_abs, var, pl_now_s, std::move(coupling)};
                     // birth_ep / birth_s / var_first survive a re-stash and restart only on
                     // an erase-and-rebirth (a jump response, or a gap prune) — the ambiguity
-                    // carry's rule, so the age of a clock carry means the same thing.
+                    // carry's rule, through the ambiguity carry's own helper, so the age of
+                    // a clock carry means the same thing.  (This map is NOT snapshotted
+                    // either; same note as the iono block above.)
                     const auto oit = rx_clk_carry.find(key);
-                    if (oit != rx_clk_carry.end()) {
-                        ent.var_first = oit->second.var_first;
-                        ent.birth_ep  = oit->second.birth_ep;
-                        ent.birth_s   = oit->second.birth_s;
-                    } else {
-                        ent.var_first = var;
-                        ent.birth_ep  = static_cast<long long>(ctx.counters.n_loop_epochs);
-                        ent.birth_s   = pl_now_s;
-                    }
+                    const LocalCarry* rprev =
+                        (oit != rx_clk_carry.end()) ? &oit->second : nullptr;
+                    ent.var_first = rprev ? rprev->var_first : var;
+                    localCarryStampBirth(
+                        ent, rprev,
+                        static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
                     // Row rrow0 + a of the station's harvest block = this clock-family
                     // column's n_c read at every carried column of the station (its own
                     // entry equals `var`, the pure conditional).  The entry then points at

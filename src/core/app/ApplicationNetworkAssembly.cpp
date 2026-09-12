@@ -3491,8 +3491,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         std::vector<LocalBlockCol> bc;
                         bc.reserve(pl_pend.size());
                         for (const PlPend& p : pl_pend) {
-                            if (pl_min_age > 0 && p.lc->birth_ep > 0
-                                && loop_ep_now - p.lc->birth_ep < pl_min_age) {
+                            // localCarryYoung (filter/NetworkRunTypes.hpp) is the ONE
+                            // definition of the maturity test, shared with the cold
+                            // anchor-fallback candidacy bar — including the
+                            // RESTORED-ARC AGE convention (SPEC_event_harness §15.4):
+                            // a non-positive birth stamp is never young.
+                            if (localCarryYoung(*p.lc, loop_ep_now, pl_min_age)) {
                                 // "free" (default): the young leg is NOT injected at all —
                                 // it re-solves from this epoch's data and carries no memory
                                 // until it matures.  "diagonal": deferred to the per-column
@@ -3518,8 +3522,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             std::vector<PlPend> mature;
                             mature.reserve(bc.size());
                             for (const PlPend& p : pl_pend)
-                                if (!(p.lc->birth_ep > 0
-                                      && loop_ep_now - p.lc->birth_ep < pl_min_age))
+                                if (!localCarryYoung(*p.lc, loop_ep_now, pl_min_age))
                                     mature.push_back(p);
                             pl_pend.swap(mature);
                         }

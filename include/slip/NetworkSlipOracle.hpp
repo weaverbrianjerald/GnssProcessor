@@ -89,8 +89,12 @@
  *   is stamped once at creation and preserved across re-stashes, exactly like
  *   @ref LocalCarry::birth_ep (which is NOT usable here: it is a loop-epoch
  *   INDEX, not seconds).  ⚠ It is deliberately not snapshotted, so a
- *   warm-resume-restored entry reads 0 and the window falls back to the
- *   latency bound alone — the conservative direction for a sim-only diagnostic.
+ *   warm-resume-restored entry carries @ref LocalCarry::kBirthSRestored (−1,
+ *   SPEC_event_harness §15.4) and the window falls back to the latency bound
+ *   alone — the conservative direction for a sim-only diagnostic — and keeps
+ *   doing so for the arc's whole restored life.  Before the sentinel the first
+ *   post-resume harvest re-stamped it with the RESUME second, which floored the
+ *   window there and reported the arc as `bound_birth`.
  * - `last_applied_s` (@ref ArcState) guards the same arc being handled twice
  *   before a re-harvest: two detectors firing in one epoch, or on consecutive
  *   epochs, must apply the jump ONCE.  It advances on every repair.

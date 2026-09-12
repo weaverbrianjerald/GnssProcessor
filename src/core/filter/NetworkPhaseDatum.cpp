@@ -307,11 +307,13 @@ void networkElectPhaseAnchors(
             || (cand_usable->slipped_ambs && cand_usable->slipped_ambs->count(k) != 0);
     };
     // COLD ANCHOR-FALLBACK: is arc (i, amb) MATURE?  Age is n_loop_epochs − birth_ep
-    // of the station's own phase-leveling carry.  An UNKNOWN age — no carry entry, or
-    // a warm-resume-restored entry whose birth_ep reads 0 — counts as MATURE, the
-    // same restored-entry convention the F3 block gate and the young-arc inflation
-    // use: the conservative direction is to let the variance ceiling decide rather
-    // than refuse a candidate the ledger says has converged.
+    // of the station's own phase-leveling carry, asked through localCarryYoung —
+    // the ONE definition, shared with the F3 block admission gate.  An UNKNOWN age —
+    // no carry entry, an unstamped one, or a warm-resume-restored entry carrying
+    // LocalCarry::kBirthEpRestored (SPEC_event_harness §15.4) — counts as MATURE,
+    // the same restored-entry convention the F3 block gate and the young-arc
+    // inflation use: the conservative direction is to let the variance ceiling
+    // decide rather than refuse a candidate the ledger says has converged.
     auto candMature = [&](size_t i, const std::string& amb) {
         if (!cand_usable || cand_usable->min_age_ep <= 0 || !cand_usable->local_carry)
             return true;
@@ -320,9 +322,8 @@ void networkElectPhaseAnchors(
         const auto it = cand_usable->local_carry->find(
                 {static_cast<int>(i), amb.substr(0, us), amb.substr(us + 1)});
         if (it == cand_usable->local_carry->end()) return true;   // never carried ⇒ unknown
-        if (it->second.birth_ep <= 0) return true;                // unstamped ⇒ mature
-        return cand_usable->now_ep - it->second.birth_ep
-               >= static_cast<long long>(cand_usable->min_age_ep);
+        return !localCarryYoung(it->second, cand_usable->now_ep,
+                                cand_usable->min_age_ep);
     };
 
     // THE CANDIDACY ACCEPTANCE TEST — one definition, three readers: the per-family

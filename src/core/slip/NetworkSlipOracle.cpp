@@ -258,7 +258,13 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
     //     looking at an un-absorbed jump.
     auto& arc = oracle.arcs[key];
     const double w_edge = now_s - oracle.window_s;
-    const double b_edge = cit->second.birth_s;       // 0 when unknown (warm resume)
+    // Non-positive when the birth is unknown: 0 = never stamped,
+    // LocalCarry::kBirthSRestored (−1) = warm-resume-restored (the true birth is
+    // not snapshotted, SPEC_event_harness §15.4).  Either way it loses the max and
+    // the window falls back to the latency bound — and with the sentinel it keeps
+    // losing it, instead of being floored at the resume epoch from the first
+    // post-resume harvest on.
+    const double b_edge = cit->second.birth_s;
     const double lower  = std::max({arc.last_applied_s, b_edge, w_edge});
     // Which term BOUND (invariant #4).  Ties go to the most specific explanation,
     // so a reader can tell "the window is too narrow" from "the arc is younger

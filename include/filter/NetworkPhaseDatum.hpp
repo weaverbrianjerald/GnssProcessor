@@ -221,8 +221,10 @@ struct AnchorCandidacyUsable {
     /// carry_invariant lineages.  Both are consulted.
     const std::set<std::pair<int, std::string>>* slipped_ambs = nullptr;
     /// `ctx.carry.local_carry`, keyed (station index, sat, signal) — read ONLY for
-    /// @c birth_ep.  Null ⇒ every age is unknown ⇒ mature (the restored-entry
-    /// convention), which degrades the pass to the variance ceilings alone.
+    /// @c birth_ep, through @ref localCarryYoung.  Null ⇒ every age is unknown ⇒
+    /// mature (the restored-entry convention), which degrades the pass to the
+    /// variance ceilings alone; so does a non-positive @c birth_ep — never stashed
+    /// (0) or warm-resume-restored (@ref LocalCarry::kBirthEpRestored).
     const std::map<std::tuple<int, std::string, std::string>, LocalCarry>*
         local_carry = nullptr;
 };
