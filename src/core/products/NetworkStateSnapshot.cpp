@@ -229,6 +229,22 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& s : snap.code_bias_sat_seen) put(fmt::format("CBS,{}", s));
     for (const auto& [sat, pr] : snap.code_bias_ifpin_pair)
         put(fmt::format("CBI,{},{},{}", sat, pr.first, pr.second));
+    // RS-5 EMIT-LAYER records (SPEC_event_harness §21.10): the eq34 emit re-base's
+    // emission frame, then the PB emission filter's per-key posterior and its
+    // per-constellation step-noise accumulators.  Written only under
+    // network.state_snapshot_emit_capture (the driver leaves the containers empty
+    // otherwise, so a run without it writes the previous bytes unchanged), under the
+    // existing header like the RS-3 group, and BEFORE the CARRY / EMITTER blobs so the
+    // verbatim blob state machines can never swallow them.  The keys carry a '|' and
+    // the format splits on ',' alone, so they need no escaping.
+    for (const auto& [key, v] : snap.emit_rebase_last)
+        put(fmt::format("ER,{},{}", key, v));
+    for (const auto& [key, st] : snap.pb_filter_state)
+        put(fmt::format("PF,{},{},{},{}", key, st.mean, st.var, st.last_seen_s));
+    // The pooled bucket's constellation field is EMPTY on purpose (Config::split_by_
+    // const false) — "PS,,<sum>,<n>" is a legal row and the parser accepts it.
+    for (const auto& [cst, ac] : snap.pb_filter_step)
+        put(fmt::format("PS,{},{},{}", cst, ac.sum_log_e2, ac.n_eff));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -616,6 +632,30 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             if (f.size() != 4 || f[1].empty() || f[2].empty() || f[3].empty())
                 return fail("malformed CBI line");
             s.code_bias_ifpin_pair[f[1]] = {f[2], f[3]};
+        } else if (tag == "ER") {   // RS-5: eq34 emit re-base emission frame
+            if (f.size() != 3 || f[1].empty()) return fail("malformed ER line");
+            if (!parseD(f[2], d1)) return fail("malformed ER value");
+            // The restored value IS the frame the next epoch differences against; a
+            // nan/inf strtod would accept here would propagate into every re-based
+            // emitted bias for that key (the CBP precedent).
+            if (!std::isfinite(d1)) return fail("ER value not finite");
+            s.emit_rebase_last[f[1]] = d1;
+        } else if (tag == "PF") {   // RS-5: PB emit filter per-key posterior
+            if (f.size() != 5 || f[1].empty()) return fail("malformed PF line");
+            if (!parseD(f[2], d1) || !parseD(f[3], d2) || !parseD(f[4], d3))
+                return fail("malformed PF fields");
+            if (!std::isfinite(d1) || !std::isfinite(d2) || !std::isfinite(d3)
+                || d2 < 0.0)
+                return fail("PF field not finite (or a negative variance)");
+            s.pb_filter_state[f[1]] = NetworkStateSnapshot::PbFilterKey{d1, d2, d3};
+        } else if (tag == "PS") {   // RS-5: PB filter per-constellation step accumulator
+            // f[1] is legitimately EMPTY for the pooled bucket (split_by_const false) —
+            // the one record in this format whose key field may be blank.
+            if (f.size() != 4) return fail("malformed PS line");
+            if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed PS fields");
+            if (!std::isfinite(d1) || !std::isfinite(d2) || d2 < 0.0)
+                return fail("PS field not finite (or a negative row count)");
+            s.pb_filter_step[f[1]] = NetworkStateSnapshot::PbFilterStep{d1, d2};
         } else {
             return fail("unknown record tag '" + tag + "'");
         }

@@ -1558,6 +1558,14 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.state_snapshot_datum_capture ? "true" : "false",
                                      config_.networkResumeDatumRestore() ? "true" : "false")
                        : std::string())
+               // RS-5 (SPEC_event_harness §21.10): the emit-layer continuity halves, on
+               // the same armed-only discipline as the RS-2 / RS-3 pairs above.
+               << ((nc.state_snapshot_emit_capture || config_.networkResumeEmitRestore())
+                       ? fmt::format("\"state_snapshot_emit_capture\":{},"
+                                     "\"resume_emit_restore\":{},",
+                                     nc.state_snapshot_emit_capture ? "true" : "false",
+                                     config_.networkResumeEmitRestore() ? "true" : "false")
+                       : std::string())
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
                << fmt::format("\"state_snapshot_resume_shock_m\":{},",
                               nc.state_snapshot_resume_shock_m)

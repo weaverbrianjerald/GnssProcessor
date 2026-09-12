@@ -250,6 +250,51 @@ public:
 
     const Counters& counters() const { return counters_; }
 
+    /// One key's scalar-KF posterior + last-seen clock.  PUBLIC because it is the
+    /// payload of @ref FilterState (the RS-5 snapshot rows); the filter itself is
+    /// the only writer.
+    struct KeyState { double mean{0.0}; double var{0.0}; double last_seen_s{0.0}; };
+    /// One (constellation|pooled) robust step-noise accumulator (geo-mean of ê²).
+    /// PUBLIC for the same reason as @ref KeyState.
+    struct StepAccum { double sum_log_e2{0.0}; double n_eff{0.0}; };
+
+    /**
+     * @brief The engine's cross-epoch FILTER state, exportable for the RTB-7
+     *        snapshot (RS-5 emit-layer continuity, docs/SPEC_event_harness.md
+     *        §21.10): every key's posterior and every constellation's
+     *        σ̂_step accumulator.
+     *
+     * Like @ref NetworkEmitRebase this engine is a bare run-local, so a warm resume
+     * cold-starts it: every key first-sights at the seam (seeded at the raw value,
+     * @c kInit, @c P = R) and every σ̂_step bucket restarts at the weak seed prior,
+     * so the first post-resume epochs run the widest gate the run will ever use and
+     * the smoothing the continuous wire carried is simply gone.  Exporting both maps
+     * lets a resume continue the emission-frame filter it inherited.
+     *
+     * @c cfg_ and @c phi_ are configuration (they come from the live run's knobs, not
+     * from the writer's) and @ref Counters is run telemetry; neither travels.
+     */
+    struct FilterState {
+        std::map<std::string, KeyState>  state;  ///< "sat|signal" -> scalar-KF posterior.
+        std::map<std::string, StepAccum> step;   ///< constellation ("" = pooled) -> step-noise accumulator.
+    };
+    /// Snapshot the filter state (cheap: a few hundred keys + one bucket per constellation).
+    FilterState exportState() const { return FilterState{state_, step_}; }
+    /**
+     * @brief Restore a previously exported filter state (a warm resume that
+     *        CONTINUES the emission-frame filter).
+     *
+     * Replaces both maps wholesale — a resume's previous emitted epoch IS the
+     * writer's last emitted epoch — and leaves @ref counters() and the live @ref
+     * Config alone.  A key absent from @p fs first-sights exactly as on a continuous
+     * run; the per-key gap clock (@c KeyState::last_seen_s) is restored with it, so a
+     * resume older than @c Config::max_gap_s re-inits that key honestly instead of
+     * smoothing across the outage.
+     *
+     * @param fs State exported by @ref exportState (via the snapshot's @c PF / @c PS rows).
+     */
+    void restoreState(const FilterState& fs) { state_ = fs.state; step_ = fs.step; }
+
     /// Drop all per-key state + the σ̂_step accumulators (a `emit_pb_filter`
     /// toggle-flip cold start; every key first-sights next epoch).  Counters,
     /// like the re-base's, accumulate over the whole run and are left intact.
@@ -276,11 +321,6 @@ public:
     }
 
 private:
-    /// One key's scalar-KF posterior + last-seen clock.
-    struct KeyState { double mean{0.0}; double var{0.0}; double last_seen_s{0.0}; };
-    /// One (constellation|pooled) robust step-noise accumulator (geo-mean of ê²).
-    struct StepAccum { double sum_log_e2{0.0}; double n_eff{0.0}; };
-
     /// σ̂_step (m) for a constellation bucket: the χ²₁-corrected geometric-mean
     /// floor of the fed innovations, regularised toward the seed by a weak prior
     /// (so it is always defined and cannot collapse).  v1 floors it at a fraction

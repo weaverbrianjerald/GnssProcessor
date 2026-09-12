@@ -220,6 +220,7 @@ namespace GnssProcessor {
         bool zwd_capture{};    ///< Snapshot-armed run (state_snapshot_path non-empty): record + harvest the per-station ZWD posterior every processed epoch so EVERY snapshot carries Z rows — read-only w.r.t. the solve (no inject; capture only).
         double amb_seam_reinflate_var{};  ///< network.amb_seam_reinflate_var_m2: one-shot variance ADD (m²) on every restored leveling carry at a warm resume (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF.
         bool   resume_frame_restore{};    ///< network.resume_frame_restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the serialized FRAME state — phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-sat state, the CLK-R held frame — so the first post-resume election/fold/emit continue the pre-seam realization instead of re-pinning at cold seeds.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into maps nothing reads).
+        bool   resume_emit_restore{};     ///< network.resume_emit_restore (RS-5, SPEC_event_harness §21.10): at a warm resume, restore the two OUTPUTS-ONLY emit engines before the first emit — @c NetworkEmitRebase's emission frame (the snapshot's ER rows) and @c NetworkPbEmitFilter's per-key posterior + per-constellation σ̂_step accumulators (PF / PS) — so the emitted phase biases continue the writer's emission LEVEL instead of stepping to the raw solve frame (17.666 m p50 per (sat,signal) measured at the field seam against 1.695 m in the estimator's own state).  Each half INERT and loudly logged when its rows are absent.  Loader hard-requires resume_frame_restore.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into containers nothing reads).
         bool   resume_datum_restore{};    ///< network.resume_datum_restore (RS-3, SPEC_event_harness §21.7): at a warm resume, restore the eq34 chain datum's last-epoch spanning tree (sticky datum receiver, receiver parent edges, satellite component roots, pin targets, longevity elevations, gap-retained edges) so the election's sticky seed CONTINUES the writer's tree instead of re-electing from the cold arc registry, and restore the time-linked code-bias previous-value map + ever-seen set with @c code_bias_datum_resumed_ left FALSE.  Loader hard-requires resume_frame_restore (anchor_incumbent is the same tree's satellite side).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into containers nothing reads).
         bool   resume_pb_seam_mark{};     ///< network.resume_pb_seam_mark (RS-4, SPEC_event_harness §21.9): at the FIRST emit after a warm resume, markDatumChange any constellation more than kResumePbSeamMarkFraction of whose fresh-baseline phase-bias keys moved past discThresholdM against their RESTORED emitter baselines - the declaration the CLK-R resume_seam rule misses because it fires only on a COLD held-frame engine.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical (the census is never taken).
         bool   resume_coupling_restore{}; ///< network.resume_coupling_restore (SPEC_synthetic_minimum_network §18.12): at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, in harvest order) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING, so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, shared-neutral) instead of the plain DIAGONAL prior asserted at the PURE CONDITIONAL variance that out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (LocalCarry::coupling stays empty exactly as the aggregate init leaves it).
@@ -1880,6 +1881,7 @@ namespace GnssProcessor {
         long long snap_cpl_terms_last    = 0;   // §18.12: regressor entries in the last snapshot
         long long snap_cpl_rows_dropped  = 0;   // §18.12: rows OMITTED WHOLE for a non-finite/negative field (run total)
         long long snap_datum_rows_last   = 0;   // RS-3 §21.7: EQ*/CB* datum rows in the last snapshot (0 under an ARMED capture on an eq34/time-linked-CB run is the INERT reading)
+        long long snap_emit_rows_last    = 0;   // RS-5 §21.10: ER/PF/PS emit-layer rows in the last snapshot (0 under an ARMED capture with the re-base or the filter running is the INERT reading)
         bool      resume_cpl_census_pending = false;  // §18.12: latch the first-post-resume harvest census + fold split
         std::vector<double> resume_cpl_census_rel;    // §18.12: per-row max|M − M_d| / max|M_d| at the first harvest
         std::vector<double> resume_cpl_census_rhs;    // §18.12: per-row |Δ Σ M·ŝ_prev| (m) at the first harvest
@@ -2527,6 +2529,14 @@ namespace GnssProcessor {
         long long n_pb_seam_keys_tested = 0; ///< RS-4: phase-bias keys the first post-resume emit compared with a restored baseline (the jump test's own population)
         long long n_pb_seam_keys_over   = 0; ///< RS-4: of those, keys beyond discThresholdM
         long long n_pb_seam_marks       = 0; ///< RS-4: constellations markDatumChange'd by the seam rule (0 with the knob off, and 0 on a cold start)
+        // RS-5 resume EMIT-LAYER restore (network.resume_emit_restore, SPEC_event_harness
+        // §21.10) — the re-coupling edge's identities for the two emit engines.  0 under an
+        // armed knob = INERT (standing invariant #4): the snapshot carried no ER / PF / PS
+        // rows (a writer without network.state_snapshot_emit_capture) or no warm resume
+        // happened, and the run-end line says which.
+        long long n_resume_emit_rebase_keys = 0; ///< emission-frame keys restored into NetworkEmitRebase (ER)
+        long long n_resume_emit_filter_keys = 0; ///< per-key posteriors restored into NetworkPbEmitFilter (PF)
+        long long n_resume_emit_step_accums = 0; ///< per-constellation step-noise accumulators restored (PS)
         long long n_resume_slip_warmup_epochs = 0; ///< epochs the MW/LLI drain ran diagnostic-only post-resume
         long long n_resume_d5_warmup_epochs = 0;   ///< RS-2b: epochs the Card-4 D5 innovation gate ran diagnostic-only post-resume
         // Card 1 coupling-regressor restore (network.resume_coupling_restore, §18.12) —
@@ -3247,21 +3257,32 @@ namespace GnssProcessor {
                                     const std::vector<NetStation>& stations);
 
     class NetworkClockEmitRebase;   // fwd: include/products/NetworkClockEmitRebase.hpp
+    class NetworkEmitRebase;        // fwd: include/products/NetworkEmitRebase.hpp
+    class NetworkPbEmitFilter;      // fwd: include/products/NetworkPbEmitFilter.hpp
     // Resume FRAME restore: both seams take the CLK-R held-frame engine
     // (a runNetwork local) so its A_c / per-sat baselines travel with the snapshot.
     // nullptr ⇒ the engine's frame is neither captured nor restored.
+    //
+    // RS-5 (§21.10) adds the two PHASE-BIAS emit engines on exactly the same footing —
+    // also runNetwork locals, also outputs-only, also nullptr ⇒ neither captured nor
+    // restored — so all three cross-epoch emit layers travel with the snapshot instead of
+    // cold-starting at every seam.
     void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               const MultiRinexSync& sync, NetworkProductEmitter& emitter,
                               NetworkInvariantCarryDriver& carry_driver,
                               const std::shared_ptr<spdlog::logger>& log,
-                              NetworkClockEmitRebase* clk_rebase = nullptr);
+                              NetworkClockEmitRebase* clk_rebase = nullptr,
+                              NetworkEmitRebase* emit_rebase = nullptr,
+                              NetworkPbEmitFilter* pb_filter = nullptr);
 
     void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_,
                                    const GnssTime& t, double pl_now_s,
                                    NetworkProductEmitter& emitter,
                                    const NetworkInvariantCarryDriver& carry_driver,
                                    const std::shared_ptr<spdlog::logger>& log,
-                                   const NetworkClockEmitRebase* clk_rebase = nullptr);
+                                   const NetworkClockEmitRebase* clk_rebase = nullptr,
+                                   const NetworkEmitRebase* emit_rebase = nullptr,
+                                   const NetworkPbEmitFilter* pb_filter = nullptr);
 
     void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                   const GnssConfig& config_, NetworkEstimator& est,

@@ -79,6 +79,9 @@
  *   CBP,<cons>|<signal>,<sat>,<value>                    # RS-3: code-bias prev value
  *   CBS,<sat>                                            # RS-3: code-bias ever-seen
  *   CBI,<sat>,<sig1>,<sig2>                              # RS-3: code-bias IF-pin pair
+ *   ER,<sat|signal>,<last_emit_m>                        # RS-5: eq34 emit re-base frame
+ *   PF,<sat|signal>,<mean>,<var>,<last_seen_s>           # RS-5: PB emit filter posterior
+ *   PS,<const>,<sum_log_e2>,<n_eff>                      # RS-5: PB filter step accumulator
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
  *   ...                                                 #  NetworkProductEmitter::serializeState)
  *   EEND
@@ -106,6 +109,14 @@
  * under @c network.state_snapshot_require), so nothing is weaker; only the message
  * differs.  Written only under @c network.state_snapshot_datum_capture, so a run
  * that does not arm it writes the v1/v2/v3 bytes unchanged.
+ *
+ * The RS-5 EMIT-LAYER records (@c ER / @c PF / @c PS, docs/SPEC_event_harness.md §21.10)
+ * follow the RS-3 precedent exactly — format-forward rows under the existing header,
+ * written only under @c network.state_snapshot_emit_capture — and carry the two
+ * OUTPUTS-ONLY engines the snapshot never held: @c NetworkEmitRebase's emission frame
+ * and @c NetworkPbEmitFilter's per-key posterior + per-constellation step accumulators.
+ * Nothing in this group enters the warm-resume fingerprint: it changes no estimate, only
+ * the level the emitted phase biases are expressed in.
  *
  * This module is entirely OUTSIDE the @c NetworkProductIO replay path: product
  * files know nothing of snapshots and replay reproduces every discontinuity
@@ -431,6 +442,52 @@ struct NetworkStateSnapshot {
         return !anchor_incumbent.empty() || !anchor_pin_target.empty()
             || !clock_anchor.empty() || !clk_frame_acc.empty()
             || !clk_frame_prev.empty() || clk_frame_epochs > 0;
+    }
+    // --- RS-5 EMIT-LAYER state (SPEC_event_harness §21.10) ------------------
+    //
+    // The two OUTPUTS-ONLY engines that sit between the estimator's raw phase-bias
+    // state and the wire (NetworkEmitStore.cpp:164 re-base, :271 filter) are bare
+    // run-locals (ApplicationNetwork.cpp:915/:930), so a warm resume cold-starts both:
+    // the leg's first emitted epoch passes the raw solve-frame value through while the
+    // continuous run's wire at the same epoch carries 604 epochs of accumulated re-base.
+    // Measured at the field seam (§21.10): emitted leg−seed 17.666 m p50 per
+    // (sat,signal) against 1.695 m in the raw state, closing EXACTLY as
+    // `emitted = raw + (leg layer − seed layer)` over 120 keys with the leg's layer
+    // 0.000 on all 129 keys.  Written under network.state_snapshot_emit_capture,
+    // restored behind network.resume_emit_restore; empty on every other file.
+    /// @c NetworkEmitRebase::last_emit_ — "sat|signal" -> previous re-based emitted
+    /// bias (m), i.e. the emission frame the next epoch re-bases onto (@c ER rows).
+    std::map<std::string, double> emit_rebase_last;
+    /// One @c NetworkPbEmitFilter key's scalar-KF posterior (@c PF rows).  A POD mirror
+    /// of @c NetworkPbEmitFilter::KeyState, exactly as @ref Osc mirrors the driver's
+    /// @c ClockOsc — the snapshot module names no engine type.
+    struct PbFilterKey {
+        double mean{0.0};         ///< posterior mean of the emitted bias (m).
+        double var{0.0};          ///< posterior variance (m²).
+        double last_seen_s{0.0};  ///< continuous product time of the last filtered epoch (the per-key gap clock).
+    };
+    std::map<std::string, PbFilterKey> pb_filter_state;  ///< "sat|signal" -> posterior.
+    /// One @c NetworkPbEmitFilter step-noise accumulator (@c PS rows) — the χ²₁
+    /// geometric-mean σ̂_step estimator's running sums for one constellation bucket.
+    ///
+    /// @note The bucket key is the constellation LETTER, or the EMPTY string when the
+    ///       filter runs pooled (@c Config::split_by_const false).  The @c PS record
+    ///       therefore has a legitimately empty second field — the one record in this
+    ///       format that does, so its parse must not reject it.
+    struct PbFilterStep {
+        double sum_log_e2{0.0};  ///< Σ log ê² over the (exponentially forgotten) fed rows.
+        double n_eff{0.0};       ///< effective fed-row count carrying the same forgetting.
+    };
+    std::map<std::string, PbFilterStep> pb_filter_step;  ///< constellation ("" pooled) -> accumulator.
+    /// True when any RS-5 emit-layer record is present.  Its OWN predicate, like
+    /// @ref hasDatumState and @ref hasCouplingState: the two halves (re-base frame /
+    /// filter state) are reported and warned about separately at the restore site, so
+    /// neither may borrow the other's INERT verdict.  Deliberately NOT folded into
+    /// @ref hasFrameState — that predicate gates the resume-side FRAME restore, and
+    /// widening it would let an emit-only snapshot claim frame state it does not have.
+    bool hasEmitState() const {
+        return !emit_rebase_last.empty() || !pb_filter_state.empty()
+            || !pb_filter_step.empty();
     }
     // --- Emitter layer -----------------------------------------------------
     /// Verbatim @c NetworkProductEmitter::serializeState blob (its own

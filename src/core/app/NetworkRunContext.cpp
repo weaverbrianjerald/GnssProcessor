@@ -20,6 +20,8 @@
 #include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkInvariantCarryDriver.hpp"   // RTB-7(c) branch-faithful carry (de)serialize
 #include "products/NetworkClockEmitRebase.hpp"       // §18.10 resume frame restore: CLK-R held frame travels
+#include "products/NetworkEmitRebase.hpp"            // RS-5 §21.10: the eq34 emit re-base frame travels
+#include "products/NetworkPbEmitFilter.hpp"          // RS-5 §21.10: the PB emit filter state travels
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey (handover scope predicate)
 #include "filter/NetworkSbasis.hpp"          // kWindUpYawModelId (wind-up model revision token)
@@ -82,6 +84,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
     k.resume_datum_restore   = config_.networkResumeDatumRestore();      // RS-3 §21.7
+    k.resume_emit_restore    = config_.networkResumeEmitRestore();       // RS-5 §21.10
     k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // RS-4 §21.9
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
@@ -1057,7 +1060,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                           const MultiRinexSync& sync, NetworkProductEmitter& emitter,
                           NetworkInvariantCarryDriver& carry_driver,
                           const std::shared_ptr<spdlog::logger>& log,
-                          NetworkClockEmitRebase* clk_rebase) {
+                          NetworkClockEmitRebase* clk_rebase,
+                          NetworkEmitRebase* emit_rebase,
+                          NetworkPbEmitFilter* pb_filter) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
     const auto& nc = config_.getNetworkConfig();
@@ -1537,6 +1542,91 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_datum_cb_seen,
                                       ctx.counters.n_resume_datum_cb_pair,
                                       datum_cb_restored ? "FALSE" : "true (CB half inert)");
+                    }
+                    // RS-5 EMIT-LAYER restore (network.resume_emit_restore,
+                    // SPEC_event_harness §21.10).  AFTER the frame and datum restores
+                    // and before anything that could emit — the whole of
+                    // networkTryWarmResume runs ahead of the first epoch, so the
+                    // ordering is structural, and the loader guarantees
+                    // resume_frame_restore is armed with it (an emit layer restored on
+                    // top of a RE-ELECTED realization frame would re-base this run's
+                    // biases onto a level the writer never emitted).
+                    //
+                    // Measured without it at the field seam (§21.10): the leg's emit
+                    // layer is 0.000 on ALL 129 keys at the first post-resume epoch
+                    // while the seed's is 18.410 m p50 at the same tow, and the emitted
+                    // difference closes EXACTLY as raw + (leg layer − seed layer) over
+                    // 120 keys — i.e. the whole 17.666 m step is these two cold starts,
+                    // not the estimator (whose own state moves 1.695 m).
+                    //
+                    // The two halves are gated and reported SEPARATELY, the
+                    // hasFrameState / hasDatumState precedent: a file may carry the ER
+                    // rows and no PF/PS (a writer with carry_invariant but without
+                    // emit_pb_filter), and an absent half must read as INERT for that
+                    // half alone.
+                    if (ctx.knobs.resume_emit_restore) {
+                        const bool have_er = !snap.emit_rebase_last.empty();
+                        const bool have_pf = !snap.pb_filter_state.empty()
+                                             || !snap.pb_filter_step.empty();
+                        if (have_er && emit_rebase) {
+                            emit_rebase->restoreState(snap.emit_rebase_last);
+                            ctx.counters.n_resume_emit_rebase_keys =
+                                static_cast<long long>(snap.emit_rebase_last.size());
+                        } else {
+                            log->warn("Network (RS-5 emit restore): ARMED but {} — the "
+                                      "eq34 emit RE-BASE half is INERT; the first "
+                                      "post-resume epoch first-sights every key and emits "
+                                      "the RAW solve-frame phase bias, exactly as an "
+                                      "unarmed resume does, so the emitted level steps by "
+                                      "the writer's whole accumulated re-base.",
+                                      have_er
+                                          ? "this run never constructs the re-base engine "
+                                            "(network.carry_invariant / "
+                                            "carry_invariant_emit_rebase off)"
+                                          : "the snapshot carries NO ER rows (a writer "
+                                            "without network.state_snapshot_emit_capture, "
+                                            "or one with the re-base off)");
+                        }
+                        if (have_pf && pb_filter) {
+                            NetworkPbEmitFilter::FilterState fs;
+                            for (const auto& [key, ks] : snap.pb_filter_state)
+                                fs.state[key] = NetworkPbEmitFilter::KeyState{
+                                    ks.mean, ks.var, ks.last_seen_s};
+                            for (const auto& [cst, ac] : snap.pb_filter_step)
+                                fs.step[cst] = NetworkPbEmitFilter::StepAccum{
+                                    ac.sum_log_e2, ac.n_eff};
+                            pb_filter->restoreState(fs);
+                            ctx.counters.n_resume_emit_filter_keys =
+                                static_cast<long long>(snap.pb_filter_state.size());
+                            ctx.counters.n_resume_emit_step_accums =
+                                static_cast<long long>(snap.pb_filter_step.size());
+                        } else {
+                            log->warn("Network (RS-5 emit restore): ARMED but {} — the PB "
+                                      "emission FILTER half is INERT; every key "
+                                      "first-sights at the seam (seeded at the raw value, "
+                                      "P = R) and σ̂_step restarts at the weak seed prior, "
+                                      "so the first post-resume epochs run the widest gate "
+                                      "of the run.",
+                                      have_pf
+                                          ? "this run never constructs the filter engine "
+                                            "(network.emit_pb_filter off)"
+                                          : "the snapshot carries NO PF/PS rows (a writer "
+                                            "without network.state_snapshot_emit_capture, "
+                                            "or one with the filter off)");
+                        }
+                        if ((have_er && emit_rebase) || (have_pf && pb_filter))
+                            log->info("Network (RS-5 emit restore): ARMED at the resume "
+                                      "seam — {} emission-frame key(s) restored into the "
+                                      "eq34 emit re-base, {} per-key posterior(s) and {} "
+                                      "step-noise accumulator(s) into the PB emission "
+                                      "filter.  Restored BEFORE the first emit, so the "
+                                      "first post-resume epoch re-bases onto the writer's "
+                                      "last EMITTED values instead of passing the raw "
+                                      "solve-frame value through; outputs-only, no "
+                                      "estimate moves.",
+                                      ctx.counters.n_resume_emit_rebase_keys,
+                                      ctx.counters.n_resume_emit_filter_keys,
+                                      ctx.counters.n_resume_emit_step_accums);
                     }
                     // Coupling regressors (network.resume_coupling_restore) — the
                     // second half of the frame restore, and the RE-COUPLING edge for
@@ -2024,7 +2114,9 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                NetworkProductEmitter& emitter,
                                const NetworkInvariantCarryDriver& carry_driver,
                                const std::shared_ptr<spdlog::logger>& log,
-                               const NetworkClockEmitRebase* clk_rebase) {
+                               const NetworkClockEmitRebase* clk_rebase,
+                               const NetworkEmitRebase* emit_rebase,
+                               const NetworkPbEmitFilter* pb_filter) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
     const auto& nc = config_.getNetworkConfig();
@@ -2361,6 +2453,37 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             for (const auto& [fam, per_sat] : snap.code_bias_prev)
                 ctx.carry.snap_datum_rows_last += static_cast<long long>(per_sat.size());
         }   // state_snapshot_datum_capture
+        // RS-5 EMIT-LAYER capture (network.state_snapshot_emit_capture, SPEC_event_harness
+        // §21.10) — the WRITE half of the last cross-epoch state the snapshot did not hold.
+        // The frame/datum blocks above carry the ESTIMATOR's realization; these two engines
+        // sit downstream of it on the OUTPUTS ONLY (NetworkEmitStore.cpp:164 re-base,
+        // :271 filter) and are bare runNetwork locals, so a warm resume cold-starts both
+        // and the first post-resume epoch emits the raw solve-frame phase bias while the
+        // continuous wire carries the accumulated re-base (17.666 m p50 per (sat,signal)
+        // measured at the field seam; §21.10's closure table).
+        //
+        // Plain exports AFTER the emit, into `snap` only — the same write-side discipline
+        // as the datum block, which is what makes this knob legal to add to an existing
+        // recipe.  A run that arms neither engine (carry_invariant off / emit_pb_filter
+        // off) exports empty maps and writes no rows, so arming the capture there costs
+        // nothing.  Nothing here enters the warm-resume fingerprint: the rows change no
+        // estimate, only the LEVEL the emitted biases are expressed in.
+        if (nc.state_snapshot_emit_capture) {
+            if (emit_rebase) snap.emit_rebase_last = emit_rebase->exportState();
+            if (pb_filter) {
+                const auto fs = pb_filter->exportState();
+                for (const auto& [key, ks] : fs.state)
+                    snap.pb_filter_state[key] =
+                        NetworkStateSnapshot::PbFilterKey{ks.mean, ks.var, ks.last_seen_s};
+                for (const auto& [cst, ac] : fs.step)
+                    snap.pb_filter_step[cst] =
+                        NetworkStateSnapshot::PbFilterStep{ac.sum_log_e2, ac.n_eff};
+            }
+            ctx.carry.snap_emit_rows_last =
+                static_cast<long long>(snap.emit_rebase_last.size()
+                                       + snap.pb_filter_state.size()
+                                       + snap.pb_filter_step.size());
+        }   // state_snapshot_emit_capture
         // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
         // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
         // resume reproduces the phase-ambiguity branch instead of re-converging one.
