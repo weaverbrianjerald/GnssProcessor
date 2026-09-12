@@ -40,7 +40,9 @@ The warm-restart posture is the one validated as leg E of the seam card
 (``SPEC_synthetic_minimum_network.md`` §18.14): writer armed with
 ``state_snapshot_frame_capture`` + ``state_snapshot_coupling_capture`` (QK/QP),
 reader armed with ``resume_frame_restore`` + ``resume_coupling_restore`` +
-``readmit_seed_horizon_s``.  Discard the first ~5 epochs after the resume; the
+``readmit_seed_horizon_s`` + (since 2026-09-11) ``zwd_seam_reseed``, without which
+the ZWD channel restarts at the seam (0.06-0.08 m truth rms for the whole leg
+against the seed's converged 0.008 m; ``--no-zwd-seam-reseed`` for old-leg A/Bs).  Discard the first ~5 epochs after the resume; the
 default ``--at-ep 10`` puts the event safely past that transient.
 """
 import argparse
@@ -256,6 +258,16 @@ def _leg_common(args, event_json):
     net["state_snapshot_interval_s"] = 1.0e9      # never overwrite the leg's seed
     net["resume_frame_restore"] = True
     net["resume_coupling_restore"] = True
+    # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
+    # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
+    # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the
+    # null leg's ZWD truth rms sits at 0.061-0.081 m for the whole 60-epoch leg
+    # against the seed's own converged 0.0076 m; armed, it reads 0.008-0.012 m
+    # from +1 on.  Every leg generated before this date graded ZWD (and the
+    # consumer vertical it feeds) on that restart.  --no-zwd-seam-reseed
+    # reproduces the old posture for a like-for-like A/B against an old leg.
+    if not getattr(args, "no_zwd_seam_reseed", False):
+        net["zwd_seam_reseed"] = True
     net["product_output_path"] = _fwd(os.path.join(legdir, "products.txt"))
     net["write_run_manifest"] = True
     net["trace_dd_fractional"] = True
@@ -408,6 +420,12 @@ def main():
                             "epoch (default 10 — past the ~5-epoch resume transient)")
         p.add_argument("--exe", default=DEFAULT_EXE)
         p.add_argument("--run", action="store_true")
+        p.add_argument("--no-zwd-seam-reseed", dest="no_zwd_seam_reseed",
+                       action="store_true",
+                       help="do NOT arm network.zwd_seam_reseed on the leg (the "
+                            "pre-2026-09-11 posture: the ZWD channel restarts at "
+                            "the seam; only for a like-for-like A/B against an "
+                            "old leg)")
         p.add_argument("--extra", default="",
                        help="JSON object deep-merged into leg.json AFTER every "
                             "harness field (arms knobs the seed's config predates)")

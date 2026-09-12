@@ -40,7 +40,7 @@ the row that carries the verdict (standing invariant #5).
    max**: the solve lands exactly on the pins.  The withhold is a RESULT, not a
    grading inconvenience — it is the price of the information, paid up front.
    A band-scoped pin is much gentler (`L5Q` withholds **nothing**).
-2. **The null leg's ZWD is a WARM-RESUME plateau, not the producer's converged
+2. **[→ §12: measured — the plateau is the seam RESTART of the ZWD channel; with `zwd_seam_reseed` armed the null is 0.011 m and the pin 0.013 m, so finding 2 is WITHDRAWN.]  The null leg's ZWD is a WARM-RESUME plateau, not the producer's converged
    level.**  The SEED's own converged ZWD (its epochs 640–665, immediately before the
    snapshot every leg resumes from) is **0.0076 m rms**; the null leg sits at
    0.067–0.081 m for all 57 epochs and never works it off.  A complete pin removes
@@ -569,6 +569,8 @@ complete on the LOS; a partial hold is a net loss.**
 
 ### 8.2 Where the error goes in the ZWD — and the seed number that reframes it
 
+**⚠ SUPERSEDED by §12 (manager re-run, 2026-09-11 evening): the 5× was the harness's own seam RESTART of the ZWD channel, not a property of the pin.  With `network.zwd_seam_reseed` armed on the leg the null reads 0.011 m and the complete pin 0.013 m — no ZWD win.  The consumer readings below stand; the ZWD ones do not.**
+
 `none` → `all`, W2: ZWD rms **0.0669 → 0.0130 m (5.1×)**, p90 **0.0923 → 0.0212 m
 (4.4×)**; consumer 3D p50 1.656 → 1.086 m, Up 1.439 → 0.691 m.  W1 agrees (0.0725 →
 0.0138, 5.3×).  The ZWD is the ONE non-invariant channel that moves by a factor
@@ -749,3 +751,20 @@ do not reach it, and the result certifies that:
   `closed_loop_trace.csv` `5C507871…`, `network_events.csv` `7675CD40…`.
 
 So every number in this document stands unchanged on the rebased tree.
+
+## 12. Finding 2 WITHDRAWN — the ZWD 5× was the harness seam restarting the ZWD channel (manager re-run, 2026-09-11 evening; legs `runs/evleg_zwdseam_null`, `runs/evleg_opin_all_zs`, exe `gnss_processor_opin_rb.exe` F4FF8EF0…)
+
+§8.2 flagged the null leg's 0.067 m ZWD as a warm-resume plateau 8.8× the seed's converged 0.0076 m.  The mechanism is a known one with a ledger row: `network.zwd_seam_reseed` (RECOMMEND_SCOPED, regime warm + phase_leveling, scope "arm on the RESUME leg") restores the snapshot's 60 Z rows as B9-style priors at the seam; without it the ZWD channel RESTARTS from its a-priori.  `scripts/event_leg.py` never armed it, so every harness leg before this date (Studies 1–7 and §2's nine legs) restarted the ZWD at the seam.  Two legs settle what the pin is worth against a correctly restored ZWD — same seed, same snapshot, same exe, `--extra {"network":{"zwd_seam_reseed":true}}`:
+
+| ZWD truth rms over 60 stations (m) | +01..+05 | +06..+10 | +11..+15 | +26..+30 | +41..+45 | +56..+60 | ALL |
+|---|---|---|---|---|---|---|---|
+| `opin_null` (§2, no reseed) | 0.0614 | 0.0783 | 0.0811 | 0.0735 | 0.0692 | 0.0660 | 0.0721 |
+| `zwdseam_null` (reseed armed) | **0.0080** | 0.0092 | 0.0097 | 0.0113 | 0.0116 | 0.0115 | **0.0108** |
+| `opin_all_zs` (reseed + complete pin at +5) | 0.0080 | 0.0275 (60 rows: the A4 withhold) | 0.0161 | 0.0122 | 0.0124 | 0.0127 | **0.0130** |
+| seed's own converged level (epochs 640–665) | — | — | — | — | — | — | 0.0076 |
+
+The reseeded null sits at the seed's converged level from +1 (0.0080 vs 0.0076) and stays within 1.2 cm for the whole leg.  The complete pin on the same reseeded leg is **not better: 0.0130 vs 0.0108 overall, 0.0127 vs 0.0115 at +56..+60** (p50 |e| 0.0069 vs 0.0074 — equal), with a 2.75 cm transient in the four withheld epochs after onset.  So the §8.2 factor was the pin re-converging a RESTARTED channel faster than the restart recovers on its own (the un-reseeded null never gets below 0.066 in 60 epochs); on a correctly resumed leg **integer information buys the ZWD nothing on this bed**.  The ZWD-sink claim (`project_zwd_sink_census_2026-09-09`) is neither confirmed nor refuted by this card.
+
+What is NOT affected: (a) §8.1 — the seed's own converged row 1b (0.4647 m) matches the null leg's (0.42–0.45), and the DD-invariant ionosphere is not restored or restarted at the seam, so the 10× collapse under the complete pin stands; the reseeded `all` leg reproduces the pin clause (9 577 arcs first pinned; 144 414 rows vs 144 025 — the restored ZWD changes the carries slightly).  (b) The consumer: on the reseeded pair the cold consumer's 3D p50 in the second half of the leg is **0.94–1.18 m with the pin against 1.57–1.95 m without** (the reseeded null is indistinguishable from the un-reseeded one, 0.9 → 1.9 → 1.6 m, so the consumer's cells were never ZWD-driven); the consumer benefit is an ignition-class reading and stands as such.  (c) §7's slipped-bed ZWD row (1.348 → 0.526) is a storm-bed number with the same seam confound and is now context only; its row 1b (2.20 → 0.41) stands.
+
+**Harness hygiene, applied:** `scripts/event_leg.py` now arms `network.zwd_seam_reseed` on every `make-leg` / `null` leg (`--no-zwd-seam-reseed` reproduces the old posture for a like-for-like A/B against an old leg); see SPEC_event_harness §18.  Event-minus-null DIFFERENCE readings from old legs are unaffected (both legs share the restart); ABSOLUTE ZWD levels read off an old leg are the restart, not the producer.
