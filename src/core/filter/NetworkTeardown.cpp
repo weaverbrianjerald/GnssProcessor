@@ -2552,9 +2552,16 @@ int networkTeardown(
     {
         const auto& C = ctx.counters;
         const double ep = static_cast<double>(std::max<long long>(C.n_cb_split_epochs, 1));
+        // §22: the reference-arc clause's own refusals, with the per-CHAIN
+        // breakdown inline — the cost is one dead zone per chain whose reference
+        // the arc is, so the total alone cannot say which chains paid.
+        std::string ref_arc_by;
+        for (const auto& [pr, n] : C.n_cb_iftd_ref_arc_by_pair)
+            ref_arc_by += fmt::format("{}{}: {}", ref_arc_by.empty() ? "" : ", ", pr, n);
         log->info("Network (common-band scope): verdicts {}, narrowed {} (bands kept "
                   "{}), all-band {} (no exoneration {} / inconsistent {} / anchor "
-                  "co-locate {}), IF-TD vetoes {}, immature pairs {}, LLI shadows {}, "
+                  "co-locate {}), IF-TD vetoes {}, ref-arc refusals {}{}, "
+                  "immature pairs {}, LLI shadows {}, "
                   "LLI-epoch verdicts {} ({} narrowed, {} anchor co-locate), "
                   "weak silences {}; "
                   "split-referenced satellites mean {:.1f} / max {} of {:.1f} anchored "
@@ -2564,7 +2571,10 @@ int networkTeardown(
                       + C.n_cb_anchor_colocate,
                   C.n_cb_all_no_exoneration, C.n_cb_all_inconsistent,
                   C.n_cb_anchor_colocate,
-                  C.n_cb_iftd_veto, C.n_cb_immature_pairs, C.n_cb_lli_shadow,
+                  C.n_cb_iftd_veto,
+                  C.n_cb_iftd_ref_arc,
+                  ref_arc_by.empty() ? std::string{} : fmt::format(" [{}]", ref_arc_by),
+                  C.n_cb_immature_pairs, C.n_cb_lli_shadow,
                   C.n_cb_lli_verdicts, C.n_cb_lli_narrowed,
                   C.n_cb_lli_anchor_colocate,
                   C.n_cb_weak_silence,

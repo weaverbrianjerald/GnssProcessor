@@ -50,6 +50,22 @@
  *    with no IF-TD pair behind it, and the verdict freed L2W — the one band that
  *    had not slipped;
  *
+ *  - **§22 THE REFERENCE-ARC CLAUSE** (`common_band_ref_arc`, default OFF): the
+ *    veto above can only fire where the pooled IF-TD test can flag, and on the
+ *    chain's REFERENCE satellite it cannot — `dd ≡ 0` by construction, so
+ *    `|dd − med| > thr` is structurally false however large the slip.  Armed,
+ *    such a pair is UNTESTED (@ref CommonBandEvidence::iftd_untested) rather
+ *    than silent, and is refused as an exonerator exactly as `immature` and
+ *    `lli_shadow` are — counted @ref CommonBandVerdict::iftd_ref_arc, named
+ *    `iftd(<pair>)=ref_arc` (inline when the refusal branch reaches it, in the
+ *    basis tail otherwise, exactly as the flagged set is named), never listed as
+ *    `silent`.  Field-measured (§20.1):
+ *    an equal-count L1C+L5X slip on GOPE/G24, the reference of both L5 chains,
+ *    narrowed to the innocent band L2W under `first` AND `all`, while the same
+ *    injection on G25 (not a reference) vetoed at 29× threshold.  Named cost:
+ *    a single-band L1 slip on that arc loses its narrowing too, because its only
+ *    silent pair is now untested;
+ *
  *  - **RULE F2, the LLI SHADOW (§14.11)**: a pair is NOT silent — it is treated
  *    as immature — at any epoch where one of its BANDS carried a receiver
  *    loss-of-lock bit at the PREVIOUS epoch (@ref
@@ -155,6 +171,18 @@ struct CommonBandEvidence {
     /// IF-TD pairs EVALUATED this epoch and NOT flagged — recorded for the
     /// verdict's basis string only; silence here exonerates nothing on its own.
     std::set<CommonBandPair> iftd_silent;
+    /// §22 THE REFERENCE-ARC CLAUSE — pairs whose IF-TD sample at this (station,
+    /// satellite) is the chain's REFERENCE satellite.  Its double difference is
+    /// identically 0 by construction (@c IfJumpInfo::is_reference: grad(ref) −
+    /// grad(ref) = 0 every epoch), and the pooled test forms
+    /// `flagged = |dd − med| > thr`, so on a reference arc the veto is
+    /// structurally unavailable — the pair is not silent-and-clean, it is
+    /// UNTESTED for the verdict, and the rule refuses it as an exonerator
+    /// (@ref CommonBandVerdict::iftd_ref_arc).  Populated ONLY when
+    /// `network.cycle_slip.common_band_ref_arc` is armed; with the knob off it
+    /// stays empty and such a sample lands in @ref iftd_silent exactly as
+    /// before, which is what makes OFF byte-identical.
+    std::set<CommonBandPair> iftd_untested;
     /// Phase signals carrying a loss-of-lock bit this epoch.
     std::set<std::string> lli_signals;
 };
@@ -214,6 +242,20 @@ struct CommonBandVerdict {
     /// alone cannot show that — so the veto carries its own identity (invariant
     /// #7) and the run-end clause breaks it down by pair kind.
     std::set<CommonBandPair> iftd_veto_pairs;
+    /// §22: silent pairs refused as exonerators because their IF-TD sample sits
+    /// on the chain's REFERENCE arc (@ref CommonBandEvidence::iftd_untested), so
+    /// the pooled test COULD NOT have flagged them — a structural dead zone, not
+    /// a clean bill of health.  Counted separately from @ref iftd_veto even
+    /// though the response is the same: a veto is evidence the pair moved, this
+    /// is the ABSENCE of a usable test, and only the second one is the price the
+    /// clause pays (an equal-count slip on a reference arc falls back to
+    /// all-band, §22.2's named cost).
+    int iftd_ref_arc{ 0 };
+    /// §22: WHICH pairs those were, the same identity @ref iftd_veto_pairs
+    /// carries for the veto (invariant #7) — the run-end clause breaks the
+    /// refusals down by pair kind, so the dead zone can be attributed to the
+    /// chains whose reference the arc actually is.
+    std::set<CommonBandPair> iftd_ref_arc_pairs;
     /// Silent pairs refused as exonerators for arc immaturity.
     int immature_pairs{ 0 };
     /// §14.11 RULE F2: silent pairs refused as exonerators because one of their
@@ -386,6 +428,12 @@ struct CommonBandEpoch {
     long long all_inconsistent{ 0 };  ///< Fallback: a pair fired, every band exonerated.
     long long bands_kept{ 0 };        ///< Bands spared by a narrowed verdict (Σ|exonerated|).
     long long iftd_veto{ 0 };         ///< Silent pairs refused as exonerators by an IF-TD flag.
+    /// §22: silent pairs refused because their IF-TD sample is the chain's
+    /// REFERENCE (dd ≡ 0 ⇒ the pooled test cannot flag it).  Nonzero only with
+    /// `common_band_ref_arc` armed — this is the ON-path telemetry of the clause
+    /// (invariant #4): an armed leg on a known reference arc reporting 0 here is
+    /// dead wiring, not a quiet arc.
+    long long iftd_ref_arc{ 0 };
     long long immature_pairs{ 0 };    ///< Silent pairs refused as exonerators for arc age.
     long long lli_shadow{ 0 };        ///< §14.11 F2: silent pairs refused because a band carried an LLI at the previous epoch.
     /// §14.12 F3: verdicts formed from the receiver's LLI bits alone, at an epoch
@@ -409,6 +457,11 @@ struct CommonBandEpoch {
     /// ("L1C_L5Q" → n).  Under `if_phase_td_pairs = first` only the one watched
     /// pair can appear here, which is precisely the measurement the card rests on.
     std::map<std::string, long long> iftd_veto_by_pair;
+    /// §22: @ref iftd_ref_arc attributed to the IF-TD pair KIND whose reference
+    /// arc it was ("L1C_L5X" → n).  The clause's cost is per CHAIN — a satellite
+    /// that is the reference of both L5 chains loses two pairs while the (1,2)
+    /// reference loses one — and the total alone cannot show that.
+    std::map<std::string, long long> iftd_ref_arc_by_pair;
     /// @}
 
     /// Drop every per-epoch value (called once per processed epoch).
@@ -417,9 +470,10 @@ struct CommonBandEpoch {
         all.clear();
         verdicts = narrowed_n = all_no_exoneration = all_inconsistent = 0;
         bands_kept = iftd_veto = immature_pairs = weak_silence = lli_shadow = 0;
-        anchor_colocate = would_narrow = 0;
+        anchor_colocate = would_narrow = iftd_ref_arc = 0;
         lli_verdicts = lli_narrowed = lli_anchor_colocate = 0;
         iftd_veto_by_pair.clear();
+        iftd_ref_arc_by_pair.clear();
     }
 
     /**

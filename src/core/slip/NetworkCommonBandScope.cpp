@@ -65,6 +65,17 @@ std::string thrText(double thresh_wl) {
     return buf;
 }
 
+/// One IF-TD pair evaluation, as the read-only preview reconstructs it for a
+/// (station, satellite).  @c is_ref is the detector's own flag
+/// (@c IfJumpInfo::is_reference) and is carried, not dropped, because a sample
+/// on the chain's reference has `dd ≡ 0` — so @c flagged is structurally false
+/// there and says nothing (§22).
+struct IfTdPreview {
+    CommonBandPair pair;
+    bool           flagged{ false };
+    bool           is_ref{ false };
+};
+
 /// Render an ordered signal set as `a;b;c`, or `none` when empty.
 std::string setText(const std::set<std::string>& s) {
     if (s.empty()) return "none";
@@ -135,6 +146,25 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
         }
         const std::string desc = "mw(" + pairText(pr) + ")silent(n="
                                  + std::to_string(st.arc_n) + ",thr=" + thrText(st.thresh_wl) + ")";
+        // §22 THE REFERENCE-ARC CLAUSE.  This pair's IF-TD sample is the chain's
+        // REFERENCE satellite, whose double difference is identically 0 by
+        // construction, so the pooled test `|dd − med| > thr` could not have
+        // flagged it however large the slip.  The veto below is therefore
+        // structurally unavailable here, and the silence is not a clean bill of
+        // health — it is the ABSENCE of a test.  Refused exactly as `immature`
+        // and `lli_shadow` are: counted, named, and never listed as `silent`.
+        // Field-measured (§20.1): an equal-count L1C+L5X slip on GOPE/G24 — the
+        // reference of both L5 chains — narrowed to the innocent band under
+        // `first` AND `all`, while the same injection at G25 vetoed at 29×
+        // threshold.  Empty unless `common_band_ref_arc` is armed, which is what
+        // keeps the knob-off path byte-identical.
+        if (ev.iftd_untested.count(pr)) {
+            ++v.iftd_ref_arc;
+            v.iftd_ref_arc_pairs.insert(pr);
+            append(desc + ";iftd(" + pairText(pr) + ")=ref_arc");
+            iftd_noted.insert(pr);
+            continue;
+        }
         if (ev.iftd_flagged.count(pr)) {
             // The EQUAL-COUNT trap: L1 and L2 slipping by the same integer leave
             // MW(1,2) silent, and only the iono-free combination sees it.
@@ -157,6 +187,14 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
         append("mw(" + pairText(pr) + ")flag");
     for (const auto& pr : ev.iftd_flagged)
         if (!iftd_noted.count(pr)) append("iftd(" + pairText(pr) + ")=flagged");
+    // §22: the SAME tail the flagged set gets, for the untested one.  Without it
+    // an untested pair that the refusal branch never reached — MW-flagged, or
+    // immature, or not processed at all — simply VANISHES from the row, and the
+    // reader cannot tell an evaluated-and-quiet lane from one whose IF-TD test
+    // could not run.  Measured on the null A/B: 6 of the 12 differing rows
+    // differed only by those missing tokens.  Never `silent`, always `=ref_arc`.
+    for (const auto& pr : ev.iftd_untested)
+        if (!iftd_noted.count(pr)) append("iftd(" + pairText(pr) + ")=ref_arc");
     for (const auto& pr : ev.iftd_silent)
         append("iftd(" + pairText(pr) + ")silent");
     append("lli=" + setText(ev.lli_signals));
@@ -283,10 +321,18 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
     // two-band slip and the response freed the one band that had not moved.
     // With it `first` there is exactly one entry per (station, satellite) and
     // every expression below reduces to the pre-knob one.
-    std::map<std::pair<int, std::string>,
-             std::vector<std::pair<CommonBandPair, bool>>> iftd;
+    //
+    // §22: each evaluation also carries the sample's `is_ref`, which the preview
+    // used to compute and drop.  It is what separates "the pooled test ran and
+    // said nothing" from "the pooled test could not run" — see the clause in
+    // @ref networkCommonBandVerdict.
+    std::map<std::pair<int, std::string>, std::vector<IfTdPreview>> iftd;
     const bool iftd_all_pairs =
         config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All;
+    // §22 THE REFERENCE-ARC CLAUSE.  Off ⇒ `iftd_untested` is never populated,
+    // every sample folds into flagged/silent exactly as before, and the rule's
+    // new branch is unreachable: the OFF path is byte-identical.
+    const bool ref_arc_clause = config_.networkCycleSlipCommonBandRefArc();
     if (config_.networkCycleSlipIfPhaseTd()) {
         const double k_mad        = config_.networkCycleSlipIfPhaseTdKMad();
         const double floor_frac   = config_.networkCycleSlipIfPhaseTdFloorFrac();
@@ -351,7 +397,8 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                     const double floor_m = floor_frac * sp->lambda;
                     const double thr     = std::max(k_mad * s_eff * emap, floor_m);
                     const bool   flagged = std::abs(sp->dd - pstat.med) > thr;
-                    iftd[{ sp->sta, sp->sat }].push_back({ { sp->sig1, sp->sig2 }, flagged });
+                    iftd[{ sp->sta, sp->sat }].push_back(
+                        IfTdPreview{ { sp->sig1, sp->sig2 }, flagged, sp->is_ref });
                 }
             }
         }
@@ -376,9 +423,15 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
             CommonBandEvidence ev = ev_in;
             const auto iit = iftd.find({ i, sat });
             if (iit != iftd.end())
-                for (const auto& [pr, flagged] : iit->second) {
-                    if (flagged) ev.iftd_flagged.insert(pr);
-                    else         ev.iftd_silent.insert(pr);
+                for (const auto& p : iit->second) {
+                    // §22: a sample on the chain's REFERENCE has dd ≡ 0, so
+                    // `flagged` is structurally false there and the pair is
+                    // UNTESTED, not silent.  Three-way and exclusive: with the
+                    // clause off the first arm never fires and this is the
+                    // pre-card two-way fold, byte for byte.
+                    if (ref_arc_clause && p.is_ref) ev.iftd_untested.insert(p.pair);
+                    else if (p.flagged)             ev.iftd_flagged.insert(p.pair);
+                    else                            ev.iftd_silent.insert(p.pair);
                 }
 
             // B = the arc's TRACKED phase bands, i.e. the live ambiguity signals
@@ -437,6 +490,9 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
             out.iftd_veto      += v.iftd_veto;
             for (const auto& pr : v.iftd_veto_pairs)   // §14.10 breakdown
                 ++out.iftd_veto_by_pair[pr.first + "_" + pr.second];
+            out.iftd_ref_arc   += v.iftd_ref_arc;      // §22
+            for (const auto& pr : v.iftd_ref_arc_pairs)
+                ++out.iftd_ref_arc_by_pair[pr.first + "_" + pr.second];
             out.immature_pairs += v.immature_pairs;
             out.lli_shadow     += v.lli_shadow;       // §14.11 F2
             out.weak_silence   += v.weak_silence;

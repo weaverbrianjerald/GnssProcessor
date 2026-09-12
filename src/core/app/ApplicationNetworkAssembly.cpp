@@ -1623,6 +1623,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         C.n_cb_iftd_veto         += common_band.iftd_veto;
         for (const auto& [pr, n] : common_band.iftd_veto_by_pair)   // §14.10
             C.n_cb_iftd_veto_by_pair[pr] += n;
+        C.n_cb_iftd_ref_arc      += common_band.iftd_ref_arc;    // §22
+        for (const auto& [pr, n] : common_band.iftd_ref_arc_by_pair)
+            C.n_cb_iftd_ref_arc_by_pair[pr] += n;
         C.n_cb_immature_pairs    += common_band.immature_pairs;
         C.n_cb_lli_shadow        += common_band.lli_shadow;      // §14.11 F2
         C.n_cb_lli_verdicts      += common_band.lli_verdicts;    // §14.12 F3

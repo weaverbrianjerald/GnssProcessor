@@ -3598,6 +3598,32 @@ namespace GnssProcessor {
         /// counter reports exactly what it refused.
         /// @return Minimum MW arc epochs for exoneration, samples.
         int networkCycleSlipCommonBandMinArcEpochs() const { return network_config_.cycle_slip_common_band_min_arc_epochs; }
+        /// @brief §22 REFERENCE-ARC CLAUSE for @ref networkCycleSlipCommonBandScope
+        ///        (`network.cycle_slip.common_band_ref_arc`, SPEC_event_harness §22).
+        ///
+        /// The scope's IF-TD veto refuses a silent MW pair only where the pooled
+        /// IF-TD test FLAGGED it, and on the chain's REFERENCE satellite that
+        /// test cannot fire: `dd ≡ 0` by construction, so `|dd − med| > thr` is
+        /// structurally false however large the slip, and the pair reaches the
+        /// rule as a clean silence.  Armed, a pair whose IF-TD sample is the
+        /// chain's reference is UNTESTED — refused as an exonerator (counted
+        /// `ref-arc refusals`, named `iftd(<pair>)=ref_arc`, never listed as
+        /// `silent`), and the verdict falls through to today's all-band response
+        /// when nothing else exonerates.  Applied to EVERY chain's reference,
+        /// including the first: the per-station reference GATE is a separate
+        /// instrument whose decision the preview does not see.
+        ///
+        /// Field-measured (§20.1): an equal-count L1C+L5X slip on GOPE/G24 — the
+        /// reference of both L5 chains — narrowed to the innocent band L2W under
+        /// `if_phase_td_pairs` `first` AND `all`, while the same injection on
+        /// G25 vetoed at 29× threshold.  Named cost: a genuine single-band slip
+        /// on a reference arc also loses its narrowing when its only silent pair
+        /// is the untested one.
+        ///
+        /// Requires @ref networkCycleSlipCommonBandScope (the loader disarms and
+        /// warns without it).  Default off; byte-identical off.
+        /// @return True when the reference-arc clause is armed.
+        bool networkCycleSlipCommonBandRefArc() const { return network_config_.cycle_slip_common_band_ref_arc; }
         /// @brief Float per-band delta bridge at the MW/IF-TD drains: when the
         ///        slip's magnitude was MEASURED (confident wide-lane integer +
         ///        IF-TD phase step), shift the carried level in place instead of

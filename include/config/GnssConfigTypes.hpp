@@ -1442,6 +1442,27 @@ namespace GnssProcessor {
         /// value tightens it, and the counter @c cb_immature_pairs reports what
         /// it refused.
         int cycle_slip_common_band_min_arc_epochs{ 10 };
+        /// §22 THE REFERENCE-ARC CLAUSE of the common-band scope.  The scope's
+        /// IF-TD veto refuses a silent MW pair only when the pooled IF-TD test
+        /// FLAGGED it, and on the chain's REFERENCE satellite that test is
+        /// structurally unavailable: its double difference is identically 0
+        /// (@c IfJumpInfo::is_reference), so `|dd − med| > thr` is false however
+        /// large the slip, and the pair lands in the silent set as if it had
+        /// been cleared.  Armed, such a pair is UNTESTED instead — refused as an
+        /// exonerator, counted, and named `iftd(<pair>)=ref_arc` in the verdict
+        /// basis — so an equal-count slip on a reference arc falls back to
+        /// today's all-band response instead of narrowing to an innocent band
+        /// (field-measured on GOPE/G24, SPEC_event_harness §20.1/§22).  Applies
+        /// to EVERY chain's reference, first chain included: the per-station
+        /// reference GATE is a separate instrument whose decision the preview
+        /// never sees.  Named cost: a genuine SINGLE-band slip on that arc also
+        /// stops narrowing when its only silent pair is the untested one.
+        /// Requires @ref cycle_slip_common_band_scope (the loader disarms and
+        /// warns without it).  Default @c false is byte-identical — the untested
+        /// set is never populated and the rule's branch is unreachable.
+        /// SOLVE-AFFECTING when armed, fingerprint-EXEMPT (forward-only RESPONSE
+        /// knob, the @ref cycle_slip_common_band_scope class).
+        bool cycle_slip_common_band_ref_arc{ false };
         int    trace_dd_fractional_epoch_stride{ 1 };  ///< T2e: write @c network_dd_fractional.csv only every Nth PROCESSED epoch (1 = every epoch = current).  Fraction statistics don't need every epoch; combines with @ref trace_dd_fractional_max_pairs to make a traced convergence run affordable.  TRACE-ONLY (never folded into the warm-resume fingerprint).  Inert unless @ref trace_dd_fractional.
         /// S1: emit @c network_phase_anchor.csv — per PROCESSED epoch, one row per
         /// GAUGE-PINNED ambiguity as (week,tow,cons,signal,sat,anchor_sta), i.e. WHICH
