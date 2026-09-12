@@ -5022,6 +5022,92 @@ RECOMMEND_SCOPED, PINNED on the field golden (write side, products byte-identica
 run of this lineage now carries its frame); `network.resume_carry_rebase` RECOMMEND_SCOPED with the
 necessary-not-sufficient record above, armed by the harness on every resume leg, pinned nowhere.
 
+### 21.7 RESULTS — RS-2b: the branch was right; the wire's realization is set by two datum memories the snapshot never carried; RS-3 pre-registered (2026-09-12 ~13:45 local; legs `runs/evleg_rs2_null_rebase_d5w{5,1}`, seed v2 ep0604, exe `gnss_processor_rs2b.exe` a31248d0…; manager re-grade)
+
+**Build (merged `b6afe8c`; registered `58c4088`).**  `network.resume_d5_warmup_ep` (int, default 0): armed only in
+`networkTryWarmResume`, counted down at the install seam (the D5 gate's single site), trips counted
+(`d5_warmup_suppressed`, a `warmup_suppressed` column on `network_d5_flags.csv`) but neither re-tapped nor
+funnelled; σ̂₀ feed, corroboration gate and the MW/LLI/IF-TD drains untouched; not fingerprinted.  Cold smoke
+with K=5 hashes `b9da8cc1…` (inert without a resume); Debug suite 1969 / 0 failed; one log-order defect the
+worker found in its own retire line was fixed before the legs were re-run (`c96182a`).
+
+| | base (blob + re-base) | **K = 5** | **K = 1** |
+|---|---|---|---|
+| D5 flags / re-taps / suppressed at +1 | 301 / 301 / 0 | 301 / **0** / **301** | 301 / **0** / **301** |
+| chord births +1 / +2 / +3 / +4 / +5 | 64 / **305** / 4 / 8 / 0 | 64 / **7** / 4 / 8 / 0 | 64 / **7** / 5 / 10 / 2 |
+| live D5 trips after the window | (+7: 1) | +6..+10: 0, **1**, 0, 0, 0 | +2..+6: **1, 2, 2**, 0, 0 |
+| D5 rows over the leg / run re-taps | 332 / 332 | 332 / 27 | 332 / 31 |
+| G2 / G3 (worst \|Δa₀₀\| from +5; clock_std ×; σ̂₀ ×) | PASS / 2.73; 0.902; 1.126 | PASS / 2.56 @+9; 0.903; 1.178 | PASS / 2.56 @+9; 0.903; 1.179 |
+| Δa₀₀ at +1 … +5 (all legs alike) | +4.95, +2.50, +2.83, +2.41, +2.48 | +4.95, +2.27, +2.82, +2.26, +2.34 | +4.95, +2.27, +2.92, +2.55, +2.31 |
+| R record at +1 | 30 sats | **30 sats** | **30 sats** |
+| per-sat-median-removed \|ΔPB\| p50 at +2 / +60 | 14.05 / 13.79 m | 14.35 / 13.64 | 14.35 / 13.78 |
+| clock contrast pooled +5..+60 p50 / p95 | 3.64 / 11.75 m | 3.59 / 11.91 | 3.61 / 11.94 |
+| W6 code bias pooled p50 | 0.669 | 0.651 | 0.656 |
+| ZWD pooled p50 / p95 | 2.14 / 9.43 | **1.66 / 8.58** | **1.65 / 8.62** |
+| consumer p50 from +5 (seed 8.94) | 5.18 | 8.91 | 5.24 |
+
+**P4a PASS, P4b PASS, P4c FAIL — the pre-registered reading (a): the branch is right, the wire's realization
+is set elsewhere.**  Holding the branch through ONE epoch removes the +2 birth wave (305 → 7); the 301 trips
+at +1 are identical in every arm and never return — the gate then runs at the seed's own rate (0–2 per
+epoch, the same 332 D5 rows everywhere).  So the +1 disagreement was one epoch of cold station layer, not a
+branch inconsistency, and K = 1 suffices.  The Δa₀₀ sub-bar (≤ 2 TECU from +1) is failed identically by
+every resume posture including the no-blob one (+2.3 … +2.9 TECU over +2..+10, decaying to < 1 by +60) — a
+common ~30-min SH-level transient at the seam, recorded, not a branch property; P4b is judged on the G3
+5-TECU bar.  P4c: the wire does not move at all — clock contrast, code bias and the per-satellite PB offset
+are unchanged to within 3 %, the emitter still declares 30 satellites at +1, and only ZWD is quieter (23 %).
+The consumer split (K=5 8.91 vs K=1 5.24 m on wires that differ by < 1 %) is the in-process consumer's own
+state, not the wire — §18.14 stands: grade seams with a cold-consumer replay.
+
+**Decision.**  `network.resume_d5_warmup_ep` RECOMMEND_SCOPED at K = 1 (`58c4088`); `scripts/event_leg.py`
+arms it on every resume leg beside `resume_carry_rebase`, so the harness posture for field legs is now
+**blob + re-base + one held epoch** (branch continuity is what the slip cards grade; the datum re-draw is
+common to every posture and cancels in event − null).  The no-blob posture remains available by `--extra`.
+
+**The two datum memories (read from the code, confirmed by the leg's own events).**  At +1 the leg writes
+**110 `PHASE_DATUM / eq34_reref` events** (the seed: 2 per epoch) and **30 `CB_DATUM / reseed_disc_landed`**
+(the seed: 0):
+1. The eq34 chain datum's spanning tree is re-elected from scratch at the seam.  The election
+   (`NetworkChainDatum.cpp`, STICKY-tree seed at `:230–270`) continues last epoch's tree through
+   `eq34_datum_rx` (the sticky datum receiver per (constellation, signal)), `eq34_rx_parent` (each
+   receiver's parent-edge satellite), `eq34_sat_root` and `eq34_prev_target` — documented at
+   `NetworkRunContext.hpp:794–815` and NEVER written to the snapshot — plus `anchor_incumbent` (the sat-side
+   parents, which the frame restore DOES bring back: 126).  With the receiver-side maps empty the tree is
+   rebuilt from the cold arc registry, the pinned arcs change, and every phase-bias family re-realizes by the
+   integer between the old and new pinned arcs: 110 rerefs, the R record naming 30 satellites, per-satellite
+   PB offsets of 14 m.  The DD branch cannot prevent this — it is invariant to the datum by construction.
+2. The time-linked code-bias datum's previous-value map (`code_bias_prev_` / `code_bias_sat_seen_`,
+   `NetworkRunContext.hpp:1128–1142`) is "NOT persisted", and the resume block sets
+   `code_bias_datum_resumed_ = true` so that every first post-resume re-seed disc-bumps
+   (`NetworkRunContext.cpp:1655–1665`, landed at `NetworkSolPrep.cpp:~880–900`): the W6 code-bias / clock
+   split is re-drawn for 30 satellites — the 3.6 m clock-contrast and 0.65 m code-bias offsets.
+
+**RS-3 pre-registered — datum continuity across the seam.**  Write knob `network.state_snapshot_datum_capture`
+(default false; beside `state_snapshot_frame_capture`): the snapshot carries the eq34 tree maps
+(`eq34_datum_rx`, `eq34_rx_parent`, `eq34_sat_root`, `eq34_prev_target`, `eq34_prev_el`,
+`eq34_retained_edges`) and the time-linked code-bias datum memory (`code_bias_prev_`,
+`code_bias_sat_seen_`) as format-forward rows; write side only, products byte-identical.  Read knob
+`network.resume_datum_restore` (default false; forward-only resume response policy, fingerprint-EXEMPT;
+requires `resume_frame_restore`): restore the maps before the first election so the sticky-tree seed
+continues the writer's tree, and restore the code-bias memory so `code_bias_datum_resumed_` stays false
+and a re-seed bumps only where it genuinely re-seeds; rows absent ⇒ today's behaviour, loudly.  Counters and
+a run-end line (`eq34 edges / datum rx / prev targets restored; CB prev values / seen restored; first-epoch
+eq34 rerefs, reattaches, CB re-seed discs`).  New seed `runs/evseed_field6h_v3` (write knob via `--extra`),
+legs from its ep0604 on the harness posture, one exe: `rs3_null_restore`, `rs3_null_norestore` (the
+control — must reproduce K = 1's 110 / 30 / 30-sat / 14 m), `rs3_null_nocarry_restore` (the datum half
+without the branch).
+* **P5a the datums continue:** `eq34_reref` at +1 ≤ 5 (was 110); `reseed_disc_landed` at +1 ≤ 3 (was 30);
+  the R record at +1 names ≤ 3 satellites (was 30).
+* **P5b the wire is continuous, pooled +5..+60 and at +2:** per-sat-median-removed |ΔPB| at +2 ≤ 0.05 m
+  (was 14.35); clock contrast p50 ≤ 3× the seed's own step (0.27 m; was 3.6) and p95 ≤ 3× (1.2 m); W6 code
+  bias p50 ≤ 0.03 m (was 0.65); ZWD p50 ≤ 3× own step (0.32 m; was 1.65); no silent PB step > 0.05 m on
+  > 10 % of keys at any epoch from +2 on.
+* **P5c availability and branch unchanged:** 60/60 emitted; a₀₀ on the G3 bar; births +2 ≤ 20; D5 rows ≈ 332.
+* **Consumer:** a cold-consumer replay of the leg's wire against a replay of the seed's wire over the same
+  window (`network.closed_loop.replay_products_path`, §18.14), reported; the in-process consumer is not graded.
+* P5a passing with P5b failing names a THIRD memory (the rx-CB carry, the T5 iono deviation) — then the
+  first-epoch offsets per channel say which; P5a failing means the sticky seed does not engage on restored
+  maps under `carry_invariant` (its carry-value test), and the fix moves into the election.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
