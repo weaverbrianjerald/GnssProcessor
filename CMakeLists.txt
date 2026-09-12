@@ -433,6 +433,7 @@ add_executable(gnss_tests
     tests/test_young_arc_inflate.cpp
     tests/test_amb_seam_reinflate_config.cpp
     tests/test_resume_frame_restore.cpp
+    tests/test_resume_pb_seam_mark.cpp
     tests/test_resume_coupling_restore.cpp
     tests/test_resume_datum_restore.cpp
     tests/test_rt_state_snapshot.cpp

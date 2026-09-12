@@ -789,6 +789,19 @@ namespace GnssProcessor {
               "restore the eq34 tree maps and the code-bias datum memory at a warm resume (RS-3): "
               "eq34 rerefs at +1 110 -> 8, CB re-seed discs 30 -> 0, R record 30 -> 0 sats; a ~10 m "
               "phase-bias re-realization remains and is the next card (SPEC_event_harness s21.9)" },
+            // --- RS-4 (SPEC_event_harness s21.9): the DECLARATION half of the same seam - the
+            //     first post-resume emit marks datum_changed for any constellation whose
+            //     phase-bias level re-realized against the RESTORED emitter baselines.  The
+            //     CLK-R resume_seam rule cannot see it (it fires only on a COLD held-frame
+            //     engine, i.e. never on a lineage that restores the frame).  Outputs-only,
+            //     forward-only resume response policy, not fingerprinted.
+            { warm,
+              network_resume_pb_seam_mark_,
+              Tier::SCOPED, false, "network.resume_pb_seam_mark",
+              "declare the warm-resume PHASE-BIAS seam on the wire: the first post-resume emit "
+              "marks datum_changed for a constellation whose restored per-key baselines moved "
+              "past discThresholdM on more than 10 % of the jump test's own population "
+              "(measured ~17 m p50 with datum_changed 0 today, SPEC_event_harness s21.9)" },
             { network_clock_temporal_anchor_ && !network_clock_model_,
               network_readmit_seed_horizon_s_ > 0.0,
               Tier::SCOPED, false, "network.readmit_seed_horizon_s",

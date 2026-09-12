@@ -82,6 +82,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
     k.resume_datum_restore   = config_.networkResumeDatumRestore();      // RS-3 §21.7
+    k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // RS-4 §21.9
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
     k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // E2 seed-first re-admission
@@ -1811,6 +1812,13 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // downstream branches on it, so the OFF path stays byte-identical
                     // (the anchor_age_resume_seed / adm_resume_pending shape).
                     ctx.carry.resume_datum_first_ep = true;
+                    // RS-4 (§21.9): the DECLARATION half's one-shot latch, set beside the
+                    // RS-3 telemetry latch and for the same reason — every warm resume
+                    // arms it so an A/B's control leg is read by the same instrument.
+                    // NetworkEmitStore consumes it at the FIRST emit, the only point at
+                    // which the emitter's restored per-key baselines still hold the
+                    // previous run's emitted values.  Read only under the knob.
+                    ctx.carry.resume_pb_seam_pending = true;
                     // eq34 reattach hygiene (spec §2 INC-1 warm-resume rule): the
                     // arc-age map is not serialized, so without this latch every arc
                     // would look one epoch old on the first resumed epoch and the

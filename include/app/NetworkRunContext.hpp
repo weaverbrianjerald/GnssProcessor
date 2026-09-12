@@ -221,6 +221,7 @@ namespace GnssProcessor {
         double amb_seam_reinflate_var{};  ///< network.amb_seam_reinflate_var_m2: one-shot variance ADD (m²) on every restored leveling carry at a warm resume (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF.
         bool   resume_frame_restore{};    ///< network.resume_frame_restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the serialized FRAME state — phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-sat state, the CLK-R held frame — so the first post-resume election/fold/emit continue the pre-seam realization instead of re-pinning at cold seeds.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into maps nothing reads).
         bool   resume_datum_restore{};    ///< network.resume_datum_restore (RS-3, SPEC_event_harness §21.7): at a warm resume, restore the eq34 chain datum's last-epoch spanning tree (sticky datum receiver, receiver parent edges, satellite component roots, pin targets, longevity elevations, gap-retained edges) so the election's sticky seed CONTINUES the writer's tree instead of re-electing from the cold arc registry, and restore the time-linked code-bias previous-value map + ever-seen set with @c code_bias_datum_resumed_ left FALSE.  Loader hard-requires resume_frame_restore (anchor_incumbent is the same tree's satellite side).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into containers nothing reads).
+        bool   resume_pb_seam_mark{};     ///< network.resume_pb_seam_mark (RS-4, SPEC_event_harness §21.9): at the FIRST emit after a warm resume, markDatumChange any constellation more than kResumePbSeamMarkFraction of whose fresh-baseline phase-bias keys moved past discThresholdM against their RESTORED emitter baselines - the declaration the CLK-R resume_seam rule misses because it fires only on a COLD held-frame engine.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical (the census is never taken).
         bool   resume_coupling_restore{}; ///< network.resume_coupling_restore (SPEC_synthetic_minimum_network §18.12): at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, in harvest order) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING, so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, shared-neutral) instead of the plain DIAGONAL prior asserted at the PURE CONDITIONAL variance that out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (LocalCarry::coupling stays empty exactly as the aggregate init leaves it).
         /// network.readmit_seed_horizon_s — READMIT continuity (E2 seed-first re-admission,
         /// SPEC_synthetic_minimum_network §18.4 / SPEC_amb_iono_split_overcount §7 FIRST):
@@ -1238,6 +1239,14 @@ namespace GnssProcessor {
         /// readout — the rerefs accumulate rather than being overwritten.  Never
         /// serialized: each resume is its own seam.
         bool resume_datum_first_ep{false};
+        /// RS-4 (SPEC_event_harness §21.9) one-shot PHASE-BIAS SEAM latch.  Set by
+        /// @ref networkTryWarmResume beside @ref resume_datum_first_ep on EVERY warm
+        /// resume and consumed by the FIRST emit in NetworkEmitStore, which is where the
+        /// emitter's restored per-key baselines are still the previous run's values.
+        /// Read only under @c knobs.resume_pb_seam_mark, so an unarmed run is
+        /// byte-identical.  Never serialized: each resume is its own seam, and a leg
+        /// that resumes twice would be two seams.
+        bool resume_pb_seam_pending{false};
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed
         /// (station index, sat).  Diagonal-only (rx-CB rationale — no shared-border
         /// footprint; the coupling variant is deliberately deferred).  NOT snapshotted:
@@ -2515,6 +2524,9 @@ namespace GnssProcessor {
         long long n_resume_datum_first_reref    = 0; ///< PHASE_DATUM/eq34_reref (sat,σ) at the first post-resume epoch
         long long n_resume_datum_first_reattach = 0; ///< PHASE_DATUM/eq34_reattach (tree-edge handovers) there
         long long n_resume_datum_first_cb_disc  = 0; ///< CB_DATUM/reseed_disc_landed satellites there
+        long long n_pb_seam_keys_tested = 0; ///< RS-4: phase-bias keys the first post-resume emit compared with a restored baseline (the jump test's own population)
+        long long n_pb_seam_keys_over   = 0; ///< RS-4: of those, keys beyond discThresholdM
+        long long n_pb_seam_marks       = 0; ///< RS-4: constellations markDatumChange'd by the seam rule (0 with the knob off, and 0 on a cold start)
         long long n_resume_slip_warmup_epochs = 0; ///< epochs the MW/LLI drain ran diagnostic-only post-resume
         long long n_resume_d5_warmup_epochs = 0;   ///< RS-2b: epochs the Card-4 D5 innovation gate ran diagnostic-only post-resume
         // Card 1 coupling-regressor restore (network.resume_coupling_restore, §18.12) —

@@ -3473,6 +3473,29 @@ int networkTeardown(
                         "happened; check the resume log for the RS-3 line."
                       : "");
     }
+    // RS-4 (SPEC_event_harness §21.9): the DECLARATION half, beside the RS-3 line and
+    // at the same (function) scope for the same invariant-#4 reason.  The census is
+    // taken on EVERY warm resume the knob is armed for, so an armed run that marked
+    // nothing reports its tested/over counts and an armed run that never resumed
+    // reports zeros — the two cases this line exists to tell apart.  Printed only when
+    // the knob is armed: with it off nothing is measured and a 0/0 line would be a
+    // false instrument (the OFF path never calls pbSeamCensus at all).
+    if (config_.networkResumePbSeamMark()) {
+        const auto& C = ctx.counters;
+        const double pct = C.n_pb_seam_keys_tested > 0
+                               ? 100.0 * static_cast<double>(C.n_pb_seam_keys_over)
+                                     / static_cast<double>(C.n_pb_seam_keys_tested)
+                               : 0.0;
+        log->info("Network (RS-4 PB seam mark): ARMED; keys tested {}, over threshold {} "
+                  "({:.1f} %), constellations marked {} (bar {:.0f} %).{}",
+                  C.n_pb_seam_keys_tested, C.n_pb_seam_keys_over, pct, C.n_pb_seam_marks,
+                  GnssConfig::kResumePbSeamMarkFraction * 100.0,
+                  C.n_pb_seam_keys_tested == 0
+                      ? "  ⚠ 0 keys tested — no warm resume happened this run, or the "
+                        "first post-resume emit found no restored emitter baselines (a "
+                        "snapshot without an EMITTER blob); the rule is INERT here."
+                      : "");
+    }
     // §18.12 coupling CAPTURE, write side — the RTB-7(e) snapshot readout's sibling, but
     // at FUNCTION scope on purpose: the RTB-7(d/e) block above is gated on carry_invariant,
     // while the coupling capture rides the phase-leveling carries
