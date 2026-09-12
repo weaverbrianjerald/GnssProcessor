@@ -193,6 +193,18 @@ namespace GnssProcessor {
               "an IF-TD pair behind EVERY MW lane (per-pair pools, shared reference arm) so the common-band "
               "verdict can veto an equal-count silence on any pair, not only the first (SPEC_event_harness "
               "s14.10, s16): the same-epoch trap S2 vetoed exactly, inert on a single-band slip; STORM BED, FINAL ARM (runs/golden_sim_campaign_zwdblk_cbscope5 = common_band_scope true + if_phase_td_pairs all on main b268ac2 with rules F2, F3 and " },
+            // --- s22 THE REFERENCE-ARC CLAUSE (promoted 2026-09-12): a silent MW pair whose
+            //     IF-TD sample is the chain's REFERENCE satellite is UNTESTED, not clean (dd == 0
+            //     by construction, so the pooled preview can never flag it and the veto is
+            //     structurally unavailable).  A clause of the scope's rule: regime = the scope.
+            { nc.cycle_slip_common_band_scope,
+              nc.cycle_slip_common_band_ref_arc,
+              Tier::ON, false, "network.cycle_slip.common_band_ref_arc",
+              "refuse a reference-arc pair as an exonerator (its IF-TD test cannot run): the field "
+              "equal-count L1C+L5X slip on GOPE/G24 goes from the wrong narrowing (keep L2W) to "
+              "all-band with both reference arcs named; single-band slips elsewhere unchanged, G25 "
+              "byte-identical; sim storm arm neutral on every bar (consumer p50 0.0807 both, T4 11 "
+              "both, ZWD 0.0059 both; runs/golden_sim_campaign_zwdblk_refarc vs _sts)" },
             { true,
               network_disc_threshold_frac_cycles_ >= 0.24 && network_disc_threshold_frac_cycles_ <= 0.26,
               Tier::ON, false, "network.disc_threshold_frac_cycles",

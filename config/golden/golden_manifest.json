@@ -39,7 +39,8 @@
     "network.cycle_slip.common_band_scope": true,
     "network.cycle_slip.if_phase_td_pairs": "all",
     "network.scoped_handover_response": true,
-    "network.handover_stransform": true
+    "network.handover_stransform": true,
+    "network.cycle_slip.common_band_ref_arc": true
    },
    "unset": [],
    "exceptions": {

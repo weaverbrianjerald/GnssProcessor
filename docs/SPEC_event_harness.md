@@ -5060,3 +5060,44 @@ wire effect is nil on the null and is to be read on the storm arm, not assumed.
 **B4 running:** `config/test_suite/_golden_sim_campaign_zwdblk_refarc.json` = the increment-1 `sts` storm arm +
 the clause, `gnss_processor_cbref.exe`, against `runs/golden_sim_campaign_zwdblk_sts` (exe certification by a
 20-epoch smoke pair `stspromo` vs `cbref` on the `sts` config, or a same-exe OFF rerun).  Bars as §22.3.
+### 22.5 B4 PASS — the sim storm bed is neutral on every bar; the clause is PROMOTED (RECOMMEND_ON with the scope) and pinned in `golden_sim_tri_w6` (2026-09-12 ~11:30 local; manager grade with `scripts/simnet_storm_grade.py`)
+
+**Arms.**  `runs/golden_sim_campaign_zwdblk_refarc` = `config/test_suite/_golden_sim_campaign_zwdblk_refarc.json`
+(the increment-1 `sts` arm + `common_band_ref_arc: true`), exe `gnss_processor_cbref.exe` (main `904b89e` + the
+clause), exit 0, 720/720, 1507 s on a shared box; against `runs/golden_sim_campaign_zwdblk_sts` (exe
+`stspromo`, 1303 s).  **Exe certification without a smoke:** `products.txt` is byte-identical between the two arms
+for the first **283 epochs** — the first differing byte is the clock record after the E record for tow 310890
+(2.35 h in), where the clause first actuates — so the OFF path across the two builds is certified on the storm
+bed itself.  The 286/286 symmetric event-row differences are the same events with different numbers after that
+epoch (PBGAUGE 224, CLK_ANCHOR 19, READMIT 17, STRANSFORM 2, PIVOT 2) plus 22 `T0_band_scope` rows carrying
+`ref_arc`; the first three differing rows (tow 302430) are `all → all` with the basis tail only.
+
+| channel (§22.3 bar) | sts | refarc | bar |
+|---|---|---|---|
+| ZWD settled truth rms | 0.0059 | **0.0059** | ≤ 0.0075 |
+| ZWD hourly | 0.17, 0.007, 0.007, 0.006, 0.006, 0.006 | identical | — |
+| consumer settled p50 / rms | 0.0807 / 0.09006 | **0.0807 / 0.09004** | p50 ≤ 0.13 |
+| consumer hourly rms | 0.645, 0.109, 0.116, 0.101, 0.103, 0.059 | identical | — |
+| T4 attribution events / ambient | 11 / 0.193 | **11** / 0.190 | ≤ 15 |
+| split-referenced satellites mean / max | 0.0 / 0 | **0.0 / 0** | ≤ 0.5 |
+| WL / EWL / L1C ref-free settled | 99.2 / 100.0 / 90.4 | identical | — |
+| IF-TD vetoes (by pair) | 116 (L1C_L2W 79, L1C_L5Q 37) | **116** (identical) | not fewer |
+| IF-TD pairs eval / flag / refloat | 2055853 / 4747 / 4722 | identical | — |
+| PB-GAUGE handovers continuous / cold | 362 / 100 | identical | — |
+| S-transform edges / re-expressed / retained | 2 / 52 / 376 | identical | — |
+| scope: verdicts / narrowed / no-exon / inconsistent | 4208 / 3147 / 807 / 202 | 4208 / **3150** / **820** / **186** | — |
+| **ref-arc refusals** | — | **29 [L1C_L5Q 12, L1C_L7Q 5, L2W_L5Q 12]** | > 0 (invariant #4) |
+
+Every pre-registered B4 bar passes with the two arms equal to the digit; the only movement is inside the scope's
+bookkeeping — 16 `inconsistent` fallbacks become 13 `no_exoneration` (both all-band, no action change) and 3
+narrowings — and the solve diverges only from the first of those narrowings on.  The sim bed never carries the
+reference-arc trap (its injected and campaign slips do not land equal-count on a reference), so the clause is
+neutral there and fixing on the field (§22.4).
+
+**Decision.**  RECOMMEND_ON together with the scope: pinned in `golden_sim_tri_w6` through the generator
+(`scripts/_rs2_refarc_ledger_oneoff.py refarc` → ledger row + md + posture row + manifest pin; `--verify` PASS;
+`config_posture_check.py --verify-loader` 0 gaps).  The field golden needs no exception — the scope itself is a
+field exception there, so the clause is out of regime rather than suppressed; the field pin of scope + pairs +
+clause rides on the RS-2 seed (§21.5) once the §20 wire/consumer bars can be read.  Grader hygiene noted, not
+fixed here: `simnet_storm_grade.py`'s `bscope_clause` regex targets an older log line and reads `None` on both
+arms.
