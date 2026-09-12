@@ -37,7 +37,8 @@
     "network.cycle_slip.anchor_slip_handover": true,
     "network.cycle_slip.mw_evidence_refloat": true,
     "network.cycle_slip.common_band_scope": true,
-    "network.cycle_slip.if_phase_td_pairs": "all"
+    "network.cycle_slip.if_phase_td_pairs": "all",
+    "network.scoped_handover_response": true
    },
    "unset": [],
    "exceptions": {
@@ -73,7 +74,8 @@
     "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here.",
     "network.cycle_slip.mw_evidence_refloat": "NOT field-validated (SPEC_event_harness §13.6): on this lineage the real OSB products make the L1/L5 and L2/L5 lanes BIA-corrected, i.e. the between-satellite path the rule's bias-free clause excludes, and the anchor-slip handover (the cure half on an anchor arc) is out of regime here (no prioritized phase datum) — a field harness leg must price the knob before it is pinned; the sim golden carries it",
     "network.cycle_slip.common_band_scope": "NOT field-validated (SPEC_event_harness s14.8, s16): the field's L5 lanes are BIA-corrected under real OSB products and run the between-satellite MW path, whose silence semantics this rule has not been priced on; a field harness leg must price it before a field pin; the sim golden carries it",
-    "network.cycle_slip.if_phase_td_pairs": "NOT field-validated (SPEC_event_harness s14.10, s16): armed with common_band_scope on the sim golden only; the field's close-spaced pairs (L2W,L5Q) amplify phase noise 12x and its pools have not been priced on real data; a field harness leg is owed before a field pin"
+    "network.cycle_slip.if_phase_td_pairs": "NOT field-validated (SPEC_event_harness s14.10, s16): armed with common_band_scope on the sim golden only; the field's close-spaced pairs (L2W,L5Q) amplify phase noise 12x and its pools have not been priced on real data; a field harness leg is owed before a field pin",
+    "network.scoped_handover_response": "GPS-ONLY lineage: the knob's entire benefit is sparing the OTHER constellation's carry at a pivot handover, so with one constellation there is nothing to spare and it is structurally inert (the regime predicate already excludes it; this entry is the record, not a suppression).  Arm it when the field lineage becomes multi-constellation — a field arm is owed then."
    }
   }
  ]

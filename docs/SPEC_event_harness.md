@@ -3969,3 +3969,86 @@ The GPS edge (276150) is symmetric: Galileo CB/PB step rms to control (158–179
 **Increment 1 re-scoped.**  Increment 0 collects the collateral share (most of the shock) for free; what the S-transform must deliver is the handing-over constellation's OWN carry (GPS at 276150: PB L1C step rms still 0.583, resets 24/24/8) — the population `c₀ = x_q_pre / v_c[q]` re-expresses instead of discarding.  Gate for increment 1: CB/PB step rms at control for the CHANGED constellation too and resets → 0 PB / 0 CB, graded on the datum-invariant contrast and the consumer, with increment 0 armed as the baseline; A/B as a fresh-convergence pair.
 
 **Pre-registered final validation (in flight):** ONE storm arm `runs/golden_sim_campaign_zwdblk_scoped` = cbscope5 + the knob, exe F4FF8EF0…: consumer 3D at the GPS-edge epoch ≤ 0.35 m (C5 1.338) and at the Galileo edge ≤ 0.35; pooled settled p50 ≤ 0.1204 and window-excluded ≤ 0.1028 (both expected to improve — the pivot-recovery window alone was 0.221 in C5); hourly h1–h3 within ±2 cm of C5; resets and `cta_decouple` scoped at both edges; ZWD ≤ 0.0069, WL ≥ 99.2, L1C ≥ 89.9, T4 ≤ 11, W2 absent, split 0.0/0, cold ≤ 78; contrasts within ±3 % of C5.  PASS ⇒ `network.scoped_handover_response` RECOMMEND_ON in regime multi-constellation + closed-loop/service consumer, pinned in `golden_sim_tri_w6` (sim-validated; field arm owed — the knob's RT origin is RTA-2).
+
+### 19.5 Storm arm + PROMOTION — `network.scoped_handover_response` is RECOMMEND_ON and pinned in `golden_sim_tri_w6` (2026-09-11; `runs/golden_sim_campaign_zwdblk_scoped` = cbscope5 + the knob, exe `F4FF8EF0…`, 720/720, 1242 s, single knob)
+
+The §19.4 fresh pair established the mechanism on a 643-epoch lineage; this is the
+final-validation arm on the storm bed, against **C5 = cbscope5** — the same base,
+one knob.
+
+| channel | C5 | **scoped** | verdict |
+|---|---|---|---|
+| **consumer settled p50 / rms** | 0.1204 / 0.2215 | **0.0825 / 0.0899** | −31 % median, −59 % rms |
+| W1 window-excluded p50 / rms | 0.1028 / 0.1848 | **0.0804 / 0.0853** | −22 % / −54 % |
+| consumer hourly p50 h0…h5 | .524 .113 .114 .101 .090 .236 | .524 .113 .114 .101 .089 **.047** | h0–h3 IDENTICAL, h5 5× better |
+| pivot-recovery window 4.68–5.40 h / last 36 min | 0.2211 / 0.2671 | **0.0938 / 0.0553** | the window this card is named for |
+| **settled max \|3D\|** | 1.3377 | **0.2009** | the metre-class shock is gone |
+| consumer Up rms / max | 0.1557 / 1.2164 | **0.0752 / 0.1968** | |
+| ZWD settled truth rms | 0.0069 | **0.0066** | better |
+| ref-free WL / EWL / L1C | 99.2 / 100 / 89.9 | 99.2 / 100 / **90.2** | better |
+| T4 events | 11 | 11 | unchanged |
+| W2 4.9917 h fallout | 0/0/0 | 0/0/0 | absent |
+| split-referenced mean / max | 0.0 / 0 | 0.0 / 0 | unchanged |
+| PHASE_ANCHOR handovers / cold | 315 / 78 | **315 / 78** | IDENTICAL |
+| PB-GAUGE elected / continuous / cold | 462 / 362 / 100 | **462 / 362 / 100** | IDENTICAL |
+| sat-clock contrast / code-bias rms / rx-DCB / rx-clock | 0.7649 / 0.0912 | 0.7657 / 0.0902 / +0.01 % / +0.41 % | producer's own products move < 0.5 % |
+| run time | 1050 s | 1242 s | **the only channel worse — CONFOUNDED (different exe)** |
+
+**The pre-registered settling run is satisfied: the blast radius shrinks to the
+constellation whose datum actually changed, measured at BOTH edges.**
+
+| edge | channel | OFF (C5) | scoped |
+|---|---|---|---|
+| GPS (319260) | consumer 3D at the edge epoch (Up) | **1.338 (−1.216)** | **0.126 (−0.118)** |
+| | Galileo CB C1C / C7Q step rms (the control) | 0.0038 / 0.159 | **0.00001 / 0.00027** |
+| | Galileo PB E L1C / L5Q step rms | 0.447 / 0.649 | **0.0012 / 0.0017** |
+| | GPS clock step (the datum that DID move) | +1.8371 | +1.8365 — unchanged |
+| | `cta_decouple` / R record | 52 (21 E + 31 G) | **31 (G only)** |
+| | consumer resets PB / CB / CLK | 57 / 57 / 19 | **30 / 30 / 10** — exactly the G share |
+| Galileo (321900) | consumer 3D at the edge epoch | **0.777** | **0.031** |
+| | GPS CB C1C / C5Q step rms | 0.0063 / 0.179 | **0.00007 / 0.0020** |
+| | GPS PB L1C step rms | 0.542 | **0.045** (12×; the residual is concurrent anchor handovers / slip responses, not the datum) |
+| | `cta_decouple` | 50 | **21 (E only)** |
+| | consumer resets PB / CB / CLK | 54 / 51 / 17 | **27 / 24 / 8** |
+
+**Isolation.**  The ONLY event counters that moved are `cta_decouple` 103 → 52,
+`cta_disc_landed` 103 → 52, `cta_recouple` 154 → 103 and `seed_held` 24 → 31.
+`common_band` / `if_slip` / `mw` / `lli` / `anchor_handover` /
+`handover_continuous` / `anchor_slip_handover` / `handover_cold` / `col_removed` /
+`col_added` are all identical; the CLK-R clause is identical except Σ|μ| 3.59 →
+3.57 m; the PB-GAUGE clause is byte-identical.  The knob touches the pivot-handover
+response and nothing else.
+
+**A second defect fell out.**  The READMIT run-end clause's "**7 dropped at a datum
+change**" goes to **0**: parked re-admission entries belonging to the constellation
+whose datum did NOT change were being discarded, so the network-wide response was
+silently degrading the already-promoted `network.readmit_seed_horizon_s` card.  Q3
+trips within 300 s of a clock seed 1 → 0 for the same reason.
+
+**PROMOTION (this section is the pass).**  `network.scoped_handover_response` →
+**RECOMMEND_ON**, regime = a PIVOT clock datum (inert under the anchor-free
+`clock_datum_sum_to_zero` / `clock_datum_broadcast_anchored`, where handovers cannot
+occur) **AND ≥ 2 constellations** — the benefit is entirely "spare the other
+constellation", so one constellation has nothing to spare — **and a consumer of the
+products** (closed-loop / service / RT), since the producer's own contrasts move
+< 0.5 % and the whole effect is in what the wire tells the consumer to discard.
+Executable regime: `n_sys >= 2 and not on("network.clock_datum_sum_to_zero") and not
+on("network.clock_datum_broadcast_anchored")`.  Posture row added (Tier::ON), pinned
+in `golden_sim_tri_w6`, generator re-run: **verify PASS** (55 recommended knobs armed
+in regime, 2 documented exceptions, 0 failures), `config_posture_check.py
+--verify-loader` **0 coverage gaps**.
+
+**Interlocks kept.**  `service_mode` force-arms it unconditionally
+(`GnssConfigLoadNetwork.cpp:3093`), including under the anchor-free datums where it
+is armed-but-inert.  **⚠ FINGERPRINTED — fresh-convergence only**: it is
+solve-affecting, so it cannot be adopted mid-chain and **no warm-resume A/B is
+possible** (which is precisely why §19.4 had to be a fresh-convergence pair).
+
+**Residuals, recorded not fixed.**  The SH-VTEC carry skip stays GLOBAL by design
+(`NetworkRunContext.cpp:2153` — the RTA-2 line says so).  There is still no run-end
+clock-pivot handover counter, so the handover population has to be recovered from
+the R records.  The 1050 → 1242 s run time is a **different exe**, not a measured
+cost — a same-exe timing pair is owed, and the knob removes work rather than adding
+it.  And the FIELD arm is owed: `golden_field_gps_dual` is GPS-only, so the knob is
+structurally inert there — a documented manifest **exception, not a pin** — and it
+becomes armable when that lineage goes multi-constellation.

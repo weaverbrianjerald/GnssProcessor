@@ -618,6 +618,22 @@ namespace GnssProcessor {
             // 3D rms 0.303 -> 0.078 m on the sim bed).  GPS-dual+SH field: mechanism transfers,
             // harm absent, so not evidence-recommended there.  Inert under the anchor-free
             // clock datums.  Fingerprinted (fresh lineage only).
+            // --- PIVOT DEPARTURE (SPEC_event_harness §19, promoted 2026-09-11).  A pivot
+            //     handover's carry skip / oscillator clear / jump-test suppression is
+            //     applied NETWORK-WIDE by default, so one constellation's datum change
+            //     re-realizes the other's carry — producer-internal free-fall, not a datum
+            //     move the consumer could transform away.  Needs a pivot datum (inert
+            //     under the anchor-free ones) and a second constellation to spare.
+            //     Fingerprinted: fresh-convergence only, no warm-resume A/B exists.
+            { r.n_sys >= 2 && !network_clock_datum_sum_to_zero_
+                  && !network_clock_datum_broadcast_anchored_,
+              network_scoped_handover_response_,
+              Tier::ON, true , "network.scoped_handover_response",
+              "scope the pivot-handover carry skip to the constellation whose datum changed: "
+              "collateral re-realization is the user's metre-class shock (storm arm settled "
+              "p50 0.1204 -> 0.0825 m, max |3D| 1.34 -> 0.20, hour 5 0.236 -> 0.047; fresh "
+              "pair edge 1.143 -> 0.117 m) while the producer's own contrasts move < 0.5 % "
+              "(runs/golden_sim_campaign_zwdblk_scoped, exe F4FF8EF0)" },
             { r.tri && !network_clock_datum_sum_to_zero_ && !network_clock_datum_broadcast_anchored_,
               network_sticky_pivot_,
               Tier::SCOPED, true , "network.sticky_pivot",
