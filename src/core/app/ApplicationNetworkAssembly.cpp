@@ -2238,6 +2238,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // SPEC_slip_relevel_walk: read-only parallel consult of the latched
     // free-epoch set (filled serially in PASS-A; const for the whole produce).
     const bool   relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
+    // SIM-ONLY ORACLE AMBIGUITY PIN (filter/NetworkOraclePin): THIS epoch's pin
+    // table, built serially before PASS B and consulted READ-ONLY here.  A const
+    // pointer, null on every run with no `oracle_pin` event armed, so the produce
+    // loop's pin block is unreachable OFF (standing invariant #6).
+    const std::map<std::tuple<int, std::string, std::string>,
+                   NetworkOraclePin::Pin>* opin_table =
+        ctx.carry.oracle_pin ? &ctx.carry.oracle_pin->table : nullptr;
+    const bool   opin_on = (opin_table != nullptr) && !opin_table->empty();
     const auto&  vce_apply     = ctx.carry.vce_apply;     // M2 v2: carry variance factor α² (unity when off)
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // Card 1: conditional local carry (coupling rows) — requires fullcov_on (enforced at load)
     const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // Card 1b: JOINTLY whiten the coupling rows (departed cols → M_w) — requires carry_cpl_cond (enforced at load)
@@ -3058,7 +3066,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // leveled run — while the loader and the run-end line both reported it
             // ARMED.  That contradicted this block's own contract at the pl_cb walk
             // ("filled whenever EITHER is armed").
-            if (legacy_local_inject || rx_cb_on || rx_cb_datum || iono_on) {
+            // `opin_on` joins the gate for the same reason `rx_cb_datum` did: the
+            // ORACLE PIN's row build lives inside this block and its arming is
+            // independent of BOTH the legacy leveling carry and the rx-CB carry.
+            // Without it the pin would be silently inert wherever
+            // legacy_local_inject is false (phase_leveling off, carry_invariant, and
+            // the phase_leveling_warmup_epochs cold window at the head of every
+            // leveled run) while the loader and the run-end line both reported it
+            // ARMED — the armed-and-inert failure invariant #4 names.  Null pointer
+            // OFF, so the gate is byte-identical there.
+            if (legacy_local_inject || rx_cb_on || rx_cb_datum || iono_on || opin_on) {
                 const Eigen::VectorXd x_lin = st.sm->getStateVector();
                 std::vector<std::tuple<Eigen::Index, double, double>> inj;  // (col, Λ, η) — legacy diagonal path
                 // QUEUE 8b (scope=relevel): the per-sat re-level census, filled by the
@@ -3686,6 +3703,61 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     }
                 }
                 }  // do_amb_carry
+                // --- SIM-ONLY ORACLE AMBIGUITY PIN (filter/NetworkOraclePin) -------
+                // One DIAGONAL local prior row per pinned ambiguity column, of the
+                // SAME shape as pl_emit_row's diagonal branch — a real (Λ, η) pair,
+                // never an `x_lin` shift (⚠ docs/SPEC_lane_slip_response.md §7.2: a
+                // shift of x_lin alone is a proven EXACT solve no-op, which is why
+                // the pin does not also write LocalCarry::value_abs).
+                //
+                // Its OWN loop, deliberately OUTSIDE `do_amb_carry`: the pin is
+                // INDEPENDENT of the leveling carry.  It fires whether or not the arc
+                // has a LocalCarry entry (a newborn leg is pinned too), whether or not
+                // the slip response freed the arc this epoch (free_ambs), and
+                // regardless of the F3 block route — that independence is the point of
+                // the instrument.  The table is built SERIALLY once per epoch
+                // (networkOraclePinEpoch) and is READ-ONLY here, so this is safe in
+                // the parallel produce phase.  Counters are produce-phase local and
+                // folded serially below, like relevel_free_skips.
+                //
+                // Closure the run-end clause states: offered = rows + gauge-pinned
+                // skipped + no column.
+                if (opin_on) {
+                    for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
+                        const auto parts = StateKeys::parseAmbiguityKey(key);
+                        if (!parts) continue;
+                        const auto pit = opin_table->find(
+                            std::make_tuple(static_cast<int>(i), parts->satellite,
+                                            parts->signal));
+                        if (pit == opin_table->end()) continue;
+                        ++R.opin_offered;
+                        if (networkIsGaugePinned_(stations, phase_datum_prioritized,
+                                                  i, parts->satellite, parts->signal)) {
+                            // The anchor's 1e10 datum pin defines this family's gauge;
+                            // a second row here would fight it.  The table build skips
+                            // anchors too — this is the authoritative backstop, and it
+                            // is counted so the closure never has to be inferred.
+                            ++R.opin_gauge_skipped;
+                            continue;
+                        }
+                        const int amb_idx = static_cast<int>(sidx);
+                        if (amb_idx < 0 || amb_idx >= x_lin.size()) {
+                            ++R.opin_no_column; continue;
+                        }
+                        const auto hit = h2local.find(amb_idx);
+                        if (hit == h2local.end()) {       // column not in A_r this epoch
+                            ++R.opin_no_column; continue;
+                        }
+                        if (!std::isfinite(x_lin(amb_idx))) { ++R.opin_no_column; continue; }
+                        const double lam = 1.0 / (pit->second.sigma_m * pit->second.sigma_m);
+                        const double eta = lam * (pit->second.value_m - x_lin(amb_idx));
+                        if (!std::isfinite(lam) || !std::isfinite(eta)) {
+                            ++R.opin_no_column; continue;  // never poison u_r
+                        }
+                        inj.emplace_back(static_cast<Eigen::Index>(hit->second), lam, eta);
+                        ++R.opin_rows;
+                    }
+                }
                 // --- ZWD carry (B9): treat the tropo ZWD column like one more carried
                 //     local state (random WALK, not random constant → positive q).  The
                 //     prior tuple joins `inj` so it is ordered by the same ascending sort
@@ -4030,6 +4102,17 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     if (relevel_free_on)
         for (const StationAssembly& Rc : asm_res)
             ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
+    // SIM-ONLY ORACLE AMBIGUITY PIN: fold this epoch's per-station pin accounting
+    // into the run-scope counters (SERIAL, post-produce — the same discipline).
+    // Null pointer OFF, so this is unreachable on an unarmed run.
+    if (ctx.carry.oracle_pin) {
+        auto& op = *ctx.carry.oracle_pin;
+        for (const StationAssembly& Rc : asm_res) {
+            op.rows_injected        += Rc.opin_rows;
+            op.gauge_pinned_skipped += Rc.opin_gauge_skipped;
+            op.no_column            += Rc.opin_no_column;
+        }
+    }
     // SPEC_withhold_era_release §8: fold the inject-side stale skips (the cliff
     // mechanism) and record the worst epoch with a handle a trace filter can use.
     {
@@ -4246,7 +4329,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         // worlds, because the gauge counter would then report folds that never
         // reached the normal equations (a telemetry channel that actively lies).
         // Both edges of the datum move together or neither does.
-        if ((carry_warm || rx_cb_on || rx_cb_datum) && !R.carry_cols.empty()) {
+        // The ORACLE PIN joins the install gate for the same reason RXCB-DATUM did:
+        // its rows are coalesced into R.carry_cols above, and a gate that built them
+        // and then dropped them would leave the run-end clause reporting folds that
+        // never reached the normal equations — a telemetry channel that actively
+        // lies.  Both edges move together or neither does.
+        if ((carry_warm || rx_cb_on || rx_cb_datum || R.opin_rows > 0)
+            && !R.carry_cols.empty()) {
             try {
                 est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                     R.carry_cols, R.carry_dNrr, R.carry_dur);

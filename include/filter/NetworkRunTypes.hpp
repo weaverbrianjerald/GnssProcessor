@@ -852,6 +852,17 @@ struct StationAssembly {
     /// and folded into the run counters SERIALLY afterwards, exactly as
     /// @c relevel_free_skips is.
     long long                 inject_stale_skips{0};
+    /// SIM-ONLY ORACLE AMBIGUITY PIN (filter/NetworkOraclePin.hpp): this
+    /// station-epoch's pin accounting, accumulated in the PARALLEL produce phase
+    /// and folded into the run counters SERIALLY afterwards, exactly as
+    /// @c relevel_free_skips is.  All four are 0 on every run with no
+    /// `oracle_pin` event armed (the table pointer is null, the block is
+    /// unreachable).  Closure: `opin_offered == opin_rows + opin_gauge_skipped +
+    /// opin_no_column`.
+    long long                 opin_offered{0};        ///< Ambiguity columns of this station found in the pin table.
+    long long                 opin_rows{0};           ///< …folded as a diagonal pin prior row.
+    long long                 opin_gauge_skipped{0};  ///< …skipped: the arc is GAUGE-PINNED (an anchor), whose 1e10 datum pin owns the family's frame.
+    long long                 opin_no_column{0};      ///< …skipped: the column is not in this epoch's A_r (or its x_lin / the row is non-finite).
     /// F1 (network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount): per
     /// INJECTED (sat, signal) ambiguity column, the B_eff the inject multiplied its
     /// carried variance by — the count of carried ambiguity columns injected on that

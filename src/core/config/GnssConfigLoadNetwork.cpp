@@ -52,6 +52,7 @@
 #include "filter/NetworkPrefitCensus.hpp"   // parseFuseClassMask / fuseClassMaskName (SPEC_prefit_census_observability INC-2)
 #include "filter/NetworkCarryVce.hpp"       // parseComponents (prior-residual census family list)
 #include "filter/NetworkCarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
+#include "filter/NetworkOraclePinScope.hpp" // oraclePinParseScope (ONE grammar for the oracle_pin scope)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
@@ -10090,10 +10091,11 @@ namespace GnssProcessor {
                 ev.kind = el.value("kind", std::string{});
                 if (ev.kind != "slip" && ev.kind != "outage"
                     && ev.kind != "anchor_handover" && ev.kind != "arc_erase"
-                    && ev.kind != "sat_clock_step" && ev.kind != "rx_clock_step") {
+                    && ev.kind != "sat_clock_step" && ev.kind != "rx_clock_step"
+                    && ev.kind != "oracle_pin") {
                     log->error("Config: {}.kind '{}' is not one of slip | outage | "
                                "anchor_handover | arc_erase | sat_clock_step | "
-                               "rx_clock_step.",
+                               "rx_clock_step | oracle_pin.",
                                where, ev.kind);
                     return false;
                 }
@@ -10116,6 +10118,8 @@ namespace GnssProcessor {
                 ev.flag_lli     = el.value("flag_lli", false);
                 ev.duration_s   = el.value("duration_s", 0.0);
                 ev.step_m       = el.value("step_m", 0.0);
+                ev.scope        = el.value("scope", std::string{});
+                ev.sigma_m      = el.value("sigma_m", 1.0e-4);
 
                 auto need = [&](bool ok, const char* what) {
                     if (!ok) log->error("Config: {} (kind '{}') requires {}.",
@@ -10167,6 +10171,36 @@ namespace GnssProcessor {
                 } else if (ev.kind == "sat_clock_step") {
                     if (!need(!ev.sat.empty(), "a sat")) return false;
                     if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
+                } else if (ev.kind == "oracle_pin") {
+                    // SIM-ONLY DIAGNOSTIC (include/filter/NetworkOraclePin.hpp).
+                    // Both fields are refused BY NAME: a scope that silently
+                    // widened, or a sigma that silently became the default, would
+                    // be graded as though it were the one the operator wrote —
+                    // the same failure the rx_clock_step 'sat' refusal names.
+                    if (!need(!ev.scope.empty(),
+                              "a scope ('all' | 'band:<sig>[+<sig>...]' | "
+                              "'station:<name>' | 'sat:<id>' | "
+                              "'arc:<sta>/<sat>/<sig>')")) return false;
+                    std::string why;
+                    if (oraclePinParseScope(ev.scope, why).kind
+                        == OraclePinScope::Kind::Invalid) {
+                        log->error("Config: {} (kind 'oracle_pin'): {}.", where, why);
+                        return false;
+                    }
+                    if (!(ev.sigma_m > 0.0) || !std::isfinite(ev.sigma_m)) {
+                        log->error("Config: {} (kind 'oracle_pin').sigma_m ({}) must be "
+                                   "> 0 and finite — it is the pin prior's sigma in "
+                                   "METRES (default 1e-4).", where, ev.sigma_m);
+                        return false;
+                    }
+                    if (!ev.station.empty() || !ev.sat.empty() || !ev.signal.empty()) {
+                        log->error("Config: {} (kind 'oracle_pin') must NOT carry a "
+                                   "'station' / 'sat' / 'signal' field — WHICH arcs are "
+                                   "pinned is said by 'scope' alone, and a second, "
+                                   "silently-ignored selector would arm a different set "
+                                   "than the operator wrote.", where);
+                        return false;
+                    }
                 } else {   // rx_clock_step — the exact dual of sat_clock_step
                     if (!need(!ev.station.empty(), "a station")) return false;
                     if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
@@ -10215,6 +10249,41 @@ namespace GnssProcessor {
                 log->warn("Config: network.inject is armed but network.trace_events is "
                           "OFF — the INJECT rows in network_events.csv (the harness's "
                           "own attribution channel) will not be written.");
+        }
+        // --- oracle_pin: the FIELD-INERTNESS mechanism ---------------------------
+        // A HARD error, not warn-and-disarm (the oracle_relevel precedent): a pin
+        // that silently degraded to "no pin" would report the model's error budget
+        // WITHOUT the ambiguities held at truth and be read as a ceiling.  That is
+        // the armed-and-inert failure standing invariant #4 names, except here the
+        // inert arm produces a WRONG SCIENTIFIC VERDICT, so it must not survive.
+        //
+        // It is also what makes this knob field-inert: a field lineage has no
+        // truth root, so an oracle_pin event cannot be armed on one at all.
+        {
+            bool any_pin = false;
+            for (const auto& e : ic.events) if (e.kind == "oracle_pin") any_pin = true;
+            if (any_pin && ic.enable) {
+                const auto& root = network_config_.slip_qc.oracle_truth_root;
+                if (root.empty() || !std::filesystem::exists(root))
+                    throw std::runtime_error(
+                        "network.inject.events[] arms an 'oracle_pin' event but "
+                        "network.cycle_slip.oracle_truth_root ('" + root
+                        + "') does not exist.  oracle_pin is a SIM-ONLY DIAGNOSTIC that "
+                          "reads a simulator fixture's truth_ambiguities.csv / "
+                          "truth_slips.csv; it is field-inert by construction and this "
+                          "error is that mechanism.  It must never appear in a golden or "
+                          "in docs/CONFIG_promotion_ledger.json.");
+                log->warn("Config: network.inject arms {} 'oracle_pin' event(s) — the "
+                          "producer's float ambiguities in scope will be HELD AT TRUTH "
+                          "from '{}'.  This run's products are a DIAGNOSTIC FIXTURE, "
+                          "never a solution.  docs/SPEC_oracle_pin.md",
+                          [&] {
+                              int n = 0;
+                              for (const auto& e : ic.events)
+                                  if (e.kind == "oracle_pin") ++n;
+                              return n;
+                          }(), root);
+            }
         }
         return true;
     }

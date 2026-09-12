@@ -41,6 +41,7 @@
 #include "filter/NetworkZStore.hpp"     // ArcKey (D5 inject/hold tag sets)
 #include "slip/NetworkRawObservables.hpp" // IonoCsState (CS-GF authority, QUEUE 8b successor)
 #include "slip/NetworkSlipOracle.hpp"  // NetworkSlipOracle (sim-only oracle slip response)
+#include "filter/NetworkOraclePin.hpp"  // NetworkOraclePin (sim-only oracle ambiguity pin)
 #include "filter/NetworkSbasis.hpp"     // NetworkSbasis::Plan (lifecycle-fn params)
 #include "filter/NetworkBiasAdmission.hpp" // CB-ADM: latched W6 code-bias admission census (ctx.admission)
 #include "filter/NetworkInject.hpp"        // NetworkInjectState — the EVENT HARNESS schedule + ledger
@@ -1158,6 +1159,17 @@ namespace GnssProcessor {
         /// it outlives the oracle); set at construction.  NOT snapshotted — a
         /// diagnostic, and a resumed leg re-reads the fixture anyway.
         std::unique_ptr<NetworkSlipOracle> slip_oracle;
+        /// SIM-ONLY ORACLE AMBIGUITY PIN (`network.inject.events[] kind
+        /// "oracle_pin"`, include/filter/NetworkOraclePin.hpp): the run-scope
+        /// truth table, the parsed scopes, THIS epoch's gauge-consistent pin
+        /// table and the run-end counters.  NULL on every run where no
+        /// `oracle_pin` event is armed — the one serial call site and the PASS-B
+        /// row both test the pointer first, so the OFF path is structurally
+        /// byte-identical (standing invariant #6).  Lives beside
+        /// @ref slip_oracle because both are truth-fed diagnostics keyed on
+        /// (station index, satellite, signal).  NOT snapshotted — a diagnostic,
+        /// and a resumed leg re-reads the fixture anyway.
+        std::unique_ptr<NetworkOraclePin> oracle_pin;
         // Per-station ZWD carry (B9): persistent across epochs, keyed by station index
         // (ZWD is one-per-station).  Solve-inert unless network.carry_zwd (every-epoch
         // inject) or a live zwd_seam_ep_left window (post-resume inject); ALSO kept

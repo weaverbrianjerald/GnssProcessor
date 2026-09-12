@@ -1151,7 +1151,7 @@ namespace GnssProcessor {
      */
     struct NetworkInjectEvent {
         /// @c slip | @c outage | @c anchor_handover | @c arc_erase | @c sat_clock_step
-        /// | @c rx_clock_step.
+        /// | @c rx_clock_step | @c oracle_pin.
         std::string kind;
         /// GPS seconds-of-week at which the event STARTS.  The run's week is implied
         /// (a leg never spans a rollover); matched with a +/-0.25 s half-epoch guard.
@@ -1178,6 +1178,21 @@ namespace GnssProcessor {
         /// adds it to the receiver clock of @ref station (every satellite) — the
         /// exact dual, and PERSISTENT from @ref tow on in both cases.
         double      step_m{ 0.0 };
+        /// @c oracle_pin ONLY — WHICH arcs are held at the fixture's true integers
+        /// (include/filter/NetworkOraclePin.hpp, docs/SPEC_oracle_pin.md).  One of
+        ///   - @c all                        — every carried non-anchor arc;
+        ///   - @c band:<sig>[+<sig>…]        — e.g. `band:L1C+L2W`;
+        ///   - @c station:<name>             — one roster station;
+        ///   - @c sat:<id>                   — e.g. `sat:G08`;
+        ///   - @c arc:<station>/<sat>/<sig>  — one exact arc.
+        /// Anything else is refused BY NAME at load: a scope that silently widened
+        /// (or emptied) would be graded as though it were the one the operator
+        /// wrote.  Required for @c oracle_pin, ignored by every other kind.
+        std::string scope;
+        /// @c oracle_pin ONLY — the pin prior's sigma in METRES (default 1e-4 m
+        /// ≈ 0.0005 cyc, weight 1e8).  Stiff, but two decades BELOW the 1e10 datum
+        /// pins, so the gauge stays the anchors'.  Must be > 0.
+        double      sigma_m{ 1.0e-4 };
     };
 
     /**

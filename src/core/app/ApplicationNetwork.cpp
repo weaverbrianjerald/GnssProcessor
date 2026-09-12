@@ -337,6 +337,24 @@ int Application::runNetwork() {
             networkSlipOracleLoad(config_, stations, log_manager_, log);
         ctx.carry.slip_oracle->carry = &ctx.carry.local_carry;
     }
+    // SIM-ONLY ORACLE AMBIGUITY PIN (`network.inject.events[] kind "oracle_pin"`,
+    // include/filter/NetworkOraclePin.hpp, docs/SPEC_oracle_pin.md): hold the
+    // float ambiguities in scope at the fixture's TRUE integers and read where the
+    // remaining error goes.  Constructed ONLY when such an event is armed — every
+    // call site tests the pointer, so the OFF path is structurally byte-identical.
+    // The load THROWS on a missing/mis-pointed fixture (the field-inertness
+    // mechanism, exactly as for the slip oracle above): a silently-degraded pin
+    // would report the model's error budget WITHOUT the ambiguities held and be
+    // read as the ceiling this card exists to measure.
+    {
+        bool any_pin = false;
+        if (nc.inject.enable)
+            for (const auto& e : nc.inject.events)
+                if (e.kind == "oracle_pin") any_pin = true;
+        if (any_pin)
+            ctx.carry.oracle_pin =
+                networkOraclePinLoad(config_, stations, log_manager_, log);
+    }
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
     // B5/raw-slip wavelength providers — gated on the streams openAll just
     // opened (same conditions as the former inline opens); constructed HERE
@@ -1979,6 +1997,20 @@ int Application::runNetwork() {
         auto& cap_priors = ws.cap_priors;
         auto& cap_dense_keys = ws.cap_dense_keys;
         auto& cap_dense_cov = ws.cap_dense_cov;
+
+        // --- SIM-ONLY ORACLE AMBIGUITY PIN (filter/NetworkOraclePin) ------------
+        // Placed HERE deliberately: AFTER networkElectPhaseAnchors (the fit reads
+        // THIS epoch's anchors and their enforced pin targets — a handover moves a
+        // family's frame term and the pin must follow it) and AFTER
+        // networkAssemblyRegisterColumns_ (so the epoch is committed; that site can
+        // still SkipEpoch), and BEFORE networkPassB_, whose PARALLEL produce loop
+        // reads the published table read-only.  Inside the existing SB_PREASM
+        // bracket rather than a new SubBlock, because adding a timer slot would
+        // change the section-timing artifact for every run, armed or not (the
+        // networkSdEwlAr precedent above).  No `oracle_pin` event => the pointer is
+        // null => not one branch is reachable => byte-identical.
+        if (ctx.carry.oracle_pin)
+            networkOraclePinEpoch(ctx, config_, stations, se.time, log, traces);
 
         subEnd(SB_PREASM);   // D0b: close pre-assembly (the assembly wall below is timed separately)
 

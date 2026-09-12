@@ -109,6 +109,11 @@ namespace GnssProcessor {
             if (e.kind == "anchor_handover")list += " mode=" + e.mode;
             if (e.kind == "sat_clock_step" || e.kind == "rx_clock_step")
                 list += fmt::format(" step={:.3f}m", e.step_m);
+            // SIM-ONLY ORACLE AMBIGUITY PIN: the scope IS the event, so it belongs
+            // in the arming line — a leg whose scope silently differed from the one
+            // the operator wrote would be graded as the intended arm.
+            if (e.kind == "oracle_pin")
+                list += fmt::format(" scope={} sigma={:.2e}m", e.scope, e.sigma_m);
         }
         log->warn("Network (fault inject): ARMED with {} scripted event(s) — this run's "
                   "input is DELIBERATELY CORRUPTED and its products are a harness "

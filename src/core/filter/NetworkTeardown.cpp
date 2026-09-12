@@ -2857,6 +2857,12 @@ int networkTeardown(
                       offenders.size(), top);
         }
     }
+    // ---- SIM-ONLY ORACLE AMBIGUITY PIN (include/filter/NetworkOraclePin.hpp) ----
+    // Standing invariant #4: the ONLY way to tell a working pin from dead wiring
+    // is the injected-row count.  A run reporting 0 has NOT measured a ceiling on
+    // what integer information buys — it has measured an unpinned run, and the
+    // line says so in-band so nobody grades it as the former.
+    networkOraclePinRunEnd(ctx.carry.oracle_pin.get(), log);
     // ---- SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp) ----
     // Standing invariant #4: the ONLY way to tell a working oracle from dead
     // wiring is the applied count.  The pre-registered P1 for this card is
