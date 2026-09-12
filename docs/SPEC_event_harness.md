@@ -4672,3 +4672,180 @@ identified and on the lanes the rule targets).
   then the field pin rides on a seed that can warm-resume (DEFECT 1's card).
 - Both defects are HARNESS findings of the kind the field seed exists for: neither is visible on the sim (the
   sim's S2 leg injected on a non-reference satellite; the sim golden resumes through the F3 coupling path).
+## 21. THE FIELD WARM-RESUME SEAM (card RS-2) — the restored invariant DD branch is folded in the WRITER's linearization frame; §20.1's "Card 1f is the prerequisite" is WITHDRAWN (pre-registered 2026-09-12 ~07:30 local, manager; before any new leg is read)
+
+### 21.1 What §20.1 called DEFECT 1, re-read from the instruments the legs already wrote
+
+§20.1 attributed the field golden's inability to warm-resume (every leg from `runs/evseed_field6h`
+ep0604 withheld 61/61) to the missing Card 1f `carry_coupling_gauge_project`, on the strength of the
+loader's own text at `GnssConfigLoadNetwork.cpp:3602–3609`.  That attribution is withdrawn:
+
+* **1f is OUT OF REGIME on this lineage.**  Ledger row `network.carry_coupling_gauge_project`:
+  `regime: on("network.carry_conditional_coupling") and not on("network.carry_invariant")`; the
+  field golden runs `carry_invariant: true`, and `ApplicationNetworkAssembly.cpp:3117` gates the
+  whole leveling inject on `do_amb_carry = (…) && !carry_invariant` — the Card-1 coupling rows the
+  loader text is about are never built here (the 1g ledger row says the same for every
+  `carry_invariant` lineage: "structurally INERT").  Arming 1f would append a fingerprint token and
+  change nothing.  The `resume_coupling_restore` interlock that names 1f is therefore not a
+  diagnosis of this seam; it is an interlock for a different vehicle.
+
+* **The first post-resume solve is torn apart by ONE prior class.**  The rhs-attrib flight
+  recorder fired on the SH-gate trip at the leg's first epoch (`runs/evleg_fld_null_off/logs/
+  rhs_attrib/attrib_277320.csv`, TOTAL rows, `norm_total`):
+
+  | class | norm_total | c00_l1 / c00_l2 |
+  |---|---|---|
+  | **dd_fold** (the restored invariant DD carry's prior) | **7.82e7** | **−1377.05 / −3471.85** |
+  | pivot_pin | 2.44e6 | −1.56 / −1.11 |
+  | cpl_row (the 61 ZWD coupling rows) | 5.14e5 | 1.01 / 0.58 |
+  | shared:d2_leftover | 8.51e3 | 0 / 0 |
+  | obs_code — every code observation of 61 stations | 616.0 | 0.72 / 0.46 |
+  | obs_other | 233.8 | |
+  | shared:d2_sh / iono_sh_row | 190.3 / 121.1 | |
+  | obs_phase | 0.0008 | |
+
+  Five orders of magnitude above the data, and it drives a₀₀ directly (the c00 columns).  Epoch
+  status at 277320 (leg vs the seed at the same tow): a₀₀ **−11109.1** vs **+38.33 ± 0.80** TECU,
+  `clock_std_m` **2819.5** vs 9.88, `sigma0_pf_code` **17218.8** vs 4.886, `sigma0_pf` 1564.7 vs
+  0.137, worst sat G20 6868.7 m; `n_d5_flags` **676 / 676 re-taps** (seed: 0), `n_chord_births` 64;
+  at the second epoch **674 births / 672 slip refloats** (the raw detectors, now with two samples,
+  erase the branch wholesale), `clock_std` still 2681 m.  The SH gate never releases: a₀₀ −1350 at
+  +20, −1162 at +40, −1198 at +60.  The prior-residual census over the leg: `zwd` σ̂₀ **12515**
+  (worst |ê| **4177 m** at SGOC00LKA against `fold_var` 7.1e-5), `cb` 1604, `rxcb` 84.6; the rx-CB
+  carry withheld 3624 of 3660 priors at its 10σ gate.  The plain RTB-7 leg (`evleg_fld_null_plain`,
+  no frame restore) is the same failure: a₀₀ −14113.6 at the first epoch, one-epoch releases at
+  +40/+42 (145.2 / 82.6 TECU), re-engaged (352.6, −94.2), 6 epochs emitted.
+
+* **Restore mechanics were textbook in every leg** (`stdout.txt:414–418`): 256 D2 shared-carry
+  keys (restored DIAGONAL — "the full-covariance carry re-seeds at the first emitted epoch"), 0
+  ambiguity carries (none exist under `carry_invariant`), 61 ZWD Z rows, **701 carried DD restored
+  branch-faithfully** (RTB-7c, σ̂₀ seeded 2.8259, Pᶻ dense v2 blob, binding validated), 126
+  phase-anchor incumbents + 32 CLK-R held-frame keys, snapshot age 30 s, generation id preserved.
+  The blob at ep0604 is `CARRY,v2,4` (4 blocks, 701 chords).
+
+### 21.2 The mechanism (read from the code; the pre-registered legs test it)
+
+`NetworkInvariantCarryDriver::serializeCarry` (`NetworkInvariantCarryDriver.cpp:182`) writes per
+block the `Z` row (chord means ẑ), the `P` rows (Pᶻ), and the `H/X/A` topology rows — **nothing
+about the linearization**.  The chord mean is the CORRECTION-frame double difference:
+`SPEC_warm_resume_event_card.md` §4 already states "the serialized `z` is the CORRECTION-frame DD
+(λ·N minus Σc·x_lin), hence run-specific" — and drew from it only the conclusion that the
+branch-agreement METRIC was invalid across runs.  The stronger consequence was never drawn: **a
+resumed run re-seeds every station's ambiguity `x_lin` from code at its first epoch
+(`cold_clock_seed` + the code-minus-phase seed; the station layer is not snapshotted), the DD prior
+fold reads THAT `x_lin` per arc (`NetworkDdPriorBuild.cpp:254–266`, `lin_of`) and forms
+`v = z_free − Gᵀx_s − ẑ` (driver `:1770`) — so every restored ẑ is wrong by Σc·(x_lin,writer −
+x_lin,now)**: the DD of code-seeded ambiguity values taken hours apart, metres per chord, folded at
+q_z = 1e-4 m²/s stiffness on 701 chords at once.  The D5 innovation gate is POST-solve, so it can
+only flag the damage (676 flags), not prevent the fold; and `carry_invariant_innov_corroborate`'s
+"no evidence still re-taps" keeps the levels for the next epoch anyway.  By the second epoch the
+raw detectors erase the branch — but the shared memory (the SH carry, the D2 clocks/biases, the
+rx-CB carry) has already been stashed from the garbage solve, which is why nothing heals: the
+withhold era is self-sustaining.
+
+**Why this was invisible on 2026-08-02 (`ft63_warm12`, "resume was textbook, the two arms are the
+same run after ~3 epochs").**  `config/test_suite/_ft63_warm12.json` arms `carry_invariant` +
+`state_snapshot_carry` + the D5 gate but **not `carry_invariant_pd_safe`** — it ran the OLD fold,
+behind which "78 % of the carried state was measured diffusing" under a silent M:=0 freeze
+(`SPEC_pd_safe_dd_fold.md`).  A frame-wrong branch that mostly cannot bite produces exactly what was
+recorded: a 91 m re-entry spike that dies in 2–3 epochs, 587 of 769 restored chords reborn in the
+first two epochs, and a "benefit window" of ~3 epochs.  The golden pins the PD-safe fold, so the
+restored branch now bites at full stiffness.  **Interpretation, not yet a measurement** — it is
+consistent with every number above and is the reason the RS card's "branch-faithful" PASS cannot be
+carried over to the golden posture; it is NOT graded here (pd_safe is fingerprinted and cannot be
+A/B'd on a leg).
+
+### 21.3 Pre-registered legs — Phase 1, on the EXISTING seed (no new seed, no code change)
+
+All legs: `runs/evseed_field6h` ep0604 (tow 277290; fingerprint 545b8bdd2b638231), 60 epochs
+(tows 277320…279090), NULL (no injected event), one exe built from main at or after eb37b24,
+`--extra` always carrying `"resume_coupling_restore": false` (the loader throws otherwise on this
+lineage), run one at a time.  Every discriminator below is fingerprint-EXEMPT (checked against the
+token list `NetworkRunContext.cpp:644–978`): `state_snapshot_carry` is the read-side gate of the
+blob restore (`:1724`) and not a token; `sh_health_gate` and `zwd_seam_reseed` and
+`resume_frame_restore` are QC / forward-only resume policy.
+
+| leg | knobs beyond the standard leg | question |
+|---|---|---|
+| L0 `rs_null_ctl` | none | same-exe control: must reproduce §21.1 (61/61 withheld, a₀₀ < −5000 at +1, `dd_fold` TOTAL > 1e7) |
+| **L1 `rs_null_nocarry`** | `state_snapshot_carry: false` | **the blob is the cause**: shared / Z / frame restored warm, the DD branch cold-starts |
+| L2 `rs_null_plain_nocarry` | `state_snapshot_carry: false`, `resume_frame_restore: false` | is the frame restore needed for availability on the field, or only for the seam's PB continuity |
+| L4 `rs_null_shgateoff` | `sh_health_gate: false` (blob restored) | the deadlock question: with the wire allowed to emit, does a₀₀ return to the seed's band by +60 (the era is the gate's) or not (the pollution is in the carried memory) |
+
+**Gates (bars frozen now).**  The seed's own traces at the matched tows are the continuous
+reference (`network_epoch_status.csv`, `network_vtec_sh.csv` layer-0 (0,0) = a₀₀, `network_zwd.csv`,
+`products.txt`, `closed_loop_trace.csv` — 61 consumer rows exist in the window).
+
+* **G1 (control, L0):** as above.  A control that does not reproduce voids the phase.
+* **G2 (availability, L1):** emitted ≥ 55 of 61; any withheld epoch lies in +1…+5.
+* **G3 (frame, L1), every epoch from +5 on:** |a₀₀,leg − a₀₀,seed| ≤ 5 TECU; `clock_std_m` ≤ 2×
+  the seed's; `sigma0_pf_code` ≤ 2× the seed's.
+* **G4 (branch cost, L1):** chord births per epoch from +5 on ≤ 5× the seed's rate at the same
+  tows; the D5 flag count at +1 is recorded (structurally ~0 without a restored branch — the number
+  that matters is Phase 2's).
+* **G5 (wire + ZWD continuity, L1), from +5 on, leg − seed at matched tows:** satellite clock
+  (per-epoch median over satellites removed, the datum-invariant contrast) p50 |Δ| ≤ 0.05 m and
+  p95 ≤ 0.20 m; W6 code bias p50 |Δ| ≤ 0.02 m; ZWD p50 |Δ| ≤ 5 mm, p95 ≤ 20 mm; phase-bias
+  re-realization at the seam either DECLARED (the emitter's disc counters bump) or absent — a
+  silent |ΔPB| > 0.05 m on more than 10 % of keys at any epoch FAILS (invariant #7).
+* **G6 (L2 vs L1):** recorded, no bar: whether the plain resume passes G2/G3 too, and the PB-side
+  seam step with vs without the frame restore.
+* **G7 (L4):** recorded: a₀₀ at +60 within 5 TECU of the seed ⇒ the era was the gate's; otherwise
+  the carried memory's.
+* **Consumer:** recorded, not gated in Phase 1 — the closed-loop consumer is not snapshotted and
+  its own cold start dominates a 30-minute window (§18.14: grade seams with a cold-consumer replay).
+
+**Decision rule.**  L1 passes G2–G5 ⇒ the blob is the whole seam defect; the INTERIM harness
+posture for field legs becomes `state_snapshot_carry: false` in `--extra` (shared/Z/frame warm, DD
+branch cold — "RTB-7(a)"), which unblocks the owed field price of the §20.1 wrong narrowing and the
+scope+pairs pin work; Phase 2 builds the real fix.  L1 fails G2 or G3 ⇒ a second class is torn:
+re-read the L1 first-epoch rhs-attrib TOTAL table (the recorder fires on the trip) and bisect the
+remaining restored classes (Z rows via `zwd_seam_reseed: false`; frame rows via L2) before any build.
+
+### 21.4 Phase 2 — the fix, pre-registered (built only after Phase 1 is graded by the manager)
+
+**Design: re-base the restored branch, do not re-seed the stations.**  The carry must live in the
+absolute value (the standing `x_lin`-shift-is-a-solve-no-op principle: the prior's RHS is formed
+against the CURRENT linearization).  Two additions, both default-OFF and byte-identical when off:
+
+1. **Write side, `network.state_snapshot_carry_lin` (default false).**  At every harvest the driver
+   also stores per chord `zl = Σc·x_lin` (the same incidence that forms `z_free`, applied to the
+   arcs' current `x_lin` — `NetworkDdPriorBuild` already has `lin_of` per arc), and
+   `serializeCarry` writes one `ZL` row per block beside `Z` (format-forward: a reader without the
+   row behaves exactly as today; snapshot bytes change only when armed).  Products and every trace
+   byte-identical (write-side only, the frame-capture precedent).
+2. **Read side, `network.resume_carry_rebase` (default false; forward-only resume response policy,
+   fingerprint-EXEMPT like `resume_frame_restore`).**  A restored block whose `ZL` row is present is
+   marked UNBASED; at the FIRST fold after the resume the prior build computes `zl_now` for every
+   restored chord from the epoch's `lin_of` and the driver re-bases `ẑ ← ẑ + (zl_writer − zl_now)`
+   (Pᶻ unchanged — an exact frame translation).  A chord with ANY arc absent at that epoch cannot be
+   re-based and is DROPPED (marginalized) rather than folded frame-wrong — counted.  Armed without
+   `ZL` rows in the blob ⇒ loud "branch NOT re-based" warning and today's behaviour; run-end line
+   `n_resume_carry_rebased / n_resume_carry_dropped_unbased / max |Δẑ|`; the D5 flag count at the
+   first post-resume epoch is the invariant-#4 readout.
+
+`scripts/event_leg.py`: write-seed arms `state_snapshot_carry_lin`, make-leg/null arm
+`resume_carry_rebase` (beside `resume_frame_restore` / `resume_coupling_restore`), both recorded in
+the meta files.  Unit tests: a two-block driver round-trip with a shifted `x_lin` restores the
+identical absolute DD; a chord missing an arc is dropped and counted; a blob without `ZL` restores
+today's ẑ untouched.
+
+**Gates (frozen now; graded on a NEW 6 h field seed written by the fixed exe with the write knob —
+the new field harness seed `runs/evseed_field6h_v2` — against its own traces and against the
+no-blob leg L1′ from the same seed):**
+
+* **P1 byte-identity:** the fixed exe with both knobs OFF reproduces the seed-writer path and the
+  L0/L1 legs byte-for-byte on `products.txt` (and the snapshot bytes without the `ZL` rows); write
+  knob ON: products and every trace byte-identical to OFF, snapshot differs only by `ZL` rows.
+* **P2 the seam is closed, from +1 on (not +5):** D5 flags at +1 ≤ 10 (was 676); `dd_fold` TOTAL
+  norm at +1 within 10× of the same leg's +10 value (was ≥ 1e5×); emitted ≥ 58/61; |a₀₀ − seed|
+  ≤ 2 TECU, `clock_std` ≤ 1.5× seed, `sigma0_pf_code` ≤ 1.5× seed; G5's wire/ZWD bars from +1.
+* **P3 the branch is worth restoring (rebased leg vs L1′ no-blob leg, same seed):** chord births
+  over +1…+5 ≤ 20 % of L1′'s; the satellite-clock contrast and code-bias |Δ| vs the seed at +1…+5
+  ≤ L1′'s; silent PB steps at the seam ≤ 1 % of keys; consumer p50 over +5…+60 ≤ L1′'s.
+  P3 failing with P2 passing = the branch restore is correct but worthless on this lineage — then
+  the harness posture stays `state_snapshot_carry: false` and the ledger row says so.
+
+**Sequel (not this card):** with a field seed that warm-resumes, the §20.1 wrong-narrowing price
+(gates G-C/G-D, dark in §20) becomes measurable, and the reference-arc clause + the scope/pairs
+field pin follow on that seed.
