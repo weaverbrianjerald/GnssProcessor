@@ -4157,6 +4157,31 @@ becomes armable when that lineage goes multi-constellation.
 
 **Rules from here on.**  (1) New legs resume from the `_v2` seeds; the old `evseed_quiet6h` (evharness worktree) and `evseed_slipped6h` stay on disk for like-for-like re-runs of old legs only.  (2) A solve-affecting knob is A/B'd on the harness as a FRESH-CONVERGENCE pair (golden ± one knob, ~20 min each) or by writing a new seed per posture — never by `--extra` on a resume leg; trace-class / QC knobs remain leg-legal.  (3) `event_leg.py` arms `zwd_seam_reseed` on every leg (§18); the seeds themselves do not need it (they are fresh runs).  The study scripts that hard-code `SEED = "runs/evseed_quiet6h"` (`ev_study1_legs.py`, `ev_study3_legs.py`, …) describe closed studies and are left as the record.
 
+### 18.2 Seeds re-written AGAIN at the increment-1 golden — `_v3`, and why `_v2` snapshots are now unusable (2026-09-12 ~00:30 local)
+
+`network.handover_stransform` was promoted and pinned in `golden_sim_tri_w6` (§19.6), and it
+is **FINGERPRINTED**.  The `_v2` seeds were written before the pin, so their snapshots carry
+the pre-promotion fingerprint: a leg resumed from a `_v2` snapshot under the CURRENT golden is
+**refused before its first epoch** by `state_snapshot_require` — the same guard that stopped
+increment 0's leg B (§19.4).  That is the guard working, not a bug, and it is the reason this
+re-write exists rather than being optional.
+
+| seed | base | fixture | fingerprint | snapshots |
+|---|---|---|---|---|
+| `runs/evseed_quiet6h_v3` | `config/golden/golden_sim_tri_w6.json` (regenerated, pins the transform) | `runs/simnet60_quiet_wu93_24h` | `d76a3d0709aeeaf2` | ep0001, 0061, 0122, 0182, 0242, 0303, 0363, 0423, 0484, 0545, 0605, 0665 |
+| `runs/evseed_slipped6h_v3` | `config/test_suite/_golden_sim_campaign_zwdblk_sts.json` | `runs/simnet60_campaign_wu93` | `542af66dcc9a7198` | ep0001, 0061, 0122, 0182, 0242, 0303, 0363, 0423, 0484, 0544, 0604, 0665 |
+
+Both 720/720, exit 0, exe `gnss_processor_stspromo.exe` (sha256 `C2F2B297…`), and both show
+the transform live in their run-end clause: *2 edge(s) TRANSFORMED, 52 row(s) re-expressed,
+376 row(s) RETAINED, 0 self-check failure(s)*, with the PIVOT rows carrying
+`sts=applied;c0=−1.839995;rows=223` (GPS 319260) and `c0=−0.036691;rows=376` (Galileo 321900).
+
+**Rules from here on.**  New legs resume from `_v3`; `_v2` and the older seeds stay on disk for
+like-for-like re-grades of legs already on record, and must be paired with the exe and golden
+they were written under.  Never mix a `_v2` snapshot with the current golden — the fingerprint
+guard will refuse it, and clearing `state_snapshot_require` to "fix" that is the silent
+cold-start this project has already been bitten by.
+
 ### 19.6 Increment 1 BUILT + PROMOTED — the clock-carry S-transform (`network.handover_stransform`): the changed constellation's own carry stops free-falling; every WIRE gate passes at 250–575× back to control, and the two CONSUMER edge gates that failed were mis-specified (2026-09-11 night build, 2026-09-12 promotion; worktree `worktree-stransform`, exe `B3A7E11B…` / promoted build `C2F2B297…`)
 
 Queue 1(b), SPEC'd 2026-08-04 in `SPEC_pivot_visibility_gauge_defect.md` §8 and unbuilt
