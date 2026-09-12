@@ -2460,6 +2460,32 @@ namespace GnssProcessor {
                               : " — which is NOT armed here, so a restore would seed only "
                                 "half the tree");
         }
+        // RS-5 EMIT-LAYER capture (write side of network.resume_emit_restore, §21.10).
+        // Same shape as the frame / datum captures above — its own knob, path-gated,
+        // write-only.  The rows come from two OUTPUTS-ONLY engines, so arming it can
+        // change no estimate and no trace, only the snapshot bytes.
+        network_config_.state_snapshot_emit_capture =
+            jval<bool>(json, "network.state_snapshot_emit_capture",
+                       "state_snapshot_emit_capture", false);
+        if (network_config_.state_snapshot_emit_capture) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (resume emit capture): state_snapshot_emit_capture "
+                          "armed but network.state_snapshot_path is empty — no snapshot is "
+                          "written, INERT.");
+            else
+                log->info("Network (resume emit capture): every snapshot also carries the "
+                          "EMIT LAYER (ER — the Card-4 eq34 emit re-base's emission frame, "
+                          "one previous emitted bias per sat|signal — and PF/PS — the PB "
+                          "emission filter's per-key scalar-KF posterior and its "
+                          "per-constellation step-noise accumulators) as format-forward "
+                          "rows under the existing header.  Both engines are bare run "
+                          "locals today, so without these rows a warm resume emits the RAW "
+                          "solve-frame phase bias at its first epoch while the continuous "
+                          "wire carries the accumulated re-base; a resume armed with "
+                          "network.resume_emit_restore continues the writer's emission "
+                          "level instead.  Write-side only; the products and every trace "
+                          "are byte-identical.");
+        }
         if (network_config_.state_snapshot_require)
             log->info("Network (RTB-7d/HB-1): warm resume REQUIRED — any resume failure "
                       "(missing/parse/fingerprint/age/emitter) is a hard run error instead "
@@ -3723,6 +3749,20 @@ namespace GnssProcessor {
                 "it back.  Without it the first election runs incumbent-less and "
                 "re-references every phase-bias family before the restored receiver-side "
                 "maps can change anything — the restore would be a silent no-op.");
+        // RS-5 EMIT-LAYER restore (read side of network.state_snapshot_emit_capture,
+        // SPEC_event_harness §21.10).  Same exemption class as the restores above:
+        // forward-only resume response policy, inert on a run that never resumes.
+        network_resume_emit_restore_ =
+            jval<bool>(json, "network.resume_emit_restore", "resume_emit_restore", false);
+        if (network_resume_emit_restore_ && !network_resume_frame_restore_)
+            throw std::runtime_error(
+                "network.resume_emit_restore requires network.resume_frame_restore: the "
+                "emit layer is a re-base of THIS run's emitted biases onto the writer's "
+                "emission frame, which is only meaningful when the realization frame "
+                "underneath it also continues.  Without the frame restore the first "
+                "election re-references every phase-bias family, so the restored "
+                "emission frame would re-base the new realization onto a level the "
+                "writer never emitted — strictly worse than cold-starting the engines.");
         // RS-2 resume CARRY RE-BASE (SPEC_event_harness §21.4) — the reader half of
         // network.state_snapshot_carry_lin, and the same exemption class as the two
         // restores above: forward-only resume response policy, inert without a resume.
@@ -3796,6 +3836,28 @@ namespace GnssProcessor {
                           "network.state_snapshot_datum_capture; a file without them "
                           "leaves each half exactly as today and says so.  Not in the "
                           "warm-resume fingerprint (forward-only resume response policy).");
+        }
+        // RS-5 (§21.10): the emit-layer restore's own ARMED/INERT line.  Its
+        // prerequisite is checked above, so by here it can only be inert for want of a
+        // snapshot to resume from.
+        if (network_resume_emit_restore_) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (RS-5 emit restore): resume_emit_restore armed but "
+                          "network.state_snapshot_path is empty — nothing can resume, "
+                          "INERT this run.");
+            else
+                log->info("Network (RS-5 emit restore): ON — at a warm resume the "
+                          "snapshot's emit-layer rows are restored BEFORE the first emit: "
+                          "the eq34 emit re-base's emission frame (ER) so the first "
+                          "post-resume epoch re-bases onto the writer's last emitted "
+                          "values instead of first-sighting every key, and the PB emission "
+                          "filter's per-key posterior + step-noise accumulators (PF/PS) so "
+                          "it continues smoothing at the gate the writer had measured.  "
+                          "The rows are captured under "
+                          "network.state_snapshot_emit_capture; a file without them "
+                          "leaves each half exactly as today and says so.  Outputs-only "
+                          "(no estimate moves) and not in the warm-resume fingerprint "
+                          "(forward-only resume response policy).");
         }
         // RS-4 (§21.9): the DECLARATION half's own ARMED/INERT line, same shape.
         if (network_resume_pb_seam_mark_) {

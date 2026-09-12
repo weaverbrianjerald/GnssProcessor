@@ -128,6 +128,39 @@ public:
 
     const Counters& counters() const { return counters_; }
 
+    /**
+     * @brief The engine's cross-epoch EMISSION FRAME, exportable for the RTB-7
+     *        snapshot (RS-5 emit-layer continuity, docs/SPEC_event_harness.md
+     *        §21.10): the previous emitted value of every "sat|signal" key.
+     *
+     * This engine is a bare run-local, so without the export every warm resume
+     * cold-starts it: the first post-resume epoch finds NO baseline for any key,
+     * re-bases nothing (@f$k_s=0@f$, @f$\delta=0@f$) and emits the raw solve-frame
+     * value, while the continuous run's wire at the same epoch carries the whole
+     * accumulated re-base.  The emitted product then steps by that accumulation —
+     * measured at the field seam: 17.6 m p50 per (sat,signal) against a 1.70 m
+     * move in the estimator's own state, and the emit layer is exactly the
+     * difference (§21.10).  Same shape, and the same fix, as the CLK-R engine's
+     * @c NetworkClockEmitRebase::exportFrameState.
+     *
+     * @return "sat|signal" -> previous re-based emitted bias (m).  Counters are
+     *         run telemetry, not frame state, and are deliberately NOT carried.
+     */
+    std::map<std::string, double> exportState() const { return last_emit_; }
+
+    /**
+     * @brief Restore a previously exported emission frame (a warm resume that
+     *        CONTINUES the re-base instead of cold-starting it).
+     *
+     * Replaces the memory wholesale — a resume's previous emitted epoch IS the
+     * writer's last emitted epoch — and leaves @ref counters() alone, so the run's
+     * own re-base telemetry still counts only what THIS run did.  A key absent from
+     * @p st is a first sighting exactly as it is on a continuous run.
+     *
+     * @param st Map exported by @ref exportState (via the snapshot's @c ER rows).
+     */
+    void restoreState(const std::map<std::string, double>& st) { last_emit_ = st; }
+
     /// Drop the emission-frame memory (a `carry_invariant` toggle-flip cold start;
     /// every key re-bases against nothing — a one-time first sighting — next epoch).
     void reset();

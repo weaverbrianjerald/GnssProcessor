@@ -1199,7 +1199,9 @@ int Application::runNetwork() {
     }
     networkSnapshotFingerprint(ctx, config_, stations);
     networkTryWarmResume(ctx, config_, sync, emitter, carry_driver, log,
-                         &clk_rebase_engine);   // §18.10: the CLK-R held frame travels too
+                         &clk_rebase_engine,    // §18.10: the CLK-R held frame travels too
+                         &emit_rebase_engine,   // RS-5 §21.10: ...and the two PHASE-BIAS
+                         &pb_filter_engine);    //   emit layers, for the same reason
     // EVENT HARNESS (docs/SPEC_event_harness.md): arm the scripted-fault schedule.
     // AFTER the warm resume on purpose — the injector is deliberately outside the
     // resume fingerprint, so its ARMED banner must not be mistaken for restored
@@ -2582,7 +2584,9 @@ int Application::runNetwork() {
         // RTB-7(a) periodic atomic snapshot (INC-4: body in NetworkRunContext.cpp;
         // stays AFTER the prev_week/prev_tow advance — snap captures THIS epoch).
         networkWriteStateSnapshot(ctx, config_, se.time, pl_now_s, emitter, carry_driver, log,
-                                  &clk_rebase_engine);   // §18.10 frame rows (v2)
+                                  &clk_rebase_engine,    // §18.10 frame rows (v2)
+                                  &emit_rebase_engine,   // RS-5 §21.10 emit-layer rows
+                                  &pb_filter_engine);    //   (ER / PF / PS)
         return LoopSignal::Next;
     };
 
