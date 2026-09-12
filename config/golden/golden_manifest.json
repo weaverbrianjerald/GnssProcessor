@@ -40,7 +40,8 @@
     "network.cycle_slip.if_phase_td_pairs": "all",
     "network.scoped_handover_response": true,
     "network.handover_stransform": true,
-    "network.cycle_slip.common_band_ref_arc": true
+    "network.cycle_slip.common_band_ref_arc": true,
+    "network.state_snapshot_datum_capture": true
    },
    "unset": [],
    "exceptions": {
@@ -66,7 +67,8 @@
     "network.parallel_max_threads": 20,
     "network.sticky_pivot": true,
     "network.cycle_slip.mw_evidence_refloat": true,
-    "network.state_snapshot_carry_lin": true
+    "network.state_snapshot_carry_lin": true,
+    "network.state_snapshot_datum_capture": true
    },
    "unset": [
     "network.emit_pb_filter_jump_k",

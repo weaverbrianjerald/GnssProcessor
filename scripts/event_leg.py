@@ -205,6 +205,10 @@ def cmd_write_seed(args):
     # by Σ c·Δx_lin.  Write-side only: products and traces are byte-identical, and a
     # reader that finds no ZL row behaves exactly as before, so it is not fingerprinted.
     net["state_snapshot_carry_lin"] = True
+    # RS-3 (SPEC_event_harness §21.7): also capture the two DATUM memories - the eq34
+    # chain tree and the time-linked code-bias datum - so a resume leg continues both
+    # datums instead of re-electing / re-seeding them (110 -> 8 rerefs, 30 -> 0 CB discs).
+    net["state_snapshot_datum_capture"] = True
     net["state_snapshot_require"] = False          # the seed IS the cold start
     net["product_output_path"] = _fwd(os.path.join(rundir, "products.txt"))
     net["write_run_manifest"] = True
@@ -302,6 +306,10 @@ def _leg_common(args, event_json):
     # erase a branch the data agrees with from +2 on (rebirths at +2: 305 -> 7).  MW /
     # LLI / IF-TD drains stay live.  Inert without a restored blob.
     net["resume_d5_warmup_ep"] = 1
+    # RS-3 (SPEC_event_harness §21.7): restore the eq34 tree maps and the code-bias
+    # datum memory at the seam.  Inert (logged) against a seed written without
+    # state_snapshot_datum_capture.
+    net["resume_datum_restore"] = True
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
     # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the

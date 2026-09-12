@@ -355,6 +355,16 @@ namespace GnssProcessor {
               "re-base the restored branch onto its own linearization (network.resume_carry_rebase); "
               "the field golden's warm resume went from 61/61 withheld to emitting (SPEC_event_harness "
               "s21.5)" },
+            // --- RS-3 (SPEC_event_harness s21.7): WRITE half of datum continuity - the eq34
+            //     chain tree and the time-linked code-bias datum memory ride the snapshot as
+            //     format-forward rows.  Write side only, products byte-identical.
+            { !nc.state_snapshot_path.empty()
+                  && (network_phase_datum_eq34_ || network_code_datum_time_linked_),
+              nc.state_snapshot_datum_capture,
+              Tier::SCOPED, false, "network.state_snapshot_datum_capture",
+              "carry the eq34 chain tree + the time-linked code-bias datum memory in the snapshot so a "
+              "warm resume can continue both datums (RS-3): first-epoch eq34 re-references 110 -> 8, "
+              "code-bias re-seed discontinuities 30 -> 0, R record 30 -> 0 satellites" },
             { warm && network_phase_leveling_,
               network_zwd_seam_reseed_,
               Tier::SCOPED, false, "network.zwd_seam_reseed",
@@ -770,6 +780,15 @@ namespace GnssProcessor {
               "hold the restored invariant DD branch through the first K post-resume epochs "
               "(D5 trips counted, not re-tapped; K = 1 suffices): +2 chord rebirths 305 -> 7, live "
               "D5 trips afterwards 0-2 per epoch = the seed's own rate (SPEC_event_harness s21.7)" },
+            // --- RS-3 (SPEC_event_harness s21.7): READ half - continue the writer's eq34 tree
+            //     and code-bias datum at the seam instead of re-electing / re-seeding them.
+            //     Forward-only resume policy, not fingerprinted; requires resume_frame_restore.
+            { warm && network_resume_frame_restore_,
+              network_resume_datum_restore_,
+              Tier::SCOPED, false, "network.resume_datum_restore",
+              "restore the eq34 tree maps and the code-bias datum memory at a warm resume (RS-3): "
+              "eq34 rerefs at +1 110 -> 8, CB re-seed discs 30 -> 0, R record 30 -> 0 sats; a ~10 m "
+              "phase-bias re-realization remains and is the next card (SPEC_event_harness s21.9)" },
             { network_clock_temporal_anchor_ && !network_clock_model_,
               network_readmit_seed_horizon_s_ > 0.0,
               Tier::SCOPED, false, "network.readmit_seed_horizon_s",
