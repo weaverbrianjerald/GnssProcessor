@@ -178,15 +178,6 @@ void networkInstallCarry(
     // logged.  The flag is cleared on every other epoch, so a run that never resumes sets
     // it false every epoch and the gate is byte-identical.
     const bool d5_warmup_now = ctx.carry.resume_d5_warmup_left > 0;
-    if (d5_warmup_now) {
-        ++ctx.counters.n_resume_d5_warmup_epochs;
-        if (--ctx.carry.resume_d5_warmup_left == 0)
-            log->info("Network (RS-2b resume D5 warm-up): RETIRED at TOW {:.1f} — the D5 "
-                      "innovation gate acted diagnostic-only for {} post-resume epoch(s) "
-                      "and suppressed {} trip(s); it re-taps from the next epoch.",
-                      se.time.tow, ctx.counters.n_resume_d5_warmup_epochs,
-                      carry_driver.counters().d5_warmup_suppressed);
-    }
     carry_driver.setInnovDiagnosticOnly(d5_warmup_now);
 
     // parallel_carry: thread installPosterior's posterior-cov GEMMs.  Run it
@@ -199,6 +190,22 @@ void networkInstallCarry(
         log->warn("Network[Card4]: DD-carry install failed at TOW {:.1f} ({}); "
                   "carry reset (refloats next epoch).", se.time.tow, ex.what());
         carry_driver.reset();
+    }
+    // RS-2b: burn one epoch of the window and retire it.  AFTER the install on purpose —
+    // the retire line quotes d5_warmup_suppressed, which this very epoch's gate has just
+    // incremented, and logging it beforehand printed the count as of the PREVIOUS epoch
+    // (a K=1 window read "suppressed 0" while the run-end line correctly said 301).  An
+    // instrument that reports its own work one epoch late reads clean and lies —
+    // invariant #4.  Outside the try/catch so a failed install still burns the epoch: the
+    // window is a count of PROCESSED epochs, not of successful ones.
+    if (d5_warmup_now) {
+        ++ctx.counters.n_resume_d5_warmup_epochs;
+        if (--ctx.carry.resume_d5_warmup_left == 0)
+            log->info("Network (RS-2b resume D5 warm-up): RETIRED at TOW {:.1f} — the D5 "
+                      "innovation gate acted diagnostic-only for {} post-resume epoch(s) "
+                      "and suppressed {} trip(s); it re-taps from the next epoch.",
+                      se.time.tow, ctx.counters.n_resume_d5_warmup_epochs,
+                      carry_driver.counters().d5_warmup_suppressed);
     }
     carry_prev_tow = se.time.tow;
 
