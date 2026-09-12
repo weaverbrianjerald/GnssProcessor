@@ -2764,6 +2764,41 @@ namespace GnssProcessor {
          */
         bool networkResumeDatumRestore() const { return network_resume_datum_restore_; }
         /**
+         * @brief RS-4 warm-resume PHASE-BIAS SEAM MARK (@c network.resume_pb_seam_mark,
+         *        SPEC_event_harness §21.9) — declare the seam on the wire when the first
+         *        post-resume emit re-realizes the phase-bias level.
+         *
+         * The CLK-R @c resume_seam rule (NetworkEmitStore.cpp) marks a warm resume only
+         * when the held-frame clock engine reports @c epochs==0, so a lineage that
+         * RESTORES that engine is never marked — precisely when the clock is continuous
+         * and the phase biases are not.  Measured on the field golden's 6 h seed: the
+         * emitted phase biases move ~17 m p50 per (sat,signal) across the seam against a
+         * restored per-key baseline, with @c datum_changed 0 and no R record, i.e. an
+         * invariant-#7 re-coupling edge that is silent to a file consumer.
+         *
+         * Armed, at the FIRST emit after a warm resume (and only there — one shot) the
+         * emitter compares each emitted phase bias with its RESTORED per-key baseline
+         * (@c last_phase_bias_, from the snapshot's @c epb rows) BEFORE the jump test
+         * overwrites it, over exactly the jump test's own population (a key with a
+         * baseline that is not stale under the staleness horizon).  A constellation with
+         * more than @ref kResumePbSeamMarkFraction of that population beyond
+         * @c discThresholdM is marked exactly as the CLK-R rule marks: one
+         * @c markDatumChange for that constellation, one @c PB_FRAME / @c resume_seam
+         * event carrying the fraction and the counts, and the constellation merged into
+         * the E record's datum set so the wire carries @c datum_changed 1.
+         *
+         * Outputs-only: it moves no estimate, only the declaration. On a cold start the
+         * latch is never set, so it cannot fire. Deliberately NOT in the warm-resume
+         * fingerprint — the same forward-only resume-response exemption class as
+         * @ref networkResumeFrameRestore, @ref networkResumeDatumRestore and
+         * @ref networkResumeCouplingRestore. Default false = byte-identical.
+         */
+        bool networkResumePbSeamMark() const { return network_resume_pb_seam_mark_; }
+        /// RS-4: fraction of a constellation's fresh-baseline phase-bias keys that must
+        /// exceed @c discThresholdM at the first post-resume emit for the seam to be
+        /// declared (single source of truth for the rule and its unit test).
+        static constexpr double kResumePbSeamMarkFraction = 0.10;
+        /**
          * @brief READMIT continuity — seed-first satellite re-admission
          *        (@c network.readmit_seed_horizon_s, seconds; the STABILITY campaign's E2,
          *        SPEC_synthetic_minimum_network §18.4 / SPEC_amb_iono_split_overcount §7 FIRST).
@@ -7531,6 +7566,7 @@ namespace GnssProcessor {
         bool   network_resume_coupling_restore_{false};    ///< §18.12 resume COUPLING-REGRESSOR restore: at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order — never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING (LOOSE CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain DIAGONAL prior asserted AT that conditional variance which out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project (Card 1f), and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only — var is never modified).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_carry_rebase_{false};        ///< RS-2 resume CARRY RE-BASE (SPEC_event_harness §21.4), the reader half of network.state_snapshot_carry_lin: at the first DD prior build after a warm resume, re-base every restored chord the build projects — ẑ += W·zl_writer − zl_now, with W the cycle-basis projection the build already forms and zl_now this epoch's Σc·x_lin over the SAME incidence that forms z_free — so the restored branch is folded in THIS run's linearization frame instead of the writer's.  Pᶻ untouched (an exact frame translation).  A component whose restored contributors carry no ZL row is marginalized (born fresh) rather than folded frame-wrong, and counted.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_datum_restore_{false};       ///< RS-3 resume DATUM restore (SPEC_event_harness §21.7), the reader half of network.state_snapshot_datum_capture: at a warm resume, restore the eq34 chain datum's last-epoch spanning tree (eq34_datum_rx / eq34_rx_parent / eq34_sat_root / eq34_prev_target / eq34_prev_el / eq34_retained_edges) BEFORE the first election, so the sticky-tree seed continues the writer's tree instead of re-electing it from the cold arc registry, and restore the time-linked code-bias memory (code_bias_prev_ / code_bias_sat_seen_) with code_bias_datum_resumed_ left FALSE, so a re-seed disc-bumps only where it genuinely re-seeds.  Loader hard-requires resume_frame_restore (the sat-side half of the same tree).  Rows absent ⇒ today's behaviour for that half, loudly.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        bool   network_resume_pb_seam_mark_{false};        ///< RS-4 warm-resume PHASE-BIAS SEAM MARK (SPEC_event_harness §21.9): at the FIRST emit after a warm resume, if more than kResumePbSeamMarkFraction of a constellation's fresh-baseline (sat,signal) phase-bias keys differ from their RESTORED emitter baseline by more than discThresholdM, markDatumChange that constellation exactly as the CLK-R resume_seam rule does (E-record datum_changed 1 + a PB_FRAME/resume_seam event + the n_pb_seam_marks counter).  Closes the gap the CLK-R rule leaves: that rule fires only when the held-frame clock engine reports epochs==0, so a lineage that RESTORES the frame is never marked - exactly when the clock is continuous and the phase-bias level is not.  One shot, warm resumes only (the latch is never set on a cold start).  Outputs-only: no estimate moves.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.
         bool   network_readmit_seed_code_bias_{true};      ///< READMIT seed sub-knob: also park + seed the departing satellite's per-signal CODE-BIAS columns (true) or the clock alone (false).  Inert without readmit_seed_horizon_s.

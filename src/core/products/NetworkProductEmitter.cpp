@@ -106,6 +106,39 @@ void NetworkProductEmitter::markSatDiscontinuity(const std::set<std::string>& sa
     forced_bump_sats_.insert(satellites.begin(), satellites.end());
 }
 
+std::map<char, NetworkProductEmitter::PbSeamConstTally>
+NetworkProductEmitter::pbSeamCensus(const NetworkSolutionEpoch& sol) const {
+    // Deliberately a read-only TWIN of the phase jump test in emitToStore rather than
+    // a refactor of it: the test's three decisions (population, threshold, key
+    // spelling) are reproduced here and nothing else, so this cannot alter a single
+    // emitted byte on any path — the OFF run never calls it and the ON run calls it
+    // strictly before emitToStore.  Keep the two in step: a change to the jump test's
+    // population or threshold belongs here too.
+    std::map<char, PbSeamConstTally> out;
+    const double epoch_s = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
+    for (const auto& s : sol.sats) {
+        if (s.sat.empty() || s.phase_bias.empty()) continue;
+        const char cst = s.sat[0];
+        for (const auto& [signal, npb] : s.phase_bias) {
+            const std::string key = s.sat + "|" + signal;
+            const auto last_it = last_phase_bias_.find(key);
+            if (last_it == last_phase_bias_.end()) continue;          // first sighting: nothing to compare
+            if (staleness_horizon_s_ > 0.0) {                          // RTA-11 staleness: same probe
+                const auto seen = phase_last_seen_s_.find(key);
+                if (seen != phase_last_seen_s_.end()
+                    && (epoch_s - seen->second) > staleness_horizon_s_)
+                    continue;                                          // stale ⇒ the test skips it too
+            }
+            PbSeamConstTally& t = out[cst];
+            ++t.keys_tested;
+            const double d = std::abs(npb.bias_m - last_it->second);
+            if (d > t.max_abs_delta_m) t.max_abs_delta_m = d;
+            if (d > discThresholdM(s.sat, signal)) ++t.keys_over;
+        }
+    }
+    return out;
+}
+
 int NetworkProductEmitter::discontinuityCounter(const std::string& sat,
                                                 const std::string& signal) const {
     const auto it = disc_counter_.find(sat + "|" + signal);

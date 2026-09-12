@@ -240,6 +240,38 @@ public:
     /// constellation-wide reset storm (P1-3).  Applies to exactly the next emit.
     void markSatDiscontinuity(const std::set<std::string>& satellites);
 
+    /// RS-4 (SPEC_event_harness §21.9): one constellation's tally in a
+    /// @ref pbSeamCensus — how many of its phase-bias keys the jump test WOULD
+    /// look at this epoch, and how many of those exceed @c discThresholdM.
+    struct PbSeamConstTally {
+        long long keys_tested{0};   ///< Keys carrying a non-stale baseline (the jump test's own population).
+        long long keys_over{0};     ///< Of those, keys whose |bias − baseline| exceeds discThresholdM.
+        double    max_abs_delta_m{0.0}; ///< Largest |bias − baseline| over the tested keys (m) — the event's statistic.
+    };
+
+    /**
+     * @brief RS-4: census of this epoch's emitted phase biases against the CURRENT
+     *        per-key baselines, WITHOUT mutating any emitter state.
+     *
+     * Read-only twin of the jump test inside @ref emitToStore: same population (a key
+     * with a baseline that is not stale under the staleness horizon), same threshold
+     * (@c discThresholdM), same key spelling. Call it BEFORE @ref emitToStore — after
+     * it, every baseline has been overwritten with this epoch's value and the census
+     * is trivially empty.
+     *
+     * Its purpose is the warm-resume seam: on a restored emitter the baselines are the
+     * PREVIOUS run's emitted values, so a level re-realization at the first post-resume
+     * emit shows up here as a large tested-key fraction — the thing
+     * @c network.resume_pb_seam_mark turns into a @c markDatumChange. Const and
+     * side-effect free, so an OFF run that never calls it is byte-identical.
+     *
+     * @param sol The epoch about to be emitted (its @c phase_bias maps are read).
+     * @return Per-constellation tallies, keyed by the satellite id's leading char.
+     *         A constellation with no baselined key at all is absent from the map.
+     */
+    std::map<char, PbSeamConstTally>
+    pbSeamCensus(const NetworkSolutionEpoch& sol) const;
+
     /// Current phase-bias discontinuity counter for a (sat, signal), or 0 if untracked.
     int discontinuityCounter(const std::string& sat, const std::string& signal) const;
 

@@ -384,6 +384,50 @@ void networkEmitStore(
             }
         }
     }
+    // RS-4 (SPEC_event_harness §21.9): the warm-resume PHASE-BIAS seam declaration.
+    // The CLK-R rule above marks a resume only when the held-frame clock engine comes
+    // back COLD (`epochs == 0`), so a lineage that RESTORES the frame is never marked —
+    // exactly the case where the clock is continuous across the seam and the phase-bias
+    // LEVEL is not (measured on the field golden: ~17 m p50 per (sat,σ) against the
+    // restored baselines, with `datum_changed 0` and no R record on the wire).  The
+    // emitter's per-key baselines are the previous run's emitted values only until
+    // emitToStore overwrites them, so the census MUST be taken here, before that call.
+    // One shot (the latch is cleared whether or not anything is marked), warm resumes
+    // only (nothing sets the latch on a cold start), and outputs-only: `sol` is not
+    // touched, so every estimate and every between-satellite difference is unchanged.
+    std::set<char>        pb_ser_consts;    // alive until the writer call below
+    if (ctx.knobs.resume_pb_seam_mark && ctx.carry.resume_pb_seam_pending
+        && n_emitted > 0 && !sol.sats.empty()) {
+        ctx.carry.resume_pb_seam_pending = false;
+        const auto census = emitter.pbSeamCensus(sol);
+        std::set<char> pb_marked;
+        for (const auto& [cst, t] : census) {
+            if (t.keys_tested <= 0) continue;
+            ctx.counters.n_pb_seam_keys_tested += t.keys_tested;
+            ctx.counters.n_pb_seam_keys_over   += t.keys_over;
+            const double frac =
+                static_cast<double>(t.keys_over) / static_cast<double>(t.keys_tested);
+            if (frac <= GnssConfig::kResumePbSeamMarkFraction) continue;
+            pb_marked.insert(cst);
+            ++ctx.counters.n_pb_seam_marks;
+            traces.emitEvent(se.time, "PB_FRAME", "resume_seam", std::string(1, cst), "",
+                             frac, GnssConfig::kResumePbSeamMarkFraction, "datum_mark",
+                             fmt::format("keys_over={}/{} ({:.1f} %) max|dPB|={:.3f} m "
+                                         "vs restored baselines",
+                                         t.keys_over, t.keys_tested, frac * 100.0,
+                                         t.max_abs_delta_m));
+        }
+        if (!pb_marked.empty()) {
+            // Same wiring as the CLK-R mark: the emitter consumes the forced bump inside
+            // emitToStore, so the on-disk E record must carry the SAME constellation set
+            // or a replay diverges from live.  Merge onto whatever the CLK-R block left
+            // in *ser_consts_use (which is `serialized_consts` unless it re-anchored).
+            emitter.markDatumChange(pb_marked);
+            pb_ser_consts = *ser_consts_use;
+            pb_ser_consts.insert(pb_marked.begin(), pb_marked.end());
+            ser_consts_use = &pb_ser_consts;
+        }
+    }
     emitter.emitToStore(sol, network_store);
     // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
     // realized pivots) every N seconds of PRODUCT time, and additionally on any

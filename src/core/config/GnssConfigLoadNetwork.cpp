@@ -3640,6 +3640,14 @@ namespace GnssProcessor {
             jval<int>(json, "network.resume_slip_warmup_ep", "resume_slip_warmup_ep", 0);
         if (network_resume_slip_warmup_ep_ < 0)
             throw std::runtime_error("network.resume_slip_warmup_ep must be >= 0");
+        // RS-4 (§21.9): the DECLARATION half of the same seam.  The CLK-R resume_seam
+        // mark is suppressed exactly when the frame restore works (the held-frame engine
+        // comes back with its epochs), so a lineage whose clock is continuous and whose
+        // phase-bias level is not emits datum_changed 0.  Same exemption class as the
+        // two knobs above: forward-only resume response policy, not fingerprinted, and
+        // structurally unreachable on a run that never resumes.
+        network_resume_pb_seam_mark_ =
+            jval<bool>(json, "network.resume_pb_seam_mark", "resume_pb_seam_mark", false);
         // RS-2b (§21.6): the same idea one layer up — the ESTIMATION-side fine-slip gate,
         // diagnostic-only for K post-resume epochs.  Same exemption class as the drain
         // warm-up above: forward-only resume response policy, inert without a resume.
@@ -3788,6 +3796,30 @@ namespace GnssProcessor {
                           "network.state_snapshot_datum_capture; a file without them "
                           "leaves each half exactly as today and says so.  Not in the "
                           "warm-resume fingerprint (forward-only resume response policy).");
+        }
+        // RS-4 (§21.9): the DECLARATION half's own ARMED/INERT line, same shape.
+        if (network_resume_pb_seam_mark_) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (RS-4 PB seam mark): resume_pb_seam_mark armed but "
+                          "network.state_snapshot_path is empty — nothing can resume, so "
+                          "the one-shot mark can never fire.  INERT this run.");
+            else
+                log->info("Network (RS-4 PB seam mark): ON — at the FIRST emit after a warm "
+                          "resume every emitted satellite phase bias is compared with its "
+                          "RESTORED emitter baseline (the snapshot's epb rows) over the jump "
+                          "test's own population, BEFORE the baselines are overwritten; a "
+                          "constellation with more than {:.0f} % of that population beyond "
+                          "discThresholdM is markDatumChange'd exactly as the CLK-R "
+                          "resume_seam rule marks (E-record datum_changed 1, one "
+                          "PB_FRAME/resume_seam event, the n_pb_seam_marks counter).  Closes "
+                          "the gap that rule leaves: it fires only when the held-frame clock "
+                          "engine reports epochs==0, so a lineage that RESTORES the frame is "
+                          "never marked — exactly the case where the clock is continuous and "
+                          "the phase-bias level is not (~17 m p50 measured, datum_changed 0).  "
+                          "One shot; structurally unreachable on a cold start.  Outputs-only "
+                          "and not in the warm-resume fingerprint (forward-only resume "
+                          "response policy).",
+                          GnssConfig::kResumePbSeamMarkFraction * 100.0);
         }
         // Slant-iono carry (QUEUE 8b, docs/SPEC_slip_relevel_walk.md s8 residual): carry
         // per-LOS slant iono across epochs as a diagonal RW prior via the same
