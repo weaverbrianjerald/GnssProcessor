@@ -2828,6 +2828,8 @@ What iteration 2 SETTLED, and it is worth the run on its own:
 station" but "what does moving the datum host at all cost the user", and the C5
 comparison cannot answer it because C5's own realization differs.  Two things, in order:
 
+⚠ **§15.11 reports iteration 4 on the NEW golden (scoped_handover_response promoted): 12 of 15 gates pass — every wire instrument beats the new reference — and the de-biased consumer misses by 4 mm while one pivot edge regresses.  KEEP_OFF stands.**
+
 ⚠ **§15.10 reports iteration 3.  The first item below is DONE and it inverted the A-comparison: per-hour-de-biased, B2 is 47 % BETTER than the scope-OFF arm, not worse — but cbscope5's advantage SURVIVES de-biasing, so the §15.8 gate failures stand.**
 
 * **A datum-invariant consumer instrument.**  Re-grade every arm on a quantity the
@@ -2943,6 +2945,97 @@ vertical bias on the OFF arm) but "the card makes the WIRE quieter and the posit
 channel still prefers `cbscope5`", and the next thing to measure is why — the
 candidate is the §19 pivot-departure window, where every arm's shocks and half its
 PB resets live and where the cold-handover population is not.
+
+### 15.11 ITERATION 4 — the card on the NEW golden, graded on iteration 3's invariant instruments: the wire gates pass by wide margins, the de-biased consumer misses by 4 mm, and one pivot edge regresses (2026-09-11; `runs/golden_sim_campaign_zwdblk_coldfb3`, 720/720, exit 0, 1361 s)
+
+The scoped-handover promotion (§19.5) moved the reference: `S =
+runs/golden_sim_campaign_zwdblk_scoped` is the new golden's posture on the campaign
+bed, and its consumer is a different animal from cbscope5's (settled p50 0.1204 →
+0.0825, shocks 13 → 0).  Iteration 4 re-asks §15.9's question against THAT baseline,
+on the datum-invariant instruments §15.10 built.
+
+**The arm.**  `config/test_suite/_golden_sim_campaign_zwdblk_coldfb3.json` = the
+tracked `_golden_sim_campaign_zwdblk_scoped.json` + `network.phase_datum_candidacy_usable:
+true` (the satellite clause is the code default beneath it) + the run path.  Nothing
+else; the flattened key-by-key diff is exactly those two lines.  Exe
+`gnss_processor_coldfb3.exe` = `1B37E94B…`, built from main `e90086f`; the reference
+was run on `F4FF8EF0…`.  **Those two exes differ only in the posture table** — a
+log-only reporter (`logNetworkPosture_` reads already-parsed state and changes
+nothing) — and in the cold-fallback code, which is default-OFF and was certified
+byte-identical OFF at §15.3.  The reference is therefore a valid same-code baseline,
+and it is stated here rather than assumed.
+
+| channel | **S (scoped)** | **B3 (S + candidacy)** | gate | verdict |
+|---|---|---|---|---|
+| **per-hour-de-biased consumer p50 / rms** | **0.0347 / 0.0466** | **0.0387 / 0.0516** | ≤ S | **FAIL** (+4.0 / +5.0 mm) |
+| statically de-biased p50 / rms | 0.0563 / 0.0688 | 0.0815 / 0.0890 | (reported) | worse |
+| raw settled p50 / rms | 0.0825 / 0.0899 | 0.1111 / 0.1348 | (reported) | worse |
+| settled mean ENU / \|bias\| | +0.0335 / −0.0104 / −0.0460, 0.0578 | +0.0830 / −0.0334 / −0.0473, 0.1012 | (reported) | the east bias returns to the candidacy arms' +0.08 |
+| **consumer PB resets** | 1475 | **1337** | < S | **PASS** (−9.4 %) |
+| CB discs / clock discs | 517 / 21 | 516 / 21 | (control) | flat |
+| shocks (> 0.5 m after h1) | 0 | **0** | | tie, both clean |
+| **wire: frac epochs \|step\| > 5 cm** | 0.3611 | **0.2944** | ≤ S | **PASS** (−18 %) |
+| **wire: p90 per-epoch max step** | 0.4000 m | **0.2651 m** | ≤ S | **PASS** (−34 %) |
+| **PHASE_ANCHOR handovers / cold** | 315 / 78 | 312 / **46** | settled ≤ 19 | **PASS** |
+| ...cold-start / settled | 27 / 51 | **27 / 19** | | −63 % settled |
+| ...cold by hour h0…h5 | 41 12 7 0 5 13 | **38 8 0 0 0 0** | | zero from hour 2 |
+| PB-GAUGE elected / continuous / cold | 462 / 362 / 100 | 468 / 416 / **52** | | |
+| continuous successor age p10 / p50 / p90 | 91 / 240 / 459 | **116 / 236 / 478** | | older |
+| candidacy: entered / elected / rank-changed / fell through | — | 468 / 399 / **60** / 69 | | |
+| satellite clause: sat-ep / families / **splits avoided** / cold-coloc / untracked | — | 133 / 399 / **13** / 0 / 0 | | |
+| **split-referenced mean / max** | 0.0 / 0 | **0.0 / 0** | 0.0 / 0 | **PASS** |
+| **ZWD settled truth rms / span p50** | 0.0066 / 0.0205 | **0.0060 / 0.0178** | ≤ 0.0066 | **PASS** |
+| **ref-free WL / EWL / L1C** | 99.2 / 100 / 90.2 | **99.3 / 100 / 91.0** | ≥ 99.2 / ≥ 90.2 | **PASS** |
+| **T4 events / ambient** | 11 / 0.206 | **11 / 0.198** | ≤ 11 | **PASS** |
+| **W2 4.9917 h: T4 / decouples / CLK breaks** | 0/0/0 | **0/0/0** | absent | **PASS** |
+| **sat-clock datum-free contrast rms** | 0.7657 | 0.7713 (**+0.73 %**) | ±3 % | **PASS** |
+| whole-run residual rms | 1.0096 | 1.0144 (+0.48 %) | | |
+| **consumer 3D at the GPS pivot edge (319260)** | 0.126 | **0.104** | ≤ 0.126 | **PASS** |
+| **consumer 3D at the Galileo pivot edge (321900)** | 0.031 | **0.108** | ≤ 0.031 | **FAIL** (+77 mm) |
+| consumer hourly p50 h0…h5 | .524 .113 .114 .101 .089 .047 | .610 .264 .243 .189 .102 .088 | | |
+| per-hour-de-biased hourly p50 | .284 .056 .023 .031 .035 .046 | .302 .054 .033 .040 **.033 .040** | | h1/h4/h5 equal-or-better, h0/h2/h3 worse |
+| PB resets by hour | 962 0 32 0 256 225 | 953 0 **0 0 232 152** | | better in h2, h4, h5 |
+| run time | 1242 s | 1361 s | | +10 % |
+
+**Verdict: 12 of 15 gates pass, 3 fail, and the knob stays KEEP_OFF.**  The three
+failures are two instruments: the per-hour-de-biased consumer (p50 +4.0 mm, rms
++5.0 mm — a miss, not a collapse) and the Galileo pivot edge (0.031 → 0.108 m).
+
+**What iteration 4 settles, and it is not nothing:**
+
+1. **On the WIRE the card is now unambiguously better than the best arm this bed
+   has.**  It beats S on every wire instrument at once — PB resets 1475 → 1337,
+   the fraction of epochs carrying a > 5 cm emitted step 0.361 → 0.294, and the p90
+   per-epoch maximum step 0.400 → 0.265 m — while removing 32 settled cold
+   handovers and every settled one after hour 1.  That is the third independent
+   arm on which the wire instruments move with the cold-handover count.
+2. **The producer's truth-graded channels are all better**: ZWD 0.0066 → 0.0060 (the
+   best on this bed), ref-free L1C 90.2 → 91.0 (likewise), WL 99.2 → 99.3, T4 equal,
+   contrasts +0.73 %.
+3. **And the consumer still does not follow.**  Its per-hour-de-biased median is 4 mm
+   worse than S's with the wire measurably quieter — the same shape §15.10 found, now
+   against a reference that itself fixed the largest consumer defect on the bed.  The
+   settled mean east error returns to +0.083 m (the value every candidacy arm carries,
+   and the scope-OFF arm too) from S's +0.034, so a third of B3's raw gap to S is
+   again a static horizontal realization the card should not be able to control —
+   yet the de-biased gap survives, exactly as C5's did.
+4. **The Galileo edge is the one real regression**, and it is worth naming precisely:
+   at 321900 the scoped response alone reaches 0.031 m and the card takes it to
+   0.108 m — still **7× better than the pre-scoped 0.777 m**, but a step back from
+   the reference.  The GPS edge moves the other way (0.126 → 0.104).  Both edges are
+   epochs where the candidacy pass is re-choosing hosts while a clock datum moves;
+   the interaction of the two mechanisms at a pivot edge is untested and is the
+   obvious next thing to look at.
+
+**Iteration 5, pre-registered.**  The open question is now narrow and local: *why does
+a quieter wire leave a noisier consumer, and what happens at a pivot edge when the
+candidacy pass and the scoped handover act in the same epoch?*  Two steps, in order:
+(i) a per-edge census of the anchor set across 321900 in S and B3 — which families
+moved, whether any moved BECAUSE of the candidacy pass, and whether the consumer's
+resets at that epoch are the ones the card added; (ii) only then a knob, if the census
+names one: an interlock that defers a candidacy-driven handover by one epoch when the
+same epoch carries a clock-datum change, gated on the Galileo edge returning to ≤ 0.031
+with the wire instruments kept.
 
 ### 14.4 Iteration 1 — the rule is right, the evidence source was wrong (worker build 5fe64c7 on its worktree; 2026-09-11 ~11:00)
 
