@@ -5427,6 +5427,84 @@ from v5 — `rs6_null_ctl`, `rs6_null_both` (+ the stateful-consumer splice on b
   the next memory (the receiver phase-bias states, the six L2X families' datum receiver).
 * Byte-identity: write knob on/off products identical; a cold run with the read knob inert; suite green.
 
+### 21.14 RESULTS — RS-6a: the two station-layer memories partition cleanly, the T5 half removes the a₀₀ seam transient; the persistent residual is not `zwd_seam_reseed`; RS-7 pre-registered (2026-09-13 ~03:00 local; worker on worktree-agent-adf16ebd10c1b98dc `ba6be47`, merged `a726206`, registered `cb4fca4`; manager grade)
+
+**Build.**  `RC` rows (the Z rows' `LocalCarry` field set — complete for this carry: its harvest stashes exactly
+`value_abs / var / pl_now_s` and its inject reads only those) and `SD` rows (the four `ShDevCarry` scalars);
+restore after the RS-5 emit restore; the rx-CB entries through the restored-arc sentinel (inert for this carry
+today — no reader tests an age — locked by a test; the load-bearing field is `last_seen_s`, which the gap
+inflation `var + q·Δt` and the 900 s prune key on) and the deviation entries as written (their harvest stamp
+`t_s > 0` is what makes them read WARM; the aging pre-pass ages them over the true gap and drops them at 5τ);
+two diagnostic sub-switches partition the halves.  Cold smoke `products.txt` **`87a33bf0…` both arms**,
+snapshot +61 RC / +376 SD rows; Debug suite 2013 / 275 suites / 0 failed; `ResumeStationRestore` (12).
+Seeds `runs/evseed_field6h_v5` (the harness seed from now on: every row kind of the day; its products are v4's
+with the serialized counters, 0 differing values) and `v5raw` (emit transforms off — the estimator instrument);
+ep0604 at the same tow, fingerprint `545b8bdd2b638231` unchanged.
+
+| leg − seed, p50 (p95) | raw ctl | raw both | raw rx-CB only | raw T5 only |
+|---|---|---|---|---|
+| raw PB at +1, ex L2X | 1.68 (4.06) | **1.50 (2.83)** | 1.46 (3.82) | 1.72 (3.03) |
+| raw PB at +2, ex L2X | 1.75 (4.66) | 1.51 (3.34) | 1.56 (4.55) | 1.63 (3.66) |
+| receiver clocks at +1 (61 sta) | 1.21 (5.11) | 0.93 (5.70) | **0.91 (5.10)** | 1.12 (5.31) |
+| SH a₀₀ at +1 / +6 (TECU) | **+4.62 / +0.46** | **+0.43 / +0.11** | +4.71 / +0.44 | **+0.32 / +0.11** |
+| T5 cold seeds over the leg (seed: ambient) | 400 | **50** | 400 | 50 |
+| rx-CB gate withheld share (seed, same window: **11.0 %**) | 26.2 % | 26.3 % | 26.3 % | 26.2 % |
+
+| wire (v5 legs), leg − seed | null ctl | null both |
+|---|---|---|
+| PB wire at +1 / +2 / +30 p50 | 0.0004 / 0.0008 / 0.038 | 0.0004 / 0.0007 / 0.048 |
+| W6 code bias at +2 / pooled p50 | 0.128 / 0.472 | 0.152 / 0.463 |
+| clock contrast at +2 / pooled p50 | 0.441 / 1.593 | **0.291** / 1.503 |
+| ZWD pooled p50 / p95 | 0.625 / 4.97 | 0.642 / 5.00 |
+| stateful consumer at the seam: PB / code / clock re-refs | 0 / 21 / 0 | 0 / 22 / 0 |
+
+**Verdicts.**  P8c the partition is clean: the T5 deviation half OWNS the SH a₀₀ seam transient (+4.62 → +0.43
+with both, +0.32 alone; rx-CB alone +4.71; cold seeds 400 → 50 = the seed's own ambient rate) and halves the +2
+clock contrast; the rx-CB half owns the receiver-clock move at +1 (1.21 → 0.91 m) and the raw PB tail (p95
+4.06 → 2.83 m).  P8a: a₀₀ PASS (≤ 2 TECU); raw PB p50 1.50 (bar 0.5) and receiver clocks 0.93 (bar 0.3) FAIL;
+the rx-CB gate share does not move.  P8b: PB wire unchanged at 0.000 (PASS); code bias 0.46 (bar 0.10), clock
+contrast pooled 1.50 (bar 0.5), ZWD 0.64 (bar 0.32), consumer code re-references 22 (bar 5) FAIL.  Both knobs
+RECOMMEND_SCOPED, the write knob pinned on the goldens, the harness arms both (`cb4fca4`) — the T5 half is a
+clean win and the rx-CB half a modest one; neither is the residual.
+
+**The residual is structural, and `zwd_seam_reseed` is not it (probe `rs6_{raw,null}_both_nozwd`).**  The
+rx-CB gate withholds 26 % of its priors on EVERY leg — the whole 60 epochs, not a transient — against 11.0 %
+on the continuous seed over the identical window; the code-bias level (0.46 m), ZWD (0.6 m) and the pooled
+clock contrast (1.5 m) sit with it.  The one thing every leg had that the seed never has, the harness's ZWD
+seam re-seed (61 Z rows as B9 priors at q 1e-9 for 480 epochs — validated on the sim, §17, never on the
+field, where the ZWD channel is the datum sink), was switched off on both postures: ZWD 0.64 → 0.41 m (p95
+5.0 → 2.6), receiver clocks 0.93 → 0.75, the raw PB tail at +30 15.3 → 9.1 m and the pooled clock-contrast
+p95 9.0 → 5.1 improve; a₀₀ at +1 +0.43 → +0.73 TECU and no longer decays (+0.36 at +6), the +2 clock contrast
+returns to the control's (0.29 → 0.44), the code bias worsens (0.46 → 0.50) and D5 trips 53 at +1 instead of
+38; the rx-CB gate reads 26.2 % either way and the consumer 22 code re-references either way.  Mixed on the
+field, and NOT the residual's cause: the harness default stays armed and the `zwd_seam_reseed` ledger row gets
+this field measurement as a scope note, with the decision deferred to RS-7 (the ZWD / DCB / clock split is
+what the shared border carries, and that border is the one memory every leg still rebuilds from one epoch).
+
+**RS-7 pre-registered — the dense shared border across the seam.**  Every leg reads `Network (C1): warm
+resume restored 256 diagonal carries — the full-covariance carry re-seeds at the first emitted epoch`: the
+D2 shared carry (clocks, W6 code biases, SH coefficients) comes back DIAGONAL although the seed's snapshot
+carries its dense covariance (the 150 QK/QP rows of `state_snapshot_coupling_capture`), because the dense-border
+restore (§18.12 (2a), `NetworkRunContext.cpp` ~:1572–1614) lives behind `resume_coupling_restore`, which the
+loader refuses on this lineage for an unrelated reason (it hard-requires Card 1f, out of regime under
+`carry_invariant`).  A shared border that restarts with one epoch's information behaves exactly like the
+residual: a noisier per-epoch DCB / clock / SH split for as long as the border's cross-covariance is thinner
+than the seed's, more 10σ withholds at the rx-CB inject, a metre-class ZWD sink and a code-bias level that a
+stateful consumer re-references.  Build: split the dense-border restore out of `resume_coupling_restore` into
+its own read knob `network.resume_border_restore` (default false; forward-only, fingerprint-exempt; requires
+`resume_frame_restore`; restores the QK/QP dense D2 covariance for the restored D rows — the coupling ROWS
+(QL/QZ regressors) stay behind the 1f interlock), counters + run-end line; write side unchanged (the rows
+already exist).  Legs from `v5raw` / `v5` ep0604, one exe: `rs7_raw_ctl` / `rs7_raw_border`, `rs7_null_ctl`
+/ `rs7_null_border` (+ the stateful splice).
+* **P9a the border is dense from +1:** the C1 line reports the dense restore (no "diagonal" clause); first-fold
+  clock trips (the §18.11 counter) at the seed's level.
+* **P9b the residual closes:** rx-CB gate withheld share within 3 points of the seed's 11.0 %; W6 code bias
+  pooled p50 ≤ 0.10 m (from 0.46); clock contrast pooled p50 ≤ 0.5 m (from 1.50); ZWD pooled p50 ≤ 0.32 m
+  (from 0.64); raw PB at +1 p50 ≤ 0.5 m ex L2X (from 1.50); receiver clocks at +1 ≤ 0.3 m (from 0.93); the
+  stateful consumer's code re-references at the seam ≤ 5 (from 22) with phase resets 0.
+* **P9c** PB wire unchanged at 0.000 (RS-5); a₀₀ within 2 TECU; the `zwd_seam_reseed` pair re-run on the
+  border-restored posture decides that knob's field scope.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
