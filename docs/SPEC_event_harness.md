@@ -5126,6 +5126,88 @@ regime, row present at `GnssConfigNetworkPosture.cpp:201`); zero unknown-knob wa
 637 re-based, and `products.txt` `d75d12a6…` **byte-identical to `rs2_null_rebase_d5w1`'s** on a different
 binary — the harness posture reproduces the hand-armed leg exactly.
 
+### 21.9 RESULTS — RS-3: both datums continue at the seam; the wire still re-realizes ~10 m per phase-bias family, without the branch too, and UNDECLARED; RS-4 pre-registered (2026-09-12 ~16:30 local; seed `runs/evseed_field6h_v3`, exe `gnss_processor_rs3.exe` D233ADBB…; manager re-grade)
+
+**Build (merged `794d10e`).**  As §21.7 plus one deviation the worker found by measurement: the code-bias half has a
+THIRD container — the IF-pin reference pair `code_bias_ifpin_pair_`, against which `NetworkSbasis` decides
+`pair_same`; restored empty it reads "pair changed" for every satellite, the split re-seeds to 0 and (with the
+seen-set now restored) every one bumps — restoring the values without the pair was strictly worse than today
+(probe: 32 of 32 still re-seeding).  Row `CBI` added; discs 32 → 0.  Rows ride the existing header (the
+optional-`var_first` precedent).  Debug suite 1982 / 0 failed, `ResumeDatumRestore` (7); cold smoke products
+`b9da8cc1…` both arms, snapshots differing only by the 824 new rows; seed v3 720/720, ep0604 at the same tow
+with 793 datum rows (6 EQD / 176 EQP / 126 EQS / 302 EQT / 121 CBP / 32 CBS / 30 CBI), fingerprint
+`545b8bdd2b638231` unchanged.
+
+| first post-resume epoch | restore | norestore (control) | nocarry_restore |
+|---|---|---|---|
+| `eq34_reref` / `eq34_reattach` (seed 2 / 1) | **8 / 0** | 110 / 0 | 8 / 0 |
+| `CB_DATUM/reseed_disc_landed` (seed 0) | **0** | 30 | 0 |
+| R record satellites | **0** | 30 | 0 |
+| D5 flags at +1 / births +1 / +2 | 40 / 64 / 7 | 301 / 64 / 7 | 0 / 701 / 7 |
+| G2 / G3 / G4 | PASS / PASS / PASS | PASS / PASS / PASS | PASS / PASS / PASS |
+| per-sat-median-removed \|ΔPB\| p50 at +2 / +60 | **11.20 / 11.30 m** | 14.35 / 13.78 | 9.33 / 10.52 |
+| clock contrast pooled p50 / p95 | **1.74 / 9.28 m** | 3.61 / 11.94 | 1.82 / 8.85 |
+| W6 code bias pooled p50 | 0.470 | 0.656 | 0.464 |
+| ZWD pooled p50 / p95 | 0.64 / 4.99 | 1.65 / 8.62 | 1.24 / 7.84 |
+| a₀₀(+60) − seed | −1.19 | −0.84 | −1.22 |
+| cold-consumer replay p50 from +5 (§18.14) | **6.66 m, falling** | 10.04 m, flat | — |
+
+The control reproduces §21.7's K = 1 leg exactly (110 / 30 / 30 sats / 14.35 m / 3.61 / 0.656 / 1.65), so v3
+is a faithful replacement for v2.  The restored tree at +1 (the leg's own first-epoch snapshot — see the trap
+below) is 93 % the writer's: EQP 164/176 parent edges, EQS 115/126 roots, EQT 282/302 pins (all targets 0),
+CBS/CBI identical.
+
+**Verdicts.**  P5a: the two hard bars pass (re-seed discs 0 ≤ 3, R record 0 ≤ 3); `eq34_reref` 8 against a
+bar of 5 and a seed rate of 2 — a near-miss that reads as the 7 % of the tree that genuinely could not be
+kept (arcs that changed across the seam).  P5c PASS.  **P5b FAIL on every channel**, all moving the right way.
+Cold-consumer replay: the restore leg's wire converges (6.66 m and falling) where the control's does not (10.0
+flat) — a real product improvement, not yet continuity.
+
+**The residual, measured (`products.txt` at +2, leg vs seed).**  Satellite clocks agree to a common −0.118 m
+with a datum-free contrast of 0.54 m p50.  Phase biases do NOT: raw |ΔPB| p50 **17.6 m** over 120 keys,
+**not whole wavelengths** (|Δ/λ − round| p50 0.258 — uniform noise), **not common to a satellite** (spread
+across a satellite's signals 48.7 m p50; G02 L1C +11.5 / L1W +37.5 / L2W +13.8 m).  The emitter's own per-key
+baselines (`epb`, restored from the writer) moved by 16.5 m p50 at the first emit.  The same order of offset
+is present WITHOUT the DD branch (`nocarry_restore` 9.3 m) and with the branch held (§21.7), and the tree and
+targets are the writer's.  So the phase-bias LEVEL per family is set by something that restarts cold in every
+posture — the station layer (the rx-CB carry: 26 % of priors withheld at its 10σ gate on the leg vs 13 % on
+the seed; the T5 per-LOS iono deviation carry: 400 cold seeds at +1; the SH a₀₀ +4.6 TECU at +1 decaying in
+five epochs; the receiver phase-bias states) — or a definition of the family's level the pins do not fix.
+That is RS-4's measurement.
+
+**The seam is UNDECLARED on the wire — an invariant-#7 gap in its own right.**  The first emitted E record
+carries `datum_changed 0`, no R record is written, and this lineage does not serialize the optional per-key
+`phase_disc` field (legend: `P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc]`), so a file
+consumer sees a 17 m phase-bias step with no signal.  Why: the CLK-R `resume_seam` datum mark fires only when
+the held-frame engine reports `epochs == 0` (`NetworkEmitStore.cpp:338`), and the frame restore brings that
+engine back with its 604 epochs — the mark was designed for the clock frame and is suppressed exactly when the
+clock IS continuous; the emitter's per-key jump test (`NetworkProductEmitter.cpp:383`) does bump the
+in-process counters on a fresh baseline, which is what the in-process consumer reacts to, but nothing reaches
+the file.  ⚠ Harness trap (worker, verified on `rs2_null_rebase_d5w1` too): a leg's first emitted epoch
+overwrites the `seed.txt` it resumed from — `event_leg.py` sets `state_snapshot_interval_s = 1e9`, but
+`NetworkRunContext.cpp` gates the write on `last_snapshot_write_s < 0.0 || …`, and the initial −1 fires
+unconditionally.  Every leg today copied a fresh snapshot and ran once, so no result is affected; `event_leg.py
+rerun` exists for exactly this; a re-run in place would silently resume from the leg's own +1 snapshot.
+
+**RS-4 pre-registered — the phase-bias level at the seam: measure, then declare.**
+* **Measurement (no solve change):** arm the raw satellite-bias state trace (`network.trace_sat_bias_states`,
+  trace-class) on a `rs3_null_restore`-posture leg and on a 60-epoch re-run window of the seed, and attribute
+  the raw estimator PB difference leg − seed at +1 per (satellite, signal) to: (a) the family's pinned arc kept
+  vs changed (the EQT diff), (b) the pinning station's rx-CB carry restart and its receiver phase-bias state,
+  (c) the signal and its per-LOS iono deviation at the pinning station, (d) emitted vs raw (whether the
+  emitter's re-base/filter moves the level).  Deliverable: the table, and a one-sentence mechanism the next
+  memory card can be built on.  Also the rx-CB carry and T5 deviation as candidate rows for a capture increment
+  if (b)/(c) dominate.
+* **Declaration (small build, default-OFF, byte-identical when off):** `network.resume_pb_seam_mark` — at the
+  first emit after a warm resume, if the emitted phase bias differs from the restored per-key baseline by more
+  than `discThresholdM` on more than 10 % of a constellation's keys, mark `datum_changed` for that
+  constellation exactly as the CLK-R `resume_seam` rule does (counted, evented `PB_FRAME/resume_seam`); and
+  register the per-key discontinuity serialization for the field golden as its own row (product bytes change
+  — a documented product-contract change, certified by a smoke pair).  Gates: on the restore leg the first E
+  record carries `datum_changed 1` (or an R record) whenever P5b's PB bar fails; byte-identical products when
+  no key exceeds the threshold (the seed-window control); the cold-consumer replay unchanged (the mark reaches
+  the file, the replay driver's reaction is measured, not assumed).
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
