@@ -2470,7 +2470,7 @@ Quiet seed `evseed_quiet6h` ep0665 (tow 279150), 60-epoch legs, event at +10.
 | comparison | result |
 |---|---|
 | base exe (unmodified worktree, `90566ebf…`) OFF-null vs ON exe (`c763c168…`) OFF-null | **IDENTICAL** — `products.txt` `f3f37bc3…`, `network_dd_fractional.csv` `852c4dc3…`, `network_events.csv` `690927f6…`, `network_solution.csv`, `network_zwd.csv`, and the run-end counter block character-for-character |
-| ON exe, knob OFF vs knob ON **at the default `min_age_ep` 60** (`coldfb_null_off` vs `coldfb_null_on`) | **SOLVE IDENTICAL** — `products.txt`, `network_dd_fractional.csv`, `network_solution.csv`, `network_zwd.csv` byte-for-byte; `network_events.csv` differs ONLY by the two trace fields the armed knob appends to each handover row (273 rows both, `…from=S46000SIM` vs `…from=S46000SIM;cand_skipped=0;cand_first_unusable=-`).  But see §15.4: that identity is the maturity bar being INERT on a warm-resume leg, not the pass agreeing with today's sweep |
+| ON exe, knob OFF vs knob ON **at the default `min_age_ep` 60** (`coldfb_null_off` vs `coldfb_null_on`) | **SOLVE IDENTICAL** — `products.txt`, `network_dd_fractional.csv`, `network_solution.csv`, `network_zwd.csv` byte-for-byte; `network_events.csv` differs ONLY by the two trace fields the armed knob appends to each handover row (273 rows both, `…from=S46000SIM` vs `…from=S46000SIM;cand_skipped=0;cand_first_unusable=-`).  But see §15.4: that identity is the maturity bar being INERT on a warm-resume leg, not the pass agreeing with today's sweep (FIXED 2026-09-12, §15.4.1 — re-measured on the v2 seed the same arm gives 36/36 elected, 11 rank-changed, `handover_cold` 3 → 0) |
 | ON exe, knob OFF vs knob ON at `min_age_ep` 0 (`coldfb_null_off` vs `coldfb_null_on0`) | DIFFERS, and attributes exactly: 3 of 24 handovers changed successor (`candidacy_rank_changed` 3), `handover_cold` 3 → **0** |
 
 The third row is the §14.4 precedent, not a failure: a knob that acts must be
@@ -2508,9 +2508,96 @@ Consequences, and they are not only the harness's:
   `min_age_ep` epochs after every resume, in the safe direction.  The G3 storm
   arm is a COLD 6 h run, where `birth_ep` is the true first stash and the bar is
   live from epoch 60 on — the regime the default was sized for.
-* **owed:** either snapshot `birth_ep` (and `birth_s` with it), or give the
+* ~~**owed:** either snapshot `birth_ep` (and `birth_s` with it), or give the
   candidacy bar a resume-aware clock.  Until then any card whose predicate reads
-  `birth_ep` must state which side of a resume it was measured on.
+  `birth_ep` must state which side of a resume it was measured on.~~  **FIXED
+  2026-09-12 — see §15.4.1.**  A card whose predicate reads `birth_ep` no longer
+  has to say which side of a resume it was measured on; it does have to be
+  built against an exe carrying the fix (everything before `worktree-birthfix`
+  measured the inert bar).
+
+#### 15.4.1 FIXED (2026-09-12) — the RESTORED sentinel, and the bar is live on a resume leg at its DEFAULT
+
+**Mechanism: a sentinel, not a format bump.**  `LocalCarry::kBirthEpRestored`
+(−1) / `kBirthSRestored` (−1.0) — the warm resume stamps every restored entry
+with them (`makeRestoredLocalCarry`, `NetworkRunContext.cpp:1250` for the `L`
+rows and `:1279` for `Z`), and the harvest's first-stash-wins rule now tests
+`!= 0` instead of `> 0` (`localCarryStampBirth`, `NetworkRunTypes.hpp:531`,
+called at all three stash sites — `NetworkRunContext.cpp:3636` ambiguity,
+`:4056` in-block iono, `:4242` in-block rx clock).  `0` still means "never
+stashed"; `−1` means "restored, true age not snapshotted ⇒ MATURE"; the two are
+now DISTINGUISHABLE, which is the entire defect.  **Nothing is added to the
+snapshot record or to the warm-resume fingerprint**, so the fix applies to every
+seed already on disk — which is also why the alternative (snapshot `birth_ep` at
+a format bump) was NOT taken: it could not have been A/B'd on
+`evseed_quiet6h_v2` at all, because that seed was written before it.
+
+**The reader audit came back clean: all three readers already tested `> 0` /
+`<= 0`, so none needed a logic change.**  The two `birth_ep` readers — the F3
+block admission gate (`ApplicationNetworkAssembly.cpp:3499` / `:3525`) and the
+candidacy maturity bar (`NetworkPhaseDatum.cpp:325`) — were merged onto ONE
+predicate, `localCarryYoung` (`NetworkRunTypes.hpp:505`), so they cannot drift
+apart.  The `birth_s` reader (the sim-only slip oracle's window floor,
+`NetworkSlipOracle.cpp:267`) keeps LOSING the window's `max` for the arc's whole
+restored life instead of being floored at the resume second from the first
+post-resume harvest on — the behaviour its own header always documented.
+`relevel_s` was never affected and needs no sentinel: it is stamped only on
+CREATE and on FREE (`NetworkYoungInflate::stamp`), never on an ordinary
+re-stash, so a restored entry's 0 survives every harvest and reads mature by
+`varAdd`'s own `relevel_s > 0` test.  Unit suite:
+`tests/test_restored_arc_age.cpp` (`RestoredArcAge`, 10 cases).
+
+**Measured.**  `runs/evseed_quiet6h_v2` ep0665 (fingerprint `c5b5df834d185ac8`,
+WARM RESUME confirmed: 2637 ambiguity carries + 60 Z rows + 355 D2 shared
+carries restored, `state_snapshot_require` on), 60-epoch NULL legs, `--extra`
+arming `phase_datum_candidacy_usable` + `phase_datum_candidacy_min_age_ep`
+(QC/election class, NOT fingerprinted — the loader accepted it on the resume
+leg, as §18.1 rule (2) allows).  Two exes differing ONLY by this fix: OLD
+`1B37E94BB6DA82FE…` (main `6a83728`), FIXED `06580E71AA86A37F…`.
+
+| channel (run-end clause) | knob OFF (either exe) | ON @ 60, OLD exe | ON @ 60, FIXED exe |
+|---|---|---|---|
+| elections the pass entered | — | 39 | 36 |
+| elected a candidate whose carry is USABLE | — | **0** | **36** |
+| of which NOT today's pick (`candidacy_rank_changed`) | — | 0 | **11** |
+| found NO usable candidate, fell through | — | **39** | **0** |
+| (candidate, family) pairs skipped | — | 679 | 10 |
+| … no ledger entry | — | 0 | 0 |
+| … refused by the variance/ratio ceiling | — | 46 | 3 |
+| … freed this epoch | — | 31 | 7 |
+| … **younger than 60 epochs** | — | **602** | **0** |
+| PB-GAUGE anchor handovers | 39 | 39 | 36 |
+| … CONTINUOUS / **COLD** | 36 / **3** | 36 / **3** | 36 / **0** |
+| handover rows carrying a screen decision (`cand_skipped > 0`) | — | 0 of 39 | **9 of 36** (`cand_first_unusable` = S31000SIM ×3, S02000SIM ×2, S29000SIM ×2, S56000SIM ×2) |
+| consumer 3D, final epoch (held-out SZZ000SIM) | 0.833 m | 0.833 m | 0.760 m |
+
+The OLD-exe ON leg is the §15.3 inert control reproduced on the v2 seed: same
+39/36/3 handovers as the OFF null, `cand_skipped=0` on every traced row, and
+**602 of 679 skips are `young`** (the SPEC's original 390 of 414 was the same
+phenomenon on the pre-promotion `evseed_quiet6h` seed).
+
+**OFF-path byte-identity (invariant #6).**  Same legdir, same `leg.json`, the
+two exes: `products.txt` `f6588a96d157dad836214f3eafde379133d4fc2c8dffe3d7fc774364a86952b6`,
+`network_dd_fractional.csv` `5842740049dd86f0…`, `network_events.csv`
+`0272423d6276ab2f…`, plus `network_solution.csv`, `network_zwd.csv`,
+`network_epoch_status.csv`, `network_phase_anchor.csv` — all IDENTICAL, and the
+run-end block differs only in four wall-clock lines (RINEX parse seconds, three
+`[RT] obs backlog` wall-clock deltas).  Expected: the three readers are all
+knob-gated (`phase_leveling_local_block_min_age_ep` 0, `candidacy_usable` off,
+`oracle_relevel` off in the golden), so a resume leg with the age knobs unarmed
+cannot see the sentinel.
+
+**The bar is now TRANSPARENT, not BLIND — and that is the test.**  On the fixed
+exe `min_age_ep: 60` is **byte-identical to `min_age_ep: 0`** (`products.txt`
+`903DFAAC0E7A5896…` both, plus all six traces; the skip partition identical at
+0/3/7/0) — the restored-entry contract delivered: on a leg whose candidates all
+predate the snapshot, the maturity test correctly refuses nobody, so the LEDGER
+half decides.  Before the fix those two bars were completely different runs
+(§15.3's third row: 3 rank changes, `handover_cold` 3 → 0 only at bar 0).  The
+bar's BITE is pinned by `RestoredArcAge.AGenuinelyYoungCandidateIsStillRefused`
+and not by this leg: with the fix the sweep finds a usable candidate at rank 0–2
+every time, so it never walks down to an in-leg-born arc, and `skip_young` stays
+0 for a reason a longer or slipped leg would change.
 
 ### 15.5 G2 — the census proxy named the wrong families, and the production path answered anyway
 
