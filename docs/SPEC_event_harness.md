@@ -4256,3 +4256,131 @@ on E3 P2 is the field reproduction of Study 7 and counts FOR the pair (it is wha
 `--from-leg`/`--extra` copy nothing you did not pass; the renamed exe is a snapshot (hash it); traces are
 CWD-relative to the leg dir; a 0xC0000409 with no message is an uncaught runtime_error (read stdout.txt);
 check `tasklist` before EVERY launch; grade only after the gates above are on disk (this section).
+### 20.1 RESULTS — the field seed, the legs, the twin, and the two defects the harness found (2026-09-12 ~01:00–04:00 local; worker on the main tree, exe `gnss_processor_fld.exe` 3FDC5F8D… = main 109a6b2 / last code commit e90086f; manager re-grade)
+
+**Seed `runs/evseed_field6h`** (golden + trace-class extras, `--extra` added to write-seed in 2587a51): exit 0,
+723 synced / **720 emitted / 0 withheld**, 1909 ms/epoch on a box shared with another producer (6× the 307 ms
+quoted from the 4 h relevel arm — the seed arms the full trace set), 12 snapshots ep0001…ep0665.  Run-end,
+verbatim: `Network (MW detect-only admission): legacy 160, evidence 0 [knob off; would-admit 10]; dropped
+loose 48 / unknown 1174.` · `IF-TD pairs [first]: 6 pair kind(s), eval 340307 / flag 149 / refloat 146`
+(L1C_L2W 113 flags; every L5-bearing pair 0) · common-band scope (OFF, would-narrow 23; `… of 0.0 anchored`,
+the predicted inert anchor clause) · **T4 attribution 0 for the whole 6 h and in every leg** (`network_raim.csv`
+0 bytes — the RAIM-pool re-host gap on `carry_invariant`; the §20 wrong-narrowing tripwire cannot fire on this
+lineage).  Natural slips per hour (h0…h5): mw_wl_slip 41/4/11/4/5/6, lli_slip 91/16/11/17/37/33, if_slip
+51/14/13/10/42/19.  Consumer WTZZ (L1/L2 float): 0 % fix, settled h3–6 p50 6.24 m.
+
+**G-F, the lane bias class — the OPPOSITE of the exception's fear.**  `mw_slip_detector.log`, 380 detections:
+
+| lane | detections | bia_corrected share |
+|---|---|---|
+| L1C/L2W | 77 | **0.753** |
+| L1C/L5Q | 97 | **0.000** |
+| L2W/L5Q | 206 | **0.000** |
+
+Under the real COD OSB product it is the L1/L2 lane that runs the between-satellite path; **the L5 lanes are
+the bias-free population the evidence rule is written for**, and `would-admit 10` says that population is
+non-empty on real data (~1.7 per hour network-wide).
+
+**Event site.**  GOPE00CZE / G24, snapshot ep0604 (tow 277290), event tow 277620.  Two forced deviations,
+both from the seed's own traces: GOPE's third band is **L5X** (RINEX C5X/L5X; priorities WCSLXPYMIQ), so every
+event signal is L5X; and `network_slip_raw.csv` lists only the first MW pair under `mw_chan=single`, so the
+triple-band test was read from the P2 null's `network_if_slip.csv` (pairs=all enumerates every pair).
+Candidates: G12 76.6° (dual only), **G24 57.5° (triple, 60/60 present, 0 LLI)**, G25 44.9°, G19/G32 < 35°.
+
+**⚠ DEFECT 1 — the field golden cannot warm-resume.**  Every leg exits 0 and resumes WARM but withholds
+**61 of 61 epochs** (`sh_gate_withheld`): at the first leg epoch (tow 277320) the SH a₀₀ reads **−4810 TECU**
+against the seed's **+38.07** at the same tow, clock_std 2819 m (seed 9.9), σ̂₀_pf_code 17219 (seed 4.9),
+674 chord births in the second epoch.  So `products.txt` is never written and `closed_loop_trace.csv` is
+empty — **gates G-C and G-D are dark on every leg, and G-E's wire/consumer halves with them.**  Discriminators
+(worker): the plain RTB-7 resume (`resume_frame_restore: false`) is *worse* (3/61 emitted, a₀₀ −6429, the
+three emitted epochs put the consumer at 5.0–5.5 km); plain + `zwd_seam_reseed: false` 7/61 (a₀₀ −5700).
+The loader's own text names the coupling path: `resume_coupling_restore` is the only knob that rebuilds the
+QK/QP regressors at the seam and it is illegal without `carry_coupling_gauge_project` (Card 1f) — which the
+golden does not carry, has no ledger row, defaults false, **and sits in the warm-resume fingerprint** (probe
+`evleg_fld_probe_cpl` refused before its first epoch: 545b8bdd2b638231 vs fb6f063ea23adf10).  The old
+validated field warm-resume config (`_fld50ws_resume.json`, RTB-7) carried `carry_coupling_gauge_project: true`.
+**Owed card (out of this card's scope): 1f on the field golden as a FRESH-CONVERGENCE pair, then one warm-resume
+leg; if that does not cure the seam, bisect the seam (the cause is attributed by the loader's text, not isolated).**
+
+**G-A identity — clean on single-band slips, and a trap on the reference arc.**  Bands freed:
+
+| event | injected | P0 OFF | P1 evidence | P2 / P2f / P3 | expected |
+|---|---|---|---|---|---|
+| E1 | L5X −99, no LLI | L1C+L5X | L1C+L5X (≡ P0) | **L5X** | {L5} ✓ |
+| E2 | L1C +37, no LLI | L1C+L2W+L5X | — | **L1C** | {L1C} ✓ |
+| E3 | L1C +29 and L5X +29 | L1C+L2W+L5X | — | **L2W** under first AND all | P2f trap / P2 all-band ✗ |
+| E5 | L5X −31 with LLI | L1C+L5X | — | **L5X** (`rule=lli_epoch`, F3) | {L5} ✓ |
+
+Verdict bases, verbatim: E1 `implicated=L5X;exonerated=L1C;L2W;basis=mw(L1C+L2W)silent(n=10;thr=1.5WL);
+mw(L1C+L5X)flag;mw(L2W+L5X)flag;iftd(…)silent×3;lli=none`; E2 `implicated=L1C;exonerated=L2W;L5X;basis=
+mw(L2W+L5X)silent(n=10;thr=0.2WL);mw(L1C+L2W)flag;mw(L1C+L5X)flag;iftd(L1C+L2W)=flagged`; E3
+`implicated=L2W;exonerated=L1C;L5X;basis=mw(L1C+L5X)silent(n=10;thr=1.4WL);mw(L1C+L2W)flag;mw(L2W+L5X)flag;
+iftd(L1C+L2W)=flagged;iftd(L1C+L5X)silent;iftd(L2W+L5X)silent;lli=none` — the equal-count trap reproduced on
+real data: the scope freed the one band that never moved and left 29 cycles standing on both guilty bands,
+where OFF freed all three.  P1 ≡ P0 bit-for-bit on the null and on E1 (the legacy gate admits a −99 L5 slip
+on the field: the lane's σ is ~5× smaller than the sim's); P3 ≡ P2 everywhere.
+
+**⚠ DEFECT 2 — why `pairs: all` did not veto E3: the IF-TD reference arc is UNTESTED in the additional
+chains.**  `network_if_slip.csv` (P2 null, 60 epochs): the L5-bearing pairs at GOPE/G24 read
+`abs_dev_m = 0.000000` at every epoch of the window while their pools fill normally; network-wide, 41
+(station, sat) arcs are zero on every row — **all of them on the (L2W, L5·) pair, exactly one per station,
+21 L5Q + 20 L5X (8.4 % / 7.4 % of arcs, so not a tracking-code effect)**, and none of them zero in the
+companion L1/L2 chain.  Per (station, pair, epoch) group there is exactly one zero-deviation satellite in
+92.7 % of groups; pooling both L5 chains, one satellite in 97.6 %.  It is the chain's REFERENCE: the statistic
+is ΔOMC(sat) − ΔOMC(ref), zero for the reference itself.  The first chain tests its reference through the
+reference arm; the additional chains do NOT re-run it (§14.10.4, the flood guard).  Correction to the naive
+reading: the L5 chains adopt the (1,2) chain's reference only when it tracks L5 (46.7 % of station-epochs
+shared; of the 53.3 % that differ, 98 % are a (1,2) reference with no L5), otherwise they elect the highest
+L5-capable satellite (rank 1 in 80.6 %, rank ≤ 2 in 99.0 %).  At GOPE: (1,2) reference G12 (76.6°, Block
+IIR-M, no L5); both L5 chains reference **G24** for k ∈ [−9, +41], then G25.  **So E3 at G24 was confounded —
+the (1,5) veto was structurally unavailable, not merely silent — and the dead zone is every station's
+highest L5-capable satellite: the best-placed arc of the constellation.**  G25 at GOPE has live L5 deviations
+at k = 0 (0.0086 / 0.0044 m against thresholds 0.109 / 0.170 m; an equal +29-cycle L1+L5 slip gives ~3.1 m
+of IF deviation, 28× the bar) and becomes the reference only at k = +43.
+
+**The equal-count leg OFF the reference arc (GOPE00CZE / G25, same tow, L1C +29 and L5X +29) — the trap
+is CLOSED there by `pairs: all` and OPEN under `pairs: first`.**  P0 freed L1C+L2W+L5X (MW (2,5) + IF-TD (1,2)
+drains).  P2f: `keep implicated=L2W;exonerated=L1C;L5X;basis=mw(L1C+L5X)silent(n=10;thr=1.5WL);mw(L1C+L2W)flag;
+mw(L2W+L5X)flag;iftd(L1C+L2W)=flagged;lli=none` → **L2W only** (the innocent band; 29 cycles left standing on
+both injected bands).  P2: `all reason=no_exoneration;…;iftd(L1C+L5X)=flagged;…;iftd(L2W+L5X)=flagged` → all
+three bands freed, three `T1_if_slip` refloat rows (one per pair).  `network_if_slip.csv` GOPE/G25 at k = 0:
+L1C/L2W 14.044 m (thr 0.107, flagged), **L1C/L5X 3.1508 m (thr 0.1089, flagged — 29×; the prediction
+29 cyc × 0.107 m/cyc = 3.10 m holds to 2 %)**, L2W/L5X 83.17 m (thr 0.171, flagged); under `first` the two
+L5 rows do not exist.  The MW (1,5) lane is silent (n=10, thr 1.5 WL) exactly as the trap requires.  The
+close-spaced pools are healthy on real data (thresholds 0.109 / 0.171 m — the 12× amplification is absorbed).
+Caveat: G25 takes the L5 reference at k = +43, so a future B/C/D grade on this arm stops at +40.
+
+**G-G, the 6 h field twin for the evidence knob (`runs/evseed_field6h_ev` = seed config + `mw_evidence_refloat`,
+same exe; manager-launched and graded).**  Exit 0, **720/720 emitted, 0 withheld (= the seed)**; run-end
+`legacy 160, evidence 10 [knob on; would-admit 0]; dropped loose 44 / unknown 1168`; every other detector
+count identical (lli_slip 205, if_slip 149, eq34 reref 746 / reattach 337; mw_wl_slip 71 → 73; attribution 0
+both).  The admissions (`src=evidence` rows): BOGT/G32 L1C;L5X ratio 7.0 n=67 int=unknown · BSHM/G30 L1C;L5Q
+4.5 n=349 known · KIT3/G06 L1C;L5Q 5.0 n=56 unknown · SYOG/G26 L2W;L5X 7.7 n=185 known · CHUR/G03 L2W;L5Q
+5.1 n=25 unknown — **all on the bias-free L5 lanes, all mature, three with an integer the legacy gate can
+never admit.**  Wire (products ON − OFF): satellite clocks ≤ 3 mm at every epoch; four admissions move the
+satellite's emitted phase bias ≤ 0.14 m within 30 min; the SYOG/G26 admission **re-realizes the (G26, L5X)
+phase-bias datum by 9.2 m in the admission epoch and it is DECLARED** (`disc_counter` 0 → 1 — invariant #7
+holds).  Consumer (`ev_consumer_invariant_grade.py`, t0 259200, settled h3–6): pb_reset / cb_disc / clk_disc
+**29 / 590 / 6 identical**; stepping-epoch fraction **0.1181 identical**; p90 of the per-epoch max emitted
+step 0.127 → 0.257 m (recorded — the consumer runs L1/L2 and did not move); raw p50 6.24 → 6.42 m; de-biased
+p50 **5.28 → 5.49 (+4.0 %)**, rms **6.48 → 6.16 (−5.0 %)**; per-hour de-biased p50 3.53 → 3.21, rms
+4.42 → 3.90.  **Every G-G bar passes** (withheld equal, consumer within ±5 %, step fraction equal, admissions
+identified and on the lanes the rule targets).
+
+**VERDICTS (per the §20 decision rules).**
+- `network.cycle_slip.mw_evidence_refloat` — **FIELD PIN.**  G-F: the L5 lanes are 0 % bias-corrected and
+  would-admit = 10 in 6 h; G-E: P1 ≡ P0 bit-for-bit on the quiet leg and on E1; G-G: pass on every bar.  The
+  fear in the exception text was inverted by measurement.  Field cost signature to watch: an admission on the
+  arc that realizes a (sat, signal) phase-bias datum re-realizes the family (declared) — on this lineage there
+  is no anchor election to hand it over, so the consumer pays one declared discontinuity per such admission.
+- `network.cycle_slip.common_band_scope` + `if_phase_td_pairs = all` — **EXCEPTION, with the mechanism.**
+  Single-band narrowing is correct on real data (E1, E2, E5 by the receiver's bits), but the equal-count trap is
+  OPEN on every station's IF-TD reference satellite (the highest L5-capable one), where the additional pairs
+  cannot veto because the reference arc is untested (DEFECT 2), and on this lineage the wrong narrowing has
+  no backstop (T4 attribution structurally 0).  The wire/consumer cost of the trap could not be measured
+  (DEFECT 1).  Fix card (stub, not built here): a pair whose IF-TD chain holds the satellite as its reference
+  is NOT silent for the verdict (untested ⇒ immature ⇒ all-band on that arc — one clause in
+  `NetworkCommonBandScope`, no detector change, no re-opening of the §14.10.4 flood), re-priced on G24 and G25;
+  then the field pin rides on a seed that can warm-resume (DEFECT 1's card).
+- Both defects are HARNESS findings of the kind the field seed exists for: neither is visible on the sim (the
+  sim's S2 leg injected on a non-reference satellite; the sim golden resumes through the F3 coupling path).
