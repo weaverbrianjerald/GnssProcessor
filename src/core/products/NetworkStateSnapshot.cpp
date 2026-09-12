@@ -207,6 +207,28 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         for (double v : snap.carry_cov_rows[i]) ln += fmt::format(",{}", v);
         put(ln);
     }
+    // RS-3 DATUM records (SPEC_event_harness §21.7): the eq34 chain datum's last-epoch
+    // spanning tree, then the time-linked code-bias datum memory.  Written only under
+    // network.state_snapshot_datum_capture (the driver leaves the containers empty
+    // otherwise, so a run without it writes the previous bytes unchanged), and
+    // deliberately WITHOUT a header bump — see the format note in the header.  Emitted
+    // BEFORE the CARRY / EMITTER blobs, like the Q* group, so the verbatim blob state
+    // machines can never swallow them.
+    for (const auto& [key, sta] : snap.eq34_datum_rx) put(fmt::format("EQD,{},{}", key, sta));
+    for (const auto& [key, sat] : snap.eq34_rx_parent) put(fmt::format("EQP,{},{}", key, sat));
+    for (const auto& [amb, sta] : snap.eq34_sat_root)  put(fmt::format("EQS,{},{}", amb, sta));
+    for (const auto& [key, tgt] : snap.eq34_prev_target)
+        put(fmt::format("EQT,{},{},{}", key.first, key.second, tgt));
+    for (const auto& [key, el] : snap.eq34_prev_el)
+        put(fmt::format("EQE,{},{},{}", key.first, key.second, el));
+    for (const auto& [idx, amb] : snap.eq34_retained_edges)
+        put(fmt::format("EQR,{},{}", idx, amb));
+    for (const auto& [fam, per_sat] : snap.code_bias_prev)
+        for (const auto& [sat, v] : per_sat)
+            put(fmt::format("CBP,{},{},{}", fam, sat, v));
+    for (const auto& s : snap.code_bias_sat_seen) put(fmt::format("CBS,{}", s));
+    for (const auto& [sat, pr] : snap.code_bias_ifpin_pair)
+        put(fmt::format("CBI,{},{},{}", sat, pr.first, pr.second));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -554,6 +576,46 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 row[static_cast<std::size_t>(e)] = d1;
             }
             s.carry_cov_rows.push_back(std::move(row));
+        } else if (tag == "EQD") {  // RS-3: eq34 sticky datum receiver per (cons,signal)
+            if (f.size() != 3 || f[1].empty() || f[2].empty())
+                return fail("malformed EQD line");
+            s.eq34_datum_rx[f[1]] = f[2];
+        } else if (tag == "EQP") {  // RS-3: receiver's parent-edge satellite
+            if (f.size() != 3 || f[1].empty() || f[2].empty())
+                return fail("malformed EQP line");
+            s.eq34_rx_parent[f[1]] = f[2];
+        } else if (tag == "EQS") {  // RS-3: satellite's component datum receiver
+            if (f.size() != 3 || f[1].empty() || f[2].empty())
+                return fail("malformed EQS line");
+            s.eq34_sat_root[f[1]] = f[2];
+        } else if (tag == "EQT") {  // RS-3: last epoch's per-(station, amb) pin target
+            if (f.size() != 4 || f[2].empty()) return fail("malformed EQT line");
+            if (!parseI(f[1], i1) || !parseD(f[3], d1)) return fail("malformed EQT fields");
+            s.eq34_prev_target[{static_cast<int>(i1), f[2]}] = d1;
+        } else if (tag == "EQE") {  // RS-3: last epoch's per-(station, sat) arc elevation
+            if (f.size() != 4 || f[2].empty()) return fail("malformed EQE line");
+            if (!parseI(f[1], i1) || !parseD(f[3], d1)) return fail("malformed EQE fields");
+            s.eq34_prev_el[{static_cast<int>(i1), f[2]}] = d1;
+        } else if (tag == "EQR") {  // RS-3: gap-retained tree edge
+            if (f.size() != 3 || f[2].empty()) return fail("malformed EQR line");
+            if (!parseI(f[1], i1)) return fail("malformed EQR station index");
+            s.eq34_retained_edges.emplace(static_cast<int>(i1), f[2]);
+        } else if (tag == "CBP") {  // RS-3: time-linked code-bias previous value
+            if (f.size() != 4 || f[1].empty() || f[2].empty())
+                return fail("malformed CBP line");
+            if (!parseD(f[3], d1)) return fail("malformed CBP value");
+            // The whole point of the map is a FINITE previous realization to
+            // difference against; a nan/inf would be accepted by strtod and then
+            // silently poison the veteran-referenced sum-to-zero RHS.
+            if (!std::isfinite(d1)) return fail("CBP value not finite");
+            s.code_bias_prev[f[1]][f[2]] = d1;
+        } else if (tag == "CBS") {  // RS-3: code-bias ever-harvested satellite
+            if (f.size() != 2 || f[1].empty()) return fail("malformed CBS line");
+            s.code_bias_sat_seen.insert(f[1]);
+        } else if (tag == "CBI") {  // RS-3: code-bias IF-pin reference pair
+            if (f.size() != 4 || f[1].empty() || f[2].empty() || f[3].empty())
+                return fail("malformed CBI line");
+            s.code_bias_ifpin_pair[f[1]] = {f[2], f[3]};
         } else {
             return fail("unknown record tag '" + tag + "'");
         }

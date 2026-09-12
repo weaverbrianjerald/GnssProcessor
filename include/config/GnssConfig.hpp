@@ -2720,6 +2720,50 @@ namespace GnssProcessor {
          */
         bool networkResumeCarryRebase() const { return network_resume_carry_rebase_; }
         /**
+         * @brief Resume DATUM restore (@c network.resume_datum_restore,
+         *        docs/SPEC_event_harness.md §21.7) — the reader half of
+         *        @c network.state_snapshot_datum_capture.
+         *
+         * The RE-COUPLING edge (standing invariant #7) for the two datum memories no
+         * snapshot ever carried.  RS-2 / RS-2b showed the restored DD branch itself is
+         * right across a warm-resume seam; what still re-realizes is the WIRE's datum:
+         *
+         *  1. The eq34 chain election continues last epoch's spanning tree from
+         *     @c eq34_datum_rx (the sticky datum receiver per (constellation,signal)),
+         *     @c eq34_rx_parent (each receiver's parent-edge satellite) and
+         *     @c eq34_sat_root, plus @c eq34_prev_target / @c eq34_prev_el /
+         *     @c eq34_retained_edges.  Only the SAT-side parents (@c anchor_incumbent)
+         *     survive a resume today, via @ref networkResumeFrameRestore, so the
+         *     receiver side is rebuilt from the cold arc registry, the pinned arcs
+         *     change, and every phase-bias family re-realizes by the integer between the
+         *     old and the new pinned arc.  The DD branch cannot prevent it — the branch
+         *     is invariant to the datum by construction.
+         *  2. The time-linked code-bias datum's previous-value map (@c code_bias_prev_ /
+         *     @c code_bias_sat_seen_) is not persisted either, so the resume block sets
+         *     @c code_bias_datum_resumed_ and EVERY first post-resume re-seed disc-bumps.
+         *
+         * Measured at the field seam without it (60-epoch leg off a 6 h seed): 110
+         * @c PHASE_DATUM/eq34_reref and 30 @c CB_DATUM/reseed_disc_landed at the first
+         * post-resume epoch (the seed: 2 and 0), an R record naming 30 satellites, a
+         * 14 m per-satellite-median-removed phase-bias offset and a 3.6 m datum-free
+         * clock contrast against the continuous seed.
+         *
+         * Armed, the six eq34 maps are restored BEFORE the first election, so the
+         * sticky-tree seed continues the writer's tree, and the code-bias memory is
+         * restored with @c code_bias_datum_resumed_ left FALSE — the datum CONTINUES, so
+         * a re-seed bumps only where it genuinely re-seeds.  Either half absent from the
+         * file ⇒ today's behaviour for that half plus one loud warning (inert, not clean).
+         *
+         * The loader hard-requires @ref networkResumeFrameRestore: the sat-side parents
+         * are the other half of the same tree, and without them the first election runs
+         * incumbent-less and re-references every family before these maps can matter.
+         * Deliberately NOT in the warm-resume fingerprint — the same forward-only
+         * resume-response exemption class as @ref networkResumeFrameRestore,
+         * @ref networkResumeCouplingRestore and @ref networkResumeCarryRebase.
+         * Default false = byte-identical.
+         */
+        bool networkResumeDatumRestore() const { return network_resume_datum_restore_; }
+        /**
          * @brief READMIT continuity — seed-first satellite re-admission
          *        (@c network.readmit_seed_horizon_s, seconds; the STABILITY campaign's E2,
          *        SPEC_synthetic_minimum_network §18.4 / SPEC_amb_iono_split_overcount §7 FIRST).
@@ -7486,6 +7530,7 @@ namespace GnssProcessor {
         bool   network_resume_frame_restore_{false};       ///< Resume FRAME restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the snapshot's phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-satellite state and the CLK-R held frame, so the first post-resume election / clock fold / emit continue the pre-seam realization.  Capture rides its OWN write knob, network.state_snapshot_frame_capture (format v2, knob-gated by 90718c3); this knob only decides whether a resume USES the rows.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_coupling_restore_{false};    ///< §18.12 resume COUPLING-REGRESSOR restore: at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order — never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING (LOOSE CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain DIAGONAL prior asserted AT that conditional variance which out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project (Card 1f), and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only — var is never modified).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_carry_rebase_{false};        ///< RS-2 resume CARRY RE-BASE (SPEC_event_harness §21.4), the reader half of network.state_snapshot_carry_lin: at the first DD prior build after a warm resume, re-base every restored chord the build projects — ẑ += W·zl_writer − zl_now, with W the cycle-basis projection the build already forms and zl_now this epoch's Σc·x_lin over the SAME incidence that forms z_free — so the restored branch is folded in THIS run's linearization frame instead of the writer's.  Pᶻ untouched (an exact frame translation).  A component whose restored contributors carry no ZL row is marginalized (born fresh) rather than folded frame-wrong, and counted.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        bool   network_resume_datum_restore_{false};       ///< RS-3 resume DATUM restore (SPEC_event_harness §21.7), the reader half of network.state_snapshot_datum_capture: at a warm resume, restore the eq34 chain datum's last-epoch spanning tree (eq34_datum_rx / eq34_rx_parent / eq34_sat_root / eq34_prev_target / eq34_prev_el / eq34_retained_edges) BEFORE the first election, so the sticky-tree seed continues the writer's tree instead of re-electing it from the cold arc registry, and restore the time-linked code-bias memory (code_bias_prev_ / code_bias_sat_seen_) with code_bias_datum_resumed_ left FALSE, so a re-seed disc-bumps only where it genuinely re-seeds.  Loader hard-requires resume_frame_restore (the sat-side half of the same tree).  Rows absent ⇒ today's behaviour for that half, loudly.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.
         bool   network_readmit_seed_code_bias_{true};      ///< READMIT seed sub-knob: also park + seed the departing satellite's per-signal CODE-BIAS columns (true) or the clock alone (false).  Inert without readmit_seed_horizon_s.

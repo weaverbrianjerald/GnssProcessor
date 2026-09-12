@@ -81,6 +81,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.amb_seam_reinflate_var = config_.networkAmbSeamReinflateVarM2();
     k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
+    k.resume_datum_restore   = config_.networkResumeDatumRestore();      // RS-3 §21.7
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
     k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // E2 seed-first re-admission
@@ -1009,7 +1010,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   carry hygiene           phase_anchor_carry_reref
         //   slip response           cycle_slip.{relevel_free_epoch,relevel_delta_bridge}
         //   resume response         zwd_seam_reseed, resume_frame_restore,
-        //                           resume_slip_warmup_ep, resume_coupling_restore
+        //                           resume_slip_warmup_ep, resume_coupling_restore,
+        //                           resume_carry_rebase, resume_d5_warmup_ep,
+        //                           resume_datum_restore (RS-3, §21.7)
         //
         // Two entries need their own note:
         //
@@ -1019,6 +1022,17 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   channel reads as a first sighting — the restore case, already handled.
         //   (`adm_resume_pending` makes that first restored epoch a screened RESTORE
         //   rather than a birth, the one case the seed-birth tripwire cannot see.)
+        //
+        //   state_snapshot_datum_capture (RS-3) is the same representation question with
+        //   one twist: its rows ride the EXISTING header (the optional-var_first
+        //   precedent), so a pre-card binary rejects the file on the unknown record TAG
+        //   rather than on the header literal.  Both are this format's documented
+        //   cold-start signal and both throw under state_snapshot_require, so the safety
+        //   is identical; keeping the header stable is what lets an RS-3 A/B diff two
+        //   snapshots and see only the new rows.  The datum quantities themselves are
+        //   already fingerprinted by the knobs that create them (phase_datum_eq34,
+        //   code_datum_time_linked), so a writer/reader mismatch on their MEANING is
+        //   unreachable.
         //
         //   state_snapshot_coupling_capture is a serialization REPRESENTATION, not a
         //   policy: it adds rows and bumps the header to v3.  That is a binary
@@ -1404,6 +1418,125 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       n_ledger_primed);
                         }
                     }
+                    // RS-3 DATUM restore (network.resume_datum_restore, SPEC_event_harness
+                    // §21.7).  The frame restore above brought back the eq34 tree's
+                    // SATELLITE side (anchor_incumbent); this brings back the receiver
+                    // side and the second, unrelated datum memory, BEFORE anything that
+                    // could run an election — the whole of networkTryWarmResume runs
+                    // ahead of the first epoch, so the ordering is structural, and the
+                    // loader guarantees resume_frame_restore is armed with it.
+                    //
+                    // Measured without it at the field seam: the sticky-tree seed sees an
+                    // empty eq34_rx_parent / eq34_sat_root, rebuilds the tree from the
+                    // cold arc registry, and every phase-bias family re-realizes by the
+                    // integer between the old and the new pinned arc — 110
+                    // PHASE_DATUM/eq34_reref at the first post-resume epoch against the
+                    // seed's 2, an R record naming 30 satellites, 14 m per-satellite PB
+                    // offsets.  The DD branch cannot prevent it (a DD is invariant to the
+                    // datum by construction), which is why RS-2's branch-faithful resume
+                    // left the wire's realization untouched.
+                    //
+                    // The two halves are gated and reported SEPARATELY: a file may carry
+                    // one and not the other (a run with phase_datum_eq34 but no
+                    // code_datum_time_linked writes no CB* rows and vice versa), and an
+                    // absent half must read as INERT for that half alone, never borrow
+                    // the other's verdict (the hasFrameState/hasCouplingState precedent).
+                    bool datum_cb_restored = false;
+                    if (ctx.knobs.resume_datum_restore) {
+                        const bool have_eq34 =
+                            !snap.eq34_datum_rx.empty() || !snap.eq34_rx_parent.empty()
+                            || !snap.eq34_sat_root.empty() || !snap.eq34_prev_target.empty()
+                            || !snap.eq34_prev_el.empty()
+                            || !snap.eq34_retained_edges.empty();
+                        const bool have_cb =
+                            !snap.code_bias_prev.empty() || !snap.code_bias_sat_seen.empty()
+                            || !snap.code_bias_ifpin_pair.empty();
+                        if (have_eq34) {
+                            ctx.carry.eq34_datum_rx  = snap.eq34_datum_rx;
+                            ctx.carry.eq34_rx_parent = snap.eq34_rx_parent;
+                            ctx.carry.eq34_sat_root  = snap.eq34_sat_root;
+                            ctx.carry.eq34_prev_target.clear();
+                            for (const auto& [key, tgt] : snap.eq34_prev_target)
+                                ctx.carry.eq34_prev_target[{key.first, key.second}] = tgt;
+                            ctx.carry.eq34_prev_el.clear();
+                            for (const auto& [key, el] : snap.eq34_prev_el)
+                                ctx.carry.eq34_prev_el[{static_cast<std::size_t>(key.first),
+                                                        key.second}] = el;
+                            ctx.carry.eq34_retained_edges.clear();
+                            for (const auto& [idx, amb] : snap.eq34_retained_edges)
+                                ctx.carry.eq34_retained_edges.emplace(idx, amb);
+                            ctx.counters.n_resume_datum_eq34_rx =
+                                static_cast<long long>(snap.eq34_datum_rx.size());
+                            ctx.counters.n_resume_datum_eq34_edges =
+                                static_cast<long long>(snap.eq34_rx_parent.size());
+                            ctx.counters.n_resume_datum_sat_roots =
+                                static_cast<long long>(snap.eq34_sat_root.size());
+                            ctx.counters.n_resume_datum_prev_targets =
+                                static_cast<long long>(snap.eq34_prev_target.size());
+                            ctx.counters.n_resume_datum_prev_el =
+                                static_cast<long long>(snap.eq34_prev_el.size());
+                            ctx.counters.n_resume_datum_retained =
+                                static_cast<long long>(snap.eq34_retained_edges.size());
+                        } else {
+                            log->warn("Network (RS-3 datum restore): ARMED but the snapshot "
+                                      "carries NO eq34 tree rows (a writer without "
+                                      "network.state_snapshot_datum_capture, or a run with "
+                                      "network.phase_datum_eq34 off) — that half is INERT; "
+                                      "the first election rebuilds the spanning tree from "
+                                      "the cold arc registry exactly as an unarmed resume "
+                                      "does, and every phase-bias family re-references.");
+                        }
+                        if (have_cb) {
+                            ctx.carry.code_bias_prev_      = snap.code_bias_prev;
+                            ctx.carry.code_bias_sat_seen_  = snap.code_bias_sat_seen;
+                            // ...and the pair those values were solved under.  Restoring
+                            // the values without the pair is strictly WORSE than today:
+                            // `pair_same` still reads false everywhere, so the IF-pin RHS
+                            // still re-seeds to 0, while the restored seen-set now makes
+                            // every one of those re-seeds BUMP.  A pair that genuinely
+                            // changed across the seam still trips the test and still
+                            // bumps — the resume's previous kept epoch IS the writer's.
+                            ctx.carry.code_bias_ifpin_pair_ = snap.code_bias_ifpin_pair;
+                            datum_cb_restored = true;
+                            long long n_cbp = 0;
+                            for (const auto& [fam, per_sat] : snap.code_bias_prev)
+                                n_cbp += static_cast<long long>(per_sat.size());
+                            ctx.counters.n_resume_datum_cb_prev  = n_cbp;
+                            ctx.counters.n_resume_datum_cb_seen  =
+                                static_cast<long long>(snap.code_bias_sat_seen.size());
+                            ctx.counters.n_resume_datum_cb_pair  =
+                                static_cast<long long>(snap.code_bias_ifpin_pair.size());
+                        } else {
+                            log->warn("Network (RS-3 datum restore): ARMED but the snapshot "
+                                      "carries NO CBP/CBS/CBI rows (a writer without "
+                                      "network.state_snapshot_datum_capture, or a run with "
+                                      "network.code_datum_time_linked off) — that half is "
+                                      "INERT; the run is marked 'resumed' below and every "
+                                      "first post-resume code-bias re-seed disc-bumps.");
+                        }
+                        if (have_eq34 || have_cb)
+                            log->info("Network (RS-3 datum restore): ARMED at the resume seam "
+                                      "— eq34 tree: {} sticky datum receiver(s), {} receiver "
+                                      "parent edge(s), {} satellite root(s), {} pin target(s), "
+                                      "{} longevity elevation(s), {} gap-retained edge(s); "
+                                      "code-bias datum: {} previous value(s) over {} family "
+                                      "(families), {} ever-seen satellite(s), {} IF-pin "
+                                      "pair(s).  Restored BEFORE "
+                                      "the first election, so its sticky seed CONTINUES the "
+                                      "writer's tree; the code-bias 'resumed' latch stays {} "
+                                      "(a re-seed bumps only where it genuinely re-seeds).",
+                                      ctx.counters.n_resume_datum_eq34_rx,
+                                      ctx.counters.n_resume_datum_eq34_edges,
+                                      ctx.counters.n_resume_datum_sat_roots,
+                                      ctx.counters.n_resume_datum_prev_targets,
+                                      ctx.counters.n_resume_datum_prev_el,
+                                      ctx.counters.n_resume_datum_retained,
+                                      ctx.counters.n_resume_datum_cb_prev,
+                                      snap.code_bias_prev.size(),
+                                      ctx.counters.n_resume_datum_cb_seen,
+                                      ctx.counters.n_resume_datum_cb_pair,
+                                      datum_cb_restored ? "FALSE" : "true (CB half inert)");
+                    }
                     // Coupling regressors (network.resume_coupling_restore) — the
                     // second half of the frame restore, and the RE-COUPLING edge for
                     // the leveling carry itself.
@@ -1662,7 +1795,22 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // consumer must see — mark the run "resumed" so every first post-
                     // resume re-seed disc-bumps (conservative; a genuinely-new sat's
                     // first emit absorbs a harmless bump).  Inert unless code_datum_time_linked.
-                    code_bias_datum_resumed_ = true;
+                    //
+                    // RS-3 (§21.7): unless the DATUM restore above actually brought the map
+                    // back.  Then the datum CONTINUES across the seam — a satellite whose
+                    // split is unchanged has no step to signal — so the blanket latch would
+                    // manufacture 30 consumer-visible discontinuities the wire does not
+                    // have.  The per-satellite seen-set restored with it keeps the
+                    // distinction the latch was standing in for: a satellite that genuinely
+                    // re-seeds is still a RETURN and still bumps.
+                    code_bias_datum_resumed_ = !datum_cb_restored;
+                    // RS-3 telemetry latch: measure the first post-resume epoch's datum
+                    // churn (eq34 rerefs / reattaches, code-bias re-seed discs) on EVERY
+                    // warm resume, armed or not, so an A/B's control leg is read by the
+                    // same instrument as its treatment.  Pure counters — nothing
+                    // downstream branches on it, so the OFF path stays byte-identical
+                    // (the anchor_age_resume_seed / adm_resume_pending shape).
+                    ctx.carry.resume_datum_first_ep = true;
                     // eq34 reattach hygiene (spec §2 INC-1 warm-resume rule): the
                     // arc-age map is not serialized, so without this latch every arc
                     // would look one epoch old on the first resumed epoch and the
@@ -2155,6 +2303,56 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                 }
             }
         }   // state_snapshot_coupling_capture
+        // RS-3 DATUM capture (network.state_snapshot_datum_capture, SPEC_event_harness
+        // §21.7) — the WRITE half of the two datum memories a warm resume had to
+        // re-realize.  The frame block above carries the eq34 tree's SATELLITE side
+        // (anchor_incumbent); this carries the RECEIVER side plus the per-component root
+        // vote, the pin targets, the longevity elevations and the extend-only retained
+        // set — together exactly what networkElectChainDatum's sticky seed reads — and
+        // the time-linked code-bias previous-value map + ever-seen set.
+        //
+        // Plain copies of ctx.carry AFTER the emit, into `snap` only: the writer run's
+        // products and every trace are byte-identical, which is what makes this knob
+        // legal to add to an existing recipe.  Every container is already empty on a run
+        // that does not arm the datum it belongs to (phase_datum_eq34 /
+        // code_datum_time_linked), so arming the capture on such a run costs nothing and
+        // writes no rows.
+        if (nc.state_snapshot_datum_capture) {
+            snap.eq34_datum_rx  = ctx.carry.eq34_datum_rx;
+            snap.eq34_rx_parent = ctx.carry.eq34_rx_parent;
+            snap.eq34_sat_root  = ctx.carry.eq34_sat_root;
+            for (const auto& [key, tgt] : ctx.carry.eq34_prev_target)
+                snap.eq34_prev_target[{key.first, key.second}] = tgt;
+            for (const auto& [key, el] : ctx.carry.eq34_prev_el)
+                snap.eq34_prev_el[{static_cast<int>(key.first), key.second}] = el;
+            for (const auto& [idx, amb] : ctx.carry.eq34_retained_edges)
+                snap.eq34_retained_edges.emplace(idx, amb);
+            // Non-finite screen on the code-bias values only: the eq34 targets and
+            // elevations are rounded/geometric quantities the election recomputes, while
+            // code_bias_prev_ IS the quantity the veteran-referenced sum-to-zero RHS
+            // differences against — a nan there would survive the parse (strtod accepts
+            // it) and poison the restored datum, so it is dropped at the source.
+            for (const auto& [fam, per_sat] : ctx.carry.code_bias_prev_)
+                for (const auto& [sat, v] : per_sat)
+                    if (std::isfinite(v)) snap.code_bias_prev[fam][sat] = v;
+            snap.code_bias_sat_seen = ctx.carry.code_bias_sat_seen_;
+            // The IF-pin pair that PRODUCED those values — the third container of the
+            // same kept-epoch lifecycle.  Without it the restore is inert on the IF-pin
+            // half: `pair_same` reads false for every satellite, the split re-seeds to 0
+            // and every satellite disc-bumps (measured: 32 of 32 on a field probe).
+            snap.code_bias_ifpin_pair = ctx.carry.code_bias_ifpin_pair_;
+            ctx.carry.snap_datum_rows_last =
+                static_cast<long long>(snap.eq34_datum_rx.size()
+                                       + snap.eq34_rx_parent.size()
+                                       + snap.eq34_sat_root.size()
+                                       + snap.eq34_prev_target.size()
+                                       + snap.eq34_prev_el.size()
+                                       + snap.eq34_retained_edges.size()
+                                       + snap.code_bias_sat_seen.size()
+                                       + snap.code_bias_ifpin_pair.size());
+            for (const auto& [fam, per_sat] : snap.code_bias_prev)
+                ctx.carry.snap_datum_rows_last += static_cast<long long>(per_sat.size());
+        }   // state_snapshot_datum_capture
         // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
         // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
         // resume reproduces the phase-ambiguity branch instead of re-converging one.

@@ -3433,6 +3433,46 @@ int networkTeardown(
                       cc.resume_dropped_unbased);
         }
     }
+    // RS-3 (SPEC_event_harness §21.7): the DATUM-continuity halves.  At FUNCTION scope,
+    // beside the coupling-capture readout and NOT inside the carry_invariant-gated
+    // RTB-7(d/e) block above — the eq34 chain datum and the time-linked code-bias datum
+    // both run on lineages that do and do not carry the invariant branch, so nesting it
+    // there would make the ON-path telemetry structurally inert on half the postures that
+    // arm it (standing invariant #4).  Printed whenever EITHER half is armed: an armed
+    // writer that wrote no rows and an armed reader that restored none are exactly the
+    // two invariant-#4 cases this line exists to expose, and the bare "off" on the other
+    // half is what says which it is.  The first-post-resume-epoch figures are counted on
+    // every warm resume regardless, so an A/B control leg reports them too.
+    if (config_.getNetworkConfig().state_snapshot_datum_capture
+        || config_.networkResumeDatumRestore()) {
+        const auto& C = ctx.counters;
+        const long long n_eq34_restored =
+            C.n_resume_datum_eq34_rx + C.n_resume_datum_eq34_edges
+            + C.n_resume_datum_sat_roots + C.n_resume_datum_prev_targets
+            + C.n_resume_datum_prev_el + C.n_resume_datum_retained;
+        log->info("Network (RS-3 datum restore): write {} / read {}; last snapshot carried "
+                  "{} datum row(s); restored eq34 datum rx {}, rx parents {}, sat roots {}, "
+                  "prev targets {} (+{} longevity elevation(s), {} gap-retained edge(s)); "
+                  "CB prev {}, seen {}, IF-pin pairs {}; first post-resume epoch: eq34 "
+                  "rerefs {}, reattaches {}, CB re-seed discs {}.{}",
+                  config_.getNetworkConfig().state_snapshot_datum_capture ? "ARMED" : "off",
+                  config_.networkResumeDatumRestore() ? "ARMED" : "off",
+                  ctx.carry.snap_datum_rows_last,
+                  C.n_resume_datum_eq34_rx, C.n_resume_datum_eq34_edges,
+                  C.n_resume_datum_sat_roots, C.n_resume_datum_prev_targets,
+                  C.n_resume_datum_prev_el, C.n_resume_datum_retained,
+                  C.n_resume_datum_cb_prev, C.n_resume_datum_cb_seen,
+                  C.n_resume_datum_cb_pair,
+                  C.n_resume_datum_first_reref, C.n_resume_datum_first_reattach,
+                  C.n_resume_datum_first_cb_disc,
+                  (config_.networkResumeDatumRestore() && n_eq34_restored == 0
+                   && C.n_resume_datum_cb_prev == 0)
+                      ? "  ⚠ 0 restored under an ARMED read — the snapshot carried no "
+                        "EQ* / CB* rows (a writer without "
+                        "network.state_snapshot_datum_capture?) or no warm resume "
+                        "happened; check the resume log for the RS-3 line."
+                      : "");
+    }
     // §18.12 coupling CAPTURE, write side — the RTB-7(e) snapshot readout's sibling, but
     // at FUNCTION scope on purpose: the RTB-7(d/e) block above is gated on carry_invariant,
     // while the coupling capture rides the phase-leveling carries
