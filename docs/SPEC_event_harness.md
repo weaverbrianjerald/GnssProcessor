@@ -4157,6 +4157,144 @@ becomes armable when that lineage goes multi-constellation.
 
 **Rules from here on.**  (1) New legs resume from the `_v2` seeds; the old `evseed_quiet6h` (evharness worktree) and `evseed_slipped6h` stay on disk for like-for-like re-runs of old legs only.  (2) A solve-affecting knob is A/B'd on the harness as a FRESH-CONVERGENCE pair (golden ± one knob, ~20 min each) or by writing a new seed per posture — never by `--extra` on a resume leg; trace-class / QC knobs remain leg-legal.  (3) `event_leg.py` arms `zwd_seam_reseed` on every leg (§18); the seeds themselves do not need it (they are fresh runs).  The study scripts that hard-code `SEED = "runs/evseed_quiet6h"` (`ev_study1_legs.py`, `ev_study3_legs.py`, …) describe closed studies and are left as the record.
 
+### 19.6 Increment 1 BUILT — the clock-carry S-transform (`network.handover_stransform`): the changed constellation's own carry stops free-falling; every WIRE gate passes, the pre-registered CONSUMER gates do not, because increment 0 already banked that win (2026-09-11 night; worktree `worktree-stransform` off `aae5375`, exe `gnss_processor_sts.exe` sha256 `B3A7E11B…`)
+
+Queue 1(b), SPEC'd 2026-08-04 in `SPEC_pivot_visibility_gauge_defect.md` §8 and unbuilt
+since.  **Built as specified**, default OFF, byte-identical OFF, FINGERPRINTED when armed.
+
+**The algebra as implemented.**  `v_c` = `NetworkSbasis::clockNullDirection` — the
+STRUCTURAL direction the datum builder owns, derived from the same `by_const` grouping and
+lexical sort `buildSharedDatum` pins with.  Inside the shared border it is the indicator
+over the constellation's registered satellite-clock columns at unit weight: the receiver
+clock/ISB that complete the gauge are LOCAL states the Schur reduction eliminates, and
+**every other shared family has a ZERO component** because its gauge is realized
+independently (W6 per-satellite IF pin + per-(const,signal) sum-to-zero for the code bias;
+anchor-receiver ambiguity pins for the phase bias).  The §19.1 census is the measurement
+behind that: at the 319260 handover the clock step is a rigid +1.8365 m while the code-bias
+step MEAN is 1e-6 m and the phase-bias step mean is −0.026 m against 0.18 m of scatter —
+the biases do not ride the clock frame.  Kernel `applyClockStransform` (pure, no context):
+`c0 = x_q/v_c[q]`, `x -= v_c*c0`, `var += v_c[i]^2 * var_q`; cross term dropped
+(conservative, §8.1 rule 2), full `S D S^T` still deferred by §8.8.
+
+**The load-bearing half is the RELEASE (§8.4 INC-1), and most of the measured benefit is
+there, not in the arithmetic.**  Only clocks are transformed; the code-bias and phase-bias
+carries were never in the wrong frame — they were simply DROPPED.  The seam records the
+transformed constellations in `NetworkCarryState::sts_consts` and the RTA-2
+`handover_affects` skips release for exactly those: the D2 diagonal
+(`NetworkRunContext.cpp:2508`) and dense (`:2625`) folds, the READMIT parked-entry drop
+(`:2477`), and `NetworkStashStatus.cpp:122/:225` (the VCE monitor and the prior-residual
+census `folded` bit, which must mirror the injector clause for clause or the census
+mislabels exactly the rows this card fixes).  Seam call site: `NetworkSolveGlue.cpp:1012`,
+immediately before `networkInjectD2CarryPrior` — the last point at which "every consumer of
+the carry sees the same frame" is guaranteed by construction rather than by an audit of the
+intervening seams.
+
+**Deliberately NOT released, both documented:** the `NetworkClockQc` jump test (its
+statistic is the RAW clock under a PIN datum, which genuinely steps by the datum delta —
+releasing it would flag the whole constellation; the edge stays classified as FRAME, §8.4
+INC-2's other permitted answer) and the two-state clock oscillator (`clock_model` is a
+documented NO-GO, so transforming it would be untested code on a dead path).
+
+**Gate 1 — OFF byte-identity: PASS, twice over.**  Fresh 2 h null pair
+`runs/evseed_stsg1_{off,false}` (knob ABSENT vs knob FALSE, one exe): `products.txt` sha256
+identical (`1729cf5a…`), and `network_dd_fractional` / `_events` / `_solution` /
+`closed_loop_trace` / `_epoch_status` all identical.  Stronger: `runs/evseed_stsg2_off`
+(this exe, knob absent) reproduces `runs/evseed_pivfresh_scoped` (increment 0's exe
+`F4FF8EF0…`, source `cc689d5`) **byte-identical on `products.txt`** (`db80fcaa…`), so the
+OFF path is a true no-op against the pre-card baseline across a different source revision.
+
+**Gate 2 — actuation + the wire, fresh 643-epoch pair `runs/evseed_stsg2_{off,on}`, one
+exe, single knob.**  Run-end (invariant #4): *2 clock-pivot handover(s) [E:1, G:1]; **2
+edge(s) TRANSFORMED, 52 row(s) re-expressed, 376 row(s) RETAINED**, 0 no-op, **0 self-check
+failure(s)**; |c0| max 1.019227 m.*  The PIVOT rows carry `sts=applied;c0=…;rows=…` (INC-2).
+The Galileo edge 271230 is the clean test — first edge of the lineage, arms identical
+before it:
+
+| channel (the CHANGED constellation's own) | control | OFF | **sts** | factor |
+|---|---|---|---|---|
+| E CB C1C / C5Q / C7Q step rms | 0.00003 / 0.00003 / 0.00050 | 0.01083 / 0.01213 / 0.25582 | **0.00003 / 0.00002 / 0.00060** | 361x / 607x / 426x |
+| E PB L1C / L5Q / L7Q step rms | 0.00203 / 0.00288 / 0.00278 | 0.55734 / 0.76102 / 0.73368 | **0.00174 / 0.00254 / 0.00242** | 320x / 300x / 303x — BELOW control |
+| consumer resets PB/CB/CLK, switch epoch | — | 18 / 18 / 6 | 18 / 18 / 6 | unchanged (by design, below) |
+| consumer resets, the five FOLLOWING epochs | — | 18,15,17,15,6 PB | **0,0,0,0,0** | the aftermath is gone |
+
+GPS edge 276150 is symmetric: CB C1C 0.01294 → **0.00003**, PB L1C 0.58319 → **0.00084**
+(the pre-registered bar was ≤ 0.01 — met by 12x), follow-on PB resets 19,15,21,10,7 →
+**0,0,0,0,0**.  The emitted GPS clock step stays the rigid +Δ with scatter at noise
+(+0.5937 ± 0.00546 → **+0.5878 ± 0.00467**, control sd 0.00494) — never per-satellite
+scatter.  **§8.7 gate 6 did NOT fire**: the ON arm's step rms is flat at the edge and at
++1 / +4 / +14 / +30 min (E PB L1C 0.00174 / 0.00191 / 0.00165 / 0.00156 / 0.00152), with no
+geometric divergence and 0 self-check failures.  Truth (`simnet_grade`, whole-run settled,
+gate ±1 %): sat-clock contrast rms 1.6356 → **1.6356** (0.00 %), sat-clock residual 1.4053 →
+1.4034, code bias 0.1445 → 0.1443 (p50 0.0468 → 0.0334), rx-DCB 1.2284 → 1.2228, rx-clock
+1.8562 → 1.8482, ZWD 0.0075 → 0.0073.  **The transform does not change accuracy, only
+continuity — exactly what it claims.**  On this bed the consumer also improves a lot: 3D rms
+**0.1851 → 0.1070 (−42 %)**, max 0.3605 → 0.1719 (−52 %), Up rms 0.1453 → 0.0565.
+
+**Gate 3 — ONE storm arm `runs/golden_sim_campaign_zwdblk_sts`** (= the tracked scoped arm
++ the knob, 720/720, 1303 s) vs **S = `runs/golden_sim_campaign_zwdblk_scoped`**.  c0 at the
+GPS edge is **−1.839995 m** — the transform independently re-derived the exact rigid shift
+§19.1 measured off the wire.
+
+| channel | S | **sts** | gate | verdict |
+|---|---|---|---|---|
+| G CB C1C / C2W / C5Q step rms at 319260 (control 0.00003/0.00003/0.00034) | 0.00921 / 0.01081 / 0.16678 | **0.00002 / 0.00002 / 0.00029** | control | **PASS** 460x / 540x / 575x |
+| G PB L1C / L2W step rms (control 0.00083/0.00132) | 0.19914 / 0.25947 | **0.00079 / 0.00124** | control | **PASS** — below control |
+| E CB C1C / C7Q step rms at 321900 (control 0.00001/0.00031) | 0.00516 / 0.17809 | **0.00001 / 0.00024** | control | **PASS** |
+| E PB L1C / L5Q step rms (control 0.00096/0.00153) | 0.40473 / 0.55652 | **0.00096 / 0.00145** | control | **PASS** |
+| consumer resets at each switch epoch | 30/30/10, 27/24/8 | **unchanged** | ≤ 3 PB/CB | **FAIL as written** (see below) |
+| consumer resets, five following epochs (PB) | 27,21,18,12,13 / 23,19,21,16,2 | **0,0,0,0,0 / 3,3,3,2,0** | — | aftermath gone |
+| **consumer 3D at the GPS edge epoch** | 0.126 | **0.125** | ≤ 0.05 | **FAIL** |
+| **consumer 3D at the Galileo edge epoch** | 0.031 | **0.036** | ≤ 0.031 | **FAIL** |
+| pooled settled p50 / rms | 0.0825 / 0.0899 | **0.0807** / 0.0901 | p50 ≤ 0.0825 | **PASS** (rms flat) |
+| W1 window-excluded p50 / rms | 0.0804 / 0.0853 | **0.0746 / 0.0818** | — | better |
+| consumer 3.0–4.68 h p50 (pre-first-edge) | 0.0905 | **0.0905** | — | IDENTICAL (a controlled pair) |
+| hourly p50 h0…h5 | .524 .113 .114 .101 .089 .047 | **.524 .113 .114 .101 .089 .042** | h0–h3 ±2 cm | **PASS** — identical h0–h4 |
+| ZWD settled truth rms / span p50 / max | 0.0066 / 0.0205 / 0.0801 | **0.0059 / 0.0169 / 0.0261** | ≤ 0.0066 | **PASS** −11 % / −18 % / −67 % |
+| ref-free WL / EWL / L1C | 99.2 / 100.0 / 90.2 | **99.2 / 100.0 / 90.4** | ≥ 99.2 / ≥ 90.2 | **PASS** |
+| T4 events / ambient | 11 / 0.196 | **11 / 0.196** | ≤ 11 | **PASS** identical |
+| W2 4.9917 h fallout | 0/0/0 | **0/0/0** | absent | **PASS** |
+| G4 keeps / unanswered / spurious | 4300 / 0 / 2 | **4300 / 0 / 2** | — | identical |
+| split-referenced mean / max | 0.0 / 0 | **0.0 / 0** | 0/0 | **PASS** |
+| PHASE_ANCHOR handovers / cold | 315 / 78 | **315 / 78** | ≤ 78 | **PASS** identical |
+| sat-clock contrast / code-bias rms / rx-DCB / rx-clock | 0.7657 / 0.0902 / 1.3022 / 1.4213 | **0.7665 / 0.0916 / 1.3020 / 1.4251** | ±3 % | **PASS** (+0.10 / +1.55 / −0.02 / +0.27 %) |
+| run time | 1242 s | 1303 s | — | +4.9 % |
+
+**Isolation (the §19.5 list, re-run).**  Every event-kind total is **IDENTICAL**:
+`common_band` 5413, `if_slip` 4747, `mw_wl_slip` 2539, `lli_slip` 1205, `anchor_handover`
+483, `handover_continuous` 362, `anchor_slip_handover` 315, `cta_recouple` 103,
+`handover_cold` 100, `col_removed` 63, `col_added` 56, `cta_disc_landed` 52, `cta_decouple`
+52, `seed_held` 31.  The CLK-R, PB-GAUGE and READMIT run-end clauses are byte-identical.
+The only counters that move are the new `sts_*` ones.  **The knob touches the handover
+carry response and nothing else.**
+
+**Why the consumer gates fail, and what it means.**  They were written expecting the
+transform to remove a consumer shock that **increment 0 had already removed**: on the
+scoped baseline the GPS-edge epoch is 0.126 m against 0.129 m the epoch BEFORE it — there is
+no shock left to take out, and a bar of ≤ 0.05 m asked for an improvement on an already-flat
+channel.  The two switch-epoch reset counts are unchanged for a reason §8.2 states
+explicitly: **the emitted wire still steps by the datum delta BY DESIGN and the disc
+channels still describe it** — the card "does not change the emitted datum, the wire, or the
+disc-channel contract".  What the transform removes is the AFTERMATH, and that it removes
+completely (72 and 74 follow-on PB resets → 0 and 8).
+
+**The newly-visible follow-on defect, named.**  With the transform armed the producer still
+declares 30 PB + 30 CB discontinuities at the switch for biases whose step rms is now
+0.0008 m — i.e. for keys that did NOT move.  They are collateral of the CLOCK disc:
+`cta_disc_landed` marks every decoupled clock satellite and `markSatDiscontinuity` bumps
+that satellite's phase, code AND clock counters together.  That is an EMISSION question,
+explicitly out of scope for §8, and it is the natural **increment 2**: split the
+per-satellite disc bump by family so a clock-only re-reference stops resetting the
+consumer's ambiguities.  Expected prize: the switch-epoch 30/30 → 0/0.
+
+**Verdict.**  Every WIRE and QUALITY gate passes and nothing regressed beyond noise; the two
+consumer-facing gates fail because their target had already been collected.  Per the card's
+own rule (all gates or nothing), the ledger row is **KEEP_OFF pending a manager decision**,
+with the mechanism recorded: this is a producer-internal continuity fix whose consumer value
+is REDUNDANT with increment 0 on a lineage that already carries it, and LARGE on one that
+does not (the quiet 643-epoch bed: consumer rms −42 %, max −52 %).  The promotion question
+is therefore not "does it work" — it demonstrably does, 252–575x on the wire with zero
+self-check failures — but "does the project want producer wire continuity it cannot
+currently monetise at the consumer".  Not decided here.
 ## 20. The FIELD harness — a 6 h seed on the field golden and the owed field legs for the three sim-validated slip cards (pre-registered 2026-09-12 ~01:00 local, BEFORE any field leg is read)
 
 **Question.**  Three slip cards are RECOMMEND_ON and pinned in `golden_sim_tri_w6` but carry documented
