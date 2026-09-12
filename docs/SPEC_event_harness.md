@@ -4157,7 +4157,7 @@ becomes armable when that lineage goes multi-constellation.
 
 **Rules from here on.**  (1) New legs resume from the `_v2` seeds; the old `evseed_quiet6h` (evharness worktree) and `evseed_slipped6h` stay on disk for like-for-like re-runs of old legs only.  (2) A solve-affecting knob is A/B'd on the harness as a FRESH-CONVERGENCE pair (golden ± one knob, ~20 min each) or by writing a new seed per posture — never by `--extra` on a resume leg; trace-class / QC knobs remain leg-legal.  (3) `event_leg.py` arms `zwd_seam_reseed` on every leg (§18); the seeds themselves do not need it (they are fresh runs).  The study scripts that hard-code `SEED = "runs/evseed_quiet6h"` (`ev_study1_legs.py`, `ev_study3_legs.py`, …) describe closed studies and are left as the record.
 
-### 19.6 Increment 1 BUILT — the clock-carry S-transform (`network.handover_stransform`): the changed constellation's own carry stops free-falling; every WIRE gate passes, the pre-registered CONSUMER gates do not, because increment 0 already banked that win (2026-09-11 night; worktree `worktree-stransform` off `aae5375`, exe `gnss_processor_sts.exe` sha256 `B3A7E11B…`)
+### 19.6 Increment 1 BUILT + PROMOTED — the clock-carry S-transform (`network.handover_stransform`): the changed constellation's own carry stops free-falling; every WIRE gate passes at 250–575× back to control, and the two CONSUMER edge gates that failed were mis-specified (2026-09-11 night build, 2026-09-12 promotion; worktree `worktree-stransform`, exe `B3A7E11B…` / promoted build `C2F2B297…`)
 
 Queue 1(b), SPEC'd 2026-08-04 in `SPEC_pivot_visibility_gauge_defect.md` §8 and unbuilt
 since.  **Built as specified**, default OFF, byte-identical OFF, FINGERPRINTED when armed.
@@ -4286,15 +4286,53 @@ explicitly out of scope for §8, and it is the natural **increment 2**: split th
 per-satellite disc bump by family so a clock-only re-reference stops resetting the
 consumer's ambiguities.  Expected prize: the switch-epoch 30/30 → 0/0.
 
-**Verdict.**  Every WIRE and QUALITY gate passes and nothing regressed beyond noise; the two
-consumer-facing gates fail because their target had already been collected.  Per the card's
-own rule (all gates or nothing), the ledger row is **KEEP_OFF pending a manager decision**,
-with the mechanism recorded: this is a producer-internal continuity fix whose consumer value
-is REDUNDANT with increment 0 on a lineage that already carries it, and LARGE on one that
-does not (the quiet 643-epoch bed: consumer rms −42 %, max −52 %).  The promotion question
-is therefore not "does it work" — it demonstrably does, 252–575x on the wire with zero
-self-check failures — but "does the project want producer wire continuity it cannot
-currently monetise at the consumer".  Not decided here.
+**Verdict as reported (2026-09-11 night).**  Every WIRE and QUALITY gate passes and nothing
+regressed beyond noise; the two consumer-facing gates fail because their target had already
+been collected.  The worker's recommendation was KEEP_OFF pending a decision, on the card's
+own all-gates-or-nothing rule.
+
+**DECISION — PROMOTE (2026-09-12, manager).**  `network.handover_stransform` is
+**RECOMMEND_ON** in regime `on("network.scoped_handover_response") and not
+on("network.clock_datum_sum_to_zero") and not on("network.clock_datum_broadcast_anchored")`
+— the same exclusions as the scoped row, with NO `n_sys >= 2` term, because the transform
+acts on the CHANGED constellation's own carry and one constellation is therefore enough for
+it to do work.  `fingerprinted: true`.  Pinned in `golden_sim_tri_w6`; a documented
+exception in `golden_field_gps_dual`.  The reasoning, for the record:
+
+- Every wire gate passes at **250–575× back to control**, `OFF` is **byte-identical across
+  two source revisions**, **§8.7 gate 6 never fired**, all producer truth channels move
+  within **±1.6 %** of a ±3 % bar, and the pooled consumer p50, the window-excluded p50, ZWD
+  and L1C are all better or equal with the hourly profile identical.  **No channel is worse
+  beyond noise.**
+- **The two consumer EDGE gates were MIS-SPECIFIED by the manager, not missed by the card.**
+  They demanded an improvement AT the switch epoch, which increment 0 had already flattened:
+  on the scoped baseline the epoch before the GPS edge reads 0.129 m and the edge epoch
+  itself 0.126 m, so the bar asked for a gain on a channel with nothing left in it.
+- The unchanged switch-epoch reset COUNT is an **emission property, not a carry property**:
+  the per-satellite disc bump marks phase, code and clock together, so a clock-only
+  re-reference still resets the consumer's ambiguities.  §8 states explicitly that the
+  emitted wire still steps by the datum delta BY DESIGN and does not touch the disc-channel
+  contract — that work is **increment 2**, pre-registered below.
+
+Sim-validated on two beds (quiet 643-epoch fresh pair, slipped 720-epoch storm arm), single
+knob, one exe.  **Field arm owed** — and owed *behind* its prerequisite: the field golden is
+GPS-only and `scoped_handover_response` is itself a field exception there, so the regime
+predicate is false on that lineage and the knob is out of regime rather than suppressed.
+
+**INCREMENT 2, pre-registered (before any code is written).**  *Split the per-satellite
+discontinuity bump by family, so a transformed clock switch declares CLK discs only.*  Today
+`cta_disc_landed` marks every decoupled clock satellite and `markSatDiscontinuity` bumps that
+satellite's phase, code AND clock counters together; with the transform armed the producer
+therefore still declares 30 PB + 30 CB discontinuities at the GPS edge for biases whose step
+rms is now **0.0008 m** — keys that provably did not move.  Target: switch-epoch consumer
+resets **30/30/10 → 0/0/10** (the clock notes stay; the receiver's white-noise clock absorbs
+the common mode for free, `RealTimeEngineSsrBreaks.cpp:290-292`).  Gates: OFF byte-identical;
+the R record and E record still name the satellites whose CLOCK re-referenced; PB/CB disc
+counters unchanged on every satellite whose bias actually stepped (so a genuine bias
+discontinuity is never suppressed — the failure mode this card must not create); consumer 3D
+at the edge epoch not worse; and the §16.8 table not worse.  ⚠ This is the first edit in the
+card that touches the **emitted disc-channel contract**, so it needs a consumer-replay arm as
+well as a producer arm.
 ## 20. The FIELD harness — a 6 h seed on the field golden and the owed field legs for the three sim-validated slip cards (pre-registered 2026-09-12 ~01:00 local, BEFORE any field leg is read)
 
 **Question.**  Three slip cards are RECOMMEND_ON and pinned in `golden_sim_tri_w6` but carry documented

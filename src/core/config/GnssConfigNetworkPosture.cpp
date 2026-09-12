@@ -634,6 +634,25 @@ namespace GnssProcessor {
               "p50 0.1204 -> 0.0825 m, max |3D| 1.34 -> 0.20, hour 5 0.236 -> 0.047; fresh "
               "pair edge 1.143 -> 0.117 m) while the producer's own contrasts move < 0.5 % "
               "(runs/golden_sim_campaign_zwdblk_scoped, exe F4FF8EF0)" },
+            // --- PIVOT DEPARTURE increment 1 (SPEC_event_harness §19.6, promoted
+            //     2026-09-12).  Increment 0 above stops a handover invalidating the
+            //     constellations whose datum did NOT move; this re-expresses the CHANGED
+            //     constellation's own carry along the structural clock null direction and
+            //     FOLDS it, instead of dropping it for one epoch.  Needs a pivot datum (no
+            //     handover seam without one) and its own prerequisite; no n_sys term —
+            //     it acts on the constellation that changed, so one is enough.
+            //     Fingerprinted (armed-only token): fresh-convergence only.
+            { network_scoped_handover_response_
+                  && !network_clock_datum_sum_to_zero_
+                  && !network_clock_datum_broadcast_anchored_,
+              network_handover_stransform_,
+              Tier::ON, true , "network.handover_stransform",
+              "re-express the changed constellation's carry at a pivot handover instead of "
+              "dropping it for an epoch: its own code-bias and phase-bias steps fall 250-575x "
+              "back to control (storm arm G PB L1C 0.19914 -> 0.00079 m, G CB C5Q 0.16678 -> "
+              "0.00029) and every follow-on consumer reset goes to zero, with ZWD 0.0066 -> "
+              "0.0059, L1C 90.2 -> 90.4 and all truth contrasts within 1.6 % "
+              "(runs/golden_sim_campaign_zwdblk_sts, exe B3A7E11B)" },
             { r.tri && !network_clock_datum_sum_to_zero_ && !network_clock_datum_broadcast_anchored_,
               network_sticky_pivot_,
               Tier::SCOPED, true , "network.sticky_pivot",
