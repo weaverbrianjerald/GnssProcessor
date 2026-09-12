@@ -2797,6 +2797,36 @@ namespace GnssProcessor {
         int networkResumeSlipWarmupEp() const { return network_resume_slip_warmup_ep_; }
 
         /**
+         * @brief Post-resume D5 innovation-gate warm-up (@c network.resume_d5_warmup_ep,
+         *        epochs; RS-2b, docs/SPEC_event_harness.md §21.6).
+         *
+         * A MEASUREMENT knob, not a repair.  With @c network.resume_carry_rebase the
+         * restored branch is folded in the resumed run's own linearization and the first
+         * post-resume solve is healthy, yet 301 of 637 re-based chords still trip the D5
+         * gate at +1 (|v| p50 11 m against a modelled 0.58 m) and the branch is erased at
+         * +2.  Two readings fit that: the branch is RIGHT and the cold station layer is
+         * what disagrees with it, or the branch is genuinely inconsistent.  The gate
+         * cannot tell them apart while it re-taps, because the re-tap destroys the
+         * hypothesis it would have tested.
+         *
+         * For this many processed epochs after a warm resume the D5 gate is therefore
+         * DIAGNOSTIC-ONLY: a chord that trips k·σ̂₀ is counted (@c d5_warmup_suppressed,
+         * the @c warmup_suppressed column of @c network_d5_flags.csv, and the epoch's
+         * @c n_d5_flags — while @c n_d5_retaps stays 0) but is NOT re-tapped, NOT marked
+         * slipped for the next epoch, and its block is not refolded.  Everything else is
+         * untouched: the σ̂₀ accumulator is fed BEFORE the decision, so calibration is not
+         * censored; the v3 corroboration gate still runs; and the MW / LLI / IF-TD drains
+         * stay live, so a genuine in-gap slip keeps a response (standing invariant #1).
+         *
+         * Counted in PROCESSED epochs at the install seam — the one site the gate lives
+         * at — so a run that never installs a posterior never burns the window.  Armed
+         * only at a warm resume; a cold start never sets it.  0 = OFF = byte-identical.
+         * Not fingerprinted (forward-only resume response policy, the same exemption
+         * class as @ref networkResumeSlipWarmupEp and @ref networkResumeCarryRebase).
+         */
+        int networkResumeD5WarmupEp() const { return network_resume_d5_warmup_ep_; }
+
+        /**
          * @brief Carry per-LOS slant ionosphere across epochs in the network producer
          *        as a diagonal random-walk prior (@c network.carry_iono, QUEUE 8b).
          *
@@ -7433,6 +7463,7 @@ namespace GnssProcessor {
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.
         bool   network_readmit_seed_code_bias_{true};      ///< READMIT seed sub-knob: also park + seed the departing satellite's per-signal CODE-BIAS columns (true) or the clock alone (false).  Inert without readmit_seed_horizon_s.
+        int    network_resume_d5_warmup_ep_{0};            ///< RS-2b (SPEC_event_harness §21.6): epochs after a warm resume during which the Card-4 D5 innovation gate is DIAGNOSTIC-ONLY — a tripping chord is counted (d5_warmup_suppressed, the network_d5_flags.csv warmup_suppressed column, the epoch's n_d5_flags) but not re-tapped, not marked slipped, and its block is not refolded, so "branch right / cold station layer wrong" can be told from "branch inconsistent".  The σ̂₀ feed, the v3 corroboration gate and the MW/LLI/IF-TD drains are untouched.  Counted in PROCESSED epochs at the install seam.  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires en masse at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = OFF.  NOT fingerprinted.
         bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).
         double network_iono_carry_q_{1e-4};               ///< QUEUE 8b: slant-iono carry random-walk process noise (m²/s); var_eff = max(var + q·Δt, floor). Only used when network.carry_iono.

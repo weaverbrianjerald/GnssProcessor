@@ -238,6 +238,7 @@ namespace GnssProcessor {
         /// network.readmit_seed_code_bias — park + seed the per-signal CODE-BIAS columns too
         /// (true, the default) or the clock alone (false).  Inert without readmit_seed_horizon_s.
         bool   readmit_seed_cb{};
+        int    resume_d5_warmup_ep{};     ///< network.resume_d5_warmup_ep (RS-2b, SPEC_event_harness §21.6): PROCESSED epochs after a warm resume during which the Card-4 D5 innovation gate is DIAGNOSTIC-ONLY — a tripping chord is counted but not re-tapped, not marked slipped, and its block is not refolded.  A measurement knob: it holds the restored branch through the seam so the re-tap cannot destroy the hypothesis it would test.  0 = OFF.  NOT fingerprinted.
         int    resume_slip_warmup_ep{};   ///< network.resume_slip_warmup_ep: epochs after a warm resume during which the MW/LLI (T0) drain is DIAGNOSTIC-ONLY — its cold Welford reference (2 samples at the second warm epoch) declared 146 false WL slips on the §18.9 bed and re-leveled 5 % of the restored arcs; IF-TD (T1) and wind-up drains stay live, so an in-gap slip keeps a detector.  0 = OFF.  NOT fingerprinted.
         bool carry_vce{};
         bool vce_apply_on{};   ///< M2 v2 (docs/SPEC_carry_vce_apply.md): the LASER 5-95 variance-factor apply. SOLVE-AFFECTING; loader guarantees carry_vce.
@@ -1217,6 +1218,14 @@ namespace GnssProcessor {
         /// once per processed epoch at the PASS-A drain dispatch, never serialized
         /// (each resume is its own seam).  0 on every continuous epoch.
         int resume_slip_warmup_left{0};
+        /// network.resume_d5_warmup_ep countdown (RS-2b, SPEC_event_harness §21.6):
+        /// PROCESSED epochs REMAINING during which the Card-4 D5 innovation gate acts
+        /// diagnostic-only after a warm resume.  Armed by @ref networkTryWarmResume,
+        /// decremented once per epoch at the INSTALL seam — the single site the gate
+        /// lives at, so a run that never installs a posterior never burns the window —
+        /// and never serialized (each resume is its own seam).  0 on every continuous
+        /// epoch, which is what makes the OFF path byte-identical.
+        int resume_d5_warmup_left{0};
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed
         /// (station index, sat).  Diagonal-only (rx-CB rationale — no shared-border
         /// footprint; the coupling variant is deliberately deferred).  NOT snapshotted:
@@ -2476,6 +2485,7 @@ namespace GnssProcessor {
         long long n_resume_frame_clk_keys    = 0;  ///< CLK-R held-frame per-sat keys restored
         long long n_resume_frame_ledger      = 0;  ///< handover-ledger entries primed from restored leveling rows
         long long n_resume_slip_warmup_epochs = 0; ///< epochs the MW/LLI drain ran diagnostic-only post-resume
+        long long n_resume_d5_warmup_epochs = 0;   ///< RS-2b: epochs the Card-4 D5 innovation gate ran diagnostic-only post-resume
         // Card 1 coupling-regressor restore (network.resume_coupling_restore, §18.12) —
         // BOTH edges of the seam (standing invariant #7).  rows/zrows/terms/dict are the
         // RE-COUPLING edge's identities; seed_reinit is the DECOUPLING edge (columns the

@@ -814,7 +814,11 @@ void NetworkRunTraces::openMwWlDumps(bool d5_armed, bool lane_trace_armed,
             // should be gradeable from one file.
             d5_flags_trace << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
                               "ewl_stasat,hold_chord,injected_prev,raw_stepped,"
-                              "zhat,v,var_v,sigma0,z_post,dw_w\n";
+                              // RS-2b: warmup_suppressed — 1 where the trip fell inside the
+                              // post-resume D5 warm-up and was counted without being acted
+                              // on.  Appended (never inserted) so an existing reader's
+                              // positional columns are unchanged.
+                              "zhat,v,var_v,sigma0,z_post,dw_w,warmup_suppressed\n";
         else
             log->warn("Network: failed to open D5 flag dump {}",
                       d5_flags_trace_path.string());
@@ -1641,6 +1645,13 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"state_snapshot_frame_capture\":" << (nc.state_snapshot_frame_capture ? "true" : "false") << ','
                << "\"resume_frame_restore\":" << (config_.networkResumeFrameRestore() ? "true" : "false") << ','
                << "\"resume_slip_warmup_ep\":" << config_.networkResumeSlipWarmupEp() << ','
+               // RS-2b: emitted ONLY when armed, so an unarmed run's manifest bytes are
+               // unchanged (the inject / adm_screen precedent — the decomposition golden
+               // hashes this file).
+               << (config_.networkResumeD5WarmupEp() > 0
+                       ? fmt::format("\"resume_d5_warmup_ep\":{},",
+                                     config_.networkResumeD5WarmupEp())
+                       : std::string())
                // Card G RESPONSE (docs/SPEC_slip_qc_hardening.md §G3/W1).  It is
                // SOLVE-AFFECTING, so an archived logs/ folder has to be able to say
                // which side of the response its products came from.  Emitted ONLY

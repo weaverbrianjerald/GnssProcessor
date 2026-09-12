@@ -44,20 +44,35 @@
  *    visible (standing invariant #4).
  * 4. **WriteKnobOffEmitsNoZlRow** — the byte-identity half: with the write knob off the
  *    blob carries no @c ZL row at all, so a snapshot is unchanged by the card's presence.
+ * 5. **DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry** — RS-2b (§21.6), the
+ *    @c network.resume_d5_warmup_ep window.  Three arms off ONE noise stream (gate off /
+ *    gate on / gate on + diagnostic-only) are warmed together and then given the same
+ *    unsignalled 12-cycle jump.  The load-bearing assertion is that the suppressed arm's
+ *    carried DD equals the GATE-OFF arm's bit-for-bit: a "diagnostic" gate that still
+ *    nudged the posterior would pass any looser test.  Also pinned: the trip is still
+ *    reported (flags 1) and counted (@c d5_warmup_suppressed 1) with @c innov_retaps 0,
+ *    @ref GnssProcessor::NetworkInvariantCarryDriver::lastInnovWarmupSuppressed marks it
+ *    so the caller can keep it out of the slip funnel, the control arm genuinely differs
+ *    (non-vacuous), and an untouched neighbour chord is identical everywhere — the flag
+ *    must not be a global mute.
  *
  * Out of scope: the estimator-side fold itself (tests/test_network_invariant_carry_driver.cpp
  * and tests/test_pd_safe_fold.cpp own that), and the end-to-end resume, which is a harness
- * leg pair — §21.4's P1/P2/P3 gates.
+ * leg pair — §21.4's P1/P2/P3 gates and §21.6's window legs.
  */
 
 #include <gtest/gtest.h>
 #include <Eigen/Dense>
 
+#include <cstdio>
+#include <map>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkInvariantCarryDriver.hpp"
 
 namespace GnssProcessor {
@@ -346,6 +361,201 @@ TEST(ResumeCarryRebaseTest, WriteKnobOffEmitsNoZlRow) {
             EXPECT_DOUBLE_EQ(blocks[0].zhat(i), 0.0) << "write=" << write;
         EXPECT_EQ(d.counters().resume_rebased, 0) << "write=" << write;
     }
+}
+
+// ---------------------------------------------------------------------------
+// 5.  RS-2b (§21.6) — the DIAGNOSTIC-ONLY D5 window.  A chord that trips the gate while
+//     Config::innov_diagnostic_only is set must be COUNTED and reported (so it reaches
+//     network_d5_flags.csv and the epoch's n_d5_flags) and otherwise left completely
+//     alone: prior mean kept, Pᶻ row/col kept, re-tap counter not bumped, and marked in
+//     lastInnovWarmupSuppressed so the caller keeps it out of the slip funnel.  With the
+//     flag clear the SAME chord must re-tap exactly as before — the two arms are run off
+//     one shared setup so the only difference is the flag.
+// ---------------------------------------------------------------------------
+namespace {
+
+// A synthetic eq34 network just large enough for the D5 gate to have something to
+// catch: integer ambiguities, a per-receiver RPB so the DD is truly integer, a
+// spanning-tree ambiguity datum pinned per station and r0's RPB + a shared clock pin.
+// Deliberately a LOCAL copy rather than a shared header — these helpers are the
+// fixture, and a fixture shared between suites drifts under whichever one edits it.
+struct Net {
+    int R, S;
+    std::vector<double> a, c, b, d;      // rx clock, sat clock, sat bias, rx RPB
+    std::vector<std::vector<int>> z;     // integer ambiguities [R][S]
+    std::vector<std::string> sats;
+};
+
+Net makeNet(unsigned seed, int R, int S) {
+    std::mt19937 gen(seed);
+    std::uniform_real_distribution<double> clk(-10, 10), bias(-0.5, 0.5);
+    std::uniform_int_distribution<int> amb(-6, 6);
+    Net n; n.R = R; n.S = S;
+    for (int r = 0; r < R; ++r) { n.a.push_back(clk(gen)); n.d.push_back(bias(gen)); }
+    for (int s = 0; s < S; ++s) {
+        n.c.push_back(clk(gen)); n.b.push_back(bias(gen));
+        char id[8]; std::snprintf(id, sizeof(id), "G%02d", s + 1); n.sats.push_back(id);
+    }
+    n.z.assign(R, std::vector<int>(S));
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) n.z[r][s] = amb(gen);
+    return n;
+}
+
+std::size_t addNetStation(NetworkEstimator& est, const Net& n, int r,
+                          const std::vector<Eigen::Index>& clkCol,
+                          const std::vector<Eigen::Index>& pbCol,
+                          const std::vector<double>* noise) {
+    const int S = n.S;
+    const Eigen::Index colA = 0, colD = 1;                 // rx clock, rx RPB
+    std::vector<Eigen::Index> colZ(S);
+    for (int s = 0; s < S; ++s) colZ[s] = 2 + s;
+    std::vector<Eigen::Index> pins;                        // tree-edge ambiguities, pinned
+    for (int s = 0; s < S; ++s) if (isTreeEdge(r, s)) pins.push_back(colZ[s]);
+    const bool rpbPin = (r == 0);
+    const int nrows = 2 * S + static_cast<int>(pins.size()) + (rpbPin ? 1 : 0);
+    const Eigen::Index n_local = 2 + S;
+    Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(nrows, est.numShared());
+    Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(nrows, n_local);
+    Eigen::VectorXd w = Eigen::VectorXd::Ones(nrows), y = Eigen::VectorXd::Zero(nrows);
+    int row = 0;
+    for (int s = 0; s < S; ++s) {
+        A_s(row, clkCol[s]) = -1.0; A_r(row, colA) = 1.0;
+        y(row) = n.a[r] - n.c[s]; ++row;
+        A_s(row, clkCol[s]) = -1.0; A_s(row, pbCol[s]) = 1.0;
+        A_r(row, colA) = 1.0; A_r(row, colD) = 1.0; A_r(row, colZ[s]) = 1.0;
+        y(row) = n.a[r] - n.c[s] + n.b[s] + n.d[r] + n.z[r][s]
+                 + (noise ? (*noise)[static_cast<std::size_t>(s)] : 0.0);
+        ++row;
+    }
+    for (Eigen::Index pc : pins) { A_r(row, pc) = 1.0; y(row) = 0.0; w(row) = 1e10; ++row; }
+    if (rpbPin) { A_r(row, colD) = 1.0; y(row) = 0.0; w(row) = 1e10; ++row; }
+    return est.addStation(A_s, A_r, w, y);
+}
+
+/// One driven epoch: build the group, fold, solve, install.  The star(0,0) tree is the
+/// same one @ref isTreeEdge / @ref chordsOf describe, so the chord order matches.
+void driveEpoch(NetworkInvariantCarryDriver& drv, const Net& n,
+                const std::vector<std::vector<double>>* noise) {
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(static_cast<std::size_t>(n.S));
+    std::vector<Eigen::Index> pbCol(static_cast<std::size_t>(n.S));
+    for (int s = 0; s < n.S; ++s) {
+        clkCol[static_cast<std::size_t>(s)] = est.registerClock(n.sats[static_cast<std::size_t>(s)]);
+        pbCol[static_cast<std::size_t>(s)] =
+            est.registerPhaseBias(n.sats[static_cast<std::size_t>(s)], "L1");
+    }
+    est.beginEpoch();
+    std::vector<std::size_t> ids(static_cast<std::size_t>(n.R));
+    for (int r = 0; r < n.R; ++r)
+        ids[static_cast<std::size_t>(r)] = addNetStation(
+            est, n, r, clkCol, pbCol,
+            noise ? &(*noise)[static_cast<std::size_t>(r)] : nullptr);
+    NetworkInvariantCarryDriver::GroupInput g;
+    g.key = 0;
+    for (int r = 0; r < n.R; ++r)
+        for (int s = 0; s < n.S; ++s) {
+            NetworkInvariantCarryDriver::ArcInput a;
+            a.rx_vertex = rxV(r);
+            a.sat_vertex = satV(s);
+            a.tree_edge = isTreeEdge(r, s);
+            a.est_station = static_cast<int>(ids[static_cast<std::size_t>(r)]);
+            a.local_col = 2 + s;
+            g.arcs.push_back(a);
+        }
+    drv.beginEpoch(1.0);
+    est.setDdPriors(drv.buildDdPriors({g}));
+    const NetworkEstimator::Datum datum = {{est.clockColumn(n.sats[0]), 0.0}};
+    const Eigen::VectorXd x_s = est.solve(datum);
+    drv.installPosterior(est, x_s, datum);
+}
+
+NetworkInvariantCarryDriver::Config gateCfg(bool gate, bool diagnostic) {
+    NetworkInvariantCarryDriver::Config c;
+    c.qz = 0.0;
+    c.innov_gate = gate;
+    c.innov_k = 4.0;
+    c.innov_diagnostic_only = diagnostic;
+    return c;
+}
+
+}  // namespace
+
+TEST(ResumeCarryRebaseTest, DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry) {
+    constexpr int R = 4, S = 4, WARM = 8;
+    Net n = makeNet(53, R, S);
+    const ArcKey slip_chord(rxV(2), satV(3));   // a chord under star(0,0)
+    const ArcKey keep_chord(rxV(1), satV(1));   // an untouched neighbour
+
+    // THREE arms off one shared noise stream, so they differ only in the two flags:
+    //   ref  — gate OFF: the fold posterior, untouched by any gate decision;
+    //   ctl  — gate ON: today's behaviour, the flagged chord re-taps data-only;
+    //   diag — gate ON + diagnostic-only: the trip is counted and NOTHING else.
+    // The load-bearing assertion is diag == ref BIT-FOR-BIT on the flagged chord: a
+    // "diagnostic" gate that still nudged the posterior would pass a looser test.
+    NetworkInvariantCarryDriver ref(gateCfg(false, false));
+    NetworkInvariantCarryDriver ctl(gateCfg(true, false));
+    NetworkInvariantCarryDriver diag(gateCfg(true, true));
+
+    std::mt19937 gen(17);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    std::vector<std::vector<std::vector<double>>> warm;
+    for (int e = 0; e < WARM; ++e) {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        warm.push_back(std::move(v));
+    }
+    for (int e = 0; e < WARM; ++e) {
+        driveEpoch(ref,  n, &warm[static_cast<std::size_t>(e)]);
+        driveEpoch(ctl,  n, &warm[static_cast<std::size_t>(e)]);
+        driveEpoch(diag, n, &warm[static_cast<std::size_t>(e)]);
+    }
+    ASSERT_EQ(ctl.counters().innov_flags, 0) << "no arm may fire on clean warm-up epochs";
+    ASSERT_EQ(diag.counters().innov_flags, 0);
+
+    // An UNSIGNALLED integer jump — the fine slip the coarse layer misses.
+    n.z[2][3] += 12;
+    std::vector<std::vector<double>> jump(R, std::vector<double>(S));
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) jump[r][s] = nd(gen);
+    driveEpoch(ref,  n, &jump);
+    driveEpoch(ctl,  n, &jump);
+    driveEpoch(diag, n, &jump);
+
+    double z_ref = 0, v_ref = 0, z_ctl = 0, v_ctl = 0, z_diag = 0, v_diag = 0;
+    ASSERT_TRUE(ref.carriedDdForTest(0, slip_chord, z_ref, v_ref));
+    ASSERT_TRUE(ctl.carriedDdForTest(0, slip_chord, z_ctl, v_ctl));
+    ASSERT_TRUE(diag.carriedDdForTest(0, slip_chord, z_diag, v_diag));
+
+    // --- the gate still SEES it, in both armed arms -----------------------------
+    EXPECT_EQ(ctl.counters().innov_flags, 1);
+    EXPECT_EQ(diag.counters().innov_flags, 1) << "the trip must still be REPORTED";
+    EXPECT_EQ(ref.counters().innov_flags, 0)  << "gate OFF must never evaluate";
+
+    // --- but only the ordinary arm ACTS on it ----------------------------------
+    EXPECT_EQ(ctl.counters().innov_retaps, 1);
+    EXPECT_EQ(ctl.counters().d5_warmup_suppressed, 0);
+    EXPECT_EQ(diag.counters().innov_retaps, 0)
+        << "flags N / re-taps 0 is the window's whole readout";
+    EXPECT_EQ(diag.counters().d5_warmup_suppressed, 1);
+
+    // --- the funnel mask, without which "diagnostic" is false next epoch --------
+    ASSERT_EQ(diag.lastInnovWarmupSuppressed().size(), 1u);
+    EXPECT_EQ(diag.lastInnovWarmupSuppressed()[0], 1);
+    ASSERT_EQ(ctl.lastInnovWarmupSuppressed().size(), 1u);
+    EXPECT_EQ(ctl.lastInnovWarmupSuppressed()[0], 0);
+
+    // --- the carry itself -------------------------------------------------------
+    EXPECT_DOUBLE_EQ(z_diag, z_ref)
+        << "the suppressed chord must keep the plain fold posterior, bit-for-bit";
+    EXPECT_DOUBLE_EQ(v_diag, v_ref) << "its Pz must not be refolded either";
+    EXPECT_NE(z_ctl, z_ref) << "the control arm must genuinely differ (non-vacuous)";
+    EXPECT_GT(v_ctl, v_ref) << "the re-tap installs the inflated data-only variance";
+
+    // --- the neighbour is untouched everywhere: the flag is not a global mute ---
+    double z_kr = 0, v_kr = 0, z_kd = 0, v_kd = 0;
+    ASSERT_TRUE(ref.carriedDdForTest(0, keep_chord, z_kr, v_kr));
+    ASSERT_TRUE(diag.carriedDdForTest(0, keep_chord, z_kd, v_kd));
+    EXPECT_DOUBLE_EQ(z_kd, z_kr);
+    EXPECT_DOUBLE_EQ(v_kd, v_kr);
 }
 
 }  // namespace GnssProcessor

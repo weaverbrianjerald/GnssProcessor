@@ -82,6 +82,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
+    k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
     k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // E2 seed-first re-admission
     k.readmit_marg_ep        = config_.networkReadmitCouplingMargEp();   // block/row re-coupling edge
     k.readmit_seed_cb        = config_.networkReadmitSeedCodeBias();     // seed the code biases too (or clock only)
@@ -1631,6 +1632,19 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                   "acts diagnostic-only for the next {} processed epoch(s); "
                                   "IF-TD (T1) and wind-up drains stay live.",
                                   ctx.knobs.resume_slip_warmup_ep);
+                    }
+                    // RS-2b (§21.6): the same window one layer up, on the ESTIMATION-side
+                    // fine-slip gate.  Armed HERE and nowhere else — a cold start must never
+                    // set it, or the gate would be diagnostic-only on a run with no restored
+                    // branch to protect.  Countdown decremented at the install seam.
+                    if (ctx.knobs.resume_d5_warmup_ep > 0) {
+                        ctx.carry.resume_d5_warmup_left = ctx.knobs.resume_d5_warmup_ep;
+                        log->info("Network (RS-2b resume D5 warm-up): ARMED — the Card-4 D5 "
+                                  "innovation gate acts diagnostic-only for the next {} "
+                                  "processed epoch(s): trips are counted, never re-tapped and "
+                                  "never marked slipped.  The σ̂₀ feed, the v3 corroboration "
+                                  "gate and the MW/LLI/IF-TD drains are untouched.",
+                                  ctx.knobs.resume_d5_warmup_ep);
                     }
                     ura_sigma0_ewma     = snap.ura_sigma0_ewma;
                     ura_refloat_horizon = snap.ura_refloat_horizon;
