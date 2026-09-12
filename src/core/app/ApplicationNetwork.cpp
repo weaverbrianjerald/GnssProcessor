@@ -667,6 +667,14 @@ int Application::runNetwork() {
     // owns the arithmetic.  The loader already disarms it without carry_invariant, but AND
     // it here too so the driver Cfg is self-consistent regardless of load path.
     carry_cfg.pd_safe = carry_invariant && config_.networkCarryInvariantPdSafe();
+    // RS-2 (SPEC_event_harness §21.4): the LINEARIZATION-frame halves of the carry.
+    // carry_lin captures Σ c·x_lin per chord at every harvest (write side, snapshot only);
+    // carry_rebase re-bases a restored branch onto THIS run's x_lin at the first post-resume
+    // DD build (read side).  The loader disarms carry_lin without state_snapshot_carry; AND
+    // both with carry_invariant here so the driver Cfg is self-consistent on any load path.
+    carry_cfg.carry_lin    = carry_invariant
+                             && config_.getNetworkConfig().state_snapshot_carry_lin;
+    carry_cfg.carry_rebase = carry_invariant && config_.networkResumeCarryRebase();
     // M5 card WL-3: the lane-coordinate carry.  The loader
     // enforces carry_invariant + mw_wl.ewl_enable.  lane_joint discriminates the LANE
     // shape (joint 2K pair blocks, lane prior/q, lane measurement rows, fold-on-change

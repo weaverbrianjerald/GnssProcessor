@@ -2342,6 +2342,12 @@ namespace GnssProcessor {
         network_config_.state_snapshot_carry_diagonal =
             jval<bool>(json, "network.state_snapshot_carry_diagonal",
                        "state_snapshot_carry_diagonal", false);
+        // RS-2 (§21.4): also write each chord's LINEARIZATION DD (the ZL row) so a resumed
+        // run can re-base the correction-frame means onto its OWN x_lin.  Write side only;
+        // validated with the rest of the carry block below.
+        network_config_.state_snapshot_carry_lin =
+            jval<bool>(json, "network.state_snapshot_carry_lin",
+                       "state_snapshot_carry_lin", false);
         // RTB-7(d): resume-event response (RE-2), A/B safety (HB-1), blob history (BR-1).
         network_config_.state_snapshot_resume_shock_m =
             jval<double>(json, "network.state_snapshot_resume_shock_m",
@@ -3620,6 +3626,22 @@ namespace GnssProcessor {
                     "alone at a 5.13 m consumer walk in h12.  Set "
                     "amb_seam_reinflate_var_m2 to 0.");
         }
+        // RS-2 resume CARRY RE-BASE (SPEC_event_harness §21.4) — the reader half of
+        // network.state_snapshot_carry_lin, and the same exemption class as the two
+        // restores above: forward-only resume response policy, inert without a resume.
+        network_resume_carry_rebase_ =
+            jval<bool>(json, "network.resume_carry_rebase", "resume_carry_rebase", false);
+        if (network_resume_carry_rebase_)
+            log->info("Network (RS-2): resume CARRY RE-BASE armed — at the first DD prior "
+                      "build after a warm resume, every restored chord the build projects is "
+                      "re-based onto THIS run's linearization (ẑ += W·zl_writer − zl_now, "
+                      "with W the cycle-basis projection the build already forms and zl_now "
+                      "this epoch's Σ c·x_lin over the same incidence that forms z_free).  "
+                      "Pᶻ is untouched — an exact frame translation, not a re-weighting.  A "
+                      "component whose restored contributors carry no ZL row is marginalized "
+                      "(born fresh on the diffuse prior) rather than folded frame-wrong, and "
+                      "counted.  A blob with no ZL rows at all leaves today's behaviour and "
+                      "warns.  NOT in the warm-resume fingerprint.");
         // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge;
         // SPEC_synthetic_minimum_network §18.4, SPEC_amb_iono_split_overcount §7 FIRST).
         // Both default OFF = byte-identical; neither is fingerprinted (parking adds
@@ -6760,6 +6782,7 @@ namespace GnssProcessor {
                           "would be inert).");
                 network_config_.state_snapshot_carry = false;
                 network_config_.state_snapshot_carry_diagonal = false;  // RTB-7(e): no blob to shape
+                network_config_.state_snapshot_carry_lin = false;       // RS-2: no blob to base
             } else {
                 log->info("Network (RTB-7c): BRANCH-FAITHFUL resume ON — the invariant DD "
                           "carry (z-store means + {} Pᶻ + vertex/group numbering) is "
@@ -6780,6 +6803,18 @@ namespace GnssProcessor {
                               "prior tightens correlated chords' common mode) — grade it on "
                               "datum-invariant quantities before trusting it.  Reading is "
                               "unaffected: v1/v2/v3 blobs all restore under either setting.");
+                if (network_config_.state_snapshot_carry_lin)
+                    log->info("Network (RS-2): carry blob carries the LINEARIZATION DD — one "
+                              "ZL row per block beside Z, zl = Σ c·x_lin over the same "
+                              "incidence that forms z_free.  The stored ẑ is the "
+                              "CORRECTION-frame DD (λN − Σ c·x_lin) and is meaningless "
+                              "against a different linearization; a resumed run re-seeds "
+                              "every station ambiguity x_lin from code, so without this row "
+                              "the restored branch folds wrong by Σ c·Δx_lin on every chord "
+                              "at once.  Reader half: network.resume_carry_rebase.  "
+                              "Format-forward — a reader that finds no ZL row behaves exactly "
+                              "as before, so this is NOT in the warm-resume fingerprint; only "
+                              "the snapshot bytes change.");
                 if (network_config_.state_snapshot_resume_shock_m > 0.0)
                     log->info("Network (RTB-7d/RE-2): resume EVENT RESPONSE armed — σ = "
                               "{:.3f} m added to every restored DD's Pᶻ diagonal at resume "
@@ -6800,6 +6835,12 @@ namespace GnssProcessor {
                 log->warn("Network (RTB-7e): state_snapshot_carry_diagonal is INERT without "
                           "state_snapshot_carry (no carry blob is written to shape).");
                 network_config_.state_snapshot_carry_diagonal = false;
+            }
+            if (network_config_.state_snapshot_carry_lin) {
+                log->warn("Network (RS-2): state_snapshot_carry_lin is INERT without "
+                          "state_snapshot_carry (no carry blob is written to carry the ZL "
+                          "rows).");
+                network_config_.state_snapshot_carry_lin = false;
             }
         }
         // PB emission-continuity filter (M5 prerequisite) — outputs-only smoother

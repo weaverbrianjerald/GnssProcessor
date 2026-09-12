@@ -515,9 +515,21 @@ void networkBuildCarryDdPriors(
                     if (sig.size() >= 2 && sig[1] == mid_digit) { band_mid_of[rs] = sig; break; }
         }
     }
+    // RS-2 (SPEC_event_harness §21.4): the carry driver needs this arc's ambiguity
+    // LINEARIZATION value when either half of the linearization-frame carry is armed — the
+    // write half stores Σ c·x_lin per chord, the read half re-bases a restored branch onto
+    // it.  Nothing else reads it, so the OFF path never takes the per-station state copy.
+    const bool carry_lin_needed = config_.getNetworkConfig().state_snapshot_carry_lin
+                                  || config_.networkResumeCarryRebase();
     for (size_t i = 0; i < stations.size(); ++i) {
         if (est_index_of[i] < 0) continue;
         const auto& h2l = asm_res[i].h2local;
+        const Eigen::VectorXd x_lin_st =
+            carry_lin_needed ? stations[i].sm->getStateVector() : Eigen::VectorXd();
+        auto linOf = [&](std::size_t state_index) -> double {
+            const Eigen::Index si = static_cast<Eigen::Index>(state_index);
+            return (si >= 0 && si < x_lin_st.size()) ? x_lin_st(si) : 0.0;
+        };
         for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
             const auto parts = StateKeys::parseAmbiguityKey(key);
             if (!parts || parts->satellite.empty()) continue;
@@ -647,6 +659,12 @@ void networkBuildCarryDdPriors(
                         // per-band groups' behavior).
                         a.slipped     = ambSlipped(key);
                         a.slipped2    = ambSlipped(key2);
+                        if (carry_lin_needed) {   // RS-2: both bands' linearization values
+                            a.x_lin = linOf(sidx);
+                            const auto& ambs2 = stations[i].sm->getAmbiguities();
+                            const auto a2 = ambs2.find(key2);
+                            if (a2 != ambs2.end()) a.x_lin2 = linOf(a2->second);
+                        }
                         // Diagnostic: band-1's eq34 tree tag governs the pair basis;
                         // count disagreements with band-2's election (a mismatch means
                         // the two per-band trees differ on the shared graph, so the
@@ -675,6 +693,7 @@ void networkBuildCarryDdPriors(
             a.est_station = est_index_of[i];
             a.local_col   = static_cast<int>(hit->second);
             a.slipped     = ambSlipped(key);
+            if (carry_lin_needed) a.x_lin = linOf(sidx);   // RS-2
             groups[gk].key = gk;
             groups[gk].arcs.push_back(a);
             // D5: record chord arcs for the innovation-flag reverse lookup (tree edges

@@ -2690,6 +2690,36 @@ namespace GnssProcessor {
          */
         bool networkResumeCouplingRestore() const { return network_resume_coupling_restore_; }
         /**
+         * @brief Resume CARRY RE-BASE (@c network.resume_carry_rebase,
+         *        docs/SPEC_event_harness.md §21.4) — the reader half of
+         *        @c network.state_snapshot_carry_lin.
+         *
+         * The invariant DD carry blob stores each chord's mean in the WRITER's
+         * linearization frame: @f$\hat z=\sum c\,x_r=\lambda N-\sum c\,x_{\rm lin}@f$.  A
+         * resumed run re-seeds every station ambiguity @c x_lin from code at its first
+         * epoch (the station layer is not snapshotted), and the DD prior fold forms
+         * @f$v=z_{\rm free}-G^\top x_s-\hat z@f$ against THAT linearization — so every
+         * restored chord enters the first solve wrong by
+         * @f$\sum c\,(x_{\rm lin,writer}-x_{\rm lin,now})@f$, metres per chord, folded at
+         * @c carry_invariant_qz stiffness on the whole branch at once.  The D5 innovation
+         * gate is POST-solve and can only flag the damage.
+         *
+         * Armed, the first DD prior build after a resume re-bases every restored chord it
+         * projects: with @f$W@f$ the cycle-basis projection the build already forms,
+         * @f$\hat z_{\rm new}\mathrel{+}=W z_{\ell,\rm writer}-z_{\ell,\rm now}@f$, where
+         * @f$z_{\ell,\rm now}@f$ is this epoch's linearization DD over the SAME incidence
+         * that forms @f$z_{\rm free}@f$.  @f$P^z@f$ is untouched — this is an exact frame
+         * translation, not a re-weighting.  A component whose restored contributors carry
+         * no @c ZL row cannot be re-based; its chords are marginalized (born fresh on the
+         * diffuse prior) rather than folded frame-wrong, and counted.
+         *
+         * Armed against a blob with no @c ZL rows at all ⇒ one loud warning and today's
+         * behaviour.  Inert on a run that never resumes.  Deliberately NOT in the
+         * warm-resume fingerprint — same forward-only resume-response exemption class as
+         * @ref networkResumeFrameRestore.  Default false = byte-identical.
+         */
+        bool networkResumeCarryRebase() const { return network_resume_carry_rebase_; }
+        /**
          * @brief READMIT continuity — seed-first satellite re-admission
          *        (@c network.readmit_seed_horizon_s, seconds; the STABILITY campaign's E2,
          *        SPEC_synthetic_minimum_network §18.4 / SPEC_amb_iono_split_overcount §7 FIRST).
@@ -7399,6 +7429,7 @@ namespace GnssProcessor {
         double network_amb_seam_reinflate_var_m2_{0.0};   ///< Seam-scoped one-shot variance ADD (m²) on every restored phase-leveling local ambiguity carry at a warm resume — a soft refloat that keeps the carried value as prior mean (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF, byte-identical.
         bool   network_resume_frame_restore_{false};       ///< Resume FRAME restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the snapshot's phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-satellite state and the CLK-R held frame, so the first post-resume election / clock fold / emit continue the pre-seam realization.  Capture rides its OWN write knob, network.state_snapshot_frame_capture (format v2, knob-gated by 90718c3); this knob only decides whether a resume USES the rows.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_coupling_restore_{false};    ///< §18.12 resume COUPLING-REGRESSOR restore: at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order — never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING (LOOSE CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain DIAGONAL prior asserted AT that conditional variance which out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project (Card 1f), and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only — var is never modified).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        bool   network_resume_carry_rebase_{false};        ///< RS-2 resume CARRY RE-BASE (SPEC_event_harness §21.4), the reader half of network.state_snapshot_carry_lin: at the first DD prior build after a warm resume, re-base every restored chord the build projects — ẑ += W·zl_writer − zl_now, with W the cycle-basis projection the build already forms and zl_now this epoch's Σc·x_lin over the SAME incidence that forms z_free — so the restored branch is folded in THIS run's linearization frame instead of the writer's.  Pᶻ untouched (an exact frame translation).  A component whose restored contributors carry no ZL row is marginalized (born fresh) rather than folded frame-wrong, and counted.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.
         bool   network_readmit_seed_code_bias_{true};      ///< READMIT seed sub-knob: also park + seed the departing satellite's per-signal CODE-BIAS columns (true) or the clock alone (false).  Inert without readmit_seed_horizon_s.

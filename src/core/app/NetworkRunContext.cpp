@@ -1758,7 +1758,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                     * nc.state_snapshot_resume_shock_m);
                             log->info("Network (RTB-7c): BRANCH-FAITHFUL — restored invariant "
                                       "DD carry ({} carried DD), {} sat-vertex + {} group-id map "
-                                      "entries; sigma0 {}; resume shock {}.  Pᶻ shape: {}.",
+                                      "entries; sigma0 {}; resume shock {}.  Pᶻ shape: {}.  "
+                                      "Linearization frame: {}.",
                                       carry_driver.resumeCarryChords(),
                                       snap.carry_sat_vertex.size(), snap.carry_group_id.size(),
                                       carry_driver.resumeSigma0Seeded()
@@ -1777,7 +1778,35 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                                         "start at ZERO and re-earn from data",
                                                         carry_driver.resumeCarryDiagonalBlocks())
                                           : std::string("dense (v1/v2 blob) — the branch "
-                                                        "geometry resumes exactly"));
+                                                        "geometry resumes exactly"),
+                                      // RS-2 / invariant #4: whether the blob carries the ZL
+                                      // rows decides whether resume_carry_rebase has anything
+                                      // to act on, and nothing else in this line shows it.
+                                      carry_driver.resumeCarryLinBlocks() > 0
+                                          ? fmt::format("ZL rows present on {} block(s) — the "
+                                                        "means can be re-based onto this run's "
+                                                        "x_lin ({})",
+                                                        carry_driver.resumeCarryLinBlocks(),
+                                                        config_.networkResumeCarryRebase()
+                                                            ? "resume_carry_rebase ARMED"
+                                                            : "resume_carry_rebase off — the "
+                                                              "branch folds in the WRITER's "
+                                                              "frame")
+                                          : std::string("NO ZL rows — the means are in the "
+                                                        "WRITER's linearization frame and "
+                                                        "cannot be re-based (writer needs "
+                                                        "network.state_snapshot_carry_lin)"));
+                            // RS-2: armed with nothing to act on is the invariant-#4 case —
+                            // the run reads "warm + branch-faithful" and the re-base counters
+                            // stay 0 for a reason the log would otherwise never state.
+                            if (config_.networkResumeCarryRebase()
+                                && carry_driver.resumeCarryLinBlocks() == 0)
+                                log->warn("Network (RS-2): network.resume_carry_rebase is armed "
+                                          "but the carry blob carries NO ZL rows — the branch "
+                                          "is NOT re-based and this resume keeps today's "
+                                          "behaviour (every restored chord folds against the "
+                                          "WRITER's x_lin).  Re-write the seed with "
+                                          "network.state_snapshot_carry_lin.");
                             // PD-safe INC-2c: the
                             // restore guard's loud half.  Every blob written before that
                             // card can carry the corrupt joint lane block (indefinite Pᶻ,

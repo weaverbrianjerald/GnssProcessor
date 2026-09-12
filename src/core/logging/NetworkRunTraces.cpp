@@ -1526,6 +1526,18 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"state_snapshot_carry\":" << (nc.state_snapshot_carry ? "true" : "false") << ','
                << "\"state_snapshot_carry_diagonal\":"
                    << (nc.state_snapshot_carry_diagonal ? "true" : "false") << ','
+               // RS-2: the linearization-frame halves.  Same reason as the diagonal knob —
+               // the write half changes only snapshot bytes and the read half only a
+               // resume, so the manifest is the one place an arm is self-describing.
+               // Emitted ONLY when armed, so an unarmed run's manifest bytes are unchanged
+               // (the inject / adm_screen precedent — the decomposition golden hashes this
+               // file).
+               << ((nc.state_snapshot_carry_lin || config_.networkResumeCarryRebase())
+                       ? fmt::format("\"state_snapshot_carry_lin\":{},"
+                                     "\"resume_carry_rebase\":{},",
+                                     nc.state_snapshot_carry_lin ? "true" : "false",
+                                     config_.networkResumeCarryRebase() ? "true" : "false")
+                       : std::string())
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
                << fmt::format("\"state_snapshot_resume_shock_m\":{},",
                               nc.state_snapshot_resume_shock_m)
