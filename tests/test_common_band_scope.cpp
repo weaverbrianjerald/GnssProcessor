@@ -14,8 +14,10 @@
  *
  * Gates:
  *   - CommonBandScopeRule — the seven worked cases of SPEC_event_harness §14.2,
- *     plus the two LLI cases, plus the counter each refusal must move.  Pure:
- *     no detector, no estimator, no network.
+ *     plus the two LLI cases, plus the §22 REFERENCE-ARC clause (a silent pair
+ *     whose IF-TD sample has dd ≡ 0 by construction is UNTESTED, not clean) with
+ *     its named cost and its knob-off control, plus the counter each refusal
+ *     must move.  Pure: no detector, no estimator, no network.
  *   - CommonBandScopeHook — @ref commonBandMayFree, the single predicate the
  *     three drains consult.  A null verdict set, an UNARMED one, and a
  *     (station, satellite) with no narrowed verdict must every one answer TRUE
@@ -438,6 +440,151 @@ TEST(CommonBandScopeRule, GenuineL2SlipStillNarrowsWithEveryIfPairEvaluated) {
     EXPECT_NE(v.basis.find("iftd(L1C+L5Q)silent"), std::string::npos);
 }
 
+// --------------------------------------- §22 RULE: the REFERENCE-ARC clause
+
+// The third refusal, and the one the FIELD found.  The veto above can only fire
+// where the pooled IF-TD test can FLAG, and on the chain's REFERENCE satellite
+// it cannot: that sample's double difference is identically 0 by construction
+// (IfJumpInfo::is_reference), so `|dd − med| > thr` is structurally false however
+// large the slip and the pair reaches the rule looking like a clean silence.
+// Measured on the field seed (SPEC_event_harness §20.1): an equal-count L1C+L5X
+// slip on GOPE/G24 — the reference of BOTH L5 chains — narrowed to the innocent
+// band L2W under `if_phase_td_pairs` `first` AND `all`, while the same injection
+// at G25 (not a reference) vetoed at 29× threshold.
+//
+// The evidence carries it as `iftd_untested`, populated only with
+// `common_band_ref_arc` armed, and the rule refuses such a pair exactly as it
+// refuses `immature` and `lli_shadow`: counted, named `iftd(<pair>)=ref_arc`,
+// and never listed as `silent`.
+//
+// Signal spelling is deliberately mixed across these cases — L5X (the field
+// triple, where the defect was measured) and L5Q (the sim triple the rest of the
+// file uses).  The rule is set-theoretic over signal NAMES, so both must behave
+// identically; a case that passed on only one spelling would be name-coupled.
+
+/// The FIELD triple — GOPE/G24's tracked bands on the DOY-129 golden.
+const std::set<std::string> kFieldTriple{ "L1C", "L2W", "L5X" };
+
+/// §22 (a) — the §20.1 trap itself.  An equal-count L1C+L5X slip leaves their
+/// wide lane MW(1,5) silent by construction while (1,2) and (2,5) both fire, and
+/// the ONE instrument that could see it — the (1,5) IF-TD pair — sits on this
+/// satellite's reference arc, so it could not have flagged.  Armed, that pair is
+/// UNTESTED: nothing exonerates and the response falls back to today's all-band
+/// one, which is the correct answer for a slip that moved two bands.
+TEST(CommonBandScopeRule, EqualCountL1L5OnTheReferenceArcFallsBackToAllBands) {
+    auto e = ev({ P("L1C", "L5X") }, { P("L1C", "L2W"), P("L2W", "L5X") });
+    e.iftd_untested.insert(P("L1C", "L5X"));   // G24 is the (1,5) chain's reference
+    e.iftd_silent.insert(P("L1C", "L2W"));     // the (1,2) chain's reference is elsewhere
+    const auto v = networkCommonBandVerdict(kFieldTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.implicated, kFieldTriple);
+    EXPECT_TRUE(v.exonerated.empty());
+    EXPECT_EQ(v.iftd_ref_arc, 1);
+    EXPECT_EQ(v.iftd_ref_arc_pairs, (std::set<CommonBandPair>{ P("L1C", "L5X") }));
+    EXPECT_EQ(v.iftd_veto, 0);                 // no flag: the refusal is the ABSENCE of a test
+    EXPECT_NE(v.basis.find("iftd(L1C+L5X)=ref_arc"), std::string::npos);
+}
+
+/// §22 (a′) — the control, and the measured defect itself.  The SAME evidence
+/// with the (1,5) sample NOT on a reference arc (i.e. the knob off, where every
+/// evaluation folds into flagged/silent) narrows to L2W: the one band that did
+/// not move.  This case must keep narrowing — it is the before picture.
+TEST(CommonBandScopeRule, EqualCountL1L5OffTheReferenceArcNarrowsToTheWrongBand) {
+    auto e = ev({ P("L1C", "L5X") }, { P("L1C", "L2W"), P("L2W", "L5X") });
+    e.iftd_silent.insert(P("L1C", "L5X"));     // the pre-clause fold of the same sample
+    e.iftd_silent.insert(P("L1C", "L2W"));
+    const auto v = networkCommonBandVerdict(kFieldTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L2W" }));
+    EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L1C", "L5X" }));
+    EXPECT_EQ(v.iftd_ref_arc, 0);
+    EXPECT_TRUE(v.iftd_ref_arc_pairs.empty());
+}
+
+/// §22 (b) — the clause is INERT where a tested lane still speaks.  A genuine L5
+/// slip on an arc that is the reference of BOTH L5 chains fires (1,5) and (2,5);
+/// its silent lane is (1,2), whose chain references a different satellite and is
+/// therefore evaluated and silent.  It exonerates, and the verdict is the §14.2
+/// one — narrowed to exactly the slipped band.  The two untested pairs cost
+/// nothing here: they were MW-flagged and were never exoneration candidates.
+TEST(CommonBandScopeRule, L5SlipOnTheL5ChainsReferenceStillNarrows) {
+    auto e = ev({ P("L1C", "L2W") }, { P("L1C", "L5Q"), P("L2W", "L5Q") });
+    e.iftd_silent.insert(P("L1C", "L2W"));
+    e.iftd_untested.insert(P("L1C", "L5Q"));
+    e.iftd_untested.insert(P("L2W", "L5Q"));
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_TRUE(v.narrowed);
+    EXPECT_EQ(v.implicated, (std::set<std::string>{ "L5Q" }));
+    EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L1C", "L2W" }));
+    EXPECT_EQ(v.iftd_ref_arc, 0);              // the refused population is SILENT pairs only
+}
+
+/// §22 (c) — THE NAMED COST, accepted in advance (§22.2).  A genuine single-band
+/// L1C slip on an arc that is the reference of the L5 chains fires (1,2) and
+/// (1,5); its only silent lane is (2,5), which is exactly one of the untested
+/// ones.  The narrowing is lost and the response is today's all-band one — a
+/// real price, paid to close the equal-count hole, and counted so it can be
+/// priced from a run's own counters rather than assumed.
+TEST(CommonBandScopeRule, L1SlipOnTheReferenceArcPaysTheNamedCost) {
+    auto e = ev({ P("L2W", "L5X") }, { P("L1C", "L2W"), P("L1C", "L5X") });
+    e.iftd_untested.insert(P("L2W", "L5X"));
+    e.iftd_untested.insert(P("L1C", "L5X"));
+    e.iftd_silent.insert(P("L1C", "L2W"));
+    const auto v = networkCommonBandVerdict(kFieldTriple, e, kMinArc);
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);
+    EXPECT_FALSE(v.narrowed);
+    EXPECT_EQ(v.implicated, kFieldTriple);
+    EXPECT_EQ(v.iftd_ref_arc, 1);              // only the SILENT pair is refused
+    EXPECT_EQ(v.iftd_ref_arc_pairs, (std::set<CommonBandPair>{ P("L2W", "L5X") }));
+    EXPECT_NE(v.basis.find("iftd(L2W+L5X)=ref_arc"), std::string::npos);
+    // The control: the same slip with the (2,5) lane TESTED narrows to L1C.
+    auto e_off = ev({ P("L2W", "L5X") }, { P("L1C", "L2W"), P("L1C", "L5X") });
+    e_off.iftd_silent.insert(P("L2W", "L5X"));
+    const auto v_off = networkCommonBandVerdict(kFieldTriple, e_off, kMinArc);
+    EXPECT_EQ(v_off.outcome, CommonBandOutcome::Narrowed);
+    EXPECT_EQ(v_off.implicated, (std::set<std::string>{ "L1C" }));
+}
+
+/// §22 (d) — an untested pair is NEVER listed as `silent`.  The basis is the
+/// evidence trail the event row carries, and calling a structural dead zone a
+/// silence there would re-tell the reader the very thing the clause exists to
+/// deny.  It carries `=ref_arc` instead, and the pre-clause spelling appears
+/// only on the control.
+TEST(CommonBandScopeRule, UntestedPairIsNeverListedSilent) {
+    auto e = ev({ P("L1C", "L5X") }, { P("L1C", "L2W"), P("L2W", "L5X") });
+    e.iftd_untested.insert(P("L1C", "L5X"));
+    const auto v = networkCommonBandVerdict(kFieldTriple, e, kMinArc);
+    EXPECT_EQ(v.basis.find("iftd(L1C+L5X)silent"), std::string::npos);
+    EXPECT_NE(v.basis.find("iftd(L1C+L5X)=ref_arc"), std::string::npos);
+    EXPECT_EQ(v.basis.find("iftd(L1C+L5X)=flagged"), std::string::npos);
+
+    // The control: the identical sample folded the pre-clause way IS listed
+    // `silent`, so the token really is the clause's doing.
+    auto e_off = ev({ P("L1C", "L5X") }, { P("L1C", "L2W"), P("L2W", "L5X") });
+    e_off.iftd_silent.insert(P("L1C", "L5X"));
+    const auto v_off = networkCommonBandVerdict(kFieldTriple, e_off, kMinArc);
+    EXPECT_NE(v_off.basis.find("iftd(L1C+L5X)silent"), std::string::npos);
+    EXPECT_EQ(v_off.basis.find("=ref_arc"), std::string::npos);
+}
+
+/// §22 — the OFF path, stated as a test rather than inferred from the loader: an
+/// EMPTY untested set leaves the verdict, the counters and the basis exactly
+/// where the pre-clause rule left them.  With the knob off the preview never
+/// populates that set, so this is the byte-identity claim in unit form.
+TEST(CommonBandScopeRule, EmptyUntestedSetLeavesEveryVerdictUnchanged) {
+    auto e = ev({ P("L1C", "L5Q") }, { P("L1C", "L2W"), P("L2W", "L5Q") });
+    e.iftd_flagged.insert(P("L1C", "L5Q"));
+    const auto v = networkCommonBandVerdict(kTriple, e, kMinArc);
+    EXPECT_TRUE(e.iftd_untested.empty());
+    EXPECT_EQ(v.outcome, CommonBandOutcome::NoExoneration);   // the §14.10 veto, intact
+    EXPECT_EQ(v.iftd_veto, 1);
+    EXPECT_EQ(v.iftd_ref_arc, 0);
+    EXPECT_TRUE(v.iftd_ref_arc_pairs.empty());
+    EXPECT_NE(v.basis.find("iftd(L1C+L5Q)=flagged"), std::string::npos);
+}
+
 // ------------------------------- §14.11 RULE F2: the LLI shadow on a silent lane
 
 // The second half of the same field defect.  The uncombined LLI branch of
@@ -783,6 +930,8 @@ TEST(CommonBandScopeHook, ClearDropsVerdictsAndCensus) {
     cbs.verdicts = cbs.narrowed_n = cbs.bands_kept = 7;
     cbs.iftd_veto = cbs.immature_pairs = cbs.would_narrow = 7;
     cbs.all_no_exoneration = cbs.all_inconsistent = 7;
+    cbs.iftd_ref_arc = 7;                                     // §22
+    cbs.iftd_ref_arc_by_pair["L1C_L5X"] = 7;
 
     cbs.clear();
 
@@ -796,5 +945,7 @@ TEST(CommonBandScopeHook, ClearDropsVerdictsAndCensus) {
     EXPECT_EQ(cbs.would_narrow, 0);
     EXPECT_EQ(cbs.all_no_exoneration, 0);
     EXPECT_EQ(cbs.all_inconsistent, 0);
+    EXPECT_EQ(cbs.iftd_ref_arc, 0);                           // §22
+    EXPECT_TRUE(cbs.iftd_ref_arc_by_pair.empty());
     EXPECT_TRUE(commonBandMayFree(&cbs, 3, "G08", "L1C"));
 }

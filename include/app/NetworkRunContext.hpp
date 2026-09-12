@@ -2820,6 +2820,20 @@ namespace GnssProcessor {
         /// single-pair detector never watched, so the total (@ref
         /// n_cb_iftd_veto) alone cannot show it.
         std::map<std::string, long long> n_cb_iftd_veto_by_pair;
+        /// §22 THE REFERENCE-ARC CLAUSE (network.cycle_slip.common_band_ref_arc):
+        /// silent MW pairs refused as exonerators because their IF-TD sample sits
+        /// on the chain's REFERENCE arc, whose double difference is identically 0
+        /// — so the pooled test could not have flagged it and the silence is the
+        /// ABSENCE of a test, not a clean bill of health.  Counted apart from
+        /// @ref n_cb_iftd_veto on purpose: a veto is positive evidence the pair
+        /// moved, this is a structural dead zone, and only the second one carries
+        /// the clause's named cost (a genuine single-band slip on a reference arc
+        /// also stops narrowing).  Nonzero only with the clause armed, so an
+        /// armed leg whose event sits on a known reference arc and reports 0 here
+        /// is dead wiring (invariant #4); the by-pair map attributes the
+        /// refusals to the CHAINS whose reference the arc is.
+        long long n_cb_iftd_ref_arc = 0;
+        std::map<std::string, long long> n_cb_iftd_ref_arc_by_pair;
         int n_cpl_row_dump = 12;   // Card 1d debug: one-shot assembled coupling-row dump budget
         int n_cpl_solve_dump = 8;  // Card 1d debug: one-shot full-precision solve-checksum budget
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on

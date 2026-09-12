@@ -280,6 +280,33 @@ namespace GnssProcessor {
                       "populations; those counters are collected with the knob OFF too, "
                       "so an OFF run already states what this would have narrowed.",
                       network_config_.cycle_slip_common_band_min_arc_epochs);
+        // §22 REFERENCE-ARC CLAUSE interlock.  It is a clause OF the scope's
+        // exoneration rule — with the scope off no verdict is formed, nothing is
+        // ever refused, and the knob is a structural zero (invariant #4).  Placed
+        // with the block above for the same reason: the scope's own disarm has
+        // just run, so this is the first point where its flag is final.
+        if (network_config_.cycle_slip_common_band_ref_arc
+            && !network_config_.cycle_slip_common_band_scope) {
+            log->warn("Network: network.cycle_slip.common_band_ref_arc needs "
+                      "network.cycle_slip.common_band_scope — it is a clause of that "
+                      "rule's exoneration test, so without the scope no verdict is "
+                      "formed and nothing is ever refused — disabled.");
+            network_config_.cycle_slip_common_band_ref_arc = false;
+        }
+        if (network_config_.cycle_slip_common_band_ref_arc)
+            log->info("Network (common-band scope, §22 reference-arc clause): ARMED — a "
+                      "silent MW pair whose IF-TD sample is the chain's REFERENCE "
+                      "satellite is UNTESTED, not clean: that sample's double difference "
+                      "is identically 0 by construction, so the pooled IF-TD test could "
+                      "not have flagged it however large the slip.  Such a pair is "
+                      "refused as an exonerator (basis token iftd(<pair>)=ref_arc) and "
+                      "the verdict falls back to today's all-band response when nothing "
+                      "else exonerates.  Applies to EVERY chain's reference, first chain "
+                      "included.  NAMED COST: a genuine single-band slip on a reference "
+                      "arc also stops narrowing when its only silent pair is the untested "
+                      "one.  Run-end reports `ref-arc refusals` with a per-pair "
+                      "breakdown; 0 on a leg whose event sits on a known reference arc is "
+                      "dead wiring.");
         if (network_cycle_slip_relevel_free_epoch_ && network_carry_invariant_) {
             log->warn("Network: network.cycle_slip.relevel_free_epoch (and its "
                       "delta_bridge rider) is inert under network.carry_invariant "
@@ -4159,6 +4186,11 @@ namespace GnssProcessor {
         network_config_.cycle_slip_common_band_min_arc_epochs =
             jval<int>(json, "network.cycle_slip.common_band_min_arc_epochs",
                       "network_cycle_slip_common_band_min_arc_epochs", 10);
+        // §22 REFERENCE-ARC CLAUSE, the scope's IF-TD dead zone.  Default OFF is
+        // byte-identical: the untested set is never populated.
+        network_config_.cycle_slip_common_band_ref_arc =
+            jval<bool>(json, "network.cycle_slip.common_band_ref_arc",
+                       "network_cycle_slip_common_band_ref_arc", false);
         network_cycle_slip_relevel_delta_bridge_ =
             jval<bool>(json, "network.cycle_slip.relevel_delta_bridge",
                        "network_cycle_slip_relevel_delta_bridge", false);

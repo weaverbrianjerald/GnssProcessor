@@ -1677,7 +1677,13 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             << fmt::format("{:.6f}", s_eff) << ',' << fmt::format("{:.3f}", emap) << ','
                             << fmt::format("{:.6f}", thr) << ',' << fmt::format("{:.6f}", floor_m) << ','
                             << fmt::format("{:.6f}", abs_dev) << ',' << (flagged ? 1 : 0) << ','
-                            << (carry_warm ? 1 : 0) << '\n';
+                            << (carry_warm ? 1 : 0) << ','
+                            // §22: the detector's own reference flag.  On a reference
+                            // arc dd is identically 0, so `flagged` above is
+                            // structurally false and the pooled test carries no
+                            // information — which is exactly what the common-band
+                            // scope's reference-arc clause reacts to.  Trace-only.
+                            << (sp->is_ref ? 1 : 0) << '\n';
                 }
 
                 // (4) Fold clean survivors into the station-pair EWMA (slips excluded).

@@ -155,9 +155,14 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // own EWMA scale + clean-sample count (decision-time, pre-update); w/s_eff =
             // shrinkage weight + effective scale; elev_map = 1/sin el; thr/floor = gate;
             // abs_dev = |dd−med|; flagged/carry_warm = decision + whether it refloated.
+            // §22 is_ref = the detector's own IfJumpInfo::is_reference: this sample is
+            // the CHAIN'S REFERENCE satellite, whose dd is identically 0 by
+            // construction, so `flagged` is structurally false however large the slip.
+            // Carried so a reference arc is read off the detector's flag instead of
+            // being inferred from abs_dev_m == 0.
             if_slip_trace << "week,tow,station,sat,sig1,sig2,elev_deg,dd_m,med_m,"
                              "s_pool_m,ewma_scale_m,count,w_shrink,s_eff_m,elev_map,"
-                             "thr_m,floor_m,abs_dev_m,flagged,carry_warm\n";
+                             "thr_m,floor_m,abs_dev_m,flagged,carry_warm,is_ref\n";
         else
             log->warn("Network: failed to open IF-slip trace {}", if_slip_trace_path.string());
         raim_trace.open(raim_trace_path);
