@@ -5381,6 +5381,52 @@ write a v5 seed from the current golden before grading anything that needs the p
 cold smoke (it keys on `state_snapshot_path` being set), and the POSTURE CHAIN advisory about
 `emit_generation_id` under `state_snapshot_require: false` fires on every cold seed writer.
 
+### 21.13 RS-6a pre-registered — the station layer's own memory across the seam: the rx-CB carry and the T5 iono deviation carry (2026-09-12 ~23:00 local, manager; before any leg is read)
+
+**What is left at the seam after RS-5, and where it lives.**  With the emit layer restored the phase-bias WIRE
+is continuous, but the estimator's own level at the first post-resume epoch still moves: raw phase bias 1.70 m
+p50 (§21.10; per-station medians MAJU00MHL 2.3 / MBAR00UGA 0.96 m — a per-station component), W6 code bias
+0.47 m p50 (the 21 code-bias re-references a stateful consumer takes at the seam, §21.11), receiver clocks
+1.21 m p50 / 5.11 p95, clock contrast 0.54 m at +2 growing to 1.7 m pooled, ZWD 0.64 m, SH a₀₀ +4.6 TECU
+decaying over five epochs.  Two station-layer memories restart cold at the seam and neither is in the
+snapshot: the **rx-CB carry** (`ctx.carry.rx_cb_carry`, `std::map<std::pair<int,std::string>, LocalCarry>` —
+the per-(station, code key) receiver code-bias memory with RW q 1e-9 m²/s; on a leg its 10σ inject gate
+withholds 26 % of priors vs 13 % on the seed) and the **T5 per-LOS iono deviation carry**
+(`ctx.carry.sh_dev_carry`, `std::map<std::string, ShDevCarry>` keyed "STATION|SAT"; 400 cold seeds at +1).
+The rx-CB restart re-splits code bias / iono / clock per station and signal, which is exactly the shape of the
+raw residual (per-station, not iono-ratio'd); the deviation restart is the a₀₀ transient.
+
+**Build (default-OFF, byte-identical when off, forward-only, not fingerprinted — the Z-row precedent).**
+Write knob `network.state_snapshot_station_capture`: rows `RC,<station index>,<cb key>,<value_abs>,<var>,
+<last_seen_s>` (the same `LocalCarry` fields the Z rows serialize, one per rx-CB carry entry) and
+`SD,<STATION|SAT>,<every ShDevCarry field>` under the existing header.  Read knob
+`network.resume_station_restore` (requires `resume_frame_restore`): restore the rx-CB entries through
+`makeRestoredLocalCarry` (the restored-arc sentinel, §15.4.1) and the deviation entries as they were, before
+the first epoch; either half absent ⇒ inert and logged; counters + run-end line.  Two sub-knobs are NOT wanted
+— the halves are gated by which rows the snapshot carries and by two leg-side switches
+`resume_station_restore_rxcb` / `_shdev` (default true; diagnostic only) so one leg can restore one half.
+
+**Instruments.**  The raw estimator level is visible only with the two outputs-only emit transforms off
+(`carry_invariant_emit_rebase: false`, `emit_pb_filter: false` — not fingerprinted, §21.10), so the legs come
+in two seeds written by the same exe from the current golden: `runs/evseed_field6h_v5` (the golden + the write
+knob; carries every row kind of the day — the harness seed from now on) and `runs/evseed_field6h_v5raw` (v5
++ the two transforms off; the estimator-level instrument).  Legs, 60 epochs from ep0604, one exe:
+from v5raw — `rs6_raw_ctl`, `rs6_raw_both`, `rs6_raw_rxcb` (rx-CB half only), `rs6_raw_shdev`;
+from v5 — `rs6_null_ctl`, `rs6_null_both` (+ the stateful-consumer splice on both).
+
+* **P8a the raw level (v5raw legs, products = raw state):** raw PB leg − seed at +1 p50 ≤ 0.5 m (from 1.70;
+  excluding the six L2X keys whose datum receiver drops); receiver clocks leg − seed at +1 p50 ≤ 0.3 m
+  (from 1.21); SH a₀₀ at +1 within 2 TECU (from +4.6); the rx-CB gate's withheld share on the leg within 3
+  points of the seed's 13 %.
+* **P8b the wire (v5 legs):** W6 code bias (B records) leg − seed pooled p50 ≤ 0.10 m (from 0.47); clock
+  contrast pooled p50 ≤ 0.5 m (from 1.74) and at +2 ≤ 0.2 (from 0.54); ZWD p50 ≤ 0.32 m (from 0.64); PB wire
+  unchanged (0.000 at +1, RS-5); the stateful consumer's code-bias re-references at the seam ≤ 5 (from 21)
+  and its phase-bias resets 0.
+* **P8c attribution:** the rxcb-only and shdev-only legs partition the P8a moves; the half that moves a
+  channel owns it.  Both halves passing their share ⇒ RS-6 closes; a residual left with both restored names
+  the next memory (the receiver phase-bias states, the six L2X families' datum receiver).
+* Byte-identity: write knob on/off products identical; a cold run with the read knob inert; suite green.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
