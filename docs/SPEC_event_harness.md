@@ -2354,7 +2354,7 @@ ref-free ≥ 90 % (from 87.1), WL ≥ 98.9 %, cold fallbacks < 68.  A T4 count
 ABOVE 78 on the storm bed is the falsifier: a wrongly exonerated band shows
 up post-fit at that arc.
 
-## 15. The COLD anchor fallbacks — CLOSED 2026-09-11: the rule works, the per-family SCOPE does not (`network.phase_datum_candidacy_usable`, KEEP_OFF; census 2026-09-11 on `golden_sim_campaign_zwdblk_mwevid`, built + graded on `coldfb`)
+## 15. The COLD anchor fallbacks — KEEP_OFF after TWO iterations: the rule works, the per-family scope was wrong, and fixing it proved the SPLIT was not the consumer's cost (`network.phase_datum_candidacy_usable` + `…_satellite`; census 2026-09-11 on `golden_sim_campaign_zwdblk_mwevid`, built + graded on `coldfb`)
 
 The anchor-slip handover falls back to a COLD re-realization when the elected
 successor has no usable carried value (68 of 305 on the storm arm with both
@@ -2664,6 +2664,8 @@ settled cold count no worse than this arm's 19, and consumer pooled p50 ≤ 0.12
 inconsistency that bought them is removed.  The §15.4 `birth_ep` resume defect is a
 separate, smaller card and is independent of this one.
 
+⚠ **§15.8 reports that iteration: it met its own primary gate (splits 0.0 / 0) and FALSIFIED this paragraph's mechanism — the consumer got 1.5 cm WORSE with every split removed.  Read §15.8 before quoting the split hypothesis from here.**
+
 **Lessons for the memory file, both paid for here:**
 
 1. **A candidacy screen that acts per-BAND on a multi-band satellite buys producer
@@ -2676,6 +2678,167 @@ separate, smaller card and is independent of this one.
    the knob off; the only cold population on the quiet bed was one unforced handover
    nobody had selected.  For a card about the ledger, screen on the LEDGER — or on
    the branch the election actually takes.
+
+### 15.8 ITERATION 2 — the SATELLITE clause: it removes every split, it fixes the slip leg, and on the storm arm it REFUTES the reading that motivated it
+
+`network.phase_datum_candidacy_satellite` (bool, default **TRUE** under
+`phase_datum_candidacy_usable`; OFF reproduces iteration 1 exactly, which is what
+makes the A/B a single knob and what makes the two storm arms differ only in the
+code default).  Built on the §15.7 reading: the per-family screen is right about
+WHICH carry is usable and wrong about WHOSE satellite it belongs to.
+
+**The rule** (locked before any leg).  When the candidacy pass is armed:
+
+* **(a) JOINT resolution** — every family of satellite *s* handing over THIS epoch
+  takes ONE successor: the first coverage-ranked candidate usable for the LARGEST
+  number of them, ties to coverage order.  A family that host is not usable for is
+  still pinned THERE, through the honest cold path (`sat_clause_cold_colocated`):
+  a cold pin on the same host is a frame step, not a split.  No candidate usable
+  for any mover ⇒ today's sweeps unchanged, counted.
+* **(b) PARTIAL handover** — when only some of *s*'s families move, the station
+  already anchoring the others is tried FIRST and, if it tracks and is usable for
+  at least one mover, takes them all (`sat_clause_colocated`).  ⚠ *Reading, not
+  transcription:* taking the held host on "usable for ≥ 1" rather than only on a
+  joint-maximum tie is the only reading under which (c) can hold — letting a
+  higher-scoring stranger win re-creates exactly the split this iteration removes,
+  and a family the held host cannot serve takes a co-located cold pin instead.
+* **(c) the census** — the run-end clause reports the per-satellite distinct-anchor
+  numbers from the SAME always-on counters the storm grade reads
+  (`networkSplitReferencedSats`), so the clause and the grade agree by
+  construction rather than by agreement.
+
+One acceptance lambda now has three readers (the per-family pass, the joint
+scoring, the co-located cold decision).  The per-family pass still runs under the
+clause — it owns the four skip counters and the row's `cand_skipped` /
+`cand_first_unusable`, and it is the FAMILY-ONLY pick `sat_clause_split_avoided`
+is measured against.  A family the joint host does not TRACK cannot be pinned
+there and falls back per-family: the only residual split, counted and warned.
+Tests: +7 cases in the same two suites (24 total), each asserting the
+per-satellite distinct-station count; full Debug suite **1924 / 261 suites, 1907
+passed, 17 skipped, 0 failures**.
+
+**Harness** (quiet seed ep0665, 60-epoch legs, ON arms at `min_age_ep` 0 for the
+§15.4 warm-resume reason, which is unchanged).
+
+| leg | exit / wall | split-ref mean / max | handovers / continuous (cold) | consumer +40 | consumer end | ZWD pooled rms |
+|---|---|---|---|---|---|---|
+| `null_off` | 0 / 188.0 s | 0.0 / 0 | 24 / 21 (**3**) | 1.7108 | 1.5464 | 0.07211 |
+| `null_on0` (iter 1) | 0 / 144.1 s | 0.0 / 0 | 24 / 24 (0) | 1.6645 | 1.4904 | 0.07180 |
+| `null_on2` (iter 2) | 0 / 151.5 s | 0.0 / 0 | 24 / 24 (0) | 1.6645 | 1.4904 | 0.07180 |
+| `g30_off` / `g30_on0` / `g30_on2` | 0 / 174.3, 182.6, 145.5 s | 0.0 / 0 | 24 / 24 (0) | 1.8664 (all three) | 1.6769 (all three) | — |
+| `slip_off` (§12.7, 40 cyc L1C at S29000SIM/G10) | 0 / 138.1 s | **4.3 / 6** | 41 / 38 (**3**) | 1.1132 | 1.0614 | 0.07262 |
+| `slip_on` (iter 1) | 0 / 142.5 s | **6.0 / 7** | 39 / 39 (0) | 1.2412 | **1.1718** (+110 mm) | 0.07184 |
+| `slip_on2` (iter 2) | 0 / 151.1 s | **4.3 / 6** (= OFF) | 38 / 38 (0) | 1.0046 | **1.0240** (−37 mm vs OFF) | 0.07209 |
+
+`null_on2` and `g30_on2` are **byte-identical** to their iteration-1 twins
+(products, DD and solution all match) — those windows had no split to avoid, and
+the clause's own counters say so (`sat_clause_split_avoided` = 0 there).  The slip
+leg is the one that moved, and it is the leg iteration 1 hurt: 16 satellite-epochs
+resolved jointly over 38 families, **2 by the held-host preference and 3 splits
+avoided**, `handover_cold` still 3 → 0.
+
+**The attribution is clean.**  On the slip leg the emitted G10 wire is essentially
+the same in both iterations (clock Δ −0.0007 m, L1C Δ −0.039 m, L2W Δ −0.046 m at
+the leg end), while the consumer difference against OFF flips **+0.110 m → −0.037
+m**.  The consumer gain is therefore NOT the injected family's own wire — it is
+the satellites whose references iteration 1 split and iteration 2 did not.  That
+is the §14.7 channel, measured directly: an inter-frequency inconsistency the
+per-band producer instruments cannot see and the user pays for.
+
+**G3 storm arm `coldfb2`** (`config/test_suite/_golden_sim_campaign_zwdblk_coldfb2.json`
+= the `coldfb` arm on iteration-2 code, where the clause is the code default, so the two
+arms differ by exactly that; exe `gnss_processor_coldfb2_storm.exe` = `1b80ce25…`,
+720/720, exit 0, 1406 s).  **B** = iteration 1 (`coldfb`), **B2** = this arm.
+
+| channel | A (OFF) | C5 (cbscope5) | B (iter 1) | **B2 (iter 2)** | pre-registered bar | verdict |
+|---|---|---|---|---|---|---|
+| **split-referenced satellites, mean / max of 52.8** | 3.5 / 7 | 0.0 / 0 | 0.9 / 3 | **0.0 / 0** | 0.0 / 0 | **PASS** |
+| PHASE_ANCHOR handovers / cold | 305 / 68 | 315 / 78 | 309 / 46 | 312 / **46** | ≤ 46 | **PASS** |
+| ...cold-start / settled | — | 27 / 51 | 27 / 19 | **27 / 19** | settled ≤ 19 | **PASS** |
+| ...cold by hour h0…h5 | 27 11 7 2 8 13 | 41 12 7 0 5 13 | 38 8 0 0 0 0 | **38 8 0 0 0 0** | | zero from hour 2 |
+| PB-GAUGE elected / continuous / cold re-realizations | — | 462/362/100 | 473/421/52 | 468/416/**52** | ≤ 52 | **PASS** |
+| continuous successor arc age p10 / p50 / p90 | — | 91 / 240 / 459 | 99 / 231 / 475 | **116 / 236 / 478** | p10 ≥ 60 | **PASS** |
+| candidacy entered / usable-elected / rank-changed / fell through | — | — | 473/404/53/69 | 468/399/**60**/69 | | |
+| SATELLITE clause: sat-epochs / families / co-located / **splits avoided** / cold co-located / untracked / no-usable | — | — | — | 133 / 399 / 0 / **13** / 0 / 0 / 23 | | the clause fired |
+| **consumer settled p50 (pooled) / rms** | .1741 / .365 | .1204 / .2215 | .1794 / .2823 | **.1941 / .3091** | ≤ .1204 | **FAIL** |
+| W1 window-excluded p50 | .1663 | .1028 | .1456 | **.1751** | ≤ .1028 | **FAIL** |
+| consumer hourly p50 h0…h5 | .447 .247 .229 .174 .086 .280 | .524 .113 .114 .101 .090 .236 | .610 .263 .240 .186 .109 .204 | **.610 .264 .243 .189 .110 .232** | h1–h3 within +2 cm of C5 | **FAIL** (+15 / +13 / +9 cm) |
+| consumer hourly rms | .62 .29 .23 .18 .47 .39 | .65 .11 .12 .10 .24 .28 | .69 .26 .236 .18 .327 .315 | **.69 .26 .24 .182 .31 .397** | | |
+| pivot window 4.68–5.40 / last 36 min | .273 / .403 | .221 / .267 | .314 / .160 | **.367 / .219** | | |
+| **ZWD settled truth rms / span p50** | .0071 / .031 | .0069 / .021 | .0061 / .0199 | **.0061 / .0197** | ≤ .0069 | **PASS — best, tied with B** |
+| **ref-free WL / EWL / L1C** | 98.9/100/87.1 | 99.2/100/89.9 | 99.3/100/90.9 | **99.3/100/90.8** | ≥ 99.2 / ≥ 89.9 | **PASS** |
+| T4 events / ambient | 78 / .229 | 11 / .197 | 11 / .196 | **11 / .196** | ≤ 11 | **PASS** |
+| W2 4.9917 h T4 / decouples / declared CLK breaks | 0/0/0 | 0/0/0 | 0/0/0 | **0/0/0** | absent | **PASS** |
+| G4 unanswered-exonerate / spurious-implicate | — | 0 / 2 | 0 / 2 | **0 / 2** | 0 / (residual) | **PASS** |
+| anchor stations holding the datum / epoch (GPS / Gal) | — | 17.26 / 11.42 | 17.76 / 11.63 | **17.16 / 11.56** | | back to C5's spread |
+| run time | 1130 s | 1050 s | 1226 s | **1406 s** | | +34 % vs C5 |
+
+**The clause did its job and the consumer did not follow.**  Split-referenced
+satellites are **0.0 / 0 all run** — the primary pre-registered gate, met exactly, with
+13 splits avoided and the datum spread back to C5's (17.16 vs 17.26 GPS stations per
+epoch).  Every producer gate passes and three are the best of any arm.  And the
+consumer is **worse than iteration 1** (pooled p50 .1794 → .1941), not better.
+
+**So the §15.7 reading is FALSIFIED: the split reference was a correlate, not the
+mechanism.**  Removing every split moved the consumer the wrong way by 1.5 cm.
+
+**What the consumer difference actually is — measured, and it is a grading trap.**
+Decomposing the settled consumer error into its mean ENU components:
+
+| arm | Ē (m) | N̄ (m) | Ū (m) | \|U\| p50 | 3D p50 |
+|---|---|---|---|---|---|
+| A (scope OFF) | **+0.0771** | +0.0309 | −0.1615 | 0.1186 | 0.1741 |
+| C5 (cbscope5) | **+0.0381** | −0.0255 | −0.0437 | 0.0739 | 0.1204 |
+| B (iter 1) | **+0.0776** | −0.0295 | −0.0072 | 0.1036 | 0.1794 |
+| B2 (iter 2) | **+0.0786** | −0.0452 | −0.0411 | 0.1124 | 0.1941 |
+
+The EAST bias is +7.7 to +7.9 cm on **A, B and B2 alike** and +3.8 cm on C5 — C5 is the
+outlier, not the candidacy arms.  The static bias-vector magnitude is 6.3 cm for C5 and
+9.9 cm for B2, which is ~3.6 cm of the 7.4 cm median gap; and the vertical, which
+iteration 1 disturbed (Ū −0.007 against C5's −0.044), iteration 2 puts back (−0.041).
+Against the scope-OFF baseline the card costs **+0.5 cm (B) / +2.0 cm (B2)** on the 3D
+median, not the +49 % the C5 comparison reads.
+
+That does not rescue the gates — they were set against C5 and they fail — but it names
+what the failure is measuring: **a single-realization horizontal datum bias that differs
+between C5 and every other arm on this bed, including the arm the card was built on.**
+Standing invariant #5 says exactly this about consumer position as a grading channel, and
+the correct instrument here is a datum-invariant one.
+
+### 15.9 Verdict on iteration 2, and what iteration 3 must test
+
+**`network.phase_datum_candidacy_usable` stays KEEP_OFF**, now with both iterations
+merged default-OFF and the satellite clause default-ON beneath it.  The pre-registered
+gates: **11 pass** (split 0.0/0, cold 46 total and 19 settled, PB-GAUGE cold 52,
+successor age p10 116, ZWD 0.0061, WL 99.3, L1C 90.8, T4 11, W2 absent, G4 unchanged) and
+**3 fail**, all three consumer: pooled p50 .1941 vs ≤ .1204, window-excluded .1751 vs
+≤ .1028, hourly h1–h3 +9 to +15 cm vs the +2 cm allowance.
+
+What iteration 2 SETTLED, and it is worth the run on its own:
+
+1. **The split reference is not the consumer cost.**  Zero splits, consumer 1.5 cm
+   worse.  The §15.7 mechanism is refuted by its own fix.
+2. **The clause is nonetheless right and cheap** — it costs 13 election changes in 6 h,
+   restores the datum spread, restores the vertical, and keeps every producer gain.  It
+   is the form the knob should keep if it is ever armed.
+3. **The consumer comparison against cbscope5 is confounded** by a 4 cm east-bias
+   difference that the candidacy arms share with the scope-OFF baseline.
+
+**Iteration 3, pre-registered before it exists.**  The open question is no longer "which
+station" but "what does moving the datum host at all cost the user", and the C5
+comparison cannot answer it because C5's own realization differs.  Two things, in order:
+
+* **A datum-invariant consumer instrument.**  Re-grade every arm on a quantity the
+  station's own coordinate bias cannot enter — the between-satellite emitted-bias
+  consistency, or the consumer's ambiguity-fixing / residual channel — and re-run the
+  §15.6 and §15.8 verdicts against it.  Until that exists, no consumer gate on this bed
+  distinguishes a card from a realization.
+* **The COVERAGE cost of a usable-carry host.**  The pass by construction elects a
+  later-ranked station (60 rank changes here).  Measure the elected successors' coverage
+  rank distribution and test the cheapest restraint: accept a later-ranked candidate only
+  while its coverage is within k of the top-ranked one's (k a knob, 0 = today), so the
+  card buys carry continuity without ever moving the datum to a thin host.  Gate: the
+  producer channels of B2 kept, and the consumer within the A-arm's own spread.
 
 ### 14.4 Iteration 1 — the rule is right, the evidence source was wrong (worker build 5fe64c7 on its worktree; 2026-09-11 ~11:00)
 
