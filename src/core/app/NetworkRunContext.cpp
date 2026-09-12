@@ -326,6 +326,16 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // eq34 chain owns its own eq34_reref carry hygiene).
         k.pa_carry_reref = anchored && !k.phase_datum_eq34
                            && config_.networkPhaseAnchorCarryReref();
+        // COLD ANCHOR-FALLBACK (SPEC_event_harness §15).  Resolved against
+        // pd_handover_continuous, not against `anchored`, because the pass screens
+        // candidates with the LEDGER's own usability predicate — with no ledger it
+        // has nothing to read and would elect by coverage rank exactly as today.
+        // The loader warns about the same INERT case; this is the belt-and-braces a
+        // hand-built NetworkConfig (tests) needs.
+        k.pd_candidacy_usable = k.pd_handover_continuous
+                                && config_.networkPhaseDatumCandidacyUsable();
+        k.pd_candidacy_min_age_ep = k.pd_candidacy_usable
+                                ? config_.networkPhaseDatumCandidacyMinAgeEp() : 0;
     }
     // SBC S-basis completion (network.sbasis_complete).  Resolved here so the
     // pb_level_prev harvest (which the completion's continuity targets re-use —

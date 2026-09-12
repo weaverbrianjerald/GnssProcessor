@@ -1,0 +1,565 @@
+/**
+ * @file test_candidacy_usable.cpp
+ * @brief COLD ANCHOR-FALLBACK (network.phase_datum_candidacy_usable,
+ *        docs/SPEC_event_harness.md §15) — the candidacy screen, its skip
+ *        reasons, and the OFF byte-identity of the election it sits in front of.
+ *
+ * The defect is a ORDERING defect, and ordering defects leave no trace at the site
+ * where they happen.  `networkElectPhaseAnchors` sweeps the coverage-ranked
+ * candidates and takes the FIRST that tracks the key; the continuous-handover
+ * branch only afterwards looks that successor up in the one-epoch ledger and may
+ * refuse its carried value as a datum — at which point the family is pinned at 0,
+ * its gauge re-realizes, it is marked for re-reference and its leveling carries are
+ * erased at every station.  Nothing errors.  A lower-ranked station holding a
+ * mature, converged arc for the same key sits unused, and the only way to see that
+ * is to compare the elected station against the ones that were passed over
+ * (measured: 43 of 47 non-cold-start cold handovers on the storm arm had three or
+ * more mature alternatives, and in NONE of them was the successor the best-placed
+ * candidate).
+ *
+ * So the cases here pin exactly the decisions that have no other observable:
+ *
+ *   1. the knob defaults OFF, parses, carries a 60-epoch maturity default, and
+ *      REFUSES a negative maturity bar at load time;
+ *   2. with the knob OFF the election is the pre-card one — same successor, same
+ *      branch, same tallies — even with a populated ledger that would have let the
+ *      pass move it (the invariant #6 byte-identity, asserted as an equality
+ *      against the OFF run of the identical fixture, counters included);
+ *   3. with it ON, a handover whose top-ranked candidate has NO ledger entry lands
+ *      on the lower-ranked candidate that HAS a usable one, takes the CONTINUOUS
+ *      branch at that candidate's own carried value, and says so
+ *      (`candidacy_rank_changed` = 1, `handover_cold` = 0);
+ *   4. each refusal reason is separately reachable and separately counted —
+ *      no entry, variance/ratio refused, FREED this epoch, and younger than the
+ *      maturity bar — because "the pass fell back" and "the pass fell back because
+ *      the bar is too tight" are different findings;
+ *   5. with NO usable candidate the election is today's, exactly, and the cold
+ *      outcome is counted as a fallback rather than hidden;
+ *   6. the pass is NOT entered when the sticky incumbent is kept, and NOT entered
+ *      for an incumbent-less (first-sighting) key — the two places where there is
+ *      no outgoing frame to preserve and a screen could only churn the election.
+ *
+ * The election is exercised directly: it reads only station NAMES, the candidate
+ * census, the handover ledger and the carry view (same construction as
+ * tests/test_anchor_slip_handover.cpp and tests/test_eq34_reattach_hygiene.cpp).
+ */
+
+#include <gtest/gtest.h>
+
+#include "config/GnssConfig.hpp"
+#include "filter/NetworkAnchorHygiene.hpp"
+#include "filter/NetworkInject.hpp"
+#include "filter/NetworkPhaseDatum.hpp"
+#include "filter/NetworkRunTypes.hpp"
+#include "filter/StateKeySchema.hpp"
+#include "logging/LogManager.hpp"
+
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <set>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+namespace fs = std::filesystem;
+using namespace GnssProcessor;
+
+namespace {
+
+constexpr const char* kSig = "L1C";
+constexpr const char* kSat = "G10";
+constexpr double kMaxVar = 1e-2;   // the golden's phase_datum_handover_max_var_m2
+
+std::string ambKey() { return StateKeys::makeAmbiguityKey(kSat, kSig); }
+
+/// Station roster + this epoch's candidate census, exactly what the election reads.
+struct Roster {
+    std::vector<NetStation> stations;
+    std::vector<bool>       present;
+    PhaseDatumCandidates    cnd;
+};
+
+/// Four stations, all tracking G10/L1C, ranked A > B > C > D by coverage — so the
+/// election's sweep walks them in exactly that order.
+Roster makeRoster(const std::vector<std::string>& names,
+                  const std::vector<int>& coverage) {
+    Roster r;
+    r.stations.resize(names.size());
+    r.present.assign(names.size(), true);
+    r.cnd.sat_el.resize(names.size());
+    r.cnd.usable_keys.resize(names.size());
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        r.stations[i].name = names[i];
+        r.cnd.cover['G'][i] = coverage[i];
+        r.cnd.cand_set['G'].insert(i);
+        r.cnd.sat_el[i][kSat] = 45.0;
+        r.cnd.usable_keys[i][ambKey()] = StateKeys::makeSatPhaseBiasKey(kSat, kSig);
+        r.cnd.union_keys[ambKey()]     = StateKeys::makeSatPhaseBiasKey(kSat, kSig);
+    }
+    return r;
+}
+
+/// The outcome of one election call, as the assertions need it.
+struct Outcome {
+    std::string           elected;      ///< this_epoch_anchor for the family ("-" = none)
+    double                target = 0.0; ///< the pin the elected station got
+    bool                  pinned = false;
+    NetworkAnchorTallies  tally;
+    std::vector<AnchorHandoverEvent> events;
+};
+
+/// One full election over the fixture.  `usable` is the candidacy view (default =
+/// the pre-card election); `dir_on` stages the one-epoch candidacy ban that makes
+/// the handover happen at all.
+Outcome elect(Roster& r,
+              std::map<std::string, std::string> incumbent,
+              const AnchorHandoverLedger& ledger,
+              const AnchorCandidacyUsable& usable,
+              bool ban_incumbent,
+              double max_var_ratio = 0.0) {
+    NetworkInjectState inject;
+    if (ban_incumbent) {
+        InjectAnchorDirective d;
+        d.sat    = kSat;
+        d.signal = kSig;
+        d.cold   = false;      // CONTINUOUS: production rules pick the successor
+        inject.anchor_now_slip.push_back(std::move(d));
+    }
+    AnchorHygiene hyg;
+    Outcome o;
+    std::map<std::string, double>      pin_target;
+    std::map<std::string, std::string> this_epoch_anchor;
+    std::set<std::string>              shared;
+    networkElectPhaseAnchors(/*sticky=*/true, r.stations, r.present, r.cnd, hyg,
+                             o.tally, incumbent, pin_target, this_epoch_anchor,
+                             shared, &ledger, &o.events, kMaxVar, nullptr,
+                             max_var_ratio,
+                             ban_incumbent ? &inject : nullptr, &usable);
+    const auto it = this_epoch_anchor.find(ambKey());
+    o.elected = it == this_epoch_anchor.end() ? "-" : it->second;
+    for (const auto& st : r.stations) {
+        const auto pt = st.pinned_amb_targets.find(ambKey());
+        if (pt != st.pinned_amb_targets.end() && st.name == o.elected) {
+            o.target = pt->second;
+            o.pinned = true;
+        }
+    }
+    return o;
+}
+
+/// amb -> anchoring station, for the single family this fixture carries.
+std::map<std::string, std::string> incumbency(const std::string& sta) {
+    return {{ambKey(), sta}};
+}
+
+/// The candidacy view, armed.
+AnchorCandidacyUsable armed(
+        int min_age_ep,
+        long long now_ep = 0,
+        const std::set<std::pair<int, std::string>>* freed = nullptr,
+        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* lc =
+            nullptr) {
+    AnchorCandidacyUsable u;
+    u.on           = true;
+    u.min_age_ep   = min_age_ep;
+    u.now_ep       = now_ep;
+    u.free_ambs    = freed;
+    u.local_carry  = lc;
+    return u;
+}
+
+/// A loaded GnssConfig, for the loader round trip.  `ok_out` receives the parse
+/// result so the NEGATIVE case can assert a refusal instead of expecting success.
+struct Loaded {
+    LogManager log;
+    GnssConfig cfg;
+    fs::path   path;
+    bool       ok = false;
+    Loaded(const std::string& tag, const std::string& network_extra) {
+        const std::string body = std::string("{\n") +
+            "  \"processing\": {\n"
+            "    \"mode\": \"ppp-rtk-network\",\n"
+            "    \"active_systems\": [ \"GPS\" ],\n"
+            "    \"signal_priorities\": { \"GPS\": \"WC\" }\n"
+            "  },\n"
+            "  \"network\": {\n"
+            "    \"clock_datum_station\": \"AAAA\",\n"
+            "    \"phase_datum_prioritized\": true,\n"
+            + network_extra +
+            "    \"stations\": [\n"
+            "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
+            "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
+            "    ]\n"
+            "  }\n"
+            "}\n";
+        path = fs::temp_directory_path() / ("candidacy_cfg_" + tag + ".json");
+        std::ofstream f(path);
+        f << body;
+        f.close();
+        ok = cfg.loadFromJson(path, log);
+    }
+    ~Loaded() { std::error_code ec; fs::remove(path, ec); }
+};
+
+}  // namespace
+
+// ===========================================================================
+// 1: the config contract
+// ===========================================================================
+
+TEST(CandidacyUsableConfig, DefaultsOffWithASixtyEpochMaturityBar) {
+    Loaded l("default", "");
+    ASSERT_TRUE(l.ok);
+    EXPECT_FALSE(l.cfg.networkPhaseDatumCandidacyUsable())
+        << "new work is default-OFF (standing invariant #6)";
+    EXPECT_EQ(l.cfg.networkPhaseDatumCandidacyMinAgeEp(), 60)
+        << "the §15 census separated the cold (p50 39 ep) and continuous (p50 236 ep) "
+           "successor populations at 60 epochs";
+}
+
+TEST(CandidacyUsableConfig, ParsesBothKnobs) {
+    Loaded l("on", "    \"phase_datum_candidacy_usable\": true,\n"
+                   "    \"phase_datum_candidacy_min_age_ep\": 20,\n");
+    ASSERT_TRUE(l.ok);
+    EXPECT_TRUE(l.cfg.networkPhaseDatumCandidacyUsable());
+    EXPECT_EQ(l.cfg.networkPhaseDatumCandidacyMinAgeEp(), 20);
+}
+
+TEST(CandidacyUsableConfig, ZeroMaturityBarIsLegalAndMeansNoAgeTest) {
+    Loaded l("zero", "    \"phase_datum_candidacy_usable\": true,\n"
+                     "    \"phase_datum_candidacy_min_age_ep\": 0,\n");
+    ASSERT_TRUE(l.ok);
+    EXPECT_EQ(l.cfg.networkPhaseDatumCandidacyMinAgeEp(), 0);
+}
+
+TEST(CandidacyUsableConfig, NegativeMaturityBarIsRefused) {
+    Loaded l("neg", "    \"phase_datum_candidacy_usable\": true,\n"
+                    "    \"phase_datum_candidacy_min_age_ep\": -1,\n");
+    EXPECT_FALSE(l.ok) << "a negative bar has no meaning; 0 is the 'no age test' "
+                          "spelling and the loader must not silently accept -1";
+}
+
+// ===========================================================================
+// 2: OFF is the pre-card election, ledger and all (invariant #6)
+// ===========================================================================
+
+TEST(CandidacyUsableElection, KnobOffElectsTheTopRankedCandidateAndGoesCold) {
+    // A anchors; the ban retires it; B outranks C but has NO ledger entry while C
+    // has a converged one.  This is the defect, stated as a test.
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};   // CCCC: usable
+
+    AnchorCandidacyUsable off;   // knob OFF — the pass is not entered
+    const Outcome o = elect(r, incumbency("AAAA"), ledger, off, /*ban=*/true);
+
+    EXPECT_EQ(o.elected, "BBBB");
+    EXPECT_TRUE(o.pinned);
+    EXPECT_DOUBLE_EQ(o.target, 0.0) << "no ledger entry for BBBB ⇒ the COLD pin";
+    EXPECT_EQ(o.tally.handover_cold, 1);
+    EXPECT_EQ(o.tally.handover_continuous, 0);
+    EXPECT_EQ(o.tally.candidacy_usable_elected, 0);
+    EXPECT_EQ(o.tally.candidacy_skipped_unusable, 0);
+    EXPECT_EQ(o.tally.candidacy_no_usable_fallback, 0);
+    EXPECT_EQ(o.tally.candidacy_rank_changed, 0);
+    ASSERT_EQ(o.events.size(), 1u);
+    EXPECT_EQ(o.events.front().cand_skipped, 0);
+    EXPECT_TRUE(o.events.front().cand_first_unusable.empty());
+}
+
+TEST(CandidacyUsableElection, KnobOffIsByteIdenticalToTheUnarmedCall) {
+    // The invariant-#6 assertion proper: the SAME fixture, once through the
+    // default-constructed view (the code path compiled but not entered) and once
+    // through a nullptr view (the pre-card signature), must agree on the elected
+    // station, the pin, the events AND every tally field the card touches.
+    auto r1 = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    auto r2 = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
+    ledger.value_abs[{3, ambKey()}] = {-3.25, 1e-7, 1e-4};
+
+    AnchorCandidacyUsable off;
+    const Outcome a = elect(r1, incumbency("AAAA"), ledger, off, /*ban=*/true);
+
+    // The nullptr-view call, spelled out (elect() always passes a view).
+    NetworkInjectState inject;
+    InjectAnchorDirective d;
+    d.sat = kSat; d.signal = kSig; d.cold = false;
+    inject.anchor_now_slip.push_back(std::move(d));
+    AnchorHygiene hyg;
+    NetworkAnchorTallies tally;
+    std::map<std::string, std::string> inc = incumbency("AAAA");
+    std::map<std::string, double> pin_target;
+    std::map<std::string, std::string> this_epoch_anchor;
+    std::set<std::string> shared;
+    std::vector<AnchorHandoverEvent> events;
+    networkElectPhaseAnchors(true, r2.stations, r2.present, r2.cnd, hyg, tally, inc,
+                             pin_target, this_epoch_anchor, shared, &ledger, &events,
+                             kMaxVar, nullptr, 0.0, &inject, nullptr);
+
+    EXPECT_EQ(a.elected, this_epoch_anchor.at(ambKey()));
+    EXPECT_DOUBLE_EQ(a.target, r2.stations[1].pinned_amb_targets.at(ambKey()));
+    EXPECT_EQ(a.tally.handover_cold, tally.handover_cold);
+    EXPECT_EQ(a.tally.handover_continuous, tally.handover_continuous);
+    EXPECT_EQ(a.tally.reattaches, tally.reattaches);
+    EXPECT_EQ(a.tally.cold_fallback_pins, tally.cold_fallback_pins);
+    EXPECT_EQ(a.tally.handover_refused_var, tally.handover_refused_var);
+    EXPECT_EQ(a.tally.handover_refused_ratio, tally.handover_refused_ratio);
+    ASSERT_EQ(a.events.size(), events.size());
+    EXPECT_EQ(a.events.front().to, events.front().to);
+    EXPECT_EQ(a.events.front().continuous, events.front().continuous);
+}
+
+// ===========================================================================
+// 3: ON — the usable candidate is elected, and the branch is continuous
+// ===========================================================================
+
+TEST(CandidacyUsableElection, ElectsTheLowerRankedCandidateWhoseCarryIsUsable) {
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};   // CCCC only
+
+    const Outcome o = elect(r, incumbency("AAAA"), ledger, armed(/*min_age=*/0),
+                            /*ban=*/true);
+
+    EXPECT_EQ(o.elected, "CCCC") << "BBBB outranks CCCC but has no usable carry";
+    EXPECT_DOUBLE_EQ(o.target, 12.5) << "pinned at the successor's OWN value in the "
+                                        "outgoing frame — the S-transform";
+    EXPECT_EQ(o.tally.handover_continuous, 1);
+    EXPECT_EQ(o.tally.handover_cold, 0);
+    EXPECT_EQ(o.tally.candidacy_usable_elected, 1);
+    EXPECT_EQ(o.tally.candidacy_rank_changed, 1) << "the elected station is NOT the "
+                                                    "one today's sweep would take";
+    EXPECT_EQ(o.tally.candidacy_no_usable_fallback, 0);
+    EXPECT_EQ(o.tally.candidacy_skipped_unusable, 1);
+    EXPECT_EQ(o.tally.candidacy_skip_no_entry, 1);
+    ASSERT_EQ(o.events.size(), 1u);
+    EXPECT_EQ(o.events.front().cand_skipped, 1);
+    EXPECT_EQ(o.events.front().cand_first_unusable, "BBBB");
+}
+
+TEST(CandidacyUsableElection, AgreeingWithTodaysPickIsCountedButNotAsAChange) {
+    // The pass ran, found the top-ranked candidate usable, and elected it — the
+    // same station today's sweep takes.  `candidacy_rank_changed` must stay 0: an
+    // arm whose elected station always matches today's changed nothing, however
+    // busy `candidacy_usable_elected` looks.
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};    // BBBB: usable
+
+    const Outcome o = elect(r, incumbency("AAAA"), ledger, armed(0), true);
+
+    EXPECT_EQ(o.elected, "BBBB");
+    EXPECT_DOUBLE_EQ(o.target, 7.0);
+    EXPECT_EQ(o.tally.candidacy_usable_elected, 1);
+    EXPECT_EQ(o.tally.candidacy_rank_changed, 0);
+    EXPECT_EQ(o.tally.candidacy_skipped_unusable, 0);
+    EXPECT_EQ(o.tally.handover_continuous, 1);
+}
+
+// ===========================================================================
+// 4: the four refusal reasons, each separately reachable and counted
+// ===========================================================================
+
+TEST(CandidacyUsableElection, VarianceCeilingRefusesTheTopCandidate) {
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, ambKey()}] = {7.0, 1.0, 1e-3};     // BBBB: var >> ceiling
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};   // CCCC: usable
+
+    const Outcome o = elect(r, incumbency("AAAA"), ledger, armed(0), true);
+
+    EXPECT_EQ(o.elected, "CCCC");
+    EXPECT_DOUBLE_EQ(o.target, 12.5);
+    EXPECT_EQ(o.tally.candidacy_skip_var_refused, 1);
+    EXPECT_EQ(o.tally.candidacy_skip_no_entry, 0);
+    EXPECT_EQ(o.tally.candidacy_rank_changed, 1);
+    EXPECT_EQ(o.tally.handover_cold, 0);
+}
+
+TEST(CandidacyUsableElection, RatioCeilingRefusesTheTopCandidateWhenArmed) {
+    // Same absolute variance for both, but BBBB has not converged against its OWN
+    // first stash.  The screen must apply the ratio ceiling exactly as the
+    // continuous branch does — a screen that ignored it would elect a station the
+    // branch then refuses, which is the defect with extra steps.
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, ambKey()}] = {7.0, 1e-4, 1e-4};    // var == var_first
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};   // var = 1e-3 x var_first
+
+    const Outcome o = elect(r, incumbency("AAAA"), ledger, armed(0), true,
+                            /*max_var_ratio=*/1e-2);
+
+    EXPECT_EQ(o.elected, "CCCC");
+    EXPECT_EQ(o.tally.candidacy_skip_var_refused, 1);
+    EXPECT_EQ(o.tally.handover_continuous, 1);
+    EXPECT_EQ(o.tally.handover_refused_ratio, 0) << "the refusal happened at "
+                                                    "CANDIDACY, so the branch never "
+                                                    "saw an unusable successor";
+}
+
+TEST(CandidacyUsableElection, AnArcFreedThisEpochIsNotACandidate) {
+    // BBBB's ledger value is immaculate and about to be meaningless: a slip response
+    // freed that very arc this epoch, so its level is re-drawn from one epoch of
+    // code before the next harvest.  Invariant #1's re-coupling edge, asked at
+    // candidacy time.
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
+    const std::set<std::pair<int, std::string>> freed{{1, ambKey()}};
+
+    const Outcome o = elect(r, incumbency("AAAA"), ledger, armed(0, 0, &freed), true);
+
+    EXPECT_EQ(o.elected, "CCCC");
+    EXPECT_DOUBLE_EQ(o.target, 12.5);
+    EXPECT_EQ(o.tally.candidacy_skip_freed, 1);
+    EXPECT_EQ(o.tally.candidacy_skip_no_entry, 0);
+    EXPECT_EQ(o.tally.candidacy_skip_var_refused, 0);
+    EXPECT_EQ(o.tally.candidacy_rank_changed, 1);
+}
+
+TEST(CandidacyUsableElection, AYoungArcIsRefusedAndZeroDisablesTheTest) {
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
+    std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
+    LocalCarry young{};
+    young.birth_ep = 980;                       // 20 epochs old at now_ep 1000
+    lc[{1, kSat, kSig}] = young;
+    LocalCarry mature{};
+    mature.birth_ep = 100;                      // 900 epochs old
+    lc[{2, kSat, kSig}] = mature;
+
+    const Outcome young_refused = elect(r, incumbency("AAAA"), ledger,
+                                        armed(60, 1000, nullptr, &lc), true);
+    EXPECT_EQ(young_refused.elected, "CCCC");
+    EXPECT_EQ(young_refused.tally.candidacy_skip_young, 1);
+    EXPECT_EQ(young_refused.tally.candidacy_rank_changed, 1);
+
+    auto r2 = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    const Outcome no_bar = elect(r2, incumbency("AAAA"), ledger,
+                                 armed(0, 1000, nullptr, &lc), true);
+    EXPECT_EQ(no_bar.elected, "BBBB") << "min_age_ep = 0 disables the maturity test";
+    EXPECT_EQ(no_bar.tally.candidacy_skip_young, 0);
+    EXPECT_EQ(no_bar.tally.candidacy_rank_changed, 0);
+}
+
+TEST(CandidacyUsableElection, AnUnknownArcAgeReadsAsMature) {
+    // The restored-entry convention: a warm-resume entry (or none at all) has no
+    // birth stamp, and refusing it would refuse every candidate on the first epoch
+    // after a resume — the conservative direction is to let the variance ceiling
+    // decide.
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
+    std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
+    LocalCarry restored{};
+    restored.birth_ep = 0;                      // unstamped
+    lc[{1, kSat, kSig}] = restored;
+
+    const Outcome o = elect(r, incumbency("AAAA"), ledger,
+                            armed(60, 1000, nullptr, &lc), true);
+
+    EXPECT_EQ(o.elected, "BBBB");
+    EXPECT_EQ(o.tally.candidacy_skip_young, 0);
+    EXPECT_EQ(o.tally.handover_continuous, 1);
+}
+
+// ===========================================================================
+// 5: no usable candidate — today's election, honestly counted
+// ===========================================================================
+
+TEST(CandidacyUsableElection, NoUsableCandidateFallsThroughToTodaysPick) {
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;          // nobody has an entry
+
+    const Outcome o = elect(r, incumbency("AAAA"), ledger, armed(0), true);
+
+    EXPECT_EQ(o.elected, "BBBB") << "the fall-through must be today's election, "
+                                    "unchanged";
+    EXPECT_DOUBLE_EQ(o.target, 0.0);
+    EXPECT_EQ(o.tally.handover_cold, 1) << "an unavoidable cold handover stays cold "
+                                           "and stays counted";
+    EXPECT_EQ(o.tally.candidacy_no_usable_fallback, 1);
+    EXPECT_EQ(o.tally.candidacy_usable_elected, 0);
+    EXPECT_EQ(o.tally.candidacy_rank_changed, 0);
+    ASSERT_EQ(o.events.size(), 1u);
+    EXPECT_EQ(o.events.front().cand_skipped, 0)
+        << "a fall-through is today's election, not a screen that walked past three "
+           "candidates — the trace must not claim otherwise";
+}
+
+TEST(CandidacyUsableElection, AForcedColdDirectiveMakesEveryCandidateUnusable) {
+    // The harness asking for a COLD handover is part of the shared predicate, so the
+    // pass cannot quietly re-pick the station a cold leg was written to land on.
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
+
+    NetworkInjectState inject;
+    InjectAnchorDirective d;
+    d.sat = kSat; d.signal = kSig; d.cold = true;    // FORCED cold
+    inject.anchor_now.push_back(std::move(d));
+    inject.armed = true;
+    AnchorHygiene hyg;
+    NetworkAnchorTallies tally;
+    std::map<std::string, std::string> inc = incumbency("AAAA");
+    std::map<std::string, double> pin_target;
+    std::map<std::string, std::string> this_epoch_anchor;
+    std::set<std::string> shared;
+    const AnchorCandidacyUsable u = armed(0);
+    networkElectPhaseAnchors(true, r.stations, r.present, r.cnd, hyg, tally, inc,
+                             pin_target, this_epoch_anchor, shared, &ledger, nullptr,
+                             kMaxVar, nullptr, 0.0, &inject, &u);
+
+    EXPECT_EQ(this_epoch_anchor.at(ambKey()), "BBBB");
+    EXPECT_DOUBLE_EQ(r.stations[1].pinned_amb_targets.at(ambKey()), 0.0);
+    EXPECT_EQ(tally.handover_cold, 1);
+    EXPECT_EQ(tally.candidacy_no_usable_fallback, 1);
+    EXPECT_EQ(tally.candidacy_usable_elected, 0);
+}
+
+// ===========================================================================
+// 6: where the pass must NOT be entered
+// ===========================================================================
+
+TEST(CandidacyUsableElection, AKeptStickyIncumbentNeverEntersThePass) {
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
+
+    const Outcome on  = elect(r, incumbency("AAAA"), ledger, armed(0), /*ban=*/false);
+    auto r2 = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorCandidacyUsable off;
+    const Outcome offo = elect(r2, incumbency("AAAA"), ledger, off, /*ban=*/false);
+
+    EXPECT_EQ(on.elected, "AAAA");
+    EXPECT_EQ(offo.elected, "AAAA");
+    EXPECT_EQ(on.tally.candidacy_usable_elected, 0);
+    EXPECT_EQ(on.tally.candidacy_no_usable_fallback, 0);
+    EXPECT_EQ(on.tally.candidacy_skipped_unusable, 0);
+    EXPECT_EQ(on.tally.handover_cold, 0);
+    EXPECT_TRUE(on.events.empty()) << "no handover happened at all";
+}
+
+TEST(CandidacyUsableElection, AFirstSightingNeverEntersThePass) {
+    // No incumbent: there is no outgoing frame, the continuous branch cannot run,
+    // and every pin is a 0-pin whichever station takes it.  Screening there would
+    // move elections the card cannot improve, so the pass must stay out.
+    auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
+    AnchorHandoverLedger ledger;
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
+
+    const Outcome o = elect(r, /*incumbent=*/{}, ledger, armed(0), /*ban=*/false);
+
+    EXPECT_EQ(o.elected, "AAAA") << "the top-ranked candidate, exactly as today";
+    EXPECT_DOUBLE_EQ(o.target, 0.0);
+    EXPECT_EQ(o.tally.candidacy_usable_elected, 0);
+    EXPECT_EQ(o.tally.candidacy_no_usable_fallback, 0);
+    EXPECT_EQ(o.tally.candidacy_skipped_unusable, 0);
+}

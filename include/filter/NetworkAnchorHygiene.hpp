@@ -134,6 +134,21 @@ struct NetworkAnchorTallies {
     double    handover_max_abs_m = 0.0;  ///< Largest |target| applied — the size of the step that was AVOIDED.
     long long handover_refused_var = 0;  ///< Ledger value REFUSED as too ill-determined to serve as a datum (subset of handover_cold) — invariant #7's re-coupling re-validation.
     long long handover_refused_ratio = 0; ///< Ledger value REFUSED by the honest-σ-scale test var <= ratio × var_first (network.phase_datum_handover_max_var_ratio; subset of handover_cold, disjoint from handover_refused_var; an unknown var_first counts here).
+    // --- COLD ANCHOR-FALLBACK (network.phase_datum_candidacy_usable) ------------
+    // docs/SPEC_event_harness.md §15.  Invariant #4: the pass is a CANDIDACY screen,
+    // so the only way to tell "it ran and changed the election" from "it ran and
+    // agreed with today's sweep" from "it never ran" is to count all three.
+    // `candidacy_rank_changed` is the load-bearing one — it is the number of
+    // elections where the usable candidate is NOT the station today's sweep would
+    // have taken, i.e. the population the card exists for.
+    long long candidacy_usable_elected = 0;      ///< Handovers whose successor came from the usable-first pass.
+    long long candidacy_rank_changed = 0;        ///< ...and the elected station DIFFERS from today's pick (the pass actually did something).
+    long long candidacy_no_usable_fallback = 0;  ///< Handovers where NO candidate was usable → today's sweeps, honest cold path.
+    long long candidacy_skipped_unusable = 0;    ///< (candidate, family) pairs the pass skipped — the sum of the four splits below.
+    long long candidacy_skip_no_entry = 0;       ///< ...no ledger entry for the candidate at all (a never-carried arc).
+    long long candidacy_skip_var_refused = 0;    ///< ...entry present but refused by the variance / ratio ceiling (or a forced-cold directive).
+    long long candidacy_skip_freed = 0;          ///< ...the candidate's own arc was FREED this epoch (leveling latch or DD slip funnel): its level is about to be re-drawn from code.
+    long long candidacy_skip_young = 0;          ///< ...arc younger than phase_datum_candidacy_min_age_ep.
     double bridge_margin_decades = 0.0;  ///< K2-style margin of the bridge information over the rank-gate cutoff.
     bool   bridge_margin_logged = false; ///< one-shot latch for that check.
 };

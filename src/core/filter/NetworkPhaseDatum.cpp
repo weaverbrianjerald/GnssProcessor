@@ -248,7 +248,8 @@ void networkElectPhaseAnchors(
         double max_var,
         std::set<std::pair<std::string, std::string>>* reref_out,
         double max_var_ratio,
-        const NetworkInjectState* inject) {
+        const NetworkInjectState* inject,
+        const AnchorCandidacyUsable* cand_usable) {
     const auto& usable_keys = cnd.usable_keys;
     const auto& cand_set    = cnd.cand_set;
     const auto& union_keys  = cnd.union_keys;
@@ -256,6 +257,72 @@ void networkElectPhaseAnchors(
     auto cov = [&](char c, size_t i) -> int {
         auto it = cover.find(c); if (it == cover.end()) return 0;
         auto jt = it->second.find(i); return jt == it->second.end() ? 0 : jt->second;
+    };
+
+    // ---- THE LEDGER USABILITY PREDICATE — one definition, two readers ----------
+    // COLD ANCHOR-FALLBACK (docs/SPEC_event_harness.md §15).  The continuous branch
+    // far below decides whether a successor's carried value may serve as the datum;
+    // the candidacy pass asks the SAME question of every candidate BEFORE one is
+    // elected.  Sharing the predicate is load-bearing, not tidiness: a screen that
+    // drifted from the decision it previews would elect a station the branch then
+    // refuses — the defect with extra steps.  The forced-cold directive is part of
+    // the predicate (the harness ASKING for cold must make every candidate unusable,
+    // so the pass cannot quietly re-pick the station a cold leg lands on).
+    struct LedgerVerdict {
+        bool ok = false;          ///< usable as a datum
+        bool has_entry = false;   ///< a ledger entry exists at all
+        bool var_over = false;    ///< entry present and var above the ABSOLUTE ceiling
+        bool ratio_on = false;    ///< the honest-σ-scale ceiling is armed
+        bool ratio_ok = true;     ///< ...and this entry passes it
+    };
+    auto ledgerVerdict = [&](const AnchorHandoverLedger::Entry* e,
+                             bool forced_cold) -> LedgerVerdict {
+        LedgerVerdict v;
+        v.ratio_on  = max_var_ratio > 0.0;
+        v.has_entry = e != nullptr;
+        v.var_over  = e != nullptr && e->var > max_var;
+        v.ratio_ok  = !v.ratio_on
+                || (e != nullptr && e->var_first > 0.0 && std::isfinite(e->var_first)
+                    && e->var <= max_var_ratio * e->var_first);
+        v.ok = !forced_cold && e != nullptr && std::isfinite(e->value)
+               && e->var > 0.0 && std::isfinite(e->var) && e->var <= max_var
+               && v.ratio_ok;
+        return v;
+    };
+    auto ledgerEntry = [&](size_t i, const std::string& amb)
+            -> const AnchorHandoverLedger::Entry* {
+        if (!handover) return nullptr;
+        const auto it = handover->value_abs.find({static_cast<int>(i), amb});
+        return it == handover->value_abs.end() ? nullptr : &it->second;
+    };
+    // COLD ANCHOR-FALLBACK: was arc (i, amb) FREED this epoch?  A slip response that
+    // freed an arc is about to re-draw its level from one epoch of code, so its
+    // carried value is not a datum however good last epoch's variance looks —
+    // standing invariant #1's re-coupling edge, asked at candidacy time.  Both
+    // vehicles (the leveling free-epoch latch and the DD invariant-carry funnel).
+    auto candFreed = [&](size_t i, const std::string& amb) {
+        if (!cand_usable) return false;
+        const std::pair<int, std::string> k{static_cast<int>(i), amb};
+        return (cand_usable->free_ambs && cand_usable->free_ambs->count(k) != 0)
+            || (cand_usable->slipped_ambs && cand_usable->slipped_ambs->count(k) != 0);
+    };
+    // COLD ANCHOR-FALLBACK: is arc (i, amb) MATURE?  Age is n_loop_epochs − birth_ep
+    // of the station's own phase-leveling carry.  An UNKNOWN age — no carry entry, or
+    // a warm-resume-restored entry whose birth_ep reads 0 — counts as MATURE, the
+    // same restored-entry convention the F3 block gate and the young-arc inflation
+    // use: the conservative direction is to let the variance ceiling decide rather
+    // than refuse a candidate the ledger says has converged.
+    auto candMature = [&](size_t i, const std::string& amb) {
+        if (!cand_usable || cand_usable->min_age_ep <= 0 || !cand_usable->local_carry)
+            return true;
+        const std::size_t us = amb.find('_');
+        if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) return true;
+        const auto it = cand_usable->local_carry->find(
+                {static_cast<int>(i), amb.substr(0, us), amb.substr(us + 1)});
+        if (it == cand_usable->local_carry->end()) return true;   // never carried ⇒ unknown
+        if (it->second.birth_ep <= 0) return true;                // unstamped ⇒ mature
+        return cand_usable->now_ep - it->second.birth_ep
+               >= static_cast<long long>(cand_usable->min_age_ep);
     };
 
     std::map<char, std::vector<size_t>> cand;
@@ -328,23 +395,85 @@ void networkElectPhaseAnchors(
         // second sweep accept a fresh host (counted — an unavoidable cold pin is not
         // the same event as a clean handover, and INC-3 can ramp its σ).  The sticky
         // incumbent above is deliberately exempt: keeping it is not a reattach.
-        if (anchor == static_cast<size_t>(-1)) {
+        // Today's two sweeps, factored so the candidacy pass below can compute the
+        // pick they WOULD make without bumping their counter twice.  Behaviour is
+        // unchanged: first the hygiene-eligible sweep, then the fresh-host fallback
+        // (whose `cold_fallback_pins` bump moves to the single call site).
+        auto todayPick = [&]() -> std::pair<size_t, bool> {
+            auto cit = cand.find(c);
+            if (cit == cand.end()) return {static_cast<size_t>(-1), false};
+            for (size_t i : cit->second)
+                if (usable_keys[i].count(amb) && hyg.eligibleHost(i, amb)
+                    && !banned_sta(i))
+                    return {i, false};
+            for (size_t i : cit->second)
+                if (usable_keys[i].count(amb) && !banned_sta(i))
+                    return {i, true};
+            return {static_cast<size_t>(-1), false};
+        };
+        // COLD ANCHOR-FALLBACK (docs/SPEC_event_harness.md §15) — the FIRST pass.
+        // Entered only where a HANDOVER is about to happen: an incumbent exists for
+        // this key and the sticky branch did not keep it (absent, lost the key, or
+        // banned).  An incumbent-LESS key has no outgoing frame to preserve — the
+        // continuous branch cannot run for it and every pin is a 0-pin whichever
+        // station takes it — so screening there would move elections this card
+        // cannot improve.  The hygiene eligibility test rides along, which makes the
+        // elected station always one today's FIRST sweep would also have accepted:
+        // the pass can only move the choice LATER down the same coverage order.
+        const auto inc_it = anchor_incumbent.find(amb);
+        int  n_cand_skipped = 0;
+        std::string first_unusable;
+        bool from_candidacy = false;
+        if (anchor == static_cast<size_t>(-1) && cand_usable && cand_usable->on
+            && inc_it != anchor_incumbent.end()) {
             auto cit = cand.find(c);
             if (cit != cand.end()) {
-                for (size_t i : cit->second)
-                    if (usable_keys[i].count(amb) && hyg.eligibleHost(i, amb)
-                        && !banned_sta(i)) {
+                for (size_t i : cit->second) {
+                    if (!usable_keys[i].count(amb) || !hyg.eligibleHost(i, amb)
+                        || banned_sta(i))
+                        continue;
+                    const LedgerVerdict v =
+                            ledgerVerdict(ledgerEntry(i, amb), dir && dir->cold);
+                    // The skip reasons are checked in the order they DISQUALIFY, and
+                    // exactly one is counted per skipped candidate, so the four
+                    // splits partition `candidacy_skipped_unusable` (invariant #4:
+                    // a total with no partition cannot say WHY the pass fell back).
+                    if (!v.ok) {
+                        ++tally.candidacy_skipped_unusable;
+                        if (!v.has_entry) ++tally.candidacy_skip_no_entry;
+                        else              ++tally.candidacy_skip_var_refused;
+                    } else if (candFreed(i, amb)) {
+                        ++tally.candidacy_skipped_unusable;
+                        ++tally.candidacy_skip_freed;
+                    } else if (!candMature(i, amb)) {
+                        ++tally.candidacy_skipped_unusable;
+                        ++tally.candidacy_skip_young;
+                    } else {
                         anchor = i;
+                        from_candidacy = true;
                         break;
                     }
-                if (anchor == static_cast<size_t>(-1))
-                    for (size_t i : cit->second)
-                        if (usable_keys[i].count(amb) && !banned_sta(i)) {
-                            anchor = i;
-                            ++tally.cold_fallback_pins;
-                            break;
-                        }
+                    ++n_cand_skipped;
+                    if (first_unusable.empty()) first_unusable = stations[i].name;
+                }
             }
+            if (from_candidacy) {
+                ++tally.candidacy_usable_elected;
+                // The number that proves the pass DID something: today's sweep is
+                // cheap to evaluate alongside, and an arm whose elected station
+                // always matches it changed nothing however clean its log looks.
+                if (todayPick().first != anchor) ++tally.candidacy_rank_changed;
+            } else {
+                ++tally.candidacy_no_usable_fallback;
+                n_cand_skipped = 0;      // the fall-through is today's election, not a screen
+                first_unusable.clear();
+            }
+        }
+        if (anchor == static_cast<size_t>(-1)) {
+            const auto pick = todayPick();
+            anchor = pick.first;
+            if (anchor != static_cast<size_t>(-1) && pick.second)
+                ++tally.cold_fallback_pins;
         }
         if (anchor == static_cast<size_t>(-1)) {
             // No tracker at all — or, under a directive, the banned incumbent was
@@ -407,20 +536,18 @@ void networkElectPhaseAnchors(
             // its birth — var <= ratio × its first-stash conditional variance.  An
             // unknown var_first (a fresh arc that was never carried) is refused.  The
             // absolute ceiling stays as a rail; both are counted separately.
-            const bool ratio_on = max_var_ratio > 0.0;
-            const bool ratio_ok = !ratio_on
-                    || (hit != handover->value_abs.end()
-                        && hit->second.var_first > 0.0
-                        && std::isfinite(hit->second.var_first)
-                        && hit->second.var <= max_var_ratio * hit->second.var_first);
-            const bool usable =
-                    !(dir && dir->cold)          // EVENT HARNESS: forced COLD handover
-                    && hit != handover->value_abs.end()
-                    && std::isfinite(hit->second.value)
-                    && hit->second.var > 0.0
-                    && std::isfinite(hit->second.var)
-                    && hit->second.var <= max_var
-                    && ratio_ok;
+            // COLD ANCHOR-FALLBACK: this predicate now has TWO readers — the
+            // candidacy pass above previews it for every candidate, this branch
+            // decides it for the elected one.  ONE lambda (`ledgerVerdict`), so the
+            // screen can never drift from the decision.  The refusal splits below
+            // read the same verdict's fields, which keeps `handover_refused_var` /
+            // `handover_refused_ratio` exactly what they were.
+            const LedgerVerdict lv = ledgerVerdict(
+                    hit != handover->value_abs.end() ? &hit->second : nullptr,
+                    dir && dir->cold);            // EVENT HARNESS: forced COLD handover
+            const bool ratio_on = lv.ratio_on;
+            const bool ratio_ok = lv.ratio_ok;
+            const bool usable   = lv.ok;
             if (hit != handover->value_abs.end()) {
                 ev_var       = hit->second.var;
                 ev_var_first = hit->second.var_first;
@@ -461,12 +588,22 @@ void networkElectPhaseAnchors(
             if (is_handover && !continuous) ++dir->n_cold_fallback;
             if (!banned.empty()) dir->retired.push_back(banned);
             dir->elected.push_back(stations[anchor].name);
+            // COLD ANCHOR-FALLBACK readback: what the candidacy pass had to walk
+            // past to reach this successor (0 / empty with the knob off).
+            dir->n_cand_skipped += n_cand_skipped;
+            if (dir->cand_first_unusable.empty())
+                dir->cand_first_unusable = first_unusable;
         }
         stations[anchor].pinned_amb_targets[amb] = target;
         if (is_handover && handovers_out) {
             AnchorHandoverEvent ev{amb, inc->second, stations[anchor].name, target, continuous};
             ev.var       = ev_var;
             ev.var_first = ev_var_first;
+            // COLD ANCHOR-FALLBACK: the census of §15 can then be re-run from the
+            // PBGAUGE rows alone — how many better-ranked candidates this handover
+            // walked past, and who the first refused one was.
+            ev.cand_skipped         = n_cand_skipped;
+            ev.cand_first_unusable  = first_unusable;
             handovers_out->push_back(std::move(ev));
         }
         // QUEUE item 1(d) (SPEC_pivot_visibility_gauge_defect §5.07.5 R1): mark

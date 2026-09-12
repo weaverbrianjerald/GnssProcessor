@@ -7082,6 +7082,26 @@ namespace GnssProcessor {
                        network_phase_datum_handover_max_var_ratio_);
             return false;
         }
+        // COLD ANCHOR-FALLBACK (docs/SPEC_event_harness.md §15 + §16.8).  The two
+        // knobs above decide what TARGET a handover's successor is pinned at; this
+        // one decides WHICH STATION reaches that decision.  Today's election takes
+        // the first coverage-ranked tracker and only then discovers its carry is
+        // unusable, so the family re-realizes cold while a lower-ranked tracker with
+        // a mature usable arc sits unused (43 of 47 non-cold-start cold handovers on
+        // the storm arm had >= 3 mature alternatives).  Default OFF = byte-identical.
+        network_phase_datum_candidacy_usable_ =
+            jval<bool>(json, "network.phase_datum_candidacy_usable",
+                       "network_phase_datum_candidacy_usable", false);
+        network_phase_datum_candidacy_min_age_ep_ =
+            jval<int>(json, "network.phase_datum_candidacy_min_age_ep",
+                      "network_phase_datum_candidacy_min_age_ep", 60);
+        if (network_phase_datum_candidacy_min_age_ep_ < 0) {
+            log->error("Network: network.phase_datum_candidacy_min_age_ep must be >= 0 "
+                       "(got {}); 0 disables the maturity test and lets the variance "
+                       "ceiling decide alone.",
+                       network_phase_datum_candidacy_min_age_ep_);
+            return false;
+        }
         // QUEUE item 1(d) — the PHASE_ANCHOR carry re-reference
         // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  The handover
         // knob above acts on the DESIGN-MATRIX side of the edge (what target the
@@ -8324,6 +8344,32 @@ namespace GnssProcessor {
                           "var / var_first.",
                           network_phase_datum_handover_max_var_ratio_,
                           network_phase_datum_handover_max_var_m2_);
+        }
+        // COLD ANCHOR-FALLBACK (SPEC_event_harness §15): same INERT ladder — with no
+        // continuous handover there is no ledger to screen candidates against, so the
+        // candidacy pass has nothing to read and would elect by coverage rank exactly
+        // as today.  Say so rather than let an armed knob read as active.
+        if (network_phase_datum_candidacy_usable_) {
+            if (!network_phase_datum_handover_continuous_)
+                log->warn("Network (COLD ANCHOR-FALLBACK): "
+                          "network.phase_datum_candidacy_usable is set but "
+                          "network.phase_datum_handover_continuous is OFF (or was disarmed "
+                          "above) — there is no handover ledger to screen candidates "
+                          "against, so the candidacy pass is INERT.");
+            else
+                log->info("Network producer (COLD ANCHOR-FALLBACK): a handover's successor is "
+                          "chosen from the coverage-ranked candidates whose CARRY IS USABLE "
+                          "by the continuous branch's own predicate (finite value, 0 < var <= "
+                          "{} m^2{}, not freed this epoch, arc age >= {} loop epochs — 0 or "
+                          "unknown = mature), and only if NONE is usable does the election "
+                          "fall through to today's take-the-first-tracker sweeps.  So "
+                          "handover_cold then counts exactly the UNAVOIDABLE "
+                          "re-realizations; candidacy_rank_changed counts the elections this "
+                          "moved.",
+                          network_phase_datum_handover_max_var_m2_,
+                          network_phase_datum_handover_max_var_ratio_ > 0.0
+                              ? ", ratio ceiling included" : "",
+                          network_phase_datum_candidacy_min_age_ep_);
         }
         // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge).
         if (network_readmit_seed_horizon_s_ > 0.0)

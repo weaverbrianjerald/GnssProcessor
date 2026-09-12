@@ -429,6 +429,17 @@ namespace GnssProcessor {
         /// re-reference; the ensemble has no anchors), same belt-and-braces as
         /// pd_handover_continuous above.
         bool   pa_carry_reref{};
+        /// COLD ANCHOR-FALLBACK, RESOLVED for the run (network.phase_datum_candidacy_usable,
+        /// docs/SPEC_event_harness.md §15): at a handover the successor is chosen from the
+        /// coverage-ranked candidates whose CARRY IS USABLE by the continuous branch's own
+        /// predicate, instead of from the first tracker of the key.  Already ANDed with
+        /// `pd_handover_continuous` (with no ledger there is nothing to screen against),
+        /// which is itself ANDed with `anchored && !phase_datum_eq34` — so, as with the two
+        /// knobs above, every site reads ONE bool.
+        bool   pd_candidacy_usable{};
+        /// network.phase_datum_candidacy_min_age_ep — the maturity bar in loop epochs
+        /// (0 = no age test); 0 when the mechanism is off.
+        int    pd_candidacy_min_age_ep{};
         int    eq34_min_arc_ep{};     ///< INC-1 eligibility threshold in consecutive-present epochs (0 = no gate).
         double prior_realization_max_gap_s{};  ///< INC-1 warm conditioning: the block applies only while the key's last EMITTED realization is younger than this (s); <= 0 disables the conditioning.
         bool   pin_bridge_on{};       ///< INC-2 time-linked phase datum armed.

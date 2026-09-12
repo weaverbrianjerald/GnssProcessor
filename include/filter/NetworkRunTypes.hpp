@@ -683,6 +683,13 @@ struct AnchorHandoverEvent {
     bool        continuous{false}; ///< true = frame preserved; false = COLD re-realization.
     double      var{-1.0};        ///< the successor's ledger conditional variance (m²; < 0 = no ledger entry) — traced when the ratio ceiling is armed.
     double      var_first{0.0};   ///< the successor arc's first-stash variance (m²; 0 = unknown).
+    /// COLD ANCHOR-FALLBACK (network.phase_datum_candidacy_usable, SPEC_event_harness
+    /// §15): how many higher-ranked candidates the usable-first pass SKIPPED before
+    /// this successor, and the first one it skipped.  0 / empty when the knob is off
+    /// (the pass is not entered) — so the storm arm's cold-handover census can be
+    /// re-run from the trace alone instead of from a second run.
+    int         cand_skipped{0};
+    std::string cand_first_unusable{};
 };
 
 /// One present station ZWD column this epoch (B9): its A_r column and the ZWD

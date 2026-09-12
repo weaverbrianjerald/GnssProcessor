@@ -128,6 +128,13 @@ namespace GnssProcessor {
         /// election pinned nobody this epoch.  The decoupling edge with no
         /// re-coupling: counted, never silent.
         mutable int n_no_successor{ 0 };
+        /// COLD ANCHOR-FALLBACK readback (network.phase_datum_candidacy_usable,
+        /// docs/SPEC_event_harness.md §15): higher-ranked candidates the usable-first
+        /// pass SKIPPED across this directive's families, and the first station it
+        /// skipped.  Both stay 0 / empty with the knob off (the pass is not entered),
+        /// so the PHASE_ANCHOR handover row reads identically on an unarmed run.
+        mutable int n_cand_skipped{ 0 };
+        mutable std::string cand_first_unusable;
     };
 
     /**

@@ -4602,6 +4602,70 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief COLD ANCHOR-FALLBACK: make a USABLE carried value a CANDIDACY
+         *        condition of the anchor election
+         *        (@c network.phase_datum_candidacy_usable).
+         *
+         * The defect (census, docs/SPEC_event_harness.md §15 + §16.8).  The election
+         * sweeps the coverage-ranked candidates and takes the FIRST that tracks the
+         * key; only AFTERWARDS does the continuous branch look the successor up in
+         * the one-epoch handover ledger and apply its usability predicate — so a
+         * family whose top-ranked tracker has NO usable ledger value goes COLD while
+         * a lower-ranked tracker with a mature usable arc sits unused.  Measured on
+         * the storm arm: 43 of 47 non-cold-start cold handovers had three or more
+         * mature alternatives, and in none of them was the elected successor the
+         * best-placed one.  A cold handover re-realizes the family's gauge, marks it
+         * for re-reference and erases its leveling carries at every station.
+         *
+         * ON: when the sticky incumbent is NOT kept and a handover is therefore about
+         * to happen, the sweep gains a FIRST pass over the SAME coverage-ranked list
+         * that accepts only candidates whose arc is USABLE — the continuous branch's
+         * own predicate (finite value, 0 < var <= the ceiling, the ratio gate when
+         * armed), plus "not itself freed this epoch" and the
+         * @ref networkPhaseDatumCandidacyMinAgeEp maturity test.  The existing
+         * coverage order ranks the usable candidates and the first is elected.  With
+         * NO usable candidate the election falls through to today's two sweeps
+         * unchanged (the honest cold path), counted.
+         *
+         * Property: with this armed, a handover goes COLD only when NO tracking
+         * candidate satisfies the continuous branch's own predicate — i.e.
+         * @c handover_cold then counts exactly the unavoidable ones.
+         *
+         * INERT unless @ref networkPhaseDatumHandoverContinuous (no ledger exists to
+         * screen against) and the anchored election is the datum.  OFF (the default)
+         * = byte-identical: the pass is not entered and no counter moves.
+         *
+         * @see networkPhaseDatumCandidacyMinAgeEp, networkPhaseDatumHandoverMaxVarM2,
+         *      docs/SPEC_event_harness.md §15
+         */
+        bool networkPhaseDatumCandidacyUsable() const {
+            return network_phase_datum_candidacy_usable_;
+        }
+
+        /**
+         * @brief Minimum arc age, in loop epochs, for a candidate to be USABLE
+         *        (@c network.phase_datum_candidacy_min_age_ep; 0 = no age test).
+         *
+         * Age is `n_loop_epochs − LocalCarry::birth_ep` of the candidate's own
+         * phase-leveling carry for the key.  An UNKNOWN age — no carry entry, or a
+         * warm-resume-restored entry whose @c birth_ep reads 0 — counts as MATURE,
+         * the same restored-entry convention @c phase_leveling_local_block_min_age_ep
+         * and the young-arc inflation use: the conservative direction is to let the
+         * variance ceiling decide rather than to refuse a candidate the ledger says
+         * is converged.
+         *
+         * The census behind the default: the 68 cold handovers of the §15 storm arm
+         * sat at successor-arc age p50 39 epochs against the 237 continuous ones'
+         * p50 236, so 60 epochs (30 min at 30 s) separates the two populations
+         * without reaching into the continuous one.
+         *
+         * INERT unless @ref networkPhaseDatumCandidacyUsable.
+         */
+        int networkPhaseDatumCandidacyMinAgeEp() const {
+            return network_phase_datum_candidacy_min_age_ep_;
+        }
+
+        /**
          * @brief QUEUE item 1(d): marginalize a handed-over (sat,signal) family's
          *        carried state for ONE epoch (@c network.phase_anchor_carry_reref).
          *
@@ -7437,6 +7501,8 @@ namespace GnssProcessor {
         double network_phase_datum_handover_max_var_ratio_{0.0}; ///< Honest-σ-scale handover ceiling: a ledger value is usable only if var <= ratio × the arc's first-stash conditional variance (unknown ⇒ refused); the absolute ceiling stays a rail.  0 = OFF.  INERT unless network_phase_datum_handover_continuous_.
         double network_phase_datum_handover_max_var_m2_{1.0}; ///< Conditional-variance ceiling (m^2) a handover ledger value must beat to be pinned; above it the handover falls through to the COLD path. INERT unless network_phase_datum_handover_continuous_.
         bool   network_phase_datum_handover_continuous_{false}; ///< Hand an anchor handover over at the successor's own outgoing-frame ambiguity value instead of re-pinning at 0, so the gauge change is an S-transform and the emitted family does not step. Both edges counted + traced. INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (no ledger allocated).
+        bool   network_phase_datum_candidacy_usable_{false}; ///< COLD ANCHOR-FALLBACK (SPEC_event_harness §15): when a handover is about to happen, sweep the coverage-ranked candidates for one whose carried value is USABLE by the continuous branch's OWN predicate (finite, 0 < var <= ceiling, ratio gate, not freed this epoch, arc age >= network_phase_datum_candidacy_min_age_ep_) BEFORE falling through to today's take-the-first-tracker sweeps.  A family with no usable candidate keeps today's honest cold path.  INERT unless network_phase_datum_handover_continuous_ (no ledger to screen against).  OFF = byte-identical (the pass is never entered).
+        int    network_phase_datum_candidacy_min_age_ep_{60}; ///< COLD ANCHOR-FALLBACK maturity bar in loop epochs (n_loop_epochs − LocalCarry::birth_ep); 0 = no age test, unknown age = mature (the restored-entry convention).  Sized on the §15 census: cold successors p50 39 ep vs continuous p50 236 ep.  INERT unless network_phase_datum_candidacy_usable_.
         bool   network_phase_anchor_carry_reref_{false};   ///< QUEUE item 1(d) (SPEC_pivot_visibility_gauge_defect §5.07.5 R1): at a PHASE_ANCHOR handover, marginalize the (sat,signal) family's shared PB carry for ONE epoch (the eq34_reref treatment) and erase its phase-leveling local carries at every station — the retired-frame prior is not folded against the re-realized design matrix, so the frame step lands on the FREE phase bias instead of being absorbed by the satellite clock (measured 41 sigma on G21). INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (the set is never populated).
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
         bool   network_cb_kaula_prior_{false};             ///< Card KP (network.cb_kaula_prior): fold a LOOSE physical-bound prior (value 0, info 1/sigma^2) onto every ADMITTED satellite code-bias column, lifting a CODE-dominated near-null direction the phase drop-and-heal structurally cannot reach (it anchors PB columns only). Real prior information — satellite OSBs are bounded at tens of ns — not a fudge. Folded through the diagonal SharedPrior channel, NOT into the tight kCodeBiasGaugeWeight datum rows, so declared_dimension is unchanged by construction. OFF = byte-identical; INERT unless estimate_sat_code_bias.

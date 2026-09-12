@@ -661,6 +661,43 @@ int networkTeardown(
                       "That is a quiet window, not evidence the fix works.");
     }
 
+    // --- COLD ANCHOR-FALLBACK run-end telemetry (docs/SPEC_event_harness.md §15) --
+    // Invariant #4.  Three populations, and only all three together say what the
+    // pass did: elected-from-usable (it found one), rank_changed (that one was NOT
+    // today's pick — the population the card exists for), and no_usable_fallback
+    // (nobody was usable, so today's honest cold path ran).  The four skip splits
+    // partition the skipped total and say WHY a candidate was refused, which is what
+    // separates "the ledger is thin" from "the maturity bar is too tight".
+    if (ctx.knobs.pd_candidacy_usable) {
+        const auto& h = ctx.counters.hyg;
+        const long long entered = h.candidacy_usable_elected
+                                + h.candidacy_no_usable_fallback;
+        log->info("Network (COLD ANCHOR-FALLBACK): the usable-first candidacy pass ran on "
+                  "{} handover election(s) — {} elected a candidate whose carry is USABLE "
+                  "(of which {} were NOT the station today's sweep would have taken: the "
+                  "cold re-realizations this card removed) and {} found NO usable "
+                  "candidate and fell through to today's sweeps (the honest cold path).  "
+                  "{} (candidate, family) pair(s) were skipped: {} no ledger entry, {} "
+                  "refused by the variance/ratio ceiling, {} freed this epoch, {} younger "
+                  "than {} epochs.",
+                  entered, h.candidacy_usable_elected, h.candidacy_rank_changed,
+                  h.candidacy_no_usable_fallback, h.candidacy_skipped_unusable,
+                  h.candidacy_skip_no_entry, h.candidacy_skip_var_refused,
+                  h.candidacy_skip_freed, h.candidacy_skip_young,
+                  ctx.knobs.pd_candidacy_min_age_ep);
+        if (entered == 0)
+            log->warn("Network (COLD ANCHOR-FALLBACK): ARMED but the pass never ran — no "
+                      "election this run reached a handover with an incumbent to hand "
+                      "over FROM.  The knob is inert on this window; nothing it reports "
+                      "is evidence either way (invariant #4).");
+        else if (h.candidacy_rank_changed == 0)
+            log->info("Network (COLD ANCHOR-FALLBACK): the pass ran on {} election(s) and "
+                      "changed NOT ONE of them — every usable candidate was already the "
+                      "station today's coverage sweep takes first.  Byte-identical to OFF "
+                      "on this window by construction, not by luck.",
+                      entered);
+    }
+
     // --- QUEUE item 1(d): PHASE_ANCHOR carry re-reference run-end telemetry -----
     // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  Same invariant-#4
     // discipline as the handover block above: `reattaches` is the denominator, and

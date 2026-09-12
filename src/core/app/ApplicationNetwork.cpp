@@ -1758,6 +1758,22 @@ int Application::runNetwork() {
                         ++ctx.counters.n_anc_slip_epochs;
                     }
                 }
+                // COLD ANCHOR-FALLBACK (SPEC_event_harness §15): the candidacy
+                // pass's read-only view.  Built here and not inside the election
+                // because every member is a run-scope carry object — the freed sets
+                // this epoch's drains just filled, and the leveling carry the age
+                // bar reads `birth_ep` from.  Default-constructed when the knob is
+                // off, which is the pre-card election exactly.
+                AnchorCandidacyUsable cand_usable;
+                if (ctx.knobs.pd_candidacy_usable) {
+                    cand_usable.on           = true;
+                    cand_usable.min_age_ep   = ctx.knobs.pd_candidacy_min_age_ep;
+                    cand_usable.now_ep       =
+                        static_cast<long long>(ctx.counters.n_loop_epochs);
+                    cand_usable.free_ambs    = &ctx.carry.relevel.free_ambs;
+                    cand_usable.slipped_ambs = &carry_slipped_ambs;
+                    cand_usable.local_carry  = &ctx.carry.local_carry;
+                }
                 networkElectPhaseAnchors(sticky, stations, present, cnd, hyg,
                                          ctx.counters.hyg,
                                          anchor_incumbent,
@@ -1779,7 +1795,8 @@ int Application::runNetwork() {
                                          (ctx.inject.armed
                                           && !ctx.inject.anchor_now.empty())
                                          || !ctx.inject.anchor_now_slip.empty()
-                                             ? &ctx.inject : nullptr);
+                                             ? &ctx.inject : nullptr,
+                                         &cand_usable);
                 // §14.5 SPLIT-REFERENCED SATELLITE CENSUS.  ALWAYS ON and
                 // knob-independent (invariant #4): how many satellites now have
                 // their per-frequency phase-bias families anchored at DIFFERENT
@@ -1856,10 +1873,21 @@ int Application::runNetwork() {
                               d.sat + "_" + d.signal,
                               d.retired.empty() ? std::string("-") : d.retired.front(),
                               std::nullopt, std::nullopt, "handover",
-                              fmt::format("to={};branch={}",
+                              fmt::format("to={};branch={}{}",
                                           d.elected.empty() ? std::string("-")
                                                             : d.elected.front(),
-                                          branch));
+                                          branch,
+                                          // COLD ANCHOR-FALLBACK (§15): what the
+                                          // candidacy pass walked past to get here,
+                                          // so the cold-handover census re-runs from
+                                          // the trace.  Absent with the knob off.
+                                          ctx.knobs.pd_candidacy_usable
+                                              ? fmt::format(";cand_skipped={};cand_first_unusable={}",
+                                                            d.n_cand_skipped,
+                                                            d.cand_first_unusable.empty()
+                                                                ? std::string("-")
+                                                                : d.cand_first_unusable)
+                                              : std::string{}));
                 }
                 // BOTH EDGES in one row (invariant #7): who released the gauge, who
                 // took it, and whether the frame was preserved.  A handover logged
@@ -1880,6 +1908,19 @@ int Application::runNetwork() {
                                      + (ctx.knobs.pd_handover_max_var_ratio > 0.0
                                             ? fmt::format(";var={:.3e};var_first={:.3e}",
                                                           h.var, h.var_first)
+                                            : std::string{})
+                                     // COLD ANCHOR-FALLBACK (§15): the per-handover
+                                     // candidacy record — how many better-ranked
+                                     // candidates this successor was chosen OVER,
+                                     // and the first one refused.  Absent (so every
+                                     // pre-card row is byte-identical) with the knob
+                                     // off.
+                                     + (ctx.knobs.pd_candidacy_usable
+                                            ? fmt::format(";cand_skipped={};cand_first_unusable={}",
+                                                          h.cand_skipped,
+                                                          h.cand_first_unusable.empty()
+                                                              ? std::string("-")
+                                                              : h.cand_first_unusable)
                                             : std::string{}));
                 // 1(d) local-carry hygiene: erase the marked families'
                 // phase-leveling carries at EVERY station, before PASS B consumes

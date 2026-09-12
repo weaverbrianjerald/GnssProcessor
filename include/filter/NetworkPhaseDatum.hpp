@@ -44,6 +44,7 @@
 #include <cstddef>
 #include <map>
 #include <set>
+#include <tuple>    // COLD ANCHOR-FALLBACK: the local-carry key (station, sat, signal)
 #include <string>
 #include <vector>
 
@@ -174,6 +175,52 @@ void networkElectEnsembleDatum(
         std::set<std::string>& shared_phase_keys);
 
 /**
+ * @brief COLD ANCHOR-FALLBACK inputs (@c network.phase_datum_candidacy_usable,
+ *        docs/SPEC_event_harness.md §15) — a read-only view, exactly the shape
+ *        @ref AnchorHygiene is, so an election handed a default instance behaves
+ *        precisely as it did before this card.
+ *
+ * The election's sweep takes the FIRST coverage-ranked tracker of the key; the
+ * continuous branch then looks that successor up in the handover ledger and may
+ * refuse it, which pins at 0 and re-realizes the family's gauge.  Everything here
+ * is what the sweep needs to ask the refusal question FIRST, for every candidate,
+ * in the same coverage order:
+ *
+ *   * the ledger itself is already a parameter of the election (@p handover), as
+ *     are both variance ceilings — the predicate is SHARED with the continuous
+ *     branch (one lambda, two readers) so a screen can never drift from the
+ *     decision it previews;
+ *   * @ref free_ambs / @ref slipped_ambs are this epoch's freed sets — a candidate
+ *     whose own arc a slip response just freed is about to have its level re-drawn
+ *     from one epoch of code, so its carried value is not a datum however good its
+ *     variance looks (standing invariant #1's re-coupling edge, in the candidacy);
+ *   * @ref local_carry + @ref now_ep supply the arc AGE (@c LocalCarry::birth_ep),
+ *     the maturity bar the §15 census separated the cold and continuous
+ *     populations with.
+ */
+struct AnchorCandidacyUsable {
+    /// network.phase_datum_candidacy_usable, already ANDed with the handover
+    /// mechanism being armed — false ⇒ the pass is not entered at all.
+    bool on = false;
+    /// network.phase_datum_candidacy_min_age_ep (0 = no age test).
+    int  min_age_ep = 0;
+    /// The loop-epoch counter the carries' @c birth_ep is stamped from
+    /// (`ctx.counters.n_loop_epochs`); age = now_ep − birth_ep.
+    long long now_ep = 0;
+    /// `ctx.carry.relevel.free_ambs` — the leveling free-epoch latch (structurally
+    /// empty on carry_invariant lineages); null ⇒ no freed test from this vehicle.
+    const std::set<std::pair<int, std::string>>* free_ambs = nullptr;
+    /// This epoch's DD invariant-carry slip funnel, same encoding; the vehicle on
+    /// carry_invariant lineages.  Both are consulted.
+    const std::set<std::pair<int, std::string>>* slipped_ambs = nullptr;
+    /// `ctx.carry.local_carry`, keyed (station index, sat, signal) — read ONLY for
+    /// @c birth_ep.  Null ⇒ every age is unknown ⇒ mature (the restored-entry
+    /// convention), which degrades the pass to the variance ceilings alone.
+    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>*
+        local_carry = nullptr;
+};
+
+/**
  * @brief Prioritized per-(sat,signal) ANCHOR election with stickiness.
  *        Relocated VERBATIM at INC-8b.
  *
@@ -264,6 +311,39 @@ void networkElectEnsembleDatum(
  *                      continuous-handover branch is refused so the family takes
  *                      the honest re-realize + re-reference path.  The directive
  *                      records which station it retired and which was elected.
+ * @param cand_usable   COLD ANCHOR-FALLBACK (@c network.phase_datum_candidacy_usable,
+ *                      docs/SPEC_event_harness.md §15), or @c nullptr / a default
+ *                      instance — which is the pre-card election EXACTLY.
+ *
+ *                      When @c on, and ONLY where a handover is about to happen (an
+ *                      incumbent EXISTS for the key and the sticky branch did not
+ *                      keep it — absent, lost the key, or banned by a directive),
+ *                      the candidate sweep gains a FIRST pass over the SAME
+ *                      coverage-ranked list that accepts only candidates whose
+ *                      carried value is USABLE: the continuous branch's own
+ *                      predicate (shared lambda, not a copy), plus "not itself
+ *                      freed this epoch" and the arc-age bar.  The existing
+ *                      coverage order ranks the usable candidates and the FIRST is
+ *                      elected; with none usable the election falls through to
+ *                      today's two sweeps unchanged, counted.
+ *
+ *                      An incumbent-LESS key (a first sighting / bridge exit) is
+ *                      deliberately NOT screened: there is no outgoing frame, the
+ *                      continuous branch cannot run, and every such pin is a 0-pin
+ *                      whatever station takes it — screening there would move
+ *                      elections the card cannot improve.  The hygiene eligibility
+ *                      test is applied inside the pass as well, so the elected
+ *                      station is always one today's FIRST sweep would also have
+ *                      accepted — just, possibly, a later-ranked one.
+ *
+ *                      PROPERTY: with this armed a handover goes COLD only when NO
+ *                      tracking candidate satisfies the continuous branch's own
+ *                      predicate, i.e. @c tally.handover_cold then counts exactly
+ *                      the unavoidable re-realizations.  Everything else — the
+ *                      sticky branch, the bridged branch, the hygiene sweeps, the
+ *                      continuous/cold decision, every target computation — is
+ *                      untouched; the ONLY change is WHICH station reaches the
+ *                      continuous branch.
  */
 void networkElectPhaseAnchors(
         bool sticky,
@@ -281,7 +361,8 @@ void networkElectPhaseAnchors(
         double max_var = 0.0,
         std::set<std::pair<std::string, std::string>>* reref_out = nullptr,
         double max_var_ratio = 0.0,
-        const NetworkInjectState* inject = nullptr);
+        const NetworkInjectState* inject = nullptr,
+        const AnchorCandidacyUsable* cand_usable = nullptr);
 
 /**
  * @brief ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover):
