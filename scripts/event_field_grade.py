@@ -178,28 +178,45 @@ def read_events(legdir):
 
 
 def parse_detail(detail):
-    """-> dict with pair, kept, cb_kept, implicated, exonerated, basis, reason, rule, src."""
+    """-> dict with pair, kept, cb_kept, implicated, exonerated, basis, reason, rule, src.
+
+    ⚠ THE SET SEPARATOR IS THE FIELD SEPARATOR.  NetworkCommonBandScope.cpp:52
+    renders a band SET with ',' and the event writer then rewrites every comma to
+    a semicolon so `detail` stays one CSV field — so a two-band set arrives as
+    ``exonerated=L2W;L5X`` and its second element is indistinguishable from a new
+    bare token.  A naive split therefore reads `exonerated={L2W}` and silently
+    drops L5X, which makes a correctly-narrowed response read as an over-wide
+    one.  The cure is a CURRENT-KEY state machine: a bare token continues the
+    previous key's list, and a bare token seen BEFORE any key is a pair signal
+    (the drain rows put "<sig1>;<sig2>" first).  ``basis=`` is emitted LAST and
+    itself contains both ';' and '=', so everything from it on is the basis.
+    """
     out = {"pair": [], "kept": set(), "cb_kept": set(), "implicated": set(),
            "exonerated": set(), "basis": "", "reason": "", "rule": "", "src": ""}
-    for tok in (detail or "").split(";"):
-        tok = tok.strip()
-        if not tok:
+    toks = [t.strip() for t in (detail or "").split(";") if t.strip()]
+    for i, t in enumerate(toks):
+        if t.startswith("basis="):
+            out["basis"] = ";".join(toks[i:])[len("basis="):]
+            toks = toks[:i]
+            break
+    SETS = ("kept", "cb_kept", "implicated", "exonerated")
+    cur = None
+    for tok in toks:
+        if "=" in tok:
+            k, _, v = tok.partition("=")
+            cur = k
+            vals = [x for x in v.replace("+", ";").split(";") if x and x != "-"]
+            if k in SETS:
+                out[k].update(vals)
+            elif k in ("reason", "rule", "src"):
+                out[k] = v
             continue
-        if "=" not in tok:
-            if SIG_RE.match(tok):
-                out["pair"].append(tok)
-            continue
-        k, _, v = tok.partition("=")
-        if k == "kept":
-            out["kept"].update(x for x in v.split("+") if x)
-        elif k == "cb_kept":
-            out["cb_kept"].update(x for x in v.split("+") if x)
-        elif k == "implicated":
-            out["implicated"].update(x for x in v.split("+") if x and x != "-")
-        elif k == "exonerated":
-            out["exonerated"].update(x for x in v.split("+") if x and x != "-")
-        elif k in ("basis", "reason", "rule", "src"):
-            out[k] = v
+        # bare token: continues the previous key's SET, else it is a pair signal
+        if cur in SETS:
+            if tok != "-":
+                out[cur].update(x for x in tok.replace("+", ";").split(";") if x)
+        elif cur is None and SIG_RE.match(tok):
+            out["pair"].append(tok)
     return out
 
 
