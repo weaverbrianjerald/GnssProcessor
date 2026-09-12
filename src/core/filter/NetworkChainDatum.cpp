@@ -818,6 +818,13 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // costs only one epoch's continuity).
     if (!eq34_reref.empty()) {
         eq34_reref_total += static_cast<long long>(eq34_reref.size());
+        // RS-3 (SPEC_event_harness §21.7): the first post-resume epoch's share of that
+        // total, which is what the datum-continuity card is graded on (110 at the seam
+        // against the seed's 2 per epoch).  Measure-only; the latch is cleared at the
+        // emit site, so a withheld first epoch simply folds into the window.
+        if (ctx.carry.resume_datum_first_ep)
+            ctx.counters.n_resume_datum_first_reref +=
+                static_cast<long long>(eq34_reref.size());
         int n_erased = 0;
         for (auto it = local_carry.begin(); it != local_carry.end();) {
             const auto& key = it->first;   // (station idx, sat, signal)

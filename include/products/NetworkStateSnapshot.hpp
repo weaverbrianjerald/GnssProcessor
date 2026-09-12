@@ -70,6 +70,14 @@
  *   QL,<station_idx>,<sat>,<signal>,<k>,<id>,<M_rj>,...  # L row's regression, harvest order
  *   QZ,<station_idx>,<k>,<id>,<M_rj>,...                 # Z row's regression
  *   QR,<sat>                                             # write-epoch clock-refloat set
+ *   EQD,<cons>|<signal>,<station>                        # RS-3: eq34 sticky datum receiver
+ *   EQP,<station>|<cons>|<signal>,<sat>                  # RS-3: receiver parent-edge sat
+ *   EQS,<sat>_<signal>,<station>                         # RS-3: sat's component datum rx
+ *   EQT,<station_idx>,<sat>_<signal>,<target>            # RS-3: last epoch's pin target
+ *   EQE,<station_idx>,<sat>,<elev_deg>                   # RS-3: longevity elevation
+ *   EQR,<station_idx>,<sat>_<signal>                     # RS-3: gap-retained tree edge
+ *   CBP,<cons>|<signal>,<sat>,<value>                    # RS-3: code-bias prev value
+ *   CBS,<sat>                                            # RS-3: code-bias ever-seen
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
  *   ...                                                 #  NetworkProductEmitter::serializeState)
  *   EEND
@@ -86,6 +94,17 @@
  * frame records are, @c v1 otherwise.  The reader accepts all three and an absent
  * record group simply restores empty containers, so an older file is always a
  * legal input and a run carrying neither group writes the v1 bytes unchanged.
+ *
+ * The RS-3 DATUM records (@c EQD / @c EQP / @c EQS / @c EQT / @c EQE / @c EQR and
+ * @c CBP / @c CBS, docs/SPEC_event_harness.md §21.7) deliberately do NOT advance the
+ * header literal: they follow the OPTIONAL @c var_first field's precedent — a
+ * knob-gated addition whose absence leaves every existing byte alone — so an RS-3
+ * A/B can diff two snapshots and see only the new rows.  The cost is that a
+ * pre-RS-3 binary reading an RS-3 file fails on the unknown record tag instead of on
+ * the header, which is the SAME documented cold-start signal (and the same throw
+ * under @c network.state_snapshot_require), so nothing is weaker; only the message
+ * differs.  Written only under @c network.state_snapshot_datum_capture, so a run
+ * that does not arm it writes the v1/v2/v3 bytes unchanged.
  *
  * This module is entirely OUTSIDE the @c NetworkProductIO replay path: product
  * files know nothing of snapshots and replay reproduces every discontinuity
@@ -331,6 +350,53 @@ struct NetworkStateSnapshot {
     /// restored behind resume_coupling_restore.  Empty on every other file.
     std::vector<std::string> carry_cov_keys;
     std::vector<std::vector<double>> carry_cov_rows;
+    // --- RS-3 DATUM memories (SPEC_event_harness §21.7) ----------------------
+    /// The eq34 chain datum's LAST-EPOCH spanning tree, written under
+    /// @c network.state_snapshot_datum_capture and restored behind
+    /// @c network.resume_datum_restore.  @ref anchor_incumbent (a FRAME record) holds
+    /// the same tree's SATELLITE-side parent edges; these are the receiver side plus
+    /// the per-component root vote, and together they are what the election's
+    /// sticky-tree seed continues.  Empty on every other file, in which case a resume
+    /// re-elects from the cold arc registry exactly as it does today.
+    ///
+    /// @c eq34_datum_rx: "<cons>|<signal>" -> sticky datum receiver r1 (station name).
+    std::map<std::string, std::string> eq34_datum_rx;
+    /// "<station>|<cons>|<signal>" -> that receiver's parent-edge satellite.
+    std::map<std::string, std::string> eq34_rx_parent;
+    /// "<sat>_<signal>" -> that satellite's component datum receiver (station name).
+    std::map<std::string, std::string> eq34_sat_root;
+    /// (station roster index, "<sat>_<signal>") -> last epoch's pin target (cycles).
+    /// Keyed per STATION on purpose: an interior satellite carries several pins, each
+    /// at a different station with its own target (an amb-only key collides and the
+    /// resulting pinmoves feed back into the rounded targets — a measured 4e8-cycle
+    /// blow-up), so the key must survive serialization intact.
+    std::map<std::pair<int, std::string>, double> eq34_prev_target;
+    /// (station roster index, sat) -> last epoch's arc elevation (deg), the
+    /// rising-vs-setting input of the longevity election.  Empty unless
+    /// network.phase_datum_eq34_longevity_election was armed on the writer.
+    std::map<std::pair<int, std::string>, double> eq34_prev_el;
+    /// {station roster index, "<sat>_<signal>"} — tree edges retained across a gap
+    /// because their local carry was still alive.  Empty unless
+    /// network.phase_datum_eq34_extend_only was armed on the writer.
+    std::set<std::pair<int, std::string>> eq34_retained_edges;
+    /// The time-linked code-bias datum's previous-epoch solved split,
+    /// "<cons>|<signal>" -> satellite -> value (m), and the set of satellites whose
+    /// split has EVER been harvested.  Restored behind the same read knob; with them
+    /// present the resume leaves @c code_bias_datum_resumed_ false, so a re-seed
+    /// disc-bumps only where it genuinely re-seeds instead of for every satellite.
+    /// Empty unless network.code_datum_time_linked was armed on the writer.
+    std::map<std::string, std::map<std::string, double>> code_bias_prev;
+    std::set<std::string> code_bias_sat_seen;
+    /// True when any RS-3 datum record is present.  Its OWN predicate, like
+    /// @ref hasCouplingState: the two halves (eq34 tree / code-bias memory) are
+    /// reported and warned about separately at the restore site, and neither may
+    /// borrow the other's INERT verdict.
+    bool hasDatumState() const {
+        return !eq34_datum_rx.empty() || !eq34_rx_parent.empty()
+            || !eq34_sat_root.empty() || !eq34_prev_target.empty()
+            || !eq34_prev_el.empty() || !eq34_retained_edges.empty()
+            || !code_bias_prev.empty() || !code_bias_sat_seen.empty();
+    }
     /// True when any coupling record is present (the writer then emits the v3 header).
     ///
     /// @warning Deliberately SEPARATE from @ref hasFrameState.  That predicate ALSO gates

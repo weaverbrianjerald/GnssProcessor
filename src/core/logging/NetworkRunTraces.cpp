@@ -1547,6 +1547,17 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.state_snapshot_carry_lin ? "true" : "false",
                                      config_.networkResumeCarryRebase() ? "true" : "false")
                        : std::string())
+               // RS-3 (SPEC_event_harness §21.7): the datum-continuity halves.  Same
+               // armed-only discipline as the RS-2 pair directly above — the write half
+               // changes only snapshot bytes and the read half only a resume, so an
+               // unarmed run's manifest bytes are unchanged (the decomposition golden
+               // hashes this file) while an armed arm is self-describing.
+               << ((nc.state_snapshot_datum_capture || config_.networkResumeDatumRestore())
+                       ? fmt::format("\"state_snapshot_datum_capture\":{},"
+                                     "\"resume_datum_restore\":{},",
+                                     nc.state_snapshot_datum_capture ? "true" : "false",
+                                     config_.networkResumeDatumRestore() ? "true" : "false")
+                       : std::string())
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
                << fmt::format("\"state_snapshot_resume_shock_m\":{},",
                               nc.state_snapshot_resume_shock_m)

@@ -220,6 +220,7 @@ namespace GnssProcessor {
         bool zwd_capture{};    ///< Snapshot-armed run (state_snapshot_path non-empty): record + harvest the per-station ZWD posterior every processed epoch so EVERY snapshot carries Z rows — read-only w.r.t. the solve (no inject; capture only).
         double amb_seam_reinflate_var{};  ///< network.amb_seam_reinflate_var_m2: one-shot variance ADD (m²) on every restored leveling carry at a warm resume (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF.
         bool   resume_frame_restore{};    ///< network.resume_frame_restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the serialized FRAME state — phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-sat state, the CLK-R held frame — so the first post-resume election/fold/emit continue the pre-seam realization instead of re-pinning at cold seeds.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into maps nothing reads).
+        bool   resume_datum_restore{};    ///< network.resume_datum_restore (RS-3, SPEC_event_harness §21.7): at a warm resume, restore the eq34 chain datum's last-epoch spanning tree (sticky datum receiver, receiver parent edges, satellite component roots, pin targets, longevity elevations, gap-retained edges) so the election's sticky seed CONTINUES the writer's tree instead of re-electing from the cold arc registry, and restore the time-linked code-bias previous-value map + ever-seen set with @c code_bias_datum_resumed_ left FALSE.  Loader hard-requires resume_frame_restore (anchor_incumbent is the same tree's satellite side).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into containers nothing reads).
         bool   resume_coupling_restore{}; ///< network.resume_coupling_restore (SPEC_synthetic_minimum_network §18.12): at a warm resume, rebuild every restored leveling / ZWD carry's Card-1 regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, in harvest order) and seed tu_reinit_hist from the columns the write epoch was RE-DRAWING, so the first PASS-B inject builds a CONDITIONAL row (A_s = M_r, shared-neutral) instead of the plain DIAGONAL prior asserted at the PURE CONDITIONAL variance that out-voted 33 of 52 Q3 anchored clock priors at the first fold (§18.11).  Loader hard-requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project and refuses amb_seam_reinflate_var_m2 > 0 (rung 3 attacked the row's WEIGHT; this touches DIRECTION only).  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (LocalCarry::coupling stays empty exactly as the aggregate init leaves it).
         /// network.readmit_seed_horizon_s — READMIT continuity (E2 seed-first re-admission,
         /// SPEC_synthetic_minimum_network §18.4 / SPEC_amb_iono_split_overcount §7 FIRST):
@@ -1226,6 +1227,17 @@ namespace GnssProcessor {
         /// and never serialized (each resume is its own seam).  0 on every continuous
         /// epoch, which is what makes the OFF path byte-identical.
         int resume_d5_warmup_left{0};
+        /// RS-3 (SPEC_event_harness §21.7) first-post-resume-epoch measurement latch.
+        /// Set by @ref networkTryWarmResume on EVERY warm resume — armed or not, so an
+        /// A/B's control leg reports the same three figures from the same instrument —
+        /// and cleared at the emit site in NetworkSolPrep once the counts have been
+        /// taken.  Pure telemetry: nothing downstream reads it, so an OFF run is
+        /// byte-identical (the @c anchor_age_resume_seed / @c adm_resume_pending shape).
+        /// If the first processed epochs are WITHHELD the window simply extends to the
+        /// first EMITTED epoch, which is the honest boundary for a consumer-facing
+        /// readout — the rerefs accumulate rather than being overwritten.  Never
+        /// serialized: each resume is its own seam.
+        bool resume_datum_first_ep{false};
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed
         /// (station index, sat).  Diagonal-only (rx-CB rationale — no shared-border
         /// footprint; the coupling variant is deliberately deferred).  NOT snapshotted:
@@ -1858,6 +1870,7 @@ namespace GnssProcessor {
         long long snap_cpl_zrows_last    = 0;   // §18.12: QZ rows in the last snapshot
         long long snap_cpl_terms_last    = 0;   // §18.12: regressor entries in the last snapshot
         long long snap_cpl_rows_dropped  = 0;   // §18.12: rows OMITTED WHOLE for a non-finite/negative field (run total)
+        long long snap_datum_rows_last   = 0;   // RS-3 §21.7: EQ*/CB* datum rows in the last snapshot (0 under an ARMED capture on an eq34/time-linked-CB run is the INERT reading)
         bool      resume_cpl_census_pending = false;  // §18.12: latch the first-post-resume harvest census + fold split
         std::vector<double> resume_cpl_census_rel;    // §18.12: per-row max|M − M_d| / max|M_d| at the first harvest
         std::vector<double> resume_cpl_census_rhs;    // §18.12: per-row |Δ Σ M·ŝ_prev| (m) at the first harvest
@@ -2484,6 +2497,23 @@ namespace GnssProcessor {
         long long n_resume_frame_cta_anchored = 0; ///< ...of which ANCHORED
         long long n_resume_frame_clk_keys    = 0;  ///< CLK-R held-frame per-sat keys restored
         long long n_resume_frame_ledger      = 0;  ///< handover-ledger entries primed from restored leveling rows
+        // RS-3 resume DATUM restore (network.resume_datum_restore, SPEC_event_harness
+        // §21.7) — the re-coupling edge's identities for the two datum memories, and the
+        // first-post-resume-epoch event counts that say whether the datum actually
+        // CONTINUED.  0 restored under an armed knob = INERT (invariant #4); the three
+        // first-epoch figures are counted on EVERY warm resume, armed or not, so the
+        // control leg of an A/B reports them from the same instrument.
+        long long n_resume_datum_eq34_rx      = 0;  ///< sticky datum receivers restored (EQD)
+        long long n_resume_datum_eq34_edges   = 0;  ///< receiver parent edges restored (EQP)
+        long long n_resume_datum_sat_roots    = 0;  ///< satellite component roots restored (EQS)
+        long long n_resume_datum_prev_targets = 0;  ///< last-epoch pin targets restored (EQT)
+        long long n_resume_datum_prev_el      = 0;  ///< longevity elevations restored (EQE)
+        long long n_resume_datum_retained     = 0;  ///< gap-retained tree edges restored (EQR)
+        long long n_resume_datum_cb_prev      = 0;  ///< code-bias previous values restored (CBP)
+        long long n_resume_datum_cb_seen      = 0;  ///< code-bias ever-seen satellites restored (CBS)
+        long long n_resume_datum_first_reref    = 0; ///< PHASE_DATUM/eq34_reref (sat,σ) at the first post-resume epoch
+        long long n_resume_datum_first_reattach = 0; ///< PHASE_DATUM/eq34_reattach (tree-edge handovers) there
+        long long n_resume_datum_first_cb_disc  = 0; ///< CB_DATUM/reseed_disc_landed satellites there
         long long n_resume_slip_warmup_epochs = 0; ///< epochs the MW/LLI drain ran diagnostic-only post-resume
         long long n_resume_d5_warmup_epochs = 0;   ///< RS-2b: epochs the Card-4 D5 innovation gate ran diagnostic-only post-resume
         // Card 1 coupling-regressor restore (network.resume_coupling_restore, §18.12) —

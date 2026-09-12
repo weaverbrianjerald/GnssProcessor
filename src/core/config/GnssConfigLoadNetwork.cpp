@@ -2433,6 +2433,33 @@ namespace GnssProcessor {
                           "snapshot size (~9.9 MB at 63 stations, 131 terms/row); with "
                           "network.state_snapshot_keep_history a 12 h leg writes ~14 GB.");
         }
+        // RS-3 DATUM capture (write side of network.resume_datum_restore, §21.7).
+        // Same shape as the frame capture above — its own knob, path-gated, write-only.
+        network_config_.state_snapshot_datum_capture =
+            jval<bool>(json, "network.state_snapshot_datum_capture",
+                       "state_snapshot_datum_capture", false);
+        if (network_config_.state_snapshot_datum_capture) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (resume datum capture): state_snapshot_datum_capture "
+                          "armed but network.state_snapshot_path is empty — no snapshot is "
+                          "written, INERT.");
+            else
+                log->info("Network (resume datum capture): every snapshot also carries the "
+                          "two datum memories (EQD/EQP/EQS/EQT/EQE/EQR — the eq34 chain "
+                          "datum's last-epoch spanning tree — and CBP/CBS — the time-linked "
+                          "code-bias previous-value map + ever-seen set) as format-forward "
+                          "rows under the existing header.  A resume armed with "
+                          "network.resume_datum_restore then continues the pre-seam datum "
+                          "instead of re-electing the tree and re-seeding every code-bias "
+                          "channel.  ⚠ The tree's SATELLITE side lives in the frame rows "
+                          "(anchor_incumbent), so pair this with "
+                          "network.state_snapshot_frame_capture{}.  Write-side only; the "
+                          "products and every trace are byte-identical.",
+                          network_config_.state_snapshot_frame_capture
+                              ? " (armed)"
+                              : " — which is NOT armed here, so a restore would seed only "
+                                "half the tree");
+        }
         if (network_config_.state_snapshot_require)
             log->info("Network (RTB-7d/HB-1): warm resume REQUIRED — any resume failure "
                       "(missing/parse/fingerprint/age/emitter) is a hard run error instead "
@@ -3675,6 +3702,19 @@ namespace GnssProcessor {
                     "alone at a 5.13 m consumer walk in h12.  Set "
                     "amb_seam_reinflate_var_m2 to 0.");
         }
+        // RS-3 DATUM restore (read side of network.state_snapshot_datum_capture,
+        // SPEC_event_harness §21.7).  Same exemption class as the three restores above:
+        // forward-only resume response policy, inert on a run that never resumes.
+        network_resume_datum_restore_ =
+            jval<bool>(json, "network.resume_datum_restore", "resume_datum_restore", false);
+        if (network_resume_datum_restore_ && !network_resume_frame_restore_)
+            throw std::runtime_error(
+                "network.resume_datum_restore requires network.resume_frame_restore: "
+                "anchor_incumbent holds the SATELLITE-side parent edges of the very "
+                "spanning tree these maps complete, and the frame restore is what brings "
+                "it back.  Without it the first election runs incumbent-less and "
+                "re-references every phase-bias family before the restored receiver-side "
+                "maps can change anything — the restore would be a silent no-op.");
         // RS-2 resume CARRY RE-BASE (SPEC_event_harness §21.4) — the reader half of
         // network.state_snapshot_carry_lin, and the same exemption class as the two
         // restores above: forward-only resume response policy, inert without a resume.
@@ -3728,6 +3768,26 @@ namespace GnssProcessor {
                           "policy).",
                           network_resume_frame_restore_ ? "ON" : "off",
                           network_resume_slip_warmup_ep_);
+        }
+        // RS-3: the datum restore's own ARMED/INERT line (its prerequisite is checked
+        // above, so by here it can only be inert for want of a snapshot to resume from).
+        if (network_resume_datum_restore_) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (resume datum restore): resume_datum_restore armed but "
+                          "network.state_snapshot_path is empty — nothing can resume, "
+                          "INERT this run.");
+            else
+                log->info("Network (resume datum restore): ON — at a warm resume the "
+                          "snapshot's eq34 spanning-tree maps (sticky datum receiver, "
+                          "receiver parent edges, satellite component roots, pin targets, "
+                          "longevity elevations, gap-retained edges) are restored before "
+                          "the first election, and the time-linked code-bias "
+                          "previous-value map + ever-seen set are restored with the "
+                          "'resumed' latch left FALSE, so a code-bias re-seed disc-bumps "
+                          "only where it genuinely re-seeds.  The rows are captured under "
+                          "network.state_snapshot_datum_capture; a file without them "
+                          "leaves each half exactly as today and says so.  Not in the "
+                          "warm-resume fingerprint (forward-only resume response policy).");
         }
         // Slant-iono carry (QUEUE 8b, docs/SPEC_slip_relevel_walk.md s8 residual): carry
         // per-LOS slant iono across epochs as a diagonal RW prior via the same

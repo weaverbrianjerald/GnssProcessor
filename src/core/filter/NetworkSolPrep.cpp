@@ -893,6 +893,14 @@ NetworkSolPrepResult networkSolPrep(
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
             if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
             retro_emit_sats.insert(mark.begin(), mark.end());
+            // RS-3 (SPEC_event_harness §21.7): the first post-resume epoch's landed
+            // re-seed discs — 30 at the field seam against the seed's 0, and the direct
+            // readout of whether the restored code-bias memory kept the datum.  Counted
+            // from `mark` (what actually LANDED), not from this_epoch_cb_reseed, so a
+            // deferred bump is attributed to the epoch the consumer sees it.
+            if (ctx.carry.resume_datum_first_ep)
+                ctx.counters.n_resume_datum_first_cb_disc +=
+                    static_cast<long long>(mark.size());
             if (events_trace.is_open())
                 for (const auto& s : mark)
                     emitEvent("CB_DATUM", "reseed_disc_landed", s, "", std::nullopt,
@@ -966,7 +974,18 @@ NetworkSolPrepResult networkSolPrep(
             log->debug("Network: {} per-(sat,signal) phase-bias anchor handover(s) at "
                        "TOW {:.1f} (disc handled by the emitter bias-jump test).",
                        n_handover, se.time.tow);
+        // RS-3 (SPEC_event_harness §21.7): the first post-resume epoch's tree-edge
+        // REATTACHES — the second half of the eq34 churn readout (rerefs are the frame
+        // steps, reattaches the host changes).
+        if (ctx.carry.resume_datum_first_ep)
+            ctx.counters.n_resume_datum_first_reattach += n_handover;
     }
+    // RS-3: close the first-post-resume measurement window HERE — the last of its three
+    // sites in epoch order, and the point at which an emission has definitely happened.
+    // A withheld epoch `continue`s long before this, so the window extends to the first
+    // EMITTED epoch rather than to the first PROCESSED one; that is the honest boundary
+    // for figures the consumer is graded on.  Telemetry only.
+    ctx.carry.resume_datum_first_ep = false;
     // §1.5 DECLARATION: refresh the realized code-bias datum (cbpin=, and gfpin= in the
     // slant posture) on EVERY emit, not once at the first — the same discipline the
     // realized clock pivots follow (NetworkEmitStore refreshes clock_pivot_sat / pdr=
