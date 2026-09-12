@@ -5286,6 +5286,78 @@ instrument).
   the rx-CB carry, the T5 deviation, the vanished L2X component datum receiver) — is pre-registered from
   RS-5's residual table, not before.
 
+### 21.11 RESULTS — RS-5 closes the seam on the phase-bias wire; the day's close-out; RS-6 pre-registered (2026-09-12 ~21:00 local; worker on worktree-agent-a1a4a2dd4a4bbb596 `265d122`; manager grade)
+
+**Build.**  `NetworkEmitRebase::exportState/restoreState` (the `last_emit_` map) and
+`NetworkPbEmitFilter::exportState/restoreState` (`state_` + `step_`; counters and config stay run-local);
+write knob `network.state_snapshot_emit_capture` (rows `ER` / `PF` / `PS`, format-forward under the existing
+header; the pooled `PS` bucket's key is legitimately blank), read knob `network.resume_emit_restore` (throws
+without `resume_frame_restore`); both engines threaded through `networkWriteStateSnapshot` /
+`networkTryWarmResume` as the CLK-R engine is.  Debug suite **2001 / 273 suites / 0 failed** (17 fixture
+skips in the worktree); `ResumeEmitRestore` + `ResumeEmitRestoreConfig` 13/13; cold smoke `products.txt`
+**`b9da8cc1…` in both arms**, snapshots differing by 135 ER + 135 PF + 1 PS rows; seed
+`runs/evseed_field6h_v4`: 720/720, `products.txt` **byte-identical to v3t's** (`5f671fba…`), ep0604 with 147
+ER / 147 PF / 1 PS, fingerprint `545b8bdd2b638231` unchanged.
+
+| emitted PB, leg − seed, p50 / p95 / max \|Δ\| | +1 | +2 | +30 |
+|---|---|---|---|
+| `rs5_null_norestore` (control) | 17.666 / 82.80 / 119.34 m | 17.633 / 82.82 | 17.652 / 82.84 |
+| **`rs5_null_restore`** | **0.000 / 0.003 / 0.053 m** | 0.001 / 0.011 | 0.038 / 0.153 |
+
+Keys within 0.05 m at +1: restore **120/121**, control 0/121; per-sat-median-removed p50 at +2: 0.0005 m vs
+11.20.  **P7a PASS — and past its own bar:** the restored re-base aligns each key to the writer's last emitted
+value, so it absorbs the estimator's 1.7 m raw level as integer + common-fractional; the PB seam mark correctly
+stays silent (`keys tested 129, over threshold 6 (4.7 %), marked 0`, first E `datum_changed 0`) where the
+control fires it (129/129, marked 1).  **P7b PASS, byte-exactly:** the two legs' `products.txt` (19 049 lines)
+differ ONLY in 7 840 P rows and the one E flag — every C / B / U / H record identical, and a₀₀ (worst |Δ| 4.39
+TECU at +39; −1.19 at +60), clocks (contrast pooled p50 1.743), code bias (0.470), ZWD (0.636), D5 flags at +1
+40 / re-taps 0, births 64 / 7, eq34 rerefs 8, CB re-seed discs 0, `637 re-based` are the same numbers on both.
+**P7c — the stateful consumer** (`scripts/splice_wire.py`, re-written and verified to reproduce the seed's
+bytes up to the seam; the same WTZZ00DEU consumer replayed over the same 665-epoch window):
+
+| wire | PB resets at the seam | code re-refs | clock re-refs | PB resets over the window |
+|---|---|---|---|---|
+| seed, continuous | 0 | 0 | 0 | 29 |
+| spliced control | **19** | 24 | 6 | 59 |
+| **spliced restore** | **0** | 21 | **0** | 30 |
+
+The restore wire is indistinguishable from the continuous wire on the phase-bias channel; the 6 clock
+re-references in the control are downstream of its `datum_changed 1`; the code-bias re-references (21 / 24) are
+in BOTH legs whose B records are byte-identical — the seam's CODE-BIAS channel, the estimator's own 0.47 m
+level, declared per key by the code jump test.  (The replay's 3D column is not an instrument here: the file
+replay floats its own iono and reads ~15 m on the continuous wire.)
+
+**Decision.**  Both knobs RECOMMEND_SCOPED and registered; the goldens pin the write knob; the harness arms
+both by default (seeds and legs).  **The deferred product-contract pin lands now:** `network.serialize_disc_
+counters` is pinned on both goldens and the smoke baselines are re-recorded once in the close-out
+certification below (the field golden's canonical 20-epoch hash moves from `b9da8cc1…` to the serialized
+one measured in §21.10's pair, `87a33bf0…`, if nothing else in the day moved products — the certification
+says).  The harness posture for a field resume leg is therefore: frame + branch (re-based, one held D5 epoch) +
+both datums + the emit layer + the PB seam mark, every one of them default-OFF, byte-identical when off, and
+outside the warm-resume fingerprint.
+
+**What the seam still costs, and where (RS-6, pre-registered as a MEASUREMENT first).**  The estimator's own
+level at the first post-resume epoch: phase bias 1.70 m p50 raw (1.68 excluding the six L2X keys whose eq34
+component datum receiver vanished), code bias 0.47 m p50 (the 21 code re-references), clock contrast 0.54 m at
++2 growing to 1.7 m pooled, ZWD 0.64 m, receiver clocks 1.21 m p50 — all set by the station layer that
+restarts cold (the rx-CB carry: 26 % of its priors withheld at the 10σ gate on a leg vs 13 % on the seed; the
+T5 per-LOS iono deviation carry: 400 cold seeds at +1; the SH a₀₀ +4.6 TECU decaying over five epochs; the
+receiver phase-bias states).  With RS-5 armed none of this is visible on the PB wire any more (the re-base
+absorbs it), so RS-6 needs a STATE-side instrument: extend `network_sat_bias_states.csv` (today CODE bias only)
+with the per-(sat, signal) phase-bias state (trace-class, byte-identical products), and a trace of the rx-CB
+carry values per (station, signal).  Legs from v4 ep0604 on today's posture, each with ONE station-layer memory
+restored in turn once captured (rx-CB carry; T5 deviation; RPB) against the control — the channel that moves
+names the memory.  Bars, frozen now: raw PB residual at +1 p50 ≤ 0.2 m; code bias ≤ 0.05 m p50 (and the
+stateful consumer's code re-references at the seam ≤ 3); clock contrast pooled p50 ≤ 3× the seed's own step
+(0.27 m); ZWD ≤ 3× own step (0.32 m); SH a₀₀ at +1 within 2 TECU.  Also owed from the day: the six L2X families
+whose component datum receiver GAMB00PYF is dropped at the seam (a re-election edge, not a memory).
+
+⚠ **Harness trap, confirmed on every leg today and to be fixed in the harness, not the producer:** a leg's
+first emitted epoch overwrites the `seed.txt` it resumed from (`NetworkRunContext.cpp` gates the first write on
+`last_snapshot_write_s < 0.0`, which the initial −1 satisfies unconditionally, whatever
+`state_snapshot_interval_s` says).  The `.epNNNN` library is intact; `event_leg.py rerun` restores the pristine
+copy; never re-run a leg in place.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
