@@ -4849,6 +4849,93 @@ no-blob leg L1′ from the same seed):**
 **Sequel (not this card):** with a field seed that warm-resumes, the §20.1 wrong-narrowing price
 (gates G-C/G-D, dark in §20) becomes measurable, and the reference-arc clause + the scope/pairs
 field pin follow on that seed.
+### 21.5 RESULTS — Phase 1 (the blob is the seam), the Phase 2 build merged, and the P2/P3 bars re-calibrated BEFORE the Phase 2 legs are read (2026-09-12 ~10:00 local; worker on worktree-agent-a2e7ed83282f533a8, manager re-grade with `scripts/ev_seam_grade.py`)
+
+**Exe** `gnss_processor_rs2.exe` = main `cf08909` (sha256 `a35d2254…`; the worker's worktree was 147 commits
+behind and was fast-forwarded first — the stale-branch-exe trap, caught).  Legs `runs/evleg_rs_null_{ctl,
+nocarry,plain_nocarry,shgateoff}`, 60 epochs from ep0604, all `exit 0` with the same RTB-7 restore line
+(256 D2 / 0 ambiguity / 61 Z / 1 pivot baseline; n_emitted 604).  Grader: `python scripts/ev_seam_grade.py
+<legdir> --seed runs/evseed_field6h` (absolute paths — it resolves relative ones against its own repo).
+
+| gate | L0 ctl (blob) | **L1 no-blob** | L2 plain, no-blob | L4 blob, SH gate off |
+|---|---|---|---|---|
+| G1 control | reproduces §21.1: 60/60 withheld, `dd_fold` 7.823e7, D5 676 — a₀₀(+1) **−4810.41** on `network_vtec_sh.csv` vs **−11109.10** on the SH gate's own log line (§21.1 quoted the gate; the grader prints both) | — | — | same first epoch as L0 |
+| G2 availability | FAIL 0/60 | **PASS 60/60** | PASS 60/60 | PASS 60/60 (gate off) |
+| G3 frame, from +5 | FAIL: \|Δa₀₀\| 1095.7 TECU, clock_std ×330.8, σ̂₀_code ×397.5 | **PASS: 2.25 TECU, ×0.876, ×1.053** | PASS: 1.64, ×0.804, ×0.880 | FAIL (as L0) |
+| G4 births +5..+60 | 321 vs seed 296 (1.08×); D5 at +1 = 676 | **262 (0.89×); D5 at +1 = 0** | 302 (1.02×); 0 | 321; 676 |
+| G5 wire + ZWD | NA | FAIL — see the calibration below | FAIL | FAIL: clock contrast p50 763 m, code bias 385 m |
+| G7 a₀₀(+60) vs seed 37.47 | −471.49 | **36.56 (Δ −0.91)** | 38.58 (+1.11) | **−471.49 (Δ −508.96)** |
+| consumer p50 from +5 (report) | no rows | 5.07 m (seed 8.83) | 10.51 m | 3487 m |
+
+**What the four legs establish.**
+1. **The blob is the seam defect** (L0 vs L1): dropping only the invariant DD carry restore turns 0/60 into
+   60/60, a₀₀ tracks the seed to ≤ 2.25 TECU from +5 on, clock scatter and σ̂₀ sit at the seed's, D5 flags at
+   +1 go 676 → 0, and the branch rebuilds cold (701 births at +1 — exactly the chords it declined to restore).
+2. **The era is the carried memory's, not the gate's** (L4): with the SH gate off and the blob restored the
+   wire emits garbage to +60 (clock contrast p50 763 m, consumer 3487 m, a₀₀ −471 at +60).  The withhold is
+   protective — it is the only thing between the consumer and 61 epochs of poisoned product.
+3. **The frame restore owns the PB-continuity half, not availability** (L2 vs L1): G2/G3 identical without
+   it, but the PB seam step doubles (median ΔPB +5.41 m vs +1.79 m) and the consumer is worse (10.5 vs 5.1 m).
+
+**G5 read correctly — two of its sub-bars were mis-calibrated, one is a real finding.**
+* The clock sub-bar (p50 0.05 / p95 0.20 m) is TIGHTER than the seed's own epoch-to-epoch datum-invariant
+  clock contrast (p50 **0.0907** / p95 **0.4034** m): no leg can pass it on this lineage.  The code-bias bar
+  (0.02 m vs own step 0.0097) and the 5 cm PB threshold (own step 0.0025) are calibrated.
+* `network_zwd.csv`'s `zwd_m` is not a physical ZWD on the field golden — the seed alone spans −30.5 … +13.5 m
+  at one station over 6 h and −24.5 … +23.8 m across stations at one settled epoch (the field ZWD sink,
+  `project_zwd_sink_census`): the 5 mm / 20 mm bars are sim-calibrated and mean nothing here.
+* The real finding: **the no-blob resume re-realizes the phase wire ONCE, declared, and then does not converge
+  to a well-defined wire.**  Each emitting leg writes exactly one `R` record at +1 naming 31 satellites
+  (invariant #7 satisfied); the offset persists (per-satellite-median-removed |ΔPB| vs the seed p50 **9.4 m**
+  at +2 — a genuinely different branch per (sat, signal), not a datum shift); the two no-blob legs disagree with
+  EACH OTHER by 8.4 m p50; and the leg−seed clock contrast GROWS 0.89 → 3.41 m over the 60 epochs while each
+  leg's own epoch-to-epoch continuity matches the seed's (L1 0.12/0.92 m).  The literal §21.3 clause reads
+  FAIL because that declared step persists past +5; a cold branch is not a branch restore.
+
+**Decision (per §21.3).**  L1 passes G2–G4 and G5's calibrated halves; the interim harness posture for field
+IDENTITY legs is `state_snapshot_carry: false` in `--extra` (shared / Z / frame warm, DD branch cold), used by
+§22's legs.  It is NOT a posture for grading absolute wire continuity across the seam — that is Phase 2's job.
+
+**Phase 2 — built and MERGED (main `2c62724`; worker commits `62303d2` + grader `b903b66`).**  As pre-registered
+in §21.4 with three deviations the worker flagged and the manager accepted: (i) `lin_of` in
+`NetworkDdPriorBuild.cpp` lives inside the lane machinery (`mw_mach_on`, off on both goldens) — the arc's
+`x_lin` is taken from the station state vector on the path that runs (`ArcInput::x_lin/x_lin2`, read only under
+the two knobs); (ii) the writer's spanning tree is not serialized, so the re-base cannot recompute the writer's
+cycles per chord — it rides the cycle-basis projection `W` the build already forms, `ẑ_new = W·ẑ_old +
+(W·zl_writer − zl_now)`, which is frame-blind (`Z_new = W·Z_old` in arc space) and reduces to the §21.4 rule
+exactly when the tree is unchanged; applied to the EMITTED block, never to `carried_`, so a RAIM rebuild is
+idempotent; (iii) "a chord with an absent arc is dropped" is the existing birth path — `n_resume_carry_dropped_
+unbased` counts the case with no exact re-base (a restored contributor with no `ZL` row).  Knobs
+`network.state_snapshot_carry_lin` (write; disarmed without `state_snapshot_carry`) and
+`network.resume_carry_rebase` (read; forward-only resume policy, NOT fingerprinted); one `ZL` row per block
+after `Z`; run-end `Network (RS-2 linearization carry): …`; a "Linearization frame: …" token on the RTB-7c
+restore line; unit suite `ResumeCarryRebaseTest` (4: per-arc-shift round trip with the identity control,
+un-basable ⇒ diffuse birth + counted, legacy blob untouched, write-off ⇒ no `ZL`).  Debug suite 1968 / 0 fail.
+**P1 on the worktree build: PASS** — 20-epoch field-golden smoke, `products.txt` `b9da8cc1…` in both arms,
+the snapshot differs only by the four `ZL` rows (+ the write timestamp), and the warm-resume fingerprint is
+**unchanged, `545b8bdd2b638231` = the existing seed's** (a `ZL`-bearing snapshot is chain-compatible).
+Main's own rebuild must reproduce the same hashes before the Phase 2 legs count (owed to the worker now).
+
+**P2 / P3 bars, RE-CALIBRATED and frozen now (the Phase 2 seed `runs/evseed_field6h_v2` is being written;
+legs `rs2_null_{rebase,norebase,nocarry}` from its ep0604, one exe).**  The yardstick is the seed's OWN
+epoch-to-epoch step over the leg window, computed by the grader for each channel (own-step p50 / p95):
+* **P2a seam closed, from +1 on (not +5):** emitted ≥ 58/61; |a₀₀ − seed| ≤ 2 TECU; `clock_std` ≤ 1.5× and
+  `sigma0_pf_code` ≤ 1.5× the seed's at every epoch; D5 flags at +1 ≤ 10 (was 676); `dd_fold` TOTAL at +1
+  within 10× of the same leg's +10 value (the recorder must be forced on if it does not trip — otherwise this
+  sub-bar is read from the D5 count alone).
+* **P2b wire, leg − seed at matched tows, pooled +2..+60:** clock contrast p50 ≤ 3× own-step p50 and p95 ≤
+  3× own-step p95; W6 code bias p50 ≤ 3× own-step p50; ZWD graded by the same own-step rule, not the mm bars.
+* **P2c phase wire at the seam (the discriminator):** the `R` record at +1 names ≤ 3 satellites (no-blob: 31);
+  per-satellite-median-removed |ΔPB| vs the seed at +2 p50 ≤ 0.05 m (no-blob: 9.4 m); no DRIFT after +2:
+  |Δ(k) − Δ(+2)| ≤ 0.05 m on ≥ 90 % of PB keys at every epoch to +60.
+* **P3 the branch is worth restoring (rebased vs `rs2_null_nocarry`, same seed):** births over +1..+5 ≤ 20 %
+  of the no-blob leg's; leg−seed clock contrast p50 at +60 ≤ the no-blob leg's at +5 (no growth); consumer p50
+  over +5..+60 ≤ the no-blob leg's.  `rs2_null_norebase` (blob, re-base off) must reproduce the L0 failure on
+  the new seed — the control that proves the fix is the re-base and not the seed.
+P2a passing with P2c failing ⇒ the frame is right but the branch content is not (a second-order seam);
+P3 failing with P2 passing ⇒ correct but worthless on this lineage — then the harness stays no-blob and the
+ledger row says so.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
@@ -4922,3 +5009,54 @@ leg of this card), scope ON + `if_phase_td_pairs: all` (the §20.1 `sp` extra), 
 * **Then (sequel, on a field seed that warm-resumes — §21 Phase 2):** the wire/consumer price of
   the E3 narrowing at G24 with the clause OFF vs ON (gates G-C/G-D of §20, dark until now), and the
   scope+pairs+clause FIELD pin through the generator if the §20 bars pass.
+### 22.4 RESULTS — B1–B3 PASS on the field seed; an unregistered effect; B4 running (2026-09-12 ~10:10 local; worker on worktree-agent-a02f192d1479c9bc2 @ `c8096ee`, exe `gnss_processor_cbref.exe` sha256 `5BD7D2DC…`, legs `runs/evleg_cbref_*` on the §21.5 interim posture `state_snapshot_carry: false`)
+
+**Built as §22.2:** `network.cycle_slip.common_band_ref_arc` (default OFF, warn+disarm without the scope);
+`CommonBandEvidence::iftd_untested`; the preview carries `is_ref` (an `IfTdPreview` element replaces the
+`{pair, flagged}` pair) and folds three ways only when the knob is armed; the rule refuses an untested pair
+before the veto check (`iftd_ref_arc` + `iftd_ref_arc_pairs`, token `iftd(<pair>)=ref_arc`); counters
+`n_cb_iftd_ref_arc[_by_pair]`; run-end field `ref-arc refusals N [pair: n …]`; `network_if_slip.csv` gains
+`is_ref`.  One addition the worker made from its own null A/B (`c8096ee`): the basis tail names untested
+pairs the refusal branch never reached (MW-flagged / immature / unprocessed), exactly as the flagged set is
+named — without it 6 of the 12 differing null rows differed only by a vanished token.  Basis-string only.
+Debug suite 1970 / 0 fail; `CommonBand*` 50/50.
+
+**B1 PASS.**  Null on/off: `products.txt` identical (`1FF0BA20…`); `network_events.csv` differs in 12 of
+1992 rows, **12/12 carry `ref_arc`**, all `T0_band_scope`, all natural L5-chain reference arcs (e.g.
+WTZR00DEU/G24 at 277410, `iftd(L1C+L5Q)=ref_arc;iftd(L2W+L5Q)=ref_arc`).  Smoke, knob absent vs `false`:
+`products.txt` `B9DA8CC1…` identical.
+
+**B2 PASS — every pre-registered row.**
+
+| leg (GOPE00CZE, +10) | ON | OFF |
+|---|---|---|
+| E3 L1C +29 & L5X +29, **G24** | `all reason=no_exoneration;implicated=L1C;L2W;L5X;basis=mw(L1C+L5X)silent(n=10;thr=1.4WL);iftd(L1C+L5X)=ref_arc;mw(L1C+L2W)flag;mw(L2W+L5X)flag;iftd(L1C+L2W)=flagged;iftd(L2W+L5X)=ref_arc;lli=none` | `keep implicated=L2W;exonerated=L1C;L5X` — the §20.1 trap |
+| E1 L5X −99, G24 | `keep implicated=L5X` | same; products `DEF230D7…` identical |
+| E2 L1C +37, G24 | `all` (the named cost) | `keep implicated=L1C` |
+| E3, G25 | `all`, products `44D461B0…` identical | `all` via `iftd(L1C+L5X)=flagged` |
+
+The clause reaches the drain: on E3/G24 the OFF IF-TD refloat row reads `L1C;L2W;pair=L1C+L2W;cb_kept=L1C`
+(the scope held back the band that really slipped); ON it reads `L1C;L2W;pair=L1C+L2W`.  Run-end
+`ref-arc refusals`: null 6 `[L1C_L5Q 1, L1C_L5X 1, L1W_L5X 2, L2W_L5Q 2]`, E3/G24 8 (`L1C_L5X` 1 → 3, its two
+verdict epochs), E2/G24 8 (`L2W_L5X` +2), E1 and E3/G25 6 (= null) — invariant #4 in both directions.
+
+**B3 — the census could not be run as pre-registered, and the substitute is exact.**  The OFF run writes no
+`T0_band_scope` rows (`NetworkCommonBandScope.cpp:521` returns before the emit loop when unarmed; the seed's
+20 484 event rows hold 0), so its 23 would-narrow verdicts exist only as a counter.  Census on the five leg
+pairs instead (both arms scope ON + `all`, the clause the only difference): **4 forfeited narrowings of 106
+(3.8 %, bar ≤ 15 %), all four injected — E3 ×2 (the fix) and E2 ×2 (the cost); natural forfeitures 0/20.**
+Reference exposure under `all`: `is_ref` on 18.3 % of IF-TD samples; 107 of 507 (station, satellite) arcs are
+a reference of ≥ 1 chain (multiplicity 1/2/3 = 32/47/28).  ⚠ The `abs_dev_m == 0` proxy §22.3 named is
+UNUSABLE: 28.5 % false negatives on the smoke (`abs_dev = |dd − med|` is zero only where the pool median is),
+0 of 71 hits at a flag epoch on the seed — the `is_ref` column is the instrument.
+
+**Unregistered effect, recorded, not banked.**  On every leg the clause also resolves **six `inconsistent`
+fallbacks into narrowings** (null: narrowed 1 → 7, inconsistent 15 → 9): a pair fired while every band was
+"exonerated" — a contradiction — and refusing the untestable exonerator leaves consistent evidence that names
+one band.  Products are unchanged because those six MW flags were dropped at admission, so the drain acted on
+none of them.  The principle is right (an exonerator that cannot be cross-checked is not an exonerator); the
+wire effect is nil on the null and is to be read on the storm arm, not assumed.
+
+**B4 running:** `config/test_suite/_golden_sim_campaign_zwdblk_refarc.json` = the increment-1 `sts` storm arm +
+the clause, `gnss_processor_cbref.exe`, against `runs/golden_sim_campaign_zwdblk_sts` (exe certification by a
+20-epoch smoke pair `stspromo` vs `cbref` on the `sts` config, or a same-exe OFF rerun).  Bars as §22.3.
