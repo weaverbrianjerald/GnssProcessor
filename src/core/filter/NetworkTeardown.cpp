@@ -3453,8 +3453,8 @@ int networkTeardown(
         log->info("Network (RS-3 datum restore): write {} / read {}; last snapshot carried "
                   "{} datum row(s); restored eq34 datum rx {}, rx parents {}, sat roots {}, "
                   "prev targets {} (+{} longevity elevation(s), {} gap-retained edge(s)); "
-                  "CB prev {}, seen {}; first post-resume epoch: eq34 rerefs {}, reattaches "
-                  "{}, CB re-seed discs {}.{}",
+                  "CB prev {}, seen {}, IF-pin pairs {}; first post-resume epoch: eq34 "
+                  "rerefs {}, reattaches {}, CB re-seed discs {}.{}",
                   config_.getNetworkConfig().state_snapshot_datum_capture ? "ARMED" : "off",
                   config_.networkResumeDatumRestore() ? "ARMED" : "off",
                   ctx.carry.snap_datum_rows_last,
@@ -3462,12 +3462,13 @@ int networkTeardown(
                   C.n_resume_datum_sat_roots, C.n_resume_datum_prev_targets,
                   C.n_resume_datum_prev_el, C.n_resume_datum_retained,
                   C.n_resume_datum_cb_prev, C.n_resume_datum_cb_seen,
+                  C.n_resume_datum_cb_pair,
                   C.n_resume_datum_first_reref, C.n_resume_datum_first_reattach,
                   C.n_resume_datum_first_cb_disc,
                   (config_.networkResumeDatumRestore() && n_eq34_restored == 0
                    && C.n_resume_datum_cb_prev == 0)
                       ? "  ⚠ 0 restored under an ARMED read — the snapshot carried no "
-                        "EQ*/CB* rows (a writer without "
+                        "EQ* / CB* rows (a writer without "
                         "network.state_snapshot_datum_capture?) or no warm resume "
                         "happened; check the resume log for the RS-3 line."
                       : "");

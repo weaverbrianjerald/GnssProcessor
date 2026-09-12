@@ -1449,7 +1449,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             || !snap.eq34_prev_el.empty()
                             || !snap.eq34_retained_edges.empty();
                         const bool have_cb =
-                            !snap.code_bias_prev.empty() || !snap.code_bias_sat_seen.empty();
+                            !snap.code_bias_prev.empty() || !snap.code_bias_sat_seen.empty()
+                            || !snap.code_bias_ifpin_pair.empty();
                         if (have_eq34) {
                             ctx.carry.eq34_datum_rx  = snap.eq34_datum_rx;
                             ctx.carry.eq34_rx_parent = snap.eq34_rx_parent;
@@ -1486,8 +1487,16 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "does, and every phase-bias family re-references.");
                         }
                         if (have_cb) {
-                            ctx.carry.code_bias_prev_    = snap.code_bias_prev;
-                            ctx.carry.code_bias_sat_seen_ = snap.code_bias_sat_seen;
+                            ctx.carry.code_bias_prev_      = snap.code_bias_prev;
+                            ctx.carry.code_bias_sat_seen_  = snap.code_bias_sat_seen;
+                            // ...and the pair those values were solved under.  Restoring
+                            // the values without the pair is strictly WORSE than today:
+                            // `pair_same` still reads false everywhere, so the IF-pin RHS
+                            // still re-seeds to 0, while the restored seen-set now makes
+                            // every one of those re-seeds BUMP.  A pair that genuinely
+                            // changed across the seam still trips the test and still
+                            // bumps — the resume's previous kept epoch IS the writer's.
+                            ctx.carry.code_bias_ifpin_pair_ = snap.code_bias_ifpin_pair;
                             datum_cb_restored = true;
                             long long n_cbp = 0;
                             for (const auto& [fam, per_sat] : snap.code_bias_prev)
@@ -1495,9 +1504,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             ctx.counters.n_resume_datum_cb_prev  = n_cbp;
                             ctx.counters.n_resume_datum_cb_seen  =
                                 static_cast<long long>(snap.code_bias_sat_seen.size());
+                            ctx.counters.n_resume_datum_cb_pair  =
+                                static_cast<long long>(snap.code_bias_ifpin_pair.size());
                         } else {
                             log->warn("Network (RS-3 datum restore): ARMED but the snapshot "
-                                      "carries NO CBP/CBS rows (a writer without "
+                                      "carries NO CBP/CBS/CBI rows (a writer without "
                                       "network.state_snapshot_datum_capture, or a run with "
                                       "network.code_datum_time_linked off) — that half is "
                                       "INERT; the run is marked 'resumed' below and every "
@@ -1509,7 +1520,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "parent edge(s), {} satellite root(s), {} pin target(s), "
                                       "{} longevity elevation(s), {} gap-retained edge(s); "
                                       "code-bias datum: {} previous value(s) over {} family "
-                                      "(families), {} ever-seen satellite(s).  Restored BEFORE "
+                                      "(families), {} ever-seen satellite(s), {} IF-pin "
+                                      "pair(s).  Restored BEFORE "
                                       "the first election, so its sticky seed CONTINUES the "
                                       "writer's tree; the code-bias 'resumed' latch stays {} "
                                       "(a re-seed bumps only where it genuinely re-seeds).",
@@ -1522,6 +1534,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_datum_cb_prev,
                                       snap.code_bias_prev.size(),
                                       ctx.counters.n_resume_datum_cb_seen,
+                                      ctx.counters.n_resume_datum_cb_pair,
                                       datum_cb_restored ? "FALSE" : "true (CB half inert)");
                     }
                     // Coupling regressors (network.resume_coupling_restore) — the
@@ -2323,6 +2336,11 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                 for (const auto& [sat, v] : per_sat)
                     if (std::isfinite(v)) snap.code_bias_prev[fam][sat] = v;
             snap.code_bias_sat_seen = ctx.carry.code_bias_sat_seen_;
+            // The IF-pin pair that PRODUCED those values — the third container of the
+            // same kept-epoch lifecycle.  Without it the restore is inert on the IF-pin
+            // half: `pair_same` reads false for every satellite, the split re-seeds to 0
+            // and every satellite disc-bumps (measured: 32 of 32 on a field probe).
+            snap.code_bias_ifpin_pair = ctx.carry.code_bias_ifpin_pair_;
             ctx.carry.snap_datum_rows_last =
                 static_cast<long long>(snap.eq34_datum_rx.size()
                                        + snap.eq34_rx_parent.size()
@@ -2330,7 +2348,8 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                        + snap.eq34_prev_target.size()
                                        + snap.eq34_prev_el.size()
                                        + snap.eq34_retained_edges.size()
-                                       + snap.code_bias_sat_seen.size());
+                                       + snap.code_bias_sat_seen.size()
+                                       + snap.code_bias_ifpin_pair.size());
             for (const auto& [fam, per_sat] : snap.code_bias_prev)
                 ctx.carry.snap_datum_rows_last += static_cast<long long>(per_sat.size());
         }   // state_snapshot_datum_capture

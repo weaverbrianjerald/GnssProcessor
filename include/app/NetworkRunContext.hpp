@@ -2511,6 +2511,7 @@ namespace GnssProcessor {
         long long n_resume_datum_retained     = 0;  ///< gap-retained tree edges restored (EQR)
         long long n_resume_datum_cb_prev      = 0;  ///< code-bias previous values restored (CBP)
         long long n_resume_datum_cb_seen      = 0;  ///< code-bias ever-seen satellites restored (CBS)
+        long long n_resume_datum_cb_pair      = 0;  ///< code-bias IF-pin reference pairs restored (CBI) — 0 here with CBP > 0 means the IF-pin half re-seeds anyway
         long long n_resume_datum_first_reref    = 0; ///< PHASE_DATUM/eq34_reref (sat,σ) at the first post-resume epoch
         long long n_resume_datum_first_reattach = 0; ///< PHASE_DATUM/eq34_reattach (tree-edge handovers) there
         long long n_resume_datum_first_cb_disc  = 0; ///< CB_DATUM/reseed_disc_landed satellites there

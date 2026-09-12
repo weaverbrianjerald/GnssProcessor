@@ -78,6 +78,7 @@
  *   EQR,<station_idx>,<sat>_<signal>                     # RS-3: gap-retained tree edge
  *   CBP,<cons>|<signal>,<sat>,<value>                    # RS-3: code-bias prev value
  *   CBS,<sat>                                            # RS-3: code-bias ever-seen
+ *   CBI,<sat>,<sig1>,<sig2>                              # RS-3: code-bias IF-pin pair
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
  *   ...                                                 #  NetworkProductEmitter::serializeState)
  *   EEND
@@ -387,6 +388,20 @@ struct NetworkStateSnapshot {
     /// Empty unless network.code_datum_time_linked was armed on the writer.
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
     std::set<std::string> code_bias_sat_seen;
+    /// The IF-pin reference pair (satellite -> {sig1, sig2}) that PRODUCED the values in
+    /// @ref code_bias_prev — the third container of the same kept-epoch lifecycle, and
+    /// the one that gates the IF-pin half of the datum.  The RHS is genuine continuity
+    /// only when the pair is UNCHANGED from the last kept epoch AND both signals had a
+    /// previous value (NetworkSbasis.cpp `pair_same`), so an empty map reads as "the
+    /// pair changed" for EVERY satellite: the split re-seeds to 0 and — with
+    /// @ref code_bias_sat_seen restored — every satellite disc-bumps.  Measured on a
+    /// 3-epoch field probe: restoring the previous values and the seen set WITHOUT this
+    /// map left 32 of 32 satellites re-seeding at the first post-resume epoch, i.e. the
+    /// IF-pin half of the restore was inert (standing invariant #4).  Restoring it is
+    /// the same continuity claim as restoring the values themselves — a resume's
+    /// previous kept epoch IS the writer's last kept epoch — and a pair that genuinely
+    /// did change still trips the test and still bumps.
+    std::map<std::string, std::pair<std::string, std::string>> code_bias_ifpin_pair;
     /// True when any RS-3 datum record is present.  Its OWN predicate, like
     /// @ref hasCouplingState: the two halves (eq34 tree / code-bias memory) are
     /// reported and warned about separately at the restore site, and neither may
@@ -395,7 +410,8 @@ struct NetworkStateSnapshot {
         return !eq34_datum_rx.empty() || !eq34_rx_parent.empty()
             || !eq34_sat_root.empty() || !eq34_prev_target.empty()
             || !eq34_prev_el.empty() || !eq34_retained_edges.empty()
-            || !code_bias_prev.empty() || !code_bias_sat_seen.empty();
+            || !code_bias_prev.empty() || !code_bias_sat_seen.empty()
+            || !code_bias_ifpin_pair.empty();
     }
     /// True when any coupling record is present (the writer then emits the v3 header).
     ///

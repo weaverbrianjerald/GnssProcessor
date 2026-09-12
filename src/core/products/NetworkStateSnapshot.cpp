@@ -227,6 +227,8 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         for (const auto& [sat, v] : per_sat)
             put(fmt::format("CBP,{},{},{}", fam, sat, v));
     for (const auto& s : snap.code_bias_sat_seen) put(fmt::format("CBS,{}", s));
+    for (const auto& [sat, pr] : snap.code_bias_ifpin_pair)
+        put(fmt::format("CBI,{},{},{}", sat, pr.first, pr.second));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -610,6 +612,10 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
         } else if (tag == "CBS") {  // RS-3: code-bias ever-harvested satellite
             if (f.size() != 2 || f[1].empty()) return fail("malformed CBS line");
             s.code_bias_sat_seen.insert(f[1]);
+        } else if (tag == "CBI") {  // RS-3: code-bias IF-pin reference pair
+            if (f.size() != 4 || f[1].empty() || f[2].empty() || f[3].empty())
+                return fail("malformed CBI line");
+            s.code_bias_ifpin_pair[f[1]] = {f[2], f[3]};
         } else {
             return fail("unknown record tag '" + tag + "'");
         }

@@ -74,6 +74,10 @@ NetworkStateSnapshot datumSnapshot() {
     s.code_bias_sat_seen.insert("G24");
     s.code_bias_sat_seen.insert("G07");
     s.code_bias_sat_seen.insert("G12");
+    // The IF-pin pair those values were solved under — without it `pair_same` reads
+    // false for every satellite and the IF-pin half of the datum re-seeds anyway.
+    s.code_bias_ifpin_pair["G24"] = {"C1W", "C2W"};
+    s.code_bias_ifpin_pair["G07"] = {"C1C", "C2W"};
     return s;
 }
 
@@ -142,12 +146,14 @@ TEST(ResumeDatumRestore, DatumRecordsRoundTripExactly) {
     EXPECT_NE(text.find("EQR,17,G07_L2W\n"), std::string::npos) << text;
     EXPECT_NE(text.find("CBP,G|C1W,G24,-1.2345678901234567\n"), std::string::npos) << text;
     EXPECT_NE(text.find("CBS,G12\n"), std::string::npos) << text;
+    EXPECT_NE(text.find("CBI,G24,C1W,C2W\n"), std::string::npos) << text;
 
     EXPECT_EQ(r.eq34_datum_rx, s.eq34_datum_rx);
     EXPECT_EQ(r.eq34_rx_parent, s.eq34_rx_parent);
     EXPECT_EQ(r.eq34_sat_root, s.eq34_sat_root);
     EXPECT_EQ(r.eq34_retained_edges, s.eq34_retained_edges);
     EXPECT_EQ(r.code_bias_sat_seen, s.code_bias_sat_seen);
+    EXPECT_EQ(r.code_bias_ifpin_pair, s.code_bias_ifpin_pair);
     // Doubles compared exactly: fmt's shortest round-trippable form must survive
     // strtod bit-for-bit, or a restored pin target re-levels a whole component.
     ASSERT_EQ(r.eq34_prev_target.size(), 2u);
@@ -193,8 +199,8 @@ TEST(ResumeDatumRestore, NoDatumRowsWhenUnpopulatedAndRestoresNothing) {
     const std::string text = roundTrip(s, r);
 
     EXPECT_EQ(text.rfind("# gnss_network_state_snapshot v1\n", 0), 0u);
-    for (const char* tag : {"\nEQD,", "\nEQP,", "\nEQS,", "\nEQT,",
-                            "\nEQE,", "\nEQR,", "\nCBP,", "\nCBS,"})
+    for (const char* tag : {"\nEQD,", "\nEQP,", "\nEQS,", "\nEQT,", "\nEQE,",
+                            "\nEQR,", "\nCBP,", "\nCBS,", "\nCBI,"})
         EXPECT_EQ(text.find(tag), std::string::npos) << tag;
 
     EXPECT_TRUE(r.eq34_datum_rx.empty());
@@ -205,6 +211,7 @@ TEST(ResumeDatumRestore, NoDatumRowsWhenUnpopulatedAndRestoresNothing) {
     EXPECT_TRUE(r.eq34_retained_edges.empty());
     EXPECT_TRUE(r.code_bias_prev.empty());
     EXPECT_TRUE(r.code_bias_sat_seen.empty());
+    EXPECT_TRUE(r.code_bias_ifpin_pair.empty());
     EXPECT_FALSE(r.hasDatumState());
 }
 
@@ -246,6 +253,7 @@ TEST(ResumeDatumRestore, MalformedDatumRecordsAreHardParseFailures) {
         {"EQR,3\n",                      "EQR"},   // missing ambiguity
         {"CBP,G|C1W,G24,nan\n",          "CBP"},   // non-finite previous value
         {"CBS,\n",                       "CBS"},   // empty satellite
+        {"CBI,G24,C1W\n",                "CBI"},   // half an IF-pin pair
     };
     for (const Case& c : cases) {
         const std::string text = head + c.row + "END,4\n";
