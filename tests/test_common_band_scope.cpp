@@ -484,6 +484,14 @@ TEST(CommonBandScopeRule, EqualCountL1L5OnTheReferenceArcFallsBackToAllBands) {
     EXPECT_EQ(v.iftd_ref_arc_pairs, (std::set<CommonBandPair>{ P("L1C", "L5X") }));
     EXPECT_EQ(v.iftd_veto, 0);                 // no flag: the refusal is the ABSENCE of a test
     EXPECT_NE(v.basis.find("iftd(L1C+L5X)=ref_arc"), std::string::npos);
+    // Named ONCE: the refusal branch names it inline and the tail must not
+    // repeat it (the `iftd_noted` contract the flagged tail already obeys).
+    std::size_t n = 0, at = 0;
+    while ((at = v.basis.find("iftd(L1C+L5X)=ref_arc", at)) != std::string::npos) {
+        ++n;
+        ++at;
+    }
+    EXPECT_EQ(n, 1u);
 }
 
 /// §22 (a′) — the control, and the measured defect itself.  The SAME evidence
@@ -519,6 +527,12 @@ TEST(CommonBandScopeRule, L5SlipOnTheL5ChainsReferenceStillNarrows) {
     EXPECT_EQ(v.implicated, (std::set<std::string>{ "L5Q" }));
     EXPECT_EQ(v.exonerated, (std::set<std::string>{ "L1C", "L2W" }));
     EXPECT_EQ(v.iftd_ref_arc, 0);              // the refused population is SILENT pairs only
+    // …but the row still NAMES them.  An untested pair the refusal branch never
+    // reached (these two were MW-flagged) would otherwise vanish from the basis
+    // and the reader could not tell a quiet lane from an untestable one.
+    EXPECT_NE(v.basis.find("iftd(L1C+L5Q)=ref_arc"), std::string::npos);
+    EXPECT_NE(v.basis.find("iftd(L2W+L5Q)=ref_arc"), std::string::npos);
+    EXPECT_EQ(v.basis.find("iftd(L1C+L5Q)silent"), std::string::npos);
 }
 
 /// §22 (c) — THE NAMED COST, accepted in advance (§22.2).  A genuine single-band

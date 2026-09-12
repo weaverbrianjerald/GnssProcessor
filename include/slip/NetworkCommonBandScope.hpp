@@ -57,7 +57,9 @@
  *    such a pair is UNTESTED (@ref CommonBandEvidence::iftd_untested) rather
  *    than silent, and is refused as an exonerator exactly as `immature` and
  *    `lli_shadow` are — counted @ref CommonBandVerdict::iftd_ref_arc, named
- *    `iftd(<pair>)=ref_arc`, never listed as `silent`.  Field-measured (§20.1):
+ *    `iftd(<pair>)=ref_arc` (inline when the refusal branch reaches it, in the
+ *    basis tail otherwise, exactly as the flagged set is named), never listed as
+ *    `silent`.  Field-measured (§20.1):
  *    an equal-count L1C+L5X slip on GOPE/G24, the reference of both L5 chains,
  *    narrowed to the innocent band L2W under `first` AND `all`, while the same
  *    injection on G25 (not a reference) vetoed at 29× threshold.  Named cost:

@@ -162,6 +162,7 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
             ++v.iftd_ref_arc;
             v.iftd_ref_arc_pairs.insert(pr);
             append(desc + ";iftd(" + pairText(pr) + ")=ref_arc");
+            iftd_noted.insert(pr);
             continue;
         }
         if (ev.iftd_flagged.count(pr)) {
@@ -186,6 +187,14 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
         append("mw(" + pairText(pr) + ")flag");
     for (const auto& pr : ev.iftd_flagged)
         if (!iftd_noted.count(pr)) append("iftd(" + pairText(pr) + ")=flagged");
+    // §22: the SAME tail the flagged set gets, for the untested one.  Without it
+    // an untested pair that the refusal branch never reached — MW-flagged, or
+    // immature, or not processed at all — simply VANISHES from the row, and the
+    // reader cannot tell an evaluated-and-quiet lane from one whose IF-TD test
+    // could not run.  Measured on the null A/B: 6 of the 12 differing rows
+    // differed only by those missing tokens.  Never `silent`, always `=ref_arc`.
+    for (const auto& pr : ev.iftd_untested)
+        if (!iftd_noted.count(pr)) append("iftd(" + pairText(pr) + ")=ref_arc");
     for (const auto& pr : ev.iftd_silent)
         append("iftd(" + pairText(pr) + ")silent");
     append("lli=" + setText(ev.lli_signals));
