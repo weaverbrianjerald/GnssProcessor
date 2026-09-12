@@ -5208,6 +5208,84 @@ rerun` exists for exactly this; a re-run in place would silently resume from the
   no key exceeds the threshold (the seed-window control); the cold-consumer replay unchanged (the mark reaches
   the file, the replay driver's reaction is measured, not assumed).
 
+### 21.10 RESULTS — RS-4: the seam's phase-bias level is the EMIT LAYER, and it closes exactly; the seam is now declared; RS-5 pre-registered (2026-09-12 ~19:00 local; worker on worktree-agent-ac918e1c0b5f083e4, merged `83a48de`; manager grade)
+
+**The instrument.**  `network.trace_sat_bias_states` does not carry the phase-bias state (its writer at
+`NetworkSolPrep.cpp:1253` emits the satellite CODE bias), and no trace carries it — `network_solution.csv` is
+written downstream of the emit transforms and mirrors `products.txt`.  The worker found the exact
+instrument in existing knobs: `NetworkEstimator.cpp:1050` sets `npb.bias_m = x_s(c)` (the raw state) and two
+OUTPUTS-ONLY transforms then overwrite it in `NetworkEmitStore.cpp` — the Card-4 eq34 emit re-base (`:256`,
+`carry_invariant_emit_rebase`, default true) and the PB emission filter (`:295`, `emit_pb_filter`, armed on
+the golden) — so a twin with both off (`runs/evseed_field6h_v3raw`) emits the raw state verbatim.  Proof it is
+outputs-only: the v3t and v3raw ep0604 snapshots differ in 0 lines outside the emitter `epb`/`ep` rows, and the
+two restore legs have max |ΔCLK| = 0.0 over 1830 clock keys.  The trace-only twin `runs/evseed_field6h_v3t`
+hashes `products.txt` `5f671fba…` = v3's (trace-class confirmed).
+
+| p50 \|Δ\| per (sat, signal), leg − seed | +1 | +2 | +30 |
+|---|---|---|---|
+| **EMITTED** | **17.666 m** | **17.611** | **17.652** |
+| **RAW** (transforms off on both sides) | **1.695 m** | **1.862** | **3.263** |
+| emit layer on the LEG (emitted − raw) | **0.000 (0 of 129 keys nonzero)** | 0.628 | 5.714 |
+| emit layer on the SEED at the same tow | 18.410 | 18.766 | 23.062 |
+| closure `emitted − (raw + legLayer − seedLayer)` | — | **0.000 over 120 keys** | — |
+
+In §21.9's own units (per-sat-median-removed |ΔPB| p50 at +2): restore 11.20 (§21.9: 11.20), nocarry 9.33
+(§21.9: 9.33), **raw 0.43 m**.  Clocks reproduce §21.9 (common −0.1177 m, contrast p50 0.537).
+
+**Mechanism.**  The eq34 emit re-base engine (`NetworkEmitRebase`, a bare run-local at
+`ApplicationNetwork.cpp:915`; memory `last_emit_` = one double per key, the previous emission frame) and the
+PB emission filter (`NetworkPbEmitFilter`, `:930`; `state_` mean/var/last_seen per key + per-constellation
+step accumulators) are in no snapshot and cold-start at the seam: the leg's first epoch passes the raw
+solve-frame value through untouched while the seed's wire at the same tow carries 604 epochs of accumulated
+re-base (18.4 m p50).  The estimator's own level moves **1.70 m p50 at +1** — 1.68 m excluding the six L2X
+keys (24.7 m), whose eq34 component datum receiver GAMB00PYF vanished at the seam (`→ None/CPVG00CPV`; 19 of
+134 families changed root); grouped by pinned-arc kept vs changed 1.59 vs 2.44 m, by signal L1C 2.10 / L1W
+1.10 / L2W 2.41 / L5Q 2.37 / L5X 0.82, L2W/L1W ratio −0.55 (not iono-like: +1.65).  Receiver clocks leg −
+seed at +1 p50 1.21 / p95 5.11 m over 61 stations; receiver code bias 0.57 / 1.68.  **Cold-consumer replay**
+(p50 3D from +5 / +30): restore 6.66 / 5.54, nocarry 15.41 / 15.44, the seed's own continuous wire over the
+same window 9.30 / 8.08 — a constant per-key level costs a cold consumer nothing; the consumers the seam
+hurts are the ones that carried state across it.
+
+**Declaration built and measured (`network.resume_pb_seam_mark`, default OFF, one-shot, outputs-only, not
+fingerprinted).**  Marked leg: run-end `keys tested 129, over threshold 129 (100.0 %), constellations marked
+1`, one `PB_FRAME/resume_seam` event (`keys_over=129/129, max|dPB|=119.3 m`), first E record `datum_changed 1`
+(`…,604,0,0,1,G`) vs the control's 0 — **the whole 61-epoch products file differs by that one line** (P
+records max |Δ| 0); cold smoke on and off both `b9da8cc1…`; Debug suite 1988 / 271 suites / 0 failed;
+`ResumePbSeamMark` (6).  The replay of the marked wire is byte-identical to the unmarked one (`NetworkProductIO
+.cpp:773` re-applies the flag, but every key is its own first sighting at the first replayed epoch).  The
+complementary half for a stateful file consumer is **`network.serialize_disc_counters`** (RTA-4): no ledger row
+until now; its smoke pair changes only the P (2700) / B (2595) / C (640) records (`b9da8cc1 → 87a33bf0`, one
+integer inserted before the `sigma=` token of every P line, legend unchanged).  Registered this commit:
+the mark RECOMMEND_SCOPED and armed on every harness leg; the serialization RECOMMEND_SCOPED with the golden
+pins DEFERRED to the RS-5 close-out, where the smoke baselines of all of today's cards are re-recorded once.
+
+**RS-5 pre-registered — emit-layer continuity across the seam.**  Write knob
+`network.state_snapshot_emit_capture` (default false): the snapshot carries `NetworkEmitRebase::last_emit_`
+(row `ER,<sat|signal>,<last_emit_m>`) and `NetworkPbEmitFilter`'s `state_` (`PF,<sat|signal>,<mean>,<var>,
+<last_seen_s>`) and `step_` (`PS,<const>,<sum_log_e2>,<n_eff>`) as format-forward rows under the existing
+header; both engines become parameters of `networkWriteStateSnapshot` / `networkTryWarmResume` exactly as the
+CLK-R engine was made one (§18.10), with `exportState` / `restoreState` on each.  Read knob
+`network.resume_emit_restore` (default false; forward-only resume response policy, fingerprint-EXEMPT; requires
+`resume_frame_restore`): restore both engines before the first emit; rows absent ⇒ today's behaviour, loudly;
+counters + run-end line (`emit re-base keys restored N, filter keys N, step accumulators N; first-epoch emit
+layer p50 vs the writer's`).  Legs from a new seed `runs/evseed_field6h_v4` (write knob via `--extra`; the
+harness will arm both knobs by default once merged): `rs5_null_restore`, `rs5_null_norestore` (control — must
+reproduce RS-4's 17.6 m emitted / 0.000 layer), and the raw-transform twin is not needed (the closure is the
+instrument).
+* **P7a the emit layer continues:** emitted − seed at +1 p50 ≤ raw − seed p50 + 0.05 m (i.e. ≈ 1.7 m, the
+  estimator's own residual); the leg's emit layer at +1 within 0.05 m of the seed's on ≥ 95 % of keys; the
+  seam mark's `keys over threshold` fraction reads the RAW residual's (recorded — with a 1.7 m raw step it is
+  expected still to fire, honestly).
+* **P7b nothing else moves:** availability, a₀₀, clocks, D5, births, eq34 rerefs and CB discs as RS-3's restore
+  leg; cold-consumer replay unchanged (a level is invisible to a cold consumer).
+* **P7c the stateful consumer (the point of the card):** a consumer replay STARTED on the seed's wire and
+  continued across the seam onto the leg's (splice the seed's products up to ep0604 with the leg's; §18.14's
+  `splice_wire.py`) — its ambiguity resets at the seam and its 3D p50 over +5..+30 vs the same consumer on the
+  seed's continuous wire; recorded for the control and the restore leg, with the mark's declaration on.
+* Then RS-6 — the estimator's own 1.7 m level at the seam (the station layer: receiver clocks 1.2 m p50 at +1,
+  the rx-CB carry, the T5 deviation, the vanished L2X component datum receiver) — is pre-registered from
+  RS-5's residual table, not before.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
