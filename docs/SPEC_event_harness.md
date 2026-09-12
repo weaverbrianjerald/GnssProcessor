@@ -4156,3 +4156,103 @@ becomes armable when that lineage goes multi-constellation.
 | `runs/evseed_slipped6h_v2` | `config/test_suite/_golden_sim_campaign_zwdblk_scoped.json` (= the golden on the campaign bed + the zwdblk pair `carry_zwd` + `carry_zwd_in_block`, as the old slipped seed carried) | `runs/simnet60_campaign_wu93` | ep0001 … ep0544, ep0604, ep0665 (12) | `ce8f64cbd3f77ace` | 720/720 emitted, 0 withheld; pivot departures at tow 319260 (G) and 321900 (E) = the storm arms' (the campaign fixture starts at 12:00) |
 
 **Rules from here on.**  (1) New legs resume from the `_v2` seeds; the old `evseed_quiet6h` (evharness worktree) and `evseed_slipped6h` stay on disk for like-for-like re-runs of old legs only.  (2) A solve-affecting knob is A/B'd on the harness as a FRESH-CONVERGENCE pair (golden ± one knob, ~20 min each) or by writing a new seed per posture — never by `--extra` on a resume leg; trace-class / QC knobs remain leg-legal.  (3) `event_leg.py` arms `zwd_seam_reseed` on every leg (§18); the seeds themselves do not need it (they are fresh runs).  The study scripts that hard-code `SEED = "runs/evseed_quiet6h"` (`ev_study1_legs.py`, `ev_study3_legs.py`, …) describe closed studies and are left as the record.
+
+## 20. The FIELD harness — a 6 h seed on the field golden and the owed field legs for the three sim-validated slip cards (pre-registered 2026-09-12 ~01:00 local, BEFORE any field leg is read)
+
+**Question.**  Three slip cards are RECOMMEND_ON and pinned in `golden_sim_tri_w6` but carry documented
+exceptions on `golden_field_gps_dual` (manifest, 2026-09-11): `network.cycle_slip.mw_evidence_refloat`,
+`network.cycle_slip.common_band_scope` and `network.cycle_slip.if_phase_td_pairs = all`.  Each exception
+names the same mechanism: on the field the L5 lanes may be BIA-corrected under the real COD OSB product and
+then run the between-satellite MW path (the evidence rule's bias-free clause EXCLUDES that path; the scope's
+silence semantics were never priced on it; the pairs' (L2W,L5Q) pool amplifies phase noise 12x and was never
+priced on real data).  The field harness answers each with ONE injected event and a null, exactly as the sim
+harness did, and the outcome per knob is a field pin through the generator or an exception WITH THE MECHANISM.
+
+**What is different on the field (facts checked before the brief, not assumptions).**
+- The field golden is a `carry_invariant` + `phase_datum_eq34` lineage with `phase_leveling: true`,
+  `mw_detect` + `if_phase_td` + `if_phase_td_ref_gate` + `mw_lli_corroborate` armed, GPS L1C/L2W/L5Q at
+  61 stations, clock datum MBAR00UGA, closed-loop consumer WTZZ00DEU (undifferenced, float).  There is NO
+  prioritized phase-anchor election (eq34 supersedes it), so `anchor_slip_handover` is out of regime and the
+  scope's anchor clause is structurally inert here (`split_referenced_sats ... of 0 anchored` is the expected
+  run-end reading; record it).  T4 on this lineage is the ATTRIBUTION erase (`T4_attrib/attrib_arc` rows).
+- The field has NO truth: every grade is event MINUS null (the seam transient, the bed and the posture cancel)
+  on datum-invariant channels, and the consumer is graded DE-BIASED (the null carries the static bias).  The
+  DD-fractional trace is uniform on the field (SPEC_amb_iono §6.13) and grades nothing here.
+- `resume_coupling_restore` THROWS at load without `carry_coupling_gauge_project` (absent from the golden):
+  field legs arm `resume_frame_restore` only (inert on a v1 snapshot — logged) and set
+  `resume_coupling_restore: false` explicitly.  `zwd_seam_reseed` is armed by `event_leg.py` as on every leg.
+- `logging.enable_mw_slip_detector` defaults to FALSE once a `logging` section exists: the seed and every leg
+  arm it explicitly (the lane bias class `bia_corrected` is a column of that log and is the whole question).
+- Loop cost on this lineage was 307 ms/epoch on a 4 h carry_invariant arm (`fld63_relevel4h_on`); the seed's
+  own `network_run_summary.csv` is the number to quote.
+
+**Seed.**  `runs/evseed_field6h` = `python scripts/event_leg.py write-seed --name field6h --base
+config/golden/golden_field_gps_dual.json --hours 6 --interval-ep 60` with `--extra` (added to write-seed for
+this card) arming `network.trace_rx_states`, `network.trace_zwd`, `network.trace_ionosphere` and
+`logging.enable_mw_slip_detector` — all trace-class.  Exe = main HEAD (8d5dad6; last code commit e90086f)
+Release, pinned as `build/x64-Release/gnss_processor_fld.exe` (hash recorded; the same binary runs every leg).
+Launched detached (`run_seed.cmd` + Start-Process, `exitcode.txt` watched).  The seed's OFF run-end clause
+`Network (MW detect-only admission): legacy N, evidence 0 [knob off; would-admit N]` is the FIRST field
+measurement of the evidence card: the size of the population the knob would refloat on real data (gate G-F).
+
+**Event site rule (from the seed's own traces, never from truth or visibility).**  Snapshot = the one nearest
+5 h (ep ~0605).  Station: a European station near the consumer so the wire effect reaches WTZZ —
+GOPE00CZE preferred, then GRAZ00AUT / LEIJ00DEU / POTS00DEU; never the clock datum (MBAR00UGA).  Satellite:
+from `network_slip_raw.csv` at the snapshot tow, a GPS satellite with L5Q rows at that station (a triple-band
+arc), elevation 35–65°, present every epoch for >= 60 epochs before the snapshot with lli1 = lli2 = 0 (mature,
+receiver-clean).  The chosen (station, sat, elevation, arc age) is recorded in the leg meta.
+
+**Legs (60 epochs, event at +10, one producer at a time — box cap 2 shared with another session).**
+Postures via `--extra` (every leg also sets `resume_coupling_restore: false`):
+P0 OFF (golden defaults) · P1 evidence ON · P2 scope ON + pairs `all` · P2f scope ON + pairs `first` ·
+P3 evidence + scope + pairs `all` (= what a field pin would arm).
+
+| leg | event | postures |
+|---|---|---|
+| null | none | P0, P1, P2, P3 |
+| E1 | L5Q −99 cyc, no LLI (the sim's exact unflagged-L5 miss) | P0, P1, P2, P3 |
+| E2 | L1C +37 cyc, no LLI | P0, P2, P3 |
+| E3 | L1C +29 AND L5Q +29 at the same epoch (Study 7's equal-count shape on the (1,5) lane) | P0, P2f, P2 |
+| E5 | L5Q −31 cyc WITH `flag_lli` (rule F3's door) | P0, P2 |
+
+**Gates, frozen.**  All read at epochs relative to the event, event − null at the SAME posture; ON vs OFF
+compares those differences.  Floor = |ON-null − OFF-null| on the same channel and window.
+- **G-A identity (invariant #4).**  From `network_events.csv` (T0_mw_detect rows `mw_wl_slip`/`lli_slip`/
+  `band_scope`, `T0_band_scope/common_band`, `T1_if_slip/if_slip`), the MW log and `network_if_slip.csv`
+  at (station, sat, k in [-1, +5]): which detectors fired, the per-lane evidence ratio and `bia_corrected`,
+  and WHICH BANDS were freed.  Expected: E1 P0 = all three bands (two MW pairs fire); E1 P2/P3 = {L5Q} only;
+  E2 P2/P3 = {L1C}; E3 P2f = a `keep` verdict with implicated {L2W} (the trap reproduced on the field) or an
+  all-band fallback (the trap absent on the field — also an answer); E3 P2 = IF-TD (1,5) veto → all bands;
+  E5 P2 = F3 verdict {L5Q}.  A narrowing FOLLOWED by a `T4_attrib/attrib_arc` at that station within +45 is a
+  wrong narrowing = FAIL for the scope.
+- **G-B station frame.**  `network_rx_states.csv` (CLK), `network_zwd.csv`, `network_ionosphere.csv`
+  (the injected LOS): event − null at +1, +10, +45.  Bar: ON |Δ| at +45 <= OFF |Δ| at +45 on every channel,
+  and the station's attribution-erase count (event − null, +0..+45) ON <= OFF.
+- **G-C wire.**  `products.txt` event − null per (sat, kind, signal): the injected satellite's max |Δ| over
+  +0..+45 for CLK and PB (ON <= OFF), and the max over every OTHER satellite (<= 2x the floor).
+- **G-D consumer, de-biased.**  `closed_loop_trace.csv` ENU event − null: max |Δ3D| over +0..+50 and mean
+  |Δ3D| over +30..+50.  Bar: ON mean <= OFF mean + floor.
+- **G-E quiet cost (ON-null vs OFF-null, 60 epochs).**  No new withhold; network-wide `attrib_arc` within
+  ±3; wire CLK max |Δ| <= 0.02 m; consumer max |Δ3D| <= 0.03 m; the run-end clauses of both nulls quoted.
+- **G-F evidence population (seed + E1).**  The seed's `would-admit` count and the MW log's `bia_corrected`
+  share per lane (L1C/L2W, L1C/L5Q, L2W/L5Q).  Pin condition for the evidence card: would-admit >= 1 on a
+  bias-free lane in 6 h, AND on E1 the evidence path admits a detection the legacy gate drops (or legacy
+  already admits it and P1 == P0 byte-for-byte — then the knob is harmless and the pin rides on G-E alone).
+  If every lane reads `bia_corrected = 1` and would-admit = 0: EXCEPTION, "structurally inert on the field —
+  every MW lane is between-satellite under the real OSB product; the population this rule admits does not
+  exist here; T4 attribution is the field's catch for an unflagged L5 slip (E1 P0 tells how fast)".
+- **G-G the field twin (only if G-A..G-E pass for the scope + pairs).**  ONE 6 h run of the seed config with
+  the pins under test (`runs/evseed_field6h_on`, same exe) against the seed: `attrib_arc` total not up by
+  more than 10 %, withheld epochs equal or fewer, consumer de-biased settled (h3–6) p50 and rms not worse by
+  more than 5 %, `ev_consumer_invariant_grade.py` pbstep fraction not worse.  PASS → pin (manifest pins +
+  exception text removed, ledger evidence line, regenerate, `--verify`, `config_posture_check.py
+  --verify-loader`).  FAIL → exception with the failing channel as the mechanism.
+
+**Decision rules.**  Scope + pairs are pinned TOGETHER or not at all (the veto is the scope's coverage).
+Evidence is decided by G-F first (population), then G-B..G-E on E1.  An identity FAIL on E3 P2f with a PASS
+on E3 P2 is the field reproduction of Study 7 and counts FOR the pair (it is what `all` exists to close).
+
+**Traps carried over.**  Knob-on legs against knob-on nulls (a dosed or natural-slip leg differs);
+`--from-leg`/`--extra` copy nothing you did not pass; the renamed exe is a snapshot (hash it); traces are
+CWD-relative to the leg dir; a 0xC0000409 with no message is an uncaught runtime_error (read stdout.txt);
+check `tasklist` before EVERY launch; grade only after the gates above are on disk (this section).
