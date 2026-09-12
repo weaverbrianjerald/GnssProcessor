@@ -1,0 +1,547 @@
+# SPEC — the ORACLE PIN: hold the ambiguities at truth and read where the error goes
+
+Card opened from `docs/SPEC_event_harness.md` §17 (stubbed 2026-09-11), built and
+graded the same day.  **Numbers first; the reading is §8.**
+
+Knob: a new injector kind `oracle_pin` in `network.inject.events[]`.
+**SIM-ONLY DIAGNOSTIC — field-inert by construction, never a golden knob, never in
+`docs/CONFIG_promotion_ledger.json`.**
+
+---
+
+## 0. Headline
+
+| | |
+|---|---|
+| **G1 OFF byte-identity** | **PASS** — 7/7 artifacts bit-identical to the UNMODIFIED exe, 652/652 counter log lines identical |
+| **G2 actuation** | **PASS on every arm the DD instrument can see, once each arm is past its own onset transient.** At a settled epoch: `L1C+L2W` 100.0 % of pinned chords < 0.01 cyc (max 1e−4), `L5Q` 100.0 % (max 0.0000), `all` 100.0 % on L1C/L2W/L5Q (max 4e−4) and **57.7 % on Galileo L7Q** (max 0.103 cyc) — the one band the pin does not fully take |
+| **G3 the coupling table** | built, both windows, every cell from a truth grader — §6 |
+| **G4 slipped seed** | **PASS** — 109 truth slips land on pinned arcs after the pin; on chords carrying one, **99.7 %** of DD errors are < 0.01 cyc at slip+1 and **99.0 %** at slip+5.  The pin follows `N(t)`. |
+
+**The two findings that were not in the pre-registration:**
+
+1. **Holding the ambiguities at truth is a metre-class prefit event, and the
+   standing QC stack treats it as one.**  On `all`, the onset epoch's fit residual
+   is **6.43 cyc rms / 38.1 cyc max** over 2 295 carried arcs — that is how far the
+   converged float ambiguities sit from their true integers in the run's own
+   single-difference frame — and `raim_within_epoch` + the A4 σ̂₀ ceiling
+   **withhold 4 epochs** (σ̂₀ 28.3 → 22.2 against a ceiling of 6.0) while the rest
+   of the state moves.  By the run end the residual is **1e−4 cyc rms / 2.7e−3
+   max**: the solve lands exactly on the pins.  The withhold is a RESULT, not a
+   grading inconvenience — it is the price of the information, paid up front.
+   A band-scoped pin is much gentler (`L5Q` withholds **nothing**).
+2. **On the SLIPPED bed the pin does not settle.**  Same knob, same σ: the
+   last-epoch residual is **6.96 cyc rms / 118 cyc max**, `no_station_term` is
+   **87 645** arc-epochs against 0 on the band arms of the quiet bed, and the
+   consumer and the ionosphere get WORSE while the ZWD improves 2.6×.  The fit
+   rests on the leveling carry, and on a slipped bed that carry is continuously
+   refloated out from under it.  §7.
+
+---
+
+## 1. What was built
+
+### 1.1 Config surface
+
+```json
+{"kind": "oracle_pin", "tow": 279330.0, "scope": "all", "sigma_m": 1e-4}
+```
+
+- `scope` — `all` | `band:<sig>[+<sig>…]` | `station:<name>` | `sat:<id>` |
+  `arc:<sta>/<sat>/<sig>`.  Anything else is refused **by name** at load
+  (`include/filter/NetworkOraclePinScope.hpp` owns the one grammar, shared by the
+  JSON loader and the run-scope seam so they cannot drift).
+- `sigma_m` — the pin prior σ in metres, default **1e−4 m** (≈ 0.0005 cyc, Λ = 1e8):
+  stiff, but two decades BELOW the 1e10 datum pins, so the gauge stays the anchors'.
+  Must be > 0.
+- PERSISTENT from `tow` on (the `sat_clock_step` semantics); `n_applied` increments
+  every epoch the table was non-empty, so the injector's never-fired hard error
+  applies unchanged.
+- A `station` / `sat` / `signal` field beside `scope` is **refused**: which arcs are
+  pinned is said by `scope` alone, and a second, silently-ignored selector would arm
+  a different set than the operator wrote.
+
+**Field-inertness.**  An `oracle_pin` event with `network.cycle_slip.oracle_truth_root`
+empty or missing is a HARD load failure, and `networkOraclePinLoad` hard-errors when
+any ROSTER station lacks `truth_ambiguities.csv` or `truth_slips.csv`.  A field
+lineage has no truth root, so the knob cannot be armed on one at all.  A HARD error
+rather than warn-and-disarm because a silently unpinned run would report the model's
+error budget WITHOUT the ambiguities held and be read as the ceiling this card exists
+to measure.
+
+### 1.2 THE GAUGE — why the pin is a fit and not `λ·N_true`
+
+A raw pin `value_abs = λ·N_true` fights the datum.  The network fixes ONE arc per
+(satellite, band) family — the ANCHOR — at whatever level it carried when it was
+elected, and station-level phase biases ride INSIDE the ambiguities.  In the run's
+own frame a non-anchor arc's ambiguity column is
+
+    α_rsj = β_sj + u_rj + λ_j · N_rsj
+
+with `u_rj` station r's band-j phase offset (receiver phase bias plus whatever
+code-datum lump the clock absorbed — station-common, NOT integer, and
+data-determined, so the pin must not overwrite it) and `β_sj` the family's frame
+term fixed by the anchor a(s,j) and its ENFORCED pin target `t_sj`
+(`NetStation::pinned_amb_targets` — READ, never assumed 0):
+
+    β_sj = t_sj − λ_j·N_{a s j} − u_{a j}.
+
+Eliminating β between an arc and its own family's anchor leaves a pure
+station-offset DIFFERENCE with every frame term gone:
+
+    g(r,s,j) = value_abs(r,s,j) − t_sj − λ_j·(N_rsj − N_{a s j}) = u_rj − u_{a j}
+
+so the fit is a **levelling network** over the per-(station, band) offsets,
+determined up to one constant per band — the same free constant the pinned values
+are invariant to.  The pinned value is then
+
+    pin(r,s,j) = t_sj + (u_rj − u_{a j}) + λ_j·(N_rsj − N_{a s j}).
+
+Three properties, all asserted by the unit suite:
+1. every pinned DOUBLE DIFFERENCE is exactly `λ·DD(N_true)` — β and u cancel, so the
+   pin asserts INTEGER information and nothing else;
+2. anchor arcs are NEVER in the table (their 1e10 datum pin owns the family frame);
+3. re-parameterising the truth as (β − c, u + c) leaves every pinned value unchanged.
+
+**⚠ The alternating fit named in the card's own pre-registration does not converge,
+and was replaced.**  "β from the anchors, u from the medians, iterate to a
+tolerance" has the error recursion `e_r = median over the station's families of
+e_{anchor(family)}`, and a median is a SELECTION, not an average — so the anchors'
+errors cycle among their own values forever.  Reproduced on the unit suite's 6×8×2
+bed: 20/20 iterations, oscillating between two values.  Since the pinned values are
+invariant to the free constant, the fix is to FIX IT: pick a ROOT anchor per band
+(the one owning the most families, ties by station index), declare its offset 0, and
+PROPAGATE — each remaining station's offset is estimated ONCE, as a median over ≥ 3
+arcs whose family anchors already have a value, and then frozen.  Terminates in at
+most one round per station; measured **2–3 rounds** on every 60-station leg here.
+
+The ≥ 3-arc rule is load-bearing: an offset fitted on one or two arcs is not a
+station term, it is that arc's own error re-labelled, and pinning on it would inject
+that error into every other arc of the station.  A MEDIAN, not a mean, because on the
+slipped bed a single un-repaired arc is a multi-cycle outlier.
+
+### 1.3 Where it actuates
+
+Built SERIALLY once per epoch (`networkOraclePinEpoch`, after the phase-anchor
+election and after column registration, before PASS B — so the fit reads THIS
+epoch's anchors and a handover moves the family's frame with the pin following it),
+then read READ-ONLY inside the parallel PASS-B produce loop, where each pinned
+ambiguity column takes ONE DIAGONAL LOCAL PRIOR row of the same shape as the
+phase-leveling carry row:
+
+```cpp
+const double lam = 1.0 / (pin.sigma_m * pin.sigma_m);
+inj.emplace_back(col, lam, lam * (pin.value_m - x_lin(amb_idx)));
+```
+
+⚠ **The x_lin trap** (`SPEC_lane_slip_response` §7.2): shifting `x_lin` alone is a
+proven EXACT solve no-op.  The row above is a real (Λ, η) pair — that is why it
+actuates — and the pin deliberately does NOT also write `LocalCarry::value_abs`.
+
+The row is INDEPENDENT of the leveling carry: it fires whether or not the arc has a
+`LocalCarry` entry (a newborn leg is pinned too), whether or not the slip response
+freed the arc this epoch, and regardless of the F3 block route.  Both the row-build
+gate and the `addStationPrior` INSTALL gate were widened for it — widening only the
+build gate would have produced rows that are coalesced into `R.carry_cols` and then
+dropped, i.e. a run-end counter that reports folds which never reached the normal
+equations.
+
+**Closure, stated in the run-end clause and verified on every arm:**
+`arc-epochs offered = rows_injected + gauge_pinned_skipped + no_column`.
+Measured `144025 = 144025 + 0 + 0` (`all`), `81695 = 81695 + 0 + 0` (`L1C+L2W`),
+`51251 = 51251 + 0 + 0` (`L5Q`), `93641 = 93641 + 0 + 0` (slipped `all`).
+
+### 1.4 Telemetry — both edges of invariant #7, with IDENTITIES
+
+`network_events.csv` carries a per-arc row on the ENTRY edge (`pinned`, with
+`before` / `pinned` / `delta_cyc` / `N`) and on the EXIT edge (`released`), plus one
+summary row per active epoch.
+
+⚠ **Counters alone were measured to be insufficient here.**  The first build emitted
+the per-arc rows only at the ONSET epoch.  A grader reconstructing "which arcs are
+pinned at epoch t" from those under-counts by every arc that joined later — **7 828
+at onset vs 9 381 at the run end** on the first quiet arm — and then reads a working
+pin as a failure (it did: the actuation gate came back 0 % on L2W with the pin
+working perfectly).  Both edges are now emitted, so the pinned set at any epoch is
+exactly (entries − exits) up to that epoch.  This is what invariant #7 means by
+"with counters **and identities**".
+
+---
+
+## 2. The legs
+
+All nine, 60 epochs, pin at **+5**, generated by `scripts/ev_oracle_pin_legs.py`
+(concurrency cap 2, completion read from `exitcode.txt`, never the process list).
+Quiet seed `runs/evseed_quiet6h` ep0665 (tow 279150, fingerprint `6a3531a1afb2b40b`)
+on fixture `runs/simnet60_quiet_wu93_24h`; slipped seed `runs/evseed_slipped6h`
+ep0665 (tow 322320) on `runs/simnet60_campaign_wu93`.
+`network.cycle_slip.oracle_truth_root` is armed on **every** leg, the nulls
+included, so the only difference between a null and an arm is the event.
+
+| leg | exe | scope | rc | wall s | withheld (A4) | rows injected | arcs first pinned / released |
+|---|---|---|---|---|---|---|---|
+| `opin_null_base` | base | — | 0 | 146.6 | 0 | — | — |
+| `opin_null` | ON | — | 0 | 151.4 | 0 | — | — |
+| `opin_all` | ON | `all` | 0 | 164.9 | **4** | 144 025 | 9 577 / 3 392 |
+| `opin_l12` | ON | `band:L1C+L2W` | 0 | 154.8 | **4** | 81 695 | 5 084 / 128 |
+| `opin_l5` | ON | `band:L5Q` | 0 | 145.8 | 0 | 51 251 | 3 193 / 66 |
+| `opin_s21` | ON | `station:S21000SIM` | 0 | 151.2 | 0 | 2 755 | 162 / 34 |
+| `opin_g08` | ON | `sat:G08` | 0 | 151.3 | 0 | 2 889 | 177 / 48 |
+| `opin_slip_null` | ON | — | 0 | 131.7 | 0 | — | — |
+| `opin_slip_all` | ON | `all` | 0 | 148.5 | **4** | 93 641 | 4 535 / 3 839 |
+
+Standing invariant #4: every armed leg reports `rows_injected > 0`, and the PASS-B
+closure is exact on every one of them.
+
+---
+
+## 3. G1 — OFF byte-identity (PASS)
+
+`opin_null_base` (the UNMODIFIED worktree exe, SHA-256 `803C61D9…`) against
+`opin_null` (the ON exe, `D5193E1A…`), same config, same snapshot:
+
+| artifact | | bytes | sha256[:16] |
+|---|---|---|---|
+| `products.txt` | IDENTICAL | 1 458 419 | `f3f37bc36051983a` |
+| `logs/network_dd_fractional.csv` | IDENTICAL | 16 016 413 | `852c4dc38cdc1929` |
+| `logs/network_zwd.csv` | IDENTICAL | 189 998 | `ddc169a23ad780b7` |
+| `logs/closed_loop_trace.csv` | IDENTICAL | 4 973 | `18280f8cd729b00f` |
+| `logs/network_ionosphere.csv` | IDENTICAL | 4 113 695 | `acea8d872fe34b19` |
+| `logs/network_rx_states.csv` | IDENTICAL | 677 647 | `889b59bc51ce244a` |
+| `logs/network_events.csv` | IDENTICAL | 22 022 | `690927f6addbcd41` |
+
+plus **652 / 652** run-end and counter log lines identical (timing figures and leg
+paths excluded, which are the only legal differences), and the ORACLE PIN clause
+ABSENT from the null leg's log.  Every file's mtime post-dates its own launch —
+memory `feedback_stale_trace_dir_fake_ab`: an A/B against a stale trace directory
+reads as byte-identity and is worth nothing.
+
+---
+
+## 4. G2 — actuation
+
+Instrument: `logs/network_dd_fractional.csv`.  A chord counts as PINNED when all
+FOUR of its legs (both stations × sat_i/ref_sat) are in the leg's own pinned set,
+reconstructed from the producer's ENTRY/EXIT event rows at that epoch — what the
+producer DID, not what the scope asked for.
+
+**At the pre-registered pin+1** (`--at-ep` default):
+
+| leg | read at | withheld first | sig | pop | p50 | p90 | max | < 0.01 cyc | unpinned p50 / p90 (pop) |
+|---|---|---|---|---|---|---|---|---|---|
+| `all` | +4 | 2 | L1C | 838 | 0.0001 | 0.0017 | 10.69 | 90.6 % | — |
+| `all` | +4 | 2 | L2W | 498 | 0.0002 | 0.0031 | 24.78 | 91.4 % | — |
+| `all` | +4 | 2 | L5Q | 838 | 0.0001 | 0.0026 | 11.23 | 90.6 % | — |
+| `all` | +4 | 2 | L7Q | 33 | 2.7009 | 13.05 | 18.56 | 36.4 % | 0.4071 / 7.917 (307) |
+| `L1C+L2W` | +4 | 2 | L1C | 838 | 0.0000 | 0.0000 | 0.0001 | **100.0 %** | — |
+| `L1C+L2W` | +4 | 2 | L2W | 498 | 0.0000 | 0.0000 | 0.0000 | **100.0 %** | — |
+| `L1C+L2W` | +4 | 2 | L5Q | — | | | | | **0.0882 / 0.3360 (838)** |
+| `L1C+L2W` | +4 | 2 | L7Q | — | | | | | **0.1561 / 0.3876 (340)** |
+| `L5Q` | +1 | **0** | L5Q | 878 | 0.0000 | 0.0000 | 0.0002 | **100.0 %** | — |
+| `L5Q` | +1 | 0 | L1C | — | | | | | **0.4355 / 2.409 (878)** |
+| `L5Q` | +1 | 0 | L2W | — | | | | | **0.0778 / 0.5836 (531)** |
+| `L5Q` | +1 | 0 | L7Q | — | | | | | **0.0937 / 0.2448 (347)** |
+
+**The contrast is the instrument and it is unambiguous**: in `L1C+L2W` the pinned
+bands read their true integer to 1e−4 cycles and the L5Q / L7Q chords of the SAME
+epoch do NOT snap (p50 0.088 / 0.156 cyc); in `L5Q` it is the mirror image.
+
+**At a settled epoch** (`--at-ep 33`, i.e. +28): `L1C+L2W` 100.0 / 100.0 %,
+`L5Q` 100.0 %, `all` **100.0 % on L1C, L2W and L5Q** (max 0.0004 cyc) and
+**57.7 % on Galileo L7Q** (p50 0.0027, max 0.1027 cyc).  So `all`'s pin+1 shortfall
+is its own onset transient, not a wiring failure — but **L7Q is a real, open
+exception**: it is the band with by far the thinnest arc population (40 onset rows
+against 3 009 for L1C), so the fit's ≥ 3-arc station-term rule binds hardest there,
+and `all` is the only arm whose `no_station_term` is non-zero (34 988 arc-epochs
+against 0 on both band arms).
+
+**`sta S21` and `sat G08` cannot be graded on this instrument at all**, and that is
+structural, not a gap: a DD chord needs FOUR pinned legs, and a single-station scope
+supplies at most two while a single-satellite scope supplies at most two (the
+reference satellite is never G08).  Those two arms are graded by the §6 table alone.
+
+---
+
+## 5. G4 — the slipped seed (PASS)
+
+`opin_slip_all` on `runs/evseed_slipped6h` / `simnet60_campaign_wu93`.
+**109 truth slips land on a pinned arc after the pin** (first fifteen):
+
+| tow | station | arc | Δ cyc | flagged |
+|---|---|---|---|---|
+| 322560 | S09000SIM | E07/L7Q | −26 | 1 |
+| 322560 | S53000SIM | G04/L5Q | −38 | 0 |
+| 322560 | S56000SIM | G06/L1C | −56 | 1 |
+| 322590 | S03000SIM | G15/L5Q | −24 | 0 |
+| 322590 | S55000SIM | E26/L5Q | +18 | 1 |
+| 322620 | S01000SIM | E34/L7Q | −62 | 0 |
+| 322620 | S21000SIM | G30/L1C | +44 | 0 |
+| 322620 | S44000SIM | G23/L5Q | −60 | 0 |
+| 322620 | S51000SIM | E14/L5Q | +98 | 1 |
+| 322650 | S09000SIM | E19/L7Q | −81 | 0 |
+| 322650 | S10000SIM | G01/L5Q | +65 | 0 |
+| 322680 | S07000SIM | E25/L5Q | −54 | 0 |
+| 322710 | S27000SIM | G19/L1C | +63 | 0 |
+| 322710 | S43000SIM | E26/L1C | +96 | 0 |
+| 322710 | S43000SIM | G19/L5Q | −52 | 1 |
+
+DD error on chords carrying a slipped pinned arc, `|dd_cyc − DD(N_true)|`:
+
+| offset | pop | p50 | p90 | max | < 0.01 cyc |
+|---|---|---|---|---|---|
+| slip + 1 | 355 | 0.0002 | 0.0019 | 32.44 | **99.7 %** |
+| slip + 5 | 303 | 0.0001 | 0.0012 | 35.00 | **99.0 %** |
+
+**The pin follows `N(t)` through the jump.**  A pin that did not would show the
+slip's own Δ (24–115 cycles here) in every one of those chords; the p50 is 2e−4 cyc
+and the single-chord tail is one or two arcs, not a population.
+
+---
+## 6. G3 — the six-column coupling table
+
+`python scripts/ev_oracle_pin_grade.py g3` → `runs/opin_table.json`.  Every cell is
+a TRUTH grader against the fixture, never a raw wire step (invariant #5).  Windows
+are the pre-registered ones: **W1 = epochs +28..+32 (pin+23..+27)** and
+**W2 = +53..+57 (pin+48..+52)**, both well past every arm's onset transient.
+4 774 LOS / 300 station-epochs / 5 emitted epochs per cell.
+
+### window W1 — epochs +28..+32 (pin+23..+27), tow 280020..280140
+
+| row | none | all | L1C+L2W | L5Q | sta S21 | sat G08 |
+|---|---|---|---|---|---|---|
+| 1 slant iono rms (m) | 2.6553 | 2.6783 | 2.7093 | 2.6852 | 2.7102 | 2.6323 |
+| 1 slant iono p50 \|e\| (m) | 1.6411 | 1.6701 | 1.7850 | 1.8200 | 1.6314 | 1.6498 |
+| 1 slant iono p90 \|e\| (m) | 4.6200 | 4.6873 | 4.4754 | 4.6501 | 4.6920 | 4.5681 |
+| 2 ZWD rms (m) | 0.0725 | 0.0138 | 0.0160 | 0.0927 | 0.1000 | 0.2203 |
+| 2 ZWD p90 \|e\| (m) | 0.1304 | 0.0219 | 0.0280 | 0.1263 | 0.1788 | 0.2353 |
+| 3 rx DCB contrast rms (m) | 1.3063 | 1.1710 | 1.6514 | 1.4543 | 1.2339 | 1.3131 |
+| 3 rx clock contrast rms (m) | 2.0648 | 1.9787 | 2.3373 | 2.0296 | 2.1017 | 2.1120 |
+| 4 sat clock rms (m) | 1.1955 | 1.2015 | 1.2720 | 1.1935 | 1.1706 | 1.2199 |
+| 4 sat clock p50 \|e\| (m) | 0.7769 | 0.6183 | 0.7276 | 0.7741 | 0.7285 | 0.7825 |
+| 4 sat clock SD contrast rms (m) | 1.6497 | 1.6934 | 1.6849 | 1.6400 | 1.6006 | 1.6313 |
+| 5 code bias rms (m) | 0.1986 | 0.2323 | 0.1995 | 0.8324 | 0.1953 | 0.1990 |
+| 5 DD L1C med \|e\| (cyc, ref-free) | 0.1366 | 0.0000 | 0.0000 | 0.0752 | 0.1763 | 0.1505 |
+| 5 DD L1C at own integer (%) | 82.5 | 100.0 | 100.0 | 88.1 | 70.1 | 74.3 |
+| 5 DD L2W med \|e\| (cyc, ref-free) | 0.1371 | 0.0000 | 0.0000 | 0.0196 | 0.2018 | 0.1864 |
+| 5 DD L2W at own integer (%) | 83.1 | 100.0 | 100.0 | 100.0 | 68.9 | 72.5 |
+| 5 DD L5Q med \|e\| (cyc, ref-free) | 0.1469 | 0.0000 | 0.0210 | 0.0000 | 0.1885 | 0.1744 |
+| 5 DD L5Q at own integer (%) | 81.0 | 100.0 | 100.0 | 100.0 | 71.8 | 73.1 |
+| 5 WL(1,2) med \|e\| (cyc, ref-free) | 0.0776 | 0.0000 | 0.0000 | 0.0549 | 0.1249 | 0.1077 |
+| 5 WL(1,2) at own integer (%) | 93.5 | 100.0 | 100.0 | 88.1 | 80.6 | 82.7 |
+| 5 EWL(2,5) med \|e\| (cyc, ref-free) | 0.0226 | 0.0000 | 0.0182 | 0.0196 | 0.0312 | 0.0292 |
+| 5 EWL(2,5) at own integer (%) | 100.0 | 100.0 | 100.0 | 100.0 | 90.9 | 90.7 |
+| 6 consumer 3D p50 (m) | 1.7645 | 1.3421 | 2.3813 | 1.2180 | 4.0578 | 1.9353 |
+| 6 consumer Up p50 (m) | 1.5822 | 1.3223 | 0.8747 | 1.1320 | 3.9807 | 1.7851 |
+| n LOS / sta-ep / epochs | 4744/300/5 | 4744/300/5 | 4744/300/5 | 4744/300/5 | 4744/300/5 | 4744/300/5 |
+
+### window W2 — epochs +53..+57 (pin+48..+52), tow 280770..280890
+
+| row | none | all | L1C+L2W | L5Q | sta S21 | sat G08 |
+|---|---|---|---|---|---|---|
+| 1 slant iono rms (m) | 2.7281 | 2.7706 | 2.7892 | 2.7571 | 2.7896 | 2.7260 |
+| 1 slant iono p50 \|e\| (m) | 1.6624 | 1.7326 | 1.8983 | 1.8787 | 1.6835 | 1.6847 |
+| 1 slant iono p90 \|e\| (m) | 4.7208 | 4.8383 | 4.5976 | 4.7404 | 4.7852 | 4.7822 |
+| 2 ZWD rms (m) | 0.0669 | 0.0130 | 0.0144 | 0.0634 | 0.0900 | 0.2138 |
+| 2 ZWD p90 \|e\| (m) | 0.0923 | 0.0212 | 0.0246 | 0.0928 | 0.1173 | 0.3618 |
+| 3 rx DCB contrast rms (m) | 1.3192 | 1.1416 | 1.6332 | 1.3998 | 1.2388 | 1.2972 |
+| 3 rx clock contrast rms (m) | 2.0922 | 1.9796 | 2.3384 | 2.0595 | 2.2701 | 2.2789 |
+| 4 sat clock rms (m) | 1.1892 | 1.1930 | 1.2659 | 1.1881 | 1.1526 | 1.2620 |
+| 4 sat clock p50 \|e\| (m) | 0.7859 | 0.6196 | 0.7269 | 0.7789 | 0.6524 | 0.6669 |
+| 4 sat clock SD contrast rms (m) | 1.6330 | 1.6701 | 1.6668 | 1.6239 | 1.5662 | 1.6442 |
+| 5 code bias rms (m) | 0.1898 | 0.2918 | 0.2170 | 0.7627 | 0.1836 | 0.1946 |
+| 5 DD L1C med \|e\| (cyc, ref-free) | 0.1876 | 0.0000 | 0.0000 | 0.0366 | 0.2793 | 0.2668 |
+| 5 DD L1C at own integer (%) | 73.4 | 100.0 | 100.0 | 96.5 | 61.5 | 61.6 |
+| 5 DD L2W med \|e\| (cyc, ref-free) | 0.2386 | 0.0000 | 0.0000 | 0.0141 | 0.4615 | 0.4335 |
+| 5 DD L2W at own integer (%) | 68.6 | 100.0 | 100.0 | 100.0 | 52.2 | 52.9 |
+| 5 DD L5Q med \|e\| (cyc, ref-free) | 0.2059 | 0.0000 | 0.0138 | 0.0000 | 0.3130 | 0.2826 |
+| 5 DD L5Q at own integer (%) | 71.5 | 100.0 | 100.0 | 100.0 | 58.7 | 60.9 |
+| 5 WL(1,2) med \|e\| (cyc, ref-free) | 0.0669 | 0.0000 | 0.0000 | 0.0309 | 0.1058 | 0.1426 |
+| 5 WL(1,2) at own integer (%) | 91.7 | 100.0 | 100.0 | 96.4 | 77.3 | 79.3 |
+| 5 EWL(2,5) med \|e\| (cyc, ref-free) | 0.0209 | 0.0000 | 0.0119 | 0.0141 | 0.0300 | 0.0349 |
+| 5 EWL(2,5) at own integer (%) | 100.0 | 100.0 | 100.0 | 100.0 | 87.8 | 91.5 |
+| 6 consumer 3D p50 (m) | 1.6561 | 1.0862 | 3.2027 | 0.3117 | 3.3884 | 1.4189 |
+| 6 consumer Up p50 (m) | 1.4389 | 0.6913 | 0.1534 | 0.2920 | 3.3067 | 1.1983 |
+| n LOS / sta-ep / epochs | 4774/300/5 | 4774/300/5 | 4774/300/5 | 4774/300/5 | 4774/300/5 | 4774/300/5 |
+
+
+**Rows 3, 4 and 5 (code bias) caveat.**  `rx DCB contrast` and `rx clock contrast`
+are the BETWEEN-STATION contrasts (`simnet_grade.grade_rx_states`) — the absolute
+per-station DCB is datum-bearing by the Table-8 identity and is not gradeable.
+`sat clock` is TRUTH-DIFFERENCED in the realized basis (`grade_clock`; this bed's
+satellite clocks are NOT null, so `simnet_sat_clock_census.py` is the wrong tool).
+The DD rows are the REF-FREE lane grade (`simnet_amb_integer --ref-free`): the DD
+trace has ONE reference satellite and it is in every chord (`SPEC_amb_iono` §6.12).
+
+**Row 1 caveat, and why the finding survives it.**  The absolute slant-iono error
+carries a datum-bearing common level (the fleet-mean receiver GF bias is absorbed
+into the ionosphere — Table-8), measured here as a **+1.58 m** common offset on the
+`none` column.  The number to read is therefore the column-to-column CHANGE, and the
+de-meaned (datum-free) spread says the same thing as the raw rms — W2:
+
+| | none | all | L1C+L2W | L5Q | sta S21 | sat G08 |
+|---|---|---|---|---|---|---|
+| slant iono rms (m) | 2.7281 | 2.7706 | 2.7892 | 2.7571 | 2.7896 | 2.7260 |
+| **de-meaned rms (m)** | **2.2246** | **2.2442** | 2.3299 | 2.2594 | 2.2708 | 2.2226 |
+| de-meaned p50 \|e−μ\| (m) | 1.6300 | 1.6329 | 1.5445 | 1.5820 | 1.6286 | 1.6118 |
+
+---
+
+## 7. G4's second half — the slipped bed, `none` vs `all` (window W2)
+
+| channel | none | all | |
+|---|---|---|---|
+| ZWD rms (m) | 1.3476 | **0.5260** | **2.6x better** |
+| ZWD p90 \|e\| (m) | 1.0734 | **0.6534** | 1.6x better |
+| slant iono rms (m) | 7.5358 | 10.9152 | **1.4x WORSE** |
+| consumer 3D p50 (m) | 3.6726 | 4.5606 | 1.2x WORSE |
+| consumer Up p50 (m) | 1.3322 | 3.8237 | 2.9x WORSE |
+
+The stub asked: *does a perfect integer hold cure the slipped bed's ZWD?*
+**Partially, and it is not free.**  The metre-class ZWD sink halves — but it stays
+at 0.53 m, **40x the quiet bed's pinned 0.013 m**, and the ionosphere and the
+consumer both get worse.
+
+The mechanism is in the run-end clause: on the slipped bed the pin's own fit reports
+`no_station_term` **87 645** arc-epochs (against **0** on both quiet band arms) and
+a last-epoch residual of **6.96 cyc rms / 118 cyc max** — the solve never lands on
+the pins.  The fit's observations are the leveling carry, and on a slipped bed that
+carry is being continuously refloated out from under it: 3 839 arcs released against
+4 535 first pinned in 50 epochs, versus 128 against 5 084 on the quiet `L1C+L2W` arm.
+**A truth-fed integer pin is not a cure for a bed whose carry is churning; it is
+downstream of the same defect the slip-response cards are about.**
+
+---
+
+## 8. WHAT THE COLUMNS DECIDE
+
+### 8.1 The ionosphere does NOT move. The standing 99.3 %-iono root cause is FALSIFIED as an inference.
+
+`none` -> `all`, window W2: slant iono rms **2.7281 -> 2.7706 m** (+1.6 %), de-meaned
+**2.2246 -> 2.2442 m** (+0.9 %), p50 \|e\| **1.6624 -> 1.7326 m**.  Window W1 says the
+same (2.6553 -> 2.6783).  Every ambiguity in the network is held at its true integer
+to 1e-4 cycles — the ambiguity/ionosphere degeneracy is *gone* — and the per-LOS
+slant ionosphere is **unchanged, marginally worse, and certainly not at the phase
+floor**.
+
+Memory `project_why_non_integer_rootcause` reads "99.3 % ionosphere": the DD
+ambiguity residual is explained by the slant-iono error, needing only 0.117 TECU to
+move a fraction.  That correlation is not in dispute — it is visible in this table
+(`none` DD L1C med \|e\| 0.19 cyc alongside 2.7 m of iono error).  **What this card
+falsifies is the INFERENCE that ran the other way**: that integer information would
+therefore fix the ionosphere.  It does not.  The implication holds
+iono -> ambiguity, not ambiguity -> iono, because the per-LOS slant iono is a FREE
+state per epoch on this posture — no time link, no second observation — so removing
+the ambiguity's freedom removes nothing from it.  Integer information buys the
+ionosphere **nothing** on this bed.
+
+### 8.2 Where the error actually went: the ZWD, and through it the consumer.
+
+`none` -> `all`, W2: ZWD rms **0.0669 -> 0.0130 m (5.1x)**, p90 **0.0923 -> 0.0212 m
+(4.4x)**; consumer 3D p50 **1.656 -> 1.086 m**, Up **1.439 -> 0.691 m**.  W1 agrees
+(ZWD 0.0725 -> 0.0138, 5.3x).  The ZWD is the ONE channel that moves by a factor
+rather than by a percent, and it is the channel this project has repeatedly found at
+the end of every level-error path (`project_zwd_sink_census_2026-09-09`: "FIELD
+consumer = producer ZWD sink via the wire").  **On this bed the ambiguity level
+error is a ZWD error, not an ionosphere error.**
+
+Everything else is flat to a few percent: rx DCB contrast 1.319 -> 1.142, rx clock
+contrast 2.092 -> 1.980, sat clock rms 1.189 -> 1.193, sat clock SD contrast
+1.633 -> 1.670.  The clocks and the receiver biases are NOT where the ambiguity error
+lives.
+
+### 8.3 The coupling map — what a PARTIAL pin does
+
+**`L1C+L2W` (pin two of three GPS bands).**  The pinned bands go to 100 %, and so
+does the FREE L5Q (71.5 -> 100.0 %, med \|e\| 0.206 -> 0.014 cyc): once two bands of a
+LOS carry exact integers, the third is determined through the shared slant-iono
+state, so the pin PROPAGATES ACROSS BANDS on the same LOS.  The Galileo L7Q chords,
+which share no LOS with a pinned GPS band, do not move (0.131 med \|e\|).  ZWD follows
+`all` almost exactly (0.0144 vs 0.0130).  But the CONSUMER splits: Up collapses to
+**0.153 m** — the best vertical in the table — while 3D *rises* to 3.203 m, i.e. the
+horizontal gets worse.  Code-bias rms also rises slightly (0.190 -> 0.217).
+
+**`L5Q` alone.**  L5Q -> 100 %, L2W -> 100 %, L1C 73.4 -> 96.5 %: the same cross-band
+propagation, from one band this time.  ZWD barely moves (0.0669 -> 0.0634) — **so the
+ZWD win of `all` is bought by the L1/L2 pair, not by L5**.  Two things get
+conspicuously worse: **code bias rms 0.190 -> 0.763 m (4x)** — pinning the third band
+alone forces the L5 satellite code bias to absorb what the L5 ambiguities no longer
+can — and the iono is flat as everywhere.  And the consumer is the BEST of the whole
+table (3D **0.312 m**, Up **0.292 m**), which on a bed whose producer ZWD is
+unimproved is a warning, not a win: the consumer is a single held-out station over one
+5-epoch window, and this column is the one to re-measure before quoting.
+
+**`station:S21000SIM` and `sat:G08` — a partial pin is NET-HARMFUL here.**  Both make
+the network-wide DD integer rate WORSE (L1C at own integer 73.4 -> 61.5 % / 61.6 %,
+L2W 68.6 -> 52.2 % / 52.9 %), both worsen the ZWD (0.0669 -> 0.0900 / 0.2138) and
+`sta S21` worsens the consumer 2x (1.656 -> 3.388 m).  The run-end clauses say why:
+neither arm settles — last-epoch fit residual **0.202 cyc** (S21) and **1.596 cyc**
+(G08) against 1e-4 on the quiet full and band arms.  **A pin on a handful of arcs
+(162 and 177) does not hold the network at truth; it asserts integers on a few arcs
+while their neighbours contradict them, and the inconsistency is paid by the shared
+states.**  That is the coupling map's real answer: on this posture integer information
+is only useful when it is CONSISTENT across a band or the whole network — one station
+or one satellite is worse than nothing.
+
+### 8.4 The price of the information
+
+The pin is the cleanest available measurement of how far the converged float
+ambiguities sit from truth: **6.43 cyc rms / 38.1 cyc max** in the run's own SD frame
+at the onset epoch of `all` (2 295 carried arcs).  Yanking that to zero at Lambda = 1e8
+is a metre-class prefit event and the standing QC stack reacts exactly as it should —
+sigma-hat-0 28.3, five within-epoch re-solves, five stations excluded, and **4 epochs
+withheld at the A4 ceiling**.  A band-scoped pin costs nothing (`L5Q`: 0 withheld).
+Any future card that feeds integer information into this producer must budget for that
+transient or ramp the weight.
+
+---
+
+## 9. Deliberate non-goals and open items
+
+- **`sigma_m` was not swept.**  Every arm here runs the default 1e-4 m.  The withhold
+  transient of §8.4 is a direct function of it; a ramped or looser pin is the obvious
+  follow-up and is not measured.
+- **Galileo L7Q never fully takes under `all`** (57.7 % at own integer, max 0.103 cyc
+  at a settled epoch) while L1C/L2W/L5Q reach 100.0 %.  L7Q is the thinnest band on
+  this roster and `all` is the only arm with non-zero `no_station_term`; whether the
+  >= 3-arc station-term rule is the binding constraint is untested.
+- **`arc:<sta>/<sat>/<sig>` scope is built and unit-tested but has no harness leg.**
+- **`sta S21` / `sat G08` cannot be graded on the DD instrument at all** — a chord
+  needs four pinned legs and those scopes supply at most two.  They are graded by the
+  §6 table alone.
+- **The consumer numbers rest on one held-out station over a 5-epoch window** and are
+  the least robust cells in the table; the `L5Q` column in particular (3D 0.31 m)
+  should be re-measured before it is quoted.
+- **This knob must never be promoted.**  It is not in `docs/CONFIG_promotion_ledger.json`,
+  it is not in any golden, and the loader hard-errors without a simulator truth root.
+
+---
+
+## 10. Reproducing
+
+```powershell
+# base (G1 reference) and ON exes, from THIS worktree
+Copy-Item scripts\vs2026_build.ps1 $env:TEMP\vs2026_build_opin.ps1   # edit $proj to the worktree
+& $env:TEMP\vs2026_build_opin.ps1 -Config x64-Release
+
+python scripts\ev_oracle_pin_legs.py make
+python scripts\ev_oracle_pin_legs.py run opin_null_base opin_null    # cap 2, always
+python scripts\ev_oracle_pin_legs.py run opin_all opin_l12
+python scripts\ev_oracle_pin_legs.py run opin_l5 opin_s21
+python scripts\ev_oracle_pin_legs.py run opin_g08 opin_slip_null
+python scripts\ev_oracle_pin_legs.py run opin_slip_all opin_slip_all
+python scripts\ev_oracle_pin_legs.py status
+
+python scripts\ev_oracle_pin_grade.py g1
+python scripts\ev_oracle_pin_grade.py g2                 # pre-registered pin+1
+python scripts\ev_oracle_pin_grade.py g2 --at-ep 33      # settled
+python scripts\ev_oracle_pin_grade.py g3                 # -> runs/opin_table.json
+python scripts\ev_oracle_pin_grade.py g4
+```
+
+Unit suite: `gnss_tests.exe --gtest_filter=OraclePin*` (22 cases, 4 suites in
+`tests/test_oracle_pin.cpp`).
+
+Both graders added a `--tow-min` / `--tow-max` pair to `scripts/simnet_grade.py` and
+`scripts/simnet_amb_integer.py` (`--last-frac` can only name a TRAILING fraction, and
+this card grades two short windows inside one 60-epoch leg).  Default (None, None) =
+not one row filtered; `simnet_amb_integer --selftest` still PASSes.
