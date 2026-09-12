@@ -4849,3 +4849,76 @@ no-blob leg L1′ from the same seed):**
 **Sequel (not this card):** with a field seed that warm-resumes, the §20.1 wrong-narrowing price
 (gates G-C/G-D, dark in §20) becomes measurable, and the reference-arc clause + the scope/pairs
 field pin follow on that seed.
+## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
+
+### 22.1 The defect, restated from the code
+
+The scope's IF-TD veto (`NetworkCommonBandScope.cpp:138–144`) refuses a silent MW pair as an
+exonerator only when the pooled IF-TD preview FLAGGED that pair.  The preview (`:277–356`) forms
+`flagged = |dd − med| > thr` per sample, and a sample on the chain's REFERENCE satellite has
+`dd ≡ 0` by construction (`IfPhaseSlipDetector.hpp:195–206`: `is_reference`) — so on a reference
+arc the veto is structurally unavailable and the pair lands in `iftd_silent` instead.  The
+per-station reference GATE (card R) tests the FIRST chain's reference through a different statistic,
+but its decision never reaches the preview, and the additional chains under `if_phase_td_pairs =
+all` have no reference test at all (§14.10.4).  §20.1 measured the consequence on real data: an
+equal-count L1C+L5X slip on GOPE/G24 (the L5 chains' reference) narrowed to the innocent band under
+`first` AND `all`, while on G25 (not the reference) `all` vetoed at 29× the threshold.  Network-wide
+the dead zone is exactly one arc per station per additional chain — the highest L5-capable
+satellite in 80.6 % of epochs.
+
+### 22.2 The clause (built default-OFF behind `network.cycle_slip.common_band_ref_arc`)
+
+A pair whose IF-TD sample at (station, satellite) is the chain's reference is **UNTESTED for the
+verdict**: the preview records it as such (`CommonBandEvidence::iftd_untested`), the rule refuses
+the corresponding silent MW pair as an exonerator — the same shape as `immature` and `lli_shadow`
+(counted `iftd_ref_arc`, basis token `iftd(<pair>)=ref_arc`, never listed as `silent`) — and the
+verdict falls through exactly as today when nothing else exonerates (`no_exoneration ⇒ all-band`).
+No detector change, no re-opening of the §14.10.4 flood, no new reference election.  Applied to
+EVERY chain's reference (first chain included): the first chain's reference gate is a separate
+instrument whose decision the preview does not see, so treating its arc as tested would be an
+assumption, not a measurement — wiring the gate's fire into the preview is a possible second
+increment, not this card.  Byte-identical when the knob is off (one branch in the rule).  Also
+(trace-only, products byte-identical): `network_if_slip.csv` gains an `is_ref` column so a
+reference arc can be identified by the detector's own flag instead of by `abs_dev_m == 0`.
+
+**Named cost, accepted in advance.**  On a reference arc of the L5 chains, a single-band L1 (or L2)
+slip loses its narrowing: its only silent pair is (2,5) (or (1,5)), now untested ⇒ all-band = the
+pre-card response.  An L5 slip there still narrows (its silent pair is (1,2), tested).  On an arc
+that is the reference of all three chains (the (1,2) reference tracks L5 in 46.7 % of
+station-epochs) nothing narrows.  The census in 22.3 (B3) prices this from the seed's own traces.
+
+### 22.3 Pre-registered legs and gates
+
+Legs on `runs/evseed_field6h` ep0604 (GOPE00CZE, event at +10, 60 epochs; the resume posture is
+whatever §21 Phase 1 decides — `state_snapshot_carry: false` if L1 passes — identical across every
+leg of this card), scope ON + `if_phase_td_pairs: all` (the §20.1 `sp` extra), knob ON vs OFF:
+
+| leg | site | expected ON | expected OFF |
+|---|---|---|---|
+| null on/off | — | byte-identical to OFF unless a natural slip lands on a reference arc; every differing event row must carry `ref_arc` | — |
+| E3 L1C +29 & L5X +29 | G24 (reference of both L5 chains, k ∈ [−9, +41]) | **all-band**, basis carries `iftd(L1C+L5X)=ref_arc;iftd(L2W+L5X)=ref_arc`, `reason=no_exoneration` | {L2W} — the §20.1 trap reproduced |
+| E1 L5X −99 | G24 | {L5X}, products byte-identical to OFF | {L5X} |
+| E2 L1C +37 | G24 | all-band (the named cost) | {L1C} |
+| E3 L1C +29 & L5X +29 | G25 (not a reference until +43) | byte-identical to OFF (all-band via the (1,5) veto) | all-band |
+
+* **B1 OFF byte-identity:** knob absent vs `false`, and this exe vs main's, on the null leg —
+  `products.txt` and `network_events.csv` identical.
+* **B2 identity:** the table above, read from each leg's `network_events.csv` verdict row
+  (`implicated=…;exonerated=…;basis=…`) and the run-end clause's new `ref-arc refusals N` field
+  (invariant #4: an ON leg at G24 reporting 0 refusals is dead wiring).
+* **B3 cost census (no run):** over the seed's 6 h `network_events.csv` (scope OFF, `would-narrow
+  23`), the number of would-narrow verdicts whose exonerating pair sits on a reference arc of its
+  chain (reference identified from `network_if_slip.csv` by `abs_dev_m == 0` on every row of the
+  arc, cross-checked against the new `is_ref` column on a 20-epoch smoke) — the fraction of
+  narrowings the clause forfeits.  Recorded; the pre-registered expectation is ≤ 15 % (one
+  reference arc per station per chain among ~12 tracked).
+* **B4 the sim bed (owed for the sim-golden pin, not for the merge):** the increment-1 storm arm
+  (`config/test_suite/_golden_sim_campaign_zwdblk_sts.json` + the knob) graded with
+  `scripts/simnet_storm_grade.py` against the Study-7 final arm: consumer settled p50 ≤ 0.13 m
+  (was 0.1204), T4 attribution ≤ 15 (was 11), split-referenced satellites ≤ 0.5/epoch (was 0.0),
+  ZWD settled rms ≤ 0.0075 m (was 0.0069), IF-TD vetoes not fewer.  Pass ⇒ pin in
+  `golden_sim_tri_w6` through the generator; fail ⇒ the clause stays a field-only recommendation
+  with the sim cost named.
+* **Then (sequel, on a field seed that warm-resumes — §21 Phase 2):** the wire/consumer price of
+  the E3 narrowing at G24 with the clause OFF vs ON (gates G-C/G-D of §20, dark until now), and the
+  scope+pairs+clause FIELD pin through the generator if the §20 bars pass.
