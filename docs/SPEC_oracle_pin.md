@@ -17,8 +17,18 @@ Knob: a new injector kind `oracle_pin` in `network.inject.events[]`.
 | **G2 actuation** | **PASS on every arm the DD instrument can see, once each arm is past its own onset transient.** At a settled epoch: `L1C+L2W` 100.0 % of pinned chords < 0.01 cyc (max 1e−4), `L5Q` 100.0 % (max 0.0000), `all` 100.0 % on L1C/L2W/L5Q (max 4e−4) and **57.7 % on Galileo L7Q** (max 0.103 cyc) — the one band the pin does not fully take |
 | **G3 the coupling table** | built, both windows, every cell from a truth grader — §6 |
 | **G4 slipped seed** | **PASS** — 109 truth slips land on pinned arcs after the pin; on chords carrying one, **99.7 %** of DD errors are < 0.01 cyc at slip+1 and **99.0 %** at slip+5.  The pin follows `N(t)`. |
+| **THE READING** | **The DD-invariant ionosphere collapses 10.1× under a complete pin — 0.4233 → 0.0419 m rms, 2.61 → 0.26 TECU.  The standing 99.3 %-iono root cause is CONFIRMED, and the `none` column's 0.423 m IS the integer-information deficit.**  §8.1 |
 
-**The two findings that were not in the pre-registration:**
+⚠ **Row 1 of the §6 table (RAW per-LOS iono error) cannot test the root cause and must
+not be read as if it could.**  In the producer's realized S-basis the free per-LOS
+slant iono absorbs a station-common lump (receiver GF/DCB, the Table-8 identity) and a
+satellite-common lump (satellite code bias / S-basis) that NO ambiguity information
+can touch — measured here at **a_r rms 1.13–1.28 m and b_s rms 1.85–1.93 m against
+0.42 m of DD-invariant interaction**, i.e. ~97 % of the 2.73 m raw rms.  Row **1b** is
+the two-way de-meaned error, which is exactly what a double difference sees, and it is
+the row that carries the verdict (standing invariant #5).
+
+**The three findings that were not in the pre-registration:**
 
 1. **Holding the ambiguities at truth is a metre-class prefit event, and the
    standing QC stack treats it as one.**  On `all`, the onset epoch's fit residual
@@ -30,12 +40,20 @@ Knob: a new injector kind `oracle_pin` in `network.inject.events[]`.
    max**: the solve lands exactly on the pins.  The withhold is a RESULT, not a
    grading inconvenience — it is the price of the information, paid up front.
    A band-scoped pin is much gentler (`L5Q` withholds **nothing**).
-2. **On the SLIPPED bed the pin does not settle.**  Same knob, same σ: the
-   last-epoch residual is **6.96 cyc rms / 118 cyc max**, `no_station_term` is
-   **87 645** arc-epochs against 0 on the band arms of the quiet bed, and the
-   consumer and the ionosphere get WORSE while the ZWD improves 2.6×.  The fit
-   rests on the leveling carry, and on a slipped bed that carry is continuously
-   refloated out from under it.  §7.
+2. **The null leg's ZWD is a WARM-RESUME plateau, not the producer's converged
+   level.**  The SEED's own converged ZWD (its epochs 640–665, immediately before the
+   snapshot every leg resumes from) is **0.0076 m rms**; the null leg sits at
+   0.067–0.081 m for all 57 epochs and never works it off.  A complete pin removes
+   ~80 % of that within two epochs and lands at 0.0130 m — 1.7x the seed.  So finding
+   2's direction stands but its magnitude must be quoted against the seed, not against
+   the null.  §8.2.
+3. **On the SLIPPED bed the pin does not settle.**  Same knob, same σ: the
+   last-epoch residual is **6.96 cyc rms / 118 cyc max** and `no_station_term` is
+   **87 645** arc-epochs against 0 on the band arms of the quiet bed.  It still
+   helps — DD-invariant iono 2.2001 → 0.4145 m (5.3×), ZWD 1.348 → 0.526 m (2.6×) —
+   but lands an order of magnitude above the quiet bed on both, and the consumer gets
+   worse.  The fit rests on the leveling carry, and on a slipped bed that carry is
+   continuously refloated out from under it.  §7.
 
 ---
 
@@ -305,13 +323,23 @@ are the pre-registered ones: **W1 = epochs +28..+32 (pin+23..+27)** and
 **W2 = +53..+57 (pin+48..+52)**, both well past every arm's onset transient.
 4 774 LOS / 300 station-epochs / 5 emitted epochs per cell.
 
+⚠ **Row 1 is BASIS-DEPENDENT: it contains the station- and satellite-common DCB
+absorption of the realized S-basis and CANNOT test the root cause** — it is context
+only.  **Row 1b is the datum-invariant one** (the two-way de-mean; §6.1).  Read §8.0
+before reading any row of this table as an estimation error.
+
 ### window W1 — epochs +28..+32 (pin+23..+27), tow 280020..280140
 
 | row | none | all | L1C+L2W | L5Q | sta S21 | sat G08 |
 |---|---|---|---|---|---|---|
-| 1 slant iono rms (m) | 2.6553 | 2.6783 | 2.7093 | 2.6852 | 2.7102 | 2.6323 |
-| 1 slant iono p50 \|e\| (m) | 1.6411 | 1.6701 | 1.7850 | 1.8200 | 1.6314 | 1.6498 |
-| 1 slant iono p90 \|e\| (m) | 4.6200 | 4.6873 | 4.4754 | 4.6501 | 4.6920 | 4.5681 |
+| 1 slant iono rms (m) [basis] | 2.6553 | 2.6783 | 2.7093 | 2.6852 | 2.7102 | 2.6323 |
+| 1 slant iono p50 \|e\| (m) [basis] | 1.6411 | 1.6701 | 1.7850 | 1.8200 | 1.6314 | 1.6498 |
+| 1 slant iono p90 \|e\| (m) [basis] | 4.6200 | 4.6873 | 4.4754 | 4.6501 | 4.6920 | 4.5681 |
+| **1b DD-invariant iono rms (m)** | 0.4312 | 0.0427 | 0.5537 | 0.2987 | 0.4632 | 0.4738 |
+| 1b DD-invariant iono p50 \|eps\| (m) | 0.2323 | 0.0303 | 0.2245 | 0.2159 | 0.2539 | 0.2697 |
+| 1b DD-invariant iono p90 \|eps\| (m) | 0.6981 | 0.0688 | 0.8114 | 0.4827 | 0.7103 | 0.7759 |
+| 1b station effect a_r rms (m) | 1.1381 | 1.1810 | 1.2687 | 1.1351 | 1.1965 | 1.1434 |
+| 1b satellite effect b_s rms (m) | 1.8544 | 1.8907 | 1.8659 | 1.8946 | 1.8608 | 1.8302 |
 | 2 ZWD rms (m) | 0.0725 | 0.0138 | 0.0160 | 0.0927 | 0.1000 | 0.2203 |
 | 2 ZWD p90 \|e\| (m) | 0.1304 | 0.0219 | 0.0280 | 0.1263 | 0.1788 | 0.2353 |
 | 3 rx DCB contrast rms (m) | 1.3063 | 1.1710 | 1.6514 | 1.4543 | 1.2339 | 1.3131 |
@@ -338,9 +366,14 @@ are the pre-registered ones: **W1 = epochs +28..+32 (pin+23..+27)** and
 
 | row | none | all | L1C+L2W | L5Q | sta S21 | sat G08 |
 |---|---|---|---|---|---|---|
-| 1 slant iono rms (m) | 2.7281 | 2.7706 | 2.7892 | 2.7571 | 2.7896 | 2.7260 |
-| 1 slant iono p50 \|e\| (m) | 1.6624 | 1.7326 | 1.8983 | 1.8787 | 1.6835 | 1.6847 |
-| 1 slant iono p90 \|e\| (m) | 4.7208 | 4.8383 | 4.5976 | 4.7404 | 4.7852 | 4.7822 |
+| 1 slant iono rms (m) [basis] | 2.7281 | 2.7706 | 2.7892 | 2.7571 | 2.7896 | 2.7260 |
+| 1 slant iono p50 \|e\| (m) [basis] | 1.6624 | 1.7326 | 1.8983 | 1.8787 | 1.6835 | 1.6847 |
+| 1 slant iono p90 \|e\| (m) [basis] | 4.7208 | 4.8383 | 4.5976 | 4.7404 | 4.7852 | 4.7822 |
+| **1b DD-invariant iono rms (m)** | 0.4233 | 0.0419 | 0.5632 | 0.2793 | 0.4476 | 0.4741 |
+| 1b DD-invariant iono p50 \|eps\| (m) | 0.2387 | 0.0289 | 0.2185 | 0.1979 | 0.2501 | 0.2881 |
+| 1b DD-invariant iono p90 \|eps\| (m) | 0.7064 | 0.0683 | 0.8152 | 0.4382 | 0.7122 | 0.7762 |
+| 1b station effect a_r rms (m) | 1.1327 | 1.1810 | 1.2798 | 1.1252 | 1.2111 | 1.1370 |
+| 1b satellite effect b_s rms (m) | 1.8995 | 1.9247 | 1.8978 | 1.9290 | 1.8985 | 1.8846 |
 | 2 ZWD rms (m) | 0.0669 | 0.0130 | 0.0144 | 0.0634 | 0.0900 | 0.2138 |
 | 2 ZWD p90 \|e\| (m) | 0.0923 | 0.0212 | 0.0246 | 0.0928 | 0.1173 | 0.3618 |
 | 3 rx DCB contrast rms (m) | 1.3192 | 1.1416 | 1.6332 | 1.3998 | 1.2388 | 1.2972 |
@@ -363,7 +396,6 @@ are the pre-registered ones: **W1 = epochs +28..+32 (pin+23..+27)** and
 | 6 consumer Up p50 (m) | 1.4389 | 0.6913 | 0.1534 | 0.2920 | 3.3067 | 1.1983 |
 | n LOS / sta-ep / epochs | 4774/300/5 | 4774/300/5 | 4774/300/5 | 4774/300/5 | 4774/300/5 | 4774/300/5 |
 
-
 **Rows 3, 4 and 5 (code bias) caveat.**  `rx DCB contrast` and `rx clock contrast`
 are the BETWEEN-STATION contrasts (`simnet_grade.grade_rx_states`) — the absolute
 per-station DCB is datum-bearing by the Table-8 identity and is not gradeable.
@@ -372,17 +404,43 @@ satellite clocks are NOT null, so `simnet_sat_clock_census.py` is the wrong tool
 The DD rows are the REF-FREE lane grade (`simnet_amb_integer --ref-free`): the DD
 trace has ONE reference satellite and it is in every chord (`SPEC_amb_iono` §6.12).
 
-**Row 1 caveat, and why the finding survives it.**  The absolute slant-iono error
-carries a datum-bearing common level (the fleet-mean receiver GF bias is absorbed
-into the ionosphere — Table-8), measured here as a **+1.58 m** common offset on the
-`none` column.  The number to read is therefore the column-to-column CHANGE, and the
-de-meaned (datum-free) spread says the same thing as the raw rms — W2:
+**Row 1 (marked `[basis]`) carries a datum-bearing common level too** — the
+fleet-mean receiver GF bias absorbed into the ionosphere, **+1.58 m** on the `none`
+column — on top of the per-station and per-satellite lumps rows 1b quantify.  A
+ONE-way de-mean is not enough to repair it: removing only the global mean leaves
+2.2246 (`none`) against 2.2442 (`all`), still flat, because the station and satellite
+factors survive.  Only the TWO-way removal of row 1b exposes the estimable part.
 
-| | none | all | L1C+L2W | L5Q | sta S21 | sat G08 |
-|---|---|---|---|---|---|---|
-| slant iono rms (m) | 2.7281 | 2.7706 | 2.7892 | 2.7571 | 2.7896 | 2.7260 |
-| **de-meaned rms (m)** | **2.2246** | **2.2442** | 2.3299 | 2.2594 | 2.2708 | 2.2226 |
-| de-meaned p50 \|e−μ\| (m) | 1.6300 | 1.6329 | 1.5445 | 1.5820 | 1.6286 | 1.6118 |
+---
+
+### 6.1 How row 1b is computed, and the check it doubles as
+
+Per EPOCH, over every LOS (r, s) with both an estimate and a truth value, fit the
+unbalanced two-way ADDITIVE model (no interaction term)
+
+    e_rs = mu + a_r + b_s + eps_rs
+
+by **alternating means** — Gauss–Seidel on the normal equations of the two-factor
+model — re-centring `a` and `b` to sum-to-zero after each sweep and iterating to
+`max|Delta a|, max|Delta b| < 1e-12 m` or 500 sweeps.  Measured convergence: **40–43
+sweeps** on every epoch of every leg (60 stations x 53 satellites, ~950 LOS).  For an
+unbalanced design the sweep is a contraction on the connected component, so it
+converges — unlike the median recursion of the PIN's own fit (§1.2), which is a
+selection and cycles.  `eps` is then pooled over the window; `a` and `b` are pooled
+separately so the reader can see which factor carries the metres.
+
+`eps` is exactly what a double difference sees: `DD(e) = eps(r1,s1) − eps(r1,s2) −
+eps(r2,s1) + eps(r2,s2)`, with `a_r` and `b_s` cancelling identically.  So row 1b is
+**also a sanity check on the trace**: under a DD-consistent pin the algebra forces
+`eps` to the phase floor, and if it had not collapsed the right response would have
+been to check what `network_ionosphere.csv` actually emits on this posture before
+drawing any conclusion.  It collapsed (0.4233 → 0.0419 m), so the trace and the join
+are sound; the residual 4 cm is discussed in §8.1.
+
+**Row 1b is NOT confounded by the warm resume** (unlike row 2 — §8.2).  The SEED
+run's own converged window reads row 1b **0.4647 m** with a_rms 1.317 / b_rms 1.831,
+the same level and factor structure as the null leg, and the null column is flat at
+0.443–0.449 across all 57 epochs.
 
 ---
 
@@ -390,16 +448,29 @@ de-meaned (datum-free) spread says the same thing as the raw rms — W2:
 
 | channel | none | all | |
 |---|---|---|---|
+| **1b DD-invariant iono rms (m)** | **2.2001** | **0.4145** | **5.3x better** |
+| 1b DD-invariant iono p50 \|eps\| (m) | 1.0944 | 0.1357 | 8.1x better |
+| 1b station effect a_r rms (m) | 2.5245 | 3.6179 | (basis) |
+| 1b satellite effect b_s rms (m) | 6.5664 | 10.1308 | (basis) |
 | ZWD rms (m) | 1.3476 | **0.5260** | **2.6x better** |
 | ZWD p90 \|e\| (m) | 1.0734 | **0.6534** | 1.6x better |
-| slant iono rms (m) | 7.5358 | 10.9152 | **1.4x WORSE** |
+| ~~slant iono rms (m), RAW~~ | 7.5358 | 10.9152 | ⚠ basis-dependent — see below |
 | consumer 3D p50 (m) | 3.6726 | 4.5606 | 1.2x WORSE |
 | consumer Up p50 (m) | 1.3322 | 3.8237 | 2.9x WORSE |
 
+⚠ **The RAW iono line is the §8.0 trap a second time, and this is the cleanest
+demonstration of it in the card.**  Raw rms goes the WRONG way (7.54 -> 10.92) while
+the DD-invariant part goes the RIGHT way by 5.3x — because the absorbed lumps GREW
+(satellite effect b_s rms 6.57 -> 10.13 m, station effect 2.52 -> 3.62 m).  The pin
+pushed error out of the estimable interaction and into the datum-bearing directions,
+which is a re-realization, not a degradation, and the raw row cannot tell the two
+apart.  Do not quote it.
+
 The stub asked: *does a perfect integer hold cure the slipped bed's ZWD?*
 **Partially, and it is not free.**  The metre-class ZWD sink halves — but it stays
-at 0.53 m, **40x the quiet bed's pinned 0.013 m**, and the ionosphere and the
-consumer both get worse.
+at 0.53 m, **69x the seed's converged 0.0076 m** (§8.2), and the consumer gets
+worse.  The DD-invariant ionosphere DOES respond (5.3x), but at 0.41 m it lands an
+order of magnitude above the quiet bed's pinned 0.042 m.
 
 The mechanism is in the run-end clause: on the slipped bed the pin's own fit reports
 `no_station_term` **87 645** arc-epochs (against **0** on both quiet band arms) and
@@ -414,58 +485,154 @@ downstream of the same defect the slip-response cards are about.**
 
 ## 8. WHAT THE COLUMNS DECIDE
 
-### 8.1 The ionosphere does NOT move. The standing 99.3 %-iono root cause is FALSIFIED as an inference.
+### 8.0 Read the rows in this order — they are not equally trustworthy
 
-`none` -> `all`, window W2: slant iono rms **2.7281 -> 2.7706 m** (+1.6 %), de-meaned
-**2.2246 -> 2.2442 m** (+0.9 %), p50 \|e\| **1.6624 -> 1.7326 m**.  Window W1 says the
-same (2.6553 -> 2.6783).  Every ambiguity in the network is held at its true integer
-to 1e-4 cycles — the ambiguity/ionosphere degeneracy is *gone* — and the per-LOS
-slant ionosphere is **unchanged, marginally worse, and certainly not at the phase
-floor**.
+Standing invariant #5 is a ranking, not a footnote, and this table spans the whole
+range:
 
-Memory `project_why_non_integer_rootcause` reads "99.3 % ionosphere": the DD
-ambiguity residual is explained by the slant-iono error, needing only 0.117 TECU to
-move a fraction.  That correlation is not in dispute — it is visible in this table
-(`none` DD L1C med \|e\| 0.19 cyc alongside 2.7 m of iono error).  **What this card
-falsifies is the INFERENCE that ran the other way**: that integer information would
-therefore fix the ionosphere.  It does not.  The implication holds
-iono -> ambiguity, not ambiguity -> iono, because the per-LOS slant iono is a FREE
-state per epoch on this posture — no time link, no second observation — so removing
-the ambiguity's freedom removes nothing from it.  Integer information buys the
-ionosphere **nothing** on this bed.
+1. **DD ambiguities and row 1b are DATUM-INVARIANT.**  A double difference removes
+   the station-common and satellite-common terms identically, and row 1b is that
+   same removal applied to the ionosphere (`DD(e) = eps(r1,s1) − eps(r1,s2) −
+   eps(r2,s1) + eps(r2,s2)`, with `a_r` and `b_s` cancelling).  These two rows carry
+   the card's verdicts.
+2. **ZWD is absolute and carries no datum** — it is gradeable as an error, and it is
+   the only non-invariant row that is.  ⚠ But on these legs it is dominated by the
+   warm-resume re-convergence, so it must be quoted against the SEED, not against
+   the null leg (§8.2).
+3. **The consumer is a COLD consumer on every leg** — each leg starts its held-out
+   station from scratch, so the 5-epoch cells are ignition-dominated and differ
+   between columns partly for reasons that have nothing to do with the pin.  Read
+   them as a direction, never as a number.
+4. **Satellite clocks, receiver clocks/DCBs, satellite code biases and RAW row 1 are
+   BASIS-DEPENDENT CONTEXT.**  Each is reported in the producer's realized S-basis,
+   where the datum and the absorbed lumps move between arms.  Their flatness across
+   columns is informative (nothing large moved into them) but their VALUES are not
+   estimation error and must not be quoted as such.
 
-### 8.2 Where the error actually went: the ZWD, and through it the consumer.
+### 8.1 The ionosphere: the root-cause inference is CONFIRMED, and the deficit is 2.6 TECU
 
-`none` -> `all`, W2: ZWD rms **0.0669 -> 0.0130 m (5.1x)**, p90 **0.0923 -> 0.0212 m
-(4.4x)**; consumer 3D p50 **1.656 -> 1.086 m**, Up **1.439 -> 0.691 m**.  W1 agrees
-(ZWD 0.0725 -> 0.0138, 5.3x).  The ZWD is the ONE channel that moves by a factor
-rather than by a percent, and it is the channel this project has repeatedly found at
-the end of every level-error path (`project_zwd_sink_census_2026-09-09`: "FIELD
-consumer = producer ZWD sink via the wire").  **On this bed the ambiguity level
-error is a ZWD error, not an ionosphere error.**
+**The number.**  Row 1b (`none` → `all`, window W2): DD-invariant per-LOS slant iono
+rms **0.4233 → 0.0419 m**, a **10.1× collapse**; p50 \|eps\| 0.2387 → 0.0289, p90
+0.7064 → 0.0683, max 1.741 → 0.143.  W1 says the same (0.4312 → 0.0427, 10.1×).
+At 6.16 TECU per metre of L1 slant that is **2.61 → 0.26 TECU**.
 
-Everything else is flat to a few percent: rx DCB contrast 1.319 -> 1.142, rx clock
-contrast 2.092 -> 1.980, sat clock rms 1.189 -> 1.193, sat clock SD contrast
-1.633 -> 1.670.  The clocks and the receiver biases are NOT where the ambiguity error
-lives.
+**It is not a resume artifact, and that was checked.**  The SEED run's own converged
+window (its epochs 640–665, immediately before the snapshot every leg resumes from)
+reads row 1b **0.4647 m** with a_rms 1.317 / b_rms 1.831 — the same level and the
+same factor structure as the null leg.  The null column is flat at 0.443–0.449
+through all 57 epochs; `all` drops from 0.450 before the pin to 0.159 at +6..+10 and
+**0.0455 by +11..+15**, then holds 0.042.  The collapse is the pin, it happens
+within ~6 epochs of onset, and the baseline it collapses from is the producer's
+CONVERGED level.
+
+**Why the raw row 1 said the opposite, and why it never could have said anything.**
+Raw per-LOS iono error is **basis-dependent**: in the producer's realized S-basis the
+free per-LOS slant iono absorbs a STATION-common lump (the receiver GF/DCB share —
+the Table-8 identity) and a SATELLITE-common lump (the satellite code-bias / S-basis
+share).  The two-way fit measures exactly how big they are: **a_r rms ≈ 1.13–1.28 m
+and b_s rms ≈ 1.85–1.93 m**, against **0.42 m** of DD-invariant interaction.  The
+2.73 m raw rms is therefore ~97 % absorbed lumps, and **no ambiguity information can
+touch either of them** — so raw row 1's insensitivity to the pin is forced by the
+basis, not measured.  It is kept in the table as context and must not be read as a
+result.  *The earlier draft of this section drew a falsification from it; that
+inference was wrong and is withdrawn.*
+
+**What this settles.**  Memory `project_why_non_integer_rootcause` reads "99.3 %
+ionosphere", needing only 0.117 TECU to move a DD fraction.  Both halves now stand
+together: the DD-invariant ionosphere error on this bed is **2.61 TECU — 22× the
+0.117 TECU that moves a fraction** — which is why the float DD fractions are
+uniform; and holding every ambiguity at its true integer **determines that
+ionosphere to 0.26 TECU**.  **The `none` column's row 1b IS the integer-information
+deficit, in metres: 0.423 m of L1 slant per LOS.**
+
+**One caveat, stated rather than smoothed.**  The collapse is to centimetres, not to
+the millimetre phase floor: 0.0419 m rms with a 0.143 m tail.  The pre-registered
+algebra says a fully DD-consistent pin forces eps to the phase floor, so ~4 cm is
+residual leakage, not the floor.  The most likely source is in this table: Galileo
+L7Q is the one band the pin does not fully take under `all` (57.7 % at own integer,
+max 0.103 cyc — §4), and the constellation split of row 1b is Galileo 0.0463 m
+against GPS 0.0386 m, in the same direction.  Tropo/code leakage into the per-LOS
+state is the other candidate.  Not separated here; it is an open item, and nothing
+in this section depends on the difference between 4 cm and the floor.
+
+**The partial columns do NOT interpolate, and one of them is worse than nothing.**
+Row 1b: `L5Q` alone 0.4233 → **0.2793** (1.5× better, and still decaying at +57),
+but `L1C+L2W` 0.4233 → **0.5632 — 1.3× WORSE than not pinning at all**, flat from
++6 onward, on both constellations (GPS 0.363 → 0.466, Galileo 0.500 → 0.683).
+`sta S21` (0.4476) and `sat G08` (0.4741) are also slightly worse.  A consistent
+reading, not a proof: on this posture the B bands of one LOS share ONE free
+slant-iono state, so holding a proper SUBSET of them exactly over-determines the iono
+in the pinned directions while leaving the lane directions free, and the tension
+lands in the iono (the B-fold over-count of `SPEC_amb_iono_split_overcount`).  Only
+the complete pin removes it.  **Integer information is worth having only when it is
+complete on the LOS; a partial hold is a net loss.**
+
+### 8.2 Where the error goes in the ZWD — and the seed number that reframes it
+
+`none` → `all`, W2: ZWD rms **0.0669 → 0.0130 m (5.1×)**, p90 **0.0923 → 0.0212 m
+(4.4×)**; consumer 3D p50 1.656 → 1.086 m, Up 1.439 → 0.691 m.  W1 agrees (0.0725 →
+0.0138, 5.3×).  The ZWD is the ONE non-invariant channel that moves by a factor
+rather than a percent, and it is the channel this project keeps finding at the end of
+every level-error path (`project_zwd_sink_census_2026-09-09`: "FIELD consumer =
+producer ZWD sink via the wire").
+
+**⚠ The context number, and it changes the claim.**  The SEED run's own converged ZWD
+over its epochs 640–665 — the epochs immediately before the snapshot every leg
+resumes from — is **0.0076 m rms** (p50 0.0047, p90 0.0125, mean +0.0003), the known
+quiet-twin level.  **The null leg's 0.0669 m is therefore the WARM-RESUME
+re-convergence, not the producer's converged ZWD**: the leg jumps to 0.0675 at its
+first five epochs, peaks at 0.0809 around +11..+15, and is still 0.0669 at +53..+57 —
+**it does not recover inside the 57-epoch leg.**
+
+So the honest statement of finding 2 is not "the pin improves the ZWD 5×".  It is:
+
+- a warm resume costs this producer ~**0.07–0.08 m** of ZWD error that it does not
+  work off within 57 epochs;
+- a COMPLETE integer pin removes ~80 % of that within **two epochs** of onset
+  (0.0653 pre-pin → 0.0241 at +6..+10 → 0.0136 by +11..+15, flat thereafter), landing
+  at **1.7× the seed's own converged 0.0076 m** — close to, but not at, the
+  converged level;
+- `L1C+L2W` does the same (0.0160 plateau), so the ZWD recovery is bought by the
+  **L1/L2 pair**, not by L5;
+- `L5Q` alone makes it **3× WORSE first** (0.238 at +6..+10) and then decays back to
+  roughly where it started (0.0634 at +57) — the single-number W2 cell "barely moves"
+  hides a large transient;
+- `sta S21` (0.0900) and `sat G08` (0.2138) are worse than the null throughout.
+
+Everything else is flat to a few percent — rx DCB contrast 1.319 → 1.142, rx clock
+contrast 2.092 → 1.980, sat clock rms 1.189 → 1.193, sat clock SD contrast 1.633 →
+1.670 — and per §8.0 those are basis-dependent context, so the reading is only "no
+large quantity moved into them", not a number.
 
 ### 8.3 The coupling map — what a PARTIAL pin does
 
 **`L1C+L2W` (pin two of three GPS bands).**  The pinned bands go to 100 %, and so
 does the FREE L5Q (71.5 -> 100.0 %, med \|e\| 0.206 -> 0.014 cyc): once two bands of a
-LOS carry exact integers, the third is determined through the shared slant-iono
-state, so the pin PROPAGATES ACROSS BANDS on the same LOS.  The Galileo L7Q chords,
-which share no LOS with a pinned GPS band, do not move (0.131 med \|e\|).  ZWD follows
-`all` almost exactly (0.0144 vs 0.0130).  But the CONSUMER splits: Up collapses to
-**0.153 m** — the best vertical in the table — while 3D *rises* to 3.203 m, i.e. the
-horizontal gets worse.  Code-bias rms also rises slightly (0.190 -> 0.217).
+GPS LOS carry exact integers, the third is determined through the shared slant-iono
+state, so the pin PROPAGATES ACROSS BANDS on the same LOS.  ⚠ `L1C` is a GALILEO code
+too, so this scope pins only ONE of Galileo's three bands — its L7Q chords are
+untouched (0.131 med \|e\|), and Galileo is where row 1b degrades hardest (0.500 ->
+0.683 against GPS's 0.363 -> 0.466).  ZWD follows `all` almost exactly (0.0144 vs
+0.0130).  But the CONSUMER splits: Up collapses to **0.153 m** — the best vertical in
+the table — while 3D *rises* to 3.203 m, i.e. the horizontal gets worse.  Code-bias
+rms also rises slightly (0.190 -> 0.217).
+
+⚠ **The two invariant rows disagree in sign on this column, and both readings are
+real**: the DD INTEGERS all reach 100 % while the DD-invariant IONOSPHERE gets 1.3x
+WORSE (0.4233 -> 0.5632, §8.1).  Exact integers on a subset of a LOS's bands do not
+imply an exact iono on that LOS — the free ambiguity lands on its integer and the
+iono absorbs the remaining tension.  This column is the sharpest open question the
+card raises (§9).
 
 **`L5Q` alone.**  L5Q -> 100 %, L2W -> 100 %, L1C 73.4 -> 96.5 %: the same cross-band
-propagation, from one band this time.  ZWD barely moves (0.0669 -> 0.0634) — **so the
-ZWD win of `all` is bought by the L1/L2 pair, not by L5**.  Two things get
+propagation, from one band this time.  ZWD ends where it started (0.0669 -> 0.0634)
+after a 3x transient excursion to 0.238 (§8.2) — **so the ZWD recovery of `all` is
+bought by the L1/L2 pair, not by L5**.  Two things get
 conspicuously worse: **code bias rms 0.190 -> 0.763 m (4x)** — pinning the third band
 alone forces the L5 satellite code bias to absorb what the L5 ambiguities no longer
-can — and the iono is flat as everywhere.  And the consumer is the BEST of the whole
+can.  Its row 1b is the best of the partial columns (0.4233 -> 0.2793, 1.5x, and still
+decaying at +57), i.e. one band of exact integers does buy some DD-invariant
+ionosphere, unlike `L1C+L2W` (§8.1).  And the consumer is the BEST of the whole
 table (3D **0.312 m**, Up **0.292 m**), which on a bed whose producer ZWD is
 unimproved is a warning, not a win: the consumer is a single held-out station over one
 5-epoch window, and this column is the one to re-measure before quoting.
@@ -503,7 +670,17 @@ transient or ramp the weight.
 - **Galileo L7Q never fully takes under `all`** (57.7 % at own integer, max 0.103 cyc
   at a settled epoch) while L1C/L2W/L5Q reach 100.0 %.  L7Q is the thinnest band on
   this roster and `all` is the only arm with non-zero `no_station_term`; whether the
-  >= 3-arc station-term rule is the binding constraint is untested.
+  >= 3-arc station-term rule is the binding constraint is untested.  This is also the
+  leading candidate for the 4 cm that row 1b does NOT collapse (§8.1) — the
+  constellation split is Galileo 0.0463 m against GPS 0.0386 m — and the two should be
+  closed together.
+- **Why a PARTIAL band pin makes the DD-invariant ionosphere WORSE than no pin at all**
+  (`L1C+L2W` 0.4233 -> 0.5632 m) is offered as a consistent reading in §8.3, not as a
+  proof.  It is the sharpest open question this card raises, and it is testable: a
+  two-band pin on a posture with only two bands should not show it.
+- **The ZWD contrast is against a warm-resume plateau** (§8.2).  A seamless (never
+  resumed) arm would say what a complete integer pin is worth against a genuinely
+  converged 0.0076 m ZWD; this card does not.
 - **`arc:<sta>/<sat>/<sig>` scope is built and unit-tested but has no harness leg.**
 - **`sta S21` / `sat G08` cannot be graded on the DD instrument at all** — a chord
   needs four pinned legs and those scopes supply at most two.  They are graded by the
@@ -545,3 +722,30 @@ Both graders added a `--tow-min` / `--tow-max` pair to `scripts/simnet_grade.py`
 `scripts/simnet_amb_integer.py` (`--last-frac` can only name a TRAILING fraction, and
 this card grades two short windows inside one 60-epoch leg).  Default (None, None) =
 not one row filtered; `simnet_amb_integer --selftest` still PASSes.
+
+---
+
+## 11. Rebase certificate (onto `cc689d5`, Study 7's closure)
+
+The card was rebased onto main after `bd97b9b` / `b268ac2` / `cc689d5` landed the F3
+anchor clause and pinned `common_band_scope` + `if_phase_td_pairs` in the sim golden.
+**Zero conflicts** — main's hunks in the three shared files
+(`NetworkRunContext.hpp`, `ApplicationNetworkAssembly.cpp`, `NetworkTeardown.cpp`)
+sit ~1500 lines away from this card's.
+
+Smoke leg `opin_all_rb` = `opin_all` re-run on the post-rebase exe
+(`F4FF8EF0…`).  The leg derives from the FROZEN seed config, so main's golden edits
+do not reach it, and the result certifies that:
+
+- the run-end clause reproduces **character for character** — 57 active epochs,
+  **144 025** rows injected, **9 577** first pinned, **3 392** released, offers
+  144 025 = 144 025 + 0 + 0, no anchor 17 100, no station term 34 988, fit 173 (3 on
+  the last epoch), last-epoch residual **0.0001 / 0.0027 cyc** over 2 523 arcs;
+- `Network producer complete: 723 epochs emitted, 4 skipped (… 4 by the A4 σ̂0
+  ceiling)` — the same four withheld epochs;
+- and **every solve artifact is bit-identical** to the pre-rebase run:
+  `products.txt` `B3E149F2…`, `network_dd_fractional.csv` `5FEEB22F…`,
+  `network_zwd.csv` `0877BA3B…`, `network_ionosphere.csv` `FBF86A96…`,
+  `closed_loop_trace.csv` `5C507871…`, `network_events.csv` `7675CD40…`.
+
+So every number in this document stands unchanged on the rebased tree.

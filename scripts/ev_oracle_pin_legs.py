@@ -50,6 +50,10 @@ REPO = os.path.dirname(_HERE)
 
 BASE_EXE = os.path.join(REPO, "build", "x64-Release", "gnss_processor_opin_base.exe")
 PIN_EXE = os.path.join(REPO, "build", "x64-Release", "gnss_processor_opin.exe")
+# The post-REBASE exe.  `opin_all_rb` is the rebase smoke leg: the leg derives from
+# the frozen SEED config, so the posture is unchanged by main's golden edits and the
+# run-end clause must reproduce `opin_all`'s counts EXACTLY.
+RB_EXE = os.path.join(REPO, "build", "x64-Release", "gnss_processor_opin_rb.exe")
 
 QUIET_SEED = "C:/GnssProcessor/.claude/worktrees/evharness/runs/evseed_quiet6h"
 QUIET_FIXTURE = "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h"
@@ -81,6 +85,8 @@ LEGS = [
      "G4 reference on the SLIPPED bed"),
     ("opin_slip_all", SLIP_SEED, SLIP_FIXTURE, PIN_EXE, "all",
      "G4 — the pin must FOLLOW N(t) through every truth slip on a pinned arc"),
+    ("opin_all_rb", QUIET_SEED, QUIET_FIXTURE, RB_EXE, "all",
+     "REBASE SMOKE — `all` on the post-rebase exe; the clause must reproduce opin_all"),
 ]
 
 

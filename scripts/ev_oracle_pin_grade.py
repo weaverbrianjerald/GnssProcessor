@@ -343,13 +343,141 @@ def cmd_g2(args):
 
 
 # ------------------------------------------------------------ the G3 channels
-def iono_row(name, lo, hi):
-    """Slant iono per LOS vs truth_atmo.csv I_L1_m (ALREADY slant).
+def _iono_err_by_epoch(name, lo, hi):
+    """{tow_int: {(station, sat): estimate − truth}} over the window, plus the
+    station set.  The join `simnet_iono_interaction.py` uses:
+    `network_ionosphere.csv`'s `iono_total_m` (= x_lin + x_r, the ABSOLUTE slant
+    estimate — never `iono_m`, which is the correction alone) against
+    (tow, station, sat), and `truth_atmo.csv`'s `I_L1_m` (ALREADY slant)."""
+    p = os.path.join(legdir(name), "logs", "network_ionosphere.csv")
+    if not os.path.isfile(p):
+        return None, set()
+    fx = fixture_of(name)
+    keep, stas = {}, set()
+    with open(p, newline="") as fh:
+        rd = csv.DictReader(fh)
+        if "iono_total_m" not in (rd.fieldnames or []):
+            return None, set()
+        for r in rd:
+            t = float(r["tow"])
+            if not (lo <= t <= hi):
+                continue
+            keep[(int(round(t)), r["station"], r["sat"])] = float(r["iono_total_m"])
+            stas.add(r["station"])
+    if not keep:
+        return None, set()
+    by_ep = {}
+    for sta in sorted(stas):
+        a = os.path.join(fx, sta, "truth_atmo.csv")
+        if not os.path.isfile(a):
+            continue
+        with open(a, newline="") as fh:
+            for r in csv.DictReader(fh):
+                try:
+                    ti = int(round(float(r["tow_s"])))
+                except (KeyError, ValueError):
+                    continue
+                k = (ti, sta, r["satellite"])
+                if k in keep:
+                    by_ep.setdefault(ti, {})[(sta, r["satellite"])] = \
+                        keep[k] - float(r["I_L1_m"])
+    return by_ep, stas
 
-    The join simnet_iono_interaction.py uses: network_ionosphere.csv's
-    `iono_total_m` (= x_lin + x_r, the ABSOLUTE slant estimate — never `iono_m`,
-    which is the correction alone) against (tow, station, sat).
+
+def _two_way(e, tol=1.0e-12, max_it=500):
+    """Unbalanced two-way de-mean WITHOUT interaction: e_rs = mu + a_r + b_s + eps.
+
+    Solved by ALTERNATING MEANS (Gauss–Seidel on the normal equations of the
+    two-factor additive model) with a re-centre to sum-to-zero after each sweep,
+    iterated to max|Delta a|, max|Delta b| < `tol` metres or `max_it` sweeps.  For
+    an unbalanced design the sweep is a contraction on the connected component, so
+    it converges — unlike the median recursion of the PIN's own fit (§1.2), which
+    is a selection and cycles.
+
+    @return (eps dict, a dict, b dict, mu, iterations)
     """
+    if not e:
+        return {}, {}, {}, 0.0, 0
+    mu = sum(e.values()) / len(e)
+    a = {r: 0.0 for r, _s in e}
+    b = {s: 0.0 for _r, s in e}
+    it = 0
+    for it in range(1, max_it + 1):
+        acc = {}
+        for (r, s), v in e.items():
+            t = acc.setdefault(r, [0.0, 0])
+            t[0] += v - mu - b[s]; t[1] += 1
+        da = 0.0
+        for r, (t0, n) in acc.items():
+            nv = t0 / n
+            da = max(da, abs(nv - a[r])); a[r] = nv
+        acc = {}
+        for (r, s), v in e.items():
+            t = acc.setdefault(s, [0.0, 0])
+            t[0] += v - mu - a[r]; t[1] += 1
+        db = 0.0
+        for s, (t0, n) in acc.items():
+            nv = t0 / n
+            db = max(db, abs(nv - b[s])); b[s] = nv
+        ma = sum(a.values()) / len(a)
+        mb = sum(b.values()) / len(b)
+        for r in a:
+            a[r] -= ma
+        for s in b:
+            b[s] -= mb
+        mu += ma + mb
+        if max(da, db) < tol:
+            break
+    eps = {k: v - mu - a[k[0]] - b[k[1]] for k, v in e.items()}
+    return eps, a, b, mu, it
+
+
+def iono_row1b(name, lo, hi):
+    """ROW 1b — the DATUM-INVARIANT per-LOS ionosphere error.
+
+    ⚠ The RAW per-LOS error (row 1) cannot test the root cause.  In the producer's
+    realized basis the free per-LOS slant iono absorbs a STATION-common term (the
+    receiver GF/DCB lump — the Table-8 identity) and a SATELLITE-common term (the
+    satellite code-bias / S-basis share).  NO ambiguity information can touch
+    either, so the raw row's insensitivity to the pin is forced by the basis, not
+    measured.  Standing invariant #5: grade datum-invariant quantities only.
+    Removing the additive station and satellite effects leaves exactly the part a
+    DOUBLE DIFFERENCE sees — DD(e) = eps(r1,s1) − eps(r1,s2) − eps(r2,s1) +
+    eps(r2,s2), with a_r and b_s cancelling identically — so row 1b is the
+    quantity the pin can, in principle, determine.
+
+    Fitted PER EPOCH (a_r and b_s are epoch-local: the absorbed lumps drift), then
+    pooled over the window.  The a/b spreads are reported so the reader can see
+    which factor carries the metres.
+    """
+    by_ep, _stas = _iono_err_by_epoch(name, lo, hi)
+    if not by_ep:
+        return None
+    eps_all, a_all, b_all, its = [], [], [], []
+    n_sta, n_sat = [], []
+    for _t, e in sorted(by_ep.items()):
+        if len(e) < 4:
+            continue
+        eps, a, b, _mu, it = _two_way(e)
+        eps_all.extend(eps.values())
+        a_all.extend(a.values())
+        b_all.extend(b.values())
+        n_sta.append(len(a)); n_sat.append(len(b))
+        its.append(it)
+    if not eps_all:
+        return None
+    ae = [abs(x) for x in eps_all]
+    return {"n": len(eps_all), "rms_m": rms(eps_all), "p50_m": pct(ae, 50),
+            "p90_m": pct(ae, 90), "max_m": max(ae),
+            "a_rms_m": rms(a_all), "b_rms_m": rms(b_all),
+            "n_sta": max(n_sta), "n_sat": max(n_sat),
+            "fit_iters_max": max(its), "epochs": len(its)}
+
+
+def iono_row(name, lo, hi):
+    """Slant iono per LOS vs truth_atmo.csv I_L1_m (ALREADY slant) — the RAW,
+    BASIS-DEPENDENT error.  See @ref iono_row1b for why this row cannot test the
+    root cause and must not be read as one."""
     p = os.path.join(legdir(name), "logs", "network_ionosphere.csv")
     if not os.path.isfile(p):
         return None
@@ -511,6 +639,7 @@ def cmd_g3(args):
             cells[col] = {
                 "leg": name, "tow": [lo, hi],
                 "iono": iono_row(name, lo, hi),
+                "iono1b": iono_row1b(name, lo, hi),
                 "zwd": zwd_row(name, lo, hi),
                 "consumer": consumer_row(name, lo, hi),
             }
@@ -565,6 +694,14 @@ def render_table(out):
         line("1 slant iono rms (m)", lambda c: _dig(c, "iono", "rms_m"))
         line("1 slant iono p50 \\|e\\| (m)", lambda c: _dig(c, "iono", "p50_m"))
         line("1 slant iono p90 \\|e\\| (m)", lambda c: _dig(c, "iono", "p90_m"))
+        line("**1b DD-invariant iono rms (m)**",
+             lambda c: _dig(c, "iono1b", "rms_m"))
+        line("1b DD-invariant iono p50 \\|eps\\| (m)",
+             lambda c: _dig(c, "iono1b", "p50_m"))
+        line("1b DD-invariant iono p90 \\|eps\\| (m)",
+             lambda c: _dig(c, "iono1b", "p90_m"))
+        line("1b station effect a_r rms (m)", lambda c: _dig(c, "iono1b", "a_rms_m"))
+        line("1b satellite effect b_s rms (m)", lambda c: _dig(c, "iono1b", "b_rms_m"))
         line("2 ZWD rms (m)", lambda c: _dig(c, "zwd", "rms_m"))
         line("2 ZWD p90 \\|e\\| (m)", lambda c: _dig(c, "zwd", "p90_m"))
         line("3 rx DCB contrast rms (m)",
