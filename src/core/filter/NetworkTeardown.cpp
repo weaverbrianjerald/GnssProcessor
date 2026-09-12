@@ -3404,6 +3404,24 @@ int networkTeardown(
                       ctx.carry.snap_carry_diagonal
                           ? "DIAGONAL-ONLY (v3 — Sum K_c numbers)"
                           : "dense (v2 — Sum K_c^2 numbers)");
+        // RS-2 (SPEC_event_harness §21.4): the linearization-frame halves.  Both are
+        // reported whenever EITHER is armed — an armed reader that re-based nothing and an
+        // armed writer that wrote no rows are the two invariant-#4 cases this line exists
+        // to make visible, and a bare "OFF" on the other half is what says which it is.
+        if (config_.getNetworkConfig().state_snapshot_carry_lin
+            || config_.networkResumeCarryRebase()) {
+            const auto& cc = carry_driver.counters();
+            log->info("Network (RS-2 linearization carry): write {} / read {}; blob carried "
+                      "ZL rows on {} restored block(s); re-based {} carried chord row(s) at "
+                      "the first post-resume build, max |dz| {:.6f} m; {} row(s) marginalized "
+                      "as UN-BASABLE (restored contributors with no ZL row — folding them "
+                      "would assert the writer's x_lin frame).",
+                      config_.getNetworkConfig().state_snapshot_carry_lin ? "ARMED" : "off",
+                      config_.networkResumeCarryRebase() ? "ARMED" : "off",
+                      carry_driver.resumeCarryLinBlocks(),
+                      cc.resume_rebased, cc.resume_rebase_max_dz,
+                      cc.resume_dropped_unbased);
+        }
     }
     // §18.12 coupling CAPTURE, write side — the RTB-7(e) snapshot readout's sibling, but
     // at FUNCTION scope on purpose: the RTB-7(d/e) block above is gated on carry_invariant,

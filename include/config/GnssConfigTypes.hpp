@@ -1956,6 +1956,26 @@ namespace GnssProcessor {
         /// diagonal-blob resume arm be compared against one shared converge run.
         /// OFF (default) ⇒ the v2 blob, byte-identical.  INERT unless @ref state_snapshot_carry.
         bool state_snapshot_carry_diagonal{ false };
+        /// RS-2 (docs/SPEC_event_harness.md §21.4): also write each chord's LINEARIZATION
+        /// double-difference @f$z_\ell=\sum c\,x_{\mathrm{lin}}@f$ into the carry blob (one
+        /// @c ZL row per block, beside @c Z).
+        ///
+        /// The serialized @f$\hat z@f$ is the CORRECTION-frame DD (@f$\lambda N@f$ minus
+        /// @f$\sum c\,x_{\mathrm{lin}}@f$), so it is meaningful only against the writer's own
+        /// linearization.  A resumed run re-seeds every station ambiguity @c x_lin from code at
+        /// its first epoch, and the prior fold then forms @f$v=z_{\rm free}-G^\top x_s-\hat z@f$
+        /// against THAT linearization — every restored chord is wrong by
+        /// @f$\sum c\,(x_{\mathrm{lin,writer}}-x_{\mathrm{lin,now}})@f$ and is folded stiff
+        /// (measured on the field golden: the whole first post-resume solve discharges through
+        /// one prior class, @c dd_fold norm 7.8e7 against 616 for every code observation of 61
+        /// stations).  This row is the writer half of the repair; @c network.resume_carry_rebase
+        /// is the reader half.
+        ///
+        /// WRITE-SIDE ONLY and format-forward: a reader that finds no @c ZL row behaves exactly
+        /// as before, so the knob is NOT in the warm-resume fingerprint.  Products and every
+        /// trace stay byte-identical when armed — only the snapshot gains the rows.  INERT
+        /// unless @ref state_snapshot_carry.
+        bool state_snapshot_carry_lin{ false };
         /// RTB-7(d) RE-2: one-shot resume-event response for the restored stiff carry —
         /// σ (m) of the variance added to every carried DD's Pᶻ DIAGONAL right after a
         /// successful carry restore.  0.0 (default) = OFF = byte-identical.  Rationale:

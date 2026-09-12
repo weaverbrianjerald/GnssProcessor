@@ -198,6 +198,13 @@ def cmd_write_seed(args):
     net["state_snapshot_keep_history"] = True
     net["state_snapshot_frame_capture"] = True
     net["state_snapshot_coupling_capture"] = True
+    # RS-2 (SPEC_event_harness §21.4): also capture the invariant DD carry's
+    # LINEARIZATION frame (one ZL row per block).  The serialized chord mean is the
+    # CORRECTION-frame DD (λN − Σ c·x_lin) and a resumed run re-seeds every station
+    # ambiguity x_lin from code, so without this row every restored chord folds wrong
+    # by Σ c·Δx_lin.  Write-side only: products and traces are byte-identical, and a
+    # reader that finds no ZL row behaves exactly as before, so it is not fingerprinted.
+    net["state_snapshot_carry_lin"] = True
     net["state_snapshot_require"] = False          # the seed IS the cold start
     net["product_output_path"] = _fwd(os.path.join(rundir, "products.txt"))
     net["write_run_manifest"] = True
@@ -283,6 +290,12 @@ def _leg_common(args, event_json):
     net["state_snapshot_interval_s"] = 1.0e9      # never overwrite the leg's seed
     net["resume_frame_restore"] = True
     net["resume_coupling_restore"] = True
+    # RS-2 (SPEC_event_harness §21.4): re-base the restored invariant DD branch onto THIS
+    # run's linearization at the first post-resume DD prior build (ẑ += W·zl_writer −
+    # zl_now).  Inert against a seed written without state_snapshot_carry_lin — the
+    # producer says so loudly rather than silently keeping the writer's frame.  Same
+    # forward-only resume-response exemption class as the two restores above.
+    net["resume_carry_rebase"] = True
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
     # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the

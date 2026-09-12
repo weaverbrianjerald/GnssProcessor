@@ -196,6 +196,33 @@ public:
          * deliberately NOT touched.  OFF ⇒ byte-identical.
          */
         bool   pd_safe{false};
+        // --- RS-2 linearization-frame carry (docs/SPEC_event_harness.md §21.4). ---
+        /**
+         * @brief Capture each chord's LINEARIZATION DD @f$z_\ell=\sum c\,x_{\rm lin}@f$
+         *        (@c network.state_snapshot_carry_lin) — the WRITE half.
+         *
+         * The carried @f$\hat z@f$ is the CORRECTION-frame DD, so it means nothing away from
+         * the linearization it was harvested against.  Armed, @ref buildDdPriors computes
+         * @f$z_\ell@f$ per emitted chord from @ref ArcInput::x_lin over the SAME fundamental
+         * cycle that builds the fold rows, @ref installPosterior stores it in
+         * @ref CarriedBlock::zl, and @ref serializeCarry writes one @c ZL row per block.
+         * Nothing in the solve reads it, so ON is byte-identical on every product and trace;
+         * only the snapshot grows.
+         */
+        bool   carry_lin{false};
+        /**
+         * @brief Re-base a RESTORED branch onto this run's linearization
+         *        (@c network.resume_carry_rebase) — the READ half.
+         *
+         * Armed, the first @ref buildDdPriors after a @ref restoreCarry that read @c ZL rows
+         * adds @f$W z_{\ell,\rm writer}-z_{\ell,\rm now}@f$ to the projected prior means of
+         * every carried chord, with @f$W@f$ the cycle-basis projection the build already
+         * forms.  @f$P^z@f$ is untouched.  The correction is applied to the EMITTED block,
+         * never to @ref carried_, so a within-epoch rebuild (the RAIM re-solve) is
+         * idempotent.  A component whose restored contributors carry no @c ZL row is
+         * marginalized rather than folded frame-wrong (@ref Counters::resume_dropped_unbased).
+         */
+        bool   carry_rebase{false};
     };
 
     /// One present, resolvable ambiguity arc this epoch (the caller has already
@@ -209,6 +236,8 @@ public:
         bool slipped{false};     ///< Card 4 C3c: a cycle slip / refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD is a stiff WRONG prior). The caller sets it from the network's authoritative slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit). Excluded from the A_old membership so any new cycle whose support includes it is re-tapped FRESH (data-only), exactly the birth path; a carried chord it refloats is counted in @ref Counters::slip_kills.  WL-3 §3.4: for a PAIR arc the caller sets the UNION of both bands' slip states — a slip on either band refloats the chord's both bands (they share the graph edge).
         int  local_col2{-1};     ///< WL-3 (pair groups only): the band-2 ambiguity's A_r local column at the SAME (rx, sat).  −1 in a pair group marks the arc unresolvable (defensive; the caller routes band-1-only arcs to the residual per-band group instead).  Ignored for per-band groups.
         bool slipped2{false};    ///< WL-3 (pair groups only): the BAND-2 ambiguity's own slip state (@c slipped holds band-1's).  Under the LANE shape (@ref Config::lane_joint) the driver unions them — a slip on either band refloats the chord's both bands (§3.4); under the §6.1 EQUIVALENCE shape each band refloats on its OWN slips only, exactly like the two per-band groups it must reproduce.  Ignored for per-band groups.
+        double x_lin{0.0};       ///< RS-2 (docs/SPEC_event_harness.md §21.4): this arc's ambiguity LINEARIZATION value (m) — the value the kernel takes its corrections about.  Read ONLY under @ref Config::carry_lin / @ref Config::carry_rebase; left 0 and unread otherwise, so the OFF path pays nothing.
+        double x_lin2{0.0};      ///< RS-2 (pair groups only): the BAND-2 ambiguity's linearization value (m) at the same (rx, sat); @ref x_lin holds band-1's.  Ignored for per-band groups.
     };
 
     /// One (const,signal) group's arcs this epoch.  Groups are independent z-store
@@ -259,6 +288,13 @@ public:
         //     the two per-band groups would have tallied; `components` counts EMITTED
         //     blocks, so it halves under the joint lane shape — structural, documented). ---
         long long pair_components{0};     ///< WL-3: pair components reconciled (summed over epochs; each is 1 joint or 2 split emitted blocks).
+        // --- RS-2 resume re-base (docs/SPEC_event_harness.md §21.4).  These are the
+        //     LAST BUILD's figures, not run totals: the re-base runs on exactly the first
+        //     DD prior build after a restore, and a within-epoch rebuild (RAIM re-solve)
+        //     recomputes the same numbers, so accumulating them would double-count. ---
+        long long resume_rebased{0};            ///< RS-2: carried chord rows re-based onto this run's linearization at the first post-resume build.  0 with @c carry_rebase armed means the wiring never fired (invariant #4) — usually no restored blob, or nothing carried at that epoch.
+        long long resume_dropped_unbased{0};    ///< RS-2: chord rows that WOULD have carried but were marginalized (born fresh on the diffuse prior) because their restored contributors carried no @c ZL row, so no exact re-base existed.  Folding them would have asserted the writer's frame.
+        double    resume_rebase_max_dz{0.0};    ///< RS-2: max |Δẑ| (m) applied by the re-base — the size of the frame error the restored branch would otherwise have folded.
         long long pair_tree_promotions{0};///< WL-3: chords promoted to tree edges to COMPLETE a pair component's spanning forest (the caller's band-1 election tags don't span the pair intersection subgraph there — fragmented-primary regions; 0 ⇒ the eq34 basis was kept exactly everywhere).
         // --- LF-1 INC-0: the emitted-component fold-dimension distribution (SPEC §7.4 — the
         //     INC-4 Amdahl question: one giant G component that dominates the parallel ceiling,
@@ -494,6 +530,12 @@ public:
     /// first resume is EXPECTED, not alarming; a non-zero count on a resume from a
     /// pd_safe-armed run is a NEW bug.
     long long resumeCarryRebirthBlocks() const { return resume_carry_rebirth_blocks_; }
+    /// RS-2: blocks restored WITH a @c ZL row, i.e. the writer captured its linearization DD
+    /// and an exact re-base onto this run's own @c x_lin is available.  0 on every blob
+    /// written before @c network.state_snapshot_carry_lin existed (or without it armed) —
+    /// on such a blob @c network.resume_carry_rebase warns and changes nothing, which is the
+    /// difference between "re-based" and "nothing to re-base from".
+    long long resumeCarryLinBlocks() const { return resume_carry_lin_blocks_; }
 
     /**
      * @brief RTB-7(d) RE-1: WHY the σ̂₀² accumulator was (not) seeded from the resumed blob.
@@ -871,6 +913,11 @@ public:
     void seedCarriedForTest(int group, const std::vector<ArcKey>& chords,
                             const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz,
                             const std::set<int>& vertices, const std::set<ArcKey>& arcs);
+    /// RS-2 test hook: attach a LINEARIZATION DD @p zl (the value @ref serializeCarry writes
+    /// as the block's @c ZL row) to the LAST-seeded block of @p group, and optionally mark it
+    /// UNBASED exactly as @ref restoreCarry would.  Production never calls this — the harvest
+    /// (@ref buildDdPriors → @ref installPosterior) owns @c zl end to end.
+    void seedCarriedLinForTest(int group, const Eigen::VectorXd& zl, bool unbased);
     /// WL-3: seed one PAIR component's carry (@p z is 2K = [band-1; band-2], @p Pz 2K×2K).
     void seedCarriedPairForTest(int group, const std::vector<ArcKey>& chords,
                                 const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz,
@@ -913,6 +960,16 @@ private:
         bool pair{false};             ///< WL-3: joint two-band pair component.
         double lambda1{0.0};          ///< WL-3 pair: band-1 wavelength (m) — the lane basis.
         double lambda2{0.0};          ///< WL-3 pair: band-2 wavelength (m).
+        /// RS-2: the LINEARIZATION DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ the means in @ref z are
+        /// relative to — same length and row order as @ref z, over the same fundamental cycle.
+        /// EMPTY unless @ref Config::carry_lin (or restored from a blob's @c ZL row), which is
+        /// exactly the condition @ref serializeCarry writes the row on.
+        Eigen::VectorXd zl;
+        /// RS-2: this block came out of @ref restoreCarry with a @c ZL row and has NOT yet been
+        /// re-based onto the resumed run's own linearization.  Set only at restore; cleared
+        /// structurally at the next @ref installPosterior, which rebuilds every block from this
+        /// epoch's @c x_lin.
+        bool unbased{false};
     };
     /// Per-emitted-block metadata (parallel to the returned blocks) for the install.
     struct BlockMeta {
@@ -932,6 +989,12 @@ private:
                                       ///< adjacent, band-2 at b+1); 3 = joint 2K lane-shape block.
         double lambda1{0.0};          ///< WL-3 pair: band wavelengths (lane functional coefficients).
         double lambda2{0.0};
+        /// RS-2: this epoch's LINEARIZATION DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ per emitted
+        /// fold row (same length / row order as @ref zhat), computed over the SAME fundamental
+        /// cycle that built the rows.  @ref installPosterior copies it into
+        /// @ref CarriedBlock::zl so the stored means stay self-describing.  EMPTY unless
+        /// @ref Config::carry_lin or @ref Config::carry_rebase.
+        Eigen::VectorXd  zl;
     };
 
     Config cfg_;
@@ -962,6 +1025,7 @@ private:
     double    resume_shock_sigma_m_{0.0};
     long long resume_carry_diag_blocks_{0};   ///< RTB-7(e): blocks restored from a PD (diagonal) row.
     long long resume_carry_rebirth_blocks_{0}; ///< PD-safe INC-2c: blocks rebirthed at restore (non-PD blob Pᶻ).
+    long long resume_carry_lin_blocks_{0};    ///< RS-2: blocks restored WITH a ZL (linearization-DD) row, i.e. exactly re-basable.
     Counters counters_;
     /// The carry-state half of @ref reset (containers + epoch index), WITHOUT the counter
     /// policy.  @ref reset keeps the run tallies; @ref restoreCarry drops them (RE-4).
