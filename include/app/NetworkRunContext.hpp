@@ -310,6 +310,7 @@ namespace GnssProcessor {
         bool clock_signal_basis_hold{};
         bool cb_time_linked{};
         bool scoped_handover{};
+        bool handover_stransform{};  ///< Queue 1(b) (network.handover_stransform): re-express the CHANGED constellation's carry along the structural clock null direction at a pivot handover and fold it, instead of skipping it for one epoch.  Loader forces it false without scoped_handover / under an anchor-free clock datum.
         bool pb_excl_unmatched{};
         bool emit_gen_time{};
         bool emit_gen_id{};
@@ -1036,6 +1037,17 @@ namespace GnssProcessor {
         // the retired frame.  Written where datum_changed is computed (solve glue),
         // read by the next epoch's hygiene pass (bridge drop, reason=datum).
         bool last_datum_changed = false;
+        /// Queue 1(b): the constellations whose carried shared state the handover
+        /// S-transform RE-EXPRESSED this epoch.  The five RTA-2 handover_affects
+        /// predicates release their skip for exactly these constellations — the
+        /// prior is valid in the incoming datum, so it must FOLD, which is the
+        /// load-bearing half of the card (§8.4 INC-1).  Rebuilt every epoch by
+        /// networkHandoverStransform (empty on every non-handover epoch and
+        /// whenever the knob is off ⇒ the OFF path is byte-identical).
+        std::set<char> sts_consts;
+        /// Queue 1(b): the coefficient applied per constellation this epoch
+        /// (constellation char -> c0, metres), for the PIVOT event row and traces.
+        std::map<char, double> sts_c0;
 
         // Per-satellite clock sanity monitor (network.clock_monitor): the previous emitted
         // clock value + the continuous-GPS second it was stashed, per satellite, for the
@@ -2096,6 +2108,21 @@ namespace GnssProcessor {
         long long cta_trip_ext = 0;          ///< decouples: an external tier (clock monitor / RAIM) already refloated this satellite
         long long cta_resolves = 0;          ///< in-epoch re-solves executed (the adapt-and-EMIT half)
         long long cta_resolve_failed = 0;    ///< in-epoch re-solves that threw and were reverted to the anchored solution
+        /// Queue 1(b) handover S-transform telemetry (invariant #4 — these are the
+        /// card's ON-path counters; transforms applied with sts_rows_retained == 0
+        /// means the fold release is mis-wired no matter how clean the log looks).
+        long long sts_edges = 0;             ///< pivot-switch (constellation,epoch) edges the transform handled
+        long long sts_applied = 0;           ///< carried rows whose mean/var the transform re-expressed
+        long long sts_rows_retained = 0;     ///< carry rows folded that the baseline skip would have dropped
+        long long sts_noop_no_carry = 0;     ///< edges skipped: the incoming pivot had no carried clock level
+        long long sts_selfcheck_fail = 0;    ///< §8.4 INC-3: post-transform |x_q| or re-derived c0 above tolerance
+        double    sts_max_abs_c0 = 0.0;      ///< largest |c0| applied over the run (m)
+        double    sts_last_c0 = 0.0;         ///< the last c0 applied (m)
+        /// The MISSING baseline increment 0 named: clock-pivot handovers per
+        /// constellation over the run.  Counted whenever pivotHandoverSignalled
+        /// raises the edge, transform armed or not, so an OFF run states the
+        /// population an ON run is acting on.
+        std::map<char, long long> pivot_handovers;
         long long cta_recouples = 0;         ///< re-coupling edges: a LOOSE satellite re-earned the anchor
         long long cta_marks = 0;             ///< per-sat wire discontinuities QUEUED at a decoupling edge
         long long cta_gf_keys = 0;           ///< (sat,epoch) clock priors whose information was gauge-downdated.  0 on an ARMED gauge-free run means the downdate never reached a group of >= 2 carried clocks — the step is inert and the anchor is still constraining the gauge.

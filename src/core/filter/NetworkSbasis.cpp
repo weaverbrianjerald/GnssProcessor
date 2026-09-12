@@ -282,6 +282,27 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     return plan;
 }
 
+std::vector<std::pair<std::string, double>> NetworkSbasis::clockNullDirection(
+    const std::vector<std::string>& registered_clock_sats,
+    const std::string& constellation) {
+    // Same grouping + lexical sort buildSharedDatum uses, so the direction spans
+    // exactly the columns that builder pinned this epoch (§8.1 rule 1: the
+    // direction must be the STRUCTURAL one this class owns).
+    std::vector<std::string> sats;
+    for (const auto& sat : registered_clock_sats) {
+        if (sat.empty()) continue;
+        if (constellationOf(sat) == constellation) sats.push_back(sat);
+    }
+    std::sort(sats.begin(), sats.end());
+    std::vector<std::pair<std::string, double>> out;
+    out.reserve(sats.size());
+    // Coefficient 1.0 on every satellite clock of the constellation: the gauge is
+    // the COMMON shift (header §Datum).  No other shared family has a component
+    // here — see the Doxygen for the measurement that confirms it.
+    for (auto& s : sats) out.emplace_back(std::move(s), 1.0);
+    return out;
+}
+
 std::vector<NetworkEstimator::SharedPrior> NetworkSbasis::buildCodeBiasKaulaPriors(
     const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
     double sigma_m) {

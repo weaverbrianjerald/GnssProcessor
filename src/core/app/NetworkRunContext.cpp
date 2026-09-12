@@ -163,6 +163,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.clock_signal_basis_hold = config_.networkClockSignalBasisHold();
     k.cb_time_linked = config_.networkCodeDatumTimeLinked();
     k.scoped_handover = config_.networkScopedHandoverResponse();
+    k.handover_stransform = config_.networkHandoverStransform();
     k.pb_excl_unmatched = config_.networkPhaseBiasExcludeUnmatchedAntenna();
     k.emit_gen_time = config_.networkEmitGenerationTime();
     k.emit_gen_id = config_.networkEmitGenerationId();
@@ -736,6 +737,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", emit_clock_disc));
         add(fmt::format("{}", config_.networkEmitterStalenessHorizonS()));
         add(fmt::format("{}", sticky_pivot));    add(fmt::format("{}", scoped_handover));
+        // Queue 1(b): the handover S-transform changes WHICH carried priors fold
+        // at a pivot switch, so a resume across a toggle change would interpret a
+        // carry that was (or was not) re-expressed in the wrong datum.  Appended
+        // ONLY when armed, so every pre-existing snapshot fingerprint is
+        // unchanged (byte-identical OFF path) — the phase_datum_ensemble /
+        // phase_leveling_los_scale precedent.  ARMED ⇒ fresh convergence only.
+        if (ctx.knobs.handover_stransform) add("sts:1");
         add(fmt::format("{}", emit_gen_id));
         add(fmt::format("{}", config_.estimateNetworkSatCodeBias()));
         add(fmt::format("{}", config_.estimateNetworkIonoSh()));
@@ -2458,6 +2466,18 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         return datum_changed
             && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
     };
+    // Queue 1(b) INC-1 — the LOAD-BEARING half of the S-transform card.  When the
+    // transform re-expressed this constellation's carry (ctx.carry.sts_consts, filled
+    // by networkHandoverStransform earlier this epoch), the prior is valid in the
+    // INCOMING datum and must FOLD: the retired-datum skip below is released for
+    // exactly those keys and the retained rows are counted (invariant #4 — transforms
+    // applied with sts_rows_retained == 0 means this release is mis-wired).  The set is
+    // empty on every non-handover epoch and whenever the knob is off, so the OFF path
+    // is byte-identical.
+    const auto sts_released = [&](const std::string& sat) {
+        return !ctx.carry.sts_consts.empty() && !sat.empty()
+            && ctx.carry.sts_consts.count(sat.front()) > 0;
+    };
     // READMIT continuity (E2 seed-first re-admission, network.readmit_seed_horizon_s).
     // The epoch clock the stash (which has none of its own) and the guard read; the
     // seed check list for this epoch; and the frame drop: a clock-datum change retires a
@@ -2474,7 +2494,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             prev_carry.erase(std::remove_if(prev_carry.begin(), prev_carry.end(),
                                             [&](const CarryPrior& cp) {
                                                 return cp.t_park_s > 0.0
-                                                    && handover_affects(cp.sat);
+                                                    && handover_affects(cp.sat)
+                                                    && !sts_released(cp.sat);
                                             }),
                              prev_carry.end());
             ctx.counters.n_readmit_dropped_datum +=
@@ -2505,7 +2526,10 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // clock datum change must NOT drop it (else a held sat, whose Σz=0 fold
             // buildEnsembleGauges skipped, is left un-datumed and the epoch withholds).
             if (phase_hold_on && cp.kind == SharedParamKind::PhaseBias) continue;
-            if (handover_affects(cp.sat)) continue;  // RTA-2: retired-datum key (scoped mode only)
+            if (handover_affects(cp.sat)) {
+                if (!sts_released(cp.sat)) continue;   // RTA-2: retired-datum key (scoped mode only)
+                ++ctx.counters.sts_rows_retained;      // queue 1(b): re-expressed ⇒ folds instead
+            }
             // Card 3 (eq34) D4 hygiene: a re-referenced (sat,σ) stepped its b_s
             // frame at this epoch's election — marginalize its carried PB prior
             // for ONE epoch (it belongs to the retired frame; folding it yanks
@@ -2622,7 +2646,10 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         for (const CarryPrior& cp : prev_carry) {
             if (cp.kind == SharedParamKind::VtecSh) continue;  // SH prior is folded PRE-gate
             if (phase_hold_on && cp.kind == SharedParamKind::PhaseBias) continue;  // Fix A hold: injected separately (datum-change-independent)
-            if (handover_affects(cp.sat)) continue;  // RTA-2: retired-datum key (scoped mode only)
+            if (handover_affects(cp.sat)) {
+                if (!sts_released(cp.sat)) continue;   // RTA-2: retired-datum key (scoped mode only)
+                ++ctx.counters.sts_rows_retained;      // queue 1(b): re-expressed ⇒ folds instead
+            }
             // Card 3 (eq34) D4 hygiene: marginalize re-referenced PB keys for
             // this epoch (retired frame) — see the diagonal branch above.
             if (cp.kind == SharedParamKind::PhaseBias

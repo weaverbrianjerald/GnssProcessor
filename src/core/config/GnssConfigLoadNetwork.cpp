@@ -5861,6 +5861,9 @@ namespace GnssProcessor {
         network_scoped_handover_response_ =
             jval<bool>(json, "network.scoped_handover_response",
                        "network_scoped_handover_response", false);
+        network_handover_stransform_ =
+            jval<bool>(json, "network.handover_stransform",
+                       "network_handover_stransform", false);
         // Phase-bias gauge: single clock-pivot station (legacy) vs per-(sat,signal)
         // prioritized anchor receiver.  The two sub-knobs (coverage-preference
         // elevation, per-(sat,signal) stickiness) are INERT unless the master toggle
@@ -7650,6 +7653,37 @@ namespace GnssProcessor {
                       "carry skip / clock-oscillator clear / jump-test suppression on a pivot "
                       "handover applies only to the constellation(s) whose datum changed, not "
                       "network-wide (the SH-VTEC carry skip stays global).");
+        // Queue 1(b): the changed constellation's OWN carry — re-expressed, not dropped.
+        if (network_handover_stransform_) {
+            if (!network_scoped_handover_response_) {
+                log->warn("Network: network.handover_stransform is INERT without "
+                          "network.scoped_handover_response — the transform releases the D2 "
+                          "carry skip for the CHANGED constellation, but with the global "
+                          "response still armed every OTHER constellation would keep "
+                          "free-falling, so the edge is not fixed.  Arm "
+                          "scoped_handover_response (the golden pins it) or drop this knob.");
+                network_handover_stransform_ = false;
+            } else if (network_clock_datum_sum_to_zero_
+                       || network_clock_datum_broadcast_anchored_) {
+                log->warn("Network: network.handover_stransform is INERT under an anchor-free "
+                          "clock datum (sum_to_zero / broadcast_anchored) — those realize the "
+                          "clock gauge without a pivot satellite, so no handover seam exists "
+                          "to transform across.");
+                network_handover_stransform_ = false;
+            } else {
+                log->info("Network producer (queue 1(b)): handover S-TRANSFORM ON — at a "
+                          "clock-pivot handover the CHANGED constellation's carried shared "
+                          "means are re-expressed in the incoming datum along the structural "
+                          "clock null direction (c0 = x_q / v_c[q] with q the new pivot; "
+                          "x -= v_c*c0; var += v_c[i]^2*var_q) and the D2 shared-carry fold is "
+                          "then NOT skipped for them — the carried information is valid, merely "
+                          "expressed in the retired datum, so it is transformed instead of "
+                          "discarded (SPEC_pivot_visibility_gauge_defect §8).  The emitted wire "
+                          "still steps by the datum delta BY DESIGN; this is producer-internal "
+                          "continuity.  ⚠ FINGERPRINTED: fresh convergence only — never flip it "
+                          "mid-chain.");
+            }
+        }
         // Card 4 (M1) dependency: the DD cycle-basis carry lives on the eq34 chain
         // datum (it needs the per-receiver RPB split + the spanning tree that supply
         // the fundamental-cycle DDs).  Reject the incoherent combination fail-loud.

@@ -95,6 +95,16 @@ void networkStashStatus(
         return datum_changed
             && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
     };
+    // Queue 1(b): mirror networkInjectD2CarryPrior's release, clause for clause.  A
+    // re-expressed key FOLDS, so the VCE monitor must see it as an ordinary carry
+    // innovation and the prior-residual census must label it CLEAN, not FRAME — the
+    // census's `folded` bit picks the dispersion branch, so a predicate that disagreed
+    // with the injector would mis-attribute exactly the rows this card fixes.  Empty
+    // set ⇒ identical to the pre-card behaviour.
+    const auto sts_released = [&](const std::string& sat) {
+        return !ctx.carry.sts_consts.empty() && !sat.empty()
+            && ctx.carry.sts_consts.count(sat.front()) > 0;
+    };
     auto emitEpochStatus = [&](const char* disposition, const EpochStatusRow& r) {
         traces.emitEpochStatus(se.time, disposition, r);
     };
@@ -119,7 +129,7 @@ void networkStashStatus(
             } else {
                 continue;                                     // Clock / VtecSh out of scope (own models)
             }
-            if (handover_affects(cp.sat)) continue;           // RTA-2 retired-datum (scoped mode)
+            if (handover_affects(cp.sat) && !sts_released(cp.sat)) continue;  // RTA-2 retired-datum (scoped mode); queue 1(b) re-expressed keys fold
             vce_shared_prior.emplace(sharedCarryKey(cp.kind, cp.sat, cp.signal),
                                      std::make_pair(cp.value, cp.var));
         }
@@ -222,7 +232,7 @@ void networkStashStatus(
                 p.label = PriorResidualLabel::Frame;
                 p.mech  = "phase_hold";
                 p.hold  = true;                  // null dispersion undefined ⇒ no σ̂₀ weight
-            } else if (handover_affects(cp.sat)) {
+            } else if (handover_affects(cp.sat) && !sts_released(cp.sat)) {
                 p.label = PriorResidualLabel::Frame;
                 p.mech  = "handover";
             } else if (is_pb && eq34_reref.count({cp.sat, cp.signal})) {

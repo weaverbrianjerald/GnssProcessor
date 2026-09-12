@@ -617,6 +617,44 @@ public:
                               = nullptr) const;
 
     /**
+     * @brief The STRUCTURAL per-constellation clock null direction @f$v_c@f$
+     *        (queue 1(b), docs/SPEC_pivot_visibility_gauge_defect.md §8.1 rule 1).
+     *
+     * The clock gauge of a constellation is the direction documented in this
+     * file's header: *adding a constant to every satellite clock of a
+     * constellation and to the receivers' clock/ISB of that constellation
+     * cancels on every row*.  The receiver clock/ISB are LOCAL states eliminated
+     * by the Schur reduction, so inside the SHARED border the direction is
+     * exactly the indicator over that constellation's registered satellite-clock
+     * columns, coefficient 1.0 each.  Every other shared family carries its own
+     * independent gauge — the satellite code bias by the W6 per-satellite IF pin
+     * plus the per-(constellation,signal) sum-to-zero rows, the phase bias by the
+     * LOCAL ambiguity pins at its anchor receiver — so their component along
+     * @f$v_c@f$ is **zero** and they are not part of this direction.  (Measured:
+     * across the 319260 handover of `runs/golden_sim_campaign_zwdblk_scoped` the
+     * clock step is a rigid +1.8365 m while the code-bias step mean is 1e-6 m and
+     * the phase-bias step mean is −0.026 m against 0.18 m of scatter — the biases
+     * do not ride the clock frame.)
+     *
+     * Returned as (satellite, coefficient) pairs in the SAME deterministic
+     * lexical order @ref buildSharedDatum groups and sorts by, so the direction a
+     * caller transforms along is the one this builder actually pinned — never
+     * hand-written at a call site, never an eigenvector (same-scale eigenvectors
+     * mix; structural membership is exact and carries per-satellite identity).
+     *
+     * @param registered_clock_sats This epoch's registered satellite-clock set —
+     *                              the same vector passed to @ref buildSharedDatum.
+     * @param constellation         Constellation key (e.g. "G"), as produced by
+     *                              @ref constellationOf.
+     * @return The direction's nonzero entries; EMPTY when the constellation has
+     *         no registered clock satellite (the caller must treat that as a
+     *         no-op, not as a zero direction).
+     */
+    static std::vector<std::pair<std::string, double>> clockNullDirection(
+        const std::vector<std::string>& registered_clock_sats,
+        const std::string& constellation);
+
+    /**
      * @brief Card KP — build the loose Kaula/physical-bound priors on the
      *        ADMITTED satellite code-bias (OSB) columns.
      *

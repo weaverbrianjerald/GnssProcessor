@@ -19,6 +19,7 @@
 #include "filter/NetworkClockAnchor.hpp"   // Card Q3 guarded temporal clock anchor
 #include "filter/NetworkDatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "filter/NetworkFrameDiag.hpp"   // invariant #7: networkDatumInfoRatio
+#include "filter/NetworkHandoverStransform.hpp"   // queue 1(b): the clock-pivot handover S-transform
 #include "filter/NetworkPhaseDatum.hpp"
 #include "filter/NetworkPivotHandover.hpp"
 #include "filter/NetworkPrefitCensus.hpp"   // H-rider: networkPrefitSigma0 (census-fed H σ̂₀)
@@ -996,6 +997,20 @@ auto& clk_prior_info = ws.clk_prior_info;
 // the prior injection + solve).  Relocated VERBATIM to filter/NetworkRelevel at the
 // Card-6 relevel decomposition (2026-07-23); full ordering rationale lives there.
 networkEphCutoverRelevel(ctx, log, traces, se, registered_clock_sats, brdc_rts);
+
+// --- Queue 1(b): the clock-pivot handover S-transform (SPEC_pivot_visibility_gauge_defect §8)
+// Re-express the CHANGED constellation's carried shared means in the INCOMING clock
+// datum and mark them for fold release, so the prior below folds instead of being
+// skipped for one epoch.  Placed here — immediately before the first fold that reads
+// prev_carry — deliberately: every consumer of the carry must see the same frame, and
+// this is the last point at which that is guaranteed by construction rather than by an
+// audit of the intervening seams.  It runs AFTER the eph-cutover re-level so the two
+// re-basings compose in the order the carry actually experienced them (cutover first:
+// it is a change of the a-priori the carry is expressed AGAINST; the handover is a
+// change of the gauge that carry realizes).  No-op and byte-identical when the knob is
+// off; clears its own release set every epoch.
+networkHandoverStransform(ctx, config_, log, traces, se.time, plan, datum_changed,
+                          changed_consts, registered_clock_sats);
 
 networkInjectD2CarryPrior(ctx, ws, traces, se.time, est, datum_changed,
                           changed_consts, dt, within_epoch_armed, log);

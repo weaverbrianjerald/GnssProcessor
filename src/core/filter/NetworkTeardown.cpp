@@ -4254,6 +4254,47 @@ int networkTeardown(
                       ctx.knobs.cta_var_floor, 1000.0 * std::sqrt(ctx.knobs.cta_var_floor),
                       std::max(0.0, ctx.knobs.cta_q) * 30.0);
     }
+    // Queue 1(b) — the clock-pivot handover BASELINE + the S-transform's ON-path
+    // telemetry.  The handover COUNT is reported unconditionally: increment 0 named
+    // this observability gap (before this card the edge existed only as a PIVOT event
+    // row and the E/R records, so an OFF run could not state the population an ON run
+    // acts on).  The sts_* clause follows only when the transform is armed.
+    // Invariant #4: `edges > 0` with `rows_retained == 0` means the INC-1 fold release
+    // is mis-wired — the transform ran and nothing folded.
+    if (!ctx.counters.pivot_handovers.empty() || ctx.knobs.handover_stransform) {
+        const auto& sc = ctx.counters;
+        std::string per_const;
+        long long total = 0;
+        for (const auto& kv : sc.pivot_handovers) {
+            if (!per_const.empty()) per_const += ", ";
+            per_const += fmt::format("{}:{}", kv.first, kv.second);
+            total += kv.second;
+        }
+        if (per_const.empty()) per_const = "(none)";
+        if (!ctx.knobs.handover_stransform) {
+            log->info("Network (clock-pivot handovers): {} datum re-reference(s) over the run "
+                      "[{}] — the constellation(s) whose pinned pivot satellite changed.  "
+                      "network.handover_stransform is OFF, so each one DROPPED that "
+                      "constellation's carried shared priors for one epoch (the free fall "
+                      "SPEC_pivot_visibility_gauge_defect §8.2 names).",
+                      total, per_const);
+        } else {
+            log->info("Network (queue 1(b) handover S-TRANSFORM): {} clock-pivot handover(s) "
+                      "over the run [{}]; {} edge(s) TRANSFORMED, {} carried row(s) "
+                      "re-expressed along the structural clock null direction, {} row(s) "
+                      "RETAINED (folded that the baseline skip would have dropped — this is "
+                      "the card's ON-path counter), {} edge(s) no-op (the incoming pivot had "
+                      "no carried level), {} self-check failure(s).  |c0| max {:.6f} m, last "
+                      "{:.6f} m.{}",
+                      total, per_const, sc.sts_edges, sc.sts_applied, sc.sts_rows_retained,
+                      sc.sts_noop_no_carry, sc.sts_selfcheck_fail,
+                      sc.sts_max_abs_c0, sc.sts_last_c0,
+                      (sc.sts_edges > 0 && sc.sts_rows_retained == 0)
+                          ? "  ⚠ DEAD WIRING: edges were transformed but NOTHING folded "
+                            "— the INC-1 skip release is not reaching the fold sites."
+                          : "");
+        }
+    }
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "
                   "runaway (magnitude ceiling {:.0f} m / rate ceiling {:.2f} m/s).",

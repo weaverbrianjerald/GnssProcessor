@@ -612,8 +612,22 @@ NetworkSolPrepResult networkSolPrep(
                     old_p = (lp != last_pivot.end()) ? lp->second : std::string("?");
                     arm = "vanish_return";
                 }
+                // Queue 1(b) INC-2: the DECOUPLING edge states what the S-transform did
+                // to this constellation's carry — applied with its coefficient, or the
+                // baseline free-fall.  Appended only when the transform actually ran, so
+                // every pre-card PIVOT row is byte-identical.
+                std::string sts_tag;
+                {
+                    const auto cit = ctx.carry.sts_c0.find(c);
+                    if (cit != ctx.carry.sts_c0.end())
+                        sts_tag = fmt::format(";sts=applied;c0={:.6f};rows={}",
+                                              cit->second, ctx.counters.sts_rows_retained);
+                    else if (ctx.knobs.handover_stransform)
+                        sts_tag = ";sts=skipped";
+                }
                 emitEvent("PIVOT", "handover", new_p, "", std::nullopt, std::nullopt,
-                          "datum_bump", fmt::format("{}:{}->{};{}", key, old_p, new_p, arm));
+                          "datum_bump",
+                          fmt::format("{}:{}->{};{}{}", key, old_p, new_p, arm, sts_tag));
             }
         }
     }

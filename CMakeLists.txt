@@ -187,6 +187,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkClockQc.cpp
     src/core/filter/NetworkClockAnchor.cpp
     src/core/filter/NetworkFrameDiag.cpp
+    src/core/filter/NetworkHandoverStransform.cpp
     src/core/filter/NetworkRowClassify.cpp
     src/core/filter/NetworkRhsAttrib.cpp
     src/core/filter/NetworkPrefitCensus.cpp
@@ -439,6 +440,7 @@ add_executable(gnss_tests
     tests/test_oracle_pin.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp
+    tests/test_handover_stransform.cpp
     tests/test_mw_evidence_refloat.cpp
     tests/test_common_band_scope.cpp
     tests/test_candidacy_usable.cpp
