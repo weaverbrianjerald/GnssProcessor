@@ -85,6 +85,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
     k.resume_datum_restore   = config_.networkResumeDatumRestore();      // RS-3 §21.7
     k.resume_emit_restore    = config_.networkResumeEmitRestore();       // RS-5 §21.10
+    k.resume_station_restore = config_.networkResumeStationRestore();    // RS-6 §21.13
+    k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
+    k.resume_station_shdev   = config_.networkResumeStationRestoreShDev();
     k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // RS-4 §21.9
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
@@ -1016,7 +1019,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   resume response         zwd_seam_reseed, resume_frame_restore,
         //                           resume_slip_warmup_ep, resume_coupling_restore,
         //                           resume_carry_rebase, resume_d5_warmup_ep,
-        //                           resume_datum_restore (RS-3, §21.7)
+        //                           resume_datum_restore (RS-3, §21.7),
+        //                           resume_emit_restore (RS-5, §21.10),
+        //                           resume_station_restore{,_rxcb,_shdev} (RS-6, §21.13)
         //
         // Two entries need their own note:
         //
@@ -1046,7 +1051,15 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   emit and writes only into `snap`.  The Card-1 arithmetic tokens those
         //   rows depend on are already in fp above, so a writer/reader mismatch on
         //   the coupling arithmetic is unreachable.  The same precedent covers the
-        //   unconditional Z-row and frame-row captures.
+        //   unconditional Z-row and frame-row captures, and the RS-5 emit-layer
+        //   (state_snapshot_emit_capture) and RS-6 station-layer
+        //   (state_snapshot_station_capture) captures: both add rows under the
+        //   EXISTING header and leave the writer's products and traces byte-identical,
+        //   and the quantities themselves are already fingerprinted by the knobs that
+        //   create them (carry_invariant_emit_rebase / emit_pb_filter for the emit
+        //   layer; carry_rx_code_bias and global_vtec_sh.rep_error_tau_s for the two
+        //   station carries), so a writer/reader mismatch on their MEANING is
+        //   unreachable.
         //
         // ⚠ Do NOT move any of these into the fingerprint: it would strand every
         //   stored snapshot AND outlaw the same-snapshot OFF/ON A/B that their
@@ -1627,6 +1640,99 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_emit_rebase_keys,
                                       ctx.counters.n_resume_emit_filter_keys,
                                       ctx.counters.n_resume_emit_step_accums);
+                    }
+                    // RS-6 STATION-LAYER restore (network.resume_station_restore,
+                    // SPEC_event_harness §21.13).  AFTER the emit restore and before the
+                    // first epoch — the whole of networkTryWarmResume runs ahead of it,
+                    // so the ordering is structural, and the loader guarantees
+                    // resume_frame_restore is armed with it (both memories are expressed
+                    // in the realization frame underneath them).
+                    //
+                    // Measured without it at the field seam (§21.13): the rx-CB inject
+                    // gate withholds 26 % of its priors on the leg against 13 % on the
+                    // seed — the whole station layer re-seeding from one epoch of code —
+                    // and ~400 deviation entries cold-seed at +1, which is the SH a₀₀
+                    // transient.
+                    //
+                    // The two halves are gated and reported SEPARATELY, the
+                    // hasFrameState / hasDatumState / hasEmitState precedent: a file may
+                    // carry RC rows and no SD (a writer with the rx-CB carry and no T5
+                    // deviation carry), and an absent half must read as INERT for that
+                    // half alone.  The two sub-switches are DIAGNOSTIC — they let one
+                    // §21.13 attribution leg restore a single half, and a withheld half
+                    // is logged as withheld, never as absent.
+                    if (ctx.knobs.resume_station_restore) {
+                        const bool have_rc = !snap.rx_cb_carry.empty();
+                        const bool have_sd = !snap.sh_dev_carry.empty();
+                        if (have_rc && ctx.knobs.resume_station_rxcb) {
+                            // RESTORED-ARC AGE (§15.4.1), exactly as the L / Z rows:
+                            // the entry goes back through makeRestoredLocalCarry rather
+                            // than a bare aggregate, so a restored rx-CB entry is
+                            // distinguishable from a never-stashed one at every reader
+                            // that grows an age test later.  The rx-CB harvest itself
+                            // stashes a bare LocalCarry and its inject reads only
+                            // value_abs / var / last_seen_s, so the sentinel changes
+                            // nothing THIS card measures — it is the convention, and an
+                            // age gate added here later must not have to rediscover it.
+                            ctx.carry.rx_cb_carry.clear();
+                            for (const auto& [key, l] : snap.rx_cb_carry)
+                                ctx.carry.rx_cb_carry[{key.first, key.second}] =
+                                    makeRestoredLocalCarry(l.value_abs, l.var,
+                                                           l.last_seen_s);
+                            ctx.counters.n_resume_station_rxcb =
+                                static_cast<long long>(ctx.carry.rx_cb_carry.size());
+                        } else {
+                            log->warn("Network (RS-6 station restore): ARMED but {} — the "
+                                      "rx-CB half is INERT; every receiver code-bias prior "
+                                      "first-sights at the seam and the harvest re-seeds "
+                                      "it from ONE epoch of code, exactly as an unarmed "
+                                      "resume does, so the station layer re-splits code "
+                                      "bias / iono / clock across the whole network.",
+                                      have_rc
+                                          ? "network.resume_station_restore_rxcb is false "
+                                            "(a §21.13 attribution leg)"
+                                          : "the snapshot carries NO RC rows (a writer "
+                                            "without network.state_snapshot_station_"
+                                            "capture, or one without the rx-CB carry)");
+                        }
+                        if (have_sd && ctx.knobs.resume_station_shdev) {
+                            // Restored AS WRITTEN — no sentinel, and none is wanted:
+                            // ShDevCarry's own cold test is `t_s <= 0`, so carrying the
+                            // writer's harvest stamp is what makes the entry read WARM,
+                            // and the epoch's aging pre-pass then ages it over the TRUE
+                            // gap (and drops it at 5·tau, the existing staleness rule).
+                            ctx.carry.sh_dev_carry.clear();
+                            for (const auto& [key, d] : snap.sh_dev_carry)
+                                ctx.carry.sh_dev_carry[key] =
+                                    ShDevCarry{d.dev, d.var, d.var_ss, d.t_s};
+                            ctx.counters.n_resume_station_shdev =
+                                static_cast<long long>(ctx.carry.sh_dev_carry.size());
+                        } else {
+                            log->warn("Network (RS-6 station restore): ARMED but {} — the "
+                                      "T5 deviation half is INERT; every per-LOS entry "
+                                      "cold-seeds at the steady state (dev 0, var "
+                                      "representation_sigma²) at the seam, which is the "
+                                      "SH a₀₀ transient.",
+                                      have_sd
+                                          ? "network.resume_station_restore_shdev is false "
+                                            "(a §21.13 attribution leg)"
+                                          : "the snapshot carries NO SD rows (a writer "
+                                            "without network.state_snapshot_station_"
+                                            "capture, or one without the T5 deviation "
+                                            "carry)");
+                        }
+                        if (ctx.counters.n_resume_station_rxcb > 0
+                            || ctx.counters.n_resume_station_shdev > 0)
+                            log->info("Network (RS-6 station restore): ARMED at the resume "
+                                      "seam — {} rx-CB carry entr{} and {} T5 per-LOS "
+                                      "deviation entr{} restored BEFORE the first epoch, so "
+                                      "the receiver code-bias priors and the SH "
+                                      "representation-error levels continue the writer's "
+                                      "instead of re-seeding from one epoch of code.",
+                                      ctx.counters.n_resume_station_rxcb,
+                                      ctx.counters.n_resume_station_rxcb == 1 ? "y" : "ies",
+                                      ctx.counters.n_resume_station_shdev,
+                                      ctx.counters.n_resume_station_shdev == 1 ? "y" : "ies");
                     }
                     // Coupling regressors (network.resume_coupling_restore) — the
                     // second half of the frame restore, and the RE-COUPLING edge for
@@ -2484,6 +2590,39 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                        + snap.pb_filter_state.size()
                                        + snap.pb_filter_step.size());
         }   // state_snapshot_emit_capture
+        // RS-6 STATION-LAYER capture (network.state_snapshot_station_capture,
+        // SPEC_event_harness §21.13) — the WRITE half of the two per-station memories
+        // that restart COLD at every warm resume.  The frame / datum blocks carry the
+        // network's realization and the emit block the level on top of it; these two
+        // are the STATION layer underneath: the receiver code-bias posterior per
+        // (station, CB family) and the per-LOS SH representation-error deviation.
+        //
+        // Plain copies of ctx.carry AFTER the emit, into `snap` only — the same
+        // write-side discipline as the datum and emit blocks, which is what makes this
+        // knob legal to add to an existing recipe.  A run that arms neither carry
+        // (network.carry_rx_code_bias / the T5 deviation) exports empty maps and writes
+        // no rows, so arming the capture there costs nothing.
+        //
+        // The non-finite screen is at the SOURCE, as for code_bias_prev: a nan that
+        // strtod would accept on the way back in becomes the prior the next fold's
+        // innovation differences against (rx-CB) or the GM level the next harvest ages
+        // (T5).  An entry dropped here is simply cold on the resume — the pre-card
+        // behaviour for that one key — where a poisoned one is not recoverable.
+        if (nc.state_snapshot_station_capture) {
+            for (const auto& [key, lc] : ctx.carry.rx_cb_carry)
+                if (std::isfinite(lc.value_abs) && std::isfinite(lc.var) && lc.var > 0.0
+                    && std::isfinite(lc.last_seen_s))
+                    snap.rx_cb_carry[{key.first, key.second}] =
+                        NetworkStateSnapshot::Local{lc.value_abs, lc.var, lc.last_seen_s};
+            for (const auto& [key, dc] : ctx.carry.sh_dev_carry)
+                if (std::isfinite(dc.dev) && std::isfinite(dc.var) && dc.var >= 0.0
+                    && std::isfinite(dc.var_ss) && dc.var_ss >= 0.0
+                    && std::isfinite(dc.t_s))
+                    snap.sh_dev_carry[key] =
+                        NetworkStateSnapshot::ShDev{dc.dev, dc.var, dc.var_ss, dc.t_s};
+            ctx.carry.snap_station_rows_last =
+                static_cast<long long>(snap.rx_cb_carry.size() + snap.sh_dev_carry.size());
+        }   // state_snapshot_station_capture
         // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
         // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
         // resume reproduces the phase-ambiguity branch instead of re-converging one.

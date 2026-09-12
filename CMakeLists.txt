@@ -449,6 +449,7 @@ add_executable(gnss_tests
     tests/test_restored_arc_age.cpp
     tests/test_resume_carry_rebase.cpp
     tests/test_resume_emit_restore.cpp
+    tests/test_resume_station_restore.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

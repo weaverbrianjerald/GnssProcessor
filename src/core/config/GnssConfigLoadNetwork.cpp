@@ -2486,6 +2486,33 @@ namespace GnssProcessor {
                           "level instead.  Write-side only; the products and every trace "
                           "are byte-identical.");
         }
+        // RS-6 STATION-LAYER capture (write side of network.resume_station_restore,
+        // §21.13).  Same shape as the frame / datum / emit captures above — its own
+        // knob, path-gated, write-only.  The rows are plain copies of two ctx.carry
+        // maps taken after the emit, so arming it can change no estimate and no trace,
+        // only the snapshot bytes.
+        network_config_.state_snapshot_station_capture =
+            jval<bool>(json, "network.state_snapshot_station_capture",
+                       "state_snapshot_station_capture", false);
+        if (network_config_.state_snapshot_station_capture) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (resume station capture): state_snapshot_station_capture "
+                          "armed but network.state_snapshot_path is empty — no snapshot is "
+                          "written, INERT.");
+            else
+                log->info("Network (resume station capture): every snapshot also carries the "
+                          "STATION LAYER (RC — the rx-CB carry, one receiver code-bias "
+                          "posterior per (station, CB family) in the Z row's field set — and "
+                          "SD — the T5/Iono-2 per-LOS SH representation-error deviation "
+                          "carry, one ShDevCarry per STATION|SAT) as format-forward rows "
+                          "under the existing header.  Both maps are cross-epoch state that "
+                          "no snapshot held, so without these rows a warm resume restarts "
+                          "both COLD: the rx-CB restart re-splits code bias / iono / clock "
+                          "per station and signal, and the deviation restart is the SH a₀₀ "
+                          "transient.  A resume armed with network.resume_station_restore "
+                          "continues both instead.  Write-side only; the products and every "
+                          "trace are byte-identical.");
+        }
         if (network_config_.state_snapshot_require)
             log->info("Network (RTB-7d/HB-1): warm resume REQUIRED — any resume failure "
                       "(missing/parse/fingerprint/age/emitter) is a hard run error instead "
@@ -3763,6 +3790,31 @@ namespace GnssProcessor {
                 "election re-references every phase-bias family, so the restored "
                 "emission frame would re-base the new realization onto a level the "
                 "writer never emitted — strictly worse than cold-starting the engines.");
+        // RS-6 STATION-LAYER restore (read side of network.state_snapshot_station_capture,
+        // SPEC_event_harness §21.13).  Same exemption class as the restores above:
+        // forward-only resume response policy, inert on a run that never resumes.  The
+        // two sub-switches are DIAGNOSTIC (default true) — they exist so one leg of the
+        // attribution matrix can restore a single half, and they mean nothing without
+        // the read knob itself.
+        network_resume_station_restore_ =
+            jval<bool>(json, "network.resume_station_restore", "resume_station_restore",
+                       false);
+        network_resume_station_restore_rxcb_ =
+            jval<bool>(json, "network.resume_station_restore_rxcb",
+                       "resume_station_restore_rxcb", true);
+        network_resume_station_restore_shdev_ =
+            jval<bool>(json, "network.resume_station_restore_shdev",
+                       "resume_station_restore_shdev", true);
+        if (network_resume_station_restore_ && !network_resume_frame_restore_)
+            throw std::runtime_error(
+                "network.resume_station_restore requires network.resume_frame_restore: "
+                "both station memories are expressed IN the realization frame underneath "
+                "them — the rx-CB carry is an absolute receiver code bias against the "
+                "code-bias datum, the T5 deviation is a residual against the SH field the "
+                "same solve realizes.  Without the frame restore the first election "
+                "re-realizes that frame, so the restored memories would re-assert a level "
+                "the writer never held: a stale stiff prior across a jump, which "
+                "invariant #1 says does not degrade gracefully.");
         // RS-2 resume CARRY RE-BASE (SPEC_event_harness §21.4) — the reader half of
         // network.state_snapshot_carry_lin, and the same exemption class as the two
         // restores above: forward-only resume response policy, inert without a resume.
@@ -3858,6 +3910,41 @@ namespace GnssProcessor {
                           "leaves each half exactly as today and says so.  Outputs-only "
                           "(no estimate moves) and not in the warm-resume fingerprint "
                           "(forward-only resume response policy).");
+        }
+        // RS-6 (§21.13): the station-layer restore's own ARMED/INERT line.  Its
+        // prerequisite is checked above, so by here it can only be inert for want of a
+        // snapshot to resume from.  The sub-switches are named only when one is OFF —
+        // an attribution leg has to be self-describing in the log, and the ordinary
+        // both-halves arm must not grow a line that says nothing.
+        if (network_resume_station_restore_) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (RS-6 station restore): resume_station_restore armed "
+                          "but network.state_snapshot_path is empty — nothing can resume, "
+                          "INERT this run.");
+            else
+                log->info("Network (RS-6 station restore): ON{} — at a warm resume the "
+                          "snapshot's station-layer rows are restored BEFORE the first "
+                          "epoch: the rx-CB carry (RC) through the restored-arc sentinel "
+                          "so the receiver code-bias priors continue instead of the whole "
+                          "network re-seeding from one epoch of code, and the T5/Iono-2 "
+                          "per-LOS deviation carry (SD) with its harvest stamp, which is "
+                          "what makes a restored entry read WARM rather than cold-seed at "
+                          "steady state.  The rows are captured under "
+                          "network.state_snapshot_station_capture; a file without them "
+                          "leaves each half exactly as today and says so.  Not in the "
+                          "warm-resume fingerprint (forward-only resume response policy).",
+                          (network_resume_station_restore_rxcb_
+                           && network_resume_station_restore_shdev_)
+                              ? ""
+                              : (network_resume_station_restore_rxcb_
+                                     ? " (rx-CB half ONLY — resume_station_restore_shdev "
+                                       "false, a §21.13 attribution leg)"
+                                     : network_resume_station_restore_shdev_
+                                           ? " (T5 deviation half ONLY — "
+                                             "resume_station_restore_rxcb false, a §21.13 "
+                                             "attribution leg)"
+                                           : " (⚠ BOTH sub-switches false — the knob is "
+                                             "armed and restores NOTHING)"));
         }
         // RS-4 (§21.9): the DECLARATION half's own ARMED/INERT line, same shape.
         if (network_resume_pb_seam_mark_) {

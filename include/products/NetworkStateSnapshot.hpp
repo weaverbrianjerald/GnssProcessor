@@ -489,6 +489,47 @@ struct NetworkStateSnapshot {
         return !emit_rebase_last.empty() || !pb_filter_state.empty()
             || !pb_filter_step.empty();
     }
+    // --- RS-6 STATION-LAYER memories (SPEC_event_harness §21.13) ------------
+    //
+    // Two per-station cross-epoch memories the snapshot did not hold, so a warm
+    // resume restarts both COLD while the estimator's own level at the first
+    // post-resume epoch still moves (§21.13: raw phase bias 1.70 m p50, W6 code
+    // bias 0.47 m, receiver clocks 1.21 m, SH a₀₀ +4.6 TECU):
+    //   * the rx-CB carry (@c NetworkCarryState::rx_cb_carry) — the per-(station,
+    //     CB state key) receiver code-bias posterior with RW q 1e-9 m²/s, whose
+    //     restart re-splits code bias / iono / clock per station and signal (its
+    //     10σ inject gate withholds 26 % of priors on a leg vs 13 % on the seed), and
+    //   * the T5 / Iono-2 per-LOS SH representation-error deviation carry
+    //     (@c NetworkCarryState::sh_dev_carry) — 400 cold seeds at the first leg
+    //     epoch, which is the a₀₀ transient.
+    // Written under network.state_snapshot_station_capture, restored behind
+    // network.resume_station_restore; empty on every other file.
+    /// (station roster index, CB state key) -> receiver code-bias carry (@c RC rows).
+    /// Serialized with EXACTLY the @ref Local fields the @c Z rows carry
+    /// (value_abs / var / last_seen_s) — the rx-CB harvest stashes a bare
+    /// @c LocalCarry{value_abs, var, pl_now_s} and its inject reads only those
+    /// three, so there is no fourth field to carry.  Index validity is guaranteed
+    /// by the roster fields inside the config fingerprint, exactly as for
+    /// @ref local_carry / @ref zwd_carry.
+    std::map<std::pair<int, std::string>, Local> rx_cb_carry;
+    /// One T5 deviation carry — a POD mirror of the driver's @c ShDevCarry, as
+    /// @ref Osc mirrors @c ClockOsc: the snapshot module names no engine type.
+    /// All four members are scalars, so the @c SD row is the whole struct in
+    /// declaration order and the restore needs no re-derivation.
+    struct ShDev {
+        double dev{0.0};     ///< Carried GM deviation (VERTICAL TECU, v2 units).
+        double var{0.0};     ///< Its posterior variance (vertical TECU²).
+        double var_ss{0.0};  ///< The GM steady-state variance = representation_sigma_tecu².
+        double t_s{0.0};     ///< Continuous-GPS s of the last harvest; ≤ 0 marks a never-harvested (cold) entry.
+    };
+    std::map<std::string, ShDev> sh_dev_carry;  ///< "STATION|SAT" -> deviation carry.
+    /// True when any RS-6 station-layer record is present.  Its OWN predicate, like
+    /// @ref hasEmitState / @ref hasDatumState / @ref hasCouplingState: the two halves
+    /// (rx-CB carry / deviation carry) are reported and warned about separately at
+    /// the restore site, and neither may borrow the other's INERT verdict.
+    bool hasStationState() const {
+        return !rx_cb_carry.empty() || !sh_dev_carry.empty();
+    }
     // --- Emitter layer -----------------------------------------------------
     /// Verbatim @c NetworkProductEmitter::serializeState blob (its own
     /// @c EMITTER header through its @c EEND terminator, newline-separated).
