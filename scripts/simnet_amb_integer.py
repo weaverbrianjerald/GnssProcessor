@@ -270,6 +270,27 @@ def read_manifest_warmup(run_dir):
     return None
 
 
+# ORACLE PIN (docs/SPEC_oracle_pin.md): an optional grading WINDOW on the DD
+# trace.  `--last-frac` can only express a TRAILING fraction, and the pin legs
+# grade two short windows inside one 60-epoch leg.  Filtered at the two points
+# the DD trace is read (the epoch prescan and the pass-1 stream) so the epoch
+# INDEX k is the index within the window and every downstream count agrees.
+# Default (None, None) => not one row is filtered; every existing caller is
+# byte-identical.
+TOW_WINDOW = (None, None)
+
+
+def set_tow_window(lo, hi):
+    """Set the inclusive (tow_min, tow_max) DD-row filter; None = open."""
+    global TOW_WINDOW
+    TOW_WINDOW = (lo, hi)
+
+
+def _tow_in_window(t):
+    lo, hi = TOW_WINDOW
+    return ((lo is None or t >= lo - 1e-6) and (hi is None or t <= hi + 1e-6))
+
+
 def prescan_epochs(dd_path):
     """Pass 0 (no csv parse): the distinct `tow` strings of the DD trace in
     first-appearance order.  Cheap — the tow field repeats within an epoch, so
@@ -287,6 +308,14 @@ def prescan_epochs(dd_path):
             i = line.find(",")
             j = line.find(",", i + 1)
             t = line[i + 1:j] if j > 0 else line[i + 1:].rstrip("\r\n")
+            if TOW_WINDOW != (None, None):
+                try:
+                    if not _tow_in_window(float(t)):
+                        n_lines -= 1
+                        continue
+                except ValueError:
+                    n_lines -= 1
+                    continue
             if t != prev:
                 prev = t
                 if t not in seen:
@@ -473,6 +502,7 @@ def grade(args, out=None):
     report to `out` (default stdout) and returns a results dict (selftest)."""
     if out is None:
         out = sys.stdout
+    set_tow_window(getattr(args, "tow_min", None), getattr(args, "tow_max", None))
 
     def P(*a):
         print(*a, file=out)
@@ -640,6 +670,14 @@ def grade(args, out=None):
         k_sel = False
         k_join = False
         for r in rd:
+            # ORACLE PIN window: drop the row BEFORE n_rows so every count, the
+            # epoch flush and the k index describe the window alone.
+            if TOW_WINDOW != (None, None):
+                try:
+                    if not _tow_in_window(float(r[i_tow])):
+                        continue
+                except (ValueError, IndexError):
+                    continue
             n_rows += 1
             tow_s = r[i_tow]
             if tow_s != cur_tow_s:
@@ -975,6 +1013,12 @@ def build_parser():
                     help="DD identity e_b vs mu_b*DD(dI)/lambda_b from network_ionosphere.csv + truth_atmo.csv")
     ap.add_argument("--stride", type=int, default=4, help="--iono-join epoch stride (default 4)")
     ap.add_argument("--gal-lanes", action="store_true", help="Galileo lanes EWL(5,7) and WL(1,5)")
+    # ORACLE PIN (docs/SPEC_oracle_pin.md): grade only DD rows inside
+    # [tow-min, tow-max] (inclusive).  `--last-frac` can only name a TRAILING
+    # fraction; the pin legs grade two short windows inside one 60-epoch leg.
+    # Omitted => unchanged behaviour, not one row filtered.
+    ap.add_argument("--tow-min", type=float, default=None)
+    ap.add_argument("--tow-max", type=float, default=None)
     ap.add_argument("--ref-free", action="store_true",
                     help="difference the trace's reference satellite away per (ref, sta_a, sta_b, signal) group (§6.12)")
     ap.add_argument("--check-lambda", action="store_true",

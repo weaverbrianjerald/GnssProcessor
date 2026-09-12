@@ -249,11 +249,43 @@ def parse_s_line(p):
 # Truth loading
 # --------------------------------------------------------------------------- #
 
+# ORACLE PIN (docs/SPEC_oracle_pin.md): an optional grading WINDOW.
+#
+# The pin legs need every channel graded over two SHORT windows of one 60-epoch
+# leg, which `--settle-frac` (a leading fraction to discard) cannot express.  The
+# filter sits at the single point every RUN trace is read and keys on the column
+# NAME: run traces carry `tow`, fixture truth files carry `tow_s`, so truth is
+# untouched by construction.  Default (None, None) => not one row is filtered and
+# every existing caller is byte-identical.
+TOW_WINDOW = (None, None)
+
+
+def set_tow_window(lo, hi):
+    """Set the inclusive (tow_min, tow_max) filter for RUN traces; None = open."""
+    global TOW_WINDOW
+    TOW_WINDOW = (lo, hi)
+
+
+def _tow_in_window(t):
+    lo, hi = TOW_WINDOW
+    return ((lo is None or t >= lo - 1e-6) and (hi is None or t <= hi + 1e-6))
+
+
 def load_csv(path):
     if not os.path.exists(path):
         return None
     with open(path, encoding="utf-8", errors="replace") as fh:
-        return list(csv.DictReader(fh))
+        rows = list(csv.DictReader(fh))
+    if TOW_WINDOW != (None, None) and rows and "tow" in rows[0]:
+        kept = []
+        for r in rows:
+            try:
+                if _tow_in_window(float(r["tow"])):
+                    kept.append(r)
+            except (TypeError, ValueError):
+                continue
+        return kept
+    return rows
 
 
 def load_truth(fixture_dir):
@@ -1174,6 +1206,11 @@ def main():
                          "(default 0.5; the level channel needs ~2 h and a short "
                          "arc will otherwise grade the transient)")
     ap.add_argument("--json", default=None)
+    # ORACLE PIN: grade only the rows inside [tow-min, tow-max] (inclusive).
+    # Applies to RUN traces and to the product epoch list; truth files are keyed
+    # on `tow_s` and are never filtered.  Omitted => unchanged behaviour.
+    ap.add_argument("--tow-min", type=float, default=None)
+    ap.add_argument("--tow-max", type=float, default=None)
     ap.add_argument("--series", default=None,
                     help="write per-epoch truth-error series to this CSV "
                          "(tow,channel,id,value,n) for the pyviz simnet viewers.  "
@@ -1198,7 +1235,14 @@ def main():
         return 2
 
     truth = load_truth(fx)
+    # The window must be OFF while the fixture truth is read (truth is keyed on
+    # `tow_s`, so it would pass through anyway — but the order documents intent).
     s_line, epochs, census = parse_products(prod)
+    if args.tow_min is not None or args.tow_max is not None:
+        set_tow_window(args.tow_min, args.tow_max)
+        epochs = [e for e in epochs if _tow_in_window(float(e["tow"]))]
+        print(f"  ORACLE-PIN window: tow [{args.tow_min}, {args.tow_max}] -> "
+              f"{len(epochs)} emitted epoch(s)")
     sc_truth, sc_disagree = satclock_truth_by_tow(truth)
     void_reason = consumer_verdict_void_reason(census)
 
