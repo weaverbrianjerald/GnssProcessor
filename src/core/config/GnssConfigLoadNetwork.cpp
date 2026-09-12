@@ -3613,6 +3613,28 @@ namespace GnssProcessor {
             jval<int>(json, "network.resume_slip_warmup_ep", "resume_slip_warmup_ep", 0);
         if (network_resume_slip_warmup_ep_ < 0)
             throw std::runtime_error("network.resume_slip_warmup_ep must be >= 0");
+        // RS-2b (§21.6): the same idea one layer up — the ESTIMATION-side fine-slip gate,
+        // diagnostic-only for K post-resume epochs.  Same exemption class as the drain
+        // warm-up above: forward-only resume response policy, inert without a resume.
+        network_resume_d5_warmup_ep_ =
+            jval<int>(json, "network.resume_d5_warmup_ep", "resume_d5_warmup_ep", 0);
+        if (network_resume_d5_warmup_ep_ < 0)
+            throw std::runtime_error("network.resume_d5_warmup_ep must be >= 0");
+        if (network_resume_d5_warmup_ep_ > 0)
+            log->info("Network (RS-2b): resume D5 warm-up armed — for the first {} PROCESSED "
+                      "epoch(s) after a warm resume the Card-4 D5 innovation gate is "
+                      "DIAGNOSTIC-ONLY: a chord that trips k·σ̂₀ is counted (run-end "
+                      "d5_warmup_suppressed, the network_d5_flags.csv warmup_suppressed "
+                      "column, and the epoch's n_d5_flags — n_d5_retaps stays 0) but is NOT "
+                      "re-tapped, NOT marked slipped for the next epoch, and its block is "
+                      "not refolded.  A MEASUREMENT knob: it holds the restored branch "
+                      "through the seam so \"branch right, cold station layer wrong\" can be "
+                      "told from \"branch inconsistent\".  The σ̂₀ accumulator is fed BEFORE "
+                      "the decision (calibration is not censored), the v3 corroboration gate "
+                      "is untouched, and the MW/LLI/IF-TD drains stay live — a genuine "
+                      "in-gap slip keeps a response.  Cold starts never arm it; NOT in the "
+                      "warm-resume fingerprint.",
+                      network_resume_d5_warmup_ep_);
         // §18.12 Card-1 coupling-regressor restore (read side of
         // network.state_snapshot_coupling_capture).  Same exemption class as the two
         // above: forward-only resume response policy, inert on a run that never resumes.

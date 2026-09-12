@@ -1494,6 +1494,7 @@ void NetworkInvariantCarryDriver::installPosterior(
     last_innov_flags_.clear();
     last_innov_sigmas_.clear();
     last_innov_terms_.clear();
+    last_innov_warmup_.clear();    // RS-2b: index-aligned with last_innov_flags_
     last_fold_rebirths_.clear();   // PD-safe INC-2a
     // Hoist the datum-frame shared covariance (the n_shared² Σ_ss copy) to ONCE per install —
     // every block's posterior-cov AND innovation readout consumes the same matrix.
@@ -1645,6 +1646,20 @@ void NetworkInvariantCarryDriver::installPosterior(
             if (d5Suppressed(bm.group, bm.chords[static_cast<std::size_t>(i)],
                              v(i) * v(i), var))
                 continue;
+            // RS-2b: inside the post-resume warm-up the trip is a MEASUREMENT.  Record the
+            // flag (so it reaches the CSV and the epoch's n_d5_flags) and count it, but
+            // leave ẑ, Pᶻ and the lane fix alone and mark it so the caller keeps it out of
+            // the slip funnel.  innov_retaps is deliberately NOT bumped: "flags N, re-taps
+            // 0" is the readout that says the window was open.
+            if (cfg_.innov_diagnostic_only) {
+                last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
+                last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
+                last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(off + i)});
+                last_innov_warmup_.push_back(1);
+                ++counters_.innov_flags;
+                ++counters_.d5_warmup_suppressed;
+                continue;
+            }
             cb.z(off + i) = bm.zhat(i) + v(i);
             cb.Pz.row(off + i).setZero();
             cb.Pz.col(off + i).setZero();
@@ -1652,6 +1667,7 @@ void NetworkInvariantCarryDriver::installPosterior(
             last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
             last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
             last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(off + i)});
+            last_innov_warmup_.push_back(0);
             ++counters_.innov_flags;
             ++counters_.innov_retaps;
             laneFixErase(bm.group, bm.chords[static_cast<std::size_t>(i)]);
@@ -1688,6 +1704,18 @@ void NetworkInvariantCarryDriver::installPosterior(
             if (d5Suppressed(bm.group, bm.chords[static_cast<std::size_t>(c)],
                              v(i) * v(i), var))
                 continue;
+            // RS-2b: diagnostic-only window — see d5GateHalf.  Per band ROW, like every
+            // other decision in this body; the funnel mask keys by the GRAPH chord either
+            // way, so a pair whose two rows differ still leaves the arc unmarked.
+            if (cfg_.innov_diagnostic_only) {
+                last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(c)]);
+                last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
+                last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(i)});
+                last_innov_warmup_.push_back(1);
+                ++counters_.innov_flags;
+                ++counters_.d5_warmup_suppressed;
+                continue;
+            }
             cb.z(i) = bm.zhat(i) + v(i);
             cb.Pz.row(i).setZero();
             cb.Pz.col(i).setZero();
@@ -1695,6 +1723,7 @@ void NetworkInvariantCarryDriver::installPosterior(
             last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(c)]);
             last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
             last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(i)});
+            last_innov_warmup_.push_back(0);
             ++counters_.innov_flags;
             ++counters_.innov_retaps;
             laneFixErase(bm.group, bm.chords[static_cast<std::size_t>(c)]);

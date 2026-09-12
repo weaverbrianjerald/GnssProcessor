@@ -41,10 +41,13 @@ namespace {
 // The trailing zhat..dw_w block is the churn card's algebra dump (2026-08-02): it takes
 // std_innov apart into the disagreement (v) and the formal claim about it (var_v), which
 // is the only way to tell an over-optimistic Cov(v) from a genuinely large innovation.
+// warmup_suppressed (RS-2b, SPEC_event_harness §21.6) is APPENDED after it: 1 where the
+// trip fell inside the post-resume D5 warm-up and was counted without being acted on, so
+// a grader can separate "the gate saw N" from "the gate did N" without the run log.
 const char* const kD5Header =
     "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
     "ewl_stasat,hold_chord,injected_prev,raw_stepped,"
-    "zhat,v,var_v,sigma0,z_post,dw_w";
+    "zhat,v,var_v,sigma0,z_post,dw_w,warmup_suppressed";
 const char* const kLaneHeader =
     "week,tow,chord_u,chord_v,station,sat,lane_cyc,frac_cyc,w,decided,held,injected";
 

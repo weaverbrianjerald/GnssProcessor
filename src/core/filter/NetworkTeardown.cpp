@@ -3859,12 +3859,24 @@ int networkTeardown(
                   wl_run.injects, med_dl, wl_run.skip_basis);
     }
     if (carry_innov_gate)
+        // RS-2b: the warm-up clause is printed whenever the knob is armed, INCLUDING at 0
+        // suppressions — "armed and suppressed nothing" is a finding (the window closed
+        // before any chord tripped, or nothing was restored to trip), and a clause that
+        // appeared only on a non-zero count could not say it (standing invariant #4).
         log->info("Network (Card 4/M1 D5 fine-slip innovation gate): {} carried-DD innovation "
                   "flag(s), {} fresh re-tap(s) over the run (k={}; the estimation-side reset for "
                   "the fine slips the coarse MW/LLI/IF-TD layer is relaxed against — each flagged "
-                  "chord re-taps data-only + marks its arc slipped for the next epoch).",
+                  "chord re-taps data-only + marks its arc slipped for the next epoch).{}",
                   carry_innov_flags_total, carry_innov_retaps_total,
-                  config_.networkCarryInvariantInnovK());
+                  config_.networkCarryInvariantInnovK(),
+                  config_.networkResumeD5WarmupEp() > 0
+                      ? fmt::format("; {} trip(s) suppressed in the {}-epoch post-resume "
+                                    "warm-up (counted, never re-tapped, never funnelled) "
+                                    "over {} epoch(s) the window was open",
+                                    carry_driver.counters().d5_warmup_suppressed,
+                                    config_.networkResumeD5WarmupEp(),
+                                    ctx.counters.n_resume_d5_warmup_epochs)
+                      : std::string());
     if (carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()) {
         const long long sup = carry_driver.counters().innov_suppressed;
         const long long tripped = carry_innov_flags_total + sup;

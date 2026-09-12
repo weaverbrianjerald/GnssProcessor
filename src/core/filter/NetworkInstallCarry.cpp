@@ -170,6 +170,16 @@ void networkInstallCarry(
         carry_driver.setInnovFlatChords(std::move(flat));
     }
 
+    // RS-2b (network.resume_d5_warmup_ep, SPEC_event_harness §21.6): for the first K
+    // PROCESSED epochs after a warm resume the D5 gate is DIAGNOSTIC-ONLY.  Counted HERE —
+    // the single site the gate lives at — so a run that never installs a posterior never
+    // burns the window, exactly as the MW/LLI drain warm-up counts at its own single
+    // dispatch site.  The retire is the window's DECOUPLING edge (invariant #7) and is
+    // logged.  The flag is cleared on every other epoch, so a run that never resumes sets
+    // it false every epoch and the gate is byte-identical.
+    const bool d5_warmup_now = ctx.carry.resume_d5_warmup_left > 0;
+    carry_driver.setInnovDiagnosticOnly(d5_warmup_now);
+
     // parallel_carry: thread installPosterior's posterior-cov GEMMs.  Run it
     // SERIAL-over-blocks (n_threads=1, its byte-identical-to-serial path) so Eigen's
     // threading does not nest with the seam's per-block OpenMP.
@@ -180,6 +190,22 @@ void networkInstallCarry(
         log->warn("Network[Card4]: DD-carry install failed at TOW {:.1f} ({}); "
                   "carry reset (refloats next epoch).", se.time.tow, ex.what());
         carry_driver.reset();
+    }
+    // RS-2b: burn one epoch of the window and retire it.  AFTER the install on purpose —
+    // the retire line quotes d5_warmup_suppressed, which this very epoch's gate has just
+    // incremented, and logging it beforehand printed the count as of the PREVIOUS epoch
+    // (a K=1 window read "suppressed 0" while the run-end line correctly said 301).  An
+    // instrument that reports its own work one epoch late reads clean and lies —
+    // invariant #4.  Outside the try/catch so a failed install still burns the epoch: the
+    // window is a count of PROCESSED epochs, not of successful ones.
+    if (d5_warmup_now) {
+        ++ctx.counters.n_resume_d5_warmup_epochs;
+        if (--ctx.carry.resume_d5_warmup_left == 0)
+            log->info("Network (RS-2b resume D5 warm-up): RETIRED at TOW {:.1f} — the D5 "
+                      "innovation gate acted diagnostic-only for {} post-resume epoch(s) "
+                      "and suppressed {} trip(s); it re-taps from the next epoch.",
+                      se.time.tow, ctx.counters.n_resume_d5_warmup_epochs,
+                      carry_driver.counters().d5_warmup_suppressed);
     }
     carry_prev_tow = se.time.tow;
 
@@ -642,7 +668,16 @@ void networkInstallCarry(
     // built with this epoch's blocks; next epoch's buildCarryDdPriors excludes it from
     // the A_old membership so the affected cycle re-taps fresh (the C3c path).
     if (carry_innov_gate) {
-        for (const auto& [gk, chord] : carry_driver.lastInnovFlags()) {
+        // RS-2b: a trip the post-resume warm-up SUPPRESSED is a measurement, not a
+        // decision — it kept its carried prior, so marking its arc slipped here would
+        // refloat next epoch exactly the chord the window exists to hold, and the
+        // "diagnostic-only" claim would be false in the one place it matters.  The mask is
+        // index-aligned with lastInnovFlags() and empty whenever the window is closed.
+        const auto& d5_warm = carry_driver.lastInnovWarmupSuppressed();
+        const auto& d5_flag_list = carry_driver.lastInnovFlags();
+        for (std::size_t fx = 0; fx < d5_flag_list.size(); ++fx) {
+            if (fx < d5_warm.size() && d5_warm[fx]) continue;
+            const auto& [gk, chord] = d5_flag_list[fx];
             const auto git = carry_arc_amb_key.find(gk);
             const auto ait = (git != carry_arc_amb_key.end())
                                  ? git->second.find(chord) : std::map<ArcKey, std::string>::const_iterator{};
@@ -763,6 +798,7 @@ void networkInstallCarry(
         const auto& flags  = carry_driver.lastInnovFlags();
         const auto& sigmas = carry_driver.lastInnovFlagSigmas();
         const auto& terms  = carry_driver.lastInnovFlagTerms();
+        const auto& warm_mask = carry_driver.lastInnovWarmupSuppressed();   // RS-2b
         if (!flags.empty()) {
             // Stream + header are owned by NetworkRunTraces (opened TRUNCATING once in
             // openMwWlDumps, under the SAME arming expression this block tests).  The
@@ -833,7 +869,13 @@ void networkInstallCarry(
                         << (d5_inject_chords_prev.count(chord) ? 1 : 0) << ','
                         << raw_stepped << ','
                         << t_zhat << ',' << t_v << ',' << t_var << ','
-                        << t_s0 << ',' << t_zpost << ',' << t_dw << '\n';
+                        << t_s0 << ',' << t_zpost << ',' << t_dw << ','
+                        // RS-2b: 1 = this trip was inside the post-resume D5 warm-up, so
+                        // it was COUNTED and nothing else — no re-tap, no funnel entry, no
+                        // refold.  Plain 0/1 rather than the raw_stepped tri-state: unlike
+                        // "did the receiver step", this one is never unknown, the driver
+                        // either suppressed the row or acted on it.
+                        << (fi < warm_mask.size() && warm_mask[fi] ? 1 : 0) << '\n';
                 }
             }
         }

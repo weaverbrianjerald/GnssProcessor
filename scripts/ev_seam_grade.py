@@ -297,6 +297,29 @@ def pb_deltas(a_epoch, b_epoch):
     return out
 
 
+def pb_desat(a_epoch, b_epoch):
+    """|ΔPB| after removing each SATELLITE's own median ΔPB — the de-referenced view.
+
+    A branch re-realization at the seam moves a satellite's whole phase-bias column by a
+    common amount (its ambiguity datum lands elsewhere), and the RAW |ΔPB| therefore reads
+    that one re-realization on every signal of that satellite forever.  Removing the
+    per-satellite median leaves only the part that is NOT a per-satellite datum — a
+    satellite with a single signal in common drops out, since its residual is 0 by
+    construction and would dilute the quantile.
+    """
+    per = {}
+    for k, v in a_epoch.items():
+        if k[0] == "P" and k in b_epoch:
+            per.setdefault(k[1], []).append(v - b_epoch[k])
+    out = []
+    for _sat, vals in per.items():
+        if len(vals) < 2:
+            continue
+        m = pct(vals, 50)
+        out += [abs(x - m) for x in vals]
+    return out
+
+
 # ---------------------------------------------------------------------- rhs
 _SHGATE_RE = None
 
@@ -401,13 +424,16 @@ def grade(legdir, seeddir):
             r["pb_p50"], r["pb_p95"] = pct(vals, 50), pct(vals, 95)
             r["pb_over"] = sum(1 for v in vals if v > 0.05)
             r["pb_over_frac"] = (r["pb_over"] / len(vals)) if vals else None
+            ds = pb_desat(leg_cp[t], seed_cp[t])
+            r["pb_desat_n"] = len(ds)
+            r["pb_desat_p50"], r["pb_desat_p95"] = pct(ds, 50), pct(ds, 95)
             d = leg_decl.get(t, {})
             r["decl_R"] = sorted(d.get("R", ()))
             r["decl_pb_ctr"] = len(d.get("ctr_pb", {}))
         else:
             for c in ("clk_n", "clk_p50", "clk_p95", "cb_n", "cb_p50", "cb_p95",
                       "pb_n", "pb_p50", "pb_p95", "pb_over", "pb_over_frac",
-                      "decl_pb_ctr"):
+                      "pb_desat_n", "pb_desat_p50", "pb_desat_p95", "decl_pb_ctr"):
                 r[c] = None
             r["decl_R"] = []
 
@@ -541,6 +567,41 @@ def pooled_g5(legdir, seeddir, meta, rows):
         declared_pb += len(leg_decl.get(t, {}).get("R", ()))
     return {"clk": clk, "cb": cb, "zwd": zwd, "pb_bad_epochs": pb_bad_epochs,
             "declared_pb_bumps": declared_pb}
+
+
+def seed_yardsticks(seeddir, tows):
+    """The SEED's OWN epoch-to-epoch step over the leg window — the calibration scale.
+
+    Every leg-minus-seed bar is meaningless until it is read against how far the
+    CONTINUOUS run's own wire moves between consecutive epochs.  Measured on exactly the
+    leg's tow window so the comparison is time-matched (the wire's step rate is not
+    constant through the day).  Returns p50/p95 per channel, in metres.
+    """
+    lo, hi = tows[0], tows[-1]
+    sp = os.path.join(seeddir, "products.txt")
+    out = {}
+    if os.path.isfile(sp):
+        P = read_products(sp, lo, hi)
+        B, _ = read_code_bias_and_disc(sp, lo, hi)
+        ts = sorted(P)
+        clk, pb, cb = [], [], []
+        for i in range(1, len(ts)):
+            a, b = P[ts[i]], P[ts[i - 1]]
+            clk += clock_contrast(a, b)
+            pb += [abs(v - b[k]) for k, v in a.items() if k[0] == "P" and k in b]
+            ba, bb = B.get(ts[i], {}), B.get(ts[i - 1], {})
+            cb += [abs(v - bb[k]) for k, v in ba.items() if k in bb]
+        out["clk"] = (len(clk), pct(clk, 50), pct(clk, 95))
+        out["pb"] = (len(pb), pct(pb, 50), pct(pb, 95))
+        out["cb"] = (len(cb), pct(cb, 50), pct(cb, 95))
+    z = read_zwd(seeddir)
+    zt = [t for t in sorted(z) if lo <= t <= hi]
+    zd = []
+    for i in range(1, len(zt)):
+        a, b = z[zt[i]], z[zt[i - 1]]
+        zd += [abs(a[s] - b[s]) for s in a if s in b]
+    out["zwd"] = (len(zd), pct(zd, 50), pct(zd, 95))
+    return out
 
 
 def g5_verdict(pool):
@@ -700,6 +761,51 @@ def main():
     else:
         print("  CONSUMER       (report only) no overlapping closed-loop rows")
         g["consumer"] = None
+
+    # --- RS-2 §21.5 readouts: the per-epoch detail a seam A/B is read on, beside the
+    # --- gates.  Everything here is REPORTED, never scored.
+    print()
+    print("SEAM DETAIL (RS-2)")
+    at = {r["k"]: r for r in rows}
+    decl = [(r["k"], r["decl_R"]) for r in rows if r["decl_R"]]
+    if decl:
+        print(f"  emitter R records (per-satellite discontinuity bump): "
+              + ", ".join(f"k+{k}: {len(s)} sat" for k, s in decl[:12])
+              + (f"  (+{len(decl) - 12} more)" if len(decl) > 12 else ""))
+        print(f"    first R at k+{decl[0][0]} names: {' '.join(decl[0][1])}")
+    else:
+        print("  emitter R records: none in the window")
+    print("  chord births k+1..+5:  "
+          + "  ".join(f"+{k}: {fint(at[k]['n_chord_births_leg'], 0).strip()}"
+                      for k in (1, 2, 3, 4, 5) if k in at)
+          + "    (seed at the same tows: "
+          + " ".join(f"+{k}: {fint(at[k]['n_chord_births_seed'], 0).strip()}"
+                     for k in (1, 2, 3, 4, 5) if k in at) + ")")
+    print("  D5 flags / re-taps:    "
+          + "  ".join(f"+{k}: {fint(at[k]['n_d5_flags_leg'], 0).strip()}"
+                      f" / {fint(at[k]['n_d5_retaps_leg'], 0).strip()}"
+                      for k in (1, 2) if k in at))
+    for k in (2, 60):
+        if k in at:
+            print(f"  |dPB| vs seed at k+{k}: raw p50 "
+                  f"{fnum(at[k]['pb_p50'], 4, 0).strip()} m; PER-SAT-median-removed p50 "
+                  f"{fnum(at[k]['pb_desat_p50'], 4, 0).strip()} / p95 "
+                  f"{fnum(at[k]['pb_desat_p95'], 4, 0).strip()} m "
+                  f"(n={at[k]['pb_desat_n']})")
+    for k in (5, 60):
+        if k in at:
+            print(f"  clock contrast at k+{k}: p50 {fnum(at[k]['clk_p50'], 4, 0).strip()} "
+                  f"/ p95 {fnum(at[k]['clk_p95'], 4, 0).strip()} m")
+    yard = seed_yardsticks(seeddir, [r["tow"] for r in rows])
+    print()
+    print("SEED YARDSTICKS — the CONTINUOUS run's OWN epoch-to-epoch step over this window")
+    for tag, name in (("clk", "clock contrast (datum-free)"), ("cb", "W6 code bias"),
+                      ("pb", "phase bias"), ("zwd", "station ZWD")):
+        if tag in yard and yard[tag][1] is not None:
+            n, p50, p95 = yard[tag]
+            print(f"  {name:<28} p50 {p50:.5f}  p95 {p95:.5f}  m   (n={n})")
+    g["seam_detail"] = {"decl_R": [(k, s) for k, s in decl],
+                        "yardsticks": yard}
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:

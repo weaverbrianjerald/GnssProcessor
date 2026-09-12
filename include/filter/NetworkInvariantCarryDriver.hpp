@@ -223,6 +223,25 @@ public:
          * marginalized rather than folded frame-wrong (@ref Counters::resume_dropped_unbased).
          */
         bool   carry_rebase{false};
+        /**
+         * @brief RS-2b (@c network.resume_d5_warmup_ep): run the D5 gate DIAGNOSTIC-ONLY.
+         *
+         * Set per epoch by the install seam from the post-resume countdown — never a
+         * construction-time policy, because the window is a property of the seam, not of
+         * the run.  While true, a chord that trips k·σ̂₀ (and survives the v3 corroboration
+         * gate) is recorded as a flag and counted in @ref Counters::innov_flags and
+         * @ref Counters::d5_warmup_suppressed, but its posterior is NOT re-tapped, its
+         * @f$P^z@f$ row/col is NOT refolded, its lane fix is NOT erased, and
+         * @ref lastInnovWarmupSuppressed marks it so the caller keeps it out of the next
+         * epoch's slip funnel.  The σ̂₀ accumulator feed sits ABOVE the decision and is
+         * therefore untouched (the D5 v2 contract: above-threshold rows must keep feeding
+         * calibration whether or not the re-tap happens).
+         *
+         * The point is falsifiability, not repair: a re-tap destroys the very hypothesis
+         * the gate would have tested, so the branch has to be held to find out whether it
+         * is the branch or the cold station layer that the data disagrees with.
+         */
+        bool   innov_diagnostic_only{false};
     };
 
     /// One present, resolvable ambiguity arc this epoch (the caller has already
@@ -292,6 +311,7 @@ public:
         //     LAST BUILD's figures, not run totals: the re-base runs on exactly the first
         //     DD prior build after a restore, and a within-epoch rebuild (RAIM re-solve)
         //     recomputes the same numbers, so accumulating them would double-count. ---
+        long long d5_warmup_suppressed{0};      ///< RS-2b: D5 trips that were COUNTED but not acted on because the post-resume warm-up window (@c network.resume_d5_warmup_ep) was open — the chord kept its carried prior, its arc was not marked slipped, and its block was not refolded.  0 with the knob armed means the window closed before any chord tripped, or nothing was restored to trip (invariant #4).
         long long resume_rebased{0};            ///< RS-2: carried chord rows re-based onto this run's linearization at the first post-resume build.  0 with @c carry_rebase armed means the wiring never fired (invariant #4) — usually no restored blob, or nothing carried at that epoch.
         long long resume_dropped_unbased{0};    ///< RS-2: chord rows that WOULD have carried but were marginalized (born fresh on the diffuse prior) because their restored contributors carried no @c ZL row, so no exact re-base existed.  Folding them would have asserted the writer's frame.
         double    resume_rebase_max_dz{0.0};    ///< RS-2: max |Δẑ| (m) applied by the re-base — the size of the frame error the restored branch would otherwise have folded.
@@ -778,6 +798,29 @@ public:
         innov_flat_ = std::move(flat);
     }
 
+    /**
+     * @brief RS-2b: arm / disarm the DIAGNOSTIC-ONLY D5 gate for the NEXT install
+     *        (@ref Config::innov_diagnostic_only).
+     *
+     * Per-epoch state, set by the install seam from the post-resume countdown, for the
+     * same reason @ref setInnovFlatChords is per-epoch: the window belongs to the seam,
+     * not to the run, and a construction-time policy could not be retired mid-run.
+     * Writes the Config field so the two gate bodies read ONE flag.
+     */
+    void setInnovDiagnosticOnly(bool on) { cfg_.innov_diagnostic_only = on; }
+
+    /**
+     * @brief RS-2b: per-flag "this trip was SUPPRESSED by the post-resume warm-up",
+     *        index-aligned with @ref lastInnovFlags (1 = suppressed, 0 = acted on).
+     *
+     * The caller MUST consult this before folding a flag into the next epoch's slip
+     * funnel: a suppressed trip is a measurement, and marking its arc slipped would
+     * refloat exactly the chord the warm-up exists to hold.  Empty when the gate is off.
+     */
+    const std::vector<char>& lastInnovWarmupSuppressed() const {
+        return last_innov_warmup_;
+    }
+
     /// The carried DD mean+variance of @p chord in @p group (false if not carried) — the read
     /// half of the WL inject (compute the current lane value before deciding to inject).  Same
     /// as @ref carriedDdForTest but named for production use.  On a WL-3 PAIR block this
@@ -1003,6 +1046,7 @@ private:
     std::vector<std::pair<int, ArcKey>> last_innov_flags_;  ///< D5: (group, chord) flagged at the last install.
     std::vector<double> last_innov_sigmas_;  ///< D5 diagnostic: |v|/√Cov(v) per flag, aligned with last_innov_flags_.
     std::vector<InnovTerms> last_innov_terms_;  ///< D5 diagnostic: the (ẑ, v, Cov(v)_ii, σ̂₀, z_post) behind each flag, aligned with last_innov_flags_ — see @ref lastInnovFlagTerms.
+    std::vector<char> last_innov_warmup_;       ///< RS-2b: 1 where the flag at the same index was SUPPRESSED by the post-resume D5 warm-up (counted, never re-tapped) — see @ref lastInnovWarmupSuppressed.
     std::vector<FoldRebirth> last_fold_rebirths_;  ///< PD-safe INC-2a: blocks rebirthed at the last install — see @ref lastFoldRebirths.
     std::set<std::pair<int, ArcKey>> gate_exempt_;  ///< WL-2 §3.3: (group, chord) injected this epoch — D5-exempt at the NEXT @ref installPosterior (consumed + cleared there).  WL-3: a pair chord's exemption spans BOTH band rows.
     std::set<std::pair<int, ArcKey>> innov_flat_;   ///< D5 v3: (group, chord) whose arc the raw observables measured as CONTINUOUS this epoch — see @ref setInnovFlatChords.  Consumed + cleared in @ref installPosterior.
