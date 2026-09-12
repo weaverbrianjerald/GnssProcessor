@@ -207,7 +207,30 @@ def cmd_write_seed(args):
     net["trace_epoch_status"] = True
     cfg.setdefault("logging", {})["enable_rt_engine"] = True
 
+    # --extra: deep-merged LAST so it can override anything this function set.
+    # write-seed inherits the GOLDEN's config, which predates any knob added
+    # after the golden was pinned — arming those (trace-class ones especially,
+    # e.g. logging.enable_mw_slip_detector, which defaults FALSE once a logging
+    # section exists) is exactly what --extra is for.  Recorded verbatim in
+    # seed_meta.json so the seed is self-describing, exactly as leg_meta.json
+    # records make-leg's.
+    extra = {}
+    if getattr(args, "extra", ""):
+        try:
+            extra = json.loads(args.extra)
+        except ValueError as e:
+            raise SystemExit(f"FATAL: --extra is not valid JSON: {e}")
+        if not isinstance(extra, dict):
+            raise SystemExit("FATAL: --extra must be a JSON object")
+        _deep_merge(cfg, extra)
+
     cfg_path = _write(cfg, os.path.join(rundir, "seed.json"))
+    meta = {
+        "base": args.base, "hours": args.hours,
+        "interval_ep": args.interval_ep, "extra": extra, "exe": args.exe,
+    }
+    with open(os.path.join(rundir, "seed_meta.json"), "w", encoding="utf-8") as fh:
+        json.dump(meta, fh, indent=2)
     n_ep = int(args.hours * 3600.0 / EPOCH_INTERVAL_S)
     print(f"seed rundir       {rundir}")
     print(f"  base chain      {args.base}"
@@ -216,6 +239,8 @@ def cmd_write_seed(args):
     print(f"  hours           {args.hours}  (~{n_ep} epochs)")
     print(f"  snapshots       every {args.interval_ep} emitted epochs -> "
           f"{os.path.basename(snap)}.epNNNN")
+    if extra:
+        print(f"  EXTRA           {json.dumps(extra)}")
     print(f"  config          {cfg_path}")
     print(f"RUN: pushd {rundir} && \"{args.exe}\" \"{cfg_path}\"")
     if args.run:
@@ -406,6 +431,9 @@ def main():
                    help="snapshot cadence in EMITTED epochs (default 60 = 1800 s)")
     s.add_argument("--exe", default=DEFAULT_EXE)
     s.add_argument("--run", action="store_true")
+    s.add_argument("--extra", default="",
+                   help="JSON object deep-merged into seed.json AFTER every "
+                        "harness field (arms knobs the base golden predates)")
     s.set_defaults(func=cmd_write_seed)
 
     for nm, fn, need_ev in (("make-leg", cmd_make_leg, True), ("null", cmd_null, False)):
