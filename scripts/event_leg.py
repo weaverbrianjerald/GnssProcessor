@@ -213,6 +213,9 @@ def cmd_write_seed(args):
     # re-base frame and the PB emission filter state - so a resume leg's wire continues
     # the writer's phase-bias levels (17.7 m p50 -> 0.000 m at the first epoch).
     net["state_snapshot_emit_capture"] = True
+    # RS-6a (SPEC_event_harness §21.13): also capture the STATION layer's memory - the
+    # rx-CB carry and the T5 per-LOS iono deviation carry (RC/SD rows).
+    net["state_snapshot_station_capture"] = True
     net["state_snapshot_require"] = False          # the seed IS the cold start
     net["product_output_path"] = _fwd(os.path.join(rundir, "products.txt"))
     net["write_run_manifest"] = True
@@ -321,6 +324,9 @@ def _leg_common(args, event_json):
     # RS-5: restore both emit engines at the seam.  Inert (logged) against a seed
     # written without state_snapshot_emit_capture.
     net["resume_emit_restore"] = True
+    # RS-6a: restore both station-layer memories at the seam (the a00 seam transient
+    # +4.6 -> +0.4 TECU).  Inert (logged) against a seed written without the RC/SD rows.
+    net["resume_station_restore"] = True
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
     # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the

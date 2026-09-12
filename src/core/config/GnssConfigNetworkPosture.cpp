@@ -375,6 +375,15 @@ namespace GnssProcessor {
               "carry the emit layer's memory (ER/PF/PS rows) so a warm resume does not cold-start the "
               "eq34 emit re-base and the PB filter: the seam's 17.7 m per-key phase-bias step becomes "
               "0.000 m p50 (RS-5)" },
+            // --- RS-6a (SPEC_event_harness s21.13/s21.14): WRITE half of station-layer
+            //     continuity - the rx-CB carry and the T5 per-LOS deviation carry ride the
+            //     snapshot (RC/SD rows).  Write side only, products byte-identical.
+            { !nc.state_snapshot_path.empty(),
+              nc.state_snapshot_station_capture,
+              Tier::SCOPED, false, "network.state_snapshot_station_capture",
+              "carry the rx-CB carry + the T5 iono deviation carry in the snapshot so a warm resume "
+              "continues the station layer's memory: the SH a00 seam transient +4.6 -> +0.4 TECU, "
+              "receiver clocks at +1 1.21 -> 0.91 m (RS-6a)" },
             { warm && network_phase_leveling_,
               network_zwd_seam_reseed_,
               Tier::SCOPED, false, "network.zwd_seam_reseed",
@@ -821,6 +830,15 @@ namespace GnssProcessor {
               "restore the eq34 emit re-base frame + the PB emission filter at a warm resume: emitted "
               "phase biases match the continuous wire to p50 0.000 m at +1, a stateful consumer sees 0 "
               "PB resets at the seam (control 19); products otherwise byte-identical (RS-5)" },
+            // --- RS-6a (SPEC_event_harness s21.13/s21.14): READ half - restore both station-layer
+            //     memories at the seam.  Forward-only resume policy, not fingerprinted; requires
+            //     resume_frame_restore.
+            { warm && network_resume_frame_restore_,
+              network_resume_station_restore_,
+              Tier::SCOPED, false, "network.resume_station_restore",
+              "restore the rx-CB carry + the T5 deviation carry at a warm resume: a00 transient "
+              "+4.6 -> +0.4 TECU, +2 clock contrast 0.44 -> 0.29 m, receiver clocks 1.21 -> 0.91 m; "
+              "the code-bias level and the rx-CB gate share do not move (RS-6a)" },
             // --- RTA-4 serialize_disc_counters (first ledger row 2026-09-12, RS-4): the per-key
             //     discontinuity counters reach the wire (optional P/B/C fields).  Outputs-only;
             //     changes product bytes, so the goldens pin it only with a recorded re-baseline.
