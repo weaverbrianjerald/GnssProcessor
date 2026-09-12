@@ -760,6 +760,16 @@ namespace GnssProcessor {
               "post-resume build instead of folding it in the writer's frame (the field golden's "
               "61/61-withheld resume: dd_fold 7.8e7 of RHS norm, 676 D5 flags at +1; SPEC_event_harness "
               "s21.5)" },
+            // --- RS-2b (SPEC_event_harness s21.6/s21.7): the D5 gate is DIAGNOSTIC-ONLY for K
+            //     post-resume epochs so the restored (re-based) branch is not erased by the
+            //     cold station layer's one-epoch disagreement (305 -> 7 rebirths at +2; the
+            //     gate runs at the seed's own rate afterwards).  Forward-only resume policy.
+            { warm && nc.state_snapshot_carry,
+              network_resume_d5_warmup_ep_ > 0,
+              Tier::SCOPED, false, "network.resume_d5_warmup_ep",
+              "hold the restored invariant DD branch through the first K post-resume epochs "
+              "(D5 trips counted, not re-tapped; K = 1 suffices): +2 chord rebirths 305 -> 7, live "
+              "D5 trips afterwards 0-2 per epoch = the seed's own rate (SPEC_event_harness s21.7)" },
             { network_clock_temporal_anchor_ && !network_clock_model_,
               network_readmit_seed_horizon_s_ > 0.0,
               Tier::SCOPED, false, "network.readmit_seed_horizon_s",

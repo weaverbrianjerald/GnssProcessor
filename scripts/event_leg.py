@@ -296,6 +296,12 @@ def _leg_common(args, event_json):
     # producer says so loudly rather than silently keeping the writer's frame.  Same
     # forward-only resume-response exemption class as the two restores above.
     net["resume_carry_rebase"] = True
+    # RS-2b (SPEC_event_harness §21.7): hold the restored branch through the first
+    # post-resume epoch — the D5 gate is diagnostic-only for K = 1 epoch, so the cold
+    # station layer's one-epoch disagreement (|v| ~11 m on 301 of 701 chords) does not
+    # erase a branch the data agrees with from +2 on (rebirths at +2: 305 -> 7).  MW /
+    # LLI / IF-TD drains stay live.  Inert without a restored blob.
+    net["resume_d5_warmup_ep"] = 1
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
     # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the
