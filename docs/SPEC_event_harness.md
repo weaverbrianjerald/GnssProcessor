@@ -4052,3 +4052,14 @@ cost — a same-exe timing pair is owed, and the knob removes work rather than a
 it.  And the FIELD arm is owed: `golden_field_gps_dual` is GPS-only, so the knob is
 structurally inert there — a documented manifest **exception, not a pin** — and it
 becomes armable when that lineage goes multi-constellation.
+
+### 18.1 Seeds re-written at the promoted golden, and the fingerprint rule (2026-09-12 ~00:50 local)
+
+`network.scoped_handover_response` (§19, RECOMMEND_ON, pinned in `golden_sim_tri_w6` at main e90086f) is FINGERPRINTED: a leg cannot add it to a snapshot written without it (`state_snapshot_require` refuses the run before its first epoch — §19.4), so every existing seed became a pre-promotion posture.  Two seeds were re-written from the promoted golden with the main-tree exe built at e90086f (`gnss_processor_seedv2.exe`, 3FDC5F8D…):
+
+| seed | base | fixture | snapshots | fingerprint | notes |
+|---|---|---|---|---|---|
+| `runs/evseed_quiet6h_v2` | `config/golden/golden_sim_tri_w6.json` | `runs/simnet60_quiet_wu93_24h` | ep0001 … ep0665 (12, every 60 emitted) | `c5b5df834d185ac8` | 720/720 emitted, 0 withheld; pivot departures at tow 271230 (E) and 276150 (G) unchanged |
+| `runs/evseed_slipped6h_v2` | `config/test_suite/_golden_sim_campaign_zwdblk_scoped.json` (= the golden on the campaign bed + the zwdblk pair `carry_zwd` + `carry_zwd_in_block`, as the old slipped seed carried) | `runs/simnet60_campaign_wu93` | as above | (run in flight) | |
+
+**Rules from here on.**  (1) New legs resume from the `_v2` seeds; the old `evseed_quiet6h` (evharness worktree) and `evseed_slipped6h` stay on disk for like-for-like re-runs of old legs only.  (2) A solve-affecting knob is A/B'd on the harness as a FRESH-CONVERGENCE pair (golden ± one knob, ~20 min each) or by writing a new seed per posture — never by `--extra` on a resume leg; trace-class / QC knobs remain leg-legal.  (3) `event_leg.py` arms `zwd_seam_reseed` on every leg (§18); the seeds themselves do not need it (they are fresh runs).  The study scripts that hard-code `SEED = "runs/evseed_quiet6h"` (`ev_study1_legs.py`, `ev_study3_legs.py`, …) describe closed studies and are left as the record.
