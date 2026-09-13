@@ -335,7 +335,27 @@ def _leg_common(args, event_json):
     # on the disposable copy above, never on seed.txt.
     net["state_snapshot_interval_s"] = 1.0e9
     net["resume_frame_restore"] = True
-    net["resume_coupling_restore"] = True
+    # §18.12 Card-1 coupling restore.  The LOADER THROWS on it unless the lineage
+    # also carries the Card-1f interlocks (GnssConfigLoadNetwork.cpp, the four
+    # throws under `if (network_resume_coupling_restore_)`): resume_frame_restore
+    # (set just above, always satisfied here), carry_conditional_coupling,
+    # carry_coupling_gauge_project, and amb_seam_reinflate_var_m2 == 0.  The sim
+    # golden carries 1f, the FIELD golden does not — so arming this unconditionally
+    # made every field leg fail to LOAD until the caller remembered
+    # --extra '{"network":{"resume_coupling_restore":false}}'.  Read the same keys
+    # off the flattened seed config and arm it only when they hold; --extra still
+    # overrides in either direction.  The other resume_* defaults stay
+    # unconditional on purpose: they are inert-with-a-log against a seed written
+    # without their rows, where this one is a hard config error.
+    cpl_missing = []
+    if not net.get("carry_conditional_coupling", False):
+        cpl_missing.append("network.carry_conditional_coupling")
+    if not net.get("carry_coupling_gauge_project", False):
+        cpl_missing.append("network.carry_coupling_gauge_project (Card 1f)")
+    if float(net.get("amb_seam_reinflate_var_m2") or 0.0) > 0.0:
+        cpl_missing.append("network.amb_seam_reinflate_var_m2 == 0 (seed has "
+                           f"{net.get('amb_seam_reinflate_var_m2')})")
+    net["resume_coupling_restore"] = not cpl_missing
     # RS-2 (SPEC_event_harness §21.4): re-base the restored invariant DD branch onto THIS
     # run's linearization at the first post-resume DD prior build (ẑ += W·zl_writer −
     # zl_now).  Inert against a seed written without state_snapshot_carry_lin — the
@@ -441,6 +461,12 @@ def _leg_common(args, event_json):
         print("  EVENT           none (NULL control leg)")
     if extra:
         print(f"  EXTRA           {json.dumps(extra)}")
+    if cpl_missing:
+        forced = bool(net.get("resume_coupling_restore", False))
+        print("  coupling        resume_coupling_restore "
+              + ("ON (forced by --extra; the loader will THROW)" if forced else "OFF")
+              + " - the seed's lineage does not carry "
+              + ", ".join(cpl_missing))
     print(f"  config          {cfg_path}")
     print(f"RUN: pushd {legdir} && \"{args.exe}\" \"{cfg_path}\"")
     if args.run:
