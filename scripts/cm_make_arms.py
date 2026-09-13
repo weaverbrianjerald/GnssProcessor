@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Card CM (SPEC_event_harness s24.8, CODE-MODEL CONSISTENCY): write the six single-knob COLD
+arm configs from the field golden and the two trace-merge smoke configs from the cert4 smoke,
+then print every arm's FLATTENED diff against A0 (it must be the knob + the output paths only).
+
+    python scripts/cm_make_arms.py [--golden config/golden/golden_field_gps_dual.json]
+        [--runs C:/GnssProcessor/runs] [--smoke-from C:/GnssProcessor/runs/_cert4_smoke_base/smoke.json]
+        [--only a0,a2] [--no-smoke] [--no-arms]
+
+Every arm = the golden (already flat: the generator refuses a base with `extends`)
+  + processing.max_duration_s 7200   (240 epochs from the file start; network.start_offset_hours is
+                                      left exactly as the golden has it)
+  + network.trace_postfit_rows true  (the s24.6 per-row trace, trace-only)
+  + network.trace_zwd true           (read (ii)'s network_zwd.csv; trace-only, harness-standard)
+  + ONE knob (the s24.8 table)
+  + its own output paths: every string value under runs/golden_field_gps_dual/ is re-pointed to
+    runs/_cm_<arm>/ (product_output_path, state_snapshot_path); the producer is launched with
+    cwd = that dir (scripts/ev_launch.ps1) so ./logs/ is per-arm as well.
+
+The smokes: runs/_cert4_smoke_base/smoke.json re-pointed to runs/_cm_smoke_base (knobs OFF) and to
+runs/_cm_smoke_rows with network.trace_postfit_rows true — products.txt must hash 87a33bf0... in both.
+"""
+import argparse
+import json
+import os
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+ARMS = {
+    "a0": {},
+    "a1": {"network.carry_rx_code_bias": False},
+    "a2": {"network.estimate_sat_code_bias": False,
+           "model_corrections.enable_code_phase_bias": True},
+    # a2 AS WRITTEN is INERT on this lineage: the loader's SH coupling forces estimate_sat_code_bias back
+    # on (GnssConfigLoadNetwork.cpp:2830-2833, "SH co-estimation is the W6 iono constraint") and the W6
+    # chain then forces enable_code_phase_bias OFF (:2891) — the run's gnss_config.log prints the W6
+    # ENABLED line and the products are the control's.  The loader's own posture for "SH iono + the
+    # external .BIA" is EXT-CB (:2796-2800): network.external_sat_code_bias, which suppresses that force
+    # (mutually exclusive with an explicit estimate_sat_code_bias: true, and it hard-errors on an explicit
+    # enable_code_phase_bias: false) — a2x is that realization of a2's intent, reported beside a2.
+    "a2x": {"network.estimate_sat_code_bias": False,
+            "network.external_sat_code_bias": True,
+            "model_corrections.enable_code_phase_bias": True},
+    "a3": {"network.estimate_iono_sh": False},
+    "a4": {"filter.process_noise.sat_code_bias_q": 1e-4},
+    "a5": {"network.cb_kaula_prior": False},
+}
+COMMON = {"processing.max_duration_s": 7200.0, "network.trace_postfit_rows": True,
+          # read (ii) needs logs/network_zwd.csv, which the golden does not arm; trace-only
+          # (GnssConfigLoadNetwork.cpp: "per-station ZWD trace ENABLED — network_zwd.csv logs each
+          # station's estimated ZWD + datum-conditioned formal sigma each emitted epoch"), and the
+          # event harness arms it on every leg.  Certified byte-identical on this build by the
+          # _cm_a0_nozwd / _cm_a0 pair (products.txt hash).
+          "network.trace_zwd": True}
+GOLDEN_RUN_SUBDIR = "runs/golden_field_gps_dual"
+
+
+def set_dotted(cfg, key, val):
+    """cfg[a][b][c] = val for key 'a.b.c'; returns the previous value ('<absent>' if none)."""
+    parts = key.split(".")
+    d = cfg
+    for p in parts[:-1]:
+        if not isinstance(d.get(p), dict):
+            d[p] = {}
+        d = d[p]
+    old = d.get(parts[-1], "<absent>")
+    d[parts[-1]] = val
+    return old
+
+
+def repoint(obj, old, new):
+    """Replace `old` inside every string value of a nested JSON object; returns the count."""
+    n = 0
+    if isinstance(obj, dict):
+        items = list(obj.items())
+    elif isinstance(obj, list):
+        items = list(enumerate(obj))
+    else:
+        return 0
+    for k, v in items:
+        if isinstance(v, str):
+            if old in v:
+                obj[k] = v.replace(old, new)
+                n += 1
+        else:
+            n += repoint(v, old, new)
+    return n
+
+
+def flatten(obj, prefix="", out=None):
+    """Nested dict -> {'a.b.c': json-encoded leaf}; arrays are leaves (they replace wholesale)."""
+    if out is None:
+        out = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "_comment":
+                continue
+            flatten(v, prefix + k + ".", out)
+    else:
+        out[prefix[:-1]] = json.dumps(obj, sort_keys=True)
+    return out
+
+
+def diff_flat(base, other):
+    keys = sorted(set(base) | set(other))
+    return [(k, base.get(k, "<absent>"), other.get(k, "<absent>")) for k in keys
+            if base.get(k) != other.get(k)]
+
+
+def load(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def dump(cfg, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=1)
+        fh.write("\n")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--golden", default=os.path.join(REPO, "config", "golden", "golden_field_gps_dual.json"))
+    ap.add_argument("--runs", default="C:/GnssProcessor/runs")
+    ap.add_argument("--smoke-from", default="C:/GnssProcessor/runs/_cert4_smoke_base/smoke.json")
+    ap.add_argument("--only", default="", help="comma list of arms to write (default all six)")
+    ap.add_argument("--no-smoke", action="store_true")
+    ap.add_argument("--no-arms", action="store_true")
+    a = ap.parse_args()
+
+    if not a.no_arms:
+        golden = load(a.golden)
+        if "extends" in golden:
+            sys.exit(f"FATAL: {a.golden} has an `extends` chain; flatten it first (make_golden_config.py output is flat)")
+        want = [s for s in a.only.split(",") if s] or [k for k in ARMS if k != "a2x"]   # a2x only on request
+        flats = {}
+        for arm in want:
+            knobs = ARMS[arm]
+            cfg = json.loads(json.dumps(golden))
+            n_paths = repoint(cfg, GOLDEN_RUN_SUBDIR, f"runs/_cm_{arm}")
+            changes = []
+            for k, v in {**COMMON, **knobs}.items():
+                old = set_dotted(cfg, k, v)
+                changes.append(f"{k}: {old} -> {v}")
+            cfg.setdefault("_comment", []).append(
+                f"card CM (SPEC_event_harness s24.8) arm {arm}: " + "; ".join(changes)
+                + f"; {n_paths} output path(s) re-pointed to runs/_cm_{arm}/")
+            path = os.path.join(a.runs, f"_cm_{arm}", "arm.json")
+            dump(cfg, path)
+            flats[arm] = flatten(cfg)
+            print(f"{arm}: wrote {path}  [{n_paths} path(s) re-pointed]  " + "; ".join(changes))
+        base = flats.get("a0") or flatten(json.loads(json.dumps(golden)))
+        for arm, f in flats.items():
+            if arm == "a0":
+                continue
+            d = diff_flat(base, f)
+            print(f"\n{arm} vs a0: {len(d)} flattened key(s) differ")
+            for k, b, v in d:
+                print(f"  {k}: {b} -> {v}")
+        if "a0" in flats:
+            d = diff_flat(flatten(golden), flats["a0"])
+            print(f"\na0 vs the golden: {len(d)} flattened key(s) differ")
+            for k, b, v in d:
+                print(f"  {k}: {b} -> {v}")
+
+    if not a.no_smoke:
+        smoke = load(a.smoke_from)
+        src = os.path.basename(os.path.dirname(os.path.abspath(a.smoke_from)))
+        flats = {}
+        for name, extra in (("_cm_smoke_base", {}), ("_cm_smoke_rows", {"network.trace_postfit_rows": True})):
+            cfg = json.loads(json.dumps(smoke))
+            n_paths = repoint(cfg, f"runs/{src}", f"runs/{name}")
+            changes = [f"{k}: {set_dotted(cfg, k, v)} -> {v}" for k, v in extra.items()]
+            path = os.path.join(a.runs, name, "smoke.json")
+            dump(cfg, path)
+            flats[name] = flatten(cfg)
+            print(f"\n{name}: wrote {path}  [{n_paths} path(s) re-pointed from runs/{src}]  " + "; ".join(changes))
+        d = diff_flat(flats["_cm_smoke_base"], flats["_cm_smoke_rows"])
+        print(f"_cm_smoke_rows vs _cm_smoke_base: {len(d)} flattened key(s) differ")
+        for k, b, v in d:
+            print(f"  {k}: {b} -> {v}")
+        d = diff_flat(flatten(smoke), flats["_cm_smoke_base"])
+        print(f"_cm_smoke_base vs {src}/smoke.json: {len(d)} flattened key(s) differ")
+        for k, b, v in d:
+            print(f"  {k}: {b} -> {v}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
