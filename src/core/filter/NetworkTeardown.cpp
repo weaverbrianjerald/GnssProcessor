@@ -3571,6 +3571,52 @@ int networkTeardown(
                         "happened; check the resume log for the RS-6 line."
                       : "");
     }
+    // RS-9 (SPEC_event_harness §21.18): the CODE-BIAS LINEARIZATION-POINT half, beside
+    // the RS-6 line for the same invariant-#4 reason — RS-6 restores the rx-CB carry's
+    // numerator and this restores the reference its inject gate differences it against,
+    // and a run that restored one without the other must be readable from the run-end
+    // tail alone.  Printed whenever EITHER half is armed.
+    if (config_.getNetworkConfig().state_snapshot_rxcb_lin_capture
+        || config_.networkResumeRxCbLinRestore()) {
+        const auto& C = ctx.counters;
+        // The applied / uncovered tallies are written station-locally inside the
+        // parallel produce phase (one out-slot per station, never resized) and summed
+        // HERE — the first and only place that needs them, and serial by construction.
+        long long applied = 0, uncovered = 0;
+        for (const auto& [a, u] : ctx.carry.rxcb_lin_sta_counts) { applied += a; uncovered += u; }
+        // "uncovered" is scoped to the CARRIED keys (the RL rows pair 1:1 with the RC
+        // rows): a code-bias family with no carry never reaches the gate and is not a
+        // miss, so a nonzero here is a carried key whose reference could not be applied.
+        log->info("Network (RS-9 rx-CB frame restore): write {} / read {}; last snapshot "
+                  "carried {} RL row(s); restored {} linearization point(s) across {} "
+                  "station(s), seeded {}, carried-but-unseeded {}.{}",
+                  config_.getNetworkConfig().state_snapshot_rxcb_lin_capture ? "ARMED" : "off",
+                  config_.networkResumeRxCbLinRestore() ? "ARMED" : "off",
+                  ctx.carry.snap_rxcb_lin_rows_last,
+                  C.n_resume_rxcb_lin_entries, C.n_resume_rxcb_lin_stations,
+                  applied, uncovered,
+                  (config_.networkResumeRxCbLinRestore() && C.n_resume_rxcb_lin_entries == 0)
+                      ? "  ⚠ 0 restored under an ARMED read — the snapshot carried no RL "
+                        "rows (a writer without network.state_snapshot_rxcb_lin_capture?) "
+                        "or no warm resume happened; check the resume log for the RS-9 "
+                        "line."
+                      : ((config_.networkResumeRxCbLinRestore()
+                          && C.n_resume_rxcb_lin_entries > 0 && applied == 0)
+                             ? "  ⚠ points were STASHED and none was ever SEEDED — no "
+                               "station reached its first-epoch code-bias initialization "
+                               "with a carried key (estimate_ifb off, or the samples loop "
+                               "never saw those families), so the gate still reads this "
+                               "leg's own frame."
+                             : (uncovered > 0
+                                    ? "  ⚠ NONZERO carried-but-unseeded — a key WITH an "
+                                      "rx-CB carry could not take its restored reference "
+                                      "(non-finite value, or a code-bias state index this "
+                                      "run does not hold), so the gate reads this leg's "
+                                      "own frame for it and can refuse that station for "
+                                      "the whole leg.  A code-bias family with no carry is "
+                                      "NOT counted here."
+                                    : "")));
+    }
     // RS-4 (SPEC_event_harness §21.9): the DECLARATION half, beside the RS-3 line and
     // at the same (function) scope for the same invariant-#4 reason.  The census is
     // taken on EVERY warm resume the knob is armed for, so an armed run that marked
@@ -3646,14 +3692,38 @@ int networkTeardown(
                       ctx.carry.shdev_demean_sta_total);
     }
     // rx-CB carry (SPEC_rx_cb_carry): armed-only run-end line, independent of iono2.
-    if (config_.networkCarryRxCodeBias())
+    if (config_.networkCarryRxCodeBias()) {
+        // RS-9 rider (§21.18) — EVERY run, trace-class, products byte-identical.  The
+        // pooled fold/withhold pair above is an invariant-#4 blind spot: a station
+        // refused EVERY epoch is refreshed by the unconditional harvest and never
+        // pruned (< 900 s), so it shows up in "N carried at run end" while carrying
+        // nothing at all.  On the field seed 7 of 61 stations are in that state for a
+        // whole 6 h day and nothing said so; on a warm-resume leg without RS-9 it is 17.
+        // Named here so the census does not have to be re-derived from the traces.
+        constexpr double kRs9WithholdShare = 0.90;
+        std::vector<std::string> carried_nothing;
+        for (const auto& [name, t] : ctx.carry.rx_cb_sta_tally)
+            if (t.first > 0
+                && static_cast<double>(t.second) > kRs9WithholdShare * static_cast<double>(t.first))
+                carried_nothing.push_back(name);
+        std::string nothing_tail;
+        if (!carried_nothing.empty()) {
+            nothing_tail = fmt::format("; {} station(s) withheld > {:.0f} % of their epochs "
+                                       "(carried NOTHING):", carried_nothing.size(),
+                                       kRs9WithholdShare * 100.0);
+            for (const auto& n : carried_nothing) { nothing_tail += ' '; nothing_tail += n; }
+        } else if (!ctx.carry.rx_cb_sta_tally.empty()) {
+            nothing_tail = fmt::format("; 0 station(s) withheld > {:.0f} % of their epochs",
+                                       kRs9WithholdShare * 100.0);
+        }
         log->info("Network (rx-CB carry): {} receiver code-bias prior(s) folded, {} withheld "
                   "by the 10σ innovation gate (receiver-reset response), {} harvest(s); {} "
                   "carried at run end (RW q={} m²/s; harvested outside the phase-leveling "
-                  "gate — SPEC_rx_cb_carry).",
+                  "gate — SPEC_rx_cb_carry){}.",
                   ctx.carry.rx_cb_injected_total, ctx.carry.rx_cb_innov_skips_total,
                   ctx.carry.rx_cb_harvested_total, ctx.carry.rx_cb_carry.size(),
-                  config_.networkRxCbCarryQ());
+                  config_.networkRxCbCarryQ(), nothing_tail);
+    }
     // Card LV-2 (docs/SPEC_level_information_budget.md): armed-only run-end line.
     // Standing invariant #4 — "0 demeaned" must be visible, never silent, because a
     // de-mean that never fired is indistinguishable from a healthy one in every

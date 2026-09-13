@@ -2513,6 +2513,43 @@ namespace GnssProcessor {
                           "continues both instead.  Write-side only; the products and every "
                           "trace are byte-identical.");
         }
+        // RS-9 code-bias LINEARIZATION-POINT capture (write side of
+        // network.resume_rxcb_lin_restore, §21.18).  Beside the station capture above and
+        // REQUIRING it: the RL row is the REFERENCE the RC row's inject gate differences
+        // against, so a file with RL and no RC would restore a frame for a carry that is
+        // not there — the defect inverted.  Write-only; the block reads the station state
+        // vectors after the emit and writes into `snap` alone.
+        network_config_.state_snapshot_rxcb_lin_capture =
+            jval<bool>(json, "network.state_snapshot_rxcb_lin_capture",
+                       "state_snapshot_rxcb_lin_capture", false);
+        if (network_config_.state_snapshot_rxcb_lin_capture
+            && !network_config_.state_snapshot_station_capture) {
+            log->warn("Network (RS-9 rx-CB lin capture): state_snapshot_rxcb_lin_capture "
+                      "armed but network.state_snapshot_station_capture is OFF — the RL "
+                      "row is the REFERENCE the RC row's inject gate differences against "
+                      "(innov = value_abs − x_lin), so writing it without the carry it "
+                      "judges would restore a frame for a carry that is not there.  "
+                      "Disarmed.");
+            network_config_.state_snapshot_rxcb_lin_capture = false;
+        }
+        if (network_config_.state_snapshot_rxcb_lin_capture) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (RS-9 rx-CB lin capture): state_snapshot_rxcb_lin_capture "
+                          "armed but network.state_snapshot_path is empty — no snapshot is "
+                          "written, INERT.");
+            else
+                log->info("Network (RS-9 rx-CB lin capture): every snapshot also carries the "
+                          "code-bias LINEARIZATION POINT (RL — one x_lin per (station, CB "
+                          "state key), beside each RC row) as format-forward rows under the "
+                          "existing header.  x_lin is seeded ONCE from one epoch of code "
+                          "behind a one-shot latch and never written back, so a warm resume "
+                          "re-derives the rx-CB inject gate's REFERENCE from the resume "
+                          "epoch while RS-6 restores its numerator: 17 of 61 field stations "
+                          "then sat outside the gate's fixed 5.13 m bar every epoch of the "
+                          "leg (§21.18).  A resume armed with network.resume_rxcb_lin_restore "
+                          "continues the writer's frame instead.  Write-side only; the "
+                          "products and every trace are byte-identical.");
+        }
         if (network_config_.state_snapshot_require)
             log->info("Network (RTB-7d/HB-1): warm resume REQUIRED — any resume failure "
                       "(missing/parse/fingerprint/age/emitter) is a hard run error instead "
@@ -3848,6 +3885,35 @@ namespace GnssProcessor {
                 "re-realizes that frame, so the restored memories would re-assert a level "
                 "the writer never held: a stale stiff prior across a jump, which "
                 "invariant #1 says does not degrade gracefully.");
+        // RS-9 rx-CB LINEARIZATION-POINT restore (read side of
+        // network.state_snapshot_rxcb_lin_capture, SPEC_event_harness §21.18).  Same
+        // exemption class as every restore above: forward-only resume response policy,
+        // inert on a run that never resumes.
+        network_resume_rxcb_lin_restore_ =
+            jval<bool>(json, "network.resume_rxcb_lin_restore", "resume_rxcb_lin_restore",
+                       false);
+        if (network_resume_rxcb_lin_restore_ && !network_resume_station_restore_)
+            throw std::runtime_error(
+                "network.resume_rxcb_lin_restore requires network.resume_station_restore: "
+                "the RL rows restore the REFERENCE the rx-CB inject gate differences the "
+                "CARRY against (innov = value_abs − x_lin), so without the carry restore "
+                "the gate would judge a freshly harvested value against the writer's "
+                "frame — the §21.18 defect inverted, not fixed.");
+        if (network_resume_rxcb_lin_restore_ && !network_resume_station_restore_rxcb_)
+            throw std::runtime_error(
+                "network.resume_rxcb_lin_restore requires network.resume_station_restore_"
+                "rxcb: that sub-switch is what restores the rx-CB carry itself, and "
+                "restoring only the linearization point it is judged against leaves the "
+                "gate comparing a cold first-sighted value to the writer's frame.");
+        if (network_resume_rxcb_lin_restore_ && network_rx_code_bias_datum_)
+            throw std::runtime_error(
+                "network.resume_rxcb_lin_restore refuses network.rx_code_bias_datum: the "
+                "restore is legal ONLY because an x_lin shift is an exact solve no-op for "
+                "a state that enters linearly, so the gate is its only consumer.  The "
+                "receiver code-bias DATUM breaks that — its prior's RHS is η = λ·(0 − "
+                "x_lin(cb)) (ApplicationNetworkAssembly.cpp), so moving x_lin MOVES the "
+                "target and therefore the solve.  Run the RS-9 restore without the datum, "
+                "or the datum without the restore.");
         // RS-2 resume CARRY RE-BASE (SPEC_event_harness §21.4) — the reader half of
         // network.state_snapshot_carry_lin, and the same exemption class as the two
         // restores above: forward-only resume response policy, inert without a resume.
@@ -3978,6 +4044,29 @@ namespace GnssProcessor {
                                              "attribution leg)"
                                            : " (⚠ BOTH sub-switches false — the knob is "
                                              "armed and restores NOTHING)"));
+        }
+        // RS-9 (§21.18): the rx-CB LINEARIZATION-POINT restore's own ARMED/INERT line.
+        // Both prerequisites are hard throws above, so by here the knob can only be
+        // inert for want of a snapshot to resume from.
+        if (network_resume_rxcb_lin_restore_) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (RS-9 rx-CB frame restore): resume_rxcb_lin_restore "
+                          "armed but network.state_snapshot_path is empty — nothing can "
+                          "resume, INERT this run.");
+            else
+                log->info("Network (RS-9 rx-CB frame restore): ON — at a warm resume each "
+                          "station's code-bias state is seeded from the snapshot's RL rows "
+                          "(the writer's x_lin) instead of from the resume epoch's one-shot "
+                          "code median, so the rx-CB inject gate differences the RS-6-"
+                          "restored carry against the frame the writer judged it against.  "
+                          "Without it the gate's fixed 5.13 m bar refused 17 of 61 field "
+                          "stations EVERY epoch of a leg against the continuous run's 7, "
+                          "and those stations carried no receiver-DCB memory at all while "
+                          "the run-end line still read '61 carried' (§21.18).  An EXACT "
+                          "solve no-op (a code bias enters linearly; the gate is the only "
+                          "consumer) — network.rx_code_bias_datum, whose RHS reads x_lin, "
+                          "is refused with it.  Not in the warm-resume fingerprint "
+                          "(forward-only resume response policy).");
         }
         // RS-7 (§21.14): the DENSE-BORDER restore's own ARMED/INERT line, same shape.
         // The full-cov prerequisite is warn-disarmed above, so by here the knob can only

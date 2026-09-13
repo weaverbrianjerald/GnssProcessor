@@ -1202,6 +1202,11 @@ int Application::runNetwork() {
                          &clk_rebase_engine,    // §18.10: the CLK-R held frame travels too
                          &emit_rebase_engine,   // RS-5 §21.10: ...and the two PHASE-BIAS
                          &pb_filter_engine);    //   emit layers, for the same reason
+    // RS-9 (§21.18): hand the resume's stashed code-bias linearization points to the
+    // station initializers.  HERE and nowhere else — the one-shot isCodeBiasInitialized
+    // latch closes at each station's first computeMeasurementUpdate, so this is the only
+    // window; a no-op unless the resume stashed RL rows.
+    networkApplyRxCbLinRestore(ctx, config_, stations, log);
     // EVENT HARNESS (docs/SPEC_event_harness.md): arm the scripted-fault schedule.
     // AFTER the warm resume on purpose — the injector is deliberately outside the
     // resume fingerprint, so its ARMED banner must not be mistaken for restored
@@ -2583,7 +2588,9 @@ int Application::runNetwork() {
 
         // RTB-7(a) periodic atomic snapshot (INC-4: body in NetworkRunContext.cpp;
         // stays AFTER the prev_week/prev_tow advance — snap captures THIS epoch).
-        networkWriteStateSnapshot(ctx, config_, se.time, pl_now_s, emitter, carry_driver, log,
+        networkWriteStateSnapshot(ctx, config_, se.time, pl_now_s, emitter, carry_driver,
+                                  stations,              // RS-9 §21.18: the RL x_lin rows
+                                  log,
                                   &clk_rebase_engine,    // §18.10 frame rows (v2)
                                   &emit_rebase_engine,   // RS-5 §21.10 emit-layer rows
                                   &pb_filter_engine);    //   (ER / PF / PS)

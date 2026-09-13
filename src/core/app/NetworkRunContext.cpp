@@ -89,6 +89,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
     k.resume_station_shdev   = config_.networkResumeStationRestoreShDev();
     k.resume_border_restore  = config_.networkResumeBorderRestore();     // RS-7 §21.14
+    k.resume_rxcb_lin_restore = config_.networkResumeRxCbLinRestore();   // RS-9 §21.18
     k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // RS-4 §21.9
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
@@ -1023,7 +1024,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           resume_datum_restore (RS-3, §21.7),
         //                           resume_emit_restore (RS-5, §21.10),
         //                           resume_station_restore{,_rxcb,_shdev} (RS-6, §21.13),
-        //                           resume_border_restore (RS-7, §21.14)
+        //                           resume_border_restore (RS-7, §21.14),
+        //                           resume_rxcb_lin_restore (RS-9, §21.18)
         //
         // Two entries need their own note:
         //
@@ -1759,6 +1761,54 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_station_shdev,
                                       ctx.counters.n_resume_station_shdev == 1 ? "y" : "ies");
                     }
+                    // RS-9 CODE-BIAS LINEARIZATION-POINT restore
+                    // (network.resume_rxcb_lin_restore, SPEC_event_harness §21.18) —
+                    // the OTHER edge of the seam RS-6 above opens.  RS-6 restores the
+                    // rx-CB carry's NUMERATOR; the gate that decides whether it is ever
+                    // folded tests it against x_lin(cb), a one-shot seed re-derived on
+                    // this leg from the RESUME epoch's code.  Measured: 17 of 61 field
+                    // stations outside the gate's fixed 5.13 m bar EVERY epoch of a leg
+                    // against the continuous run's 7, refreshed and refused forever with
+                    // no receiver-DCB memory while the run-end line read "61 carried"
+                    // (§21.18(a)/(b)).  Invariant #7 exactly: RS-6 re-validated the value
+                    // it reconnected and not the frame it is judged against.
+                    //
+                    // Only STASHED here.  x_lin lives in each station's StateManager, and
+                    // the one-shot latch that freezes it does not close until that
+                    // station's first computeMeasurementUpdate — so the consumption is a
+                    // separate seam (networkApplyRxCbLinRestore) called from runNetwork
+                    // right after this function, where the station roster is in scope.
+                    // The loader hard-requires resume_station_restore and its rxcb half,
+                    // so an armed knob here always sits under a restored carry.
+                    if (ctx.knobs.resume_rxcb_lin_restore) {
+                        if (!snap.rx_cb_lin.empty()) {
+                            ctx.carry.rxcb_lin_restore.clear();
+                            for (const auto& [key, xl] : snap.rx_cb_lin)
+                                ctx.carry.rxcb_lin_restore[key.first][key.second] = xl;
+                            ctx.counters.n_resume_rxcb_lin_stations =
+                                static_cast<long long>(ctx.carry.rxcb_lin_restore.size());
+                            ctx.counters.n_resume_rxcb_lin_entries =
+                                static_cast<long long>(snap.rx_cb_lin.size());
+                            log->info("Network (RS-9 rx-CB frame restore): ARMED at the "
+                                      "resume seam — {} code-bias linearization point(s) "
+                                      "across {} station(s) stashed from the snapshot's RL "
+                                      "rows; each station's first-epoch code-bias seed will "
+                                      "take the writer's x_lin instead of a median over ONE "
+                                      "epoch of code, so the rx-CB inject gate differences "
+                                      "the restored carry against the writer's frame.",
+                                      ctx.counters.n_resume_rxcb_lin_entries,
+                                      ctx.counters.n_resume_rxcb_lin_stations);
+                        } else {
+                            log->warn("Network (RS-9 rx-CB frame restore): ARMED but the "
+                                      "snapshot carries NO RL rows (a writer without "
+                                      "network.state_snapshot_rxcb_lin_capture) — INERT; "
+                                      "every station re-derives its code-bias "
+                                      "linearization point from the RESUME epoch's code, "
+                                      "so the rx-CB gate judges the RESTORED carry against "
+                                      "a frame the writer never held and can refuse a "
+                                      "station for the whole leg (§21.18).");
+                        }
+                    }
                     // Coupling regressors (network.resume_coupling_restore) — the
                     // second half of the frame restore, and the RE-COUPLING edge for
                     // the leveling carry itself.
@@ -2280,10 +2330,69 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     }
 }
 
+// ---------------------------------------------------------------------------
+// RS-9 (SPEC_event_harness §21.18): install the resume's stashed code-bias
+// linearization points on the station initializers.
+//
+// Its own seam rather than a block inside networkTryWarmResume because the two
+// need different things: the resume function owns the snapshot and stashes the
+// RL map into ctx.carry, while THIS needs the mutable station roster — and the
+// only window in which the install can matter is between the resume and the
+// first computeMeasurementUpdate, since StateInitializer::isCodeBiasInitialized
+// is a one-shot latch.  The driver therefore calls it immediately after the
+// resume, one line, exactly as the RS-8 canonical-signal map is wired.
+// ---------------------------------------------------------------------------
+void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config_,
+                                std::vector<NetStation>& stations,
+                                const std::shared_ptr<spdlog::logger>& log) {
+    // Nothing stashed ⇒ nothing to do: the knob is off, no warm resume happened, or
+    // the snapshot carried no RL rows (warned at the resume).  No allocation, no
+    // branch taken inside any station — byte-identical.
+    if (ctx.carry.rxcb_lin_restore.empty()) return;
+    (void)config_;   // the knob is already resolved into ctx.knobs / the stash
+    // One out-slot pair per station, sized ONCE here and never resized: each
+    // StateInitializer keeps a raw pointer to its own element and increments it from
+    // inside the OpenMP parallel produce phase.  Distinct objects ⇒ race-free with no
+    // atomics, the same discipline as the per-station StationAssembly tallies.
+    // {applied, carried-but-unseeded} — the second is scoped to the keys the map
+    // CARRIES (the RL rows pair 1:1 with the RC rows), so a code-bias family with no
+    // carry, whose x_lin no gate reads, is not counted as a miss.
+    ctx.carry.rxcb_lin_sta_counts.assign(stations.size(), {0LL, 0LL});
+    long long installed_sta = 0, installed_entries = 0, orphan = 0;
+    for (const auto& [sidx, keymap] : ctx.carry.rxcb_lin_restore) {
+        if (sidx < 0 || sidx >= static_cast<int>(stations.size())) { ++orphan; continue; }
+        auto& st = stations[static_cast<std::size_t>(sidx)];
+        if (!st.mm) { ++orphan; continue; }
+        auto& slot = ctx.carry.rxcb_lin_sta_counts[static_cast<std::size_t>(sidx)];
+        st.mm->getStateInitializer().setCodeBiasSeedOverride(keymap, &slot.first,
+                                                             &slot.second);
+        ++installed_sta;
+        installed_entries += static_cast<long long>(keymap.size());
+    }
+    // The roster is inside the warm-resume fingerprint, so an index that does not
+    // resolve should be unreachable; if it ever is, it is a silent lost restore
+    // (invariant #4) and must be loud.
+    if (orphan > 0)
+        log->warn("Network (RS-9 rx-CB frame restore): {} restored station index(es) did "
+                  "not resolve to a live station model and were DROPPED — those stations "
+                  "re-derive their code-bias linearization point from the resume epoch's "
+                  "code, which is the pre-card behaviour for them.", orphan);
+    log->info("Network (RS-9 rx-CB frame restore): installed on {} station(s), {} "
+              "linearization point(s) — consumed at each station's first-epoch code-bias "
+              "initialization (the one-shot isCodeBiasInitialized latch), so the rx-CB "
+              "inject gate's reference is the writer's rather than this leg's.",
+              installed_sta, installed_entries);
+    // Consumed: the map has been handed to the initializers, and re-installing it
+    // later could only be inert (the latch has closed).  Dropping it here makes that
+    // structural rather than conventional.
+    ctx.carry.rxcb_lin_restore.clear();
+}
+
 void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_,
                                const GnssTime& t, double pl_now_s,
                                NetworkProductEmitter& emitter,
                                const NetworkInvariantCarryDriver& carry_driver,
+                               const std::vector<NetStation>& stations,
                                const std::shared_ptr<spdlog::logger>& log,
                                const NetworkClockEmitRebase* clk_rebase,
                                const NetworkEmitRebase* emit_rebase,
@@ -2688,6 +2797,51 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             ctx.carry.snap_station_rows_last =
                 static_cast<long long>(snap.rx_cb_carry.size() + snap.sh_dev_carry.size());
         }   // state_snapshot_station_capture
+        // RS-9 CODE-BIAS LINEARIZATION POINT capture (network.state_snapshot_rxcb_lin_
+        // capture, SPEC_event_harness §21.18) — the RC row's REFERENCE.  The RC row above
+        // carries the rx-CB carry's numerator; the gate that decides whether that prior is
+        // folded tests `value_abs − x_lin(cb)` against a FIXED 5.13 m bar, and x_lin is the
+        // one-shot seed StateInitializer::initializeCodeBiases wrote on this station's
+        // FIRST processed epoch and never revised.  It is not in ctx.carry at all — it
+        // lives in the station's own state vector — which is why this is the one snapshot
+        // block that reads `stations`.
+        //
+        // Read-only and AFTER the emit, exactly like the blocks above, so arming it moves
+        // no estimate and no trace: an x_lin shift is an exact solve no-op for a state that
+        // enters linearly (project_network_xlin_invariance) and nothing here writes one
+        // anyway.  Keyed EXACTLY as the RC rows — (roster index, CB state key) — so the
+        // restore can pair them without a second identity, and screened for finiteness at
+        // the SOURCE for the RC reason one step sharper: a non-finite linearization point
+        // would poison the first epoch's iono and ambiguity seeds through
+        // computeRawResidual, not merely one fold.
+        //
+        // Driven off the RC rows THEMSELVES, not off the station's code-bias state set:
+        // one RL row beside each RC row, and never an orphan.  A station carries more
+        // code-bias states than the rx-CB carry holds (a GPS L1/L2/L5 lineage has
+        // GPS_DCB *and* GPS_IFB5 per station while only GPS_DCB is carried), and a
+        // reference with no carry to judge has no consumer — restoring it would be an
+        // unmeasured state change outside this card.  Iterating what was written also
+        // makes the pairing structural: the RL count IS the RC count, so a restore can
+        // never bind a frame to a carry the file does not hold.  The loader's
+        // requirement on state_snapshot_station_capture is what makes this non-empty.
+        if (nc.state_snapshot_rxcb_lin_capture) {
+            for (const auto& [key, l] : snap.rx_cb_carry) {
+                (void)l;
+                if (key.first < 0 || key.first >= static_cast<int>(stations.size())) continue;
+                const auto& st = stations[static_cast<std::size_t>(key.first)];
+                if (!st.sm) continue;
+                const auto& cbs = st.sm->getCodeBiasStates();
+                const auto cit = cbs.find(key.second);
+                if (cit == cbs.end()) continue;
+                const Eigen::VectorXd xs = st.sm->getStateVector();
+                const Eigen::Index cb_idx = static_cast<Eigen::Index>(cit->second);
+                if (cb_idx < 0 || cb_idx >= xs.size()) continue;
+                if (!std::isfinite(xs(cb_idx))) continue;
+                snap.rx_cb_lin[{key.first, key.second}] = xs(cb_idx);
+            }
+            ctx.carry.snap_rxcb_lin_rows_last =
+                static_cast<long long>(snap.rx_cb_lin.size());
+        }   // state_snapshot_rxcb_lin_capture
         // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
         // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
         // resume reproduces the phase-ambiguity branch instead of re-converging one.
@@ -5226,6 +5380,20 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             // increments all sit BELOW the `if (!rx_cb_on) continue;` in the
             // assembly's pl_cb walk, so a datum-only run cannot populate them.
             ctx.carry.rx_cb_innov_skips_total += R.pl_cb_innov_skips;
+            // RS-9 rider (§21.18): the same two tallies, kept PER STATION.  The pooled
+            // "N folded, M withheld" line cannot distinguish 26 % of stations refused
+            // occasionally from 28 % of stations refused ALWAYS, and the field seam is
+            // the second: the set is fixed from k = 1 and those stations carry no
+            // receiver-DCB memory for the whole run while the line still counts them
+            // among the "N carried".  The denominator is station-epochs with a
+            // DECISION; the numerator is station-epochs in which every decision was a
+            // withhold ("carried NOTHING" — the multi-family generalization of the
+            // one-key field posture).  Serial, so no race.
+            if (R.pl_cb_injected > 0 || R.pl_cb_innov_skips > 0) {
+                auto& tally = ctx.carry.rx_cb_sta_tally[stations[i].name];
+                ++tally.first;
+                if (R.pl_cb_injected == 0) ++tally.second;
+            }
             ctx.carry.lv2_folds_demeaned += R.pl_cb_demeaned;   // Card LV-2
             // Card LV-4 same-run A/B — summed with the other produce-phase tallies,
             // BEFORE any early continue, so a station whose back-substitution throws
