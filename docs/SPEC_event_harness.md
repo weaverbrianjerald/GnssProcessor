@@ -6106,6 +6106,34 @@ notes for the record: R1′d (max|t| p50) never passes at any q and is non-monot
 the census counts 3720 of 3721 folds at 2.5e-3 because its own `var > 0` guard drops one station-epoch (the ON-path
 run-end counter reads 3721 on every armed leg).
 
+**RS-10b v8 RE-TEST — the re-arm candidate q = 2.5e-3 is REFUSED on the second realization (2026-09-14 ~01:30 local; manager-run
+leg `evleg_rs10b_v8_q3` = `cert_null_v8` + `zwd_seam_reseed: true, zwd_seam_reseed_q: 0.0025`, single-knob pair by config
+diff, both from `evseed_field6h_v8` ep0604; `scripts/ev_seam_grade.py` against the v8 seed; consumer channel REPORTED only,
+§24.1).**  On the v8 seed — RS-8 + RS-9 in the snapshot — the reseed-OFF seam is far cleaner than the v7 OFF arm the bracket
+was bracketed against (ZWD leg − seed +1 p50 0.086 vs 0.180; +60 0.092 vs 0.584), and the reseed at the crossover q is now
+worse than OFF on every ZWD number and neutral on the wire:
+
+| leg − seed | q 2.5e-3 (v8) | reseed OFF (v8, `cert_null_v8`) |
+|---|---|---|
+| ZWD +1 p50 / p95 | 0.169 / **2.17** | 0.086 / 0.42 |
+| ZWD +2 p50 / p95 | 0.164 / 1.08 | 0.105 / 0.36 |
+| ZWD +60 p50 / p95 | **0.296 / 4.70** | 0.092 / 0.60 |
+| ZWD pooled +5..+60 p50 / p95 | 0.210 / 2.63 | 0.087 / 0.42 |
+| sat-clock contrast +1 p50; +60 p50 / p95 | 0.140; 0.268 / 0.945 | 0.152; 0.255 / 0.929 |
+| W6 code bias +1 / +60 p50 | 0.052 / 0.461 | 0.052 / 0.415 |
+| phase bias +1 / +60 p50 | 0.0004 / 0.097 | 0.0004 / 0.109 |
+| D5 flags at +1 (re-taps 0) | 37 | 45 |
+| `zwd` prior family | 3720 folds, Σw·ê² 85.8 % of the prior side | absent (0 rows) |
+| a₀₀ +1 / +60 (TECU) | +0.95 / +0.12 | +1.08 / −0.07 |
+| in-run cold consumer p50 from +5 (reported) | 4.28 m | 8.94 m |
+
+The reseed's prior is a perturbation of at least the size of the seam it means to smooth: at +60 it leaves the ZWD 3× further
+from the continuous run with a 4.7 m p95 tail, while the wire channels are inside the six-leg scatter either way.  The
+cold-consumer number runs the other way again (4.3 vs 8.9 m) and, per §24, cannot be read.  **Decision.**  No re-arm: the
+reseed stays OFF on lineages that carry no ZWD memory; `network.zwd_seam_reseed_q` stays RECOMMEND_SCOPED (validated,
+byte-identical, the only way the response can be tuned) with this re-test on its row; the crossover of §21.21 was a property
+of the v7 seed's seam, not of the mechanism.
+
 ### 21.22 CERTIFICATION — the night's merges on main's own binaries; the v8 harness seeds; the closing legs graded at the seam epoch (2026-09-13 ~21:30 local; certification worker on main, parts 1–2 at `1bb0039`; part 3 re-certifies the final HEAD; manager grade)
 
 **Part 1 (main `1bb0039`; `c1d94e8` binary-identical).**  Debug and Release rebuilt first attempt (both new test TUs compiled in
