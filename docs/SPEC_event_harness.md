@@ -6772,3 +6772,67 @@ D_phase and D_code not worse than v8's by more than 10 % in hours 3–6; the cou
 reported per twin.  W3 (the code side): pooled within-arc rms of D_code ≤ 0.3 m; a per-satellite code-side CONSTANT
 offset larger than 1 m is reported by satellite (a datum inconsistency the consumer cannot absorb because it carries no
 per-satellite code-bias state — `estimate_sat_biases false`).
+
+**§24.5 RESULTS — the wire is NOT consumer-consistent, and the satellite CLOCK carries it (2026-09-14 ~02:50 local; read-only Opus
+census, `scripts/wire_vs_code_census.py` merged `20377f2`; manager re-read).**  Conventions taken from the code, not from memory:
+the `C` record is a DELTA on the a-priori CODE clock (`clock_corr = interpolateClock(CLK) + applyClockToBias(c0)/c`), the
+consumer's applied phase term is `−C_net + PB_net` against the CODE user's `−0 + OSB` (the common `−c·δt_CODE` cancels), the
+S-line's a-priori identity names the FIRST product path of its extension (the 128 file) while every epoch was served by the
+129 CLK; GPS L5 / C5 are absent from CODE's MGEX OSB, so 24 k of 95 k P rows are outside the census.  Per hour, pooled
+within-arc |D − arc mean| on v8 (declared arcs = split at gaps, `R` marks and counter bumps):
+
+| h | D_phase rms, declared / tracking arcs | D_code rms, declared / tracking | raw clock contrast LEVEL p50 / p95; within-arc rms |
+|---|---|---|---|
+| 0 | 5.00 / 9.85 | 1.43 / 6.53 | 5.71 / 12.79; 5.64 |
+| 1 | 4.48 / 6.37 | 1.34 / 5.19 | 4.09 / 12.90; 3.97 |
+| 2 | 3.71 / 4.94 | 1.52 / 3.59 | 2.69 / 9.21; 2.90 |
+| 3 | 4.88 / 6.17 | 1.92 / 3.95 | 2.87 / 11.56; 4.54 |
+| 4 | 4.96 / 6.41 | 1.45 / 5.12 | 5.62 / 14.48; 5.00 |
+| 5 | 2.76 / 9.23 | 1.49 / 6.44 | 5.84 / 16.79; 2.68 |
+
+**W1 FAIL by ×10 on the "wire moves" branch**: 2.8–5.0 m rms within declared arcs (bar 0.05; the ≥ 0.5 m branch).  The
+decomposition is the finding: `PB_net − OSB` is flat within arcs (0.12–0.37 m rms, ZERO steps > 0.25 m), `B_net − OSB` is
+flat (0.13–0.22 m, zero steps), and `C_net` alone wanders 2.7–5.6 m rms within declared arcs with a 12–31 m between-satellite
+spread (the producer's own `clock_std_m` 6.7 m at epoch 1, `CLK_STEP` 0 — in the estimator, not at emission); worst arc G11
+L1C mean +60.7 m / rms 30.4 m, worst clock G05 drifting +9.7 → −11.7 m over hours 0–4.7.  **W2 — the four knobs did not change
+it** (declared-arc phase rms within 3 %, code identical; 24–27 % worse on tracking arcs in hours 4–5 only because 312 vs 301
+declared re-realizations put more steps inside tracking arcs) — the pin question is moot until W1 is fixed.  **W3 FAIL both
+halves**: code within-arc rms 1.3–1.9 m (declared), and per-satellite CONSTANT code offsets > 1 m on 90 of 106 keys (up to
+10.7 m; ±3–7 m in the pinned C1C/C2W IF direction, 13 m on the clock pivot G01) — which a consumer without per-satellite
+code-bias states cannot absorb.  The 60-epoch window on `cert_null_v8` reproduces the continuous seed to a few % on every
+kind: the inconsistency is the wire's, not a seam artefact.  So §24.3's consumer was right, and the response-cost story of
+§20.3 was a reading of a wire that leaves a float user at metres regardless of any slip knob.
+
+**Two things ruled in and out immediately (manager, 03:00).**  (i) The 61 held station coordinates are ITRF2020 propagated to
+DOY 129 to < 1 mm (62 / 62 in `data/static/sinex/ITRF2020-IGS-TRF.SSC`) and the per-station phase residual rms is 0.01–0.17 m
+(`network_pf_keyed.csv`, kind STA, hours 2–5) — not a coordinate or geometry blunder.  (ii) **The producer's own settled CODE
+residuals are 1.8–9.8 m rms per station, median 4.5 m** (`s0_code` 4.5 against the 0.3 m assumed; the epoch σ̂₀ code ≈ 5 the
+seam grader has printed all along), rising with isolation — GAMB 9.8, JPLM 9.6, MAJU 8.7, CAS1 8.1, SAVO 7.7, KOKV 7.6, PALM
+7.6 … WROC 1.8, GOP6 2.2, FFMJ 2.5; corr(rms, log mean distance to the 3 nearest stations) = +0.51; per signal C1C 6.7, C2W
+5.5, C5Q 5.4, C1W 5.3, C5X 5.3, C2X 4.3 — the L2 / L5 residuals are SMALLER than L1's, the opposite of a dispersive (ionospheric)
+error (which would read ×1.65 / ×1.79); per satellite G16 8.8 … G19 3.7.  The satellite clock is what the code determines: a
+code model inconsistent by metres, station-dependently, IS the clock's metre-level wander, and the phase side inherits it
+through the clock.  The seven stations the frame-blind rx-CB gate refuses all day (§21.18) sit high (GAMB, KOKV, CPVG, LCK4,
+LMMF, MRO1, GOPE) but are not the whole list (JPLM, MAJU, CAS1, SAVO, PALM are not refused).
+
+### 24.6 The CODE-RESIDUAL attribution — per-LOS, from the producer's own post-fit residuals (pre-registered before the trace is read)
+
+A null leg from v8 ep0604 (`ci_null_resid`: `trace_station_residuals: true` + `raim_carry_invariant: true`, trace-only + the
+pinned screen; products must hash `e0d234ee…`) supplies per-LOS post-fit code AND phase residuals per epoch if the writer
+rides the re-hosted pool (if it still writes zero rows on this lineage — the known gap — the writer is re-pointed at
+`qc_amb` as a trace-only build item and the leg re-run).  Reads over the settled window k = 10..60, per (station, satellite,
+signal): the residual MEAN (a constant no state absorbed), its rms about the mean, and its elevation dependence (bins
+15–25°, 25–45°, > 45°).  Pre-registered discriminators, each with the mechanism it names:
+
+| signature | mechanism it names |
+|---|---|
+| rms(C2W)/rms(C1C) ≈ 1.65, rms(C5)/rms(C1C) ≈ 1.79, same sign per LOS | ionosphere representation (the SH field / per-LOS deviation cannot follow the slant) |
+| ratios ≈ 1, per-(station, signal) CONSTANT mean of metres, flat in elevation | a receiver code bias not absorbed — the rx-CB state's gate / withhold / canonical-signal keying (§21.18's frame-blind gate is the named suspect) |
+| ratios ≈ 1, mean ≈ 0, rms ∝ 1/sin(el), phase clean | code multipath / observation noise model (then the 0.3 m code σ is wrong, not the model) |
+| per-satellite constant common to all stations | a satellite code-bias / clock datum term (the W3 constants) |
+| the phase residual of the same LOS shares the signature | geometry / troposphere / mapping (excluded so far by the cm phase rms) |
+
+Bars: A1 the per-station code rms of the leg reproduces `network_pf_keyed.csv`'s ranking (the trace is the same statistic);
+A2 the dominant signature is named by the table with > 70 % of the pooled code residual variance in ONE row; A3 the named
+mechanism's fix is pre-registered as the next producer card WITH a wire-vs-CODE bar (W1's within-arc rms halved on a 60-epoch
+leg, then on a seed) — the first time this project has had a truth-referenced wire bar to build against.
