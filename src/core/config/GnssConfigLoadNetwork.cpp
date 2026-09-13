@@ -4912,6 +4912,10 @@ namespace GnssProcessor {
             // 0.5·λ_IF, n≥2 gate that re-fired every epoch on a sub-slip drift).
             sq.ref_gate = jval<bool>(json, "network.cycle_slip.if_phase_td_ref_gate",
                                      "network_cycle_slip_if_phase_td_ref_gate", false);
+            // REF-FAN (§22.6) — the reference arm on the ADDITIONAL chains.
+            // Interlocked below (needs pairs = all AND the empirical gate).
+            sq.ref_arm_all = jval<bool>(json, "network.cycle_slip.if_phase_td_ref_arm_all",
+                                        "network_cycle_slip_if_phase_td_ref_arm_all", false);
             sq.ref_k = jval<double>(json, "network.cycle_slip.if_phase_td_ref_k",
                                     "network_cycle_slip_if_phase_td_ref_k", 6.0);
             sq.ref_min_n = jval<int>(json, "network.cycle_slip.if_phase_td_ref_min_n",
@@ -5082,6 +5086,54 @@ namespace GnssProcessor {
                 sq.ref_warmup_abstain = false;
                 sq.ref_elev_norm      = false;
             }
+            // REF-FAN (§22.6): the reference arm on the ADDITIONAL chains.  TWO
+            // hard prerequisites, both structural rather than stylistic:
+            //  * `if_phase_td_pairs = all` — with one chain per satellite there
+            //    are no additional chains, so the knob is a dead flag, not a
+            //    behaviour (standing invariant #4: never leave inert posture in
+            //    a config that reads as armed);
+            //  * `if_phase_td_ref_gate` — WITHOUT the empirical gate the LEGACY
+            //    candidate condition |median| > 0.5·λ_IF is the decision, and on
+            //    a wide combination that condition is met by NOISE: (L2W,L5Q)
+            //    has IF coefficients 12.26 / −11.26 (noise amplification 16.6)
+            //    against λ_IF = 0.1248 m, measured at 5 351 candidates / 64 fires
+            //    over a quiet 70-epoch 60-station null (§14.10.3).  That is the
+            //    flood the ONE-arm rule exists to prevent and it must never gate
+            //    a wide chain again — this card re-opens the arm only behind the
+            //    per-chain EMPIRICAL scale, which tracks each chain's own
+            //    dispersion.  The detector refuses the combination a second time.
+            if (sq.ref_arm_all
+                && (network_config_.cycle_slip_if_phase_td_pairs != NetworkIfPhaseTdPairs::All
+                    || !sq.ref_gate)) {
+                log->warn("Network (§22.6 REF-FAN): network.cycle_slip.if_phase_td_ref_arm_all "
+                          "needs BOTH .if_phase_td_pairs = 'all' (currently '{}' — with one "
+                          "chain per satellite there is no ADDITIONAL chain to arm) and "
+                          ".if_phase_td_ref_gate (currently {}) — DISARMED.  The gate is not "
+                          "optional: without it the LEGACY candidate condition "
+                          "|median| > 0.5·lambda_IF is the decision, and on the wide "
+                          "combinations that condition is met by NOISE ((L2W,L5Q): noise "
+                          "amplification 16.6, lambda_IF 0.125 m — 5 351 candidates / 64 fires "
+                          "on a quiet 70-epoch null, §14.10.3).  The legacy condition must "
+                          "never gate a wide chain again.",
+                          network_config_.cycle_slip_if_phase_td_pairs
+                                  == NetworkIfPhaseTdPairs::All ? "all" : "first",
+                          sq.ref_gate ? "ON" : "OFF");
+                sq.ref_arm_all = false;
+            }
+            if (sq.ref_arm_all)
+                log->info("Network (§22.6 REF-FAN): IF-TD reference arm on ALL chains ARMED — "
+                          "an ADDITIONAL chain with an OWN-ELECTED reference runs the arm on "
+                          "that chain through the EMPIRICAL gate (its own ref_scale EWMA, its "
+                          "own lambda_IF); one with an ADOPTED reference inherits the first "
+                          "chain's verdict for that satellite this epoch (reset of THIS pair's "
+                          "reference arc, median rebase by THIS chain's own median on a "
+                          "FireRebase).  Closes the reference-slip FAN-OUT: a slip ON an "
+                          "additional chain's reference reads abs_dev = 0 on its own rows by "
+                          "construction and is otherwise attributed to every OTHER satellite "
+                          "of that chain (field seed: six false refloats on G11/G25/G32 plus a "
+                          "13.7 m phase-bias datum re-realization from one −99 cyc L5X slip on "
+                          "GOPE00CZE/G24).  Run-end reports opportunities / candidates / own "
+                          "fires / inherited fires / fan-out rows suppressed PER CHAIN.");
             if (sq.lli_corroborate && !network_cycle_slip_mw_detect_) {
                 log->warn("Network (slip-QC card L): network.cycle_slip.mw_lli_corroborate is "
                           "set but .mw_detect is OFF — the LLI arm it qualifies never runs, so "

@@ -804,6 +804,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 rg.elev_norm       = sq.ref_elev_norm;        // §6.14.6 item 2
                 rg.elev_clamp_deg  = sq.ref_elev_clamp_deg;
                 st.if_slip->setRefGate(rg);
+                // REF-FAN (§22.6): run the reference arm on the ADDITIONAL
+                // chains too.  Loader-interlocked on pairs = all AND ref_gate,
+                // and the detector refuses the combination a second time, so
+                // pushing the raw flag here cannot re-open the §14.10.3 flood.
+                st.if_slip->setRefArmAllChains(sq.ref_arm_all);
             }
         }
 
