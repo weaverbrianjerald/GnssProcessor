@@ -11,6 +11,7 @@ $p = Start-Process -FilePath $Exe -ArgumentList "`"$Config`"" -WorkingDirectory 
      -RedirectStandardOutput (Join-Path $RunDir 'stdout.txt') `
      -RedirectStandardError  (Join-Path $RunDir 'stderr.txt') `
      -NoNewWindow -PassThru
+$null = $p.Handle   # touch the handle BEFORE the wait or $p.ExitCode reads empty on this path (RS-7 worker, 2026-09-13)
 $p.WaitForExit()
 $sw.Stop()
 "$($p.ExitCode)`n$([math]::Round($sw.Elapsed.TotalSeconds,1))" |

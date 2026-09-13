@@ -89,6 +89,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
     k.resume_station_shdev   = config_.networkResumeStationRestoreShDev();
     k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // RS-8 §21.16
+    k.resume_border_restore  = config_.networkResumeBorderRestore();     // RS-7 §21.14
     k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // RS-4 §21.9
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
@@ -1024,6 +1025,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           resume_emit_restore (RS-5, §21.10),
         //                           resume_station_restore{,_rxcb,_shdev} (RS-6, §21.13),
         //                           resume_signal_canon_restore (RS-8, §21.16)
+        //                           resume_border_restore (RS-7, §21.14)
         //
         // Two entries need their own note:
         //
@@ -1265,14 +1267,37 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         }
                         prev_carry.push_back(std::move(cp));
                     }
-                    // C1: the v1 snapshot serializes per-key (value, var) only — the
-                    // dense covariance block deliberately is not persisted.  The first
-                    // post-resume fold therefore runs the diagonal path (identical
-                    // legacy semantics); the dense block re-seeds at the first emit.
-                    if (fullcov_on && !prev_carry.empty())
-                        log->info("Network (C1): warm resume restored {} diagonal carries — "
-                                  "the full-covariance carry re-seeds at the first emitted "
-                                  "epoch.", prev_carry.size());
+                    // C1: the D records serialize per-key (value, var) only, so the
+                    // carried block's CROSS-covariance comes from the QK/QP side-car or
+                    // not at all.  Restored (RS-7 / §18.12 (2a)) the first warm fold runs
+                    // the dense path; otherwise it runs the legacy per-key diagonal and
+                    // the dense block re-seeds at the first emit.
+                    //
+                    // ⚠ This line is printed BEFORE the dense-border block below, so it
+                    // must not assert "diagonal" on a leg that is about to restore the
+                    // border — invariant #4 cuts both ways, and P9a (§21.14) reads exactly
+                    // this clause.  The predicate is the block's own arming test minus the
+                    // post-filter nk>0 / finite screen, which only the block can evaluate;
+                    // if that screen fails the block warns and says it degraded to the
+                    // diagonal, so the pair of lines stays truthful either way.
+                    const bool border_restore_armed =
+                        (ctx.knobs.resume_coupling_restore || ctx.knobs.resume_border_restore)
+                        && fullcov_on;
+                    const bool border_rows_present =
+                        !snap.carry_cov_keys.empty()
+                        && snap.carry_cov_rows.size() == snap.carry_cov_keys.size();
+                    if (fullcov_on && !prev_carry.empty()) {
+                        if (border_restore_armed && border_rows_present)
+                            log->info("Network (C1): warm resume restored {} carries; the "
+                                      "dense shared border is restored below from the "
+                                      "snapshot's {} QK/QP record(s) (RS-7), so the first "
+                                      "warm fold runs the full-covariance path.",
+                                      prev_carry.size(), snap.carry_cov_keys.size());
+                        else
+                            log->info("Network (C1): warm resume restored {} diagonal carries — "
+                                      "the full-covariance carry re-seeds at the first emitted "
+                                      "epoch.", prev_carry.size());
+                    }
                     prev_pivot    = snap.prev_pivot;
                     last_pivot    = snap.last_pivot;
                     c1_zoh_active = snap.c1_zoh_active;
@@ -1957,16 +1982,39 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       snap.clock_refloat_sats.size());
                         }
                     }
-                    // §18.12 (2a): the dense D2 covariance side-car.  Restored behind the
-                    // SAME read knob — it is the other half of the coupling seam: the
-                    // coupling rows are conditional from the first warm fold, so the border
-                    // they condition on must fold DENSE from the first fold too, or the
-                    // 376-key diagonal asymmetry §18.12 measured stays.  Keys with no
+                    // §18.12 (2a): the dense D2 covariance side-car.  TWO read knobs reach
+                    // it (RS-7, §21.14).  Under resume_coupling_restore it is the other half
+                    // of the coupling seam: the coupling rows are conditional from the
+                    // first warm fold, so the border they condition on must fold DENSE
+                    // from the first fold too, or the 376-key diagonal asymmetry §18.12
+                    // measured stays.  Under resume_border_restore it stands ALONE — a
+                    // covariance block carries no regression and no gauge identity, so it
+                    // needs neither carry_conditional_coupling nor Card 1f, and that is
+                    // what makes it reachable on a carry_invariant field lineage where the
+                    // loader refuses resume_coupling_restore outright.  Keys with no
                     // restored D row are dropped (row AND column) and counted; the fold
                     // still degrades per-key as before.
-                    if (ctx.knobs.resume_coupling_restore && fullcov_on
-                        && !snap.carry_cov_keys.empty()
-                        && snap.carry_cov_rows.size() == snap.carry_cov_keys.size()) {
+                    //
+                    // Invariant #4: armed with no usable QK/QP records (a writer without
+                    // network.state_snapshot_coupling_capture, or a truncated block) the
+                    // knob is INERT and has to SAY so — a border that silently restarts
+                    // diagonal IS the defect this card exists to close.
+                    if (ctx.knobs.resume_border_restore && fullcov_on && !border_rows_present)
+                        log->warn("Network (RS-7 border restore): ARMED but the snapshot "
+                                  "carries NO usable QK/QP records ({} key(s), {} row(s)) — "
+                                  "a writer without network.state_snapshot_coupling_capture, "
+                                  "or a truncated block.  INERT this run: the dense shared "
+                                  "border re-seeds from the first emitted epoch exactly as "
+                                  "before, which IS the §21.14 defect.",
+                                  snap.carry_cov_keys.size(), snap.carry_cov_rows.size());
+                    if (border_restore_armed && border_rows_present) {
+                        // Name the knob that actually armed the restore: on a field leg
+                        // resume_coupling_restore is refused by the loader, so a line
+                        // reading "resume coupling restore" would send the reader hunting
+                        // a knob the config does not carry.
+                        const char* const border_knob =
+                            ctx.knobs.resume_border_restore ? "RS-7 border restore"
+                                                            : "resume coupling restore";
                         std::set<std::string> live_keys;
                         for (const CarryPrior& cp : prev_carry)
                             if (cp.kind != SharedParamKind::VtecSh)
@@ -1997,17 +2045,34 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             ctx.carry.prev_carry_cov = std::move(cov);
                             ctx.counters.n_resume_cpl_cov_keys    = static_cast<long long>(nk);
                             ctx.counters.n_resume_cpl_cov_dropped = n_drop_cov;
-                            log->info("Network (resume coupling restore, dense border): {} "
-                                      "dense-carry key(s) restored from the snapshot's QK/QP "
-                                      "records ({} dropped: no restored D row) — the first warm "
-                                      "fold runs the C1 DENSE path instead of the diagonal "
-                                      "asymmetry.", nk, n_drop_cov);
+                            log->info("Network ({}, dense border): {} dense-carry key(s) "
+                                      "restored from the snapshot's QK/QP records ({} "
+                                      "dropped: no restored D row) — the first warm fold "
+                                      "runs the C1 DENSE path instead of the diagonal "
+                                      "asymmetry.",
+                                      border_knob, nk, n_drop_cov);
                         } else {
-                            log->warn("Network (resume coupling restore, dense border): QK/QP "
-                                      "records present but unusable ({} usable key(s), "
-                                      "finite={}) — the first warm fold degrades to the "
-                                      "diagonal path.", nk, finite);
+                            log->warn("Network ({}, dense border): QK/QP records present but "
+                                      "unusable ({} usable key(s), finite={}) — the first "
+                                      "warm fold degrades to the diagonal path.",
+                                      border_knob, nk, finite);
                         }
+                    }
+                    // §21.14 (invariant #4): the first-fold census — n_resume_cpl_diag_border,
+                    // the count of carried keys that missed prev_carry_cov.row and folded
+                    // through the legacy per-key DIAGONAL path — is the ONLY instrument that
+                    // reads whether the border came back dense.  It used to be latched
+                    // inside the coupling restore, so a resume that did not arm THAT knob
+                    // reported 0 for the same reason a healthy one does, and the control arm
+                    // of any border A/B was unreadable.  Latch it for every warm resume that
+                    // has a dense carry at all: the CONTROL legs then read the full diagonal
+                    // count and the border legs read ~0 (plus whatever the drop screen
+                    // rejected).  Trace-class — everything the latch gates is a counter or a
+                    // measure-only census vector, so products stay byte-identical.
+                    if (fullcov_on && !prev_carry.empty()) {
+                        ctx.carry.resume_cpl_census_pending = true;
+                        ctx.counters.n_resume_dense_carry_keys =
+                            static_cast<long long>(prev_carry.size());
                     }
                     // Resume slip warm-up (network.resume_slip_warmup_ep, §18.10): the
                     // MW/LLI drain is diagnostic-only for K post-resume epochs (its cold
@@ -5652,6 +5717,17 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // restored-vs-fresh regressor census above — therefore covers EXACTLY the first
     // post-resume epoch.  Unconditional: a run that never resumed leaves it false, and
     // clearing a false bool is a no-op on every OFF path.
+    if (ctx.carry.resume_cpl_census_pending)
+        // RS-7 (§21.14), P9a's second instrument.  The warm resume runs BEFORE any epoch,
+        // so every Q3 decouple counted by now belongs to the first post-resume epoch —
+        // no baseline subtraction, and no per-epoch plumbing.  §18.11 measured 33 of 52
+        // anchored clock priors out-voted at the first fold when the seam's carried rows
+        // met a border with no cross-covariance; restoring the border is supposed to put
+        // this back at the continuous run's level.
+        ctx.counters.n_resume_first_fold_cta_trips =
+            ctx.counters.cta_trip_nis + ctx.counters.cta_trip_abs
+          + ctx.counters.cta_trip_gap + ctx.counters.cta_trip_datum
+          + ctx.counters.cta_trip_ext;
     ctx.carry.resume_cpl_census_pending = false;
 }
 

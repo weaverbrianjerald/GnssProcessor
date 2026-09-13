@@ -5356,7 +5356,13 @@ whose component datum receiver GAMB00PYF is dropped at the seam (a re-election e
 first emitted epoch overwrites the `seed.txt` it resumed from (`NetworkRunContext.cpp` gates the first write on
 `last_snapshot_write_s < 0.0`, which the initial −1 satisfies unconditionally, whatever
 `state_snapshot_interval_s` says).  The `.epNNNN` library is intact; `event_leg.py rerun` restores the pristine
-copy; never re-run a leg in place.
+copy; never re-run a leg in place.  **FIXED in the harness 2026-09-13 (main `dcf04dd`, worker commit `a207193`):**
+`make-leg` / `null` now lay down TWO copies — `seed.txt` (pristine, never named by any config; its sha256 recorded in
+`leg_meta.json`) and `state_snapshot.txt` (what `state_snapshot_path` names, disposable) — so the exe never reads and
+writes the same file; `rerun` restores only the disposable copy after verifying a pristine source.  Validated on
+`runs/evleg_hfix_trap`: first run and in-place rerun both WARM RESUME, products byte-identical (`95cda87d…`),
+`seed.txt` unchanged.  The same commit arms `resume_coupling_restore` on a leg only when the seed's lineage carries
+the loader's Card-1f interlocks (the field golden does not), so field legs no longer need `--extra` for it.
 
 ### 21.12 CLOSE-OUT CERTIFICATION (2026-09-12 ~22:30 local; worker on main's own tree at `17f854f`)
 
@@ -5585,6 +5591,167 @@ from `v6`, 60 epochs, one exe; every other RS restore at the harness default; `r
 * **Q5 the rider:** the canonical line appears on `main_log` for every station on the cold seed and, on the legs,
   reads "restored" (canon) / "decided" (ctl); a resume against a `CN`-less snapshot (a v5 seed) warns once.
 
+### 21.17 RESULTS — RS-7: the dense border restores exactly, and it is NOT the residual (KEEP_OFF with the mechanism); RS-7b census pre-registered (2026-09-13 ~08:20 local; worker on worktree-agent-abc0bf1feef082b22 `0a7efa8`, merged; manager grade)
+
+**Build.**  `network.resume_border_restore` (default false; throws without `resume_frame_restore`; warn-DISARMS
+without `shared_carry_full_cov`; does NOT require Card 1f or `carry_conditional_coupling` — both locked by tests);
+the §18.12 (2a) dense-border block gated on either knob and naming the knob that armed it; the C1 seam line made
+truthful (the "diagonal carries" clause prints only when no dense restore follows); the first-fold diagonal census
+armed on EVERY warm resume with the dense carry on (control legs read it too); run-end `Network (RS-7 border
+restore)` line + a plain-warm-resume readout; `tests/test_resume_border_restore.cpp` (10).  Cold smoke `87a33bf0…`
+knob absent AND armed; Debug suite 2023 / 276 suites / 2022 passed / 1 skip / 0 failed; exe `23C628B3…`.
+The border under test: the 150 QK/QP keys are **29 CLK + 121 CB** (C1W 29, C2W 30, C1C 30, C5X 16, C5Q 14, C2X 2)
+— no PhaseBias keys on this lineage (§project_network_fullcov_carry's regime caveat, confirmed) — and all 150 of
+the 256 D rows' non-VtecSh keys restore (0 dropped).  `rs7_null_ctl` `products.txt` = `c45e52a0…`, §21.15's
+certified hash, on a third independently linked binary.
+
+| leg − seed (raw = v5raw, estimator; null = v5, wire) | raw ctl | raw border | null ctl | null border |
+|---|---|---|---|---|
+| C1 "diagonal carries" clause / RS-7 keys restored | YES / – | **no / 150 (0 dropped)** | YES / – | no / 150 |
+| border keys folded DIAGONALLY at the first fold | 150 | **0** | 150 | 0 |
+| raw PB +1 p50 (p95) ex L2X | 1.496 (2.825) | 1.457 (2.629) | 0.000 (0.002) | 0.000 (0.002) |
+| receiver clocks +1 p50 (p95), 61 sta | 0.934 (5.70) | **1.124** (5.82) | idem | idem |
+| SH a₀₀ +1 / +6 (TECU) | +0.43 / +0.11 | +0.45 / +0.51 | idem | idem |
+| rx-CB gate withheld share (seed, same window: **11.01 %** = 403/3660) | **26.31 %** | **26.28 %** | idem | idem |
+| W6 code bias +2 / pooled p50 | 0.152 / 0.460 | 0.140 / **0.804** | idem | idem |
+| clock contrast +2 / pooled p50 (p95) | 0.291 / 1.651 (9.11) | 0.361 / 1.563 (**7.32**) | idem | idem |
+| ZWD pooled p50 / p95 | 0.659 / 5.03 | 0.637 / 5.03 | idem | idem |
+| D5 flags +1; births +1 / +2; eq34 rerefs | 38; 64 / 7; 64 | 39; 64 / 7; 64 | idem | idem |
+| PB wire p50 +1 / +2 / +30 | – | – | 0.0004 / 0.0007 / 0.048 | 0.0005 / 0.0011 / 0.035 |
+| stateful consumer at the seam: PB / code / clock re-refs (±30 s) | – | – | 0 / 22 / 0 | 0 / **25** / 0 |
+
+**P9a PASS** — the border is dense from the first fold, 150/0, the diagonal count 150 → 0, zero dense-fold
+fallbacks.  ⚠ Its second instrument is vacuous here: the §18.11 "first-fold clock trips" counter is the Card-Q3
+decouple total and `network.clock_anchor` is not armed on the field golden, so it reads 0 structurally (the run-end
+line now says so instead of letting the 0 read as health).  **P9b FAIL on every bar, with the border demonstrably
+dense** — so §21.14's attribution is FALSIFIED.  What the border moves: clock contrast p95 9.11 → 7.32 (at +60
+2.85 → 1.87), raw PB p95 2.83 → 2.63, ZWD 0.659 → 0.637.  What it moves the wrong way: the W6 code-bias level
+0.460 → **0.804** pooled (every signal: C1C 0.29 → 0.48, C1W 0.88 → 1.07, C2W 0.47 → 0.78, C5Q 0.37 → 0.79, C5X
+0.33 → 0.77), receiver clocks at +1 0.93 → 1.12 m, consumer code re-references 22 → 25.  The code-bias trajectory
+INVERTS: the border arm is better at the seam (+1 0.070 vs 0.086, +2 0.140 vs 0.152) and then walks ~1.7× faster
+(+10 0.495 vs 0.333, +30 0.844 vs 0.440, +60 1.139 vs 0.666) — restoring the writer's cross-covariance fixes the
+first fold and then stiffens the code-bias block against a station layer that is NOT the writer's (invariant #1's
+shape: a stiff prior across a state the run does not share).  What does not move at all: the rx-CB gate share,
+**flat at 26 % on every epoch of both arms** against the seed's flat 10–11 % over the identical window.  **P9c
+PASS** (PB wire 0.000 unchanged; a₀₀ Δ 0.02 TECU); the `zwd_seam_reseed` pair on the border posture reproduces
+§21.14's mixed pattern unchanged (ZWD 0.637 → 0.430, clock contrast 1.563 → 1.168, rx clocks 1.12 → 0.82; CB 0.804
+→ 0.918, a₀₀ +0.45 → +0.74 and no decay, D5 39 → 53), so that knob's field verdict does not change either.
+
+**Decision.**  `network.resume_border_restore` = **KEEP_OFF on the field** with the mechanism above (the knob is
+correct, tested, default-OFF and stays in the tree; re-test it after the station-layer residual is closed — the
+sim's leg-E win (§18.14) was measured WITH the coupling rows and with a station layer that continued).  Not armed
+by the harness; no golden change.  Harness notes: `ev_launch.ps1` wrote an empty exit-code line (`$p.ExitCode`
+unpopulated; fixed by touching `$p.Handle`); a `CMakeLists.txt` edit landing during a configure leaves `build.ninja`
+newer than it and the new test file silently uncompiled — count suites, touch `CMakeLists.txt`.
+
+**RS-7b pre-registered — a CENSUS, no new run: WHERE the flat 26 % lives.**  Everything §21.14 called "the
+residual" (rx-CB withheld share 26 % vs 11 %, code-bias level walk, ZWD 0.64 m, pooled clock contrast 1.5 m, 22
+consumer code re-references) is persistent over the whole leg, so it is a per-epoch structural difference between
+the leg's and the seed's state, not a transient.  Read from the existing `rs7_raw_{ctl,border}` legs and `v5raw`
+over the identical window (epochs 605–664): (a) the rx-CB withholds per (station, code key, epoch) with the
+innovation's magnitude, sign and σ — concentrated on a station/signal subset withholding EVERY epoch (a per-station
+split) or diffuse (a gate calibration); constant per-key offset (a frame) or scatter (instability); which term of
+"10σ + 0.5 m" fails; (b) what the inject innovation is measured AGAINST in the code (`NetworkRunContext.cpp` ~5231,
+`RxCbInjectAction::SkipInnov`) — the writer's `x_lin`, the previous posterior, or the epoch's code-only estimate —
+and what a withhold does to the carry (the fingerprint note at ~214 says this gate reads innovations against
+`x_lin`, and an `x_lin` shift is a solve no-op that a screen still sees, SPEC_lane_slip_response §7.2); (c) receiver
+clocks and ZWD per station, leg − seed as 60-epoch series: persistent per-station offsets, and whether they sit on
+the withholding stations; (d) W6 code bias per (sat, signal) and clock contrast per satellite, leg − seed series:
+common-mode per signal (a datum realization) or per satellite, and whether clock and code bias re-split per
+satellite (CLK + CB per (sat, signal) leg − seed — the consumer-invariant sum — against each alone).  Candidate
+mechanisms to weigh, none assumed: a station-side `x_lin` re-seeded at the resume that the gate reads (H1); a
+per-satellite clock↔code-bias re-split invisible to the consumer (then the instruments overstate the residual and
+the 22 re-references are its whole cost) (H2); a station subset with a persistently different clock/CB/ZWD split —
+the field's ZWD datum sink (H3); a restored carry variance so tight that 10σ sits below the leg's own scatter (H4).
+Deliverable: the mechanism with the evidence, the smallest increment, and its harness grade.
+
+### 21.18 RESULTS — RS-7b census: the flat 26 % is the rx-CB inject gate reading a FROZEN, un-snapshotted linearization point re-seeded at the resume; RS-9 pre-registered (2026-09-13 ~08:50 local; read-only Opus census on the RS-7 legs, script `scratchpad/rs7b_census.py`; manager pre-registration BEFORE any leg is read)
+
+**(a) Where the 26 % lives.**  One rx-CB key per station (`GPS_DCB`, 61 per epoch), so "by key" is "by station".
+Over the identical window (tow 277320–279090, k = 1..60): seed 403/3660 = **11.01 %**, `rs7_raw_ctl` 963/3660 =
+26.31 %, `rs7_raw_border` 962/3660, `rs6_raw_ctl` (no station-layer restore at all) 942/3599 = 26.17 %.  Per-epoch
+counts are flat and deterministic — seed `6 6 6 … 7 7 7` (one step at k = 14), leg `17 17 … 16 16` — and the set is
+**17 stations withholding 45–58 of 60 epochs** (KRGG 58, GUAM 57, SGOC 56, CAS1 55, GAMB 55, SOLO 54, OAFA 54, BOR1
+54, KOKV 53, MAJU 52, LCK4 51, MRO1 51, COCO 50, CUSV 49, GOPE 49, LMMF 48, HKSL 45) against the seed's **7** (KOKV
+57, CPVG 56, MRO1 54, LMMF 53, GOPE 52, GAMB 49, LCK4 46): 6 shared, 11 leg-only, 1 seed-only.  Concentrated,
+per-station, fixed from k = 1.  **No guard term fails — the innovation does.**  `rxCbInjectGate`
+(`include/filter/NetworkRunTypes.hpp:1535–1549`) withholds on `innov² > k²·(var_eff + guard_var)`, k = 10,
+guard_var = 0.25 m², `var_eff = var + q·Δt` with q = 1e-9: measured `var_eff` p50 1.30e-2 m², so the 0.5 m guard is
+95 % of the σ² and the bar is a fixed **5.13 m** — on a quantity whose epoch-to-epoch motion is 9.4e-4 m p50.  H4
+(gate calibration) is dead: `var_eff` would have to grow 400× to move the bar 20 %.
+
+**(b) What the innovation is measured against — the proof.**  `ApplicationNetworkAssembly.cpp:3954`:
+`cb_innov_raw = value_abs − x_lin(cb_idx)`; `x_lin` is the station StateManager's code-bias state, seeded ONCE by
+`StateInitializer::initializeCodeBiases` (`StateInitializer.cpp:656`, the median over satellites of a code-residual
+DCB, written at `:749/:754`) on the station's FIRST processed epoch behind the one-shot `isCodeBiasInitialized()`
+(`MeasurementModel.cpp:1799–1802`), never written back; `rx_cb_carry_demean` / `_harvest_demean` /
+`rx_cb_carry_step_gate` are all off here, so the raw innovation is the tested one.  At k = 1 the leg has restored
+all 61 RC entries, so `value_abs`, `var` and `last_seen_s` are bit-identical to the seed's at the same tow, the gap is
+30 s in both, k / q / guard identical — same numerator, same threshold, **6 withheld in the seed, 17 in the leg**: the
+only input left is `x_lin`.  `rs6_raw_ctl` (carry NOT restored) trips the same ~16 from k = 2 — the set is a property
+of the leg's `x_lin`, not of the carry's provenance.  `x_lin` is in no snapshot row (RC = `value_abs / var /
+last_seen_s`, `NetworkStateSnapshot.cpp:257–259 / :686`) and nothing restores it.  **What a withhold does:** the fold
+is skipped (`:4006–4009`, zero force) but the harvest overwrites the entry unconditionally
+(`NetworkRunContext.cpp:5328`) and the prune only drops > 900 s — a withholding station is refreshed and refused
+every epoch, forever, with no rx-CB memory, while the run-end line reads "61 carried" (invariant #4 blind spot).
+Its carry variance is 1.3e-2 m² against a folding station's 3e-5.
+
+**(c)(d) The consequences sit on the withholding stations, and the clock error is real to the consumer.**  Leg −
+seed with the per-epoch across-station median removed (invariant #5): the 18 withholding stations carry CB
+`value_abs` p50 **0.510 m** vs 0.019 on the 44 folding ones (26×, essentially exclusive), receiver clock 1.94 vs 1.03,
+ZWD 0.95 vs 0.62 (worst SOLO CLK 16.8 / ZWD 7.8, CPVG 8.2 / 4.1, CAS1 5.3 / 3.5).  H3 is inverted — the per-station
+split is the CONSEQUENCE of the withhold (the set is fixed at k = 1 before any split can develop).  Products leg −
+seed over 60 epochs: clock contrast p50 1.497 (p95 8.99), code bias 0.427, and the consumer-invariant sums |CLK + CB|
+1.566 / |CLK − CB| 1.397 against |CLK| 1.497 alone, per-satellite corr(ΔCLK, ΔCB) = +0.59 (a re-split would be ≈ −1):
+**H2 falsified**, the 22 code re-references are not the whole cost.  Structure: per-signal means ≈ 0 (only C2X +0.378,
+the §21.16 L2X key) — not a datum realization; a per-(sat, signal) CONSTANT explains 85.9 % of the ΔCB variance (per
+satellite alone 29 %) — a frozen level offset per OSB key, the "level walk" shape; clock contrast per satellite
+persistent (G16 +9.2 ± 5.2, G21 −8.6 ± 2.8).
+
+**Mechanism (H1).**  RS-6 restored the rx-CB carry's numerator and left its reference cold: `x_lin(cb)` is a frozen,
+arbitrary linearization point re-derived at the leg's first epoch from one epoch of code at 05:02 instead of 00:00;
+the gate's only statistic is the distance from it, so 11 extra stations sit outside a 5.13 m bar for the whole leg,
+lose their receiver-DCB memory permanently, and the receiver-DCB / satellite-OSB / clock / ZWD split re-realizes on
+them.  Invariant #7 exactly: the re-coupling edge re-validated the value it reconnected but not the frame it is
+judged against — RS-8's defect family (a per-station, first-epoch, un-snapshotted, silent decision; GAMB / OAFA /
+CPVG sit in both sets, `resolveReceiverBias` feeds `initializeCodeBiases`).  ⚠ **An open defect in its own right,
+NOT this card:** the gate is frame-blind on the continuous run too — 7 of 61 stations are refused for the whole 6 h
+on the seed (no rx-CB memory all day).  The frame-invariant screen (`rx_cb_carry_step_gate`, LV-4) is the correct
+statistic but was graded net-harmful as built (SPEC_level_information_budget §11 / §23.3: +64 / +35 / +16 % post-fit
+phase rms, needs LV-5) — a solve-affecting card with the level-channel instruments, owed, not tonight.
+
+**RS-9 pre-registered — snapshot and restore the code-bias linearization point (the RS-3/5/6 pattern).**  Write knob
+`network.state_snapshot_rxcb_lin_capture` (requires `state_snapshot_station_capture`): row `RL,<station idx>,<cb
+key>,<x_lin>` beside the RC row (`NetworkStateSnapshot.cpp:258`, read at `:686`), format-forward.  Read knob
+`network.resume_rxcb_lin_restore` (requires `resume_station_restore` with its rxcb half): the RL map is stashed at
+the RS-6 restore (`NetworkRunContext.cpp:1689–1707`) and consumed at the station's first-epoch code-bias
+initialization (`StateInitializer::setCodeBiasSeedOverride` checked inside the `samples` loop at
+`StateInitializer.cpp:745–753`, `markCodeBiasInitialized()` for covered keys; uncovered keys fall back to today's
+seed and are counted); a snapshot without RL rows is inert and warned; counters + run-end line.  Solve-invariant by
+construction under this posture (a code bias enters linearly, an `x_lin` shift is an exact solve no-op —
+project_network_xlin_invariance; the only consumer is this gate; `rx_code_bias_datum`, whose RHS reads `x_lin`, is
+off here — the loader refuses the pair).  Not fingerprinted (forward-only resume response policy).  Rider (every
+run, trace-class): the rx-CB run-end line names the stations that withheld > 90 % of their epochs ("carried NOTHING")
+so the seed's 7 become visible.  Rejected variants: seeding `x_lin := value_abs` (over-corrects the leg to ~0 % against
+the seed's 11 % and breaks the leg↔seed comparability every RS gate uses); arming LV-4.  Seeds `v7` / `v7raw` = the
+v5 recipes + the write knob (products byte-identical to v5 / v5raw), ep0604 at the same tow, fingerprint unchanged.
+
+**Gates, frozen (legs `rs9_raw_ctl` / `rs9_raw_lin` from `v7raw`, `rs9_null_ctl` / `rs9_null_lin` from `v7`, 60
+epochs, one exe, every other RS restore at the harness default; `resume_border_restore` off):**
+* **R1 the closing bar:** rx-CB withheld share over k = 1..60 = the seed's 11.0 ± 1 % (from 26.3), and the leg's
+  withholding set = the seed's 7 stations (KOKV, CPVG, MRO1, LMMF, GOPE, GAMB, LCK4) ± 1; restored RL entries 61,
+  uncovered 0.
+* **R2 the consequences, the RS-7 P9b bars re-used unchanged:** W6 code bias pooled p50 ≤ 0.10 m (from 0.46); ZWD
+  pooled p50 ≤ 0.32 (from 0.66); clock contrast pooled p50 ≤ 0.5 (from 1.65); receiver clocks at +1 p50 ≤ 0.3 (from
+  0.93); raw PB at +1 p50 ≤ 0.5 ex L2X (from 1.50; the L2X exclusion stays until RS-8 lands); the stateful consumer's
+  code re-references at the seam ≤ 5 (from 22) with phase resets 0; PB wire 0.000 and a₀₀ within 2 TECU unchanged.
+  Each bar reported PASS/FAIL; the card closes on R1 even if R2 leaves a remainder — R2's remainder then names the
+  next memory.
+* **R3 byte-identity:** cold smoke knob absent vs armed `87a33bf0…`; `v7` / `v7raw` products = `v5` / `v5raw`;
+  `rs9_raw_ctl` `products.txt` = `evleg_rs7_raw_ctl`'s (same posture, new binary); suite green.
+* **R4 the rider:** the seed's run-end line names its 7 permanently-refused stations; the lin leg names the same 7;
+  the ctl leg names 17.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
@@ -5748,5 +5915,69 @@ neutral there and fixing on the field (§22.4).
 `config_posture_check.py --verify-loader` 0 gaps).  The field golden needs no exception — the scope itself is a
 field exception there, so the clause is out of regime rather than suppressed; the field pin of scope + pairs +
 clause rides on the RS-2 seed (§21.5) once the §20 wire/consumer bars can be read.  Grader hygiene noted, not
-fixed here: `simnet_storm_grade.py`'s `bscope_clause` regex targets an older log line and reads `None` on both
-arms.
+fixed here: `simnet_storm_grade.py`'s `bscope_clause` reads `None` on both
+arms.  **Resolved 2026-09-13 (main `dcf04dd`, worker commit `ee33550`): the regex was not stale — the `§Z`
+response-scope clause (`raim_erase_band_scope` / `refloat_band_scope`) is out of regime on the campaign lineage, which
+emits the detector-side `Network (common-band scope): verdicts …` census instead; the grader now tries both, records
+`bscope_clause_kind`, and the captured census reproduces B4's table to the digit (4208 / 3150 vs 3147 / 820 vs 807 /
+186 vs 202 / 116 / ref-arc refusals 29).**
+
+### 22.6 THE REFERENCE-SLIP FAN-OUT under `if_phase_td_pairs = all` — found by FP-1 on the warm-resuming field seed; the REF-FAN card pre-registered (2026-09-13 ~09:45 local, manager; FP-1's legs still running, no fix leg read)
+
+**The finding (FP-1 worker, interim report at 7 of 12 legs; `runs/evleg_fp1_*` from `evseed_field6h_v5` ep0604,
+exe `gnss_processor_rs7.exe` 23C628B3…).**  With the field seed warm-resuming cleanly (61/61 emitted on every
+leg, 0 withheld — defect 1 of §20.1 is cured on v5) the §20 identity rows all reproduce (E1 PIN → `{L5X}`; E2 PIN
+→ `all` via `iftd(L2W+L5X)=ref_arc`, the clause's named cost; the PIN null's `ref-arc refusals 6 [L1C_L5Q 1,
+L1C_L5X 1, L1W_L5X 2, L2W_L5Q 2]` = §22.4 exactly).  But the pre-registered G-A cannot see what the additional
+chains DO with a slip on their own reference: at GOPE00CZE, G24 is the reference of both L5 chains for k ∈
+[−9, +41] (§20.1), so E1's −99 cyc L5X slip reads `abs_dev = 0.000000` on G24's own rows and **−31.8 m / −283.9 m
+on G11, G25 and G32** — six false IF-TD refloats on innocent arcs, 0 in the OFF arm; one of them (G32/L1C)
+re-realizes a satellite phase-bias datum network-wide by **13.7 m** (declared: disc 1 → 2, σ 0.039 → 0.449).  No
+backstop: card R's counters are identical in all four legs, T4 is structurally 0 on `carry_invariant`, and the
+collateral satellites have no scope verdict to narrow.  The mirror image of §22.1: the clause made an UNTESTED
+reference refuse to exonerate; nothing makes a SLIPPED reference stop implicating its chain.
+
+**Why it exists (the §14.10.3 flood guard).**  The reference arm (tier T1r, `IfPhaseSlipDetector.cpp` ~689–800:
+the median of the non-reference between-epoch DDs is the reference's own step; on a fire the reference's IF arc
+is reset, `ref_slip` traced, and — for a coherent step — the chain's `prev_grad` re-based so the pooled outlier
+test sees only per-satellite residuals) runs on the FIRST chain only (`~977: run_ref_arm = first_pair_chain`),
+because per-chain re-runs through the LEGACY candidate condition |median| > 0.5·λ_IF flooded on the wide
+combinations ((L2W,L5Q): noise amplification 16.6, λ_IF 0.125 m — 5 351 candidates / 64 fires on a quiet null,
+§14.10.3).  An additional chain therefore ADOPTS the first chain's reference when that satellite is in its set
+(`~934–957`) and otherwise ELECTS its own (`selectReference`) — and in neither case is a reference slip ever
+attributed: an adopted reference's fire in the first chain does not reach the additional chain (whose fan-out then
+goes to the pooled test), and an own-elected reference is never tested at all.  On DOY-129 the L5 chains
+own-elect at 53 % of station-epochs (the (1,2) reference is a no-L5 IIR-M in 98 % of those), G24 at GOPE among
+them.  Card R's EMPIRICAL gate (`if_phase_td_ref_gate`, armed on both goldens: per-chain EWMA dispersion scale,
+k = 6, coherence, warm-up abstain, thin-widen) postdates that flood measurement and scales with each chain's own
+noise — the legacy threshold was the flood, not the arm.
+
+**Build (default-OFF, byte-identical when off; the `first` posture untouched by construction).**  Knob
+`network.cycle_slip.if_phase_td_ref_arm_all` (requires `if_phase_td_pairs = all` AND `if_phase_td_ref_gate` —
+warn + disarm otherwise; the legacy candidate condition must never gate a wide chain again): on an additional
+chain, (i) OWN-ELECTED reference ⇒ run the reference arm on that chain through the empirical gate with the chain's
+own dispersion state (`cs.ref_scale_*` are per chain already); (ii) ADOPTED reference ⇒ inherit the first chain's
+verdict for that satellite this epoch: a first-chain `ref_slip` fire on the adopted satellite is a `ref_slip` on
+this chain too (reset THIS pair's reference arc `<sat>_<this chain's phase_if_key>`, re-base this chain's
+`prev_grad` by this chain's own median when the verdict is FireRebase, skip the pooled attribution of the fan-out);
+no fire ⇒ exactly today.  Counters per chain: candidates / fires (own) / inherited fires / fan-out suppressed;
+run-end line; `network_if_slip.csv` rows for the additional chains' reference arm carry the chain key and
+`ref_slip`.  Nothing changes on the first chain, on `pairs = first`, or when the knob is off.
+
+**Gates, frozen (legs 60 epochs from `evseed_field6h_v5` ep0604, PIN posture = scope + pairs `all` + the clause
+[the FP-1 arm], fix off vs on, one exe; events as §20 at GOPE00CZE, +10):**
+* **F1 the flood (null off/on):** additional-chain reference-arm fires network-wide over 60 epochs ≤ 2× the first
+  chain's own count over the same window (report both, and the candidates); products byte-identical when nothing
+  fires, otherwise differing only at attributed epochs (list them).
+* **F2 the fan-out (E1, E5, E3/G24 off/on):** collateral IF-TD refloats on the non-reference satellites of the L5
+  chains at k ∈ [+9, +12] → 0 (from 6 on E1); the reference's own arc flagged `ref_slip` on each L5 chain at +10
+  (E1 and E5: the L5X arc; E3: both bands, and the band-scope verdict for G24 stays all-band or narrows to the
+  slipped bands, never to L2W); phase-bias datum re-realizations caused by collateral refloats → 0 (the 13.7 m
+  G32/L1C one); consumer event − null max |Δ3D| over +0..+50 and mean over +30..+50 on ≤ OFF; the station frame
+  (CLK / ZWD / the injected LOS) at +45 on ≤ off.
+* **F3 the control (E3/G25 off/on, G25 not a reference):** products byte-identical, or differing only where an
+  inherited first-chain fire acted (explain each).
+* **F4 byte-identity:** cold smoke on the field golden (pairs `first`) knob absent vs armed `87a33bf0…`; the
+  fix-off legs reproduce FP-1's PIN legs' `products.txt` byte-for-byte (same posture, new binary); suite green.
+Passing F1–F4 re-opens the FP-1 pin (G-A..G-G re-run on the fixed posture, §20's bars); failing F1 names the
+flood's true owner (the empirical gate on wide chains) and the pin stays an exception with this mechanism.
