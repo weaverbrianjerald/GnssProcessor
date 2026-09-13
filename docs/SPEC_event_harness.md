@@ -6894,3 +6894,90 @@ Bars: A1 the per-station code rms of the leg reproduces `network_pf_keyed.csv`'s
 A2 the dominant signature is named by the table with > 70 % of the pooled code residual variance in ONE row; A3 the named
 mechanism's fix is pre-registered as the next producer card WITH a wire-vs-CODE bar (W1's within-arc rms halved on a 60-epoch
 leg, then on a seed) — the first time this project has had a truth-referenced wire bar to build against.
+
+**§24.6 RESULTS — the code residual is a persistent per-LINE-OF-SIGHT level of metres, non-dispersive, with no home in the model
+(2026-09-14 ~05:30 local; worker on worktree-agent-ad8d3f6516c27591c `7ece11f`, merged `0dac1cc`: `network.trace_postfit_rows` → `logs/
+network_pf_rows.csv` (signed `resid_m = y − A_s·x_s − A_r·x_r`, `w`, `elev_deg` per row, written inside the P1-4 pass; smoke ON/OFF both
+`87a33bf0…`) and `scripts/pf_rows_attrib.py`; leg `ci_null_rows` from v8 ep0604 with the pinned screen, products `e0d234ee…`, 145 587 rows
+over 60 epochs; manager grade + the LOS forensic below).**
+
+**A1 PASS**: the dump reproduces the leg's own `pf_keyed` STA statistic at all 3 111 (tow, station) cells (max |Δ| 5e-5) and its
+per-station ranking at the same epochs (Spearman 0.996); the ranking is NOT stationary over the day (Spearman 0.53 against
+hours 2–5: GOPE 3.6 → 9.1, HOLB 8.0 → 13.0, JPLM 10.8 → 16.3 m) — a per-LOS population, not fixed station constants.
+
+**The shape (window k = 10..60, 1 303 LOS-signal series, pooled code rms 4.33 m; phase rms 0.3 mm — numerically zero under
+free ambiguities).**  The per-LOS MEAN carries **92.3 %** of the sum of squares (|mean| p50 1.76 / p90 6.62 / max 29.8 m; rms
+about the mean p50 0.56 m), persists across window halves (r 0.91, slope 0.87), and is ×3.2 larger below 25° than above 45°.
+It is NOT dispersive: rms(C2W)/rms(C1C) = 0.87 and rms(C5)/rms(C1C) = 0.70 against the 1.65 / 1.79 an ionospheric error
+carries; the between-signal energy is 12× what an ionospheric pattern allows; the C1C and C2W per-LOS means are uncorrelated
+(r 0.03).  Nested variance decomposition: per-(station, signal) constants **20.2 %**, per-(satellite, signal) constants 8.3 %,
+station-epoch and satellite-epoch common modes 0.5 % each, **per-LOS signal-common 51.9 %**, per-LOS dispersive 16.4 %,
+remainder 2.2 %.  The seven stations the rx-CB gate refuses all day carry the DCB signature the (station, signal) constants
+predict — C1C mean −2.86 m vs +0.40 for the rest, C2W +1.95 vs −0.49, opposite signs at 6 of 7 (GAMB −6.1 / +4.1, CPVG −4.8 /
++2.1, LCK4 −3.4 / +2.7 …) — §21.18's frame-blind gate priced at a fifth of the code residual variance.  A2 by the letter: the
+largest row is "the per-LOS residual after every state row" at 70.6 %; the ionosphere row is shape-refuted.
+
+**The LOS forensic (manager, 05:20).**  JPLM/G10 (C1W / C2W / C5Q ≈ −16 / −15 / −19 m at k = 10, el 23.4°, sliding to −27 / −27 /
+−30 m by k = 45 at 17.8° — signal-common, growing as the satellite sets) is the worst of 493 LOS with ≥ 30 rows; the levels
+correlate with NEITHER the Sagnac term (r −0.015; Sagnac rms 15.7 m across the LOS — an omitted or mis-signed Earth-rotation
+correction is excluded) NOR the receiver-clock light-time term ρ̇·δt_r (r −0.13; JPLM's receiver clock is +260 km ≈ 0.87 ms, the
+term 0.43 m); |level| vs 1/sin(el) r +0.33, and a per-station `a + b/sin(el)` fit explains only **8.2 %** of the level SS — the
+levels are not a zenith-referenced station pattern either.  What the network's own zenith channel shows is the finding of the
+hour: **the per-station ZWD states are unphysical** — SCTB −16.2 m (min −34.7), JPLM +21.7, MAJU −12.2, GOP6 −10.7, OAFA −8.0,
+KRGG −4.9, WROC −4.4 m against a physical 0–0.4 m — the white-sink ZWD absorbs tens of metres of station-common, mapping-shaped
+error every epoch, and the per-LOS levels are what the mapping function cannot fit.  The iono states for the worst LOS are
+ordinary (JPLM/G10 slant 10–12 m L1 at 17–23°).  A non-dispersive, station-common, mapping-shaped error of tens of metres has
+no physical source at an IGS site with ITRF coordinates; the discriminating test is a plain standalone PPP of the same
+stations on CODE products (JPLM, SCTB, MAJU, and WROC as the control), which decides between the observations at those sites
+and the network's per-station modeling — running as this is written.
+
+**The standalone-PPP forensic (manager, 05:45) — the observations and the shared single-station model are FINE; the defect is the
+network's own estimation.**  Four network stations run as plain PPP on CODE SP3 / CLK / .BIA (`config/ppp_internal.json`, GPS-only,
+15° mask, 2 h from 00:00, `runs/_ci_ppp_*`), graded on the last 30 min against the ITRF2020 roster:
+
+| station (network code rms, network ZWD) | 3D p50 | E / N / U | 3D at 30 / 60 min | tropo state | IF code resid rms | phase rms |
+|---|---|---|---|---|---|---|
+| WROC00POL (1.8 m, −4.4 m) | **0.032** | −0.026 / +0.002 / +0.013 | 0.17 / 0.07 | 0.090 | 0.42 | 0.006 |
+| JPLM00USA (9.6 m, +21.7 m) | **0.118** | +0.018 / −0.021 / −0.116 | 11.2 / 3.97 | 0.107 | 0.47 | 0.007 |
+| SCTB00ATA (7.2 m, −16.2 m) | **0.186** | +0.069 / +0.013 / +0.172 | 1.60 / 0.24 | −0.122 | 1.41 | 0.009 |
+| MAJU00MHL (8.7 m, −12.2 m) | **0.160** | +0.089 / +0.055 / +0.122 | 4.41 / 1.88 | 0.386 | 0.94 | 0.018 |
+
+JPLM/G10 — the network's worst LOS at −25 m — reads **+0.04 m mean / 0.24 m rms** standalone.  Every geometric explanation
+of the network's per-LOS levels is excluded by direct test on the 493 LOS of `ci_null_rows`: the Sagnac term (r −0.015),
+the receiver-clock light-time term (r −0.13), a light-time or transmit-time error (corr with the range rate +0.125, slope
++1 ms), and a per-station position-error vector (a 4-parameter fit per station explains 42.8 % of the level SS with fitted
+|d| of 3–20 m — the roster is ITRF2020 to 1 mm, so these are not coordinates).  The levels are metres, per LOS, non-dispersive,
+persistent, present only in the network's uncombined multi-station solve, whose per-station ZWD sits at ±5–35 m to
+accommodate them.  **Conclusion: the network producer's code model — the uncombined per-signal code rows with estimated
+satellite code biases (W6), carried receiver code biases (frozen at their first-epoch seed, q 1e-9), the per-LOS ionosphere
+tied to the SH field, and the per-epoch ZWD sink — is inconsistent with the data by metres at every station, worst at the
+isolated ones; the satellite clock, which the code determines, inherits it (§24.5), and the wire's metre-level inconsistency
+with CODE, the consumer's failure to converge (§24.3), and every "level channel" finding since July are downstream of it.**
+
+### 24.8 Card CM — CODE-MODEL CONSISTENCY: single-knob COLD arms that name the mechanism (pre-registered before any arm is read)
+
+Six arms from the field golden, 2 h cold from 00:00 (240 epochs; the fingerprinted knobs must cold-start), one knob each
+against the control, every arm with `network.trace_postfit_rows: true` (trace-only):
+
+| arm | knob | what it removes |
+|---|---|---|
+| A0 | control (the golden + the trace) | — |
+| A1 | `network.carry_rx_code_bias: false` | the receiver code-bias carry (the frozen first-epoch memory; §21.18's gate) |
+| A2 | `network.estimate_sat_code_bias: false` + `model_corrections.enable_code_phase_bias: true` | W6 — CODE's OSB replaces the estimated satellite code biases (the consumer L4's satellite side) |
+| A3 | `network.estimate_iono_sh: false` | the SH-VTEC tie — the per-LOS ionosphere floats at `ionosphere_q` |
+| A4 | `filter.process_noise.sat_code_bias_q: 1e-4` | the frozen satellite code-bias states (q 1e-10 → 1e-4) |
+| A5 | `network.cb_kaula_prior: false` | the 3 m Kaula prior on the code biases |
+
+A knob the loader refuses on this lineage is reported with the loader's line and the arm dropped, never worked around; a knob
+that forces others (W6's forcing of `estimate_sat_biases`, `promote_sat_code_bias`, `estimate_ifb`) is recorded with the
+effective posture from `gnss_config.log`.  **Reads per arm, last hour (k 121..240):** (i) per-station code residual rms p50
+across stations (`network_pf_keyed.csv` STA; control ≈ 4.5 m); (ii) per-station ZWD absolute p50 and the count of stations with
+|ZWD| > 0.5 m (`network_zwd.csv`; control 7 stations beyond 5 m); (iii) the wire-vs-CODE census on the arm's `products.txt`
+(`scripts/wire_vs_code_census.py`, hour 1: within-arc rms of D_phase and D_code, the raw clock contrast LEVEL p50; control
+2.8–5 m / 1.3–1.9 m / 3–6 m); (iv) the per-LOS level SS share and its dispersive fraction (`scripts/pf_rows_attrib.py`); (v)
+availability (emitted / withheld) and the run-end counters.  **Bars (frozen):** an arm NAMES the mechanism when it takes (i)
+below 1.0 m AND (ii) to zero stations beyond 0.5 m AND (iii) D_phase within-arc rms below 0.5 m in hour 1 — all three; a
+partial mover (any bar halved) is reported as a contributor; no bar moved ⇒ that mechanism is exonerated.  Two or more arms
+crossing the bars ⇒ the fix card combines them and is graded on the same three plus the consumer's convergence (§24.3's
+instrument, now with a warm consumer).  Availability must not fall below the control's by more than 5 %; an arm that holds the
+bars by withholding is not a pass.
