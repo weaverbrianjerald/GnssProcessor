@@ -4406,6 +4406,17 @@ int networkTeardown(
                   ctx.carry.ep_pf_code_rows, ctx.carry.ep_pf_phase_rows,
                   ctx.carry.ep_sigma0_pf, ctx.carry.ep_sigma0_pf_code,
                   ctx.carry.ep_sigma0_pf_phase);
+    if (config_.getNetworkConfig().trace_postfit_rows)
+        // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line.
+        log->log(ctx.carry.pf_rows_written > 0 ? spdlog::level::info : spdlog::level::warn,
+                 "Network (§24.6 post-fit rows): {} SIGNED per-row post-fit residual(s) written "
+                 "to network_pf_rows.csv ({} code + {} phase; {} written with an empty "
+                 "elev_deg); {} data row(s) the pass visited were attributed to neither "
+                 "family and NOT written (local-column-only pseudo-observations).  0 written "
+                 "under an ARMED trace means the pass never pooled a station — read the "
+                 "P1-4 line.",
+                 ctx.carry.pf_rows_written, ctx.carry.pf_rows_code, ctx.carry.pf_rows_phase,
+                 ctx.carry.pf_rows_no_elev, ctx.carry.pf_rows_unattributed);
     if (config_.getNetworkConfig().trace_sh_spectrum)
         log->info("Network (P1-3 shared-normal spectrum): {} epoch(s) written to "
                   "network_sh_spectrum.csv (mode detail every {} traced epoch(s)).",

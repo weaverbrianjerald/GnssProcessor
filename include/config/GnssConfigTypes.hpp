@@ -1931,6 +1931,30 @@ namespace GnssProcessor {
          */
         bool trace_postfit_keyed{ false };
         /**
+         * @brief SPEC_event_harness §24.6 (per-LOS code-residual attribution):
+         *        SIGNED per-row post-fit residual dump (@c network.trace_postfit_rows).
+         *
+         * The keyed pools above pool per STATION, per SATELLITE and per SIGNAL
+         * SEPARATELY and drop the sign, and @c network_station_residuals.csv is a
+         * per-cell RAIM maximum without sign or signal — nothing in the tree gave
+         * a SIGNED per-(station, satellite, signal) residual with its kind.  When
+         * this is on, the same P1-4 residual pass writes one
+         * @c network_pf_rows.csv line per DATA row it visits and can attribute to
+         * a family (kind ∈ {code, phase}):
+         * @c week,tow,station,sat,signal,kind,resid_m,w,elev_deg — @c resid_m the
+         * signed post-fit residual @f$v = y - A_s x_s - A_r x_r@f$ (observed −
+         * predicted, metres, NOT standardized), @c w the row's information weight
+         * (the pass standardizes @f$|v|\sqrt{w}@f$), @c elev_deg the LOS elevation
+         * off the station's modeled observation set (empty when unavailable).
+         * Rows the pass attributes to neither family (local-column-only
+         * pseudo-observations) are counted on the run-end line, not written.
+         * Implies the P1-4 pass runs (like the keyed rider).  ~2.5 k rows per
+         * emitted epoch at 61 stations, streamed (never buffered).  TRACE-ONLY —
+         * never folded into the warm-resume fingerprint.  Default OFF ⇒ no file,
+         * byte-identical.
+         */
+        bool trace_postfit_rows{ false };
+        /**
          * @brief SPEC_day129_frame_guards Phase 2.2: SH-field health GATE
          *        (@c network.sh_health_gate) — gate emission, not just warn.
          *

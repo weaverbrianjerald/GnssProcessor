@@ -2458,9 +2458,9 @@ int Application::runNetwork() {
         // before the census's rider feeds this epoch's stations, so a station
         // cannot standardize its own coordinate fault away.
         if (ctx.knobs.cg_on) ctx.carry.cg.beginEpoch(pl_now_s, se.time.tow);
-        if (nc.trace_postfit_sigma0 || nc.trace_postfit_keyed)
+        if (nc.trace_postfit_sigma0 || nc.trace_postfit_keyed || nc.trace_postfit_rows)
             networkPostfitSigma0(ctx, config_, log, traces, se, stations, est, x_s,
-                                 asm_res, est_index_of);
+                                 asm_res, est_index_of, &modeled);
         if (nc.trace_sh_spectrum)
             networkShSpectrum(ctx, config_, log, traces, se, est);
         // docs/SPEC_prefit_census_observability.md INC-1/3/4 — the PREFIT

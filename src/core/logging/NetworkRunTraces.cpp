@@ -62,6 +62,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       sh_spectrum_trace_path(log_dir_ / "network_sh_spectrum.csv"),
       sh_spectrum_mode_trace_path(log_dir_ / "network_sh_spectrum_mode.csv"),
       pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
+      pf_rows_trace_path(log_dir_ / "network_pf_rows.csv"),
       phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
       sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
       sd_ewl_ar_trace_path(log_dir_ / "network_sd_ewl_ar.csv"),
@@ -436,6 +437,18 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open keyed post-fit trace {}",
                       pf_keyed_trace_path.string());
+    }
+    if (nc.trace_postfit_rows) {
+        // SPEC_event_harness §24.6: the SIGNED per-row dump off the P1-4 pass.  One
+        // line per attributed DATA row per emitted epoch; resid_m is v (metres, NOT
+        // standardized), w the row weight, elev_deg empty when the station has no
+        // modeled observation of that satellite this epoch.
+        pf_rows_trace.open(pf_rows_trace_path);
+        if (pf_rows_trace)
+            pf_rows_trace << "week,tow,station,sat,signal,kind,resid_m,w,elev_deg\n";
+        else
+            log->warn("Network: failed to open per-row post-fit trace {}",
+                      pf_rows_trace_path.string());
     }
     if (nc.trace_phase_anchor) {
         // S1 anchor partition (docs/SPEC_lane_spectrometer.md §3.3).  One row per
@@ -1426,6 +1439,11 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"trace_clock_full\":" << (nc.trace_clock_full ? "true" : "false") << ','
                << "\"trace_station_residuals\":" << (nc.trace_station_residuals ? "true" : "false") << ','
                << "\"trace_raim_redundancy\":" << (nc.trace_raim_redundancy ? "true" : "false") << ','
+               // SPEC_event_harness §24.6 per-row post-fit dump: emitted ONLY when
+               // armed, so an unarmed run's manifest bytes are unchanged (the adm_*
+               // precedent below).
+               << (nc.trace_postfit_rows ? std::string("\"trace_postfit_rows\":true,")
+                                         : std::string())
                // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
                // needs to tell a screened leg from its control without re-reading the
                // config — and, because `adm_screen` is solve-affecting, to know that
@@ -2028,6 +2046,9 @@ void NetworkRunTraces::closeAll() {
     // Same rationale: a NEW member, and the contingency is the graded artifact
     // of a datum-graph arm.
     if (datum_graph_trace.is_open()) datum_graph_trace.close();
+    // Same rationale: a NEW member, and the per-row residual dump is the graded
+    // artifact of a §24.6 attribution leg — its tail must be flushed at teardown.
+    if (pf_rows_trace.is_open()) pf_rows_trace.close();
 }
 
 } // namespace GnssProcessor

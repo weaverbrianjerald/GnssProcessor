@@ -33,6 +33,7 @@
  * stays in @c logging/NetworkRunTraces.
  */
 
+#include "common/PppObservation.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -131,6 +132,18 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
  * structure ⇒ orbit/clock input, per-signal split ⇒ dispersive).  Zero extra
  * label lookups when the keyed trace is closed — the OFF path is unchanged.
  *
+ * ROWS EXTENSION (SPEC_event_harness §24.6, @c network.trace_postfit_rows): the
+ * same pass writes every DATA row it attributes to a family as ONE SIGNED line
+ * of @c network_pf_rows.csv — @c resid_m is @f$v_i@f$ itself (observed −
+ * predicted, metres, the sign convention of @f$v = y - A_s x_s - A_r x_r@f$
+ * above), @c w the row's information weight, @c elev_deg the LOS elevation read
+ * off @p modeled.  The keyed pools answer WHICH station / satellite / signal;
+ * the rows answer what the residual of one LOS IS — its mean (a constant no
+ * state absorbed), its dispersive ratio across signals, its elevation shape.
+ * Rows of neither family are counted (@c ctx.carry.pf_rows_unattributed), not
+ * written.  Same label lookups as the keyed path (shared), zero cost when the
+ * rows trace is closed.
+ *
  * @param ctx           Run context (per-epoch results + run counters).
  * @param config_       Live config (only the trace toggles are read).
  * @param log           Main logger.
@@ -142,6 +155,10 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
  * @param x_s           Solved shared vector.
  * @param asm_res       Per-station assembly blocks.
  * @param est_index_of  Station index -> estimator index (<0 = not in the solve).
+ * @param modeled       Per-station MODELED observation set of this epoch (the
+ *                      PASS-A output the driver holds), read ONLY by the rows
+ *                      extension for the LOS elevation of each written row.
+ *                      nullptr ⇒ every @c elev_deg is empty.
  */
 void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                           const std::shared_ptr<spdlog::logger>& log,
@@ -150,7 +167,8 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                           NetworkEstimator& est,
                           const Eigen::VectorXd& x_s,
                           const std::vector<StationAssembly>& asm_res,
-                          const std::vector<int>& est_index_of);
+                          const std::vector<int>& est_index_of,
+                          const std::vector<std::vector<PppObservation>>* modeled = nullptr);
 
 /**
  * @brief STANDING INVARIANT #7: the per-epoch DATUM-DIRECTION INFORMATION RATIO

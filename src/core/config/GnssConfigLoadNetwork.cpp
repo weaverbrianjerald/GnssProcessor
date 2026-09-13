@@ -2287,6 +2287,18 @@ namespace GnssProcessor {
                       "per-satellite / per-signal robust post-fit pools -> "
                       "network_pf_keyed.csv (trace-only; the P1-4 residual pass runs "
                       "whenever this or trace_postfit_sigma0 is armed).");
+        // SPEC_event_harness §24.6: SIGNED per-(station, satellite, signal) post-fit
+        // residual rows off the same P1-4 pass.  Trace-only, fingerprint-SAFE (absent
+        // from NetworkRunContext.cpp's fingerprint list like the two riders above);
+        // implies the pass runs even without the sigma0 / keyed traces.
+        network_config_.trace_postfit_rows =
+            jval<bool>(json, "network.trace_postfit_rows", "trace_postfit_rows", false);
+        if (network_config_.trace_postfit_rows)
+            log->info("Network (§24.6 rows): network.trace_postfit_rows ON — SIGNED per-(station, "
+                      "satellite, signal) post-fit residuals (v = y − A·x, observed − predicted, "
+                      "metres) with the row weight and LOS elevation -> network_pf_rows.csv "
+                      "(trace-only; the P1-4 residual pass runs whenever this, "
+                      "trace_postfit_keyed or trace_postfit_sigma0 is armed).");
         if (network_config_.trace_sh_spectrum)
             log->info("Network (P1-3): network.trace_sh_spectrum ON — per-epoch reduced-shared-"
                       "normal spectrum + per-family eigenvector mass partition into "

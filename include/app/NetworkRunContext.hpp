@@ -1700,6 +1700,17 @@ namespace GnssProcessor {
         long long ep_pf_phase_rows   = 0;   ///< …of which PHASE rows (residual ≡ 0 under free ambiguities)
         long long pf_epochs_total    = 0;   ///< run-end counter (invariant #4: 0 ⇒ inert)
         bool      pf_empty_logged    = false;  ///< one-shot "armed but pooled nothing" warn latch
+        // SPEC_event_harness §24.6 (network.trace_postfit_rows): run-end accounting of
+        // the SIGNED per-row dump — rows WRITTEN (code + phase), written rows with no
+        // elevation, and DATA rows the pass visited but could attribute to neither
+        // family (NOT written).  Invariant #4 needs all of them: "0 written under an
+        // ARMED trace" must be visible, and a non-zero unattributed count says which
+        // rows the dump does not carry.
+        long long pf_rows_written      = 0;
+        long long pf_rows_code         = 0;   ///< …of which kind=code
+        long long pf_rows_phase        = 0;   ///< …of which kind=phase
+        long long pf_rows_no_elev      = 0;   ///< …written with an EMPTY elev_deg (station absent from the modeled set, or no satellite on the row)
+        long long pf_rows_unattributed = 0;   ///< data rows attributed to neither family (local-column-only pseudo-observations) — counted, not written
 
         // --- PREFIT census, per-epoch scalars ---------------------------------
         // Filled by
