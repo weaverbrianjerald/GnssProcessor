@@ -4672,6 +4672,66 @@ identified and on the lanes the rule targets).
   then the field pin rides on a seed that can warm-resume (DEFECT 1's card).
 - Both defects are HARNESS findings of the kind the field seed exists for: neither is visible on the sim (the
   sim's S2 leg injected on a non-reference satellite; the sim golden resumes through the F3 coupling path).
+
+### 20.2 RESULTS — FP-1, the §20 matrix on the warm-resuming seed: defect 1 is cured, every identity row reproduces, and the pin is REFUSED by a defect the gates could not see — the reference-slip fan-out (2026-09-13 ~11:30 local; worker on worktree-agent-a8ac220a59ca83a04, exe `gnss_processor_rs7.exe` 23C628B3… = main's producer after RS-7, seed `evseed_field6h_v5` ep0604, legs `runs/evleg_fp1_*`; manager grade)
+
+**Legs.**  {null, E1, E2, E3/G24, E3/G25} × {OFF, PIN = scope + pairs `all` + the §22 clause}; the E5 pair was not
+run (slot contention; F3's door is not what decides this card).  Every leg 61/61 emitted, 0 withheld, no cold start,
+products + 61 consumer rows — **§20.1's defect 1 is cured on v5**, and G-B / G-C / G-D are readable on the field for
+the first time.
+
+**G-A PASS on every pre-registered row.**  E1 PIN → `{L5X}` (`iftd(L1C+L5X)=ref_arc;iftd(L2W+L5X)=ref_arc`); E2 PIN →
+`all` (`no_exoneration`, the clause's named cost); E3/G24 PIN → `all reason=no_exoneration` with both L5 pairs
+`ref_arc` (§22.4 B2 verbatim — the trap closed); E3/G25 PIN → `all` via `iftd(L1C+L5X)=flagged` (the (1,5) veto).
+PIN null run-end `narrowed 7 (bands kept 14), all-band 44 (no exoneration 34 / inconsistent 9 / anchor co-locate 1),
+IF-TD vetoes 0, ref-arc refusals 6 [L1C_L5Q 1, L1C_L5X 1, L1W_L5X 2, L2W_L5Q 2]` = §22.4's null to the pair; OFF null
+`narrowed 1, inconsistent 15, ref-arc refusals 0 [would-narrow 1]`.  T4 attribution 0 on every leg (structural on
+`carry_invariant`), so the wrong-narrowing tripwire cannot fire on this lineage.
+
+**The blocker — the reference-slip fan-out (§22.6).**  GOPE's chains from `is_ref`: (L1C,L2W) → G12 all leg; both
+L5 chains → **G24 for k ∈ [−9, +41]**, handing to G25 at +42.  An IF-TD sample is `dOMC(sat) − dOMC(ref)`, so the
+injected slip reads `abs_dev = 0.000000` on G24's own L5 rows and full-size on everyone else's:
+
+| leg | G24's own L5 rows | other satellites flagged → refloats | E3/G25 control (G25 not a reference) |
+|---|---|---|---|
+| E1 PIN (L5X −99) | 0.000000 ×2 | **6** (G11 / G25 / G32 × both L5 chains; 31.8 m at 253–292×, 283.9 m at 605–1580× the threshold) → 6 | — |
+| E2 PIN (L1C +37) | 0.000000 ×2 | **3** ((1,5) only — an L1C slip leaves IF(L2W,L5X) alone) → 3 | — |
+| E3/G24 PIN | 0.000000 ×2 | **6** (3.16 m at 25–29×, 83.2 m at 177–463×) → 6 | G25's own rows 3.15 / 83.2 m flagged, **0** collateral |
+| every OFF arm | — | 0 | 0 |
+
+No backstop: card R's reference gate reads `3600 opp, 1 flag` identically on all four legs (it tests the first chain
+only), T4 is 0, and the collateral satellites have no `T0_band_scope` row to narrow.  Cost: blast radius at k = 0 OFF
+1 product key (`P/G24/L5X`), PIN 2 — the extra is `P/G32/L1C`, an innocent satellite's phase bias re-realized
+network-wide by **13.71 / 13.73 / 13.73 m** on E1 / E2 / E3g24 (declared — disc 1 → 2, σ 0.039 → 0.449 m — so the
+declaration edge holds, but the response is wrong); GOPE ZWD at +45 2.02 m PIN vs 0.25 OFF on E1; consumer mean
+|Δ3D| over +30..+50 E1 4.71 vs 0.98, E2 3.16 vs 1.18, E3g24 2.80 vs 2.43 — OFF recovers by +15, PIN does not.  Field
+exposure: 12.7 % of IF-TD samples sit on a reference arc, 25.9 % of (station, satellite) arcs are a chain reference
+at least once over 6 h, and of 149 flagged rows zero are on a reference arc (the detector cannot flag there); under
+`all` the exposure roughly triples (§22.4: 107 of 507 arcs).
+
+| event | G-A | G-B | G-C | G-D | fan-out PIN / OFF |
+|---|---|---|---|---|---|
+| E1 | PASS | FAIL (clk, zwd) | FAIL (PB L2X) | FAIL (4.71 vs 0.98 + 1.99) | 2 / 0 |
+| E2 | PASS | FAIL (zwd) | PASS | PASS (3.160 vs bar 3.168) | 1 / 0 |
+| E3/G24 | PASS | FAIL (zwd) | FAIL (PB L1C / L1W / L5Q) | PASS | 2 / 0 |
+| E3/G25 | PASS | PASS | PASS | PASS | 0 / 0 |
+
+**G-E fails its numeric bars for a defensible reason — the counter-weight.**  Withheld 0 / 0, `attrib_arc` 0 / 0,
+but wire CLK max |Δ| 0.088 m (bar 0.02) and consumer max |Δ3D| 4.43 m (bar 0.03).  The floor series is EXACTLY zero
+on every channel through k = +38; at +39 (tow 278790) JPLM00USA/G10 shows `L1C/L5Q dd = 5.046 m` against a 0.109 m
+threshold on a 189-sample mature pool → flagged and refloated in PIN, while in OFF the same dd appears with
+`count = 0, med = dd, abs_dev = 0, flagged = 0`: G10 lost L2W that epoch, its "first pair" rotated to (L1C,L5Q), and
+the new chain restarted with the slipped sample as its own origin.  Every other satellite at JPLM is quiet (≤ 0.004 m)
+and the reference G28 is quiet: **a real 46σ slip that `all` catches and `first` structurally cannot** — a
+pool-restart blind spot at pair rotation, the second defect this card names (under `first` the additional chains'
+histories do not exist; under `all` they are warm).
+
+**Decision.**  Scope + pairs `all` + the clause stay FIELD EXCEPTIONS with the fan-out as the mechanism (the manifest
+texts are rewritten through the generator; the ledger rows carry this section); G-G not run.  The pin is re-run
+(§20's bars on the fixed posture) once REF-FAN (§22.6) passes F1–F4 — and the pair-rotation blind spot is the
+argument FOR `all` once the fan-out is closed.  Graders merged: `scripts/fp1_gate_table.py`,
+`scripts/fp1_refslip_census.py`.
+
 ## 21. THE FIELD WARM-RESUME SEAM (card RS-2) — the restored invariant DD branch is folded in the WRITER's linearization frame; §20.1's "Card 1f is the prerequisite" is WITHDRAWN (pre-registered 2026-09-12 ~07:30 local, manager; before any new leg is read)
 
 ### 21.1 What §20.1 called DEFECT 1, re-read from the instruments the legs already wrote
