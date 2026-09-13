@@ -5356,7 +5356,13 @@ whose component datum receiver GAMB00PYF is dropped at the seam (a re-election e
 first emitted epoch overwrites the `seed.txt` it resumed from (`NetworkRunContext.cpp` gates the first write on
 `last_snapshot_write_s < 0.0`, which the initial −1 satisfies unconditionally, whatever
 `state_snapshot_interval_s` says).  The `.epNNNN` library is intact; `event_leg.py rerun` restores the pristine
-copy; never re-run a leg in place.
+copy; never re-run a leg in place.  **FIXED in the harness 2026-09-13 (main `dcf04dd`, worker commit `a207193`):**
+`make-leg` / `null` now lay down TWO copies — `seed.txt` (pristine, never named by any config; its sha256 recorded in
+`leg_meta.json`) and `state_snapshot.txt` (what `state_snapshot_path` names, disposable) — so the exe never reads and
+writes the same file; `rerun` restores only the disposable copy after verifying a pristine source.  Validated on
+`runs/evleg_hfix_trap`: first run and in-place rerun both WARM RESUME, products byte-identical (`95cda87d…`),
+`seed.txt` unchanged.  The same commit arms `resume_coupling_restore` on a leg only when the seed's lineage carries
+the loader's Card-1f interlocks (the field golden does not), so field legs no longer need `--extra` for it.
 
 ### 21.12 CLOSE-OUT CERTIFICATION (2026-09-12 ~22:30 local; worker on main's own tree at `17f854f`)
 
@@ -5748,5 +5754,9 @@ neutral there and fixing on the field (§22.4).
 `config_posture_check.py --verify-loader` 0 gaps).  The field golden needs no exception — the scope itself is a
 field exception there, so the clause is out of regime rather than suppressed; the field pin of scope + pairs +
 clause rides on the RS-2 seed (§21.5) once the §20 wire/consumer bars can be read.  Grader hygiene noted, not
-fixed here: `simnet_storm_grade.py`'s `bscope_clause` regex targets an older log line and reads `None` on both
-arms.
+fixed here: `simnet_storm_grade.py`'s `bscope_clause` reads `None` on both
+arms.  **Resolved 2026-09-13 (main `dcf04dd`, worker commit `ee33550`): the regex was not stale — the `§Z`
+response-scope clause (`raim_erase_band_scope` / `refloat_band_scope`) is out of regime on the campaign lineage, which
+emits the detector-side `Network (common-band scope): verdicts …` census instead; the grader now tries both, records
+`bscope_clause_kind`, and the captured census reproduces B4's table to the digit (4208 / 3150 vs 3147 / 820 vs 807 /
+186 vs 202 / 116 / ref-arc refusals 29).**
