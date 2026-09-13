@@ -29,6 +29,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkStateSnapshot.hpp"
+#include "realtime/RealTimeEngine.hpp"       // Card CC (B): consumer snapshot beside the network history copy
 #include "rinex/MultiRinexSync.hpp"
 
 #include <fmt/format.h>
@@ -2515,7 +2516,8 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                const std::shared_ptr<spdlog::logger>& log,
                                const NetworkClockEmitRebase* clk_rebase,
                                const NetworkEmitRebase* emit_rebase,
-                               const NetworkPbEmitFilter* pb_filter) {
+                               const NetworkPbEmitFilter* pb_filter,
+                               RealTimeEngine* consumer) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
     const auto& nc = config_.getNetworkConfig();
@@ -3032,6 +3034,30 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             if (!NetworkStateSnapshotIO::write(hp, snap, &herr))
                 log->warn("Network (RTB-7d/BR-1): history snapshot write to '{}' failed ({}).",
                           hp.string(), herr);
+            // Card CC (B): the closed-loop consumer's own snapshot beside this
+            // history copy, same suffix, same tow.  The consumer processed this
+            // epoch inside networkEmitStore (earlier in the same loop iteration);
+            // writeStateSnapshotTo refuses — nothing written, counted, logged —
+            // if its last processed epoch is not `t`, so the file on disk can
+            // never carry a different tow than the copy it sits beside.  Consumer
+            // memory only: the producer's snapshot, solve and products see nothing.
+            if (nc.closed_loop.state_snapshot && consumer) {
+                const std::filesystem::path cp = RealTimeEngine::consumerSnapshotHistoryPath(
+                    snap_path, static_cast<unsigned long long>(snap.n_emitted));
+                std::string cerr;
+                if (consumer->writeStateSnapshotTo(cp, &t, &cerr)) {
+                    ++ctx.counters.cl_snap_written;
+                    const auto ct = consumer->lastProcessedEpochTime();
+                    log->info("Network closed-loop (card CC): consumer snapshot written beside "
+                              "'{}' -> '{}' (network tow {:.6f}, consumer tow {:.6f}).",
+                              hp.filename().string(), cp.filename().string(), t.tow,
+                              ct ? ct->tow : -1.0);
+                } else {
+                    ++ctx.counters.cl_snap_skipped;
+                    log->warn("Network closed-loop (card CC): consumer snapshot NOT written "
+                              "beside '{}' — {}.", hp.filename().string(), cerr);
+                }
+            }
         }
         last_snapshot_write_s = pl_now_s;
     }

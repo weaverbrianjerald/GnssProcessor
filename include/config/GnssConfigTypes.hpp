@@ -172,6 +172,35 @@ namespace GnssProcessor {
         bool          consume_network_iono{ false };     ///< Consume the network's co-estimated SH-VTEC ionosphere: the producer evaluates its VTEC field at the consumer's pierce points and supplies an UNDIFFERENCED per-satellite slant-iono value (metres on L1); the consumer applies it as a tight, quality-scaled BLUP / ionosphere-weighted prior on its slant-iono states instead of floating them at ionosphere_q.  This is the strong (ionosphere-corrected) user model Odijk-2012/TK-2015 identify as the fast-AR enabler.  Default OFF => byte-identical (producer pushes nothing, consumer applies nothing).
         bool          consume_combined_sigma{ false };   ///< M4 (contract v2): fold the network product's per-key COMBINED-correction σ (age-inflated) into a network-corrected observation's measurement variance INSTEAD OF the URA + phase-bias-σ RSS, so a fresh (reconverging) satellite whose individual clock/bias σ are cm-level but whose COMBINED correction is mm-level is NOT deweighted 10–100× off.  Per-key fallback to the v1 weighting when the sigc/sigcc tokens are absent (mixed-stream safe).  Default OFF => byte-identical.
         bool          consumer_undifferenced{ false };   ///< Consumer user model.  false = BSSD (legacy: between-satellite single-difference S-transform in the filter).  true = UNDIFFERENCED uncombined PPP-RTK USER (the end-state): no observation-space differencing — apply the network satellite phase biases directly to the raw float and fix per-band ambiguities INDIVIDUALLY via the resolver's internal-SD LAMBDA (no WL/NL cascade, no pivot-handover machinery).  Dissolves the network-bias↔.BIA-frame conflict by dropping the MW WL.
+        /**
+         * @brief Card CC (A): carry the consumer's float ambiguity across a DECLARED
+         *        phase-bias step instead of resetting it
+         *        (@c network.closed_loop.pb_disc_carry, default false ⇒ byte-identical).
+         *
+         * Derived into the consumer engine's config as
+         * @c processing.ssr_phase_bias_disc_carry (@c GnssConfig::ssrPhaseBiasDiscCarry)
+         * by @c deriveClosedLoopConsumerConfig; a STANDALONE real-time consumer sets
+         * that @c processing key directly.  See @c RealTimeEngine::carryOnPhaseBiasDisc_
+         * (RealTimeEngineSsrBreaks.cpp) for the mechanism and its refusal branches.
+         */
+        bool          pb_disc_carry{ false };
+        /**
+         * @brief Card CC (B): the closed-loop consumer's WARM START in the event
+         *        harness (@c network.closed_loop.state_snapshot, default false ⇒
+         *        byte-identical — no file is written).
+         *
+         * When true AND the producer writes a network history snapshot copy
+         * (@c state_snapshot_keep_history: @c <state_snapshot_path>.epNNNN), the
+         * consumer engine's RtStateSnapshot is ALSO written beside it as
+         * @c <state_snapshot_path>.consumer.epNNNN with the same @c n_emitted suffix
+         * and the same epoch tow (asserted at the write site; a consumer that did not
+         * process that epoch writes nothing and the skip is counted).
+         * @c scripts/event_leg.py copies that file into a resume leg and points
+         * @c realtime.state_snapshot_path at it, so the leg's consumer resumes at
+         * the seam instead of cold-starting.  Consumer-side only: the producer's
+         * solve, products and its own snapshot are untouched (not fingerprinted).
+         */
+        bool          state_snapshot{ false };
 
         /**
          * @brief Q5 replay: path to an ALREADY-WRITTEN network product file to

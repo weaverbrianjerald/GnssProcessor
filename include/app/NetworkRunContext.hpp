@@ -65,6 +65,8 @@
 
 namespace GnssProcessor {
 
+    class RealTimeEngine;   // Card CC (B): the closed-loop consumer handed to networkWriteStateSnapshot
+
     class GnssConfig;
     struct NetworkConfig;
     class MultiRinexSync;
@@ -2203,6 +2205,12 @@ namespace GnssProcessor {
         /// Queue 1(b) handover S-transform telemetry (invariant #4 — these are the
         /// card's ON-path counters; transforms applied with sts_rows_retained == 0
         /// means the fold release is mis-wired no matter how clean the log looks).
+        /// Card CC (B): the closed-loop consumer's snapshot written beside each network
+        /// history copy (`<state_snapshot_path>.consumer.epNNNN`).  Invariant #4: a seed
+        /// with `closed_loop.state_snapshot` armed and `cl_snap_written == 0` has NO
+        /// consumer warm start to offer a leg, however clean the log reads.
+        long long cl_snap_written = 0;       ///< consumer snapshots written with the network copy's tow
+        long long cl_snap_skipped = 0;       ///< history epochs where the consumer had not processed that tow (nothing written)
         long long sts_edges = 0;             ///< pivot-switch (constellation,epoch) edges the transform handled
         long long sts_applied = 0;           ///< carried rows whose mean/var the transform re-expressed
         long long sts_rows_retained = 0;     ///< carry rows folded that the baseline skip would have dropped
@@ -3406,6 +3414,14 @@ namespace GnssProcessor {
     ///        @c ctx.carry.  Read-only in both cases, and each group is written only
     ///        under its own knob (@c network.state_snapshot_signal_capture /
     ///        @c network.state_snapshot_rxcb_lin_capture).
+    /// @param consumer Card CC (B): the closed-loop consumer engine (nullptr when the
+    ///        harness is off).  Under @c network.closed_loop.state_snapshot each network
+    ///        HISTORY copy (@c state_snapshot_keep_history) is accompanied by the
+    ///        consumer's own RtStateSnapshot at
+    ///        @c RealTimeEngine::consumerSnapshotHistoryPath (same @c .epNNNN suffix),
+    ///        written only when the consumer's last processed epoch IS @p t (the
+    ///        matching-tow invariant; a miss is counted in
+    ///        @c counters.cl_snap_skipped and logged).  Read-only for the producer.
     void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_,
                                    const GnssTime& t, double pl_now_s,
                                    NetworkProductEmitter& emitter,
@@ -3414,7 +3430,8 @@ namespace GnssProcessor {
                                    const std::shared_ptr<spdlog::logger>& log,
                                    const NetworkClockEmitRebase* clk_rebase = nullptr,
                                    const NetworkEmitRebase* emit_rebase = nullptr,
-                                   const NetworkPbEmitFilter* pb_filter = nullptr);
+                                   const NetworkPbEmitFilter* pb_filter = nullptr,
+                                   RealTimeEngine* consumer = nullptr);
 
     /// RS-9 (§21.18): install the warm resume's stashed @c RL map on each station's
     /// @c StateInitializer, so the station's one-shot first-epoch code-bias seed takes

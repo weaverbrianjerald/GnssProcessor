@@ -35,6 +35,21 @@ Three subcommands:
     The same leg with ``network.inject`` absent.  Every event leg is graded
     against its null so the resume seam transient cancels.
 
+THE CONSUMER'S WARM START (card CC (B), ``SPEC_event_harness.md`` §24.4).  Harness
+default since 2026-09-14: ``write-seed`` arms ``network.closed_loop.state_snapshot``
+so the producer writes the closed-loop CONSUMER's own filter-state snapshot beside
+every network history copy — ``state_snapshot.txt.consumer.epNNNN``, same suffix,
+same tow (the producer refuses the write when the consumer did not process that
+tow).  ``make-leg`` / ``null`` copy it into the leg exactly like the network one
+(``seed_consumer.txt`` pristine, ``consumer_snapshot.txt`` disposable), point
+``realtime.state_snapshot_path`` at the disposable copy and park the consumer's own
+write cadence (``realtime.state_snapshot_interval_s`` 1e9 — its FIRST write is
+unconditional and lands on the disposable copy), so the leg's consumer resumes at
+the seam instead of cold-starting; ``rerun`` restores that copy too.  A seed
+without the file (every seed before v9) leaves the leg's consumer cold, exactly as
+before, and the leg summary's ``consumer`` line says which.  Consumer memory only:
+products and the producer's snapshot are byte-identical with and without it.
+
 Resume mechanics reused verbatim from ``scripts/chain_make_leg.py``: the leg's
 ``network.start_offset_hours`` is the self-correcting recurrence
 
@@ -111,6 +126,19 @@ def read_snapshot_header(path):
     if week is None or tow is None or n_emitted is None:
         raise SystemExit(f"FATAL: {path} has no readable M/N header")
     return week, tow, n_emitted, fingerprint
+
+
+def read_rt_snapshot_header(path):
+    """Return (week, tow) from an RT (consumer) snapshot's M line.
+
+    Format (include/realtime/RtStateSnapshot.hpp):
+    ``M,week,tow,wall_utc,fingerprint_hex,core_size,state_size``."""
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if line.startswith("M,"):
+                f = line.rstrip("\n").split(",")
+                return int(f[1]), float(f[2])
+    raise SystemExit(f"FATAL: {path} has no readable M header (not an RT state snapshot?)")
 
 
 def start_offset_hours(week, tow, anchor_s=None):
@@ -243,6 +271,13 @@ def cmd_write_seed(args):
     # RS-8 (SPEC_event_harness §21.16): also capture every station's CANONICAL-SIGNAL map (CN
     # rows) - the per-station latch a resume otherwise re-decides on 23 of 61 stations.
     net["state_snapshot_signal_capture"] = True
+    # Card CC (B) (SPEC_event_harness §24.4): also write the closed-loop CONSUMER's
+    # RtStateSnapshot beside every network history copy
+    # (state_snapshot.txt.consumer.epNNNN, same suffix, same tow), so a leg's
+    # consumer can resume at the seam instead of cold-starting.  Consumer memory
+    # only: the producer's products and its own snapshot are byte-identical with it
+    # (the v9 field seed hashes v8's products).  Inert without a closed_loop block.
+    net.setdefault("closed_loop", {})["state_snapshot"] = True
     net["state_snapshot_require"] = False          # the seed IS the cold start
     net["product_output_path"] = _fwd(os.path.join(rundir, "products.txt"))
     net["write_run_manifest"] = True
@@ -273,6 +308,8 @@ def cmd_write_seed(args):
     meta = {
         "base": args.base, "hours": args.hours,
         "interval_ep": args.interval_ep, "extra": extra, "exe": args.exe,
+        # Card CC (B): the harness default that makes the consumer snapshots exist.
+        "harness_consumer_snapshot": bool(net.get("closed_loop", {}).get("state_snapshot", False)),
     }
     with open(os.path.join(rundir, "seed_meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
@@ -325,6 +362,23 @@ def _leg_common(args, event_json):
     snap_sha = _sha256(pristine)
 
     week, tow, n_emitted, fingerprint = read_snapshot_header(pristine)
+
+    # Card CC (B): the closed-loop CONSUMER's snapshot beside the network copy, when
+    # the seed has one (v9 and later).  Same two-copy layout, same reason: the exe's
+    # own first cadence write is unconditional and must land on the disposable copy.
+    cons_src = os.path.join(seed_run, f"state_snapshot.txt.consumer.ep{args.snapshot_ep:04d}")
+    cons_pristine = cons_leg = cons_sha = cons_tow = None
+    if os.path.isfile(cons_src):
+        cons_pristine = os.path.join(legdir, "seed_consumer.txt")      # never handed to the exe
+        cons_leg = os.path.join(legdir, "consumer_snapshot.txt")       # the exe may overwrite it
+        shutil.copyfile(cons_src, cons_pristine)
+        shutil.copyfile(cons_src, cons_leg)
+        cons_sha = _sha256(cons_pristine)
+        _cw, cons_tow = read_rt_snapshot_header(cons_pristine)
+        if abs(cons_tow - tow) > 1e-3:
+            print(f"WARNING: consumer snapshot tow {cons_tow!r} != network snapshot tow {tow!r} "
+                  "(the producer should have refused this write) - the consumer resume may be "
+                  "refused by its age gate")
 
     cfg, _ = _flatten(seed_cfg_path)
     anchor_s = fixture_first_obs_s(cfg)
@@ -426,6 +480,16 @@ def _leg_common(args, event_json):
     lg = cfg.setdefault("logging", {})
     lg["enable_ambiguity_trace"] = True
     lg["enable_rt_engine"] = True
+    # Card CC (B): point the leg's consumer at the disposable consumer snapshot.  The
+    # engine stages it at initialize and applies it at its first processed epoch
+    # (age 30 s against the 300 s horizon; the fingerprint is the seed consumer's
+    # own config facts).  Interval 1e9 parks every cadence write but the first
+    # unconditional one, which lands on the disposable copy.  A seed without the
+    # file leaves the realtime block untouched (the consumer cold-starts as before).
+    if cons_leg is not None:
+        rt = cfg.setdefault("realtime", {})
+        rt["state_snapshot_path"] = _fwd(cons_leg)
+        rt["state_snapshot_interval_s"] = 1.0e9
 
     # Event tow: the snapshot's tow is the LAST epoch it recorded, so the leg's
     # first processed epoch is tow + 30 s.  --at-ep is counted from that first
@@ -468,6 +532,13 @@ def _leg_common(args, event_json):
                   if event_json is not None else None),
         "max_duration_s": proc["max_duration_s"],
         "extra": extra,
+        # Card CC (B): the consumer's warm start (None/False = no consumer snapshot in
+        # the seed, the leg's consumer cold-starts as every pre-v9 leg did).
+        "harness_consumer_snapshot": cons_leg is not None,
+        "consumer_snapshot": (cons_src if cons_leg is not None else None),
+        "consumer_snapshot_sha256": cons_sha,
+        "leg_consumer_snapshot": (_fwd(cons_leg) if cons_leg is not None else None),
+        "consumer_snapshot_tow": cons_tow,
     }
     with open(os.path.join(legdir, "leg_meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
@@ -492,6 +563,16 @@ def _leg_common(args, event_json):
               + ("ON (forced by --extra; the loader will THROW)" if forced else "OFF")
               + " - the seed's lineage does not carry "
               + ", ".join(cpl_missing))
+    if cons_leg is not None:
+        print(f"  consumer        {os.path.basename(cons_src)}  tow {cons_tow!r}"
+              f" ({'== network' if abs(cons_tow - tow) <= 1e-3 else '!= NETWORK'})"
+              f" -> realtime.state_snapshot_path = {os.path.basename(cons_leg)}"
+              " (WARM start; cadence parked at 1e9 s; sha256 "
+              f"{cons_sha[:16]}...)")
+    else:
+        print("  consumer        no state_snapshot.txt.consumer.ep"
+              f"{args.snapshot_ep:04d} in the seed -> the leg's consumer COLD-starts "
+              "(pre-CC seed)")
     print(f"  config          {cfg_path}")
     print(f"RUN: pushd {legdir} && \"{args.exe}\" \"{cfg_path}\"")
     if args.run:
@@ -597,6 +678,34 @@ def cmd_rerun(args):
         shutil.copyfile(use, dst)
     print(f"re-seeded {dst} from {use}"
           + ("" if want is None else f"  (sha256 {want[:16]}... verified)"))
+
+    # Card CC (B): the consumer's disposable snapshot, restored the same way (the
+    # leg's consumer overwrote it with its own first unconditional cadence write).
+    # Sources: leg_meta's `consumer_snapshot` (the seed's .consumer.epNNNN), else the
+    # leg's seed_consumer.txt; verified against `consumer_snapshot_sha256`.
+    cdst = (leg_cfg.get("realtime", {}).get("state_snapshot_path")
+            or meta.get("leg_consumer_snapshot"))
+    if meta.get("harness_consumer_snapshot") and cdst:
+        cdst = os.path.abspath(cdst)
+        cwant = meta.get("consumer_snapshot_sha256")
+        ctried, cuse = [], None
+        for cand in (meta.get("consumer_snapshot"), os.path.join(legdir, "seed_consumer.txt")):
+            if not cand or not os.path.isfile(cand):
+                ctried.append(f"{cand}: missing")
+                continue
+            got = _sha256(cand)
+            if cwant is None or got == cwant:
+                cuse = cand
+                break
+            ctried.append(f"{cand}: sha256 {got[:16]}... != recorded {cwant[:16]}...")
+        if cuse is None:
+            raise SystemExit("FATAL: no verified pristine copy of this leg's CONSUMER snapshot:\n  "
+                             + "\n  ".join(ctried)
+                             + "\n(re-generate the leg with make-leg / null)")
+        if os.path.abspath(cuse) != cdst:
+            shutil.copyfile(cuse, cdst)
+        print(f"re-seeded consumer {cdst} from {cuse}"
+              + ("" if cwant is None else f"  (sha256 {cwant[:16]}... verified)"))
     return _run(args.exe, cfg_path, legdir)
 
 

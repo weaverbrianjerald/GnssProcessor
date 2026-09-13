@@ -629,6 +629,31 @@ namespace GnssProcessor {
         bool resetAmbiguity(const std::string& key, double std_m);
 
         /**
+         * @brief Translate a float ambiguity state by @p delta_m — VALUE ONLY
+         *        (card CC, the consumer's declared-step carry).
+         *
+         * The consumer's phase row is @c predicted = … + ssr_bias_term + amb_term
+         * with both signs +1, so when the applied satellite phase bias moves by
+         * Δ (a DECLARED re-realization: disc-counter bump or A5 freshness flip)
+         * the ambiguity in the new datum is exactly @c amb − Δ.  This primitive
+         * applies that translation: @c state_vector_(idx) += delta_m, the
+         * covariance is untouched (no row/column zeroing, no re-inflation) and
+         * the key is NOT marked pending re-seed — the ambiguity keeps every
+         * cross-covariance it converged, which is the whole point of carrying
+         * instead of resetting.
+         *
+         * Unknown keys are refused exactly like @ref resetAmbiguity's guard
+         * (false + a debug line): slip detectors and the SSR datum-break
+         * reactions iterate raw signals the state may not hold.
+         *
+         * @param key     Ambiguity key ("G24_L5X").
+         * @param delta_m Translation to ADD to the state value (metres); the
+         *                caller passes −Δ for an applied-bias step of +Δ.
+         * @return true iff the state existed and was translated.
+         */
+        bool shiftAmbiguity(const std::string& key, double delta_m);
+
+        /**
          * @brief Record an SSR phase-bias discontinuity counter and report a bump.
          *
          * The IGS-SSR discontinuity counter increments whenever a satellite phase

@@ -5064,6 +5064,25 @@ int networkTeardown(
         log->info("  VERDICT                   : {}", verdict);
         log->info("  closed-loop trace         : {}",
                   (log_dir_ / "closed_loop_trace.csv").string());
+        // Card CC (A): the declared-step carry counters — the consumer's ON-path
+        // telemetry (invariant #4).  Printed only when the knob is armed, so an
+        // OFF run's summary is byte-identical.  Closure: carried + resets == events.
+        if (consumer->pbDiscCarryArmed()) {
+            const auto& c = consumer->pbDiscCarryCounters();
+            log->info("  pb-disc carry (card CC)   : events {} (disc bumps {} + freshness flips {}) "
+                      "-> pb_disc_carried {} / pb_flip_carried {}; pb_disc_reset_first_sight {} / "
+                      "pb_disc_reset_basis {} / pb_disc_reset_bssd {} / "
+                      "pb_disc_reset_unknown_key {}; closure {}",
+                      c.events, c.disc_bumps, c.flips, c.disc_carried, c.flip_carried,
+                      c.reset_first_sight, c.reset_basis, c.reset_bssd, c.reset_unknown_key,
+                      c.closureHolds() ? "HOLDS" : "BROKEN");
+        }
+        // Card CC (B): consumer snapshots written beside the network history
+        // copies (0 written on an armed seed = no warm start on offer).
+        if (cl.state_snapshot)
+            log->info("  consumer snapshots (CC-B) : {} written beside network history copies "
+                      "(matching tow), {} skipped (consumer had not processed that tow)",
+                      ctx.counters.cl_snap_written, ctx.counters.cl_snap_skipped);
         log->info("==============================================================");
     }
     // EVENT HARNESS run-end (filter/NetworkInject.cpp): the clause, and the

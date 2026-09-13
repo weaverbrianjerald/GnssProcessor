@@ -1143,6 +1143,45 @@ namespace GnssProcessor {
         return true;
     }
 
+    bool StateManager::shiftAmbiguity(const std::string& key, double delta_m) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        if (key.empty()) {
+            logger->warn("shiftAmbiguity called with empty key");
+            return false;
+        }
+        if (!std::isfinite(delta_m)) {
+            logger->warn("shiftAmbiguity called with non-finite delta for key {}: {}", key, delta_m);
+            return false;
+        }
+
+        const int idx_i = getAmbiguityIndex(key);
+        if (idx_i < 0) {
+            // Mirror resetAmbiguity's guard: never auto-create a state for a key
+            // the band filter kept out of the state vector (the datum-break
+            // reactions iterate raw modeled signals, exactly like the slip
+            // detectors do).
+            logger->debug("shiftAmbiguity ignoring unknown key {} "
+                          "(signal not in current state — likely band-filtered out by "
+                          "signal_mode, or not yet created this epoch)", key);
+            return false;
+        }
+
+        const auto idx = static_cast<Eigen::Index>(idx_i);
+        if (idx >= state_vector_.size()) {
+            logger->error("shiftAmbiguity index out of bounds for key {}: idx={}, state_size={}",
+                key, idx_i, state_vector_.size());
+            return false;
+        }
+
+        // Value-only translation: the covariance and the pending-reseed set are
+        // deliberately untouched (see the header).
+        state_vector_(idx) += delta_m;
+        logger->debug("Shifted ambiguity {} at index {} by {:+.4f} m (value-only, covariance kept)",
+                      key, idx_i, delta_m);
+        return true;
+    }
+
     bool StateManager::restoreDynamicState(RestoredStateKind kind, const std::string& key,
                                            double value, size_t expect_idx) {
         auto logger = log_manager_.getLogger("state_manager");

@@ -10462,6 +10462,13 @@ namespace GnssProcessor {
             clc.consume_network_iono     = cl.value("consume_network_iono", false);
             clc.consume_combined_sigma   = cl.value("consume_combined_sigma", false);  // M4 (contract v2)
             clc.consumer_undifferenced   = cl.value("consumer_undifferenced", false);
+            // Card CC: (A) the declared-step ambiguity carry (derived into the
+            // consumer engine as processing.ssr_phase_bias_disc_carry) and (B) the
+            // consumer snapshot beside each network history copy.  Both default
+            // false ⇒ byte-identical; neither reaches the producer's solve or its
+            // resume fingerprint.
+            clc.pb_disc_carry            = cl.value("pb_disc_carry", false);
+            clc.state_snapshot           = cl.value("state_snapshot", false);
             // Q5 replay: consume an already-written product file instead of the
             // live producer.  Presence alone arms the replay driver (the enable
             // flag still gates the station validation below), so a config that
@@ -10703,6 +10710,12 @@ namespace GnssProcessor {
         if (cl.consume_network_products && !c.enable_ssr_bias_max_age_
             && !c.enable_ssr_bias_max_age_explicit_)
             c.enable_ssr_bias_max_age_ = true;
+        // Card CC (A): the harness knob lands on the DERIVED consumer config as
+        // the engine-level processing key (a standalone RT consumer sets the
+        // processing key itself).  Never cleared here — an explicit
+        // processing.ssr_phase_bias_disc_carry on the base config is kept.
+        if (cl.pb_disc_carry)
+            c.ssr_phase_bias_disc_carry_ = true;
         // Closed-loop-specific overlay: enable ambiguity resolution for the
         // consumer (the producer itself is float) — the closed loop validates
         // integer RECOVERY on the held-out station from the producer's products.

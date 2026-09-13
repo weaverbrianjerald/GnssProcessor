@@ -2601,7 +2601,8 @@ int Application::runNetwork() {
                                   log,
                                   &clk_rebase_engine,    // §18.10 frame rows (v2)
                                   &emit_rebase_engine,   // RS-5 §21.10 emit-layer rows
-                                  &pb_filter_engine);    //   (ER / PF / PS)
+                                  &pb_filter_engine,     //   (ER / PF / PS)
+                                  setup.consumer.get()); // Card CC (B): consumer snapshot beside each history copy
         return LoopSignal::Next;
     };
 

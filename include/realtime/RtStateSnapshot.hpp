@@ -29,6 +29,14 @@
  *   C,key,0|1                 A5 code-bias applied map
  *   END,n_lines
  *
+ * Card CC (A) — deliberately NOT in v1: the consumer's last-APPLIED phase-bias
+ * VALUE map (the declared-step carry's Δ baseline, @c PbDiscCarryLedger).  A
+ * restored engine therefore has the A5 applied FLAGS but no applied VALUES, so
+ * the first disc bump / freshness flip per key after a restore falls back to the
+ * existing ambiguity RESET (counted as @c pb_disc_reset_first_sight) — the
+ * conservative direction; every later event on that key is carried once the
+ * first post-restore epoch has recorded the applied value.
+ *
  * @see src/core/realtime/RealTimeEngineStateSnap.cpp (the engine seam that
  *      writes / stages / applies), docs/SPEC_synthetic_minimum_network.md §17.
  */

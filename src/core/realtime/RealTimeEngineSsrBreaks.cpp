@@ -92,6 +92,10 @@ void RealTimeEngine::logProducerStatus(RtEpochContext& ctx) {
  * (frozen lines 1708-1751); see scripts/rt_seam_verify.py.
  */
 void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
+    // Card CC (A): with the declared-step carry armed the whole reaction is the
+    // carry seam below; everything from here on is the pre-card path, verbatim.
+    if (config_.ssrPhaseBiasDiscCarry()) { carryOnPhaseBiasDisc_(ctx); return; }
+
     auto log = log_manager_.getLogger("rt_engine");
     const std::string& epoch_prefix = ctx.epoch_prefix;
     const std::vector<PppObservation>& modeled_obs = ctx.modeled_obs;
@@ -140,6 +144,109 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
             }
         }
     }
+}
+
+/**
+ * @brief Card CC (A): SSR phase-bias discontinuity / freshness flip -> ambiguity
+ *        CARRY (amb -= Δ), the knob-ON twin of resetOnPhaseBiasDisc.
+ *
+ * New code (not a relocation).  Same per-key sweep as the reset reaction —
+ * the raw phase signals of every modeled satellite, the same ungated read for
+ * the disc counter and the same gated (hold_factor × max_age) read for the A5
+ * applied flag — plus the one thing the carry needs: the VALUE the measurement
+ * model applies this epoch, taken with the SAME read the model makes
+ * (MeasurementModel.cpp ssr_bias_term: gated ⇒ getPhaseBias(sat, code, obs.time,
+ * max_age); ungated otherwise; 0 when it yields nothing).  Δ = applied_now −
+ * applied_prev is one translation per event whether the event is a counter
+ * bump, a flip, or both in the same epoch.  PbDiscCarryLedger::react decides
+ * and mutates; the refusals take the existing reset.
+ *
+ * UPDATE SITE: the ledger's record() runs at the tail of each key's iteration,
+ * AFTER the reaction — so this epoch's Δ was against the value the model
+ * applied at the previous update, and the next epoch's Δ will be against the
+ * value the update below this reaction is about to apply.  The A5 flag map is
+ * refreshed at the same site with the same value the reset path would write.
+ */
+void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
+    auto log = log_manager_.getLogger("rt_engine");
+    const std::string& epoch_prefix = ctx.epoch_prefix;
+    const std::vector<PppObservation>& modeled_obs = ctx.modeled_obs;
+
+    const auto& ssr = ssrStore();
+    const double reset_std = config_.getAmbiguityStd();
+    const bool   bias_age_gate = config_.enableSsrBiasMaxAge();
+    const double bias_max_age  = config_.getSsrBiasMaxAge()
+                               * config_.getSsrBiasStaleHoldFactor();
+    const bool basis_nlwl = (config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl);
+    const bool bssd       = config_.enableBetweenSatelliteSd();
+    for (const auto& obs : modeled_obs) {
+        for (const auto& kv : obs.modeled) {
+            const std::string& code = kv.first;
+            if (code.empty() || code[0] != 'L') continue;       // phase only
+            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            const std::string key     = obs.satellite + "|" + code;
+            const std::string amb_key = obs.satellite + "_" + code;
+
+            // The disc-counter bump: the ungated read, exactly as the reset path.
+            bool bump = false;
+            if (auto pb = ssr.getPhaseBias(obs.satellite, code))
+                bump = state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
+
+            // The value the model APPLIES this epoch (the model's own read).
+            const auto applied = bias_age_gate
+                ? ssr.getPhaseBias(obs.satellite, code, obs.time, bias_max_age)
+                : ssr.getPhaseBias(obs.satellite, code);
+            const bool   applied_now   = static_cast<bool>(applied);
+            const double applied_now_m = applied ? applied->bias_m : 0.0;
+
+            // The A5 freshness flip, on the same flag memory the reset path keeps
+            // (and the RT snapshot restores); only tracked under the gate.
+            bool flip = false;
+            if (bias_age_gate) {
+                const auto it = ssr_phase_bias_applied_.find(key);
+                flip = (it != ssr_phase_bias_applied_.end() && it->second != applied_now);
+            }
+
+            const auto d = pb_disc_carry_.react(*state_manager_, key, amb_key, bump, flip,
+                                                applied_now_m, basis_nlwl, bssd, reset_std);
+            using A = PbDiscCarryLedger::Action;
+            switch (d.action) {
+                case A::None: break;
+                case A::CarriedDisc:
+                    log->info("{}SSR phase-bias discontinuity: carried {} {} by {:+.3f} m",
+                              epoch_prefix, obs.satellite, code, -d.delta_m);
+                    break;
+                case A::CarriedFlip:
+                    log->info("{}SSR phase-bias freshness flip ({} -> {}): carried {} {} by "
+                              "{:+.3f} m", epoch_prefix, applied_now ? "stale" : "fresh",
+                              applied_now ? "fresh" : "stale", obs.satellite, code,
+                              -d.delta_m);
+                    break;
+                default:
+                    log->info("{}SSR phase-bias {}: reset {} {} ({} — carry refused)",
+                              epoch_prefix, bump ? "discontinuity" : "freshness flip",
+                              obs.satellite, code, PbDiscCarryLedger::actionName(d.action));
+                    break;
+            }
+
+            // UPDATE SITE (after the reaction): what the update below will apply.
+            pb_disc_carry_.record(key, applied_now_m);
+            if (bias_age_gate) ssr_phase_bias_applied_[key] = applied_now;
+        }
+    }
+}
+
+void RealTimeEngine::logPbDiscCarrySummary_(const char* tag) {
+    if (!config_.ssrPhaseBiasDiscCarry()) return;   // knob off: never printed (byte-identical)
+    const auto& c = pb_disc_carry_.counters();
+    log_manager_.getLogger("rt_engine")->info(
+        "SSR phase-bias declared-step carry ({}): events {} (disc bumps {} + freshness flips {}) "
+        "-> pb_disc_carried {} / pb_flip_carried {}; pb_disc_reset_first_sight {} / "
+        "pb_disc_reset_basis {} / pb_disc_reset_bssd {} / pb_disc_reset_unknown_key {}; "
+        "closure carried + resets == events: {}; {} keys recorded",
+        tag, c.events, c.disc_bumps, c.flips, c.disc_carried, c.flip_carried,
+        c.reset_first_sight, c.reset_basis, c.reset_bssd, c.reset_unknown_key,
+        c.closureHolds() ? "HOLDS" : "BROKEN", pb_disc_carry_.size());
 }
 
 /**
