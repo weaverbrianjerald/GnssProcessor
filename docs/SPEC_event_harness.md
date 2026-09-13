@@ -5591,6 +5591,80 @@ from `v6`, 60 epochs, one exe; every other RS restore at the harness default; `r
 * **Q5 the rider:** the canonical line appears on `main_log` for every station on the cold seed and, on the legs,
   reads "restored" (canon) / "decided" (ctl); a resume against a `CN`-less snapshot (a v5 seed) warns once.
 
+### 21.17 RESULTS — RS-7: the dense border restores exactly, and it is NOT the residual (KEEP_OFF with the mechanism); RS-7b census pre-registered (2026-09-13 ~08:20 local; worker on worktree-agent-abc0bf1feef082b22 `0a7efa8`, merged; manager grade)
+
+**Build.**  `network.resume_border_restore` (default false; throws without `resume_frame_restore`; warn-DISARMS
+without `shared_carry_full_cov`; does NOT require Card 1f or `carry_conditional_coupling` — both locked by tests);
+the §18.12 (2a) dense-border block gated on either knob and naming the knob that armed it; the C1 seam line made
+truthful (the "diagonal carries" clause prints only when no dense restore follows); the first-fold diagonal census
+armed on EVERY warm resume with the dense carry on (control legs read it too); run-end `Network (RS-7 border
+restore)` line + a plain-warm-resume readout; `tests/test_resume_border_restore.cpp` (10).  Cold smoke `87a33bf0…`
+knob absent AND armed; Debug suite 2023 / 276 suites / 2022 passed / 1 skip / 0 failed; exe `23C628B3…`.
+The border under test: the 150 QK/QP keys are **29 CLK + 121 CB** (C1W 29, C2W 30, C1C 30, C5X 16, C5Q 14, C2X 2)
+— no PhaseBias keys on this lineage (§project_network_fullcov_carry's regime caveat, confirmed) — and all 150 of
+the 256 D rows' non-VtecSh keys restore (0 dropped).  `rs7_null_ctl` `products.txt` = `c45e52a0…`, §21.15's
+certified hash, on a third independently linked binary.
+
+| leg − seed (raw = v5raw, estimator; null = v5, wire) | raw ctl | raw border | null ctl | null border |
+|---|---|---|---|---|
+| C1 "diagonal carries" clause / RS-7 keys restored | YES / – | **no / 150 (0 dropped)** | YES / – | no / 150 |
+| border keys folded DIAGONALLY at the first fold | 150 | **0** | 150 | 0 |
+| raw PB +1 p50 (p95) ex L2X | 1.496 (2.825) | 1.457 (2.629) | 0.000 (0.002) | 0.000 (0.002) |
+| receiver clocks +1 p50 (p95), 61 sta | 0.934 (5.70) | **1.124** (5.82) | idem | idem |
+| SH a₀₀ +1 / +6 (TECU) | +0.43 / +0.11 | +0.45 / +0.51 | idem | idem |
+| rx-CB gate withheld share (seed, same window: **11.01 %** = 403/3660) | **26.31 %** | **26.28 %** | idem | idem |
+| W6 code bias +2 / pooled p50 | 0.152 / 0.460 | 0.140 / **0.804** | idem | idem |
+| clock contrast +2 / pooled p50 (p95) | 0.291 / 1.651 (9.11) | 0.361 / 1.563 (**7.32**) | idem | idem |
+| ZWD pooled p50 / p95 | 0.659 / 5.03 | 0.637 / 5.03 | idem | idem |
+| D5 flags +1; births +1 / +2; eq34 rerefs | 38; 64 / 7; 64 | 39; 64 / 7; 64 | idem | idem |
+| PB wire p50 +1 / +2 / +30 | – | – | 0.0004 / 0.0007 / 0.048 | 0.0005 / 0.0011 / 0.035 |
+| stateful consumer at the seam: PB / code / clock re-refs (±30 s) | – | – | 0 / 22 / 0 | 0 / **25** / 0 |
+
+**P9a PASS** — the border is dense from the first fold, 150/0, the diagonal count 150 → 0, zero dense-fold
+fallbacks.  ⚠ Its second instrument is vacuous here: the §18.11 "first-fold clock trips" counter is the Card-Q3
+decouple total and `network.clock_anchor` is not armed on the field golden, so it reads 0 structurally (the run-end
+line now says so instead of letting the 0 read as health).  **P9b FAIL on every bar, with the border demonstrably
+dense** — so §21.14's attribution is FALSIFIED.  What the border moves: clock contrast p95 9.11 → 7.32 (at +60
+2.85 → 1.87), raw PB p95 2.83 → 2.63, ZWD 0.659 → 0.637.  What it moves the wrong way: the W6 code-bias level
+0.460 → **0.804** pooled (every signal: C1C 0.29 → 0.48, C1W 0.88 → 1.07, C2W 0.47 → 0.78, C5Q 0.37 → 0.79, C5X
+0.33 → 0.77), receiver clocks at +1 0.93 → 1.12 m, consumer code re-references 22 → 25.  The code-bias trajectory
+INVERTS: the border arm is better at the seam (+1 0.070 vs 0.086, +2 0.140 vs 0.152) and then walks ~1.7× faster
+(+10 0.495 vs 0.333, +30 0.844 vs 0.440, +60 1.139 vs 0.666) — restoring the writer's cross-covariance fixes the
+first fold and then stiffens the code-bias block against a station layer that is NOT the writer's (invariant #1's
+shape: a stiff prior across a state the run does not share).  What does not move at all: the rx-CB gate share,
+**flat at 26 % on every epoch of both arms** against the seed's flat 10–11 % over the identical window.  **P9c
+PASS** (PB wire 0.000 unchanged; a₀₀ Δ 0.02 TECU); the `zwd_seam_reseed` pair on the border posture reproduces
+§21.14's mixed pattern unchanged (ZWD 0.637 → 0.430, clock contrast 1.563 → 1.168, rx clocks 1.12 → 0.82; CB 0.804
+→ 0.918, a₀₀ +0.45 → +0.74 and no decay, D5 39 → 53), so that knob's field verdict does not change either.
+
+**Decision.**  `network.resume_border_restore` = **KEEP_OFF on the field** with the mechanism above (the knob is
+correct, tested, default-OFF and stays in the tree; re-test it after the station-layer residual is closed — the
+sim's leg-E win (§18.14) was measured WITH the coupling rows and with a station layer that continued).  Not armed
+by the harness; no golden change.  Harness notes: `ev_launch.ps1` wrote an empty exit-code line (`$p.ExitCode`
+unpopulated; fixed by touching `$p.Handle`); a `CMakeLists.txt` edit landing during a configure leaves `build.ninja`
+newer than it and the new test file silently uncompiled — count suites, touch `CMakeLists.txt`.
+
+**RS-7b pre-registered — a CENSUS, no new run: WHERE the flat 26 % lives.**  Everything §21.14 called "the
+residual" (rx-CB withheld share 26 % vs 11 %, code-bias level walk, ZWD 0.64 m, pooled clock contrast 1.5 m, 22
+consumer code re-references) is persistent over the whole leg, so it is a per-epoch structural difference between
+the leg's and the seed's state, not a transient.  Read from the existing `rs7_raw_{ctl,border}` legs and `v5raw`
+over the identical window (epochs 605–664): (a) the rx-CB withholds per (station, code key, epoch) with the
+innovation's magnitude, sign and σ — concentrated on a station/signal subset withholding EVERY epoch (a per-station
+split) or diffuse (a gate calibration); constant per-key offset (a frame) or scatter (instability); which term of
+"10σ + 0.5 m" fails; (b) what the inject innovation is measured AGAINST in the code (`NetworkRunContext.cpp` ~5231,
+`RxCbInjectAction::SkipInnov`) — the writer's `x_lin`, the previous posterior, or the epoch's code-only estimate —
+and what a withhold does to the carry (the fingerprint note at ~214 says this gate reads innovations against
+`x_lin`, and an `x_lin` shift is a solve no-op that a screen still sees, SPEC_lane_slip_response §7.2); (c) receiver
+clocks and ZWD per station, leg − seed as 60-epoch series: persistent per-station offsets, and whether they sit on
+the withholding stations; (d) W6 code bias per (sat, signal) and clock contrast per satellite, leg − seed series:
+common-mode per signal (a datum realization) or per satellite, and whether clock and code bias re-split per
+satellite (CLK + CB per (sat, signal) leg − seed — the consumer-invariant sum — against each alone).  Candidate
+mechanisms to weigh, none assumed: a station-side `x_lin` re-seeded at the resume that the gate reads (H1); a
+per-satellite clock↔code-bias re-split invisible to the consumer (then the instruments overstate the residual and
+the 22 re-references are its whole cost) (H2); a station subset with a persistently different clock/CB/ZWD split —
+the field's ZWD datum sink (H3); a restored carry variance so tight that 10σ sits below the leg's own scatter (H4).
+Deliverable: the mechanism with the evidence, the smallest increment, and its harness grade.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
