@@ -6029,6 +6029,40 @@ byte-identical when unset; read only inside the seam window; NOT fingerprinted, 
 bracket exactly as pre-registered above on the v7 seed (`rs10b_null_{on,q4,q2}`; the ON leg must reproduce `rs9_null_lin`
 byte-for-byte on the new binary).
 
+**RS-10b RESULTS — the bracket ran; the reseed's damage was its stiffness, and no single q holds both ends (2026-09-13 ~20:40
+local; worker on worktree-agent-aaa93a7f642ccfdb7 `e2bf262`, merged `9cf83b3`; manager grade).**  `network.zwd_seam_reseed_q`
+(default −1 = inherit `zwd_carry_q`, byte-identical; must be > 0 when set; one resolved `zwdQEff(seam_live)` read by the B9
+diagonal fold, the B9-in-block fold and the harvest's prior-residual `fold_var`; NOT fingerprinted) — cold smoke `87a33bf0…`
+both arms, suite 2060 / 280 / 0 failed, the ON reference reproduces `rs9_null_lin` byte-for-byte, and all four legs
+warm-resume under the unchanged fingerprint.  The five arms on `v7` ep0604 (the six-leg scatter of a +1 p50 is ±0.03 m;
+R2′'s bars were set at the OFF arm's own values without margin and are restated as multiples of the seed's own per-epoch
+step, 0.107 m ZWD / 0.331 m receiver clock):
+
+| leg − seed | ON 1e-9 | q 3.8e-4 | q 2.5e-3 | q 1.7e-2 | reseed OFF |
+|---|---|---|---|---|---|
+| `zwd` prior σ̂₀ p50; folds dropped by the var guard | 11.2; 215 | 1.32; 6 | 0.60; 1 | **0.24; 0** | absent |
+| ZWD +1 p50 (× the seed's step) | 2.68× | 3.00× | 2.82× | 2.07× | 1.68× |
+| rx-clock +1 rms (× step); max | 9.3×; 17.1 m | 9.0×; 16.3 | 7.9×; 12.6 | **5.9×; 5.9** | 5.0×; 5.9 |
+| ZWD +1 max | 9.88 m | 9.44 | 7.31 | **3.25** | 2.48 |
+| ZWD +60 p50 / contrast +60 p95 | 1.338 / 10.29 | 0.895 / **4.01** | 0.618 / 4.05 | **0.471** / 4.94 | 0.584 / 5.36 |
+| wire at +1 (clock contrast p50 / cb / pb) | 0.327 / 0.097 / 0.0004 | 0.324 / 0.101 / – | 0.330 / 0.100 / – | 0.345 / 0.094 / – | 0.368 / 0.092 / 0.0004 |
+| cold in-run consumer k 5–32 3D / \|up\| p50 | 8.8 / 6.4 | **6.4 / 2.3** | 7.3 / 3.1 | 12.2 / 9.8 | 14.7 / 12.1 |
+| cold consumer k 33–60 3D / \|up\| | 7.6 / 3.9 | 6.3 / 1.5 | 7.1 / **0.97** | 7.0 / 1.9 | 7.3 / 3.3 |
+
+The over-stiffness signature is monotone in q (tails, σ̂₀, dropped folds) and at 1.7e-2 the seam tails equal the OFF arm's
+while the producer at +60 is BETTER than OFF (ZWD 0.471 vs 0.584) — §21.21's "the reseed is the perturbation, not the cure"
+was a statement about q = 1e-9, not about the mechanism.  The cold consumer runs the other way: the best arms are the soft
+ones (3.8e-4, 2.5e-3) and 1.7e-2 breaks it.  The crossover lies in (2.5e-3, 1.7e-2): q 2.5e-3 holds every consumer bar and
+misses the producer end on exactly one, ZWD at +60 0.618 vs the 0.60 bar (3 %; the OFF arm itself 0.584), with σ̂₀ 0.60,
+contrast p95 4.05 and the tails half-way down.  **Decision.**  No q holds both pre-registered ends, so by the
+pre-registration the tie-break is the stateful-consumer splice, which is indifferent to the reseed (§21.14) — the reseed
+stays OFF on lineages that carry no ZWD; `network.zwd_seam_reseed_q` is registered RECOMMEND_SCOPED (validated,
+byte-identical, the only way the response can ever be tuned) and q 2.5e-3 is the re-arm candidate on record, re-tested
+on the v8 seed as a second realization (the one 3 % miss sits inside the pooled p50's own scatter).  Two instrument
+notes for the record: R1′d (max|t| p50) never passes at any q and is non-monotonic — it is not on the stiffness axis; and
+the census counts 3720 of 3721 folds at 2.5e-3 because its own `var > 0` guard drops one station-epoch (the ON-path
+run-end counter reads 3721 on every armed leg).
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code

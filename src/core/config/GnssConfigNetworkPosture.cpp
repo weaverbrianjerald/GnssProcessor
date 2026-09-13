@@ -409,6 +409,14 @@ namespace GnssProcessor {
               "warm-resume ZWD no-restart (h6 truth rms 0.124 vs cold 0.390); settled h9-12 "
               "consumer 0.134 vs no-Z warm 0.278; NOT fingerprinted; OFF where the lineage carries "
               "no ZWD (RS-10: zwd prior sigma0 11, ZWD leg-seed 0.29 -> 1.34 m by +60)" },
+            // --- RS-10b (SPEC_event_harness s21.21): the seam reseed's own stiffness, seam-scoped
+            //     and fingerprint-exempt (it borrowed the fingerprinted zwd_carry_q before).
+            { warm && network_zwd_seam_reseed_,
+              network_zwd_seam_reseed_q_ > 0.0,
+              Tier::SCOPED, false, "network.zwd_seam_reseed_q",
+              "give the ZWD seam reseed its own stiffness: at the inherited 1e-9 the seam prior is ~4000x "
+              "too stiff on a white-sink ZWD (sigma0 11, ZWD leg-seed 1.34 m by +60); tuned, the tails "
+              "collapse to the reseed-OFF arm's while the cold consumer keeps its smoother start (RS-10b)" },
             // --- SCOPED tier: QC, RAIM and SLIP knobs ---------------------------------
             { estimate_network_sat_code_bias_ && !warm,
               network_code_bias_disc_jump_test_,
