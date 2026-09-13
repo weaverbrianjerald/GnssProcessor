@@ -390,6 +390,24 @@ namespace GnssProcessor {
     struct SlipQcConfig {
         // --- Card R: hardened IF-TD reference-satellite gate ---------------
         bool   ref_gate{ false };            ///< Master arm (network.cycle_slip.if_phase_td_ref_gate).
+        /// **REF-FAN (SPEC_event_harness §22.6)** — run the reference arm on the
+        /// ADDITIONAL gradient chains of `if_phase_td_pairs = all` as well
+        /// (`network.cycle_slip.if_phase_td_ref_arm_all`).  Today the arm runs on
+        /// the FIRST chain only (§14.10.4), so a slip ON an additional chain's
+        /// reference — whose own double difference is identically 0 by
+        /// construction — is never attributed and FANS OUT across every other
+        /// satellite of that chain (measured on the field seed: a −99 cyc L5X
+        /// slip at GOPE00CZE/G24, the reference of both L5 chains, produced six
+        /// false IF-TD refloats on G11/G25/G32 and a 13.7 m network-wide
+        /// phase-bias datum re-realization).  ON: an own-elected reference is
+        /// tested on that chain through the EMPIRICAL gate with the chain's own
+        /// dispersion state; an adopted one inherits the first chain's verdict.
+        /// **Requires `if_phase_td_pairs = all` AND @ref ref_gate** — the legacy
+        /// candidate condition |median| > 0.5·λ_IF is met by NOISE on the wide
+        /// combinations and must never gate one again (§14.10.3); the loader
+        /// warns and disarms otherwise, and the detector refuses it a second time.
+        /// Default false ⇒ byte-identical.
+        bool   ref_arm_all{ false };
         double ref_k{ 6.0 };                 ///< Empirical multiplier on the effective DD-dispersion scale.
         int    ref_min_n{ 4 };               ///< Minimum non-reference DDs before the median is trusted.
         double ref_thin_widen{ 3.0 };        ///< Physical-floor multiplier below @ref ref_min_n.

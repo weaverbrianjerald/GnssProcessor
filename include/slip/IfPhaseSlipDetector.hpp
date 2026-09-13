@@ -452,6 +452,72 @@ namespace GnssProcessor {
         const RefGateCounters& refGateCounters() const { return ref_gate_counters_; }
 
         /**
+         * @brief §22.6 — the outcome of ONE chain's reference arm this epoch.
+         *
+         * Recorded by the FIRST chain so the ADDITIONAL chains that ADOPTED its
+         * reference can inherit the verdict instead of sending the reference's
+         * own step into their pooled outlier test as a fan-out across every
+         * other satellite.  Lives for one epoch only.
+         */
+        struct RefArmOutcome {
+            std::string    satellite;                            ///< The chain's reference satellite ("" = the arm did not run).
+            RefGateVerdict verdict{ RefGateVerdict::Suppress };   ///< What the arm decided.
+            bool           fired{ false };                        ///< verdict != Suppress.
+        };
+
+        /**
+         * @brief §22.6 — per-GRADIENT-CHAIN reference-arm telemetry.
+         *
+         * Keyed by chain key ("GPS", "GPS|L2W_L5X").  The aggregate
+         * @ref RefGateCounters cannot answer the question this card asks —
+         * whether the ADDITIONAL chains' arm is a flood or a backstop — because
+         * it sums every chain into one number (standing invariant #4: the
+         * run-end counters are the ON-path telemetry).
+         */
+        struct RefArmChainCounters {
+            long long opportunities{ 0 };      ///< Epochs with a usable family (n ≥ 2 finite non-reference DDs) where the arm ran on this chain.
+            long long candidates{ 0 };         ///< …of those, |median| > floor_frac·λ_IF (the legacy candidate condition, here only a pre-filter).
+            long long fires_own{ 0 };          ///< Fires decided BY this chain's own arm through the empirical gate.
+            long long fires_inherited{ 0 };    ///< Fires inherited from the first chain's verdict on an ADOPTED reference.
+            long long fanout_suppressed{ 0 };  ///< Non-reference DDs that were above the physical floor BEFORE the rebase and below it after — the fan-out rows that would otherwise have been attributed to innocent arcs.
+        };
+
+        /// §22.6 run telemetry, per gradient chain.
+        const std::map<std::string, RefArmChainCounters>& refArmChainCounters() const {
+            return ref_arm_chain_counters_;
+        }
+
+        /**
+         * @brief §22.6 — run the reference arm on the ADDITIONAL chains too.
+         *
+         * Off (default, and the only legal setting unless @ref setAllPairs is on
+         * AND @ref RefGateParams::enable is set) the reference arm runs on the
+         * FIRST chain only (§14.10.4): an additional chain adopts the first
+         * chain's reference where it can and elects its own otherwise, and in
+         * NEITHER case is a slip ON that reference ever attributed.  The
+         * consequence measured on the field seed (§22.6): a −99 cyc L5X slip on
+         * GOPE00CZE/G24 — the reference of both L5 chains — reads `abs_dev = 0`
+         * on its own rows by construction and fans out onto G11/G25/G32 as six
+         * false refloats plus a 13.7 m network-wide phase-bias re-realization.
+         *
+         * On, an additional chain with an OWN-ELECTED reference runs the arm
+         * with that chain's own dispersion state and its own λ_IF, and one with
+         * an ADOPTED reference inherits the first chain's verdict for that
+         * satellite this epoch.  **Neither path may reach the LEGACY candidate
+         * condition as a decision**: |median| > 0.5·λ_IF is met by NOISE on the
+         * wide combinations ((L2W,L5Q): noise amplification 16.6, λ_IF 0.125 m —
+         * 5 351 candidates / 64 fires on a quiet null, §14.10.3), so the own arm
+         * is refused on an additional chain unless the EMPIRICAL gate is armed.
+         * The loader disarms the knob there as well; this is the second lock.
+         *
+         * Nothing changes on the first chain, with @ref all_pairs_ off, or with
+         * this off.
+         *
+         * @param all True to run the arm on every chain.
+         */
+        void setRefArmAllChains(bool all) { ref_arm_all_ = all; }
+
+        /**
          * @brief Defer per-satellite outlier flagging to an external (network) pool.
          *
          * When enabled, detect() still groups, single-differences, double-differences,
@@ -496,6 +562,11 @@ namespace GnssProcessor {
         /** §14.10: evaluate every distinct band pair, not just the first two
          *  signals of each satellite; see @ref setAllPairs. */
         bool all_pairs_{ false };
+
+        /** §22.6: run the reference arm on the ADDITIONAL chains too — own-elected
+         *  through the empirical gate, adopted by inheritance; see
+         *  @ref setRefArmAllChains.  Inert unless @ref all_pairs_ is on. */
+        bool ref_arm_all_{ false };
 
         /** Minimum elevation (degrees) for a satellite to be chosen as reference. */
         static constexpr double kRefElevThreshDeg = 45.0;
@@ -650,7 +721,16 @@ namespace GnssProcessor {
          *                        is unchanged.  False on the ADDITIONAL chains of
          *                        @ref setAllPairs, which share the first chain's
          *                        reference and must not re-run its test — see
-         *                        §14.10.4 for what re-running it costs.
+         *                        §14.10.4 for what re-running it costs, and
+         *                        @ref setRefArmAllChains for the §22.6 knob that
+         *                        turns it back on through the EMPIRICAL gate.
+         * @param[out] out_outcome §22.6: where to record this chain's reference-arm
+         *                        verdict so the additional chains that adopted the
+         *                        reference can inherit it.  nullptr ⇒ not recorded.
+         * @param inherit         §22.6: a first-chain verdict to APPLY on this chain
+         *                        (the adopted-reference path).  nullptr ⇒ today's
+         *                        behaviour.  Ignored unless it fired and names this
+         *                        chain's current reference.
          */
         std::map<std::string, double> processDoubleDifferences(
             const std::vector<SatData>& sat_vec,
@@ -662,7 +742,9 @@ namespace GnssProcessor {
             double position_sigma_3d,
             const Eigen::Vector3d& delta_pos,
             std::vector<std::string>& reset_keys,
-            bool run_ref_arm = true);
+            bool run_ref_arm = true,
+            RefArmOutcome* out_outcome = nullptr,
+            const RefArmOutcome* inherit = nullptr);
 
         /**
          * @brief Card R: advance this constellation's non-reference DD
@@ -753,6 +835,11 @@ namespace GnssProcessor {
 
         /** Card R: run telemetry. */
         RefGateCounters ref_gate_counters_{};
+
+        /** §22.6: run telemetry, per gradient chain.  Populated on every chain
+         *  the arm runs on (the first chain included), so the ON/OFF reading is
+         *  a comparison of like with like. */
+        std::map<std::string, RefArmChainCounters> ref_arm_chain_counters_;
 
         /** Monotonic detect() call index — the unit the Card-R persistence
          *  run-length is measured in (epoch identity without a time model). */

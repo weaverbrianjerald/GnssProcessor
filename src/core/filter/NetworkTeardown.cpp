@@ -3171,6 +3171,48 @@ int networkTeardown(
                   rg.fires_station_event, rg.suppressed_scale, rg.suppressed_thin,
                   nc.slip_qc.ref_min_n, rg.suppressed_persistence, rg.suppressed_warmup,
                   rg.reselects);
+
+        // §22.6 REF-FAN — the SAME tier split PER GRADIENT CHAIN.  The aggregate
+        // above cannot answer this card's question (is the additional chains' arm
+        // a flood or a backstop?) because it sums every chain into one number.
+        // Printed whenever the ref gate is armed, ref_arm_all or not: with the
+        // knob OFF the additional chains show 0 opportunities, which is the
+        // reading that makes the ON number interpretable (invariant #4 — the
+        // yardstick is the FIRST chain's own count over the same window).
+        {
+            std::map<std::string, IfPhaseSlipDetector::RefArmChainCounters> per_chain;
+            for (const auto& st : stations) {
+                if (!st.if_slip) continue;
+                for (const auto& [chain, c] : st.if_slip->refArmChainCounters()) {
+                    auto& a = per_chain[chain];
+                    a.opportunities     += c.opportunities;
+                    a.candidates        += c.candidates;
+                    a.fires_own         += c.fires_own;
+                    a.fires_inherited   += c.fires_inherited;
+                    a.fanout_suppressed += c.fanout_suppressed;
+                }
+            }
+            std::string chain_detail;
+            long long extra_own = 0, extra_inh = 0, first_fires = 0;
+            for (const auto& [chain, c] : per_chain) {
+                chain_detail += fmt::format(
+                    "{}{} [opp {}, cand {}, own {}, inherited {}, fan-out suppressed {}]",
+                    chain_detail.empty() ? "" : "; ", chain,
+                    c.opportunities, c.candidates, c.fires_own, c.fires_inherited,
+                    c.fanout_suppressed);
+                if (chain.find('|') == std::string::npos) first_fires += c.fires_own;
+                else { extra_own += c.fires_own; extra_inh += c.fires_inherited; }
+            }
+            log->info("Network (§22.6 REF-FAN / IF-TD reference arm per CHAIN): "
+                      "ref_arm_all is {}.  ADDITIONAL-chain fires: {} own + {} inherited = {}, "
+                      "against the FIRST chains' {} over the same window (F1 bar: <= 2x).  "
+                      "Per chain — {}.  [ref_arm_all OFF ⇒ every '<sys>|<sig>_<sig>' chain "
+                      "reads 0 opportunities: the arm does not run there, which is the §22.6 "
+                      "defect, not a clean result.]",
+                      nc.slip_qc.ref_arm_all ? "ARMED" : "off",
+                      extra_own, extra_inh, extra_own + extra_inh, first_fires,
+                      chain_detail.empty() ? std::string{"(no chain reported)"} : chain_detail);
+        }
     }
     if (config_.networkPhaseDatumEq34())
         log->info("Network (Card 3/eq34): {} (sat,σ) re-reference(s), {} local carry "

@@ -603,9 +603,25 @@ namespace GnssProcessor {
         double position_sigma_3d,
         const Eigen::Vector3d& delta_pos,
         std::vector<std::string>& reset_keys,
-        bool run_ref_arm) {
+        bool run_ref_arm,
+        RefArmOutcome* out_outcome,
+        const RefArmOutcome* inherit) {
 
         auto logger = log_manager_.getLogger("if_slip_detector");
+
+        // §22.6 SECOND LOCK.  An ADDITIONAL chain may run the arm only through
+        // the EMPIRICAL gate.  With ref_gate_.enable off the legacy candidate
+        // condition |median| > floor_frac·λ_IF IS the decision, and that is the
+        // §14.10.3 flood: on (L2W,L5Q) the IF coefficients are 12.26 / −11.26
+        // (noise amplification 16.6) against λ_IF = 0.1248 m, so NOISE clears it
+        // — 5 351 candidates / 64 fires on a quiet 70-epoch null.  The loader
+        // disarms if_phase_td_ref_arm_all without the gate; this refuses the
+        // combination in code, where the invariant actually lives.
+        const bool extra_chain = (sys_str.find('|') != std::string::npos);
+        if (extra_chain && !ref_gate_.enable) {
+            run_ref_arm = false;
+            inherit     = nullptr;
+        }
         // ONE definition, set by detect() — position uncertainty OR model nuisance.
         // Re-deriving it from position_sigma_3d here would silently exclude the
         // §6.14.6 item 3 arm and leave the reference gate firing through a closed gate.
@@ -686,6 +702,86 @@ namespace GnssProcessor {
         // ZERO extra — a false-alarm cost entirely invisible in the per-pair
         // evaluated/flagged tally.  Sharing the reference keeps every chain's
         // gradients in one frame and leaves the screening where it was.
+        // §22.6: the ACTION of a reference-arm fire, shared by the chain's own
+        // arm and by the ADOPTED-reference inheritance path below, so the two
+        // cannot drift apart.  `inherited` only changes the telemetry — the
+        // reset key, the rebase and the trace record are the same response,
+        // because the claim being acted on ("this chain's reference stepped") is
+        // the same claim whichever arm established it.
+        auto applyRefFire = [&](double median_dd, RefGateVerdict verdict,
+                                std::size_t n_finite, bool inherited) {
+            auto& rc = ref_arm_chain_counters_[sys_str];
+            if (inherited) ++rc.fires_inherited; else ++rc.fires_own;
+
+            const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
+            reset_keys.push_back(ref_amb_key);
+
+            // The OFF-path text is preserved verbatim; only an INHERITED fire
+            // adds a clause, so an existing log line cannot change under the knob.
+            if (inherited)
+                logger->warn("{}: Reference satellite {} IF phase slip INHERITED from the "
+                    "first chain's verdict: median(delta_grad)={:.4f} m ({:.1f} IF cyc), "
+                    "lambda_IF={:.4f} m (n_finite={}); reset {}",
+                    sys_str, cs.ref_satellite, median_dd,
+                    median_dd / lambda_if, lambda_if, n_finite, ref_amb_key);
+            else
+                logger->warn("{}: Reference satellite {} IF phase slip: "
+                    "median(delta_grad)={:.4f} m ({:.1f} IF cyc) > 0.5*lambda_IF={:.4f} m "
+                    "(n_finite={}); reset {}",
+                    sys_str, cs.ref_satellite, median_dd,
+                    median_dd / lambda_if, 0.5 * lambda_if,
+                    n_finite, ref_amb_key);
+
+            writeTraceRecord(*ref_data, sys_str, 0.0, median_dd,
+                cs.ref_satellite, false, lambda_if, true, "ref_slip",
+                position_sigma_3d, false);
+
+            // Correct prev gradients by the median offset and recompute double
+            // diffs so that subsequent outlier detection - here, or the network
+            // pool the driver runs on the cached DDs - sees only the
+            // per-satellite residual after removing the reference slip.  THIS is
+            // what stops the fan-out: without it the reference's own step rides
+            // every non-reference DD of the chain and is attributed to innocent
+            // arcs (§22.6: six false refloats on G11/G25/G32).
+            //
+            // Card R: SKIPPED for a FireNoRebase verdict.  The rebase asserts
+            // "the reference slipped by exactly median_dd", which is only
+            // defensible for a coherent common step.  On an incoherent
+            // multi-satellite station event the median is a mixture, and
+            // subtracting it from every OTHER satellite's history would inject a
+            // fictitious step into arcs that are fine - while also hiding the
+            // real per-satellite jumps from the network pool arm downstream.
+            // Resetting the reference arc (above) is kept; inventing its
+            // magnitude is not.
+            if (verdict != RefGateVerdict::FireRebase) return;
+
+            // Fan-out rows this rebase de-implicates: non-reference DDs above the
+            // chain's own physical floor before it and below after.  The honest
+            // ON-path number for "what would otherwise have been attributed to an
+            // innocent arc" (invariant #4) - a floor-crossing count, not a claim
+            // about what the network pool would have flagged.
+            const double floor_m = ref_gate_.floor_frac * lambda_if;
+            for (const auto& [sat, dd] : delta_grad)
+                if (sat != cs.ref_satellite && std::isfinite(dd)
+                    && std::abs(dd) > floor_m && std::abs(dd - median_dd) <= floor_m)
+                    ++rc.fanout_suppressed;
+
+            for (auto& [sat, prev_g] : cs.prev_grad)
+                if (sat != cs.ref_satellite) prev_g += median_dd;
+
+            delta_grad.clear();
+            all_finite = true;
+            for (const auto& [sat, g] : grad_phi_if) {
+                auto prev_it = cs.prev_grad.find(sat);
+                if (prev_it != cs.prev_grad.end()) {
+                    delta_grad[sat] = g - prev_it->second;
+                } else {
+                    delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
+                    all_finite = false;
+                }
+            }
+        };
+
         if (run_ref_arm)
         // Collect finite non-reference double differences. If the median is
         // large, the reference satellite slipped  not the non-ref satellites.
@@ -725,6 +821,11 @@ namespace GnssProcessor {
                 // is NOT the pool arm's per-(station,sat,pair) sample count, which
                 // is exactly why T1r must stay a separate tier from T1.
                 ++ref_gate_counters_.gate_opportunities;
+                // 22.6: the SAME tier, split per gradient chain.  The aggregate
+                // above sums every chain into one number and so cannot answer
+                // whether the ADDITIONAL chains' arm is a flood or a backstop.
+                auto& rc_own = ref_arm_chain_counters_[sys_str];
+                ++rc_own.opportunities;
                 const double median_dd = computeMedian(non_ref_dds);
 
                 // Card R: the LEGACY condition is the candidate filter; when the
@@ -735,6 +836,7 @@ namespace GnssProcessor {
                     (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
                         ? RefGateVerdict::FireRebase
                         : RefGateVerdict::Suppress;
+                if (verdict != RefGateVerdict::Suppress) ++rc_own.candidates;
                 if (ref_gate_.enable) {
                     // The dispersion scale advances on EVERY epoch with a usable
                     // family, candidate or not (see updateRefDispersion).
@@ -758,51 +860,47 @@ namespace GnssProcessor {
                 const bool ref_fire = (verdict != RefGateVerdict::Suppress);
                 if (ref_fire) ++ref_gate_counters_.gate_flags;  // tier T1r numerator
 
-                if (ref_fire) {
-                    const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
-                    reset_keys.push_back(ref_amb_key);
+                if (ref_fire) applyRefFire(median_dd, verdict, non_ref_dds.size(), false);
 
-                    logger->warn("{}: Reference satellite {} IF phase slip: "
-                        "median(delta_grad)={:.4f} m ({:.1f} IF cyc) > 0.5*lambda_IF={:.4f} m "
-                        "(n_finite={}); reset {}",
-                        sys_str, cs.ref_satellite, median_dd,
-                        median_dd / lambda_if, 0.5 * lambda_if,
-                        non_ref_dds.size(), ref_amb_key);
-
-                    writeTraceRecord(*ref_data, sys_str, 0.0, median_dd,
-                        cs.ref_satellite, false, lambda_if, true, "ref_slip",
-                        position_sigma_3d, false);
-
-                    // Correct prev gradients by the median offset and recompute
-                    // double diffs so that subsequent outlier detection sees only
-                    // the per-satellite residual after removing the reference slip.
-                    //
-                    // Card R: SKIPPED for a FireNoRebase verdict.  The rebase
-                    // asserts "the reference slipped by exactly median_dd", which
-                    // is only defensible for a coherent common step.  On an
-                    // incoherent multi-satellite station event the median is a
-                    // mixture, and subtracting it from every OTHER satellite's
-                    // history would inject a fictitious step into arcs that are
-                    // fine — while also hiding the real per-satellite jumps from
-                    // the network pool arm downstream.  Resetting the reference
-                    // arc (above) is kept; inventing its magnitude is not.
-                    if (verdict == RefGateVerdict::FireRebase) {
-                        for (auto& [sat, prev_g] : cs.prev_grad)
-                            if (sat != cs.ref_satellite) prev_g += median_dd;
-
-                        delta_grad.clear();
-                        all_finite = true;
-                        for (const auto& [sat, g] : grad_phi_if) {
-                            auto prev_it = cs.prev_grad.find(sat);
-                            if (prev_it != cs.prev_grad.end()) {
-                                delta_grad[sat] = g - prev_it->second;
-                            } else {
-                                delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
-                                all_finite = false;
-                            }
-                        }
-                    }
+                // 22.6: publish this chain's verdict so the ADDITIONAL chains that
+                // ADOPTED its reference can inherit it.  Recorded whether or not it
+                // fired: the inheritance path must be able to tell "the arm ran and
+                // found nothing" (exactly today) from "the arm did not run".
+                if (out_outcome) {
+                    out_outcome->satellite = cs.ref_satellite;
+                    out_outcome->verdict   = verdict;
+                    out_outcome->fired     = ref_fire;
                 }
+            }
+        }
+
+        // --- 22.6: the ADOPTED-reference inheritance path -------------------
+        // An additional chain that adopted the first chain's reference has no
+        // arm of its own by construction (its reference's own DD is identically
+        // 0), and today the first chain's fire does not reach it: the step stays
+        // on every one of THIS chain's non-reference DDs and is attributed to
+        // innocent arcs by the pooled test.  That fan-out is the defect (six
+        // false refloats on GOPE00CZE G11/G25/G32 from E1's slip on G24).
+        //
+        // The verdict is inherited, never re-derived: re-testing would be the
+        // 14.10.3 flood on a wide combination.  The MAGNITUDE is this chain's
+        // own median of its own non-reference DDs, because the step in metres is
+        // per-combination (the same integer slip moves each IF pair by its own
+        // coefficients) - only the QUESTION "did this satellite step?" is shared.
+        if (!run_ref_arm && inherit && inherit->fired
+            && !inherit->satellite.empty()
+            && inherit->satellite == cs.ref_satellite) {
+            std::vector<double> non_ref_dds;
+            for (const auto& [sat, dd] : delta_grad)
+                if (sat != cs.ref_satellite && std::isfinite(dd))
+                    non_ref_dds.push_back(dd);
+            if (non_ref_dds.size() >= 2) {
+                auto& rc = ref_arm_chain_counters_[sys_str];
+                ++rc.opportunities;
+                const double median_dd = computeMedian(non_ref_dds);
+                if (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
+                    ++rc.candidates;
+                applyRefFire(median_dd, inherit->verdict, non_ref_dds.size(), true);
             }
         }
 
@@ -907,6 +1005,10 @@ namespace GnssProcessor {
         // chain of a system is always processed before its additional chains and
         // this is filled by the time they need it.
         std::map<std::string, std::string> first_ref_by_sys;
+        // §22.6: and its reference arm's VERDICT this epoch, for the additional
+        // chains that adopted it.  Same ordering argument — the first chain has
+        // already run by the time an additional chain of its system is reached.
+        std::map<std::string, RefArmOutcome> first_ref_arm_by_sys;
 
         for (auto& [sys_str, sat_vec] : by_constellation) {
             if (sat_vec.size() < 2) continue;
@@ -939,6 +1041,7 @@ namespace GnssProcessor {
             // does not contain the first chain's reference at all, e.g. a
             // satellite tracking L1/L2 but not L5.
             bool ref_changed;
+            bool adopted_ref = false;        // §22.6: which of the two paths ran
             if (first_pair_chain) {
                 ref_changed = selectReference(sat_vec, cs);
                 first_ref_by_sys[sys_only] = cs.ref_satellite;
@@ -955,6 +1058,25 @@ namespace GnssProcessor {
                             break;
                         }
                 if (!adopted) ref_changed = selectReference(sat_vec, cs);
+                adopted_ref = adopted;
+            }
+
+            // §22.6: the two backstops for a slip ON an additional chain's
+            // reference, both OFF unless ref_arm_all_ is armed.
+            //   OWN-ELECTED  ⇒ run the arm on this chain, through the EMPIRICAL
+            //                  gate, on this chain's own cs.ref_scale_* state and
+            //                  this chain's own λ_IF.  Requires ref_gate_.enable:
+            //                  the legacy 0.5·λ_IF candidate condition IS the
+            //                  §14.10.3 flood on a wide combination, and
+            //                  processDoubleDifferences refuses the pair again.
+            //   ADOPTED      ⇒ inherit the first chain's verdict for that
+            //                  satellite this epoch (no second test, so no flood).
+            const bool run_extra_own_arm =
+                !first_pair_chain && ref_arm_all_ && ref_gate_.enable && !adopted_ref;
+            const RefArmOutcome* inherit = nullptr;
+            if (!first_pair_chain && ref_arm_all_ && adopted_ref) {
+                const auto oit = first_ref_arm_by_sys.find(sys_only);
+                if (oit != first_ref_arm_by_sys.end()) inherit = &oit->second;
             }
 
             // Find reference data
@@ -971,10 +1093,16 @@ namespace GnssProcessor {
             // Double-difference processing (if previous epoch exists).
             // Returns geometry-corrected, reference-slip-corrected delta_grads.
             std::map<std::string, double> delta_grad;
-            if (!cs.prev_grad.empty())
+            if (!cs.prev_grad.empty()) {
+                RefArmOutcome outcome;
                 delta_grad = processDoubleDifferences(sat_vec, sys_str, cs, grad_phi_if,
                     lambda_if, ref_changed, position_sigma_3d, delta_pos, reset_keys,
-                    /*run_ref_arm=*/first_pair_chain);   // §14.10.4
+                    /*run_ref_arm=*/first_pair_chain || run_extra_own_arm,  // §14.10.4 / §22.6
+                    /*out_outcome=*/first_pair_chain ? &outcome : nullptr,
+                    /*inherit=*/inherit);
+                if (first_pair_chain && !outcome.satellite.empty())
+                    first_ref_arm_by_sys[sys_only] = outcome;
+            }
 
             // For satellites without a previous epoch, fill NaN
             for (const auto& [sat, g] : grad_phi_if)
