@@ -2308,6 +2308,48 @@ int networkTeardown(
                       "row); {} border key(s) folded DIAGONALLY at the first warm fold.",
                       C.n_resume_cpl_cov_keys, C.n_resume_cpl_cov_dropped,
                       C.n_resume_cpl_diag_border);
+        // RS-7 (§21.14) — the DENSE-BORDER restore's own run-end readout, and the C1
+        // border's readout on a plain warm resume that arms NEITHER restore.  Both edges
+        // of the same instrument (standing invariant #7): how much of the border came
+        // back, and how much of it the first fold still had to take diagonally.  The Q3
+        // first-fold decouple count is §18.11's own trip statistic — the number the
+        // restored border is supposed to return to a continuous run's level — and it is
+        // structurally 0 on a lineage that does not arm network.clock_anchor, which the
+        // line says outright rather than letting a 0 read as health (invariant #4).
+        {
+            const std::string cta_note =
+                ctx.knobs.cta_on
+                    ? std::string{}
+                    : std::string("  (network.clock_anchor is OFF on this lineage — that 0 "
+                                  "is structural, not a health signal.)");
+            if (config_.networkResumeBorderRestore())
+                log->info("Network (RS-7 border restore, dense border): {} dense-carry key(s) "
+                          "restored from the snapshot's QK/QP records ({} dropped: no "
+                          "restored D row) against {} carried key(s) at the seam; {} border "
+                          "key(s) STILL folded DIAGONALLY at the first warm fold.  First "
+                          "post-resume epoch: {} Q3 clock-anchor decouple(s).{}{}",
+                          C.n_resume_cpl_cov_keys, C.n_resume_cpl_cov_dropped,
+                          C.n_resume_dense_carry_keys, C.n_resume_cpl_diag_border,
+                          C.n_resume_first_fold_cta_trips, cta_note,
+                          C.n_resume_cpl_cov_keys == 0
+                              ? "  ⚠ 0 keys restored under an ARMED border restore — the "
+                                "snapshot carried no usable QK/QP records (a writer without "
+                                "network.state_snapshot_coupling_capture), or no warm resume "
+                                "happened; the border re-seeded from the first emitted epoch "
+                                "exactly as before."
+                              : "");
+            else if (C.n_resume_dense_carry_keys > 0
+                     && !config_.networkResumeCouplingRestore())
+                log->info("Network (C1 dense border, warm resume): {} carried key(s) came "
+                          "back with VALUES and per-key variances only — {} of them folded "
+                          "DIAGONALLY at the first warm fold, because neither "
+                          "network.resume_border_restore nor network.resume_coupling_restore "
+                          "is armed, so the block's cross-covariance re-seeds from the first "
+                          "emitted epoch.  First post-resume epoch: {} Q3 clock-anchor "
+                          "decouple(s).{}",
+                          C.n_resume_dense_carry_keys, C.n_resume_cpl_diag_border,
+                          C.n_resume_first_fold_cta_trips, cta_note);
+        }
         // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge) —
         // BOTH edges printed (standing invariant #7): parked = what left; seeded = what came
         // back; moved / outlier = what the data rejected; the coupling window's diverted-term

@@ -2831,6 +2831,41 @@ namespace GnssProcessor {
          */
         bool networkResumeStationRestoreShDev() const { return network_resume_station_restore_shdev_; }
         /**
+         * @brief RS-7 resume DENSE-BORDER restore (@c network.resume_border_restore,
+         *        SPEC_event_harness §21.14) — fold the shared border DENSE from the
+         *        first warm epoch instead of re-seeding it from one epoch of data.
+         *
+         * Under @ref networkSharedCarryFullCov the D2 shared carry (satellite clocks,
+         * code biases, phase biases) folds as one dense @f$(P_{prev}+Q)^{-1}@f$ block.
+         * A warm resume restored that block's VALUES and per-key variances but not its
+         * cross-covariance, so every carried key missed @c prev_carry_cov.row and folded
+         * through the legacy DIAGONAL path — the C1 line's "warm resume restored N
+         * diagonal carries" — while the snapshot's @c QK / @c QP records (written by
+         * @c network.state_snapshot_coupling_capture) carried the block all along.
+         * Armed, the restore rebuilds @c SharedCarryCov from those records for exactly
+         * the keys that also have a restored D row; keys with no live row are dropped
+         * (row AND column) and counted, and the per-key fold degrades for them as before.
+         *
+         * Deliberately NOT gated on Card 1f.  The same records feed two independent
+         * restores: the coupling ROWS (@c QL / @c QZ regressors) are a per-row
+         * REGRESSION on the border and stay behind @ref networkResumeCouplingRestore
+         * with its @c carry_coupling_gauge_project interlock (a truncated row breaks the
+         * family identity @f$M^Tg_s=-g_r(c)@f$, which is what 1f repairs); the dense
+         * block restored here is a COVARIANCE, carries no regression and no gauge
+         * identity, and is therefore legal on a @c carry_invariant lineage where 1f is
+         * out of regime.  Splitting them is the whole card.
+         *
+         * The loader hard-requires @ref networkResumeFrameRestore (the border is
+         * expressed in the realization frame, exactly the RS-6 argument), and
+         * warn-disarms without @ref networkSharedCarryFullCov (nothing consumes the
+         * block).  Deliberately NOT in the warm-resume fingerprint — the same
+         * forward-only resume-response exemption class as @ref networkResumeFrameRestore,
+         * @ref networkResumeDatumRestore, @ref networkResumeEmitRestore,
+         * @ref networkResumeCouplingRestore and @ref networkResumeStationRestore.
+         * Default false = byte-identical.
+         */
+        bool networkResumeBorderRestore() const { return network_resume_border_restore_; }
+        /**
          * @brief RS-4 warm-resume PHASE-BIAS SEAM MARK (@c network.resume_pb_seam_mark,
          *        SPEC_event_harness §21.9) — declare the seam on the wire when the first
          *        post-resume emit re-realizes the phase-bias level.
@@ -7637,6 +7672,7 @@ namespace GnssProcessor {
         bool   network_resume_station_restore_{false};     ///< RS-6 resume STATION-LAYER restore (SPEC_event_harness §21.13), the reader half of network.state_snapshot_station_capture: at a warm resume, restore the rx-CB carry (the RC rows, through makeRestoredLocalCarry so each entry carries the §15.4.1 restored-arc sentinel) and the T5 / Iono-2 per-LOS deviation carry (the SD rows, as written — ShDevCarry's cold test is t_s <= 0, so the restored harvest stamp is what makes the entry read WARM) BEFORE the first epoch, instead of cold-starting both (measured: the rx-CB inject gate withholds 26 % of priors on a leg against 13 % on the seed, and ~400 deviation entries cold-seed at +1).  Each half inert and loudly logged when its rows are absent.  Loader hard-requires resume_frame_restore.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_station_restore_rxcb_{true}; ///< RS-6 diagnostic sub-switch: restore the rx-CB half.  Meaningful only under network_resume_station_restore_, and only so one leg of the §21.13 attribution matrix can restore ONE half.  Default true ⇒ an ordinary armed resume restores both.
         bool   network_resume_station_restore_shdev_{true};///< RS-6 diagnostic sub-switch: restore the T5 deviation half — the rxcb twin, same scope and default.
+        bool   network_resume_border_restore_{false};      ///< RS-7 resume DENSE-BORDER restore (SPEC_event_harness §21.14): at a warm resume, rebuild the C1 dense shared-carry covariance (SharedCarryCov) from the snapshot's QK/QP records for the keys that also have a restored D row, so the FIRST warm fold runs the dense (P_prev+Q)^-1 path instead of the per-key diagonal the resume has always degraded to (the "warm resume restored N diagonal carries" line).  Split out of network_resume_coupling_restore_ deliberately: that knob also restores the coupling ROWS (QL/QZ regressors), which need Card 1f for the family identity M^T g_s = -g_r(c); a COVARIANCE block carries no regression and no gauge identity, so it is legal on a carry_invariant lineage where 1f is out of regime.  Loader hard-requires resume_frame_restore and warn-disarms without shared_carry_full_cov.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_pb_seam_mark_{false};        ///< RS-4 warm-resume PHASE-BIAS SEAM MARK (SPEC_event_harness §21.9): at the FIRST emit after a warm resume, if more than kResumePbSeamMarkFraction of a constellation's fresh-baseline (sat,signal) phase-bias keys differ from their RESTORED emitter baseline by more than discThresholdM, markDatumChange that constellation exactly as the CLK-R resume_seam rule does (E-record datum_changed 1 + a PB_FRAME/resume_seam event + the n_pb_seam_marks counter).  Closes the gap the CLK-R rule leaves: that rule fires only when the held-frame clock engine reports epochs==0, so a lineage that RESTORES the frame is never marked - exactly when the clock is continuous and the phase-bias level is not.  One shot, warm resumes only (the latch is never set on a cold start).  Outputs-only: no estimate moves.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.

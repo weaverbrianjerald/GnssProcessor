@@ -3805,6 +3805,39 @@ namespace GnssProcessor {
         network_resume_station_restore_shdev_ =
             jval<bool>(json, "network.resume_station_restore_shdev",
                        "resume_station_restore_shdev", true);
+        // RS-7 DENSE-BORDER restore (read side of the snapshot's QK/QP records,
+        // SPEC_event_harness §21.14).  Same exemption class as every restore above:
+        // forward-only resume response policy, inert on a run that never resumes.
+        //
+        // ⚠ Deliberately NOT gated on network.carry_coupling_gauge_project (Card 1f) or
+        // network.carry_conditional_coupling — THAT IS THE CARD.  One capture knob writes
+        // two independent populations: the coupling ROWS (QL/QZ) are per-row REGRESSIONS
+        // on the border, so a truncated one breaks the family identity Mᵀg_s = −g_r(c)
+        // and needs 1f's repair — they stay behind resume_coupling_restore and its
+        // interlock.  The QK/QP block restored here is a COVARIANCE: it carries no
+        // regression, no gauge identity and no family sum, so it is legal on a
+        // carry_invariant lineage where 1f is out of regime and resume_coupling_restore
+        // is refused.  Before the split, a field warm resume could not restore its dense
+        // border at all.
+        network_resume_border_restore_ =
+            jval<bool>(json, "network.resume_border_restore", "resume_border_restore",
+                       false);
+        if (network_resume_border_restore_ && !network_resume_frame_restore_)
+            throw std::runtime_error(
+                "network.resume_border_restore requires network.resume_frame_restore: "
+                "the dense border is expressed IN the realization frame underneath it — "
+                "its keys are absolute satellite clocks and code/phase biases against "
+                "the datum that same solve realizes.  Without the frame restore the "
+                "first election re-realizes that frame, so the restored cross-covariance "
+                "would describe a level the writer never held: a stiff prior carried "
+                "across a jump, which invariant #1 says does not degrade gracefully.");
+        if (network_resume_border_restore_ && !network_shared_carry_full_cov_) {
+            log->warn("Network (RS-7 border restore): resume_border_restore armed but "
+                      "network.shared_carry_full_cov is OFF — nothing consumes a dense "
+                      "carried block (every key folds through the per-key diagonal path "
+                      "by construction), so the knob is INERT.  Disarmed.");
+            network_resume_border_restore_ = false;
+        }
         if (network_resume_station_restore_ && !network_resume_frame_restore_)
             throw std::runtime_error(
                 "network.resume_station_restore requires network.resume_frame_restore: "
@@ -3945,6 +3978,30 @@ namespace GnssProcessor {
                                              "attribution leg)"
                                            : " (⚠ BOTH sub-switches false — the knob is "
                                              "armed and restores NOTHING)"));
+        }
+        // RS-7 (§21.14): the DENSE-BORDER restore's own ARMED/INERT line, same shape.
+        // The full-cov prerequisite is warn-disarmed above, so by here the knob can only
+        // be inert for want of a snapshot to resume from.
+        if (network_resume_border_restore_) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (RS-7 border restore): resume_border_restore armed but "
+                          "network.state_snapshot_path is empty — nothing can resume, "
+                          "INERT this run.");
+            else
+                log->info("Network (RS-7 border restore): ON — at a warm resume the C1 "
+                          "dense shared-carry covariance is rebuilt from the snapshot's "
+                          "QK/QP records for every key that also has a restored D row, so "
+                          "the FIRST warm fold runs the dense (P_prev+Q)⁻¹ path instead of "
+                          "re-seeding the border's cross-covariance from one epoch of "
+                          "data.  Keys with no restored row are dropped (row AND column) "
+                          "and counted; a file without QK/QP rows leaves the border "
+                          "exactly as today and says so.  The coupling ROWS (QL/QZ) are a "
+                          "SEPARATE population and stay behind "
+                          "network.resume_coupling_restore with its Card-1f interlock — a "
+                          "covariance block carries no regression and no gauge identity, "
+                          "so this half is legal on a carry_invariant lineage.  Not in "
+                          "the warm-resume fingerprint (forward-only resume response "
+                          "policy).");
         }
         // RS-4 (§21.9): the DECLARATION half's own ARMED/INERT line, same shape.
         if (network_resume_pb_seam_mark_) {
