@@ -337,6 +337,14 @@ def grade_arm(arm, armdir, a, ref_cfg_lines=None):
     # -- (i) per-station code residual rms, last hour
     med, tows = per_station_median(os.path.join(logs, "network_pf_keyed.csv"), "STA", "key",
                                    ["rms_code", "s0_code", "rms_phase"], t_lo, t_hi)
+    # an arm whose post-fit pass pooled NO code rows (the s24.6 run-end line "0 code + N phase": EXT-CB
+    # on this lineage) has rms_code == 0 at every station — an empty pool, not a residual; bar (i) is
+    # NOT gradable there and must not read as a pass
+    rows_line = C.get("rows")
+    code_pooled = None if rows_line is None else int(rows_line[1])
+    if med and code_pooled == 0:
+        print(f"  !! {arm}: the post-fit pass wrote 0 code rows (run-end line) — read (i) is an EMPTY POOL, not a residual")
+        med = None
     if med:
         rc = np.array(list(med["rms_code"].values()))
         R["i"] = dict(n_sta=int(rc.size), n_epochs=len(tows), p50=pct(rc, 50), p90=pct(rc, 90), max=float(rc.max()) if rc.size else float("nan"),
@@ -387,6 +395,8 @@ def bars(R, R0):
     names = all(passes.values())
     contributor = any(halved.values())
     label = "NAMES (all three bars)" if names else ("contributor (a bar halved vs A0)" if contributor else "exonerated (no bar moved)")
+    if b1 is None and b3 is None:
+        label = "NOT GRADABLE (no code pool and no wire in the hour)"
     if R is R0:
         label = "control"
     if avail_ok is False:
