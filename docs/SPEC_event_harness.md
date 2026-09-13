@@ -6063,6 +6063,66 @@ notes for the record: R1′d (max|t| p50) never passes at any q and is non-monot
 the census counts 3720 of 3721 folds at 2.5e-3 because its own `var > 0` guard drops one station-epoch (the ON-path
 run-end counter reads 3721 on every armed leg).
 
+### 21.22 CERTIFICATION — the night's merges on main's own binaries; the v8 harness seeds; the closing legs graded at the seam epoch (2026-09-13 ~21:30 local; certification worker on main, parts 1–2 at `1bb0039`; part 3 re-certifies the final HEAD; manager grade)
+
+**Part 1 (main `1bb0039`; `c1d94e8` binary-identical).**  Debug and Release rebuilt first attempt (both new test TUs compiled in
+without a `CMakeLists.txt` touch); Debug suite **2049 cases / 279 suites / 2048 passed / 1 documented skip / 0 failed**
+(the six resume suites 48/48); Release exe `29952251…`; smokes `_cert1_smoke_base` and `_cert1_smoke_nowrite` (every write
+knob false) BOTH `87a33bf0…` — fourteen write-row families go exactly to zero under the write knobs and every other tag is
+count-identical (the census delta vs `_rs6_smoke_off` is CN 366, RC 61, SD 376, RL 61 only); no unknown-knob warning;
+the canonical-signal rider on `main_log` 61 + the consumer's 1.
+
+**Part 2 — the v8 harness seeds.**  `runs/evseed_field6h_v8` / `v8raw` = the v5 / v5raw recipes under today's harness
+(config diff = the two new write knobs + paths): `products.txt` **byte-identical to v5 / v5raw** (`0f510024…` / `c7f63437…`),
+ep0604 at tow 277290.00000810623, fingerprint `545b8bdd2b638231`, the ep0604 census = v5's in every tag plus **RL 61 and
+CN 366** (D 256 · ZL 4 · EQD 6 · EQP 176 · EQS 126 · EQT 302 · CBP 121 · CBS 32 · CBI 30 · ER 147 · PF 147 · PS 1 · RC 61 ·
+SD 467 · QK/QP 150 · QS 383 · QZ 61); v8raw the same minus the emit layer.  **v8 is the harness seed from here.**
+
+**The closing legs (`cert_null_v8` / `cert_raw_v8`, 60 epochs, the harness defaults and nothing else: every RS restore
+armed, `resume_coupling_restore` and `zwd_seam_reseed` set false by the harness on this lineage, `resume_border_restore`
+absent).**  Both 61/61, no cold start, riders 61 `restored` + 61 `audited` + 1 `decided` (the consumer's).  Restore counts:
+RS-2 4 blocks / 699 chord rows re-based / 0 un-basable; RS-2b 45 trips held, retired at 277320; RS-3 6 / 176 / 126 / 302
+and CB 121 / 32 / 30, **eq34 re-references at +1 = 2**, re-seed discs 0; RS-5 147 / 147 / 1 (raw arm 0 / 0 / 0 with the
+"0 under an ARMED read" clause — its seed writes no emit layer); RS-6 61 + 467; **RS-8 366 restored, 34 would have been
+decided differently** (§21.20 to the count); **RS-9 61 restored / 61 seeded / 0 carried-but-unseeded**; RS-4 null arm 126
+tested / 0 over threshold / 0 marked, raw arm 113 of 126 over (89.7 %) / 1 marked — the mark reads the raw level exactly
+where it is meant to.
+
+| seam epoch, leg − seed | +1 | +2 | reference (the card that set it) |
+|---|---|---|---|
+| PB wire p50 | 0.0004 | 0.0008 | 0.000 (RS-5) |
+| clock contrast p50 | 0.152 | 0.190 | 0.160 (RS-8 canon) |
+| W6 code bias p50 | 0.052 | 0.084 | 0.046 (RS-8 canon) |
+| ZWD p50 | **0.086** | 0.105 | 0.180 (RS-10 nozwd) — halved again by RS-8 |
+| Δa₀₀ (TECU) | +1.08 | +1.49 | within 2 |
+| chord births leg / seed | **1 / 2** | 5 / 2 | 1 (RS-8 canon; the control read 64) |
+| D5 flags (held, 0 re-taps) | 45 | 1 | posture (RS-9 in, reseed out) |
+
+The raw arm's solve channels are bit-for-bit the null arm's (only the emit layer differs).  rx-CB withheld share over the
+leg **11.39 %** (417/3660) vs the seed's 11.01 % — on the seed's own number (RS-9's lin leg read 9.78); the withholding set 7
+on both, ±1 (OAFA00ARG in, LCK400IND out).  L2X tracker set at the first IF-TD epoch **= the seed's, arc for arc**
+({GAMB00PYF 5, OAFA00ARG 6, INEG00MEX 4}).  **Raw PB at +1 over ALL keys** (126 present at the epoch): p50 **0.736 m**, p95
+1.79, max 2.22 — the 11 L2X keys read 0.30 (no longer the outlier family; the "ex L2X" grading is retired), the other 115
+0.78 against RS-8's 0.60 on the canon leg (+30 %; posture delta — RS-9 in, the reseed out — worth a second look, not a
+regression).  **Stateful splice** (`_cert_rp_splice_v8`, 665 epochs; the instrument first reproduced RS-9's 24 on
+`_rs9_rp_splice_lin`): at the seam epoch **PB resets 0, code re-references 15, clock 0** — the code channel down from
+22–24 (−37 %) with RS-8's 10 channel-set bumps retired; the window's PB count (29) equals the continuous wire's.
+
+**The D5-v5 re-test (§23.2's named pair, `d5v5_v8_{off,on}`, 120 epochs, one differing key).**  V2 every clause PASS
+(born flags 74 → 0, born-skipped 1824, carried 16 → 17, births 1873 → 1805, **re-taps 90 → 17**, carry-side lifetime 49.1 →
+51.0 ep); wire: clock contrast 0.0020 and ZWD 0.0018 PASS, PB wire |ON − OFF| p50 **0.0137 m vs the 0.01 bar** (FAIL, 1.37×;
+p95 0.18, max 6.3); withheld 0 = 0; a₀₀ 0.002 TECU.  **The consumer bar is indeterminate:** de-biased by the window MEDIAN
+ON/OFF = −3.9 % (PASS), by the window MEAN +3.0 to +4.1 % — every reading inside ±5.4 % and the SIGN flips with an
+analyst choice, while the direct arm-to-arm 3D separation (mean 1.22 m) is an order of magnitude larger than the
+dispersion difference.  Not resolved by same-realization pairing either: the knob reshapes the chord population and with
+it the realization, and this float consumer cannot rank two realizations.  **KEEP_OFF stands** (§23.2); the mechanism's
+win is real (re-taps −80 %) and a promotion needs a consumer-side instrument that is not a single realization's
+dispersion — a truth-referenced multi-realization grade, owed.
+
+**Part 3 (re-certification of the final HEAD).**  Main moved past `1bb0039` by two more knob merges (REF-FAN
+`if_phase_td_ref_arm_all`, RS-10b `zwd_seam_reseed_q`, two new test files) and the RAIM screen pin; the final rebuild,
+smoke pair and suite at HEAD are recorded below when they land.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
