@@ -45,7 +45,8 @@
     "network.state_snapshot_emit_capture": true,
     "network.serialize_disc_counters": true,
     "network.state_snapshot_station_capture": true,
-    "network.state_snapshot_rxcb_lin_capture": true
+    "network.state_snapshot_rxcb_lin_capture": true,
+    "network.state_snapshot_signal_capture": true
    },
    "unset": [],
    "exceptions": {
@@ -76,7 +77,8 @@
     "network.state_snapshot_emit_capture": true,
     "network.serialize_disc_counters": true,
     "network.state_snapshot_station_capture": true,
-    "network.state_snapshot_rxcb_lin_capture": true
+    "network.state_snapshot_rxcb_lin_capture": true,
+    "network.state_snapshot_signal_capture": true
    },
    "unset": [
     "network.emit_pb_filter_jump_k",

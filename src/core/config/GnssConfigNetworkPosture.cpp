@@ -401,6 +401,14 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.state_snapshot_rxcb_lin_capture",
               "carry the rx-CB carry's code-bias linearization point so a warm resume judges the "
               "restored carry against the writer's frame, not one epoch of resume code (RS-9)" },
+            // --- RS-8 (SPEC_event_harness s21.16/s21.20): WRITE half - every station's locked
+            //     canonical-signal map (CN rows) rides the snapshot.  Write side only, products
+            //     byte-identical.
+            { !nc.state_snapshot_path.empty(),
+              nc.state_snapshot_signal_capture,
+              Tier::SCOPED, false, "network.state_snapshot_signal_capture",
+              "carry each station's canonical-signal map so a warm resume does not re-decide 23 of "
+              "61 stations' channels from the resume epoch: chord births at the seam 64 -> 1 (RS-8)" },
             // RS-10 (SPEC_event_harness s21.21): only where the lineage CARRIES the ZWD (the F3
             // station block or carry_zwd).  On a white-sink ZWD (the field golden) the B9 prior
             // is ~4000x too stiff and the harvest turns it into the falsified diagonal carry.
@@ -869,6 +877,15 @@ namespace GnssProcessor {
               "restore each station's code-bias linearization point at a warm resume: rx-CB withheld "
               "share 26.3 -> 9.8 % (the seed's 11.0), the 11 defect-created stations back to folding, "
               "receiver clocks at +1 0.93 -> 0.82 m (RS-9)" },
+            // --- RS-8 (SPEC_event_harness s21.16/s21.20): READ half - restore the canonical-signal
+            //     map before any station's first epoch.  Forward-only resume policy, not
+            //     fingerprinted; requires resume_frame_restore.
+            { warm && network_resume_frame_restore_,
+              network_resume_signal_canon_restore_,
+              Tier::SCOPED, false, "network.resume_signal_canon_restore",
+              "restore the canonical-signal latch at a warm resume: chord births at +1 64 -> 1, L2X "
+              "keys 25.6 -> 0.62 m and every other key 1.50 -> 0.60 m raw, eq34 rerefs 8 -> 2, "
+              "clock contrast at +1 0.31 -> 0.16 m (RS-8)" },
             // --- RTA-4 serialize_disc_counters (first ledger row 2026-09-12, RS-4): the per-key
             //     discontinuity counters reach the wire (optional P/B/C fields).  Outputs-only;
             //     changes product bytes, so the goldens pin it only with a recorded re-baseline.
