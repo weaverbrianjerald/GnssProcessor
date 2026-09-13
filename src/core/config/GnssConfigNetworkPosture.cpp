@@ -420,6 +420,16 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.cycle_slip.if_phase_td_ref_gate",
               "hardened refsat gate: raw-confirmed 71% -> 90%, unsupported refsat flags 14 -> 4, "
               "pool arm untouched" },
+            // --- s22.6/s22.7 REF-FAN (2026-09-13): the reference arm on the ADDITIONAL chains, so a
+            //     slip ON a chain's own reference stops fanning out; own-elected references through
+            //     the empirical gate, adopted ones inherit the first chain's verdict.  Regime = pairs
+            //     all + the empirical gate.
+            { nc.cycle_slip_if_phase_td_pairs == NetworkIfPhaseTdPairs::All && nc.slip_qc.ref_gate,
+              nc.slip_qc.ref_arm_all,
+              Tier::SCOPED, false, "network.cycle_slip.if_phase_td_ref_arm_all",
+              "run the reference arm on the additional IF-TD chains (empirical gate): collateral refloats "
+              "6 -> 0 on every GOPE/G24 event, the 13.3 m innocent PB re-realization removed, consumer mean "
+              "1.4-2.7x better, flood held (93/94 wide-chain candidates suppressed); sim storm arm owed" },
             { true,
               network_exclude_unmodeled_antenna_stations_,
               Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",

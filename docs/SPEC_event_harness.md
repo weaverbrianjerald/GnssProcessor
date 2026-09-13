@@ -6259,6 +6259,65 @@ run-end line; `network_if_slip.csv` rows for the additional chains' reference ar
 Passing F1–F4 re-opens the FP-1 pin (G-A..G-G re-run on the fixed posture, §20's bars); failing F1 names the
 flood's true owner (the empirical gate on wide chains) and the pin stays an exception with this mechanism.
 
+### 22.7 RESULTS — REF-FAN: the reference arm on the additional chains holds the flood and removes the fan-out; RECOMMEND_SCOPED, not yet pinned; FP-2 (the §20 matrix on the fixed posture) pre-registered (2026-09-13 ~19:10 local; worker on worktree-agent-a789fceb19843b4fb `9bd2d51`, merged `e6b04a4`; manager grade)
+
+**Build.**  `network.cycle_slip.if_phase_td_ref_arm_all` (default OFF; loader disarms it without `if_phase_td_pairs = all`
+AND `if_phase_td_ref_gate`, and the detector refuses the legacy candidate condition on a `|`-keyed chain — two locks
+against re-opening the §14.10.3 flood): an additional chain with an OWN-elected reference runs the reference arm
+through card R's empirical gate with that chain's own dispersion state; an ADOPTED reference inherits the first
+chain's verdict for the epoch (this pair's reference arc reset, the pooled fan-out suppressed); per-chain counters
+(opportunities / candidates / own fires / inherited fires / fan-out rows suppressed) + a run-end line;
+`tests/test_iftd_ref_arm_all.cpp` (13).  Cold smoke on the field golden (pairs `first`, knob inert) `87a33bf0…` both
+arms; the fix-off legs reproduce FP-1's PIN legs byte-for-byte (`null_off` `bea5df33…`, `e3g25_off` `1c217798…`); Debug
+suite 2036 / 277 / 0 failed.  ⚠ Process: the ten legs were first generated across three harness versions (RS-9, RS-8
+and the RS-10 conditional landed on `event_leg.py` mid-batch — feedback_harness_defaults_shared_state) and an orphaned
+driver tree re-ran four legs in place (killed name-scoped); every graded leg was regenerated onto one harness
+(`e6071f43…`), diff-verified single-knob per pair.  A free determinism control: `e3g25_on` run twice (once with a
+second producer live) is byte-identical.
+
+**F1 PASS — the flood is held by the empirical gate.**  Null legs, 60 epochs × 60 stations: additional-chain fires
+**1** (own; `G27/SCTB00ATA` on `L2W;L5X` at k = −7, a natural reference slip the OFF arm never tested) against the
+first chain's 1 — bar ≤ 2×.  The counters price §14.10.3 exactly: `GPS|L2W_L5Q` 9 candidates → 0 fires, `GPS|L2W_L5X`
+85 → 1 — 93 of 94 legacy candidates on the wide combinations suppressed.  Products differ from that fire on (59
+epochs, the first differing `H` record stamped at k = −7; nothing differs at −10 / −9).
+
+**F2 PASS on every primary bar — the fan-out is gone.**  Collateral IF-TD refloats at GOPE00CZE, k = +0:
+
+| event | OFF collateral | ON collateral | ON: the reference's own arcs reset | the innocent 13.3 m `G32/L1C` PB re-realization |
+|---|---|---|---|---|
+| E1 L5X −99 | 6 (31.8 m ×3, 283.9 m ×3) | **0** | 2 (`G24 L1C;L5X`, `G24 L2W;L5X`) | OFF present, **ON absent** |
+| E5 L5X −31 + LLI | 6 (9.96 ×3, 88.9 ×3) | **0** | 2 | OFF present, ON absent |
+| E3/G24 +29 / +29 | 6 + 1 legitimate (`G24 L1C+L2W` 14.05 m) | **0** + the same legitimate one, value identical | 2 | OFF present, ON absent |
+
+The band-scope verdict for G24 is unchanged (E1 both arms `implicated=L5X; exonerated=L1C;L2W; … ref_arc`; E3/G24
+all-band in both — the clause's named cost untouched).  Event − null within each arm: blast radius collapses 7.5× on
+every event (worst other satellite 13.34 → 1.79 m); the station frame at +45 improves on E1 (clk −8.17 → −5.07, ZWD
+3.48 → 1.16) and E5 (−4.48 → −1.59, 2.50 → 0.36); consumer mean |Δ3D| over +30..+50 **1.94 → 0.72 (E1), 2.20 → 1.01
+(E5), 1.34 → 0.99 (E3/G24)**.  Two honest misses, reported not smoothed: consumer MAX |Δ3D| over +0..+50 E1 2.44 →
+2.52 (+3 %) and **E5 2.93 → 4.47 (+53 %)**; the E3/G24 station clock at +45 −1.19 → +1.50 m.
+
+**F3 PASS in substance.**  The E3/G25 detections are bit-identical between arms (`L1C+L2W` 14.0445, `L1C+L5X` 3.1508,
+`L2W+L5X` 83.1726 m) and the station frame identical to four decimals; the products differ from k = −7 on — the same
+natural `G27` fire as in every pair including the null, not the G25 event — so the pre-registered "byte-identical"
+wording cannot hold for a mechanism that acts on natural reference slips network-wide; the bar is read event − null
+within each arm.  **F4 PASS** (above).
+
+**Invariant #4, both ways.**  `inherited` fires = **0 in every leg**: the adopted-reference path is built and
+unit-tested but never fired on this lineage — the L5 chains own-elect (the (1,2) reference is a no-L5 IIR-M at 98 % of
+those station-epochs), so the whole field result comes from the own-elected arm; the inheritance half is validated
+on a lineage where an L5-capable satellite is the first chain's reference, or not at all.
+
+**Decision.**  RECOMMEND_SCOPED (regime: `if_phase_td_pairs = all` with `if_phase_td_ref_gate`); pinned nowhere yet —
+the field golden runs pairs `first` (out of regime), the sim golden pins pairs `all` + the clause and gets a documented
+exception until its storm arm is run (`simnet_storm_grade.py`, the B4 protocol of §22.5).  **FP-2 pre-registered:**
+the §20 matrix on the fixed field posture — scope + pairs `all` + the clause + `ref_arm_all` — from the v8 harness
+seed (every RS restore in both arms; the harness held still for the batch): {null, E1, E2, E3/G24, E3/G25, E5} ×
+{OFF, PIN}, §20's G-A..G-E bars verbatim with the G25 +40 window rule, the fan-out census of §20.2 (collateral must
+read 0 on every G24 leg), the E5 consumer-max and the E3/G24 clock-at-+45 misses above re-read on the second
+realization; G-A..G-E passing ⇒ the G-G twin (6 h, the four knobs) and, on its bars, the field pin of all four
+together.  A second event bed (another station / satellite where the injected satellite is a chain reference) is the
+named guard against pinning on one site.
+
 ## 23. D5 v5 CARRIED-ONLY on the field (`network.carry_invariant_innov_carried_only`) — the born-chord flags are the churn engine and removing them costs nothing on the wire (2026-09-13; pre-registered in the worker brief before any leg was read, results ~12:30 local; worker on worktree-agent-abad026e4a52148da, exe `gnss_processor_rs7.exe` 23C628B3…; manager grade)
 
 **Why.**  The Card-4 D5 innovation gate standardizes a chord's innovation against Cov(v), the H0 covariance about
