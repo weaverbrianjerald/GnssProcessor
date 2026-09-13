@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Box-wide PRODUCER SLOT locks for the event harness (standing cap: 2 concurrent gnss_processor runs).
 
-    python scripts/ev_slot.py claim <worker>     # blocks until a slot is free, prints the lock path
+    python scripts/ev_slot.py claim <worker> [--max-wait S]   # blocks until a slot is free (default 540 s), prints the lock path;
+                                                            # exit 3 = no slot within the wait: just call it again
     python scripts/ev_slot.py release <lockpath>  # after the run's exitcode.txt appeared
     python scripts/ev_slot.py status
 
@@ -61,7 +62,7 @@ def _try_claim(i, who):
     return p
 
 
-def claim(who):
+def claim(who, max_wait=540):
     os.makedirs(SLOT_DIR, exist_ok=True)
     waited = 0
     while True:
@@ -71,10 +72,11 @@ def claim(who):
                 if p:
                     print(p, flush=True)
                     return 0
+        if waited >= max_wait:
+            print(f"# {who}: no producer slot within {max_wait} s - call claim again", file=sys.stderr, flush=True)
+            return 3
         time.sleep(POLL_S)
         waited += POLL_S
-        if waited % 300 == 0:
-            print(f"# {who}: waiting for a producer slot ({waited // 60} min)", file=sys.stderr, flush=True)
 
 
 def release(p):
@@ -105,8 +107,11 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     cmd = sys.argv[1]
-    if cmd == "claim" and len(sys.argv) == 3:
-        sys.exit(claim(sys.argv[2]))
+    if cmd == "claim" and len(sys.argv) >= 3:
+        mw = 540
+        if "--max-wait" in sys.argv:
+            mw = int(sys.argv[sys.argv.index("--max-wait") + 1])
+        sys.exit(claim(sys.argv[2], mw))
     if cmd == "release" and len(sys.argv) == 3:
         sys.exit(release(sys.argv[2]))
     if cmd == "status":
