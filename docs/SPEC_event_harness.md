@@ -6512,3 +6512,14 @@ pre-dates them), graded on the consumer de-biased 3D mean over +6..+120 within 5
 second realization on a seam that no longer re-births 64 chords.  (Instrument note for every future 2 h field leg:
 the DOY-129 sick-field outage at 06:03–06:18 UT lands at ep122–151 of any leg from ep0604 — grade before it or
 around it, never through it.)
+
+### 23.3 The v8 re-test (2026-09-13 ~21:20; the pair §23.2 named, run in the certification, §21.22)
+
+`d5v5_v8_{off,on}`, 120 epochs from `v8` ep0604, one differing key: V2 every clause PASS (born flags 74 → 0, born-skipped 1824,
+carried 16 → 17, births 1873 → 1805, re-taps 90 → 17, carry-side lifetime 49 → 51 ep); clock contrast 0.0020 and ZWD 0.0018
+PASS; PB wire |ON − OFF| p50 0.0137 m against the 0.01 bar (FAIL, 1.37×); withheld 0 = 0.  The consumer bar is INDETERMINATE:
+de-biased by the window median ON/OFF −3.9 %, by the window mean +3.0 to +4.1 % — every reading inside ±5.4 % with the sign
+set by an analyst choice, while the direct arm-to-arm separation (1.22 m mean) dwarfs the dispersion difference.  A knob that
+reshapes the chord population reshapes the realization, and a single float consumer cannot rank two realizations even from
+one seed.  **KEEP_OFF stands.**  A promotion needs a consumer instrument that is not one realization's dispersion — a
+truth-referenced grade over several seam epochs / stations, owed.
