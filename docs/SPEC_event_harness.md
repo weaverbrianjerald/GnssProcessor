@@ -5881,6 +5881,69 @@ are the time-linked code-bias datum's per-key re-seed (RS-3 restored the CBP map
 re-seed?), the W6 set-mean realization, or the receiver side.  Deliverable: mechanism, the smallest increment, and
 its seam-epoch bar (ZWD at +1 within 3× the seed's own step; consumer code re-references at the seam ≤ 5).
 
+### 21.20 RESULTS — RS-8: the canonical-signal latch flips on 23 of 61 stations at a resume, not three; restoring it takes chord births at the seam 64 → 1 and every phase-bias key's level to the seed's (2026-09-13 ~14:30 local; worker on worktree-agent-a533ac4a027ca01be `d4a56fa` + merge; manager grade)
+
+**Build.**  `PppModel::exportCanonicalSignals / restoreCanonicalSignals`; row `CN,<station idx>,<constellation>,<band>,
+<C|L>,<signal>` under `network.state_snapshot_signal_capture` (61 stations × 6 entries = 366 rows on this lineage);
+`network.resume_signal_canon_restore` (requires `resume_frame_restore`; INERT-warned on a CN-less snapshot) restores
+each station's map before its first epoch so the `:427` guard treats it as decided; counters (stations / entries /
+disagreements with what the first epoch would have decided) + run-end line; the rider re-emits the "Canonical
+signals" line on `main_log` at every decision AND restore (`decided` / `restored` / `audited`); one call in
+`ApplicationNetwork.cpp` after `networkTryWarmResume`, body in the seam; `tests/test_resume_signal_canon_restore.cpp`
+(13).  Cold smoke `87a33bf0…` knobs absent AND armed (the ON snapshot gains exactly the 366 CN rows); seeds `v6` /
+`v6raw` = the v5 recipes + the write knob, products byte-identical to `v5` / `v5raw`, ep0604 at the same tow,
+fingerprint `545b8bdd2b638231`; `rs8_raw_ctl` `products.txt` byte-identical to `rs6_raw_both`'s (the ctl reading a
+CN-bearing snapshot it ignores); Debug suite 2036 / 278 / 0 failed on the merged tree.  ⚠ The worker's worktree was
+created 285 files behind main and reset to main's tip before any edit (feedback_agent_worktree_stale_base).
+
+**Q1 PASS.**  At the first IF-TD-traced epoch (277350) the canon leg's L2X tracker set is the seed's — 15 arcs on
+{GAMB00PYF, INEG00MEX, OAFA00ARG}, arc for arc — against the ctl's 12 on {CPVG00CPV, INEG00MEX} (§21.16 reproduced);
+emitted L2X satellites at +1 11 = the seed's (ctl 10).  The restore line's disagreement count: **34 of 366 entries
+across 23 of 61 stations** — the latch does not flip on three stations, it flips on twenty-three: mostly L1 code /
+phase ties (`C1C` vs `C1W`, `L1C` vs `L1W`, decided by one or two satellites), plus the three L2 flips §21.16 named
+(GAMB L2X→L2W, OAFA L2X/C2X→L2W/C2W, CPVG L2W→L2X) and a `C2W`↔`C2L` at CEBR00ESP.  The cold seed's rider caught the
+defect in the act: `GAMB00PYF (10 sats): … L2X(L2:10)` at 00:00 against `L2L keeps L2X vs L2W(10)` at 05:02.
+
+**Q2 PASS.**  eq34 re-references at 277320: ctl 8 (2 L5Q + 6 L2X), **canon 2** (G09 and G27 on L5Q — the seed's own
+two), zero L2X; the RS-3 restore line identical on both.
+
+**Q3 — the level.**  Raw pair, per-key |Δ| at +1 vs `v6raw`: the six L2X keys **25.63 → 0.62 m** p50 (max 70.6 →
+1.53; bar ≤ 2.0, PASS with 41× margin) — and the OTHER 115 keys **1.4957 → 0.6009 m** p50 (max 4.66 → 2.25).  The
+pre-registered "within 0.05 m of the control" bar assumed the restore touched L2X only; it touches the channel
+23 stations contribute, so the whole realization moves — toward the seed, 2.5× better.  The bar is rewritten as "no
+worse than the control" and PASSES; the 1.50 m "raw PB at +1 ex L2X" figure that RS-6/RS-7/RS-9 carried was the
+latch's own cost on the other 20 stations.  Raw PB at +1 is graded over all 129 keys from here on.
+
+| wire pair (`rs8_null_*` vs `v6`), leg − seed | ctl | **canon** | seed's own |
+|---|---|---|---|
+| chord births at +1 | 64 | **1** | 2 |
+| D5 flags at +1 | 38 | **29** | — |
+| clock contrast p50 at +1 / +60 | 0.306 / 2.846 | **0.160 / 0.886** | — |
+| W6 code bias p50 at +1 | 0.086 | **0.046** | — |
+| ZWD p50 / p95 (window) | 0.659 / 5.03 | 0.446 / 4.24 | — |
+| PB wire p50 at +1 | 0.0004 | 0.0004 | — |
+| a₀₀ at +1; worst from +5 | +0.43; 4.49 @ +39 | +0.88; 2.80 @ +56 | — |
+| σ̂₀ code ratio (G3) | 1.561 | **1.136** | — |
+| consumer p50 from +5 (report-only) | 7.86 | 9.26 m | — |
+
+**The structural headline: 64 → 1 chord births at the seam** — the ctl leg was re-birthing the ambiguities of every
+station whose canonical channel had just flipped; the canon leg births 1 against the continuous run's 2.  (Even the
+pooled channels §21.19 retired move: clock contrast window p50 1.65 → 1.06, at +60 2.85 → 0.89 — the latch was also
+the largest seed of the two realizations' divergence.)
+
+**Q4 PASS** on every clause (above).  **Q5 PASS:** ctl 62 `decided` per leg; canon 61 `restored` + 61 `audited` + 1
+`decided` — the stray `decided` is the closed-loop CONSUMER's own `PppModel`, built outside `buildStation`, not in the
+producer roster and not covered by the snapshot: the consumer re-decides its canonical channels at every warm resume
+too (scope note; the consumer is not snapshotted at all and its own cold start dominates a 30-minute window, §18.14).
+The probe `rs8_probe_v5` (read knob armed against the CN-less v5 snapshot): one INERT warn, the run-end
+`0 restored under an ARMED read` clause, 62 `decided` lines, exit 0.
+
+**Decision.**  Both knobs RECOMMEND_SCOPED: the write knob pinned on both goldens (write side, byte-identical), the
+read knob harness-armed on every leg; the harness seed becomes `v8` (CN + RL rows) at the certification.  Two owed
+items named, not built: the latch's tie-break itself (34 flips on one-satellite ties over a 5 h gap is a design
+smell of `decideConstellationCanonicals` on the CONTINUOUS run too — a per-station canonical channel decided by one
+epoch's count; owed as its own card with a field A/B), and the consumer's uncovered latch.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
