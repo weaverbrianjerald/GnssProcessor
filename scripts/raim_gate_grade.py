@@ -57,9 +57,11 @@ _TELEM = [
     ("epochs_pool_cells",
      r"RAIM pool re-host\): (\d+) seam pass\(es\), (\d+) station-epoch\(s\) with a "
      r"live census, (\d+) ambiguity cell\(s\) screened"),
+    # ⚠ the number patterns must NOT be [-\d.]+ : these values end a sentence, so a
+    # greedy dot class swallows the trailing full stop and float() then raises.
     ("sigma0",
      r"RAIM pool re-host\): .?.?0 over (\d+) live-pool epoch\(s\) .{0,4} mean "
-     r"([-\d.]+), max ([-\d.]+)"),
+     r"(-?\d+(?:\.\d+)?), max (-?\d+(?:\.\d+)?)"),
     ("flagged",
      r"RAIM pool re-host\): (\d+) satellite-epoch\(s\) consensus-flagged, (\d+) "
      r"isolated arc-epoch\(s\) attribution-flagged"),
@@ -90,7 +92,7 @@ def read_stdout(run: Path) -> dict:
         m = re.search(pat, txt)
         if not m:
             continue
-        g = [float(x) if "." in x else int(x) for x in m.groups()]
+        g = [float(x) if "." in x else int(x) for x in m.groups()]  # ints stay ints
         if key == "epochs_pool_cells":
             out["epochs"], out["pool_stations"], out["pool_cells"] = g
         elif key == "sigma0":
@@ -272,7 +274,8 @@ def read_products(path: Path) -> dict:
             "heartbeat": heartbeat}
 
 
-def compare_records(a: Path, b: Path, kinds=("C", "B", "P")) -> dict:
+def compare_records(a: Path, b: Path, kinds=("C", "B", "P"),
+                    alpha: float = 0.1) -> dict:
     """Per-record-kind byte comparison of two products.txt files."""
     pa, pb = read_products(a), read_products(b)
     out = {}
@@ -306,6 +309,49 @@ def compare_records(a: Path, b: Path, kinds=("C", "B", "P")) -> dict:
         "per_sat_p50_max": max(((s, _pct(v, 50)) for s, v in per_sat.items()),
                                key=lambda t: abs(t[1] or 0.0), default=None),
         "per_sat_p50": {s: _pct(v, 50) for s, v in sorted(per_sat.items())},
+    }
+    # --- the σ̂₀ EWMA, recovered from the emitted URA ------------------------
+    # There is NO per-epoch trace of the post-fit RAIM σ̂₀ on this posture:
+    # network_raim.csv writes only FLAGGED cells ("quiet epochs emit nothing"),
+    # the epoch-status `sigma0` column is the WITHIN-EPOCH tier's statistic, and
+    # the L13 per-cell trace is a separate unarmed knob.  But the emitted URA is
+    #
+    #     ura(sat) = max(1, ura_sigma0_ewma) * sqrt(var(sat))
+    #
+    # and `var` is a property of the solve.  So on an arm where the solve is
+    # identical to its control, the per-epoch RATIO of the two runs' URA is
+    # exactly the ratio of their EWMAs -- and the control's EWMA is pinned at the
+    # 1.0 floor precisely because its pool is empty.  The ratio therefore READS
+    # the leg's EWMA directly, with no extra knob and no extra run.
+    #
+    # ⚠ Two caveats, both structural: the EWMA is clipped by `max(1, .)`, so
+    # nothing below 1 is recoverable; and the scale lands one epoch LATE (the
+    # EWMA updates post-emit), so epoch k's URA carries the EWMA through k-1.
+    # The inversion sigma0_k = (ewma_k - (1-alpha)*ewma_{k-1})/alpha is reported
+    # only where both EWMAs are above the clip.
+    by_ep: dict[str, list[float]] = defaultdict(list)
+    for (tow, _sat) in common:
+        r = ub[(tow, _sat)] / ua[(tow, _sat)] if ua[(tow, _sat)] else None
+        if r is not None:
+            by_ep[tow].append(r)
+    traj = [(t, _pct(v, 50)) for t, v in sorted(by_ep.items(), key=lambda kv: float(kv[0]))]
+    ratios = [r for _t, r in traj if r is not None]
+    ewma_sigma0 = []
+    for i in range(1, len(traj)):
+        e1, e0 = traj[i][1], traj[i - 1][1]
+        if e1 and e0 and e1 > 1.0 and e0 > 1.0:
+            ewma_sigma0.append((traj[i][0], (e1 - (1.0 - alpha) * e0) / alpha))
+    out["_ura_ewma"] = {
+        "alpha": alpha, "n_epochs": len(traj),
+        "ratio_first": traj[:3], "ratio_last": traj[-3:],
+        "ratio_p50": _pct(ratios, 50), "ratio_max": max(ratios) if ratios else None,
+        "ratio_spread_per_epoch_max": max(
+            (max(v) - min(v) for v in by_ep.values() if v), default=None),
+        "n_ratio_above_1": sum(1 for r in ratios if r > 1.0 + 1e-12),
+        "implied_sigma0_p50": _pct([s for _t, s in ewma_sigma0], 50),
+        "implied_sigma0_p99": _pct([s for _t, s in ewma_sigma0], 99),
+        "implied_sigma0_max": max((s for _t, s in ewma_sigma0), default=None),
+        "implied_sigma0_n": len(ewma_sigma0),
     }
     # Emission heartbeat: the H record's status / withheld columns, per epoch.
     ha = {h[0]: h for h in pa.get("heartbeat", [])}
@@ -395,6 +441,17 @@ def main() -> int:
                       f"ctl_p50={v['ctl_p50']} leg_p50={v['leg_p50']} "
                       f"d_p50={v['delta_p50']} d_p99={v['delta_p99']} "
                       f"d_min={v['delta_min']} d_max={v['delta_max']}")
+                continue
+            if k == "_ura_ewma":
+                print(f"       URA EWMA (sigma0 read off the URA ratio, alpha={v['alpha']}):")
+                print(f"           ratio p50={v['ratio_p50']} max={v['ratio_max']} "
+                      f"epochs_above_1={v['n_ratio_above_1']}/{v['n_epochs']} "
+                      f"per-epoch spread max={v['ratio_spread_per_epoch_max']}")
+                print(f"           first={v['ratio_first']}")
+                print(f"           last ={v['ratio_last']}")
+                print(f"           implied sigma0: n={v['implied_sigma0_n']} "
+                      f"p50={v['implied_sigma0_p50']} p99={v['implied_sigma0_p99']} "
+                      f"max={v['implied_sigma0_max']}")
                 continue
             if k == "_heartbeat":
                 print(f"       H: n_ctl={v['n_ctl']} n_leg={v['n_leg']} "
