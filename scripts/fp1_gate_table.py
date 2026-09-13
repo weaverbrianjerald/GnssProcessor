@@ -134,6 +134,31 @@ def consumer_diff(leg, null, t0, post, lo_mean=30):
             "n": len(d3), "n_mean": len(seg), "series": d3}
 
 
+def blast_at(leg, null, t0, k=0, tol=0.5):
+    """Product keys moving more than `tol` m at ONE epoch, event - null.
+
+    G-C's "every other satellite <= 2x the floor" is uninformative whenever the
+    floor is set by an unrelated natural event late in the window: 2x a 139 m
+    floor passes anything.  Read at the EVENT EPOCH instead, where a natural
+    event tens of epochs later cannot reach, the same quantity is a clean
+    blast radius — how many product keys the response moved, and which.
+    """
+    t = t0 + k * EPOCH_S
+    A = read_products(os.path.join(leg, "products.txt"), int(t) - 1, int(t) + 1)
+    B = read_products(os.path.join(null, "products.txt"), int(t) - 1, int(t) + 1)
+    ta = sorted(A)
+    tb = sorted(B)
+    if not ta or not tb:
+        return []
+    out = []
+    for key, va in A[ta[0]].items():
+        vb = B[tb[0]].get(key)
+        if vb is not None and abs(va - vb) > tol:
+            out.append((abs(va - vb), "/".join(key)))
+    out.sort(reverse=True)
+    return out
+
+
 def onset(d, tol=0.0):
     """First k >= 0 at which |value| exceeds tol (None = never)."""
     for k in sorted(x for x in d if x >= 0):
@@ -178,6 +203,27 @@ def collateral(legdir, nulldir, sta, injected_sat, t0, lo=0, hi=5):
         out[tag] = c
     net = {s: v for s, v in out["leg"].items() if s not in out["null"]}
     return out, net
+
+
+def fanout_groups(legdir):
+    """(tow, station, pair) groups where >= 2 satellites refloated together.
+
+    The signature of a REFERENCE-arc slip: dOMC(sat) - dOMC(ref) is identically
+    0 on the reference's own row and full-size on every other satellite of that
+    chain, so one slip on a chain reference flags the whole station at once.
+    Network-wide (the injected station is not privileged), and the natural rate
+    is the control — read it on the nulls before reading it on an event leg.
+    """
+    rows = read_events(legdir) or []
+    g = {}
+    for r in rows:
+        if r.get("tier") != "T1_if_slip" or r.get("action") != "refloat":
+            continue
+        det = r.get("detail", "")
+        pair = (det.split("pair=")[1].split(";")[0] if "pair=" in det
+                else ";".join(det.split(";")[:2]))
+        g.setdefault((r.get("tow"), r.get("station"), pair), set()).add(r.get("sat"))
+    return {k: sorted(v) for k, v in g.items() if len(v) >= 2}, len(g)
 
 
 # -------------------------------------------------------------------- report
@@ -302,6 +348,17 @@ def grade(runs, prefix, json_out=None):
                           + "; ".join(f"k={k:+d} {t} {dd}" for k, t, dd in net[s]))
             else:
                 print(f"      {a.upper()}  (none)")
+        print("    FAN-OUT signature (>= 2 sats refloating one station/pair/epoch), "
+              "network-wide")
+        for a in ARMS:
+            fg, tot = fanout_groups(arms[a]["leg"])
+            nfg, ntot = fanout_groups(nulls[a])
+            coll[a]["fanout"] = {"leg": len(fg), "null": len(nfg),
+                                 "groups": {str(k): v for k, v in fg.items()}}
+            print(f"      {a.upper():<4} leg {len(fg)} of {tot} groups | "
+                  f"null {len(nfg)} of {ntot}")
+            for k, v in sorted(fg.items()):
+                print(f"           tow={k[0]} {k[1]} {k[2]}: {v}")
         d["collateral"] = coll
 
         # ---- G-B
@@ -351,6 +408,13 @@ def grade(runs, prefix, json_out=None):
             print(f"    {'worst other ' + a.upper():<16}{fnum(w['v'], 4, 13)}"
                   f"{('@+%s %s' % (w['at'], w['key'])):>20}  "
                   f"{'PASS' if okk else 'FAIL'}")
+        print(f"    -- blast radius AT THE EVENT EPOCH (k=0), |d| > 0.5 m "
+              f"(floor-independent) --")
+        for a in ARMS:
+            bl = blast_at(arms[a]["leg"], nulls[a], t0)
+            d.setdefault("blast", {})[a] = [(round(v, 4), kk) for v, kk in bl]
+            print(f"      {a.upper():<4} {len(bl)} key(s): "
+                  + (", ".join(f"{kk} {v:.3f}" for v, kk in bl[:6]) or "(none)"))
         gc["PASS"] = all(gc.values())
 
         # ---- G-D
