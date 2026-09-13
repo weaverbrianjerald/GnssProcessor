@@ -30,6 +30,7 @@ pass).  The grader prints the numbers and the labels; the manager decides.
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import shutil
@@ -54,6 +55,15 @@ ARM_KNOBS = {
            ["estimate_iono_sh", "SH-iono", "SH-VTEC", "SH health", "sh_health", "consume_network_iono", "Iono-2"]),
     "a4": ("filter.process_noise.sat_code_bias_q: 1e-4", ["sat_code_bias_q", "sat_code_bias", "code-bias q", "code bias q"]),
     "a5": ("network.cb_kaula_prior: false", ["Kaula", "kaula"]),
+    # the s24.8 extension arms (the shared station block)
+    "a6": ("network.carry_zwd true + zwd_carry_q 1e-8 (diagonal B9 RW)", ["ZWD carry", "carry_zwd", "B9"]),
+    "a6b": ("network.carry_zwd true + zwd_carry_q 1e-7 (diagonal B9 RW)", ["ZWD carry", "carry_zwd", "B9"]),
+    "a7": ("estimation.zwd_constraint enabled, sigma 0.2 m (getter read by the RT engine only)",
+           ["ZWD soft constraint", "zwd_constraint"]),
+    "a8lit": ("network.stations cut to WROC/GOP6/FFMJ, nothing else changed (datum MBAR00UGA)",
+              ["clock_datum_station", "stations list", "need >=2 stations", "datum"]),
+    "a8": ("network.stations cut to WROC/GOP6/FFMJ + clock_datum_station WROC00POL",
+           ["clock_datum_station", "stations list", "need >=2 stations", "datum"]),
 }
 
 RUN_END = [
@@ -124,6 +134,103 @@ def per_station_median(path, kind_filter, key_col, val_cols, t_lo, t_hi):
                     pass
     out = {c: {s: float(np.median(v)) for s, v in acc[c].items() if v} for c in val_cols}
     return out, tows
+
+
+def tropo_fit(armdir, t_lo, t_hi):
+    """Read (vi): per station, the share of the window's CODE post-fit residual sum of squares
+    explained by a 2-parameter tropo-shaped fit v = a + b / sin(el) (rows, and again on the per-LOS
+    window means as s24.6 did); pooled = sum of explained SS over stations / total SS."""
+    path = os.path.join(armdir, "logs", "network_pf_rows.csv")
+    if not os.path.isfile(path):
+        return None
+    sta_v, sta_el, los = defaultdict(list), defaultdict(list), defaultdict(list)
+    with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+        rd = csv.reader(fh)
+        hdr = next(rd)
+        ix = {h: i for i, h in enumerate(hdr)}
+        for r in rd:
+            if len(r) < len(hdr) or r[ix["kind"]] != "code":
+                continue
+            try:
+                tow = float(r[ix["tow"]]); v = float(r[ix["resid_m"]]); el = float(r[ix["elev_deg"]])
+            except ValueError:
+                continue
+            if tow < t_lo - 1e-3 or tow > t_hi + 1e-3 or not np.isfinite(el) or el <= 0:
+                continue
+            s = r[ix["station"]]
+            sta_v[s].append(v); sta_el[s].append(el)
+            los[(s, r[ix["sat"]], r[ix["signal"]])].append((v, el))
+    if not sta_v:
+        return None
+
+    def fit(v, el):
+        v = np.asarray(v, float); m = 1.0 / np.sin(np.radians(np.asarray(el, float)))
+        A = np.column_stack([np.ones_like(m), m])
+        coef, *_ = np.linalg.lstsq(A, v, rcond=None)
+        res = v - A @ coef
+        ss = float(np.sum(v * v)); ssr = float(np.sum(res * res))
+        return ss, ss - ssr, float(coef[1])
+
+    per = {}
+    tot = expl = 0.0
+    for s in sta_v:
+        ss, ex, b = fit(sta_v[s], sta_el[s])
+        per[s] = dict(pct=100.0 * ex / ss if ss > 0 else float("nan"), b_m=b, n=len(sta_v[s]), rms=math.sqrt(ss / len(sta_v[s])))
+        tot += ss; expl += ex
+    # the same on the per-LOS window MEANS (one point per LOS-signal series)
+    mv, mel = defaultdict(list), defaultdict(list)
+    for (s, sat, sig), pts in los.items():
+        a = np.asarray(pts, float)
+        mv[s].append(float(a[:, 0].mean())); mel[s].append(float(a[:, 1].mean()))
+    tot_m = expl_m = 0.0
+    for s in mv:
+        if len(mv[s]) >= 4:
+            ss, ex, _ = fit(mv[s], mel[s]); tot_m += ss; expl_m += ex
+    pcts = np.array([p["pct"] for p in per.values()])
+    top = sorted(per.items(), key=lambda kv: -kv[1]["pct"])[:5]
+    return dict(pooled_rows_pct=100.0 * expl / tot if tot > 0 else float("nan"),
+                pooled_means_pct=100.0 * expl_m / tot_m if tot_m > 0 else float("nan"),
+                median_pct=float(np.median(pcts)), max_pct=float(pcts.max()),
+                top=[(s, p["pct"], p["b_m"]) for s, p in top], n_sta=len(per))
+
+
+def a00_series(armdir, t_lo, t_hi):
+    """Read (vii): the SH a00 series from network_vtec_sh_health.csv (first / window p50, min, max / last, in-band count)."""
+    path = os.path.join(armdir, "logs", "network_vtec_sh_health.csv")
+    if not os.path.isfile(path):
+        return None
+    tows, a00, inb = [], [], []
+    with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+        for r in csv.DictReader(fh):
+            try:
+                tows.append(float(r["tow"])); a00.append(float(r["a00_tecu"])); inb.append(int(float(r.get("a00_in_band", "nan"))))
+            except (KeyError, ValueError):
+                continue
+    if not a00:
+        return None
+    tows = np.array(tows); a00 = np.array(a00); inb = np.array(inb)
+    w = (tows >= t_lo - 1e-3) & (tows <= t_hi + 1e-3)
+    return dict(n=int(a00.size), first=float(a00[0]), last=float(a00[-1]),
+                win_p50=pct(a00[w], 50) if w.any() else float("nan"),
+                win_min=float(a00[w].min()) if w.any() else float("nan"), win_max=float(a00[w].max()) if w.any() else float("nan"),
+                in_band=int(inb.sum()), in_band_win=int(inb[w].sum()), n_win=int(w.sum()))
+
+
+def zwd_carried(path, t_lo, t_hi):
+    """Fraction of station-epochs in the window whose network_zwd.csv row says carried = 1 (the ZWD carry's on-path telemetry)."""
+    if not os.path.isfile(path):
+        return None
+    n = c = 0
+    with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+        for r in csv.DictReader(fh):
+            try:
+                tow = float(r["tow"])
+            except (KeyError, ValueError):
+                continue
+            if t_lo - 1e-3 <= tow <= t_hi + 1e-3:
+                n += 1
+                c += int(r.get("carried", "0") in ("1", "1.0", "true"))
+    return dict(n=n, carried=c, frac=(c / n if n else float("nan")))
 
 
 def epoch_status(path, t_lo, t_hi):
@@ -297,7 +404,8 @@ def grade_arm(arm, armdir, a, ref_cfg_lines=None):
     V = {}
     # NB the loader is silent on unknown JSON keys (feedback_branch_exe_unknown_knob_silent); this catches only
     # an explicit refusal / unrecognized-value line, and the per-knob effect lines below are the real check
-    V["unknown_knob"] = [short(l) for l in cfg if re.search(r"unknown (key|knob|option|field|config|value)|unrecogni[sz]ed|refus", l, re.I)]
+    V["unknown_knob"] = [short(l) for l in cfg if re.search(r"unknown (key|knob|option|field|config|value)|unrecogni[sz]ed|refus|not in stations list|need >=2 stations", l, re.I)]
+    V["errors"] = [short(l, 300) for l in stdout if "[error]" in l or "[critical]" in l][:4]
     V["trace_rows"] = [short(l, 160) for l in cfg if "trace_postfit_rows" in l]
     V["trace_zwd"] = [short(l, 160) for l in cfg if "ZWD trace ENABLED" in l]
     V["first_epoch"] = None
@@ -366,10 +474,14 @@ def grade_arm(arm, armdir, a, ref_cfg_lines=None):
     else:
         R["ii"] = None
 
+    R["zwd_carried"] = zwd_carried(os.path.join(logs, "network_zwd.csv"), t_lo, t_hi)
+    # -- (vi) tropo-shaped fit share of the code residual; (vii) the SH a00 series
+    R["vi"] = tropo_fit(armdir, t_lo, t_hi)
+    R["vii"] = a00_series(armdir, t_lo, t_hi)
     # -- (iii) wire-vs-CODE census on the hour
-    R["iii"] = None if a.skip_census else census(armdir, a.runs, t_lo, a.k_hi - a.k_lo + 1, force=a.force)
+    R["iii"] = None if a.skip_census or R["exit"] not in ("0", None) else census(armdir, a.runs, t_lo, a.k_hi - a.k_lo + 1, force=a.force)
     # -- (iv) per-LOS attribution on the hour
-    R["iv"] = None if a.skip_attrib else attrib(armdir, a.tow0, a.k_lo, a.k_hi, force=a.force)
+    R["iv"] = None if a.skip_attrib or R["exit"] not in ("0", None) else attrib(armdir, a.tow0, a.k_lo, a.k_hi, force=a.force)
     return R
 
 
@@ -417,6 +529,8 @@ def print_report(results, a):
         print(f"  zwd trace: {V['trace_zwd'][0] if V.get('trace_zwd') else 'NO ZWD-trace LINE'}")
         print(f"  first emitted epoch: {V['first_epoch'] or 'NO epoch-1 LINE'}")
         print(f"  unknown-knob / refusal lines: {V['unknown_knob'] if V['unknown_knob'] else 'none'}")
+        if V.get("errors"):
+            print(f"  [error] lines in stdout: " + " | ".join(V["errors"]))
         print(f"  snapshot / cold-start lines: " + (" | ".join(V["snapshot"]) if V["snapshot"] else "none matched"))
         if V.get("knob_lines"):
             print("  knob effect lines (gnss_config.log):")
@@ -460,6 +574,18 @@ def print_report(results, a):
                   f"; worst: " + ", ".join(f"{s[:4]} {v:+.2f}" for s, v in ii["worst"]))
         else:
             print("  (ii) no network_zwd.csv rows in the window")
+        zc = R.get("zwd_carried")
+        if zc and zc["n"]:
+            print(f"      ZWD rows flagged carried in the hour: {zc['carried']} of {zc['n']} ({100 * zc['frac']:.1f} %)")
+        tf = R.get("vi")
+        if tf:
+            print(f"  (vi) tropo-shaped fit v = a + b/sin(el) of the code residual, per station: explained SS pooled {fmt(tf['pooled_rows_pct'], 1)} % (rows), "
+                  f"{fmt(tf['pooled_means_pct'], 1)} % (per-LOS means); per-station median {fmt(tf['median_pct'], 1)} % max {fmt(tf['max_pct'], 1)} %; top: "
+                  + ", ".join(f"{s[:4]} {p:.0f} % (b {b:+.1f} m)" for s, p, b in tf["top"]))
+        a0s = R.get("vii")
+        if a0s:
+            print(f"  (vii) SH a00 (TECU): epoch 1 {fmt(a0s['first'], 1)}, hour p50 {fmt(a0s['win_p50'], 1)} [min {fmt(a0s['win_min'], 1)}, max {fmt(a0s['win_max'], 1)}], last {fmt(a0s['last'], 1)}; "
+                  f"in band {a0s['in_band']}/{a0s['n']} epochs (hour {a0s['in_band_win']}/{a0s['n_win']})")
         c = R.get("iii")
         if c:
             print(f"  (iii) wire-vs-CODE census, hour ({c['n_epochs']} epochs): D_phase within-arc rms declared {fmt(c['phase_decl_rms'])} (tracking {fmt(c['phase_track_rms'])}; diffmedian cm {fmt(c['phase_decl_rms_diffmedian'])}) m"
@@ -497,6 +623,12 @@ def print_report(results, a):
               f"{fmt(c.get('phase_decl_rms'), 2, 5)}/{fmt(c.get('code_decl_rms'), 2, 5)}/{fmt(c.get('clk_level_p50'), 2, 6)} "
               f"{fmt(t.get('level_share'), 1, 6)}/{fmt(t.get('disp_nested'), 1, 6)} "
               f"{str(av.get('emitted', '-')):>5s}/{str(av.get('synced', '-')):>5s} w{str((av.get('withheld_gate') or 0) + (av.get('withheld_a4') or 0)) if av else '-':>3s}  {R['bars']['label']}")
+    # -- the extension reads
+    print("\nEXTENSION READS (last hour): (vi) tropo-shaped fit share of the code residual (pooled rows / per-LOS means / per-station median) | ZWD rows carried | (vii) SH a00 epoch 1 / hour p50 [min..max] / last, in-band epochs")
+    for R in results:
+        tf = R.get("vi") or {}; zc = R.get("zwd_carried") or {}; a0s = R.get("vii") or {}
+        print(f"{R['arm']:6s} (vi) {fmt(tf.get('pooled_rows_pct'), 1, 5)} / {fmt(tf.get('pooled_means_pct'), 1, 5)} / {fmt(tf.get('median_pct'), 1, 5)} %   carried {fmt(100 * zc['frac'], 1, 5) if zc and zc.get('n') else '    -'} %   "
+              f"a00 {fmt(a0s.get('first'), 1, 6)} / {fmt(a0s.get('win_p50'), 1, 6)} [{fmt(a0s.get('win_min'), 1)}..{fmt(a0s.get('win_max'), 1)}] / {fmt(a0s.get('last'), 1, 6)}  in-band {a0s.get('in_band', '-')}/{a0s.get('n', '-')}")
 
 
 def main():

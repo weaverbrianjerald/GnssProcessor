@@ -45,7 +45,40 @@ ARMS = {
     "a3": {"network.estimate_iono_sh": False},
     "a4": {"filter.process_noise.sat_code_bias_q": 1e-4},
     "a5": {"network.cb_kaula_prior": False},
+    # ---- the s24.8 EXTENSION (manager, 2026-09-13): the shared station block --------------------
+    # a6 / a6b: the ZWD as a time-linked state — the diagonal B9 random-walk carry
+    # (GnssConfigLoadNetwork.cpp:3701-3705; :9913-9930 "ZWD carry, B9 ... reuses the phase-leveling
+    # warmup / max-gap housekeeping; non-pivot stations only" — phase_leveling is pinned on the golden,
+    # phase_leveling_local_block is not, so the block form is out of regime and the diagonal row is the
+    # minimal posture the loader accepts).
+    "a6":  {"network.carry_zwd": True, "network.zwd_carry_q": 1e-8},
+    "a6b": {"network.carry_zwd": True, "network.zwd_carry_q": 1e-7},
+    # a7: the ZWD soft constraint pseudo-observation toward the a-priori (GnssConfigLoad.cpp:1398-1406,
+    # apriori 0.10 m).  Its getter (GnssConfig::getZwdConstraint) is consumed ONLY by
+    # RealTimeEngine.cpp / RealTimeEngineEstimate.cpp — nothing on the network path reads it, so this
+    # arm is expected byte-identical to a0 (run as the proof of that, reported as dropped).
+    "a7":  {"estimation.zwd_constraint.enabled": True, "estimation.zwd_constraint.sigma_m": 0.2},
+    # a8lit: the golden with network.stations cut to three European stations and NOTHING else changed —
+    # expected to be refused, since network.clock_datum_station is MBAR00UGA
+    # (ApplicationNetworkSetup.cpp:190 "clock_datum_station '...' not in stations list").
+    "a8lit": {"__stations__": ["WROC00POL", "GOP600CZE", "FFMJ00DEU"]},
+    # a8: the same cut with the clock datum re-pointed at one of the three (the minimal change the
+    # refusal forces; WROC00POL = the best-behaved station of the control).
+    "a8":  {"__stations__": ["WROC00POL", "GOP600CZE", "FFMJ00DEU"],
+            "network.clock_datum_station": "WROC00POL"},
 }
+DEFAULT_ARMS = ["a0", "a1", "a2", "a3", "a4", "a5"]
+
+
+def cut_stations(cfg, names):
+    """network.stations -> only the named entries, in the given order (arrays replace wholesale)."""
+    have = {s.get("name"): s for s in cfg.get("network", {}).get("stations", [])}
+    missing = [n for n in names if n not in have]
+    if missing:
+        sys.exit(f"FATAL: stations not in the golden's network.stations: {missing}")
+    n_before = len(cfg["network"]["stations"])
+    cfg["network"]["stations"] = [have[n] for n in names]
+    return f"network.stations: {n_before} -> {len(names)} entries [{', '.join(names)}]"
 COMMON = {"processing.max_duration_s": 7200.0, "network.trace_postfit_rows": True,
           # read (ii) needs logs/network_zwd.csv, which the golden does not arm; trace-only
           # (GnssConfigLoadNetwork.cpp: "per-station ZWD trace ENABLED — network_zwd.csv logs each
@@ -134,13 +167,16 @@ def main():
         golden = load(a.golden)
         if "extends" in golden:
             sys.exit(f"FATAL: {a.golden} has an `extends` chain; flatten it first (make_golden_config.py output is flat)")
-        want = [s for s in a.only.split(",") if s] or [k for k in ARMS if k != "a2x"]   # a2x only on request
+        want = [s for s in a.only.split(",") if s] or DEFAULT_ARMS   # a2x / a6.. only on request
         flats = {}
         for arm in want:
-            knobs = ARMS[arm]
+            knobs = dict(ARMS[arm])
             cfg = json.loads(json.dumps(golden))
             n_paths = repoint(cfg, GOLDEN_RUN_SUBDIR, f"runs/_cm_{arm}")
             changes = []
+            stations = knobs.pop("__stations__", None)
+            if stations:
+                changes.append(cut_stations(cfg, stations))
             for k, v in {**COMMON, **knobs}.items():
                 old = set_dotted(cfg, k, v)
                 changes.append(f"{k}: {old} -> {v}")
