@@ -5944,6 +5944,58 @@ items named, not built: the latch's tie-break itself (34 flips on one-satellite 
 smell of `decideConstellationCanonicals` on the CONTINUOUS run too — a per-station canonical channel decided by one
 epoch's count; owed as its own card with a field A/B), and the consumer's uncovered latch.
 
+### 21.21 RESULTS — RS-10 census: the ZWD "step" is `zwd_seam_reseed` itself on a lineage that carries no ZWD, and the consumer's code re-references are all declared (2026-09-13 ~15:00 local; read-only Opus census on `rs9_null_lin` / `rs9_raw_lin` vs `v7` / `v7raw`, scripts `scratchpad/rs10_*.py`; manager grade; the single-knob confirmation leg pre-registered below)
+
+**(a) The frame is clean, and the sink has no memory to restore.**  The Z row holds the ABSOLUTE ZWD (`NetworkRunContext
+.cpp:5055`, `value_abs = x_lin + x_r`) and the B9 inject forms `η = λ(value_abs − x_lin(tropo))` with `x_lin(tropo) ≡ 0` on
+both sides (the producer never writes its solution back into the station StateManager) — measured |Z row − seed
+ZWD(ep0604)| = **0.0000 m on all 61 stations**; RS-9's `x_lin` family is falsified for the ZWD (lin 0.288 vs ctl 0.300 m
+at +1).  What the field lineage lacks is a ZWD MEMORY at all: `carry_zwd` off, no F3 station block ⇒ the seed's
+`carried` flag is 0 on all 43 889 ZWD rows — the ZWD is a per-epoch white datum sink on every continuous field epoch,
+with its own epoch-to-epoch step **0.107 m p50 (rms 0.72)**.  The reseed pins that sink to one draw at q = 1e-9 m²/s
+(σ 1.7e-4 m over 30 s — the measured increment implies q ≈ 1.7e-2, ~4000× in σ): the leg's `zwd` prior family runs
+σ̂₀ p50 **11.2** / max|t| 23 (cb 3.2, rxcb 4.1 in the same file; the seed has no `zwd` family), folds every epoch and
+is refused by the data — and from +2 the harvest re-stashes the LEG's own posterior (fold variance 2.3e-2 → 2.3e-5 m²):
+the diagonal ZWD carry documented FALSIFIED on continuous runs (consumer 0.204 → 0.723 m rms), running for 480 epochs.
+The receiver-clock "re-split" at +1 is the same event: across stations r(ΔZWD, ΔCLK) = **−0.897**, slope −1.71 (= −⟨mf_w⟩),
+R² 0.80; the residual after the trade is 1.36 m rms — and 1.39 m in the reseed-OFF arm, flat over +1..+30 while the
+totals grow (rms ΔCLK 3.08 → 6.62).  Against the estimator's own formal σ (seed σ(ZWD) p50 0.31, σ(CLK) 0.57 m):
+reseed ON |ΔZWD|/σ 1.05, |ΔCLK|/σ 1.61; reseed OFF **0.68 and 0.99** — two realizations of the same estimator.  The
+movers are weak-geometry stations (Spearman with the seed's own per-station step +0.77: MAC1, VOIM, PARK, KIT3, CEBR,
+CAS1), not the rx-CB set (R² 0.015).  Over the hour the double count leaks to the wire: ZWD leg − seed p50 **1.338 vs
+0.578 m** at +60, satellite-clock contrast p95 **10.29 vs 5.44** (the RS-6-era nozwd contrast, not single-knob; D5 trips
+at +1 37 → 53, diagnostic-only under the RS-2b hold).  **Verdict: a datum-sink restart — and the reseed is the
+perturbation, not the cure.**  `network.zwd_seam_reseed` is OFF on any lineage that does not carry the ZWD: its ledger
+regime is narrowed from `phase_leveling` to `phase_leveling_local_block or carry_zwd` (the two mechanisms that give
+the ZWD a carried flag; the sim golden has the block, the field golden neither), the posture row follows, and
+`event_leg.py` arms it only on such lineages (`--extra` overrides).  Rejected: raising `zwd_carry_q` to soften the
+prior — it would still run a ZWD carry for 480 epochs on the one lineage where that carry is falsified.
+
+**(b) The seam re-references — 14 keys at +1 (24 over +1/+2), all DECLARED, all GPS code bias.**  G06 C1W/C2W/C5X, G12
+C1W, G19 C1W/C2W, G24 C1W/C2W, G25 C1W/C2W/C5X, G32 C1W/C2W/C5X (ctl = the same minus G06 C2W); the phase-bias (29)
+and clock (6) discontinuity totals are identical to the continuous reference — the consumer's whole seam cost is code
+bias.  Declared 14/14: each leg's `code_disc` counter = the seed's + 1 at 277320 while the seed's own is unchanged;
+producer-wide the leg bumps 81 of 120 keys at +1 against the seed's 7.  The consumer's test IS the declared counter,
+no threshold (`RealTimeEngineSsrBreaks.cpp:169–175` → `SsrCorrectionStore.cpp:268–276` → `StateManager::noteSsr
+Discontinuity`, any change in either direction), and its response is ONE re-inflation of the constellation's receiver
+code-bias states — no ambiguity reset, no re-reference; 14 fires = one GPS-wide rx-CB re-inflation.  Magnitude: |leg −
+seed| at +1 for those keys p50 **0.099 m** (wire arm bit-identical to the raw arm ⇒ estimator level), 14× the seed's own
+per-epoch step for the same keys (0.007 m).  Mechanism: the producer's emit jump test (`NetworkProductEmitter.cpp:368–
+381`, threshold 0.25 λ = 48–64 mm) tripped by a genuine realization move — 71 of the 81 bumps exceed it (0 false
+negatives) — plus 10 `changed_channels` triggers from a channel-set change at the leg's first epoch (G|C1W 29 → 30
+gaining G18; G|C2X G31 → G32) that the seed never had, i.e. RS-8's latch, retired with it.  Not the RS-3 datum (121
+CBP + 32 CBS + 30 CBI restored, zero re-seed rows), not the receiver side (RS-9 moves it 12 mm the wrong way), not a
+per-signal datum shift (signed channel means ≤ 1.2 mm against sd 0.09–0.25 m).  What remains after RS-8 is a
+~5–10 cm per-key OSB realization move at the first post-resume fold, sitting at the jump test's own threshold and
+answered by a benign consumer re-inflation — the seam's residual floor, read at the certification's closing splice.
+
+**The confirmation leg, pre-registered (running):** `rs10_null_nozwd` = `rs9_null_lin`'s posture with
+`zwd_seam_reseed` off (the one differing key, verified by config diff; same exe B3E6D744), graded against
+`rs9_null_lin` and `v7`: the `zwd` prior family absent (n_folded 0); at +1 ZWD p50 ≤ 0.22 / p95 ≤ 1.5 m (from 0.288 /
+2.32), receiver-clock rms ≤ 1.8 m (from 3.08), the ZWD-trade-removed residual 1.37 ± 0.10 m; the wire at +1 unchanged
+(satellite-clock contrast p50 ≤ 0.34 / p95 ≤ 0.85, cb p50 ≤ 0.10, pb p50 ≤ 0.001); at +60 ZWD p50 ≤ 0.60 and
+satellite-clock contrast p95 ≤ 6.0; D5 trips at +1 reported with re-taps 0; |ΔZWD|/σ and |ΔCLK|/σ at +1 ≈ 0.68 / 0.99.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
