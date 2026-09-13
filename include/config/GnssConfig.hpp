@@ -2609,6 +2609,37 @@ namespace GnssProcessor {
         int networkZwdSeamReseedEpochs() const { return network_zwd_seam_reseed_epochs_; }
 
         /**
+         * @brief Seam-window ZWD re-seed random-walk process noise (m²/s)
+         *        (@c network.zwd_seam_reseed_q, RS-10b,
+         *        docs/SPEC_event_harness.md §21.21).
+         *
+         * The stiffness of the @ref networkZwdSeamReseed RESPONSE, decoupled from the
+         * continuous-run carry parameter it used to borrow.  Default @c -1 (any
+         * negative value) is the "unset" sentinel: the seam fold keeps using
+         * @ref networkZwdCarryQ, so an unset knob is byte-identical to the pre-card
+         * build.  A positive value replaces it — and ONLY inside the live seam window
+         * (@c var_eff = var + q·Δt on the restored Z row); a continuous epoch's
+         * @ref networkCarryZwd row always uses @ref networkZwdCarryQ.
+         *
+         * Why it exists (§21.21, measured): @ref networkZwdCarryQ IS in the
+         * warm-resume fingerprint ("carry q's … must COLD-start" — it is
+         * solve-affecting on both sides of a seam), while the seam response that
+         * borrowed its weight deliberately is NOT.  So the one knob a resume
+         * response exists to tune was the one that could not be varied on a resume
+         * leg at all: the pre-registered `zwd_carry_q` bracket was REFUSED at the
+         * fingerprint check, which is why the inherited 1e-9 (σ 1.7e-4 m over 30 s,
+         * against a measured ZWD sink increment implying q ≈ 1.7e-2) was never
+         * questioned on the field lineage.  This knob is in the same exemption class
+         * as @ref networkZwdSeamReseed itself — forward-only resume response policy,
+         * NOT fingerprinted — so the bracket runs off one snapshot.
+         *
+         * Must be @c > 0 when set; @c 0 is rejected at load (it would make the
+         * inflation a no-op while reading as "armed").  Use a negative value to mean
+         * "borrow @c network.zwd_carry_q".
+         */
+        double networkZwdSeamReseedQ() const { return network_zwd_seam_reseed_q_; }
+
+        /**
          * @brief Seam-scoped ambiguity-carry variance re-inflation at a warm resume
          *        (@c network.amb_seam_reinflate_var_m2, m², STABILITY target 2 leg C,
          *        SPEC_synthetic_minimum_network §18).
@@ -7725,6 +7756,7 @@ namespace GnssProcessor {
         bool   network_carry_rx_clock_isb_{true};          ///< RX-CLK-in-block: also carry the per-system INTER-SYSTEM BIAS (ISB) columns in the same block, as a PURE random walk (no drift state — an ISB is a near-constant bias; the sim truth injects a fixed 8.000 m GPS->Galileo offset).  Counted separately; 0 ISB columns is NOT an alarm (a GPS-only or BSSD posture allocates none).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Used by network.carry_zwd and by the network.zwd_seam_reseed post-resume window.
         bool   network_zwd_seam_reseed_{false};           ///< Seam-scoped ZWD re-seed: after a warm resume that restored Z rows, run the B9 inject+stash for zwd_seam_reseed_epochs emitted epochs, then retire (the station filter has re-established its own memory).  Never runs on continuous epochs.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
+        double network_zwd_seam_reseed_q_{-1.0};          ///< RS-10b (§21.21): the SEAM window's own RW process noise (m²/s).  Negative (default -1) = the "unset" sentinel: the seam fold borrows network.zwd_carry_q, byte-identical to the pre-card build.  Positive = used INSTEAD of zwd_carry_q, and only while the seam window is live (a continuous carry_zwd row always uses zwd_carry_q).  NOT fingerprinted (forward-only resume response policy) — which is the whole point: zwd_carry_q IS, so the response's stiffness could not be varied on a resume leg.
         int    network_zwd_seam_reseed_epochs_{480};      ///< Seam re-seed horizon (emitted epochs post-resume).  Default 480 = 4 h at 30 s: past the measured ~3.1 h cold re-convergence, under the >=6-8 h double-memory pathology onset, within the 720-epoch validated (cz) bound.  Only used when network.zwd_seam_reseed.
         double network_amb_seam_reinflate_var_m2_{0.0};   ///< Seam-scoped one-shot variance ADD (m²) on every restored phase-leveling local ambiguity carry at a warm resume — a soft refloat that keeps the carried value as prior mean (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF, byte-identical.
         bool   network_resume_frame_restore_{false};       ///< Resume FRAME restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the snapshot's phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-satellite state and the CLK-R held frame, so the first post-resume election / clock fold / emit continue the pre-seam realization.  Capture rides its OWN write knob, network.state_snapshot_frame_capture (format v2, knob-gated by 90718c3); this knob only decides whether a resume USES the rows.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.

@@ -80,6 +80,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.zwd_q = config_.networkZwdCarryQ();
     k.zwd_seam_on = config_.networkZwdSeamReseed();
     k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
+    k.zwd_seam_q = config_.networkZwdSeamReseedQ();
     k.amb_seam_reinflate_var = config_.networkAmbSeamReinflateVarM2();
     k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
@@ -1028,7 +1029,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           resume_signal_canon_restore (RS-8, §21.16)
         //                           resume_border_restore (RS-7, §21.14)
         //                           resume_border_restore (RS-7, §21.14),
-        //                           resume_rxcb_lin_restore (RS-9, §21.18)
+        //                           resume_rxcb_lin_restore (RS-9, §21.18),
+        //                           zwd_seam_reseed_q (RS-10b, §21.21)
         //
         // Two entries need their own note:
         //
@@ -1374,12 +1376,20 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     if (ctx.knobs.zwd_seam_on) {
                         if (!zwd_carry.empty()) {
                             ctx.carry.zwd_seam_ep_left = ctx.knobs.zwd_seam_epochs;
+                            // RS-10b (§21.21): the window's effective q is its own
+                            // (network.zwd_seam_reseed_q) when armed, else the borrowed
+                            // network.zwd_carry_q.  Named here because this line is the
+                            // ON-path telemetry for the bracket — the run-end counters
+                            // say the window folded, this says how stiffly.
                             log->info("Network (ZWD seam re-seed): ARMED at the resume seam — {} "
                                       "restored Z row(s) will fold as B9-style priors for the next "
-                                      "{} emitted epoch(s) (RW q {:.3e} m²/s over the true gap), "
-                                      "then retire.",
+                                      "{} emitted epoch(s) (RW q {:.3e} m²/s over the true gap, "
+                                      "{}), then retire.",
                                       zwd_carry.size(), ctx.knobs.zwd_seam_epochs,
-                                      ctx.knobs.zwd_q);
+                                      ctx.knobs.zwdQEff(/*seam_live=*/true),
+                                      ctx.knobs.zwd_seam_q > 0.0
+                                          ? "network.zwd_seam_reseed_q — the seam's own"
+                                          : "inherited from network.zwd_carry_q");
                         } else {
                             log->warn("Network (ZWD seam re-seed): warm resume completed but the "
                                       "snapshot carried ZERO Z rows (written by a pre-capture "
@@ -3886,7 +3896,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const bool   prires_zwd  = ctx.knobs.prires_zwd;
     const bool   prires_iono = ctx.knobs.prires_iono;   // QUEUE 8b
     const bool   prires_rxcb = ctx.knobs.prires_rxcb;
-    const double zwd_q       = ctx.knobs.zwd_q;
+    // RS-10b (§21.21): the former `zwd_q` alias is gone on purpose — this body's one
+    // consumer (the prior-residual census's fold_var) has to read the EFFECTIVE q
+    // through NetworkKnobs::zwdQEff(zwd_seam_live), because inside a live seam window
+    // an armed network.zwd_seam_reseed_q replaces network.zwd_carry_q at the injector.
+    // A bare zwd_q here would silently mis-scale the `zwd` family's σ̂₀.
     // B9-in-block (network.carry_zwd_in_block): the ZWD column joins the F3 harvest
     // block.  Conjoined with the SAME live predicate the block itself carries
     // (pl_local_block && carry_cpl_cond) so the harvest and the inject agree on which
@@ -5233,7 +5247,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             in.family   = "zwd";
                             in.station  = static_cast<int>(i);
                             in.e        = zit->second.value_abs - value_abs;
-                            in.fold_var = zit->second.var + zwd_q * std::max(0.0, zgap);
+                            // RS-10b: mirror the INJECTOR's q exactly — inside a live
+                            // seam window an armed network.zwd_seam_reseed_q governs
+                            // there, and a census computed against a variance no row
+                            // ever used would report the `zwd` family's σ̂₀ (the R1'
+                            // instrument) off by the override ratio.
+                            in.fold_var = zit->second.var
+                                        + ctx.knobs.zwdQEff(zwd_seam_live)
+                                              * std::max(0.0, zgap);
                             in.post_var = var;
                             in.gap_s    = zgap;
                             in.folded   = R.pl_zwd_injected;
