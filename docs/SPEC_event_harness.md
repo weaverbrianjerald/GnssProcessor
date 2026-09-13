@@ -6981,3 +6981,28 @@ partial mover (any bar halved) is reported as a contributor; no bar moved ⇒ th
 crossing the bars ⇒ the fix card combines them and is graded on the same three plus the consumer's convergence (§24.3's
 instrument, now with a warm consumer).  Availability must not fall below the control's by more than 5 %; an arm that holds the
 bars by withholding is not a pass.
+
+**§24.8 first six arms READ (2026-09-14 ~06:45; worker c416761 / dd1d2c4, `runs/_cm_a0`..`_cm_a5`, exe 13c1d7ef… = main's Release rebuilt after the
+rows merge; both smokes 87a33bf0…).**  No single knob names the mechanism and no bar is halved: last-hour per-station code rms p50 4.54–4.79 m,
+49–56 of 61 stations with |ZWD| > 0.5 m (NIUM −38 m, CAS1 −20, COCO +20 in the control), D_phase within-arc rms 1.6–3.1 m, per-LOS level share 82–83 % with the
+dispersive fraction 15–16 %, availability 240 / 242 in every graded arm.  A1 (rx-CB carry off), A4 (sat code-bias q 1e-4) and A5 (Kaula prior off)
+are the control to the digit; A3 (SH tie off) is the largest sub-half mover (D_phase 2.74 → 1.62, seven fewer ZWD stations) and its effective posture
+is W6 with the external GIM in place of the SH field, not a free ionosphere; A2 as written is INERT (the loader forces `estimate_sat_code_bias` back
+on under `estimate_iono_sh`, `GnssConfigLoadNetwork.cpp:2830`); the EXT-CB realization (A2x: CODE's .BIA, no satellite code-bias state) collapses the
+SH field to −83 TECU in one epoch and withholds 239 / 240 emissions — the W6 columns absorb something real rather than causing it.  So the
+inconsistency lives upstream of every code-bias and ionosphere knob.  **Pre-registered extension (before any arm is read): the two things every arm
+shares and the converging standalone PPP does not** — the per-epoch white ZWD sink and the multi-station coupling itself:
+
+| arm | knob | what it tests |
+|---|---|---|
+| A6 | `network.carry_zwd: true`, `network.zwd_carry_q: 1e-8` (a physical random walk; the block form `carry_zwd_in_block` only if the loader requires it) | the ZWD as a per-epoch sink: time-linked, it cannot absorb tens of metres |
+| A6b | the same with `zwd_carry_q: 1e-7` | the stiffness axis |
+| A7 | `estimation.zwd_constraint` (the pseudo-observation toward the a-priori, σ 0.2 m) if it exists on this path | the same, as a prior instead of a time link |
+| A8 | the golden's station list cut to WROC00POL + GOP600CZE + FFMJ00DEU (+ the consumer), everything else unchanged | the multi-station coupling: three well-behaved stations 130–300 km apart |
+
+Reads and bars as §24.8; for A8 the bars are read on its three stations and the wire census on its products (a three-station SH field is
+Kaula-held; report the a00 series).  Frozen reading: A6 / A6b / A7 crossing the bars names the ZWD sink as the mechanism (the code
+model is right, its parameterization let the ZWD eat the inconsistency); A6 moving the metres INTO the code residuals with a
+1/sin(el) station pattern names the inconsistency as tropospheric in shape (then the a-priori tropo model of the producer path is the
+suspect); A8 crossing the bars with the full-network posture names the coupling (datum, pins, the global field) and A8 failing them
+names the per-station model itself.
