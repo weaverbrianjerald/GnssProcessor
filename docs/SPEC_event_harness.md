@@ -4732,6 +4732,49 @@ texts are rewritten through the generator; the ledger rows carry this section); 
 argument FOR `all` once the fan-out is closed.  Graders merged: `scripts/fp1_gate_table.py`,
 `scripts/fp1_refslip_census.py`.
 
+### 20.3 RESULTS — FP-2, the matrix on the FIXED posture: the 60-epoch matrix is a clean sweep, the 6 h twin refuses the pin on the response cost (2026-09-13 ~23:20 local; worker on worktree-agent-a5c519cce79cf30c2 `5800768`, merged; exe = the certified `AF418A9F…`; seed `evseed_field6h_v8` ep0604; harness `e6071f43…` unmoved for the batch; manager grade)
+
+**Legs.**  {null, E1, E2, E3/G24, E3/G25, E5} × {OFF, PIN = scope + pairs `all` + the clause + `if_phase_td_ref_arm_all`},
+all 12 clean (61/61, no cold start, RS-8 / RS-9 restores on, the four ARMED lines present on every PIN leg, every pair's
+config diff = the four knobs + paths).
+
+**G-A PASS on every row** (E1 `keep implicated=L5X` with both L5 pairs `ref_arc`; E2 `all reason=no_exoneration`, the
+clause's cost; E3/G24 `all` via `ref_arc`; E3/G25 `all` via the (1,5) veto, its three detections bit-identical to §22.7's;
+E5 `keep implicated=L5X` via `lli=L5X`), T4 attribution 0 everywhere.  **The fan-out census: 0 collateral on every G24
+event** (FP-1 read 6 / 3 / 6), the reference's own arcs reset instead (2 / 2 / 3 / 2), the innocent 13.7 m re-realization
+absent; blast radius at k = 0 **1 key in both arms on every event**; the per-chain counter prices it (`fan-out suppressed`
+3 → 9 on `e1_pin`, FP-1's six).  **G-B PASS 5/5** (every channel within 9 mm at a zero floor; E1 better on clock and iono);
+**G-C PASS 5/5** (≤ 0.017 of the 0.123 m CLK floor); **G-D PASS 5/5** with the floor (cons_mean floor 4.29 m) — at a ZERO
+floor E1 would be 6.5× better (2.34 → 0.36), E3/G24 better, E3/G25 a tie, **E2 and E5 worse (+0.65, +1.39 m mean)**.  The
+two re-reads: the E3/G24 station clock at +45 is +1.4917 OFF / +1.4918 PIN (REF-FAN's miss does not reproduce as an arm
+difference); the E5 consumer max reproduces in direction, smaller (2.75 → 3.61, +31 %).  **G-E:** withheld 0 / 0 and
+`attrib_arc` 0 / 0 PASS; the numeric bars are not gradeable — the two nulls are exactly zero on every channel through
+k = −8 and diverge at **k = −7** on §22.7's natural `G27/SCTB00ATA` reference fire, then PIN catches what OFF structurally
+cannot (MIZU/G06 at +21; **JPLM/G10's 46σ (1,5) slip at +39, which OFF carries on the wire for 8 epochs** before its own
+156 m detection at +47; VOIM/G18 at +47).  Every phase-bias step > 0.5 m is DECLARED in all 12 legs (a new wire-step
+census, `scripts/`); the undeclared steps are the known clock-channel gap (`emit_clock_disc` off), identical in both arms.
+
+**G-G the twin (`evseed_field6h_v8fp2`, 6 h, the four knobs) — FAIL.**  PASS: 720 / 720 emitted = v8, `attrib_arc` 0 = 0,
+**fingerprint `545b8bdd2b638231` = v8's (none of the four knobs is fingerprinted)**, the F1 flood bar at scale
+(additional-chain fires 12 own + **20 inherited** = 32 vs the first chains' 21; `L2W_L5X` 704 candidates → 4 fires) — **the
+adopted-reference path's first field validation**, the half §22.7 left open.  Work done: scope narrowings 23 → 55,
+ref-arc refusals 0 → 143 across 10 pair kinds, pairs evaluated 340 k → 689 k.  FAIL: consumer de-biased settled h3–6 p50
+**+18 % (mean-debiased) / +22 % (median)**, rms **+31 / +33 %** (bar 5 %); `pbstep` epochs carrying |step| > 0.05 m 0.118 →
+**0.151 (+28 %)**, p90 max step 0.257 → **0.733 m** (bar: not worse); per-hour the PIN consumer is BETTER in h0–2 and worse in
+h3–5.  Mechanism: **+107 refloats over 6 h**, each a declared phase-bias re-realization on the wire that the float,
+undifferenced WTZZ consumer re-converges through — the detector side is right (it catches real slips `first` cannot see)
+and the RESPONSE is what costs.  Neutral: `pb_reset` 29 = 29, `clk_disc` 6 = 6.  Anomaly worth its own leg: the first
+chain's OWN decisions drift under `all` at 6 h (`L1C_L2W` 113/110 → 107/104, `L1C_L2X` 15/15 → 8/8) though identical over 60
+epochs — §14.10.4's "pure addition" holds structurally, not after slow state feedback; a single-knob 6 h leg would
+attribute it.  Also: a PIN-only ≈ 1.9 m declared `P/G30/L2W` re-realization at a leg-dependent epoch (a marginal trigger,
+not an event response); the 0.5 m consumer shock instrument is saturated (600 / 600) on this consumer.
+
+**Decision.**  The four stay FIELD EXCEPTIONS, now with the measured mechanism (the manifest texts rewritten through
+the generator; the four ledger rows carry this section).  What would change it: a cheaper slip response — the
+lane-preserving refloat (SPEC_lane_slip_response's open build) or an emitted-level-preserving re-tap — or a consumer that
+carries its state across DECLARED steps; when either lands, the G-G twin is re-run on that posture and all four are
+pinned together.  The fan-out fix itself (REF-FAN) stands validated on both beds and pinned on the sim golden.
+
 ## 21. THE FIELD WARM-RESUME SEAM (card RS-2) — the restored invariant DD branch is folded in the WRITER's linearization frame; §20.1's "Card 1f is the prerequisite" is WITHDRAWN (pre-registered 2026-09-12 ~07:30 local, manager; before any new leg is read)
 
 ### 21.1 What §20.1 called DEFECT 1, re-read from the instruments the legs already wrote
