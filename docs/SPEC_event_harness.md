@@ -5921,3 +5921,63 @@ response-scope clause (`raim_erase_band_scope` / `refloat_band_scope`) is out of
 emits the detector-side `Network (common-band scope): verdicts …` census instead; the grader now tries both, records
 `bscope_clause_kind`, and the captured census reproduces B4's table to the digit (4208 / 3150 vs 3147 / 820 vs 807 /
 186 vs 202 / 116 / ref-arc refusals 29).**
+
+### 22.6 THE REFERENCE-SLIP FAN-OUT under `if_phase_td_pairs = all` — found by FP-1 on the warm-resuming field seed; the REF-FAN card pre-registered (2026-09-13 ~09:45 local, manager; FP-1's legs still running, no fix leg read)
+
+**The finding (FP-1 worker, interim report at 7 of 12 legs; `runs/evleg_fp1_*` from `evseed_field6h_v5` ep0604,
+exe `gnss_processor_rs7.exe` 23C628B3…).**  With the field seed warm-resuming cleanly (61/61 emitted on every
+leg, 0 withheld — defect 1 of §20.1 is cured on v5) the §20 identity rows all reproduce (E1 PIN → `{L5X}`; E2 PIN
+→ `all` via `iftd(L2W+L5X)=ref_arc`, the clause's named cost; the PIN null's `ref-arc refusals 6 [L1C_L5Q 1,
+L1C_L5X 1, L1W_L5X 2, L2W_L5Q 2]` = §22.4 exactly).  But the pre-registered G-A cannot see what the additional
+chains DO with a slip on their own reference: at GOPE00CZE, G24 is the reference of both L5 chains for k ∈
+[−9, +41] (§20.1), so E1's −99 cyc L5X slip reads `abs_dev = 0.000000` on G24's own rows and **−31.8 m / −283.9 m
+on G11, G25 and G32** — six false IF-TD refloats on innocent arcs, 0 in the OFF arm; one of them (G32/L1C)
+re-realizes a satellite phase-bias datum network-wide by **13.7 m** (declared: disc 1 → 2, σ 0.039 → 0.449).  No
+backstop: card R's counters are identical in all four legs, T4 is structurally 0 on `carry_invariant`, and the
+collateral satellites have no scope verdict to narrow.  The mirror image of §22.1: the clause made an UNTESTED
+reference refuse to exonerate; nothing makes a SLIPPED reference stop implicating its chain.
+
+**Why it exists (the §14.10.3 flood guard).**  The reference arm (tier T1r, `IfPhaseSlipDetector.cpp` ~689–800:
+the median of the non-reference between-epoch DDs is the reference's own step; on a fire the reference's IF arc
+is reset, `ref_slip` traced, and — for a coherent step — the chain's `prev_grad` re-based so the pooled outlier
+test sees only per-satellite residuals) runs on the FIRST chain only (`~977: run_ref_arm = first_pair_chain`),
+because per-chain re-runs through the LEGACY candidate condition |median| > 0.5·λ_IF flooded on the wide
+combinations ((L2W,L5Q): noise amplification 16.6, λ_IF 0.125 m — 5 351 candidates / 64 fires on a quiet null,
+§14.10.3).  An additional chain therefore ADOPTS the first chain's reference when that satellite is in its set
+(`~934–957`) and otherwise ELECTS its own (`selectReference`) — and in neither case is a reference slip ever
+attributed: an adopted reference's fire in the first chain does not reach the additional chain (whose fan-out then
+goes to the pooled test), and an own-elected reference is never tested at all.  On DOY-129 the L5 chains
+own-elect at 53 % of station-epochs (the (1,2) reference is a no-L5 IIR-M in 98 % of those), G24 at GOPE among
+them.  Card R's EMPIRICAL gate (`if_phase_td_ref_gate`, armed on both goldens: per-chain EWMA dispersion scale,
+k = 6, coherence, warm-up abstain, thin-widen) postdates that flood measurement and scales with each chain's own
+noise — the legacy threshold was the flood, not the arm.
+
+**Build (default-OFF, byte-identical when off; the `first` posture untouched by construction).**  Knob
+`network.cycle_slip.if_phase_td_ref_arm_all` (requires `if_phase_td_pairs = all` AND `if_phase_td_ref_gate` —
+warn + disarm otherwise; the legacy candidate condition must never gate a wide chain again): on an additional
+chain, (i) OWN-ELECTED reference ⇒ run the reference arm on that chain through the empirical gate with the chain's
+own dispersion state (`cs.ref_scale_*` are per chain already); (ii) ADOPTED reference ⇒ inherit the first chain's
+verdict for that satellite this epoch: a first-chain `ref_slip` fire on the adopted satellite is a `ref_slip` on
+this chain too (reset THIS pair's reference arc `<sat>_<this chain's phase_if_key>`, re-base this chain's
+`prev_grad` by this chain's own median when the verdict is FireRebase, skip the pooled attribution of the fan-out);
+no fire ⇒ exactly today.  Counters per chain: candidates / fires (own) / inherited fires / fan-out suppressed;
+run-end line; `network_if_slip.csv` rows for the additional chains' reference arm carry the chain key and
+`ref_slip`.  Nothing changes on the first chain, on `pairs = first`, or when the knob is off.
+
+**Gates, frozen (legs 60 epochs from `evseed_field6h_v5` ep0604, PIN posture = scope + pairs `all` + the clause
+[the FP-1 arm], fix off vs on, one exe; events as §20 at GOPE00CZE, +10):**
+* **F1 the flood (null off/on):** additional-chain reference-arm fires network-wide over 60 epochs ≤ 2× the first
+  chain's own count over the same window (report both, and the candidates); products byte-identical when nothing
+  fires, otherwise differing only at attributed epochs (list them).
+* **F2 the fan-out (E1, E5, E3/G24 off/on):** collateral IF-TD refloats on the non-reference satellites of the L5
+  chains at k ∈ [+9, +12] → 0 (from 6 on E1); the reference's own arc flagged `ref_slip` on each L5 chain at +10
+  (E1 and E5: the L5X arc; E3: both bands, and the band-scope verdict for G24 stays all-band or narrows to the
+  slipped bands, never to L2W); phase-bias datum re-realizations caused by collateral refloats → 0 (the 13.7 m
+  G32/L1C one); consumer event − null max |Δ3D| over +0..+50 and mean over +30..+50 on ≤ OFF; the station frame
+  (CLK / ZWD / the injected LOS) at +45 on ≤ off.
+* **F3 the control (E3/G25 off/on, G25 not a reference):** products byte-identical, or differing only where an
+  inherited first-chain fire acted (explain each).
+* **F4 byte-identity:** cold smoke on the field golden (pairs `first`) knob absent vs armed `87a33bf0…`; the
+  fix-off legs reproduce FP-1's PIN legs' `products.txt` byte-for-byte (same posture, new binary); suite green.
+Passing F1–F4 re-opens the FP-1 pin (G-A..G-G re-run on the fixed posture, §20's bars); failing F1 names the
+flood's true owner (the empirical gate on wide chains) and the pin stays an exception with this mechanism.
