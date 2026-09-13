@@ -424,7 +424,17 @@ std::vector<std::string> activeFrequencyBands(
         const auto& system_to_bands = getSystemToBands();
 
         for (const auto& [cons, sat_obs_list] : by_cons) {
-            if (constellation_canonical_decided_.count(cons)) continue;
+            // RS-8 (docs/SPEC_event_harness.md §21.16): a constellation whose latch
+            // was RESTORED runs this tally ONCE more, diagnostically — it writes
+            // nothing, and only counts how many entries the restore overrode.  That
+            // audit is the instrument for "this resume WOULD have re-decided the
+            // latch", which is otherwise unobservable (a pre-card run simply
+            // re-decided, on a logger that is 0 bytes in every run).  Unreachable
+            // without a restore, so every other run keeps the original guard exactly.
+            const bool already_decided = constellation_canonical_decided_.count(cons) > 0;
+            const bool audit_only = already_decided
+                                    && constellation_canonical_audit_pending_.count(cons) > 0;
+            if (already_decided && !audit_only) continue;
             if (sat_obs_list.empty()) continue;
 
             auto pit = signal_priorities_.find(cons);
@@ -474,10 +484,6 @@ std::vector<std::string> activeFrequencyBands(
                     best[key] = { sig, count };
             }
 
-            for (const auto& [key, cand] : best)
-                constellation_canonical_[cons][key] = cand.signal;
-            constellation_canonical_decided_.insert(cons);
-
             // Build a stable trace string for the decision log.
             std::string summary;
             for (const auto& [key, cand] : best) {
@@ -485,10 +491,97 @@ std::vector<std::string> activeFrequencyBands(
                 summary += cand.signal + "(" + key.first + ":"
                          + std::to_string(cand.count) + ")";
             }
+
+            if (audit_only) {
+                // RS-8 audit: compare, count, log — and LEAVE the latch alone.  A
+                // disagreement is the defect being prevented: the kept signal is the
+                // writer's, the tallied one is what THIS run would have latched from
+                // the resume epoch's satellite counts.
+                std::string disagreements;
+                long long n_seen = 0, n_diff = 0;
+                const auto cit = constellation_canonical_.find(cons);
+                const std::map<std::pair<std::string, char>, std::string> kNoLatch;
+                const auto& locked =
+                    (cit != constellation_canonical_.end()) ? cit->second : kNoLatch;
+                for (const auto& [key, cand] : best) {
+                    const auto lit = locked.find(key);
+                    if (lit == locked.end()) continue;   // nothing restored for this band
+                    ++n_seen;
+                    if (lit->second == cand.signal) continue;
+                    ++n_diff;
+                    if (!disagreements.empty()) disagreements += ", ";
+                    disagreements += key.first + std::string(1, key.second) + " keeps "
+                                   + lit->second + " vs " + cand.signal + "("
+                                   + std::to_string(cand.count) + ") here";
+                }
+                canon_audit_entries_  += n_seen;
+                canon_audit_disagree_ += n_diff;
+                constellation_canonical_audit_pending_.erase(cons);
+                log_manager_.getLogger("main_log")->info(
+                    "Canonical signals audited for {} station '{}' ({} sats this "
+                    "epoch): {} of {} restored entr{} would have been decided "
+                    "DIFFERENTLY here{}{} | this epoch's tally: {}",
+                    cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
+                    sat_obs_list.size(), n_diff, n_seen, n_seen == 1 ? "y" : "ies",
+                    n_diff > 0 ? " — " : "", disagreements, summary);
+                continue;
+            }
+
+            for (const auto& [key, cand] : best)
+                constellation_canonical_[cons][key] = cand.signal;
+            constellation_canonical_decided_.insert(cons);
+
             log_manager_.getLogger("ppp_model")->info(
                 "Canonical signals locked for {} ({} sats this epoch): {}",
                 cons, sat_obs_list.size(), summary);
+            // RS-8 rider (§21.16): the SAME decision on main_log, which every run
+            // actually writes — the ppp_model logger is 0 bytes in every run, which
+            // is why a warm resume silently re-deciding this latch survived the whole
+            // RS card series unseen.  Trace-class: products byte-identical.
+            log_manager_.getLogger("main_log")->info(
+                "Canonical signals decided for {} station '{}' ({} sats this epoch): {}",
+                cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
+                sat_obs_list.size(), summary);
         }
+    }
+
+    std::vector<PppModel::CanonicalSignal> PppModel::exportCanonicalSignals() const {
+        std::vector<CanonicalSignal> out;
+        for (const auto& [cons, per_band] : constellation_canonical_)
+            for (const auto& [key, sig] : per_band)
+                out.push_back(CanonicalSignal{ cons, key.first, key.second, sig });
+        return out;
+    }
+
+    std::size_t PppModel::restoreCanonicalSignals(
+            const std::vector<CanonicalSignal>& entries) {
+        std::size_t n = 0;
+        std::set<std::string> touched;
+        for (const auto& e : entries) {
+            if (e.constellation.empty() || e.band.empty() || e.signal.empty()) continue;
+            if (e.obs_type != 'C' && e.obs_type != 'L') continue;
+            constellation_canonical_[e.constellation][{ e.band, e.obs_type }] = e.signal;
+            touched.insert(e.constellation);
+            ++n;
+        }
+        // The DECIDED mark is the whole point of the card: without it the guard at
+        // the top of decideConstellationCanonicals re-runs the tally at the first
+        // processed epoch and overwrites everything just restored.
+        for (const auto& cons : touched) {
+            constellation_canonical_decided_.insert(cons);
+            constellation_canonical_audit_pending_.insert(cons);
+            std::string summary;
+            for (const auto& [key, sig] : constellation_canonical_[cons]) {
+                if (!summary.empty()) summary += ", ";
+                summary += sig + "(" + key.first + std::string(1, key.second) + ")";
+            }
+            log_manager_.getLogger("main_log")->info(
+                "Canonical signals restored for {} station '{}' (from the snapshot, "
+                "no satellite tally): {}",
+                cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
+                summary);
+        }
+        return n;
     }
 
     bool PppModel::computeModels(const std::vector<RinexObservation>& observations,

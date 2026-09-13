@@ -2513,6 +2513,35 @@ namespace GnssProcessor {
                           "continues both instead.  Write-side only; the products and every "
                           "trace are byte-identical.");
         }
+        // RS-8 CANONICAL-SIGNAL capture (write side of
+        // network.resume_signal_canon_restore, §21.16).  Same shape as the frame /
+        // datum / emit / station captures above — its own knob, path-gated,
+        // write-only.  The rows are read out of each station's PppModel after the
+        // emit, so arming it can change no estimate and no trace, only the snapshot
+        // bytes.
+        network_config_.state_snapshot_signal_capture =
+            jval<bool>(json, "network.state_snapshot_signal_capture",
+                       "state_snapshot_signal_capture", false);
+        if (network_config_.state_snapshot_signal_capture) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (resume signal capture): state_snapshot_signal_capture "
+                          "armed but network.state_snapshot_path is empty — no snapshot "
+                          "is written, INERT.");
+            else
+                log->info("Network (resume signal capture): every snapshot also carries "
+                          "the CANONICAL-SIGNAL latch (CN — one row per (station, "
+                          "constellation, band, C|L) naming the locked RINEX code).  That "
+                          "latch is decided from a station's FIRST processed epoch's "
+                          "satellite counts and held for the run, and it lived in no "
+                          "snapshot, so a warm resume RE-decides it from the resume "
+                          "epoch's counts (measured: GAMB00PYF L2X→L2W, CPVG00CPV "
+                          "L2W→L2X, OAFA00ARG L2X→L2W ⇒ the L2X tracker set changes, the "
+                          "eq34 L2X component loses its datum receiver, and six "
+                          "phase-bias families step ~25 m at +1).  A resume armed with "
+                          "network.resume_signal_canon_restore continues the writer's "
+                          "latch instead.  Write-side only; the products and every trace "
+                          "are byte-identical.");
+        }
         // RS-9 code-bias LINEARIZATION-POINT capture (write side of
         // network.resume_rxcb_lin_restore, §21.18).  Beside the station capture above and
         // REQUIRING it: the RL row is the REFERENCE the RC row's inject gate differences
@@ -3885,6 +3914,22 @@ namespace GnssProcessor {
                 "re-realizes that frame, so the restored memories would re-assert a level "
                 "the writer never held: a stale stiff prior across a jump, which "
                 "invariant #1 says does not degrade gracefully.");
+        // RS-8 CANONICAL-SIGNAL restore (read side of
+        // network.state_snapshot_signal_capture, SPEC_event_harness §21.16).  Same
+        // exemption class as the restores above: forward-only resume response policy,
+        // inert on a run that never resumes.
+        network_resume_signal_canon_restore_ =
+            jval<bool>(json, "network.resume_signal_canon_restore",
+                       "resume_signal_canon_restore", false);
+        if (network_resume_signal_canon_restore_ && !network_resume_frame_restore_)
+            throw std::runtime_error(
+                "network.resume_signal_canon_restore requires "
+                "network.resume_frame_restore: the arcs the restored realization frame "
+                "names ARE the writer's canonical signals' — restoring the latch onto a "
+                "re-elected frame would pin each station to the writer's channels while "
+                "the datum underneath them is re-realized from this run's own tracker "
+                "set, which is a different, unmeasured seam rather than the continuous "
+                "one the card is about.");
         // RS-9 rx-CB LINEARIZATION-POINT restore (read side of
         // network.state_snapshot_rxcb_lin_capture, SPEC_event_harness §21.18).  Same
         // exemption class as every restore above: forward-only resume response policy,
@@ -4044,6 +4089,25 @@ namespace GnssProcessor {
                                              "attribution leg)"
                                            : " (⚠ BOTH sub-switches false — the knob is "
                                              "armed and restores NOTHING)"));
+        }
+        // RS-8 (§21.16): the canonical-signal restore's own ARMED/INERT line, beside
+        // the RS-6 one.  Its prerequisite is checked above, so by here it can only be
+        // inert for want of a snapshot to resume from.
+        if (network_resume_signal_canon_restore_) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (RS-8 canonical restore): resume_signal_canon_restore "
+                          "armed but network.state_snapshot_path is empty — nothing can "
+                          "resume, INERT this run.");
+            else
+                log->info("Network (RS-8 canonical restore): ON — at a warm resume the "
+                          "snapshot's CN rows are restored into each station's PppModel "
+                          "BEFORE the first epoch, so the per-(constellation, band, C|L) "
+                          "canonical-signal latch continues the writer's instead of being "
+                          "RE-decided from the resume epoch's satellite counts.  The rows "
+                          "are captured under network.state_snapshot_signal_capture; a "
+                          "file without them leaves today's behaviour and says so.  Not "
+                          "in the warm-resume fingerprint (forward-only resume response "
+                          "policy).");
         }
         // RS-9 (§21.18): the rx-CB LINEARIZATION-POINT restore's own ARMED/INERT line.
         // Both prerequisites are hard throws above, so by here the knob can only be

@@ -451,6 +451,7 @@ add_executable(gnss_tests
     tests/test_resume_carry_rebase.cpp
     tests/test_resume_emit_restore.cpp
     tests/test_resume_station_restore.cpp
+    tests/test_resume_signal_canon_restore.cpp
     tests/test_resume_rxcb_lin_restore.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")

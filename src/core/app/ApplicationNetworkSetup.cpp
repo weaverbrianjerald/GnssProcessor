@@ -575,6 +575,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         st.sm->setStateEpochTime(synced.front().time);
         st.model = std::make_unique<PppModel>(
             config_, *product_parser_, log_manager_, *parser, *st.sm);
+        // RS-8 (SPEC_event_harness §21.16): the canonical-signal rider names the station.
+        // Log-only and unconditional — the latch's "locked for GPS …" line has always
+        // gone to the ppp_model logger, which is 0 bytes in every run, which is how a
+        // warm resume silently re-deciding a station's per-band channel survived unseen.
+        st.model->setCanonicalTraceLabel(cfg.name);
         // Wind-up census (estimation.trace_windup_census): read-only per-receiver
         // step/gap counters, armed on every station so the run-end readout is a
         // roster sum.  The carry horizon is passed so the census can bucket the

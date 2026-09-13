@@ -1580,6 +1580,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      config_.networkResumeStationRestoreRxCb() ? "true" : "false",
                                      config_.networkResumeStationRestoreShDev() ? "true" : "false")
                        : std::string())
+               // RS-8 (SPEC_event_harness §21.16): the canonical-signal latch halves, on
+               // the same armed-only discipline as the pairs above.
+               << ((nc.state_snapshot_signal_capture
+                    || config_.networkResumeSignalCanonRestore())
+                       ? fmt::format("\"state_snapshot_signal_capture\":{},"
+                                     "\"resume_signal_canon_restore\":{},",
+                                     nc.state_snapshot_signal_capture ? "true" : "false",
+                                     config_.networkResumeSignalCanonRestore() ? "true" : "false")
+                       : std::string())
                // RS-9 (SPEC_event_harness §21.18): the code-bias linearization-point
                // halves — the reference the rx-CB inject gate judges the RS-6-restored
                // carry against — on the same armed-only discipline as the pairs above.

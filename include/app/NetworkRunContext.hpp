@@ -225,6 +225,7 @@ namespace GnssProcessor {
         bool   resume_station_restore{};  ///< network.resume_station_restore (RS-6, SPEC_event_harness §21.13): at a warm resume, restore the two STATION-LAYER memories before the first epoch — the rx-CB carry (the snapshot's RC rows, through @c makeRestoredLocalCarry so every entry carries the §15.4.1 restored-arc sentinel) and the T5 / Iono-2 per-LOS SH deviation carry (the SD rows, as written: @c ShDevCarry's own cold test is @c t_s <= 0, so the restored harvest stamp is what makes the entry read WARM and the epoch's aging pre-pass ages it over the true gap).  Each half INERT and loudly logged when its rows are absent.  Loader hard-requires resume_frame_restore.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into containers nothing reads).
         bool   resume_station_rxcb{};     ///< network.resume_station_restore_rxcb (default true) — DIAGNOSTIC sub-switch of @c resume_station_restore, so one §21.13 attribution leg can restore the rx-CB half alone.
         bool   resume_station_shdev{};    ///< network.resume_station_restore_shdev (default true) — the @c resume_station_rxcb twin.
+        bool   resume_signal_canon_restore{};  ///< network.resume_signal_canon_restore (RS-8, SPEC_event_harness §21.16): at a warm resume, restore each station's per-(constellation, band, C|L) canonical-signal latch (the snapshot's @c CN rows) into its @c PppModel before the first epoch, so @c PppModel::decideConstellationCanonicals treats the station as already decided instead of re-deciding the latch from the RESUME epoch's satellite counts (measured: GAMB00PYF L2X→L2W, CPVG00CPV L2W→L2X ⇒ the L2X tracker set changes, the eq34 L2X component loses its datum receiver and six phase-bias families step ~25 m at +1).  INERT and loudly logged on a snapshot with no @c CN rows.  Loader hard-requires resume_frame_restore.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into a container nothing reads).
         bool   resume_rxcb_lin_restore{}; ///< network.resume_rxcb_lin_restore (RS-9, SPEC_event_harness §21.18): at a warm resume, stash the snapshot's @c RL rows (the writer's code-bias @c x_lin per (station roster index, CB state key)) and seed each station's code-bias state from them at its first-epoch @c StateInitializer::initializeCodeBiases, instead of from ONE epoch of the resume epoch's code.  RS-6 restores the rx-CB carry's NUMERATOR; this restores the REFERENCE its inject gate differences against, which is the same seam's other edge (invariant #7).  Solve-invariant by construction — an @c x_lin shift is an exact solve no-op for a state that enters linearly and the gate is its only consumer — so the loader REFUSES @c network.rx_code_bias_datum with it (that datum's RHS reads @c x_lin).  Hard-requires @c resume_station_restore + its rxcb half.  NOT fingerprinted.  OFF = byte-identical resume (rows parsed into a container nothing reads).
         bool   resume_border_restore{};   ///< network.resume_border_restore (RS-7, SPEC_event_harness §21.14): at a warm resume, rebuild the C1 dense shared-carry covariance (@c SharedCarryCov) from the snapshot's QK/QP records for every key that also has a restored D row, so the FIRST warm fold runs the dense @f$(P_{prev}+Q)^{-1}@f$ path instead of the per-key DIAGONAL every resume has degraded to.  Split out of @c resume_coupling_restore on purpose: that knob also restores the coupling ROWS (QL/QZ regressors), whose truncation breaks the family identity @f$M^Tg_s=-g_r(c)@f$ and therefore needs Card 1f; a COVARIANCE block carries no regression and no gauge identity, so it is legal on a @c carry_invariant lineage where 1f is out of regime.  Loader hard-requires @c resume_frame_restore and warn-disarms without @c shared_carry_full_cov.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume.
         bool   resume_pb_seam_mark{};     ///< network.resume_pb_seam_mark (RS-4, SPEC_event_harness §21.9): at the FIRST emit after a warm resume, markDatumChange any constellation more than kResumePbSeamMarkFraction of whose fresh-baseline phase-bias keys moved past discThresholdM against their RESTORED emitter baselines - the declaration the CLK-R resume_seam rule misses because it fires only on a COLD held-frame engine.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical (the census is never taken).
@@ -1913,6 +1914,14 @@ namespace GnssProcessor {
         long long snap_datum_rows_last   = 0;   // RS-3 §21.7: EQ*/CB* datum rows in the last snapshot (0 under an ARMED capture on an eq34/time-linked-CB run is the INERT reading)
         long long snap_emit_rows_last    = 0;   // RS-5 §21.10: ER/PF/PS emit-layer rows in the last snapshot (0 under an ARMED capture with the re-base or the filter running is the INERT reading)
         long long snap_station_rows_last = 0;   // RS-6 §21.13: RC/SD station-layer rows in the last snapshot (0 under an ARMED capture on a run that arms carry_rx_code_bias or the T5 deviation carry is the INERT reading)
+        long long snap_canon_rows_last   = 0;   // RS-8 §21.16: CN canonical-signal rows in the last snapshot (0 under an ARMED capture means no station had decided a latch yet — on a network run past epoch 1 that is the INERT reading)
+        // RS-8 §21.16 [snapshot: EXEMPT — a resume-response staging buffer, filled by
+        // networkTryWarmResume and drained by networkRestoreCanonicalSignals in the same
+        // process].  The parsed CN rows, keyed by station ROSTER INDEX, waiting for the
+        // driver to hand them the station models (networkTryWarmResume has no `stations`
+        // and must not grow one — the restore is the seam right after it).  Empty on
+        // every run that does not resume with network.resume_signal_canon_restore armed.
+        std::map<int, std::vector<PppModel::CanonicalSignal>> resume_canon_rows;
         long long snap_rxcb_lin_rows_last = 0;  // RS-9 §21.18: RL code-bias linearization-point rows in the last snapshot (0 under an ARMED capture is the INERT reading — no station holds a finite code-bias state, i.e. estimate_ifb is off)
         bool      resume_cpl_census_pending = false;  // §18.12: latch the first-post-resume harvest census + fold split
         std::vector<double> resume_cpl_census_rel;    // §18.12: per-row max|M − M_d| / max|M_d| at the first harvest
@@ -2578,6 +2587,18 @@ namespace GnssProcessor {
         // says which.
         long long n_resume_station_rxcb  = 0; ///< rx-CB carry entries restored (RC)
         long long n_resume_station_shdev = 0; ///< T5 per-LOS deviation carry entries restored (SD)
+        // RS-8 resume CANONICAL-SIGNAL restore (network.resume_signal_canon_restore,
+        // SPEC_event_harness §21.16).  0 stations under an armed knob = INERT (standing
+        // invariant #4): the snapshot carried no CN rows (a writer without
+        // network.state_snapshot_signal_capture) or no warm resume happened, and the
+        // run-end line says which.  The DISAGREE count is the defect's own instrument —
+        // it is the number of restored entries this run's first epoch would have latched
+        // DIFFERENTLY, i.e. exactly the flips the card prevents, so a nonzero value is a
+        // success reading and a zero one says the seam epoch happened to agree.
+        long long n_resume_canon_stations = 0; ///< stations whose canonical latch was restored (CN)
+        long long n_resume_canon_entries  = 0; ///< canonical entries restored across those stations
+        long long n_resume_canon_audited  = 0; ///< restored entries the first post-resume epoch's tally could be compared against
+        long long n_resume_canon_disagree = 0; ///< ...of those, the ones this run would have decided differently
         // RS-9 resume rx-CB LINEARIZATION-POINT restore (network.resume_rxcb_lin_restore,
         // SPEC_event_harness §21.18) — the re-coupling edge's identities for the FRAME the
         // rx-CB inject gate judges the restored carry against.  0 entries under an armed
@@ -3335,12 +3356,38 @@ namespace GnssProcessor {
                               NetworkEmitRebase* emit_rebase = nullptr,
                               NetworkPbEmitFilter* pb_filter = nullptr);
 
-    /// @param stations The station roster, for the RS-9 (§21.18) @c RL capture: the
+    /**
+     * @brief RS-8 (§21.16): apply the staged canonical-signal latch to the station models.
+     *
+     * The second half of @ref networkTryWarmResume for this card.  The resume seam
+     * parses the snapshot and stages the @c CN rows in
+     * @c NetworkCarryState::resume_canon_rows (it has no @c stations and must not grow
+     * one); this seam — called from the driver immediately after it, where the roster
+     * IS in scope — hands each station's rows to its @c PppModel::restoreCanonicalSignals
+     * so the first-epoch guard treats the station as decided.  Counts stations /
+     * entries into @c ctx.counters and drains the staging buffer.
+     *
+     * Unarmed, unresumed, or given a snapshot with no @c CN rows, it does nothing but
+     * (in the armed, row-less case) warn ONCE — standing invariant #4.
+     *
+     * @param ctx      Run context (reads the staged rows, writes the counters).
+     * @param config_  Run configuration (the knob and the snapshot path).
+     * @param stations The station roster; indices key the staged rows.
+     * @param log      Run logger.
+     */
+    void networkRestoreCanonicalSignals(NetworkRunContext& ctx, const GnssConfig& config_,
+                                        std::vector<NetStation>& stations,
+                                        const std::shared_ptr<spdlog::logger>& log);
+
+    /// @param stations The station roster, shared by two capture groups that cannot be
+    ///        read out of @c ctx.carry.  RS-8 (§21.16) @c CN: the canonical-signal latch
+    ///        lives in each station's @c PppModel.  RS-9 (§21.18) @c RL: the
     ///        code-bias linearization point is a property of each station's OWN state
     ///        vector (@c stations[i].sm->getStateVector()), which no other snapshot
     ///        record needs — the RC/SD/ER/PF rows are all plain copies out of
-    ///        @c ctx.carry.  Read-only, and only under
-    ///        @c network.state_snapshot_rxcb_lin_capture.
+    ///        @c ctx.carry.  Read-only in both cases, and each group is written only
+    ///        under its own knob (@c network.state_snapshot_signal_capture /
+    ///        @c network.state_snapshot_rxcb_lin_capture).
     void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_,
                                    const GnssTime& t, double pl_now_s,
                                    NetworkProductEmitter& emitter,

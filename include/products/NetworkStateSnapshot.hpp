@@ -82,6 +82,7 @@
  *   ER,<sat|signal>,<last_emit_m>                        # RS-5: eq34 emit re-base frame
  *   PF,<sat|signal>,<mean>,<var>,<last_seen_s>           # RS-5: PB emit filter posterior
  *   PS,<const>,<sum_log_e2>,<n_eff>                      # RS-5: PB filter step accumulator
+ *   CN,<station_idx>,<cons>,<band>,<C|L>,<signal>        # RS-8: canonical-signal latch
  *   RC,<station_idx>,<cb_key>,<value_abs>,<var>,<last_seen_s>  # RS-6: rx-CB carry
  *   SD,<station|sat>,<dev>,<var>,<var_ss>,<t_s>          # RS-6: T5 per-LOS deviation carry
  *   RL,<station_idx>,<cb_key>,<x_lin>                    # RS-9: code-bias linearization point
@@ -121,6 +122,14 @@
  * Nothing in this group enters the warm-resume fingerprint: it changes no estimate, only
  * the level the emitted phase biases are expressed in.
  *
+ * The RS-8 CANONICAL-SIGNAL records (@c CN, docs/SPEC_event_harness.md §21.16) follow the
+ * same precedent — format-forward rows under the existing header, written only under
+ * @c network.state_snapshot_signal_capture — and carry the one per-station latch that
+ * lived in no snapshot at all: @c PppModel's per-(constellation, band, obs-type) canonical
+ * signal, decided from ONE epoch's satellite counts and locked for the run.  A warm resume
+ * re-decided it from the resume epoch's counts instead (measured: GAMB00PYF L2X→L2W,
+ * CPVG00CPV L2W→L2X), which changed the tracker set, dropped an eq34 component's datum
+ * receiver and stepped six phase-bias families ~25 m at the seam.
  * The RS-6 STATION-LAYER records (@c RC / @c SD, §21.13) and the RS-9 code-bias
  * LINEARIZATION-POINT record (@c RL, §21.18) follow the same precedent — format-forward
  * rows under the existing header, each behind its own capture knob
@@ -561,6 +570,34 @@ struct NetworkStateSnapshot {
     bool hasStationState() const {
         return !rx_cb_carry.empty() || !sh_dev_carry.empty();
     }
+    // --- RS-8 CANONICAL-SIGNAL latch (SPEC_event_harness §21.16) ------------
+    //
+    // The per-station, per-(constellation, band, obs-type) canonical signal
+    // PppModel::decideConstellationCanonicals picks from the station's FIRST
+    // processed epoch's satellite counts and then locks for the run.  It lived in
+    // no snapshot, so a warm resume re-decided it from the RESUME epoch's counts:
+    // measured on the field seam, GAMB00PYF flipped L2X→L2W, CPVG00CPV L2W→L2X and
+    // OAFA00ARG L2X→L2W, which changed the L2X tracker set, left the eq34 L2X
+    // component without its datum receiver, and stepped the six L2X phase-bias
+    // families ~25 m at +1.  Written under network.state_snapshot_signal_capture,
+    // restored behind network.resume_signal_canon_restore; empty on every other file.
+    /// One locked canonical pick — a POD mirror of @c PppModel::CanonicalSignal, as
+    /// @ref ShDev mirrors @c ShDevCarry: the snapshot module names no engine type.
+    struct CanonSignal {
+        std::string constellation;   ///< System display name, e.g. "GPS".
+        std::string band;            ///< Band name, e.g. "L2".
+        char        obs_type{ 'C' }; ///< 'C' (code) or 'L' (phase).
+        std::string signal;          ///< Locked RINEX code, e.g. "L2X".
+    };
+    /// Station ROSTER INDEX -> its locked canonicals, in the writer's export order
+    /// (deterministic; the model iterates nested @c std::map).  Index validity is
+    /// guaranteed by the roster fields inside the config fingerprint, exactly as for
+    /// @ref local_carry / @ref zwd_carry / @ref rx_cb_carry.
+    std::map<int, std::vector<CanonSignal>> canonical_signals;
+    /// True when any RS-8 canonical-signal record is present — its OWN predicate, like
+    /// @ref hasStationState / @ref hasEmitState: an absent group must read as INERT for
+    /// itself alone and never borrow another group's verdict.
+    bool hasCanonicalSignalState() const { return !canonical_signals.empty(); }
     // --- Emitter layer -----------------------------------------------------
     /// Verbatim @c NetworkProductEmitter::serializeState blob (its own
     /// @c EMITTER header through its @c EEND terminator, newline-separated).

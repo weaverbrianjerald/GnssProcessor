@@ -2111,6 +2111,22 @@ namespace GnssProcessor {
         /// @c ctx.carry after the emit into the snapshot alone, so the writer's products
         /// and every trace stay byte-identical.  INERT unless state_snapshot_path.
         bool state_snapshot_station_capture{ false };
+        /// RS-8 CANONICAL-SIGNAL capture (SPEC_event_harness §21.16), the write half of
+        /// @c network.resume_signal_canon_restore: every snapshot also carries each
+        /// station's per-(constellation, band, obs-type) canonical signal — the latch
+        /// @c PppModel::decideConstellationCanonicals picks from that station's FIRST
+        /// processed epoch's satellite counts and then locks for the run — as
+        /// format-forward @c CN rows under the existing header.  It lived in no
+        /// snapshot, so a warm resume re-decided it from the RESUME epoch's counts:
+        /// GAMB00PYF flipped L2X→L2W, CPVG00CPV L2W→L2X, OAFA00ARG L2X→L2W, which
+        /// changed the L2X tracker set, left the eq34 L2X component without its datum
+        /// receiver, and stepped the six L2X phase-bias families ~25 m at +1 (§21.16).
+        /// Its OWN knob, not a clause of @ref state_snapshot_station_capture: those rows
+        /// are estimator carries, this is a per-station SIGNAL SELECTION latch.
+        /// Write-side only — the capture reads each station's model after the emit and
+        /// writes into the snapshot alone, so the writer's products and every trace stay
+        /// byte-identical.  INERT unless state_snapshot_path.
+        bool state_snapshot_signal_capture{ false };
         /// RS-9 code-bias LINEARIZATION-POINT capture (write side of
         /// network.resume_rxcb_lin_restore, docs/SPEC_event_harness.md §21.18): beside
         /// every @c RC row also serialize an @c RL row — the station @c StateManager's

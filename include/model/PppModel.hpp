@@ -444,6 +444,96 @@ namespace GnssProcessor {
         }
 
         /**
+         * @struct CanonicalSignal
+         * @brief One locked per-(constellation, band, obs-type) canonical pick.
+         *
+         * The flat, container-free row shape of @c constellation_canonical_, so a
+         * caller (the network producer's state snapshot) can carry the latch across
+         * a process boundary without naming the nested map type.  RS-8,
+         * docs/SPEC_event_harness.md §21.16.
+         */
+        struct CanonicalSignal {
+            std::string constellation;   /**< System display name, e.g. "GPS". */
+            std::string band;            /**< Band name from the system→bands table, e.g. "L2". */
+            char        obs_type{ 'C' }; /**< 'C' (code) or 'L' (phase). */
+            std::string signal;          /**< The locked RINEX code, e.g. "L2X". */
+        };
+
+        /**
+         * @brief Export the locked canonical-signal latch (RS-8, §21.16).
+         *
+         * One entry per DECIDED (constellation, band, obs-type) triple, in
+         * @c constellation_canonical_ iteration order (deterministic — nested
+         * @c std::map).  A constellation not yet decided contributes nothing, and
+         * so does the degenerate case of one decided with an EMPTY candidate set
+         * (no admitted priority signal was tracked at its first epoch): such a
+         * constellation restores as UNDECIDED and re-decides, which is exactly the
+         * pre-card behaviour for it.
+         *
+         * @return The flat rows; empty before the first processed epoch.
+         */
+        std::vector<CanonicalSignal> exportCanonicalSignals() const;
+
+        /**
+         * @brief Restore a previously exported canonical-signal latch (RS-8, §21.16).
+         *
+         * Refills @c constellation_canonical_ from @p entries and marks every
+         * constellation they name DECIDED, so @c decideConstellationCanonicals'
+         * first-epoch guard leaves it alone instead of re-deciding it from the
+         * resume epoch's satellite counts — the defect §21.16 names (at a warm
+         * resume GAMB00PYF flipped L2X→L2W and CPVG00CPV L2W→L2X, the L2X tracker
+         * set changed, and the eq34 L2X component lost its datum receiver).
+         *
+         * Each restored constellation is also marked AUDIT-PENDING: the next
+         * @c decideConstellationCanonicals call runs its tally diagnostically —
+         * writing nothing — and counts the entries that differ from what this
+         * station WOULD have decided at that epoch
+         * (@ref canonicalAuditDisagreements).  That audit is the only behaviour a
+         * restore adds beyond the latch itself, and it is read-only.
+         *
+         * Emits the canonical-signal rider on @c main_log, tagged @c restored.
+         *
+         * @param entries Rows from @ref exportCanonicalSignals, in any order.  A row
+         *        with an empty constellation / band / signal, or an obs-type that is
+         *        neither 'C' nor 'L', is ignored.
+         * @return The number of entries actually installed.
+         */
+        std::size_t restoreCanonicalSignals(const std::vector<CanonicalSignal>& entries);
+
+        /**
+         * @brief Set the label this model prints in the canonical-signal rider (RS-8).
+         *
+         * The network producer sets it to the station name at construction; the
+         * single-receiver paths leave it empty and the rider prints "-".  Log-only —
+         * nothing else reads it.
+         *
+         * @param label Station / receiver label.
+         */
+        void setCanonicalTraceLabel(std::string label) {
+            canonical_trace_label_ = std::move(label);
+        }
+
+        /**
+         * @brief Canonical entries the restore audit compared (RS-8, §21.16).
+         * @return Restored entries the first post-resume epoch's tally could be
+         *         compared against; 0 on any run that never restored a latch.
+         */
+        long long canonicalAuditEntries() const { return canon_audit_entries_; }
+
+        /**
+         * @brief Canonical entries the restore audit found DISAGREEING (RS-8, §21.16).
+         *
+         * A restored (band, obs-type) whose signal differs from the one this
+         * station's first post-resume epoch would have picked — exactly the flips
+         * §21.16 measured.  A nonzero count is the defect being PREVENTED, not an
+         * error; a zero count on a leg that resumed is the invariant-#4 reading that
+         * the seam epoch happened to agree with the writer.
+         *
+         * @return Disagreeing entries; 0 on any run that never restored a latch.
+         */
+        long long canonicalAuditDisagreements() const { return canon_audit_disagree_; }
+
+        /**
          * @brief Compute the per-signal I₂ + I₃ correction (m) to add
          *        to the modeled observable.
          *
@@ -471,6 +561,12 @@ namespace GnssProcessor {
         ~PppModel() = default;
 
     private:
+        // Test seam: PppModelCanonicalTestAccess (tests/test_resume_signal_canon_restore.cpp)
+        // reaches decideConstellationCanonicals + the latch members so the RS-8 restore's
+        // contract — the first-epoch guard must NOT re-decide a restored latch — can be
+        // pinned without a full geometry / product chain.  Defined only in gnss_tests.
+        friend struct PppModelCanonicalTestAccess;
+
         const GnssConfig& config_;             /**< Reference to configuration (read-only). */
         ProductParser& product_parser_;        /**< Product parser providing SP3/CLK/ERP/etc. */
         LogManager& log_manager_;              /**< Logging manager used for diagnostic messages. */
@@ -521,6 +617,21 @@ namespace GnssProcessor {
                  std::map<std::pair<std::string, char>, std::string>>
                 constellation_canonical_;
         std::set<std::string> constellation_canonical_decided_; /**< Constellations whose canonical set is locked. */
+
+        /**
+         * @brief Constellations whose latch was RESTORED and not yet audited (RS-8).
+         *
+         * Populated only by @ref restoreCanonicalSignals.  The next
+         * @c decideConstellationCanonicals call runs the tally for such a
+         * constellation diagnostically — comparing, never writing — then erases it,
+         * so the audit costs exactly one extra tally per restored constellation and
+         * is unreachable on a run that never restores.
+         */
+        std::set<std::string> constellation_canonical_audit_pending_;
+        long long canon_audit_entries_{ 0 };   /**< RS-8: restored entries the audit compared. */
+        long long canon_audit_disagree_{ 0 };  /**< RS-8: restored entries the first epoch's tally would have picked differently. */
+        /// RS-8 rider label (@ref setCanonicalTraceLabel); empty off the network path.
+        std::string canonical_trace_label_;
 
         /**
          * @brief Network-wide signal coverage allowlist (see @ref setSignalAllowlist).
