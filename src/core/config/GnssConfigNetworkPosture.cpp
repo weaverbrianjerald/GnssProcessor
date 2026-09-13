@@ -132,15 +132,6 @@ namespace GnssProcessor {
               Tier::ON, false, "network.carry_invariant_innov_k",
               "k=4 (sweep flat over 4-30) is right ONLY with innov_calibrate; on raw formal "
               "Cov(v) the field value is k=10" },
-            // --- D5 v5 (SPEC_event_harness s23, 2026-09-13): only CARRIED chords are gated - a
-            //     born chord has no H0 (diffuse prior) and its flag only re-borns it (the churn
-            //     engine: 589 of 730 D5 flags over 6 h on the field).  Field pin deferred to
-            //     the s23 same-realization long-leg consumer grade.
-            { network_carry_invariant_innov_gate_,
-              network_carry_invariant_innov_carried_only_,
-              Tier::SCOPED, false, "network.carry_invariant_innov_carried_only",
-              "gate CARRIED chords only: born-chord D5 flags 589 -> 0 over 6 h (carried 141 -> 143), "
-              "slip refloats -30 %, pbstep p90 0.257 -> 0.057 m, wire flat (D5 v5, s23)" },
             { network_carry_invariant_,
               network_carry_invariant_qz_ >= 5e-5 && network_carry_invariant_qz_ <= 2e-4,
               Tier::ON, false, "network.carry_invariant_qz",

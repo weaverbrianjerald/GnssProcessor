@@ -6294,3 +6294,35 @@ reported, `pbstep` on the leg products not worse, withheld equal, clock contrast
 within the V3 bars.  PASS ⇒ pin on `golden_field_gps_dual` (its certified smoke hash moves — every payload kind, no
 structural change — and is re-recorded at that certification); FAIL ⇒ the exception stands with the consumer number.
 Graders merged: `scripts/d5v5_grade.py`, `d5v5_prodiff.py`, `d5v5_seam_ab.py`.
+
+### 23.2 RESULTS — the same-realization pair refuses the pin: KEEP_OFF on the field, re-test named (2026-09-13 ~16:20 local; worker on worktree-agent-abad026e4a52148da `76861c1`, merged; manager grade)
+
+**Legs.**  `d5v5_long_off` / `d5v5_long_on`: 240 epochs from `v5` ep0604 (exe 23C628B3…, config diff = the knob only;
+harness defaults of ~12:45 — before RS-8 / RS-9 were harness-armed, so both arms carry those seam defects equally).
+**The pre-registered window is not measurable:** a 30-epoch contiguous producer outage sits at ep122–151 on BOTH arms
+(`solve_failed` at 122, `gate_withheld` 123–150, `sh_gate_withheld` 151; 6 scattered SH-gate withholds to 215 — the
+DOY-129 sick-field era, 06:03–06:18 UT; the SH gate still has no release policy) with dispositions epoch-for-epoch
+identical between arms, and the consumer collapses on both (3D 100–330 m after the outage, never recovering) — so
+every +120..+240 bar fails on both arms' wreckage and says nothing about the knob (consumer de-biased +14 %, wire
+p50 0.18 m, `pbstep` +6 % / +10 %; withheld 37 = 37 PASS).
+
+**Pre-outage (+6..+120, the producer emitting every epoch) — the read that counts:** consumer de-biased 3D mean
+**3.069 → 4.267 m (+39 %)**, raw 3D at +120 3.3 vs 14.6 m; PB wire |ON − OFF| p50 **0.033 m** (bar 0.01; spread across
+many satellites — G10 107 rows, G04 91, G11 86 above 0.2 m — a broad slow divergence, not the twin's single-satellite
+level); clock contrast 0.0055 m and ZWD 0.0022 m PASS.  Three horizons of the same statistic: +6..+60 clock 0.0018 /
+PB 0.0032 / ZWD 0.0007 / consumer separation 0.39 m; +6..+120 0.0055 / 0.033 / 0.0022 / 2.61 m; post-outage 0.18 /
+0.18 / 0.079 / 169 m — every channel grows with time since the seam (§21.19's realization divergence, here driven by
+the knob's own change of the chord population), and the outage multiplies it ~6×.  V2 holds over the whole leg: born
+flags 86 → 0, carried 97 → 100, D5 flags 183 → 100, re-taps 145 → 62, births −2.7 %, carried DDs 739 = 739,
+marginalizations 1976 = 1976, `clk_disc` 0 = 0, shocks 84 = 84.
+
+**Decision.**  Two truth-referenced consumer reads in the wrong direction (the twin's settled h3–6 +5.3 % p50 /
++13 % rms; this pair's +39 % over +6..+120) against one neutral 60-epoch read: **KEEP_OFF on the field** (ledger
+verdict changed; the deferred-pin exception and the posture row removed).  The mechanism is real and cheap — born
+chords never carried information to test — but a knob that reshapes the chord population reshapes the realization,
+and on this float-only consumer the two realizations the field has been dealt read worse.  Re-test named, not
+run: a 120-epoch pair from the v8 harness seed (every RS restore incl. RS-8 / RS-9 in both arms; the pair above
+pre-dates them), graded on the consumer de-biased 3D mean over +6..+120 within 5 % and the PB wire within 0.01 m — a
+second realization on a seam that no longer re-births 64 chords.  (Instrument note for every future 2 h field leg:
+the DOY-129 sick-field outage at 06:03–06:18 UT lands at ep122–151 of any leg from ep0604 — grade before it or
+around it, never through it.)
