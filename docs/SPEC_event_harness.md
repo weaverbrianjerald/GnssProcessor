@@ -6719,6 +6719,53 @@ G2/G3 pass): the v8 recipe with that posture + (A) vs without — declared-step 
 p50 / rms not worse, and the instrument's own hour-to-hour p50 spread reported; then and only then §20.3's G-G is re-run on
 the fixed slip posture with this consumer, and the four knobs are pinned or not on a bar the instrument can carry.
 
+**§24.4 RESULTS — card CC: the carry is exact and neutral, the warm start works once the restore scope is right, and neither can be
+graded on this wire's consumer (2026-09-14 ~04:40 local; worker on worktree-agent-a3344694b164c2e9f `ef2b134`, merged; exe
+`F27E9CF9…`; harness `3f421edb…` (the consumer-snapshot additions only); seed v9; manager grade).**
+
+**Build.**  (A) `network.closed_loop.pb_disc_carry` → `processing.ssr_phase_bias_disc_carry`; `StateManager::shiftAmbiguity`
+(value-only); `PbDiscCarryLedger` (per-key last-applied value, counters `pb_disc_carried / pb_flip_carried / resets first_sight
+/ basis / bssd / unknown_key`, closure at run end); the RtStateSnapshot v1 format unchanged (no value map — after a restore
+the first bump per key resets, stated in the header).  (B) `network.closed_loop.state_snapshot`: the consumer's snapshot
+written beside every network history copy with the copy's tow; `RealTimeEngine::writeStateSnapshotTo`, a RESTORED rider;
+`event_leg.py` copies `state_snapshot.txt.consumer.epNNNN` into the leg (pristine `seed_consumer.txt` + disposable), sets
+`realtime.state_snapshot_path` with the cadence parked, records both in leg_meta; `write-seed` arms the knob.  Suite 2083 /
+282 / 0 failed (10 new `ConsumerDiscCarryTest` cases; 16 fixture-gated skips on the worker's empty `data/`).  **G1 PASS**:
+`_cc_smoke_base` products `87a33bf0…`, consumer trace byte-identical (`7476f0a0…`), `rt_engine.log` identical.  **Seed v9**:
+products `0f510024…` = v8, consumer trace = v8's, ep0604 fingerprint `545b8bdd2b638231`, consumer snapshots beside all 12
+history copies (tow equal 12 / 12; consumer fingerprint `8ba709ddf9191c8a`).
+
+**G2 — the restore takes, and the loader's default scope makes it useless.**  `cc_null_warm` (RESTORED at tow 277320, age
+30 s, 29 states / 24 dynamic; products `e0d234ee…` = `cert_null_v8`).  Consumer leg − seed at matched tows, |Δ ENU|:
+
+| restore posture | k = 1 | k = 11 | k = 30 | k = 60 | max / mean k 1..60 |
+|---|---|---|---|---|---|
+| `core` (loader default) | **14.43** | 4.28 | 2.12 | 1.21 | 14.43 / 2.61 — the leg then tracks §24.3's COLD trajectory to the digit |
+| `full`, seam refloat ON | 0.83 | 6.89 | 3.31 | 2.53 | 6.89 / 2.99 — the refloat re-opens every ambiguity: worse than cold at k = 11 (18.8 m) |
+| **`full`, seam refloat OFF** | **0.63** | 1.31 | 1.56 | 1.12 | **1.67 / 1.23** |
+
+`core` restores the five core states and re-creates the 24 dynamic ones, so 48 code rows pull the position 9 m in one epoch;
+`full` + `state_snapshot_seam_refloat: false` is the posture that resumes — and the 0.6–1.7 m it still sits from the seed's
+consumer is the wire's own seam (clock contrast 0.15 m p50 and nine declared code-bias re-references at the seam epoch,
+identical in every posture).  **Decision: the harness leg default becomes `full` + refloat OFF** (a harness default, not a
+golden knob; recorded in the harness's default list).
+
+**G3 — the carry does what it says; its consumer benefit is inside the instrument's noise.**  E3/G24 pin pair on v9:
+products `adb75dc5…` byte-identical across OFF / CARRY / the fp2 leg.  OFF: `reset G24 L5X` at 277620 and `reset G06 L2W`
+at 278250; CARRY: `carried G24 L5X by +0.776 m` and `carried G06 L2W by −12.795 m` (a 12.8 m declared step carried exactly),
+no reset for G24, counters `events 2 → carried 2, resets 0, closure HOLDS`.  Consumer event − null over k 11..41: default
+posture OFF max 3.380 / mean 2.400, CARRY 3.332 / 2.347 (PASS both bars; carry − off max 0.225, mean 0.093 m); warm posture
+OFF 1.050 / 0.514, CARRY 1.054 / 0.513 (mean PASS, max by 4 mm the other way) — mm to cm, because the consumer's error is
+wire-driven (§24.3 / §24.5) and the event − null curves are the pin posture's producer-side response common to both arms.
+
+**Decision.**  (A) VALIDATED as exact and neutral (byte-identical OFF, counters closed, the shift lands to the millimetre);
+**default OFF, not pinned** — an exact translation is strictly better than a code re-seed, but its benefit cannot be
+measured on a wire that leaves a float user at metres, and the standing rule is validation before a pin; it is re-graded on
+the §24.5 wire instrument's successor (a consumer-continuity read on a consistent wire) once §24.6's fix lands.  (B) LANDED
+as the harness's consumer instrument: every leg from a v9-class seed carries a warm consumer; the `full` + refloat-OFF
+default is set on main.  The G4 twin is NOT run: the §24.3 attribution has named no converging posture, because none exists
+on this wire — the twin waits on the producer fix.  The pooled "consumer" bars of §20.3 / §21.21 / §23.2 stay suspended.
+
 **§24.3 RESULTS (2026-09-14 ~01:20 local; the five legs, products byte-identical `e0d234ee…` in every arm; manager read with
 `scratchpad/ci_consumer_read.py`).**  The consumer's own modeling is NOT the defect, and neither the iono supply nor the
 network clock alone is:
