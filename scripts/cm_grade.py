@@ -509,6 +509,10 @@ def bars(R, R0):
     label = "NAMES (all three bars)" if names else ("contributor (a bar halved vs A0)" if contributor else "exonerated (no bar moved)")
     if b1 is None and b3 is None:
         label = "NOT GRADABLE (no code pool and no wire in the hour)"
+    if R is not R0:
+        p0 = (R0.get("i") or {}).get("p50")
+        if b1 is not None and p0 and np.isfinite(b1) and np.isfinite(p0) and b1 > 10.0 * p0:
+            label = f"DIVERGED (code rms p50 {b1 / p0:.0f}x the control's)"
     if R is R0:
         label = "control"
     if avail_ok is False:
