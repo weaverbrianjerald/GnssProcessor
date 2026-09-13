@@ -237,6 +237,9 @@ def cmd_write_seed(args):
     # RS-6a (SPEC_event_harness §21.13): also capture the STATION layer's memory - the
     # rx-CB carry and the T5 per-LOS iono deviation carry (RC/SD rows).
     net["state_snapshot_station_capture"] = True
+    # RS-9 (SPEC_event_harness §21.18): also capture the rx-CB carry's code-bias LINEARIZATION
+    # point (RL rows beside RC) - the frame the inject gate judges the carry against.
+    net["state_snapshot_rxcb_lin_capture"] = True
     net["state_snapshot_require"] = False          # the seed IS the cold start
     net["product_output_path"] = _fwd(os.path.join(rundir, "products.txt"))
     net["write_run_manifest"] = True
@@ -382,6 +385,9 @@ def _leg_common(args, event_json):
     # RS-6a: restore both station-layer memories at the seam (the a00 seam transient
     # +4.6 -> +0.4 TECU).  Inert (logged) against a seed written without the RC/SD rows.
     net["resume_station_restore"] = True
+    # RS-9: restore that frame at the seam (withheld share 26 % -> 10 %, the seed's 11 %).
+    # Inert (logged) against a seed written without RL rows.
+    net["resume_rxcb_lin_restore"] = True
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
     # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the

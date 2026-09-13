@@ -393,6 +393,14 @@ namespace GnssProcessor {
               "carry the rx-CB carry + the T5 iono deviation carry in the snapshot so a warm resume "
               "continues the station layer's memory: the SH a00 seam transient +4.6 -> +0.4 TECU, "
               "receiver clocks at +1 1.21 -> 0.91 m (RS-6a)" },
+            // --- RS-9 (SPEC_event_harness s21.18/s21.19): WRITE half - the rx-CB carry's
+            //     linearization point (RL rows beside RC) rides the snapshot.  Write side only,
+            //     products byte-identical; requires state_snapshot_station_capture.
+            { !nc.state_snapshot_path.empty() && nc.state_snapshot_station_capture,
+              nc.state_snapshot_rxcb_lin_capture,
+              Tier::SCOPED, false, "network.state_snapshot_rxcb_lin_capture",
+              "carry the rx-CB carry's code-bias linearization point so a warm resume judges the "
+              "restored carry against the writer's frame, not one epoch of resume code (RS-9)" },
             { warm && network_phase_leveling_,
               network_zwd_seam_reseed_,
               Tier::SCOPED, false, "network.zwd_seam_reseed",
@@ -848,6 +856,15 @@ namespace GnssProcessor {
               "restore the rx-CB carry + the T5 deviation carry at a warm resume: a00 transient "
               "+4.6 -> +0.4 TECU, +2 clock contrast 0.44 -> 0.29 m, receiver clocks 1.21 -> 0.91 m; "
               "the code-bias level and the rx-CB gate share do not move (RS-6a)" },
+            // --- RS-9 (SPEC_event_harness s21.18/s21.19): READ half - restore the rx-CB frame at
+            //     the seam.  Forward-only resume policy, not fingerprinted; requires
+            //     resume_station_restore.
+            { warm && network_resume_station_restore_,
+              network_resume_rxcb_lin_restore_,
+              Tier::SCOPED, false, "network.resume_rxcb_lin_restore",
+              "restore each station's code-bias linearization point at a warm resume: rx-CB withheld "
+              "share 26.3 -> 9.8 % (the seed's 11.0), the 11 defect-created stations back to folding, "
+              "receiver clocks at +1 0.93 -> 0.82 m (RS-9)" },
             // --- RTA-4 serialize_disc_counters (first ledger row 2026-09-12, RS-4): the per-key
             //     discontinuity counters reach the wire (optional P/B/C fields).  Outputs-only;
             //     changes product bytes, so the goldens pin it only with a recorded re-baseline.
