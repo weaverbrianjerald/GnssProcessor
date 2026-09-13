@@ -7038,3 +7038,17 @@ Frozen reading: A10 / A10b crossing the bars names the tie's stiffness as the me
 instruments re-graded; A11 crossing them names the field's resolution; A9 crossing them while A10 / A11 do not names the coupled code-bias +
 field datum (W6) itself; none crossing them exonerates the ionosphere representation and the remaining suspect is the modeled observable
 of the network path (the row-by-row modeled-value diff the worker proposed).
+
+**§24.8 second extension READ (2026-09-14 ~13:10; arms run by the worker before its session limit, graded by the manager with the merged
+`scripts/cm_grade.py`, `runs/_cm_a10 / a10b / a11`).**  A10 (`representation_sigma_tecu` 50), A10b (20) and A11 (degree 15 / layer-2 degree 8)
+are the control on every bar: code rms p50 4.75 / 4.73 / 4.67 m, 58 / 58 / 57 stations beyond 0.5 m of ZWD (NIUM −39, CAS1 −20, COCO +19 in all),
+D_phase declared within-arc rms 2.47 / 2.59 / 2.85 m, per-LOS level share 81.7–82.0 %, availability 240 / 242, tropo-shaped fit share 1.3 %; a00
+sits at 23 / 26 / 30 TECU (the looser tie lowers the level, nothing else moves); the cold consumer at 90–120 min reads 7.8 (A0) / 9.3 / 9.0 / 8.6 m.
+A9 (free per-LOS ionosphere + CODE's OSB, the PPP posture at the station level) is NOT GRADABLE on this producer: 0 of 240 epochs emitted, every
+epoch withheld by the observability gate on an undeclared machine-zero null direction (smallest eigenvalue −8e-11 against a declared datum
+dimension of 1).  **The ionosphere representation is exonerated.**  Eleven arms have now cleared every estimation-side knob — the code-bias
+states and their priors, the receiver code-bias carry, the SH tie, its stiffness and its degree, the ZWD sink (load-bearing, not causal), the
+network's size — and the inconsistency is in the code rows at epoch 1 of a three-station solve.  What remains is the row itself: `y = observed
+− modeled` as the network path builds it against the same `PppModel::computeModels` the converging PPP uses (`ApplicationNetworkAssembly.cpp:1308`).
+The next read is the producer's own per-row `CODE-DECOMP` trace (`MeasurementModel.cpp:1740`, trace level: observed, predicted and every model
+term per row) on a four-epoch three-station network run and on the WROC standalone PPP, diffed row by row at the first epoch.
