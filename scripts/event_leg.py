@@ -490,6 +490,14 @@ def _leg_common(args, event_json):
         rt = cfg.setdefault("realtime", {})
         rt["state_snapshot_path"] = _fwd(cons_leg)
         rt["state_snapshot_interval_s"] = 1.0e9
+        # Harness default since 2026-09-14 (SPEC_event_harness s24.4 G2): the loader's
+        # default restore scope "core" restores only the five core states and re-creates
+        # the dynamic ones, so the leg's consumer is effectively COLD (14.4 m at k = 1,
+        # the cold trajectory to the digit); "full" restores every state, and the seam
+        # refloat must be OFF (ON re-opens every ambiguity: worse than cold at k = 11).
+        # full + refloat OFF resumes at 0.63 m from the continuous consumer at k = 1.
+        rt["state_snapshot_restore_scope"] = "full"
+        rt["state_snapshot_seam_refloat"] = False
 
     # Event tow: the snapshot's tow is the LAST epoch it recorded, so the leg's
     # first processed epoch is tow + 30 s.  --at-ep is counted from that first
@@ -567,7 +575,7 @@ def _leg_common(args, event_json):
         print(f"  consumer        {os.path.basename(cons_src)}  tow {cons_tow!r}"
               f" ({'== network' if abs(cons_tow - tow) <= 1e-3 else '!= NETWORK'})"
               f" -> realtime.state_snapshot_path = {os.path.basename(cons_leg)}"
-              " (WARM start; cadence parked at 1e9 s; sha256 "
+              " (WARM start, scope full, seam refloat OFF; cadence parked at 1e9 s; sha256 "
               f"{cons_sha[:16]}...)")
     else:
         print("  consumer        no state_snapshot.txt.consumer.ep"
