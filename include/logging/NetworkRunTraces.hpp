@@ -605,6 +605,17 @@ namespace GnssProcessor {
         /// which satellites, which signals (dispersive split).
         std::ofstream pf_keyed_trace;
         const std::filesystem::path pf_keyed_trace_path;
+        /// SPEC_event_harness §24.6 (@c network.trace_postfit_rows): SIGNED per-row
+        /// post-fit residuals from the same P1-4 pass — one line per DATA row the pass
+        /// visits and attributes to a family (kind ∈ {code, phase}):
+        /// @c week,tow,station,sat,signal,kind,resid_m,w,elev_deg.  @c resid_m is
+        /// v = y − A_s·x_s − A_r·x_r (observed − predicted, metres, NOT standardized —
+        /// the pass pools |v|·√w), @c w the row's information weight, @c elev_deg the
+        /// LOS elevation off the station's modeled observation set (empty when the
+        /// station is absent from it).  The per-LOS attribution instrument the keyed
+        /// pools cannot be: they pool per STA / SAT / SIG separately and drop the sign.
+        std::ofstream pf_rows_trace;
+        const std::filesystem::path pf_rows_trace_path;
         /// S1 (@c network.trace_phase_anchor): one row per GAUGE-PINNED ambiguity per
         /// PROCESSED epoch — @c week,tow,cons,signal,sat,anchor_sta.  The
         /// (constellation, signal, satellite) -> anchoring STATION map that realizes the

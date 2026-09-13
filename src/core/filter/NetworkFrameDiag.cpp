@@ -175,12 +175,17 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                           NetworkEstimator& est,
                           const Eigen::VectorXd& x_s,
                           const std::vector<StationAssembly>& asm_res,
-                          const std::vector<int>& est_index_of) {
+                          const std::vector<int>& est_index_of,
+                          const std::vector<std::vector<PppObservation>>* modeled) {
     (void)config_;   // toggles are expressed through which traces are open
     const std::size_t stations_n = stations.size();
     // §4.3 keyed extension: active only while its trace is open — the OFF path
     // (trace closed) adds zero label lookups and zero pool work.
     const bool keyed = traces.pf_keyed_trace.is_open();
+    // §24.6 rows extension: the SIGNED per-row dump, same gate discipline.  The
+    // per-column sat / signal labels are shared with the keyed path.
+    const bool rows_on = traces.pf_rows_trace.is_open();
+    const bool labels  = keyed || rows_on;
     ctx.carry.ep_sigma0_pf       = 0.0;
     ctx.carry.ep_sigma0_pf_code  = 0.0;
     ctx.carry.ep_sigma0_pf_phase = 0.0;
@@ -208,7 +213,7 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
         is_sh_col.assign(nsh, 0);
         is_pb_col.assign(nsh, 0);
         is_cb_col.assign(nsh, 0);
-        if (keyed) { col_sat.assign(nsh, {}); col_sig.assign(nsh, {}); }
+        if (labels) { col_sat.assign(nsh, {}); col_sig.assign(nsh, {}); }
         for (Eigen::Index c = 0; c < x_s.size(); ++c) {
             std::string lbl;
             try { lbl = est.sharedColumnLabel(c); } catch (...) { continue; }
@@ -216,7 +221,7 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
             if      (lbl.rfind("SH", 0) == 0) is_sh_col[u] = 1;
             else if (lbl.rfind("PB:", 0) == 0) is_pb_col[u] = 1;
             else if (lbl.rfind("CB:", 0) == 0) is_cb_col[u] = 1;
-            if (keyed && lbl.rfind("SH", 0) != 0) {
+            if (labels && lbl.rfind("SH", 0) != 0) {
                 // "KIND:sat[:signal]" — sat between the first and (optional)
                 // second colon, signal after the second.
                 const std::size_t p1 = lbl.find(':');
@@ -282,6 +287,11 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
 
         // Keyed: this station's own {code, phase} pools (STA row written below).
         std::vector<double> sta_code, sta_phase;
+        // Rows: this station's satellite -> elevation (deg) off the MODELED set,
+        // built only while the rows trace is open (zero cost otherwise).
+        std::map<std::string, double> sta_el;
+        if (rows_on && modeled && i < modeled->size())
+            for (const PppObservation& o : (*modeled)[i]) sta_el[o.satellite] = o.elevation;
 
         for (Eigen::Index row = 0; row < v.size(); ++row) {
             // Card-1 coupling rows are statements about the CARRY, not data.
@@ -295,7 +305,7 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (is_sh_col[u]) { sh_row = true; break; }
                 if (is_pb_col[u]) pb_row = true;
                 else if (is_cb_col[u]) cb_row = true;
-                if (keyed) {
+                if (labels) {
                     if (!row_sat && !col_sat[u].empty()) row_sat = &col_sat[u];
                     if (!row_sig && !col_sig[u].empty()) row_sig = &col_sig[u];
                 }
@@ -329,6 +339,29 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (row_sig) {
                     auto& gp = sig_pool[*row_sig];
                     (phase_row ? gp.second : gp.first).push_back(r);
+                }
+            }
+            if (rows_on) {
+                if (phase_row || cb_row) {
+                    // SIGNED v (metres), the row weight, and the LOS elevation.  The
+                    // sat / signal come from the same CLK/CB/PB labels the keyed
+                    // pools key on; a row with no labelled signal writes it empty.
+                    auto& t = traces.pf_rows_trace;
+                    t << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
+                      << stations[i].name << ','
+                      << (row_sat ? *row_sat : std::string()) << ','
+                      << (row_sig ? *row_sig : std::string()) << ','
+                      << (phase_row ? "phase" : "code") << ','
+                      << fmt::format("{:.5f}", v(row)) << ','
+                      << fmt::format("{:.6e}", w) << ',';
+                    const auto el = row_sat ? sta_el.find(*row_sat) : sta_el.end();
+                    if (el != sta_el.end()) t << fmt::format("{:.2f}", el->second);
+                    else ++ctx.carry.pf_rows_no_elev;
+                    t << '\n';
+                    ++ctx.carry.pf_rows_written;
+                    ++(phase_row ? ctx.carry.pf_rows_phase : ctx.carry.pf_rows_code);
+                } else {
+                    ++ctx.carry.pf_rows_unattributed;
                 }
             }
         }
