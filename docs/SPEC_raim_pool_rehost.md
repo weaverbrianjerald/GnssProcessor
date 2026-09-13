@@ -325,6 +325,47 @@ rows > 0), and with the actuator armed does `refloats_queued` read > 0 with the 
 (the §7 unit item that proves actuation reaches the carry) — the one measurement that turns "runs" into "screens".
 D1 (re-host the within-epoch tier's pool) stays deferred and is the prerequisite for any withhold on this lineage.
 
+### 7.2 The POWER leg, re-shaped before it is run: the E3 shape gives the screen no opportunity by construction (pre-registered 2026-09-14 ~00:45 local, manager; no leg read)
+
+§7.1 named E3 (the equal-count L1C + L5X slip at GOPE00CZE/G24, +10) as the power leg.  Read against the epoch order it
+cannot work: under the golden's OFF posture the (1,2) IF-TD chain sees the L1C half of E3 as a 3.1 m step and the two MW
+pairs (1,5) / (2,5) see 29 WL cycles; the arc is detected and DRAINED (`free_ambs`) before `SB_RAIM` runs (the RAIM seam
+sits after both slip drains), so at +10 the screen meets a FREE column — zero opportunity, whatever its power.  The same
+holds for E1 (two MW pairs fire), E2, E5 (LLI).  A power measurement needs a slip every armed detector is blind to:
+
+**The RAIM-only shape on this posture: EQUAL cycles on all three tracked bands — L1C, L2W and L5X each + n at the same
+epoch (`n, n, n`).**  MW(1,2), MW(1,5) and MW(2,5) are identically zero (Δn = 0 on every pair); the (1,2) IF-TD step is
+`(α₁λ₁ − α₂λ₂)·n = 0.107 n m` against an 8·MAD threshold (`if_phase_td_k_mad` 8.0); no LLI; GF is not armed on the network
+path.  The D5 innovation gate WILL flag the slipped arc's chords (the DD steps by n·λ_b per band) but `carry_invariant_
+innov_corroborate` refuses a flag without raw evidence, so the chord prior stays and the tension has one place to go —
+the post-fit residual the re-hosted screen reads.  That hand-off (detector blind → D5 refused → RAIM) is exactly what the
+"RAIM always on" directive asks the tier to catch.
+
+**Legs** (from `evseed_field6h_v8` ep0604, 60 epochs, the harness defaults, exe = the certified `AF418A9F…` under a unique
+name; harness `e6071f43…` must not move): `raimp_null_screen` (no event, `raim_carry_invariant: true`); for n ∈ {1, 2, 4}:
+`raimp_n<n>_off` (seed posture — the screen absent, the loader's INERT line), `raimp_n<n>_screen` (+ `raim_carry_invariant:
+true`), `raimp_n<n>_act` (+ `raim_carry_invariant_refloat: true`) — ten legs; the injection block is three `slip` events at
+tow 277620 on G24 at GOPE00CZE, signals L1C / L2W / L5X, `delta_cycles` n each (the E3 shape with the third band added).
+
+**Reads.**  Per leg at GOPE/G24, k ∈ [+9, +15]: T1 IF-TD rows, T0 MW rows, LLI, D5 rows on chords touching (GOPE, G24)
+with their corroborated / held outcome — the DETECTOR CENSUS that decides whether the leg is a RAIM-only opportunity;
+the screen legs' σ̂₀ series k = +5..+25 and the null's floor series; T3 / T4 rows with identity; on the act legs
+`refloats_queued / drained` and the `carry_slipped_ambs` drain with identity; the wire (fp1_gate_table's G-C read, event −
+null at the same posture): G24 CLK / PB |Δ| at +10..+50; `products.txt` hashes — `raimp_null_screen` byte-identical to
+`cert_null_v8`, every screen leg byte-identical to its off leg (the A4 withhold is unreachable until D1; a difference is a
+finding), act legs allowed to differ after +10 only where a refloat drained.
+
+**Bars.**  P0 (blindness): the smallest n whose off arm has ZERO detector rows at GOPE/G24 in [+9, +15]; if n = 1 is
+already caught by IF-TD, the posture has no RAIM-only slip of ≥ 1 cycle and the screen's field opportunity is EMPTY on
+this lineage — a closing finding, not a failure of the leg.  P1 (power, on that n): the screen arm's σ̂₀ at +10..+12 rises
+above 1.0 + 3× the null's own spread AND a T3 / T4 row names GOPE/G24 within +10..+15 ⇒ PASS (the screen sees an undrained
+slip); σ̂₀ at its floor with the D5 flag refused ⇒ FAIL = §3's R2 absorption confirmed on a real slip (report the arc's
+post-fit residual and the chord-prior residual, which then carry the finding).  P2 (actuation, only on P1 PASS):
+`refloats_queued ≥ 1`, the arc in the drain with identity, and the act arm's G24 wire error over +20..+50 below the
+screen-only arm's.  P3 (the cost of the miss, reported): the off arm's G24 CLK / PB error vs null over +10..+50 — what an
+undetected (n, n, n) slip costs the products, the number that prices the screen.  Consumer channels are REPORTED, not
+gated (SPEC_event_harness §24.1).
+
 ## 8. Promotion
 
 Per the standing no-promotion directive: `network.raim` stays as-is, both new knobs stay default-OFF, and
