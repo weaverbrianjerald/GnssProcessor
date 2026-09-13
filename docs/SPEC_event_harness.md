@@ -6119,9 +6119,18 @@ it the realization, and this float consumer cannot rank two realizations.  **KEE
 win is real (re-taps −80 %) and a promotion needs a consumer-side instrument that is not a single realization's
 dispersion — a truth-referenced multi-realization grade, owed.
 
-**Part 3 (re-certification of the final HEAD).**  Main moved past `1bb0039` by two more knob merges (REF-FAN
-`if_phase_td_ref_arm_all`, RS-10b `zwd_seam_reseed_q`, two new test files) and the RAIM screen pin; the final rebuild,
-smoke pair and suite at HEAD are recorded below when they land.
+**Part 3 — the final HEAD (`1542441` for binaries and configs; `574d1a4` docs-only past it).**  Debug and Release rebuilt
+first attempt; Debug suite **2073 cases / 281 suites / 2072 passed / 1 documented skip / 0 failed** (`IfTdRefArmAll` 13/13,
+`ZwdSeamReseedQ` 11/11); Release exe `AF418A9F…`; the smoke pair from the REGENERATED field golden (now pinning
+`raim_carry_invariant`) `_cert3_smoke_base` and `_cert3_smoke_nowrite` BOTH `87a33bf0…` with the re-host live (20 seam
+passes, 18 163 cells, σ̂₀ 1.000, zero opportunity) — the posture summary moved SCOPED 39/46 → 40/47 and the loader's old
+"post-fit RAIM is INERT" warning is gone; no unknown-knob warnings.  **The REF-FAN sim storm arm** (`runs/golden_sim_campaign_
+zwdblk_refarm` vs `_refarc`, the §22.5 protocol; config tracked as `config/test_suite/_golden_sim_campaign_zwdblk_refarm.json`)
+is neutral or better on every printed field — ZWD 0.0059 both, consumer p50 0.0807 → 0.0806, T4 events 11 = 11, refloats
+8315 → 8313, the whole band-scope census byte-identical — and the additional chains now report opportunities (2 each on
+the Galileo (1,7) and (5,7) chains, 4 inherited fires against the first chains' 2, the F1 bar exactly); the knob is pinned
+on `golden_sim_tri_w6` and its exception lifted (§22.7).  ⚠ `simnet_storm_grade.py` needs the elapsed-seconds line in
+`exitcode.txt` that `ev_launch.ps1` writes and a plain `.cmd` launcher does not.
 
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
@@ -6402,8 +6411,8 @@ those station-epochs), so the whole field result comes from the own-elected arm;
 on a lineage where an L5-capable satellite is the first chain's reference, or not at all.
 
 **Decision.**  RECOMMEND_SCOPED (regime: `if_phase_td_pairs = all` with `if_phase_td_ref_gate`); pinned nowhere yet —
-the field golden runs pairs `first` (out of regime), the sim golden pins pairs `all` + the clause and gets a documented
-exception until its storm arm is run (`simnet_storm_grade.py`, the B4 protocol of §22.5).  **FP-2 pre-registered:**
+the field golden runs pairs `first` (out of regime), the sim golden pins pairs `all` + the clause — its storm arm ran in the certification (§21.22 part 3): neutral or
+better on every field, the additional chains now with opportunities, so the knob is PINNED there and the exception lifted.  **FP-2 pre-registered:**
 the §20 matrix on the fixed field posture — scope + pairs `all` + the clause + `ref_arm_all` — from the v8 harness
 seed (every RS restore in both arms; the harness held still for the batch): {null, E1, E2, E3/G24, E3/G25, E5} ×
 {OFF, PIN}, §20's G-A..G-E bars verbatim with the G25 +40 window rule, the fan-out census of §20.2 (collateral must

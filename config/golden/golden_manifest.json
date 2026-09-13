@@ -46,7 +46,8 @@
     "network.serialize_disc_counters": true,
     "network.state_snapshot_station_capture": true,
     "network.state_snapshot_rxcb_lin_capture": true,
-    "network.state_snapshot_signal_capture": true
+    "network.state_snapshot_signal_capture": true,
+    "network.cycle_slip.if_phase_td_ref_arm_all": true
    },
    "unset": [],
    "exceptions": {
@@ -55,8 +56,7 @@
     "network.estimate_iono_sh": "posture C by design: the sim bed grades the FREE per-LOS slant ionosphere against truth (SPEC_synthetic_minimum_network §13, 'NO ionosphere constraint by design'); the SH layer is the FIELD posture (see golden_field_gps_dual)",
     "network.clock_datum_sum_to_zero": "does NOT graduate (ledger row: 12 h A/B excursion-suppressing but higher steady median; the pin datum stays); also INERT-izes sticky_pivot",
     "network.emit_pb_filter_gate_v2": "out of regime (needs carry_invariant + emit_pb_filter)",
-    "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here.",
-    "network.cycle_slip.if_phase_td_ref_arm_all": "FIELD-VALIDATED, SIM STORM ARM OWED (SPEC_event_harness s22.7, 2026-09-13): REF-FAN passed F1-F4 on the field seed (collateral refloats 6 -> 0, flood held); this lineage pins pairs = all + the clause, so the knob is in regime here, but its sim validation is the B4 storm arm (scripts/simnet_storm_grade.py vs golden_sim_campaign_zwdblk_refarc) which has not been run - pin after it is neutral-or-better on every bar."
+    "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here."
    }
   },
   {
