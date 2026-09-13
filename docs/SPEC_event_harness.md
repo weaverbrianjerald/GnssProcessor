@@ -5996,6 +5996,30 @@ answered by a benign consumer re-inflation — the seam's residual floor, read a
 (satellite-clock contrast p50 ≤ 0.34 / p95 ≤ 0.85, cb p50 ≤ 0.10, pb p50 ≤ 0.001); at +60 ZWD p50 ≤ 0.60 and
 satellite-clock contrast p95 ≤ 6.0; D5 trips at +1 reported with re-taps 0; |ΔZWD|/σ and |ΔCLK|/σ at +1 ≈ 0.68 / 0.99.
 
+**Confirmation leg RESULT (`rs10_null_nozwd`, single knob verified by config diff — `resume_signal_canon_restore` pinned false
+in both arms because RS-8's harness default landed between the two legs; the v7 seed has no CN rows anyway): 11 of 12 bars
+PASS.**  The `zwd` prior family is absent (0 rows, 0 folds; ON σ̂₀ 11.2); at +1 ZWD p50 **0.180** (ON 0.288) / p95 1.26 (2.32),
+receiver-clock rms **1.65** (3.08), the trade-removed residual 1.356 (1.354); wire at +1 unchanged within the six-leg scatter —
+code bias 0.092 (0.097), phase bias 0.0004 (0.0004), satellite-clock contrast p95 0.817 (0.816) and p50 0.368 vs the 0.34 bar
+(FAIL as written: the bar was another leg's observed value with no margin; six legs span 0.275–0.368, sd 0.029, and the OFF − ON
+gap is 0.46× the seed's own per-epoch step) ; at +60 ZWD p50 **0.584** (ON 1.338) and satellite-clock contrast p95 **5.36**
+(10.29); |ΔZWD|/σ 0.65 and |ΔCLK|/σ 0.93 at +1 (the predicted 0.68 / 0.99); D5 trips at +1 51 (37), re-taps 0.  Removal is
+confirmed on the producer's state channel and on the wire over the hour.  **And one unregistered channel goes the other way,
+reproducibly:** the grader's report-only in-run consumer (a cold consumer started at the seam in every leg) reads 3D p50 over
+k 5–32 **14.7 m OFF vs 8.8 ON** and |up| 12.1 vs 6.4 (p95 19.4 vs 7.9), crossing over by k 33–60 (7.3 vs 7.6) — on two
+independent OFF arms (`rs10_null_nozwd`, `rs6_null_both_nozwd`) and two ON arms (`rs9_null_lin`, `rs9_null_ctl`), the
+continuous consumer at 8.9.  That is the benefit `event_leg.py` armed the knob for ("the consumer vertical it feeds"), which
+the census had no channel to see: the stiff prior double-counts the sink for the producer but hands a COLD consumer a
+~15-minute smoother start.  The stateful-consumer splice (§21.14's RS-6 probe) saw no difference either way.  The two ends of
+the stiffness axis each win one side — a genuine trade, not a defect — so the decision (OFF on non-carrying lineages) stands on
+the producer evidence with the cold-consumer transient recorded as its named cost, and the bracket is pre-registered as one
+config-only pair from the same seed: `network.zwd_carry_q` 3.8e-4 (p50-matched to the sink's own step) and 1.7e-2
+(rms-matched), reseed ARMED, each a single knob vs `rs9_null_lin`; bars R1' (prior present, n_folded 3721, σ̂₀ p50 ≤ 2.0,
+max|t| p50 ≤ 5 — an inert q FAILS), R2' / R4' at the OFF arm's levels (ZWD +1 ≤ 0.22 / p95 ≤ 1.5, rx-clock rms ≤ 1.8; +60
+ZWD ≤ 0.60, contrast p95 ≤ 6.0), R3' wire within the six-leg scatter, C' the in-run consumer k 5–32 |up| p50 ≤ 7 m and 3D
+p50 ≤ 9.5 m (the ON arm's levels) with k 33–60 not worse than either arm.  A q that holds both ends re-arms the reseed on
+this lineage at that q; if neither does, the trade is decided by the stateful splice, not by the in-run consumer.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
