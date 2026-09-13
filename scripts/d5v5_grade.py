@@ -108,6 +108,13 @@ _PATTERNS = {
     'marginalizations': (r'invariant carry\):[^\n]*?([\d,]+)\s*marginalization\(s\)', int),
     'slip_refloats_runend': (r'invariant carry\):[^\n]*?([\d,]+)\s*slip refloat\(s\)', int),
     'emitted_epochs': (r'post-fit [^\n]{0,12}0\):\s*([\d,]+)\s*emitted epoch\(s\)', int),
+    # Slip-QC card G's run-end "D5 attribution: N FLAG ROW(s) of which M coincident
+    # with a raw step, = A distinct funnel arc(s) re-tapped".  attrib_arc is A — the
+    # count that actually re-taps (the ROW count double-counts a pair chord flagged on
+    # both bands of a WL-3 joint block).
+    'attrib_rows': (r'D5 attribution:\s*([\d,]+)\s*FLAG ROW\(s\)', int),
+    'attrib_rawstep': (r'D5 attribution:[^\n]*?of which\s*([\d,]+)\s*coincident with a raw step', int),
+    'attrib_arc': (r'D5 attribution:[^\n]*?=\s*([\d,]+)\s*distinct funnel arc\(s\) re-tapped', int),
 }
 
 
@@ -134,8 +141,6 @@ def parse_stdout(path):
     # by — so the flag is derived from the restore line, not from the phrase.
     out['carry_restored'] = ('carry restored YES' in t)
     out['cold_start'] = not out['carry_restored']
-    m = re.search(r'attrib_arc[^\d]{0,40}([\d,]+)', t)
-    out['attrib_arc'] = int(m.group(1).replace(',', '')) if m else None
     # Back-compat aliases for the compare() table.
     out['chord_births_line'] = out.get('chord_births_runend')
     out['carried_dd_line'] = out.get('carried_dd_runend')
@@ -444,7 +449,8 @@ def compare(a_path, b_path):
     lines.append('  RUN-END')
     for k in ('d5_flags', 'd5_retaps', 'v3_trips', 'v3_suppressed', 'v5_born_skipped',
               'd5keep_kept', 'd5keep_erased', 'd5_nonpos_var_rows', 'sigma0_postrun',
-              'carried_dd_line', 'chord_births_line', 'attrib_arc'):
+              'carried_dd_line', 'chord_births_line', 'slip_refloats_runend',
+              'attrib_rows', 'attrib_rawstep', 'attrib_arc'):
         row(k, _g(A, 'runend', k), _g(B, 'runend', k))
     row('cold_start', _g(A, 'runend', 'cold_start'), _g(B, 'runend', 'cold_start'))
     row('v5_line_present', _g(A, 'runend', 'v5_line_present'), _g(B, 'runend', 'v5_line_present'))
