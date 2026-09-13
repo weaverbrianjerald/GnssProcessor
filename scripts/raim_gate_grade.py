@@ -6,7 +6,14 @@ The card's whole point is that a QC tier read ARMED and screened nothing, so the
 grader reads them off a finished run directory and, given two run dirs, answers
 the three questions the field gates ask:
 
-  1. **Is the screen live?**  ``sigma0`` in ``logs/network_epoch_status.csv`` is
+  1. **Is the screen live?**  ⚠ CORRECTION (SPEC §7.3, 2026-09-14): the ``sigma0``
+     column of ``logs/network_epoch_status.csv`` is the WITHIN-EPOCH tier's
+     ``sigma0_adapt`` (NetworkStashStatus.cpp:530, pooled over ``pl_amb`` — empty on a
+     ``carry_invariant`` lineage), NOT the re-hosted post-fit screen's statistic; the
+     re-hosted σ̂₀ is read from the run-end tally and, per epoch, from the emitted
+     URA ratio against a twin (``emit_ura`` scales by ``ura_sigma0_ewma``).  The
+     paragraph below describes what the column was believed to be.
+     ``sigma0`` in ``logs/network_epoch_status.csv`` was read as
      the per-epoch post-fit RAIM variance factor written straight out of
      ``NetworkRaim.cpp`` (``sigma0 = max(raim_sigma0_floor, 1.4826*median|r|)``
      when the pool is non-empty, and the bare ``1.0`` initializer when it is

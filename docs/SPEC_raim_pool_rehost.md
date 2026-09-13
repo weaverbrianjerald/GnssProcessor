@@ -366,6 +366,47 @@ screen-only arm's.  P3 (the cost of the miss, reported): the off arm's G24 CLK /
 undetected (n, n, n) slip costs the products, the number that prices the screen.  Consumer channels are REPORTED, not
 gated (SPEC_event_harness §24.1).
 
+### 7.3 RESULTS — the POWER leg: an undrained equal-count slip is below every tier's resolution on this lineage, and it costs the wire nothing (2026-09-14 ~03:40 local; worker on worktree-agent-aa3b8bfe38edc9aa1 `19392c8`, merged; exe = the certified `AF418A9F…` as `gnss_processor_raimp.exe`; seed v8 ep0604; harness `e6071f43…` unmoved across 16 legs; `scripts/raimp_batch.py` + `scripts/raimp_grade.py`; manager grade)
+
+**P0 — the (n, n, n) shape is caught for n ≥ 2 always, and for n = 1 by a coin flip.**  The (1,2) IF-TD bar is its physical
+floor, `thr = max(k_mad·s_eff·map, floor_frac·λ_IF(1,1))` (`NetworkSlipQc.cpp:1194–1197`, `floor_frac` 1.0) = 0.106953 m = exactly
+one equal-count cycle's IF step; the empirical term (8 × 3 mm × 1.2 ≈ 0.03 m) never reaches it.  So an n = 1 slip is caught iff
+the chain's own noise at the event epoch shares the step's sign: the pre-registered k = 11 draw was caught by +6.0 mm (n = 2 by
++0.113, n = 4 by +0.327 m, each refloated at the event epoch — the E3 situation), and the null chain predicted 20 of 55
+epochs blind for n = 1.  **P0′ (the manager's extension): three re-draws at k = 15 / 19 / 23 were all MISSED** — dd 0.1065 /
+0.1057 / 0.1065 m against 0.1070 (margins −0.4 / −1.3 / −0.5 mm), zero T1 / T0 / LLI rows in [kev−1, kev+5], MW Δ ≡ 0 and
+GF Δ = −0.0539·n m by construction.  The D5 innovation gate never TRIPPED on the arc either (suppressed totals equal the
+null's) — on this lineage the chord priors sit at `dd_sigma_cyc` p50 ≈ 3.9 cycles (§7.1), so a one-cycle step is a quarter
+of a chord σ.
+
+**P1 — FAIL: the re-hosted screen saw nothing on the three undrained slips.**  Screen / act arms: σ̂₀ 1.000 / 1.000 over
+54 518 cells and 61 seam passes, 0 satellites / 0 arcs flagged, 0 T3 / T4 rows, URA ratio ≡ 1.0000 at every epoch, act
+byte-identical to off (`d4f34599…` / `6166c9d1…` / `aef07661…`); GOPE's post-fit phase pool at the blind epoch moved by
++3.7 mm s0 / −0.6 mm max against the null.  §3's R2 is confirmed on a real slip: the free local column takes the step and
+the residual never sees it.  One structural qualifier the worker found in the snapshot: (GOPE00CZE, G24) is GOPE's **L5X
+eq34 datum PIN** (`EQP,GOPE00CZE|G|L5X,G24`; L1C → G32, L2W → G12), and pinned keys are excluded from the pool at carry
+build (`NetworkRaim.cpp:198–199`) — the L5X third of the slip cannot reach the screen by construction; the L1C / L2W thirds
+were in the pool and left no footprint.  On the matrix legs (n = 1, 2, 4 caught) P1 reads FAIL for want of opportunity, as
+§7.2 predicted.  **P2 — not applicable** (queued / drained 0 / 0 on all six act legs; the actuator has never fired in 16
+legs).  **P3 — the cost of the miss is nil**: G24 clock max |Δ| vs null 0.0022 / 0.0017 / 0.0009 m (means ≤ 1.1 mm), phase
+bias max 0.034 / 0.029 / 0.037 m growing toward the window end; the CAUGHT slips cost more (CLK 0.018–0.024, PB 0.064–0.070 m
+— the response's own price).  Blast at kev: 0 keys > 0.5 m on all 16 legs; declared discontinuities at the events: 0.
+
+**Provenance.**  Every leg 61 / 61, warm resume, 3 events armed / 3 fired, no cold start; config diffs exactly the knob(s)
++ paths; `raimp_null_screen` ≡ `cert_null_v8` (`e0d234ee…`); every screen ≡ its off leg; the harness sha before and after
+each leg unchanged.  Two instrument traps recorded: `network_epoch_status.csv`'s `sigma0` column is the WITHIN-EPOCH tier's
+`sigma0_adapt` (`NetworkStashStatus.cpp:530`, pooled over `pl_amb`, empty here) — it cannot see the re-hosted screen, contra
+`raim_gate_grade.py`'s docstring (amended); and a D5 trip the v3 corroboration gate suppresses never reaches
+`network_d5_flags.csv` (`NetworkInvariantCarryDriver.cpp:1646–1648`), so "refused" is visible only in the run-end totals.
+
+**Decision.**  `network.raim_carry_invariant` stays RECOMMEND_SCOPED and pinned: live, neutral, ~5 % cost, and now with its
+power measured — none, on the one slip shape the detectors miss, which is also harmless.  `network.raim_carry_invariant_refloat`
+stays KEEP_OFF with the stronger record: zero opportunity in 16 legs INCLUDING three detector-blind slips.  The structural
+reading: on a `carry_invariant` lineage whose chord priors are ~4 cycles wide, a one-cycle slip is below the resolution of
+every tier — IF-TD by its own floor, D5 by the chord σ, post-fit RAIM by the free column — and the wire is indifferent to it;
+the tiers' power is bounded by the carry's strength, not by their statistics.  No further power legs; D1 stays deferred (a
+withhold remains unreachable), and the next RAIM question is the sim bed's stiffer chords, not the field's.
+
 ## 8. Promotion
 
 Per the standing no-promotion directive: `network.raim` stays as-is, both new knobs stay default-OFF, and
