@@ -5523,6 +5523,68 @@ a₀₀ seam transient is gone; a stateful consumer sees 0 phase-bias resets at 
 shared border, restored DIAGONAL on this lineage (RS-7, §21.14) — the code-bias level, the ZWD sink offset, the
 pooled clock contrast and the rx-CB gate's 26 % share all sit with it.
 
+### 21.16 RS-8 pre-registered — the six L2X families' "datum drop" is the per-station CANONICAL-SIGNAL latch re-deciding at the resume epoch, not a datum memory (2026-09-13 ~06:40 local; read-only investigation on the existing legs, manager pre-registration BEFORE any leg is read)
+
+**The finding (no new run; Opus investigation on `evseed_field6h_v5` / `v5raw` and the RS-6 legs).**  §21.10–§21.14 graded
+raw phase bias "ex L2X" because the six GPS L2X families step ~25 m at +1 and their eq34 component datum
+receiver GAMB00PYF "vanishes" (→ CPVG00CPV).  The datum memory is complete and IS restored: the ep0604 snapshot
+carries `EQD,G|L2X,GAMB00PYF`, eleven `EQS,G*_L2X,GAMB00PYF` roots, the `PA` pins and the parent edges
+INEG00MEX←G31 / OAFA00ARG←G27, and the leg's RS-3 line restores all of it (6 sticky receivers, 176 parent edges,
+126 roots, 302 pin targets).  The seed does not re-elect at the seam (its PHASE_DATUM rows at 277290–277350 carry
+zero L2X; its L2X tracker set is `{GAMB, INEG, OAFA}` for all 720 epochs).  The leg's election falls through the
+sticky and incumbent tests (`NetworkChainDatum.cpp:306–353`, then the reref stamp at `:507–510`) for one reason:
+GAMB00PYF is not in the L2X `rx_list` because it contributes **no L2X arc** — its L2X tracker set at +1 is
+`CPVG|G10 G12 G15 G23 G24 G25 G29 G32, INEG|G10 G28 G31 G32` (12 arcs) against the seed's
+`GAMB|G04 G08 G09 G27 G31, INEG|…, OAFA|…` (15 arcs); the unions are exactly the emitted L2X key sets (seed 11
+satellites, leg 10, intersection = the six that re-reference; the other five have no L2X column at all ⇒ "None").
+
+The cause is `PppModel::decideConstellationCanonicals` (`src/core/model/PppModel.cpp:414`, guard `:427`, lock
+`:479`; member `include/model/PppModel.hpp:513–523`): per station, on that station's FIRST processed epoch, it picks
+the per-(band, obs-type) signal with the highest satellite count and locks it for the run.  The latch is in no
+snapshot and its "Canonical signals locked for GPS …" line goes to the `ppp_model` logger, which is 0 bytes in every
+run — the swap is silent.  RINEX tallies at the two run starts reproduce every observed tracker set:
+
+| station | 00:00 (seed ep 1) | 05:02 (leg ep 1) | seed canonical | leg canonical |
+|---|---|---|---|---|
+| GAMB00PYF | L2W 9 / **L2X 10** | **L2W 10** / L2X 8 | L2X | **L2W** |
+| CPVG00CPV | **L2W 10** / L2X 7 | L2W 8 / **L2X 11** | L2W | **L2X** |
+| OAFA00ARG | L2W 7 / **L2X 8** | **L2W 9** / L2X 8 | L2X | **L2W** |
+| INEG00MEX | L2W 1 / **L2X 7** | L2W 2 / **L2X 7** | L2X | L2X |
+
+On the matched raw pair (`v5raw` vs `rs6_raw_both`) the six L2X keys read p50 |Δ| **25.6 m** at +1 against 1.50 m
+for the other 123 — §21.10's 24.7 m to the digit.  (A latch that decides a station's canonical L2 signal from ONE
+epoch's satellite count is a design smell in its own right — GAMB's L2W/L2X counts differ by one or two satellites
+at both instants — but that is not this card: the continuity defect is that a resume RE-decides it.)
+
+**Build (RS-8; the RS-3/RS-5/RS-6 pattern — default-OFF, byte-identical when off, forward-only, NOT fingerprinted).**
+Write knob `network.state_snapshot_signal_capture`: one row `CN,<station index>,<constellation>,<band>,<C|L>,<signal>`
+per locked canonical (from `PppModel::exportCanonicalSignals()` over `constellation_canonical_` +
+`_decided_`), format-forward under the existing header; the field golden pins it (write side only, products
+byte-identical) and `event_leg.py write-seed` arms it.  Read knob `network.resume_signal_canon_restore` (requires
+`resume_frame_restore` — the arcs the restored realization frame names are the writer's canonical signals'):
+at a warm resume, after the RS-3 datum restore, restore each station's map (`PppModel::restoreCanonicalSignals()`)
+so the `:427` guard treats the station as decided; a snapshot without `CN` rows is inert and WARNED (the rider that
+makes this defect visible from now on: the "Canonical signals locked" line is re-emitted on `main_log` at every
+decision AND every restore, with the counts); counters + run-end line.  Two leg-side diagnostics are NOT wanted.
+Seeds: `runs/evseed_field6h_v6` and `v6raw` = the v5 recipes + the write knob (their products must be byte-identical
+to v5's / v5raw's: 0 differing values — the RS-5→RS-6 precedent), ep0604 at the same tow, fingerprint unchanged.
+
+**Gates, frozen (legs `rs8_raw_ctl` / `rs8_raw_canon` from `v6raw` ep0604 and `rs8_null_ctl` / `rs8_null_canon`
+from `v6`, 60 epochs, one exe; every other RS restore at the harness default; `resume_coupling_restore: false`):**
+* **Q1 the tracker set:** at +1 the leg's L2X tracker set in `network_if_slip.csv` is the seed's `{GAMB00PYF,
+  INEG00MEX, OAFA00ARG}` and the emitted L2X satellite set is the seed's 11; every station's canonical map at +1
+  equals the writer's (the restore line counts 0 disagreements).
+* **Q2 the datum:** the first post-resume epoch's eq34 re-references drop from 8 to ≤ 2 (the seed's own two L5Q
+  re-references at 277320), with zero L2X rows; the RS-3 restore line unchanged.
+* **Q3 the level:** on the raw pair the six L2X keys' |Δ| at +1 p50 ≤ 2.0 m (from 25.6), i.e. at the other keys'
+  level, so raw PB at +1 is graded over all 129 keys from here on; the other 123 keys within 0.05 m of the control
+  leg's (the restore touches L2X only).
+* **Q4 byte-identity:** cold smoke knob absent vs armed `products.txt` identical (`87a33bf0…` on the field golden);
+  `rs8_raw_ctl` reproduces `evleg_rs6_raw_both`'s `products.txt` byte-for-byte (same posture, new binary — the
+  resume path certified too); `v6` / `v6raw` products byte-identical to `v5` / `v5raw`; suite green.
+* **Q5 the rider:** the canonical line appears on `main_log` for every station on the cold seed and, on the legs,
+  reads "restored" (canon) / "decided" (ctl); a resume against a `CN`-less snapshot (a v5 seed) warns once.
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
