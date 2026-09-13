@@ -7052,3 +7052,56 @@ network's size — and the inconsistency is in the code rows at epoch 1 of a thr
 − modeled` as the network path builds it against the same `PppModel::computeModels` the converging PPP uses (`ApplicationNetworkAssembly.cpp:1308`).
 The next read is the producer's own per-row `CODE-DECOMP` trace (`MeasurementModel.cpp:1740`, trace level: observed, predicted and every model
 term per row) on a four-epoch three-station network run and on the WROC standalone PPP, diffed row by row at the first epoch.
+
+### 24.9 The row-level read (2026-09-14 ~14:30, manager): the a-priori model is right, the code rows do not ask for the ZWD the solve reports, and the station block is near-rank-deficient at ignition
+
+`runs/_ci_decomp_net` / `_net2` (the A8 three-station posture, 4 epochs, `measurement_model` at trace level; the rx-state / iono / rows
+traces) and `_ci_decomp_phasedw` / `_ctl20` (20 epochs, phase σ 0.5 m vs 2 mm).
+
+**The a-priori pseudorange model is right.**  At WROC's first epoch the engine's `predicted` for every code row agrees with an INDEPENDENT
+model (the ITRF position, the SP3 with light time and Earth rotation, CODE's 30 s clock, the relativistic periodic term, Saastamoinen ZHD at
+the geodetic height) to the ~2 m the independent model omits (the satellite antenna offset).  The pre-fit innovations are +2.3…+5.0 m on C1C
+and +4.1…+6.9 m on C2W (the station clock's and the bias seeds' linearization) and their ionosphere-free combination spans −0.7…+2.1 m with
+NO elevation trend (G15 at 23°: −0.25; G30 at 73°: +0.79) — a −18 m ZWD would need a 28 m spread between them.  The post-fit code residuals
+are 0.3–0.55 m rms per station at epochs 1–4; the row weights are normal (σ 0.31–0.77 m code, 2–3 mm phase).
+
+**And yet the ZWD reads −17.8 ± 4.5 m at epoch 1 and converges to −19.6 ± 1.1 m by epoch 20** at WROC (GOP6 −9.9 → −11.5, FFMJ −7.1 → −9.5; σ
+falling as σ₀/√n).  The phase-deweight diagnostic (§24.10's first arm, phase σ 0.5 m — a code-only solve) leaves it at −14.5 → −18.0 m (FFMJ
+−4.5 → −5.2, GOP6 −6.6 → −7.2) with the code residuals SMALLER (0.26–0.39 m): **the sink is driven by the code rows' STATE STRUCTURE, not by
+the phase rows.**  What `network_zwd.csv` writes is `x_lin + x_r(zcol)` with `x_lin ≡ 0` (`NetworkIonoDiag.cpp:139`; the station's tropo
+state is a correction about zero) and `x_r` the local correction RECONSTRUCTED from the shared solution (`est.reconstructStation`), its σ the
+conditional local variance.  A formal σ of 4.5 m for a column whose partial is the wet mapping function against ten code rows of σ 0.4 m is
+not possible (it would be ~0.1 m): the ZWD column's effective information in the reduced station block is ~1/50 of that, and the
+redundancy census of the same epoch says why — **47 of 130 rows (36 %) are UNCHECKABLE (redundancy ≤ 1e-6)**, i.e. fully absorbed by free
+local parameters.  With the ambiguities free per epoch (carry_invariant), the phase rows carry no absolute information, and the code rows
+must determine, per station and per epoch, {clock, ZWD, the γ-scaled receiver "DCB", N per-LOS ionospheres tied at 5 TECU}: the DCB and
+the ionospheres share the γ-vector (only their sum per LOS is observed; the SH tie is the only separator), and clock vs ZWD separate only
+through the ionosphere-free combination's elevation spread.  The local block is near-rank-deficient; the reconstruction picks a solution
+along the weak direction, the residuals stay small, the ZWD reads absurd, and the station's contribution to the SHARED states (the satellite
+clocks and biases — the wire) is a projection of that weak split, which is how a wire metres off CODE and a consumer that never converges
+come out of stations whose own data fit to 0.4 m.  Three supporting facts from the same traces: the receiver "code-bias" seed is γ-scaled
+between C1 and C2 at all three stations (ratio 1.647 = (f₁/f₂)²) — an ionosphere-like offset, not a hardware DCB; the per-LOS ionosphere at
+epoch 1 is inconsistent between neighbours (G15 at 23–28°: WROC +14.7, GOP6 +9.6, FFMJ +3.5 m); the residual-pool trace omits every C1C row at
+WROC (rows "attributed to neither family" — the pinned / canonical signal), a trace gap.  The sim bed carries the same sink (the campaign
+run's `zwd_m` spans −11.9…+22.2 m around a 0.12 m median), which the medians of the storm grades never showed.
+
+### 24.10 Card ZP — the station block's parameterization at ignition (pre-registered; the phase-deweight arm above is its first result)
+
+**Instrument (build, trace-only): `network.trace_station_block`** — per station per epoch: the local block's rank and condition number, its
+smallest eigenpairs with the local states that span them (which of clock / ZWD / DCB / iono / ambiguity columns), the ZWD column's effective
+information Σ w·h² in the reduced system against its raw Σ w·m_wet², the reconstructed local correction's norm, and the count of zero-redundancy
+rows by kind — written for the first 20 epochs and every 60th thereafter.  Bars: none; it is the eyes of the card.
+
+**Mechanism (build, default OFF, byte-identical, never fingerprinted): `network.zwd_prior_sigma_m`** — one pseudo-observation per station per
+epoch on the tropo column toward the a-priori ZWD (the SH-tie row's shape).  Arms (cold 2 h from the golden, the traces on): σ 0.02 m (held),
+σ 0.2 m (physical), control.  Reads: §24.8's (i)–(v), the clock LEVEL vs CODE, the cold consumer's 3D at 1 h / 2 h, and the station-block
+trace.  Frozen reading: with the ZWD held, the code residual rms and the wire-vs-CODE within-arc rms FALL ⇒ the sink was a symptom and the
+prior is the fix (a posture change; the level instruments re-graded); they RISE ⇒ the sink was protecting the wire and the inconsistency is
+then measured directly as the change in the clock LEVEL vs CODE between the arms.
+
+**The design question this leaves for the author** (not a worker's call): a station block whose code rows must resolve clock, ZWD, a γ-scaled
+receiver bias and N tied ionospheres every epoch, with the phase contributing nothing absolute, is under-determined by construction; the
+candidates are (a) a per-epoch ZWD prior (above), (b) an ionosphere-free code combination for the station states (the standalone PPP's
+posture, which converges), (c) a receiver DCB datum per station instead of a free γ-scaled column, (d) an absolute phase time-link alongside
+the DD carry (the leveling inject that `carry_invariant` retired).  Each is a posture change of the field vehicle; the goldens, the harness
+seeds and every level-channel number change with it.
