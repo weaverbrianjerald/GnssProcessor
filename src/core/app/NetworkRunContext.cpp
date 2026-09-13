@@ -88,6 +88,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_station_restore = config_.networkResumeStationRestore();    // RS-6 §21.13
     k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
     k.resume_station_shdev   = config_.networkResumeStationRestoreShDev();
+    k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // RS-8 §21.16
     k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // RS-4 §21.9
     k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
     k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
@@ -1021,7 +1022,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           resume_carry_rebase, resume_d5_warmup_ep,
         //                           resume_datum_restore (RS-3, §21.7),
         //                           resume_emit_restore (RS-5, §21.10),
-        //                           resume_station_restore{,_rxcb,_shdev} (RS-6, §21.13)
+        //                           resume_station_restore{,_rxcb,_shdev} (RS-6, §21.13),
+        //                           resume_signal_canon_restore (RS-8, §21.16)
         //
         // Two entries need their own note:
         //
@@ -1060,6 +1062,18 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   layer; carry_rx_code_bias and global_vtec_sh.rep_error_tau_s for the two
         //   station carries), so a writer/reader mismatch on their MEANING is
         //   unreachable.
+        //
+        //   state_snapshot_signal_capture (RS-8, §21.16) is the same representation
+        //   question again — CN rows under the EXISTING header, read out of the station
+        //   models after the emit, writer's products and traces byte-identical.  The
+        //   station ROSTER (which is what the row's index means) is already in fp above,
+        //   so an index cannot silently name a different station.  Its OWN contents —
+        //   signal_priorities and the coverage allowlist — are deliberately NOT added:
+        //   they are not in the fingerprint today, adding them would strand every stored
+        //   snapshot, and a mismatch is not silent anyway.  A restored channel this run
+        //   does not track simply has no observation, which is the pre-card reading for
+        //   that band (a station that tracks nothing on a band has no canonical for it
+        //   either way), and the restore AUDIT reports the disagreement explicitly.
         //
         // ⚠ Do NOT move any of these into the fingerprint: it would strand every
         //   stored snapshot AND outlaw the same-snapshot OFF/ON A/B that their
@@ -1734,6 +1748,49 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_station_shdev,
                                       ctx.counters.n_resume_station_shdev == 1 ? "y" : "ies");
                     }
+                    // RS-8 CANONICAL-SIGNAL restore (network.resume_signal_canon_restore,
+                    // SPEC_event_harness §21.16) — STAGED here, APPLIED by
+                    // networkRestoreCanonicalSignals immediately after this function
+                    // returns.  The latch lives in each station's PppModel and this seam
+                    // has no roster; growing one just to reach the models would make the
+                    // resume seam depend on the whole station bundle for one map, so the
+                    // rows are parked in ctx.carry and the driver's very next call drains
+                    // them (the two are a pair — an empty stash there means either this
+                    // block did not run or the snapshot carried nothing).
+                    //
+                    // Measured without it (§21.16): the resume epoch's satellite counts
+                    // re-decide the latch — GAMB00PYF L2X→L2W, CPVG00CPV L2W→L2X,
+                    // OAFA00ARG L2X→L2W — so the L2X tracker set changes, the eq34 L2X
+                    // component's datum receiver vanishes, and the six L2X phase-bias
+                    // families read p50 |Δ| 25.6 m at +1 against 1.50 m for the other 123.
+                    if (ctx.knobs.resume_signal_canon_restore) {
+                        ctx.carry.resume_canon_rows.clear();
+                        long long staged = 0;
+                        for (const auto& [idx, rows] : snap.canonical_signals) {
+                            auto& dst = ctx.carry.resume_canon_rows[idx];
+                            for (const auto& c : rows) {
+                                dst.push_back(PppModel::CanonicalSignal{
+                                    c.constellation, c.band, c.obs_type, c.signal});
+                                ++staged;
+                            }
+                        }
+                        if (staged == 0)
+                            log->warn("Network (RS-8 canonical restore): ARMED but the "
+                                      "snapshot carries NO CN rows (a writer without "
+                                      "network.state_snapshot_signal_capture) — INERT; "
+                                      "every station re-DECIDES its canonical per-band "
+                                      "signal from THIS epoch's satellite counts, exactly "
+                                      "as an unarmed resume does, and a band whose two "
+                                      "channels are within a satellite or two of each "
+                                      "other can flip silently.");
+                        else
+                            log->info("Network (RS-8 canonical restore): staged {} "
+                                      "canonical entr{} across {} station(s) from the "
+                                      "snapshot; applied to the station models before the "
+                                      "first epoch.",
+                                      staged, staged == 1 ? "y" : "ies",
+                                      ctx.carry.resume_canon_rows.size());
+                    }
                     // Coupling regressors (network.resume_coupling_restore) — the
                     // second half of the frame restore, and the RE-COUPLING edge for
                     // the leveling carry itself.
@@ -2215,6 +2272,57 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     }
 }
 
+void networkRestoreCanonicalSignals(NetworkRunContext& ctx, const GnssConfig& config_,
+                                    std::vector<NetStation>& stations,
+                                    const std::shared_ptr<spdlog::logger>& log) {
+    // RS-8 (SPEC_event_harness §21.16), the APPLY half of the canonical-signal restore.
+    // networkTryWarmResume parsed the snapshot and staged its CN rows; this seam is the
+    // driver's very next call, where the station roster is in scope, and it is the only
+    // place the latch can actually be written.  It must run BEFORE the first processed
+    // epoch: PppModel::decideConstellationCanonicals locks the latch on that epoch, and
+    // a restore arriving afterwards would be overwritten already.
+    //
+    // Unarmed, or on a run that never resumed, the stash is empty and this is a no-op
+    // (byte-identical).  Armed with an empty stash after a resume, networkTryWarmResume
+    // has ALREADY warned once about the CN-less snapshot — invariant #4 is served there,
+    // where the file is in hand, rather than warned about twice.
+    if (!ctx.knobs.resume_signal_canon_restore) return;
+    auto& staged = ctx.carry.resume_canon_rows;
+    if (staged.empty()) return;
+
+    long long n_sta = 0, n_ent = 0, n_orphan = 0;
+    for (const auto& [idx, rows] : staged) {
+        if (idx < 0 || idx >= static_cast<int>(stations.size())
+            || !stations[static_cast<std::size_t>(idx)].model) {
+            // Unreachable through a PASSING fingerprint (the roster is one of its terms),
+            // so this is a tripwire rather than a handled case — and a silent drop is
+            // exactly the failure mode the card exists to end.
+            ++n_orphan;
+            continue;
+        }
+        const std::size_t applied =
+            stations[static_cast<std::size_t>(idx)].model->restoreCanonicalSignals(rows);
+        if (applied == 0) continue;
+        ++n_sta;
+        n_ent += static_cast<long long>(applied);
+    }
+    ctx.counters.n_resume_canon_stations = n_sta;
+    ctx.counters.n_resume_canon_entries  = n_ent;
+    staged.clear();   // one-shot: the latch is written, the buffer owns nothing further
+
+    if (n_orphan > 0)
+        log->warn("Network (RS-8 canonical restore): {} snapshot station index(es) name "
+                  "no station on this roster and were DROPPED — the config fingerprint "
+                  "should have refused this file; treat the run as suspect.", n_orphan);
+    log->info("Network (RS-8 canonical restore): applied {} canonical entr{} to {} "
+              "station model(s) BEFORE the first epoch — each of those stations keeps "
+              "the writer's per-band channel instead of re-deciding it from this "
+              "epoch's satellite counts.  The first epoch AUDITS the latch (it runs the "
+              "tally diagnostically and reports how many entries it would have picked "
+              "differently); the run-end RS-8 line carries that count.",
+              n_ent, n_ent == 1 ? "y" : "ies", n_sta);
+}
+
 void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_,
                                const GnssTime& t, double pl_now_s,
                                NetworkProductEmitter& emitter,
@@ -2222,7 +2330,8 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                const std::shared_ptr<spdlog::logger>& log,
                                const NetworkClockEmitRebase* clk_rebase,
                                const NetworkEmitRebase* emit_rebase,
-                               const NetworkPbEmitFilter* pb_filter) {
+                               const NetworkPbEmitFilter* pb_filter,
+                               const std::vector<NetStation>* stations) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
     const auto& nc = config_.getNetworkConfig();
@@ -2623,6 +2732,36 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             ctx.carry.snap_station_rows_last =
                 static_cast<long long>(snap.rx_cb_carry.size() + snap.sh_dev_carry.size());
         }   // state_snapshot_station_capture
+        // RS-8 CANONICAL-SIGNAL capture (network.state_snapshot_signal_capture,
+        // SPEC_event_harness §21.16) — the WRITE half of the one per-station latch that
+        // lived in NO snapshot: PppModel's per-(constellation, band, obs-type) canonical
+        // signal, decided from that station's FIRST processed epoch's satellite counts
+        // and then locked for the run.
+        //
+        // The only snapshot group that cannot be read out of ctx.carry — the latch is
+        // inside each station's model — hence the roster parameter.  A caller that
+        // passes none simply does not capture the group (and the knob then reports the
+        // invariant-#4 "0 rows under an ARMED capture" reading at run end).
+        //
+        // Read-only w.r.t. the models and written into `snap` alone, the same write-side
+        // discipline as the datum / emit / station blocks, which is what makes the knob
+        // legal to add to an existing recipe: products and traces byte-identical.
+        if (nc.state_snapshot_signal_capture && stations) {
+            for (std::size_t i = 0; i < stations->size(); ++i) {
+                const auto& st = (*stations)[i];
+                if (!st.model) continue;
+                auto rows = st.model->exportCanonicalSignals();
+                if (rows.empty()) continue;   // never processed an epoch, or nothing admitted
+                auto& dst = snap.canonical_signals[static_cast<int>(i)];
+                for (const auto& c : rows)
+                    dst.push_back(NetworkStateSnapshot::CanonSignal{
+                        c.constellation, c.band, c.obs_type, c.signal});
+            }
+            long long n = 0;
+            for (const auto& [idx, rows] : snap.canonical_signals)
+                n += static_cast<long long>(rows.size());
+            ctx.carry.snap_canon_rows_last = n;
+        }   // state_snapshot_signal_capture
         // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
         // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
         // resume reproduces the phase-ambiguity branch instead of re-converging one.

@@ -2831,6 +2831,31 @@ namespace GnssProcessor {
          */
         bool networkResumeStationRestoreShDev() const { return network_resume_station_restore_shdev_; }
         /**
+         * @brief RS-8 resume CANONICAL-SIGNAL restore
+         *        (@c network.resume_signal_canon_restore, SPEC_event_harness §21.16) —
+         *        the READ half of @c network.state_snapshot_signal_capture.
+         *
+         * Armed, a warm resume restores each station's per-(constellation, band,
+         * obs-type) canonical-signal latch (the @c CN rows) into its @c PppModel before
+         * the first epoch, so @c PppModel::decideConstellationCanonicals' first-epoch
+         * guard treats the station as already decided instead of re-deciding the latch
+         * from the RESUME epoch's satellite counts.  Measured without it at the field
+         * seam: GAMB00PYF L2X→L2W, CPVG00CPV L2W→L2X, OAFA00ARG L2X→L2W — the L2X
+         * tracker set changes, the eq34 L2X component loses its datum receiver, and the
+         * six L2X phase-bias families step ~25 m at +1 (p50 |Δ| 25.6 m against 1.50 m
+         * for the other 123 keys).
+         *
+         * A snapshot without @c CN rows is INERT and loudly logged (the RS-3 / RS-5 /
+         * RS-6 precedent).  The loader hard-requires @ref networkResumeFrameRestore: the
+         * arcs the restored realization frame names are the writer's canonical signals'.
+         * Deliberately NOT in the warm-resume fingerprint — the same forward-only
+         * resume-response exemption class as @ref networkResumeFrameRestore,
+         * @ref networkResumeDatumRestore, @ref networkResumeEmitRestore,
+         * @ref networkResumeStationRestore, @ref networkResumeCouplingRestore and
+         * @ref networkResumeCarryRebase.  Default false = byte-identical.
+         */
+        bool networkResumeSignalCanonRestore() const { return network_resume_signal_canon_restore_; }
+        /**
          * @brief RS-4 warm-resume PHASE-BIAS SEAM MARK (@c network.resume_pb_seam_mark,
          *        SPEC_event_harness §21.9) — declare the seam on the wire when the first
          *        post-resume emit re-realizes the phase-bias level.
@@ -7637,6 +7662,7 @@ namespace GnssProcessor {
         bool   network_resume_station_restore_{false};     ///< RS-6 resume STATION-LAYER restore (SPEC_event_harness §21.13), the reader half of network.state_snapshot_station_capture: at a warm resume, restore the rx-CB carry (the RC rows, through makeRestoredLocalCarry so each entry carries the §15.4.1 restored-arc sentinel) and the T5 / Iono-2 per-LOS deviation carry (the SD rows, as written — ShDevCarry's cold test is t_s <= 0, so the restored harvest stamp is what makes the entry read WARM) BEFORE the first epoch, instead of cold-starting both (measured: the rx-CB inject gate withholds 26 % of priors on a leg against 13 % on the seed, and ~400 deviation entries cold-seed at +1).  Each half inert and loudly logged when its rows are absent.  Loader hard-requires resume_frame_restore.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_station_restore_rxcb_{true}; ///< RS-6 diagnostic sub-switch: restore the rx-CB half.  Meaningful only under network_resume_station_restore_, and only so one leg of the §21.13 attribution matrix can restore ONE half.  Default true ⇒ an ordinary armed resume restores both.
         bool   network_resume_station_restore_shdev_{true};///< RS-6 diagnostic sub-switch: restore the T5 deviation half — the rxcb twin, same scope and default.
+        bool   network_resume_signal_canon_restore_{false};///< RS-8 resume CANONICAL-SIGNAL restore (SPEC_event_harness §21.16), the reader half of network.state_snapshot_signal_capture: at a warm resume, restore each station's per-(constellation, band, obs-type) canonical-signal latch (the CN rows) into its PppModel BEFORE the first epoch, so decideConstellationCanonicals' first-epoch guard leaves it alone instead of re-deciding it from the RESUME epoch's satellite counts (measured: GAMB00PYF L2X→L2W, CPVG00CPV L2W→L2X, OAFA00ARG L2X→L2W ⇒ the L2X tracker set changes, the eq34 L2X component loses its datum receiver, and the six L2X phase-bias families step ~25 m at +1).  A file without CN rows is inert and loudly logged.  Loader hard-requires resume_frame_restore.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_pb_seam_mark_{false};        ///< RS-4 warm-resume PHASE-BIAS SEAM MARK (SPEC_event_harness §21.9): at the FIRST emit after a warm resume, if more than kResumePbSeamMarkFraction of a constellation's fresh-baseline (sat,signal) phase-bias keys differ from their RESTORED emitter baseline by more than discThresholdM, markDatumChange that constellation exactly as the CLK-R resume_seam rule does (E-record datum_changed 1 + a PB_FRAME/resume_seam event + the n_pb_seam_marks counter).  Closes the gap the CLK-R rule leaves: that rule fires only when the held-frame clock engine reports epochs==0, so a lineage that RESTORES the frame is never marked - exactly when the clock is continuous and the phase-bias level is not.  One shot, warm resumes only (the latch is never set on a cold start).  Outputs-only: no estimate moves.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.

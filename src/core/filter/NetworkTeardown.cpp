@@ -3529,6 +3529,46 @@ int networkTeardown(
                         "happened; check the resume log for the RS-6 line."
                       : "");
     }
+    // RS-8 (SPEC_event_harness §21.16): the CANONICAL-SIGNAL latch, beside the RS-6 line
+    // and on the same armed-only discipline.  The DISAGREE count is this card's own
+    // instrument and it reads in BOTH directions: > 0 is the defect being prevented (so
+    // many restored entries this run's first epoch would have latched differently), 0
+    // says the seam epoch happened to agree — never that the wiring did nothing, which
+    // is what the stations/entries pair reports (standing invariant #4).
+    if (config_.getNetworkConfig().state_snapshot_signal_capture
+        || config_.networkResumeSignalCanonRestore()) {
+        auto& C = ctx.counters;
+        // The audit runs INSIDE the station models on the first post-resume epoch, so
+        // the roster is the only place the result lives; sum it here.
+        long long audited = 0, disagree = 0;
+        for (const auto& st : setup.stations) {
+            if (!st.model) continue;
+            audited  += st.model->canonicalAuditEntries();
+            disagree += st.model->canonicalAuditDisagreements();
+        }
+        C.n_resume_canon_audited  = audited;
+        C.n_resume_canon_disagree = disagree;
+        log->info("Network (RS-8 canonical restore): write {} / read {}; last snapshot "
+                  "carried {} CN row(s); restored {} entr{} across {} station(s); first "
+                  "post-resume epoch audited {} of them and {} would have been decided "
+                  "DIFFERENTLY here.{}",
+                  config_.getNetworkConfig().state_snapshot_signal_capture ? "ARMED" : "off",
+                  config_.networkResumeSignalCanonRestore() ? "ARMED" : "off",
+                  ctx.carry.snap_canon_rows_last,
+                  C.n_resume_canon_entries, C.n_resume_canon_entries == 1 ? "y" : "ies",
+                  C.n_resume_canon_stations, audited, disagree,
+                  (config_.networkResumeSignalCanonRestore()
+                   && C.n_resume_canon_entries == 0)
+                      ? "  ⚠ 0 restored under an ARMED read — the snapshot carried no CN "
+                        "rows (a writer without network.state_snapshot_signal_capture?) "
+                        "or no warm resume happened; check the resume log for the RS-8 "
+                        "line."
+                      : (disagree > 0
+                             ? "  Those are the flips the card prevents: without the "
+                               "restore each of them re-decides the station's canonical "
+                               "per-band channel at the seam."
+                             : ""));
+    }
     // RS-4 (SPEC_event_harness §21.9): the DECLARATION half, beside the RS-3 line and
     // at the same (function) scope for the same invariant-#4 reason.  The census is
     // taken on EVERY warm resume the knob is armed for, so an armed run that marked

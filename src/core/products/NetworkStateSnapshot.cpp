@@ -259,6 +259,18 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
                         l.value_abs, l.var, l.last_seen_s));
     for (const auto& [key, d] : snap.sh_dev_carry)
         put(fmt::format("SD,{},{},{},{},{}", key, d.dev, d.var, d.var_ss, d.t_s));
+    // RS-8 CANONICAL-SIGNAL records (SPEC_event_harness §21.16): the per-station
+    // per-(constellation, band, obs-type) latch PppModel locks from one epoch's
+    // satellite counts.  Written only under network.state_snapshot_signal_capture
+    // (the driver leaves the container empty otherwise, so a run without it writes
+    // the previous bytes unchanged), under the existing header like the RS-3 / RS-5
+    // / RS-6 groups, and BEFORE the CARRY / EMITTER blobs so the verbatim blob state
+    // machines can never swallow them.  Constellation / band / signal are RINEX
+    // tokens and the obs-type is one char, so none of the fields can carry a comma.
+    for (const auto& [idx, rows] : snap.canonical_signals)
+        for (const auto& c : rows)
+            put(fmt::format("CN,{},{},{},{},{}", idx, c.constellation, c.band,
+                            c.obs_type, c.signal));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -695,6 +707,19 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 || !std::isfinite(d4) || d2 < 0.0 || d3 < 0.0)
                 return fail("SD field not finite (or a negative variance)");
             s.sh_dev_carry[f[1]] = NetworkStateSnapshot::ShDev{d1, d2, d3, d4};
+        } else if (tag == "CN") {   // RS-8: canonical-signal latch entry
+            // Refused at the parse like the RC / SD rows: the restored signal becomes
+            // the station's LOCKED per-band channel for the whole leg, so a malformed
+            // row is not something to skip quietly — an obs-type that is neither 'C'
+            // nor 'L' would install an entry no lookup can ever match, which reads as
+            // a cold latch for that band and re-opens the very defect this carries.
+            if (f.size() != 6 || f[2].empty() || f[3].empty() || f[5].empty())
+                return fail("malformed CN line");
+            if (!parseI(f[1], i1) || i1 < 0) return fail("malformed CN station index");
+            if (f[4].size() != 1 || (f[4][0] != 'C' && f[4][0] != 'L'))
+                return fail("CN obs-type must be exactly 'C' or 'L'");
+            s.canonical_signals[static_cast<int>(i1)].push_back(
+                NetworkStateSnapshot::CanonSignal{f[2], f[3], f[4][0], f[5]});
         } else {
             return fail("unknown record tag '" + tag + "'");
         }
