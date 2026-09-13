@@ -2354,6 +2354,9 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
     // StateInitializer keeps a raw pointer to its own element and increments it from
     // inside the OpenMP parallel produce phase.  Distinct objects ⇒ race-free with no
     // atomics, the same discipline as the per-station StationAssembly tallies.
+    // {applied, carried-but-unseeded} — the second is scoped to the keys the map
+    // CARRIES (the RL rows pair 1:1 with the RC rows), so a code-bias family with no
+    // carry, whose x_lin no gate reads, is not counted as a miss.
     ctx.carry.rxcb_lin_sta_counts.assign(stations.size(), {0LL, 0LL});
     long long installed_sta = 0, installed_entries = 0, orphan = 0;
     for (const auto& [sidx, keymap] : ctx.carry.rxcb_lin_restore) {

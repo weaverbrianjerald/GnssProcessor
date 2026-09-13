@@ -747,7 +747,15 @@ void StateInitializer::initializeCodeBiases(const std::vector<PppObservation>& o
         // — the only consumer of the value is the gate.  network.rx_code_bias_
         // datum is the one mechanism whose RHS also reads x_lin (η = λ(0 −
         // x_lin)); the loader refuses that pair, so it cannot be reached here.
-        if (!code_bias_seed_override_.empty()) {
+        // Scoped to the keys the map CARRIES a reference for.  The RL rows pair 1:1
+        // with the RC rows, so a key absent here is one with no rx-CB carry — the
+        // gate never differences anything against its x_lin, and it simply takes
+        // today's seed (a GPS L1/L2/L5 station holds GPS_DCB, carried, and
+        // GPS_IFB5, not).  `uncovered` therefore counts only the case that WOULD
+        // matter — a carried key whose restored reference could not be applied —
+        // and must read 0.
+        if (codeBiasSeedOverrideCovers(code_bias_seed_override_, key)) {
+            bool seeded = false;
             const auto ovr = resolveCodeBiasSeedOverride(code_bias_seed_override_, key);
             if (ovr.has_value()) {
                 const int ov_idx = state_manager_.getCodeBiasIndex(key);
@@ -757,12 +765,10 @@ void StateInitializer::initializeCodeBiases(const std::vector<PppObservation>& o
                     log->info("{}RS-9: code bias {} seeded from the RESTORED "
                               "linearization point: {:.6f} m (the one-epoch code "
                               "median is NOT used)", epoch_prefix, key, *ovr);
-                    continue;
+                    seeded = true;
                 }
             }
-            // Reached the loop, no usable override ⇒ today's seed, counted.  An
-            // uncovered key is the pre-card behaviour for that key alone, not a
-            // failure — but invariant #4 says it must be visible.
+            if (seeded) continue;
             if (cb_seed_override_uncovered_) ++*cb_seed_override_uncovered_;
         }
         std::vector<double> estimates;

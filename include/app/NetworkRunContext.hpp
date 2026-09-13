@@ -2582,13 +2582,19 @@ namespace GnssProcessor {
         // SPEC_event_harness §21.18) — the re-coupling edge's identities for the FRAME the
         // rx-CB inject gate judges the restored carry against.  0 entries under an armed
         // knob = INERT (invariant #4): the snapshot carried no RL rows (a writer without
-        // network.state_snapshot_rxcb_lin_capture), or no warm resume happened.  A nonzero
-        // `_uncovered` is not a failure — those keys simply take the pre-card one-epoch
-        // code seed — but it must be visible, because a station seeded on the old path is
-        // exactly a station the gate can still refuse for the whole leg.
+        // network.state_snapshot_rxcb_lin_capture), or no warm resume happened.
+        //
+        // `_uncovered` is scoped to the keys the RL rows CARRY a reference for, which — the
+        // rows pairing 1:1 with the RC rows — is exactly the set that has an rx-CB carry,
+        // i.e. exactly the set whose x_lin the inject gate ever reads.  A code-bias family
+        // with no carry (GPS_IFB5 beside the carried GPS_DCB on a GPS L1/L2/L5 station)
+        // takes today's one-epoch seed and is NOT a miss, so it is not counted.  A NONZERO
+        // `_uncovered` therefore means a CARRIED key whose restored reference could not be
+        // applied — a non-finite value, or a state index this run does not hold — which is
+        // a defect, not a scope note.
         long long n_resume_rxcb_lin_stations  = 0; ///< stations handed an RL override map
         long long n_resume_rxcb_lin_entries   = 0; ///< RL entries installed across them
-        long long n_resume_rxcb_lin_uncovered = 0; ///< first-epoch code-bias keys with NO RL entry ⇒ today's seed
+        long long n_resume_rxcb_lin_uncovered = 0; ///< CARRIED code-bias keys whose restored reference could NOT be applied (expected 0)
         long long n_resume_slip_warmup_epochs = 0; ///< epochs the MW/LLI drain ran diagnostic-only post-resume
         long long n_resume_d5_warmup_epochs = 0;   ///< RS-2b: epochs the Card-4 D5 innovation gate ran diagnostic-only post-resume
         // Card 1 coupling-regressor restore (network.resume_coupling_restore, §18.12) —

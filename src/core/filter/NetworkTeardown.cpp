@@ -3584,9 +3584,12 @@ int networkTeardown(
         // HERE — the first and only place that needs them, and serial by construction.
         long long applied = 0, uncovered = 0;
         for (const auto& [a, u] : ctx.carry.rxcb_lin_sta_counts) { applied += a; uncovered += u; }
+        // "uncovered" is scoped to the CARRIED keys (the RL rows pair 1:1 with the RC
+        // rows): a code-bias family with no carry never reaches the gate and is not a
+        // miss, so a nonzero here is a carried key whose reference could not be applied.
         log->info("Network (RS-9 rx-CB frame restore): write {} / read {}; last snapshot "
                   "carried {} RL row(s); restored {} linearization point(s) across {} "
-                  "station(s), seeded {}, uncovered {}.{}",
+                  "station(s), seeded {}, carried-but-unseeded {}.{}",
                   config_.getNetworkConfig().state_snapshot_rxcb_lin_capture ? "ARMED" : "off",
                   config_.networkResumeRxCbLinRestore() ? "ARMED" : "off",
                   ctx.carry.snap_rxcb_lin_rows_last,
@@ -3601,10 +3604,18 @@ int networkTeardown(
                           && C.n_resume_rxcb_lin_entries > 0 && applied == 0)
                              ? "  ⚠ points were STASHED and none was ever SEEDED — no "
                                "station reached its first-epoch code-bias initialization "
-                               "with a covered key (estimate_ifb off, or the samples loop "
+                               "with a carried key (estimate_ifb off, or the samples loop "
                                "never saw those families), so the gate still reads this "
                                "leg's own frame."
-                             : ""));
+                             : (uncovered > 0
+                                    ? "  ⚠ NONZERO carried-but-unseeded — a key WITH an "
+                                      "rx-CB carry could not take its restored reference "
+                                      "(non-finite value, or a code-bias state index this "
+                                      "run does not hold), so the gate reads this leg's "
+                                      "own frame for it and can refuse that station for "
+                                      "the whole leg.  A code-bias family with no carry is "
+                                      "NOT counted here."
+                                    : "")));
     }
     // RS-4 (SPEC_event_harness §21.9): the DECLARATION half, beside the RS-3 line and
     // at the same (function) scope for the same invariant-#4 reason.  The census is

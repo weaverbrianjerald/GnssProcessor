@@ -230,16 +230,23 @@ public:
      * gate judges against is the re-coupling edge RS-6 left open (invariant #7).
      *
      * Contract: a key PRESENT here is seeded to @p overrides' value and counted
-     * in @ref codeBiasSeedOverrideApplied; a key the samples loop reaches that is
-     * NOT present falls back to today's median seed and is counted in
-     * @ref codeBiasSeedOverrideUncovered.  Install BEFORE the station's first
-     * @c computeMeasurementUpdate; it is read only under the one-shot latch, so
-     * a later install is inert by construction.
+     * in @c applied.  A key the loop reaches that is NOT present simply takes
+     * today's median seed and is NOT counted anywhere — the RL rows pair 1:1
+     * with the RC rows, so an absent key is one with no rx-CB CARRY, whose
+     * @c x_lin the inject gate therefore never reads (a field station holds
+     * @c GPS_DCB, which is carried, and @c GPS_IFB5, which is not).  @c uncovered
+     * is the invariant-#4 tripwire for the case that WOULD matter: a key that has
+     * a carry, and whose restored reference could not be applied (a non-finite
+     * value, or a state index this run does not hold).  It should read 0.
+     *
+     * Install BEFORE the station's first @c computeMeasurementUpdate; it is read
+     * only under the one-shot latch, so a later install is inert by construction.
      *
      * @param overrides  CB state key ("GPS_DCB", "GPS_IFB5", …) → the writer's
      *                   @c x_lin for that state, in metres.
      * @param applied    Optional out-slot incremented per covered key seeded.
-     * @param uncovered  Optional out-slot incremented per uncovered key.
+     * @param uncovered  Optional out-slot incremented per COVERED key that could
+     *                   not be seeded (see above) — never for an absent key.
      *
      * @note The two out-slots are RAW pointers on purpose: the network producer
      *       runs @c computeMeasurementUpdate inside an OpenMP parallel-for over
@@ -269,10 +276,13 @@ public:
      *                   is the whole pre-card path).
      * @param key        CB state key being seeded.
      * @return The writer's @c x_lin when the key is covered by a FINITE entry;
-     *         @c std::nullopt ⇒ UNCOVERED, and the caller takes today's
-     *         one-epoch median seed.  A non-finite entry is treated as uncovered
-     *         rather than trusted — the parser already refuses one, so this is
-     *         belt-and-braces against a future producer of the map.
+     *         @c std::nullopt otherwise, and the caller takes today's one-epoch
+     *         median seed.  A non-finite entry is refused rather than trusted —
+     *         the parser already refuses one, so this is belt-and-braces against
+     *         a future producer of the map.  Use @ref codeBiasSeedOverrideCovers
+     *         to tell the two @c nullopt cases apart: an ABSENT key is a key with
+     *         no carry (nothing reads its reference), while a PRESENT-but-refused
+     *         one is the counted failure.
      */
     static std::optional<double> resolveCodeBiasSeedOverride(
         const std::map<std::string, double>& overrides, const std::string& key) {
@@ -280,6 +290,20 @@ public:
         const auto it = overrides.find(key);
         if (it == overrides.end() || !std::isfinite(it->second)) return std::nullopt;
         return it->second;
+    }
+
+    /**
+     * @brief Does the installed map carry a reference for @p key at all?
+     *
+     * The population @c uncovered is measured against.  The RL rows pair 1:1 with
+     * the RC rows, so "present in the map" is exactly "this key has an rx-CB carry
+     * entry", which is exactly "the inject gate will difference something against
+     * this key's @c x_lin".  A key the seeding loop reaches that is ABSENT here is
+     * therefore not a miss — it is a code-bias family nothing carries.
+     */
+    static bool codeBiasSeedOverrideCovers(const std::map<std::string, double>& overrides,
+                                           const std::string& key) {
+        return overrides.find(key) != overrides.end();
     }
 
     /// Install this epoch's frame (consumed once by the next state pre-pass).

@@ -30,8 +30,11 @@
  *       the restore stops being the exact no-op it is licensed as);
  *   (c) @c RL rows round-trip through the snapshot TEXT at full precision, and a
  *       malformed or non-finite one is a HARD parse failure;
- *   (d) the seed-override rule: a covered key takes the writer's value, an
- *       uncovered key falls through to today's one-epoch median seed;
+ *   (d) the seed-override rule — a carried key takes the writer's value, any
+ *       other key falls through to today's one-epoch median seed — and the
+ *       SCOPE of the @c uncovered counter: only a key the map carries a
+ *       reference for (i.e. one with an rx-CB carry, whose @c x_lin the gate
+ *       actually reads) can be a miss;
  *   (e) a snapshot with no @c RL rows restores nothing (an old file leaves the
  *       pre-card behaviour, and the container stays empty).
  *
@@ -299,31 +302,55 @@ TEST(ResumeRxCbLinRestore, MalformedOrNonFiniteRlRowIsAHardParseFailure) {
 // ---------------------------------------------------------------------------
 
 /// The decision @c StateInitializer::initializeCodeBiases makes per key inside
-/// its `samples` loop.  A covered key is seeded to the writer's x_lin (and the
-/// one-epoch code median is never computed); an uncovered key falls through to
-/// today's path and is COUNTED, because a station seeded on the old path is
-/// exactly a station the gate can still refuse for the whole leg (invariant #4).
-TEST(ResumeRxCbLinRestore, SeedOverrideCoversOnlyTheKeysItCarries) {
+/// its `samples` loop: a key the map carries a FINITE reference for is seeded to
+/// the writer's x_lin and the one-epoch code median is never computed.
+TEST(ResumeRxCbLinRestore, SeedOverrideResolvesOnlyFiniteCarriedKeys) {
     const std::map<std::string, double> ovr{{"GPS_DCB", -3.7654321098765432},
                                             {"GPS_IFB5", 0.109375}};
     const auto covered = StateInitializer::resolveCodeBiasSeedOverride(ovr, "GPS_DCB");
     ASSERT_TRUE(covered.has_value());
     EXPECT_DOUBLE_EQ(*covered, -3.7654321098765432);
     EXPECT_DOUBLE_EQ(*StateInitializer::resolveCodeBiasSeedOverride(ovr, "GPS_IFB5"), 0.109375);
-    // Uncovered ⇒ nullopt ⇒ today's median seed.  A different constellation's
-    // family is the ordinary case (a field lineage carries GPS only).
+    // Absent ⇒ nullopt ⇒ today's median seed.  A different constellation's family
+    // is the ordinary case (a field lineage carries GPS only).
     EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride(ovr, "GAL_DCB").has_value());
     EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride(ovr, "gps_dcb").has_value());
     // An EMPTY map is the whole pre-card path: no run that leaves the knob off
     // can take a different branch here.
     EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride({}, "GPS_DCB").has_value());
     // Belt-and-braces against a future producer of the map: the parser already
-    // refuses a non-finite RL row, and if one ever arrived it must read UNCOVERED
-    // rather than be installed as a linearization point.
+    // refuses a non-finite RL row, and if one ever arrived it must be REFUSED
+    // rather than installed as a linearization point.
     const std::map<std::string, double> bad{
         {"GPS_DCB", std::numeric_limits<double>::quiet_NaN()},
         {"GPS_IFB5", std::numeric_limits<double>::infinity()}};
     EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride(bad, "GPS_DCB").has_value());
+    EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride(bad, "GPS_IFB5").has_value());
+}
+
+/// The population @c n_resume_rxcb_lin_uncovered is measured against — and the
+/// whole point of the scope, measured on the field legs: the RL rows pair 1:1
+/// with the RC rows, so "in the map" IS "has an rx-CB carry" IS "the inject gate
+/// reads this key's x_lin".  A field station holds TWO code-bias states
+/// (@c GPS_DCB, carried; @c GPS_IFB5, not), so counting every un-restored key
+/// the seeding loop reaches would report one miss per station for a family
+/// nothing carries.  Only a CARRIED key that could not take its reference is a
+/// miss, and that must read 0.
+TEST(ResumeRxCbLinRestore, UncoveredIsScopedToTheKeysTheMapCarries) {
+    // The field shape: GPS_DCB carried (an RL row beside its RC row), GPS_IFB5 not.
+    const std::map<std::string, double> ovr{{"GPS_DCB", -3.7654321098765432}};
+    EXPECT_TRUE(StateInitializer::codeBiasSeedOverrideCovers(ovr, "GPS_DCB"));
+    EXPECT_FALSE(StateInitializer::codeBiasSeedOverrideCovers(ovr, "GPS_IFB5"));
+    EXPECT_FALSE(StateInitializer::codeBiasSeedOverrideCovers(ovr, "GAL_DCB"));
+    EXPECT_FALSE(StateInitializer::codeBiasSeedOverrideCovers({}, "GPS_DCB"));
+    // The two @c nullopt cases are DIFFERENT, and only the second is counted: an
+    // absent key is a family with no carry, while a present-but-refused one is a
+    // carried key whose restored reference could not be applied.
+    const std::map<std::string, double> bad{
+        {"GPS_DCB", std::numeric_limits<double>::quiet_NaN()}};
+    EXPECT_TRUE(StateInitializer::codeBiasSeedOverrideCovers(bad, "GPS_DCB"));
+    EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride(bad, "GPS_DCB").has_value());
+    EXPECT_FALSE(StateInitializer::codeBiasSeedOverrideCovers(bad, "GPS_IFB5"));
     EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride(bad, "GPS_IFB5").has_value());
 }
 
