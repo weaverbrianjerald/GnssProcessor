@@ -2866,6 +2866,44 @@ namespace GnssProcessor {
          */
         bool networkResumeBorderRestore() const { return network_resume_border_restore_; }
         /**
+         * @brief RS-9 resume rx-CB LINEARIZATION-POINT restore
+         *        (@c network.resume_rxcb_lin_restore, SPEC_event_harness §21.18) — restore
+         *        the REFERENCE the rx-CB inject gate judges the restored carry against.
+         *
+         * RS-6 restored the rx-CB carry's numerator (@c value_abs / @c var /
+         * @c last_seen_s, the @c RC rows) and left its reference cold.  The gate's only
+         * statistic is @f$|value\_abs - x\_lin(cb)|@f$ against a FIXED 5.13 m bar (k = 10,
+         * guard 0.25 m², @c var_eff p50 1.3e-2 m²), and @c x_lin(cb) is the one-shot seed
+         * @c StateInitializer::initializeCodeBiases writes on the station's FIRST processed
+         * epoch — on a leg, from the RESUME epoch's code instead of the writer's 00:00.
+         * Measured on the field seam: 17 of 61 stations outside the bar EVERY epoch of the
+         * leg against the continuous run's 7, refreshed and refused forever with no rx-CB
+         * memory while the run-end line still read "61 carried" (§21.18(a)/(b)), and the
+         * consequences sat on exactly those stations (code-bias @c value_abs p50 0.510 m vs
+         * 0.019, receiver clock 1.94 vs 1.03, ZWD 0.95 vs 0.62).  Armed, the snapshot's
+         * @c RL rows are stashed at the RS-6 restore and consumed at each station's
+         * first-epoch code-bias initialization, so the gate judges the restored value
+         * against the frame the writer judged it against.  Invariant #7's re-coupling
+         * edge: RS-6 re-validated the VALUE it reconnected but not the FRAME.
+         *
+         * SOLVE-INVARIANT by construction under this posture — a code bias enters the
+         * observation equation linearly, so an @c x_lin shift is an exact solve no-op
+         * (project_network_xlin_invariance) and the only consumer of the value is the gate.
+         * The ONE mechanism that would break that is @ref networkRxCodeBiasDatum, whose RHS
+         * reads @c x_lin (@f$\eta = \lambda(0 - x\_lin)@f$) and would therefore MOVE the
+         * solve; the loader refuses the pair.
+         *
+         * The loader hard-requires @ref networkResumeStationRestore with its
+         * @ref networkResumeStationRestoreRxCb half (restoring a reference for a carry that
+         * was not restored judges a fresh value against a stale frame — the defect
+         * inverted).  Deliberately NOT in the warm-resume fingerprint: the same
+         * forward-only resume-response exemption class as @ref networkResumeFrameRestore,
+         * @ref networkResumeDatumRestore, @ref networkResumeEmitRestore,
+         * @ref networkResumeStationRestore and @ref networkResumeBorderRestore.
+         * Default false = byte-identical.
+         */
+        bool networkResumeRxCbLinRestore() const { return network_resume_rxcb_lin_restore_; }
+        /**
          * @brief RS-4 warm-resume PHASE-BIAS SEAM MARK (@c network.resume_pb_seam_mark,
          *        SPEC_event_harness §21.9) — declare the seam on the wire when the first
          *        post-resume emit re-realizes the phase-bias level.
@@ -7672,6 +7710,7 @@ namespace GnssProcessor {
         bool   network_resume_station_restore_{false};     ///< RS-6 resume STATION-LAYER restore (SPEC_event_harness §21.13), the reader half of network.state_snapshot_station_capture: at a warm resume, restore the rx-CB carry (the RC rows, through makeRestoredLocalCarry so each entry carries the §15.4.1 restored-arc sentinel) and the T5 / Iono-2 per-LOS deviation carry (the SD rows, as written — ShDevCarry's cold test is t_s <= 0, so the restored harvest stamp is what makes the entry read WARM) BEFORE the first epoch, instead of cold-starting both (measured: the rx-CB inject gate withholds 26 % of priors on a leg against 13 % on the seed, and ~400 deviation entries cold-seed at +1).  Each half inert and loudly logged when its rows are absent.  Loader hard-requires resume_frame_restore.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_station_restore_rxcb_{true}; ///< RS-6 diagnostic sub-switch: restore the rx-CB half.  Meaningful only under network_resume_station_restore_, and only so one leg of the §21.13 attribution matrix can restore ONE half.  Default true ⇒ an ordinary armed resume restores both.
         bool   network_resume_station_restore_shdev_{true};///< RS-6 diagnostic sub-switch: restore the T5 deviation half — the rxcb twin, same scope and default.
+        bool   network_resume_rxcb_lin_restore_{false};    ///< RS-9 resume rx-CB LINEARIZATION-POINT restore (SPEC_event_harness §21.18), the reader half of network.state_snapshot_rxcb_lin_capture: at a warm resume, seed each station's code-bias state from the snapshot's RL rows instead of from the resume epoch's one-shot code median, so the rx-CB inject gate judges the RS-6-restored carry against the frame the writer judged it against (measured without it: 17 of 61 stations refused every epoch of a leg against the continuous run's 7, permanently losing their receiver-DCB memory).  Solve-invariant under this posture (an x_lin shift is an exact solve no-op; the only consumer is the gate) — the loader REFUSES the pair with network.rx_code_bias_datum, whose RHS reads x_lin.  Loader hard-requires resume_station_restore + its rxcb half.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_border_restore_{false};      ///< RS-7 resume DENSE-BORDER restore (SPEC_event_harness §21.14): at a warm resume, rebuild the C1 dense shared-carry covariance (SharedCarryCov) from the snapshot's QK/QP records for the keys that also have a restored D row, so the FIRST warm fold runs the dense (P_prev+Q)^-1 path instead of the per-key diagonal the resume has always degraded to (the "warm resume restored N diagonal carries" line).  Split out of network_resume_coupling_restore_ deliberately: that knob also restores the coupling ROWS (QL/QZ regressors), which need Card 1f for the family identity M^T g_s = -g_r(c); a COVARIANCE block carries no regression and no gauge identity, so it is legal on a carry_invariant lineage where 1f is out of regime.  Loader hard-requires resume_frame_restore and warn-disarms without shared_carry_full_cov.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         bool   network_resume_pb_seam_mark_{false};        ///< RS-4 warm-resume PHASE-BIAS SEAM MARK (SPEC_event_harness §21.9): at the FIRST emit after a warm resume, if more than kResumePbSeamMarkFraction of a constellation's fresh-baseline (sat,signal) phase-bias keys differ from their RESTORED emitter baseline by more than discThresholdM, markDatumChange that constellation exactly as the CLK-R resume_seam rule does (E-record datum_changed 1 + a PB_FRAME/resume_seam event + the n_pb_seam_marks counter).  Closes the gap the CLK-R rule leaves: that rule fires only when the held-frame clock engine reports epochs==0, so a lineage that RESTORES the frame is never marked - exactly when the clock is continuous and the phase-bias level is not.  One shot, warm resumes only (the latch is never set on a cold start).  Outputs-only: no estimate moves.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical.
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.

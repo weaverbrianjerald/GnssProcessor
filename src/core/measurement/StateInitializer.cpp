@@ -734,6 +734,37 @@ void StateInitializer::initializeCodeBiases(const std::vector<PppObservation>& o
 
     Eigen::VectorXd x_updated = x;
     for (const auto& [key, sv] : samples) {
+        // --- RS-9 (docs/SPEC_event_harness.md §21.18) ------------------------
+        // A warm resume that restored this station's rx-CB carry restored the
+        // carry's NUMERATOR and left the reference it is judged against cold:
+        // the inject gate's statistic is |value_abs − x_lin(cb)| against a fixed
+        // 5.13 m bar, and x_lin(cb) is exactly the one-shot seed computed below
+        // — from the RESUME epoch's code instead of the writer's first epoch.
+        // With the override installed, the covered key takes the writer's
+        // linearization point and the seed below is not computed at all.  An
+        // EXACT solve no-op by construction (a code bias enters linearly, so an
+        // x_lin shift is absorbed by the state; project_network_xlin_invariance)
+        // — the only consumer of the value is the gate.  network.rx_code_bias_
+        // datum is the one mechanism whose RHS also reads x_lin (η = λ(0 −
+        // x_lin)); the loader refuses that pair, so it cannot be reached here.
+        if (!code_bias_seed_override_.empty()) {
+            const auto ovr = resolveCodeBiasSeedOverride(code_bias_seed_override_, key);
+            if (ovr.has_value()) {
+                const int ov_idx = state_manager_.getCodeBiasIndex(key);
+                if (ov_idx >= 0 && ov_idx < static_cast<int>(x_updated.size())) {
+                    x_updated(ov_idx) = *ovr;
+                    if (cb_seed_override_applied_) ++*cb_seed_override_applied_;
+                    log->info("{}RS-9: code bias {} seeded from the RESTORED "
+                              "linearization point: {:.6f} m (the one-epoch code "
+                              "median is NOT used)", epoch_prefix, key, *ovr);
+                    continue;
+                }
+            }
+            // Reached the loop, no usable override ⇒ today's seed, counted.  An
+            // uncovered key is the pre-card behaviour for that key alone, not a
+            // failure — but invariant #4 says it must be visible.
+            if (cb_seed_override_uncovered_) ++*cb_seed_override_uncovered_;
+        }
         std::vector<double> estimates;
         estimates.reserve(sv.size());
         for (const auto& s : sv) {

@@ -259,6 +259,14 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
                         l.value_abs, l.var, l.last_seen_s));
     for (const auto& [key, d] : snap.sh_dev_carry)
         put(fmt::format("SD,{},{},{},{},{}", key, d.dev, d.var, d.var_ss, d.t_s));
+    // RS-9 (SPEC_event_harness §21.18): the code-bias LINEARIZATION POINT beside each
+    // RC row, under its own knob (network.state_snapshot_rxcb_lin_capture) so a recipe
+    // may carry the carry's numerator without its reference or both.  Same key shape as
+    // RC — (station roster index, CB state key) — and the same escaping argument (the CB
+    // family carries no comma).  Written under the EXISTING header like every group
+    // above; a reader that finds none behaves exactly as today.
+    for (const auto& [key, xl] : snap.rx_cb_lin)
+        put(fmt::format("RL,{},{},{}", key.first, key.second, xl));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
     for (const auto& s : snap.retro_active)   put(fmt::format("A,{}", s));
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
@@ -695,6 +703,20 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 || !std::isfinite(d4) || d2 < 0.0 || d3 < 0.0)
                 return fail("SD field not finite (or a negative variance)");
             s.sh_dev_carry[f[1]] = NetworkStateSnapshot::ShDev{d1, d2, d3, d4};
+        } else if (tag == "RL") {   // RS-9: code-bias linearization point (x_lin)
+            if (f.size() != 4 || f[2].empty()) return fail("malformed RL line");
+            if (!parseI(f[1], i1)) return fail("malformed RL station index");
+            if (!parseD(f[3], d1)) return fail("malformed RL x_lin");
+            // Refused on the RC ground, one step sharper: this value becomes the
+            // station's code-bias LINEARIZATION POINT for the whole run, so a nan/inf
+            // strtod would accept here would make every subsequent innovation of that
+            // (station, family) non-finite — and, through computeRawResidual, poison
+            // the first epoch's iono and ambiguity seeds too.  No sign or magnitude
+            // screen: a receiver DCB is legitimately either sign and the seed path's
+            // own |est| < 200 m sanity bound belongs to the MEDIAN estimator, not to a
+            // value the writer already solved for.
+            if (!std::isfinite(d1)) return fail("RL x_lin not finite");
+            s.rx_cb_lin[{static_cast<int>(i1), f[2]}] = d1;
         } else {
             return fail("unknown record tag '" + tag + "'");
         }
