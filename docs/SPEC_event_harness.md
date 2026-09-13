@@ -6766,6 +6766,17 @@ as the harness's consumer instrument: every leg from a v9-class seed carries a w
 default is set on main.  The G4 twin is NOT run: the §24.3 attribution has named no converging posture, because none exists
 on this wire — the twin waits on the producer fix.  The pooled "consumer" bars of §20.3 / §21.21 / §23.2 stay suspended.
 
+**§24.7 CERTIFICATION of main after card CC (2026-09-14 ~05:10 local; certification worker on main's own tree at `73cbbab`).**  Release and
+Debug rebuilt first attempt (596 s / 274 s); Debug suite **2083 cases / 282 suites / 2082 passed / 0 failed / 1 documented skip**
+(`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`; 84.6 s); Release exe `3E768AD2…` (copy `gnss_processor_cert2.exe`); smoke
+`_cert4_smoke_base` (knobs OFF) `products.txt` `87a33bf0…` = cert3 and `closed_loop_trace.csv` byte-identical, no unknown-knob line, no
+CC-B counter line; the warm null leg on main's exe (`cert4_null_warm`, v9 ep0604) products `e0d234ee…` = `cert_null_v8`, consumer
+RESTORED (scope full, 29 states / 24 dynamic, age 30 s), leg − seed 0.6305 / 1.311 / 1.564 / 1.119 m at k = 1 / 11 / 30 / 60 (its consumer
+trace byte-identical to the worker's `cc_null_warm_full_norefloat`).  One cross-exe note: the v8 and v9 `ep0604` snapshots differ by nine
+bytes (the header write time and the URA quality-ramp counter 598 → 604, read only under `warmup_ura_floor_m > 0`; both seeds' products
+`0f510024…`).  The per-row residual trace (§24.6) merged after this certification is trace-only; its own smoke pair (`_rows_smoke_base` /
+`_rows_smoke_on`, both `87a33bf0…`) was run by its worker on the same code.
+
 **§24.3 RESULTS (2026-09-14 ~01:20 local; the five legs, products byte-identical `e0d234ee…` in every arm; manager read with
 `scratchpad/ci_consumer_read.py`).**  The consumer's own modeling is NOT the defect, and neither the iono supply nor the
 network clock alone is:
