@@ -5812,6 +5812,75 @@ epochs, one exe, every other RS restore at the harness default; `resume_border_r
 * **R4 the rider:** the seed's run-end line names its 7 permanently-refused stations; the lin leg names the same 7;
   the ctl leg names 17.
 
+### 21.19 RESULTS — RS-9 closes the rx-CB frame (withheld share 26.3 % → 9.8 %, the seed's 11.0 %); the pooled 60-epoch leg − seed bars are RETIRED as seam instruments (they measure realization divergence); RS-10 pre-registered (2026-09-13 ~13:20 local; worker on worktree-agent-aac1e6222abdfe75f `3b6459f`+, merged; manager grade)
+
+**Build.**  `RL,<station idx>,<cb key>,<x_lin>` rows paired 1:1 with the RC rows (61 on this lineage — the carried
+`GPS_DCB`; the uncarried `GPS_IFB5` never reaches the gate) under `network.state_snapshot_rxcb_lin_capture`;
+`network.resume_rxcb_lin_restore` stashes the map at the RS-6 restore and seeds each station's first-epoch code-bias
+linearization point to the writer's value (`StateInitializer::resolveCodeBiasSeedOverride`, `markCodeBiasInitialized`
+for covered keys); counters + run-end line; the rider on the always-on rx-CB line names the stations that withheld
+> 90 % of their epochs ("carried NOTHING").  Cold smoke `87a33bf0…` knobs absent AND armed (the ON snapshot gains
+exactly 61 RL rows); seeds `v7` / `v7raw` = the v5 recipes + the write knob, products byte-identical to `v5` /
+`v5raw`, ep0604 at the same tow, fingerprint `545b8bdd2b638231`; `rs9_raw_ctl` / `rs9_null_ctl` `products.txt`
+byte-identical to `rs7_raw_ctl` / `rs7_null_ctl`; Debug suite 2035 / 277 / 0 failed.  ⚠ The per-key "seeded from the
+RESTORED linearization point" line goes to the `state_initializer` logger, 0 bytes on this posture (the §21.16
+family); the counters are the instrument.
+
+**R1 PASS — the frame was the mechanism.**  rx-CB withheld share over k = 1..60 (`scripts/rs9_census.py`, which
+reproduces §21.18's 403/3660): seed **11.01 %**; ctl **26.31 %** (= `rs7_raw_ctl` to the row); **lin 9.78 %** — 94 % of
+the 15.3-point gap closed, 1.2 points BELOW the seed (the ±1 band missed on the favourable side).  Withholding sets
+(≥ 75 % of the window): seed 7, ctl 17, **lin 6** — every one of the 11 stations the defect created (KRGG GUAM SGOC
+BOR1 SOLO MAJU COCO CUSV HKSL SCTB, CAS1 55 → 7) is back to 0/60; shared with the seed 5, only-leg 1 (OAFA00ARG),
+only-seed 2 (CPVG00CPV, LCK400IND) — OAFA and CPVG are exactly §21.16's canonical-signal stations (RS-8, another
+branch), LCK4 sits at 46/60 on the seed and 13/60 on the leg.  **R4 PASS:** the rider names 6 on the seeds (CPVG GAMB
+GOPE KOKV LMMF MRO1 — LCK4 is 77 % over the window, under 90 % over 6 h), 16 on the ctl legs, 6 on the lin legs (GAMB
+GOPE KOKV LMMF MRO1 OAFA).  Both arms restore identically at the RS-6 layer (61 rx-CB entries, 467 deviation
+entries): the frame is the only difference.
+
+**R2 — every pooled bar fails again, and the way it fails retires the bars.**  With 11 stations returned to folding:
+W6 code bias pooled p50 0.460 → **0.545** (worse), clock contrast pooled 1.651 → 1.697 (worse; p95 9.11 → 8.93), ZWD
+0.659 → 0.653 (flat), receiver clocks at +1 0.934 → 0.819 (12 % better), raw PB at +1 1.496 → 1.373 (8 % better), PB
+wire 0.000 unchanged, a₀₀ +0.43 → +0.38, births / D5 / eq34 rerefs unchanged; the stateful consumer's code
+re-references at the seam 22 → 24, phase resets 0 on both, cold-consumer settled 3D 11.79 vs 11.75 m.  The rx-CB
+withheld population was therefore NOT what drives the pooled code-bias / clock / ZWD residual, and the RS-7 control's
+own series says what does (`rs7_null_ctl/seam_grade.json`, leg − seed p50 by epoch):
+
+| leg − seed p50 | +1 | +2 | +5 | +30 | +60 |
+|---|---|---|---|---|---|
+| clock contrast | 0.31 | 0.29 | 0.53 | 1.42 | 2.85 m |
+| W6 code bias | 0.086 | 0.152 | 0.268 | 0.44 | 0.67 m |
+| ZWD | 0.30 | 0.30 | 0.40 | 0.56 | 1.35 m |
+| PB wire (DD-invariant) | 0.000 | 0.001 | 0.003 | 0.048 | 0.118 m |
+| a₀₀ | +0.43 | +0.18 | +0.13 | −1.53 | −1.19 TECU |
+
+Every shared channel — including the DD-invariant phase-bias wire and the SH a₀₀ — diverges roughly linearly from a
+near-identical state on identical data: two realizations of a weak-datum, random-walk shared parameterization walking
+apart as their gate decisions differ, the chain-datum churn the literature leaves unsolved (project_ppprtk_literature
+_pack).  The 60-epoch pooled bars of §21.13/§21.14 (CB ≤ 0.10, clock contrast ≤ 0.5, ZWD ≤ 0.32) therefore graded
+DIVERGENCE, not the seam — which is why RS-7 and RS-9 could each close their own mechanism exactly and leave those bars
+untouched.  **From here the seam is graded at the SEAM EPOCH (+1 / +2 against the seed's own per-epoch step) and by
+consumer instruments (the stateful splice's re-references at the seam; the cold-consumer replay), never by pooled
+leg − seed levels over a window.**  On those instruments the seam's remaining cost is two items: the ZWD step at +1
+(0.30 m p50 with `zwd_seam_reseed` ARMED, which should have pinned it to the writer's value) and the 22–24 code-bias
+re-references the stateful consumer takes at the seam.
+
+**Decision.**  Both RS-9 knobs RECOMMEND_SCOPED: the write knob pinned on both goldens (write side, byte-identical;
+requires `state_snapshot_station_capture`, pinned), the read knob harness-armed on every leg.  `n_resume_rxcb_lin_
+uncovered` counts only keys that have a carry (0 here).  The next harness seed (v8) carries CN + RL rows once RS-8
+merges.
+
+**RS-10 pre-registered — a CENSUS, no new run, on `rs9_null_lin` / `rs9_raw_lin` vs `v7` / `v7raw`.**  (a) The ZWD
+seam step: per station at +1 and +2, the leg's ZWD vs the seed's, the snapshot's Z-row values vs the seed's ZWD trace
+at ep0604/0605, and the leg's ZWD linearization point / a-priori vs the writer's (`zwd_seam_reseed` injects the Z rows
+as B9 priors at q 1e-9 — in which frame, correction or absolute?); the same for the receiver clocks at +1 (0.82 m p50
+— per-epoch white, so 0.82 m is the seam's per-station re-split at +1); is the 0.30 m the RS-9 family again (a
+re-seeded `x_lin` for ZWD), a datum-sink restart, or the reseed acting in the wrong frame?  (b) The seam
+re-references: which 22 (sat, signal) keys the consumer re-references, whether each is DECLARED (B-record disc
+counter / code jump test) and its |Δ| at +1 leg − seed, against the seed's own per-epoch code-bias step; whether they
+are the time-linked code-bias datum's per-key re-seed (RS-3 restored the CBP map with the latch false — did those keys
+re-seed?), the W6 set-mean realization, or the receiver side.  Deliverable: mechanism, the smallest increment, and
+its seam-epoch bar (ZWD at +1 within 3× the seed's own step; consumer code re-references at the seam ≤ 5).
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
