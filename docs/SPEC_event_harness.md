@@ -6690,3 +6690,57 @@ at the event, ON carries it (the log line with Δ), products byte-identical betw
 G2/G3 pass): the v8 recipe with that posture + (A) vs without — declared-step resets 29 → ≤ 2 (the first sightings), settled
 p50 / rms not worse, and the instrument's own hour-to-hour p50 spread reported; then and only then §20.3's G-G is re-run on
 the fixed slip posture with this consumer, and the four knobs are pinned or not on a bar the instrument can carry.
+
+**§24.3 RESULTS (2026-09-14 ~01:20 local; the five legs, products byte-identical `e0d234ee…` in every arm; manager read with
+`scratchpad/ci_consumer_read.py`).**  The consumer's own modeling is NOT the defect, and neither the iono supply nor the
+network clock alone is:
+
+| arm | k = 1 | k = 11 | k = 30 | k = 60 | p50 3D k 30–60 | \|up\| | north | east | slope m/ep |
+|---|---|---|---|---|---|---|---|---|---|
+| L0 as golden (FULL) | 3.96 | 16.13 | 11.37 | 7.18 | 8.44 | 5.98 | −5.92 | +0.79 | −0.137 |
+| L1 no iono supply | 4.25 | 15.34 | 10.74 | 7.60 | 8.37 | 4.49 | −6.90 | +1.62 | −0.102 |
+| L2 no network clock (bias-only) | 9.39 | 4.93 | 6.13 | 6.44 | 6.52 | 5.30 | −2.08 | +3.26 | +0.005 |
+| L3 neither (CODE clock + network biases) | 6.21 | 6.65 | 8.16 | 7.47 | 8.24 | 6.61 | −2.81 | +3.88 | −0.029 |
+| **L4 no products (plain PPP on CODE SP3/CLK/.BIA)** | **1.48** | **1.32** | **0.28** | **0.25** | **0.25** | **0.17** | −0.17 | +0.08 | 0.000 |
+
+The same 6–8 GPS satellites (15° mask), the same filter, the same 30 minutes: on CODE's products the cold float converges to
+0.25 m 3D / 0.17 m up by k = 30 and stays there; on ANY combination of the network's products it sits at 6–8 m at k = 60
+(FULL mode first walks to 16 m by k = 10 — its ZWD state runs 0.07 → −1.37 → +3.41 m over eleven epochs while the frozen
+`troposphere_q 1e-9` then holds whatever it latched; the continuous seed's consumer holds ZWD ≈ 0.6 m for six hours
+against a physical ~0.15 m, which is the height bias of §24.1 in another coordinate).  L3 is the decisive row: CODE's clock
+with the network's phase and code biases is as bad as FULL — so the damage is in the BIAS wire or in how the consumer
+applies it, and a per-satellite constant cannot be the reason (a float ambiguity absorbs any constant).  Either the
+network's biases, taken with a clock, differ from CODE's by something that MOVES within an arc at the metre level, or the
+consumer's application of the network products is defective at the metre level — `project_closedloop_consumer_vertical_bug`
+concluded the latter in August ("the defect is CONSUMER-side application; products are sound in isolation") and it was never
+fixed.  The two are separated without a consumer, by the products themselves (§24.5).
+
+**Corrections to §24.1's reading.**  The consumer is a healthy float PPP user (L4); its wander on the network wire is a
+TRUE statement about the wire AS APPLIED, not an instrument artifact — but the bar problem stands as written: a wire that
+leaves a float user at 6–8 m makes every consumer figure a random walk, and the resets are not the channel.  The
+consumer-side bars stay suspended; the replacement instrument is §24.5.
+
+### 24.5 The wire-vs-CODE consistency census — truth-referenced, datum-invariant, consumer-free, readable on any leg (pre-registered before it is written; a read-only Opus census, no producer run)
+
+What the consumer applies per satellite s and phase signal L at epoch t is `A_net(s,L,t) = c·δt_net(s,t) + PB_net(s,L,t)`
+(FULL) against what the CODE user applies, `A_code(s,L,t) = c·δt_CODE(s,t) + OSB_CODE(s,L)`; for code signals the same with
+the network W6 code bias against CODE's code OSB.  A float user is indifferent to any per-satellite CONSTANT difference and
+to any per-epoch common-mode difference (its ambiguities and receiver clock absorb them), so the quantity that reaches the
+position is `D(s,L,t) = [A_net − A_code](s,L,t) − median_s[A_net − A_code](L,t)`, and its WITHIN-ARC variation is the
+consumer's damage.  Census on `runs/evseed_field6h_v8` (6 h) and `runs/evseed_field6h_v8fp2` (the four-knob twin), the
+products.txt `C` / `P` / `B` rows against the CODE 30 s CLK and OSB BIA the seed's config names (the S line's a-priori
+identity; the consumer used the same files in L4): per satellite and signal, D's mean over each arc (the datum offset — a
+sanity read: it should be the same constant for every signal of a satellite up to the OSB), its rms ABOUT the arc mean, and
+the per-hour p50 / p95 of |D − arc mean| pooled over satellites; the same for the code side; the raw clock contrast
+`c·δt_net − c·δt_CODE` de-medianed per epoch, p50 / p95 per hour.  Also the 60-epoch windows the legs use (k = 1..60 from
+tow 277320) on both seeds and on `evleg_cert_null_v8`.
+
+**Bars.**  W1 (consistency): pooled within-arc rms of D_phase ≤ 0.05 m per hour after hour 1 on v8 ⇒ the products are
+consumer-consistent and the metre-level consumer failure is the consumer's APPLICATION (a consumer build card follows,
+instrumented by the applied-correction dump); rms ≥ 0.5 m ⇒ the wire itself moves within arcs at the metre level and the
+consumer is reading it right (then the between-satellite clock / phase-bias wander is the producer defect to attack, and
+the pin question is moot until it is).  W2 (the pin, re-graded on this instrument): v8fp2's pooled within-arc rms of
+D_phase and D_code not worse than v8's by more than 10 % in hours 3–6; the count of arcs with a within-arc step > 0.25 m
+reported per twin.  W3 (the code side): pooled within-arc rms of D_code ≤ 0.3 m; a per-satellite code-side CONSTANT
+offset larger than 1 m is reported by satellite (a datum inconsistency the consumer cannot absorb because it carries no
+per-satellite code-bias state — `estimate_sat_biases false`).
